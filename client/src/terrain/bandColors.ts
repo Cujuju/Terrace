@@ -6,7 +6,7 @@
 // Without that split the renderer would either repeat the selection logic or
 // run an sRGB→linear pow() per vertex per patch.
 
-import { MAX_HEIGHT, bandOf } from '@terrace/shared';
+import { MAX_HEIGHT, bandOf, isWater } from '@terrace/shared';
 
 /** Colour components in the 0..1 range. Interpreted as sRGB. */
 export type Rgb = readonly [r: number, g: number, b: number];
@@ -46,14 +46,22 @@ export const TERRAIN_PALETTE: readonly Rgb[] = [
 export const LAST_PALETTE_INDEX = TERRAIN_PALETTE.length - 1;
 
 /**
- * Palette index for a raw (un-quantised) height. Uses shared's `bandOf`, whose
- * floor division puts every underwater height in a negative band — that is
- * what makes the seabed test a simple `band < 0`.
+ * Palette index for a RAW (un-quantised) height.
+ *
+ * The water test is shared's own `isWater` (h <= SEA_LEVEL), NOT `bandOf(h) <
+ * 0`. Those two disagree at exactly one height and it is the most common one
+ * in the world: band 0 spans h ∈ [0, 63], which straddles the waterline —
+ * h = 0 is water, h = 1..63 is dry land. Using the band sign would colour a
+ * freshly generated world (every cell at 0, and therefore entirely water by
+ * the shared model) as solid beach sand.
+ *
+ * This must be fed the raw height rather than the quantised one, because
+ * quantisation destroys exactly the distinction being made here:
+ * quantizeToBand(1) === 0, so a quantised input would call dry land water.
  */
 export function bandPaletteIndex(height: number): number {
-  const band = bandOf(height);
-  if (band < 0) return SEABED_PALETTE_INDEX;
-  const index = FIRST_LAND_PALETTE_INDEX + band;
+  if (isWater(height)) return SEABED_PALETTE_INDEX;
+  const index = FIRST_LAND_PALETTE_INDEX + bandOf(height);
   return index > LAST_PALETTE_INDEX ? LAST_PALETTE_INDEX : index;
 }
 

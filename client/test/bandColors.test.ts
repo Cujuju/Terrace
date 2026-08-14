@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL, bandOf } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  MAX_HEIGHT,
+  MIN_HEIGHT,
+  SEA_LEVEL,
+  bandOf,
+  isWater,
+} from '@terrace/shared';
 import {
   FIRST_LAND_PALETTE_INDEX,
   LAST_PALETTE_INDEX,
@@ -38,16 +45,25 @@ describe('bandPaletteIndex', () => {
     expect(bandPaletteIndex(MIN_HEIGHT)).toBe(SEABED_PALETTE_INDEX);
   });
 
-  it('puts the first band above sea level on the first land colour', () => {
-    // bandOf(0) is 0, the first land band — sea level itself is dry ground's
-    // floor, matching shared's isWater(h) = h <= SEA_LEVEL boundary.
-    expect(bandPaletteIndex(SEA_LEVEL)).toBe(FIRST_LAND_PALETTE_INDEX);
+  it('treats sea level itself as water, agreeing with shared isWater', () => {
+    // THE case band arithmetic gets wrong: bandOf(0) is 0, a land band, but
+    // shared defines isWater(h) as h <= SEA_LEVEL. A fresh world is entirely
+    // zeros, so getting this backwards paints the whole map beach sand.
+    expect(isWater(SEA_LEVEL)).toBe(true);
+    expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
+  });
+
+  it('colours the dry remainder of band 0 as land', () => {
+    // Band 0 straddles the waterline: 0 is sea, 1..BAND_HEIGHT-1 is beach.
+    expect(bandPaletteIndex(1)).toBe(FIRST_LAND_PALETTE_INDEX);
     expect(bandPaletteIndex(BAND_HEIGHT - 1)).toBe(FIRST_LAND_PALETTE_INDEX);
   });
 
   it('advances one palette step per terrace band', () => {
     for (let band = 0; band <= LAST_PALETTE_INDEX - FIRST_LAND_PALETTE_INDEX; band++) {
-      expect(bandPaletteIndex(band * BAND_HEIGHT)).toBe(
+      // +1 so band 0 is sampled on its dry side; every other band is entirely
+      // above water anyway.
+      expect(bandPaletteIndex(band * BAND_HEIGHT + 1)).toBe(
         FIRST_LAND_PALETTE_INDEX + band,
       );
     }
@@ -75,21 +91,37 @@ describe('bandPaletteIndex', () => {
     }
   });
 
-  it('agrees with shared bandOf about where the band boundaries are', () => {
-    // A colour change must coincide exactly with a band change, otherwise the
-    // colour steps and the geometric terraces would be offset from each other.
-    for (let h = 1; h <= MAX_HEIGHT; h++) {
-      const colourChanged = bandPaletteIndex(h) !== bandPaletteIndex(h - 1);
-      const bandChanged = bandOf(h) !== bandOf(h - 1);
-      if (colourChanged) expect(bandChanged).toBe(true);
+  it('changes colour only at a band edge or at the waterline', () => {
+    // Colour steps must line up with the geometric terraces, or the ramp would
+    // visibly slide against the steps. The single exception is the waterline
+    // inside band 0, which is a material change (sea → beach) at a height
+    // where the geometry does not step.
+    for (let h = MIN_HEIGHT + 1; h <= MAX_HEIGHT; h++) {
+      if (bandPaletteIndex(h) === bandPaletteIndex(h - 1)) continue;
+      const atBandEdge = bandOf(h) !== bandOf(h - 1);
+      const atWaterline = isWater(h - 1) && !isWater(h);
+      expect(atBandEdge || atWaterline).toBe(true);
     }
+  });
+
+  it('puts the waterline colour change exactly at shared SEA_LEVEL', () => {
+    expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
+    expect(bandPaletteIndex(SEA_LEVEL + 1)).not.toBe(SEABED_PALETTE_INDEX);
   });
 });
 
 describe('bandColorOf', () => {
   it('returns the palette entry the index selects', () => {
     expect(bandColorOf(-1)).toBe(TERRAIN_PALETTE[SEABED_PALETTE_INDEX]);
-    expect(bandColorOf(0)).toBe(TERRAIN_PALETTE[FIRST_LAND_PALETTE_INDEX]);
+    expect(bandColorOf(0)).toBe(TERRAIN_PALETTE[SEABED_PALETTE_INDEX]);
+    expect(bandColorOf(1)).toBe(TERRAIN_PALETTE[FIRST_LAND_PALETTE_INDEX]);
     expect(bandColorOf(MAX_HEIGHT)).toBe(TERRAIN_PALETTE[LAST_PALETTE_INDEX]);
+  });
+
+  it('paints a freshly generated world entirely as sea', () => {
+    // Regression guard. A new world is an all-zero Int16Array and every cell
+    // is water by shared's definition; an earlier band-sign test rendered the
+    // whole thing as beach sand instead.
+    expect(bandColorOf(0)).toBe(TERRAIN_PALETTE[SEABED_PALETTE_INDEX]);
   });
 });

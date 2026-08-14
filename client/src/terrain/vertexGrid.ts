@@ -117,9 +117,10 @@ export function writeChunkVertexData(
       positions[p++] = quantizeToBand(height) * HEIGHT_WORLD_SCALE;
       positions[p++] = cell.y * CELL_WORLD_SIZE;
 
-      // Colour from the RAW height, not the quantised one: both agree on the
-      // band (quantizing cannot move a height across a band boundary), and
-      // using the raw value keeps this independent of the terracing step.
+      // Colour from the RAW height, and it MUST be the raw one. Band 0 spans
+      // heights 0..BAND_HEIGHT-1, which straddles the waterline, so the
+      // quantised value (always 0 for that whole band) cannot distinguish sea
+      // from the beach above it. See bandPaletteIndex.
       const color = palette[bandPaletteIndex(height)];
       colors[c++] = color[0];
       colors[c++] = color[1];

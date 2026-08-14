@@ -49,6 +49,24 @@ export const BAND_WORLD_HEIGHT = CELL_WORLD_SIZE;
 export const HEIGHT_WORLD_SCALE = BAND_WORLD_HEIGHT / BAND_HEIGHT;
 
 /**
+ * How far above SEA_LEVEL the water surface is drawn, in world units.
+ *
+ * It cannot be zero. Terrace band 0 covers heights 0..BAND_HEIGHT-1 and every
+ * one of them quantises to a vertex height of 0 — the same plane the sea would
+ * sit on. That is not a rare case: it is a freshly generated world (all cells
+ * at 0) and every shoreline flat thereafter, so a coplanar sea would z-fight
+ * across the most-looked-at part of the map.
+ *
+ * A thirty-second of a band is the compromise: far above the depth-buffer
+ * resolution at these camera distances, so the ordering is decided and stable,
+ * yet a small enough step that a band-0 flat still reads as sitting AT the
+ * waterline rather than floating above or sunk below it. Band 1 — one sculpt
+ * click — clears the surface by a full world unit, which is what makes
+ * "raising land out of water" read as buildable (MVP criterion 4).
+ */
+export const WATER_SURFACE_LIFT = BAND_WORLD_HEIGHT / 32;
+
+/**
  * Milliseconds between repeated sculpt intents while the pointer is held down.
  *
  * Chosen at 120 ms — deliberately just above the server's 100 ms tick period
