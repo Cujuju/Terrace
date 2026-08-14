@@ -211,3 +211,46 @@ describe('handleSculptIntent', () => {
     expect(seenDiffs[0]).toBeGreaterThan(0);
   });
 });
+
+describe('sculptDenied nack', () => {
+  let world: World;
+  let sink: RecordingSink;
+  const denier: TerracePlugin = {
+    name: 'denier',
+    onIntent(): IntentVerdict {
+      return { kind: 'deny', reason: 'no mana' };
+    },
+  };
+
+  beforeEach(() => {
+    world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    sink = new RecordingSink();
+    world.setSink(sink);
+  });
+
+  it('nacks a plugin-denied intent that carried a seq, to the sender only', () => {
+    const outcome = handleSculptIntent(makeDeps(world, [denier]), PLAYER, sculptMessage({ seq: 42 }));
+    expect(outcome.applied).toBe(false);
+    expect(sink.messages).toEqual([
+      { target: PLAYER.id, type: 'sculptDenied', payload: { type: 'sculptDenied', seq: 42 } },
+    ]);
+  });
+
+  it('sends nothing for a plugin-denied intent without a seq', () => {
+    handleSculptIntent(makeDeps(world, [denier]), PLAYER, sculptMessage());
+    expect(sink.messages).toHaveLength(0);
+  });
+
+  it('stays SILENT for a mask rejection even when the intent carried a seq', () => {
+    // The anti-cheat boundary: a locked-centre intent must remain
+    // indistinguishable from a dropped packet (protocol.ts, pipeline step 2).
+    const outcome = handleSculptIntent(
+      makeDeps(world, [denier]),
+      PLAYER,
+      sculptMessage({ x: LOCKED_CELL.x, y: LOCKED_CELL.y, seq: 42 }),
+    );
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('locked');
+    expect(sink.messages).toHaveLength(0);
+  });
+});

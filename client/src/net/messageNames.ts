@@ -14,6 +14,7 @@
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
 } from '@terrace/shared';
@@ -29,3 +30,6 @@ export const MSG_TERRAIN_DIFF: TerrainDiffMessage['type'] = 'terrainDiff';
 
 /** Client → server: a sculpt request. Never heights — direction only. */
 export const MSG_SCULPT: SculptIntent['type'] = 'sculpt';
+
+/** Server → the sender only: a plugin denied the intent with this seq. */
+export const MSG_SCULPT_DENIED: SculptDeniedMessage['type'] = 'sculptDenied';

@@ -282,3 +282,32 @@ describe('authoritative state seeding', () => {
     expect(store.pendingCount()).toBe(1);
   });
 });
+
+describe('rejectSeq — the sculptDenied fast path', () => {
+  it('rolls back exactly the nacked prediction and keeps the others', () => {
+    const { mirror, store } = createClient();
+
+    store.predict({ ...raise(), seq: 1 }, 0);
+    store.predict({ ...raise(CENTRE.x + 8), seq: 2 }, 0);
+    const deniedHeight = heightAt(mirror.map, CENTRE.x, CENTRE.y);
+    expect(deniedHeight).toBeGreaterThan(0);
+
+    const dirty = store.rejectSeq(1);
+    expect(dirty.size).toBeGreaterThan(0);
+    expect(store.pendingCount()).toBe(1);
+    // The denied stroke is gone from the rendered map...
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(0);
+    // ...and the surviving prediction still shows.
+    expect(heightAt(mirror.map, CENTRE.x + 8, CENTRE.y)).toBeGreaterThan(0);
+  });
+
+  it('is a no-op for a seq with no pending prediction', () => {
+    const { mirror, store } = createClient();
+    store.predict({ ...raise(), seq: 5 }, 0);
+    const before = heightAt(mirror.map, CENTRE.x, CENTRE.y);
+
+    expect(store.rejectSeq(999).size).toBe(0);
+    expect(store.pendingCount()).toBe(1);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(before);
+  });
+});

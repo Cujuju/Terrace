@@ -14,6 +14,7 @@ import { DEFAULT_WORLD_SIZE, quantizeToBand } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
 } from '@terrace/shared';
@@ -206,6 +207,14 @@ export function createWorld(viewport: Viewport): World {
     predictSculpt(intent: SculptIntent): void {
       if (meshes === null || predictions === null) return;
       meshes.update(predictions.predict(intent, nowMs()));
+      armExpiryTimer();
+    },
+
+    onSculptDenied(msg: SculptDeniedMessage): void {
+      if (meshes === null || predictions === null) return;
+      // The denied stroke comes off the screen the moment the nack lands —
+      // one round trip — instead of at the prediction deadline.
+      meshes.update(predictions.rejectSeq(msg.seq));
       armExpiryTimer();
     },
 

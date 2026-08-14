@@ -121,6 +121,17 @@ export interface PredictionStore {
     nowMs: number,
   ): Set<number>;
 
+  /**
+   * Retires the prediction whose intent carried this seq — the server's
+   * sculptDenied nack. This is the fast path that makes a plugin denial
+   * (out of mana, on cooldown) read as "the brush stopped" rather than as a
+   * one-second rubber-band: without it the denied prediction stays on screen
+   * until PREDICTION_TTL_MS. A seq with no pending prediction is a no-op —
+   * the deadline or a value-confirmation may legitimately have got there
+   * first. Returns stale chunk indices.
+   */
+  rejectSeq(seq: number): Set<number>;
+
   /** Drops predictions past PREDICTION_TTL_MS. Returns stale chunk indices. */
   expire(nowMs: number): Set<number>;
 
@@ -292,6 +303,17 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       );
       replayPending(dirty);
 
+      return dirty;
+    },
+
+    rejectSeq(seq: number): Set<number> {
+      const dirty = new Set<number>();
+      const index = pending.findIndex((p) => p.intent.seq === seq);
+      if (index === -1) return dirty;
+
+      restoreToBase(dirty);
+      pending.splice(index, 1);
+      replayPending(dirty);
       return dirty;
     },
 

@@ -21,6 +21,32 @@ export interface SculptIntent {
   radius: number;
   /** +1 raise, -1 lower. */
   dir: 1 | -1;
+  /**
+   * Client-chosen correlation id, echoed back on SculptDeniedMessage so the
+   * sender can retire the exact client-side prediction a denial refers to.
+   * Optional: an intent without one is still valid — it simply cannot be
+   * nacked by seq, and its prediction falls back to the value/deadline
+   * reconciliation in the client's prediction store.
+   */
+  seq?: number;
+}
+
+/**
+ * Server → the ORIGINATING client only: a structurally valid intent was denied
+ * by a plugin interceptor (mana, cooldowns…), identified by the seq the client
+ * put on it.
+ *
+ * ANTI-CHEAT BOUNDARY — this message exists for plugin denials and for nothing
+ * else. Mask rejections (brush centre in a locked chunk) remain answered with
+ * silence: they stay indistinguishable from a dropped packet. A client can
+ * already tell which chunks it was never sent, so a plugin-denial nack reveals
+ * nothing it does not know; a mask nack would additionally confirm the mask's
+ * exact behaviour at the boundary, so it is never sent.
+ */
+export interface SculptDeniedMessage {
+  type: 'sculptDenied';
+  /** The denied intent's seq, verbatim. */
+  seq: number;
 }
 
 /** Server → clients: cells changed by an applied edit (or plugin terrain op). */
@@ -56,7 +82,8 @@ export type ClientMessage = SculptIntent;
 export type ServerMessage =
   | TerrainDiffMessage
   | ChunkUnlockMessage
-  | JoinSnapshotMessage;
+  | JoinSnapshotMessage
+  | SculptDeniedMessage;
 
 /**
  * Validates an untrusted inbound sculpt intent. Returns the typed intent, or
@@ -88,11 +115,19 @@ export function validateSculptIntent(
   }
   if (dir !== 1 && dir !== -1) return null;
 
+  // seq is optional and only ever echoed back to its sender, so the only
+  // structural demand is that a PRESENT seq is a safe integer — anything else
+  // (floats, NaN, objects) is rejected with the whole intent rather than let a
+  // hostile value ride along into a server-originated message.
+  const { seq } = m;
+  if (seq !== undefined && !Number.isSafeInteger(seq)) return null;
+
   return {
     type: 'sculpt',
     x: x as number,
     y: y as number,
     radius: radius as number,
     dir,
+    ...(seq !== undefined ? { seq: seq as number } : {}),
   };
 }

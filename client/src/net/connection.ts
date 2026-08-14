@@ -35,6 +35,7 @@ import { Client, type Room } from '@colyseus/sdk';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
 } from '@terrace/shared';
@@ -42,6 +43,7 @@ import { ROOM_NAME, SERVER_URL } from '../config.ts';
 import {
   MSG_CHUNK_UNLOCK,
   MSG_SCULPT,
+  MSG_SCULPT_DENIED,
   MSG_SNAPSHOT,
   MSG_TERRAIN_DIFF,
 } from './messageNames.ts';
@@ -77,6 +79,8 @@ export interface TerrainSink {
   onSnapshot(msg: JoinSnapshotMessage): void;
   onChunkUnlock(msg: ChunkUnlockMessage): void;
   onTerrainDiff(msg: TerrainDiffMessage): void;
+  /** A plugin denied our intent with this seq: retire its prediction NOW. */
+  onSculptDenied(msg: SculptDeniedMessage): void;
 }
 
 export interface ConnectionOptions {
@@ -160,6 +164,9 @@ export function connect(options: ConnectionOptions): Connection {
     });
     joined.onMessage<TerrainDiffMessage>(MSG_TERRAIN_DIFF, (msg) => {
       options.sink.onTerrainDiff(msg);
+    });
+    joined.onMessage<SculptDeniedMessage>(MSG_SCULPT_DENIED, (msg) => {
+      options.sink.onSculptDenied(msg);
     });
 
     // Plugin routing. Plugin messages are namespaced `<plugin>:<type>` by the

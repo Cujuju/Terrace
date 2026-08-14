@@ -81,6 +81,15 @@ export function handleSculptIntent(
   // 3. Plugin interceptor chain (mana, cooldowns, ownership, …).
   const verdict = interceptors.runIntent(intent, player);
   if (verdict.kind === 'deny') {
+    // Nack PLUGIN denials — and only those — back to the sender, echoing the
+    // intent's seq so the client can retire the exact prediction it made for
+    // it immediately instead of waiting out its reconciliation deadline.
+    // The mask rejection above stays silent on purpose (see its comment); a
+    // plugin denial reveals nothing about the mask, and the plugin itself has
+    // already had the chance to say why on its own channel (e.g. mana:denied).
+    if (intent.seq !== undefined) {
+      world.sendTo(player.id, { type: 'sculptDenied', seq: intent.seq });
+    }
     return { applied: false, reason: 'plugin-denied', detail: verdict.reason };
   }
 

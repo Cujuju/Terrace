@@ -47,3 +47,23 @@ describe('validateSculptIntent', () => {
     expect(validateSculptIntent({ ...base, radius: 1, dir: '-1' }, WORLD)).toBeNull();
   });
 });
+
+describe('validateSculptIntent seq correlation', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
+
+  it('passes a safe-integer seq through verbatim', () => {
+    expect(validateSculptIntent({ ...base, seq: 7 }, WORLD)).toEqual({ ...base, seq: 7 });
+  });
+
+  it('omits seq entirely when the intent carried none', () => {
+    const intent = validateSculptIntent({ ...base }, WORLD);
+    expect(intent).not.toBeNull();
+    expect(Object.hasOwn(intent as object, 'seq')).toBe(false);
+  });
+
+  it('rejects the whole intent on a malformed seq', () => {
+    for (const seq of [1.5, Number.NaN, Infinity, '7', {}, 2 ** 53]) {
+      expect(validateSculptIntent({ ...base, seq }, WORLD)).toBeNull();
+    }
+  });
+});

@@ -138,6 +138,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     return strokeAction;
   };
 
+  /**
+   * Monotonic per-session correlation id stamped on every intent. The server
+   * echoes it on a sculptDenied nack, which is how the prediction store rolls
+   * back exactly the stroke a plugin (mana, cooldowns…) refused — without it a
+   * denied prediction lingers on screen until its reconciliation deadline.
+   */
+  let nextSeq = 1;
+
   const emitIntent = (): void => {
     const cell = pickCell();
     if (cell === null) return;
@@ -149,6 +157,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       y: cell.y,
       radius: brushRadius(),
       dir: sculptDirection(action),
+      seq: nextSeq++,
     });
   };
 
