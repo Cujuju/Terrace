@@ -1,0 +1,122 @@
+// monsters — the wire contract between the plugin's two halves.
+//
+// Imported by BOTH server/ and client/, so it stays dependency-free (no three,
+// no node builtins) and side-effect-free: one definition of the payload, so the
+// halves cannot drift.
+//
+// Namespacing: the hosts prefix `monsters:` on the wire in both directions, so
+// every type here is the UN-namespaced form (see server/src/plugins/host.ts and
+// client/src/plugins/host.ts).
+
+/** Plugin name on both sides. Also the message namespace. */
+export const MONSTERS_PLUGIN_NAME = 'monsters';
+
+/**
+ * Un-namespaced type of the server → client push (`monsters:state`).
+ *
+ * There is exactly one message type and it carries FULL state every time — the
+ * same choice the wildlife plugin made, for the same self-healing reasons, and
+ * here it is nearly free: the list holds at most MAX_LIVING_MONSTERS entries
+ * (one). See the bandwidth note in server/index.ts.
+ *
+ * The list being EMPTY is meaningful and is broadcast just as faithfully as a
+ * populated one: it is how a client learns the monster is gone. A despawn that
+ * were signalled only by the absence of a message would leave a client that
+ * joined mid-lull rendering nothing wrong, but a client that was watching the
+ * thing rendering it forever.
+ */
+export const MONSTERS_STATE_MESSAGE = 'state';
+
+/**
+ * The monster kinds that exist. Ordered; this is also the deterministic order in
+ * which summoning considers kinds, so if a future kind is added the contest for
+ * the world's single monster slot resolves predictably rather than by whichever
+ * key `for…in` yielded.
+ */
+export const MONSTER_KINDS = ['cthulhu'] as const;
+
+export type MonsterKind = (typeof MONSTER_KINDS)[number];
+
+/**
+ * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — three
+ * orders of magnitude finer than the monster itself (Cthulhu spans ~11 cells),
+ * far below what any camera distance can resolve, and it makes the payload's
+ * encoded size bounded and exactly assertable in a test. Same value and same
+ * reasoning as the wildlife plugin's.
+ */
+export const MONSTER_POSITION_DECIMALS = 2;
+
+const POSITION_QUANTUM = 10 ** MONSTER_POSITION_DECIMALS;
+
+/** Rounds a cell-space coordinate to the broadcast precision. */
+export function roundBroadcastPosition(value: number): number {
+  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
+}
+
+/**
+ * One monster, as it appears on the wire.
+ *
+ * DELIBERATELY ABSENT: the idle/lurking flag. The client can SEE that the thing
+ * is not moving — that is what idling looks like — and the model's animation is
+ * a function of elapsed time, not of gait. Putting the flag on the wire would be
+ * a second source of truth for something already visible.
+ */
+export interface MonsterState {
+  /** Stable for the monster's whole life; the client keys interpolation by it. */
+  readonly id: number;
+  readonly kind: MonsterKind;
+  /** Cell-space position (fractional). World X/Z, since CELL_WORLD_SIZE is 1. */
+  readonly x: number;
+  readonly y: number;
+  /** Radians; the monster moves toward (cos heading, sin heading) in cell space. */
+  readonly heading: number;
+}
+
+export interface MonstersStatePayload {
+  readonly monsters: readonly MonsterState[];
+}
+
+export function isMonsterKind(value: unknown): value is MonsterKind {
+  return (MONSTER_KINDS as readonly string[]).includes(value as string);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * Defensive parse of a received payload.
+ *
+ * The client trusts the server, but "trusts" is not "assumes well-formed": a
+ * version skew between a self-hoster's server and a cached client bundle is an
+ * ordinary event, and the right failure mode is "the monster is missing this
+ * second", never a thrown exception inside the render loop. Unknown kinds and
+ * malformed entries are dropped individually; a payload that is not a list at
+ * all yields null so the caller can ignore the message entirely.
+ *
+ * An EMPTY list is a valid parse (it is the despawn signal), which is exactly
+ * why "not a list" has to be reported as null rather than as an empty result.
+ */
+export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const monsters = (payload as { monsters?: unknown }).monsters;
+  if (!Array.isArray(monsters)) return null;
+
+  const parsed: MonsterState[] = [];
+  for (const raw of monsters) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const entry = raw as Partial<MonsterState>;
+    if (!isFiniteNumber(entry.id)) continue;
+    if (!isMonsterKind(entry.kind)) continue;
+    if (!isFiniteNumber(entry.x) || !isFiniteNumber(entry.y)) continue;
+    if (!isFiniteNumber(entry.heading)) continue;
+    parsed.push({
+      id: entry.id,
+      kind: entry.kind,
+      x: entry.x,
+      y: entry.y,
+      heading: entry.heading,
+    });
+  }
+  return parsed;
+}
