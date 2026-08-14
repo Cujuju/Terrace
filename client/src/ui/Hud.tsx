@@ -7,14 +7,23 @@
 // the dot on whatever the status happened to be at mount. There are no such
 // consts in this file, by construction.
 
-import { For, type JSX } from 'solid-js';
+import { createSignal, For, Show, type JSX } from 'solid-js';
 import {
   BRUSH_RADII,
   brushRadius,
   connectionStatus,
   sculptMode,
   setBrushRadius,
+  setSculptMode,
 } from '../state/hudState.ts';
+import {
+  ACTION_PRECEDENCE,
+  controlBindings,
+  twoFingerGesture,
+  type ControlAction,
+  type ControlBindings,
+} from '../state/controlPrefs.ts';
+import { ControlsPanel } from './ControlsPanel.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -24,7 +33,40 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   reconnecting: 'Reconnecting',
 };
 
+const HINT_VERB: Record<ControlAction, string> = {
+  raise: 'raises',
+  lower: 'lowers',
+  orbit: 'orbits',
+  pan: 'pans',
+};
+
+const HINT_BUTTON: Record<string, string> = {
+  left: 'Left',
+  middle: 'Middle',
+  right: 'Right',
+};
+
+const HINT_MODIFIER: Record<string, string> = {
+  none: '',
+  shift: 'Shift+',
+  ctrl: 'Ctrl+',
+  alt: 'Alt+',
+};
+
+/** "Left-drag raises · Shift+Left-drag lowers · …" from the live bindings. */
+function hintText(bindings: ControlBindings): string {
+  const parts = ACTION_PRECEDENCE.map((action) => {
+    const b = bindings[action];
+    return `${HINT_MODIFIER[b.modifier]}${HINT_BUTTON[b.button]}-drag ${HINT_VERB[action]}`;
+  });
+  return `${parts.join(' · ')} · Wheel zooms`;
+}
+
 export function Hud(): JSX.Element {
+  // Panel visibility is pure UI state local to this component; nothing
+  // imperative reads it, so a component-scoped signal is the right home.
+  const [showControls, setShowControls] = createSignal(false);
+
   return (
     <div class="hud">
       <div class="hud-panel">
@@ -57,14 +99,44 @@ export function Hud(): JSX.Element {
 
         <div class="hud-row">
           <span class="hud-label">Mode</span>
-          <span class="mode-value" classList={{ lower: sculptMode() === 'lower' }}>
+          {/* A button, not a label: on touch there are no modifier keys, so
+              tapping this is how one-finger sculpting switches direction. */}
+          <button
+            type="button"
+            class="mode-value"
+            classList={{ lower: sculptMode() === 'lower' }}
+            onClick={() =>
+              setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
+            }
+          >
             {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
-          </span>
+          </button>
         </div>
 
-        <p class="hud-hint">
-          Left-drag sculpts · Shift lowers · Right-drag orbits · Middle-drag pans
-        </p>
+        <div class="hud-row">
+          <button
+            type="button"
+            class="controls-toggle"
+            classList={{ open: showControls() }}
+            onClick={() => setShowControls(!showControls())}
+          >
+            Controls {showControls() ? '▾' : '▸'}
+          </button>
+        </div>
+
+        <Show when={showControls()}>
+          <ControlsPanel />
+        </Show>
+
+        <p class="hud-hint">{hintText(controlBindings())}</p>
+        {/* Touch capability is static per device, so the guard can be a plain
+            expression — it never needs to re-run. */}
+        <Show when={navigator.maxTouchPoints > 0}>
+          <p class="hud-hint">
+            1-finger sculpts (tap Mode to switch) · 2-finger{' '}
+            {twoFingerGesture() === 'orbit' ? 'orbits' : 'pans'} + pinch zooms
+          </p>
+        </Show>
       </div>
     </div>
   );

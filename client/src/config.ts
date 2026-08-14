@@ -80,6 +80,17 @@ export const WATER_SURFACE_LIFT = BAND_WORLD_HEIGHT / 32;
  */
 export const SCULPT_REPEAT_INTERVAL_MS = 120;
 
+/**
+ * Milliseconds a one-finger touch stroke waits before its first sculpt
+ * intent. The two fingers of an intended camera gesture never land in the
+ * same instant — tens of milliseconds apart is typical — and without this
+ * grace the first finger's immediate intent pokes the terrain once per
+ * pinch/pan. 100 ms comfortably covers the inter-finger gap while staying
+ * below what a deliberate tap reads as lag. Mouse strokes are unaffected:
+ * a mouse cannot grow a second finger, so they still fire immediately.
+ */
+export const TOUCH_STROKE_GRACE_MS = 100;
+
 /** Camera framing, in cells. */
 export const CAMERA_FOV_DEGREES = 55;
 export const CAMERA_NEAR = 0.1;

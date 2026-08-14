@@ -11,7 +11,6 @@ import {
   Group,
   HemisphereLight,
   MathUtils,
-  MOUSE,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
@@ -107,15 +106,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   controls.minDistance = CAMERA_MIN_DISTANCE;
   controls.maxDistance = CAMERA_MAX_DISTANCE;
   controls.maxPolarAngle = MathUtils.degToRad(CAMERA_MAX_POLAR_ANGLE_DEGREES);
-  // Left-drag is the sculpt brush (input/sculptInput.ts), so the camera gets
-  // the other two buttons: right orbits, middle pans, wheel dollies. Setting
-  // LEFT to null tells OrbitControls to ignore it entirely rather than fight
-  // the brush for the drag.
-  controls.mouseButtons = {
-    LEFT: null,
-    MIDDLE: MOUSE.PAN,
-    RIGHT: MOUSE.ROTATE,
-  };
+  // Which mouse button drives which camera verb is user-configurable and is
+  // owned by input/cameraBindings.ts (wired in main.tsx): it sets
+  // controls.mouseButtons per press so buttons claimed by the sculpt brush are
+  // null here and the two input owners never fight over a drag.
 
   const resize = (): void => {
     const width = canvas.clientWidth;

@@ -7,6 +7,7 @@
 
 import { render } from 'solid-js/web';
 import { connect, type ConnectionStatus } from './net/connection.ts';
+import { bindCameraControls } from './input/cameraBindings.ts';
 import { createSculptInput } from './input/sculptInput.ts';
 import { createViewport } from './render/scene.ts';
 import { createWorld } from './world.ts';
@@ -23,6 +24,7 @@ if (canvas === null || hudRoot === null) {
 const viewport = createViewport(canvas);
 const world = createWorld(viewport);
 viewport.start();
+bindCameraControls(canvas, viewport.controls);
 
 const connection = connect({
   sink: world,

@@ -22,11 +22,14 @@ body {
   color: var(--hud-text);
 }
 
-/* The renderer sizes its drawing buffer from these CSS pixels. */
+/* The renderer sizes its drawing buffer from these CSS pixels. touch-action
+   none is belt-and-suspenders with OrbitControls (which sets it inline): no
+   browser scroll/zoom gesture may ever hijack a sculpt or camera drag. */
 #viewport {
   display: block;
   width: 100vw;
   height: 100vh;
+  touch-action: none;
 }
 
 /* The HUD floats over the canvas; only its own controls take pointer events,
@@ -132,12 +135,28 @@ body {
   background: rgba(111, 191, 115, 0.18);
 }
 
+/* The mode indicator doubles as a toggle button (the only way to switch
+   raise/lower on touch), so it is a <button> with the chrome stripped. */
 .mode-value {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 10px;
+  font: inherit;
+  cursor: pointer;
   color: var(--hud-accent);
+}
+
+.mode-value:hover {
+  border-color: var(--hud-accent);
 }
 
 .mode-value.lower {
   color: #d98a5a;
+}
+
+.mode-value.lower:hover {
+  border-color: #d98a5a;
 }
 
 .hud-hint {
@@ -145,4 +164,74 @@ body {
   color: var(--hud-muted);
   font-size: 11px;
   max-width: 220px;
+}
+
+/* Control-bindings editor */
+
+.controls-toggle {
+  border: none;
+  background: transparent;
+  color: var(--hud-muted);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.controls-toggle:hover,
+.controls-toggle.open {
+  color: var(--hud-text);
+}
+
+.controls-row {
+  gap: 6px;
+}
+
+.controls-label {
+  flex: 1;
+  color: var(--hud-muted);
+}
+
+.controls-select {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hud-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.controls-select:hover {
+  border-color: var(--hud-accent);
+}
+
+/* Native dropdown lists render on the OS layer; dark text on dark panel would
+   be unreadable, so give the options an explicit opaque background. */
+.controls-select option {
+  background: #1a2028;
+  color: var(--hud-text);
+}
+
+.controls-warning {
+  margin: 4px 0;
+  color: #e0b64a;
+  font-size: 11px;
+  max-width: 220px;
+}
+
+.controls-reset {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.controls-reset:hover {
+  border-color: var(--hud-accent);
+  color: var(--hud-text);
 }
