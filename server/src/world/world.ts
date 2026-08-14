@@ -9,6 +9,7 @@
 
 import {
   applySculpt,
+  BAND_HEIGHT,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
@@ -16,6 +17,7 @@ import {
   createHeightmap,
   heightAt,
   isChunkUnlocked,
+  SEA_LEVEL,
   unlockChunk,
   type CellDiff,
   type Heightmap,
@@ -26,6 +28,43 @@ import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlock } from './initial-unlock.ts';
 import { chunkPayloadOf } from './mask-filter.ts';
+
+/**
+ * Depth of a FRESH world's seabed, in terrace bands below sea level.
+ * Decided 2026-08-14 with the owner (see docs/DESIGN.md): a brand-new world is
+ * an OCEAN, not a flat shoreline at exactly sea level.
+ *
+ * WHY THREE, AND WHY THIS EXACT NUMBER IS NOT ARBITRARY.
+ *
+ * `createHeightmap` allocates an all-zero grid, and SEA_LEVEL is 0, so before
+ * this every cell of a fresh world sat EXACTLY at the waterline: the sea had
+ * zero depth everywhere. Anything that classifies water by depth therefore had
+ * nothing to classify — the wildlife plugin's deep-water habitat begins
+ * `DEEP_WATER_BANDS_BELOW_SEA` (3) bands down, so whales and deep-sea creatures
+ * had literally nowhere to exist until a player hand-dug a trench. That was the
+ * defect this constant fixes, and the fix is only correct if the fresh seabed
+ * REACHES that threshold, so three is chosen to satisfy:
+ *
+ *     FRESH_SEABED_BANDS_BELOW_SEA >= DEEP_WATER_BANDS_BELOW_SEA
+ *
+ * Core cannot import that plugin constant — plugins depend on core, never the
+ * reverse — so the relation is asserted from the plugin side instead
+ * (plugins/wildlife/test/wildlife.test.ts, "a fresh world is deep-water habitat
+ * everywhere"). If either number moves, that test fails rather than the ocean
+ * silently going shallow again.
+ *
+ * Three is also the shallowest depth that satisfies the relation, which is what
+ * we want: every extra band is one more sculpt a player must spend to raise
+ * their first island (see the note on createFresh).
+ */
+export const FRESH_SEABED_BANDS_BELOW_SEA = 3;
+
+/**
+ * The height every cell of a fresh world starts at: three bands of water
+ * column above the seabed. Well inside MIN_HEIGHT (-1024 = 16 bands), so the
+ * full sculpt range below the floor is still available for deeper trenches.
+ */
+export const FRESH_SEABED_HEIGHT = SEA_LEVEL - FRESH_SEABED_BANDS_BELOW_SEA * BAND_HEIGHT;
 
 export class World {
   readonly map: Heightmap;
@@ -48,11 +87,44 @@ export class World {
   }
 
   /**
-   * A brand-new world: flat at sea level, with the provisional starter region
-   * unlocked (see initial-unlock.ts). Used when no snapshot exists.
+   * A brand-new world: an OPEN OCEAN whose floor lies FRESH_SEABED_BANDS_BELOW_SEA
+   * bands under the waterline, with the provisional starter region unlocked (see
+   * initial-unlock.ts). Used when no snapshot exists.
+   *
+   * The seabed is filled HERE, on the server, and deliberately not in
+   * `createHeightmap`: shared/ is the determinism contract that client and
+   * server both run, and world GENESIS is not part of it. The client never
+   * generates terrain — it receives chunks — so a zero-filled allocator stays
+   * the honest shared primitive and "what a new world looks like" stays a
+   * server policy that a future world-gen plugin can replace.
+   *
+   * TWO CONSEQUENCES, BOTH INTENDED AND BOTH REAL:
+   *
+   *   1. Raising the first island now costs FRESH_SEABED_BANDS_BELOW_SEA more
+   *      band-steps than it used to (four sculpts to break the surface instead
+   *      of one, at DEFAULT_SCULPT_AMOUNT = one band per intent). That is the
+   *      point — the ocean is a volume with a bottom, not a sheet of paper.
+   *   2. A fresh world has NO land and NO shallow water at all: every cell is
+   *      exactly at the deep-water threshold. Habitat-driven plugins see one
+   *      habitat on day one (open sea) and gain the others as players sculpt.
+   *
+   * Only this path changes. `restore` rebuilds whatever a snapshot holds, so
+   * existing worlds are untouched by the new floor.
+   *
+   * Not a cosmetic mismatch worth chasing on the client: the client boots its
+   * local heightmap at band 0 and shows a flat sea until the first chunk
+   * arrives, so for the one pre-connect frame it draws a shoreline where the
+   * server has an abyss. The first `chunkUnlock` overwrites it. Left alone
+   * on purpose — the fix belongs in the client's boot state, not here.
    */
   static createFresh(size: number): World {
-    const world = new World(createHeightmap(size), createChunkMask(size));
+    const map = createHeightmap(size);
+    // Uniform floor: no world-gen, no noise. A flat abyssal plain trivially
+    // satisfies the gradient limit (every 4-neighbour difference is 0), so a
+    // fresh world needs no relaxation pass to be legal terrain.
+    map.cells.fill(FRESH_SEABED_HEIGHT);
+
+    const world = new World(map, createChunkMask(size));
     applyInitialUnlock(world);
     // The starter unlock is part of world creation, not a mutation of an
     // existing world: the first snapshot will be written by the normal dirty

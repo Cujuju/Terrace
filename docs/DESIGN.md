@@ -415,6 +415,73 @@ terrace/
   Anti-cheat is unaffected: tool and profile choose the SHAPE of an edit, never
   its power. The amount stays server-side.
 
+- **A fresh world starts as a deep ocean, not a flat shoreline** (owner request,
+  settled 2026-08-14, from the report "we need more wildlife, I don't see any
+  deep sea creatures"). A brand-new world's entire heightmap is filled at
+  `FRESH_SEABED_BANDS_BELOW_SEA = 3` terrace bands below `SEA_LEVEL`
+  (`server/src/world/world.ts`, `World.createFresh`).
+
+  **Root cause this fixes.** `createHeightmap` allocates zeros and `SEA_LEVEL`
+  is 0, so every cell of a fresh world sat *exactly* at the waterline: the sea
+  had no depth anywhere. Nothing that classifies water by depth could ever fire
+  — the wildlife plugin's deep-water habitat begins three bands down, so whales
+  and deep-sea creatures had literally nowhere to exist unless a player hand-dug
+  a trench. The ocean was a surface, not a volume.
+
+  **Why exactly three bands.** It is the shallowest depth satisfying
+  `FRESH_SEABED_BANDS_BELOW_SEA >= DEEP_WATER_BANDS_BELOW_SEA` — the fresh ocean
+  must qualify as deep habitat *by design*, and every band beyond that is one
+  more sculpt a player spends raising their first island. Core cannot import a
+  plugin constant, so the relation is pinned by a test on the plugin side
+  (`plugins/wildlife/test/wildlife.test.ts`).
+
+  **Where it lives, and why not in `shared/`.** The server fills the floor;
+  `createHeightmap` stays zero-filled. `shared/` is the determinism contract
+  that client and server both run, and world *genesis* is not part of it — the
+  client never generates terrain, it receives chunks. This also keeps "what a
+  new world looks like" a server policy a future world-gen plugin can replace.
+
+  **Consequences, accepted:**
+  - Raising the first island costs three more band-steps (four sculpts to break
+    the surface instead of one). Intended — the ocean is a volume with a bottom.
+  - A fresh world has **no land and no shallow water at all**; every cell is
+    exactly at the deep threshold. Habitat plugins see one habitat on day one
+    and gain the others as players sculpt. Fish and grazers therefore do not
+    exist on a brand-new world until someone builds them a shelf or an island.
+  - Snapshot-restored worlds are untouched: the floor applies to the no-snapshot
+    path only, so existing self-hosted worlds do not silently gain an ocean.
+  - The client boots its local heightmap at band 0, so for the single frame
+    before the first chunk arrives it draws a shoreline where the server has an
+    abyss. Cosmetic, pre-connect only, and **not fixed here** — it belongs in the
+    client's boot state.
+
+- **Wildlife is denser, and its population is a living process rather than an
+  inventory** (owner request, settled 2026-08-14, same report). Two parts:
+
+  1. **Density retune.** Per-species `habitatCellsPerIndividual` roughly doubles
+     the asked-for population overall (a nominal fully-revealed 512² world goes
+     from 82 to 167 requested, which `WILDLIFE_POPULATION_CAP` — raised 100 →
+     150 — scales to 148). The two DEEP species move much further than the other
+     two (whale 20 000 → 5 000, deepsea 6 000 → 1 500) because deep water stopped
+     being a rare remote habitat and became the habitat every new server opens
+     in: a fresh 256² world's 16 384-cell starter ocean now holds 3 whales and 10
+     deep-sea creatures on day one, where the old table asked for none.
+     Recomputed bandwidth at the new cap: 150 × 52 B ≈ 7.8 KB per full-state
+     broadcast, 39 KB/s ≈ 312 kbit/s per client at the 5 Hz cadence.
+     Honest note: at these densities a *fully* revealed 512² world rides the cap
+     (~10% below what the densities ask for). Accepted — the cap is a bandwidth
+     budget and scales species proportionally, so a capped world loses scale, not
+     shape.
+  2. **Stochastic population.** Targets are a CEILING approached at random, never
+     a quota filled at boot. Each pending spawn credit carries a constant hazard
+     (`SPAWN_MEAN_WAIT_SECONDS = 20`), so the deficit decays exponentially and a
+     world is ~95% stocked after a minute rather than in three seconds — and
+     creatures also leave of their own accord (`NATURAL_LIFESPAN_SECONDS = 300`),
+     so spawn events keep happening forever and the mix a player watches never
+     repeats. Both are per-second rates converted with the host's `dt`; the
+     equilibrium sits at `T / (1 + W/L)` ≈ 0.94 of target, deliberately never
+     pinned to it. Tests assert bounds and statistics, never exact counts.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)

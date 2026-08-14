@@ -72,15 +72,43 @@ export interface SpeciesProfile {
    * with one unlocked chunk holds a handful of creatures and a fully revealed
    * 512² world holds a full ecosystem, with no separate small/large-world case.
    *
-   * Sized against a nominal half-land / half-water 512² world (262 144 cells;
-   * ~131 000 land, and of the water roughly 40% shallow shelf / 60% open sea):
+   * RETUNED 2026-08-14 (owner: "we need more wildlife, I don't see any deep sea
+   * creatures"). Two worlds are sized against, and both matter:
    *
-   *   fish     52 000 / 1 500 ≈ 35     grazer   131 000 / 4 000 ≈ 33
-   *   deepsea  79 000 / 6 000 ≈ 13     whale     79 000 / 20 000 ≈ 4
+   * (a) A FRESH world — since 2026-08-14 an open ocean at
+   *     FRESH_SEABED_BANDS_BELOW_SEA under the waterline (server/src/world/
+   *     world.ts), so its unlocked starter region is 100% DEEP water and 0%
+   *     shallow / 0% land. On the shipped 256² default that region is
+   *     INITIAL_UNLOCK_CHUNK_SPAN² chunks = 128×128 = 16 384 cells:
    *
-   * ≈ 85 creatures at full reveal — comfortably inside WILDLIFE_POPULATION_CAP,
-   * so the cap is a safety rail for pathological worlds (an all-shallow ocean
-   * map would ask for 175 fish) rather than something the normal case rides.
+   *       deepsea  16 384 / 1 500 = 10      whale  16 384 / 5 000 = 3
+   *       fish 0 and grazer 0 — there is no shallow shelf and no land yet;
+   *       both appear the moment a player sculpts one.
+   *
+   *     This is the case the owner's report was about, and it is why the two
+   *     DEEP densities move much further than the other two: they were sized
+   *     when deep water was a rare, remote habitat, and it is now the habitat a
+   *     brand-new server opens in.
+   *
+   * (b) A nominal half-land / half-water 512² world at full reveal (262 144
+   *     cells; ~131 000 land, of the water roughly 40% shallow / 60% open sea):
+   *
+   *       fish     52 429 / 1 000 = 52      grazer   131 072 / 2 700 = 48
+   *       deepsea  78 643 / 1 500 = 52      whale     78 643 / 5 000 = 15
+   *
+   *     167 asked for, against the previous table's 82 — the requested "roughly
+   *     double". WILDLIFE_POPULATION_CAP (150) then scales every species down
+   *     proportionally to 148 (46 fish / 43 grazer / 46 deepsea / 13 whale).
+   *
+   * HONEST NOTE ON THE CAP'S CHANGED CHARACTER. It used to be documented as a
+   * safety rail that the normal case never rode; at these densities a FULLY
+   * revealed 512² world does ride it, losing ~10% of the asked-for population.
+   * That is accepted rather than worked around: the cap is a bandwidth budget,
+   * it scales species proportionally (so what a capped world loses is scale,
+   * not shape), and full reveal of a 512² world is the extreme of the range,
+   * not the common case. Every partially revealed world — which is every world
+   * anyone actually plays for the first hours — is below it and gets exactly
+   * the density asked for here.
    */
   readonly habitatCellsPerIndividual: number;
 
@@ -109,7 +137,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 3,
     turnNoiseRadiansPerSecond: 1.4,
     bodyLengthCells: 0.7,
-    habitatCellsPerIndividual: 1500,
+    // 1 500 → 1 000: half again as many schools on a shelf of any given size.
+    habitatCellsPerIndividual: 1000,
     groupSize: 5,
   },
   whale: {
@@ -118,7 +147,11 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 0.8,
     turnNoiseRadiansPerSecond: 0.25,
     bodyLengthCells: 5,
-    habitatCellsPerIndividual: 20000,
+    // 20 000 → 5 000. The binding requirement: a fresh 256² world's 16 384-cell
+    // ocean must hold whales on day one, and 16 384/5 000 = 3 does. The old
+    // figure asked for 0 there — the owner's "I don't see any deep sea
+    // creatures" was, for whales, arithmetically guaranteed.
+    habitatCellsPerIndividual: 5000,
     groupSize: 1,
   },
   deepsea: {
@@ -127,7 +160,10 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 1.2,
     turnNoiseRadiansPerSecond: 0.9,
     bodyLengthCells: 1.2,
-    habitatCellsPerIndividual: 6000,
+    // 6 000 → 1 500. Deep water carries the ambience of a fresh world entirely
+    // on its own, so it needs the density of a populated habitat rather than of
+    // a rarity: 10 in a fresh starter ocean, ~46 on a capped full 512².
+    habitatCellsPerIndividual: 1500,
     groupSize: 1,
   },
   grazer: {
@@ -136,7 +172,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 1.6,
     turnNoiseRadiansPerSecond: 1.1,
     bodyLengthCells: 1.1,
-    habitatCellsPerIndividual: 4000,
+    // 4 000 → 2 700: half again as many grazers per hillside, matching fish.
+    habitatCellsPerIndividual: 2700,
     groupSize: 1,
   },
 };
