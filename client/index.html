@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terrace</title>
+  </head>
+  <body>
+    <!-- The imperative Three.js renderer owns this canvas; Solid never touches
+         it (design doc §3.1). Solid mounts the HUD into #hud, which floats
+         above the canvas. -->
+    <canvas id="viewport"></canvas>
+    <div id="hud"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

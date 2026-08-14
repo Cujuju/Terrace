@@ -1,0 +1,148 @@
+/* HUD styling. Plain CSS — no utility framework in the dependency budget. */
+
+:root {
+  --hud-bg: rgba(18, 22, 28, 0.78);
+  --hud-border: rgba(255, 255, 255, 0.12);
+  --hud-text: #e8edf2;
+  --hud-muted: #97a3b0;
+  --hud-accent: #6fbf73;
+  --status-connected: #5ac47a;
+  --status-connecting: #e0b64a;
+  --status-reconnecting: #e0b64a;
+  --status-offline: #7d8894;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0e12;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--hud-text);
+}
+
+/* The renderer sizes its drawing buffer from these CSS pixels. */
+#viewport {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* The HUD floats over the canvas; only its own controls take pointer events,
+   so drags anywhere else reach the sculpt/orbit handlers underneath. */
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud-panel {
+  pointer-events: auto;
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  min-width: 210px;
+  padding: 12px 14px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hud-row:last-of-type {
+  margin-bottom: 0;
+}
+
+.hud-label {
+  width: 46px;
+  color: var(--hud-muted);
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--status-offline);
+}
+
+.status-connected {
+  background: var(--status-connected);
+}
+
+/* Both in-flight states pulse, so "working on it" is visible without text. */
+.status-connecting,
+.status-reconnecting {
+  background: var(--status-connecting);
+  animation: hud-pulse 1.2s ease-in-out infinite;
+}
+
+.status-offline {
+  background: var(--status-offline);
+}
+
+@keyframes hud-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-connecting,
+  .status-reconnecting {
+    animation: none;
+  }
+}
+
+.status-label {
+  color: var(--hud-muted);
+}
+
+.brush-picker {
+  display: flex;
+  gap: 4px;
+}
+
+.brush-button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.brush-button:hover {
+  border-color: var(--hud-accent);
+}
+
+.brush-button.active {
+  border-color: var(--hud-accent);
+  background: rgba(111, 191, 115, 0.18);
+}
+
+.mode-value {
+  color: var(--hud-accent);
+}
+
+.mode-value.lower {
+  color: #d98a5a;
+}
+
+.hud-hint {
+  margin: 10px 0 0;
+  color: var(--hud-muted);
+  font-size: 11px;
+  max-width: 220px;
+}
