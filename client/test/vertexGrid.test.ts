@@ -1,20 +1,33 @@
 // Geometry-builder tests. The builder is pure (no Three.js, no DOM), so all of
 // this runs headless against plain typed arrays — which is the point: the
 // terraced silhouette is feel-critical and must be assertable without a GPU.
+//
+// The organic renderer (2026-08-14) moved the interesting assertions from
+// "which quad is in which slot" to "what shape did the outline take, and does
+// it still tell the truth about the heightmap".
 
 import { describe, expect, it } from 'vitest';
-import { CHUNK_SIZE, quantizeToBand, type ChunkPayload } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  SEA_LEVEL,
+  quantizeToBand,
+  type ChunkPayload,
+} from '@terrace/shared';
 import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
-  CHUNK_INDEX_COUNT,
-  CHUNK_VERTEX_COUNT,
-  CLIFF_FACE_PICK_INSET,
-  INDICES_PER_QUAD,
-  MAX_QUADS_PER_CHUNK,
-  MAX_WALL_QUADS_PER_CHUNK,
-  TOP_QUADS_PER_CHUNK,
-  VERTICES_PER_QUAD,
-  buildChunkIndices,
+  CHAIKIN_ITERATIONS,
+  CHUNK_TRIANGLE_BUDGET,
+  CONTOUR_CELL_CENTRE_GUARD,
+  CONTOUR_SAMPLE_CLEARANCE,
+  FALLBACK_MAX_TRIANGLES,
+  INITIAL_CHUNK_TRIANGLE_CAPACITY,
+  LATTICE_PER_CHUNK,
+  SEABED_CAP_SINK,
+  SKIRT_PICK_INSET,
+  VERTICES_PER_TRIANGLE,
+  chunkCapTriangles,
+  chunkContourLoops,
   createChunkGeometryBuffers,
   writeChunkVertexData,
   type ChunkGeometryBuffers,
@@ -28,17 +41,21 @@ import {
   type Rgb,
 } from '../src/terrain/bandColors.ts';
 import { worldPointToCell } from '../src/terrain/picking.ts';
-import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
+import {
+  BAND_WORLD_HEIGHT,
+  CELL_WORLD_SIZE,
+  HEIGHT_WORLD_SCALE,
+  WATER_SURFACE_LIFT,
+} from '../src/config.ts';
 
 const WORLD = 64;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
 /**
- * The world's last chunk. Most wall tests build their terrain HERE on purpose:
- * at the world border sampleHeight clamps, so the +x/+y probes fall back onto
- * the chunk itself and the only walls emitted are the ones the test asked for.
- * Anywhere else, the never-received neighbours read as band 0 and add a rim of
- * border walls that would swamp the count being asserted.
+ * The world's last chunk. Tests that want a chunk with no un-received
+ * neighbours build their terrain HERE: at the world border sampleHeight clamps,
+ * so the lattice's last row/column falls back onto the chunk itself instead of
+ * reading a never-received neighbour as sea.
  */
 const EDGE_CHUNK = WORLD / CHUNK_SIZE - 1;
 const EDGE_ORIGIN = EDGE_CHUNK * CHUNK_SIZE;
@@ -78,33 +95,55 @@ interface Vertex {
   z: number;
 }
 
-/** The four corners of quad `q`, in the v0..v3 order writeQuad lays down. */
-function quadCorners(buffers: ChunkGeometryBuffers, q: number): Vertex[] {
-  const out: Vertex[] = [];
-  for (let v = 0; v < VERTICES_PER_QUAD; v++) {
-    const base = (q * VERTICES_PER_QUAD + v) * 3;
+interface Triangle {
+  a: Vertex;
+  b: Vertex;
+  c: Vertex;
+  normal: Vertex;
+  color: number[];
+}
+
+function vertexAt(buffers: ChunkGeometryBuffers, index: number): Vertex {
+  const base = index * 3;
+  return {
+    x: buffers.positions[base],
+    y: buffers.positions[base + 1],
+    z: buffers.positions[base + 2],
+  };
+}
+
+function trianglesOf(
+  buffers: ChunkGeometryBuffers,
+  counts: ChunkGeometryCounts,
+): Triangle[] {
+  const out: Triangle[] = [];
+  for (let t = 0; t < counts.triangleCount; t++) {
+    const base = t * VERTICES_PER_TRIANGLE;
     out.push({
-      x: buffers.positions[base],
-      y: buffers.positions[base + 1],
-      z: buffers.positions[base + 2],
+      a: vertexAt(buffers, base),
+      b: vertexAt(buffers, base + 1),
+      c: vertexAt(buffers, base + 2),
+      normal: {
+        x: buffers.normals[base * 3],
+        y: buffers.normals[base * 3 + 1],
+        z: buffers.normals[base * 3 + 2],
+      },
+      color: [
+        buffers.colors[base * 3],
+        buffers.colors[base * 3 + 1],
+        buffers.colors[base * 3 + 2],
+      ],
     });
   }
   return out;
 }
 
-function quadColor(buffers: ChunkGeometryBuffers, q: number): number[] {
-  const base = q * VERTICES_PER_QUAD * 3;
-  return [buffers.colors[base], buffers.colors[base + 1], buffers.colors[base + 2]];
-}
-
-function quadNormal(buffers: ChunkGeometryBuffers, q: number): Vertex {
-  const base = q * VERTICES_PER_QUAD * 3;
-  return {
-    x: buffers.normals[base],
-    y: buffers.normals[base + 1],
-    z: buffers.normals[base + 2],
-  };
-}
+/** Flat band tops: the ones whose normal points straight up. */
+const capsOf = (triangles: Triangle[]): Triangle[] =>
+  triangles.filter((t) => t.normal.y === 1);
+/** Vertical risers: everything else the builder emits. */
+const skirtsOf = (triangles: Triangle[]): Triangle[] =>
+  triangles.filter((t) => t.normal.y === 0);
 
 /** Colours round-trip through Float32, so compare them at that precision. */
 function expectColor(actual: readonly number[], expected: Rgb): void {
@@ -113,48 +152,50 @@ function expectColor(actual: readonly number[], expected: Rgb): void {
   expect(actual[2]).toBeCloseTo(expected[2], 6);
 }
 
-/** Slot of the top face of local cell (i,j) — the fixed part of the layout. */
-function topQuadSlot(i: number, j: number): number {
-  return j * CHUNK_SIZE + i;
+/**
+ * Barycentric containment in the XZ plane, inclusive of the edges.
+ *
+ * Zero-area triangles cover nothing: hole bridging leaves a few slivers along
+ * its bridges (a bridge is walked in both directions, so the triangle that
+ * closes it is degenerate), and they rasterise to no pixels at all. Counting
+ * them as covering the whole plane — which the sign test alone would — makes
+ * every coverage assertion below meaningless.
+ */
+function coversXZ(t: Triangle, x: number, z: number): boolean {
+  const area =
+    (t.b.x - t.a.x) * (t.c.z - t.a.z) - (t.b.z - t.a.z) * (t.c.x - t.a.x);
+  if (Math.abs(area) < 1e-12) return false;
+  const sign = (px: number, pz: number, a: Vertex, b: Vertex): number =>
+    (b.x - a.x) * (pz - a.z) - (b.z - a.z) * (px - a.x);
+  const d1 = sign(x, z, t.a, t.b);
+  const d2 = sign(x, z, t.b, t.c);
+  const d3 = sign(x, z, t.c, t.a);
+  const anyNegative = d1 < 0 || d2 < 0 || d3 < 0;
+  const anyPositive = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(anyNegative && anyPositive);
 }
 
-interface Wall {
-  quad: number;
-  corners: Vertex[];
-  /** 'x' — the wall lies in a plane of constant X; 'z' — constant Z. */
-  axis: 'x' | 'z';
-  plane: number;
-  lowY: number;
-  highY: number;
-}
-
-/** Every wall quad the last write emitted, decoded. */
-function walls(buffers: ChunkGeometryBuffers, counts: ChunkGeometryCounts): Wall[] {
-  const out: Wall[] = [];
-  for (let q = TOP_QUADS_PER_CHUNK; q < counts.quadCount; q++) {
-    const corners = quadCorners(buffers, q);
-    const constantX = corners.every((c) => c.x === corners[0].x);
-    const ys = corners.map((c) => c.y);
-    out.push({
-      quad: q,
-      corners,
-      axis: constantX ? 'x' : 'z',
-      plane: constantX ? corners[0].x : corners[0].z,
-      lowY: Math.min(...ys),
-      highY: Math.max(...ys),
-    });
+/**
+ * The surface a player would see (and click) at a point: the highest cap
+ * covering it. This is the function the honesty invariant is stated against.
+ */
+function topmostCapY(triangles: Triangle[], x: number, z: number): number | null {
+  let best: number | null = null;
+  for (const cap of capsOf(triangles)) {
+    if (!coversXZ(cap, x, z)) continue;
+    if (best === null || cap.a.y > best) best = cap.a.y;
   }
-  return out;
+  return best;
 }
 
 function write(
   mirror: ReturnType<typeof createTerrainMirror>,
   cx: number,
   cy: number,
-): { buffers: ChunkGeometryBuffers; counts: ChunkGeometryCounts } {
+): { buffers: ChunkGeometryBuffers; counts: ChunkGeometryCounts; triangles: Triangle[] } {
   const buffers = createChunkGeometryBuffers();
   const counts = writeChunkVertexData(mirror, cx, cy, buffers, PALETTES);
-  return { buffers, counts };
+  return { buffers, counts, triangles: trianglesOf(buffers, counts) };
 }
 
 function mirrorWith(chunks: ChunkPayload[]) {
@@ -168,336 +209,667 @@ function writeEdge(height: (i: number, j: number) => number) {
   return write(mirrorWith([edgeChunk(height)]), EDGE_CHUNK, EDGE_CHUNK);
 }
 
-describe('buildChunkIndices', () => {
-  it('covers every possible quad slot with two triangles', () => {
-    const indices = buildChunkIndices();
-    expect(indices.length).toBe(CHUNK_INDEX_COUNT);
-    expect(CHUNK_INDEX_COUNT).toBe(MAX_QUADS_PER_CHUNK * INDICES_PER_QUAD);
-  });
-
-  it('gives quad k its own four vertices, so nothing is shared across a crease', () => {
-    const indices = buildChunkIndices();
-    for (let q = 0; q < MAX_QUADS_PER_CHUNK; q++) {
-      for (let k = 0; k < INDICES_PER_QUAD; k++) {
-        const index = indices[q * INDICES_PER_QUAD + k];
-        expect(index).toBeGreaterThanOrEqual(q * VERTICES_PER_QUAD);
-        expect(index).toBeLessThan((q + 1) * VERTICES_PER_QUAD);
+describe('flat terrain', () => {
+  it('draws a whole-chunk cap for the one band present, and nothing else', () => {
+    // Every sample is band 1, so there is exactly one level and it covers the
+    // chunk's whole domain: two triangles, no contour, no riser.
+    const { counts, triangles } = writeEdge(() => 100);
+    expect(counts.skirtTriangleCount).toBe(0);
+    expect(counts.capTriangleCount).toBe(2);
+    for (const cap of capsOf(triangles)) {
+      for (const corner of [cap.a, cap.b, cap.c]) {
+        expect(corner.y).toBeCloseTo(BAND_WORLD_HEIGHT);
       }
     }
   });
 
-  it('references only vertices that exist, and fits in a Uint16 index', () => {
-    for (const index of buildChunkIndices()) {
-      expect(index).toBeLessThan(CHUNK_VERTEX_COUNT);
-    }
-    expect(CHUNK_VERTEX_COUNT).toBeLessThanOrEqual(0x10000);
+  it('covers the chunk domain exactly: cell centres in, the next chunk out', () => {
+    // The domain is [x0, x0+16] — the lattice of cell centres — so a chunk is
+    // responsible for everything from its own first centre up to (and
+    // including) its neighbour's, and no further.
+    const { triangles } = writeEdge(() => 100);
+    expect(topmostCapY(triangles, EDGE_ORIGIN, EDGE_ORIGIN)).toBeCloseTo(
+      BAND_WORLD_HEIGHT,
+    );
+    expect(
+      topmostCapY(triangles, EDGE_ORIGIN + CHUNK_SIZE, EDGE_ORIGIN + CHUNK_SIZE),
+    ).toBeCloseTo(BAND_WORLD_HEIGHT);
+    expect(topmostCapY(triangles, EDGE_ORIGIN - 0.5, EDGE_ORIGIN + 4)).toBeNull();
   });
 
-  it('winds top faces so they face up (+Y)', () => {
-    const indices = buildChunkIndices();
-    const { buffers } = write(mirrorWith([chunkPayload(0, 0, 0)]), 0, 0);
+  it('points every cap straight up and every skirt sideways', () => {
+    const { triangles } = writeEdge((i) => (i < 8 ? 0 : 256));
+    for (const cap of capsOf(triangles)) {
+      expect(cap.normal).toEqual({ x: 0, y: 1, z: 0 });
+    }
+    const skirts = skirtsOf(triangles);
+    expect(skirts.length).toBeGreaterThan(0);
+    for (const skirt of skirts) {
+      expect(skirt.normal.y).toBe(0);
+      expect(Math.hypot(skirt.normal.x, skirt.normal.z)).toBeCloseTo(1, 6);
+    }
+  });
 
-    // Cross product of the first triangle's edges must point along +Y.
-    const read = (i: number): Vertex => ({
-      x: buffers.positions[i * 3],
-      y: buffers.positions[i * 3 + 1],
-      z: buffers.positions[i * 3 + 2],
-    });
-    const a = read(indices[0]);
-    const b = read(indices[1]);
-    const c = read(indices[2]);
-    const e1 = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
-    const e2 = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
-    const normalY = e1.z * e2.x - e1.x * e2.z;
-    expect(normalY).toBeGreaterThan(0);
+  it('winds caps so they face up (+Y)', () => {
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 0)]), 0, 0);
+    const cap = capsOf(triangles)[0];
+    const e1 = { x: cap.b.x - cap.a.x, z: cap.b.z - cap.a.z };
+    const e2 = { x: cap.c.x - cap.a.x, z: cap.c.z - cap.a.z };
+    // Y component of e1 × e2 for two vectors in the XZ plane.
+    expect(e1.z * e2.x - e1.x * e2.z).toBeGreaterThan(0);
   });
 });
 
-describe('top faces', () => {
-  it('emits one flat quad per owned cell at the cell-centred footprint', () => {
-    // 100 sits inside band 1 (BAND_HEIGHT 64), so it must render at 64.
-    const { buffers, counts } = write(mirrorWith([chunkPayload(0, 0, 100)]), 0, 0);
-
-    expect(counts.topQuadCount).toBe(TOP_QUADS_PER_CHUNK);
-    expect(counts.topQuadCount).toBe(CELLS_PER_CHUNK);
-
-    const corners = quadCorners(buffers, topQuadSlot(3, 4));
-    const expectedY = quantizeToBand(100) * HEIGHT_WORLD_SCALE;
-    for (const corner of corners) {
-      // Flat: every corner at the SAME height. This is the whole terrace look.
-      expect(corner.y).toBeCloseTo(expectedY);
-    }
-    expect(expectedY).toBeCloseTo(BAND_WORLD_HEIGHT);
-
-    // Cell (3,4) covers [2.5, 3.5] × [3.5, 4.5] — centred on its integer
-    // coordinate, which is what keeps picking.ts's Math.round() correct.
-    expect(CELL_WORLD_SIZE).toBe(1);
-    expect(corners.map((c) => c.x).sort()).toEqual([2.5, 2.5, 3.5, 3.5]);
-    expect(corners.map((c) => c.z).sort()).toEqual([3.5, 3.5, 4.5, 4.5]);
+describe('the waterline', () => {
+  it('keeps DRY band-0 land at exactly y = 0, so the sea cannot z-fight it', () => {
+    // WATER_SURFACE_LIFT's reasoning in config.ts depends on this: a band-0
+    // flat renders at world y = 0 and the sea floats just above it.
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 63)]), 0, 0);
+    const shore = capsOf(triangles).filter((t) => t.a.y === 0);
+    expect(shore.length).toBeGreaterThan(0);
+    expectColor(shore[0].color, TERRAIN_PALETTE[bandPaletteIndex(SEA_LEVEL + 1)]);
   });
 
-  it('points every top face straight up', () => {
-    const { buffers } = write(mirrorWith([chunkPayload(0, 0, 300)]), 0, 0);
-    for (let q = 0; q < TOP_QUADS_PER_CHUNK; q++) {
-      expect(quadNormal(buffers, q)).toEqual({ x: 0, y: 1, z: 0 });
-    }
+  it('sinks the SEABED cap under the dry one rather than z-fighting it', () => {
+    // Band 0 carries two colours at one height; the submerged half is the one
+    // that moves, and only far enough to decide the depth test.
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 63)]), 0, 0);
+    const seabed = capsOf(triangles).filter((t) => t.a.y < 0);
+    expect(seabed.length).toBeGreaterThan(0);
+    for (const cap of seabed) expect(cap.a.y).toBeCloseTo(-SEABED_CAP_SINK);
+    expectColor(seabed[0].color, TERRAIN_PALETTE[bandPaletteIndex(SEA_LEVEL)]);
+    // Still comfortably under the sea surface, which is what makes the sink
+    // invisible.
+    expect(SEABED_CAP_SINK).toBeGreaterThan(0);
+    expect(SEABED_CAP_SINK).toBeLessThan(WATER_SURFACE_LIFT);
   });
 
-  it('quantises every cell to its band floor', () => {
-    const height = (i: number, j: number): number => (i * 37 + j * 11) % 400;
-    const { buffers } = writeEdge(height);
-
-    for (let j = 0; j < CHUNK_SIZE; j++) {
-      for (let i = 0; i < CHUNK_SIZE; i++) {
-        const expected = quantizeToBand(height(i, j)) * HEIGHT_WORLD_SCALE;
-        expect(quadCorners(buffers, topQuadSlot(i, j))[0].y).toBeCloseTo(expected);
-      }
-    }
-  });
-
-  it('keeps band-0 flats exactly at the waterline, so the sea cannot z-fight', () => {
-    // WATER_SURFACE_LIFT's reasoning in config.ts depends on this: every
-    // height in band 0 renders at world y = 0, and the sea floats just above.
-    const { buffers } = write(mirrorWith([chunkPayload(0, 0, 63)]), 0, 0);
-    for (let q = 0; q < TOP_QUADS_PER_CHUNK; q++) {
-      expect(quadCorners(buffers, q)[0].y).toBe(0);
+  it('paints a freshly generated (all-zero) world as seabed, never beach', () => {
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 0)]), 0, 0);
+    const caps = capsOf(triangles);
+    expect(caps.length).toBe(2);
+    for (const cap of caps) {
+      expectColor(cap.color, TERRAIN_PALETTE[bandPaletteIndex(0)]);
+      expect(cap.a.y).toBeCloseTo(-SEABED_CAP_SINK);
     }
   });
 });
 
-describe('cliff walls', () => {
-  it('emits no wall where neighbouring cells share a band', () => {
-    // 0 and 63 are different heights but the SAME band, so the surface is one
-    // continuous flat — no wall, however much raw height differs.
-    const { counts } = writeEdge((i) => (i % 2 === 0 ? 0 : 63));
-    expect(counts.wallQuadCount).toBe(0);
-    expect(counts.quadCount).toBe(TOP_QUADS_PER_CHUNK);
-  });
-
-  it('emits a TRUE VERTICAL wall spanning exactly the band difference', () => {
-    const { buffers, counts } = writeEdge((i) => (i < 8 ? 0 : 256));
-
-    // One wall per row of the step, and nothing else.
-    expect(counts.wallQuadCount).toBe(CHUNK_SIZE);
-
-    for (const wall of walls(buffers, counts)) {
-      expect(wall.axis).toBe('x');
-      // Vertical means every corner shares one X — the plane is exact, not
-      // "nearly", or the face is a 45° ramp again.
-      for (const corner of wall.corners) expect(corner.x).toBe(wall.plane);
-      expect(wall.lowY).toBeCloseTo(0);
-      expect(wall.highY).toBeCloseTo(quantizeToBand(256) * HEIGHT_WORLD_SCALE);
-      // Its horizontal footprint is a single cell edge — a wall never spans
-      // more than the cell that owns it.
-      const zs = wall.corners.map((c) => c.z);
-      expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(CELL_WORLD_SIZE);
+describe('organic outlines', () => {
+  it('puts a band edge INSIDE a cell, not on the cell boundary', () => {
+    // A one-band step between cell 7 (height 0) and cell 8 (height 64). The
+    // old renderer put a wall on the boundary at x = 7.5; the contour instead
+    // sits a quarter of a cell inside the higher cell, which is what makes a
+    // stamped edge read as drawn rather than as a grid line.
+    const mirror = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : BAND_HEIGHT))]);
+    const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
+    expect(loops).toHaveLength(1);
+    // Everything the loop does inside the chunk (the rest of it runs along the
+    // domain border, which is the neighbour's business).
+    const interior = loops[0].filter(
+      (p) => p.x > EDGE_ORIGIN && p.x < EDGE_ORIGIN + CHUNK_SIZE,
+    );
+    expect(interior.length).toBeGreaterThan(0);
+    const expected = EDGE_ORIGIN + 8 - 0.25;
+    for (const p of interior) {
+      expect(p.x).toBeCloseTo(expected, 6);
+      // And emphatically NOT on the cell boundary, which is where the old
+      // renderer's wall stood.
+      expect(p.x).not.toBeCloseTo(EDGE_ORIGIN + 7.5, 6);
     }
   });
 
-  it('spans a multi-band cliff with ONE quad, floor to rim', () => {
-    const { buffers, counts } = writeEdge((i) => (i < 8 ? 0 : 1024));
-    expect(counts.wallQuadCount).toBe(CHUNK_SIZE);
-    for (const wall of walls(buffers, counts)) {
-      expect(wall.highY - wall.lowY).toBeCloseTo(
-        quantizeToBand(1024) * HEIGHT_WORLD_SCALE,
+  it('stacks a multi-band drop as a staircase of contours, not one wall', () => {
+    // Heights 0 and 256 across one cell boundary: four band boundaries fall
+    // between the two samples, and each lands at its own interpolated place.
+    const mirror = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 256))]);
+    const positions: number[] = [];
+    for (let k = 1; k <= 4; k++) {
+      const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, k * BAND_HEIGHT);
+      const interior = loops[0].filter(
+        (p) => p.x > EDGE_ORIGIN && p.x < EDGE_ORIGIN + CHUNK_SIZE,
       );
+      positions.push(interior[0].x - EDGE_ORIGIN);
     }
+    // Strictly increasing: the higher the band, the further into the high cell
+    // its edge sits. Nesting is what lets caps stack without crossing.
+    for (let k = 1; k < positions.length; k++) {
+      expect(positions[k]).toBeGreaterThan(positions[k - 1]);
+    }
+    expect(positions[0]).toBeCloseTo(7.3, 6);
+    expect(positions[3]).toBeCloseTo(7 + (1 - CONTOUR_CELL_CENTRE_GUARD), 6);
   });
 
-  it('faces the wall outward, away from the cell that owns it', () => {
-    // High land to the EAST, so the exposed face looks WEST (−X).
-    const eastHigh = writeEdge((i) => (i < 8 ? 0 : 256));
-    for (const wall of walls(eastHigh.buffers, eastHigh.counts)) {
-      expect(quadNormal(eastHigh.buffers, wall.quad)).toEqual({ x: -1, y: 0, z: 0 });
-    }
-
-    // Mirror image: high land to the WEST, face looks EAST (+X).
-    const westHigh = writeEdge((i) => (i < 8 ? 256 : 0));
-    for (const wall of walls(westHigh.buffers, westHigh.counts)) {
-      expect(quadNormal(westHigh.buffers, wall.quad)).toEqual({ x: 1, y: 0, z: 0 });
-    }
+  it('follows a gradient diagonally instead of stepping around cells', () => {
+    // A smooth diagonal ramp. If the outline were the cell grid, every skirt
+    // would be axis-aligned; the whole point of interpolating is that they are
+    // not.
+    const { triangles } = writeEdge((i, j) => (i + j) * 12);
+    const angled = skirtsOf(triangles).filter((t) => {
+      const dx = Math.abs(t.b.x - t.a.x);
+      const dz = Math.abs(t.b.z - t.a.z);
+      return dx > 1e-6 && dz > 1e-6;
+    });
+    expect(angled.length).toBeGreaterThan(0);
   });
 
-  it('emits +y walls in a plane of constant Z, facing along ±Z', () => {
-    const southHigh = writeEdge((_i, j) => (j < 8 ? 0 : 256));
-    expect(southHigh.counts.wallQuadCount).toBe(CHUNK_SIZE);
-    for (const wall of walls(southHigh.buffers, southHigh.counts)) {
-      expect(wall.axis).toBe('z');
-      for (const corner of wall.corners) expect(corner.z).toBe(wall.plane);
-      // The high ground is to the +Z side, so its face looks −Z.
-      expect(quadNormal(southHigh.buffers, wall.quad)).toEqual({ x: 0, y: 0, z: -1 });
+  it('rounds the outline: two Chaikin passes, no 90° turns left', () => {
+    const mirror = mirrorWith([edgeChunk((i, j) => (i > 4 && j > 4 ? 128 : 0))]);
+    const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
+    const corner = loops[0].filter((p) => !p.onBorder);
+    expect(CHAIKIN_ITERATIONS).toBe(2);
+    // The raw marching-squares corner is one right angle; after smoothing the
+    // turn is spread over several vertices, none of them square.
+    let squareTurns = 0;
+    for (let i = 1; i + 1 < corner.length; i++) {
+      const ax = corner[i].x - corner[i - 1].x;
+      const az = corner[i].z - corner[i - 1].z;
+      const bx = corner[i + 1].x - corner[i].x;
+      const bz = corner[i + 1].z - corner[i].z;
+      const dot = ax * bx + az * bz;
+      if (Math.abs(dot) < 1e-9 && Math.hypot(ax, az) > 1e-9) squareTurns++;
     }
-
-    const northHigh = writeEdge((_i, j) => (j < 8 ? 256 : 0));
-    for (const wall of walls(northHigh.buffers, northHigh.counts)) {
-      expect(quadNormal(northHigh.buffers, wall.quad)).toEqual({ x: 0, y: 0, z: 1 });
-    }
-  });
-
-  it('emits a shared edge exactly once — the owning cell emits it, not both', () => {
-    // A single raised cell has four exposed edges. Two of them (+x, +y) are
-    // emitted by the cell itself; the other two are the +x/+y edges of its west
-    // and north neighbours. Four walls, no duplicates.
-    const { buffers, counts } = writeEdge((i, j) => (i === 5 && j === 6 ? 256 : 0));
-    expect(counts.wallQuadCount).toBe(4);
-
-    // No two walls occupy the same plane and footprint (a duplicate would
-    // z-fight and, worse, blur which cell owns the face).
-    const fingerprints = walls(buffers, counts).map((wall) =>
-      wall.corners
-        .map((c) => `${c.x},${c.y},${c.z}`)
-        .sort()
-        .join('|'),
-    );
-    expect(new Set(fingerprints).size).toBe(fingerprints.length);
-  });
-
-  it('reads the neighbouring CHUNK through the mirror for border walls', () => {
-    // Chunk (0,0) flat at band 0, chunk (1,0) a plateau at band 4. The wall
-    // between them belongs to chunk (0,0)'s last column: it owns the +x edge.
-    const mirror = mirrorWith([chunkPayload(0, 0, 0), chunkPayload(1, 0, 256)]);
-
-    const left = write(mirror, 0, 0);
-    expect(left.counts.wallQuadCount).toBe(CHUNK_SIZE);
-    for (const wall of walls(left.buffers, left.counts)) {
-      expect(wall.axis).toBe('x');
-      // The border between cell 15 and cell 16 sits at world x = 15.5.
-      expect(wall.plane).toBeCloseTo(CHUNK_SIZE - 0.5, 2);
-      expect(wall.highY).toBeCloseTo(quantizeToBand(256) * HEIGHT_WORLD_SCALE);
-    }
-
-    // And the chunk on the other side emits NOTHING on that border — it only
-    // ever emits its own cells' +x/+y edges, so the wall is not drawn twice.
-    // (Its own far borders, against never-received chunks, are different edges
-    // and are legitimately its to emit.)
-    const right = write(mirror, 1, 0);
-    const onSharedBorder = walls(right.buffers, right.counts).filter(
-      (wall) => wall.axis === 'x' && wall.plane < CHUNK_SIZE,
-    );
-    expect(onSharedBorder).toHaveLength(0);
-  });
-
-  it('walls off the edge of received territory down to band 0', () => {
-    // Chunk (1,0) was never sent, so its cells read height 0 through the
-    // mirror — exactly the Phase 1 convention. The revealed plateau therefore
-    // ends in a cliff down to the waterline rather than in mid-air.
-    const { buffers, counts } = write(mirrorWith([chunkPayload(0, 0, 300)]), 0, 0);
-
-    expect(counts.wallQuadCount).toBe(CHUNK_SIZE * 2); // its +x AND +y borders
-    for (const wall of walls(buffers, counts)) {
-      expect(wall.lowY).toBeCloseTo(0);
-      expect(wall.highY).toBeCloseTo(quantizeToBand(300) * HEIGHT_WORLD_SCALE);
-    }
-  });
-
-  it('emits no wall at the world border, where sampling clamps', () => {
-    const { counts } = writeEdge(() => 512);
-    // To the east and south the world ends: sampleHeight clamps back onto the
-    // cell itself, the bands match, and no rim of walls is emitted.
-    expect(counts.wallQuadCount).toBe(0);
+    expect(squareTurns).toBe(0);
   });
 });
 
-describe('wall ownership', () => {
+describe('single-cell features', () => {
+  /** Distance from a point to a cell centre, in cells. */
+  const distanceTo = (p: { x: number; z: number }, cx: number, cz: number): number =>
+    Math.hypot(p.x - cx, p.z - cz);
+
+  it('renders a one-cell spire as a small rounded column', () => {
+    const spire = { i: 5, j: 6 };
+    const mirror = mirrorWith([
+      edgeChunk((i, j) => (i === spire.i && j === spire.j ? BAND_HEIGHT : 0)),
+    ]);
+    const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
+    expect(loops).toHaveLength(1);
+    const centreX = EDGE_ORIGIN + spire.i;
+    const centreZ = EDGE_ORIGIN + spire.j;
+
+    // Rounded, not a four-sided diamond and not a cell-shaped square.
+    expect(loops[0].length).toBeGreaterThan(8);
+    for (const p of loops[0]) {
+      const d = distanceTo(p, centreX, centreZ);
+      // A COLUMN: it stands well inside its own cell...
+      expect(d).toBeLessThan(0.5);
+      // ...and never touches the centre, which is the honesty guard.
+      expect(d).toBeGreaterThanOrEqual(CONTOUR_CELL_CENTRE_GUARD - 1e-9);
+    }
+
+    // And it is a real column: a cap on top with a skirt all the way round.
+    const { triangles } = write(mirror, EDGE_CHUNK, EDGE_CHUNK);
+    expect(topmostCapY(triangles, centreX, centreZ)).toBeCloseTo(BAND_WORLD_HEIGHT);
+    expect(skirtsOf(triangles).length).toBeGreaterThan(8);
+  });
+
+  it('renders a one-cell pit as a rounded well, as a hole in the plateau', () => {
+    const pit = { i: 9, j: 4 };
+    const mirror = mirrorWith([
+      edgeChunk((i, j) => (i === pit.i && j === pit.j ? 0 : BAND_HEIGHT)),
+    ]);
+    const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
+    // Two loops: the chunk's own outline (the whole domain) and the well.
+    expect(loops).toHaveLength(2);
+    const well = loops.find((loop) => loop.every((p) => !p.onBorder));
+    expect(well).toBeDefined();
+    const centreX = EDGE_ORIGIN + pit.i;
+    const centreZ = EDGE_ORIGIN + pit.j;
+    expect(well!.length).toBeGreaterThan(8);
+    for (const p of well!) {
+      const d = distanceTo(p, centreX, centreZ);
+      expect(d).toBeGreaterThan(0.5); // the well is wider than the cell it digs
+      expect(d).toBeLessThan(1); // but does not swallow the neighbours
+    }
+
+    // The hole is real: the plateau cap does not cover the pit's centre, and
+    // the seabed below does.
+    const { triangles } = write(mirror, EDGE_CHUNK, EDGE_CHUNK);
+    expect(topmostCapY(triangles, centreX, centreZ)).toBeCloseTo(-SEABED_CAP_SINK);
+  });
+});
+
+describe('honesty — the render never lies about the heightmap', () => {
   /**
-   * The contract picking depends on: a hit anywhere on a vertical wall must
-   * resolve — through picking.ts's UNCHANGED pure API — to the higher of the
-   * two cells the wall separates. Asserted against the real function rather
-   * than a restatement of its rounding rule.
+   * THE invariant: at every cell centre the topmost cap is at exactly the
+   * height the authoritative heightmap quantises to. Players click what they
+   * see (picking.ts rounds a hit to the nearest cell centre), so a cap that
+   * covered a centre at the wrong band would sculpt the wrong terrain.
+   *
+   * Cells on the chunk's own domain border are excluded: their centres lie
+   * exactly ON the seam, where this chunk's cap and its neighbour's meet, and
+   * both draw them at the same height (asserted separately in "chunk seams").
    */
-  function cellOfWall(wall: Wall): { x: number; y: number } | null {
-    const mid = (pick: (c: Vertex) => number): number => {
-      const values = wall.corners.map(pick);
-      return (Math.min(...values) + Math.max(...values)) / 2;
-    };
-    return worldPointToCell(
-      mid((c) => c.x) / CELL_WORLD_SIZE,
-      mid((c) => c.z) / CELL_WORLD_SIZE,
-      WORLD,
+  function expectHonest(
+    height: (i: number, j: number) => number,
+    probeRadius = 0,
+  ): ChunkGeometryCounts {
+    const { triangles, counts } = writeEdge(height);
+    for (let j = 1; j < CHUNK_SIZE; j++) {
+      for (let i = 1; i < CHUNK_SIZE; i++) {
+        const expected = quantizeToBand(height(i, j)) * HEIGHT_WORLD_SCALE;
+        const x = EDGE_ORIGIN + i;
+        const z = EDGE_ORIGIN + j;
+        const probes: [number, number][] = [[x, z]];
+        if (probeRadius > 0) {
+          probes.push(
+            [x + probeRadius, z],
+            [x - probeRadius, z],
+            [x, z + probeRadius],
+            [x, z - probeRadius],
+          );
+        }
+        for (const [px, pz] of probes) {
+          const actual = topmostCapY(triangles, px, pz);
+          expect(actual, `cell (${i},${j}) at (${px},${pz})`).not.toBeNull();
+          // Band 0's cap is the sunk seabed; every other band sits on its floor.
+          const tolerance = SEABED_CAP_SINK + 1e-6;
+          expect(Math.abs((actual as number) - expected)).toBeLessThanOrEqual(tolerance);
+        }
+      }
+    }
+    return counts;
+  }
+
+  it('holds over a stamped, terraced landscape', () => {
+    expectHonest((i, j) => ((i * 37 + j * 11) % 5) * BAND_HEIGHT);
+  });
+
+  it('holds over a smooth landscape with mid-band gradients', () => {
+    expectHonest((i, j) => Math.round(i * 13 + j * 29 + Math.sin(i * j) * 40));
+  });
+
+  it('holds under water as well as above it', () => {
+    expectHonest((i, j) => ((i + j) % 4) * BAND_HEIGHT - 2 * BAND_HEIGHT);
+  });
+
+  it('holds over a whole guard disc around each centre, not just the point', () => {
+    // The guard is what buys the margin: the cap covers a disc around every
+    // cell centre, so a click that lands slightly off centre still resolves to
+    // the surface the player aimed at.
+    expectHonest(
+      (i, j) => ((i * 7 + j * 3) % 3) * BAND_HEIGHT,
+      CONTOUR_CELL_CENTRE_GUARD / 2,
+    );
+  });
+
+  it('keeps every smoothed contour clear of every cell centre', () => {
+    const mirror = mirrorWith([
+      edgeChunk((i, j) => Math.round(i * 19 + j * 7 + ((i * j) % 13) * 5)),
+    ]);
+    for (let k = 0; k <= 4; k++) {
+      for (const loop of chunkContourLoops(
+        mirror,
+        EDGE_CHUNK,
+        EDGE_CHUNK,
+        k * BAND_HEIGHT,
+      )) {
+        for (const p of loop) {
+          if (p.onBorder) continue; // shared with the neighbour, and pinned
+          const d = Math.hypot(p.x - Math.round(p.x), p.z - Math.round(p.z));
+          expect(d).toBeGreaterThanOrEqual(CONTOUR_CELL_CENTRE_GUARD - 1e-9);
+        }
+      }
+    }
+  });
+
+  it('keeps the sample clearance from swamping a real gradient', () => {
+    // The clearance is what stops stamped terrain collapsing onto the grid; it
+    // must not also decide where a genuinely sloped edge goes. Half a band is
+    // the largest offset that cannot reorder two samples.
+    expect(CONTOUR_SAMPLE_CLEARANCE).toBe(BAND_HEIGHT / 2);
+  });
+});
+
+describe('triangulation', () => {
+  /** Twice the signed area of a triangle in the (x,z) plane. */
+  const doubleArea = (t: { x: number; z: number }[]): number =>
+    (t[1].x - t[0].x) * (t[2].z - t[0].z) - (t[1].z - t[0].z) * (t[2].x - t[0].x);
+
+  const loopArea = (loop: { x: number; z: number }[]): number => {
+    let sum = 0;
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i];
+      const b = loop[(i + 1) % loop.length];
+      sum += a.x * b.z - b.x * a.z;
+    }
+    return sum / 2;
+  };
+
+  /**
+   * A cap must PARTITION its region: same total area, nothing wound backwards.
+   * Both fail loudly if hole bridging leaves the merged polygon only weakly
+   * simple — the triangulation then stalls, and the leftovers show as terrain
+   * you can see through, or as a hole quietly painted over.
+   */
+  function expectPartition(
+    height: (i: number, j: number) => number,
+    threshold: number,
+  ): void {
+    const mirror = mirrorWith([edgeChunk(height)]);
+    const triangles = chunkCapTriangles(mirror, EDGE_CHUNK, EDGE_CHUNK, threshold);
+    expect(triangles.length).toBeGreaterThan(0);
+
+    let triangleArea = 0;
+    for (const triangle of triangles) {
+      const twice = doubleArea(triangle);
+      // Backwards triangles cancel in the sum but not on screen.
+      expect(twice).toBeGreaterThanOrEqual(0);
+      triangleArea += twice / 2;
+    }
+
+    let regionArea = 0;
+    for (const loop of chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, threshold)) {
+      regionArea += loopArea(loop); // holes are wound the other way and subtract
+    }
+    // Not exactly equal, and the difference is a documented sliver: each hole
+    // is bridged through a slit BRIDGE_SLIT_WIDTH (a millionth of a cell) wide
+    // and at most a chunk diagonal long, so a few dozen holes add well under a
+    // thousandth of a square cell of area that the outline itself does not
+    // enclose. Anything larger means triangles outside the region.
+    const SLIT_AREA_TOLERANCE = 1e-3;
+    expect(Math.abs(triangleArea - regionArea)).toBeLessThan(SLIT_AREA_TOLERANCE);
+  }
+
+  it('partitions a plain region', () => {
+    expectPartition((i, j) => (i > 4 && j > 4 ? 2 * BAND_HEIGHT : 0), BAND_HEIGHT);
+  });
+
+  it('partitions a region with a hole in it', () => {
+    expectPartition(
+      (i, j) => (i === 9 && j === 4 ? 0 : 2 * BAND_HEIGHT),
+      2 * BAND_HEIGHT,
+    );
+  });
+
+  it('partitions a region with SEVERAL holes, which is where bridges pile up', () => {
+    expectPartition(
+      (i, j) => Math.round(i * 13 + j * 29 + Math.sin(i * j) * 40),
+      4 * BAND_HEIGHT,
+    );
+  });
+});
+
+describe('the blocky fallback', () => {
+  /**
+   * Terrain no brush can produce and only deliberate single-cell stamping can:
+   * every cell one band above its neighbours. Its contour geometry is an
+   * order of magnitude over budget, and triangulating it measured ~90 ms per
+   * patch — a multi-frame stall — so the chunk is drawn blocky instead.
+   */
+  const checkerboard = (i: number, j: number): number => ((i + j) % 2) * BAND_HEIGHT;
+
+  it('takes over when a chunk blows the contour budget, and stays bounded', () => {
+    const { counts } = writeEdge(checkerboard);
+    expect(counts.usedFallback).toBe(true);
+    expect(counts.triangleCount).toBeLessThanOrEqual(FALLBACK_MAX_TRIANGLES);
+    // And the budget is what it trips: the contour path would have needed far
+    // more than this.
+    expect(FALLBACK_MAX_TRIANGLES).toBeLessThan(CHUNK_TRIANGLE_BUDGET);
+  });
+
+  it('leaves ordinary sculpted terrain alone', () => {
+    const hill = writeEdge((i, j) => Math.round(360 - 3 * ((i - 8) ** 2 + (j - 8) ** 2)));
+    expect(hill.counts.usedFallback).toBe(false);
+    const blobs = writeEdge((i, j) =>
+      Math.round(Math.max(0, 300 - 20 * Math.hypot(i - 5, j - 5))),
+    );
+    expect(blobs.counts.usedFallback).toBe(false);
+  });
+
+  it('keeps the honesty invariant, cell for cell', () => {
+    const { triangles, counts } = writeEdge(checkerboard);
+    expect(counts.usedFallback).toBe(true);
+    for (let j = 1; j < CHUNK_SIZE; j++) {
+      for (let i = 1; i < CHUNK_SIZE; i++) {
+        const expected =
+          quantizeToBand(checkerboard(i, j)) * HEIGHT_WORLD_SCALE -
+          (checkerboard(i, j) === 0 ? SEABED_CAP_SINK : 0);
+        expect(topmostCapY(triangles, EDGE_ORIGIN + i, EDGE_ORIGIN + j)).toBeCloseTo(
+          expected,
+          6,
+        );
+      }
+    }
+  });
+
+  it('keeps walls attributed to the higher cell, through the real picking', () => {
+    const { triangles } = writeEdge(checkerboard);
+    for (const skirt of skirtsOf(triangles)) {
+      // Probed at the centroid: a wall's corners sit on the cell grid in the
+      // axis it runs along, where rounding is a tie that says nothing about
+      // which side of the wall is higher.
+      const cell = worldPointToCell(
+        (skirt.a.x + skirt.b.x + skirt.c.x) / 3 / CELL_WORLD_SIZE,
+        (skirt.a.z + skirt.b.z + skirt.c.z) / 3 / CELL_WORLD_SIZE,
+        WORLD,
+      );
+      if (cell === null) continue; // the world-rim half-cell, off the map
+      // The higher cell of the checkerboard is the one whose parity raises it.
+      const local = { i: cell.x - EDGE_ORIGIN, j: cell.y - EDGE_ORIGIN };
+      expect(checkerboard(local.i, local.j)).toBe(BAND_HEIGHT);
+    }
+  });
+
+  it('curtains its border so a fallback chunk can never be seen through', () => {
+    const { triangles, counts } = writeEdge(checkerboard);
+    expect(counts.usedFallback).toBe(true);
+    const onWestBorder = skirtsOf(triangles).filter(
+      (t) => Math.abs(t.a.x - EDGE_ORIGIN) < 0.01 && Math.abs(t.b.x - EDGE_ORIGIN) < 0.01,
+    );
+    expect(onWestBorder.length).toBeGreaterThan(0);
+  });
+});
+
+describe('chunk seams', () => {
+  /** Every contour vertex a chunk emits on one world-space line of constant X. */
+  function borderPoints(
+    mirror: ReturnType<typeof createTerrainMirror>,
+    cx: number,
+    cy: number,
+    threshold: number,
+    x: number,
+  ): number[] {
+    const out: number[] = [];
+    for (const loop of chunkContourLoops(mirror, cx, cy, threshold)) {
+      for (const p of loop) {
+        if (Math.abs(p.x - x) < 1e-12) out.push(p.z);
+      }
+    }
+    return out.sort((a, b) => a - b);
+  }
+
+  it('emits IDENTICAL border vertices from both sides of a shared feature', () => {
+    // A plateau that runs across the border between chunk (0,0) and (1,0). The
+    // two chunks compute the crossing on the shared lattice edges from the same
+    // canonical samples, so their border vertices must agree exactly — if they
+    // did not, the seam would crack open under the camera.
+    const plateau = (x: number, y: number): number =>
+      y > 5 && y < 11 ? 3 * BAND_HEIGHT : 0;
+    const mirror = mirrorWith([
+      chunkPayloadFrom(0, 0, plateau),
+      chunkPayloadFrom(1, 0, plateau),
+    ]);
+
+    for (let k = 1; k <= 3; k++) {
+      const left = borderPoints(mirror, 0, 0, k * BAND_HEIGHT, CHUNK_SIZE);
+      const right = borderPoints(mirror, 1, 0, k * BAND_HEIGHT, CHUNK_SIZE);
+      expect(left.length).toBeGreaterThan(0);
+      expect(right).toEqual(left);
+    }
+  });
+
+  it('reads one cell PAST its own last row, which is what mirror.ts dirties', () => {
+    // Chunk (0,0)'s geometry must react to a change in chunk (1,0)'s first
+    // column, or the seam would be built against stale heights.
+    const before = write(mirrorWith([chunkPayload(0, 0, 0)]), 0, 0);
+    const after = write(
+      mirrorWith([chunkPayload(0, 0, 0), chunkPayload(1, 0, 4 * BAND_HEIGHT)]),
+      0,
+      0,
+    );
+    expect(after.counts.triangleCount).toBeGreaterThan(before.counts.triangleCount);
+    expect(LATTICE_PER_CHUNK).toBe(CHUNK_SIZE + 1);
+  });
+
+  it('grows no skirt along a chunk border a band simply continues across', () => {
+    // A flat plateau spanning both chunks: the border is not an edge of
+    // anything, so neither chunk may wall it off.
+    const mirror = mirrorWith([
+      chunkPayload(0, 0, 4 * BAND_HEIGHT),
+      chunkPayload(1, 0, 4 * BAND_HEIGHT),
+      chunkPayload(0, 1, 4 * BAND_HEIGHT),
+      chunkPayload(1, 1, 4 * BAND_HEIGHT),
+    ]);
+    const { counts } = write(mirror, 0, 0);
+    expect(counts.skirtTriangleCount).toBe(0);
+  });
+
+  it('walls off the edge of received territory down to the sea', () => {
+    // Chunk (1,0) was never sent, so its cells read height 0 through the
+    // mirror. The revealed plateau therefore ends in a cliff down to the
+    // waterline rather than in mid-air.
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 300)]), 0, 0);
+    const skirts = skirtsOf(triangles);
+    expect(skirts.length).toBeGreaterThan(0);
+    const lowest = Math.min(...skirts.flatMap((t) => [t.a.y, t.b.y, t.c.y]));
+    expect(lowest).toBeCloseTo(-SEABED_CAP_SINK);
+  });
+
+  it('emits no skirt at the world border, where sampling clamps', () => {
+    const { counts } = writeEdge(() => 512);
+    expect(counts.skirtTriangleCount).toBe(0);
+  });
+});
+
+describe('skirt picking', () => {
+  /**
+   * The contract picking depends on, asserted through picking.ts's UNCHANGED
+   * pure API rather than a restatement of its rounding rule.
+   */
+  /**
+   * Cells every BAND riser resolves to. The waterline's own riser is excluded:
+   * it is SEABED_CAP_SINK tall (a sixty-fourth of a band), it lies at the sea
+   * surface where there is no cliff to click, and it is a colour boundary
+   * rather than a step — see SHORE_EDGE_CROSSING.
+   */
+  function bandRisers(triangles: Triangle[]): Triangle[] {
+    return skirtsOf(triangles).filter(
+      (t) =>
+        Math.max(t.a.y, t.b.y, t.c.y) - Math.min(t.a.y, t.b.y, t.c.y) >
+        SEABED_CAP_SINK * 2,
     );
   }
 
-  it('resolves a hit on a spire wall to the HIGHER cell, on all four sides', () => {
-    // One raised cell: its four walls face west, east, north and south, and
-    // every one of them must sculpt that cell — the cliff you clicked.
-    const { buffers, counts } = writeEdge((i, j) => (i === 5 && j === 6 ? 256 : 0));
-    const found = walls(buffers, counts);
-    expect(found).toHaveLength(4);
-    for (const wall of found) {
-      expect(cellOfWall(wall)).toEqual({
-        x: EDGE_ORIGIN + 5,
-        y: EDGE_ORIGIN + 6,
-      });
+  /**
+   * The cell a riser resolves to, probed at the triangle's centroid — a point
+   * genuinely on the face, and away from its corners. Corners are deliberately
+   * not probed: a riser's corners sit on the cell grid in the axis it runs
+   * along, where rounding is a tie in the OTHER direction, and that says
+   * nothing about which side of the cliff the face belongs to.
+   */
+  function cellUnder(riser: Triangle): { x: number; y: number } | null {
+    const x = (riser.a.x + riser.b.x + riser.c.x) / 3;
+    const z = (riser.a.z + riser.b.z + riser.c.z) / 3;
+    return worldPointToCell(x / CELL_WORLD_SIZE, z / CELL_WORLD_SIZE, WORLD);
+  }
+
+  function cellsUnderSkirts(triangles: Triangle[]): (string | null)[] {
+    const cells = new Set<string>();
+    for (const riser of bandRisers(triangles)) {
+      const cell = cellUnder(riser);
+      cells.add(cell === null ? 'null' : `${cell.x},${cell.y}`);
     }
+    return Array.from(cells);
+  }
+
+  it('resolves every point of a spire wall to the spire itself', () => {
+    const { triangles } = writeEdge((i, j) => (i === 5 && j === 6 ? BAND_HEIGHT : 0));
+    expect(cellsUnderSkirts(triangles)).toEqual([
+      `${EDGE_ORIGIN + 5},${EDGE_ORIGIN + 6}`,
+    ]);
   });
 
-  it('resolves a hit on a PIT wall to the higher rim, not the floor', () => {
-    // The inverse case, and the one a naive tie-break gets wrong: a single
-    // sunken cell. Every surrounding wall belongs to the rim around it.
-    const { buffers, counts } = writeEdge((i, j) => (i === 9 && j === 4 ? 0 : 256));
-    const found = walls(buffers, counts);
-    expect(found).toHaveLength(4);
-
+  it('resolves the straight stretches of a pit wall to the rim, not the floor', () => {
+    // The inverse of the spire, and the case where the contract has a boundary
+    // worth stating. A one-cell well's outline runs three quarters of a cell
+    // out from the dug cell along the axes — comfortably inside the RIM cells,
+    // so clicking those stretches raises the rim, which is what filling a hole
+    // looks like. Where the outline rounds the corner between two of those
+    // stretches it cuts back across the dug cell's own square, and a click
+    // there sculpts the floor instead. That is inherent: an outline that
+    // follows the terrain instead of the grid cannot stay outside a
+    // single-cell square all the way round it, and no inset can move it there
+    // without tearing the wall away from the tread it hangs from.
+    const { triangles } = writeEdge((i, j) => (i === 9 && j === 4 ? 0 : BAND_HEIGHT));
     const pit = { x: EDGE_ORIGIN + 9, y: EDGE_ORIGIN + 4 };
-    const rim = [
-      { x: pit.x - 1, y: pit.y },
-      { x: pit.x + 1, y: pit.y },
-      { x: pit.x, y: pit.y - 1 },
-      { x: pit.x, y: pit.y + 1 },
-    ];
-    for (const wall of found) {
-      const cell = cellOfWall(wall);
+    const risers = bandRisers(triangles);
+    expect(risers.length).toBeGreaterThan(0);
+
+    let straight = 0;
+    for (const riser of risers) {
+      const cell = cellUnder(riser);
+      expect(cell).not.toBeNull();
+      // Never further away than the ring of cells around the pit.
+      expect(Math.abs((cell as { x: number }).x - pit.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs((cell as { y: number }).y - pit.y)).toBeLessThanOrEqual(1);
+
+      const x = (riser.a.x + riser.b.x + riser.c.x) / 3;
+      const z = (riser.a.z + riser.b.z + riser.c.z) / 3;
+      const offAxis = Math.min(Math.abs(x - pit.x), Math.abs(z - pit.y));
+      if (offAxis > 0.25) continue; // the rounded corner, exempt above
+      straight++;
       expect(cell).not.toEqual(pit);
-      expect(rim).toContainEqual(cell);
     }
+    expect(straight).toBeGreaterThan(0);
   });
 
-  it('insets the wall plane into the owning cell by exactly the named epsilon', () => {
-    const boundary = EDGE_ORIGIN + 7.5;
-
-    // High to the east: the wall between local cells 7 and 8 is owned by 8, so
-    // its plane sits on cell 8's side of the boundary.
-    const eastHigh = writeEdge((i) => (i < 8 ? 0 : 256));
-    for (const wall of walls(eastHigh.buffers, eastHigh.counts)) {
-      expect(wall.plane).toBeCloseTo(boundary + CLIFF_FACE_PICK_INSET, 6);
+  it('breaks an exact tie toward the HIGHER side, which is what the inset is for', () => {
+    // Heights 0 and 128 put band 1's boundary exactly on the mean of the two
+    // samples, so the contour runs down the middle between the cells and
+    // rounding is a tie. The inset decides it for the cliff you clicked.
+    const { triangles } = writeEdge((i) => (i < 8 ? 0 : 2 * BAND_HEIGHT));
+    const band1Skirts = skirtsOf(triangles).filter(
+      (t) => Math.max(t.a.y, t.b.y, t.c.y) === BAND_WORLD_HEIGHT,
+    );
+    expect(band1Skirts.length).toBeGreaterThan(0);
+    for (const skirt of band1Skirts) {
+      // Probe at the quad's own mid-height corner, on the chunk's interior side
+      // (the domain runs half a cell past the last cell centre at the world
+      // rim, which picking legitimately reports as off-map).
+      const cell = worldPointToCell(
+        skirt.a.x / CELL_WORLD_SIZE,
+        EDGE_ORIGIN + 4,
+        WORLD,
+      );
+      expect(cell?.x).toBe(EDGE_ORIGIN + 8);
     }
-
-    // High to the west: owned by cell 7, so the plane moves the other way.
-    const westHigh = writeEdge((i) => (i < 8 ? 256 : 0));
-    for (const wall of walls(westHigh.buffers, westHigh.counts)) {
-      expect(wall.plane).toBeCloseTo(boundary - CLIFF_FACE_PICK_INSET, 6);
-    }
-  });
-
-  it('keeps the inset far below half a cell, so the wall still reads as on the edge', () => {
-    expect(CLIFF_FACE_PICK_INSET).toBeGreaterThan(0);
-    expect(CLIFF_FACE_PICK_INSET).toBeLessThan(0.01);
+    expect(SKIRT_PICK_INSET).toBeGreaterThan(0);
+    expect(SKIRT_PICK_INSET).toBeLessThan(0.01);
     // A negative power of two: exact in binary, identical on every platform.
-    expect(Number.isInteger(Math.log2(CLIFF_FACE_PICK_INSET))).toBe(true);
+    expect(Number.isInteger(Math.log2(SKIRT_PICK_INSET))).toBe(true);
     // And it must survive Float32 storage at the far corner of the largest
-    // supported world (512 cells), or the inset would round back into a tie.
-    const farBoundary = 511.5;
-    expect(Math.round(Math.fround(farBoundary + CLIFF_FACE_PICK_INSET))).toBe(512);
-    expect(Math.round(Math.fround(farBoundary - CLIFF_FACE_PICK_INSET))).toBe(511);
+    // supported world (512 cells), or it would round back into a tie.
+    expect(Math.round(Math.fround(511.5 + SKIRT_PICK_INSET))).toBe(512);
+    expect(Math.round(Math.fround(511.5 - SKIRT_PICK_INSET))).toBe(511);
   });
 });
 
 describe('colour attribution', () => {
-  it('paints top faces from the band palette and walls from the cliff palette', () => {
-    const { buffers, counts } = writeEdge((i) => (i < 8 ? 0 : 300));
+  it('paints caps from the band ramp and skirts from the cliff ramp', () => {
+    const { triangles } = writeEdge((i) => (i < 8 ? 0 : 300));
+    const highCaps = capsOf(triangles).filter(
+      (t) => Math.abs(t.a.y - 4 * BAND_WORLD_HEIGHT) < 1e-6,
+    );
+    expect(highCaps.length).toBeGreaterThan(0);
+    expectColor(highCaps[0].color, TERRAIN_PALETTE[bandPaletteIndex(4 * BAND_HEIGHT)]);
 
-    // Top of a high cell: the ordinary band ramp, from its RAW height.
-    expectColor(quadColor(buffers, topQuadSlot(8, 0)), TERRAIN_PALETTE[bandPaletteIndex(300)]);
-    // Top of a low cell: height 0 is water, hence the seabed entry.
-    expectColor(quadColor(buffers, topQuadSlot(7, 0)), TERRAIN_PALETTE[bandPaletteIndex(0)]);
-
-    // Walls take the OWNING (higher) cell's entry from the cliff ramp, so the
-    // cut face matches the tread above it rather than the ground below it.
-    const found = walls(buffers, counts);
-    expect(found.length).toBeGreaterThan(0);
-    for (const wall of found) {
-      expectColor(quadColor(buffers, wall.quad), CLIFF_PALETTE[bandPaletteIndex(300)]);
-    }
+    const topSkirts = skirtsOf(triangles).filter(
+      (t) => Math.abs(Math.max(t.a.y, t.b.y, t.c.y) - 4 * BAND_WORLD_HEIGHT) < 1e-6,
+    );
+    expect(topSkirts.length).toBeGreaterThan(0);
+    expectColor(topSkirts[0].color, CLIFF_PALETTE[bandPaletteIndex(4 * BAND_HEIGHT)]);
   });
 
   it('makes cliff faces visibly darker than the tread they sit under', () => {
@@ -510,30 +882,68 @@ describe('colour attribution', () => {
   });
 });
 
-describe('emitted counts', () => {
-  it('reports counts consistent with the quad layout', () => {
-    const { counts } = write(mirrorWith([chunkPayload(0, 0, 100)]), 0, 0);
-    expect(counts.quadCount).toBe(counts.topQuadCount + counts.wallQuadCount);
-    expect(counts.vertexCount).toBe(counts.quadCount * VERTICES_PER_QUAD);
-    expect(counts.indexCount).toBe(counts.quadCount * INDICES_PER_QUAD);
+describe('buffers', () => {
+  it('reports counts consistent with the layout', () => {
+    const { counts } = writeEdge((i) => (i < 8 ? 0 : 256));
+    expect(counts.triangleCount).toBe(
+      counts.capTriangleCount + counts.skirtTriangleCount,
+    );
+    expect(counts.vertexCount).toBe(counts.triangleCount * VERTICES_PER_TRIANGLE);
+    expect(counts.triangleCount).toBeLessThanOrEqual(counts.triangleCapacity);
   });
 
-  it('stays inside the documented worst case on the pathological terrain', () => {
-    // Alternating bands on every cell: every cell differs from BOTH its +x and
-    // +y neighbours, so this is the tight upper bound the buffers are sized
-    // for. Neighbour chunks are supplied so the border cells count too.
-    const checkerboard = (x: number, y: number): number => ((x + y) % 2) * 128;
-    const mirror = mirrorWith([
-      chunkPayloadFrom(1, 1, checkerboard),
-      chunkPayloadFrom(2, 1, checkerboard),
-      chunkPayloadFrom(1, 2, checkerboard),
-    ]);
-    const { counts } = write(mirror, 1, 1);
+  it('settles at a capacity and then patches without reallocating', () => {
+    // The whole point of the working capacity: a chunk grows to its own
+    // high-water mark within the first edits, and the steady state of a held
+    // sculpt then reallocates nothing.
+    const buffers = createChunkGeometryBuffers();
+    const hill = (i: number, j: number): number =>
+      Math.round(360 - 3 * ((i - 8) ** 2 + (j - 8) ** 2));
+    const first = writeChunkVertexData(
+      mirrorWith([edgeChunk(hill)]),
+      EDGE_CHUNK,
+      EDGE_CHUNK,
+      buffers,
+      PALETTES,
+    );
+    // A smooth 7-band hill outgrows the starting capacity, so it grows once...
+    expect(first.triangleCount).toBeGreaterThan(INITIAL_CHUNK_TRIANGLE_CAPACITY);
+    expect(first.capacityGrew).toBe(true);
 
-    expect(counts.wallQuadCount).toBe(MAX_WALL_QUADS_PER_CHUNK);
-    expect(counts.quadCount).toBe(MAX_QUADS_PER_CHUNK);
-    expect(counts.vertexCount).toBe(CHUNK_VERTEX_COUNT);
-    expect(counts.indexCount).toBe(CHUNK_INDEX_COUNT);
+    // ...and then never again, however the stroke reshapes it.
+    for (let step = 1; step <= 4; step++) {
+      const next = writeChunkVertexData(
+        mirrorWith([edgeChunk((i, j) => hill(i, j) + step * 17)]),
+        EDGE_CHUNK,
+        EDGE_CHUNK,
+        buffers,
+        PALETTES,
+      );
+      expect(next.capacityGrew).toBe(false);
+      expect(next.triangleCapacity).toBe(first.triangleCapacity);
+    }
+  });
+
+  it('keeps an ordinary chunk inside its starting capacity', () => {
+    const modest = writeEdge((i, j) => (i > 4 && j > 4 ? 2 * BAND_HEIGHT : 0));
+    expect(modest.counts.capacityGrew).toBe(false);
+    expect(modest.counts.triangleCapacity).toBe(INITIAL_CHUNK_TRIANGLE_CAPACITY);
+  });
+
+  it('grows (and keeps the growth) when a chunk outgrows its capacity', () => {
+    const buffers = createChunkGeometryBuffers(4);
+    const mirror = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 256))]);
+    const grown = writeChunkVertexData(mirror, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
+    expect(grown.capacityGrew).toBe(true);
+    expect(buffers.positions.length).toBe(
+      grown.triangleCapacity * VERTICES_PER_TRIANGLE * 3,
+    );
+
+    // Capacity never shrinks back, so the same chunk never thrashes.
+    const flat = mirrorWith([edgeChunk(() => 256)]);
+    const after = writeChunkVertexData(flat, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
+    expect(after.capacityGrew).toBe(false);
+    expect(after.triangleCapacity).toBe(grown.triangleCapacity);
   });
 
   it('collapses the unused tail onto a vertex inside the chunk', () => {
@@ -541,39 +951,29 @@ describe('emitted counts', () => {
     // ignores the draw range, so stale or zeroed tail vertices would drag a
     // distant chunk's bound back toward the world origin.
     const { buffers, counts } = write(mirrorWith([chunkPayload(2, 2, 100)]), 2, 2);
-    expect(counts.vertexCount).toBeLessThan(CHUNK_VERTEX_COUNT);
-
-    const anchor = quadCorners(buffers, 0)[0];
-    for (let v = counts.vertexCount; v < CHUNK_VERTEX_COUNT; v++) {
-      const base = v * 3;
-      expect(buffers.positions[base]).toBe(anchor.x);
-      expect(buffers.positions[base + 1]).toBe(anchor.y);
-      expect(buffers.positions[base + 2]).toBe(anchor.z);
+    const total = counts.triangleCapacity * VERTICES_PER_TRIANGLE;
+    expect(counts.vertexCount).toBeLessThan(total);
+    const anchor = vertexAt(buffers, 0);
+    for (let v = counts.vertexCount; v < total; v++) {
+      expect(vertexAt(buffers, v)).toEqual(anchor);
     }
   });
 
-  it('shrinks the live range again when a cliff is levelled', () => {
-    const cliffy = writeEdge((i) => (i < 8 ? 0 : 256));
-    const flat = writeEdge(() => 256);
-    expect(cliffy.counts.indexCount).toBeGreaterThan(flat.counts.indexCount);
-    expect(flat.counts.wallQuadCount).toBe(0);
-  });
-});
-
-describe('writeChunkVertexData contract', () => {
-  it('rejects buffers of the wrong size rather than writing out of range', () => {
-    const mirror = createTerrainMirror(WORLD);
+  it('leaves no stale geometry behind when a re-patch emits less', () => {
     const buffers = createChunkGeometryBuffers();
-    const stub = new Float32Array(3);
-    expect(() =>
-      writeChunkVertexData(mirror, 0, 0, { ...buffers, positions: stub }, PALETTES),
-    ).toThrow(RangeError);
-    expect(() =>
-      writeChunkVertexData(mirror, 0, 0, { ...buffers, normals: stub }, PALETTES),
-    ).toThrow(RangeError);
-    expect(() =>
-      writeChunkVertexData(mirror, 0, 0, { ...buffers, colors: stub }, PALETTES),
-    ).toThrow(RangeError);
+    const cliffy = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 256))]);
+    const before = writeChunkVertexData(cliffy, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
+
+    const flat = mirrorWith([edgeChunk(() => 256)]);
+    const after = writeChunkVertexData(flat, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
+    expect(after.triangleCount).toBeLessThan(before.triangleCount);
+    expect(after.skirtTriangleCount).toBe(0);
+
+    const anchor = vertexAt(buffers, 0);
+    const total = after.triangleCapacity * VERTICES_PER_TRIANGLE;
+    for (let v = after.vertexCount; v < total; v++) {
+      expect(vertexAt(buffers, v).y).toBe(anchor.y);
+    }
   });
 
   it('is idempotent — re-patching the same data yields the same buffers', () => {
@@ -589,22 +989,5 @@ describe('writeChunkVertexData contract', () => {
     expect(Array.from(second.positions)).toEqual(Array.from(first.positions));
     expect(Array.from(second.normals)).toEqual(Array.from(first.normals));
     expect(Array.from(second.colors)).toEqual(Array.from(first.colors));
-  });
-
-  it('leaves no stale geometry behind when a re-patch emits fewer walls', () => {
-    // The same buffers reused: what was a cliff must not survive as garbage in
-    // the tail once the terrain is levelled.
-    const buffers = createChunkGeometryBuffers();
-    const cliffy = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 256))]);
-    writeChunkVertexData(cliffy, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
-
-    const flat = mirrorWith([edgeChunk(() => 256)]);
-    const counts = writeChunkVertexData(flat, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
-    expect(counts.wallQuadCount).toBe(0);
-
-    const anchor = quadCorners(buffers, 0)[0];
-    for (let v = counts.vertexCount; v < CHUNK_VERTEX_COUNT; v++) {
-      expect(buffers.positions[v * 3 + 1]).toBe(anchor.y);
-    }
   });
 });

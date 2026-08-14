@@ -13,17 +13,19 @@ import {
 } from '../src/terrain/mirror.ts';
 import { createTerrainMeshes } from '../src/render/terrainMeshes.ts';
 import {
-  CHUNK_INDEX_COUNT,
-  INDICES_PER_QUAD,
-  TOP_QUADS_PER_CHUNK,
-  VERTICES_PER_QUAD,
+  INITIAL_CHUNK_TRIANGLE_CAPACITY,
+  VERTICES_PER_TRIANGLE,
 } from '../src/terrain/vertexGrid.ts';
-import { HEIGHT_WORLD_SCALE } from '../src/config.ts';
+import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 
 const WORLD = 64;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
-/** A chunk with no cliffs draws its 256 top faces and nothing more. */
-const FLAT_CHUNK_INDEX_COUNT = TOP_QUADS_PER_CHUNK * INDICES_PER_QUAD;
+/**
+ * A chunk with one band and no contour is two triangles: its whole domain, at
+ * that band's height. That is the smallest geometry the builder can emit, and
+ * the draw range has to cut everything after it.
+ */
+const FLAT_CHUNK_VERTEX_COUNT = 2 * VERTICES_PER_TRIANGLE;
 
 function chunkPayload(cx: number, cy: number, fill: number): ChunkPayload {
   return { cx, cy, heights: new Array<number>(CELLS_PER_CHUNK).fill(fill) };
@@ -77,9 +79,10 @@ describe('createTerrainMeshes', () => {
   it('patches vertex buffers IN PLACE, never rebuilding geometry', () => {
     // The client performance contract (design doc §8). If any of these object
     // identities change, an edit is reallocating GPU resources per sculpt —
-    // and this still has to hold now that the emitted quad count VARIES with
-    // the terrain, which is exactly what the preallocate-and-draw-a-prefix
-    // strategy buys.
+    // and this still has to hold now that the emitted triangle count VARIES
+    // widely with the terrain, which is exactly what the working-capacity
+    // strategy buys (a chunk only ever rebinds when it outgrows its buffers,
+    // and this edit is nowhere near that).
     const { meshes, mirror, group } = setup([chunkPayload(0, 0, 0)]);
 
     const mesh = meshes.pickables()[0];
@@ -87,7 +90,6 @@ describe('createTerrainMeshes', () => {
     const positionBefore = plainAttribute(mesh.geometry, 'position');
     const normalBefore = plainAttribute(mesh.geometry, 'normal');
     const colorBefore = plainAttribute(mesh.geometry, 'color');
-    const indexBefore = mesh.geometry.getIndex();
     const positionArrayBefore = positionBefore.array;
     const normalArrayBefore = normalBefore.array;
     // `needsUpdate` on a BufferAttribute is a setter with no getter — reading
@@ -109,7 +111,6 @@ describe('createTerrainMeshes', () => {
     expect(mesh.geometry.getAttribute('position')).toBe(positionBefore);
     expect(mesh.geometry.getAttribute('normal')).toBe(normalBefore);
     expect(mesh.geometry.getAttribute('color')).toBe(colorBefore);
-    expect(mesh.geometry.getIndex()).toBe(indexBefore);
     // Same backing typed arrays — rewritten, not replaced.
     expect(mesh.geometry.getAttribute('position').array).toBe(positionArrayBefore);
     expect(mesh.geometry.getAttribute('normal').array).toBe(normalArrayBefore);
@@ -121,16 +122,17 @@ describe('createTerrainMeshes', () => {
     expect(colorBefore.version).toBeGreaterThan(colorVersionBefore);
   });
 
-  it('shares one index attribute across every chunk mesh', () => {
-    // Quad k owns vertices 4k..4k+3 in every chunk in every world state, so
-    // the indices are world-independent and need not be per mesh.
+  it('builds non-indexed geometry, so every triangle keeps its own crease', () => {
+    // Flat shading needs unshared vertices at every cap/skirt boundary, so no
+    // vertex is ever reused — an index buffer that never shares is pure
+    // overhead, and there is none.
     const { meshes } = setup([chunkPayload(0, 0, 0), chunkPayload(1, 1, 300)]);
-    const [first, second] = meshes.pickables();
-    expect(first.geometry.getIndex()).toBe(second.geometry.getIndex());
-    expect(first.geometry.getIndex()?.count).toBe(CHUNK_INDEX_COUNT);
+    for (const mesh of meshes.pickables()) {
+      expect(mesh.geometry.getIndex()).toBeNull();
+    }
   });
 
-  it('gives each chunk its OWN normals, since wall normals differ per chunk', () => {
+  it('gives each chunk its OWN normals, since skirt normals differ per chunk', () => {
     const { meshes } = setup([chunkPayload(0, 0, 0), chunkPayload(1, 1, 300)]);
     const [first, second] = meshes.pickables();
     expect(first.geometry.getAttribute('normal')).not.toBe(
@@ -139,21 +141,24 @@ describe('createTerrainMeshes', () => {
   });
 
   it('draws only the emitted prefix of the buffers', () => {
-    // A flat chunk emits no walls at all, so the draw range must cut the whole
-    // worst-case wall tail rather than rasterising it.
+    // A flat chunk is two triangles; the draw range must cut the rest of the
+    // capacity rather than rasterising it. On non-indexed geometry the range
+    // counts vertices.
     const { meshes } = setup([chunkPayload(0, 0, 0)]);
     const geometry = meshes.pickables()[0].geometry;
     expect(geometry.drawRange.start).toBe(0);
-    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_INDEX_COUNT);
-    expect(geometry.drawRange.count).toBeLessThan(CHUNK_INDEX_COUNT);
+    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
+    expect(geometry.drawRange.count).toBeLessThan(
+      INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
+    );
   });
 
-  it('grows and shrinks the draw range as sculpting adds and removes cliffs', () => {
+  it('grows and shrinks the draw range as sculpting adds and removes terraces', () => {
     const { meshes, mirror } = setup([chunkPayload(0, 0, 0)]);
     const geometry = meshes.pickables()[0].geometry;
-    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_INDEX_COUNT);
+    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
 
-    // Raising one interior cell by four bands cuts four cliff faces around it.
+    // Raising one interior cell four bands cuts a stepped column around it.
     meshes.update(
       applyTerrainDiff(mirror, {
         type: 'terrainDiff',
@@ -161,20 +166,22 @@ describe('createTerrainMeshes', () => {
       }),
     );
     const raised = geometry.drawRange.count;
-    expect(raised).toBe(FLAT_CHUNK_INDEX_COUNT + 4 * INDICES_PER_QUAD);
-    expect(raised).toBeLessThanOrEqual(CHUNK_INDEX_COUNT);
+    expect(raised).toBeGreaterThan(FLAT_CHUNK_VERTEX_COUNT);
+    expect(raised).toBeLessThanOrEqual(
+      INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
+    );
 
-    // Level it again and the walls — and the range — go away.
+    // Level it again and the column — and the range — go away.
     meshes.update(
       applyTerrainDiff(mirror, {
         type: 'terrainDiff',
         cells: [{ x: 2, y: 3, h: 0 }],
       }),
     );
-    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_INDEX_COUNT);
+    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
   });
 
-  it('writes the new height into the patched cell top face', () => {
+  it('writes the new height into the patched chunk', () => {
     const { meshes, mirror } = setup([chunkPayload(0, 0, 0)]);
     const mesh = meshes.pickables()[0];
 
@@ -185,15 +192,14 @@ describe('createTerrainMeshes', () => {
       }),
     );
 
-    // Top faces occupy fixed slots: cell (i,j) is quad j*CHUNK_SIZE + i, and
-    // quad k starts at vertex 4k. All four of its corners are level.
-    const topQuad = 3 * CHUNK_SIZE + 2;
+    // Somewhere in the live range there is now a cap at four bands up — the
+    // top of the column the sculpt raised.
     const position = mesh.geometry.getAttribute('position');
-    for (let v = 0; v < VERTICES_PER_QUAD; v++) {
-      expect(position.getY(topQuad * VERTICES_PER_QUAD + v)).toBeCloseTo(
-        256 * HEIGHT_WORLD_SCALE,
-      );
+    let highest = -Infinity;
+    for (let v = 0; v < mesh.geometry.drawRange.count; v++) {
+      highest = Math.max(highest, position.getY(v));
     }
+    expect(highest).toBeCloseTo(4 * BAND_WORLD_HEIGHT);
   });
 
   it('refreshes the bounding sphere so edited chunks stay pickable', () => {
@@ -236,12 +242,38 @@ describe('createTerrainMeshes', () => {
     meshes.update(dirty);
 
     expect(group.children).toHaveLength(2);
-    // The pre-existing neighbour was re-patched too, so the border wall
-    // between the two chunks is rebuilt against the newly revealed heights.
+    // The pre-existing neighbour was re-patched too, so the terrace that now
+    // runs up to the seam is rebuilt against the newly revealed heights.
     expect(dirty.has(chunkIndex(WORLD, 0, 0))).toBe(true);
     const left = meshes.pickables()[0];
-    expect(left.geometry.drawRange.count).toBe(
-      FLAT_CHUNK_INDEX_COUNT + CHUNK_SIZE * INDICES_PER_QUAD,
+    expect(left.geometry.drawRange.count).toBeGreaterThan(FLAT_CHUNK_VERTEX_COUNT);
+  });
+
+  it('rebinds attributes when a chunk outgrows its buffers, keeping one geometry', () => {
+    // Growth is the one path that reallocates. It must swap in fresh
+    // attributes, dispose the geometry it replaced, and leave the mesh in the
+    // scene exactly once.
+    const { meshes, mirror, group } = setup([chunkPayload(0, 0, 0)]);
+    const mesh = meshes.pickables()[0];
+    const positionBefore = plainAttribute(mesh.geometry, 'position');
+
+    // A chunk-wide hill: several bands of contour, past the starting capacity.
+    const cells = [];
+    for (let y = 0; y < CHUNK_SIZE; y++) {
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        cells.push({ x, y, h: Math.round(360 - 3 * ((x - 8) ** 2 + (y - 8) ** 2)) });
+      }
+    }
+    meshes.update(applyTerrainDiff(mirror, { type: 'terrainDiff', cells }));
+
+    expect(group.children).toHaveLength(1);
+    expect(meshes.pickables()[0]).toBe(mesh);
+    expect(mesh.geometry.getAttribute('position')).not.toBe(positionBefore);
+    expect(mesh.geometry.drawRange.count).toBeGreaterThan(
+      INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
+    );
+    expect(mesh.geometry.getAttribute('position').count).toBeGreaterThanOrEqual(
+      mesh.geometry.drawRange.count,
     );
   });
 

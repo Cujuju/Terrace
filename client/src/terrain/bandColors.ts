@@ -73,8 +73,11 @@ export function bandColorOf(height: number): Rgb {
 // ---------------------------------------------------------------------------
 // Cliff faces
 //
-// Terraced rendering draws VERTICAL walls between bands (terrain/vertexGrid.ts).
-// Painting those walls with the top-face colour makes a cliff read as stretched
+// Terraced rendering draws VERTICAL skirts between bands — one band tall, along
+// each band's smoothed outline (terrain/vertexGrid.ts). It also uses this ramp
+// for the fine step at the waterline and for the per-cell walls of the blocky
+// fallback, so "cliff" here means every cut face, whatever drew it.
+// Painting those faces with the top-face colour makes a cliff read as stretched
 // grass; what the Godus look needs is exposed rock — the same ground, but CUT.
 // So every palette entry gets a derived cliff entry: pulled toward bare rock,
 // then darkened. Both moves are needed. Darkening alone keeps the grass hue and

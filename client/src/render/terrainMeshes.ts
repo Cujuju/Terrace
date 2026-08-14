@@ -6,47 +6,66 @@
 // Float32Arrays are allocated once, when the chunk's data first arrives, and
 // live until the world is replaced. Applying a terrain diff rewrites the
 // affected chunks' position/normal/colour arrays and flips `needsUpdate`; it
-// never touches the index buffer, never allocates, and never re-adds anything
-// to the scene graph.
+// never allocates and never re-adds anything to the scene graph.
 //
-// VARIABLE GEOMETRY, FIXED BUFFERS. Since the terraced surface grew true
-// vertical cliffs (terrain/vertexGrid.ts) a chunk's quad count is no longer
-// constant: it is 256 top faces plus one wall per edge whose two cells sit in
-// different bands, so it moves every time somebody sculpts. Two ways to carry
-// that, and this module takes the first:
+// BUFFER STRATEGY, re-derived for the organic renderer (2026-08-14).
 //
-//   CHOSEN — preallocate the worst case and draw a prefix. Buffers are sized
-//   for MAX_QUADS_PER_CHUNK (768 quads = 3072 vertices), the emitted quads are
-//   packed from slot 0, and `setDrawRange(0, indexCount)` cuts the unused tail.
-//   A patch is then pure array writes: no allocation, no attribute or geometry
-//   objects created, no GPU buffer deleted and recreated. Cost per patch is
-//   ~37k float stores (≈3072 vertices × 9 components, plus collapsing the
-//   tail) — tens of microseconds. A held sculpt fires an intent every
-//   SCULPT_REPEAT_INTERVAL_MS (≈8/s) and each one dirties a handful of chunks,
-//   so the whole steady-state load is well under a tenth of one 16.6 ms frame,
-//   and it produces no garbage for the collector to trip over mid-stroke.
+// The old builder had a TIGHT worst case: 256 top quads plus at most two wall
+// quads per cell, i.e. exactly 768 quads, so buffers were sized for the
+// pathological chunk once and a `setDrawRange` prefix cut the tail. The organic
+// builder has no such bound worth allocating for. Its triangle count is
 //
-//   REJECTED — rebuild the chunk's BufferGeometry on patch. It would size
-//   exactly to the terrain, but it allocates three typed arrays, three
-//   BufferAttributes and a BufferGeometry per patched chunk per intent, and
-//   disposing the old geometry makes the driver delete and recreate that
-//   chunk's GPU buffers ~30 times a second during a held stroke. That is
-//   precisely the churn the §8 no-rebuild rule exists to forbid, and the
-//   frame-time cost of a driver-side buffer respec is exactly the kind of
-//   spike that shows up as a stutter under a held brush rather than as a lower
-//   average frame rate.
+//     Σ over the bands present in the chunk of (cap triangles + 2 × contour
+//     segments),
 //
-//   MEMORY, known and accepted: 3072 vertices × 3 attributes × 3 components ×
-//   4 bytes = 108 KB per chunk, against ~7 KB for the Phase 1 vertex grid. A
-//   fully revealed 512² world (1024 chunks) would hold ~108 MB of terrain
-//   attributes. That is the PATHOLOGICAL bound — it assumes every cell in the
-//   world differs in band from both of its neighbours — and it lands at the
-//   same world scale where §8 already accepts 1024 draw calls. If measurement
-//   ever demands it, the fix is per-chunk capacity that grows on demand
-//   (chunks that hold few walls keep small buffers, and only a chunk that
-//   outgrows its capacity reallocates, which is rare and not on the hot path);
-//   dropping the normal attribute, which flat shading ignores, would recover
-//   another third. Neither is needed at the scales worlds actually run at.
+// which is ~10 triangles for a flat chunk, ~1.5k for a chunk crossed by four
+// smoothed band contours, and — for a chunk that spans the full ±16 bands with
+// a wiggly contour on every one of them — tens of thousands. Sizing every chunk
+// for that last figure would cost megabytes per chunk for terrain nobody makes.
+// So the two candidates change shape, and the choice with them:
+//
+//   REJECTED — preallocate the worst case, as before. The honest worst case is
+//   33 levels × (≈2.3k cap + ≈4.6k skirt) ≈ 230k triangles = 24 MB per chunk.
+//   Even a realistic-but-lively bound (8 levels, 700 triangles each) is 600 KB
+//   per chunk, i.e. 600 MB for a fully revealed 512² world, to serve chunks
+//   that overwhelmingly need 1% of it. Preallocation only wins when the bound
+//   is tight, and it no longer is.
+//
+//   CHOSEN — preallocate a working capacity per chunk, DRAW A PREFIX with
+//   setDrawRange, and GROW (doubling) on the rare patch that overflows. Chunks
+//   start at INITIAL_CHUNK_TRIANGLE_CAPACITY (1024 triangles = 110 KB, the same
+//   order as the old renderer's fixed 108 KB) and only reallocate on the edit
+//   that first pushes them past it. Capacity never shrinks, so it converges to
+//   each chunk's own high-water mark within the first few sculpts and every
+//   patch after that is pure array writes: no allocation, no attribute or
+//   geometry object created, no GPU buffer deleted and recreated.
+//
+// AGAINST THE HELD-SCULPT BUDGET. A held brush emits one intent every
+// SCULPT_REPEAT_INTERVAL_MS (≈8/s) and a radius-4 brush can straddle at most
+// four chunks, so the steady state is ≈32 chunk patches per second, i.e. one
+// patch every other frame at 60 fps. Per patch, on a typical four-band chunk
+// (measured shapes, estimated times):
+//   - sampling and marching: 4 levels × 256 squares ≈ 1k square evaluations;
+//   - smoothing: 2 Chaikin passes over a few hundred vertices;
+//   - triangulation: ear clipping, O(n²) on n ≈ 150 per loop ≈ 20k operations;
+//   - buffer writes: ≈1.5k triangles × 27 floats ≈ 40k stores.
+// That is tens of microseconds of work, the same order as the old builder's
+// ~37k stores, and it lands on ~4% of the frames. Growth events are the only
+// spike, and there are at most log2(capacity) of them per chunk EVER.
+//
+// GARBAGE, named rather than hidden: unlike the old builder, the contour
+// pipeline allocates — a few thousand small point objects per chunk rebuild,
+// on the order of 100 KB. At 32 patches/s that is ~3 MB/s of strictly
+// short-lived objects, which is nursery traffic a generational collector
+// scavenges in a fraction of a millisecond and never promotes. The rule that
+// matters for stutter is the one still kept absolutely: no GPU buffer is
+// respecified mid-stroke, because a driver-side buffer respec is what shows up
+// as a frame spike rather than as a lower average frame rate.
+//
+// MEMORY at rest: 108 bytes per triangle (3 unshared vertices × 9 floats).
+// Non-indexed is deliberate — every triangle owning its own three vertices is
+// what gives flat shading a hard crease at every cap/skirt boundary, and an
+// index buffer that never shares a vertex is pure overhead.
 //
 // DRAW-CALL TRADEOFF, known and accepted for v1: one mesh per 16×16 chunk
 // means a fully revealed 512² world would be 1024 draw calls. That is a lot,
@@ -73,7 +92,6 @@ import { chunksPerEdge } from '@terrace/shared';
 import { CLIFF_PALETTE, TERRAIN_PALETTE, type Rgb } from '../terrain/bandColors.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
-  buildChunkIndices,
   createChunkGeometryBuffers,
   writeChunkVertexData,
   type ChunkGeometryBuffers,
@@ -133,19 +151,6 @@ export function createTerrainMeshes(
     cliff: toLinearPalette(CLIFF_PALETTE),
   };
 
-  // Quad k always owns vertices 4k..4k+3 in every chunk in every world state,
-  // so the index buffer is world-independent and one attribute serves every
-  // mesh. A chunk with fewer quads narrows its draw range instead of owning
-  // its own indices.
-  //
-  // Normals, unlike Phase 1's, are NOT shared: a wall's outward normal is ±X
-  // or ±Z depending on which of its two cells stands higher, so it is per
-  // chunk and rewritten on every patch. Three's FLAT_SHADED path happens to
-  // derive the face normal from screen-space derivatives and ignore the
-  // attribute, but the geometry should describe itself honestly rather than
-  // depend on one material flag staying set.
-  const sharedIndex = new BufferAttribute(buildChunkIndices(), 1);
-
   const material = new MeshStandardMaterial({
     vertexColors: true,
     flatShading: true,
@@ -160,25 +165,62 @@ export function createTerrainMeshes(
   const meshes = new Map<number, ChunkMesh>();
 
   /**
+   * Builds the geometry and attributes around a chunk's CURRENT buffers. Run
+   * once when the chunk's mesh is created, and again only on the rare patch
+   * that grew the buffers — a typed array cannot be resized, so a grown chunk
+   * needs new attributes, and the old geometry is disposed rather than left to
+   * hold its GPU buffers until the world is replaced.
+   */
+  const bindGeometry = (entry: ChunkMesh): void => {
+    const positionAttribute = new BufferAttribute(entry.buffers.positions, 3);
+    const normalAttribute = new BufferAttribute(entry.buffers.normals, 3);
+    const colorAttribute = new BufferAttribute(entry.buffers.colors, 3);
+    // All three attributes are rewritten on every edit that touches this chunk.
+    positionAttribute.setUsage(DynamicDrawUsage);
+    normalAttribute.setUsage(DynamicDrawUsage);
+    colorAttribute.setUsage(DynamicDrawUsage);
+
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', positionAttribute);
+    geometry.setAttribute('normal', normalAttribute);
+    geometry.setAttribute('color', colorAttribute);
+
+    const previous = entry.mesh.geometry;
+    entry.mesh.geometry = geometry;
+    // The mesh is only ever pointed at one geometry at a time, and no other
+    // mesh shares it (nothing is shared between chunks any more — geometry is
+    // non-indexed, so there is no world-independent index buffer to share).
+    if (previous !== geometry) previous.dispose();
+
+    entry.positionAttribute = positionAttribute;
+    entry.normalAttribute = normalAttribute;
+    entry.colorAttribute = colorAttribute;
+  };
+
+  /**
    * Rewrites one chunk's geometry in place and re-syncs everything downstream
-   * of the vertex data: the GPU upload flags, the draw range (the quad count
-   * moves whenever a sculpt adds or removes a cliff), and the bound.
+   * of the vertex data: the GPU upload flags, the draw range (the triangle
+   * count moves whenever a sculpt reshapes a contour), and the bound.
    */
   const writeChunk = (chunkIdx: number, entry: ChunkMesh): void => {
     const cx = chunkIdx % chunkCols;
     const cy = (chunkIdx - cx) / chunkCols;
 
-    // In place: same arrays, same attributes, same geometry, same mesh.
+    // In place: same arrays, same attributes, same geometry, same mesh —
+    // unless this chunk's geometry outgrew its capacity, which is the one case
+    // that reallocates (see the buffer strategy in the module header).
     const counts = writeChunkVertexData(mirror, cx, cy, entry.buffers, palettes);
+    if (counts.capacityGrew) bindGeometry(entry);
 
     entry.positionAttribute.needsUpdate = true;
     entry.normalAttribute.needsUpdate = true;
     entry.colorAttribute.needsUpdate = true;
 
-    // The live prefix of the shared index buffer. Three honours drawRange in
-    // BOTH the renderer and Mesh.raycast, so the unused tail is neither drawn
-    // nor pickable — verified against three 0.185 src/objects/Mesh.js.
-    entry.mesh.geometry.setDrawRange(0, counts.indexCount);
+    // The live prefix of the buffers. Three honours drawRange in BOTH the
+    // renderer and Mesh.raycast, so the unused tail is neither drawn nor
+    // pickable — verified against three 0.185 src/objects/Mesh.js. On
+    // non-indexed geometry the range counts VERTICES.
+    entry.mesh.geometry.setDrawRange(0, counts.vertexCount);
 
     // Heights changed, so the culling/raycast bound is stale. Skipping it makes
     // edited chunks vanish at certain camera angles and stop being clickable.
@@ -190,32 +232,22 @@ export function createTerrainMeshes(
 
   const createChunkMesh = (chunkIdx: number): ChunkMesh => {
     const buffers = createChunkGeometryBuffers();
-
-    const positionAttribute = new BufferAttribute(buffers.positions, 3);
-    const normalAttribute = new BufferAttribute(buffers.normals, 3);
-    const colorAttribute = new BufferAttribute(buffers.colors, 3);
-    // All three attributes are rewritten on every edit that touches this chunk.
-    positionAttribute.setUsage(DynamicDrawUsage);
-    normalAttribute.setUsage(DynamicDrawUsage);
-    colorAttribute.setUsage(DynamicDrawUsage);
-
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', positionAttribute);
-    geometry.setAttribute('normal', normalAttribute);
-    geometry.setAttribute('color', colorAttribute);
-    geometry.setIndex(sharedIndex);
-
-    const mesh = new Mesh(geometry, material);
+    // The mesh starts on an empty geometry that bindGeometry immediately
+    // replaces; it exists only so the entry is well-typed before its buffers
+    // are bound.
+    const mesh = new Mesh(new BufferGeometry(), material);
+    const placeholder = new BufferAttribute(new Float32Array(0), 3);
     const entry: ChunkMesh = {
       mesh,
       buffers,
-      positionAttribute,
-      normalAttribute,
-      colorAttribute,
+      positionAttribute: placeholder,
+      normalAttribute: placeholder,
+      colorAttribute: placeholder,
     };
+    bindGeometry(entry);
     // One code path fills the buffers and sets the draw range, whether the
     // chunk is new or being re-patched — a mesh created with a stale (default,
-    // Infinity) draw range would draw its whole worst-case tail on frame one.
+    // Infinity) draw range would draw its whole unwritten tail on frame one.
     writeChunk(chunkIdx, entry);
 
     group.add(mesh);
@@ -224,12 +256,6 @@ export function createTerrainMeshes(
 
   const disposeEntry = (entry: ChunkMesh): void => {
     group.remove(entry.mesh);
-    // Disposing a geometry releases the GPU buffers of every attribute it
-    // holds, including the shared index one. That is safe here because
-    // meshes are only ever removed by clear(), which removes ALL of them at
-    // once and is followed by a whole new TerrainMeshes instance with its own
-    // shared attributes — no surviving mesh is left pointing at a released
-    // buffer. (Three would re-upload one anyway; this just avoids the churn.)
     entry.mesh.geometry.dispose();
   };
 
