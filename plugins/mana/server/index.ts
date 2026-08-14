@@ -16,6 +16,16 @@
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, sculptOptionsOf } from '@terrace/shared';
 import type { SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
+// The difficulty band core publishes (WorldApi.difficulty lives inside it). A
+// RUNTIME import into core, unlike the type-only one below, and the dependency
+// runs the allowed direction — plugins depend on core, never the reverse — so
+// this plugin's two anchors stay pinned to the ends of core's own scale instead
+// of restating them as literals.
+import {
+  DEFAULT_WORLD_DIFFICULTY,
+  MAX_WORLD_DIFFICULTY,
+  MIN_WORLD_DIFFICULTY,
+} from '../../../server/src/config.ts';
 // Type-only import of the plugin contract (erased at runtime). It reaches into
 // server/src because core publishes no plugin-API entry point yet — see the
 // API-gap notes in the Phase 2 report.
@@ -132,38 +142,100 @@ export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = 3;
 export const MANA_CAPACITY =
   FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT;
 
+// ────────────────────────────────────────────────────────────────────────────
+// REGEN IS DERIVED FROM THE WORLD'S DIFFICULTY (owner-settled 2026-08-14: "warm
+// maps regenerate 200/s, difficult maps 20/s").
+//
+// Core owns a neutral per-world scalar — WorldApi.difficulty, an integer in
+// [1, 100] where 1 is warm/forgiving and 100 is punishing — and attaches no
+// mechanic to it whatsoever. mana is its first consumer, and this is the whole
+// of mana's interpretation: the pace of the economy IS what "difficulty" means
+// to a plugin whose only mechanic is a spending limit. A warm world hands the
+// player mana faster than they can plausibly spend it, so the veto is nearly
+// never felt; a punishing one makes every sculpt a decision.
+//
+// This replaces a FLAT default of 20/s. A world that leaves both settings alone
+// therefore regenerates faster than it used to (110.9/s at the default
+// difficulty of 50, up from 20/s) — intended, and the mid-scale answer to the
+// owner's two anchors rather than a retune of the old number.
+//
+// NOTE: mana is an economy, not terrain math — the determinism contract in
+// CLAUDE.md governs shared/'s heightmap ops and does not apply here, so a
+// fractional rate and a fractional pool are both fine. State is still
+// reproducible: regen is driven purely by the fixed tick period the host passes
+// in, never by wall-clock time.
+// ────────────────────────────────────────────────────────────────────────────
+
 /**
- * DEFAULT regeneration, in mana units per second of simulated time, for a world
- * whose deployment does not configure one. 20/s = one point stamp
- * (MANA_COST_PER_MIN_RADIUS_SCULPT = 6) every 0.3 s sustained, and a full
- * empty-to-capacity refill in MANA_CAPACITY / 20 = 40.5 s. Slow enough to be
- * felt, fast enough that a self-hoster poking at a fresh world is never left
- * staring at an empty gauge.
+ * The WARM anchor: regen at MIN_WORLD_DIFFICULTY, in mana units per second of
+ * simulated time. The owner's number for an easy map.
  *
- * Deliberately NOT retuned when volume pricing landed: the number that changed
- * is what a sculpt costs, and the refill time moving from 30 s to 40.5 s is the
- * pool getting bigger, not the world getting slower. Per second, this still buys
- * more sculpting than the flat price did (20/s bought 0.8 sculpts/s at 25 each,
- * and buys 3.3 point stamps/s at 6).
- *
- * Per-world overrides arrive through MANA_REGEN_ENV (see below): the pace of an
- * economy is a property of the world being hosted — a sandbox for two friends
- * and a persistent server for thirty want different answers — not of this
- * plugin, and the client HUD reads the rate off the wire rather than assuming
- * this number.
- *
- * NOTE: mana is an economy, not terrain math — the determinism contract in
- * CLAUDE.md governs shared/'s heightmap ops and does not apply here, so a
- * fractional pool is fine. State is still reproducible: regen is driven purely
- * by the fixed tick period the host passes in, never by wall-clock time.
+ * What it buys, at the shipped prices: 200/s is 33 point stamps a second
+ * (MANA_COST_PER_MIN_RADIUS_SCULPT = 6) against a held brush that emits ~8
+ * intents/s, and a full empty-to-capacity refill in MANA_CAPACITY / 200 ≈ 4 s.
+ * Fine detailing is effectively free at this end of the scale and only the
+ * biggest brushes are ever rationed, which is what "warm" is meant to feel like.
+ * It sits well inside the configurable band (MAX_MANA_REGEN_PER_SECOND = 810).
  */
-export const DEFAULT_MANA_REGEN_PER_SECOND = 20;
+export const MANA_REGEN_AT_DIFFICULTY_1 = 200;
+
+/**
+ * The PUNISHING anchor: regen at MAX_WORLD_DIFFICULTY. The owner's number for a
+ * difficult map, and — not by coincidence — the flat default this derivation
+ * replaces: 3.3 point stamps a second sustained, a full refill in
+ * MANA_CAPACITY / 20 = 40.5 s, an economy that is felt continuously.
+ */
+export const MANA_REGEN_AT_DIFFICULTY_100 = 20;
+
+/**
+ * This world's DEFAULT regen rate, derived from its difficulty by linear
+ * interpolation between the two anchors above:
+ *
+ *   t         = (difficulty − 1) / (100 − 1)
+ *   regen(d)  = MANA_REGEN_AT_DIFFICULTY_1
+ *               + t × (MANA_REGEN_AT_DIFFICULTY_100 − MANA_REGEN_AT_DIFFICULTY_1)
+ *             = 200 − 180 × (d − 1) / 99
+ *
+ * so regen(1) = 200/s exactly, regen(100) = 20/s exactly, and the default
+ * difficulty of 50 gives 200 − 180 × 49/99 = 110.909…/s — the documented
+ * midpoint an unconfigured world runs at. Linear because the scalar is a
+ * dimensionless 1–100 dial with no natural curve to it: any easing would be a
+ * second tuning decision hidden inside a first one, and a plugin author reading
+ * "difficulty 25" should be able to predict the rate.
+ *
+ * The endpoints are read from core's band rather than written as 1 and 100, so
+ * the two anchors stay pinned to the ends of whatever that band is; the test
+ * suite asserts the names still match (MANA_REGEN_AT_DIFFICULTY_1 ↔
+ * MIN_WORLD_DIFFICULTY) so a rescale in core cannot leave these misnamed.
+ *
+ * Defensive on input: a non-finite difficulty degrades to core's own default
+ * rather than propagating NaN into every pool (a NaN balance compares false
+ * against every threshold, which freezes a player out permanently and silently),
+ * and the interpolation parameter is clamped so an out-of-band difficulty cannot
+ * extrapolate past the anchors. WorldApi.difficulty already guarantees both;
+ * this function is exported and cheap to make total.
+ */
+export function manaRegenForDifficulty(difficulty: number): number {
+  const rated = Number.isFinite(difficulty) ? difficulty : DEFAULT_WORLD_DIFFICULTY;
+  const span = MAX_WORLD_DIFFICULTY - MIN_WORLD_DIFFICULTY;
+  const t = Math.min(1, Math.max(0, (rated - MIN_WORLD_DIFFICULTY) / span));
+  return (
+    MANA_REGEN_AT_DIFFICULTY_1 +
+    t * (MANA_REGEN_AT_DIFFICULTY_100 - MANA_REGEN_AT_DIFFICULTY_1)
+  );
+}
 
 /**
  * Environment variable naming this world's regen rate, in mana units per
  * second. Read at onWorldCreate (like invite's SHARE_URL) rather than at module
  * load, so tests and a supervisor that restarts the world see the current
  * environment.
+ *
+ * PRECEDENCE: an explicitly set MANA_REGEN_PER_S ALWAYS beats the difficulty
+ * derivation. A host who writes a number means that number — they are configuring
+ * this plugin directly, and having a world-level dial silently overrule them
+ * would make the setting a lie. Difficulty is the DEFAULT, i.e. the answer for a
+ * deployment that has said nothing about mana specifically.
  */
 export const MANA_REGEN_ENV = 'MANA_REGEN_PER_S';
 
@@ -212,29 +284,64 @@ export const MIN_MANA_REGEN_PER_SECOND =
 export const MAX_MANA_REGEN_PER_SECOND = MANA_CAPACITY / MIN_FULL_REFILL_S;
 
 /** Logged when MANA_REGEN_PER_S is set to something unusable. */
-export const MANA_REGEN_INVALID_WARNING = `[mana] ${MANA_REGEN_ENV} is not a positive finite number; falling back to ${DEFAULT_MANA_REGEN_PER_SECOND}/s`;
+export const MANA_REGEN_INVALID_WARNING = `[mana] ${MANA_REGEN_ENV} is not a positive finite number; falling back to this world's difficulty-derived rate`;
 
 /** Logged when MANA_REGEN_PER_S is usable but outside the supported band. */
 export const MANA_REGEN_CLAMPED_WARNING = `[mana] ${MANA_REGEN_ENV} clamped into [${MIN_MANA_REGEN_PER_SECOND}, ${MAX_MANA_REGEN_PER_SECOND}] mana/s`;
 
 /**
+ * The supported band, applied to WHICHEVER SOURCE WON — explicit environment or
+ * difficulty derivation. The derived rates (20…200/s) sit comfortably inside it,
+ * so today this only ever bites a hand-configured value; it is applied to both
+ * anyway, because the band is the plugin's statement about what rates the
+ * economy still works at, not a statement about text parsing. Re-anchor the
+ * derivation past a bound one day and it clamps instead of shipping a world
+ * nobody can play.
+ */
+function clampManaRegenPerSecond(rate: number, onClamp?: () => void): number {
+  if (rate < MIN_MANA_REGEN_PER_SECOND) {
+    onClamp?.();
+    return MIN_MANA_REGEN_PER_SECOND;
+  }
+  if (rate > MAX_MANA_REGEN_PER_SECOND) {
+    onClamp?.();
+    return MAX_MANA_REGEN_PER_SECOND;
+  }
+  return rate;
+}
+
+/**
  * UNTRUSTED INPUT (deployment configuration, i.e. a human with a text editor).
  *
- * Resolves the configured regen rate, in three layers, because each failure
- * mode has a different right answer:
+ * Resolves this world's base regen rate. `raw` is MANA_REGEN_PER_S as the host
+ * wrote it; `difficulty` is WorldApi.difficulty.
  *
- *   unset / blank            → the default. Not configuring is not an error.
- *   not a positive finite    → the default, loudly. NaN or 0 or -5 would freeze
- *     number                   every pool at its starting balance forever (and
- *                              NaN would poison it permanently), so this must
- *                              never be taken at face value.
+ * PRECEDENCE, and it is one-way: an EXPLICIT, usable MANA_REGEN_PER_S always
+ * wins. Difficulty only supplies the DEFAULT — the answer for a deployment that
+ * has configured this plugin not at all.
+ *
+ * Four layers, because each failure mode has a different right answer:
+ *
+ *   unset / blank            → the difficulty-derived rate. Not configuring is
+ *                              not an error; it is how you opt into the dial.
+ *   not a positive finite    → the difficulty-derived rate, loudly. NaN or 0 or
+ *     number                   -5 would freeze every pool at its starting
+ *                              balance forever (and NaN would poison it
+ *                              permanently), so this must never be taken at face
+ *                              value. It is treated as "not configured", not as
+ *                              a reason to refuse to boot: mana is a plugin, and
+ *                              a typo in an optional setting should not cost a
+ *                              self-hoster their world.
+ *   explicit and usable      → that number, whatever the difficulty says.
  *   outside the band         → clamped, loudly. A typo'd extra zero should slow
  *                              or speed the world to its documented limit, not
  *                              silently ship a world nobody can play.
  */
-export function resolveManaRegenPerSecond(raw: string | undefined): number {
+export function resolveManaRegenPerSecond(raw: string | undefined, difficulty: number): number {
+  const derived = manaRegenForDifficulty(difficulty);
+
   if (typeof raw !== 'string' || raw.trim().length === 0) {
-    return DEFAULT_MANA_REGEN_PER_SECOND;
+    return clampManaRegenPerSecond(derived);
   }
 
   // Number() rather than parseFloat(): parseFloat('20abc') is 20, which would
@@ -242,25 +349,20 @@ export function resolveManaRegenPerSecond(raw: string | undefined): number {
   const parsed = Number(raw.trim());
   if (!Number.isFinite(parsed) || parsed <= 0) {
     console.warn(MANA_REGEN_INVALID_WARNING);
-    return DEFAULT_MANA_REGEN_PER_SECOND;
+    return clampManaRegenPerSecond(derived);
   }
 
-  if (parsed < MIN_MANA_REGEN_PER_SECOND) {
+  return clampManaRegenPerSecond(parsed, () => {
     console.warn(MANA_REGEN_CLAMPED_WARNING);
-    return MIN_MANA_REGEN_PER_SECOND;
-  }
-  if (parsed > MAX_MANA_REGEN_PER_SECOND) {
-    console.warn(MANA_REGEN_CLAMPED_WARNING);
-    return MAX_MANA_REGEN_PER_SECOND;
-  }
-  return parsed;
+  });
 }
 
 /**
- * This world's base regen rate: the default until onWorldCreate resolves the
- * environment. Perks scale it per player (see manaRegenFor).
+ * This world's base regen rate: the rate of a default-difficulty world until
+ * onWorldCreate resolves the real one. Perks scale it per player (see
+ * manaRegenFor).
  */
-let regenPerSecond: number = DEFAULT_MANA_REGEN_PER_SECOND;
+let regenPerSecond: number = manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY);
 
 /** This world's base regen rate, before any player's perk. */
 export function manaRegenPerSecond(): number {
@@ -598,7 +700,10 @@ export const plugin: TerracePlugin = {
     api = world;
     // Read here, not at module load: a supervisor that recreates the world (and
     // every test that boots one) must see the environment as it is NOW.
-    regenPerSecond = resolveManaRegenPerSecond(process.env[MANA_REGEN_ENV]);
+    // Explicit MANA_REGEN_PER_S if the host set one, otherwise derived from THIS
+    // world's difficulty — which is why it is read here, from the WorldApi, and
+    // not from a module-level constant.
+    regenPerSecond = resolveManaRegenPerSecond(process.env[MANA_REGEN_ENV], world.difficulty);
   },
 
   onPlayerJoin(player: Player): void {
@@ -638,7 +743,8 @@ export function manaBalanceOf(playerId: string): number | null {
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetManaState(): void {
   api = null;
-  regenPerSecond = DEFAULT_MANA_REGEN_PER_SECOND;
+  // Back to the pre-onWorldCreate value: the rate of a default-difficulty world.
+  regenPerSecond = manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY);
   poolsByPlayer.clear();
   perksByPlayer.clear();
 }

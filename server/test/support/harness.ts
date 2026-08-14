@@ -38,16 +38,22 @@ export class RecordingSink implements MessageSink {
  * A flat world with exactly the listed chunks unlocked — bypassing the fresh
  * world's starter region so tests can put a locked chunk exactly where they
  * need one.
+ *
+ * `difficulty` is the world's WORLD_DIFFICULTY rating; omitted, it is core's
+ * default, exactly as an unconfigured deployment would get. Suites whose
+ * arithmetic depends on a plugin's difficulty-derived numbers pass one
+ * explicitly rather than inheriting whatever the default happens to be.
  */
 export function worldWithUnlockedChunks(
   size: number,
   chunks: ReadonlyArray<readonly [number, number]>,
+  difficulty?: number,
 ): World {
   const mask = createChunkMask(size);
   for (const [cx, cy] of chunks) {
     unlockChunk(mask, chunkIndex(size, cx, cy));
   }
-  return World.restore(size, createHeightmap(size).cells, mask);
+  return World.restore(size, createHeightmap(size).cells, mask, difficulty);
 }
 
 /** Wraps a plugin object as if discovery had loaded it from plugins/<name>. */

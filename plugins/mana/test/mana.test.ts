@@ -13,6 +13,11 @@ import {
   sculptOptionsOf,
   type SculptIntent,
 } from '@terrace/shared';
+import {
+  DEFAULT_WORLD_DIFFICULTY,
+  MAX_WORLD_DIFFICULTY,
+  MIN_WORLD_DIFFICULTY,
+} from '../../../server/src/config.ts';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -25,7 +30,6 @@ import {
 import { plugin as revealPlugin, resetRevealState } from '../../reveal/server/index.ts';
 import { sculptManaCost } from '../pricing.ts';
 import {
-  DEFAULT_MANA_REGEN_PER_SECOND,
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
   INSUFFICIENT_MANA_REASON,
   MANA_BALANCE_MESSAGE,
@@ -36,6 +40,8 @@ import {
   MANA_PER_BAND_CELL,
   MANA_PERK_MAX_MULTIPLIER,
   MANA_PERK_MIN_MULTIPLIER,
+  MANA_REGEN_AT_DIFFICULTY_1,
+  MANA_REGEN_AT_DIFFICULTY_100,
   MANA_REGEN_ENV,
   MAX_DRAINED_WAIT_S,
   MAX_MANA_REGEN_PER_SECOND,
@@ -47,6 +53,7 @@ import {
   manaPerBandCellFor,
   manaPerkOf,
   manaRegenFor,
+  manaRegenForDifficulty,
   manaRegenPerSecond,
   plugin as manaPlugin,
   resetManaState,
@@ -65,6 +72,24 @@ const INTERIOR_CELL = { x: 24, y: 24 } as const;
 
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
+
+/**
+ * The difficulty every test in this file boots at unless it says otherwise.
+ *
+ * MAX_WORLD_DIFFICULTY, deliberately: regen is now DERIVED from the world's
+ * difficulty (see manaRegenForDifficulty), and the hardest world's anchor is
+ * exactly MANA_REGEN_AT_DIFFICULTY_100 = 20 mana/s — a whole number that divides
+ * the tick period and the point-stamp price evenly, so every "ticks to earn one
+ * sculpt back" count in this suite stays an exact integer instead of an IEEE
+ * near-miss. That was true of the flat 20/s default this replaced, so the suite's
+ * arithmetic is unchanged; what changed is that the rate is now stated rather
+ * than inherited. The derivation itself is tested at all three anchors in the
+ * "difficulty-derived regen" block below.
+ */
+const SUITE_DIFFICULTY = MAX_WORLD_DIFFICULTY;
+
+/** The regen rate SUITE_DIFFICULTY produces. Exact, by the anchor above. */
+const SUITE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
 
 const PLAYER: Player = { id: 'session-1', name: 'Tester' };
 
@@ -107,11 +132,11 @@ interface Harness {
  * sorts directories alphabetically: mana, then reveal) and walks the same boot
  * sequence server/src/index.ts does.
  */
-function boot(): Harness {
+function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   resetManaState();
   resetRevealState();
 
-  const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK]);
+  const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], difficulty);
   const sink = new RecordingSink();
   world.setSink(sink);
 
@@ -158,7 +183,7 @@ describe('mana plugin', () => {
       capacity: MANA_CAPACITY,
       // A RATE, not a price: the client prices its own intents with it.
       manaPerBandCell: MANA_PER_BAND_CELL,
-      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
   });
 
@@ -218,7 +243,7 @@ describe('mana plugin', () => {
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
 
     // Exactly enough simulated time to earn one sculpt back.
-    const ticksToRefundOneSculpt = POINT_COST / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
+    const ticksToRefundOneSculpt = POINT_COST / (SUITE_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToRefundOneSculpt; n++) harness.host.tick(TICK_DT);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
 
@@ -232,7 +257,7 @@ describe('mana plugin', () => {
     }
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
 
-    const ticksToAffordOneSculpt = POINT_COST / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
+    const ticksToAffordOneSculpt = POINT_COST / (SUITE_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToAffordOneSculpt; n++) harness.host.tick(TICK_DT);
 
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
@@ -369,7 +394,7 @@ describe('mana perks', () => {
     // otherwise both players simply refill to capacity and the perk is
     // invisible. Derived, not guessed: enough point stamps to leave more room
     // than the perked player can earn in the second that follows, plus one.
-    const sculptsToDrain = Math.ceil((DEFAULT_MANA_REGEN_PER_SECOND * 2) / POINT_COST) + 1;
+    const sculptsToDrain = Math.ceil((SUITE_REGEN_PER_SECOND * 2) / POINT_COST) + 1;
     for (let n = 0; n < sculptsToDrain; n++) {
       sculptAs(PLAYER);
       sculptAs(OTHER_PLAYER);
@@ -382,8 +407,8 @@ describe('mana perks', () => {
 
     const perkedGain = (manaBalanceOf(PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
     const plainGain = (manaBalanceOf(OTHER_PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
-    expect(plainGain).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
-    expect(perkedGain).toBe(DEFAULT_MANA_REGEN_PER_SECOND * 2);
+    expect(plainGain).toBe(SUITE_REGEN_PER_SECOND);
+    expect(perkedGain).toBe(SUITE_REGEN_PER_SECOND * 2);
 
     // Capacity is deliberately NOT scaled by the perk.
     for (let n = 0; n < 100; n++) harness.host.tick(TICK_DT);
@@ -476,9 +501,10 @@ describe('mana perks', () => {
 
 // ────────────────────────────────────────────────────────────────────────────
 // PER-WORLD REGEN RATE. The rate is deployment configuration (MANA_REGEN_PER_S)
-// with a default, so the three things worth pinning down are: an unconfigured
-// world still works, a configured one is obeyed, and a MIS-configured one can
-// neither freeze the economy nor delete it.
+// over a difficulty-derived default, so the things worth pinning down are: an
+// unconfigured world still works, a configured one is obeyed WHATEVER the
+// difficulty says, and a MIS-configured one can neither freeze the economy nor
+// delete it.
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('mana regen configuration', () => {
@@ -497,16 +523,16 @@ describe('mana regen configuration', () => {
     else process.env[MANA_REGEN_ENV] = originalEnv;
   });
 
-  it('falls back to the default when unset or blank', () => {
-    expect(resolveManaRegenPerSecond(undefined)).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
-    expect(resolveManaRegenPerSecond('')).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
-    expect(resolveManaRegenPerSecond('   ')).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+  it('falls back to the difficulty-derived rate when unset or blank', () => {
+    expect(resolveManaRegenPerSecond(undefined, SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('', SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('   ', SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
     expect(console.warn).not.toHaveBeenCalled(); // not configuring is not an error
 
     const harness = boot();
-    expect(manaRegenPerSecond()).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(manaRegenPerSecond()).toBe(SUITE_REGEN_PER_SECOND);
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
-      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
   });
 
@@ -525,30 +551,30 @@ describe('mana regen configuration', () => {
 
   it('rejects anything that is not a positive finite number', () => {
     for (const bad of ['abc', '0', '-5', 'NaN', 'Infinity', '20abc', 'true']) {
-      expect(resolveManaRegenPerSecond(bad)).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+      expect(resolveManaRegenPerSecond(bad, SUITE_DIFFICULTY)).toBe(SUITE_REGEN_PER_SECOND);
     }
     expect(console.warn).toHaveBeenCalledTimes(7);
 
     // End to end: a garbage value must leave a WORKING world, not a frozen one.
     process.env[MANA_REGEN_ENV] = 'twenty';
     const harness = boot();
-    expect(manaRegenPerSecond()).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(manaRegenPerSecond()).toBe(SUITE_REGEN_PER_SECOND);
     // Spend on the biggest brush, so a full second of regen fits in the hole it
     // leaves rather than being clipped by the capacity cap.
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
     const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
     for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
-    expect((manaBalanceOf(PLAYER.id) ?? 0) - afterSpend).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect((manaBalanceOf(PLAYER.id) ?? 0) - afterSpend).toBe(SUITE_REGEN_PER_SECOND);
   });
 
   it('clamps a rate outside the supported band into it', () => {
-    expect(resolveManaRegenPerSecond('0.0001')).toBe(MIN_MANA_REGEN_PER_SECOND);
-    expect(resolveManaRegenPerSecond('1e9')).toBe(MAX_MANA_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('0.0001', SUITE_DIFFICULTY)).toBe(MIN_MANA_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('1e9', SUITE_DIFFICULTY)).toBe(MAX_MANA_REGEN_PER_SECOND);
     // The band's own edges are configurable values, not rejected ones.
-    expect(resolveManaRegenPerSecond(String(MIN_MANA_REGEN_PER_SECOND))).toBe(
+    expect(resolveManaRegenPerSecond(String(MIN_MANA_REGEN_PER_SECOND), SUITE_DIFFICULTY)).toBe(
       MIN_MANA_REGEN_PER_SECOND,
     );
-    expect(resolveManaRegenPerSecond(String(MAX_MANA_REGEN_PER_SECOND))).toBe(
+    expect(resolveManaRegenPerSecond(String(MAX_MANA_REGEN_PER_SECOND), SUITE_DIFFICULTY)).toBe(
       MAX_MANA_REGEN_PER_SECOND,
     );
 
@@ -583,6 +609,154 @@ describe('mana regen configuration', () => {
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
       regenPerSecond: configured * 2,
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// DIFFICULTY-DERIVED REGEN (owner-settled 2026-08-14: "warm maps 200/s,
+// difficult maps 20/s"). Core publishes a neutral 1–100 scalar and attaches no
+// mechanic to it; mana's interpretation is the pace of the economy. What has to
+// hold: both anchors are exact, the middle is the documented interpolation, an
+// explicit MANA_REGEN_PER_S outranks the whole thing, and the supported band
+// still contains whichever source won.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('difficulty-derived regen', () => {
+  const originalEnv = process.env[MANA_REGEN_ENV];
+
+  beforeEach(() => {
+    delete process.env[MANA_REGEN_ENV];
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalEnv === undefined) delete process.env[MANA_REGEN_ENV];
+    else process.env[MANA_REGEN_ENV] = originalEnv;
+  });
+
+  /** The rate the joining player was actually told, off the wire. */
+  function pushedRegen(harness: Harness): number {
+    const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
+    expect(pushes.length).toBeGreaterThan(0);
+    return (pushes[0].payload as { regenPerSecond: number }).regenPerSecond;
+  }
+
+  it('anchors the scale where the owner set it, and names the anchors correctly', () => {
+    expect(MANA_REGEN_AT_DIFFICULTY_1).toBe(200);
+    expect(MANA_REGEN_AT_DIFFICULTY_100).toBe(20);
+    // The names claim these sit at difficulty 1 and 100. Assert that against
+    // CORE's band, so rescaling WORLD_DIFFICULTY cannot leave them misnamed —
+    // the same plugin-side relation check wildlife uses for the seabed depth.
+    expect(MIN_WORLD_DIFFICULTY).toBe(1);
+    expect(MAX_WORLD_DIFFICULTY).toBe(100);
+  });
+
+  it('gives a WARM world 200/s, on the wire', () => {
+    const harness = boot(MIN_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_1);
+    expect(pushedRegen(harness)).toBe(MANA_REGEN_AT_DIFFICULTY_1);
+  });
+
+  it('gives a PUNISHING world 20/s, on the wire', () => {
+    const harness = boot(MAX_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_100);
+    expect(pushedRegen(harness)).toBe(MANA_REGEN_AT_DIFFICULTY_100);
+  });
+
+  it('gives the default world the documented midpoint, ≈110.9/s', () => {
+    // The formula stated independently of the implementation:
+    //   regen(d) = 200 + (d − 1)/(100 − 1) × (20 − 200)
+    const expected =
+      MANA_REGEN_AT_DIFFICULTY_1 +
+      ((DEFAULT_WORLD_DIFFICULTY - MIN_WORLD_DIFFICULTY) /
+        (MAX_WORLD_DIFFICULTY - MIN_WORLD_DIFFICULTY)) *
+        (MANA_REGEN_AT_DIFFICULTY_100 - MANA_REGEN_AT_DIFFICULTY_1);
+
+    const harness = boot(DEFAULT_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(expected);
+    expect(pushedRegen(harness)).toBe(expected);
+    // The number the comments and .env.example quote to self-hosters.
+    expect(expected).toBeCloseTo(110.909, 3);
+  });
+
+  it('interpolates linearly and monotonically across the whole scale', () => {
+    let previous = Number.POSITIVE_INFINITY;
+    for (let difficulty = MIN_WORLD_DIFFICULTY; difficulty <= MAX_WORLD_DIFFICULTY; difficulty++) {
+      const rate = manaRegenForDifficulty(difficulty);
+      // Harder is never faster, and every rate lies between the two anchors...
+      expect(rate).toBeLessThan(previous);
+      expect(rate).toBeLessThanOrEqual(MANA_REGEN_AT_DIFFICULTY_1);
+      expect(rate).toBeGreaterThanOrEqual(MANA_REGEN_AT_DIFFICULTY_100);
+      // ...and inside the band the economy is documented to work at, so the
+      // derivation never needs the clamp to save it.
+      expect(rate).toBeGreaterThanOrEqual(MIN_MANA_REGEN_PER_SECOND);
+      expect(rate).toBeLessThanOrEqual(MAX_MANA_REGEN_PER_SECOND);
+      previous = rate;
+    }
+  });
+
+  it('lets a warm world actually outspend a punishing one', () => {
+    // Not just a number on the wire: the same second of simulated time buys ten
+    // times as much sculpting at difficulty 1 as at difficulty 100.
+    function earnedInOneSecond(difficulty: number): number {
+      const harness = boot(difficulty);
+      sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
+      const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
+      for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
+      return (manaBalanceOf(PLAYER.id) ?? 0) - afterSpend;
+    }
+
+    expect(earnedInOneSecond(MIN_WORLD_DIFFICULTY)).toBe(MANA_REGEN_AT_DIFFICULTY_1);
+    expect(earnedInOneSecond(MAX_WORLD_DIFFICULTY)).toBe(MANA_REGEN_AT_DIFFICULTY_100);
+  });
+
+  it('lets an EXPLICIT MANA_REGEN_PER_S beat the difficulty, in both directions', () => {
+    // A host who writes a number means that number: the world dial supplies the
+    // default and nothing more.
+    const configured = 7;
+    process.env[MANA_REGEN_ENV] = String(configured);
+
+    for (const difficulty of [MIN_WORLD_DIFFICULTY, DEFAULT_WORLD_DIFFICULTY, MAX_WORLD_DIFFICULTY]) {
+      const harness = boot(difficulty);
+      expect(manaRegenPerSecond()).toBe(configured);
+      expect(pushedRegen(harness)).toBe(configured);
+    }
+
+    // Explicitly FASTER than the warmest world's default is honoured too — the
+    // anchors bound the derivation, not the setting.
+    process.env[MANA_REGEN_ENV] = String(MANA_REGEN_AT_DIFFICULTY_1 * 2);
+    boot(MAX_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_1 * 2);
+  });
+
+  it('still clamps an explicit rate, whatever the difficulty', () => {
+    // The band applies to whichever source wins.
+    process.env[MANA_REGEN_ENV] = '1e9';
+    boot(MIN_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(MAX_MANA_REGEN_PER_SECOND);
+
+    process.env[MANA_REGEN_ENV] = '0.0001';
+    boot(MIN_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(MIN_MANA_REGEN_PER_SECOND);
+  });
+
+  it('falls back to the DIFFICULTY rate when the explicit value is junk', () => {
+    process.env[MANA_REGEN_ENV] = 'twenty';
+    const harness = boot(MIN_WORLD_DIFFICULTY);
+    expect(manaRegenPerSecond()).toBe(MANA_REGEN_AT_DIFFICULTY_1);
+    expect(pushedRegen(harness)).toBe(MANA_REGEN_AT_DIFFICULTY_1);
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it('is total on a difficulty core could never hand it', () => {
+    // WorldApi.difficulty is already clamped to the band; this is the second
+    // layer, so a direct caller cannot poison every pool with NaN.
+    expect(manaRegenForDifficulty(Number.NaN)).toBe(
+      manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY),
+    );
+    expect(manaRegenForDifficulty(-100)).toBe(MANA_REGEN_AT_DIFFICULTY_1);
+    expect(manaRegenForDifficulty(10_000)).toBe(MANA_REGEN_AT_DIFFICULTY_100);
   });
 });
 
@@ -666,7 +840,7 @@ describe('client local intent gate', () => {
       balance: 30,
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
-      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
     expect(gateLocalSculpt(POINT_INTENT)).toBe(true); // 30 -> 24, affordable
     expect(manaPool()?.balance).toBe(30 - POINT_COST);
@@ -696,7 +870,7 @@ describe('client local intent gate', () => {
       balance: MANA_CAPACITY,
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
-      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
     };
 
     setManaPool(fullPool);
@@ -949,7 +1123,7 @@ describe('gate / server parity — the same intent, the same fee', () => {
       balance: stranded,
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
-      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
     expect(gateLocalSculpt(plateau)).toBe(false);
     expect(
@@ -965,7 +1139,7 @@ describe('gate / server parity — the same intent, the same fee', () => {
       balance: MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
-      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+      regenPerSecond: SUITE_REGEN_PER_SECOND,
     });
     expect(gateLocalSculpt(plateau)).toBe(true);
   });

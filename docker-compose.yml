@@ -25,6 +25,11 @@ services:
       # Changing this against an existing database is refused at boot, not
       # silently reinterpreted.
       WORLD_SIZE: ${WORLD_SIZE:-512}
+      # How hard this world is meant to be, 1–100 (1 = warm, 100 = punishing).
+      # Core attaches no mechanics to it; plugins read it and decide what it
+      # means for them. mana derives its default regen rate from it: 200/s at 1,
+      # ~110.9/s at 50, 20/s at 100. Out-of-range values are clamped, not fatal.
+      WORLD_DIFFICULTY: ${WORLD_DIFFICULTY:-50}
       # Listen port INSIDE the container; the mapping below uses the same number
       # on the host so the two can never drift apart.
       PORT: ${PORT:-2567}
@@ -38,6 +43,13 @@ services:
       # World snapshot cadence in seconds; a snapshot is written only when the
       # world actually changed, and the last 10 are kept.
       SNAPSHOT_INTERVAL_S: ${SNAPSHOT_INTERVAL_S:-60}
+      # mana plugin (ignored when it is not installed). Empty by default, which
+      # the plugin reads as "not configured" and answers with the
+      # WORLD_DIFFICULTY-derived rate above. Set it in .env to override that
+      # outright — an explicit rate always beats the difficulty. Passed through
+      # here because .env.example documents it: without this line, setting it
+      # there would silently do nothing under Compose.
+      MANA_REGEN_PER_S: ${MANA_REGEN_PER_S:-}
     ports:
       - "${PORT:-2567}:${PORT:-2567}"
     volumes:
