@@ -105,6 +105,41 @@ export const SCULPT_REPEAT_INTERVAL_MS = 120;
  */
 export const TOUCH_STROKE_GRACE_MS = 100;
 
+// ---------------------------------------------------------------------------
+// Trackpad wheel gestures (input/wheelGestures.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wheel deltas at or above this magnitude (in pixel-mode events with no X
+ * component) are treated as discrete mouse-wheel notches. Mac/Windows mice
+ * report ≈100–120 per notch; a two-finger trackpad scroll streams small
+ * (often fractional) deltas well under this. Heuristic, not a proof — which
+ * is why the Controls panel carries a manual override.
+ */
+export const WHEEL_MOUSE_NOTCH_MIN_DELTA = 40;
+
+/**
+ * Milliseconds of wheel silence that end a gesture. Within a gesture the
+ * first classification is LOCKED, so one ambiguous delta mid-stream cannot
+ * flip a pan into a zoom; trackpads stream events far faster than this, and
+ * distinct human gestures are comfortably further apart.
+ */
+export const WHEEL_GESTURE_GAP_MS = 200;
+
+/**
+ * Zoom factor per unit of pinch delta: distance scales by
+ * PINCH_ZOOM_BASE^deltaY. 1.01 ≈ a 3× zoom across a full ~110-unit pinch
+ * stroke — matches what the same gesture does in the OS's own apps.
+ */
+export const PINCH_ZOOM_BASE = 1.01;
+
+/**
+ * Screen-heights of camera-distance-scaled travel per pixel of trackpad
+ * scroll. 1.5/1000: a full-height two-finger swipe moves the view by 1.5
+ * "screens" — brisk enough to cross a world, calm enough to aim.
+ */
+export const TRACKPAD_PAN_SPEED = 1.5 / 1000;
+
 /** Camera framing, in cells. */
 export const CAMERA_FOV_DEGREES = 55;
 export const CAMERA_NEAR = 0.1;

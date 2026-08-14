@@ -135,8 +135,12 @@ export function createClientPluginHost(
         unregisterFns.push(unregister);
         return unregister;
       },
-      registerHudPanel(component: Component) {
-        addPluginHudPanel({ pluginName: plugin.name, component });
+      registerHudPanel(component: Component, options?: { placement?: 'panel' | 'top-center' }) {
+        addPluginHudPanel({
+          pluginName: plugin.name,
+          component,
+          placement: options?.placement ?? 'panel',
+        });
       },
       onCanvasPress(handler) {
         pressHandlers.push(handler);

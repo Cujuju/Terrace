@@ -5,10 +5,18 @@
 import { createSignal } from 'solid-js';
 import type { Component } from 'solid-js';
 
+/**
+ * Where a plugin panel renders. 'panel' stacks inside the corner HUD panel;
+ * 'top-center' floats centred along the top edge of the screen (status
+ * displays that should read at a glance mid-play, like the mana gauge).
+ */
+export type HudPanelPlacement = 'panel' | 'top-center';
+
 export interface PluginHudPanel {
   /** Owning plugin — used as the render key and shown as the panel title. */
   readonly pluginName: string;
   readonly component: Component;
+  readonly placement: HudPanelPlacement;
 }
 
 const [pluginHudPanels, setPluginHudPanels] = createSignal<

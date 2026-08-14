@@ -50,8 +50,15 @@ export interface ClientPluginCtx {
    */
   onFrame(handler: (dt: number) => void): () => void;
 
-  /** Adds a Solid component to the HUD's plugin-panel stack. */
-  registerHudPanel(component: Component): void;
+  /**
+   * Adds a Solid component to the HUD. Default placement stacks it inside the
+   * corner panel; 'top-center' floats it centred along the top of the screen
+   * for at-a-glance status (gauges, timers).
+   */
+  registerHudPanel(
+    component: Component,
+    options?: { placement?: 'panel' | 'top-center' },
+  ): void;
 
   /**
    * Lets the plugin claim pointer presses on the canvas BEFORE the sculpt

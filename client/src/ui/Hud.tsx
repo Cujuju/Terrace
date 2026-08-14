@@ -71,6 +71,13 @@ export function Hud(): JSX.Element {
 
   return (
     <div class="hud">
+      {/* Top-centre plugin stack: at-a-glance status (mana gauge etc). */}
+      <div class="hud-top-center">
+        <For each={pluginHudPanels().filter((p) => p.placement === 'top-center')}>
+          {(panel) => <Dynamic component={panel.component} />}
+        </For>
+      </div>
+
       <div class="hud-panel">
         <div class="hud-row hud-status">
           {/* classList keeps the reactive read inline rather than in a const. */}
@@ -130,9 +137,9 @@ export function Hud(): JSX.Element {
           <ControlsPanel />
         </Show>
 
-        {/* Plugin panels (design §3.5): each client plugin may register one
-            Solid component; they stack under the core controls. */}
-        <For each={pluginHudPanels()}>
+        {/* Plugin panels (design §3.5): each client plugin may register
+            components; 'panel'-placed ones stack under the core controls. */}
+        <For each={pluginHudPanels().filter((p) => p.placement === 'panel')}>
           {(panel) => (
             <div class="hud-plugin-panel">
               <Dynamic component={panel.component} />

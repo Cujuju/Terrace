@@ -243,6 +243,24 @@ body {
   border-top: 1px solid var(--hud-border);
 }
 
+/* Top-centre plugin stack: floats clear of the corner panel; children take
+   pointer events themselves, the container never blocks the canvas. */
+.hud-top-center {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hud-top-center > * {
+  pointer-events: auto;
+}
+
 /* Invite plugin: the share URL must survive narrow panels intact. */
 .invite-url {
   font-size: 12px;
