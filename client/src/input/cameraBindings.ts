@@ -18,6 +18,7 @@ import {
   type ModifierState,
   type MouseButtonName,
 } from '../state/controlPrefs.ts';
+import { bindWheelCamera } from './wheelCamera.ts';
 
 export interface CameraBindings {
   dispose(): void;
@@ -84,11 +85,17 @@ export function bindCameraControls(
     capture: true,
   });
 
+  // Wheel events are the other half of camera input and follow the same
+  // capture-phase pattern; kept in a sibling module because they carry camera
+  // maths of their own rather than binding lookups.
+  const wheelGestures = bindWheelCamera(canvas, controls);
+
   return {
     dispose(): void {
       canvas.removeEventListener('pointerdown', onPointerDownCapture, {
         capture: true,
       });
+      wheelGestures.dispose();
     },
   };
 }

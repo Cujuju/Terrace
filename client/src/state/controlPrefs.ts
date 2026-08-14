@@ -149,13 +149,15 @@ export function setBinding(
   }
 }
 
-/** Resets mouse bindings AND the touch gesture — one button, whole scheme. */
+/** Resets every control preference — one button, whole scheme. */
 export function resetBindings(): void {
   setControlBindingsSignal(DEFAULT_BINDINGS);
   setTwoFingerGestureSignal(DEFAULT_TWO_FINGER_GESTURE);
+  setWheelBehaviourSignal(DEFAULT_WHEEL_BEHAVIOUR);
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);
+    localStorage.removeItem(WHEEL_STORAGE_KEY);
   } catch {
     // Ignore, as above.
   }
@@ -198,6 +200,52 @@ export function setTwoFingerGesture(gesture: TwoFingerGesture): void {
   setTwoFingerGestureSignal(gesture);
   try {
     localStorage.setItem(TOUCH_STORAGE_KEY, JSON.stringify({ twoFinger: gesture }));
+  } catch {
+    // Best effort; the in-memory setting still applies for this session.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wheel
+//
+// A trackpad two-finger scroll and a mouse wheel notch arrive as the same
+// `wheel` event, so the client classifies them heuristically
+// (input/wheelGestures.ts). Heuristics misread hardware eventually, so the user
+// gets an override: 'auto' classifies, 'zoom' forces every non-pinch wheel back
+// to OrbitControls' dolly, 'pan' forces trackpad panning. Pinch (ctrlKey) is
+// unambiguous and always zooms, whatever this says.
+// ---------------------------------------------------------------------------
+
+export type WheelBehaviour = 'auto' | 'zoom' | 'pan';
+
+export const DEFAULT_WHEEL_BEHAVIOUR: WheelBehaviour = 'auto';
+
+const WHEEL_STORAGE_KEY = 'terrace.wheelControls.v1';
+
+function loadWheelBehaviour(): WheelBehaviour {
+  try {
+    const raw = localStorage.getItem(WHEEL_STORAGE_KEY);
+    if (raw === null) return DEFAULT_WHEEL_BEHAVIOUR;
+    const parsed: unknown = JSON.parse(raw);
+    const b = (parsed as { wheel?: unknown } | null)?.wheel;
+    return b === 'auto' || b === 'zoom' || b === 'pan'
+      ? b
+      : DEFAULT_WHEEL_BEHAVIOUR;
+  } catch {
+    return DEFAULT_WHEEL_BEHAVIOUR;
+  }
+}
+
+const [wheelBehaviour, setWheelBehaviourSignal] = createSignal<WheelBehaviour>(
+  loadWheelBehaviour(),
+);
+
+export { wheelBehaviour };
+
+export function setWheelBehaviour(behaviour: WheelBehaviour): void {
+  setWheelBehaviourSignal(behaviour);
+  try {
+    localStorage.setItem(WHEEL_STORAGE_KEY, JSON.stringify({ wheel: behaviour }));
   } catch {
     // Best effort; the in-memory setting still applies for this session.
   }
