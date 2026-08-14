@@ -208,17 +208,20 @@ export function setTwoFingerGesture(gesture: TwoFingerGesture): void {
 // ---------------------------------------------------------------------------
 // Wheel
 //
-// A trackpad two-finger scroll and a mouse wheel notch arrive as the same
-// `wheel` event, so the client classifies them heuristically
-// (input/wheelGestures.ts). Heuristics misread hardware eventually, so the user
-// gets an override: 'auto' classifies, 'zoom' forces every non-pinch wheel back
-// to OrbitControls' dolly, 'pan' forces trackpad panning. Pinch (ctrlKey) is
-// unambiguous and always zooms, whatever this says.
+// What a scroll does, pinches aside: 'pan' (default) translates the map, which
+// is what a trackpad's two-finger scroll must do — it is the reflexive gesture
+// on a laptop, and dollying on it made the camera lurch. 'zoom' hands non-pinch
+// wheels back to OrbitControls' damped dolly, for mouse users who want their
+// wheel to zoom.
+//
+// A pinch always zooms in both modes: it is reported separately (ctrlKey, or
+// Safari's gesture events) and needs no heuristic to recognise, so it is never
+// in question.
 // ---------------------------------------------------------------------------
 
-export type WheelBehaviour = 'auto' | 'zoom' | 'pan';
+export type WheelBehaviour = 'pan' | 'zoom';
 
-export const DEFAULT_WHEEL_BEHAVIOUR: WheelBehaviour = 'auto';
+export const DEFAULT_WHEEL_BEHAVIOUR: WheelBehaviour = 'pan';
 
 const WHEEL_STORAGE_KEY = 'terrace.wheelControls.v1';
 
@@ -228,9 +231,7 @@ function loadWheelBehaviour(): WheelBehaviour {
     if (raw === null) return DEFAULT_WHEEL_BEHAVIOUR;
     const parsed: unknown = JSON.parse(raw);
     const b = (parsed as { wheel?: unknown } | null)?.wheel;
-    return b === 'auto' || b === 'zoom' || b === 'pan'
-      ? b
-      : DEFAULT_WHEEL_BEHAVIOUR;
+    return b === 'pan' || b === 'zoom' ? b : DEFAULT_WHEEL_BEHAVIOUR;
   } catch {
     return DEFAULT_WHEEL_BEHAVIOUR;
   }

@@ -106,25 +106,8 @@ export const SCULPT_REPEAT_INTERVAL_MS = 120;
 export const TOUCH_STROKE_GRACE_MS = 100;
 
 // ---------------------------------------------------------------------------
-// Trackpad wheel gestures (input/wheelGestures.ts)
+// Wheel gestures (input/wheelCamera.ts)
 // ---------------------------------------------------------------------------
-
-/**
- * Wheel deltas at or above this magnitude (in pixel-mode events with no X
- * component) are treated as discrete mouse-wheel notches. Mac/Windows mice
- * report ≈100–120 per notch; a two-finger trackpad scroll streams small
- * (often fractional) deltas well under this. Heuristic, not a proof — which
- * is why the Controls panel carries a manual override.
- */
-export const WHEEL_MOUSE_NOTCH_MIN_DELTA = 40;
-
-/**
- * Milliseconds of wheel silence that end a gesture. Within a gesture the
- * first classification is LOCKED, so one ambiguous delta mid-stream cannot
- * flip a pan into a zoom; trackpads stream events far faster than this, and
- * distinct human gestures are comfortably further apart.
- */
-export const WHEEL_GESTURE_GAP_MS = 200;
 
 /**
  * Zoom factor per unit of pinch delta: distance scales by

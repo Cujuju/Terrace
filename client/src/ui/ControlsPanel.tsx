@@ -95,8 +95,9 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* Wheel: the override for hardware the trackpad/mouse heuristic reads
-          wrong. A pinch always zooms regardless of this setting. */}
+      {/* Wheel: scrolling pans the map by default (a trackpad's two-finger
+          scroll must not dolly); mouse users can put zoom back on the wheel.
+          A pinch always zooms, whichever is chosen. */}
       <div class="hud-row controls-row">
         <span class="controls-label">Scroll wheel</span>
         <select
@@ -106,9 +107,8 @@ export function ControlsPanel(): JSX.Element {
             setWheelBehaviour(e.currentTarget.value as WheelBehaviour)
           }
         >
-          <option value="auto">Auto</option>
-          <option value="zoom">Zoom</option>
           <option value="pan">Pan</option>
+          <option value="zoom">Zoom</option>
         </select>
       </div>
 

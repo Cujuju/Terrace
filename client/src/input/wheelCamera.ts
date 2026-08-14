@@ -1,19 +1,25 @@
-// Trackpad camera gestures: pinch to zoom, two-finger scroll to pan the map.
+// Wheel and trackpad camera gestures: pinch to zoom, scroll to pan the map.
 //
-// Installed by input/cameraBindings.ts. The classification of "is this a
-// trackpad or a mouse wheel" lives in input/wheelGestures.ts (pure, tested);
-// this module owns only the DOM plumbing and the camera maths.
+// Installed by input/cameraBindings.ts.
+//
+// THE RULE, and it is deliberately not a heuristic: a pinch zooms, and every
+// other wheel event pans. OrbitControls dollies on every wheel event it sees,
+// which on a MacBook made an idle two-finger scroll — the most reflexive
+// gesture on the machine — lurch the camera. Trying to tell a trackpad scroll
+// from a mouse notch by inspecting deltas is guesswork that fails on some
+// hardware every time; panning on all of them is one predictable rule, and the
+// mouse users who want a zooming wheel say so once in the Controls panel
+// (state/controlPrefs.ts, 'zoom').
 //
 // HOW IT COEXISTS WITH ORBITCONTROLS: OrbitControls registers its own
-// non-capturing `wheel` listener on the same canvas, and it dollies on every
-// event it sees. Our listener is registered in the CAPTURE phase, which the DOM
-// dispatch algorithm runs before the non-capturing listeners of the same
-// element, so we get first refusal on every wheel event:
-//   - mouse notch  → return without touching the event; OrbitControls dollies
-//                    it exactly as it did in Phase 1, damping and all.
-//   - pinch or pan → preventDefault (no browser page zoom / no history swipe)
-//                    + stopImmediatePropagation, so OrbitControls never sees it,
-//                    and we move the camera ourselves.
+// non-capturing `wheel` listener on the same canvas. Ours is registered in the
+// CAPTURE phase, which the DOM dispatch algorithm runs before the
+// non-capturing listeners of the same element, so we get first refusal:
+//   - pinch, or scroll in 'pan' mode → preventDefault (no browser page zoom,
+//     no two-finger back-swipe) + stopImmediatePropagation, so OrbitControls
+//     never sees the event, and we move the camera ourselves.
+//   - scroll in 'zoom' mode        → return without touching the event, and
+//     OrbitControls dollies it exactly as it did in Phase 1, damping and all.
 //
 // Both gestures write `camera.position` (and, for a pan, `controls.target`)
 // directly. That is safe by construction: OrbitControls.update() re-derives its
@@ -32,14 +38,13 @@ import {
   TRACKPAD_PAN_SPEED,
 } from '../config.ts';
 import { wheelBehaviour } from '../state/controlPrefs.ts';
-import { classifyWheel, type WheelGestureState } from './wheelGestures.ts';
 
 export interface WheelCameraGestures {
   dispose(): void;
 }
 
 /**
- * Scratch vectors. Module scope (three's own convention) because every handler
+ * Scratch vectors. Module scope (three's own convention) because every function
  * below runs to completion synchronously on the one JS thread — no two uses can
  * ever interleave.
  */
@@ -50,12 +55,17 @@ const scratchMove = new Vector3();
 
 /**
  * Squared length under which a ground-projected camera axis is treated as
- * having no ground direction at all. Reached when the camera looks straight
- * down (OrbitControls' default minPolarAngle is 0, so the user can orbit
- * there): the view direction is then vertical and its X/Z part is numerical
- * noise, which normalises to a random heading and would send a pan sideways.
+ * having no ground direction at all — i.e. a horizontal component below 1e-3
+ * of a unit vector, which is a camera within 0.06° of straight down.
+ *
+ * That case is reachable: OrbitControls' default minPolarAngle is 0, so the
+ * user can orbit to vertical, and three's own lookAt nudges the degenerate
+ * orientation by 1e-4 rather than leaving it undefined. Normalising a vector
+ * that short amplifies float noise into an arbitrary heading, which would send
+ * a pan off sideways; the threshold sits above the nudge so the fallback below
+ * takes over before that can happen.
  */
-const MIN_GROUND_AXIS_LENGTH_SQ = 1e-8;
+const MIN_GROUND_AXIS_LENGTH_SQ = 1e-6;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -64,8 +74,8 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * Fills `right` and `forward` with the ground-parallel screen axes of the
  * camera: screen-right and screen-up, both flattened onto the XZ plane and
- * normalised. Panning along these is what makes a two-finger scroll feel like
- * dragging the map rather than sliding the camera through the air.
+ * normalised. Panning along these is what makes a scroll feel like dragging the
+ * map rather than sliding the camera through the air.
  *
  * Reads `camera.matrix` — the same source OrbitControls' own pan uses. It is
  * recomposed once per frame by the renderer, so it can be one frame stale in
@@ -93,6 +103,50 @@ function groundAxes(camera: Camera, right: Vector3, forward: Vector3): void {
 }
 
 /**
+ * The ground-parallel translation one wheel event asks for, written into `out`
+ * and returned. Exported for its unit tests: this vector IS the pan feel.
+ *
+ * Wheel convention: a positive delta scrolls the VIEWPORT right/down. On the
+ * ground plane screen-down is -forward, hence the negation on Y — the scene
+ * then travels with the fingers, as it does in every map app.
+ *
+ * The magnitude scales with the camera's distance from its target: at ten times
+ * the height a pixel of finger travel covers ten times the ground, so the map
+ * appears to move under the fingers at the same rate at every zoom level.
+ */
+export function groundPanOffset(
+  camera: Camera,
+  target: Vector3,
+  deltaX: number,
+  deltaY: number,
+  out: Vector3,
+): Vector3 {
+  groundAxes(camera, scratchRight, scratchForward);
+  const speed = camera.position.distanceTo(target) * TRACKPAD_PAN_SPEED;
+  return out
+    .set(0, 0, 0)
+    .addScaledVector(scratchRight, deltaX * speed)
+    .addScaledVector(scratchForward, -deltaY * speed);
+}
+
+/**
+ * The orbit distance one pinch delta asks for, clamped to the zoom bounds.
+ * Exported for its unit tests.
+ *
+ * Exponential in the delta so the gesture is scale-invariant: the same finger
+ * travel is the same zoom RATIO whether close in or far out. deltaY < 0 is the
+ * platform convention for "zoom in", and a base above 1 maps that to a shorter
+ * distance.
+ */
+export function pinchZoomedDistance(distance: number, deltaY: number): number {
+  return clamp(
+    distance * Math.pow(PINCH_ZOOM_BASE, deltaY),
+    CAMERA_MIN_DISTANCE,
+    CAMERA_MAX_DISTANCE,
+  );
+}
+
+/**
  * Moves the camera to `distance` from the orbit target along the current view
  * ray, clamped to the configured zoom bounds. The target is left alone — this
  * is a dolly, not a pan.
@@ -116,8 +170,8 @@ function setOrbitDistance(
  * declared here — deliberately minimal: `scale` is the pinch magnification
  * relative to the START of the gesture (1 at gesturestart, >1 fingers apart).
  * Everything else on the event is unused. Feature-detected before use; Chrome,
- * Firefox and Edge never fire these (they send ctrl+wheel instead, which the
- * classifier reads as a pinch).
+ * Firefox and Edge never fire these (they send a wheel event with ctrlKey set
+ * instead, which is the pinch signal this module reads).
  */
 interface SafariGestureEvent extends Event {
   readonly scale: number;
@@ -129,57 +183,16 @@ export function bindWheelCamera(
 ): WheelCameraGestures {
   const camera = controls.object;
 
-  /** Threaded through classifyWheel; null until the first wheel event. */
-  let gestureState: WheelGestureState | null = null;
-
-  const dollyByPinchDelta = (deltaY: number): void => {
-    // Exponential in the delta so the gesture is scale-invariant: the same
-    // finger travel is the same zoom ratio whether close in or far out.
-    // deltaY < 0 is the platform convention for "zoom in", and a base above 1
-    // maps that to a shorter distance.
-    const distance = camera.position.distanceTo(controls.target);
-    setOrbitDistance(
-      camera,
-      controls.target,
-      distance * Math.pow(PINCH_ZOOM_BASE, deltaY),
-    );
-  };
-
-  const panByWheelDelta = (deltaX: number, deltaY: number): void => {
-    groundAxes(camera, scratchRight, scratchForward);
-    // Scale by the camera's distance from its target: at ten times the height
-    // a pixel of finger travel covers ten times the ground, so the map appears
-    // to move under the fingers at the same rate at every zoom level.
-    const speed = camera.position.distanceTo(controls.target) * TRACKPAD_PAN_SPEED;
-    // Wheel convention: positive delta scrolls the VIEWPORT right/down. On the
-    // ground plane screen-down is -forward, hence the negation on Y — the
-    // scene then travels with the fingers, as it does in every map app.
-    scratchMove
-      .set(0, 0, 0)
-      .addScaledVector(scratchRight, deltaX * speed)
-      .addScaledVector(scratchForward, -deltaY * speed);
-    // Both ends move together: the orbit offset is unchanged, so this is a pure
-    // translation and the next OrbitControls.update() has nothing to correct.
-    camera.position.add(scratchMove);
-    controls.target.add(scratchMove);
-  };
-
   const onWheelCapture = (event: WheelEvent): void => {
-    gestureState = classifyWheel(
-      {
-        ctrlKey: event.ctrlKey,
-        deltaMode: event.deltaMode,
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        timeStamp: event.timeStamp,
-      },
-      gestureState,
-      wheelBehaviour(),
-    );
+    // ctrlKey with no key held is how Chrome, Firefox and Edge encode a
+    // trackpad pinch; a user actually holding ctrl to zoom means the same
+    // thing. Either way it zooms, in both preference modes.
+    const isPinch = event.ctrlKey;
 
-    // A mouse notch is OrbitControls' business. Leave the event completely
-    // untouched — including its default — so its handler behaves as before.
-    if (gestureState.gesture === 'mouse') return;
+    // 'zoom' mode: a plain scroll is OrbitControls' business. Leave the event
+    // completely untouched — including its default — so its handler behaves
+    // as it did before trackpad gestures existed.
+    if (!isPinch && wheelBehaviour() === 'zoom') return;
 
     // Ours now: no browser page zoom (ctrl+wheel), no two-finger back-swipe,
     // and no OrbitControls dolly on top of what we are about to do.
@@ -187,13 +200,28 @@ export function bindWheelCamera(
     event.stopImmediatePropagation();
 
     if (controls.enabled === false) return;
-    if (gestureState.gesture === 'pinch-zoom') {
+    if (isPinch) {
       if (controls.enableZoom === false) return;
-      dollyByPinchDelta(event.deltaY);
+      const distance = camera.position.distanceTo(controls.target);
+      setOrbitDistance(
+        camera,
+        controls.target,
+        pinchZoomedDistance(distance, event.deltaY),
+      );
       return;
     }
     if (controls.enablePan === false) return;
-    panByWheelDelta(event.deltaX, event.deltaY);
+    // Both ends move together: the orbit offset is unchanged, so this is a pure
+    // translation and the next OrbitControls.update() has nothing to correct.
+    groundPanOffset(
+      camera,
+      controls.target,
+      event.deltaX,
+      event.deltaY,
+      scratchMove,
+    );
+    camera.position.add(scratchMove);
+    controls.target.add(scratchMove);
   };
 
   canvas.addEventListener('wheel', onWheelCapture, {
