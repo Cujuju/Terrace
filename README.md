@@ -50,6 +50,17 @@ open **<http://localhost:8080>** and start sculpting:
 Raise, lower, orbit and pan can each be rebound to any mouse button plus an
 optional Shift/Ctrl/Alt modifier; the choice is saved in the browser.
 
+### Inviting players on your LAN
+
+Set `SHARE_URL` on the server to the address friends should open — e.g.
+`SHARE_URL=http://my-pc.local:5173` (Windows and macOS answer
+`<computer-name>.local` on the LAN out of the box) — and the HUD shows an
+**Invite** line with a copy button on every client. Without it, players who
+already joined over the network see their own address as the invite; only the
+hosting player's `localhost` view has nothing shareable to show, which is
+exactly why `SHARE_URL` exists. Web browsers cannot discover servers via
+mDNS/DNS-SD, so a shareable, human-passable URL *is* the discovery story.
+
 The status dot in the HUD shows the connection. If the server is not up yet, the client
 retries quietly in the background until it is — there is no error dialog to dismiss.
 

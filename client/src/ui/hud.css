@@ -242,3 +242,26 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--hud-border);
 }
+
+/* Invite plugin: the share URL must survive narrow panels intact. */
+.invite-url {
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all; /* one click selects the whole URL for manual copy */
+}
+
+.invite-copy {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.invite-copy:hover {
+  border-color: var(--hud-accent);
+  color: var(--hud-text);
+}
