@@ -7,14 +7,28 @@
 
 import { BAND_HEIGHT } from '@terrace/shared';
 
+/** 2567 is the Colyseus convention and the server's `PORT` default (§8). */
+export const DEFAULT_SERVER_PORT = 2567;
+
 /**
- * Default Colyseus endpoint. 2567 is the Colyseus convention and the server's
- * `PORT` default (design doc §8). Verified against @colyseus/sdk 0.17.43
- * `Client.ts`: the string form of the constructor argument is parsed with
- * `new URL(...)` and treats `wss:`/`https:` as secure, so a `ws://` URL is an
- * accepted endpoint form.
+ * Hostname the page itself was served from, with a fallback for non-browser
+ * contexts (Vitest runs this module in a plain node environment).
  */
-export const DEFAULT_SERVER_URL = 'ws://localhost:2567';
+const pageHostname =
+  typeof location === 'undefined' ? 'localhost' : location.hostname;
+
+/**
+ * Default Colyseus endpoint. Derived from the page's own hostname rather than
+ * hard-coded `localhost`, so a browser that loaded the client over the LAN
+ * (http://192.168.x.x:5173) dials the game server on the machine that served
+ * it — a literal `localhost` there would make every LAN visitor dial
+ * THEMSELVES. On the dev machine nothing changes: the page host is localhost.
+ *
+ * Verified against @colyseus/sdk 0.17.43 `Client.ts`: the string form of the
+ * constructor argument is parsed with `new URL(...)` and treats
+ * `wss:`/`https:` as secure, so a `ws://` URL is an accepted endpoint form.
+ */
+export const DEFAULT_SERVER_URL = `ws://${pageHostname}:${DEFAULT_SERVER_PORT}`;
 
 /**
  * Room name passed to `joinOrCreate`. Core has no lobby — one process is one

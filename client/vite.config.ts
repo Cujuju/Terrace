@@ -9,6 +9,11 @@ export default defineConfig({
     // Colyseus owns 2567 (design doc §8 "Configuration"); keep the dev server
     // clear of it so both can run side by side.
     port: 5173,
+    // Listen on all interfaces: this is a multiplayer project, and "a friend
+    // on the LAN opens http://<dev-box>:5173" is a first-class dev workflow.
+    // The client derives its ws endpoint from the page hostname (config.ts),
+    // so a LAN visitor automatically dials this machine's server too.
+    host: true,
   },
   test: {
     // Every client test is pure logic (see test/ — picking math, terrain mirror
