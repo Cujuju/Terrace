@@ -29,6 +29,7 @@ function fakeStorage(initial: Record<string, string> = {}): Storage {
 
 const BINDINGS_KEY = 'terrace.controlBindings.v1';
 const TOUCH_KEY = 'terrace.touchControls.v1';
+const WHEEL_KEY = 'terrace.wheelControls.v1';
 
 async function freshPrefs(initial?: Record<string, string>): Promise<{
   prefs: Prefs;
@@ -116,10 +117,11 @@ describe('rebinding and precedence', () => {
 });
 
 describe('persistence', () => {
-  it('round-trips bindings and the touch gesture through storage', async () => {
+  it('round-trips bindings, the touch gesture and wheel behaviour through storage', async () => {
     const first = await freshPrefs();
     first.prefs.setBinding('raise', { button: 'right', modifier: 'none' });
     first.prefs.setTwoFingerGesture('orbit');
+    first.prefs.setWheelBehaviour('zoom');
 
     // Same storage, fresh module: what a page reload sees.
     vi.resetModules();
@@ -127,6 +129,45 @@ describe('persistence', () => {
     const second: Prefs = await import('../src/state/controlPrefs.ts');
     expect(second.controlBindings().raise).toEqual({ button: 'right', modifier: 'none' });
     expect(second.twoFingerGesture()).toBe('orbit');
+    expect(second.wheelBehaviour()).toBe('zoom');
+  });
+
+  it('defaults the wheel to pan and keeps its own storage key', async () => {
+    const { prefs, storage } = await freshPrefs();
+    // Pan is the default because a trackpad two-finger scroll must not dolly.
+    expect(prefs.wheelBehaviour()).toBe('pan');
+    expect(prefs.DEFAULT_WHEEL_BEHAVIOUR).toBe('pan');
+    // Editing one preference must not disturb the other two.
+    prefs.setWheelBehaviour('zoom');
+    expect(storage.getItem(WHEEL_KEY)).toBe(JSON.stringify({ wheel: 'zoom' }));
+    expect(storage.getItem(BINDINGS_KEY)).toBeNull();
+    expect(storage.getItem(TOUCH_KEY)).toBeNull();
+  });
+
+  it('round-trips both wheel modes', async () => {
+    for (const mode of ['pan', 'zoom'] as const) {
+      const first = await freshPrefs();
+      first.prefs.setWheelBehaviour(mode);
+      vi.resetModules();
+      (globalThis as { localStorage?: Storage }).localStorage = first.storage;
+      const second: Prefs = await import('../src/state/controlPrefs.ts');
+      expect(second.wheelBehaviour()).toBe(mode);
+    }
+  });
+
+  it('falls back to pan on a corrupt or unknown stored wheel behaviour', async () => {
+    for (const bad of [
+      'not json',
+      '42',
+      'null',
+      '{}',
+      JSON.stringify({ wheel: 'auto' }), // the mode that no longer exists
+      JSON.stringify({ wheel: 'dolly' }),
+      JSON.stringify({ wheel: 7 }),
+    ]) {
+      const { prefs } = await freshPrefs({ [WHEEL_KEY]: bad });
+      expect(prefs.wheelBehaviour()).toBe('pan');
+    }
   });
 
   it('falls back whole to defaults on malformed or partial stored data', async () => {
@@ -152,15 +193,18 @@ describe('persistence', () => {
     expect(prefs.twoFingerGesture()).toBe('pan');
   });
 
-  it('reset restores defaults for mouse AND touch and clears storage', async () => {
+  it('reset restores defaults for mouse, touch AND wheel and clears storage', async () => {
     const { prefs, storage } = await freshPrefs();
     prefs.setBinding('pan', { button: 'right', modifier: 'alt' });
     prefs.setTwoFingerGesture('orbit');
+    prefs.setWheelBehaviour('zoom');
     prefs.resetBindings();
     expect(prefs.controlBindings()).toEqual(prefs.DEFAULT_BINDINGS);
     expect(prefs.twoFingerGesture()).toBe('pan');
+    expect(prefs.wheelBehaviour()).toBe('pan');
     expect(storage.getItem(BINDINGS_KEY)).toBeNull();
     expect(storage.getItem(TOUCH_KEY)).toBeNull();
+    expect(storage.getItem(WHEEL_KEY)).toBeNull();
   });
 });
 
@@ -170,7 +214,11 @@ describe('no localStorage at all', () => {
     // beforeEach already deleted the stub; import with nothing installed.
     const prefs: Prefs = await import('../src/state/controlPrefs.ts');
     expect(prefs.controlBindings()).toEqual(prefs.DEFAULT_BINDINGS);
+    expect(prefs.wheelBehaviour()).toBe('pan');
     prefs.setBinding('raise', { button: 'middle', modifier: 'none' });
     expect(prefs.resolvePress(1, NO_MODS)).toBe('raise');
+    // Setting a preference with no storage at all must not throw.
+    prefs.setWheelBehaviour('zoom');
+    expect(prefs.wheelBehaviour()).toBe('zoom');
   });
 });

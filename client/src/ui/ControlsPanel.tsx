@@ -10,12 +10,15 @@ import {
   resetBindings,
   setBinding,
   setTwoFingerGesture,
+  setWheelBehaviour,
   shadowedActions,
   twoFingerGesture,
+  wheelBehaviour,
   type BindingModifier,
   type ControlAction,
   type MouseButtonName,
   type TwoFingerGesture,
+  type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 
 const ACTION_LABEL: Record<ControlAction, string> = {
@@ -89,6 +92,23 @@ export function ControlsPanel(): JSX.Element {
         >
           <option value="pan">Pan</option>
           <option value="orbit">Orbit</option>
+        </select>
+      </div>
+
+      {/* Wheel: scrolling pans the map by default (a trackpad's two-finger
+          scroll must not dolly); mouse users can put zoom back on the wheel.
+          A pinch always zooms, whichever is chosen. */}
+      <div class="hud-row controls-row">
+        <span class="controls-label">Scroll wheel</span>
+        <select
+          class="controls-select"
+          value={wheelBehaviour()}
+          onChange={(e) =>
+            setWheelBehaviour(e.currentTarget.value as WheelBehaviour)
+          }
+        >
+          <option value="pan">Pan</option>
+          <option value="zoom">Zoom</option>
         </select>
       </div>
 
