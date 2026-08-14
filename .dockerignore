@@ -1,0 +1,25 @@
+# Keep the build context to source only. The Dockerfile copies the whole
+# workspace in one layer (see its `source` stage), so anything left here would
+# be shipped into the image — and host node_modules in particular would break
+# it, since pnpm's symlinks point at host paths.
+
+node_modules
+**/node_modules
+
+# Reinstalled inside the image from the lockfile.
+.git
+.github
+
+# Build output and local state — regenerated, or explicitly not the image's.
+**/dist
+data
+.env
+*.tsbuildinfo
+
+# Agent worktrees (whole repo copies) and editor scratch.
+.claude
+
+# Not needed inside the image.
+Dockerfile
+.dockerignore
+docker-compose.yml
