@@ -334,6 +334,28 @@ terrace/
 - Q4, Q6, Q7 remain open; none block Phase 0. Q4 affects the Phase 1 server
   (`SNAPSHOT_INTERVAL_S` in `.env.example` carries a provisional 60 s default).
 
+### Decisions made 2026-08-13 (Phase 1 kickoff, settled with owner)
+
+- **Q4 — DECIDED** (owner accepted recommended default): snapshot every
+  `SNAPSHOT_INTERVAL_S` (60 s) **only if the world changed** since the last
+  snapshot, keep a rolling history of the last 10, plus one snapshot on clean
+  shutdown.
+- **Q6 — DECIDED:** client plugin halves are **compiled in** at build time.
+  The loader consumes a stable module signature so runtime loading can be
+  added later without changing plugins. (Runtime loading was costed: the hard
+  part is sharing Solid/Three/shared across bundle boundaries — deferred.)
+- **Q7 — DECIDED:** terrain diffs and chunks travel as **plain Colyseus
+  messages** (msgpack), exactly the shapes in `shared/src/protocol.ts`.
+  Colyseus schema state is never used for terrain (262k tracked cells fights
+  the change-tracking layer; the math already emits exact diffs; locked-chunk
+  omission needs per-client sends anyway). Schema may still carry
+  player/presence state.
+- **Colyseus pairing — RESOLVED:** the 0.17 browser client exists — the
+  package was renamed `colyseus.js` → `@colyseus/sdk` (0.17.43). Phase 1 pins
+  **colyseus 0.17.x server + @colyseus/sdk 0.17.x client**. Note 0.17's
+  `Client<{ userData, auth, messages }>` generic shape and multi-handler
+  `onMessage()`.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
