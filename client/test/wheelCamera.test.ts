@@ -493,25 +493,26 @@ describe('safariTwistAzimuth', () => {
     // Safari's `rotation` is cumulative since gesturestart. Three events of a
     // steady twist must each ask for the same turn — an absolute reading would
     // ask for 10°, then 20°, then 30°.
-    const first = safariTwistAzimuth(10, 0);
-    const second = safariTwistAzimuth(20, 10);
-    const third = safariTwistAzimuth(30, 20);
+    const first = safariTwistAzimuth(10, 0, false);
+    const second = safariTwistAzimuth(20, 10, false);
+    const third = safariTwistAzimuth(30, 20, false);
     expect(second).toBeCloseTo(first, 12);
     expect(third).toBeCloseTo(first, 12);
     // And the stream must land exactly where one big event would.
-    expect(first + second + third).toBeCloseTo(safariTwistAzimuth(30, 0), 12);
+    expect(first + second + third).toBeCloseTo(safariTwistAzimuth(30, 0, false), 12);
   });
 
   it('asks for nothing when the fingers have not moved', () => {
     // Math.abs, because negating a zero delta yields -0: the same angle, and
     // an equally exact no-op, but not Object.is-equal to 0.
-    expect(Math.abs(safariTwistAzimuth(42, 42))).toBe(0);
+    expect(Math.abs(safariTwistAzimuth(42, 42, false))).toBe(0);
+    expect(Math.abs(safariTwistAzimuth(42, 42, true))).toBe(0);
   });
 
-  it('turns the world with the fingers, at the configured sensitivity', () => {
+  it('turns the world with the fingers on a trackpad, at the configured sensitivity', () => {
     // A clockwise finger twist (Safari's positive direction) turns the map
     // clockwise, which is a NEGATIVE azimuth delta for the camera.
-    const azimuth = safariTwistAzimuth(30, 0);
+    const azimuth = safariTwistAzimuth(30, 0, false);
     expect(azimuth).toBeLessThan(0);
     expect(azimuth).toBeCloseTo(
       -MathUtils.degToRad(30) * SAFARI_GESTURE_ROTATE_SENSITIVITY,
@@ -519,16 +520,32 @@ describe('safariTwistAzimuth', () => {
     );
   });
 
+  it('takes the OPPOSITE sense on a touchscreen', () => {
+    // Direct touch (iPhone/iPad): the owner-reported inversion (2026-08-14).
+    // Same magnitude, mirrored sign, for every delta.
+    expect(safariTwistAzimuth(30, 0, true)).toBeCloseTo(
+      -safariTwistAzimuth(30, 0, false),
+      12,
+    );
+    expect(safariTwistAzimuth(-15, 5, true)).toBeCloseTo(
+      -safariTwistAzimuth(-15, 5, false),
+      12,
+    );
+  });
+
   it('is 1:1 with the fingers by default', () => {
     // The whole point of the default: twist 30°, the map turns 30°.
     expect(SAFARI_GESTURE_ROTATE_SENSITIVITY).toBe(1);
-    expect(Math.abs(safariTwistAzimuth(30, 0))).toBeCloseTo(
+    expect(Math.abs(safariTwistAzimuth(30, 0, false))).toBeCloseTo(
       MathUtils.degToRad(30),
       12,
     );
   });
 
   it('mirrors on the direction of the twist', () => {
-    expect(safariTwistAzimuth(-15, 0)).toBeCloseTo(-safariTwistAzimuth(15, 0), 12);
+    expect(safariTwistAzimuth(-15, 0, false)).toBeCloseTo(
+      -safariTwistAzimuth(15, 0, false),
+      12,
+    );
   });
 });

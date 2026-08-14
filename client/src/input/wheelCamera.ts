@@ -273,15 +273,26 @@ export function pinchZoomedDistance(distance: number, deltaY: number): number {
  * Negated so the world follows the fingers: a clockwise twist (Safari's
  * positive direction) must turn the map clockwise, which is the camera going
  * counter-clockwise about the target — the opposite sense of the azimuth.
+ *
+ * `directTouch` FLIPS that sign. The same gesture events fire on a Mac
+ * trackpad (indirect — the fingers are not on the world) and on an
+ * iPhone/iPad screen (direct — they are), and the two read as opposite
+ * senses: on the touchscreen the owner reported the map turning AGAINST the
+ * twist (2026-08-14, iPhone), so direct touch takes the un-negated delta.
+ * The trackpad sense is kept as originally calibrated. Assumption: the
+ * macOS-trackpad direction was right as shipped — it is unverified on real
+ * hardware, and if it ever gets the same report, the fix is this same flag,
+ * not another negation.
  */
 export function safariTwistAzimuth(
   rotationDegrees: number,
   previousRotationDegrees: number,
+  directTouch: boolean,
 ): number {
-  return (
+  const trackpadSense =
     -MathUtils.degToRad(rotationDegrees - previousRotationDegrees) *
-    SAFARI_GESTURE_ROTATE_SENSITIVITY
-  );
+    SAFARI_GESTURE_ROTATE_SENSITIVITY;
+  return directTouch ? -trackpadSense : trackpadSense;
 }
 
 /**
@@ -429,6 +440,11 @@ export function bindWheelCamera(
   //     angle would then silently re-apply.
 
   const supportsGestureEvents = 'ongesturestart' in window;
+  // Whether a gesture on THIS device is fingers on the world (touchscreen) or
+  // fingers beside it (trackpad) — see safariTwistAzimuth. Static per device:
+  // maxTouchPoints is 0 on macOS Safari and >0 on iOS/iPadOS, including iPads
+  // masquerading as desktop Safari.
+  const directTouch = navigator.maxTouchPoints > 0;
   let pinchStartDistance = 0;
   /** Cumulative `rotation` of the last gesture event seen, in degrees. */
   let lastGestureRotationDegrees = 0;
@@ -449,7 +465,7 @@ export function bindWheelCamera(
     // Twist first: it preserves the orbit radius, so the dolly below still
     // lands on exactly the distance the pinch asked for. Polar delta 0 — a
     // twist is a heading change and nothing else.
-    orbitBy(safariTwistAzimuth(rotation, lastGestureRotationDegrees), 0);
+    orbitBy(safariTwistAzimuth(rotation, lastGestureRotationDegrees, directTouch), 0);
     lastGestureRotationDegrees = rotation;
 
     if (controls.enableZoom === false) return;
