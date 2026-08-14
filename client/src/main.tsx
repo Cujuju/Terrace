@@ -51,3 +51,14 @@ createSculptInput({
 });
 
 render(() => <Hud />, hudRoot);
+
+// Dev-only handle for headless smoke automation: lets a driver read the real
+// camera matrices and world state instead of guessing them. import.meta.env.DEV
+// is statically false in production builds, so the whole block is eliminated.
+if (import.meta.env.DEV) {
+  (window as unknown as { __terrace?: unknown }).__terrace = {
+    viewport,
+    world,
+    connection,
+  };
+}
