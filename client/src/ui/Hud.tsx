@@ -23,6 +23,7 @@ import {
   setBrushRadius,
   setBrushTool,
   setSculptMode,
+  type SculptMode,
 } from '../state/hudState.ts';
 import {
   ACTION_PRECEDENCE,
@@ -42,6 +43,33 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   connecting: 'Connecting',
   connected: 'Connected',
   reconnecting: 'Reconnecting',
+};
+
+/**
+ * Tooltip copy, in one place per control (native `title`, no tooltip widget).
+ *
+ * The standard every string below is held to: ONE sentence, plain language,
+ * stating the CONSEQUENCE for the player rather than the implementation — the
+ * relaxation pass is "drags neighbouring terrain along", not "relaxation".
+ * Anything that depends on live state (the bound lower chord, the status) is
+ * built from the same accessors the control itself reads, so a title can never
+ * go stale against the control it explains.
+ */
+const STATUS_TITLE: Record<ConnectionStatus, string> = {
+  offline: 'No link to the server — nothing you sculpt now is saved or shared.',
+  connecting: 'Opening the link to the server — the world arrives once it is up.',
+  connected: 'Live with the server — your edits are saved and everyone sees them.',
+  reconnecting: 'The link dropped and is being retried — edits made now may be lost.',
+};
+
+const TOOL_TITLE: Record<SculptTool, string> = {
+  stamp: 'Moves exactly the ground under the brush — spires, pits and sheer cliffs.',
+  smooth: 'Drags neighbouring terrain along, like pulling fabric — blends shapes.',
+};
+
+const PROFILE_TITLE: Record<SculptProfile, string> = {
+  soft: 'Strongest at the centre and fading to nothing at the rim — a rounded hill.',
+  hard: 'The same height change across the whole brush — a plateau with sheer edges.',
 };
 
 const HINT_VERB: Record<ControlAction, string> = {
@@ -88,6 +116,23 @@ function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
   return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
 }
 
+/**
+ * The Mode button's tooltip. It names the LIVE lower binding rather than a
+ * hardcoded "Shift", because that binding is user-editable in the Controls
+ * panel — a fixed "Shift lowers" would start lying the moment it is rebound.
+ * Touch gets the same sentence: tapping is how a device with no modifier keys
+ * switches direction.
+ */
+function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
+  // The chord quoted is the one that does the OPPOSITE of the current mode —
+  // that is the escape hatch the sentence is offering.
+  const opposite = mode === 'lower' ? bindings.raise : bindings.lower;
+  const chord = `${HINT_MODIFIER[opposite.modifier]}${HINT_BUTTON[opposite.button]}`;
+  return mode === 'lower'
+    ? `Drags dig land down — click or tap to go back to raising, or ${chord}-drag to raise.`
+    : `Drags pile land up — click or tap to switch to lowering, or ${chord}-drag to lower.`;
+}
+
 export function Hud(): JSX.Element {
   // Panel visibility is pure UI state local to this component; nothing
   // imperative reads it, so a component-scoped signal is the right home.
@@ -103,7 +148,9 @@ export function Hud(): JSX.Element {
       </div>
 
       <div class="hud-panel">
-        <div class="hud-row hud-status">
+        {/* One title for the whole row: the dot and the word are one readout,
+            and the tooltip says what that state MEANS for the player's edits. */}
+        <div class="hud-row hud-status" title={STATUS_TITLE[connectionStatus()]}>
           {/* classList keeps the reactive read inline rather than in a const. */}
           <span
             class="status-dot"
@@ -121,6 +168,8 @@ export function Hud(): JSX.Element {
                   type="button"
                   class="brush-button"
                   classList={{ active: brushRadius() === radius }}
+                  aria-label={`Brush radius ${radius}`}
+                  title={`Brush radius ${radius} — a wider brush moves more land and costs more mana.`}
                   onClick={() => setBrushRadius(radius)}
                 >
                   {radius}
@@ -143,6 +192,8 @@ export function Hud(): JSX.Element {
                   type="button"
                   class="brush-button brush-button-wide"
                   classList={{ active: brushTool() === tool }}
+                  aria-label={`${TOOL_LABEL[tool]} tool`}
+                  title={TOOL_TITLE[tool]}
                   onClick={() => setBrushTool(tool)}
                 >
                   {TOOL_LABEL[tool]}
@@ -161,6 +212,8 @@ export function Hud(): JSX.Element {
                   type="button"
                   class="brush-button brush-button-wide"
                   classList={{ active: brushProfile() === profile }}
+                  aria-label={`${PROFILE_LABEL[profile]} edge`}
+                  title={PROFILE_TITLE[profile]}
                   onClick={() => setBrushProfile(profile)}
                 >
                   {PROFILE_LABEL[profile]}
@@ -178,6 +231,8 @@ export function Hud(): JSX.Element {
             type="button"
             class="mode-value"
             classList={{ lower: sculptMode() === 'lower' }}
+            aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
+            title={modeTitle(sculptMode(), controlBindings())}
             onClick={() =>
               setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
             }
@@ -191,6 +246,8 @@ export function Hud(): JSX.Element {
             type="button"
             class="controls-toggle"
             classList={{ open: showControls() }}
+            aria-expanded={showControls()}
+            title="Show or hide the mouse, touch and scroll settings."
             onClick={() => setShowControls(!showControls())}
           >
             Controls {showControls() ? '▾' : '▸'}

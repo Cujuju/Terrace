@@ -37,6 +37,22 @@ function isCastable(skill: SkillView): boolean {
   return skill.kind === 'active';
 }
 
+/**
+ * The cast button's tooltip, for the three states its caption already shows in
+ * shorthand. Built from the same props the caption is built from, so the two
+ * can never disagree; a cooldown reads the LIVE remaining seconds, since a
+ * generic "it recharges" would be the one thing the player already knows.
+ */
+function castTitle(skill: SkillView, armed: boolean): string {
+  if (skill.cooldownRemainingS > 0) {
+    return `Just used — ready to cast again in ${cooldownLabelSeconds(skill.cooldownRemainingS)}s.`;
+  }
+  const name = skillInfo(skill.id).name;
+  return armed
+    ? `Now click the ground to aim it — or click here to put ${name} away.`
+    : `Ready ${name}, then click the ground to choose where it lands.`;
+}
+
 function SkillRow(props: { skill: SkillView }): JSX.Element {
   // props.skill is already reactive (Solid wraps prop expressions in getters),
   // so reading props.skill.* inside JSX below is a live read. These helpers are
@@ -44,9 +60,19 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
   const info = (): ReturnType<typeof skillInfo> => skillInfo(props.skill.id);
   const onCooldown = (): boolean => props.skill.cooldownRemainingS > 0;
   const isArmed = (): boolean => armedSkill() === props.skill.id;
+  /**
+   * The row explains the skill; while it is recharging it also carries the
+   * countdown, because a DISABLED button does not raise the hover events a
+   * native tooltip needs (Chrome and Safari both swallow them) — so the one
+   * state whose button tooltip can never appear is answered by its row.
+   */
+  const rowTitle = (): string =>
+    onCooldown()
+      ? `${info().description} Ready again in ${cooldownLabelSeconds(props.skill.cooldownRemainingS)}s.`
+      : info().description;
 
   return (
-    <div class="hud-row" title={info().description}>
+    <div class="hud-row" title={rowTitle()}>
       <span
         class="status-dot"
         style={{ background: cssColor(SKILL_KIND_COLOR[props.skill.kind]) }}
@@ -59,6 +85,8 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
           class="brush-button"
           classList={{ active: isArmed() }}
           style={{ width: 'auto', padding: '0 8px' }}
+          aria-label={`Cast ${info().name}`}
+          title={castTitle(props.skill, isArmed())}
           disabled={onCooldown()}
           onClick={() => armSkill(isArmed() ? null : props.skill.id)}
         >
@@ -82,7 +110,10 @@ export function RelicsPanel(): JSX.Element {
 
   return (
     <>
-      <div class="hud-row">
+      <div
+        class="hud-row"
+        title="Gems hovering over the land right now — each one holds a skill to claim."
+      >
         <span class="hud-label">Relics</span>
         <span>{relics().length} in the world</span>
       </div>
@@ -90,7 +121,12 @@ export function RelicsPanel(): JSX.Element {
       <Show
         when={skills().length > 0}
         fallback={
-          <p class="hud-hint">No skills yet — click a floating gem to collect one.</p>
+          <p
+            class="hud-hint"
+            title="Click the ground under a floating gem and its skill is yours to keep."
+          >
+            No skills yet — click a floating gem to collect one.
+          </p>
         }
       >
         <For each={skills()}>{(skill) => <SkillRow skill={skill} />}</For>
