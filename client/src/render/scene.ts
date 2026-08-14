@@ -27,7 +27,15 @@ import {
   CAMERA_MIN_DISTANCE,
   CAMERA_NEAR,
   CELL_WORLD_SIZE,
+  SERVER_URL,
 } from '../config.ts';
+import {
+  CAMERA_POSE_SAVE_DEBOUNCE_MS,
+  cameraPoseStorageKey,
+  loadCameraPose,
+  saveCameraPose,
+  type CameraPose,
+} from './cameraPose.ts';
 
 /** Sky/background, and the hemisphere light's sky colour. */
 const SKY_COLOR = 0x9fc7e8;
@@ -60,8 +68,16 @@ export interface Viewport {
   readonly controls: OrbitControls;
   /** Everything sculptable lives here; the raycaster tests this group only. */
   readonly terrainGroup: Group;
-  /** Re-centres and frames the camera once the world's size is known. */
-  focusWorld(worldSize: number): void;
+  /**
+   * Points the camera at a world of this size, once that size is known, and
+   * arms pose persistence for it (nothing can be stored before the world's
+   * identity — and therefore its storage key — exists).
+   *
+   * The stored pose for this server + world size wins if there is a valid one,
+   * so a reload resumes the exact view it left; otherwise the world is framed
+   * from scratch. Returns true when a stored pose was restored.
+   */
+  restoreOrFocus(worldSize: number): boolean;
   /**
    * Registers a per-frame callback, called before each render with the frame
    * delta in seconds (capped — see FRAME_DELTA_CAP_S). Returns an unregister
@@ -173,13 +189,83 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     controls.update();
   };
 
+  // -------------------------------------------------------------------------
+  // Camera-pose persistence (render/cameraPose.ts owns the format and rules).
+  // -------------------------------------------------------------------------
+
+  /** Null until the world size — and so the storage key — is known. */
+  let poseStorageKey: string | null = null;
+  let poseSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const currentPose = (): CameraPose => ({
+    target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+    position: {
+      x: camera.position.x,
+      y: camera.position.y,
+      z: camera.position.z,
+    },
+  });
+
+  /** Writes the live pose immediately, cancelling any pending debounced save. */
+  const savePoseNow = (): void => {
+    if (poseSaveTimer !== null) {
+      clearTimeout(poseSaveTimer);
+      poseSaveTimer = null;
+    }
+    if (poseStorageKey === null) return;
+    saveCameraPose(poseStorageKey, currentPose());
+  };
+
+  /**
+   * Schedules ONE save CAMERA_POSE_SAVE_DEBOUNCE_MS from the first change of a
+   * burst; further changes inside that window ride along rather than pushing
+   * the deadline out. A deadline-resetting debounce would write nothing at all
+   * during a long continuous gesture (wheel zoom, damping decay), which is
+   * precisely the case 'end' does not cover.
+   */
+  const savePoseSoon = (): void => {
+    if (poseStorageKey === null || poseSaveTimer !== null) return;
+    poseSaveTimer = setTimeout(() => {
+      poseSaveTimer = null;
+      savePoseNow();
+    }, CAMERA_POSE_SAVE_DEBOUNCE_MS);
+  };
+
+  // 'end' closes a completed gesture; 'change' catches the streams that never
+  // emit one. pagehide covers the reload that lands inside the debounce window
+  // — it fires on both navigation and bfcache suspension, where 'unload' does
+  // not (and 'unload' would disqualify the page from the bfcache).
+  controls.addEventListener('end', savePoseNow);
+  controls.addEventListener('change', savePoseSoon);
+  window.addEventListener('pagehide', savePoseNow);
+
+  const restoreOrFocus = (worldSize: number): boolean => {
+    poseStorageKey = cameraPoseStorageKey(SERVER_URL, worldSize);
+    const stored = loadCameraPose(poseStorageKey, worldSize);
+    if (stored === null) {
+      focusWorld(worldSize);
+      return false;
+    }
+    controls.target.set(stored.target.x, stored.target.y, stored.target.z);
+    camera.position.set(
+      stored.position.x,
+      stored.position.y,
+      stored.position.z,
+    );
+    // Recomputes the controls' internal spherical from the pose we just set;
+    // without it the next input would swing the camera back to the previous
+    // orbit angles.
+    controls.update();
+    return true;
+  };
+
   return {
     scene,
     camera,
     renderer,
     controls,
     terrainGroup,
-    focusWorld,
+    restoreOrFocus,
     onFrame(handler: (dt: number) => void): () => void {
       frameCallbacks.add(handler);
       return () => frameCallbacks.delete(handler);
@@ -192,6 +278,11 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
       frameHandle = 0;
       frameCallbacks.clear();
       resizeObserver.disconnect();
+      // Last write wins: the pose on screen at teardown is the one remembered.
+      savePoseNow();
+      controls.removeEventListener('end', savePoseNow);
+      controls.removeEventListener('change', savePoseSoon);
+      window.removeEventListener('pagehide', savePoseNow);
       controls.dispose();
       renderer.dispose();
     },
