@@ -10,10 +10,19 @@
 // the eye already is when the terrain stops responding to the brush.
 //
 // THE READOUTS, IN ORDER OF HOW FAST THEY ANSWER:
-//   1. the level in the lower bulb  — how much you have, right now
-//   2. the falling grain's RHYTHM   — one grain per sculpt's worth of regen, so
-//                                     a fast world streams and a slow one drips
-//   3. "480 / 600" and "+20/s"      — the exact numbers, for when you want them
+//   1. the sand level in the lower bulb — how much you have, right now
+//   2. the falling grain's RHYTHM       — one grain per sculpt's worth of regen,
+//                                         so a fast world streams and a slow one
+//                                         drips
+//   3. "480 / 600" and "+20/s"          — the exact numbers, beside the glass
+//
+// ART DIRECTION (owner brief): this is a game object, not a UI widget — a
+// bronze-and-amber instrument that would not look out of place in an RPG
+// inventory. Everything is drawn: moulded caps built from stacked profiles,
+// corner posts with finials and studs, a gradient-lit frame, a diagonal sheen
+// across the glass. Pure inline SVG, no raster, no external assets. The warm
+// palette is deliberately narrow (three bronzes, two sands) so it stays
+// harmonious against the HUD's dark slate rather than competing with it.
 //
 // SMOOTHING IS DISPLAY ONLY. Between server pushes the level advances locally
 // at the pushed rate (gauge.ts) so the motion is continuous rather than a 10 Hz
@@ -40,48 +49,94 @@ import { deniedCount, manaPool } from './state.ts';
 /** How long the denial flash lasts. Matches the HUD's other transient cues. */
 const DENIAL_FLASH_MS = 600;
 
-// ── Geometry, in SVG user units of the 44 × 62 viewBox ──────────────────────
-// The glass is symmetric about x = 22: two 23-unit-tall funnels meeting at a
-// 4-unit neck, capped top and bottom. The lower funnel is the only part that
-// moves, so its extents are named — the fill rect and the grain's fall distance
-// are both derived from them and cannot drift apart.
-const VIEW_W = 44;
-const VIEW_H = 62;
-const GLASS_CENTER_X = 22;
-const BULB_TOP_Y = 33;
-const BULB_BOTTOM_Y = 56;
+// ── Geometry, in SVG user units of the 52 × 74 viewBox ──────────────────────
+// The instrument is symmetric about x = 26. Vertically it reads as five bands:
+// top cap (3–12), upper funnel (12–35), neck (35–39), lower funnel (39–62),
+// bottom cap (62–71), with the corner posts spanning cap to cap behind it all.
+//
+// Only the lower funnel moves, so its extents are the named ones: the sand
+// rect, the grain's fall distance and the clip path are all derived from them
+// and cannot drift apart.
+const VIEW_W = 52;
+const VIEW_H = 74;
+const GLASS_CENTER_X = 26;
+const BULB_TOP_Y = 39;
+const BULB_BOTTOM_Y = 62;
 const BULB_HEIGHT = BULB_BOTTOM_Y - BULB_TOP_Y;
 
-/** Where a grain appears — just under the neck, above an empty bulb's floor. */
-const GRAIN_START_Y = 31;
-const GRAIN_RADIUS = 1.7;
+/**
+ * The glass as ONE continuous silhouette — both funnels AND the neck tube
+ * between them. Drawing the funnels as two separate triangles left a gap at the
+ * waist and read as two shapes rather than as one hourglass (caught in a 5×
+ * render); the neck walls are what make it a single vessel.
+ */
+const GLASS_SILHOUETTE_PATH = `M11 12 H41 L27.5 35 V${BULB_TOP_Y} L41 ${BULB_BOTTOM_Y} H11 L24.5 ${BULB_TOP_Y} V35 Z`;
 
-/** Thickness of the lighter band drawn along the top of the fill. */
-const SURFACE_LINE_H = 1.2;
+/** The lower funnel alone: what the sand is clipped to. */
+const LOWER_FUNNEL_PATH = `M24.5 ${BULB_TOP_Y} H27.5 L41 ${BULB_BOTTOM_Y} H11 Z`;
+
+/** Where a grain appears — inside the neck, above an empty bulb's floor. */
+const GRAIN_START_Y = 37;
+const GRAIN_RADIUS = 1.8;
+
+/** Thickness of the brighter band drawn along the top of the sand. */
+const SURFACE_LINE_H = 1.3;
+
+/** Corner posts: narrow columns joining the caps, with a finial at each end. */
+const POST_LEFT_X = 5.5;
+const POST_RIGHT_X = 43.5;
+const POST_WIDTH = 3;
+const POST_TOP_Y = 10;
+const POST_BOTTOM_Y = 64;
+const FINIAL_RADIUS = 2.1;
+const STUD_RADIUS = 0.9;
 
 // ── Palette ─────────────────────────────────────────────────────────────────
 // Self-contained on purpose: this plugin may not touch client/src/ui/hud.css,
 // and a plugin that hard-depends on core CSS classes is a plugin that breaks
-// when core restyles. The HUD's own custom properties are used where they
-// exist, each with a literal fallback so the gauge is legible even if a future
-// core drops them.
-const POOL_COLOR = '#5a9bd4';
-const POOL_SURFACE_COLOR = '#9fd2f2';
-const DENIED_COLOR = '#d9584a';
-const GLASS_STROKE = 'rgba(255, 255, 255, 0.34)';
-const GLASS_CAP = 'rgba(255, 255, 255, 0.22)';
-const RESERVOIR_FILL = 'rgba(255, 255, 255, 0.07)';
+// when core restyles. The HUD's own custom properties are used for the text and
+// the chrome, each with a literal fallback so the gauge stays legible even if a
+// future core drops them.
+//
+// The frame is three bronzes rather than one flat colour: a lit edge, a body
+// and a shadow, fed to a top-to-bottom gradient so the mouldings read as turned
+// metal instead of as stacked rectangles.
+const BRONZE_LIGHT = '#e0b262';
+const BRONZE_MID = '#a8752c';
+const BRONZE_DARK = '#4e3315';
+
+/** Sand: warm amber, lit from the top of the bulb. */
+const SAND_LIGHT = '#f5cf74';
+const SAND_DEEP = '#cf8f24';
+const SAND_SURFACE = '#ffeab3';
+
+/** The denial flash: the same three-tone treatment, in red. */
+const DENIED_LIGHT = '#f08e80';
+const DENIED_MID = '#d9584a';
+const DENIED_DARK = '#6d241c';
+
+/** Glass. Warm-tinted rather than neutral white, so it belongs to the bronze. */
+const GLASS_STROKE = 'rgba(255, 228, 178, 0.46)';
+const GLASS_TINT = 'rgba(255, 238, 208, 0.05)';
+const GLASS_SHEEN = 'rgba(255, 255, 255, 0.14)';
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
-/** Clip id for the lower bulb. Namespaced so it cannot collide with core's. */
+// SVG ids are document-global, so every one this component mints is namespaced.
+const FRAME_GRADIENT_ID = 'mana-gauge-frame-grad';
+const SAND_GRADIENT_ID = 'mana-gauge-sand-grad';
 const BULB_CLIP_ID = 'mana-gauge-bulb-clip';
+const GLASS_CLIP_ID = 'mana-gauge-glass-clip';
 
 /**
  * The one stylesheet this component renders. Keyframes cannot be expressed as
  * inline styles, which is the only reason a <style> element exists here; the
  * per-instance values (the cue's period, its fall distance) still arrive as
  * inline custom properties, so the CSS itself stays constant.
+ *
+ * LAYOUT: one horizontal control — glass on the left, stats stacked to its
+ * right and left-aligned against it. It sits over the play view, so it stays as
+ * small as the numbers allow.
  *
  * The reduced-motion block is belt-and-suspenders with the JS branch below: the
  * component already skips the frame loop and unmounts the grain when the user
@@ -93,10 +148,10 @@ const GAUGE_CSS = `
   pointer-events: none;
   user-select: none;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 3px;
-  padding: 7px 12px 6px;
+  gap: 9px;
+  padding: 5px 13px 5px 9px;
   border: 1px solid var(--hud-border, rgba(255, 255, 255, 0.12));
   border-radius: 12px;
   background: var(--hud-bg, rgba(18, 22, 28, 0.78));
@@ -104,13 +159,14 @@ const GAUGE_CSS = `
   font-family: inherit;
   line-height: 1;
 }
-.mana-gauge__numbers {
+.mana-gauge__stats {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 .mana-gauge__balance {
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: var(--hud-text, #e8edf2);
 }
@@ -120,8 +176,8 @@ const GAUGE_CSS = `
 .mana-gauge__rate {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
   color: var(--hud-muted, #97a3b0);
-  opacity: 0.85;
 }
 .mana-gauge__grain {
   animation-name: mana-gauge-fall;
@@ -226,14 +282,20 @@ export function ManaGauge(): JSX.Element {
     const pool = manaPool();
     return pool !== null && isPoolFull(displayed(), pool.capacity);
   };
-  const poolColor = () => (flashing() ? DENIED_COLOR : POOL_COLOR);
-  const surfaceColor = () => (flashing() ? DENIED_COLOR : POOL_SURFACE_COLOR);
-  // The GLASS flashes too, not just the liquid. A denial happens precisely when
-  // the pool is near empty, so a flash carried only by the fill would be a few
-  // red pixels at the bottom of the bulb — loudest exactly when there is
-  // nothing left to colour. Verified against a rendered empty gauge.
-  const glassColor = () => (flashing() ? DENIED_COLOR : GLASS_STROKE);
-  const capColor = () => (flashing() ? DENIED_COLOR : GLASS_CAP);
+
+  // THE FLASH. It recolours the FRAME and the SAND together, through the two
+  // gradients' stops. A flash carried only by the sand would be a few pixels at
+  // the bottom of an empty bulb — silent at exactly the moment a denial happens
+  // — so the whole instrument goes red instead. (Verified against a rendered
+  // empty gauge; that was the defect the first render exposed.)
+  const frameLight = () => (flashing() ? DENIED_LIGHT : BRONZE_LIGHT);
+  const frameMid = () => (flashing() ? DENIED_MID : BRONZE_MID);
+  const frameDark = () => (flashing() ? DENIED_DARK : BRONZE_DARK);
+  const sandLight = () => (flashing() ? DENIED_LIGHT : SAND_LIGHT);
+  const sandDeep = () => (flashing() ? DENIED_MID : SAND_DEEP);
+  const sandSurface = () => (flashing() ? DENIED_LIGHT : SAND_SURFACE);
+  const glassColor = () => (flashing() ? DENIED_MID : GLASS_STROKE);
+
   /**
    * Seconds per grain: one sculpt's worth of regen. Recomputed from the live
    * pool rather than cached, so a cost that changes under the player (a perk
@@ -263,46 +325,92 @@ export function ManaGauge(): JSX.Element {
           aria-hidden="true"
         >
           <defs>
+            {/* Frame lighting: lit edge at the top, shadow at the bottom, so
+                every moulding picks up the same imaginary light. */}
+            <linearGradient id={FRAME_GRADIENT_ID} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color={frameLight()} />
+              <stop offset="45%" stop-color={frameMid()} />
+              <stop offset="100%" stop-color={frameDark()} />
+            </linearGradient>
+
+            {/* Sand lighting, pinned to the BULB rather than to the sand rect
+                (userSpaceOnUse): the shading then belongs to the vessel and
+                does not rescale every time the level moves. */}
+            <linearGradient
+              id={SAND_GRADIENT_ID}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1={BULB_TOP_Y}
+              x2="0"
+              y2={BULB_BOTTOM_Y}
+            >
+              <stop offset="0%" stop-color={sandLight()} />
+              <stop offset="100%" stop-color={sandDeep()} />
+            </linearGradient>
+
             <clipPath id={BULB_CLIP_ID}>
-              {/* The lower funnel: neck (top) widening to the base. */}
-              <path d={`M20.5 ${BULB_TOP_Y} H23.5 L36 ${BULB_BOTTOM_Y} H8 Z`} />
+              <path d={LOWER_FUNNEL_PATH} />
+            </clipPath>
+            {/* The whole vessel, for the sheen that crosses it. */}
+            <clipPath id={GLASS_CLIP_ID}>
+              <path d={GLASS_SILHOUETTE_PATH} />
             </clipPath>
           </defs>
 
-          {/* Frame: the two caps a real hourglass is held by. */}
-          <rect x="5" y="2" width="34" height="3.5" rx="1.75" fill={capColor()} />
-          <rect x="5" y="56.5" width="34" height="3.5" rx="1.75" fill={capColor()} />
+          {/* ── Corner posts, behind everything: the columns the caps are
+                turned onto, each capped with a finial. ── */}
+          <g fill={`url(#${FRAME_GRADIENT_ID})`}>
+            <rect
+              x={POST_LEFT_X}
+              y={POST_TOP_Y}
+              width={POST_WIDTH}
+              height={POST_BOTTOM_Y - POST_TOP_Y}
+              rx="1.2"
+            />
+            <rect
+              x={POST_RIGHT_X}
+              y={POST_TOP_Y}
+              width={POST_WIDTH}
+              height={POST_BOTTOM_Y - POST_TOP_Y}
+              rx="1.2"
+            />
+            <circle cx={POST_LEFT_X + POST_WIDTH / 2} cy={POST_TOP_Y} r={FINIAL_RADIUS} />
+            <circle cx={POST_RIGHT_X + POST_WIDTH / 2} cy={POST_TOP_Y} r={FINIAL_RADIUS} />
+            <circle cx={POST_LEFT_X + POST_WIDTH / 2} cy={POST_BOTTOM_Y} r={FINIAL_RADIUS} />
+            <circle cx={POST_RIGHT_X + POST_WIDTH / 2} cy={POST_BOTTOM_Y} r={FINIAL_RADIUS} />
+          </g>
+          {/* A single lit edge down each post — one line is all it takes to
+              read as round rather than as a flat bar. */}
+          <g stroke={frameLight()} stroke-width="0.6" opacity="0.55">
+            <line
+              x1={POST_LEFT_X + 0.8}
+              y1={POST_TOP_Y + 1.5}
+              x2={POST_LEFT_X + 0.8}
+              y2={POST_BOTTOM_Y - 1.5}
+            />
+            <line
+              x1={POST_RIGHT_X + 0.8}
+              y1={POST_TOP_Y + 1.5}
+              x2={POST_RIGHT_X + 0.8}
+              y2={POST_BOTTOM_Y - 1.5}
+            />
+          </g>
 
-          {/* Upper funnel: the world's reservoir. Deliberately NOT drawn as
-              draining — mana is not a fixed quantity moving from one bulb to
-              the other, and a shrinking top would promise an end that the
-              server's regen does not have. */}
-          <path
-            d="M8 6 H36 L23.5 29 H20.5 Z"
-            fill={RESERVOIR_FILL}
-            stroke={glassColor()}
-            stroke-width="1"
-            stroke-linejoin="round"
-          />
+          {/* ── The glass, tinted and outlined. The upper funnel is deliberately
+                NOT drawn as draining: mana is not a fixed quantity moving from
+                one bulb to the other, and a shrinking top would promise an end
+                that the server's regen does not have. ── */}
+          <path d={GLASS_SILHOUETTE_PATH} fill={GLASS_TINT} />
 
-          {/* Lower funnel: the pool. */}
-          <path
-            d={`M20.5 ${BULB_TOP_Y} H23.5 L36 ${BULB_BOTTOM_Y} H8 Z`}
-            fill="none"
-            stroke={glassColor()}
-            stroke-width="1"
-            stroke-linejoin="round"
-          />
-
-          {/* The level. A full-width rect clipped to the bulb, so the liquid
-              takes the glass's silhouette instead of being a floating box. */}
+          {/* ── The sand: a full-width rect clipped to the bulb, so it takes the
+                glass's silhouette instead of being a floating box. ── */}
           <g clip-path={`url(#${BULB_CLIP_ID})`}>
             <rect
               x="0"
               y={fillTopY()}
               width={VIEW_W}
               height={fillHeight()}
-              fill={poolColor()}
+              fill={`url(#${SAND_GRADIENT_ID})`}
             />
             <Show when={fill() > 0}>
               <rect
@@ -310,13 +418,14 @@ export function ManaGauge(): JSX.Element {
                 y={fillTopY()}
                 width={VIEW_W}
                 height={SURFACE_LINE_H}
-                fill={surfaceColor()}
+                fill={sandSurface()}
               />
             </Show>
           </g>
 
-          {/* THE RATE CUE. One grain per sculpt's worth of regen; unmounted at
-              capacity, where there is nothing left to fall. */}
+          {/* ── THE RATE CUE. One grain per sculpt's worth of regen, falling
+                from the neck to the current surface; unmounted at capacity,
+                where there is nothing left to fall. ── */}
           <Show when={!full()}>
             <g
               class="mana-gauge__grain"
@@ -329,20 +438,67 @@ export function ManaGauge(): JSX.Element {
                 cx={GLASS_CENTER_X}
                 cy={GRAIN_START_Y}
                 r={GRAIN_RADIUS}
-                fill={surfaceColor()}
+                fill={sandSurface()}
               />
             </g>
           </Show>
+
+          {/* ── Sheen: one diagonal streak across both bulbs, clipped to the
+                glass. Drawn over the sand — it is a reflection ON the glass. ── */}
+          <g clip-path={`url(#${GLASS_CLIP_ID})`}>
+            <rect
+              x="9"
+              y="-16"
+              width="5.5"
+              height="110"
+              fill={GLASS_SHEEN}
+              transform={`rotate(18 ${GLASS_CENTER_X} 37)`}
+            />
+          </g>
+
+          {/* Outlines last, so the glass edge stays crisp over sand and sheen. */}
+          <path
+            d={GLASS_SILHOUETTE_PATH}
+            fill="none"
+            stroke={glassColor()}
+            stroke-width="1"
+            stroke-linejoin="round"
+          />
+
+          {/* ── Caps: three stacked profiles each (lip, body, shoulder) rather
+                than one bar — the step between them is what makes a moulding
+                read as moulded. Studs sit on the outer lips. ── */}
+          <g fill={`url(#${FRAME_GRADIENT_ID})`}>
+            <rect x="4" y="2.5" width="44" height="3.4" rx="1.7" />
+            <rect x="7.5" y="5.6" width="37" height="4" rx="1.2" />
+            <rect x="10.5" y="9.4" width="31" height="2.4" rx="1.2" />
+
+            <rect x="10.5" y="62.2" width="31" height="2.4" rx="1.2" />
+            <rect x="7.5" y="64.4" width="37" height="4" rx="1.2" />
+            <rect x="4" y="68.1" width="44" height="3.4" rx="1.7" />
+          </g>
+          {/* Studs: four on each lip. Small, but they are most of what says
+              "forged object" at this size. */}
+          <g fill={frameLight()} opacity="0.8">
+            <circle cx="9" cy="4.2" r={STUD_RADIUS} />
+            <circle cx="19.5" cy="4.2" r={STUD_RADIUS} />
+            <circle cx="32.5" cy="4.2" r={STUD_RADIUS} />
+            <circle cx="43" cy="4.2" r={STUD_RADIUS} />
+            <circle cx="9" cy="69.8" r={STUD_RADIUS} />
+            <circle cx="19.5" cy="69.8" r={STUD_RADIUS} />
+            <circle cx="32.5" cy="69.8" r={STUD_RADIUS} />
+            <circle cx="43" cy="69.8" r={STUD_RADIUS} />
+          </g>
         </svg>
 
-        <div class="mana-gauge__numbers">
+        {/* Stats beside the glass, stacked and left-aligned: the balance is what
+            you read at a glance, the rate is the world's own constant and sits
+            under it — visible at capacity too, where the cue is paused. */}
+        <div class="mana-gauge__stats">
           <span class="mana-gauge__balance">
             {Math.floor(displayed())}
             <span class="mana-gauge__capacity">/{manaPool()!.capacity}</span>
           </span>
-          {/* The rate in numerals, quieter than the balance, and shown even at
-              capacity where the cue is paused — "how fast does this world
-              refill" is a property of the world, not of the current level. */}
           <span class="mana-gauge__rate">{formatRegenRate(manaPool()!.regenPerSecond)}</span>
         </div>
       </div>
