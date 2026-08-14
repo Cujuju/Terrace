@@ -8,8 +8,10 @@ import {
   isWater,
 } from '@terrace/shared';
 import {
+  CLIFF_PALETTE,
   FIRST_LAND_PALETTE_INDEX,
   LAST_PALETTE_INDEX,
+  MIN_ADJACENT_LAND_LUMINANCE_GAP,
   SEABED_DEPTH_STOPS,
   SEABED_PALETTE_INDEX,
   TERRAIN_PALETTE,
@@ -56,6 +58,44 @@ describe('bandPaletteIndex', () => {
   it('keeps every seabed stop below the land ramp', () => {
     for (let h = MIN_HEIGHT; h <= SEA_LEVEL; h++) {
       expect(bandPaletteIndex(h)).toBeLessThan(FIRST_LAND_PALETTE_INDEX);
+    }
+  });
+
+  it('keeps adjacent land stops a visible luminance gap apart', () => {
+    // The above-ground half of the same owner-reported contrast: every land
+    // band must differ from its neighbour by at least the named gap, in
+    // EITHER direction — the ramp's shape (bright sand, darkening grass,
+    // rock climbing to snow) is not the contract; the gap is.
+    const luminance = ([r, g, b]: readonly [number, number, number]): number =>
+      r + g + b;
+    for (let i = FIRST_LAND_PALETTE_INDEX + 1; i <= LAST_PALETTE_INDEX; i++) {
+      expect(
+        Math.abs(luminance(TERRAIN_PALETTE[i]) - luminance(TERRAIN_PALETTE[i - 1])),
+      ).toBeGreaterThanOrEqual(MIN_ADJACENT_LAND_LUMINANCE_GAP);
+    }
+  });
+
+  it('outlines seabed seams with rims brighter than both treads they part', () => {
+    // The owner-reported invisible seams (2026-08-14): underwater the cliff
+    // skirt IS the seam outline, so its colour must beat the brighter
+    // (shallower) tread beside it, not just its own — on land the same skirt
+    // is a cut face and darkens instead. The waterline splits the regimes.
+    const luminance = ([r, g, b]: readonly [number, number, number]): number =>
+      r + g + b;
+    for (let stop = 0; stop < SEABED_DEPTH_STOPS; stop++) {
+      expect(luminance(CLIFF_PALETTE[stop])).toBeGreaterThan(
+        luminance(TERRAIN_PALETTE[stop]),
+      );
+      if (stop > 0) {
+        expect(luminance(CLIFF_PALETTE[stop])).toBeGreaterThan(
+          luminance(TERRAIN_PALETTE[stop - 1]),
+        );
+      }
+    }
+    for (let i = FIRST_LAND_PALETTE_INDEX; i <= LAST_PALETTE_INDEX; i++) {
+      expect(luminance(CLIFF_PALETTE[i])).toBeLessThan(
+        luminance(TERRAIN_PALETTE[i]),
+      );
     }
   });
 

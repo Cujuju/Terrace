@@ -41,11 +41,11 @@ export const SEABED_PALETTE_INDEX = 0;
 export const FIRST_LAND_PALETTE_INDEX = SEABED_DEPTH_STOPS;
 
 /**
- * The ramp: four seabed depth stops, then eight land stops — sand at the
- * shoreline, grass, rock, then snowcap. Bands at or above the last stop all
- * render as snow — a band-7 peak is already 448 height units of relief,
- * unambiguously a mountain top, so there is nothing above it that needs its
- * own colour.
+ * The ramp: four seabed depth stops, then ten land stops — sand and soil at
+ * the shoreline, grass from band 3, rock, then snowcap. Bands at or above the
+ * last stop all render as snow — a band-9 peak is already 576 height units of
+ * relief, unambiguously a mountain top, so there is nothing above it that
+ * needs its own colour.
  *
  * The seabed stops keep the established muddy-green family (the old single
  * seabed sat between today's 0 and 1) but step ~20% darker and bluer per
@@ -57,15 +57,34 @@ export const TERRAIN_PALETTE: readonly Rgb[] = [
   rgb(0x50705d), // 1 seabed, band −1 — the shelf
   rgb(0x3a5b52), // 2 seabed, band −2 — the ring
   rgb(0x274347), // 3 seabed, band −3 and deeper — deep water, monster country
-  rgb(0xd9c89a), // 4 band 0 — beach sand at the waterline
-  rgb(0x7fae52), // 5 band 1 — bright lowland grass
-  rgb(0x689a45), // 6 band 2 — grass
-  rgb(0x52863b), // 7 band 3 — highland grass
-  rgb(0x7d7a6e), // 8 band 4 — exposed rock
-  rgb(0x8f8c82), // 9 band 5 — rock
-  rgb(0xa8a49a), // 10 band 6 — pale high rock
-  rgb(0xf2f4f6), // 11 band 7+ — snow
+  // Three sand-and-soil stops before any green (owner, 2026-08-14: "multiple
+  // layers of sand and soil color near the water. Greener layers should start
+  // higher up") — the coast reads as coast for two full terraces before
+  // vegetation takes over at band 3.
+  rgb(0xd9c89a), // 4 band 0 — wet beach sand at the waterline
+  rgb(0xc0a468), // 5 band 1 — dry sand
+  rgb(0x96774a), // 6 band 2 — bare soil
+  rgb(0x8fc25a), // 7 band 3 — bright lowland grass
+  rgb(0x69a244), // 8 band 4 — grass
+  rgb(0x467a33), // 9 band 5 — dark highland grass
+  rgb(0x736f61), // 10 band 6 — dark exposed rock
+  rgb(0x908c80), // 11 band 7 — rock
+  rgb(0xb3aea2), // 12 band 8 — pale high rock
+  rgb(0xf2f4f6), // 13 band 9+ — snow
 ];
+
+/**
+ * Smallest summed-RGB luminance gap between ADJACENT land stops (owner,
+ * 2026-08-14: "more contrast on the layers above ground as well" — the first
+ * ramp's neighbours sat ~0.2 apart and adjacent terraces blurred together at
+ * play distance). 0.3 is ~10% of the 0..3 scale: comfortably visible on a lit
+ * tread, and holdable across the whole ramp without breaking the sand → grass
+ * → rock → snow story. The land ramp is deliberately NOT monotonic (sand is
+ * brighter than the grass above it; rock climbs back toward snow), so the gap
+ * is the contract — direction is the palette's own business. Enforced by
+ * test, so a future recolour cannot quietly blur two bands back together.
+ */
+export const MIN_ADJACENT_LAND_LUMINANCE_GAP = 0.3;
 
 /** Highest valid index; bands beyond the ramp clamp here. */
 export const LAST_PALETTE_INDEX = TERRAIN_PALETTE.length - 1;
@@ -153,13 +172,63 @@ export function cliffFaceColor(top: Rgb): Rgb {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Seabed rims — the OPPOSITE derivation, and deliberately so (owner,
+// 2026-08-14: "I can't see the outline seams of the layers against the
+// reflection of the water. maybe ... a really slight border outline ...
+// slightly a different colour"). On land, darkening a cut face works because
+// the sun does too. Underwater every colour arrives pre-dimmed by the water
+// tint, so a darkened seam is exactly what vanishes. A rim LIGHTER than both
+// treads it separates — nudged toward a pale aqua, the colour depth actually
+// silts an edge with — reads from above as a thin outline around each terrace,
+// which is the requested border without any new geometry: the one-band cliff
+// skirt already runs along precisely the seam being outlined.
+// ---------------------------------------------------------------------------
+
+/** The pale silt-aqua a seabed rim is pulled toward. */
+const SEABED_RIM_TINT: Rgb = rgb(0x9fd4c8);
+
+/**
+ * How much of the rim tint replaces the tread colour. 0.35 keeps the rim
+ * clearly of its own terrace (a deep rim stays darker than a shelf rim) while
+ * shifting it visibly off the tread; "slight", as asked, not chalk lines.
+ */
+export const SEABED_RIM_TINT_MIX = 0.35;
+
+/**
+ * Brightness applied after the tint. 1.25 lifts the rim above BOTH
+ * neighbouring treads — an outline must beat the brighter side of the seam,
+ * not just its own — sized against the ~20%-per-band tread steps so the rim
+ * outshines the shallower neighbour by a visible margin through the water.
+ */
+export const SEABED_RIM_BRIGHTEN_FACTOR = 1.25;
+
+/** Tint toward silt-aqua, then brighten — never past white. */
+export function seabedRimColor(top: Rgb): Rgb {
+  const mix = (channel: number, tint: number): number => {
+    const lifted =
+      (channel * (1 - SEABED_RIM_TINT_MIX) + tint * SEABED_RIM_TINT_MIX) *
+      SEABED_RIM_BRIGHTEN_FACTOR;
+    return lifted > 1 ? 1 : lifted;
+  };
+  return [
+    mix(top[0], SEABED_RIM_TINT[0]),
+    mix(top[1], SEABED_RIM_TINT[1]),
+    mix(top[2], SEABED_RIM_TINT[2]),
+  ];
+}
+
 /**
  * The cliff ramp, index-for-index with TERRAIN_PALETTE so a wall can be looked
- * up with the very same `bandPaletteIndex` the tread above it used. Derived
- * once at module load; the renderer converts it to linear alongside the top
- * palette, so no per-vertex colour maths happens on the patch path.
+ * up with the very same `bandPaletteIndex` the tread above it used. Seabed
+ * entries take the rim derivation, land entries the rock one — the waterline
+ * is the material boundary between the two regimes. Derived once at module
+ * load; the renderer converts it to linear alongside the top palette, so no
+ * per-vertex colour maths happens on the patch path.
  */
-export const CLIFF_PALETTE: readonly Rgb[] = TERRAIN_PALETTE.map(cliffFaceColor);
+export const CLIFF_PALETTE: readonly Rgb[] = TERRAIN_PALETTE.map((top, index) =>
+  index < SEABED_DEPTH_STOPS ? seabedRimColor(top) : cliffFaceColor(top),
+);
 
 /** Bands the ramp covers explicitly, i.e. before snow clamping kicks in. */
 export const RAMP_BAND_COUNT = LAST_PALETTE_INDEX - FIRST_LAND_PALETTE_INDEX;

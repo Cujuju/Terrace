@@ -41,6 +41,7 @@ import {
 } from '../src/terrain/vertexGrid.ts';
 import {
   CLIFF_PALETTE,
+  FIRST_LAND_PALETTE_INDEX,
   TERRAIN_PALETTE,
   bandPaletteIndex,
   type Rgb,
@@ -1091,9 +1092,12 @@ describe('colour attribution', () => {
     expectColor(topSkirts[0].color, CLIFF_PALETTE[bandPaletteIndex(4 * BAND_HEIGHT)]);
   });
 
-  it('makes cliff faces visibly darker than the tread they sit under', () => {
+  it('makes LAND cliff faces visibly darker than the tread they sit under', () => {
+    // Land only since the seabed rim change (2026-08-14): underwater the same
+    // skirt is a seam OUTLINE and brightens instead — that regime's contract
+    // lives in bandColors.test.ts, next to the derivation it tests.
     const luminance = (c: Rgb): number => c[0] + c[1] + c[2];
-    for (let i = 0; i < TERRAIN_PALETTE.length; i++) {
+    for (let i = FIRST_LAND_PALETTE_INDEX; i < TERRAIN_PALETTE.length; i++) {
       expect(luminance(CLIFF_PALETTE[i])).toBeLessThan(
         luminance(TERRAIN_PALETTE[i]) * 0.85,
       );
