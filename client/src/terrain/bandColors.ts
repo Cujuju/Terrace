@@ -70,6 +70,61 @@ export function bandColorOf(height: number): Rgb {
   return TERRAIN_PALETTE[bandPaletteIndex(height)];
 }
 
+// ---------------------------------------------------------------------------
+// Cliff faces
+//
+// Terraced rendering draws VERTICAL walls between bands (terrain/vertexGrid.ts).
+// Painting those walls with the top-face colour makes a cliff read as stretched
+// grass; what the Godus look needs is exposed rock — the same ground, but CUT.
+// So every palette entry gets a derived cliff entry: pulled toward bare rock,
+// then darkened. Both moves are needed. Darkening alone keeps the grass hue and
+// just reads as shadow; tinting alone keeps a snow cliff as bright as the snow
+// above it and the crease disappears.
+// ---------------------------------------------------------------------------
+
+/**
+ * The bare-rock colour every cliff face is pulled toward: damp cut earth. One
+ * shared hue across the whole ramp is what makes cliffs read as one material —
+ * the rock under a meadow and the rock under a snowfield are the same rock.
+ */
+const CLIFF_ROCK_TINT: Rgb = rgb(0x6b5a49);
+
+/**
+ * How much of that rock hue replaces the band's own colour. 0.4 keeps enough
+ * of the band to tell which terrace a cliff belongs to (a sand cliff is still
+ * sandy, a snow cliff still cold) while committing the face to rock.
+ */
+export const CLIFF_ROCK_TINT_MIX = 0.4;
+
+/**
+ * Brightness the tinted face keeps. 0.68 rather than something heavier because
+ * the lighting rig already does part of the work: the sun is high (see
+ * render/scene.ts) so a vertical face receives markedly less of it than a
+ * tread, and two cliff orientations out of four get no direct sun at all.
+ * Multiplying those by a harsh factor as well would crush them to black.
+ */
+export const CLIFF_FACE_DARKEN_FACTOR = 0.68;
+
+/** Tint toward rock, then darken — the derivation described above. */
+export function cliffFaceColor(top: Rgb): Rgb {
+  const mix = (channel: number, tint: number): number =>
+    (channel * (1 - CLIFF_ROCK_TINT_MIX) + tint * CLIFF_ROCK_TINT_MIX) *
+    CLIFF_FACE_DARKEN_FACTOR;
+  return [
+    mix(top[0], CLIFF_ROCK_TINT[0]),
+    mix(top[1], CLIFF_ROCK_TINT[1]),
+    mix(top[2], CLIFF_ROCK_TINT[2]),
+  ];
+}
+
+/**
+ * The cliff ramp, index-for-index with TERRAIN_PALETTE so a wall can be looked
+ * up with the very same `bandPaletteIndex` the tread above it used. Derived
+ * once at module load; the renderer converts it to linear alongside the top
+ * palette, so no per-vertex colour maths happens on the patch path.
+ */
+export const CLIFF_PALETTE: readonly Rgb[] = TERRAIN_PALETTE.map(cliffFaceColor);
+
 /** Bands the ramp covers explicitly, i.e. before snow clamping kicks in. */
 export const RAMP_BAND_COUNT = LAST_PALETTE_INDEX - FIRST_LAND_PALETTE_INDEX;
 
