@@ -1,0 +1,90 @@
+# Terrace — self-host a world with one command:
+#
+#   docker compose up
+#
+# Then open http://localhost:8080. Nothing below is required: every value has a
+# working default. To change one, copy .env.example to .env and edit it —
+# Compose reads .env from this directory automatically.
+#
+# Two services, because core serves no static files: `server` is the
+# authoritative Colyseus world, `client` is nginx handing out the built browser
+# bundle. See README.md ("How the pieces fit").
+
+# Fixes the volume/container name prefix, so the backup commands in README.md
+# (docker volume terrace_world-data) are the same on every machine.
+name: terrace
+
+services:
+  server:
+    build:
+      context: .
+      target: server
+    environment:
+      # Cells per world edge. Must be a multiple of 16 (the chunk size). 512
+      # wants a mid-size box; 128 is Populous-proven playable on a small VPS.
+      # Changing this against an existing database is refused at boot, not
+      # silently reinterpreted.
+      WORLD_SIZE: ${WORLD_SIZE:-512}
+      # Listen port INSIDE the container; the mapping below uses the same number
+      # on the host so the two can never drift apart.
+      PORT: ${PORT:-2567}
+      # Path inside the container. Both /data/world.db and ./data/world.db (the
+      # spelling in .env.example) land on the same volume — see the mounts
+      # below. Any OTHER path lives in the container's disposable layer and is
+      # lost on the next rebuild.
+      DB_PATH: ${DB_PATH:-/data/world.db}
+      # Fixed simulation tick rate, 1–60.
+      TICK_HZ: ${TICK_HZ:-10}
+      # World snapshot cadence in seconds; a snapshot is written only when the
+      # world actually changed, and the last 10 are kept.
+      SNAPSHOT_INTERVAL_S: ${SNAPSHOT_INTERVAL_S:-60}
+    ports:
+      - "${PORT:-2567}:${PORT:-2567}"
+    volumes:
+      # Named volume, not a bind mount: a fresh named volume inherits /data's
+      # ownership from the image, so the unprivileged `node` user can write it
+      # with no host-side chown. Backups: see README.md.
+      - world-data:/data
+      # The same volume again, at the path a repo-relative DB_PATH resolves to
+      # (WORKDIR is /app). Belt and suspenders: copying .env.example to .env
+      # verbatim would otherwise put the world in the container layer and lose
+      # it on the next rebuild.
+      - world-data:/app/data
+    # A TCP connect to the listener. It proves the process is up and accepting
+    # sockets; it says nothing about room health (core exposes no HTTP health
+    # route, and this deliberately adds no dependency to give it one).
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('net').connect(Number(process.env.PORT||2567),'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      target: client
+      args:
+        # BAKED IN AT BUILD TIME (Vite inlines import.meta.env.VITE_*). The
+        # default works for a browser on the Docker host. For anyone else to
+        # join, set PUBLIC_WS_URL to an address they can reach — e.g.
+        # ws://your-box.example:2567 — and rebuild: `docker compose up --build`.
+        # If you changed PORT, change this too.
+        VITE_SERVER_URL: ${PUBLIC_WS_URL:-ws://localhost:2567}
+    ports:
+      - "${CLIENT_PORT:-8080}:80"
+    # Ordering only. The page loads fine before the server is up; the client
+    # retries the connection itself.
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  # Holds world.db (plus its WAL sidecars). This is the whole world: heightmap,
+  # unlock mask, and every plugin's persisted slice.
+  world-data:
