@@ -17,6 +17,7 @@ import {
   SWIM_PROFILES,
   UNKNOWN_TERRAIN_WORLD_Y,
   creatureWorldY,
+  walkerGroundY,
 } from '../client/placement.ts';
 
 function entity(
@@ -202,5 +203,28 @@ describe('vertical placement', () => {
     // world unit of water cannot give it both.
     const seabedY = -1;
     expect(creatureWorldY('whale', seabedY)).toBeCloseTo(-0.5, 6);
+  });
+});
+
+describe('walkerGroundY — footprint sampling', () => {
+  const flatAt = (h: number) => () => h;
+
+  it('stands on the highest band the footprint overlaps, not the centre cell', () => {
+    // Centre cell is band 0; the cell one to the +x is band 2 (world Y 2). A
+    // walker at x = 9.8 overhangs the boundary at x = 10, so it must stand at 2.
+    const sample = (cx: number) => (cx >= 10 ? 2 : 0);
+    expect(walkerGroundY(sample, 9.8, 5.5)).toBe(2);
+    // Well clear of the boundary the centre cell rules.
+    expect(walkerGroundY(sample, 9.0, 5.5)).toBe(0);
+  });
+
+  it('matches the single-cell sample on flat ground', () => {
+    expect(walkerGroundY(flatAt(3), 20.5, 20.5)).toBe(3);
+  });
+
+  it('returns null only when every sample is null', () => {
+    expect(walkerGroundY(() => null, 5, 5)).toBeNull();
+    const halfNull = (cx: number) => (cx >= 5 ? 1 : null);
+    expect(walkerGroundY(halfNull, 5.5, 5.5)).toBe(1);
   });
 });

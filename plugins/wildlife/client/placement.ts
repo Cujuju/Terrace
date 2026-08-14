@@ -88,9 +88,9 @@ export function swimmerWorldY(seabedY: number, profile: SwimProfile): number {
 }
 
 /**
- * World Y for one creature. `terrainY` is ClientPluginCtx.terrainHeightAt at the
- * creature's cell — the seabed for a swimmer, the ground for a walker — or null
- * before the first snapshot arrives.
+ * World Y for one creature. `terrainY` is the ground/seabed height under it —
+ * for a walker, use walkerGroundY, not a single-cell sample — or null before
+ * the first snapshot arrives.
  */
 export function creatureWorldY(species: WildlifeSpecies, terrainY: number | null): number {
   const surfaceY = terrainY ?? UNKNOWN_TERRAIN_WORLD_Y;
@@ -98,4 +98,46 @@ export function creatureWorldY(species: WildlifeSpecies, terrainY: number | null
   // Land species' models are built with the origin at their feet, so the ground
   // height is the answer with no offset.
   return profile === null ? surfaceY : swimmerWorldY(surfaceY, profile);
+}
+
+/**
+ * Half-extent of a walker's ground footprint, in cells.
+ *
+ * A grazer's body is ~1.1 cells long, so its geometry overhangs its centre by
+ * roughly half a cell in every facing. Slightly under that (0.45) keeps the
+ * sample inside the body's true extent, so the creature never rides up on a
+ * band it does not actually overlap.
+ */
+export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS = 0.45;
+
+/**
+ * Ground height for a land creature: the HIGHEST rendered cell under its
+ * footprint, not the single cell under its centre.
+ *
+ * The single-cell version is exactly the reported clipping bug: a walker whose
+ * centre is on a low band but whose body overhangs a neighbouring higher band
+ * stands at the low height and its body intersects the riser face. Sampling
+ * the four footprint corners plus the centre and standing on the max means the
+ * body clears every band it overlaps; while crossing a riser the creature pops
+ * up a band the moment its leading edge reaches it — a step, which is how a
+ * terraced world walks.
+ */
+export function walkerGroundY(
+  sampleRenderedY: (cellX: number, cellY: number) => number | null,
+  x: number,
+  y: number,
+): number | null {
+  const h = WALKER_FOOTPRINT_HALF_EXTENT_CELLS;
+  let ground: number | null = null;
+  for (const [dx, dy] of [
+    [0, 0],
+    [-h, -h],
+    [-h, h],
+    [h, -h],
+    [h, h],
+  ]) {
+    const sampled = sampleRenderedY(Math.floor(x + dx), Math.floor(y + dy));
+    if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
+  }
+  return ground;
 }
