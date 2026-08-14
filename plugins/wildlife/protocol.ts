@@ -30,6 +30,64 @@ export const WILDLIFE_SPECIES = ['fish', 'whale', 'deepsea', 'grazer'] as const;
 export type WildlifeSpecies = (typeof WILDLIFE_SPECIES)[number];
 
 /**
+ * The size classes an individual can be born at, smallest first.
+ *
+ * Only fish vary today (see FISH size tuning in server/species.ts); every other
+ * species is always DEFAULT_SIZE_CLASS. The class is drawn once at spawn and
+ * never changes, which is why the client can bake it into the model at creation
+ * time instead of re-reading it every frame.
+ *
+ * Ordered, and the ORDER IS THE WIRE FORM: an entity carries the INDEX into this
+ * array, not the name. That is what keeps the field to a single msgpack byte —
+ * see the bandwidth note in server/index.ts.
+ */
+export const WILDLIFE_SIZE_CLASSES = ['small', 'medium', 'large'] as const;
+
+export type WildlifeSizeClass = (typeof WILDLIFE_SIZE_CLASSES)[number];
+
+/**
+ * The class everything that does not vary in size is born at, and the fallback
+ * for a payload that carries no size at all (see parseEntitiesPayload). Middle
+ * of the range, and its model scale is exactly 1, so "no size information" and
+ * "the size this plugin has always drawn" are the same picture.
+ */
+export const DEFAULT_SIZE_CLASS: WildlifeSizeClass = 'medium';
+
+export const DEFAULT_SIZE_CLASS_INDEX = WILDLIFE_SIZE_CLASSES.indexOf(DEFAULT_SIZE_CLASS);
+
+/**
+ * Uniform scale applied to a creature's model for its size class.
+ *
+ * Medium is 1 by definition: the models in client/models.ts are authored at
+ * medium, so every existing dimension in that file (and every clearance in
+ * client/placement.ts, which was sized against those dimensions) keeps meaning
+ * exactly what it meant. The spread either side is ±~40%, which is the smallest
+ * ratio that still reads as "that one is a bigger fish" at the distance this
+ * game is played from — a 20% difference is invisible once two fish are not
+ * side by side, and 2× would make a large fish compete with the deep-sea
+ * silhouette for attention.
+ *
+ * The largest fish is therefore 1.4 × 0.26 = 0.36 world units tall, comfortably
+ * inside the 0.3 minimum submergence its swim profile already insists on, so no
+ * placement clearance has to change with size.
+ */
+export const WILDLIFE_SIZE_MODEL_SCALE: Readonly<Record<WildlifeSizeClass, number>> = {
+  small: 0.6,
+  medium: 1,
+  large: 1.4,
+};
+
+/** Wire index → class, with anything out of range falling back to the default. */
+export function sizeClassAt(index: number): WildlifeSizeClass {
+  return WILDLIFE_SIZE_CLASSES[index] ?? DEFAULT_SIZE_CLASS;
+}
+
+/** Class → wire index. */
+export function sizeClassIndex(sizeClass: WildlifeSizeClass): number {
+  return WILDLIFE_SIZE_CLASSES.indexOf(sizeClass);
+}
+
+/**
  * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — two
  * orders of magnitude finer than the smallest creature (a fish is 0.7 cells
  * long) and far below what any camera distance in this game can resolve, so it
@@ -55,6 +113,19 @@ export interface WildlifeEntityState {
   readonly y: number;
   /** Radians; the creature moves toward (cos heading, sin heading) in cell space. */
   readonly heading: number;
+  /**
+   * Index into WILDLIFE_SIZE_CLASSES. Drives the model scale and nothing else on
+   * this side; the server also uses the class to decide how strongly this
+   * individual schools, but schooling itself is never sent — the client draws
+   * where the server says each creature is and has no concept of a school.
+   *
+   * OPTIONAL ON THE WIRE, always present after parsing. A server built before
+   * size classes existed omits it, and the honest reading of that payload is
+   * "these are ordinary medium creatures", not "drop them all" — which is what a
+   * required field would have meant for a client on a newer bundle than its
+   * self-hosted server.
+   */
+  readonly size: number;
 }
 
 export interface WildlifeEntitiesPayload {
@@ -98,6 +169,11 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
       x: entry.x,
       y: entry.y,
       heading: entry.heading,
+      // Absent or nonsense → the default class. Normalising here means every
+      // consumer downstream can treat `size` as a valid index unconditionally.
+      size: isFiniteNumber(entry.size)
+        ? sizeClassIndex(sizeClassAt(entry.size))
+        : DEFAULT_SIZE_CLASS_INDEX,
     });
   }
   return parsed;

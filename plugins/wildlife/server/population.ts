@@ -59,10 +59,14 @@
 
 import { CHUNK_SIZE } from '@terrace/shared';
 import {
+  DEFAULT_SIZE_CLASS,
+  WILDLIFE_SIZE_CLASSES,
   WILDLIFE_SPECIES,
   type WildlifeEntityState,
+  type WildlifeSizeClass,
   type WildlifeSpecies,
   roundBroadcastPosition,
+  sizeClassIndex,
 } from '../protocol.ts';
 import {
   HABITAT_CENSUS_INTERVAL_SECONDS,
@@ -73,12 +77,34 @@ import {
   takeCensus,
   targetsFor,
 } from './census.ts';
-import { profileOf } from './species.ts';
+import { SCHOOLING_PROBABILITY_BY_SIZE, type SizeWeights, profileOf } from './species.ts';
 
 /** A living creature. Mutable — the tick loop writes these in place. */
 export interface WildlifeEntity {
   readonly id: number;
   readonly species: WildlifeSpecies;
+
+  /**
+   * The school this creature belongs to. Allocated at spawn and never changed:
+   * schools do not merge, split or recruit — a school is born, shrinks as
+   * members are lost to terrain, and eventually departs whole (see
+   * applyNaturalTurnover).
+   *
+   * EVERY creature has one, including solitary species and fish that drew a
+   * non-schooling group: those simply get a school to themselves. That is what
+   * lets cohesion, turnover and persistence be written once instead of once per
+   * "does this thing school" branch — a school of one degenerates to exactly the
+   * per-individual behaviour that shipped before schools existed.
+   *
+   * NEVER ON THE WIRE. The client draws creatures where the server says they
+   * are; it needs no concept of a school to do that, and adding one would cost
+   * bandwidth for something no renderer reads.
+   */
+  readonly schoolId: number;
+
+  /** Size class, drawn once per spawn group. Drives cohesion and model scale. */
+  readonly size: WildlifeSizeClass;
+
   /** Cell-space position, fractional. */
   x: number;
   y: number;
@@ -179,6 +205,13 @@ let spawnChunks: ReadonlyArray<readonly [number, number]> = [];
 let nextEntityId = 1;
 
 /**
+ * The next school id to hand out. Ids are never reused within a process, and are
+ * carried through a snapshot (persistence.ts) so a restored school stays one
+ * school instead of dissolving into singletons on restart.
+ */
+let nextSchoolId = 1;
+
+/**
  * Creatures lost to natural turnover since the last reset. Observability only —
  * nothing in the sim reads it. It exists so a test can distinguish "the
  * population changed because animals came and went" from "the habitat rules
@@ -211,6 +244,16 @@ export function nextEntityIdValue(): number {
   return nextEntityId;
 }
 
+/** The id the next school will take. Persisted alongside nextEntityIdValue. */
+export function nextSchoolIdValue(): number {
+  return nextSchoolId;
+}
+
+/** Members of one school, in spawn order. Empty for an id that has departed. */
+export function schoolMembers(schoolId: number): WildlifeEntity[] {
+  return entities.filter((entity) => entity.schoolId === schoolId);
+}
+
 /** Drops all state so a suite (or a fresh world) starts from zero. */
 export function resetPopulation(): void {
   entities.length = 0;
@@ -220,6 +263,7 @@ export function resetPopulation(): void {
   targets = emptySpeciesCounts();
   spawnChunks = [];
   nextEntityId = 1;
+  nextSchoolId = 1;
   naturalDepartures = 0;
 }
 
@@ -298,9 +342,44 @@ function findSpawnCell(
 }
 
 /**
+ * Draws one size class against its species' weights. Iterates
+ * WILDLIFE_SIZE_CLASSES in order, so the mapping from a random number to a class
+ * is fixed rather than dependent on object key order.
+ *
+ * A weight table that sums to zero (a species configured with no sizes at all)
+ * yields the default class rather than undefined — the only defensive branch
+ * here, and it costs one comparison.
+ */
+function drawSizeClass(weights: SizeWeights): WildlifeSizeClass {
+  let total = 0;
+  for (const sizeClass of WILDLIFE_SIZE_CLASSES) total += weights[sizeClass];
+  if (total <= 0) return DEFAULT_SIZE_CLASS;
+
+  let roll = Math.random() * total;
+  for (const sizeClass of WILDLIFE_SIZE_CLASSES) {
+    roll -= weights[sizeClass];
+    if (roll < 0) return sizeClass;
+  }
+  // Only reachable if the accumulated float sum lands exactly on `total`.
+  return DEFAULT_SIZE_CLASS;
+}
+
+/**
  * Spawns up to `wanted` creatures of one species around a seed cell. Members
  * that land outside the habitat are dropped rather than nudged inward: a school
  * that meets a shoreline should simply be smaller on that side.
+ *
+ * SCHOOL IDENTITY IS DECIDED HERE, once per group, in two rolls:
+ *
+ *   1. the group's SIZE CLASS, drawn from the species' weights;
+ *   2. whether the group is COHESIVE, at SCHOOLING_PROBABILITY_BY_SIZE for that
+ *      class — small fish nearly always, large fish nearly never.
+ *
+ * A cohesive group shares one school id and will hold together (movement.ts) and
+ * leave together (applyNaturalTurnover). A non-cohesive one hands every member
+ * its own school id, which is precisely the independent-wanderer behaviour that
+ * shipped before schools existed. Both branches produce valid schools, so
+ * nothing downstream has to ask which happened.
  *
  * Returns how many were actually created, so the caller consumes exactly that
  * many credits.
@@ -310,6 +389,12 @@ function spawnGroup(world: HabitatWorld, species: WildlifeSpecies, wanted: numbe
   if (seed === null) return 0;
 
   const profile = profileOf(species);
+  const size = drawSizeClass(profile.sizeWeights);
+  const cohesive = Math.random() < SCHOOLING_PROBABILITY_BY_SIZE[size];
+  // Allocated up front so every member of a cohesive group gets the same id even
+  // though members are created one at a time.
+  const groupSchoolId = nextSchoolId++;
+
   const scatter = profile.bodyLengthCells * GROUP_SCATTER_BODY_LENGTHS;
   // One shared heading: a group leaves the seed cell as a group.
   const heading = Math.random() * Math.PI * 2;
@@ -320,7 +405,16 @@ function spawnGroup(world: HabitatWorld, species: WildlifeSpecies, wanted: numbe
     const x = n === 0 ? seed.x : seed.x + (Math.random() * 2 - 1) * scatter;
     const y = n === 0 ? seed.y : seed.y + (Math.random() * 2 - 1) * scatter;
     if (!isValidCellFor(world, species, x, y)) continue;
-    entities.push({ id: nextEntityId++, species, x, y, heading, fleeSecondsRemaining: 0 });
+    entities.push({
+      id: nextEntityId++,
+      species,
+      schoolId: cohesive ? groupSchoolId : nextSchoolId++,
+      size,
+      x,
+      y,
+      heading,
+      fleeSecondsRemaining: 0,
+    });
     created++;
   }
   return created;
@@ -422,9 +516,39 @@ export function despawnInvalidHabitat(world: HabitatWorld): number {
 }
 
 /**
- * NATURAL TURNOVER. Each creature independently has a `dt / L` chance of
- * leaving this tick, which is an exponential lifetime with mean
- * NATURAL_LIFESPAN_SECONDS.
+ * NATURAL TURNOVER, ROLLED PER SCHOOL.
+ *
+ * Each SCHOOL independently has a `dt / L` chance of leaving this tick, and when
+ * it fires every member of that school goes at once. L is
+ * NATURAL_LIFESPAN_SECONDS — the same constant, at the same value, as when the
+ * roll was per individual.
+ *
+ * WHY THE MEAN DOES NOT CHANGE (the arithmetic, because the intuition is
+ * wrong the other way). Write p = dt/L for the per-roll hazard, N for the living
+ * fish and k for the mean school size.
+ *
+ *     per-individual rolls:  N rolls × p × 1 fish lost  = N·p fish per tick
+ *     per-school rolls:      (N/k) rolls × p × k fish   = N·p fish per tick
+ *
+ * They are equal. A member's own departure hazard is the hazard of its school,
+ * which is p either way, so an individual fish still has an exponential lifetime
+ * with mean L = 300 s, the equilibrium population N = T/(1 + W/L) ≈ 0.94·T is
+ * untouched, and no compensating multiplier is needed or wanted — scaling L by k
+ * would have cut fish turnover fivefold. What DOES change is the EVENT rate: a
+ * departure now happens k times less often and takes k fish with it. At the
+ * shipped numbers a 79-fish world sees a school leave every ~19 s instead of a
+ * fish leaving every ~3.8 s.
+ *
+ * WHY IT HAD TO CHANGE. Losing members one at a time is a slow leak that
+ * fragments schools: after a couple of minutes what was a group of five is a
+ * three and two strays, and the strays never rejoin anything (schools do not
+ * recruit). Departing whole keeps the visible unit intact for its whole life,
+ * and the replacement arrives as a whole group too — the census sees a deficit
+ * of `groupSize` and spawnGroup fills it in one event, where a deficit of 1
+ * could only ever produce another singleton.
+ *
+ * Non-schooling species are unaffected in every sense: their groupSize is 1, so
+ * each individual is its own school and this IS the per-individual roll.
  *
  * Deliberately NOT despawnWithCredit: a natural departure is not a habitat
  * failure, so it must not book a HABITAT_LOSS_RESPAWN_DELAY_SECONDS credit of
@@ -433,12 +557,27 @@ export function despawnInvalidHabitat(world: HabitatWorld): number {
  * mechanism for every kind of gap, exactly as the "one spawn path" note above
  * demands.
  *
- * Iterates backwards so a removal cannot skip the next candidate.
+ * Exported alongside despawnInvalidHabitat because it is the other half of "how
+ * a creature stops existing", and because the school semantics above are a
+ * contract worth asserting directly rather than inferring from a whole tick.
  */
-function applyNaturalTurnover(dt: number): void {
+export function applyNaturalTurnover(dt: number): void {
   const departureChance = dt / NATURAL_LIFESPAN_SECONDS;
+
+  // One roll per school, in first-appearance order — a fixed order, so the roll
+  // a given school gets does not depend on how the array happens to be laid out.
+  const rolled = new Set<number>();
+  const departing = new Set<number>();
+  for (const entity of entities) {
+    if (rolled.has(entity.schoolId)) continue;
+    rolled.add(entity.schoolId);
+    if (Math.random() < departureChance) departing.add(entity.schoolId);
+  }
+  if (departing.size === 0) return;
+
+  // Iterates backwards so a removal cannot skip the next candidate.
   for (let i = entities.length - 1; i >= 0; i--) {
-    if (Math.random() >= departureChance) continue;
+    if (!departing.has(entities[i].schoolId)) continue;
     entities.splice(i, 1);
     naturalDepartures++;
   }
@@ -479,6 +618,9 @@ export function entityStates(): WildlifeEntityState[] {
     x: roundBroadcastPosition(entity.x),
     y: roundBroadcastPosition(entity.y),
     heading: roundBroadcastPosition(entity.heading),
+    // The class INDEX, not its name — one msgpack byte instead of seven.
+    // `schoolId` is deliberately absent: see the field's note on WildlifeEntity.
+    size: sizeClassIndex(entity.size),
   }));
 }
 
@@ -491,8 +633,14 @@ export function entityStates(): WildlifeEntityState[] {
 export function replacePopulation(
   restored: readonly WildlifeEntity[],
   nextId: number,
+  nextSchool: number,
 ): void {
   resetPopulation();
   for (const entity of restored) entities.push({ ...entity });
   nextEntityId = nextId;
+  // Never below "one past the highest restored school", or a newly spawned group
+  // would join a restored school and inherit its departure roll.
+  let highestSchool = 0;
+  for (const entity of entities) highestSchool = Math.max(highestSchool, entity.schoolId);
+  nextSchoolId = Math.max(nextSchool, highestSchool + 1, 1);
 }

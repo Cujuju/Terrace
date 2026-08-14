@@ -5,7 +5,16 @@
 
 import { describe, expect, it } from 'vitest';
 import { SEA_LEVEL } from '@terrace/shared';
-import { parseEntitiesPayload, type WildlifeEntityState } from '../protocol.ts';
+import {
+  DEFAULT_SIZE_CLASS,
+  DEFAULT_SIZE_CLASS_INDEX,
+  WILDLIFE_SIZE_CLASSES,
+  WILDLIFE_SIZE_MODEL_SCALE,
+  parseEntitiesPayload,
+  sizeClassAt,
+  sizeClassIndex,
+  type WildlifeEntityState,
+} from '../protocol.ts';
 import {
   DEFAULT_INTERPOLATION_SECONDS,
   MAX_INTERPOLATION_SECONDS,
@@ -24,15 +33,62 @@ function entity(
   id: number,
   overrides: Partial<WildlifeEntityState> = {},
 ): WildlifeEntityState {
-  return { id, species: 'fish', x: 0, y: 0, heading: 0, ...overrides };
+  return {
+    id,
+    species: 'fish',
+    x: 0,
+    y: 0,
+    heading: 0,
+    size: DEFAULT_SIZE_CLASS_INDEX,
+    ...overrides,
+  };
 }
 
 describe('entities payload parsing', () => {
   it('accepts a well-formed payload', () => {
     const parsed = parseEntitiesPayload({
-      entities: [{ id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5 }],
+      entities: [{ id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5, size: 0 }],
     });
-    expect(parsed).toEqual([{ id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5 }]);
+    expect(parsed).toEqual([
+      { id: 3, species: 'whale', x: 1.25, y: -2.5, heading: 1.5, size: 0 },
+    ]);
+  });
+
+  it('reads a payload from a server that predates size classes as medium', () => {
+    // Version skew is ordinary for a self-hoster: an old server omits the field
+    // entirely, and the right answer is "ordinary medium creatures", never
+    // "drop the whole population".
+    const parsed = parseEntitiesPayload({
+      entities: [{ id: 3, species: 'fish', x: 0, y: 0, heading: 0 }],
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed?.[0].size).toBe(DEFAULT_SIZE_CLASS_INDEX);
+    expect(sizeClassAt(parsed![0].size)).toBe(DEFAULT_SIZE_CLASS);
+  });
+
+  it('falls back to the default class for a size index it does not know', () => {
+    const parsed = parseEntitiesPayload({
+      entities: [
+        { id: 1, species: 'fish', x: 0, y: 0, heading: 0, size: 99 },
+        { id: 2, species: 'fish', x: 0, y: 0, heading: 0, size: -1 },
+        { id: 3, species: 'fish', x: 0, y: 0, heading: 0, size: 'big' },
+      ],
+    });
+    expect(parsed?.map((entity) => entity.size)).toEqual([
+      DEFAULT_SIZE_CLASS_INDEX,
+      DEFAULT_SIZE_CLASS_INDEX,
+      DEFAULT_SIZE_CLASS_INDEX,
+    ]);
+  });
+
+  it('never carries a school on the wire', () => {
+    // Schools are a server-side steering concept; the client draws creatures
+    // where it is told they are and needs no knowledge of them.
+    const parsed = parseEntitiesPayload({
+      entities: [{ id: 1, species: 'fish', x: 0, y: 0, heading: 0, size: 0, schoolId: 7 }],
+    });
+    expect(parsed).toHaveLength(1);
+    expect(Object.keys(parsed![0]).sort()).toEqual(['heading', 'id', 'size', 'species', 'x', 'y']);
   });
 
   it('returns null when the payload is not an entity list at all', () => {
@@ -48,10 +104,41 @@ describe('entities payload parsing', () => {
         { id: 1, species: 'dragon', x: 0, y: 0, heading: 0 },
         { id: 2, species: 'fish', x: NaN, y: 0, heading: 0 },
         { id: 3, species: 'fish', x: 0, y: 0 },
-        { id: 4, species: 'grazer', x: 1, y: 2, heading: 0.5 },
+        { id: 4, species: 'grazer', x: 1, y: 2, heading: 0.5, size: 1 },
       ],
     });
-    expect(parsed).toEqual([{ id: 4, species: 'grazer', x: 1, y: 2, heading: 0.5 }]);
+    expect(parsed).toEqual([{ id: 4, species: 'grazer', x: 1, y: 2, heading: 0.5, size: 1 }]);
+  });
+});
+
+describe('size classes', () => {
+  it('round-trips every class through its wire index', () => {
+    for (const sizeClass of WILDLIFE_SIZE_CLASSES) {
+      expect(sizeClassAt(sizeClassIndex(sizeClass))).toBe(sizeClass);
+    }
+  });
+
+  it('draws the default class at exactly the scale the models are authored at', () => {
+    // The models in client/models.ts are authored at medium, and every clearance
+    // in client/placement.ts was sized against those dimensions. If this stops
+    // being 1, both files quietly start meaning something else.
+    expect(WILDLIFE_SIZE_MODEL_SCALE[DEFAULT_SIZE_CLASS]).toBe(1);
+  });
+
+  it('orders the model scales smallest to largest', () => {
+    const scales = WILDLIFE_SIZE_CLASSES.map((sizeClass) => WILDLIFE_SIZE_MODEL_SCALE[sizeClass]);
+    for (let i = 1; i < scales.length; i++) expect(scales[i]).toBeGreaterThan(scales[i - 1]);
+  });
+
+  it('keeps the largest fish inside its own swim clearance', () => {
+    // A large fish is 1.4 × the authored 0.26-unit body height, so its half
+    // height is 0.182 — the fish profile insists on 0.3 of submergence, so no
+    // clearance in placement.ts has to become size-aware. This is that argument,
+    // pinned: it is what makes "size is a scale on the root" safe.
+    const FISH_AUTHORED_BODY_HEIGHT = 0.26;
+    const largestHalfHeight = (FISH_AUTHORED_BODY_HEIGHT * WILDLIFE_SIZE_MODEL_SCALE.large) / 2;
+    expect(largestHalfHeight).toBeLessThan(SWIM_PROFILES.fish!.minSubmergence);
+    expect(largestHalfHeight).toBeLessThan(SWIM_PROFILES.fish!.minClearance);
   });
 });
 
@@ -130,6 +217,19 @@ describe('WildlifeInterpolator', () => {
 
     interpolator.advance(MAX_INTERPOLATION_SECONDS);
     expect(interpolator.sample().get(1)?.x).toBeCloseTo(10, 6);
+  });
+
+  it('carries the size class through interpolation untouched', () => {
+    const interpolator = new WildlifeInterpolator();
+    interpolator.receive([entity(1, { x: 0, size: 0 })]);
+    interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
+    interpolator.receive([entity(1, { x: 10, size: 0 })]);
+    interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
+
+    // Position is halfway; size is a class, not a quantity, so it does not lerp.
+    const sampled = interpolator.sample().get(1);
+    expect(sampled?.x).toBeCloseTo(5, 6);
+    expect(sampled?.size).toBe(0);
   });
 
   it('drops creatures the server has stopped reporting', () => {

@@ -27,7 +27,14 @@ import {
   freshGenesisProfile,
 } from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
-import { WILDLIFE_SPECIES, type WildlifeSpecies } from '../protocol.ts';
+import {
+  DEFAULT_SIZE_CLASS,
+  WILDLIFE_SIZE_CLASSES,
+  WILDLIFE_SPECIES,
+  type WildlifeSizeClass,
+  type WildlifeSpecies,
+  sizeClassIndex,
+} from '../protocol.ts';
 import {
   WILDLIFE_POPULATION_CAP,
   type HabitatWorld,
@@ -40,20 +47,42 @@ import {
   plugin as wildlifePlugin,
   resetWildlifeState,
 } from '../server/index.ts';
-import { FLEE_SPEED_MULTIPLIER, isFleeing, speedOf } from '../server/movement.ts';
+import {
+  FLEE_SPEED_MULTIPLIER,
+  SCHOOL_ALIGNMENT_RADIANS_PER_SECOND,
+  SCHOOL_COMFORT_RADIUS_CELLS,
+  SCHOOL_FULL_PULL_RADIUS_CELLS,
+  SCHOOL_MAX_PULL_RADIANS_PER_SECOND,
+  FLEE_DURATION_SECONDS,
+  advanceMovement,
+  cohesionPullRadiansPerSecond,
+  isFleeing,
+  normalizeAngle,
+  speedOf,
+  startleNear,
+  steerWithSchool,
+  summarizeSchools,
+} from '../server/movement.ts';
 import { loadPopulation } from '../server/persistence.ts';
 import {
   NATURAL_LIFESPAN_SECONDS,
   SPAWN_MEAN_WAIT_SECONDS,
+  applyNaturalTurnover,
   despawnInvalidHabitat,
+  despawnWithCredit,
   livingEntities,
   naturalDepartureCount,
   pendingCreditCount,
   populationTargets,
+  type WildlifeEntity,
 } from '../server/population.ts';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
+  FISH_SCHOOLS_ON_FRESH_SHELF,
+  FISH_SIZE_WEIGHTS,
+  SCHOOLING_PROBABILITY_BY_SIZE,
+  SCHOOL_LOOSENESS_BY_SIZE,
   habitatOf,
   profileOf,
 } from '../server/species.ts';
@@ -301,8 +330,13 @@ describe('population targets', () => {
     const targets = targetsFor({ land: 131072, shallow: 52429, deep: 78643 });
     const total = WILDLIFE_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // The documented ecosystem after the 2026-08-14 retune: 167 asked for, the
-    // cap scaling that to 148, with whales still the rarest species.
+    // The documented ecosystem after the 2026-08-14 retunes: 246 asked for
+    // (131 fish / 52 deepsea / 48 grazer / 15 whale), the cap scaling that by
+    // 150/246 and flooring to 148. Asserted exactly, because this table is the
+    // arithmetic the species.ts header claims and a silent drift in it is how
+    // that header becomes a lie.
+    expect(targets).toEqual({ fish: 79, deepsea: 31, grazer: 29, whale: 9 });
+    expect(total).toBe(148);
     expect(total).toBeGreaterThan(WILDLIFE_POPULATION_CAP / 2);
     expect(targets.fish).toBeGreaterThan(targets.whale);
     expect(targets.whale).toBeGreaterThan(0);
@@ -323,8 +357,16 @@ describe('population targets', () => {
       );
     }
 
-    // Day one: 4 fish, 8 deep-sea creatures, 2 whales, 0 grazers.
-    expect(targets.fish).toBeGreaterThanOrEqual(2);
+    // Day one after the 2026-08-14 school retune: 10 fish, 8 deep-sea creatures,
+    // 2 whales, 0 grazers.
+    //
+    // The fish figure is the VISIBLE-DENSITY contract, and it is asserted as the
+    // relation it was chosen for rather than as the number 10: a fresh shelf must
+    // hold FISH_SCHOOLS_ON_FRESH_SHELF complete schools, because one blob of fish
+    // is not recognisable as a school and the old density could not even hold
+    // one whole group.
+    expect(targets.fish).toBe(FISH_SCHOOLS_ON_FRESH_SHELF * profileOf('fish').groupSize);
+    expect(targets.fish).toBe(10);
     expect(targets.deepsea).toBeGreaterThanOrEqual(5);
     // "2–3 whales immediately" (owner, 2026-08-14) — the single hardest
     // constraint on FRESH_SHELF_SPAN_DIVISOR, since a bigger shelf eats the open
@@ -622,7 +664,17 @@ describe('wildlife sync', () => {
     expect(payload.entities).toHaveLength(livingEntities().length);
 
     for (const entity of payload.entities) {
-      expect(Object.keys(entity).sort()).toEqual(['heading', 'id', 'species', 'x', 'y']);
+      // `size` is on the wire (the client scales the model by it); `schoolId`
+      // deliberately is not — schooling is a server-side steering concept.
+      expect(Object.keys(entity).sort()).toEqual([
+        'heading',
+        'id',
+        'size',
+        'species',
+        'x',
+        'y',
+      ]);
+      expect(WILDLIFE_SIZE_CLASSES[entity.size as number]).toBeDefined();
       expect(WILDLIFE_SPECIES).toContain(entity.species);
       for (const key of ['x', 'y', 'heading'] as const) {
         const value = entity[key] as number;
@@ -731,5 +783,706 @@ describe('wildlife persistence', () => {
 
     harness.host.tick(TICK_DT);
     expect(livingEntities().find((entity) => entity.id === 1)).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCHOOLS
+//
+// Owner, 2026-08-14: "I see individual fish but I haven't seen any schools of
+// fish." These suites pin the four claims the fix rests on: a school holds
+// together for minutes, a sculpt scatters it and it re-forms, the terrain still
+// beats it, and turnover moves it as one body without changing the rate at
+// which fish come and go.
+//
+// Every bound below is a NAMED constant carrying the measurement it came from,
+// and every behavioural bound has at least 2× headroom over the worst of twenty
+// measured trials — these run against the real, unseeded Math.random, so a bound
+// that merely "usually" holds is a flake waiting for CI.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A world that is shallow water everywhere: fish habitat with no boundaries. */
+const OPEN_SHALLOW_HEIGHT = SEA_LEVEL - BAND_HEIGHT;
+
+/** Where hand-built schools are placed — the middle of the test world. */
+const SCHOOL_ORIGIN_CELL = WORLD_SIZE / 2;
+
+/** Members in a hand-built school: one full spawn group. */
+const SCHOOL_UNDER_TEST_MEMBERS = profileOf('fish').groupSize;
+
+/**
+ * Half-width of the jitter a hand-built school is created with, in cells —
+ * GROUP_SCATTER_BODY_LENGTHS (2) × a fish's 0.7-cell body, i.e. exactly the
+ * scatter population.ts gives a real spawn group.
+ */
+const SCHOOL_BIRTH_SCATTER_CELLS = 1.4;
+
+/** Simulated seconds a school is watched for. Five minutes — "over minutes". */
+const SCHOOL_OBSERVATION_SECONDS = 300;
+
+/**
+ * Ceiling on a school's TIME-AVERAGED radius (the mean, over every tick, of the
+ * greatest distance from a member to the school's centroid).
+ *
+ * Measured over 60 × 300 s trials of a small school: median 1.49 cells, worst
+ * 2.64. 5 cells is nearly double the worst measurement, and still a tenth of
+ * what the same five fish reach in ONE minute without cohesion, so it cannot
+ * pass by accident.
+ */
+const SCHOOL_MEAN_RADIUS_CEILING_CELLS = 5;
+
+/**
+ * Ceiling on the school's radius at ANY instant. Measured worst case over the
+ * same trials: 6.46 cells for the small class (11.18 for the loosest, which is
+ * not what this suite watches). 12 is the "cohesion is not silently broken"
+ * rail rather than a statement about how a school looks; the mean above is the
+ * one that describes the picture.
+ */
+const SCHOOL_PEAK_RADIUS_CEILING_CELLS = 12;
+
+/**
+ * Radius past which a group of fish is no longer any kind of group. Five fish
+ * given SEPARATE school ids reach a radius of 48–195 cells within a minute
+ * (measured, 200 trials); 15 is far above anything a real school does and far
+ * below anything unschooled fish do, so it separates the two cleanly.
+ */
+const DISPERSED_RADIUS_CELLS = 15;
+
+/**
+ * How far a startled school must have spread by the end of its panic, and how
+ * tight it must be again a minute later.
+ *
+ * Measured over 200 trials: the scatter is 11.9–36 cells (median 24.7) and the
+ * re-formed radius 0.8–4.0. The scatter floor is deliberately set well under
+ * the smallest measurement rather than near the median — a school fleeing into
+ * its own turning circle is a real, if rare, outcome, and this suite exists to
+ * prove that panic OVERRIDES cohesion, not to police how far five fish get in
+ * 2.5 seconds.
+ */
+const FLEE_SCATTER_FLOOR_CELLS = 8;
+const REFORM_SECONDS = 60;
+const REFORMED_RADIUS_CEILING_CELLS = 8;
+
+/**
+ * Cells a school must have travelled in REFORM_SECONDS to count as drifting
+ * rather than milling. Measured over 200 trials: 112–178 cells, because
+ * alignment makes a school hold a heading. 10 is an order of magnitude below
+ * that — this is the "it went somewhere" floor, not a speed measurement.
+ */
+const SCHOOL_DRIFT_FLOOR_CELLS = 10;
+
+/** A world of nothing but shallow water, entirely unlocked. */
+function openShallowWorld(): World {
+  return worldWithTerrain(WORLD_SIZE, () => OPEN_SHALLOW_HEIGHT);
+}
+
+/**
+ * Installs a hand-built population through the persistence path — the one seam
+ * that creates creatures without the spawn machinery, which is what lets these
+ * tests state an exact school and then watch only the steering.
+ */
+function installFish(
+  entities: ReadonlyArray<{
+    id: number;
+    schoolId: number;
+    size: WildlifeSizeClass;
+    x: number;
+    y: number;
+  }>,
+): void {
+  loadPopulation({
+    version: 1,
+    nextId: entities.length + 1,
+    nextSchoolId: Math.max(...entities.map((entity) => entity.schoolId)) + 1,
+    entities: entities.map((entity) => ({
+      id: entity.id,
+      species: 'fish',
+      schoolId: entity.schoolId,
+      size: sizeClassIndex(entity.size),
+      x: entity.x,
+      y: entity.y,
+      // One shared heading, as a real spawn group gets.
+      heading: 0.5,
+    })),
+  });
+}
+
+/** One school of `members` fish, jittered around the world's centre. */
+function installSchool(
+  size: WildlifeSizeClass = 'small',
+  members: number = SCHOOL_UNDER_TEST_MEMBERS,
+  schoolIdOf: (index: number) => number = () => 1,
+): void {
+  installFish(
+    Array.from({ length: members }, (_, n) => ({
+      id: n + 1,
+      schoolId: schoolIdOf(n),
+      size,
+      x: SCHOOL_ORIGIN_CELL + (Math.random() * 2 - 1) * SCHOOL_BIRTH_SCATTER_CELLS,
+      y: SCHOOL_ORIGIN_CELL + (Math.random() * 2 - 1) * SCHOOL_BIRTH_SCATTER_CELLS,
+    })),
+  );
+}
+
+/** Centroid of a set of creatures. */
+function centroidOf(members: readonly WildlifeEntity[]): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  for (const member of members) {
+    x += member.x;
+    y += member.y;
+  }
+  return { x: x / members.length, y: y / members.length };
+}
+
+/** Greatest distance from any member to the group's centroid, in cells. */
+function groupRadius(members: readonly WildlifeEntity[] = livingEntities()): number {
+  if (members.length === 0) return 0;
+  const centre = centroidOf(members);
+  let radius = 0;
+  for (const member of members) {
+    radius = Math.max(radius, Math.hypot(member.x - centre.x, member.y - centre.y));
+  }
+  return radius;
+}
+
+describe('school cohesion', () => {
+  let view: HabitatWorld;
+
+  beforeEach(() => {
+    resetWildlifeState();
+    view = habitatView(openShallowWorld());
+  });
+
+  it('holds a spawned school together over minutes of simulated swimming', () => {
+    installSchool();
+
+    let peak = 0;
+    let sum = 0;
+    const ticks = ticksFor(SCHOOL_OBSERVATION_SECONDS);
+    for (let n = 0; n < ticks; n++) {
+      advanceMovement(view, TICK_DT);
+      const radius = groupRadius();
+      peak = Math.max(peak, radius);
+      sum += radius;
+    }
+
+    expect(livingEntities()).toHaveLength(SCHOOL_UNDER_TEST_MEMBERS);
+    expect(sum / ticks).toBeLessThan(SCHOOL_MEAN_RADIUS_CEILING_CELLS);
+    expect(peak).toBeLessThan(SCHOOL_PEAK_RADIUS_CEILING_CELLS);
+  });
+
+  it('is what keeps them together: the same five fish disperse without a school', () => {
+    // THE CONTROL, and the bug being fixed. Identical starting positions,
+    // identical wander — the only difference is that these five are five schools
+    // of one rather than one school of five.
+    installSchool('small', SCHOOL_UNDER_TEST_MEMBERS, (n) => n + 1);
+    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
+    expect(groupRadius()).toBeGreaterThan(DISPERSED_RADIUS_CELLS);
+  });
+
+  it('drifts as one body rather than milling on the spot', () => {
+    installSchool();
+    const start = centroidOf(livingEntities());
+    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
+    const end = centroidOf(livingEntities());
+
+    expect(Math.hypot(end.x - start.x, end.y - start.y)).toBeGreaterThan(
+      SCHOOL_DRIFT_FLOOR_CELLS,
+    );
+    expect(groupRadius()).toBeLessThan(SCHOOL_PEAK_RADIUS_CEILING_CELLS);
+  });
+
+  it('scatters when startled and re-forms afterwards', () => {
+    installSchool();
+    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
+
+    const centre = centroidOf(livingEntities());
+    expect(startleNear(centre.x, centre.y, FLEE_RADIUS_CELLS)).toBe(SCHOOL_UNDER_TEST_MEMBERS);
+
+    for (let n = 0; n < ticksFor(FLEE_DURATION_SECONDS); n++) advanceMovement(view, TICK_DT);
+    // Panic beat cohesion outright: the school is in pieces.
+    expect(groupRadius()).toBeGreaterThan(FLEE_SCATTER_FLOOR_CELLS);
+
+    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
+    expect(groupRadius()).toBeLessThan(REFORMED_RADIUS_CEILING_CELLS);
+  });
+
+  it('leaves a school of one wandering exactly as it always did', () => {
+    // The "last fish" case: a school whose other members were lost to terrain.
+    installSchool('small', 1);
+    const fish = livingEntities()[0];
+    const startX = fish.x;
+    const startY = fish.y;
+
+    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
+
+    // Still alive, still moving, and nothing pulled it anywhere: with no other
+    // members there is no centroid to steer toward.
+    expect(livingEntities()).toHaveLength(1);
+    expect(Math.hypot(fish.x - startX, fish.y - startY)).toBeGreaterThan(
+      SCHOOL_DRIFT_FLOOR_CELLS,
+    );
+  });
+});
+
+describe('the cohesion blend', () => {
+  /** A fish with an explicit pose, for steering arithmetic. */
+  function fishAt(x: number, y: number, heading: number, size: WildlifeSizeClass): WildlifeEntity {
+    return { id: 1, species: 'fish', schoolId: 1, size, x, y, heading, fleeSecondsRemaining: 0 };
+  }
+
+  it('applies no pull at all inside the comfort radius', () => {
+    for (const looseness of Object.values(SCHOOL_LOOSENESS_BY_SIZE)) {
+      expect(cohesionPullRadiansPerSecond(0, looseness)).toBe(0);
+      expect(cohesionPullRadiansPerSecond(SCHOOL_COMFORT_RADIUS_CELLS * looseness, looseness)).toBe(
+        0,
+      );
+    }
+  });
+
+  it('ramps to the maximum at the full-pull radius and saturates beyond it', () => {
+    const pullAtFull = cohesionPullRadiansPerSecond(SCHOOL_FULL_PULL_RADIUS_CELLS, 1);
+    expect(pullAtFull).toBeCloseTo(SCHOOL_MAX_PULL_RADIANS_PER_SECOND, 10);
+    expect(cohesionPullRadiansPerSecond(SCHOOL_FULL_PULL_RADIUS_CELLS * 10, 1)).toBe(pullAtFull);
+
+    // Monotonic across the ramp — no step, no plateau in the middle.
+    let previous = 0;
+    for (let d = SCHOOL_COMFORT_RADIUS_CELLS; d <= SCHOOL_FULL_PULL_RADIUS_CELLS; d += 0.1) {
+      const pull = cohesionPullRadiansPerSecond(d, 1);
+      expect(pull).toBeGreaterThanOrEqual(previous);
+      previous = pull;
+    }
+  });
+
+  it('makes bigger fish school more loosely, on both halves of the dial', () => {
+    // Ordering of the tuning itself: the "smaller fish school more" request
+    // expressed as the numbers that implement it.
+    const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
+    expect(SCHOOL_LOOSENESS_BY_SIZE[small]).toBeLessThan(SCHOOL_LOOSENESS_BY_SIZE[medium]);
+    expect(SCHOOL_LOOSENESS_BY_SIZE[medium]).toBeLessThan(SCHOOL_LOOSENESS_BY_SIZE[large]);
+
+    // A large fish tolerates a gap that already has a small one turning hard.
+    const gap = SCHOOL_COMFORT_RADIUS_CELLS * 1.5;
+    expect(cohesionPullRadiansPerSecond(gap, SCHOOL_LOOSENESS_BY_SIZE[small])).toBeGreaterThan(
+      cohesionPullRadiansPerSecond(gap, SCHOOL_LOOSENESS_BY_SIZE[large]),
+    );
+  });
+
+  it('turns toward the rest of the school, never further than the rate allows', () => {
+    // Three members due east of the subject, well outside the comfort radius, so
+    // the pull is saturated and the turn is exactly the per-tick rate limit.
+    const subject = fishAt(0, 0, Math.PI, 'small');
+    const away = SCHOOL_FULL_PULL_RADIUS_CELLS * 2;
+    const school = summarizeSchools([
+      subject,
+      fishAt(away, 0, 0, 'small'),
+      fishAt(away, 1, 0, 'small'),
+      fishAt(away, -1, 0, 'small'),
+    ]).get(1)!;
+
+    const steered = steerWithSchool(subject, school, subject.heading, TICK_DT);
+    expect(Math.abs(normalizeAngle(steered - subject.heading))).toBeLessThanOrEqual(
+      (SCHOOL_MAX_PULL_RADIANS_PER_SECOND + SCHOOL_ALIGNMENT_RADIANS_PER_SECOND) * TICK_DT + 1e-9,
+    );
+    // …and it is a turn TOWARD them: heading π (due west) moves toward 0.
+    expect(Math.abs(steered)).toBeLessThan(Math.abs(subject.heading));
+  });
+
+  it('leaves a lone member unsteered', () => {
+    const subject = fishAt(0, 0, 1.2, 'small');
+    const school = summarizeSchools([subject]).get(1)!;
+    expect(steerWithSchool(subject, school, 1.2, TICK_DT)).toBe(1.2);
+  });
+
+  it('excludes the member itself from its own school centroid', () => {
+    // Two members, one at the origin and one 10 cells east. Including self would
+    // put the centroid 5 cells away and halve the pull; excluding it puts the
+    // target where the other fish actually is.
+    const subject = fishAt(0, 0, 0, 'small');
+    const school = summarizeSchools([subject, fishAt(10, 0, 0, 'small')]).get(1)!;
+    // Facing north, with the other fish due east: it turns clockwise, toward 0.
+    expect(steerWithSchool(subject, school, Math.PI / 2, TICK_DT)).toBeLessThan(Math.PI / 2);
+  });
+
+  it('ignores the mean heading of a school that has just scattered', () => {
+    // Members whose headings cancel exactly: their circular mean has no
+    // direction, and alignment must not invent one out of the rounding error.
+    const subject = fishAt(0, 0, 0, 'small');
+    const school = summarizeSchools([
+      subject,
+      fishAt(0, 0, 0, 'small'),
+      fishAt(0, 0, Math.PI / 2, 'small'),
+      fishAt(0, 0, Math.PI, 'small'),
+      fishAt(0, 0, -Math.PI / 2, 'small'),
+    ]).get(1)!;
+    // Everyone is at the same point, so cohesion is zero too: the heading comes
+    // back untouched, which is the whole assertion.
+    expect(steerWithSchool(subject, school, 0.75, TICK_DT)).toBe(0.75);
+  });
+});
+
+describe('habitat beats cohesion', () => {
+  /**
+   * An island: a square of land in the middle of shallow water, wider than a
+   * school's full-pull radius so members cannot simply cross it.
+   */
+  const ISLAND_HALF_WIDTH_CELLS = 12;
+  const ISLAND_HEIGHT = SEA_LEVEL + BAND_HEIGHT;
+
+  function islandWorld(): World {
+    return worldWithTerrain(WORLD_SIZE, (x, y) =>
+      Math.abs(x - SCHOOL_ORIGIN_CELL) <= ISLAND_HALF_WIDTH_CELLS &&
+      Math.abs(y - SCHOOL_ORIGIN_CELL) <= ISLAND_HALF_WIDTH_CELLS
+        ? ISLAND_HEIGHT
+        : OPEN_SHALLOW_HEIGHT,
+    );
+  }
+
+  it('never pulls a member of a straddling school onto land', () => {
+    resetWildlifeState();
+    const world = islandWorld();
+    const view = habitatView(world);
+
+    // A school split by the island: two members west of it, three east, with the
+    // centroid squarely on dry land. Cohesion is asking every one of them to
+    // swim straight into the beach.
+    const offset = ISLAND_HALF_WIDTH_CELLS + 2;
+    installFish([
+      { id: 1, schoolId: 1, size: 'small', x: SCHOOL_ORIGIN_CELL - offset, y: SCHOOL_ORIGIN_CELL },
+      {
+        id: 2,
+        schoolId: 1,
+        size: 'small',
+        x: SCHOOL_ORIGIN_CELL - offset,
+        y: SCHOOL_ORIGIN_CELL + 1,
+      },
+      { id: 3, schoolId: 1, size: 'small', x: SCHOOL_ORIGIN_CELL + offset, y: SCHOOL_ORIGIN_CELL },
+      {
+        id: 4,
+        schoolId: 1,
+        size: 'small',
+        x: SCHOOL_ORIGIN_CELL + offset,
+        y: SCHOOL_ORIGIN_CELL + 1,
+      },
+      {
+        id: 5,
+        schoolId: 1,
+        size: 'small',
+        x: SCHOOL_ORIGIN_CELL + offset,
+        y: SCHOOL_ORIGIN_CELL - 1,
+      },
+    ]);
+    const centre = centroidOf(livingEntities());
+    expect(habitatOf(world.heightAt(Math.round(centre.x), Math.round(centre.y)))).toBe('land');
+
+    for (let n = 0; n < ticksFor(SCHOOL_OBSERVATION_SECONDS); n++) {
+      advanceMovement(view, TICK_DT);
+      for (const fish of livingEntities()) {
+        expect(isValidCellFor(view, 'fish', fish.x, fish.y)).toBe(true);
+      }
+    }
+
+    // Nothing had to be culled to keep that true — the steering veto did it, not
+    // the habitat sweep tidying up afterwards.
+    expect(despawnInvalidHabitat(view)).toBe(0);
+    expect(livingEntities()).toHaveLength(SCHOOL_UNDER_TEST_MEMBERS);
+  });
+});
+
+/**
+ * Schools of fish used in the turnover suites. 30 × the 5-member group size is
+ * exactly WILDLIFE_POPULATION_CAP, which is the largest sample a hand-built
+ * population can have (loadPopulation stops at the cap) and therefore the
+ * tightest statistics available.
+ */
+const TURNOVER_SCHOOLS = WILDLIFE_POPULATION_CAP / SCHOOL_UNDER_TEST_MEMBERS;
+
+/**
+ * Independent trials the turnover rate is measured over.
+ *
+ * One trial of 30 schools has a standard deviation of ~2.6 departed schools
+ * (√(30 × 0.632 × 0.368)) against a mean of 19 — 14% relative. Eight trials
+ * bring that to 5%, so the ±25% tolerance below is five standard deviations,
+ * which is what makes an unseeded statistical test safe to run in CI.
+ */
+const TURNOVER_TRIALS = 8;
+
+/**
+ * Fraction of the expected departure count the measurement may differ by. See
+ * TURNOVER_TRIALS for why 0.25 is ~5σ and not a guess.
+ */
+const TURNOVER_RATE_TOLERANCE = 0.25;
+
+/**
+ * Fraction of a population that has departed after one mean lifetime:
+ * 1 − e⁻¹ for an exponential lifetime, which is what both the per-individual
+ * and the per-school roll produce (see the arithmetic in population.ts).
+ */
+const DEPARTED_FRACTION_AFTER_ONE_LIFETIME = 1 - Math.exp(-1);
+
+/** Installs `schools` schools of `members` fish each, all in open water. */
+function installSchools(schools: number, members: number): void {
+  const entities: Array<{
+    id: number;
+    schoolId: number;
+    size: WildlifeSizeClass;
+    x: number;
+    y: number;
+  }> = [];
+  for (let school = 0; school < schools; school++) {
+    for (let member = 0; member < members; member++) {
+      entities.push({
+        id: entities.length + 1,
+        schoolId: school + 1,
+        size: 'small',
+        // Spread the schools out so they are independent bodies of fish; the
+        // turnover roll does not read position, but a test that looked like a
+        // single 150-fish pile would be misleading about what it models.
+        x: SCHOOL_ORIGIN_CELL + school,
+        y: SCHOOL_ORIGIN_CELL,
+      });
+    }
+  }
+  installFish(entities);
+}
+
+/** Living members of each school id, keyed by school. */
+function membersBySchool(): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const entity of livingEntities()) {
+    counts.set(entity.schoolId, (counts.get(entity.schoolId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Departures observed over `seconds` of turnover on a freshly built population. */
+function departuresOver(schools: number, members: number, seconds: number): number {
+  installSchools(schools, members);
+  const before = naturalDepartureCount();
+  for (let n = 0; n < ticksFor(seconds); n++) applyNaturalTurnover(TICK_DT);
+  return naturalDepartureCount() - before;
+}
+
+describe('school-level natural turnover', () => {
+  beforeEach(() => {
+    resetWildlifeState();
+  });
+
+  it('takes a whole school at a time, never part of one', () => {
+    // THE point of the change: a school that is losing members one by one is a
+    // school being visibly eroded, and the strays it leaves behind can never
+    // rejoin anything. Departures are all-or-nothing, and that is exact — no
+    // bound, no statistics.
+    installSchools(TURNOVER_SCHOOLS, SCHOOL_UNDER_TEST_MEMBERS);
+
+    // A coarse dt so departures happen quickly; the roll is dt/L either way.
+    const COARSE_TURNOVER_DT_SECONDS = 30;
+    for (let n = 0; n < 40 && livingEntities().length > 0; n++) {
+      applyNaturalTurnover(COARSE_TURNOVER_DT_SECONDS);
+      for (const [, members] of membersBySchool()) {
+        expect(members).toBe(SCHOOL_UNDER_TEST_MEMBERS);
+      }
+    }
+
+    // And the population really did turn over, rather than the assertion above
+    // holding because nothing ever happened.
+    expect(livingEntities().length).toBeLessThan(WILDLIFE_POPULATION_CAP);
+    expect(naturalDepartureCount() % SCHOOL_UNDER_TEST_MEMBERS).toBe(0);
+  });
+
+  it('preserves the rate at which individual fish leave', () => {
+    // The arithmetic in population.ts, measured: rolling once per school of k
+    // and removing k loses the same fish per second as rolling k times and
+    // removing one. If a "correspondingly longer mean" had been applied, this
+    // would come out five times too low.
+    let departed = 0;
+    for (let trial = 0; trial < TURNOVER_TRIALS; trial++) {
+      departed += departuresOver(
+        TURNOVER_SCHOOLS,
+        SCHOOL_UNDER_TEST_MEMBERS,
+        NATURAL_LIFESPAN_SECONDS,
+      );
+    }
+
+    const expected =
+      TURNOVER_TRIALS * WILDLIFE_POPULATION_CAP * DEPARTED_FRACTION_AFTER_ONE_LIFETIME;
+    expect(departed).toBeGreaterThan(expected * (1 - TURNOVER_RATE_TOLERANCE));
+    expect(departed).toBeLessThan(expected * (1 + TURNOVER_RATE_TOLERANCE));
+  });
+
+  it('leaves solitary creatures on exactly the per-individual roll they had', () => {
+    // The control: schools of one — which is what every non-schooling species
+    // is, and what a lone-remainder fish is. Same population, same window, same
+    // expected count as the schools above.
+    let departed = 0;
+    for (let trial = 0; trial < TURNOVER_TRIALS; trial++) {
+      departed += departuresOver(WILDLIFE_POPULATION_CAP, 1, NATURAL_LIFESPAN_SECONDS);
+    }
+
+    const expected =
+      TURNOVER_TRIALS * WILDLIFE_POPULATION_CAP * DEPARTED_FRACTION_AFTER_ONE_LIFETIME;
+    expect(departed).toBeGreaterThan(expected * (1 - TURNOVER_RATE_TOLERANCE));
+    expect(departed).toBeLessThan(expected * (1 + TURNOVER_RATE_TOLERANCE));
+  });
+
+  it('never strands a school that has shrunk to its last member', () => {
+    // A school reduced to one by habitat loss must keep rolling like anything
+    // else: neither immortal (a bug where only multi-member schools are rolled)
+    // nor culled on sight.
+    installSchools(TURNOVER_SCHOOLS, SCHOOL_UNDER_TEST_MEMBERS);
+
+    // Strip every school down to one member, the way a drained bay would.
+    for (let i = livingEntities().length - 1; i >= 0; i--) {
+      const entity = livingEntities()[i];
+      const rank = livingEntities()
+        .filter((other) => other.schoolId === entity.schoolId)
+        .indexOf(entity);
+      if (rank > 0) despawnWithCredit(i);
+    }
+    expect(livingEntities()).toHaveLength(TURNOVER_SCHOOLS);
+    for (const [, members] of membersBySchool()) expect(members).toBe(1);
+
+    const before = naturalDepartureCount();
+    for (let n = 0; n < ticksFor(NATURAL_LIFESPAN_SECONDS); n++) applyNaturalTurnover(TICK_DT);
+
+    // Some left, some did not: an exponential lifetime, not a cliff.
+    expect(naturalDepartureCount() - before).toBeGreaterThan(0);
+    expect(livingEntities().length).toBeGreaterThan(0);
+  });
+});
+
+// ── Size classes, end to end through the spawn path ──────────────────────────
+
+/**
+ * Simulated seconds a fish-only world is watched for while sampling spawned
+ * groups. Long enough that turnover replaces the population several times, so
+ * the sample is ~125 groups rather than the ~40 alive at any instant — measured,
+ * and comfortably more than the ratios below need.
+ *
+ * It is also the longest-running test in this file, so it is deliberately not
+ * longer: the whole workspace suite runs several vitest instances in parallel,
+ * and a test that sits at half the default timeout on an idle machine is a
+ * timeout flake on a busy one.
+ */
+const SIZE_SAMPLE_SECONDS = 450;
+
+/**
+ * How many times more common small fish must be than large ones in the sample.
+ *
+ * FISH_SIZE_WEIGHTS asks for 6 : 1, and over a sample this size the measured
+ * ratio sits between 4.4 and 9.2 (200 trials' worth of sampling). Asserting
+ * only 2 leaves room for ordinary multinomial jitter while still failing loudly
+ * if the weights stop being read.
+ */
+const SMALL_TO_LARGE_ABUNDANCE_FLOOR = 2;
+
+/**
+ * How many times larger a small fish's typical school must be than a large
+ * fish's, measured as fish-per-school.
+ *
+ * The probabilities predict 5/(0.9 + 5×0.1) = 3.6 members per small school
+ * against 5/(0.1 + 5×0.9) = 1.1 for large — a ratio above 3, and the measured
+ * range is 2.7–3.4. Asserting 1.5 is half the predicted effect, which no
+ * plausible jitter reaches but a broken SCHOOLING_PROBABILITY_BY_SIZE lookup
+ * would fail instantly.
+ */
+const SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR = 1.5;
+
+describe('fish size classes drive schooling', () => {
+  it('orders the tuning tables smallest-schools-most', () => {
+    const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
+    expect(SCHOOLING_PROBABILITY_BY_SIZE[small]).toBeGreaterThan(
+      SCHOOLING_PROBABILITY_BY_SIZE[medium],
+    );
+    expect(SCHOOLING_PROBABILITY_BY_SIZE[medium]).toBeGreaterThan(
+      SCHOOLING_PROBABILITY_BY_SIZE[large],
+    );
+    expect(FISH_SIZE_WEIGHTS[small]).toBeGreaterThan(FISH_SIZE_WEIGHTS[medium]);
+    expect(FISH_SIZE_WEIGHTS[medium]).toBeGreaterThan(FISH_SIZE_WEIGHTS[large]);
+    // Every non-fish species has exactly one size, so nothing else in the plugin
+    // needs a "does this species vary" flag.
+    for (const species of WILDLIFE_SPECIES) {
+      if (species === 'fish') continue;
+      const weights = profileOf(species).sizeWeights;
+      expect(WILDLIFE_SIZE_CLASSES.filter((size) => weights[size] > 0)).toEqual([
+        DEFAULT_SIZE_CLASS,
+      ]);
+    }
+  });
+
+  it('spawns all three sizes, small most often, and schools them accordingly', () => {
+    // A world that is nothing but fish habitat, run long enough for turnover to
+    // cycle the population several times over. Every school id ever seen is
+    // recorded with the size it was born at and the most members it ever had.
+    const harness = bootOn(openShallowWorld());
+    const seen = new Map<number, { size: WildlifeSizeClass; members: number }>();
+
+    for (let n = 0; n < ticksFor(SIZE_SAMPLE_SECONDS); n++) {
+      harness.host.tick(TICK_DT);
+      const counts = membersBySchool();
+      for (const entity of livingEntities()) {
+        const previous = seen.get(entity.schoolId);
+        const members = counts.get(entity.schoolId) ?? 1;
+        if (previous === undefined) seen.set(entity.schoolId, { size: entity.size, members });
+        else if (members > previous.members) previous.members = members;
+      }
+    }
+
+    const bySize = (size: WildlifeSizeClass) =>
+      [...seen.values()].filter((school) => school.size === size);
+    const [small, , large] = WILDLIFE_SIZE_CLASSES;
+
+    // Every class actually occurs.
+    for (const size of WILDLIFE_SIZE_CLASSES) expect(bySize(size).length).toBeGreaterThan(0);
+
+    // Small fish are the many. Counted in FISH, not in schools: a solitary large
+    // fish makes one school per fish, so counting schools would flatter it.
+    const fishOf = (size: WildlifeSizeClass) =>
+      bySize(size).reduce((sum, school) => sum + school.members, 0);
+    expect(fishOf(small)).toBeGreaterThan(fishOf(large) * SMALL_TO_LARGE_ABUNDANCE_FLOOR);
+
+    // And small fish are the ones in schools: more fish per school than large.
+    const membersPerSchool = (size: WildlifeSizeClass) => fishOf(size) / bySize(size).length;
+    expect(membersPerSchool(small)).toBeGreaterThan(
+      membersPerSchool(large) * SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR,
+    );
+    expect(membersPerSchool(large)).toBeLessThan(SCHOOL_UNDER_TEST_MEMBERS);
+  });
+
+  it('carries school and size through a snapshot unchanged', () => {
+    // Without this the whole behaviour is undone by a restart: school membership
+    // cannot be recovered from position, so a dropped schoolId would restore
+    // every school as permanent singletons.
+    const harness = bootOn(openShallowWorld());
+    tick(harness, ticksFor(SETTLE_SECONDS));
+    const before = livingEntities().map((entity) => ({ ...entity }));
+    expect(before.length).toBeGreaterThan(0);
+    expect(new Set(before.map((entity) => entity.schoolId)).size).toBeLessThan(before.length);
+
+    const slices = harness.host.collectPersistence();
+    const restored = bootOn(openShallowWorld());
+    restored.host.restorePersistence(slices);
+
+    expect(livingEntities().map((entity) => ({ ...entity }))).toEqual(before);
+  });
+
+  it('restores a pre-schooling snapshot as independent wanderers', () => {
+    // Old slices carry no schoolId. The honest reading is "creatures whose
+    // schools we no longer know" — one school each — not one giant school.
+    resetWildlifeState();
+    loadPopulation({
+      version: 1,
+      nextId: 4,
+      entities: [
+        { id: 1, species: 'fish', x: 10, y: 10, heading: 0 },
+        { id: 2, species: 'fish', x: 11, y: 10, heading: 0 },
+        { id: 3, species: 'fish', x: 12, y: 10, heading: 0 },
+      ],
+    });
+
+    const schools = livingEntities().map((entity) => entity.schoolId);
+    expect(new Set(schools).size).toBe(schools.length);
+    for (const entity of livingEntities()) expect(entity.size).toBe(DEFAULT_SIZE_CLASS);
   });
 });

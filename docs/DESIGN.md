@@ -493,20 +493,30 @@ terrace/
   inventory** (owner request, settled 2026-08-14, same report). Two parts:
 
   1. **Density retune.** Per-species `habitatCellsPerIndividual` roughly doubles
-     the asked-for population overall (a nominal fully-revealed 512² world goes
-     from 82 to 167 requested, which `WILDLIFE_POPULATION_CAP` — raised 100 →
-     150 — scales to 148). The two DEEP species move much further than the other
-     two (whale 20 000 → 5 000, deepsea 6 000 → 1 500) because deep water stopped
-     being a rare remote habitat and became three quarters of the ground every
-     new server opens on. Day one on any fresh world (4 096 shallow / 12 288 deep
-     inside the starter square) is **4 fish, 8 deep-sea creatures, 2 whales, 0
-     grazers** — where the old table asked for nothing but fish.
-     Recomputed bandwidth at the new cap: 150 × 52 B ≈ 7.8 KB per full-state
-     broadcast, 39 KB/s ≈ 312 kbit/s per client at the 5 Hz cadence.
-     Honest note: at these densities a *fully* revealed 512² world rides the cap
-     (~10% below what the densities ask for). Accepted — the cap is a bandwidth
+     the asked-for population overall. The two DEEP species move much further
+     than the other two (whale 20 000 → 5 000, deepsea 6 000 → 1 500) because
+     deep water stopped being a rare remote habitat and became three quarters of
+     the ground every new server opens on. Fish moved again on the same day
+     (1 000 → 400) for the schooling change below. Day one on any fresh world
+     (4 096 shallow / 12 288 deep inside the starter square):
+
+     | species | density | day-one target |
+     |---|---|---|
+     | fish | 400 shallow cells each | **10** (two full schools of 5) |
+     | deep-sea | 1 500 deep cells each | **8** |
+     | whale | 5 000 deep cells each | **2** |
+     | grazer | 2 700 land cells each | **0** — a fresh world has no land |
+
+     A fully revealed nominal 512² world asks for 246 (131 fish / 52 deep-sea /
+     48 grazer / 15 whale); `WILDLIFE_POPULATION_CAP` (raised 100 → 150) scales
+     that by 150/246 to **148** (79 / 31 / 29 / 9). Bandwidth at that cap, with
+     the `size` field added below: 150 × 58 B ≈ 8.7 KB per full-state broadcast,
+     43.5 KB/s ≈ 348 kbit/s per client at the 5 Hz cadence.
+     Honest note, restated after the fish retune: a *fully* revealed 512² world
+     now rides the cap hard, getting 60% of what the densities ask for, and fish
+     are the majority species there (53%). Accepted — the cap is a bandwidth
      budget and scales species proportionally, so a capped world loses scale, not
-     shape.
+     shape; and "enough fish to see schools" is arithmetically "a lot of fish".
   2. **Stochastic population.** Targets are a CEILING approached at random, never
      a quota filled at boot. Each pending spawn credit carries a constant hazard
      (`SPAWN_MEAN_WAIT_SECONDS = 20`), so the deficit decays exponentially and a
@@ -516,6 +526,61 @@ terrace/
      repeats. Both are per-second rates converted with the host's `dt`; the
      equilibrium sits at `T / (1 + W/L)` ≈ 0.94 of target, deliberately never
      pinned to it. Tests assert bounds and statistics, never exact counts.
+
+- **Fish school, and how strongly depends on their size** (owner request,
+  settled 2026-08-14: "I see individual fish but I haven't seen any schools of
+  fish", then "fish come in three sizes; smaller fish should be more likely to
+  school"). Entirely inside `plugins/wildlife`; core is untouched.
+
+  **Root cause.** A spawn group placed five fish together and then steered every
+  one of them independently, so a school existed only at the instant it appeared
+  and was gone within a minute — and per-individual turnover eroded whatever was
+  left. Schools were a spawn-time coincidence, never a thing.
+
+  **Four parts.**
+  1. **School identity.** Every creature carries a `schoolId`, allocated once per
+     spawn group and never changed. Solitary species and lone-remainder fish get
+     a school of one, which makes every school rule degenerate to the old
+     per-individual behaviour instead of needing a "does this school" branch.
+     It is **never on the wire** — the client draws creatures where it is told
+     they are and needs no concept of a school.
+  2. **Boids-lite cohesion.** Each tick a creature's steering is `wander +
+     attraction toward the rest of its school + mild alignment to its mean
+     heading`, both school terms clamped to a turn rate and to the angle
+     remaining, so they compose rather than override. Habitat/unlock steering and
+     FLEE keep absolute priority: cohesion only proposes a desired heading, and
+     the existing veto still rejects it, so a school straddling a new island is
+     deflected member by member and a startled school scatters outright (and
+     re-forms afterwards — measured: 25 cells apart during the panic, back inside
+     2 cells a minute later). No separation term: attraction switches off inside
+     the comfort radius, so members never converge to a point.
+  3. **Turnover moves the school, not the fish.** The natural-departure roll is
+     per school, and takes every member at once. **The mean does not change**:
+     per-individual rolls lose `N·dt/L` fish per tick and per-school rolls lose
+     `(N/k)·dt/L·k` — the same number, so `NATURAL_LIFESPAN_SECONDS` stays 300 and
+     an individual's expected lifetime is unchanged. What changes is the *event*
+     rate: departures happen `k` times less often and take `k` fish. A
+     "correspondingly longer" mean would have cut fish turnover fivefold.
+  4. **Three sizes.** `small | medium | large`, drawn once per spawn group at
+     6 : 3 : 1, driving both the model scale (0.6 / 1 / 1.4) and how strongly the
+     group schools: `SCHOOLING_PROBABILITY_BY_SIZE` is 0.9 / 0.5 / 0.1, and
+     `SCHOOL_LOOSENESS_BY_SIZE` (1 / 1.5 / 2) widens the cohesion radii and
+     softens the pull for bigger fish. Everything but fish has exactly one size,
+     which is why no species needs a "varies in size" flag. Size **is** on the
+     wire — the client cannot scale a model it has not been told about — as a
+     one-byte class index, optional so that a payload from a server that predates
+     it reads as ordinary medium creatures rather than being dropped.
+
+  **Why fish density had to move with it.** A school is recognisable only when
+  there is more than one of them; the old day-one shelf held four fish in total,
+  less than one whole group. `FISH_SCHOOLS_ON_FRESH_SHELF = 2` × the group size
+  of 5 is 10 fish, and 4 096 shelf cells / 10 gives the 400 in the table above.
+
+  **Persistence.** `schoolId` and `size` are persisted as additive optional
+  fields (no version bump). School membership is not recoverable from position,
+  so dropping it would make a restart silently undo the whole behaviour; a slice
+  written before this change restores as independent wanderers of default size,
+  which is the honest reading of data that never had the information.
 
 - **A world has a DIFFICULTY rating, and it is a neutral core scalar** (owner
   request, settled 2026-08-14: "maps get a difficulty rating 1–100; warm maps

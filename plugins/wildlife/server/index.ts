@@ -23,16 +23,19 @@
 //     payload, so the bandwidth is a constant, not a function of how long the
 //     world has been running.
 //
-// The price is bandwidth. Per creature the payload is five keys — id, species,
-// x, y, heading — which msgpack encodes in roughly 52 B including the key
+// The price is bandwidth. Per creature the payload is six keys — id, species,
+// x, y, heading, size — which msgpack encodes in roughly 58 B including the key
 // strings (Colyseus re-sends keys on every message; there is no schema here).
-// 150 creatures × 52 B ≈ 7.8 KB per broadcast (recomputed 2026-08-14 when the
-// cap went from 100 to 150 — the old figures were 5.2 KB / 26 KB/s / 210 kbit/s).
+// 150 creatures × 58 B ≈ 8.7 KB per broadcast (recomputed 2026-08-14 twice: once
+// when the cap went from 100 to 150, and again when `size` was added — the
+// figures before those were 5.2 KB / 26 KB/s / 210 kbit/s and then 7.8 KB /
+// 39 KB/s / 312 kbit/s. `size` is a class INDEX rather than a name precisely so
+// this line moved by 6 B and not by 13).
 //
-//   every tick  (10 Hz): 78 KB/s ≈ 624 kbit/s per client
-//   every OTHER tick (5 Hz): 39 KB/s ≈ 312 kbit/s per client   ← chosen
+//   every tick  (10 Hz): 87 KB/s ≈ 696 kbit/s per client
+//   every OTHER tick (5 Hz): 43.5 KB/s ≈ 348 kbit/s per client   ← chosen
 //
-// 5 Hz is chosen because the extra 312 kbit/s buys nothing a player can see.
+// 5 Hz is chosen because the extra 348 kbit/s buys nothing a player can see.
 // The fastest species cruises at 3 cells/s, so between two 200 ms updates it
 // covers 0.6 cells — well under one cell, and the client interpolates across the
 // gap (client/interpolation.ts). Even a fleeing fish at ×3 covers 1.8 cells,
