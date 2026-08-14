@@ -126,6 +126,13 @@ body {
   cursor: pointer;
 }
 
+/* Word-labelled variants of the same button (Tool / Edge rows): identical
+   chrome, sized to their text instead of the radius digits' square. */
+.brush-button-wide {
+  width: auto;
+  padding: 0 8px;
+}
+
 .brush-button:hover {
   border-color: var(--hud-accent);
 }

@@ -31,6 +31,8 @@ import {
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import {
   brushRadius,
+  brushProfile,
+  brushTool,
   sculptMode,
   setSculptMode,
   sculptDirection,
@@ -151,12 +153,16 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (cell === null) return;
     const action = currentStrokeAction();
     setSculptMode(action);
+    // tool/profile are read (not captured) per intent, so switching the HUD
+    // toggles mid-stroke takes effect on the very next repeat.
     send({
       type: 'sculpt',
       x: cell.x,
       y: cell.y,
       radius: brushRadius(),
       dir: sculptDirection(action),
+      tool: brushTool(),
+      profile: brushProfile(),
       seq: nextSeq++,
     });
   };

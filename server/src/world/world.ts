@@ -19,6 +19,7 @@ import {
   unlockChunk,
   type CellDiff,
   type Heightmap,
+  type SculptOptions,
   type ServerMessage,
 } from '@terrace/shared';
 import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
@@ -165,16 +166,26 @@ export class World {
   }
 
   /**
-   * Applies an authoritative sculpt: brush + gradient relaxation, from the
-   * shared math (never re-implemented here — design §3.3).
+   * Applies an authoritative sculpt from the shared math (never re-implemented
+   * here — design §3.3). `options` selects the brush tool and edge profile;
+   * omitting it means smooth+soft, the shared library's compatibility default
+   * (LIBRARY_DEFAULT_SCULPT_OPTIONS). Player intents never omit it: the intent
+   * pipeline resolves them through `sculptOptionsOf` first.
    *
    * Returns the FULL diff, including cells inside locked chunks that the
-   * relaxation legitimately touched. Filtering for the wire happens in
-   * mask-filter.ts; this method deliberately does not broadcast, so that the
-   * one place which does (sculpt-service.ts) is the only place to audit.
+   * relaxation legitimately touched (with the stamp tool there is no relaxation
+   * and so no spill at all). Filtering for the wire happens in mask-filter.ts;
+   * this method deliberately does not broadcast, so that the one place which
+   * does (sculpt-service.ts) is the only place to audit.
    */
-  applySculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
-    const diff = applySculpt(this.map, x, y, radius, amount);
+  applySculpt(
+    x: number,
+    y: number,
+    radius: number,
+    amount: number,
+    options?: SculptOptions,
+  ): CellDiff[] {
+    const diff = applySculpt(this.map, x, y, radius, amount, options);
     if (diff.length > 0) this.changedSinceSnapshot = true;
     return diff;
   }

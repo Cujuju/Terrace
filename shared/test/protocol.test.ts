@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { validateSculptIntent } from '../src/index.ts';
+import {
+  sculptOptionsOf,
+  validateSculptIntent,
+  WIRE_DEFAULT_SCULPT_OPTIONS,
+} from '../src/index.ts';
 
 const WORLD = 128;
 
@@ -65,5 +69,73 @@ describe('validateSculptIntent seq correlation', () => {
     for (const seq of [1.5, Number.NaN, Infinity, '7', {}, 2 ** 53]) {
       expect(validateSculptIntent({ ...base, seq }, WORLD)).toBeNull();
     }
+  });
+});
+
+describe('validateSculptIntent brush tool and edge profile', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
+
+  it('passes every valid tool/profile combination through verbatim', () => {
+    for (const tool of ['stamp', 'smooth'] as const) {
+      for (const profile of ['soft', 'hard'] as const) {
+        expect(validateSculptIntent({ ...base, tool, profile }, WORLD)).toEqual({
+          ...base,
+          tool,
+          profile,
+        });
+      }
+    }
+  });
+
+  it('accepts an intent that carries neither, and omits both fields', () => {
+    // An older client sends no tool/profile at all; it must stay valid.
+    const intent = validateSculptIntent({ ...base }, WORLD);
+    expect(intent).not.toBeNull();
+    expect(Object.hasOwn(intent as object, 'tool')).toBe(false);
+    expect(Object.hasOwn(intent as object, 'profile')).toBe(false);
+  });
+
+  it('accepts one field without the other', () => {
+    expect(validateSculptIntent({ ...base, tool: 'stamp' }, WORLD)).toEqual({
+      ...base,
+      tool: 'stamp',
+    });
+    expect(validateSculptIntent({ ...base, profile: 'hard' }, WORLD)).toEqual({
+      ...base,
+      profile: 'hard',
+    });
+  });
+
+  it('rejects the WHOLE intent on any other tool or profile value', () => {
+    for (const tool of ['STAMP', 'chisel', '', 0, 1, null, {}, ['stamp']]) {
+      expect(validateSculptIntent({ ...base, tool }, WORLD)).toBeNull();
+    }
+    for (const profile of ['SOFT', 'medium', '', 0, 1, null, {}, ['soft']]) {
+      expect(validateSculptIntent({ ...base, profile }, WORLD)).toBeNull();
+    }
+  });
+});
+
+describe('sculptOptionsOf — the normalisation contract', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
+
+  it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
+    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft' });
+    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft' });
+  });
+
+  it('honours whatever the intent DID name, and defaults only the rest', () => {
+    expect(sculptOptionsOf({ ...base, tool: 'smooth' })).toEqual({
+      tool: 'smooth',
+      profile: 'soft',
+    });
+    expect(sculptOptionsOf({ ...base, profile: 'hard' })).toEqual({
+      tool: 'stamp',
+      profile: 'hard',
+    });
+    expect(sculptOptionsOf({ ...base, tool: 'smooth', profile: 'hard' })).toEqual({
+      tool: 'smooth',
+      profile: 'hard',
+    });
   });
 });

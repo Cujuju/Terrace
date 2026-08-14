@@ -7,12 +7,23 @@
 // (mana, cooldowns) AFTER this structural validation passes.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from './constants.ts';
-import type { CellDiff } from './heightmap.ts';
+import { SCULPT_PROFILES, SCULPT_TOOLS } from './heightmap.ts';
+import type {
+  CellDiff,
+  ResolvedSculptOptions,
+  SculptProfile,
+  SculptTool,
+} from './heightmap.ts';
 
 /**
  * Client → server: "sculpt at (x,y)". Direction only — the sculpt AMOUNT is
  * server configuration (DEFAULT_SCULPT_AMOUNT, modifiable by plugins), never
  * client input, so a hacked client cannot sculpt harder than anyone else.
+ *
+ * `tool` and `profile` ARE client input: they choose the shape of the edit, not
+ * its power. Every combination costs the same and reaches the same cells at the
+ * centre, so there is nothing here for a hacked client to gain — a stamp is not
+ * a stronger sculpt, it is a differently-shaped one.
  */
 export interface SculptIntent {
   type: 'sculpt';
@@ -22,6 +33,16 @@ export interface SculptIntent {
   /** +1 raise, -1 lower. */
   dir: 1 | -1;
   /**
+   * Brush tool: 'stamp' (footprint only) or 'smooth' (footprint + gradient
+   * relaxation). Optional — absent means WIRE_DEFAULT_SCULPT_OPTIONS.tool.
+   */
+  tool?: SculptTool;
+  /**
+   * Edge profile: 'soft' (linear falloff) or 'hard' (flat across the
+   * footprint). Optional — absent means WIRE_DEFAULT_SCULPT_OPTIONS.profile.
+   */
+  profile?: SculptProfile;
+  /**
    * Client-chosen correlation id, echoed back on SculptDeniedMessage so the
    * sender can retire the exact client-side prediction a denial refers to.
    * Optional: an intent without one is still valid — it simply cannot be
@@ -29,6 +50,42 @@ export interface SculptIntent {
    * reconciliation in the client's prediction store.
    */
   seq?: number;
+}
+
+/**
+ * What a PLAYER intent means when it names no tool/profile (decision
+ * 2026-08-14, owner-settled).
+ *
+ * WHY THIS DIFFERS FROM THE LIBRARY DEFAULT. `applySculpt` called with no
+ * options runs smooth+soft — it must, or every plugin terraform written before
+ * this change would silently re-tune itself (see LIBRARY_DEFAULT_SCULPT_OPTIONS
+ * in heightmap.ts). The wire is the opposite problem: it carries what a PLAYER
+ * asked for, and the owner's new player-facing feel is the stamp — an edit that
+ * changes exactly its footprint. A client too old to send `tool` therefore gets
+ * the new default brush, and plugins keep the old one. The two defaults are
+ * different on purpose and each is stated exactly once.
+ */
+export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
+  tool: 'stamp',
+  profile: 'soft',
+};
+
+/**
+ * THE NORMALISATION CONTRACT. Turns an intent's optional tool/profile into the
+ * concrete options `applySculpt` runs.
+ *
+ * This is the ONLY place absent-means-what is decided for an intent, and both
+ * sides of the prediction contract call it: the server's intent pipeline
+ * (server/src/intent/pipeline.ts, step 5) and the client's prediction store
+ * (client/src/terrain/prediction.ts). If either one defaulted for itself the
+ * two could drift, and a drift here is not a subtle bug — it is the client
+ * predicting a spire where the server builds a mound, on every stroke.
+ */
+export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
+  return {
+    tool: intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool,
+    profile: intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile,
+  };
 }
 
 /**
@@ -78,6 +135,13 @@ export interface JoinSnapshotMessage {
   chunks: ChunkPayload[];
 }
 
+/**
+ * Everything a client may send. One message type today: the sculpt intent —
+ * position, radius, direction, and (since 2026-08-14) the optional brush tool
+ * and edge profile. Fields are added to it ADDITIVELY and optionally, so an
+ * older client stays valid; `sculptOptionsOf` states what an omitted field
+ * means, once, for every reader.
+ */
 export type ClientMessage = SculptIntent;
 export type ServerMessage =
   | TerrainDiffMessage
@@ -122,12 +186,27 @@ export function validateSculptIntent(
   const { seq } = m;
   if (seq !== undefined && !Number.isSafeInteger(seq)) return null;
 
+  // tool/profile are optional (an older client sends neither) but closed sets:
+  // a PRESENT value must be one the terrain math actually implements. Anything
+  // else — a typo, a probe, a future value this build has never heard of — is
+  // rejected WITH THE WHOLE INTENT rather than silently defaulted, because
+  // silently defaulting would apply a differently-shaped edit than the sender
+  // predicted and desync its prediction for a full round trip. The valid sets
+  // come from heightmap.ts, so adding a tool cannot leave the validator behind.
+  const { tool, profile } = m;
+  if (tool !== undefined && !SCULPT_TOOLS.includes(tool as SculptTool)) return null;
+  if (profile !== undefined && !SCULPT_PROFILES.includes(profile as SculptProfile)) {
+    return null;
+  }
+
   return {
     type: 'sculpt',
     x: x as number,
     y: y as number,
     radius: radius as number,
     dir,
+    ...(tool !== undefined ? { tool: tool as SculptTool } : {}),
+    ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
 }

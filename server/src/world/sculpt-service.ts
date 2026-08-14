@@ -6,7 +6,7 @@
 // forgotten line away from leaking locked terrain. There is exactly one line to
 // audit, and it is in this file.
 
-import type { CellDiff } from '@terrace/shared';
+import type { CellDiff, SculptOptions } from '@terrace/shared';
 import { filterDiffToUnlocked } from './mask-filter.ts';
 import type { World } from './world.ts';
 
@@ -21,11 +21,15 @@ export interface TerrainChangeListener {
 /**
  * Applies an authoritative sculpt and publishes it.
  *
- * 1. shared/applySculpt: brush + gradient relaxation (the same math the client
- *    predicts with — design §3.3).
+ * 1. shared/applySculpt: brush, plus gradient relaxation when the options say
+ *    so (the same math the client predicts with — design §3.3). `options` is
+ *    passed through verbatim; an OMITTED options argument is the shared
+ *    library's compatibility default, smooth+soft, which is exactly what the
+ *    plugin WorldApi path wants (world-api.ts). Player intents arrive here
+ *    already resolved by the pipeline's single call to `sculptOptionsOf`.
  * 2. ANTI-CHEAT: filter the resulting diff down to unlocked chunks only.
- *    Relaxation spills across chunk borders, so this is a real, routinely-hit
- *    filter, not a formality.
+ *    Smooth-tool relaxation spills across chunk borders, so this is a real,
+ *    routinely-hit filter, not a formality.
  * 3. Broadcast the filtered diff — skipped entirely when nothing visible
  *    changed, so an edit whose whole cascade lands in locked terrain generates
  *    no traffic at all (and leaks nothing by its mere existence).
@@ -42,8 +46,9 @@ export function applyServerSculpt(
   y: number,
   radius: number,
   amount: number,
+  options?: SculptOptions,
 ): CellDiff[] {
-  const diff = world.applySculpt(x, y, radius, amount);
+  const diff = world.applySculpt(x, y, radius, amount, options);
   if (diff.length === 0) return diff;
 
   const visible = filterDiffToUnlocked(world, diff);

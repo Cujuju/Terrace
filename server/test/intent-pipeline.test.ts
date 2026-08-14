@@ -212,6 +212,101 @@ describe('handleSculptIntent', () => {
   });
 });
 
+describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => {
+  let world: World;
+
+  /** The 4-neighbours of a cell — what relaxation would move and stamp must not. */
+  const neighbourHeights = (w: World, x: number, y: number): number[] => [
+    w.heightAt(x - 1, y),
+    w.heightAt(x + 1, y),
+    w.heightAt(x, y - 1),
+    w.heightAt(x, y + 1),
+  ];
+
+  beforeEach(() => {
+    world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.setSink(new RecordingSink());
+  });
+
+  it('a stamp intent does NOT relax the neighbours, end to end', () => {
+    const outcome = handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ tool: 'stamp' }),
+    );
+
+    expect(outcome.applied).toBe(true);
+    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
+    // The diff is the footprint alone — a radius-1 stamp is exactly one cell.
+    if (outcome.applied) expect(outcome.diff).toHaveLength(1);
+  });
+
+  it('a smooth intent still relaxes the neighbours', () => {
+    handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ tool: 'smooth' }));
+
+    expect(
+      neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
+    ).toBe(true);
+  });
+
+  it('an intent naming NO tool is applied as a stamp (the wire default)', () => {
+    // The pipeline normalises through shared's sculptOptionsOf, whose default is
+    // the player-facing stamp — deliberately NOT the library's smooth default.
+    handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
+
+    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('a hard profile lays a flat plateau across the footprint', () => {
+    handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ radius: 3, tool: 'stamp', profile: 'hard' }),
+    );
+
+    // Every cell out to the footprint edge got the SAME delta...
+    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(world.heightAt(UNLOCKED_CELL.x + 2, UNLOCKED_CELL.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    // ...and the cell beyond it is untouched: a sheer edge.
+    expect(world.heightAt(UNLOCKED_CELL.x + 3, UNLOCKED_CELL.y)).toBe(0);
+  });
+
+  it('rejects an intent carrying an unknown tool or profile as malformed', () => {
+    const deps = makeDeps(world, []);
+    // Spread over a valid message rather than through sculptMessage's typed
+    // overrides: these values are exactly what the type system forbids, which
+    // is the point — only a hostile or out-of-date client can send them.
+    for (const message of [
+      { ...(sculptMessage() as object), tool: 'chisel' },
+      { ...(sculptMessage() as object), profile: 'medium' },
+    ]) {
+      const outcome = handleSculptIntent(deps, PLAYER, message);
+      expect(outcome.applied).toBe(false);
+      if (!outcome.applied) expect(outcome.reason).toBe('malformed');
+    }
+    expect(world.dirty).toBe(false);
+  });
+
+  it('carries a plugin-rewritten tool through to the applied edit', () => {
+    // A plugin may reshape the brush; the rewrite is re-validated and then
+    // normalised by the same one function, so it reaches the math intact.
+    const smoother: TerracePlugin = {
+      name: 'smoother',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, tool: 'smooth' } };
+      },
+    };
+
+    handleSculptIntent(makeDeps(world, [smoother]), PLAYER, sculptMessage({ tool: 'stamp' }));
+
+    expect(
+      neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
+    ).toBe(true);
+  });
+});
+
 describe('sculptDenied nack', () => {
   let world: World;
   let sink: RecordingSink;

@@ -76,13 +76,77 @@ function clampHeight(h: number): number {
 }
 
 /**
- * Applies the sculpt brush: linear falloff from center, radius 1 degenerating
- * to the Populous point brush (design decision Q2).
+ * How a sculpt treats the terrain AROUND its footprint (decision 2026-08-14).
  *
- * Cells at integer distance `d = floor(sqrt(dx² + dy²))` from the center get
- * `trunc(amount * (radius - d) / radius)`; cells at d >= radius are untouched.
- * Math.sqrt is IEEE-exact and immediately floored, so this is deterministic
- * cross-platform. Results clamp to [MIN_HEIGHT, MAX_HEIGHT].
+ * - `stamp`  — the brush changes exactly its footprint and nothing else. No
+ *              relaxation pass runs, so repeated radius-1 raises stack into a
+ *              true vertical spire and lowering digs a sheer pit. This is the
+ *              player-facing default on the wire (see protocol.ts).
+ * - `smooth` — brush THEN the gradient-limit relaxation: the Populous
+ *              fabric-pull, kept verbatim as a deliberate blending tool and as
+ *              the library default for API compatibility (plugins tuned their
+ *              terraforms against relaxation).
+ */
+export type SculptTool = 'stamp' | 'smooth';
+
+/**
+ * How the brush distributes its amount ACROSS its footprint.
+ *
+ * - `soft` — the original linear falloff from the centre (design decision Q2).
+ * - `hard` — one flat delta over the whole footprint, edge cells included:
+ *            plateaus and clean holes with sheer edges.
+ */
+export type SculptProfile = 'soft' | 'hard';
+
+/** Every valid tool, in wire/UI order. Validation and the HUD both read this. */
+export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth'];
+
+/** Every valid profile, in wire/UI order. */
+export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
+
+/** Caller-supplied sculpt options; every field defaults when absent. */
+export interface SculptOptions {
+  readonly tool?: SculptTool;
+  readonly profile?: SculptProfile;
+}
+
+/** Sculpt options with nothing left to default — what the math actually runs. */
+export interface ResolvedSculptOptions {
+  readonly tool: SculptTool;
+  readonly profile: SculptProfile;
+}
+
+/**
+ * What `applySculpt` runs when it is called WITHOUT options.
+ *
+ * COMPATIBILITY CONTRACT: this is deliberately NOT the player-facing default.
+ * Every pre-2026-08-14 caller of applySculpt — the plugin `WorldApi.sculpt`
+ * path above all — was written and tuned against brush + gradient relaxation,
+ * so an absent options argument must keep reproducing that behaviour bit for
+ * bit. The new player-facing default (stamp) lives on the wire instead:
+ * `WIRE_DEFAULT_SCULPT_OPTIONS` in protocol.ts. Tested in heightmap.test.ts,
+ * "an ABSENT options argument is byte-identical to explicit smooth+soft".
+ */
+export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
+  tool: 'smooth',
+  profile: 'soft',
+};
+
+/**
+ * Applies the sculpt brush over its footprint: cells at integer distance
+ * `d = floor(sqrt(dx² + dy²))` from the centre with `d < radius`. Cells at
+ * `d >= radius` are never touched by the brush itself. Math.sqrt is IEEE-exact
+ * and immediately floored, so the footprint is deterministic cross-platform.
+ *
+ * The per-cell delta depends on `profile`:
+ *   soft — `trunc(amount * (radius - d) / radius)`: linear falloff, radius 1
+ *          degenerating to the Populous point brush (design decision Q2).
+ *   hard — `amount` at every footprint cell, edge included: a flat plateau or
+ *          a clean hole with sheer edges (decision 2026-08-14).
+ * `trunc` (toward zero) is what keeps raise and lower exact mirrors of each
+ * other; `hard` is trivially symmetric for the same reason.
+ *
+ * Results clamp to [MIN_HEIGHT, MAX_HEIGHT].
  *
  * Changed cell indices are added to `changed` (for the caller to smooth and
  * diff). Throws on invalid center/radius — validation of untrusted input
@@ -95,6 +159,7 @@ export function applyBrush(
   radius: number,
   amount: number,
   changed: Set<number>,
+  profile: SculptProfile = LIBRARY_DEFAULT_SCULPT_OPTIONS.profile,
 ): void {
   if (!inBounds(map, cx, cy)) {
     throw new RangeError(`brush center (${cx},${cy}) out of bounds`);
@@ -117,8 +182,11 @@ export function applyBrush(
     for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
       const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
       if (dist >= radius) continue;
-      // Linear falloff; trunc (toward zero) keeps raise/lower symmetric.
-      const delta = Math.trunc((amount * (radius - dist)) / radius);
+      // 'hard': the same flat delta everywhere in the footprint (sheer edges).
+      // 'soft': linear falloff; trunc (toward zero) keeps raise/lower symmetric.
+      // At radius 1 the two are identical — the footprint is the centre alone.
+      const delta =
+        profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
       if (delta === 0) continue;
       const x = cx + dx;
       const y = cy + dy;
@@ -227,10 +295,23 @@ export function smooth(map: Heightmap, changed: Set<number>): void {
 }
 
 /**
- * The complete sculpt operation both sides run: brush → relaxation → diff.
+ * The complete sculpt operation both sides run: brush → (relaxation) → diff.
  * The server runs it authoritatively and broadcasts the returned diff; the
  * client runs it for instant prediction and reconciles against that diff.
  * Diff order is ascending cell index — deterministic wire order.
+ *
+ * `options` picks the tool and the edge profile; the two are orthogonal, so
+ * hard+smooth (stamp a plateau, let it slump) is a legal, meaningful combination.
+ * OMITTING `options` ENTIRELY reproduces the pre-2026-08-14 behaviour bit for
+ * bit — see LIBRARY_DEFAULT_SCULPT_OPTIONS for why that, and not the new
+ * player-facing default, is what an absent argument means.
+ *
+ * DETERMINISM: both branches are integer-only over the same fixed iteration
+ * order, so server and client predicting with the same options land on the
+ * same cells. Predicting with DIFFERENT options than the server applies is a
+ * mismatch like any other and resolves through normal reconciliation — which
+ * is exactly why both sides normalise an intent through one shared function
+ * (`sculptOptionsOf`, protocol.ts) rather than each defaulting for itself.
  */
 export function applySculpt(
   map: Heightmap,
@@ -238,10 +319,16 @@ export function applySculpt(
   cy: number,
   radius: number,
   amount: number,
+  options?: SculptOptions,
 ): CellDiff[] {
+  const tool = options?.tool ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.tool;
+  const profile = options?.profile ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.profile;
+
   const changed = new Set<number>();
-  applyBrush(map, cx, cy, radius, amount, changed);
-  smooth(map, changed);
+  applyBrush(map, cx, cy, radius, amount, changed, profile);
+  // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
+  // footprint is the entire extent of the edit, so a spire stays a spire.
+  if (tool === 'smooth') smooth(map, changed);
 
   const indices = Array.from(changed).sort((a, b) => a - b);
   const diff: CellDiff[] = [];

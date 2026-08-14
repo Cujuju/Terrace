@@ -57,6 +57,7 @@ import {
   applySculpt,
   cellIndex,
   chunkIndex,
+  sculptOptionsOf,
   validateSculptIntent,
   type SculptIntent,
 } from '@terrace/shared';
@@ -186,7 +187,19 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
    */
   const applyPrediction = (p: PendingPrediction, dirty: Set<number>): void => {
     const amount = DEFAULT_SCULPT_AMOUNT * p.intent.dir;
-    const diff = applySculpt(mirror.map, p.intent.x, p.intent.y, p.intent.radius, amount);
+    // The intent's tool/profile are resolved by the SAME shared function the
+    // server's intent pipeline uses (`sculptOptionsOf`, protocol.ts), so an
+    // intent that named neither predicts exactly what the server will apply.
+    // Defaulting locally instead would put two copies of "absent means what"
+    // in the codebase — the one drift this whole contract exists to prevent.
+    const diff = applySculpt(
+      mirror.map,
+      p.intent.x,
+      p.intent.y,
+      p.intent.radius,
+      amount,
+      sculptOptionsOf(p.intent),
+    );
 
     p.indices = [];
     p.after = [];

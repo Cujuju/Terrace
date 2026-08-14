@@ -14,6 +14,7 @@ import {
   chunkIndex,
   createHeightmap,
   heightAt,
+  sculptOptionsOf,
   type CellDiff,
   type ChunkPayload,
   type Heightmap,
@@ -65,7 +66,13 @@ function createClient(chunks: ChunkPayload[] = allChunks()): {
   return { mirror, store };
 }
 
-/** The authoritative side: the same math the server's sculpt service runs. */
+/**
+ * The authoritative side: the same math the server's sculpt service runs, with
+ * the same normalisation the server's intent pipeline applies first — an intent
+ * that named no tool/profile means whatever `sculptOptionsOf` says it means,
+ * on BOTH sides. Defaulting differently here would make these tests pass while
+ * the real client and server disagreed.
+ */
 function serverSculpt(map: Heightmap, intent: SculptIntent): TerrainDiffMessage {
   const cells: CellDiff[] = applySculpt(
     map,
@@ -73,6 +80,7 @@ function serverSculpt(map: Heightmap, intent: SculptIntent): TerrainDiffMessage 
     intent.y,
     intent.radius,
     DEFAULT_SCULPT_AMOUNT * intent.dir,
+    sculptOptionsOf(intent),
   );
   return { type: 'terrainDiff', cells };
 }
@@ -85,10 +93,18 @@ describe('predict', () => {
   it('applies the shared sculpt math immediately and leaves the base untouched', () => {
     const { mirror, store } = createClient();
 
+    const intent = raise();
     const expected = createHeightmap(WORLD);
-    applySculpt(expected, CENTRE.x, CENTRE.y, 3, DEFAULT_SCULPT_AMOUNT);
+    applySculpt(
+      expected,
+      CENTRE.x,
+      CENTRE.y,
+      3,
+      DEFAULT_SCULPT_AMOUNT,
+      sculptOptionsOf(intent),
+    );
 
-    const dirty = store.predict(raise(), 0);
+    const dirty = store.predict(intent, 0);
 
     expect(store.pendingCount()).toBe(1);
     expect(mirror.map.cells).toEqual(expected.cells);
@@ -214,6 +230,71 @@ describe('reconciliation', () => {
     // acknowledgement.
     store.applyAuthoritative(() => new Set<number>(), 10);
     expect(store.pendingCount()).toBe(1);
+  });
+});
+
+describe('brush tools and edge profiles (decision 2026-08-14)', () => {
+  /**
+   * The `no visible snap` assertion, once per tool/profile combination and once
+   * for an intent that names NEITHER. Radius 1 is the case that actually
+   * separates the tools: a 64-unit spike exceeds MAX_STEP, so the smooth tool
+   * relaxes it outward and the stamp tool does not. If the client and the
+   * server ever normalised absent fields differently, the last case here would
+   * be a mountain on one side and a spire on the other.
+   */
+  const combinations: Array<{ name: string; intent: SculptIntent }> = [
+    { name: 'stamp + soft', intent: { ...raise(CENTRE.x, CENTRE.y, 1), tool: 'stamp', profile: 'soft' } },
+    { name: 'stamp + hard', intent: { ...raise(CENTRE.x, CENTRE.y, 4), tool: 'stamp', profile: 'hard' } },
+    { name: 'smooth + soft', intent: { ...raise(CENTRE.x, CENTRE.y, 1), tool: 'smooth', profile: 'soft' } },
+    { name: 'smooth + hard', intent: { ...raise(CENTRE.x, CENTRE.y, 4), tool: 'smooth', profile: 'hard' } },
+    { name: 'neither field named (wire default)', intent: raise(CENTRE.x, CENTRE.y, 1) },
+  ];
+
+  for (const { name, intent } of combinations) {
+    it(`predicts ${name} cell-for-cell identically to the server`, () => {
+      const { mirror, store } = createClient();
+      const server = createHeightmap(WORLD);
+
+      store.predict(intent, 0);
+      const predicted = Int16Array.from(mirror.map.cells);
+
+      const diff = serverSculpt(server, intent);
+      store.applyAuthoritative((m) => applyTerrainDiff(m, diff), 10);
+
+      // Retired by value: the prediction and the authoritative result agree.
+      expect(store.pendingCount()).toBe(0);
+      expect(mirror.map.cells).toEqual(predicted);
+      expect(mirror.map.cells).toEqual(server.cells);
+    });
+  }
+
+  it('predicts a stamp as a spire: the neighbours never move', () => {
+    const { mirror, store } = createClient();
+
+    store.predict({ ...raise(CENTRE.x, CENTRE.y, 1), tool: 'stamp' }, 0);
+
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1)).toBe(0);
+  });
+
+  it('predicts the smooth tool as the old fabric pull', () => {
+    const { mirror, store } = createClient();
+
+    store.predict({ ...raise(CENTRE.x, CENTRE.y, 1), tool: 'smooth' }, 0);
+
+    // 64 > MAX_STEP, so relaxation must have pushed height outward.
+    expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBeGreaterThan(0);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBeLessThan(DEFAULT_SCULPT_AMOUNT);
+  });
+
+  it('does not predict an intent whose tool or profile it does not recognise', () => {
+    // Same validator as the server: an unknown value fails the whole intent,
+    // so the client must not paint an edit the server is about to drop.
+    const { store } = createClient();
+    expect(store.predict({ ...raise(), tool: 'chisel' } as unknown as SculptIntent, 0).size).toBe(0);
+    expect(store.predict({ ...raise(), profile: 'medium' } as unknown as SculptIntent, 0).size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
   });
 });
 

@@ -43,6 +43,9 @@ export function createWorldApi(
     },
     sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
       // Same service the intent pipeline uses: filtered broadcast included.
+      // No options argument ON PURPOSE — that is the shared library's
+      // compatibility default (smooth + soft), which is the behaviour every
+      // plugin terraform was tuned against. See WorldApi.sculpt in types.ts.
       return applyServerSculpt(world, listener, x, y, radius, amount);
     },
     unlockChunk(cx: number, cy: number): boolean {

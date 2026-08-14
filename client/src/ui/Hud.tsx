@@ -11,11 +11,17 @@ import { createSignal, For, Show, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import {
+  BRUSH_PROFILES,
   BRUSH_RADII,
+  BRUSH_TOOLS,
+  brushProfile,
   brushRadius,
+  brushTool,
   connectionStatus,
   sculptMode,
+  setBrushProfile,
   setBrushRadius,
+  setBrushTool,
   setSculptMode,
 } from '../state/hudState.ts';
 import {
@@ -27,6 +33,7 @@ import {
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
+import type { SculptProfile, SculptTool } from '@terrace/shared';
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   offline: 'Offline',
@@ -46,6 +53,17 @@ const HINT_BUTTON: Record<string, string> = {
   left: 'Left',
   middle: 'Middle',
   right: 'Right',
+};
+
+/** Button captions for the brush-shape toggles (decision 2026-08-14). */
+const TOOL_LABEL: Record<SculptTool, string> = {
+  stamp: 'Stamp',
+  smooth: 'Smooth',
+};
+
+const PROFILE_LABEL: Record<SculptProfile, string> = {
+  soft: 'Soft',
+  hard: 'Hard',
 };
 
 const HINT_MODIFIER: Record<string, string> = {
@@ -100,6 +118,46 @@ export function Hud(): JSX.Element {
                   onClick={() => setBrushRadius(radius)}
                 >
                   {radius}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+
+        {/* Brush SHAPE: which tool, and how its edge falls off. Orthogonal by
+            design — hard+smooth stamps a plateau and lets it slump. Every
+            reactive value is read by calling its accessor inline, per the file
+            header; the labels are static maps, so they need no accessor. */}
+        <div class="hud-row">
+          <span class="hud-label">Tool</span>
+          <div class="brush-picker">
+            <For each={BRUSH_TOOLS}>
+              {(tool) => (
+                <button
+                  type="button"
+                  class="brush-button brush-button-wide"
+                  classList={{ active: brushTool() === tool }}
+                  onClick={() => setBrushTool(tool)}
+                >
+                  {TOOL_LABEL[tool]}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+
+        <div class="hud-row">
+          <span class="hud-label">Edge</span>
+          <div class="brush-picker">
+            <For each={BRUSH_PROFILES}>
+              {(profile) => (
+                <button
+                  type="button"
+                  class="brush-button brush-button-wide"
+                  classList={{ active: brushProfile() === profile }}
+                  onClick={() => setBrushProfile(profile)}
+                >
+                  {PROFILE_LABEL[profile]}
                 </button>
               )}
             </For>

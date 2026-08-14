@@ -34,9 +34,17 @@ export interface WorldApi {
   isChunkUnlocked(cx: number, cy: number): boolean;
 
   /**
-   * Applies an edit exactly like a player intent would: shared brush + gradient
+   * Applies an edit through the authoritative path: shared brush + gradient
    * relaxation, full diff kept server-side, mask-filtered diff broadcast.
    * Returns the full (unfiltered) diff — plugins are trusted server code.
+   *
+   * ALWAYS THE SMOOTH TOOL WITH A SOFT EDGE, deliberately, and unchanged by the
+   * 2026-08-14 brush-tool decision. Player intents now default to the stamp
+   * tool, but existing plugins' terraforms were shaped and tuned against
+   * relaxation — a plugin that raises a hill expects the land to flow. Changing
+   * this default would silently re-tune every installed plugin, so it stays,
+   * and the signature stays with it. If a plugin ever needs a stamp, that is an
+   * additive optional options argument here, decided with the owner then.
    */
   sculpt(x: number, y: number, radius: number, amount: number): CellDiff[];
 
