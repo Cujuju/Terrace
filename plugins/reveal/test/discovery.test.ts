@@ -17,8 +17,18 @@ describe('shipped example plugins', () => {
   it('are discovered from plugins/ in alphabetical directory order', async () => {
     const loaded = await discoverPlugins(PLUGINS_DIR);
 
-    expect(loaded.map((entry) => entry.directory)).toEqual(['mana', 'reveal']);
-    expect(loaded.map((entry) => entry.plugin.name)).toEqual(['mana', 'reveal']);
+    // Properties, not an exhaustive folder listing: the shipped plugin set
+    // grows over time, and this test must not fail because a NEW plugin was
+    // added next to these two. What it guards is (a) both examples load, (b)
+    // each plugin's name matches its directory, and (c) load order — which IS
+    // the interceptor order — is the sorted directory order.
+    const directories = loaded.map((entry) => entry.directory);
+    expect(directories).toContain('mana');
+    expect(directories).toContain('reveal');
+    expect(directories).toEqual([...directories].sort());
+    for (const entry of loaded) {
+      expect(entry.plugin.name).toBe(entry.directory);
+    }
   });
 
   it('implement the hooks each one advertises', async () => {
