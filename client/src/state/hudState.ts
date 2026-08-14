@@ -121,6 +121,21 @@ export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 /** The Controls panel starts collapsed — the HUD is a sculpting tool first. */
 export const DEFAULT_SHOW_CONTROLS = false;
 
+/**
+ * Whether the whole tools panel starts expanded, PER DEVICE CLASS (owner
+ * report, 2026-08-14: on an iPhone the open panel covers half the world).
+ * A touchscreen starts collapsed to a tab and expands on tap; a desktop, with
+ * screen to spare and a hover cursor, starts open as it always has. The
+ * device check is static for the life of the page, and the player's own
+ * toggle is persisted over this default like every other HUD choice.
+ * The predicate is the SAME `maxTouchPoints > 0` the HUD's touch-hint uses —
+ * one definition of "this is a touch device" — and it must be the positive
+ * form: environments without the field at all (bare node, some DOM stubs)
+ * report undefined, which is "not a touchscreen", not "unknown, assume phone".
+ */
+export const DEFAULT_PANEL_OPEN: boolean =
+  typeof navigator === 'undefined' || !(navigator.maxTouchPoints > 0);
+
 /** Everything persisted, in the shape it is stored and restored in. */
 export interface PersistedHudState {
   readonly brushRadius: number;
@@ -128,6 +143,7 @@ export interface PersistedHudState {
   readonly brushProfile: SculptProfile;
   readonly sculptMode: SculptMode;
   readonly showControls: boolean;
+  readonly panelOpen: boolean;
 }
 
 export const DEFAULT_HUD_STATE: PersistedHudState = {
@@ -136,6 +152,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   brushProfile: DEFAULT_BRUSH_PROFILE,
   sculptMode: DEFAULT_SCULPT_MODE,
   showControls: DEFAULT_SHOW_CONTROLS,
+  panelOpen: DEFAULT_PANEL_OPEN,
 };
 
 /**
@@ -181,6 +198,10 @@ function readShowControls(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_SHOW_CONTROLS;
 }
 
+function readPanelOpen(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_PANEL_OPEN;
+}
+
 /**
  * Parses a stored payload. Unreadable JSON or a non-object gives the defaults
  * outright (there are no fields to salvage); anything else is salvaged field by
@@ -202,6 +223,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     brushProfile: readProfile(record['brushProfile']),
     sculptMode: readMode(record['sculptMode']),
     showControls: readShowControls(record['showControls']),
+    panelOpen: readPanelOpen(record['panelOpen']),
   };
 }
 
@@ -252,6 +274,16 @@ const [showControls, setShowControlsSignal] = createSignal<boolean>(
 );
 
 /**
+ * Whether the whole tools panel is expanded, or collapsed to its tab (see
+ * DEFAULT_PANEL_OPEN for the per-device default). Persisted like the rest:
+ * closing the panel on a phone is a choice about this device, and it should
+ * hold across reloads.
+ */
+const [panelOpen, setPanelOpenSignal] = createSignal<boolean>(
+  stored.panelOpen,
+);
+
+/**
  * Writes the whole persisted record. Best effort: a full or unavailable
  * storage costs only the next reload's memory, never the live session.
  */
@@ -262,6 +294,7 @@ function persist(): void {
     brushProfile: brushProfile(),
     sculptMode: sculptMode(),
     showControls: showControls(),
+    panelOpen: panelOpen(),
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -309,6 +342,12 @@ export function setShowControls(show: boolean): void {
   persist();
 }
 
+export function setPanelOpen(open: boolean): void {
+  if (open === panelOpen()) return;
+  setPanelOpenSignal(open);
+  persist();
+}
+
 export {
   connectionStatus,
   setConnectionStatus,
@@ -318,6 +357,7 @@ export {
   brushProfile,
   sculptMode,
   showControls,
+  panelOpen,
 };
 
 /** The `dir` field of a SculptIntent for the current mode. */

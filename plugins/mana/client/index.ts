@@ -35,11 +35,12 @@ export const clientPlugin: TerraceClientPlugin = {
       );
       recordDenial();
     });
-    // Top centre, not the corner panel: the gauge is a glanceable status
-    // instrument (design of the panel itself is in ManaGauge.tsx), and the
-    // moment it matters is the moment the brush stops responding — when the
-    // player's eyes are on the terrain, not on a list of controls.
-    ctx.registerHudPanel(ManaGauge, { placement: 'top-center' });
+    // Bottom centre (owner move, 2026-08-14 — it began top-centre): the gauge
+    // is a glanceable status instrument (design of the panel itself is in
+    // ManaGauge.tsx) and the moment it matters is the moment the brush stops
+    // responding — but the top centre now belongs to the world header, and an
+    // instrument at the bottom edge sits nearer the hand and clear of the sky.
+    ctx.registerHudPanel(ManaGauge, { placement: 'bottom-center' });
 
     // The client half of the interceptor chain: unaffordable sculpts stop
     // here, before they are sent or predicted (see gateLocalSculpt). The INTENT

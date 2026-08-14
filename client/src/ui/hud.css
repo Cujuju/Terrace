@@ -55,6 +55,41 @@ body {
   line-height: 1.4;
 }
 
+/* The collapsed face of the tools panel: same chrome as .hud-panel, shrunk to
+   its content. A real button so it is tabbable and gets the pointer cursor. */
+.hud-panel-tab {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--hud-text);
+  cursor: pointer;
+}
+
+/* The status row as the collapse control: a button with the chrome stripped,
+   laid out exactly like the .hud-row it replaces. */
+.panel-header {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-chevron {
+  margin-left: auto;
+  color: var(--hud-muted);
+}
+
+.panel-header:hover .panel-chevron {
+  color: var(--hud-text);
+}
+
 .hud-row {
   display: flex;
   align-items: center;
@@ -265,6 +300,24 @@ body {
 }
 
 .hud-top-center > * {
+  pointer-events: auto;
+}
+
+/* Bottom-centre plugin stack: the top-centre stack mirrored to the bottom
+   edge, same clearance, growing upward from it. */
+.hud-bottom-center {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hud-bottom-center > * {
   pointer-events: auto;
 }
 

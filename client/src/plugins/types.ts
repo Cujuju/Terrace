@@ -53,11 +53,12 @@ export interface ClientPluginCtx {
   /**
    * Adds a Solid component to the HUD. Default placement stacks it inside the
    * corner panel; 'top-center' floats it centred along the top of the screen
-   * for at-a-glance status (gauges, timers).
+   * for at-a-glance status; 'bottom-center' floats it centred along the
+   * bottom for persistent instruments (gauges, timers).
    */
   registerHudPanel(
     component: Component,
-    options?: { placement?: 'panel' | 'top-center' },
+    options?: { placement?: 'panel' | 'top-center' | 'bottom-center' },
   ): void;
 
   /**

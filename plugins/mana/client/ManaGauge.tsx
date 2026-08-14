@@ -68,6 +68,19 @@ const DENIAL_FLASH_MS = 600;
 // and cannot drift apart.
 const VIEW_W = 52;
 const VIEW_H = 74;
+
+/**
+ * On-screen scale of the hourglass relative to its viewBox (owner, 2026-08-14:
+ * "reduce the size of the hourglass by maybe 40%"). Applied to the rendered
+ * width/height only — every geometric constant above stays in the same 52 × 74
+ * user units, so the drawing itself never learns it was shrunk. 0.6 is the
+ * asked-for reduction; the numeric readouts beside the glass keep their font
+ * sizes, which at this scale become the instrument's primary face with the
+ * glass as its animated accent.
+ */
+const GAUGE_DISPLAY_SCALE = 0.6;
+const DISPLAY_W = Math.round(VIEW_W * GAUGE_DISPLAY_SCALE);
+const DISPLAY_H = Math.round(VIEW_H * GAUGE_DISPLAY_SCALE);
 const GLASS_CENTER_X = 26;
 const BULB_TOP_Y = 39;
 const BULB_BOTTOM_Y = 62;
@@ -160,7 +173,7 @@ const GAUGE_CSS = `
      nobody could ever read. The cost is that the small patch of world directly
      behind the instrument is no longer sculptable, which is what every other
      HUD control already costs (the corner panel is pointer-events: auto too);
-     the gauge sits at the top edge, clear of where the brush works, and the
+     the gauge sits at the bottom edge, clear of where the brush works, and the
      camera can pan whatever it hides into reach. */
   pointer-events: auto;
   cursor: help;
@@ -348,8 +361,8 @@ export function ManaGauge(): JSX.Element {
         <style>{GAUGE_CSS}</style>
 
         <svg
-          width={VIEW_W}
-          height={VIEW_H}
+          width={DISPLAY_W}
+          height={DISPLAY_H}
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           aria-hidden="true"
         >

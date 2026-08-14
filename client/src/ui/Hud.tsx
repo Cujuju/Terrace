@@ -18,10 +18,12 @@ import {
   brushRadius,
   brushTool,
   connectionStatus,
+  panelOpen,
   sculptMode,
   setBrushProfile,
   setBrushRadius,
   setBrushTool,
+  setPanelOpen,
   setSculptMode,
   setShowControls,
   showControls,
@@ -155,17 +157,55 @@ export function Hud(): JSX.Element {
         </For>
       </div>
 
+      {/* Bottom centre: persistent instruments (the mana gauge), kept along
+          the bottom edge so the world's centre stays clear. */}
+      <div class="hud-bottom-center">
+        <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
+          {(panel) => <Dynamic component={panel.component} />}
+        </For>
+      </div>
+
+      {/* The whole tools panel collapses to a tab (owner, 2026-08-14: on a
+          phone the open panel hides half the world). The status dot lives on
+          BOTH faces, so the connection stays glanceable while collapsed. */}
+      <Show
+        when={panelOpen()}
+        fallback={
+          <button
+            type="button"
+            class="hud-panel hud-panel-tab"
+            aria-expanded={false}
+            title="Open the brush and camera menu."
+            onClick={() => setPanelOpen(true)}
+          >
+            <span
+              class="status-dot"
+              classList={{ [`status-${connectionStatus()}`]: true }}
+            />
+            Menu ▸
+          </button>
+        }
+      >
       <div class="hud-panel">
-        {/* One title for the whole row: the dot and the word are one readout,
-            and the tooltip says what that state MEANS for the player's edits. */}
-        <div class="hud-row hud-status" title={STATUS_TITLE[connectionStatus()]}>
+        {/* The status row doubles as the collapse control — it is the panel's
+            first row on every device, so open and closed toggle in the same
+            place. Its title stays the STATUS meaning (the row is a readout
+            first); the chevron and aria-expanded carry the collapse affordance. */}
+        <button
+          type="button"
+          class="hud-row hud-status panel-header"
+          aria-expanded={true}
+          title={STATUS_TITLE[connectionStatus()]}
+          onClick={() => setPanelOpen(false)}
+        >
           {/* classList keeps the reactive read inline rather than in a const. */}
           <span
             class="status-dot"
             classList={{ [`status-${connectionStatus()}`]: true }}
           />
           <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
-        </div>
+          <span class="panel-chevron">▴</span>
+        </button>
 
         <div class="hud-row">
           <span class="hud-label">Brush</span>
@@ -286,6 +326,7 @@ export function Hud(): JSX.Element {
           </p>
         </Show>
       </div>
+      </Show>
     </div>
   );
 }

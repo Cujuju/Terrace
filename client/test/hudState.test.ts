@@ -85,6 +85,8 @@ describe('defaults', () => {
       brushProfile: WIRE_DEFAULT_SCULPT_OPTIONS.profile,
       sculptMode: 'raise',
       showControls: false,
+      // The test DOM reports no touch points, so this is the desktop default.
+      panelOpen: true,
     });
   });
 });
@@ -148,6 +150,18 @@ describe('round-trip through storage', () => {
       expect(second.showControls()).toBe(open);
     }
   });
+
+  it('round-trips the whole tools panel in both states', async () => {
+    for (const open of [true, false]) {
+      const first = await freshHud();
+      // Same both-ways discipline as the Controls case: prove the non-default
+      // state is a stored choice, not an accident of never writing.
+      first.hud.setPanelOpen(!open);
+      first.hud.setPanelOpen(open);
+      const second = await reload(first.storage);
+      expect(second.panelOpen()).toBe(open);
+    }
+  });
 });
 
 describe('write-through', () => {
@@ -170,6 +184,9 @@ describe('write-through', () => {
       brushProfile: 'hard',
       sculptMode: 'lower',
       showControls: true,
+      // Untouched by the setters above: the test env (jsdom, no touch points)
+      // defaults the tools panel open.
+      panelOpen: true,
     });
     // One entry, not five.
     expect(storage.length).toBe(1);
@@ -290,6 +307,8 @@ describe('fallback on corrupt storage', () => {
       brushProfile: 'hard',
       sculptMode: 'lower',
       showControls: true,
+      // Absent from the (older-build) payload above → the desktop default.
+      panelOpen: true,
     });
   });
 });

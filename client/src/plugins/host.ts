@@ -135,7 +135,10 @@ export function createClientPluginHost(
         unregisterFns.push(unregister);
         return unregister;
       },
-      registerHudPanel(component: Component, options?: { placement?: 'panel' | 'top-center' }) {
+      registerHudPanel(
+        component: Component,
+        options?: { placement?: 'panel' | 'top-center' | 'bottom-center' },
+      ) {
         addPluginHudPanel({
           pluginName: plugin.name,
           component,
