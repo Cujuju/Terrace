@@ -1,11 +1,19 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    // Both halves in one project (like plugins/relics): server code reaches
+    // node builtins through the core sources it type-imports, the panel needs
+    // DOM.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
     // nested workspace package (it does for server/, one level up), and these
     // tests compile server sources that use node: builtins. Naming the types
     // explicitly is deterministic and costs nothing.
-    "types": ["node"]
+    "types": ["node"],
+    // Matches client/tsconfig.json: the HUD panel is compiled by the client's
+    // vite-plugin-solid, which expects untransformed JSX.
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js"
   },
-  "include": ["server", "test"]
+  "include": ["protocol.ts", "server", "client", "test"]
 }

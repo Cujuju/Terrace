@@ -27,10 +27,16 @@ import type {
 
 /**
  * Full pool, in mana units. Sized against MANA_COST_PER_SCULPT so a rested
- * player gets exactly MANA_CAPACITY / MANA_COST_PER_SCULPT = 8 immediate
- * sculpts — enough to shape one hill in a burst before the economy bites.
+ * player gets MANA_CAPACITY / MANA_COST_PER_SCULPT = 24 immediate sculpts.
+ *
+ * Retuned 2026-08-14 (owner request, up from 200/8 sculpts): the held brush
+ * emits ~8 intents/s, so 24 is ~3 seconds of continuous sculpting — enough to
+ * raise a whole feature in one gesture before the economy bites, where 8
+ * emptied in a single second of holding and made denial the COMMON case
+ * rather than the limit case. Regen is unchanged (20/s → a full refill in
+ * 30 s, ~1.25 s of waiting per additional sculpt when drained).
  */
-export const MANA_CAPACITY = 200;
+export const MANA_CAPACITY = 600;
 
 /**
  * Charged per applied sculpt intent, regardless of brush radius. Flat on
@@ -72,11 +78,11 @@ export const MANA_PERK_MAX_MULTIPLIER = 4;
 /** The multiplier of a player holding no perk: prices and regen unchanged. */
 export const NEUTRAL_MANA_MULTIPLIER = 1;
 
-/** Un-namespaced type of the server → client balance push (`mana:balance`). */
-export const MANA_BALANCE_MESSAGE = 'balance';
+// Message names and payload shapes live in ../protocol.ts (shared with the
+// client half); re-exported here so existing importers keep working.
+import { MANA_BALANCE_MESSAGE, MANA_DENIED_MESSAGE } from '../protocol.ts';
 
-/** Un-namespaced type of the server → client refusal (`mana:denied`). */
-export const MANA_DENIED_MESSAGE = 'denied';
+export { MANA_BALANCE_MESSAGE, MANA_DENIED_MESSAGE };
 
 /** Reason string attached to the IntentVerdict, surfaced in server logs. */
 export const INSUFFICIENT_MANA_REASON = 'insufficient mana';
@@ -217,7 +223,13 @@ function sendBalance(playerId: string, pool: ManaPool): void {
   if (api === null) return;
   const balance = displayBalance(pool);
   pool.lastSentBalance = balance;
-  api.sendTo(playerId, MANA_BALANCE_MESSAGE, { balance, capacity: MANA_CAPACITY });
+  api.sendTo(playerId, MANA_BALANCE_MESSAGE, {
+    balance,
+    capacity: MANA_CAPACITY,
+    // The perk-adjusted price of this player's next sculpt: what the client's
+    // local intent gate compares the balance against (see ../protocol.ts).
+    cost: manaCostFor(playerId),
+  });
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import {
+  MANA_CAPACITY,
   MANA_COST_PER_SCULPT,
   manaBalanceOf,
   plugin as manaPlugin,
@@ -168,16 +169,28 @@ describe('reveal plugin', () => {
 
     // Earn some frontier pressure, then spend the rest of the pool inland so
     // the border chunk is left part-way to its threshold with an empty wallet.
+    // The drain ALTERNATES raise and lower at one interior cell: the wallet
+    // empties at full speed while the terrain stays put, so however large the
+    // pool is tuned (it has grown once already), the drain can never stack an
+    // interior hill whose relaxation skirt reaches a border and muddies the
+    // pressure this test reasons about.
     paidSculpt(harness, BORDER_CELL.x, BORDER_CELL.y, 4);
+    const affordableFromFull = Math.floor(MANA_CAPACITY / MANA_COST_PER_SCULPT);
     let drained = 0;
     for (;;) {
       const outcome = handleSculptIntent(
         { world: harness.world, interceptors: harness.host },
         PLAYER,
-        { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius: 4, dir: 1 },
+        {
+          type: 'sculpt',
+          x: INTERIOR_CELL.x,
+          y: INTERIOR_CELL.y,
+          radius: 4,
+          dir: drained % 2 === 0 ? 1 : -1,
+        },
       );
       if (!outcome.applied) break;
-      expect(++drained).toBeLessThanOrEqual(INTERIOR_SCULPTS + 1);
+      expect(++drained).toBeLessThanOrEqual(affordableFromFull);
     }
 
     const pressureWhenBroke = frontierPressureAt(frontierIndex);

@@ -8,7 +8,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@terrace/shared": "workspace:*"
+    "@terrace/shared": "workspace:*",
+    "solid-js": "^1.9.14"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

@@ -1,0 +1,43 @@
+// mana — the client half: renders the pool the server half already broadcasts.
+// Message-and-HUD only; no scene layer.
+
+// Type-only import of the client plugin contract, as every client half does.
+import type {
+  ClientPluginCtx,
+  TerraceClientPlugin,
+} from '../../../client/src/plugins/types.ts';
+import {
+  MANA_BALANCE_MESSAGE,
+  MANA_DENIED_MESSAGE,
+  MANA_PLUGIN_NAME,
+  parseManaBalancePayload,
+  parseManaDeniedPayload,
+} from '../protocol.ts';
+import { ManaPanel } from './ManaPanel.tsx';
+import { gateLocalSculpt, recordDenial, setManaPool } from './state.ts';
+
+export const clientPlugin: TerraceClientPlugin = {
+  name: MANA_PLUGIN_NAME,
+
+  attach(ctx: ClientPluginCtx): void {
+    ctx.onMessage(MANA_BALANCE_MESSAGE, (payload) => {
+      const pool = parseManaBalancePayload(payload);
+      if (pool !== null) setManaPool(pool);
+    });
+    ctx.onMessage(MANA_DENIED_MESSAGE, (payload) => {
+      const denied = parseManaDeniedPayload(payload);
+      if (denied === null) return;
+      // The denial carries the authoritative balance; keep the bar honest even
+      // if a balance push was lost. Capacity is whatever we last heard.
+      setManaPool((pool) =>
+        pool === null ? null : { ...pool, balance: denied.balance },
+      );
+      recordDenial();
+    });
+    ctx.registerHudPanel(ManaPanel);
+
+    // The client half of the interceptor chain: unaffordable sculpts stop
+    // here, before they are sent or predicted (see gateLocalSculpt).
+    ctx.onLocalIntent(() => gateLocalSculpt());
+  },
+};

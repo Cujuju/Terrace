@@ -97,7 +97,11 @@ describe('mana plugin', () => {
     const pushed = harness.sink.ofType('mana:balance');
     expect(pushed).toHaveLength(1);
     expect(pushed[0].target).toBe(PLAYER.id);
-    expect(pushed[0].payload).toEqual({ balance: MANA_CAPACITY, capacity: MANA_CAPACITY });
+    expect(pushed[0].payload).toEqual({
+      balance: MANA_CAPACITY,
+      capacity: MANA_CAPACITY,
+      cost: MANA_COST_PER_SCULPT,
+    });
   });
 
   it('charges every applied sculpt and denies once the pool cannot pay', () => {
@@ -381,5 +385,43 @@ describe('mana perks', () => {
     expect(sculptAs(latecomer).applied).toBe(true);
     expect(manaBalanceOf(latecomer.id)).toBe(MANA_CAPACITY - manaCostFor(latecomer.id));
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`).length).toBeGreaterThan(0);
+  });
+});
+
+describe('protocol parse (client half)', () => {
+  it('accepts proper payloads and rejects malformed ones', async () => {
+    const { parseManaBalancePayload, parseManaDeniedPayload } = await import('../protocol.ts');
+    expect(parseManaBalancePayload({ balance: 150, capacity: 600, cost: 25 })).toEqual({
+      balance: 150,
+      capacity: 600,
+      cost: 25,
+    });
+    for (const bad of [null, 'x', {}, { balance: 1 }, { balance: -1, capacity: 600, cost: 25 }, { balance: 1, capacity: 0, cost: 25 }, { balance: Number.NaN, capacity: 600, cost: 25 }, { balance: 1, capacity: 600 }]) {
+      expect(parseManaBalancePayload(bad)).toBeNull();
+    }
+    expect(parseManaDeniedPayload({ balance: 3, cost: 25 })).toEqual({ balance: 3, cost: 25 });
+    for (const bad of [null, {}, { balance: 3 }, { cost: 25 }, { balance: 3, cost: 'x' }]) {
+      expect(parseManaDeniedPayload(bad)).toBeNull();
+    }
+  });
+});
+
+describe('client local intent gate', () => {
+  it('allows with no pool state, debits when allowed, denies when broke', async () => {
+    const { gateLocalSculpt, setManaPool, manaPool, deniedCount } = await import(
+      '../client/state.ts'
+    );
+
+    setManaPool(null);
+    expect(gateLocalSculpt()).toBe(true); // no economy declared: never veto
+
+    setManaPool({ balance: 30, capacity: 600, cost: 25 });
+    expect(gateLocalSculpt()).toBe(true); // 30 -> 5, affordable
+    expect(manaPool()?.balance).toBe(5);
+
+    const denialsBefore = deniedCount();
+    expect(gateLocalSculpt()).toBe(false); // 5 < 25: veto...
+    expect(deniedCount()).toBe(denialsBefore + 1); // ...flash...
+    expect(manaPool()?.balance).toBe(5); // ...and no debit on a veto
   });
 });

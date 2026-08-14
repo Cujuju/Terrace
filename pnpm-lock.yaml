@@ -60,6 +60,9 @@ importers:
       '@terrace/shared':
         specifier: workspace:*
         version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
     devDependencies:
       '@types/node':
         specifier: ^24.13.3
