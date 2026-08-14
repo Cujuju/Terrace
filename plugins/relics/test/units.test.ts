@@ -1,0 +1,234 @@
+// Unit coverage for the three pure server modules: perk composition, relic
+// placement, and the composed terraform shapes. The integration behaviour they
+// add up to is in relics.test.ts; what is checked here is the maths and the
+// invariants that make that integration safe — above all, that no terraform
+// step can be handed to the shared brush with a radius it throws on.
+
+import { describe, expect, it } from 'vitest';
+import { BAND_HEIGHT, MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, SEA_LEVEL } from '@terrace/shared';
+import {
+  AZURE_HEART_COST_MULTIPLIER,
+  NEUTRAL_MULTIPLIER,
+  SPRING_OF_AETHER_REGEN_MULTIPLIER,
+  composeManaPerk,
+  isPerkSkill,
+} from '../server/perk.ts';
+import {
+  RELIC_PREFERRED_TERRAIN_ATTEMPTS,
+  RELIC_RNG_DEFAULT_SEED,
+  RELIC_SPAWN_ATTEMPTS,
+  SHORE_HEIGHT_MARGIN,
+  chooseRelicCell,
+  createRelicRng,
+  terrainClassOf,
+  type SpawnWorld,
+} from '../server/spawn.ts';
+import {
+  GENESIS_STEPS,
+  QUAKE_CORE_DEPTH_BANDS,
+  QUAKE_STEPS,
+  TERRAFORM_BY_SKILL,
+  TERRAFORM_RING_OFFSET,
+} from '../server/terraform.ts';
+
+describe('mana perk composition', () => {
+  it('is neutral for a player holding no perk skills', () => {
+    expect(composeManaPerk([])).toEqual({
+      costMultiplier: NEUTRAL_MULTIPLIER,
+      regenMultiplier: NEUTRAL_MULTIPLIER,
+    });
+    expect(composeManaPerk(['titans-hand', 'quake'])).toEqual({
+      costMultiplier: NEUTRAL_MULTIPLIER,
+      regenMultiplier: NEUTRAL_MULTIPLIER,
+    });
+  });
+
+  it('applies each perk on its own axis', () => {
+    expect(composeManaPerk(['azure-heart'])).toEqual({
+      costMultiplier: AZURE_HEART_COST_MULTIPLIER,
+      regenMultiplier: NEUTRAL_MULTIPLIER,
+    });
+    expect(composeManaPerk(['spring-of-aether'])).toEqual({
+      costMultiplier: NEUTRAL_MULTIPLIER,
+      regenMultiplier: SPRING_OF_AETHER_REGEN_MULTIPLIER,
+    });
+  });
+
+  it('is order-independent — which is why it multiplies', () => {
+    expect(composeManaPerk(['azure-heart', 'spring-of-aether'])).toEqual(
+      composeManaPerk(['spring-of-aether', 'azure-heart']),
+    );
+  });
+
+  it('knows which roster skills carry a perk', () => {
+    expect(isPerkSkill('azure-heart')).toBe(true);
+    expect(isPerkSkill('spring-of-aether')).toBe(true);
+    expect(isPerkSkill('quake')).toBe(false);
+    expect(isPerkSkill('titans-hand')).toBe(false);
+  });
+});
+
+describe('relic rng', () => {
+  it('is seeded, so a world replays the same sequence', () => {
+    const a = createRelicRng(RELIC_RNG_DEFAULT_SEED);
+    const b = createRelicRng(RELIC_RNG_DEFAULT_SEED);
+    for (let n = 0; n < 100; n++) expect(a.next()).toBe(b.next());
+  });
+
+  it('resumes from a persisted state, so a restored world continues its sequence', () => {
+    const original = createRelicRng(RELIC_RNG_DEFAULT_SEED);
+    for (let n = 0; n < 10; n++) original.next();
+
+    // Save, as the persistence slice does…
+    const saved = original.state();
+    const expected = [original.next(), original.next(), original.next()];
+
+    // …and restore. The restored generator must produce the very draws the
+    // original went on to produce, not restart from the seed.
+    const resumed = createRelicRng(saved);
+    expect([resumed.next(), resumed.next(), resumed.next()]).toEqual(expected);
+    expect(resumed.state()).toBe(original.state());
+
+    // A generator restarted from the seed does NOT match — i.e. the assertion
+    // above is testing resumption, not a coincidence.
+    const restarted = createRelicRng(RELIC_RNG_DEFAULT_SEED);
+    expect([restarted.next(), restarted.next(), restarted.next()]).not.toEqual(expected);
+  });
+
+  it('stays inside [0, 1)', () => {
+    const rng = createRelicRng(1);
+    for (let n = 0; n < 10000; n++) {
+      const value = rng.next();
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThan(1);
+    }
+  });
+});
+
+describe('terrainClassOf', () => {
+  it('classifies by distance from the waterline', () => {
+    expect(terrainClassOf(SEA_LEVEL)).toBe('shore');
+    expect(terrainClassOf(SEA_LEVEL + SHORE_HEIGHT_MARGIN)).toBe('shore');
+    expect(terrainClassOf(SEA_LEVEL - SHORE_HEIGHT_MARGIN)).toBe('shore');
+    expect(terrainClassOf(SEA_LEVEL + SHORE_HEIGHT_MARGIN + 1)).toBe('land');
+    // Open sea is neither: a gem down there would be unreachable-looking.
+    expect(terrainClassOf(SEA_LEVEL - SHORE_HEIGHT_MARGIN - 1)).toBeNull();
+  });
+});
+
+/** A stub world: every cell unlocked unless listed, at a single height. */
+function stubWorld(options: { size: number; height: number; locked?: (x: number, y: number) => boolean }): SpawnWorld {
+  return {
+    worldSize: options.size,
+    heightAt: () => options.height,
+    isCellUnlocked: (x, y) => !(options.locked?.(x, y) ?? false),
+  };
+}
+
+describe('chooseRelicCell', () => {
+  const rng = () => createRelicRng(RELIC_RNG_DEFAULT_SEED);
+
+  it('never returns a locked cell', () => {
+    // Only the top-left quadrant is unlocked.
+    const world = stubWorld({
+      size: 64,
+      height: 0,
+      locked: (x, y) => x >= 32 || y >= 32,
+    });
+
+    const generator = rng();
+    for (let n = 0; n < 50; n++) {
+      const cell = chooseRelicCell(world, generator, new Set(), 'shore');
+      if (cell === null) continue;
+      expect(cell.x).toBeLessThan(32);
+      expect(cell.y).toBeLessThan(32);
+    }
+  });
+
+  it('never returns an occupied cell', () => {
+    const size = 4;
+    const world = stubWorld({ size, height: 0 });
+    // Everything but (3,3) is taken.
+    const occupied = new Set<number>();
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (x === 3 && y === 3) continue;
+        occupied.add(y * size + x);
+      }
+    }
+
+    const cell = chooseRelicCell(world, rng(), occupied, 'shore');
+    expect(cell).toEqual({ x: 3, y: 3 });
+  });
+
+  it('honours the preferred terrain when the world offers it', () => {
+    // All land.
+    const world = stubWorld({ size: 32, height: SEA_LEVEL + BAND_HEIGHT * 4 });
+    expect(chooseRelicCell(world, rng(), new Set(), 'land')).not.toBeNull();
+  });
+
+  it('relaxes to any unlocked cell rather than starving on a flat new world', () => {
+    // A brand-new world is flat at sea level: every cell is shore, so a relic
+    // that insisted on land would never spawn at all.
+    const world = stubWorld({ size: 32, height: SEA_LEVEL });
+    expect(chooseRelicCell(world, rng(), new Set(), 'land')).not.toBeNull();
+    expect(RELIC_PREFERRED_TERRAIN_ATTEMPTS).toBeLessThan(RELIC_SPAWN_ATTEMPTS);
+  });
+
+  it('gives up rather than looping when nothing qualifies', () => {
+    const world = stubWorld({ size: 32, height: 0, locked: () => true });
+    expect(chooseRelicCell(world, rng(), new Set(), 'shore')).toBeNull();
+
+    // Deep sea everywhere is also a legitimate "nowhere to put it".
+    const drowned = stubWorld({ size: 32, height: SEA_LEVEL - SHORE_HEIGHT_MARGIN - 1 });
+    expect(chooseRelicCell(drowned, rng(), new Set(), 'shore')).toBeNull();
+  });
+
+  it('handles a world with no size at all', () => {
+    expect(chooseRelicCell(stubWorld({ size: 0, height: 0 }), rng(), new Set(), 'shore')).toBeNull();
+  });
+});
+
+describe('terraform shapes', () => {
+  const allSteps = [...QUAKE_STEPS, ...GENESIS_STEPS];
+
+  it('never asks the shared brush for a radius it throws on', () => {
+    // applyBrush throws a RangeError outside [MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS]
+    // and on a non-integer amount — the host would swallow it and the skill
+    // would silently never work. This is the invariant that prevents that.
+    for (const step of allSteps) {
+      expect(Number.isInteger(step.radius)).toBe(true);
+      expect(step.radius).toBeGreaterThanOrEqual(MIN_BRUSH_RADIUS);
+      expect(step.radius).toBeLessThanOrEqual(MAX_BRUSH_RADIUS);
+      expect(Number.isInteger(step.amount)).toBe(true);
+      // Math.abs because `-384 % 64` is -0 in JS, and Object.is(-0, 0) is false.
+      expect(Math.abs(step.amount % BAND_HEIGHT)).toBe(0);
+    }
+  });
+
+  it('composes past the single-brush cap', () => {
+    for (const steps of [QUAKE_STEPS, GENESIS_STEPS]) {
+      expect(steps.length).toBeGreaterThan(1);
+      const reach = Math.max(...steps.map((step) => Math.abs(step.dx) + step.radius));
+      expect(reach).toBeGreaterThan(MAX_BRUSH_RADIUS);
+    }
+    expect(TERRAFORM_RING_OFFSET).toBe(MAX_BRUSH_RADIUS);
+  });
+
+  it('digs with Quake and raises with Genesis', () => {
+    for (const step of QUAKE_STEPS) expect(step.amount).toBeLessThan(0);
+    for (const step of GENESIS_STEPS) expect(step.amount).toBeGreaterThan(0);
+  });
+
+  it('centres each shape on the target cell exactly once', () => {
+    for (const steps of [QUAKE_STEPS, GENESIS_STEPS]) {
+      const centres = steps.filter((step) => step.dx === 0 && step.dy === 0);
+      expect(centres).toHaveLength(1);
+    }
+    expect(Math.abs(QUAKE_STEPS[0].amount)).toBe(QUAKE_CORE_DEPTH_BANDS * BAND_HEIGHT);
+  });
+
+  it('is defined for exactly the active skills', () => {
+    expect([...TERRAFORM_BY_SKILL.keys()].sort()).toEqual(['genesis', 'quake']);
+  });
+});
