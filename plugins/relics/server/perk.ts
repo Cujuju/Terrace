@@ -22,10 +22,11 @@ export interface ManaPerk {
 /**
  * Azure Heart: sculpts cost half.
  *
- * A half, not a third or a quarter, because mana's own numbers make halving
- * legible: MANA_CAPACITY / MANA_COST_PER_SCULPT sculpts from a full pool,
- * so the perk reads as "16 from full" — a doubling a player can count. It also
- * sits at the ceiling of what mana's perk band allows to be given away
+ * A half, not a third or a quarter, because halving stays legible under
+ * mana's volume pricing (2026-08-14): every brush's cost is halved, so the
+ * player counts "twice the sculpts from a full pool" at whatever brush they
+ * favour. It also sits at the ceiling of what mana's perk band allows to be
+ * given away
  * (MANA_PERK_MIN_MULTIPLIER is 0.25), leaving room for a future relic to stack
  * on top without the clamp silently swallowing it.
  */

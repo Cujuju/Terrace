@@ -152,9 +152,10 @@ export const TITANS_HAND_RADIUS_BONUS = 1;
  * cannot accidentally be free, and so making a cast stronger automatically
  * makes it rarer.
  *
- * 5 s/band is calibrated against hand sculpting: mana sustains one sculpt —
- * one band at the brush centre — every 1.25 s (MANA_COST_PER_SCULPT 25 over
- * MANA_REGEN_PER_SECOND 20). At 5 s/band a cast is four times SLOWER per band
+ * 5 s/band is calibrated against hand sculpting: under mana's volume pricing
+ * (2026-08-14) the default regen sustains a point stamp — one band at one
+ * cell — every ~0.3 s, and larger brushes proportionally slower. At 5 s/band
+ * a cast remains several times SLOWER per band
  * than the hand it supplements, which is the intended relationship: relic casts
  * buy you reach and shape (a 15-cell crater no brush can draw), never
  * throughput. The number is written here rather than imported from mana because
