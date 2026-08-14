@@ -59,6 +59,11 @@ createSculptInput({
   // be answered, so predicting it would put the local terrain permanently ahead
   // of the server.
   send: (intent) => {
+    // Client-side interceptor chain first (mirrors the server's): a plugin
+    // veto (out of mana, say) stops the intent HERE — nothing is sent, nothing
+    // is predicted, so a refusal cannot flicker. The server still runs its own
+    // authoritative chain on whatever does go out.
+    if (!pluginHost.allowLocalIntent(intent)) return;
     if (connection.sendSculpt(intent)) world.predictSculpt(intent);
   },
 });

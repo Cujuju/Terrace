@@ -10,6 +10,7 @@
 // side's `messages` record: the host prefixes `<name>:` on the wire in both
 // directions, so a plugin cannot collide with core messages or another plugin.
 
+import type { SculptIntent } from '@terrace/shared';
 import type { Group } from 'three';
 import type { Component } from 'solid-js';
 
@@ -69,6 +70,21 @@ export interface ClientPluginCtx {
    * call: fine for clicks, not for per-frame use.
    */
   pickTerrainCell(clientX: number, clientY: number): { x: number; y: number } | null;
+
+  /**
+   * The client-side mirror of the server's onIntent interceptor chain: lets a
+   * plugin veto a local sculpt BEFORE it is sent or predicted. Return true to
+   * allow, false to veto — a vetoed intent never leaves the machine, so there
+   * is no phantom stroke and no nack round trip.
+   *
+   * This is UX, not authority: the server runs its own chain regardless, and
+   * a plugin using this hook must gate on REPLICATED server state (e.g. the
+   * mana balance the server pushes), never on rules it invented locally —
+   * otherwise the two chains drift and the visual glitching this hook exists
+   * to remove comes back. Handlers run in plugin registration order; the
+   * first veto wins. Returns an unregister function.
+   */
+  onLocalIntent(handler: (intent: SculptIntent) => boolean): () => void;
 }
 
 export interface TerraceClientPlugin {

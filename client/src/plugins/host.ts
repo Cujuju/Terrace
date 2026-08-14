@@ -7,6 +7,7 @@
 // type, so dispatch is a single lookup per message — no per-plugin fan-out on
 // the hot path.
 
+import type { SculptIntent } from '@terrace/shared';
 import { Group, Raycaster, Vector2 } from 'three';
 import type { Component } from 'solid-js';
 import { CELL_WORLD_SIZE } from '../config.ts';
@@ -24,6 +25,14 @@ export interface ClientPluginHost {
    * plugins this build has no client half for.
    */
   routeMessage(type: string, payload: unknown): void;
+  /**
+   * Runs the client-side intent chain (ClientPluginCtx.onLocalIntent); false
+   * means some plugin vetoed and the intent must be neither sent nor
+   * predicted. A handler that throws counts as ALLOW: a buggy client half
+   * must degrade to the server-authoritative path, never to a player who
+   * cannot sculpt at all.
+   */
+  allowLocalIntent(intent: SculptIntent): boolean;
   dispose(): void;
 }
 
@@ -57,6 +66,7 @@ export function createClientPluginHost(
    * nothing after this listener may act on a claimed press.
    */
   const pressHandlers: ((event: PointerEvent) => boolean)[] = [];
+  const localIntentHandlers: ((intent: SculptIntent) => boolean)[] = [];
   const onCanvasPointerDown = (event: PointerEvent): void => {
     for (const handler of pressHandlers) {
       let claimed = false;
@@ -136,6 +146,13 @@ export function createClientPluginHost(
         };
       },
       pickTerrainCell,
+      onLocalIntent(handler) {
+        localIntentHandlers.push(handler);
+        return () => {
+          const i = localIntentHandlers.indexOf(handler);
+          if (i !== -1) localIntentHandlers.splice(i, 1);
+        };
+      },
     };
 
     // A plugin that throws in attach loses its own features, not the app:
@@ -148,6 +165,17 @@ export function createClientPluginHost(
   }
 
   return {
+    allowLocalIntent(intent: SculptIntent): boolean {
+      for (const handler of localIntentHandlers) {
+        try {
+          if (!handler(intent)) return false;
+        } catch (error) {
+          console.error('[terrace] plugin local-intent handler threw', error);
+        }
+      }
+      return true;
+    },
+
     routeMessage(type: string, payload: unknown): void {
       const set = handlers.get(type);
       if (set === undefined) return;
@@ -177,6 +205,7 @@ export function createClientPluginHost(
         capture: true,
       });
       pressHandlers.length = 0;
+      localIntentHandlers.length = 0;
       handlers.clear();
     },
   };
