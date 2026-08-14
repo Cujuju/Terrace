@@ -22,17 +22,37 @@ import type { World } from './world.ts';
  */
 export const INITIAL_UNLOCK_CHUNK_SPAN = 8;
 
+/** The centred square of chunks a fresh world starts with unlocked. */
+export interface InitialUnlockFootprint {
+  /** Chunk coordinate of the first unlocked chunk, on both axes. */
+  readonly startChunk: number;
+  /** Edge length of the square, in chunks. */
+  readonly spanChunks: number;
+}
+
 /**
- * Unlocks a centred square of INITIAL_UNLOCK_CHUNK_SPAN² chunks.
+ * The starter region's geometry, as one function.
+ *
+ * Exported because world genesis has to place its shallow shelf CONCENTRIC with
+ * this square (see World.createFresh), and a second copy of "centred by
+ * flooring, clamped to the world" is exactly the kind of duplicated contract
+ * that agrees today and drifts tomorrow. The unlock loop below reads it too, so
+ * there is one definition and no derived restatement of it anywhere.
  *
  * The square is centred by flooring, so on an odd chunk count the extra chunk
  * sits on the high side — arbitrary but deterministic. Worlds smaller than the
- * span unlock entirely (the clamp below), never partially.
+ * span unlock entirely (the clamp), never partially.
  */
+export function initialUnlockFootprint(size: number): InitialUnlockFootprint {
+  const edge = chunksPerEdge(size);
+  const spanChunks = Math.min(INITIAL_UNLOCK_CHUNK_SPAN, edge);
+  return { startChunk: Math.floor((edge - spanChunks) / 2), spanChunks };
+}
+
+/** Unlocks the centred square of INITIAL_UNLOCK_CHUNK_SPAN² chunks. */
 export function applyInitialUnlock(world: World): void {
   const edge = chunksPerEdge(world.size);
-  const span = Math.min(INITIAL_UNLOCK_CHUNK_SPAN, edge);
-  const start = Math.floor((edge - span) / 2);
+  const { startChunk: start, spanChunks: span } = initialUnlockFootprint(world.size);
 
   for (let cy = start; cy < start + span; cy++) {
     for (let cx = start; cx < start + span; cx++) {

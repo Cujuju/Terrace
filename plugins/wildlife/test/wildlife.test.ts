@@ -19,7 +19,12 @@ import { INITIAL_UNLOCK_CHUNK_SPAN } from '../../../server/src/world/initial-unl
 import {
   FRESH_SEABED_BANDS_BELOW_SEA,
   FRESH_SEABED_HEIGHT,
+  FRESH_SHELF_BANDS_BELOW_SEA,
+  FRESH_SHELF_HEIGHT,
+  FRESH_SLOPE_BANDS_BELOW_SEA,
+  FRESH_SLOPE_HEIGHT,
   World,
+  freshGenesisProfile,
 } from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
 import { WILDLIFE_SPECIES, type WildlifeSpecies } from '../protocol.ts';
@@ -27,6 +32,7 @@ import {
   WILDLIFE_POPULATION_CAP,
   type HabitatWorld,
   isValidCellFor,
+  takeCensus,
   targetsFor,
 } from '../server/census.ts';
 import {
@@ -207,43 +213,69 @@ describe('habitat classification', () => {
 });
 
 describe('a fresh world as habitat', () => {
-  it('puts the fresh seabed at or below the deep-water threshold', () => {
-    // THE cross-package contract: core sets the fresh seabed depth and cannot
-    // import this plugin's threshold, so the relation between the two numbers is
+  it('puts the fresh open-sea floor at or below the deep-water threshold', () => {
+    // THE cross-package contract: core sets the genesis band depths and cannot
+    // import this plugin's threshold, so the relation between the numbers is
     // asserted here. If either moves the wrong way, whales lose their habitat on
-    // day one all over again — which is the bug this pair of constants fixes.
+    // day one all over again — which is the bug these constants fix.
     expect(FRESH_SEABED_BANDS_BELOW_SEA).toBeGreaterThanOrEqual(DEEP_WATER_BANDS_BELOW_SEA);
     expect(FRESH_SEABED_HEIGHT).toBeLessThanOrEqual(DEEP_WATER_MAX_HEIGHT);
     expect(habitatOf(FRESH_SEABED_HEIGHT)).toBe('deep');
   });
 
-  it('classifies every cell of a fresh world as deep water', () => {
-    const world = World.createFresh(WORLD_SIZE);
-    for (let y = 0; y < WORLD_SIZE; y++) {
-      for (let x = 0; x < WORLD_SIZE; x++) {
-        if (habitatOf(world.heightAt(x, y)) === 'deep') continue;
-        // Report the first offender rather than 65 536 passing assertions.
-        throw new Error(`cell (${x},${y}) is ${habitatOf(world.heightAt(x, y))}, not deep`);
-      }
-    }
-    expect(world.heightAt(0, 0)).toBe(FRESH_SEABED_HEIGHT);
+  it('keeps the shelf and the slope ring on the SHALLOW side of that threshold', () => {
+    // The other half of the same contract, and the reason a fresh world has
+    // coastal life: both inshore terraces must classify as shallow, or the
+    // shelf is just more abyss and fish have nowhere to be.
+    expect(FRESH_SHELF_BANDS_BELOW_SEA).toBeLessThan(DEEP_WATER_BANDS_BELOW_SEA);
+    expect(FRESH_SLOPE_BANDS_BELOW_SEA).toBeLessThan(DEEP_WATER_BANDS_BELOW_SEA);
+    expect(habitatOf(FRESH_SHELF_HEIGHT)).toBe('shallow');
+    expect(habitatOf(FRESH_SLOPE_HEIGHT)).toBe('shallow');
   });
 
-  it('spawns whales and deep-sea creatures on a fresh world, and nothing else', () => {
+  it('offers both shallow and deep habitat inside the starter region, and no land', () => {
+    const world = World.createFresh(WORLD_SIZE);
+    const census = takeCensus(habitatView(world));
+
+    expect(census.cellsByHabitat.shallow).toBeGreaterThan(0);
+    expect(census.cellsByHabitat.deep).toBeGreaterThan(0);
+    // No land until somebody raises an island — the honest consequence of a
+    // world that starts as an ocean.
+    expect(census.cellsByHabitat.land).toBe(0);
+
+    // The day-one split, derived from the genesis geometry rather than restated
+    // as two magic totals: shallow is the shelf box grown by the ring width on
+    // every side, and it sits wholly inside the starter square, so everything
+    // else the census can see is open sea.
+    const { shelfMinCell, shelfMaxCell, slopeWidthCells } = freshGenesisProfile(WORLD_SIZE);
+    const shallowEdgeCells = shelfMaxCell - shelfMinCell + 1 + 2 * slopeWidthCells;
+    const starterCells = (INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE) ** 2;
+
+    expect(census.cellsByHabitat.shallow).toBe(shallowEdgeCells * shallowEdgeCells);
+    expect(census.cellsByHabitat.deep).toBe(starterCells - census.cellsByHabitat.shallow);
+    // Sanity on the numbers those formulas produce today: 4 096 / 12 288.
+    expect(census.cellsByHabitat.shallow).toBe(4096);
+    expect(census.cellsByHabitat.deep).toBe(12288);
+  });
+
+  it('spawns fish, deep-sea creatures and whales on a fresh world — but no grazers', () => {
     const harness = bootOn(World.createFresh(WORLD_SIZE));
     tick(harness, ticksFor(SETTLE_SECONDS));
 
     const counts = countsBySpecies();
+    expect(counts.fish).toBeGreaterThanOrEqual(1);
     expect(counts.whale).toBeGreaterThanOrEqual(1);
     expect(counts.deepsea).toBeGreaterThanOrEqual(4);
-    // No shallow shelf and no land exist yet, so these two cannot be anywhere.
-    expect(counts.fish).toBe(0);
+    // No land exists yet, so this one cannot be anywhere.
     expect(counts.grazer).toBe(0);
 
-    // And they are where the starter unlock is — not scattered over the locked
-    // remainder of the ocean.
+    // Every creature is in its own habitat and inside the starter unlock — not
+    // scattered over the locked remainder of the ocean.
     for (const entity of livingEntities()) {
-      expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
+      const x = Math.floor(entity.x);
+      const y = Math.floor(entity.y);
+      expect(harness.world.isCellUnlocked(x, y)).toBe(true);
+      expect(habitatOf(harness.world.heightAt(x, y))).toBe(profileOf(entity.species).habitat);
     }
   });
 });
@@ -276,26 +308,30 @@ describe('population targets', () => {
     expect(targets.whale).toBeGreaterThan(0);
   });
 
-  it("stocks a fresh world's starter ocean with deep-water life on day one", () => {
-    // Every cell of a fresh world is deep water, so the starter region's whole
-    // area counts as deep habitat and nothing else exists yet.
-    const starterEdgeCells = INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE;
-    const starterCells = starterEdgeCells * starterEdgeCells;
-    const targets = targetsFor({ land: 0, shallow: 0, deep: starterCells });
+  it("stocks a fresh world's starter region with coastal AND open-sea life on day one", () => {
+    // The habitat areas a fresh world actually presents, taken from the world
+    // itself rather than from numbers typed in here — this is the assertion that
+    // the density table is tuned against reality and not against a memory of it.
+    const census = takeCensus(habitatView(World.createFresh(WORLD_SIZE)));
+    const targets = targetsFor(census.cellsByHabitat);
 
     // The documented densities, restated as the outcome they were chosen for.
-    expect(targets.whale).toBe(
-      Math.floor(starterCells / profileOf('whale').habitatCellsPerIndividual),
-    );
-    expect(targets.deepsea).toBe(
-      Math.floor(starterCells / profileOf('deepsea').habitatCellsPerIndividual),
-    );
-    // "2–3 whales and several deep-sea creatures immediately" (owner, 2026-08-14).
-    expect(targets.whale).toBeGreaterThanOrEqual(2);
+    for (const species of WILDLIFE_SPECIES) {
+      const profile = profileOf(species);
+      expect(targets[species]).toBe(
+        Math.floor(census.cellsByHabitat[profile.habitat] / profile.habitatCellsPerIndividual),
+      );
+    }
+
+    // Day one: 4 fish, 8 deep-sea creatures, 2 whales, 0 grazers.
+    expect(targets.fish).toBeGreaterThanOrEqual(2);
     expect(targets.deepsea).toBeGreaterThanOrEqual(5);
-    // Fish and grazers have no habitat until someone sculpts a shelf or an
-    // island — a fresh world is open ocean, and this is the honest consequence.
-    expect(targets.fish).toBe(0);
+    // "2–3 whales immediately" (owner, 2026-08-14) — the single hardest
+    // constraint on FRESH_SHELF_SPAN_DIVISOR, since a bigger shelf eats the open
+    // sea a whale needs.
+    expect(targets.whale).toBeGreaterThanOrEqual(2);
+    // Grazers have no habitat until someone raises an island. Honest
+    // consequence of a world that starts as an ocean.
     expect(targets.grazer).toBe(0);
   });
 
