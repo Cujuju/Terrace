@@ -284,43 +284,123 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
 
 /**
  * Triangles one chunk may spend on smoothed contours before it is given the
- * BLOCKY FALLBACK instead (writeBlockyFallback).
+ * BLOCKY FALLBACK instead (writeBlockyFallback). The MEMORY half of the guard;
+ * CHUNK_TRIANGULATION_WORK_BUDGET is the time half, and either one trips it.
  *
  * Contour geometry is unbounded in principle: every band present in a chunk
  * draws its own cap, so terrain that alternates band by cell — which no brush
  * can make, because the gradient limit forbids it, but a patient player
  * stamping single cells can — multiplies the cost by the number of bands.
- * Measured on one 16×16 chunk, per patch, single core, BEFORE this budget
- * existed and AFTER:
  *
- *   terrain                        triangles      before      after
- *   flat (any band)                        2     0.12 ms    0.12 ms
- *   one stamped spire                     94     0.17 ms    0.17 ms
- *   smooth 7-band hill                 1,887     0.80 ms    0.80 ms
- *   two overlapping brush blobs        1,314     0.32 ms    0.32 ms
- *   rough smooth-tool relief           3,045     0.89 ms    0.89 ms
- *   terraced pseudo-random            12,170      100 ms    0.72 ms  ← blocky
- *   alternating band checkerboard      9,477       89 ms    0.68 ms  ← blocky
- *   ±16-band checkerboard            157,735     1450 ms    0.89 ms  ← blocky
+ * Measured on one 16×16 chunk, per patch, single core (WSL2, Node 24). The
+ * "contour" column is the cost of actually building that geometry, taken with
+ * both budgets lifted so every row reports what it costs rather than what the
+ * guard did with it; the last two columns are what the guard DOES with it, at
+ * the old budget and at this one. The crater rows are dug by the real shared
+ * brush — concentric stamp lowers with ragged single-cell remnants left
+ * standing — and live as fixtures in test/vertexGrid.test.ts.
  *
- * The three adversarial rows are not a triangulation bug — ear clipping a
- * hundred-holed polygon is simply expensive, and 157k triangles is 17 MB of
- * attributes besides — but a multi-frame stall is not something a renderer may
- * do, however deserved. So the builder counts the triangles it is ABOUT to
- * need, level by level, and the moment the running total passes this budget it
- * abandons the contour path for that chunk and emits axis-aligned per-cell
- * geometry instead (1,666 triangles): correct heights, correct colours,
- * correct picking, no smoothing. Beauty is sacrificed exactly where the terrain
- * is adversarial, and nowhere else.
+ *   terrain                      triangles     work   contour   4,096     now
+ *   flat (any band)                      2       0k   0.04 ms      ok      ok
+ *   one stamped spire                   94       1k   0.12 ms      ok      ok
+ *   smooth 7-band hill               2,212     125k   0.51 ms      ok      ok
+ *   rough smooth-tool relief         3,261     128k   0.74 ms      ok      ok
+ *   square spiral arm                1,982     146k   0.71 ms      ok      ok
+ *   spire field, every 4th cell      1,784       8k   0.29 ms      ok      ok
+ *   spire field, every 2nd cell      7,976      41k   0.98 ms  blocky      ok
+ *   pits every 4th cell              1,970     176k   0.62 ms  blocky      ok
+ *   pits every 3rd cell              4,247     796k   2.06 ms  blocky      ok
+ *   STAMPED CRATER (the fixture)     3,566     112k   0.81 ms      ok      ok
+ *   crater, 12 bands deep            4,613     143k   1.04 ms  blocky      ok
+ *   crater + 6 spires                5,250     148k   1.12 ms  blocky      ok
+ *   two craters on one diagonal      5,218     199k   1.44 ms  blocky      ok
+ *   three craters + six spires       8,319     337k   2.05 ms  blocky      ok
+ *   pits every 2nd cell              8,738   3,358k   7.71 ms  blocky  blocky
+ *   terraced pseudo-random          12,911   1,695k   5.81 ms  blocky  blocky
+ *   alternating band checkerboard   11,714   4,914k  11.29 ms  blocky  blocky
+ *   ±16-band checkerboard          192,994  78,653k 176.21 ms  blocky  blocky
  *
- * 4096 sits above every plausible sculpted chunk measured above (the worst,
- * rough relief straight off the smooth tool, needs 3,045) and caps a chunk's
- * attribute memory at 442 KB. The bail-out happens BEFORE the expensive work —
- * bridging and ear clipping are the only super-linear steps and both run after
- * the count is known — which is why the last row costs a millisecond rather
- * than a second and a half.
+ * A chunk drawn blocky costs 0.4–0.7 ms in every one of these rows, whichever
+ * generation drew it: the fallback's own geometry is fixed-size, and the
+ * bail-out happens before the expensive work.
+ *
+ * "work" is the ear-clipping cost predictor defined at
+ * CHUNK_TRIANGULATION_WORK_BUDGET. The 4,096 column is this same code on
+ * 2026-08-14 morning, i.e. what the owner played: EIGHT rows of ordinary
+ * sculpting drew blocky there, for two independent reasons that had to be
+ * fixed together — the budget itself for the ones over 4,096 triangles, and,
+ * for the ones under it (pits every 4th cell, at 1,970 triangles and 0.62 ms),
+ * hole bridging leaving the outline self-intersecting so that the exact
+ * triangle prediction failed and the verification door fired. Those two fixes
+ * are the hole ORDERING at the end of groupLoops and the bridge REFINEMENT in
+ * bridgeHole; between them they also cut the adversarial rows by 2–12× (the
+ * ±16-band checkerboard's contour path was 2,093 ms before them).
+ *
+ * A multi-frame stall is not something a renderer may do, however adversarial
+ * the terrain, so the builder counts what it is ABOUT to need, level by level,
+ * and the moment either budget is passed it abandons the contour path for that
+ * chunk and emits axis-aligned per-cell geometry instead (1,802 triangles at
+ * most): correct heights, correct colours, correct picking, no smoothing.
+ * Beauty is sacrificed exactly where the terrain is adversarial, and nowhere
+ * else. The bail-out happens BEFORE the expensive work — bridging and ear
+ * clipping are the only super-linear steps and both run after the counts are
+ * known — which is why the last row costs a millisecond rather than a second
+ * and a half.
+ *
+ * 10,240 sits 23% above the heaviest legitimately sculpted chunk measured
+ * (three craters and six spires dug into one 16×16 chunk, 8,319) and roughly
+ * 3× above the reported crater itself. The OLD value, 4,096, is what the owner
+ * hit: an ordinary crater plus a few spires needs 5,250, so normal heavy play
+ * flipped chunks to blocky and the terrain read as a patchwork.
+ *
+ * MEMORY. Attributes are 108 bytes per triangle (3 unshared vertices × 9
+ * floats), and ensureCapacity doubles rather than fits, so the ceiling this
+ * budget sets is a 16,384-triangle capacity = 1.77 MB per chunk, against
+ * 442 KB at the old 4,096. That is a per-chunk HIGH-WATER MARK reached only by
+ * a chunk whose own geometry demanded it, never an allocation every chunk
+ * makes: the reported crater settles at 4,096 (442 KB), a crater with spires
+ * at 8,192 (885 KB), the three-crater chunk at 16,384 (1.77 MB), a chunk that
+ * blew either budget needs only 2,048 (221 KB) for the fallback, and an
+ * ordinary chunk still never leaves its starting 1,024 (110 KB). What grew is
+ * the worst case for the rare crowded chunk, not the cost of a world.
  */
-export const CHUNK_TRIANGLE_BUDGET = 4096;
+export const CHUNK_TRIANGLE_BUDGET = 10240;
+
+/**
+ * Ear-clipping work one chunk may spend before it is given the blocky fallback.
+ * The TIME half of the guard, and the half that catches the checkerboards.
+ *
+ * WHY TRIANGLES ALONE CANNOT DO THIS JOB, measured: a field of stamped spires
+ * costs 7,976 triangles and 0.98 ms, while a field of stamped PITS costs 8,738
+ * triangles and 7.71 ms. Same size, same stamping, eight times the time — the
+ * spires are separate outer loops, the pits are holes bridged into one polygon,
+ * and earClip is O(V²) in the vertices V of the polygon it is handed. Triangle
+ * count is therefore not what predicts a stall; the size of the bridged
+ * polygons is, and gating on the wrong one either lets a 7 ms chunk through or
+ * blockifies a crater to catch it.
+ *
+ * So the builder sums V² over the polygons it is about to triangulate, where V
+ * is the merged vertex count a polygon's outer loop, its holes and its bridges
+ * come to (two extra vertices per bridge — see BRIDGE_SLIT_WIDTH). Against the
+ * measured table above that predicts ear-clipping time at 1.6–3.3 ns per unit
+ * across five orders of magnitude of work, which is as tight as this gets: it
+ * IS the inner loop's own operation count.
+ *
+ * 1,000,000 is therefore ~3.3 ms of ear clipping at the worst measured rate,
+ * and with the rest of the pipeline (marching, smoothing, ~1 ms of buffer
+ * writes at the triangle budget) it holds a chunk build to about 4 ms — a
+ * quarter of a 60 fps frame, for an event that lands on ~4% of frames during a
+ * held sculpt (see the budget reasoning in render/terrainMeshes.ts: ≈32 chunk
+ * patches per second, so ~13% of one core at this ceiling and under 3% at the
+ * crater fixture's real 112k). It clears every legitimate fixture with room to
+ * spare — the heaviest, three craters in one chunk, needs 337k, and pits every
+ * third cell 796k — and catches every adversarial one by 1.7× to 78×.
+ *
+ * It cannot blockify anything the old triangle-only budget passed: a chunk
+ * needs a polygon of ~1,000 vertices to reach this work, and 1,000 cap vertices
+ * drag ~2,000 skirt triangles along with them, which was already over 4,096.
+ */
+export const CHUNK_TRIANGULATION_WORK_BUDGET = 1_000_000;
 
 /**
  * How many candidate bridges the fallback search in bridgeHole tries before it
@@ -364,7 +444,8 @@ export interface ChunkGeometryCounts {
   /** True when the buffers had to be reallocated to fit this geometry. */
   capacityGrew: boolean;
   /**
-   * True when the chunk's contour geometry blew CHUNK_TRIANGLE_BUDGET and it
+   * True when the chunk's contour geometry blew CHUNK_TRIANGLE_BUDGET or
+   * CHUNK_TRIANGULATION_WORK_BUDGET (or failed to triangulate exactly) and it
    * was drawn with axis-aligned per-cell geometry instead.
    */
   usedFallback: boolean;
@@ -1015,6 +1096,57 @@ function turn(ax: number, az: number, bx: number, bz: number, cx: number, cz: nu
   return (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
 }
 
+/**
+ * Containment in a triangle, edges included and winding irrelevant — the caller
+ * (bridgeHole's refinement) builds its triangle from a ray and cannot know
+ * which way round it came out.
+ */
+function pointInTriangle(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  cx: number,
+  cz: number,
+  px: number,
+  pz: number,
+): boolean {
+  const d1 = turn(ax, az, bx, bz, px, pz);
+  const d2 = turn(bx, bz, cx, cz, px, pz);
+  const d3 = turn(cx, cz, ax, az, px, pz);
+  const anyNegative = d1 < 0 || d2 < 0 || d3 < 0;
+  const anyPositive = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(anyNegative && anyPositive);
+}
+
+/**
+ * Whether the point (px,pz) lies on the INSIDE of `loop` as seen from the
+ * loop's vertex `i` — i.e. inside the wedge that vertex's two edges cut out of
+ * the plane. A convex corner's wedge is the one between its edges; a reflex
+ * corner's is everything except the wedge between them.
+ *
+ * It is a local test, not a containment test, and that is exactly what
+ * bridgeHole's refinement needs: a candidate landing vertex whose wedge does
+ * not face the hole cannot be the end of a bridge that runs through the
+ * interior, however close it is. (earcut calls this locallyInside.)
+ */
+function seesPoint(loop: ContourLoop, i: number, px: number, pz: number): boolean {
+  const n = loop.length;
+  const a = loop[i];
+  const prev = loop[(i + n - 1) % n];
+  const next = loop[(i + 1) % n];
+  if (turn(prev.x, prev.z, a.x, a.z, next.x, next.z) > 0) {
+    return (
+      turn(a.x, a.z, px, pz, next.x, next.z) <= 0 &&
+      turn(a.x, a.z, prev.x, prev.z, px, pz) <= 0
+    );
+  }
+  return (
+    turn(a.x, a.z, px, pz, prev.x, prev.z) > 0 ||
+    turn(a.x, a.z, next.x, next.z, px, pz) > 0
+  );
+}
+
 function segmentsCross(
   a: ContourPoint,
   b: ContourPoint,
@@ -1070,8 +1202,49 @@ function bridgeHole(outer: ContourLoop, hole: ContourLoop): ContourLoop {
     hitX = x;
     outerIndex = a.x > b.x ? i : (i + 1) % outer.length;
   }
-  // The ray's landing point is the usual answer, but not always a legal one:
-  // another part of the outline can stand between the hole and it. Verifying
+  // REFINEMENT, and it is what the ray cast alone gets wrong (measured
+  // 2026-08-14). The hit edge's larger-x end is the right landing vertex only
+  // when nothing stands between the hole and it, and on a chunk-sized outline
+  // that is usually FALSE: the hit edge is the domain's own east border, whose
+  // larger-x end is a corner sixteen cells away, and almost anything — the
+  // hole's own far side above all — stands in the way. Every such obstruction
+  // is an outer vertex lying inside the triangle (hole point, ray hit, that
+  // endpoint): a vertex outside the triangle cannot block a sight line that
+  // stays inside it. So one O(outer) pass over exactly those vertices, keeping
+  // the one at the shallowest angle to the ray, lands the bridge on a vertex
+  // the hole can actually see. This is earcut's findHoleBridge refinement,
+  // mirrored (our ray runs +x, so "closer to the hole" is SMALLER x).
+  //
+  // The comment this replaces claimed the refinement was already here; it was
+  // not, and the cost fell on the fallback search below — which fired on
+  // essentially every crater bridge and, at O(outer × hole) plus a sort plus
+  // BRIDGE_SEARCH_LIMIT visibility passes, was over HALF the build time of a
+  // chunk with three craters in it (2.13 ms of 4.17 ms).
+  if (outerIndex >= 0) {
+    const mx = outer[outerIndex].x;
+    const mz = outer[outerIndex].z;
+    let bestTangent = Infinity;
+    for (let i = 0; i < outer.length; i++) {
+      if (i === outerIndex) continue;
+      const p = outer[i];
+      // Only vertices strictly beyond the ray's start and no further out than
+      // the current landing vertex can be in the way.
+      if (p.x <= hx || p.x > mx) continue;
+      if (!pointInTriangle(hx, hz, hitX, hz, mx, mz, p.x, p.z)) continue;
+      if (!seesPoint(outer, i, hx, hz)) continue;
+      // Tangent of the angle between the ray and the candidate: the smallest
+      // one is visible from the hole, because anything that could hide it would
+      // itself sit at a smaller angle and be picked instead.
+      const tangent = Math.abs(hz - p.z) / (p.x - hx);
+      if (tangent < bestTangent || (tangent === bestTangent && p.x < outer[outerIndex].x)) {
+        bestTangent = tangent;
+        outerIndex = i;
+      }
+    }
+  }
+
+  // The refined landing point is the usual answer, but not a guaranteed one:
+  // the refinement assumes an outline that is simple to begin with. Verifying
   // costs one more O(outer + hole) pass, and only when it fails does the search
   // widen to "the nearest vertex with a clear line", which is what the first
   // version of this function did for EVERY hole — and what made it 300 ms.
@@ -1325,7 +1498,20 @@ function splitPolygon(polygon: ContourLoop): [ContourLoop, ContourLoop] | null {
 /** Groups a level's loops into outer polygons with their holes. */
 interface CapPolygon {
   outer: ContourLoop;
+  /**
+   * Sorted by descending `rightmostX`, which is the order they MUST be bridged
+   * in — see the ordering argument at the end of groupLoops.
+   */
   holes: ContourLoop[];
+}
+
+/** The x of the vertex bridgeHole casts its ray from. */
+function rightmostX(loop: ContourLoop): number {
+  let x = -Infinity;
+  for (const p of loop) {
+    if (p.x > x) x = p.x;
+  }
+  return x;
 }
 
 function groupLoops(loops: ContourLoop[]): CapPolygon[] {
@@ -1350,6 +1536,38 @@ function groupLoops(loops: ContourLoop[]): CapPolygon[] {
       }
     }
     if (best >= 0) outers[best].holes.push(hole);
+  }
+  // BRIDGING ORDER, and it is a correctness requirement rather than a
+  // preference (2026-08-14, found on an ordinary stamped crater).
+  //
+  // bridgeHole splices one hole at a time into an outline that already contains
+  // every bridge spliced before it, and it picks its bridge by casting +x from
+  // the hole's rightmost vertex and checking the line of sight against the
+  // outer loop and THAT hole. It cannot check against holes not spliced yet —
+  // they are not part of the outline it is looking at — so in an arbitrary
+  // order a bridge can be run straight THROUGH a hole that is still to come.
+  // Splicing that hole afterwards then crosses the earlier bridge's corridor:
+  // the merged polygon is no longer simple, ear clipping stalls on an inverted
+  // remnant, the exact triangle prediction fails, and the verification in
+  // writeChunkVertexData sends the WHOLE CHUNK to the blocky fallback. Two
+  // craters dug on one diagonal are enough — the second bowl sits on the first
+  // bowl's bridge — which is one half of the "ordinary terrain went blocky"
+  // report this ordering fixes.
+  //
+  // Descending rightmost x removes the possibility rather than detecting it: a
+  // bridge from the rightmost vertex of hole h lands on a vertex whose x is at
+  // least h's own (the ray travels +x and the landing vertex is never behind
+  // the hit point), so h's corridor lies entirely in the half-plane
+  // x ≥ rightmostX(h), while every hole still unspliced has rightmostX ≤ that
+  // and so lies entirely in the closed half-plane on the other side. The two
+  // can meet only ON the line x = rightmostX(h), which takes two holes with the
+  // same rightmost x AND a vertical bridge to be a crossing rather than a
+  // touch; that residue is still caught, blockily, by the verification door.
+  //
+  // Same ordering earcut's eliminateHoles uses, for the same reason, mirrored
+  // left-to-right because our ray runs +x.
+  for (const polygon of outers) {
+    polygon.holes.sort((a, b) => rightmostX(b) - rightmostX(a));
   }
   return outers;
 }
@@ -1698,6 +1916,8 @@ export function writeChunkVertexData(
   // fallback BEFORE the super-linear work — see CHUNK_TRIANGLE_BUDGET.
   let capTriangles = 0;
   let skirtTriangles = 0;
+  /** Σ V² over the polygons to be triangulated — see the work budget. */
+  let triangulationWork = 0;
   let overBudget = false;
   const polygonsPerLevel: CapPolygon[][] = [];
   for (const level of levels) {
@@ -1716,7 +1936,13 @@ export function writeChunkVertexData(
     for (const polygon of polygons) {
       let vertices = polygon.outer.length;
       for (const hole of polygon.holes) vertices += hole.length;
-      capTriangles += vertices + 2 * polygon.holes.length - 2;
+      // Every bridge splices its two ends in twice, once per side of the slit,
+      // so the polygon earClip is handed is this long — and it triangulates to
+      // exactly that many vertices minus two, which is the exact prediction the
+      // verification below depends on.
+      const merged = vertices + 2 * polygon.holes.length;
+      capTriangles += merged - 2;
+      triangulationWork += merged * merged;
     }
     if (level.skirtDrop > 0) {
       for (const loop of level.loops) {
@@ -1727,7 +1953,13 @@ export function writeChunkVertexData(
         }
       }
     }
-    if (capTriangles + skirtTriangles > CHUNK_TRIANGLE_BUDGET) {
+    // Either budget alone is enough to abandon the contour path: one bounds the
+    // geometry (and the buffers behind it), the other the time it takes to make
+    // it. Both are checked here, before any of the super-linear work runs.
+    if (
+      capTriangles + skirtTriangles > CHUNK_TRIANGLE_BUDGET ||
+      triangulationWork > CHUNK_TRIANGULATION_WORK_BUDGET
+    ) {
       overBudget = true;
       break;
     }

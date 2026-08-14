@@ -10,7 +10,11 @@ import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  DEFAULT_SCULPT_AMOUNT,
   SEA_LEVEL,
+  applySculpt,
+  createHeightmap,
+  heightAt,
   quantizeToBand,
   type ChunkPayload,
 } from '@terrace/shared';
@@ -18,6 +22,7 @@ import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
   CHAIKIN_ITERATIONS,
   CHUNK_TRIANGLE_BUDGET,
+  CHUNK_TRIANGULATION_WORK_BUDGET,
   CONTOUR_CELL_CENTRE_GUARD,
   CONTOUR_SAMPLE_CLEARANCE,
   FALLBACK_MAX_TRIANGLES,
@@ -59,6 +64,15 @@ const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
  */
 const EDGE_CHUNK = WORLD / CHUNK_SIZE - 1;
 const EDGE_ORIGIN = EDGE_CHUNK * CHUNK_SIZE;
+
+/**
+ * Where the SCULPTED fixtures below are dug: an interior chunk, whose
+ * neighbours are all present in the fixture world. The edge-chunk trick is
+ * wrong for them — a brush overhanging the world border would be clipped, and
+ * the fixtures are about what a stroke costs, not about the rim.
+ */
+const FIXTURE_CHUNK = 1;
+const FIXTURE_ORIGIN = FIXTURE_CHUNK * CHUNK_SIZE;
 
 /** sRGB palettes — the builder does not care which space it is handed. */
 const PALETTES: ChunkPalettes = { top: TERRAIN_PALETTE, cliff: CLIFF_PALETTE };
@@ -207,6 +221,109 @@ function mirrorWith(chunks: ChunkPayload[]) {
 /** Builds the edge chunk from local heights and writes its geometry. */
 function writeEdge(height: (i: number, j: number) => number) {
   return write(mirrorWith([edgeChunk(height)]), EDGE_CHUNK, EDGE_CHUNK);
+}
+
+// ---------------------------------------------------------------------------
+// SCULPTED FIXTURES — terrain made the way a player makes it.
+//
+// The renderer's budgets are decisions about what real play costs, so the
+// terrain they are tuned against must be real play and not a formula that
+// happens to be expensive. These fixtures are therefore dug with the shared
+// brush itself (applySculpt, tool 'stamp', profile 'soft' — the player-facing
+// wire defaults), one stroke per click, exactly as the server would apply
+// them. They are what the measured table at CHUNK_TRIANGLE_BUDGET reports.
+// ---------------------------------------------------------------------------
+
+/** One held-brush click: a centre offset, a radius, a repeat count. */
+interface Stroke {
+  dx: number;
+  dy: number;
+  radius: number;
+  clicks: number;
+  /** Raise instead of lower — how a remnant column is left standing. */
+  up?: boolean;
+}
+
+/** Cell the fixture strokes are centred on: the middle of the fixture chunk. */
+const SCULPT_CENTRE = FIXTURE_ORIGIN + CHUNK_SIZE / 2;
+
+/**
+ * THE CRATER. A stamp-dug bowl of the shape the owner reported going blocky:
+ * radius 4 down to radius 1, walked around an irregular ring so the rim is
+ * ragged rather than circular, bottoming out about nine bands down, with five
+ * single-cell columns raised back up inside it — the remnants a player leaves
+ * when digging around something.
+ *
+ * Deliberately NOT symmetric: a clean cone produces neatly nested contours and
+ * is far cheaper than what a player actually leaves behind.
+ */
+const CRATER_STROKES: readonly Stroke[] = [
+  { dx: 0, dy: 0, radius: 4, clicks: 4 },
+  { dx: 2, dy: 1, radius: 4, clicks: 3 },
+  { dx: -2, dy: 2, radius: 4, clicks: 3 },
+  { dx: 1, dy: -3, radius: 3, clicks: 3 },
+  { dx: -3, dy: -1, radius: 3, clicks: 3 },
+  { dx: 0, dy: 3, radius: 2, clicks: 4 },
+  { dx: 0, dy: 0, radius: 2, clicks: 6 },
+  { dx: -1, dy: 0, radius: 1, clicks: 4 },
+  { dx: 2, dy: -1, radius: 1, clicks: 3 },
+  { dx: 1, dy: 1, radius: 1, clicks: 4, up: true },
+  { dx: -2, dy: -2, radius: 1, clicks: 6, up: true },
+  { dx: 3, dy: -2, radius: 1, clicks: 3, up: true },
+  { dx: -3, dy: 3, radius: 1, clicks: 5, up: true },
+  { dx: 2, dy: 3, radius: 1, clicks: 2, up: true },
+];
+
+/** Disjoint spires stamped around the crater — the second reported shape. */
+const SPIRE_STROKES: readonly Stroke[] = [
+  { dx: -4, dy: -4, radius: 1, clicks: 7, up: true },
+  { dx: 4, dy: -3, radius: 1, clicks: 5, up: true },
+  { dx: -3, dy: 4, radius: 1, clicks: 9, up: true },
+  { dx: 5, dy: 4, radius: 1, clicks: 4, up: true },
+  { dx: 0, dy: -6, radius: 1, clicks: 6, up: true },
+  { dx: 6, dy: 0, radius: 2, clicks: 3, up: true },
+];
+
+/** The same crater dug again, offset — two bowls on one diagonal. */
+const offsetStrokes = (strokes: readonly Stroke[], dx: number, dy: number): Stroke[] =>
+  strokes.map((s) => ({ ...s, dx: s.dx + dx, dy: s.dy + dy }));
+
+/**
+ * Applies strokes to a world that starts flat at `base`, and returns every
+ * chunk of it — neighbours included, so the fixture chunk's lattice reads real
+ * heights one cell past its own edge instead of clamping.
+ */
+function sculptedWorld(strokes: readonly Stroke[], base: number): ChunkPayload[] {
+  const map = createHeightmap(WORLD);
+  map.cells.fill(base);
+  for (const stroke of strokes) {
+    for (let click = 0; click < stroke.clicks; click++) {
+      applySculpt(
+        map,
+        SCULPT_CENTRE + stroke.dx,
+        SCULPT_CENTRE + stroke.dy,
+        stroke.radius,
+        stroke.up ? DEFAULT_SCULPT_AMOUNT : -DEFAULT_SCULPT_AMOUNT,
+        { tool: 'stamp', profile: 'soft' },
+      );
+    }
+  }
+  const chunks: ChunkPayload[] = [];
+  const perEdge = WORLD / CHUNK_SIZE;
+  for (let cy = 0; cy < perEdge; cy++) {
+    for (let cx = 0; cx < perEdge; cx++) {
+      chunks.push(
+        chunkPayloadFrom(cx, cy, (x, y) => heightAt(map, x, y)),
+      );
+    }
+  }
+  return chunks;
+}
+
+/** Sculpts a world and writes the chunk the strokes were centred in. */
+function writeSculpted(strokes: readonly Stroke[], base = 8 * BAND_HEIGHT) {
+  const mirror = mirrorWith(sculptedWorld(strokes, base));
+  return write(mirror, FIXTURE_CHUNK, FIXTURE_CHUNK);
 }
 
 describe('flat terrain', () => {
@@ -616,6 +733,108 @@ describe('the blocky fallback', () => {
       Math.round(Math.max(0, 300 - 20 * Math.hypot(i - 5, j - 5))),
     );
     expect(blobs.counts.usedFallback).toBe(false);
+  });
+
+  /**
+   * THE REGRESSION THE BUDGETS EXIST TO GET RIGHT (2026-08-14). A stamped
+   * crater is not adversarial terrain — it is the single most ordinary thing
+   * the stamp tool makes — and at the old 4,096-triangle budget every one of
+   * these drew blocky, which the owner saw as a patchwork of square chunks in
+   * the middle of a normal dig.
+   *
+   * Asserted on counts and flags only, never on wall-clock: a timing assertion
+   * in CI measures the CI runner's mood. The milliseconds behind these numbers
+   * are in the table at CHUNK_TRIANGLE_BUDGET, from local runs.
+   */
+  describe('and the sculpted terrain it must NOT take over from', () => {
+    it('draws a stamped crater organically', () => {
+      const { counts } = writeSculpted(CRATER_STROKES);
+      expect(counts.usedFallback).toBe(false);
+      // Real contour geometry, not a degenerate handful of triangles.
+      expect(counts.capTriangleCount).toBeGreaterThan(500);
+      expect(counts.skirtTriangleCount).toBeGreaterThan(500);
+    });
+
+    it('draws a crater dug into the sea floor organically too', () => {
+      // Starting from a flat sea rather than a plateau: the same bowl, but its
+      // levels run from band -14 up, and band 0 carries the extra waterline cap.
+      const { counts } = writeSculpted(CRATER_STROKES, 0);
+      expect(counts.usedFallback).toBe(false);
+    });
+
+    it('draws a crater with disjoint spires around it organically', () => {
+      const { counts } = writeSculpted([...CRATER_STROKES, ...SPIRE_STROKES]);
+      expect(counts.usedFallback).toBe(false);
+    });
+
+    it('draws several craters in one chunk organically', () => {
+      // Two bowls on one diagonal is the case that used to defeat hole
+      // bridging outright — the second bowl sits on the first bowl's bridge.
+      const twin = writeSculpted([
+        ...CRATER_STROKES,
+        ...offsetStrokes(CRATER_STROKES, 6, 6),
+      ]);
+      expect(twin.counts.usedFallback).toBe(false);
+
+      // And a chunk dug three times over, with spires, which is the heaviest
+      // legitimately sculpted chunk the budgets are tuned against.
+      const ragged = writeSculpted([
+        ...CRATER_STROKES,
+        ...offsetStrokes(CRATER_STROKES, 6, 6),
+        ...offsetStrokes(CRATER_STROKES, -6, 5),
+        ...SPIRE_STROKES,
+      ]);
+      expect(ragged.counts.usedFallback).toBe(false);
+      // It must also still fit the budget with headroom rather than scrape in.
+      expect(ragged.counts.triangleCount).toBeLessThan(CHUNK_TRIANGLE_BUDGET);
+    });
+
+    it('draws a field of stamped spires organically, however many', () => {
+      // The case that proves the triangle budget alone cannot be the guard:
+      // this costs MORE triangles than the pit field below and a fraction of
+      // the time, because separate outer loops never get bridged together.
+      const field: Stroke[] = [];
+      for (let dx = -8; dx <= 8; dx += 2) {
+        for (let dy = -8; dy <= 8; dy += 2) {
+          field.push({ dx, dy, radius: 1, clicks: 3, up: true });
+        }
+      }
+      const { counts } = writeSculpted(field, 4 * BAND_HEIGHT);
+      expect(counts.usedFallback).toBe(false);
+      expect(counts.triangleCount).toBeGreaterThan(4096);
+    });
+  });
+
+  /**
+   * The work budget's own door. A field of single-cell PITS at the same spacing
+   * as the spire field above makes one polygon with dozens of holes bridged
+   * into it, which is quadratic to triangulate; it is comfortably inside the
+   * triangle budget and must still be caught.
+   */
+  it('takes over on terrain that is cheap in triangles but not in work', () => {
+    const pits: Stroke[] = [];
+    for (let dx = -8; dx <= 8; dx += 2) {
+      for (let dy = -8; dy <= 8; dy += 2) pits.push({ dx, dy, radius: 1, clicks: 3 });
+    }
+    const { counts } = writeSculpted(pits);
+    expect(counts.usedFallback).toBe(true);
+    expect(counts.triangleCount).toBeLessThanOrEqual(FALLBACK_MAX_TRIANGLES);
+
+    // Pits every FOURTH cell are the same shape an order of magnitude cheaper,
+    // and must come through organically — the gate has to discriminate, not
+    // just reject holes.
+    const sparse: Stroke[] = [];
+    for (let dx = -8; dx <= 8; dx += 4) {
+      for (let dy = -8; dy <= 8; dy += 4) sparse.push({ dx, dy, radius: 1, clicks: 3 });
+    }
+    expect(writeSculpted(sparse).counts.usedFallback).toBe(false);
+  });
+
+  it('keeps both budgets above the fallback they fall back TO', () => {
+    // A fallback that could itself trip a budget would loop; both gates must
+    // sit clear of the geometry the fallback emits.
+    expect(FALLBACK_MAX_TRIANGLES).toBeLessThan(CHUNK_TRIANGLE_BUDGET);
+    expect(CHUNK_TRIANGULATION_WORK_BUDGET).toBeGreaterThan(0);
   });
 
   it('keeps the honesty invariant, cell for cell', () => {
