@@ -66,17 +66,20 @@ export function hasChunk(mirror: TerrainMirror, chunkIdx: number): boolean {
 /**
  * Chunks whose RENDERED geometry depends on cell (x,y).
  *
- * A chunk's mesh has CHUNK_SIZE+1 vertices per edge: it samples one cell past
- * its own last row and column so its border vertices coincide with the
- * neighbour's first ones and the two meshes tile without a crack (see
- * vertexGrid.ts). The consequence for diff application is that a cell on a
- * chunk's FIRST row or column is also read by the chunk before it:
+ * Since the 2026-08-14 cliff renderer, a chunk's mesh emits per-cell top quads
+ * plus wall quads against its +x/+y neighbours, and a chunk's LAST row/column
+ * walls read the FIRST row/column of the next chunk (see vertexGrid.ts). The
+ * consequence for diff application is unchanged in shape: a cell on a chunk's
+ * first row or column is also read by the chunk before it —
  *
- *   cell x is owned by chunk floor(x / CHUNK_SIZE), and is additionally the
- *   border sample of chunk floor(x / CHUNK_SIZE) - 1 exactly when
+ *   cell x is owned by chunk floor(x / CHUNK_SIZE), and additionally feeds the
+ *   border walls of chunk floor(x / CHUNK_SIZE) - 1 exactly when
  *   x % CHUNK_SIZE === 0.
  *
- * The same holds independently on y, so a corner cell dirties four chunks.
+ * The same holds independently on y. The up-left DIAGONAL dirty this function
+ * also emits is now slightly over-conservative for the wall geometry (the old
+ * vertex-per-cell grid's corner sample needed it); it costs one harmless extra
+ * chunk patch on corner cells and is kept for simplicity.
  * Missing this is precisely how seam cracks appear after an edit, which is why
  * it is its own tested function rather than inline arithmetic.
  *

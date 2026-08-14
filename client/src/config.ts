@@ -50,12 +50,12 @@ export const ROOM_NAME = import.meta.env.VITE_ROOM_NAME ?? DEFAULT_ROOM_NAME;
 export const CELL_WORLD_SIZE = 1;
 
 /**
- * World units a single terrace band rises. Set equal to CELL_WORLD_SIZE so a
- * one-band riser spans exactly one cell horizontally and one cell vertically —
- * a 45° face. That is the steepest riser a vertex-per-cell grid can produce
- * (a vertical wall would need duplicated vertices; see terrain/vertexGrid.ts),
- * and it is what makes the quantised steps read as terraces rather than as a
- * gentle slope. PROVISIONAL: feel-tune alongside BAND_HEIGHT in Phase 2.
+ * World units a single terrace band rises. Historically forced to equal
+ * CELL_WORLD_SIZE by the old vertex-per-cell grid (whose steepest face was
+ * 45°); since the 2026-08-14 cliff renderer, risers are true vertical walls
+ * (terrain/vertexGrid.ts emits duplicated per-face vertices), so this is now
+ * a free feel constant: how tall one band step LOOKS relative to a cell.
+ * Kept at 1 cell per band until feel-tuning says otherwise.
  */
 export const BAND_WORLD_HEIGHT = CELL_WORLD_SIZE;
 
