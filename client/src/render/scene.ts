@@ -62,9 +62,24 @@ export interface Viewport {
   readonly terrainGroup: Group;
   /** Re-centres and frames the camera once the world's size is known. */
   focusWorld(worldSize: number): void;
+  /**
+   * Registers a per-frame callback, called before each render with the frame
+   * delta in seconds (capped — see FRAME_DELTA_CAP_S). Returns an unregister
+   * function. This is how plugin layers animate without owning a loop.
+   */
+  onFrame(handler: (dt: number) => void): () => void;
   start(): void;
   dispose(): void;
 }
+
+/**
+ * Upper bound on the dt handed to frame callbacks, in seconds. A backgrounded
+ * tab stops receiving animation frames; without the cap, returning to the tab
+ * would hand animations one multi-second step and every wandering creature
+ * would teleport. 100 ms = the server's tick period: a plausible worst normal
+ * frame, and far below anything that reads as a jump.
+ */
+const FRAME_DELTA_CAP_S = 0.1;
 
 export function createViewport(canvas: HTMLCanvasElement): Viewport {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -120,9 +135,20 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     renderer.setSize(width, height, false);
   };
 
+  const frameCallbacks = new Set<(dt: number) => void>();
+
   let frameHandle = 0;
+  let lastFrameMs = 0;
   const renderFrame = (): void => {
     frameHandle = requestAnimationFrame(renderFrame);
+    const nowMs = performance.now();
+    // First frame has no predecessor; a zero step is correct for it.
+    const dt =
+      lastFrameMs === 0
+        ? 0
+        : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
+    lastFrameMs = nowMs;
+    for (const cb of frameCallbacks) cb(dt);
     // Damping needs a per-frame update; it is also what applies any pending
     // camera input.
     controls.update();
@@ -154,12 +180,17 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     controls,
     terrainGroup,
     focusWorld,
+    onFrame(handler: (dt: number) => void): () => void {
+      frameCallbacks.add(handler);
+      return () => frameCallbacks.delete(handler);
+    },
     start(): void {
       if (frameHandle === 0) renderFrame();
     },
     dispose(): void {
       cancelAnimationFrame(frameHandle);
       frameHandle = 0;
+      frameCallbacks.clear();
       resizeObserver.disconnect();
       controls.dispose();
       renderer.dispose();

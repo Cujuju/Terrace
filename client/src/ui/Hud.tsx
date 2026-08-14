@@ -8,6 +8,8 @@
 // consts in this file, by construction.
 
 import { createSignal, For, Show, type JSX } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
+import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import {
   BRUSH_RADII,
   brushRadius,
@@ -127,6 +129,16 @@ export function Hud(): JSX.Element {
         <Show when={showControls()}>
           <ControlsPanel />
         </Show>
+
+        {/* Plugin panels (design §3.5): each client plugin may register one
+            Solid component; they stack under the core controls. */}
+        <For each={pluginHudPanels()}>
+          {(panel) => (
+            <div class="hud-plugin-panel">
+              <Dynamic component={panel.component} />
+            </div>
+          )}
+        </For>
 
         <p class="hud-hint">{hintText(controlBindings())}</p>
         {/* Touch capability is static per device, so the guard can be a plain

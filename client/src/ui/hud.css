@@ -235,3 +235,10 @@ body {
   border-color: var(--hud-accent);
   color: var(--hud-text);
 }
+
+/* Plugin HUD panels stack under the core controls, visually separated. */
+.hud-plugin-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hud-border);
+}

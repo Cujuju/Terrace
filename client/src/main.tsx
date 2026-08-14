@@ -9,6 +9,8 @@ import { render } from 'solid-js/web';
 import { connect, type ConnectionStatus } from './net/connection.ts';
 import { bindCameraControls } from './input/cameraBindings.ts';
 import { createSculptInput } from './input/sculptInput.ts';
+import { createClientPluginHost } from './plugins/host.ts';
+import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { createWorld } from './world.ts';
 import { setConnectionStatus } from './state/hudState.ts';
@@ -26,9 +28,20 @@ const world = createWorld(viewport);
 viewport.start();
 bindCameraControls(canvas, viewport.controls);
 
+// The host is created before the connection because the connection's options
+// need routeMessage; the host reads the connection lazily (see plugins/host.ts)
+// so the cycle is broken without a setter. Plugin attach() runs here, before
+// any server contact — sends during attach would go nowhere by design.
+const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
+  viewport,
+  world,
+  connection: () => connection,
+});
+
 const connection = connect({
   sink: world,
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
+  onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
 });
 
 createSculptInput({

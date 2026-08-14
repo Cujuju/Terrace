@@ -82,6 +82,12 @@ export interface TerrainSink {
 export interface ConnectionOptions {
   sink: TerrainSink;
   onStatus: (status: ConnectionStatus) => void;
+  /**
+   * Receives every namespaced plugin message (`<plugin>:<type>`, identified
+   * by the colon — core message names never contain one). The client plugin
+   * host routes these to the plugin that owns the namespace.
+   */
+  onPluginMessage?: (type: string, payload: unknown) => void;
   /** Overridable for tests / alternate deployments. */
   serverUrl?: string;
   roomName?: string;
@@ -101,6 +107,12 @@ export interface Connection {
    * back). The caller predicts if and only if this returns true.
    */
   sendSculpt(intent: SculptIntent): boolean;
+  /**
+   * Sends an already-namespaced plugin message (`<plugin>:<type>`); a no-op
+   * while offline. The client plugin host is the only intended caller — a
+   * plugin itself goes through its ctx, which owns the namespacing.
+   */
+  sendPlugin(type: string, payload: unknown): void;
   /** Leaves the room and stops retrying. */
   dispose(): void;
 }
@@ -150,6 +162,17 @@ export function connect(options: ConnectionOptions): Connection {
       options.sink.onTerrainDiff(msg);
     });
 
+    // Plugin routing. Plugin messages are namespaced `<plugin>:<type>` by the
+    // server host, and no core message name contains a colon, so the colon IS
+    // the discriminator. The SDK's '*' handler fires for every message
+    // (including ones with specific handlers above); the filter keeps core
+    // traffic from being delivered twice.
+    joined.onMessage('*', (type: string | number, payload: unknown) => {
+      if (typeof type === 'string' && type.includes(':')) {
+        options.onPluginMessage?.(type, payload);
+      }
+    });
+
     // Connection lifecycle. `onDrop`/`onReconnect` bracket the SDK's own
     // automatic reconnection, so they only move the status dot — there is
     // nothing for us to do in between.
@@ -197,6 +220,12 @@ export function connect(options: ConnectionOptions): Connection {
       if (room === null) return false;
       room.send(MSG_SCULPT, intent);
       return true;
+    },
+    sendPlugin(type: string, payload: unknown): void {
+      // Dropping while offline mirrors sendSculpt: plugin messages are
+      // requests against live server state; there is nothing to replay
+      // them against after a reconnect.
+      room?.send(type, payload);
     },
     dispose(): void {
       disposed = true;

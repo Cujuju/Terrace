@@ -1,0 +1,183 @@
+// The client plugin host: builds each compiled-in plugin's ctx and routes its
+// namespaced messages (decision Q6; contract in ./types.ts).
+//
+// Mirrors the server host's namespacing exactly: a plugin subscribes and sends
+// with UN-namespaced types, and the host prefixes `<name>:` on the wire in
+// both directions. Handlers live in one flat map keyed by the full namespaced
+// type, so dispatch is a single lookup per message — no per-plugin fan-out on
+// the hot path.
+
+import { Group, Raycaster, Vector2 } from 'three';
+import type { Component } from 'solid-js';
+import { CELL_WORLD_SIZE } from '../config.ts';
+import type { Connection } from '../net/connection.ts';
+import type { Viewport } from '../render/scene.ts';
+import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
+import type { World } from '../world.ts';
+import { addPluginHudPanel } from './hudPanels.ts';
+import type { ClientPluginCtx, TerraceClientPlugin } from './types.ts';
+
+export interface ClientPluginHost {
+  /**
+   * Wire this as ConnectionOptions.onPluginMessage. Messages whose namespace
+   * no plugin claimed are dropped silently — the server may legitimately run
+   * plugins this build has no client half for.
+   */
+  routeMessage(type: string, payload: unknown): void;
+  dispose(): void;
+}
+
+export function createClientPluginHost(
+  plugins: readonly TerraceClientPlugin[],
+  deps: {
+    viewport: Viewport;
+    world: World;
+    /** Late-bound because the Connection is created after the host (it needs
+     * routeMessage in its options); the host only sends, never at attach
+     * time, so reading it lazily breaks the cycle without a setter dance. */
+    connection: () => Connection;
+  },
+): ClientPluginHost {
+  const { viewport, world } = deps;
+
+  /** `<plugin>:<type>` → subscribed handlers, across all plugins. */
+  const handlers = new Map<string, Set<(payload: unknown) => void>>();
+  const layers: Group[] = [];
+  const unregisterFns: (() => void)[] = [];
+
+  const canvas = viewport.renderer.domElement;
+
+  /**
+   * Canvas-press claims, in plugin registration order; first claim wins. One
+   * capture-phase listener serves every plugin: capture runs before the
+   * sculpt brush's bubble-phase pointerdown AND before OrbitControls', so a
+   * claimed press (a click on a relic, say) neither sculpts nor drags the
+   * camera. stopImmediatePropagation is deliberate — cameraBindings' own
+   * capture listener registered earlier has already run harmlessly, and
+   * nothing after this listener may act on a claimed press.
+   */
+  const pressHandlers: ((event: PointerEvent) => boolean)[] = [];
+  const onCanvasPointerDown = (event: PointerEvent): void => {
+    for (const handler of pressHandlers) {
+      let claimed = false;
+      try {
+        claimed = handler(event);
+      } catch (error) {
+        console.error('[terrace] plugin canvas-press handler threw', error);
+      }
+      if (claimed) {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        return;
+      }
+    }
+  };
+  canvas.addEventListener('pointerdown', onCanvasPointerDown, { capture: true });
+
+  /**
+   * Click → terrain cell for plugins. Allocates its own raycaster per call —
+   * clicks are rare; the sculpt brush keeps its own allocation-free variant
+   * for the held-stroke hot path (input/sculptInput.ts).
+   */
+  const pickTerrainCell = (
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } | null => {
+    const size = world.worldSize();
+    if (size <= 0) return null;
+    const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+    if (device === null) return null;
+    const raycaster = new Raycaster();
+    raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
+    const hits = raycaster.intersectObjects(world.pickables(), false);
+    if (hits.length === 0) return null;
+    const point = hits[0].point;
+    return worldPointToCell(point.x / CELL_WORLD_SIZE, point.z / CELL_WORLD_SIZE, size);
+  };
+
+  for (const plugin of plugins) {
+    const layer = new Group();
+    layer.name = `plugin:${plugin.name}`;
+    // Into the scene, NOT terrainGroup: the sculpt raycaster must never see a
+    // plugin's meshes as terrain (input/sculptInput.ts picks terrain only).
+    viewport.scene.add(layer);
+    layers.push(layer);
+
+    const ctx: ClientPluginCtx = {
+      layer,
+      worldSize: () => world.worldSize(),
+      terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
+      onMessage(type, handler) {
+        const key = `${plugin.name}:${type}`;
+        let set = handlers.get(key);
+        if (set === undefined) {
+          set = new Set();
+          handlers.set(key, set);
+        }
+        set.add(handler);
+        return () => set.delete(handler);
+      },
+      send(type, payload) {
+        deps.connection().sendPlugin(`${plugin.name}:${type}`, payload);
+      },
+      onFrame(handler) {
+        const unregister = viewport.onFrame(handler);
+        unregisterFns.push(unregister);
+        return unregister;
+      },
+      registerHudPanel(component: Component) {
+        addPluginHudPanel({ pluginName: plugin.name, component });
+      },
+      onCanvasPress(handler) {
+        pressHandlers.push(handler);
+        return () => {
+          const i = pressHandlers.indexOf(handler);
+          if (i !== -1) pressHandlers.splice(i, 1);
+        };
+      },
+      pickTerrainCell,
+    };
+
+    // A plugin that throws in attach loses its own features, not the app:
+    // same containment stance as the server host's `safely`.
+    try {
+      plugin.attach(ctx);
+    } catch (error) {
+      console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
+    }
+  }
+
+  return {
+    routeMessage(type: string, payload: unknown): void {
+      const set = handlers.get(type);
+      if (set === undefined) return;
+      for (const handler of set) {
+        try {
+          handler(payload);
+        } catch (error) {
+          console.error(`[terrace] plugin handler for "${type}" threw`, error);
+        }
+      }
+    },
+
+    dispose(): void {
+      for (const plugin of plugins) {
+        try {
+          plugin.dispose?.();
+        } catch (error) {
+          console.error(`[terrace] client plugin "${plugin.name}" threw in dispose`, error);
+        }
+      }
+      for (const unregister of unregisterFns) unregister();
+      for (const layer of layers) {
+        layer.clear();
+        viewport.scene.remove(layer);
+      }
+      canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
+        capture: true,
+      });
+      pressHandlers.length = 0;
+      handlers.clear();
+    },
+  };
+}

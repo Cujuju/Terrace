@@ -10,7 +10,7 @@
 // for that reason — a stale direct reference would silently keep drawing the
 // previous session's terrain.
 
-import { DEFAULT_WORLD_SIZE } from '@terrace/shared';
+import { DEFAULT_WORLD_SIZE, quantizeToBand } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
@@ -23,8 +23,10 @@ import {
   applySnapshot,
   applyTerrainDiff,
   createTerrainMirror,
+  sampleHeight,
   type TerrainMirror,
 } from './terrain/mirror.ts';
+import { HEIGHT_WORLD_SCALE } from './config.ts';
 import {
   createPredictionStore,
   type PredictionStore,
@@ -44,6 +46,14 @@ export interface World extends TerrainSink {
   /** 0 until the first snapshot arrives. */
   worldSize(): number;
   pickables(): Mesh[];
+  /**
+   * World-space Y of the RENDERED terrain surface at cell (x, y): the
+   * band-quantised height the terrain mesh actually draws, which is where
+   * anything standing on the ground belongs. Cells in never-received chunks
+   * read as band 0, exactly like the mesh renders them. Null before the first
+   * snapshot. Consumed by the client plugin host (plugins/host.ts).
+   */
+  terrainHeightAt(x: number, y: number): number | null;
   dispose(): void;
 }
 
@@ -201,6 +211,11 @@ export function createWorld(viewport: Viewport): World {
 
     worldSize(): number {
       return mirror?.map.size ?? 0;
+    },
+
+    terrainHeightAt(x: number, y: number): number | null {
+      if (mirror === null) return null;
+      return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
     pickables(): Mesh[] {
