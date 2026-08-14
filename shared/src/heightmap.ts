@@ -10,6 +10,7 @@
 
 import {
   BAND_HEIGHT,
+  DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
@@ -199,6 +200,84 @@ export function applyBrush(
       }
     }
   }
+}
+
+/**
+ * HOW MUCH TERRAIN ONE SCULPT NOMINALLY MOVES: the sum, over the brush
+ * footprint, of the ABSOLUTE per-cell delta a sculpt of DEFAULT_SCULPT_AMOUNT
+ * would apply. Height units × cells — a volume, in the only units this project
+ * has for one. Deterministic and integer, like every other number in here.
+ *
+ * WHY IT LIVES BESIDE applyBrush AND NOT IN THE PLUGIN THAT PRICES SCULPTS.
+ * This is terrain math: it is the SAME loop, the same footprint test
+ * (`floor(sqrt(dx² + dy²)) < radius`) and the same per-cell delta expression
+ * (including the same `Math.trunc`) that applyBrush runs, and the two must
+ * agree exactly or a price would be charged for an edit that never happens.
+ * shared/ is where math that both sides must agree on lives (CLAUDE.md), and
+ * the regression test in heightmap.test.ts pins this function against
+ * applyBrush's own observed output for every radius × profile rather than
+ * against a re-derivation of it.
+ *
+ * "NOMINALLY" — three deliberate exclusions, each of which would make the
+ * number depend on WHERE the player clicked rather than on WHAT they asked for:
+ *
+ *   clamping     — a brush hitting MAX_HEIGHT moves less terrain than the same
+ *                  brush in open ground. Pricing that would make a sculpt
+ *                  cheaper exactly where it does nothing, which is a refund for
+ *                  failure, not a discount.
+ *   map edges    — a brush overhanging the border loses the cells outside it.
+ *                  Same argument: the intent is identical, so the price is.
+ *   relaxation   — the `smooth` tool's gradient-limit spill moves further
+ *                  terrain still, and is DELIBERATELY FREE. `tool` is therefore
+ *                  not a parameter here at all. This preserves exactly what the
+ *                  flat per-sculpt price did before volume pricing (it ignored
+ *                  the spill too), and it is the honest answer: the spill's size
+ *                  depends on the terrain that is already there, so charging for
+ *                  it would price the world's history rather than the player's
+ *                  action, and would make an identical intent cost two different
+ *                  amounts in two places.
+ *
+ * The result is a pure function of (radius, profile), which is what lets the
+ * client price an intent identically to the server without knowing the terrain.
+ *
+ * Throws on an out-of-range radius, exactly as applyBrush does.
+ */
+export function sculptDisplacementUnits(
+  radius: number,
+  profile: SculptProfile,
+): number {
+  if (
+    !Number.isInteger(radius) ||
+    radius < MIN_BRUSH_RADIUS ||
+    radius > MAX_BRUSH_RADIUS
+  ) {
+    throw new RangeError(`brush radius ${radius} outside [${MIN_BRUSH_RADIUS}, ${MAX_BRUSH_RADIUS}]`);
+  }
+
+  let units = 0;
+  // Scan bounds, footprint test and delta expression are COPIED FROM applyBrush
+  // above, verbatim, with `amount` fixed to DEFAULT_SCULPT_AMOUNT — the amount a
+  // sculpt intent actually carries (it is server configuration, never client
+  // input, see protocol.ts). Iteration order is irrelevant to a sum of
+  // non-negative integers, but it is kept identical anyway so the two loops read
+  // as the one loop they are.
+  for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
+    for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
+      const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
+      if (dist >= radius) continue;
+      const delta =
+        profile === 'hard'
+          ? DEFAULT_SCULPT_AMOUNT
+          : Math.trunc((DEFAULT_SCULPT_AMOUNT * (radius - dist)) / radius);
+      // |delta|: raising and lowering displace the same volume, so a lower
+      // costs exactly what the raise that undoes it costs. DEFAULT_SCULPT_AMOUNT
+      // is positive today, so this branch is defensive — but the contract this
+      // function states is "sum of ABSOLUTE deltas", and a plugin-configured
+      // negative amount must not price out as a negative volume.
+      units += delta < 0 ? -delta : delta;
+    }
+  }
+  return units;
 }
 
 /**

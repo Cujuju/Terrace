@@ -9,10 +9,13 @@ import {
   heightAt,
   isWater,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
+  MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
+  MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   quantizeToBand,
+  sculptDisplacementUnits,
   smooth,
   type Heightmap,
 } from '../src/index.ts';
@@ -451,5 +454,155 @@ describe('applySculpt — tools and profiles are orthogonal', () => {
         expect(a.cells).toEqual(b.cells);
       }
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// SCULPT VOLUME — the number the mana plugin prices a sculpt by.
+//
+// The claim under test is not "this formula is implemented correctly", it is
+// "this function agrees with applyBrush". So the primary test measures
+// applyBrush's OWN output — the terrain it actually left behind — and compares
+// the total to sculptDisplacementUnits, for every radius × profile the game
+// ships. Re-deriving the expected sum with a copy of the formula would only
+// prove the copy matched.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Σ |height change| over the whole map after one brush application: the volume
+ * applyBrush moved, observed rather than predicted.
+ */
+function observedDisplacement(
+  radius: number,
+  profile: 'soft' | 'hard',
+  amount: number,
+): number {
+  const size = 64;
+  // A FLAT MID-RANGE map: every cell starts far enough from MIN_HEIGHT and
+  // MAX_HEIGHT that nothing clamps, and the centre is far enough from the
+  // border that nothing overhangs. Those are exactly the two exclusions
+  // sculptDisplacementUnits documents, so this is the map on which "nominal"
+  // and "actual" must coincide.
+  const map = createHeightmap(size);
+  const start = 128;
+  map.cells.fill(start);
+
+  applyBrush(map, 32, 32, radius, amount, new Set<number>(), profile);
+
+  let total = 0;
+  for (const h of map.cells) total += Math.abs(h - start);
+  return total;
+}
+
+describe('sculptDisplacementUnits', () => {
+  it('equals the volume applyBrush actually moves, for every radius × profile', () => {
+    for (const profile of ['soft', 'hard'] as const) {
+      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+        expect(sculptDisplacementUnits(radius, profile)).toBe(
+          observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),
+        );
+      }
+    }
+  });
+
+  it('prices a lower exactly like the raise that undoes it', () => {
+    // Volume is |delta| summed, so direction cannot make a sculpt cheaper —
+    // otherwise digging would be the economical way to reshape a world.
+    for (const profile of ['soft', 'hard'] as const) {
+      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+        expect(sculptDisplacementUnits(radius, profile)).toBe(
+          observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT),
+        );
+      }
+    }
+  });
+
+  /**
+   * THE LITERAL TABLE. Deliberately hand-written numbers, not a formula: this is
+   * the wall that stops a "harmless" refactor of the brush from silently
+   * re-pricing the whole economy. Every value is height-units × cells, at
+   * DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT = 64.
+   *
+   *   radius  cells   soft (band-cells)   hard (band-cells)
+   *      1      1        64  ( 1  )          64  ( 1 )
+   *      2      9       320  ( 5  )         576  ( 9 )
+   *      3     25       736  (11.5)        1600  (25 )
+   *      4     45      1280  (20  )        2880  (45 )
+   */
+  it('matches the published table of displacement volumes', () => {
+    expect(sculptDisplacementUnits(1, 'soft')).toBe(64);
+    expect(sculptDisplacementUnits(2, 'soft')).toBe(320);
+    expect(sculptDisplacementUnits(3, 'soft')).toBe(736);
+    expect(sculptDisplacementUnits(4, 'soft')).toBe(1280);
+
+    expect(sculptDisplacementUnits(1, 'hard')).toBe(64);
+    expect(sculptDisplacementUnits(2, 'hard')).toBe(576);
+    expect(sculptDisplacementUnits(3, 'hard')).toBe(1600);
+    expect(sculptDisplacementUnits(4, 'hard')).toBe(2880);
+  });
+
+  it('is one band-cell at the point brush, where the two profiles coincide', () => {
+    // The unit the price rate is denominated in: one band of height, one cell.
+    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'soft')).toBe(BAND_HEIGHT);
+    expect(sculptDisplacementUnits(MIN_BRUSH_RADIUS, 'hard')).toBe(BAND_HEIGHT);
+  });
+
+  it('grows with radius, and hard never displaces less than soft', () => {
+    for (const profile of ['soft', 'hard'] as const) {
+      for (let radius = MIN_BRUSH_RADIUS; radius < MAX_BRUSH_RADIUS; radius++) {
+        expect(sculptDisplacementUnits(radius + 1, profile)).toBeGreaterThan(
+          sculptDisplacementUnits(radius, profile),
+        );
+      }
+      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+        expect(sculptDisplacementUnits(radius, 'hard')).toBeGreaterThanOrEqual(
+          sculptDisplacementUnits(radius, 'soft'),
+        );
+      }
+    }
+  });
+
+  it('is a pure integer function of radius and profile', () => {
+    for (const profile of ['soft', 'hard'] as const) {
+      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+        const units = sculptDisplacementUnits(radius, profile);
+        expect(Number.isInteger(units)).toBe(true);
+        // Called twice, same answer — no hidden state, nothing terrain-dependent.
+        expect(sculptDisplacementUnits(radius, profile)).toBe(units);
+      }
+    }
+  });
+
+  it('rejects a radius the brush itself would reject', () => {
+    for (const bad of [0, MAX_BRUSH_RADIUS + 1, 1.5, Number.NaN]) {
+      expect(() => sculptDisplacementUnits(bad, 'soft')).toThrow(RangeError);
+    }
+  });
+
+  it('ignores the relaxation spill, which stays deliberately free', () => {
+    // The smooth tool REACHES FURTHER than its footprint: relaxation drags
+    // terrain outside the brush and how far depends on the terrain that was
+    // already there. None of that is priced — the function takes no `tool`
+    // argument at all, so both tools cost the volume of the brush and nothing
+    // else, exactly as the flat per-sculpt price it replaced also ignored the
+    // spill. What follows is the evidence that there IS a spill being waived.
+    const size = 64;
+    const stampedCells = new Set<number>();
+    const stamped = createHeightmap(size);
+    stamped.cells.fill(128);
+    applyBrush(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, stampedCells, 'hard');
+
+    const slumped = createHeightmap(size);
+    slumped.cells.fill(128);
+    const slumpedDiff = applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'smooth',
+      profile: 'hard',
+    });
+
+    // The brush alone touched its 45 footprint cells; the same brush plus
+    // relaxation touched strictly more of the world than that.
+    expect(slumpedDiff.length).toBeGreaterThan(stampedCells.size);
+    // And the price is the brush's volume either way — one number, no tool.
+    expect(sculptDisplacementUnits(4, 'hard')).toBe(2880);
   });
 });
