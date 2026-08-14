@@ -37,13 +37,18 @@ The first build takes a few minutes. When the log shows
 
 open **<http://localhost:8080>** and start sculpting:
 
-| Input | Action |
+| Input | Action (default — rebind under **Controls** in the HUD) |
 |---|---|
 | left click / drag | raise land |
 | shift + left click / drag | lower land |
 | right drag | orbit the camera |
 | middle drag | pan |
 | wheel | zoom |
+| one-finger touch | sculpt (tap **Mode** to switch raise/lower) |
+| two-finger touch | pinch zoom + pan (or orbit — configurable) |
+
+Raise, lower, orbit and pan can each be rebound to any mouse button plus an
+optional Shift/Ctrl/Alt modifier; the choice is saved in the browser.
 
 The status dot in the HUD shows the connection. If the server is not up yet, the client
 retries quietly in the background until it is — there is no error dialog to dismiss.
