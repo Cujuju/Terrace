@@ -9,14 +9,18 @@
 //   2. MASK CHECK             — the brush CENTRE cell's chunk must be unlocked.
 //   3. PLUGIN INTERCEPTORS    — allow / deny / modify, first deny wins.
 //   4. RE-VALIDATION          — only if a plugin modified the intent.
-//   5. APPLY + BROADCAST      — via sculpt-service (mask-filtered on the wire).
+//   5. NORMALISE + APPLY +    — absent tool/profile resolved through shared's
+//      BROADCAST                 sculptOptionsOf, then applied via
+//                                sculpt-service (mask-filtered on the wire).
 //
 // The sculpt AMOUNT is server-side (DEFAULT_SCULPT_AMOUNT × direction) and is
 // never read from the message, so a hacked client cannot sculpt harder than
-// anyone else.
+// anyone else. The brush SHAPE (tool, profile) is client-chosen — it changes
+// what the edit looks like, never how much it can move.
 
 import {
   DEFAULT_SCULPT_AMOUNT,
+  sculptOptionsOf,
   validateSculptIntent,
   type CellDiff,
   type SculptIntent,
@@ -111,6 +115,13 @@ export function handleSculptIntent(
   }
 
   // 5. Apply authoritatively and publish (filtered) to clients.
+  //
+  // THE ONE NORMALISATION POINT for player intents: an intent that named no
+  // tool/profile is resolved here, by the shared contract function, and every
+  // layer below this line receives concrete options. The client's prediction
+  // store calls the SAME function on the SAME intent, which is what makes
+  // "predicted a spire, server built a mound" impossible by construction
+  // rather than by two copies of a default agreeing today.
   const amount = DEFAULT_SCULPT_AMOUNT * effective.dir;
   const diff = applyServerSculpt(
     world,
@@ -119,6 +130,7 @@ export function handleSculptIntent(
     effective.y,
     effective.radius,
     amount,
+    sculptOptionsOf(effective),
   );
 
   return { applied: true, intent: effective, diff };
