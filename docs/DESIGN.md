@@ -37,6 +37,9 @@ chosen over AGPL to maximize adoption; people may build closed-source games on t
   2. **Gradient limiting** — no slope may exceed a max step; after an edit, an
      iterative relaxation pass pulls neighbors toward each other. This is what makes
      land "flow" outward and is **the single most important element of the feel**.
+     — PARTLY SUPERSEDED 2026-08-14: still true of the `smooth` tool, but
+     relaxation is no longer what the DEFAULT brush does. See the Phase 2
+     decision "Sculpting gains brush TOOLS and edge PROFILES" below.
   3. **Sea level** — height ≤ 0 is water; flat land above water is buildable.
 - The signature relaxation loop, roughly:
 
@@ -371,6 +374,46 @@ terrace/
   localStorage, edited in the HUD's Controls panel. One resolver
   (`client/src/state/controlPrefs.ts`) owns "who gets this press"; OrbitControls'
   `mouseButtons`/`touches` are derived from it per press.
+
+- **Sculpting gains brush TOOLS and edge PROFILES; the stamp becomes the
+  default brush** (owner request, settled 2026-08-14). Two orthogonal axes on
+  every sculpt:
+
+  | Axis | Values | Meaning |
+  |---|---|---|
+  | tool | `stamp` (player default) / `smooth` | `stamp` changes exactly the brush footprint — no relaxation pass, so repeated radius-1 raises build a true vertical spire and lowering digs a sheer pit. `smooth` is today's behaviour verbatim: brush **plus** the gradient-limit relaxation. |
+  | profile | `soft` (default) / `hard` | `soft` is the original linear falloff from the centre. `hard` applies one flat delta across the whole footprint, edge cells included — plateaus and clean holes with sheer edges. |
+
+  All four combinations are legal and meaningful (hard+smooth = stamp a plateau,
+  let it slump).
+
+  **This SUPERSEDES the §2 framing of gradient limiting as "the single most
+  important element of the feel" — for the DEFAULT brush only.** Relaxation is
+  no longer what happens on every edit; it is one of two tools, and the owner's
+  new player-facing feel is the stamp. The mechanic itself is unchanged and
+  fully available: nothing about §2's description of *how* relaxation works, or
+  of why it matters when you want land to flow, is retracted.
+
+  **Two different defaults, on purpose.** The wire default (an intent naming
+  neither field) is **stamp + soft** — the new player-facing feel, so a client
+  too old to send the fields still gets the new brush. The library default
+  (`applySculpt` called with no options argument) stays **smooth + soft**,
+  because every existing caller — above all the plugin `WorldApi.sculpt` path —
+  was tuned against relaxation, and a silent re-tune of every installed plugin
+  is not an acceptable side effect of a UI feature. `WorldApi.sculpt` keeps its
+  signature and its smooth behaviour.
+
+  **The normalisation is one function.** `sculptOptionsOf(intent)` in
+  `shared/src/protocol.ts` is the only place "absent means what" is decided for
+  an intent, and both the server's intent pipeline and the client's prediction
+  store call it. Two copies of that default that agreed today would be a client
+  predicting a spire where the server builds a mound tomorrow. The wire fields
+  are additive and optional (same pattern as `seq`); a present value outside the
+  known set fails validation with the whole intent rather than being defaulted,
+  because silently reshaping an edit desyncs the sender's prediction.
+
+  Anti-cheat is unaffected: tool and profile choose the SHAPE of an edit, never
+  its power. The amount stays server-side.
 
 ### Version facts recorded at scaffold time (2026-08-13)
 
