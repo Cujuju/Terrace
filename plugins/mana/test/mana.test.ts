@@ -3,6 +3,16 @@
 // API cannot express a mana economy, these tests are what fails.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  BAND_HEIGHT,
+  MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
+  SCULPT_PROFILES,
+  type SculptProfile,
+  sculptDisplacementUnits,
+  sculptOptionsOf,
+  type SculptIntent,
+} from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -13,13 +23,17 @@ import {
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import { plugin as revealPlugin, resetRevealState } from '../../reveal/server/index.ts';
+import { sculptManaCost } from '../pricing.ts';
 import {
   DEFAULT_MANA_REGEN_PER_SECOND,
+  FULL_POOL_MAX_RADIUS_HARD_STAMPS,
   INSUFFICIENT_MANA_REASON,
   MANA_BALANCE_MESSAGE,
   MANA_CAPACITY,
-  MANA_COST_PER_SCULPT,
+  MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+  MANA_COST_PER_MIN_RADIUS_SCULPT,
   MANA_DENIED_MESSAGE,
+  MANA_PER_BAND_CELL,
   MANA_PERK_MAX_MULTIPLIER,
   MANA_PERK_MIN_MULTIPLIER,
   MANA_REGEN_ENV,
@@ -30,6 +44,7 @@ import {
   clearManaPerk,
   manaBalanceOf,
   manaCostFor,
+  manaPerBandCellFor,
   manaPerkOf,
   manaRegenFor,
   manaRegenPerSecond,
@@ -52,6 +67,34 @@ const INTERIOR_CELL = { x: 24, y: 24 } as const;
 const TICK_DT = 0.1;
 
 const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+
+/**
+ * The cheapest sculpt there is: the radius-1 point brush, one band over one
+ * cell. Most of this suite drains a pool one of these at a time, so its price is
+ * named once here and never spelled as a literal.
+ */
+const POINT_INTENT: SculptIntent = {
+  type: 'sculpt',
+  x: INTERIOR_CELL.x,
+  y: INTERIOR_CELL.y,
+  radius: MIN_BRUSH_RADIUS,
+  dir: 1,
+};
+
+/** Price of POINT_INTENT at the standard (unperked) rate. */
+const POINT_COST = MANA_COST_PER_MIN_RADIUS_SCULPT;
+
+/** How many point stamps a full, unperked pool buys. */
+const POINT_STAMPS_PER_POOL = MANA_CAPACITY / POINT_COST;
+
+/**
+ * Cells in a radius-4 footprint (45). A HARD stamp moves a full band over every
+ * one of them, so this is also the ratio between the most and least expensive
+ * sculpt — geometry, not tuning, which is why it is derived here rather than
+ * written down.
+ */
+const MAX_RADIUS_HARD_FOOTPRINT_CELLS =
+  sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard') / BAND_HEIGHT;
 
 interface Harness {
   readonly world: World;
@@ -81,11 +124,17 @@ function boot(): Harness {
   return { world, host, sink };
 }
 
-function sculptAt(harness: Harness, x: number, y: number, radius = 1) {
+function sculptAt(
+  harness: Harness,
+  x: number,
+  y: number,
+  radius = MIN_BRUSH_RADIUS,
+  profile?: SculptProfile,
+) {
   return handleSculptIntent(
     { world: harness.world, interceptors: harness.host },
     PLAYER,
-    { type: 'sculpt', x, y, radius, dir: 1 },
+    { type: 'sculpt', x, y, radius, dir: 1, ...(profile !== undefined ? { profile } : {}) },
   );
 }
 
@@ -107,19 +156,20 @@ describe('mana plugin', () => {
     expect(pushed[0].payload).toEqual({
       balance: MANA_CAPACITY,
       capacity: MANA_CAPACITY,
-      cost: MANA_COST_PER_SCULPT,
+      // A RATE, not a price: the client prices its own intents with it.
+      manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
     });
   });
 
   it('charges every applied sculpt and denies once the pool cannot pay', () => {
-    const affordable = MANA_CAPACITY / MANA_COST_PER_SCULPT;
+    const affordable = POINT_STAMPS_PER_POOL;
     expect(Number.isInteger(affordable)).toBe(true);
 
     for (let n = 1; n <= affordable; n++) {
       const outcome = sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
       expect(outcome.applied).toBe(true);
-      expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - n * MANA_COST_PER_SCULPT);
+      expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - n * POINT_COST);
     }
 
     expect(manaBalanceOf(PLAYER.id)).toBe(0);
@@ -133,7 +183,7 @@ describe('mana plugin', () => {
   });
 
   it('leaves the terrain untouched when it denies', () => {
-    for (let n = 0; n < MANA_CAPACITY / MANA_COST_PER_SCULPT; n++) {
+    for (let n = 0; n < POINT_STAMPS_PER_POOL; n++) {
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     }
 
@@ -149,7 +199,7 @@ describe('mana plugin', () => {
   });
 
   it('tells the denied player why, on its own namespaced channel', () => {
-    for (let n = 0; n < MANA_CAPACITY / MANA_COST_PER_SCULPT; n++) {
+    for (let n = 0; n < POINT_STAMPS_PER_POOL; n++) {
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     }
     harness.sink.clear();
@@ -159,15 +209,16 @@ describe('mana plugin', () => {
     const refusals = harness.sink.ofType('mana:denied');
     expect(refusals).toHaveLength(1);
     expect(refusals[0].target).toBe(PLAYER.id);
-    expect(refusals[0].payload).toEqual({ balance: 0, cost: MANA_COST_PER_SCULPT });
+    // The refusal names THE REFUSED INTENT'S price, not the rate.
+    expect(refusals[0].payload).toEqual({ balance: 0, cost: POINT_COST });
   });
 
   it('regenerates on the tick and never past capacity', () => {
     sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
-    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_SCULPT);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
 
     // Exactly enough simulated time to earn one sculpt back.
-    const ticksToRefundOneSculpt = MANA_COST_PER_SCULPT / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
+    const ticksToRefundOneSculpt = POINT_COST / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToRefundOneSculpt; n++) harness.host.tick(TICK_DT);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
 
@@ -176,12 +227,12 @@ describe('mana plugin', () => {
   });
 
   it('recovers from an empty pool and sculpts again', () => {
-    for (let n = 0; n < MANA_CAPACITY / MANA_COST_PER_SCULPT; n++) {
+    for (let n = 0; n < POINT_STAMPS_PER_POOL; n++) {
       sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     }
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
 
-    const ticksToAffordOneSculpt = MANA_COST_PER_SCULPT / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
+    const ticksToAffordOneSculpt = POINT_COST / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToAffordOneSculpt; n++) harness.host.tick(TICK_DT);
 
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
@@ -246,20 +297,42 @@ describe('mana perks', () => {
       costMultiplier: NEUTRAL_MANA_MULTIPLIER,
       regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
     });
-    expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+    expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
+    expect(manaCostFor(PLAYER.id, POINT_INTENT)).toBe(POINT_COST);
+  });
+
+  it('scales the RATE, so a perk discounts every brush and not just one', () => {
+    // The perk multiplies mana-per-band-cell, which is what makes it composable
+    // with volume pricing: a half-cost holder pays half for the point brush AND
+    // half for the radius-4 plateau, rather than half for one size of sculpt.
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
+    expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL * 0.5);
+
+    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+      for (const profile of SCULPT_PROFILES) {
+        const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
+        expect(manaCostFor(PLAYER.id, intent)).toBe(
+          sculptManaCost(MANA_PER_BAND_CELL * 0.5, radius, profile),
+        );
+        // Half price, to within the single rounding-up step.
+        expect(manaCostFor(PLAYER.id, intent) * 2).toBeGreaterThanOrEqual(
+          manaCostFor(OTHER_PLAYER.id, intent),
+        );
+      }
+    }
   });
 
   it('charges the perked price on the intent path', () => {
     setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
-    const discounted = manaCostFor(PLAYER.id);
-    expect(discounted).toBe(Math.ceil(MANA_COST_PER_SCULPT * 0.5));
+    const discounted = manaCostFor(PLAYER.id, POINT_INTENT);
+    expect(discounted).toBe(Math.ceil(POINT_COST * 0.5));
 
     expect(sculptAs(PLAYER).applied).toBe(true);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - discounted);
 
     // The unperked player in the same world still pays full price.
     expect(sculptAs(OTHER_PLAYER).applied).toBe(true);
-    expect(manaBalanceOf(OTHER_PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_SCULPT);
+    expect(manaBalanceOf(OTHER_PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
   });
 
   it('buys a cheaper player strictly more sculpts before the veto', () => {
@@ -270,7 +343,7 @@ describe('mana perks', () => {
     let plain = 0;
     while (sculptAs(OTHER_PLAYER).applied) plain++;
 
-    expect(plain).toBe(MANA_CAPACITY / MANA_COST_PER_SCULPT);
+    expect(plain).toBe(POINT_STAMPS_PER_POOL);
     expect(perked).toBeGreaterThan(plain);
   });
 
@@ -284,21 +357,24 @@ describe('mana perks', () => {
     sculptAs(PLAYER);
     const refusals = harness.sink.ofType(`mana:${MANA_DENIED_MESSAGE}`);
     expect(refusals).toHaveLength(1);
-    expect((refusals[0].payload as { cost: number }).cost).toBe(manaCostFor(PLAYER.id));
+    expect((refusals[0].payload as { cost: number }).cost).toBe(
+      manaCostFor(PLAYER.id, POINT_INTENT),
+    );
   });
 
   it('regenerates a perked player faster, and still caps at capacity', () => {
     setManaPerk(PLAYER.id, { regenMultiplier: 2 });
 
-    // Spend enough that a second of doubled regen still fits under the cap —
+    // Spend enough that a second of DOUBLED regen still fits under the cap —
     // otherwise both players simply refill to capacity and the perk is
-    // invisible. Four sculpts each leaves 100 of 200.
-    const sculptsToDrain = 4;
+    // invisible. Derived, not guessed: enough point stamps to leave more room
+    // than the perked player can earn in the second that follows, plus one.
+    const sculptsToDrain = Math.ceil((DEFAULT_MANA_REGEN_PER_SECOND * 2) / POINT_COST) + 1;
     for (let n = 0; n < sculptsToDrain; n++) {
       sculptAs(PLAYER);
       sculptAs(OTHER_PLAYER);
     }
-    const spent = sculptsToDrain * MANA_COST_PER_SCULPT;
+    const spent = sculptsToDrain * POINT_COST;
     expect(manaBalanceOf(PLAYER.id)).toBe(manaBalanceOf(OTHER_PLAYER.id));
 
     // One second of simulated time.
@@ -327,7 +403,7 @@ describe('mana perks', () => {
   it('clears on request', () => {
     setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
     clearManaPerk(PLAYER.id);
-    expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+    expect(manaCostFor(PLAYER.id, POINT_INTENT)).toBe(POINT_COST);
     // Clearing a player who has no perk is a no-op, not an error.
     expect(() => clearManaPerk('never-seen')).not.toThrow();
   });
@@ -341,7 +417,7 @@ describe('mana perks', () => {
       costMultiplier: NEUTRAL_MANA_MULTIPLIER,
       regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
     });
-    expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+    expect(manaCostFor(PLAYER.id, POINT_INTENT)).toBe(POINT_COST);
   });
 
   it('clamps a multiplier into the documented band', () => {
@@ -353,7 +429,7 @@ describe('mana perks', () => {
 
     // The floor is what stops a zero multiplier from deleting the economy: a
     // perked player is still charged, and can still run out.
-    expect(manaCostFor(PLAYER.id)).toBeGreaterThan(0);
+    expect(manaCostFor(PLAYER.id, POINT_INTENT)).toBeGreaterThan(0);
     let sculpts = 0;
     while (sculptAs(PLAYER).applied) sculpts++;
     expect(sculpts).toBeGreaterThan(0);
@@ -377,7 +453,7 @@ describe('mana perks', () => {
     });
 
     expect(sculptAs(PLAYER).applied).toBe(true);
-    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_SCULPT);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
   });
 
   it('may be set before mana has ever seen the player', () => {
@@ -391,7 +467,9 @@ describe('mana perks', () => {
     harness.sink.clear();
 
     expect(sculptAs(latecomer).applied).toBe(true);
-    expect(manaBalanceOf(latecomer.id)).toBe(MANA_CAPACITY - manaCostFor(latecomer.id));
+    expect(manaBalanceOf(latecomer.id)).toBe(
+      MANA_CAPACITY - manaCostFor(latecomer.id, POINT_INTENT),
+    );
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`).length).toBeGreaterThan(0);
   });
 });
@@ -455,7 +533,9 @@ describe('mana regen configuration', () => {
     process.env[MANA_REGEN_ENV] = 'twenty';
     const harness = boot();
     expect(manaRegenPerSecond()).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
-    sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+    // Spend on the biggest brush, so a full second of regen fits in the hole it
+    // leaves rather than being clipped by the capacity cap.
+    sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, MAX_BRUSH_RADIUS, 'hard');
     const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
     for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
     expect((manaBalanceOf(PLAYER.id) ?? 0) - afterSpend).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
@@ -480,9 +560,10 @@ describe('mana regen configuration', () => {
     while (sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied) {
       /* drain */
     }
-    // One tick of slack on top of the minute: the floor is 25/60 mana per
-    // second, and accumulating that in 0.1 s steps lands a hair under 25 in
-    // IEEE arithmetic. The claim under test is the wait, not the last ULP.
+    // One tick of slack on top of the minute: the floor is
+    // MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S = 6/60 mana per
+    // second, and accumulating that in 0.1 s steps lands a hair under 6 in IEEE
+    // arithmetic. The claim under test is the wait, not the last ULP.
     for (let n = 0; n <= MAX_DRAINED_WAIT_S / TICK_DT; n++) harness.host.tick(TICK_DT);
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
   });
@@ -509,38 +590,62 @@ describe('protocol parse (client half)', () => {
   it('accepts proper payloads and rejects malformed ones', async () => {
     const { parseManaBalancePayload, parseManaDeniedPayload } = await import('../protocol.ts');
     expect(
-      parseManaBalancePayload({ balance: 150, capacity: 600, cost: 25, regenPerSecond: 20 }),
+      parseManaBalancePayload({
+        balance: 150,
+        capacity: 810,
+        manaPerBandCell: 6,
+        regenPerSecond: 20,
+      }),
     ).toEqual({
       balance: 150,
-      capacity: 600,
-      cost: 25,
+      capacity: 810,
+      manaPerBandCell: 6,
       regenPerSecond: 20,
     });
-    // A fractional rate is legal — the configurable band's floor is 25/60.
+    // Both rates may be fractional: regen's band floor is 6/60, and a perked
+    // mana-per-band-cell is the base rate times a multiplier as low as 0.25.
     expect(
-      parseManaBalancePayload({ balance: 0, capacity: 600, cost: 25, regenPerSecond: 0.4 }),
-    ).toEqual({ balance: 0, capacity: 600, cost: 25, regenPerSecond: 0.4 });
+      parseManaBalancePayload({
+        balance: 0,
+        capacity: 810,
+        manaPerBandCell: 1.5,
+        regenPerSecond: 0.4,
+      }),
+    ).toEqual({ balance: 0, capacity: 810, manaPerBandCell: 1.5, regenPerSecond: 0.4 });
     for (const bad of [
       null,
       'x',
       {},
       { balance: 1 },
-      { balance: -1, capacity: 600, cost: 25, regenPerSecond: 20 },
-      { balance: 1, capacity: 0, cost: 25, regenPerSecond: 20 },
-      { balance: Number.NaN, capacity: 600, cost: 25, regenPerSecond: 20 },
-      { balance: 1, capacity: 600, regenPerSecond: 20 },
-      // The new field: missing, zero (an infinite pulse period), negative, and
+      { balance: -1, capacity: 810, manaPerBandCell: 6, regenPerSecond: 20 },
+      { balance: 1, capacity: 0, manaPerBandCell: 6, regenPerSecond: 20 },
+      { balance: Number.NaN, capacity: 810, manaPerBandCell: 6, regenPerSecond: 20 },
+      { balance: 1, capacity: 810, regenPerSecond: 20 },
+      // The rate field: missing, zero (which would make every sculpt free on the
+      // client only), negative, and not a number at all.
+      { balance: 1, capacity: 810, regenPerSecond: 20 },
+      { balance: 1, capacity: 810, manaPerBandCell: 0, regenPerSecond: 20 },
+      { balance: 1, capacity: 810, manaPerBandCell: -6, regenPerSecond: 20 },
+      { balance: 1, capacity: 810, manaPerBandCell: Number.NaN, regenPerSecond: 20 },
+      { balance: 1, capacity: 810, manaPerBandCell: '6', regenPerSecond: 20 },
+      // The regen field: missing, zero (an infinite pulse period), negative, and
       // not a number at all. All-or-nothing — see parseManaBalancePayload.
-      { balance: 1, capacity: 600, cost: 25 },
-      { balance: 1, capacity: 600, cost: 25, regenPerSecond: 0 },
-      { balance: 1, capacity: 600, cost: 25, regenPerSecond: -20 },
-      { balance: 1, capacity: 600, cost: 25, regenPerSecond: Number.NaN },
-      { balance: 1, capacity: 600, cost: 25, regenPerSecond: Number.POSITIVE_INFINITY },
-      { balance: 1, capacity: 600, cost: 25, regenPerSecond: '20' },
+      { balance: 1, capacity: 810, manaPerBandCell: 6 },
+      { balance: 1, capacity: 810, manaPerBandCell: 6, regenPerSecond: 0 },
+      { balance: 1, capacity: 810, manaPerBandCell: 6, regenPerSecond: -20 },
+      { balance: 1, capacity: 810, manaPerBandCell: 6, regenPerSecond: Number.NaN },
+      {
+        balance: 1,
+        capacity: 810,
+        manaPerBandCell: 6,
+        regenPerSecond: Number.POSITIVE_INFINITY,
+      },
+      { balance: 1, capacity: 810, manaPerBandCell: 6, regenPerSecond: '20' },
     ]) {
       expect(parseManaBalancePayload(bad)).toBeNull();
     }
-    expect(parseManaDeniedPayload({ balance: 3, cost: 25 })).toEqual({ balance: 3, cost: 25 });
+    // The refusal still carries a concrete PRICE — the refused intent's.
+    expect(parseManaDeniedPayload({ balance: 3, cost: 270 })).toEqual({ balance: 3, cost: 270 });
     for (const bad of [null, {}, { balance: 3 }, { cost: 25 }, { balance: 3, cost: 'x' }]) {
       expect(parseManaDeniedPayload(bad)).toBeNull();
     }
@@ -548,21 +653,320 @@ describe('protocol parse (client half)', () => {
 });
 
 describe('client local intent gate', () => {
-  it('allows with no pool state, debits when allowed, denies when broke', async () => {
+  it('allows with no pool state, debits the intent, denies when broke', async () => {
     const { gateLocalSculpt, setManaPool, manaPool, deniedCount } = await import(
       '../client/state.ts'
     );
 
     setManaPool(null);
-    expect(gateLocalSculpt()).toBe(true); // no economy declared: never veto
+    expect(gateLocalSculpt(POINT_INTENT)).toBe(true); // no economy: never veto
 
-    setManaPool({ balance: 30, capacity: 600, cost: 25, regenPerSecond: 20 });
-    expect(gateLocalSculpt()).toBe(true); // 30 -> 5, affordable
-    expect(manaPool()?.balance).toBe(5);
+    // 30 mana at rate 6: five point stamps' worth.
+    setManaPool({
+      balance: 30,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+    });
+    expect(gateLocalSculpt(POINT_INTENT)).toBe(true); // 30 -> 24, affordable
+    expect(manaPool()?.balance).toBe(30 - POINT_COST);
 
     const denialsBefore = deniedCount();
-    expect(gateLocalSculpt()).toBe(false); // 5 < 25: veto...
+    // The SAME balance that pays for a point stamp cannot pay for the radius-4
+    // hard plateau — the gate prices the intent it was handed, not a constant.
+    const bigStamp: SculptIntent = {
+      ...POINT_INTENT,
+      radius: MAX_BRUSH_RADIUS,
+      profile: 'hard',
+    };
+    expect(gateLocalSculpt(bigStamp)).toBe(false);
     expect(deniedCount()).toBe(denialsBefore + 1); // ...flash...
-    expect(manaPool()?.balance).toBe(5); // ...and no debit on a veto
+    expect(manaPool()?.balance).toBe(30 - POINT_COST); // ...and no debit on a veto
+
+    // ...while the point brush it can still afford goes through, and debits its
+    // own (smaller) price.
+    expect(gateLocalSculpt(POINT_INTENT)).toBe(true);
+    expect(manaPool()?.balance).toBe(30 - 2 * POINT_COST);
+  });
+
+  it('debits a big brush far faster than a point brush', async () => {
+    const { gateLocalSculpt, setManaPool, manaPool } = await import('../client/state.ts');
+
+    const fullPool = {
+      balance: MANA_CAPACITY,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+    };
+
+    setManaPool(fullPool);
+    let points = 0;
+    while (gateLocalSculpt(POINT_INTENT)) points++;
+    expect(points).toBe(POINT_STAMPS_PER_POOL);
+
+    setManaPool(fullPool);
+    const bigStamp: SculptIntent = {
+      ...POINT_INTENT,
+      radius: MAX_BRUSH_RADIUS,
+      profile: 'hard',
+    };
+    let plateaus = 0;
+    while (gateLocalSculpt(bigStamp)) plateaus++;
+    expect(plateaus).toBe(FULL_POOL_MAX_RADIUS_HARD_STAMPS);
+    expect(manaPool()?.balance).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// VOLUME PRICING (owner-settled 2026-08-14). A sculpt costs mana in proportion
+// to the terrain volume its brush displaces, so the price is a property of the
+// INTENT and no longer a constant. Three things have to hold: the tuning numbers
+// are what the owner asked for, the server charges the right amount for each
+// brush, and the client's local gate agrees with it exactly.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('the price of a sculpt', () => {
+  it('pins the tuning constants and the constraints they were derived from', () => {
+    // The rate IS the price of a point stamp, because a radius-1 brush moves
+    // exactly one band over exactly one cell. Owner's constraint: ≈5–8 mana.
+    expect(MANA_PER_BAND_CELL).toBe(6);
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(MANA_PER_BAND_CELL);
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBeGreaterThanOrEqual(5);
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBeLessThanOrEqual(8);
+
+    // The most expensive brush: 45 band-cells, 45× the point stamp. The pool is
+    // three of those, the low end of the owner's "≈3–4" — see the derivation on
+    // FULL_POOL_MAX_RADIUS_HARD_STAMPS for why the other constraint ("≈100
+    // point stamps") cannot be met at the same time.
+    expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(270);
+    expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(3);
+    expect(MANA_CAPACITY).toBe(810);
+    expect(MANA_CAPACITY).toBe(
+      FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+    );
+    expect(POINT_STAMPS_PER_POOL).toBe(135);
+
+    // Radius-4 soft lands proportionally between the two, by volume alone.
+    const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft');
+    expect(softPlateau).toBe(120);
+    expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
+    expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+
+    // The regen band is re-derived from the CHEAPEST sculpt: one more point
+    // stamp within a minute at the floor.
+    expect(MIN_MANA_REGEN_PER_SECOND).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S);
+    expect(MAX_MANA_REGEN_PER_SECOND).toBe(MANA_CAPACITY);
+  });
+
+  it('is the displaced volume at the payer’s rate, for every brush', () => {
+    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+      for (const profile of SCULPT_PROFILES) {
+        const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
+        // Spelled out the long way here, from shared's volume function, rather
+        // than by calling the pricing helper the implementation calls: this test
+        // is the independent statement of the formula.
+        const expected = Math.ceil(
+          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, profile)) / BAND_HEIGHT,
+        );
+        expect(manaCostFor(PLAYER.id, intent)).toBe(expected);
+      }
+    }
+  });
+
+  it('resolves an intent’s ABSENT profile through the shared normalisation', () => {
+    // An older client sends neither tool nor profile. It must be charged for the
+    // brush the server will actually run — WIRE_DEFAULT_SCULPT_OPTIONS — and
+    // sculptOptionsOf is the one place that decides what absent means.
+    const bare: SculptIntent = { type: 'sculpt', x: 1, y: 1, radius: 3, dir: 1 };
+    expect(manaCostFor(PLAYER.id, bare)).toBe(
+      sculptManaCost(MANA_PER_BAND_CELL, 3, sculptOptionsOf(bare).profile),
+    );
+  });
+
+  it('charges direction-blind: lowering costs what raising costs', () => {
+    const raise: SculptIntent = { ...POINT_INTENT, radius: 3, profile: 'hard', dir: 1 };
+    const lower: SculptIntent = { ...raise, dir: -1 };
+    expect(manaCostFor(PLAYER.id, lower)).toBe(manaCostFor(PLAYER.id, raise));
+  });
+});
+
+describe('charging per intent, through the real pipeline', () => {
+  let harness: Harness;
+
+  beforeEach(() => {
+    harness = boot();
+  });
+
+  function sculptWith(radius: number, profile: SculptProfile) {
+    return handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: 1, profile },
+    );
+  }
+
+  it('charges a radius-4 hard stamp far more than a point stamp', () => {
+    expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
+    const pointFee = MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0);
+
+    const before = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(sculptWith(MAX_BRUSH_RADIUS, 'hard').applied).toBe(true);
+    const plateauFee = before - (manaBalanceOf(PLAYER.id) ?? 0);
+
+    expect(pointFee).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
+    expect(plateauFee).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
+    // 45 cells of a full band versus one: the ratio is geometry, not tuning.
+    expect(plateauFee).toBe(pointFee * MAX_RADIUS_HARD_FOOTPRINT_CELLS);
+  });
+
+  it('charges hard more than soft at the same radius', () => {
+    for (let radius = MIN_BRUSH_RADIUS + 1; radius <= MAX_BRUSH_RADIUS; radius++) {
+      const beforeSoft = manaBalanceOf(PLAYER.id) ?? 0;
+      expect(sculptWith(radius, 'soft').applied).toBe(true);
+      const softFee = beforeSoft - (manaBalanceOf(PLAYER.id) ?? 0);
+
+      const beforeHard = manaBalanceOf(PLAYER.id) ?? 0;
+      expect(sculptWith(radius, 'hard').applied).toBe(true);
+      const hardFee = beforeHard - (manaBalanceOf(PLAYER.id) ?? 0);
+
+      expect(hardFee).toBeGreaterThan(softFee);
+    }
+  });
+
+  it('denies at the threshold of THE INTENT’S cost, not a flat one', () => {
+    // Drain to a balance that can still pay for a point stamp but not for a
+    // radius-4 hard plateau. The old flat price could not tell these apart.
+    while ((manaBalanceOf(PLAYER.id) ?? 0) >= MANA_COST_PER_MAX_RADIUS_HARD_SCULPT) {
+      expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
+    }
+    const stranded = manaBalanceOf(PLAYER.id) ?? 0;
+    expect(stranded).toBeGreaterThanOrEqual(MANA_COST_PER_MIN_RADIUS_SCULPT);
+
+    harness.sink.clear();
+    expect(sculptWith(MAX_BRUSH_RADIUS, 'hard')).toEqual({
+      applied: false,
+      reason: 'plugin-denied',
+      detail: INSUFFICIENT_MANA_REASON,
+    });
+    // The refusal names the price of the intent that was refused.
+    const refusals = harness.sink.ofType(`mana:${MANA_DENIED_MESSAGE}`);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0].payload).toEqual({
+      balance: stranded,
+      cost: MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+    });
+    // Nothing was charged for the refused edit, and the brush they CAN afford
+    // still works — the veto is per intent, not a lock-out.
+    expect(manaBalanceOf(PLAYER.id)).toBe(stranded);
+    expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
+  });
+
+  it('affords exactly the pool the tuning constraint promises', () => {
+    let plateaus = 0;
+    while (sculptWith(MAX_BRUSH_RADIUS, 'hard').applied) plateaus++;
+    expect(plateaus).toBe(FULL_POOL_MAX_RADIUS_HARD_STAMPS);
+  });
+});
+
+describe('gate / server parity — the same intent, the same fee', () => {
+  /**
+   * THE PROPERTY: for every brush the game can send, and every perk rate the
+   * economy can produce, the fee the server takes off the authoritative pool and
+   * the fee the client's local gate takes off its replica are the SAME INTEGER.
+   *
+   * This is the invariant the shared pricing function (../pricing.ts) exists to
+   * guarantee. If it ever fails, the client is letting through strokes the
+   * server will nack — the phantom-stroke bug the local gate was added to fix.
+   *
+   * The multipliers cover neutral, the shipped half-cost relic, and one that
+   * lands the rate on a non-integer (6 × 0.3 = 1.8) so the single rounding step
+   * is exercised on both sides rather than being trivially absent.
+   */
+  const PARITY_MULTIPLIERS = [NEUTRAL_MANA_MULTIPLIER, 0.5, 0.3] as const;
+
+  it('charges the same fee on both sides for every radius × profile × perk', async () => {
+    const { gateLocalSculpt, setManaPool, manaPool } = await import('../client/state.ts');
+
+    for (const multiplier of PARITY_MULTIPLIERS) {
+      for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+        for (const profile of SCULPT_PROFILES) {
+          const harness = boot();
+          if (multiplier !== NEUTRAL_MANA_MULTIPLIER) {
+            setManaPerk(PLAYER.id, { costMultiplier: multiplier });
+          }
+          const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
+
+          // SERVER: the real pipeline, the real interceptor chain.
+          const serverBefore = manaBalanceOf(PLAYER.id) ?? 0;
+          const outcome = handleSculptIntent(
+            { world: harness.world, interceptors: harness.host },
+            PLAYER,
+            intent,
+          );
+          expect(outcome.applied).toBe(true);
+          const serverFee = serverBefore - (manaBalanceOf(PLAYER.id) ?? 0);
+
+          // CLIENT: seeded from the balance push the server actually emitted, so
+          // the rate under test is the one that really travels.
+          const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
+          const pushed = pushes[pushes.length - 1].payload as {
+            manaPerBandCell: number;
+            regenPerSecond: number;
+          };
+          setManaPool({
+            balance: MANA_CAPACITY,
+            capacity: MANA_CAPACITY,
+            manaPerBandCell: pushed.manaPerBandCell,
+            regenPerSecond: pushed.regenPerSecond,
+          });
+          expect(gateLocalSculpt(intent)).toBe(true);
+          const clientFee = MANA_CAPACITY - (manaPool()?.balance ?? 0);
+
+          expect(clientFee).toBe(serverFee);
+        }
+      }
+    }
+  });
+
+  it('refuses the same intent at the same balance on both sides', async () => {
+    const { gateLocalSculpt, setManaPool } = await import('../client/state.ts');
+    const harness = boot();
+    const plateau: SculptIntent = {
+      ...POINT_INTENT,
+      radius: MAX_BRUSH_RADIUS,
+      profile: 'hard',
+    };
+
+    // Drain the server pool to just under the plateau's price.
+    while ((manaBalanceOf(PLAYER.id) ?? 0) >= MANA_COST_PER_MAX_RADIUS_HARD_SCULPT) {
+      sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+    }
+    const stranded = manaBalanceOf(PLAYER.id) ?? 0;
+
+    // Same balance, same rate, same intent → the client vetoes it locally, so
+    // the request the server would have denied is never sent.
+    setManaPool({
+      balance: stranded,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+    });
+    expect(gateLocalSculpt(plateau)).toBe(false);
+    expect(
+      handleSculptIntent(
+        { world: harness.world, interceptors: harness.host },
+        PLAYER,
+        plateau,
+      ).applied,
+    ).toBe(false);
+
+    // And the other side of the threshold: at exactly the price, both allow.
+    setManaPool({
+      balance: MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
+      capacity: MANA_CAPACITY,
+      manaPerBandCell: MANA_PER_BAND_CELL,
+      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+    });
+    expect(gateLocalSculpt(plateau)).toBe(true);
   });
 });

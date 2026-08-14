@@ -3,7 +3,7 @@
 // PLUGIN unlocks territory (core never decides when), and clients see the new
 // chunk stream in.
 
-import { chunkIndex } from '@terrace/shared';
+import { chunkIndex, type SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -16,7 +16,7 @@ import {
 } from '../../../server/test/support/harness.ts';
 import {
   MANA_CAPACITY,
-  MANA_COST_PER_SCULPT,
+  manaCostFor,
   manaBalanceOf,
   plugin as manaPlugin,
   resetManaState,
@@ -100,15 +100,19 @@ function boot(): Harness {
  * merely coexist.
  */
 function paidSculpt(harness: Harness, x: number, y: number, radius: number) {
+  const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir: 1 };
+  // Mana prices a sculpt by the volume its brush displaces (2026-08-14), so the
+  // amount to wait for is THIS intent's price, not a per-sculpt constant.
+  const cost = manaCostFor(PLAYER.id, intent);
   let ticks = 0;
-  while ((manaBalanceOf(PLAYER.id) ?? 0) < MANA_COST_PER_SCULPT) {
+  while ((manaBalanceOf(PLAYER.id) ?? 0) < cost) {
     harness.host.tick(TICK_DT);
     if (++ticks > MAX_REGEN_TICKS) throw new Error('mana never regenerated');
   }
   return handleSculptIntent(
     { world: harness.world, interceptors: harness.host },
     PLAYER,
-    { type: 'sculpt', x, y, radius, dir: 1 },
+    intent,
   );
 }
 
@@ -175,7 +179,17 @@ describe('reveal plugin', () => {
     // interior hill whose relaxation skirt reaches a border and muddies the
     // pressure this test reasons about.
     paidSculpt(harness, BORDER_CELL.x, BORDER_CELL.y, 4);
-    const affordableFromFull = Math.floor(MANA_CAPACITY / MANA_COST_PER_SCULPT);
+    // Radius-4 sculpts, at whatever the current pricing charges for one.
+    const affordableFromFull = Math.floor(
+      MANA_CAPACITY /
+        manaCostFor(PLAYER.id, {
+          type: 'sculpt',
+          x: INTERIOR_CELL.x,
+          y: INTERIOR_CELL.y,
+          radius: 4,
+          dir: 1,
+        }),
+    );
     let drained = 0;
     for (;;) {
       const outcome = handleSculptIntent(

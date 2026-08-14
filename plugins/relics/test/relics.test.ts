@@ -16,9 +16,10 @@ import {
 } from '../../../server/test/support/harness.ts';
 import {
   MANA_CAPACITY,
-  MANA_COST_PER_SCULPT,
+  MANA_COST_PER_MIN_RADIUS_SCULPT,
+  MANA_PER_BAND_CELL,
   NEUTRAL_MANA_MULTIPLIER,
-  manaCostFor,
+  manaPerBandCellFor,
   manaPerkOf,
   plugin as manaPlugin,
   resetManaState,
@@ -490,13 +491,16 @@ describe('relics plugin', () => {
       harness = boot();
       await manaBridgeReady();
       expect(isManaAvailable()).toBe(true);
-      expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+      // Since mana prices sculpts by displaced volume, the perk scales the RATE
+      // (mana per band-cell) rather than a per-sculpt constant — so that is what
+      // this bridge is asserted against.
+      expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
 
       collectSkill(harness, 'azure-heart');
 
       expect(manaPerkOf(PLAYER.id).costMultiplier).toBe(AZURE_HEART_COST_MULTIPLIER);
-      expect(manaCostFor(PLAYER.id)).toBe(
-        Math.ceil(MANA_COST_PER_SCULPT * AZURE_HEART_COST_MULTIPLIER),
+      expect(manaPerBandCellFor(PLAYER.id)).toBe(
+        MANA_PER_BAND_CELL * AZURE_HEART_COST_MULTIPLIER,
       );
     });
 
@@ -525,7 +529,7 @@ describe('relics plugin', () => {
       harness = boot();
       await manaBridgeReady();
       collectSkill(harness, 'azure-heart');
-      expect(manaCostFor(PLAYER.id)).toBeLessThan(MANA_COST_PER_SCULPT);
+      expect(manaPerBandCellFor(PLAYER.id)).toBeLessThan(MANA_PER_BAND_CELL);
 
       harness.world.removePlayer(PLAYER.id);
       harness.host.playerLeft(PLAYER);
@@ -534,7 +538,7 @@ describe('relics plugin', () => {
         costMultiplier: NEUTRAL_MANA_MULTIPLIER,
         regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
       });
-      expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+      expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
     });
 
     it('buys the holder more sculpts, through the real intent pipeline', async () => {
@@ -542,9 +546,10 @@ describe('relics plugin', () => {
       await manaBridgeReady();
       collectSkill(harness, 'azure-heart');
 
-      // At half price the pool affords strictly more sculpts than the eight a
-      // full pool buys at the standard price.
-      const standardSculpts = MANA_CAPACITY / MANA_COST_PER_SCULPT;
+      // At half price the pool affords strictly more sculpts than a full pool
+      // buys at the standard price. The sculpts below are radius-1 point stamps,
+      // so the standard price is MANA_COST_PER_MIN_RADIUS_SCULPT.
+      const standardSculpts = MANA_CAPACITY / MANA_COST_PER_MIN_RADIUS_SCULPT;
       let applied = 0;
       for (let n = 0; n < standardSculpts * 2; n++) {
         const outcome = handleSculptIntent(
@@ -613,14 +618,14 @@ describe('relics plugin', () => {
       collectSkill(harness, 'azure-heart');
       // Still buffered: the import has not resolved.
       expect(isManaAvailable()).toBe(false);
-      expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+      expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
 
       release();
       await manaBridgeReady();
 
       expect(isManaAvailable()).toBe(true);
-      expect(manaCostFor(PLAYER.id)).toBe(
-        Math.ceil(MANA_COST_PER_SCULPT * AZURE_HEART_COST_MULTIPLIER),
+      expect(manaPerBandCellFor(PLAYER.id)).toBe(
+        MANA_PER_BAND_CELL * AZURE_HEART_COST_MULTIPLIER,
       );
     });
   });

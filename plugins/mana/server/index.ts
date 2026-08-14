@@ -13,7 +13,9 @@
 // the sim is never patched, exactly as design §3.5 requires ("a mana plugin
 // vetoes/modifies intents rather than patching the sim").
 
+import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, sculptOptionsOf } from '@terrace/shared';
 import type { SculptIntent } from '@terrace/shared';
+import { sculptManaCost } from '../pricing.ts';
 // Type-only import of the plugin contract (erased at runtime). It reaches into
 // server/src because core publishes no plugin-API entry point yet — see the
 // API-gap notes in the Phase 2 report.
@@ -25,33 +27,124 @@ import type {
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
 
-/**
- * Full pool, in mana units. Sized against MANA_COST_PER_SCULPT so a rested
- * player gets MANA_CAPACITY / MANA_COST_PER_SCULPT = 24 immediate sculpts.
- *
- * Retuned 2026-08-14 (owner request, up from 200/8 sculpts): the held brush
- * emits ~8 intents/s, so 24 is ~3 seconds of continuous sculpting — enough to
- * raise a whole feature in one gesture before the economy bites, where 8
- * emptied in a single second of holding and made denial the COMMON case
- * rather than the limit case. Regen is unchanged (20/s → a full refill in
- * 30 s, ~1.25 s of waiting per additional sculpt when drained).
- */
-export const MANA_CAPACITY = 600;
+// ────────────────────────────────────────────────────────────────────────────
+// PRICING — VOLUME, NOT PER-CLICK (owner-settled 2026-08-14: "define the cost
+// of sculpting in terms of mana").
+//
+// A sculpt costs mana in proportion to the terrain volume its brush nominally
+// displaces, measured in BAND-CELLS: one terrace band of height, moved over one
+// cell. The flat MANA_COST_PER_SCULPT this replaces charged a radius-4 hard
+// plateau — 45 cells, 45 band-cells of rock — exactly what it charged for
+// nudging a single cell, which made the big brushes strictly free money and gave
+// the player nothing to weigh.
+//
+// The arithmetic itself is in ../pricing.ts, because the client half must price
+// an intent to the same integer (see the gate in ../client/state.ts).
+// ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Charged per applied sculpt intent, regardless of brush radius. Flat on
- * purpose: the sculpt amount is already server-fixed (DEFAULT_SCULPT_AMOUNT),
- * so a flat cost makes the rate limit legible to a player — "one sculpt costs
- * one sculpt" — rather than something they have to model.
+ * THE RATE: mana charged per band-cell displaced. This is the ONE number the
+ * economy's prices are tuned through, and it is what travels on the wire (the
+ * balance push carries it perk-adjusted, so the client can price any intent).
+ *
+ * DERIVED FROM THE OWNER'S TUNING CONSTRAINT "a radius-1 stamp stays cheap,
+ * ≈5–8 mana". A radius-1 brush is the Populous point brush: one cell, moved by
+ * exactly DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT, i.e. exactly ONE band-cell. Its
+ * price is therefore the rate itself, so the constraint is literally a
+ * constraint on this constant, and 6 is the middle of the band.
+ *
+ * A pleasant property of 6 that is an OBSERVATION, not a law: every shipped
+ * radius × profile displaces a multiple of 32 height units, so at rate 6 every
+ * base price comes out an exact integer (6, 30/54, 69/150, 120/270 — see the
+ * literal table in the tests) and the `ceil` in sculptManaCost only ever rounds
+ * a PERK-adjusted price. Change the rate and that stays correct, just less tidy.
  */
-export const MANA_COST_PER_SCULPT = 25;
+export const MANA_PER_BAND_CELL = 6;
+
+/**
+ * The price of the cheapest sculpt that exists: the radius-1 point brush, one
+ * band over one cell. Derived rather than written down, so it cannot drift from
+ * the rate. Equal to MANA_PER_BAND_CELL by construction — it is spelled out
+ * because the regen band below is derived from "one more sculpt", and "one more
+ * sculpt" means this one, the cheapest.
+ *
+ * Profile is irrelevant at radius 1 (soft and hard are the same single cell);
+ * 'soft' is named because it is the wire default.
+ */
+export const MANA_COST_PER_MIN_RADIUS_SCULPT = sculptManaCost(
+  MANA_PER_BAND_CELL,
+  MIN_BRUSH_RADIUS,
+  'soft',
+);
+
+/**
+ * The most expensive sculpt that exists: a radius-4 HARD stamp, which moves a
+ * full band across all 45 cells of its footprint — 45 band-cells, 45× the point
+ * brush. The pool is sized against this (see MANA_CAPACITY).
+ */
+export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
+  MANA_PER_BAND_CELL,
+  MAX_BRUSH_RADIUS,
+  'hard',
+);
+
+/**
+ * The owner's other tuning constraint: how many of those maximum stamps a full
+ * pool buys. Stated as "≈3–4"; 3 is taken, and the reason is the conflict below.
+ *
+ * THE TWO CONSTRAINTS ARE NOT SIMULTANEOUSLY SATISFIABLE, and pretending
+ * otherwise would just hide which one was quietly dropped. Under a strictly
+ * volume-proportional price the ratio between the two stamps is fixed by
+ * GEOMETRY, not by tuning: a radius-4 hard stamp displaces exactly 45 band-cells
+ * to the point brush's 1. "≈100 radius-1 stamps" therefore means 100/45 = 2.2
+ * big stamps, and "3 big stamps" means 135 point stamps — the same pool cannot
+ * be both. Taking 3 (the LOW end of the owner's second range) is the choice that
+ * satisfies that range exactly while overshooting the ≈100 by the least possible
+ * margin; going the other way — 100 point stamps — would land outside the stated
+ * 3–4 entirely, and 4 big stamps would put the point-stamp count at 180.
+ *
+ * The alternative that would satisfy both is a price that is sub-linear in
+ * volume (a discount for big brushes), which is not the model the owner settled:
+ * "proportional to the terrain volume its brush nominally displaces".
+ */
+export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = 3;
+
+/**
+ * Full pool, in mana units — DERIVED from the tuning constraint above rather
+ * than written down, so the constraint is executable and re-tuning the rate
+ * re-sizes the pool with it:
+ *
+ *   MANA_CAPACITY = 3 × 270 = 810
+ *
+ * What that buys, at rate 6 (pinned by a test, so these numbers cannot rot):
+ *
+ *   radius 1 (either profile)  6 mana   → 135 stamps from a full pool
+ *   radius 2 soft / hard      30 / 54   →  27 / 15
+ *   radius 3 soft / hard      69 / 150  →  11 /  5
+ *   radius 4 soft / hard     120 / 270  →   6 /  3
+ *
+ * Up from 600 with the flat 25-per-sculpt price (24 sculpts of any size). The
+ * held brush emits ~8 intents/s, so 135 point stamps is ~17 s of continuous
+ * fine detailing before the economy bites, while three big plateaus empty the
+ * same pool — which is the point of pricing by volume: the player now chooses
+ * between reach and stamina instead of always taking the biggest brush.
+ */
+export const MANA_CAPACITY =
+  FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT;
 
 /**
  * DEFAULT regeneration, in mana units per second of simulated time, for a world
- * whose deployment does not configure one. 20/s = one sculpt every 1.25 s
- * sustained, and a full empty-to-capacity refill in 30 s. Slow enough to be
+ * whose deployment does not configure one. 20/s = one point stamp
+ * (MANA_COST_PER_MIN_RADIUS_SCULPT = 6) every 0.3 s sustained, and a full
+ * empty-to-capacity refill in MANA_CAPACITY / 20 = 40.5 s. Slow enough to be
  * felt, fast enough that a self-hoster poking at a fresh world is never left
  * staring at an empty gauge.
+ *
+ * Deliberately NOT retuned when volume pricing landed: the number that changed
+ * is what a sculpt costs, and the refill time moving from 30 s to 40.5 s is the
+ * pool getting bigger, not the world getting slower. Per second, this still buys
+ * more sculpting than the flat price did (20/s bought 0.8 sculpts/s at 25 each,
+ * and buys 3.3 point stamps/s at 6).
  *
  * Per-world overrides arrive through MANA_REGEN_ENV (see below): the pace of an
  * economy is a property of the world being hosted — a sandbox for two friends
@@ -85,18 +178,35 @@ export const MANA_REGEN_ENV = 'MANA_REGEN_PER_S';
 export const MAX_DRAINED_WAIT_S = 60;
 
 /**
- * The shortest a full empty-to-capacity refill may take. Sets the CEILING:
- * at one refill per second, one sculpt's worth of regen lands every
- * MANA_COST_PER_SCULPT / MANA_CAPACITY = ~42 ms, which is already at the edge
- * of what a person reads as separate events rather than a blur — the HUD gauge
- * derives its pulse period from exactly that quantity. Faster than this the
- * economy has stopped being one (every tick refills everything), so the extra
- * range would buy nothing but a misleading readout.
+ * The shortest a full empty-to-capacity refill may take. Sets the CEILING, and
+ * it stands on its own terms: at one refill per second the pool is back to full
+ * within the reaction time of the player who emptied it, so nothing they can do
+ * ever meets a limit — the economy has stopped being one (every tick refills
+ * everything) and the extra range would buy nothing.
+ *
+ * WHAT THE GAUGE DOES UP HERE, since the old derivation of this bound leaned on
+ * it: at this ceiling one point stamp's worth of regen lands every
+ * MANA_COST_PER_MIN_RADIUS_SCULPT / MANA_CAPACITY = 6/810 ≈ 7 ms, far below the
+ * gauge's MIN_PULSE_PERIOD_S (0.25 s) floor. The falling-grain cue therefore
+ * saturates at its fastest legible rhythm rather than trying to draw ~135 grains
+ * a second, which is both a flicker hazard and unreadable. That clamp lives in
+ * the gauge (client/gauge.ts) where it belongs; it is not a reason to move this
+ * bound, because a rate can be unplayable-fast without being illegible-fast.
  */
 export const MIN_FULL_REFILL_S = 1;
 
-/** Slowest rate a deployment may configure. See MAX_DRAINED_WAIT_S. */
-export const MIN_MANA_REGEN_PER_SECOND = MANA_COST_PER_SCULPT / MAX_DRAINED_WAIT_S;
+/**
+ * Slowest rate a deployment may configure: one more sculpt — the CHEAPEST one,
+ * the radius-1 point brush — inside MAX_DRAINED_WAIT_S. 6/60 = 0.1 mana/s.
+ *
+ * The cheapest sculpt is the right one to anchor this to: the promise the floor
+ * makes is "a drained player can always do SOMETHING again within a minute", and
+ * the thing they can always do is the point brush. Anchoring it to a big brush
+ * instead would force every world to regenerate 45× faster to make the same
+ * promise about the one edit a player might not want to make.
+ */
+export const MIN_MANA_REGEN_PER_SECOND =
+  MANA_COST_PER_MIN_RADIUS_SCULPT / MAX_DRAINED_WAIT_S;
 
 /** Fastest rate a deployment may configure. See MIN_FULL_REFILL_S. */
 export const MAX_MANA_REGEN_PER_SECOND = MANA_CAPACITY / MIN_FULL_REFILL_S;
@@ -247,7 +357,12 @@ const poolsByPlayer = new Map<string, ManaPool>();
  * perk that player previously had.
  */
 export interface ManaPerk {
-  /** Scales MANA_COST_PER_SCULPT. Below 1 = cheaper. */
+  /**
+   * Scales MANA_PER_BAND_CELL — the RATE, not a per-sculpt price. Below 1 =
+   * cheaper. Scaling the rate rather than the price is what keeps a perk
+   * meaningful under volume pricing: a half-cost holder pays half for every
+   * brush they pick up, instead of half for one size of sculpt.
+   */
   readonly costMultiplier?: number;
   /** Scales this world's regen rate (manaRegenPerSecond). Above 1 = faster. */
   readonly regenMultiplier?: number;
@@ -309,15 +424,46 @@ export function manaPerkOf(playerId: string): EffectiveManaPerk {
 }
 
 /**
- * What one sculpt costs this player.
+ * THIS PLAYER'S RATE: mana per band-cell, after whatever cost perk they hold.
  *
- * Rounded UP: a fractional price would drift the pool away from the whole-unit
- * value the HUD shows, and rounding up rather than down means the floor imposed
- * by MANA_PERK_MIN_MULTIPLIER cannot be undercut into zero by rounding. With
- * the shipped 0.5 perk this is ceil(12.5) = 13 — "about half", by one unit.
+ * This — not a price — is what goes on the wire, and it is the whole reason the
+ * client can gate an intent the server has never seen: a rate plus the shared
+ * volume function prices ANY brush, so the client needs no round trip to learn
+ * what the radius-3 hard stamp it is about to send will cost.
+ *
+ * NOT rounded. Rounding here would quantise the rate (6 × 0.5 = 3 is fine, but
+ * 6 × 0.75 = 4.5 would become 4 or 5) and throw away the perk's precision at
+ * every brush size; the single rounding happens once, at the end, in
+ * sculptManaCost. Keeping exactly one rounding step is also what lets the client
+ * reproduce the server's integer exactly.
  */
-export function manaCostFor(playerId: string): number {
-  return Math.ceil(MANA_COST_PER_SCULPT * manaPerkOf(playerId).costMultiplier);
+export function manaPerBandCellFor(playerId: string): number {
+  return MANA_PER_BAND_CELL * manaPerkOf(playerId).costMultiplier;
+}
+
+/**
+ * What THIS INTENT costs THIS player: the perk-adjusted rate times the volume
+ * the intent's brush displaces (../pricing.ts).
+ *
+ * Per intent, not per player: since volume pricing the price is a function of
+ * the brush, so there is no such thing as "this player's sculpt cost" without an
+ * intent to price. `sculptOptionsOf` resolves the intent's optional profile
+ * through the SAME shared normalisation the terrain math uses, so the cell a
+ * price is charged for is the cell an edit actually touches — the client gate
+ * calls it too, on the same intent.
+ *
+ * Rounded UP inside sculptManaCost: a fractional price would drift the pool away
+ * from the whole-unit value the HUD shows, and rounding up rather than down
+ * means the floor imposed by MANA_PERK_MIN_MULTIPLIER cannot be undercut into
+ * zero by rounding. With the shipped 0.5 perk a point stamp is ceil(3) = 3 and a
+ * radius-3 soft is ceil(34.5) = 35 — "about half", never free.
+ */
+export function manaCostFor(playerId: string, intent: SculptIntent): number {
+  return sculptManaCost(
+    manaPerBandCellFor(playerId),
+    intent.radius,
+    sculptOptionsOf(intent).profile,
+  );
 }
 
 /** The value a HUD would display: whole mana units. */
@@ -333,9 +479,12 @@ function sendBalance(playerId: string, pool: ManaPool): void {
   api.sendTo(playerId, MANA_BALANCE_MESSAGE, {
     balance,
     capacity: MANA_CAPACITY,
-    // The perk-adjusted price of this player's next sculpt: what the client's
-    // local intent gate compares the balance against (see ../protocol.ts).
-    cost: manaCostFor(playerId),
+    // The perk-adjusted RATE, not a price: prices depend on the brush the
+    // player is holding, which is a client-side fact the server does not track
+    // and has no business tracking. Handing over the rate lets the client's
+    // local intent gate price the exact intent it is about to send, with the
+    // same shared function this server charges by (../pricing.ts).
+    manaPerBandCell: manaPerBandCellFor(playerId),
     // The perk-adjusted rate this pool refills at. Display-only on the client
     // (it animates the gauge between pushes); the authoritative arithmetic
     // stays here.
@@ -388,18 +537,25 @@ function poolFor(playerId: string): ManaPool {
  */
 function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   const pool = poolFor(ctx.player.id);
-  // The price this player pays, after any perk another plugin has set on them.
-  // Read per intent rather than cached: a perk can be granted or revoked at any
-  // moment (a relic collected mid-stroke), and a stale price is a wrong charge.
-  const cost = manaCostFor(ctx.player.id);
+  // The price of THIS intent for THIS player: the volume its brush displaces at
+  // the rate this player pays, after any perk another plugin has set on them.
+  // Computed per intent and never cached, for two independent reasons — a perk
+  // can be granted or revoked at any moment (a relic collected mid-stroke), and
+  // since volume pricing the radius and profile are the intent's own fields, so
+  // consecutive intents from the same player legitimately cost different
+  // amounts.
+  const cost = manaCostFor(ctx.player.id, intent);
 
   if (pool.balance < cost) {
     // Tell the player why. Core's own rejections are silent on purpose — an
     // error reply would confirm the existence of locked terrain and defeat the
     // mask (pipeline.ts) — but "you are out of mana" leaks nothing about the
     // world, and a player who gets no feedback assumes the server is broken.
-    // The cost travels with it: with perks in play it is no longer a constant
-    // the client could have known.
+    // The CONCRETE cost of the refused intent travels with it — a price, not
+    // the rate the balance push carries. The client is being told what this
+    // exact sculpt would have cost, which is the number a "you cannot afford
+    // that" readout needs; re-deriving it from the rate would work but would
+    // make the refusal depend on the client still holding the brush it sent.
     api?.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
       balance: displayBalance(pool),
       cost,

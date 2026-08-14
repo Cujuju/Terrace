@@ -7,9 +7,10 @@
 // keeps ManaGauge.tsx to markup plus wiring.
 //
 // DISPLAY ONLY. Nothing here participates in affordability: the local intent
-// gate (state.ts) compares the SERVER-pushed balance against the SERVER-pushed
-// cost, and this smoothing never feeds back into it. The worst a bug in this
-// file can do is draw a wrong picture.
+// gate (state.ts) compares the SERVER-pushed balance against a price it computes
+// with the SERVER-pushed rate through the shared pricing function, and none of
+// this smoothing or formatting feeds back into it. The worst a bug in this file
+// can do is draw a wrong picture.
 
 /** Milliseconds per second — rAF hands out milliseconds, regen is per second. */
 export const MS_PER_SECOND = 1000;
@@ -125,12 +126,30 @@ export function formatRegenRate(regenPerSecond: number): string {
 }
 
 /**
+ * The price readout beside the gauge, e.g. "−12/use": what the brush the player
+ * is CURRENTLY holding costs to apply once.
+ *
+ * Whole units always — a price is an integer by construction (sculptManaCost
+ * rounds up), so unlike the regen rate there is no slow end that needs a decimal.
+ * A minus sign, matching the "+20/s" above it: the two lines are the two
+ * directions the pool moves. An unusable or absent price renders as an em dash
+ * rather than as a confident "−0/use", which would read as "sculpting is free".
+ */
+export function formatSculptCost(cost: number): string {
+  if (!usable(cost) || cost <= 0) return '—';
+  return `−${Math.round(cost)}/use`;
+}
+
+/**
  * THE RATE READOUT: seconds per cycle of the falling-grain cue.
  *
- * One cycle is one sculpt's worth of regen — cost / regenPerSecond seconds — so
- * the cue is not decoration, it is the unit of the economy made visible. A
- * world configured fast drops grains in a stream; a slow world drips. The
- * player learns "one grain = one more sculpt" without being told a number.
+ * One cycle is one CURRENT-BRUSH sculpt's worth of regen — cost / regenPerSecond
+ * seconds — so the cue is not decoration, it is the unit of the economy made
+ * visible. A world configured fast drops grains in a stream; a slow world drips,
+ * and since volume pricing (2026-08-14) picking up a radius-4 hard brush slows
+ * the same world's rhythm 45× because that is honestly how much longer the
+ * player must wait between those sculpts. The player learns "one grain = one
+ * more sculpt WITH THIS BRUSH" without being told a number.
  *
  * Clamped into [MIN_PULSE_PERIOD_S, MAX_PULSE_PERIOD_S]; an unusable rate or
  * cost degrades to the slowest period, which is the least distracting thing an

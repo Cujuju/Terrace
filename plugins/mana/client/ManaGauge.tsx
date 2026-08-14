@@ -11,10 +11,18 @@
 //
 // THE READOUTS, IN ORDER OF HOW FAST THEY ANSWER:
 //   1. the sand level in the lower bulb — how much you have, right now
-//   2. the falling grain's RHYTHM       — one grain per sculpt's worth of regen,
-//                                         so a fast world streams and a slow one
-//                                         drips
-//   3. "480 / 600" and "+20/s"          — the exact numbers, beside the glass
+//   2. the falling grain's RHYTHM       — one grain per sculpt's worth of regen
+//                                         FOR THE BRUSH IN HAND, so a fast world
+//                                         streams, a slow one drips, and a big
+//                                         brush stretches either one out
+//   3. "480 / 810", "+20/s", "−270/use" — the exact numbers, beside the glass
+//
+// WHY THE PRICE IS ON HERE AT ALL. Since sculpting is priced by the volume it
+// displaces (2026-08-14), the cost of the next click is no longer a constant the
+// player can learn once — it changes every time they change brush, by up to 45×.
+// A gauge that showed only the pool would leave them discovering that by running
+// out. The brush's price is read from the HUD's own brush selection, so the two
+// controls agree by construction.
 //
 // ART DIRECTION (owner brief): this is a game object, not a UI widget — a
 // bronze-and-amber instrument that would not look out of place in an RPG
@@ -40,11 +48,12 @@ import {
   advanceDisplayBalance,
   fillFraction,
   formatRegenRate,
+  formatSculptCost,
   isPoolFull,
   pulsePeriodSeconds,
   syncedDisplayBalance,
 } from './gauge.ts';
-import { deniedCount, manaPool } from './state.ts';
+import { currentBrushCost, deniedCount, manaPool } from './state.ts';
 
 /** How long the denial flash lasts. Matches the HUD's other transient cues. */
 const DENIAL_FLASH_MS = 600;
@@ -173,7 +182,8 @@ const GAUGE_CSS = `
 .mana-gauge__capacity {
   color: var(--hud-muted, #97a3b0);
 }
-.mana-gauge__rate {
+.mana-gauge__rate,
+.mana-gauge__cost {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -297,14 +307,18 @@ export function ManaGauge(): JSX.Element {
   const glassColor = () => (flashing() ? DENIED_MID : GLASS_STROKE);
 
   /**
-   * Seconds per grain: one sculpt's worth of regen. Recomputed from the live
-   * pool rather than cached, so a cost that changes under the player (a perk
-   * collected mid-stroke, or a future non-flat cost model) re-times the cue
-   * instead of lying about it.
+   * Seconds per grain: one CURRENT-BRUSH sculpt's worth of regen.
+   *
+   * currentBrushCost() reads the HUD's live brush selection (state.ts), so
+   * switching from the point brush to a radius-4 hard stamp re-times the cue on
+   * the spot — 45× slower, because that is 45× the mana and therefore 45× the
+   * wait. Recomputed at the use site rather than cached, per the project's Solid
+   * rule; a perk collected mid-stroke changes the pushed rate and re-times it
+   * through the same accessor.
    */
   const periodSeconds = () => {
     const pool = manaPool();
-    return pool === null ? 0 : pulsePeriodSeconds(pool.cost, pool.regenPerSecond);
+    return pool === null ? 0 : pulsePeriodSeconds(currentBrushCost(), pool.regenPerSecond);
   };
   /** A grain falls from the neck to the CURRENT surface, never through it. */
   const grainFall = () => Math.max(0, fillTopY() - GRAIN_START_Y);
@@ -314,7 +328,7 @@ export function ManaGauge(): JSX.Element {
       <div
         class="mana-gauge"
         role="img"
-        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}`}
+        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${currentBrushCost()}`}
       >
         <style>{GAUGE_CSS}</style>
 
@@ -491,15 +505,20 @@ export function ManaGauge(): JSX.Element {
           </g>
         </svg>
 
-        {/* Stats beside the glass, stacked and left-aligned: the balance is what
-            you read at a glance, the rate is the world's own constant and sits
-            under it — visible at capacity too, where the cue is paused. */}
+        {/* Stats beside the glass, stacked and left-aligned, in the order the
+            player needs them: what you have, what it fills at, what the brush in
+            your hand takes out. All three stay visible at capacity, where the
+            cue is paused and the numbers are the only readout left. */}
         <div class="mana-gauge__stats">
           <span class="mana-gauge__balance">
             {Math.floor(displayed())}
             <span class="mana-gauge__capacity">/{manaPool()!.capacity}</span>
           </span>
           <span class="mana-gauge__rate">{formatRegenRate(manaPool()!.regenPerSecond)}</span>
+          {/* The price of the CURRENT brush: the one number that makes volume
+              pricing visible before the pool drains, and the answer to "why did
+              that stamp cost so much more than the last one". */}
+          <span class="mana-gauge__cost">{formatSculptCost(currentBrushCost())}</span>
         </div>
       </div>
     </Show>

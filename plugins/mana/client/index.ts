@@ -42,7 +42,8 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.registerHudPanel(ManaGauge, { placement: 'top-center' });
 
     // The client half of the interceptor chain: unaffordable sculpts stop
-    // here, before they are sent or predicted (see gateLocalSculpt).
-    ctx.onLocalIntent(() => gateLocalSculpt());
+    // here, before they are sent or predicted (see gateLocalSculpt). The INTENT
+    // is passed through — its radius and profile are what it costs.
+    ctx.onLocalIntent((intent) => gateLocalSculpt(intent));
   },
 };

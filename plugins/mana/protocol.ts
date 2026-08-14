@@ -21,11 +21,20 @@ export interface ManaBalanceMessage {
   /** Pool size, so the HUD can draw a fraction without knowing the config. */
   readonly capacity: number;
   /**
-   * What THIS player's next sculpt costs (perk-adjusted). Load-bearing for the
-   * client half's local intent gate: affordability is balance vs cost, and
-   * neither is a constant the client could hard-code.
+   * THIS player's price RATE: mana per band-cell displaced, perk-adjusted.
+   *
+   * Load-bearing for the client half's local intent gate. It is a rate rather
+   * than a price because since volume pricing (2026-08-14) there is no single
+   * "next sculpt cost" — the price depends on the brush the player is holding,
+   * which is client-side state the server does not track. A rate plus the shared
+   * volume function (../pricing.ts, shared/src/heightmap.ts) prices any intent
+   * the client might send, so affordability stays balance vs a number the server
+   * vouched for, with no round trip when the player changes brushes.
+   *
+   * Strictly positive: a zero rate would make every sculpt free and silently
+   * delete the economy on the client side only.
    */
-  readonly cost: number;
+  readonly manaPerBandCell: number;
   /**
    * Mana per second THIS player's pool refills at — the world's configured rate
    * (MANA_REGEN_PER_S) times whatever regen perk they hold. Strictly positive.
@@ -40,7 +49,12 @@ export interface ManaBalanceMessage {
 
 export interface ManaDeniedMessage {
   readonly balance: number;
-  /** What the refused sculpt would have cost (perk-adjusted, not a constant). */
+  /**
+   * What THE REFUSED SCULPT would have cost: a concrete price for a concrete
+   * intent (its brush's volume × this player's perk-adjusted rate), not the rate
+   * the balance push carries. A refusal is about one edit that did not happen,
+   * so it names that edit's price rather than making the reader re-derive it.
+   */
   readonly cost: number;
 }
 
@@ -63,30 +77,37 @@ function finiteNonNegative(value: unknown): number | null {
  *
  * `regenPerSecond` must be strictly positive: zero would make the gauge's pulse
  * period (cost / regen) infinite and its fill-time estimate a division by zero.
+ *
+ * `manaPerBandCell` must be strictly positive for a blunter reason: at zero
+ * every sculpt prices out at zero, so the client gate would wave through strokes
+ * the server is about to deny — an economy that exists on one side of the wire
+ * only. Rejecting the push leaves the client with no pool state, which the gate
+ * reads as "no economy declared" and handles correctly.
  */
 export function parseManaBalancePayload(payload: unknown): ManaBalanceMessage | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const p = payload as {
     balance?: unknown;
     capacity?: unknown;
-    cost?: unknown;
+    manaPerBandCell?: unknown;
     regenPerSecond?: unknown;
   };
   const balance = finiteNonNegative(p.balance);
   const capacity = finiteNonNegative(p.capacity);
-  const cost = finiteNonNegative(p.cost);
+  const manaPerBandCell = finiteNonNegative(p.manaPerBandCell);
   const regenPerSecond = finiteNonNegative(p.regenPerSecond);
   if (
     balance === null ||
     capacity === null ||
     capacity === 0 ||
-    cost === null ||
+    manaPerBandCell === null ||
+    manaPerBandCell === 0 ||
     regenPerSecond === null ||
     regenPerSecond === 0
   ) {
     return null;
   }
-  return { balance, capacity, cost, regenPerSecond };
+  return { balance, capacity, manaPerBandCell, regenPerSecond };
 }
 
 /** Defensive parse; null means "ignore the message". */
