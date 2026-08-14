@@ -74,7 +74,10 @@ export function createWorld(viewport: Viewport): World {
   let mirror: TerrainMirror | null = null;
   let meshes: TerrainMeshes | null = null;
   let predictions: PredictionStore | null = null;
-  /** World size the camera has already been framed for; 0 before the first. */
+  /**
+   * World size the camera has already been aimed at — framed OR restored from
+   * a saved pose; 0 before the first snapshot.
+   */
   let framedWorldSize = 0;
   /** One-shot timer armed for the moment the oldest prediction expires. */
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,11 +140,18 @@ export function createWorld(viewport: Viewport): World {
     clearExpiryTimer();
     water.setWorldSize(worldSize);
 
-    // Frame the camera only for a world we have not framed before. A snapshot
-    // also arrives on every reconnect, and re-framing there would yank the
-    // camera out from under a player who had just lined up a shot.
+    // Point the camera only at a world we have not pointed it at before. A
+    // snapshot also arrives on every reconnect, and re-aiming there would yank
+    // the camera out from under a player who had just lined up a shot.
+    //
+    // "Pointed at" covers both outcomes of restoreOrFocus: restoring the pose
+    // saved for this server + world size, and framing the world from scratch
+    // when there is no usable saved pose. A restored pose therefore counts as
+    // framed — a rejoin at the same size leaves it alone, exactly as it leaves
+    // a framed camera alone, and a rejoin at a NEW size runs the same restore
+    // path afresh against that size's own key.
     if (worldSize !== framedWorldSize) {
-      viewport.focusWorld(worldSize);
+      viewport.restoreOrFocus(worldSize);
       framedWorldSize = worldSize;
     }
 
