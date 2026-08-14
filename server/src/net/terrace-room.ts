@@ -120,6 +120,25 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     logInfo(`room "${ROOM_NAME}" created (world ${this.context.world.size}²)`);
   }
 
+  /**
+   * ORDERING CONTRACT: 'snapshot' MUST be the first message a joining client
+   * receives. It carries worldSize, so a client cannot size its local mirror —
+   * and therefore cannot place a chunk — before it arrives; a 'chunkUnlock' or
+   * 'terrainDiff' that overtook it would be dropped, and that terrain would
+   * silently never render.
+   *
+   * That contract holds because of a fact verified in @colyseus/core 0.17.50
+   * (`Room.mjs` `_onJoin`): the framework does `this.clients.push(client)` and
+   * only THEN `await this.onJoin(...)`. From the push to the send below there
+   * is no `await`, so no timer callback — notably the process tick loop, which
+   * can broadcast a plugin's chunkUnlock — can interleave and reach a client
+   * that has not yet been sized.
+   *
+   * The `: void` return type is therefore LOAD-BEARING, not decoration: it
+   * narrows the base class's `void | Promise<any>`, so making this method
+   * `async` (or awaiting anything before the send) is a compile error rather
+   * than a silent, timing-dependent bug in the client's renderer.
+   */
   override onJoin(client: TerraceClient, options?: { name?: unknown }): void {
     const player: Player = {
       id: client.sessionId,
@@ -138,6 +157,8 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     };
     client.send('snapshot', snapshot);
 
+    // Only AFTER the snapshot: a plugin's onPlayerJoin may broadcast or unlock
+    // chunks, and the new client must already be sized to receive that.
     this.context.host.playerJoined(player);
     logInfo(`player "${player.name}" joined (${snapshot.chunks.length} chunks sent)`);
   }
