@@ -415,11 +415,23 @@ terrace/
   Anti-cheat is unaffected: tool and profile choose the SHAPE of an edit, never
   its power. The amount stays server-side.
 
-- **A fresh world starts as a deep ocean, not a flat shoreline** (owner request,
-  settled 2026-08-14, from the report "we need more wildlife, I don't see any
-  deep sea creatures"). A brand-new world's entire heightmap is filled at
-  `FRESH_SEABED_BANDS_BELOW_SEA = 3` terrace bands below `SEA_LEVEL`
-  (`server/src/world/world.ts`, `World.createFresh`).
+- **A fresh world starts as an ocean with a coast, not a flat shoreline** (owner
+  request, settled 2026-08-14, from the report "we need more wildlife, I don't
+  see any deep sea creatures"). `World.createFresh`
+  (`server/src/world/world.ts`) generates three concentric terraces by Chebyshev
+  (square-ring) distance from the starter region's centre:
+
+  | region | depth | constant | height |
+  |---|---|---|---|
+  | shelf — a centred square of `spanChunks / FRESH_SHELF_SPAN_DIVISOR` (= 2) chunks | 1 band | `FRESH_SHELF_BANDS_BELOW_SEA` | −64 |
+  | slope ring — `FRESH_SLOPE_WIDTH_CELLS` (= `CHUNK_SIZE`, 16) cells wide | 2 bands | `FRESH_SLOPE_BANDS_BELOW_SEA` | −128 |
+  | open sea — everything beyond | 3 bands | `FRESH_SEABED_BANDS_BELOW_SEA` | −192 |
+
+  Deterministic and integer-only: no RNG anywhere in genesis, so a size always
+  produces the same world and tests assert it cell by cell. The shelf is placed
+  from `initialUnlockFootprint()` — the one definition of the starter square,
+  which `applyInitialUnlock` also reads — rather than from a second copy of its
+  centring rule.
 
   **Root cause this fixes.** `createHeightmap` allocates zeros and `SEA_LEVEL`
   is 0, so every cell of a fresh world sat *exactly* at the waterline: the sea
@@ -428,12 +440,32 @@ terrace/
   and deep-sea creatures had literally nowhere to exist unless a player hand-dug
   a trench. The ocean was a surface, not a volume.
 
-  **Why exactly three bands.** It is the shallowest depth satisfying
-  `FRESH_SEABED_BANDS_BELOW_SEA >= DEEP_WATER_BANDS_BELOW_SEA` — the fresh ocean
+  **Why these depths.** Three bands is the shallowest depth satisfying
+  `FRESH_SEABED_BANDS_BELOW_SEA >= DEEP_WATER_BANDS_BELOW_SEA` — the open sea
   must qualify as deep habitat *by design*, and every band beyond that is one
-  more sculpt a player spends raising their first island. Core cannot import a
-  plugin constant, so the relation is pinned by a test on the plugin side
-  (`plugins/wildlife/test/wildlife.test.ts`).
+  more sculpt a player spends raising land out there. One band for the shelf is
+  the shallowest water that is still water: shallow habitat for coastal species,
+  and only one band below the surface so an island where the game starts you
+  costs two sculpts rather than four. Core cannot import a plugin constant, so
+  both relations (open sea deep, shelf and ring shallow) are pinned by tests on
+  the plugin side (`plugins/wildlife/test/wildlife.test.ts`).
+
+  **Why the shelf is a quarter of the starter square.** The habitat census only
+  counts *unlocked* cells, so the starter square's 16 384 cells (identical on
+  every world size) are the entire day-one habitat budget, and
+  `FRESH_SHELF_SPAN_DIVISOR` is what splits it. At 4 the split is 4 096 shallow
+  / 12 288 deep — the coarsest setting that still buys 2 whales at 5 000 deep
+  cells each. A larger shelf eats the open sea this change exists to create; a
+  smaller one leaves no coast for fish.
+
+  **Residual, named.** A one-band step is `BAND_HEIGHT` (64) against a gradient
+  limit of `MAX_STEP` (32), so the two ring boundaries do not satisfy the
+  relaxation invariant at genesis. Nothing enforces it at rest — the stamp tool
+  violates it deliberately on every spire — but a `smooth` sculpt whose
+  relaxation reaches a boundary will slump it once, with a larger-than-usual
+  diff bounded by `SMOOTH_PASS_LIMIT`. Accepted: that is the smooth tool doing
+  its job on a terrace edge, and a ramped coast would trade the terraced house
+  style for it.
 
   **Where it lives, and why not in `shared/`.** The server fills the floor;
   `createHeightmap` stays zero-filled. `shared/` is the determinism contract
@@ -442,18 +474,18 @@ terrace/
   new world looks like" a server policy a future world-gen plugin can replace.
 
   **Consequences, accepted:**
-  - Raising the first island costs three more band-steps (four sculpts to break
-    the surface instead of one). Intended — the ocean is a volume with a bottom.
-  - A fresh world has **no land and no shallow water at all**; every cell is
-    exactly at the deep threshold. Habitat plugins see one habitat on day one
-    and gain the others as players sculpt. Fish and grazers therefore do not
-    exist on a brand-new world until someone builds them a shelf or an island.
-  - Snapshot-restored worlds are untouched: the floor applies to the no-snapshot
-    path only, so existing self-hosted worlds do not silently gain an ocean.
+  - Raising land costs band-steps it did not before, and how many now varies by
+    place: two sculpts to break the surface on the starter shelf, four out in
+    the open sea. Intended — the ocean is a volume with a bottom.
+  - A fresh world has **no land**. Land-habitat species (the wildlife plugin's
+    grazers) have nowhere to be until a player raises an island; water species,
+    coastal and open-sea alike, have somewhere from the first tick.
+  - Snapshot-restored worlds are untouched: genesis applies to the no-snapshot
+    path only, so existing self-hosted worlds do not silently gain a coastline.
   - The client boots its local heightmap at band 0, so for the single frame
-    before the first chunk arrives it draws a shoreline where the server has an
-    abyss. Cosmetic, pre-connect only, and **not fixed here** — it belongs in the
-    client's boot state.
+    before the first chunk arrives it draws a flat shoreline where the server has
+    a coast and an abyss. Cosmetic, pre-connect only, and **not fixed here** — it
+    belongs in the client's boot state.
 
 - **Wildlife is denser, and its population is a living process rather than an
   inventory** (owner request, settled 2026-08-14, same report). Two parts:
@@ -463,9 +495,10 @@ terrace/
      from 82 to 167 requested, which `WILDLIFE_POPULATION_CAP` — raised 100 →
      150 — scales to 148). The two DEEP species move much further than the other
      two (whale 20 000 → 5 000, deepsea 6 000 → 1 500) because deep water stopped
-     being a rare remote habitat and became the habitat every new server opens
-     in: a fresh 256² world's 16 384-cell starter ocean now holds 3 whales and 10
-     deep-sea creatures on day one, where the old table asked for none.
+     being a rare remote habitat and became three quarters of the ground every
+     new server opens on. Day one on any fresh world (4 096 shallow / 12 288 deep
+     inside the starter square) is **4 fish, 8 deep-sea creatures, 2 whales, 0
+     grazers** — where the old table asked for nothing but fish.
      Recomputed bandwidth at the new cap: 150 × 52 B ≈ 7.8 KB per full-state
      broadcast, 39 KB/s ≈ 312 kbit/s per client at the 5 Hz cadence.
      Honest note: at these densities a *fully* revealed 512² world rides the cap

@@ -75,20 +75,26 @@ export interface SpeciesProfile {
    * RETUNED 2026-08-14 (owner: "we need more wildlife, I don't see any deep sea
    * creatures"). Two worlds are sized against, and both matter:
    *
-   * (a) A FRESH world — since 2026-08-14 an open ocean at
-   *     FRESH_SEABED_BANDS_BELOW_SEA under the waterline (server/src/world/
-   *     world.ts), so its unlocked starter region is 100% DEEP water and 0%
-   *     shallow / 0% land. On the shipped 256² default that region is
-   *     INITIAL_UNLOCK_CHUNK_SPAN² chunks = 128×128 = 16 384 cells:
+   * (a) A FRESH world — since 2026-08-14 an ocean with a coast: a shallow shelf
+   *     and slope ring at the centre, open sea beyond (server/src/world/
+   *     world.ts). The census only counts UNLOCKED cells, so day one is bounded
+   *     by the starter square — INITIAL_UNLOCK_CHUNK_SPAN² chunks = 128×128 =
+   *     16 384 cells, the same on every world size — split by that genesis
+   *     profile into 4 096 shallow and 12 288 deep:
    *
-   *       deepsea  16 384 / 1 500 = 10      whale  16 384 / 5 000 = 3
-   *       fish 0 and grazer 0 — there is no shallow shelf and no land yet;
-   *       both appear the moment a player sculpts one.
+   *       fish     4 096 / 1 000 =  4      deepsea  12 288 / 1 500 = 8
+   *       whale   12 288 / 5 000 =  2      grazer            — = 0
+   *
+   *     Grazers alone have nothing on day one: there is no land until a player
+   *     raises an island, and that is the intended shape of a world that starts
+   *     as an ocean.
    *
    *     This is the case the owner's report was about, and it is why the two
    *     DEEP densities move much further than the other two: they were sized
-   *     when deep water was a rare, remote habitat, and it is now the habitat a
-   *     brand-new server opens in.
+   *     when deep water was a rare, remote habitat, and it is now three
+   *     quarters of the ground a brand-new server opens on. It also makes the
+   *     deep densities the binding constraint on the shelf's size — see
+   *     FRESH_SHELF_SPAN_DIVISOR, which is chosen against the whale figure here.
    *
    * (b) A nominal half-land / half-water 512² world at full reveal (262 144
    *     cells; ~131 000 land, of the water roughly 40% shallow / 60% open sea):
@@ -137,7 +143,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 3,
     turnNoiseRadiansPerSecond: 1.4,
     bodyLengthCells: 0.7,
-    // 1 500 → 1 000: half again as many schools on a shelf of any given size.
+    // 1 500 → 1 000: half again as many schools on a shelf of any given size,
+    // and one school (4) on the 4 096-cell shelf a fresh world starts with.
     habitatCellsPerIndividual: 1000,
     groupSize: 5,
   },
@@ -147,10 +154,11 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 0.8,
     turnNoiseRadiansPerSecond: 0.25,
     bodyLengthCells: 5,
-    // 20 000 → 5 000. The binding requirement: a fresh 256² world's 16 384-cell
-    // ocean must hold whales on day one, and 16 384/5 000 = 3 does. The old
-    // figure asked for 0 there — the owner's "I don't see any deep sea
-    // creatures" was, for whales, arithmetically guaranteed.
+    // 20 000 → 5 000. The binding requirement: a fresh world's 12 288 cells of
+    // open sea inside the starter square must hold whales on day one, and
+    // 12 288/5 000 = 2 does. The old figure asked for 0 there — the owner's "I
+    // don't see any deep sea creatures" was, for whales, arithmetically
+    // guaranteed.
     habitatCellsPerIndividual: 5000,
     groupSize: 1,
   },
@@ -160,9 +168,9 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
     cruiseSpeedCellsPerSecond: 1.2,
     turnNoiseRadiansPerSecond: 0.9,
     bodyLengthCells: 1.2,
-    // 6 000 → 1 500. Deep water carries the ambience of a fresh world entirely
-    // on its own, so it needs the density of a populated habitat rather than of
-    // a rarity: 10 in a fresh starter ocean, ~46 on a capped full 512².
+    // 6 000 → 1 500. Deep water is three quarters of a fresh world's starter
+    // region, so it needs the density of a populated habitat rather than of a
+    // rarity: 8 on day one, ~46 on a capped full 512².
     habitatCellsPerIndividual: 1500,
     groupSize: 1,
   },
