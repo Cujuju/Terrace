@@ -28,8 +28,10 @@ import {
   ACTION_PRECEDENCE,
   controlBindings,
   twoFingerGesture,
+  wheelBehaviour,
   type ControlAction,
   type ControlBindings,
+  type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
@@ -74,12 +76,16 @@ const HINT_MODIFIER: Record<string, string> = {
 };
 
 /** "Left-drag raises · Shift+Left-drag lowers · …" from the live bindings. */
-function hintText(bindings: ControlBindings): string {
+function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
   const parts = ACTION_PRECEDENCE.map((action) => {
     const b = bindings[action];
     return `${HINT_MODIFIER[b.modifier]}${HINT_BUTTON[b.button]}-drag ${HINT_VERB[action]}`;
   });
-  return `${parts.join(' · ')} · Wheel zooms`;
+  // The wheel verb follows the preference (input/wheelCamera.ts) — it is the
+  // one modifier-free gesture the user can change. Pinch and Alt+scroll are
+  // fixed in both modes, so they are stated flatly.
+  const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
+  return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
 }
 
 export function Hud(): JSX.Element {
@@ -205,7 +211,7 @@ export function Hud(): JSX.Element {
           )}
         </For>
 
-        <p class="hud-hint">{hintText(controlBindings())}</p>
+        <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
         {/* Touch capability is static per device, so the guard can be a plain
             expression — it never needs to re-run. */}
         <Show when={navigator.maxTouchPoints > 0}>

@@ -123,6 +123,48 @@ export const PINCH_ZOOM_BASE = 1.01;
  */
 export const TRACKPAD_PAN_SPEED = 1.5 / 1000;
 
+/**
+ * Wheel-delta pixels one edge-to-edge two-finger swipe across the trackpad
+ * reports. The reference for the orbit rates below, and an APPROXIMATION: the
+ * OS scales finger travel to wheel deltas with an acceleration curve that
+ * differs per platform and per pointer-speed setting, so no exact figure
+ * exists. 500 is the order of magnitude a slow, deliberate full-trackpad swipe
+ * produces on a MacBook trackpad (unverified on Windows precision trackpads,
+ * which report smaller deltas — orbiting there is correspondingly slower, not
+ * broken). Named so the two rates below stay in step when it is re-tuned.
+ */
+const TRACKPAD_FULL_SWIPE_DELTA_PIXELS = 500;
+
+/**
+ * Radians of orbit azimuth per pixel of Alt+scroll deltaX. Half a turn per
+ * full-trackpad swipe: enough to bring the far side of the map into view in
+ * one gesture, while still leaving a heading reachable without a feather-touch.
+ */
+export const TRACKPAD_ORBIT_AZIMUTH_RADIANS_PER_PIXEL =
+  Math.PI / TRACKPAD_FULL_SWIPE_DELTA_PIXELS;
+
+/**
+ * Radians of orbit polar angle per pixel of Alt+scroll deltaY. Deliberately
+ * EQUAL to the azimuth rate: OrbitControls' own drag-orbit uses one rate for
+ * both axes (2π per element height), and matching that isotropy is what makes
+ * a diagonal swipe rotate along the diagonal instead of skewing. The usable
+ * polar range is only CAMERA_MAX_POLAR_ANGLE_DEGREES wide, so a swipe reaches
+ * the clamp long before its end — that is the clamp doing its job, not a rate
+ * that needs softening.
+ */
+export const TRACKPAD_ORBIT_POLAR_RADIANS_PER_PIXEL =
+  TRACKPAD_ORBIT_AZIMUTH_RADIANS_PER_PIXEL;
+
+/**
+ * World-rotation per degree of Safari trackpad-rotation gesture, in degrees.
+ * 1 is fingers-to-world 1:1 — twisting the fingers 30° twists the map 30°,
+ * which is the only rate that can be described without qualification and the
+ * one every OS-level rotate gesture (Photos, Preview) uses. Change it only if
+ * real use says the wrist runs out of travel before the map is where it
+ * should be.
+ */
+export const SAFARI_GESTURE_ROTATE_SENSITIVITY = 1;
+
 /** Camera framing, in cells. */
 export const CAMERA_FOV_DEGREES = 55;
 export const CAMERA_NEAR = 0.1;
