@@ -7,16 +7,33 @@ import { describe, expect, it } from 'vitest';
 import { SEA_LEVEL } from '@terrace/shared';
 import { parseMonstersPayload, type MonsterState } from '../protocol.ts';
 import {
+  CTHULHU_BODY_WRINKLE_DEPTH,
   CTHULHU_FACE_TENTACLE_COUNT,
   CTHULHU_HEAD_BOTTOM,
   CTHULHU_HEAD_TOP,
+  CTHULHU_HEAD_WRINKLE_DEPTH,
   CTHULHU_LURK_DEPTH,
   CTHULHU_SHOULDER_HEIGHT,
+  CTHULHU_SHOULDER_OFFSET,
   CTHULHU_SHOULDER_THICKNESS,
+  CTHULHU_SHOULDER_WIDTH,
   CTHULHU_TORSO_HEIGHT,
   CTHULHU_TOTAL_HEIGHT,
   CTHULHU_WATERLINE_BITE,
   CTHULHU_WIDTH_CELLS,
+  CTHULHU_WING_ARM_RADIUS,
+  CTHULHU_WING_ELBOW_BULGE,
+  CTHULHU_WING_ELBOW_RISE_FRACTION,
+  CTHULHU_WING_FINGER_COUNT,
+  CTHULHU_WING_FINGER_FAN_START_RADIANS,
+  CTHULHU_WING_FINGER_LENGTH,
+  CTHULHU_WING_FINGER_RADIUS,
+  CTHULHU_WING_FINGER_RISE,
+  CTHULHU_WING_FINGER_SPREAD,
+  CTHULHU_WING_FOLD_RISE,
+  CTHULHU_WING_LEAN_RADIANS,
+  CTHULHU_WING_OFFSET,
+  CTHULHU_WING_TIP_HEIGHT,
 } from '../client/anatomy.ts';
 import {
   DEFAULT_INTERPOLATION_SECONDS,
@@ -214,5 +231,81 @@ describe('silhouette', () => {
 
   it('is taller than it is wide — the hunch, not a raft', () => {
     expect(CTHULHU_TOTAL_HEIGHT).toBeGreaterThan(CTHULHU_WIDTH_CELLS);
+  });
+
+  it('is as tall as it is because of the wings, not the skull', () => {
+    // The tallest point is the tip of the topmost folded finger. If the head
+    // ever overtakes it the hunch has stopped reading, and this is the test
+    // that says so rather than a screenshot nobody takes.
+    expect(CTHULHU_TOTAL_HEIGHT).toBe(CTHULHU_WING_TIP_HEIGHT);
+    expect(CTHULHU_WING_TIP_HEIGHT).toBeGreaterThan(CTHULHU_HEAD_TOP);
+  });
+
+  it('aims the topmost finger at exactly the rise its tip height is derived from', () => {
+    // The wing geometry places that finger by ANGLE and the silhouette height
+    // claims its RISE; this is the derivation that keeps the two the same
+    // number. Break it and the model is quietly a different height than the
+    // placement maths and the tests above believe.
+    expect(
+      Math.cos(CTHULHU_WING_FINGER_FAN_START_RADIANS) * CTHULHU_WING_FINGER_LENGTH,
+    ).toBeCloseTo(CTHULHU_WING_FINGER_RISE, 10);
+  });
+});
+
+describe('skin sculpt', () => {
+  it('only ever carves inward, so the stated extents are real bounds', () => {
+    // The sculpt is what makes the model organic, and the reason it is stated
+    // as a DEPTH rather than an amplitude: every dimension in anatomy.ts — and
+    // CTHULHU_LURK_DEPTH, derived from one of them — is a bound the placement
+    // maths trusts. Both depths are positive distances taken off the surface.
+    expect(CTHULHU_HEAD_WRINKLE_DEPTH).toBeGreaterThan(0);
+    expect(CTHULHU_BODY_WRINKLE_DEPTH).toBeGreaterThan(0);
+  });
+
+  it('cannot wrinkle the head back under the waterline it was lifted clear of', () => {
+    // The head bottom rides exactly CTHULHU_WATERLINE_BITE under the surface, so
+    // a dent deeper than the bite could put dry skull below the water — or, on
+    // the other side of the same coin, lift a piece of the rim out of it.
+    expect(CTHULHU_HEAD_WRINKLE_DEPTH).toBeLessThan(CTHULHU_WATERLINE_BITE);
+  });
+
+  it('cannot wrinkle a shoulder crown under the surface it has to break', () => {
+    const crownClearance =
+      CTHULHU_SHOULDER_HEIGHT + CTHULHU_SHOULDER_THICKNESS / 2 - CTHULHU_LURK_DEPTH;
+    expect(crownClearance).toBeGreaterThan(0);
+    expect(CTHULHU_BODY_WRINKLE_DEPTH).toBeLessThan(crownClearance);
+  });
+});
+
+describe('footprint', () => {
+  /**
+   * The three candidates for the widest point on the model, each written the way
+   * the builder computes it. The server steers by CTHULHU_WIDTH_CELLS, so a
+   * wing that grows past it is a wing that goes through a cliff the look-ahead
+   * probe called clear — and nothing else in the suite would notice.
+   */
+  const halfFootprint = CTHULHU_WIDTH_CELLS / 2;
+
+  it('keeps the shoulders inside the footprint the server steers by', () => {
+    expect(CTHULHU_SHOULDER_OFFSET + CTHULHU_SHOULDER_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
+  });
+
+  it('keeps the wing elbow inside it', () => {
+    const elbowRise = CTHULHU_WING_FOLD_RISE * CTHULHU_WING_ELBOW_RISE_FRACTION;
+    const elbowReach =
+      CTHULHU_WING_OFFSET +
+      elbowRise * Math.tan(CTHULHU_WING_LEAN_RADIANS) +
+      CTHULHU_WING_ELBOW_BULGE +
+      CTHULHU_WING_ARM_RADIUS;
+    expect(elbowReach).toBeLessThanOrEqual(halfFootprint);
+  });
+
+  it('keeps the outermost finger inside it', () => {
+    const fingerReach =
+      CTHULHU_WING_OFFSET +
+      CTHULHU_WING_FOLD_RISE * Math.tan(CTHULHU_WING_LEAN_RADIANS) +
+      (CTHULHU_WING_FINGER_COUNT - 1) * CTHULHU_WING_FINGER_SPREAD +
+      CTHULHU_WING_FINGER_RADIUS;
+    expect(fingerReach).toBeLessThanOrEqual(halfFootprint);
   });
 });
