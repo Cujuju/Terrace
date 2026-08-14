@@ -18,6 +18,7 @@ import {
   WILDLIFE_ENTITIES_MESSAGE,
   WILDLIFE_PLUGIN_NAME,
   parseEntitiesPayload,
+  sizeClassAt,
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import { createWildlifeModels, type CreatureModel, type WildlifeModels } from './models.ts';
@@ -63,7 +64,9 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
 
   for (const [id, entity] of sampled) {
     if (views.has(id)) continue;
-    const model = models.create(entity.species);
+    // Size is fixed for a creature's whole life (the server draws it at spawn),
+    // so it is baked into the model here rather than re-read every frame.
+    const model = models.create(entity.species, sizeClassAt(entity.size));
     container.add(model.root);
     views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID });
   }

@@ -23,18 +23,22 @@ export interface HabitatWorld {
  *
  * 150 is a bandwidth number, not an ecology one (raised from 100 on 2026-08-14
  * with the density retune in species.ts). The full-state broadcast costs
- * roughly 52 B per creature once msgpack has encoded the five keys and their
- * values, so:
+ * roughly 58 B per creature once msgpack has encoded the six keys and their
+ * values — 52 B for the original five, plus 6 B for the `size` key and its
+ * single-byte class index (protocol.ts) — so:
  *
- *   150 × 52 B          = 7.8 KB per message
- *   × 5 Hz              = 39 KB/s  ≈ 312 kbit/s of steady downstream PER CLIENT
- *   × ~10 players       ≈ 3.1 Mbit/s of server upstream on wildlife alone
+ *   150 × 58 B          = 8.7 KB per message
+ *   × 5 Hz              = 43.5 KB/s ≈ 348 kbit/s of steady downstream PER CLIENT
+ *   × ~10 players       ≈ 3.5 Mbit/s of server upstream on wildlife alone
  *
  * (The 5 Hz cadence and why it is not 10 Hz are argued in server/index.ts.)
  * That is up from ~210 kbit/s per client at the old cap of 100 — still a
  * fraction of a modest home upstream, so the "roughly ten concurrent players
  * with room left for terrain diffs" figure survives the raise; it is what stops
  * the cap going higher. The cap is the dial to turn, and it is here.
+ *
+ * It now BINDS on a fully revealed 512² world (the densities ask for 246 there,
+ * see species.ts), which is the accepted cost of enough fish to see schools.
  */
 export const WILDLIFE_POPULATION_CAP = 150;
 

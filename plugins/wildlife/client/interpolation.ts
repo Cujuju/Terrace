@@ -17,6 +17,11 @@ export interface InterpolatedEntity {
   readonly x: number;
   readonly y: number;
   readonly heading: number;
+  /**
+   * Size-class index, carried through untouched. It is not interpolated because
+   * it cannot change: the server draws a creature's size once, at spawn.
+   */
+  readonly size: number;
 }
 
 /**
@@ -153,6 +158,7 @@ export class WildlifeInterpolator {
         x: lerp(start.x, entity.x, t),
         y: lerp(start.y, entity.y, t),
         heading: lerpAngle(start.heading, entity.heading, t),
+        size: entity.size,
       });
     }
 

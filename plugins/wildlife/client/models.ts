@@ -30,7 +30,11 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
-import type { WildlifeSpecies } from '../protocol.ts';
+import {
+  WILDLIFE_SIZE_MODEL_SCALE,
+  type WildlifeSizeClass,
+  type WildlifeSpecies,
+} from '../protocol.ts';
 
 /**
  * Sphere tessellation. 6 segments around, 4 rings tall: the fewest that still
@@ -75,7 +79,13 @@ export interface CreatureModel {
 }
 
 export interface WildlifeModels {
-  create(species: WildlifeSpecies): CreatureModel;
+  /**
+   * Builds one creature. `sizeClass` scales the whole rig uniformly — the
+   * geometries stay shared and un-scaled (they are the medium-sized authoring,
+   * see WILDLIFE_SIZE_MODEL_SCALE), so a size class costs a transform on the
+   * root Group and not a second copy of every buffer.
+   */
+  create(species: WildlifeSpecies, sizeClass: WildlifeSizeClass): CreatureModel;
   /** Frees every shared geometry and material. Call once, at plugin dispose. */
   dispose(): void;
 }
@@ -246,8 +256,13 @@ export function createWildlifeModels(): WildlifeModels {
   };
 
   return {
-    create(species) {
-      return constructors[species]();
+    create(species, sizeClass) {
+      const model = constructors[species]();
+      // Uniform, on the ROOT: `animate` only ever touches the inner rig, and the
+      // caller only ever sets position and rotation.y, so nothing downstream can
+      // overwrite the scale on a later frame.
+      model.root.scale.setScalar(WILDLIFE_SIZE_MODEL_SCALE[sizeClass]);
+      return model;
     },
     dispose() {
       for (const geometry of geometries) geometry.dispose();
