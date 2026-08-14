@@ -10,6 +10,7 @@ import {
 import {
   FIRST_LAND_PALETTE_INDEX,
   LAST_PALETTE_INDEX,
+  SEABED_DEPTH_STOPS,
   SEABED_PALETTE_INDEX,
   TERRAIN_PALETTE,
   bandColorOf,
@@ -39,10 +40,35 @@ describe('TERRAIN_PALETTE', () => {
 });
 
 describe('bandPaletteIndex', () => {
-  it('maps everything at or below sea level to the seabed', () => {
-    expect(bandPaletteIndex(SEA_LEVEL - 1)).toBe(SEABED_PALETTE_INDEX);
-    expect(bandPaletteIndex(-BAND_HEIGHT)).toBe(SEABED_PALETTE_INDEX);
-    expect(bandPaletteIndex(MIN_HEIGHT)).toBe(SEABED_PALETTE_INDEX);
+  it('steps one seabed stop per band of depth, clamping at the deepest', () => {
+    // The flats (h = 0) are stop 0; each band down takes the next stop —
+    // mirroring how the dry side steps at band edges — and everything past
+    // the ramp shares the deepest stop rather than wrapping into land colours.
+    expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
+    expect(bandPaletteIndex(SEA_LEVEL - 1)).toBe(SEABED_PALETTE_INDEX + 1);
+    expect(bandPaletteIndex(-BAND_HEIGHT)).toBe(SEABED_PALETTE_INDEX + 1);
+    expect(bandPaletteIndex(-BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 2);
+    expect(bandPaletteIndex(-2 * BAND_HEIGHT - 1)).toBe(SEABED_DEPTH_STOPS - 1);
+    expect(bandPaletteIndex(-3 * BAND_HEIGHT - 1)).toBe(SEABED_DEPTH_STOPS - 1);
+    expect(bandPaletteIndex(MIN_HEIGHT)).toBe(SEABED_DEPTH_STOPS - 1);
+  });
+
+  it('keeps every seabed stop below the land ramp', () => {
+    for (let h = MIN_HEIGHT; h <= SEA_LEVEL; h++) {
+      expect(bandPaletteIndex(h)).toBeLessThan(FIRST_LAND_PALETTE_INDEX);
+    }
+  });
+
+  it('darkens the seabed with depth, so underwater terraces read apart', () => {
+    // The owner-reported contrast (2026-08-14): through the water tint the
+    // treads themselves must differ, strictly, at every stop.
+    const luminance = ([r, g, b]: readonly [number, number, number]): number =>
+      r + g + b;
+    for (let stop = 1; stop < SEABED_DEPTH_STOPS; stop++) {
+      expect(luminance(TERRAIN_PALETTE[stop])).toBeLessThan(
+        luminance(TERRAIN_PALETTE[stop - 1]),
+      );
+    }
   });
 
   it('treats sea level itself as water, agreeing with shared isWater', () => {
@@ -112,7 +138,7 @@ describe('bandPaletteIndex', () => {
 
 describe('bandColorOf', () => {
   it('returns the palette entry the index selects', () => {
-    expect(bandColorOf(-1)).toBe(TERRAIN_PALETTE[SEABED_PALETTE_INDEX]);
+    expect(bandColorOf(-1)).toBe(TERRAIN_PALETTE[SEABED_PALETTE_INDEX + 1]);
     expect(bandColorOf(0)).toBe(TERRAIN_PALETTE[SEABED_PALETTE_INDEX]);
     expect(bandColorOf(1)).toBe(TERRAIN_PALETTE[FIRST_LAND_PALETTE_INDEX]);
     expect(bandColorOf(MAX_HEIGHT)).toBe(TERRAIN_PALETTE[LAST_PALETTE_INDEX]);

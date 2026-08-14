@@ -17,29 +17,54 @@ function rgb(hex: number): Rgb {
 }
 
 /**
- * Palette index 0 is the seabed — everything at or below SEA_LEVEL, seen
- * through the translucent water plane. Indices 1..N are the land ramp, one
- * step per terrace band starting at band 0 (the first band above sea level).
+ * Seabed stops — one per terrace band BELOW the waterline, darkening with
+ * depth, before the land ramp begins (owner report, 2026-08-14: "we need more
+ * contrast on the layers underneath the water because they're difficult to
+ * see" — with a single seabed colour, underwater terraces differed only by
+ * their cliff skirts, and through the water plane that all but vanished).
+ *
+ * FOUR stops because that is the world's own underwater anatomy: the h = 0
+ * waterline flats, then the three genesis strata (shelf −1, ring −2, deep −3;
+ * see the server's fresh-world genesis). Band −3 is also exactly where deep
+ * water — monster habitat — begins, so everything at that depth and below
+ * sharing the darkest stop is a statement, not a truncation: past the light,
+ * the deep is one material.
  */
-export const SEABED_PALETTE_INDEX = 0;
-export const FIRST_LAND_PALETTE_INDEX = 1;
+export const SEABED_DEPTH_STOPS = 4;
 
 /**
- * The ramp. Eight land stops: sand at the shoreline, grass, rock, then
- * snowcap. Bands at or above the last stop all render as snow — a band-7 peak
- * is already 448 height units of relief, unambiguously a mountain top, so
- * there is nothing above it that needs its own colour.
+ * Index 0 is the SHALLOWEST seabed (the h = 0 flats — also every cell of a
+ * freshly created world); deeper bands take the next indices, then the land
+ * ramp, one step per terrace band starting at band 0 (the first above sea).
+ */
+export const SEABED_PALETTE_INDEX = 0;
+export const FIRST_LAND_PALETTE_INDEX = SEABED_DEPTH_STOPS;
+
+/**
+ * The ramp: four seabed depth stops, then eight land stops — sand at the
+ * shoreline, grass, rock, then snowcap. Bands at or above the last stop all
+ * render as snow — a band-7 peak is already 448 height units of relief,
+ * unambiguously a mountain top, so there is nothing above it that needs its
+ * own colour.
+ *
+ * The seabed stops keep the established muddy-green family (the old single
+ * seabed sat between today's 0 and 1) but step ~20% darker and bluer per
+ * band, sized so the difference still reads through the translucent water
+ * tint that compresses whatever contrast the treads have.
  */
 export const TERRAIN_PALETTE: readonly Rgb[] = [
-  rgb(0x4a5f52), // 0 seabed
-  rgb(0xd9c89a), // 1 band 0 — beach sand at the waterline
-  rgb(0x7fae52), // 2 band 1 — bright lowland grass
-  rgb(0x689a45), // 3 band 2 — grass
-  rgb(0x52863b), // 4 band 3 — highland grass
-  rgb(0x7d7a6e), // 5 band 4 — exposed rock
-  rgb(0x8f8c82), // 6 band 5 — rock
-  rgb(0xa8a49a), // 7 band 6 — pale high rock
-  rgb(0xf2f4f6), // 8 band 7+ — snow
+  rgb(0x6a7f68), // 0 seabed, waterline flats (h = 0)
+  rgb(0x50705d), // 1 seabed, band −1 — the shelf
+  rgb(0x3a5b52), // 2 seabed, band −2 — the ring
+  rgb(0x274347), // 3 seabed, band −3 and deeper — deep water, monster country
+  rgb(0xd9c89a), // 4 band 0 — beach sand at the waterline
+  rgb(0x7fae52), // 5 band 1 — bright lowland grass
+  rgb(0x689a45), // 6 band 2 — grass
+  rgb(0x52863b), // 7 band 3 — highland grass
+  rgb(0x7d7a6e), // 8 band 4 — exposed rock
+  rgb(0x8f8c82), // 9 band 5 — rock
+  rgb(0xa8a49a), // 10 band 6 — pale high rock
+  rgb(0xf2f4f6), // 11 band 7+ — snow
 ];
 
 /** Highest valid index; bands beyond the ramp clamp here. */
@@ -60,7 +85,15 @@ export const LAST_PALETTE_INDEX = TERRAIN_PALETTE.length - 1;
  * quantizeToBand(1) === 0, so a quantised input would call dry land water.
  */
 export function bandPaletteIndex(height: number): number {
-  if (isWater(height)) return SEABED_PALETTE_INDEX;
+  if (isWater(height)) {
+    // One stop per band of depth: bandOf(0) = 0 (the flats), bandOf(−1) = −1
+    // (the shelf), and so on down; depths past the ramp clamp to the deepest
+    // stop rather than wrapping into the land colours. `0 -` rather than the
+    // unary minus so the flats index as +0, not -0 (equal as an index, but a
+    // strict-equality landmine for every consumer that compares indices).
+    const depth = 0 - bandOf(height);
+    return depth >= SEABED_DEPTH_STOPS ? SEABED_DEPTH_STOPS - 1 : depth;
+  }
   const index = FIRST_LAND_PALETTE_INDEX + bandOf(height);
   return index > LAST_PALETTE_INDEX ? LAST_PALETTE_INDEX : index;
 }
