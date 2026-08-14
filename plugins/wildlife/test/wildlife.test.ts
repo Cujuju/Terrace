@@ -15,7 +15,12 @@ import {
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
-import type { World } from '../../../server/src/world/world.ts';
+import { INITIAL_UNLOCK_CHUNK_SPAN } from '../../../server/src/world/initial-unlock.ts';
+import {
+  FRESH_SEABED_BANDS_BELOW_SEA,
+  FRESH_SEABED_HEIGHT,
+  World,
+} from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
 import { WILDLIFE_SPECIES, type WildlifeSpecies } from '../protocol.ts';
 import {
@@ -32,11 +37,20 @@ import {
 import { FLEE_SPEED_MULTIPLIER, isFleeing, speedOf } from '../server/movement.ts';
 import { loadPopulation } from '../server/persistence.ts';
 import {
+  NATURAL_LIFESPAN_SECONDS,
+  SPAWN_MEAN_WAIT_SECONDS,
+  despawnInvalidHabitat,
   livingEntities,
+  naturalDepartureCount,
   pendingCreditCount,
   populationTargets,
 } from '../server/population.ts';
-import { DEEP_WATER_MAX_HEIGHT, habitatOf, profileOf } from '../server/species.ts';
+import {
+  DEEP_WATER_BANDS_BELOW_SEA,
+  DEEP_WATER_MAX_HEIGHT,
+  habitatOf,
+  profileOf,
+} from '../server/species.ts';
 import { worldWithTerrain } from './support/world.ts';
 
 /** 256² cells = 16×16 chunks — big enough that all four habitats are populated. */
@@ -44,6 +58,43 @@ const WORLD_SIZE = 256;
 
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
+
+const TICKS_PER_SIMULATED_SECOND = 1 / TICK_DT;
+
+/** Ticks for `seconds` of simulated time, as a whole number of ticks. */
+function ticksFor(seconds: number): number {
+  return Math.round(seconds * TICKS_PER_SIMULATED_SECOND);
+}
+
+/**
+ * Simulated seconds after which a population is treated as "settled".
+ *
+ * The deficit decays with time constant SPAWN_MEAN_WAIT_SECONDS, so six time
+ * constants leaves e⁻⁶ ≈ 0.2% of the initial deficit unfilled — far inside the
+ * ordinary birth/death jitter the bounds below allow for.
+ */
+const SETTLE_TIME_CONSTANTS = 6;
+const SETTLE_SECONDS = SPAWN_MEAN_WAIT_SECONDS * SETTLE_TIME_CONSTANTS;
+
+/**
+ * Lower bound, as a fraction of target, that a settled population must hold.
+ *
+ * Theory puts the equilibrium at 1/(1 + W/L) ≈ 0.94 of target (see the header
+ * of server/population.ts). 0.6 is generous enough that the small-integer
+ * habitats in this test world (5 fish, 8 whales) cannot trip it on ordinary
+ * Poisson jitter, and tight enough to fail if spawning stops working.
+ */
+const SETTLED_POPULATION_FLOOR_FRACTION = 0.6;
+
+/**
+ * Upper bound, as a fraction of target, on how full a population may be after a
+ * SHORT burst of ticks — the assertion that arrivals are spread out rather than
+ * instant. In BURST_SECONDS the deficit only decays by
+ * 1 − e^(−BURST/W) ≈ 14%, so 0.5 leaves enormous margin while still failing
+ * loudly if the old fill-on-sight behaviour ever comes back.
+ */
+const BURST_SECONDS = 3;
+const BURST_POPULATION_CEILING_FRACTION = 0.5;
 
 /**
  * A north-to-south ramp: abyss at y=0, shoreline at y=200, hills below that.
@@ -72,10 +123,10 @@ interface Harness {
   readonly sink: RecordingSink;
 }
 
-function boot(): Harness {
+/** Boots the plugin, through the real host, onto an already-built world. */
+function bootOn(world: World): Harness {
   resetWildlifeState();
 
-  const world = worldWithTerrain(WORLD_SIZE, rampHeight, isChunkLocked);
   const sink = new RecordingSink();
   world.setSink(sink);
 
@@ -85,6 +136,10 @@ function boot(): Harness {
   host.playerJoined(PLAYER);
 
   return { world, host, sink };
+}
+
+function boot(): Harness {
+  return bootOn(worldWithTerrain(WORLD_SIZE, rampHeight, isChunkLocked));
 }
 
 /**
@@ -106,9 +161,15 @@ function tick(harness: Harness, times: number): void {
   for (let n = 0; n < times; n++) harness.host.tick(TICK_DT);
 }
 
-/** Ticks until every species has reached its target, or gives up. */
+/** Ticks long enough for the stochastic fill to settle near its targets. */
 function fillPopulation(harness: Harness): void {
-  tick(harness, 200);
+  tick(harness, ticksFor(SETTLE_SECONDS));
+}
+
+/** Sum of the current per-species targets. */
+function totalTarget(): number {
+  const targets = populationTargets();
+  return WILDLIFE_SPECIES.reduce((sum, species) => sum + targets[species], 0);
 }
 
 function countsBySpecies(): Record<WildlifeSpecies, number> {
@@ -145,6 +206,48 @@ describe('habitat classification', () => {
   });
 });
 
+describe('a fresh world as habitat', () => {
+  it('puts the fresh seabed at or below the deep-water threshold', () => {
+    // THE cross-package contract: core sets the fresh seabed depth and cannot
+    // import this plugin's threshold, so the relation between the two numbers is
+    // asserted here. If either moves the wrong way, whales lose their habitat on
+    // day one all over again — which is the bug this pair of constants fixes.
+    expect(FRESH_SEABED_BANDS_BELOW_SEA).toBeGreaterThanOrEqual(DEEP_WATER_BANDS_BELOW_SEA);
+    expect(FRESH_SEABED_HEIGHT).toBeLessThanOrEqual(DEEP_WATER_MAX_HEIGHT);
+    expect(habitatOf(FRESH_SEABED_HEIGHT)).toBe('deep');
+  });
+
+  it('classifies every cell of a fresh world as deep water', () => {
+    const world = World.createFresh(WORLD_SIZE);
+    for (let y = 0; y < WORLD_SIZE; y++) {
+      for (let x = 0; x < WORLD_SIZE; x++) {
+        if (habitatOf(world.heightAt(x, y)) === 'deep') continue;
+        // Report the first offender rather than 65 536 passing assertions.
+        throw new Error(`cell (${x},${y}) is ${habitatOf(world.heightAt(x, y))}, not deep`);
+      }
+    }
+    expect(world.heightAt(0, 0)).toBe(FRESH_SEABED_HEIGHT);
+  });
+
+  it('spawns whales and deep-sea creatures on a fresh world, and nothing else', () => {
+    const harness = bootOn(World.createFresh(WORLD_SIZE));
+    tick(harness, ticksFor(SETTLE_SECONDS));
+
+    const counts = countsBySpecies();
+    expect(counts.whale).toBeGreaterThanOrEqual(1);
+    expect(counts.deepsea).toBeGreaterThanOrEqual(4);
+    // No shallow shelf and no land exist yet, so these two cannot be anywhere.
+    expect(counts.fish).toBe(0);
+    expect(counts.grazer).toBe(0);
+
+    // And they are where the starter unlock is — not scattered over the locked
+    // remainder of the ocean.
+    for (const entity of livingEntities()) {
+      expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
+    }
+  });
+});
+
 describe('population targets', () => {
   it('scales each species with the area of ITS habitat', () => {
     const targets = targetsFor({ land: 8000, shallow: 3000, deep: 12000 });
@@ -166,11 +269,34 @@ describe('population targets', () => {
     const targets = targetsFor({ land: 131072, shallow: 52429, deep: 78643 });
     const total = WILDLIFE_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // The documented ecosystem: ~85 creatures, with fish the most numerous and
-    // whales the rarest.
+    // The documented ecosystem after the 2026-08-14 retune: 167 asked for, the
+    // cap scaling that to 148, with whales still the rarest species.
     expect(total).toBeGreaterThan(WILDLIFE_POPULATION_CAP / 2);
     expect(targets.fish).toBeGreaterThan(targets.whale);
     expect(targets.whale).toBeGreaterThan(0);
+  });
+
+  it("stocks a fresh world's starter ocean with deep-water life on day one", () => {
+    // Every cell of a fresh world is deep water, so the starter region's whole
+    // area counts as deep habitat and nothing else exists yet.
+    const starterEdgeCells = INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE;
+    const starterCells = starterEdgeCells * starterEdgeCells;
+    const targets = targetsFor({ land: 0, shallow: 0, deep: starterCells });
+
+    // The documented densities, restated as the outcome they were chosen for.
+    expect(targets.whale).toBe(
+      Math.floor(starterCells / profileOf('whale').habitatCellsPerIndividual),
+    );
+    expect(targets.deepsea).toBe(
+      Math.floor(starterCells / profileOf('deepsea').habitatCellsPerIndividual),
+    );
+    // "2–3 whales and several deep-sea creatures immediately" (owner, 2026-08-14).
+    expect(targets.whale).toBeGreaterThanOrEqual(2);
+    expect(targets.deepsea).toBeGreaterThanOrEqual(5);
+    // Fish and grazers have no habitat until someone sculpts a shelf or an
+    // island — a fresh world is open ocean, and this is the honest consequence.
+    expect(targets.fish).toBe(0);
+    expect(targets.grazer).toBe(0);
   });
 
   it('scales every species down proportionally rather than truncating one', () => {
@@ -194,19 +320,59 @@ describe('wildlife plugin', () => {
     expect(harness.host.pluginNames).toEqual(['wildlife']);
   });
 
-  it('starts empty and fills to the habitat targets, then holds steady', () => {
+  it('starts empty and trends toward the habitat targets without ever exceeding them', () => {
     expect(livingEntities()).toHaveLength(0);
 
     fillPopulation(harness);
     const targets = populationTargets();
-    expect(countsBySpecies()).toEqual(targets);
+    const counts = countsBySpecies();
+
+    // Never ABOVE target: credits are only ever issued for a deficit, so this is
+    // an invariant of the credit path and can be asserted exactly.
+    for (const species of WILDLIFE_SPECIES) {
+      expect(counts[species]).toBeLessThanOrEqual(targets[species]);
+    }
 
     const settled = livingEntities().length;
-    expect(settled).toBeGreaterThan(0);
+    expect(settled).toBeGreaterThanOrEqual(
+      Math.floor(totalTarget() * SETTLED_POPULATION_FLOOR_FRACTION),
+    );
     expect(settled).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
+  });
 
-    tick(harness, 300);
-    expect(livingEntities()).toHaveLength(settled);
+  it('arrives gradually rather than filling on sight', () => {
+    // One census has run by the first tick, so the whole deficit is already
+    // booked as ripe credits: anything still missing here is missing because the
+    // spawn hazard has not fired yet, not because nothing has been asked for.
+    tick(harness, ticksFor(BURST_SECONDS));
+
+    expect(pendingCreditCount()).toBeGreaterThan(0);
+    expect(livingEntities().length).toBeLessThan(
+      totalTarget() * BURST_POPULATION_CEILING_FRACTION,
+    );
+  });
+
+  it('keeps turning over at equilibrium: creatures leave and others take their place', () => {
+    fillPopulation(harness);
+    const settled = livingEntities().length;
+    const idsBefore = new Set(livingEntities().map((entity) => entity.id));
+    const departuresBefore = naturalDepartureCount();
+
+    // Two mean lifetimes: the expected number of departures is ~2 × the living
+    // population, so "nothing left" would be a broken turnover rate, not luck.
+    tick(harness, ticksFor(NATURAL_LIFESPAN_SECONDS * 2));
+
+    expect(naturalDepartureCount()).toBeGreaterThan(departuresBefore);
+
+    // Replaced, not merely lost: the population is still near target and some of
+    // the creatures alive now did not exist before.
+    const after = livingEntities();
+    expect(after.length).toBeGreaterThanOrEqual(
+      Math.floor(totalTarget() * SETTLED_POPULATION_FLOOR_FRACTION),
+    );
+    expect(after.length).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
+    expect(after.some((entity) => !idsBefore.has(entity.id))).toBe(true);
+    expect(settled).toBeGreaterThan(0);
   });
 
   it('spawns nothing outside its habitat or outside unlocked territory', () => {
@@ -228,15 +394,22 @@ describe('wildlife plugin', () => {
 
     // 60 s of simulated wandering — long enough for the fastest species to cross
     // the whole habitat band several times and meet every boundary.
-    for (let n = 0; n < 600; n++) {
+    for (let n = 0; n < ticksFor(60); n++) {
       harness.host.tick(TICK_DT);
       for (const entity of livingEntities()) {
         expect(isValidCellFor(view, entity.species, entity.x, entity.y)).toBe(true);
       }
     }
 
-    // Nothing was quietly culled to keep the invariant true.
-    expect(livingEntities()).toHaveLength(before);
+    // Nothing was quietly culled to keep the invariant true. Population size is
+    // no longer the way to assert that — natural turnover moves it every tick —
+    // so ask the sweep directly: it finds nothing to remove, which means every
+    // creature that left over those 60 s left of old age, not because the
+    // steering let it stray somewhere illegal and the sweep tidied up after it.
+    expect(despawnInvalidHabitat(view)).toBe(0);
+    expect(livingEntities().length).toBeGreaterThanOrEqual(
+      Math.floor(before * SETTLED_POPULATION_FLOOR_FRACTION),
+    );
   });
 
   it('treats locked chunks as walls', () => {
@@ -363,10 +536,24 @@ describe('wildlife plugin', () => {
     }
     expect(countsBySpecies().fish).toBeLessThan(targets.fish);
 
-    // The credit ripens after HABITAT_LOSS_RESPAWN_DELAY_SECONDS; give it that
-    // plus a census interval to be re-counted.
-    tick(harness, 200);
-    expect(countsBySpecies().fish).toBe(populationTargets().fish);
+    // "Recovered" is now a statement about a NEW fish existing, not about the
+    // count hitting the target on a given tick: with turnover the count is a
+    // fluctuating quantity, but an id that did not exist before can only have
+    // come from a spawn. Ids are never reused (see the persistence suite).
+    const highestIdBefore = Math.max(...livingEntities().map((entity) => entity.id));
+    const newFishSeen = new Set<number>();
+
+    // Watch the whole window rather than only its last frame: a fish that
+    // spawned and later died of old age still proves the recovery happened.
+    for (let n = 0; n < ticksFor(SETTLE_SECONDS * 2); n++) {
+      harness.host.tick(TICK_DT);
+      for (const entity of livingEntities()) {
+        if (entity.species !== 'fish' || entity.id <= highestIdBefore) continue;
+        newFishSeen.add(entity.id);
+        expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
+      }
+    }
+    expect(newFishSeen.size).toBeGreaterThan(0);
   });
 });
 

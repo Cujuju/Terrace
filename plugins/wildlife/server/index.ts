@@ -19,19 +19,20 @@
 //     staleness and nothing else; there is no diff stream to desynchronise;
 //   * no join handshake — a joining client is caught up by the next broadcast,
 //     so this plugin needs no onPlayerJoin snapshot path at all;
-//   * bounded cost — WILDLIFE_POPULATION_CAP (100) puts a hard ceiling on the
+//   * bounded cost — WILDLIFE_POPULATION_CAP (150) puts a hard ceiling on the
 //     payload, so the bandwidth is a constant, not a function of how long the
 //     world has been running.
 //
 // The price is bandwidth. Per creature the payload is five keys — id, species,
 // x, y, heading — which msgpack encodes in roughly 52 B including the key
 // strings (Colyseus re-sends keys on every message; there is no schema here).
-// 100 creatures ≈ 5.2 KB per broadcast.
+// 150 creatures × 52 B ≈ 7.8 KB per broadcast (recomputed 2026-08-14 when the
+// cap went from 100 to 150 — the old figures were 5.2 KB / 26 KB/s / 210 kbit/s).
 //
-//   every tick  (10 Hz): 52 KB/s ≈ 420 kbit/s per client
-//   every OTHER tick (5 Hz): 26 KB/s ≈ 210 kbit/s per client   ← chosen
+//   every tick  (10 Hz): 78 KB/s ≈ 624 kbit/s per client
+//   every OTHER tick (5 Hz): 39 KB/s ≈ 312 kbit/s per client   ← chosen
 //
-// 5 Hz is chosen because the extra 210 kbit/s buys nothing a player can see.
+// 5 Hz is chosen because the extra 312 kbit/s buys nothing a player can see.
 // The fastest species cruises at 3 cells/s, so between two 200 ms updates it
 // covers 0.6 cells — well under one cell, and the client interpolates across the
 // gap (client/interpolation.ts). Even a fleeing fish at ×3 covers 1.8 cells,
@@ -94,16 +95,18 @@ let tickCount = 0;
  * THE SIM STEP — CRITICAL PATH.
  *
  * Fixed order, once per host tick:
- *   1. population — census (every HABITAT_CENSUS_INTERVAL_SECONDS) and at most
- *      one spawn group, so the world fills and recovers gradually;
+ *   1. population — natural turnover, the census (every
+ *      HABITAT_CENSUS_INTERVAL_SECONDS) and a PROBABILISTIC spawn roll, so the
+ *      world fills and recovers gradually and never stops changing;
  *   2. movement — every creature wanders or flees, steering around anything that
  *      is not its habitat and around locked territory;
  *   3. habitat sweep — anything now standing somewhere invalid despawns with a
  *      respawn credit. Movement cannot produce this on its own (it vetoes bad
  *      steps), so in practice this catches creatures the TERRAIN moved out from
- *      under. It runs anyway, unconditionally: it is 100 height lookups, and it
- *      is the invariant "no creature is ever outside its habitat" made true by
- *      construction rather than by trusting step 2;
+ *      under. It runs anyway, unconditionally: it is at most
+ *      WILDLIFE_POPULATION_CAP height lookups, and it is the invariant "no
+ *      creature is ever outside its habitat" made true by construction rather
+ *      than by trusting step 2;
  *   4. broadcast, on the cadence.
  *
  * Steps 1–3 are all driven by `dt`; nothing here reads a wall clock.

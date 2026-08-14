@@ -21,16 +21,22 @@ export interface HabitatWorld {
 /**
  * Hard ceiling on living creatures, whatever the habitat census says.
  *
- * 100 is a bandwidth number, not an ecology one. The full-state broadcast costs
+ * 150 is a bandwidth number, not an ecology one (raised from 100 on 2026-08-14
+ * with the density retune in species.ts). The full-state broadcast costs
  * roughly 52 B per creature once msgpack has encoded the five keys and their
- * values; 100 creatures is ~5.2 KB per message, and at the 5 Hz cadence (see
- * server/index.ts) ~26 KB/s ≈ 210 kbit/s of steady downstream PER CLIENT. That
- * is a fraction of a modest home upstream, so a self-hoster can carry roughly
- * ten concurrent players on wildlife traffic alone and still have room for
- * terrain diffs. Double the cap and that budget halves; the cap is the dial to
- * turn, and it is here.
+ * values, so:
+ *
+ *   150 × 52 B          = 7.8 KB per message
+ *   × 5 Hz              = 39 KB/s  ≈ 312 kbit/s of steady downstream PER CLIENT
+ *   × ~10 players       ≈ 3.1 Mbit/s of server upstream on wildlife alone
+ *
+ * (The 5 Hz cadence and why it is not 10 Hz are argued in server/index.ts.)
+ * That is up from ~210 kbit/s per client at the old cap of 100 — still a
+ * fraction of a modest home upstream, so the "roughly ten concurrent players
+ * with room left for terrain diffs" figure survives the raise; it is what stops
+ * the cap going higher. The cap is the dial to turn, and it is here.
  */
-export const WILDLIFE_POPULATION_CAP = 100;
+export const WILDLIFE_POPULATION_CAP = 150;
 
 /**
  * Seconds between habitat censuses. The census walks every cell of every
@@ -103,8 +109,12 @@ export function emptySpeciesCounts(): Record<WildlifeSpecies, number> {
  *
  * The cap is applied by scaling every species down proportionally rather than by
  * truncating whichever species happened to be counted last: an ocean world that
- * asks for 175 fish should end up with a smaller but still correctly-shaped
+ * asks for 260 fish should end up with a smaller but still correctly-shaped
  * ecosystem, not with the fish quota eating the whales.
+ *
+ * These are TARGETS, not a quota that gets filled on sight — population.ts
+ * approaches them stochastically and lets creatures leave again, so the living
+ * count sits a little under target and never stops moving.
  */
 export function targetsFor(
   cellsByHabitat: Readonly<Record<Habitat, number>>,
