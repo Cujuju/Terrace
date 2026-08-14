@@ -92,8 +92,15 @@ export interface Connection {
    * Sends a sculpt intent if a room is joined; a no-op otherwise. Dropping
    * intents while offline is correct — the server is authoritative and there
    * is nothing to replay them against.
+   *
+   * Returns whether the intent actually went out. This is load-bearing for
+   * client-side prediction, not a convenience: a prediction is only ever
+   * reconciled by the authoritative diff that answers its intent, so predicting
+   * an intent that was never sent would leave the local terrain permanently
+   * ahead of the server (until the deadline in terrain/prediction.ts drags it
+   * back). The caller predicts if and only if this returns true.
    */
-  sendSculpt(intent: SculptIntent): void;
+  sendSculpt(intent: SculptIntent): boolean;
   /** Leaves the room and stops retrying. */
   dispose(): void;
 }
@@ -186,8 +193,10 @@ export function connect(options: ConnectionOptions): Connection {
   void attemptJoin();
 
   return {
-    sendSculpt(intent: SculptIntent): void {
-      room?.send(MSG_SCULPT, intent);
+    sendSculpt(intent: SculptIntent): boolean {
+      if (room === null) return false;
+      room.send(MSG_SCULPT, intent);
+      return true;
     },
     dispose(): void {
       disposed = true;
