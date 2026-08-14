@@ -7,7 +7,7 @@
 // the dot on whatever the status happened to be at mount. There are no such
 // consts in this file, by construction.
 
-import { createSignal, For, Show, type JSX } from 'solid-js';
+import { For, Show, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import {
@@ -23,6 +23,8 @@ import {
   setBrushRadius,
   setBrushTool,
   setSculptMode,
+  setShowControls,
+  showControls,
   type SculptMode,
 } from '../state/hudState.ts';
 import {
@@ -134,10 +136,10 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 }
 
 export function Hud(): JSX.Element {
-  // Panel visibility is pure UI state local to this component; nothing
-  // imperative reads it, so a component-scoped signal is the right home.
-  const [showControls, setShowControls] = createSignal(false);
-
+  // Panel visibility used to be a component-local signal. It now lives in
+  // hudState.ts so it is persisted with the rest of the HUD — an expanded
+  // Controls panel survives a reload like every other choice made here. It is
+  // still read by calling the accessor inline, exactly as before.
   return (
     <div class="hud">
       {/* Top-centre plugin stack: at-a-glance status (mana gauge etc). */}
