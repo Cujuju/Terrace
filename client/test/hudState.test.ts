@@ -346,3 +346,38 @@ describe('sculptDirection', () => {
     expect(hud.sculptDirection('lower')).toBe(-1);
   });
 });
+
+// World identity (name + difficulty) is SERVER-derived: it arrives on every
+// join snapshot, so it is normalised at the setter and never persisted.
+describe('world identity', () => {
+  it('starts unknown and takes what the snapshot stated', async () => {
+    const { hud } = await freshHud();
+    expect(hud.worldIdentity()).toEqual({ name: null, difficulty: null });
+
+    hud.setWorldIdentity({ name: 'Gloamwatch Fells', difficulty: 37 });
+    expect(hud.worldIdentity()).toEqual({ name: 'Gloamwatch Fells', difficulty: 37 });
+  });
+
+  it('treats a blank or unusable field as unknown rather than as a value', async () => {
+    const { hud } = await freshHud();
+    // What an older server — which sends neither field — looks like once the
+    // snapshot handler has mapped its undefineds to null.
+    hud.setWorldIdentity({ name: null, difficulty: null });
+    expect(hud.worldIdentity()).toEqual({ name: null, difficulty: null });
+
+    hud.setWorldIdentity({ name: '   ', difficulty: Number.NaN });
+    expect(hud.worldIdentity()).toEqual({ name: null, difficulty: null });
+  });
+
+  it('trims the name and rounds the rating — the HUD prints both verbatim', async () => {
+    const { hud } = await freshHud();
+    hud.setWorldIdentity({ name: ' Emberfall ', difficulty: 37.4 });
+    expect(hud.worldIdentity()).toEqual({ name: 'Emberfall', difficulty: 37 });
+  });
+
+  it('is never written to storage', async () => {
+    const { hud, storage } = await freshHud();
+    hud.setWorldIdentity({ name: 'Emberfall', difficulty: 50 });
+    expect(storage.getItem(HUD_KEY) ?? '').not.toContain('Emberfall');
+  });
+});

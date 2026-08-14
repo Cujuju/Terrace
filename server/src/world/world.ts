@@ -34,6 +34,7 @@ import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlock, initialUnlockFootprint } from './initial-unlock.ts';
 import { chunkPayloadOf } from './mask-filter.ts';
+import { generateWorldName } from './world-name.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FRESH-WORLD GENESIS (decided 2026-08-14 with the owner — see docs/DESIGN.md)
@@ -246,6 +247,20 @@ export class World {
    */
   readonly difficulty: number;
 
+  /**
+   * What this world is CALLED — minted once at genesis by world-name.ts and
+   * then persisted with the heightmap, so every restart and every player sees
+   * the same name.
+   *
+   * SNAPSHOT STATE, and the opposite of `difficulty` in that respect. A name is
+   * the world's identity: a host who restarts their server must get the same
+   * world back, name included, which is precisely what a snapshot is for.
+   * Difficulty is deployment configuration a host re-rates by editing their
+   * environment, so it deliberately is NOT stored. The two live side by side
+   * here and are persisted differently on purpose.
+   */
+  readonly name: string;
+
   private sink: MessageSink = NULL_SINK;
   private readonly playersById = new Map<string, Player>();
 
@@ -257,10 +272,16 @@ export class World {
    */
   private changedSinceSnapshot = false;
 
-  private constructor(map: Heightmap, mask: Uint8Array, difficulty: number) {
+  private constructor(
+    map: Heightmap,
+    mask: Uint8Array,
+    difficulty: number,
+    name: string,
+  ) {
     this.map = map;
     this.mask = mask;
     this.difficulty = difficulty;
+    this.name = name;
   }
 
   /**
@@ -299,7 +320,11 @@ export class World {
    * server has a coast and an abyss. The first `chunkUnlock` overwrites it.
    * Left alone on purpose — the fix belongs in the client's boot state.
    */
-  static createFresh(size: number, difficulty: number = DEFAULT_WORLD_DIFFICULTY): World {
+  static createFresh(
+    size: number,
+    difficulty: number = DEFAULT_WORLD_DIFFICULTY,
+    name: string = generateWorldName(),
+  ): World {
     const map = createHeightmap(size);
     const profile = freshGenesisProfile(size);
 
@@ -313,7 +338,12 @@ export class World {
       }
     }
 
-    const world = new World(map, createChunkMask(size), normalizeDifficulty(difficulty));
+    const world = new World(
+      map,
+      createChunkMask(size),
+      normalizeDifficulty(difficulty),
+      name,
+    );
     applyInitialUnlock(world);
     // The starter unlock is part of world creation, not a mutation of an
     // existing world: the first snapshot will be written by the normal dirty
@@ -330,12 +360,19 @@ export class World {
    * `difficulty` comes from the CURRENT environment, never from the snapshot:
    * it is deployment configuration, so re-rating a world is an env edit plus a
    * restart, and an old snapshot never overrides today's setting.
+   *
+   * `name` comes from the SNAPSHOT, which is the opposite rule and the right
+   * one: the name is what this world is, so it must come back exactly as it was
+   * stored. `null` means the snapshot predates world names (or was written by a
+   * build that stored none), and the world is named here, once — see
+   * mintedName below for why that also marks the world dirty.
    */
   static restore(
     size: number,
     cells: Int16Array,
     mask: Uint8Array,
     difficulty: number = DEFAULT_WORLD_DIFFICULTY,
+    name: string | null = null,
   ): World {
     const map = createHeightmap(size);
     if (cells.length !== map.cells.length) {
@@ -351,7 +388,25 @@ export class World {
     }
     map.cells.set(cells);
     expectedMask.set(mask);
-    return new World(map, expectedMask, normalizeDifficulty(difficulty));
+
+    // A stored name is used verbatim; a missing or blank one is minted now.
+    const stored = name?.trim() ?? '';
+    const mintedName = stored === '' ? generateWorldName() : null;
+    const world = new World(
+      map,
+      expectedMask,
+      normalizeDifficulty(difficulty),
+      mintedName ?? stored,
+    );
+
+    // THE NAME MUST REACH DISK, and `dirty` is the only mechanism that gets it
+    // there: the snapshot scheduler writes ONLY a changed world, so an existing
+    // world nobody sculpts would otherwise be re-named on every single boot and
+    // never persist any of those names. Marking it changed here is not a
+    // workaround for that rule — it is the rule applied honestly, because the
+    // world in memory genuinely differs from the one on disk.
+    if (mintedName !== null) world.changedSinceSnapshot = true;
+    return world;
   }
 
   get size(): number {

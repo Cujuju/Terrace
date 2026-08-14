@@ -128,11 +128,28 @@ export interface ChunkUnlockMessage {
 /**
  * Server → one joining client: world geometry plus ONLY the unlocked chunks
  * (anti-cheat by omission — locked terrain is never on the wire).
+ *
+ * `worldName` and `difficulty` are WORLD IDENTITY, not gameplay: the name is
+ * what this world is called (generated once at genesis and persisted with it),
+ * and the difficulty is the neutral 1–100 dial core already publishes to
+ * plugins as WorldApi.difficulty. Core attaches no mechanic to either — it
+ * only tells a joining client which world it is looking at — so carrying them
+ * here does not put anything "gamey" in core (design §3.5).
+ *
+ * Both are OPTIONAL and additive, exactly like SculptIntent's `seq`: a
+ * snapshot from a server built before this change is still a valid message,
+ * and a client that receives neither simply has nothing to title the world
+ * with. Absent means unknown, never a default — a client must not invent a
+ * difficulty the server did not state.
  */
 export interface JoinSnapshotMessage {
   type: 'snapshot';
   worldSize: number;
   chunks: ChunkPayload[];
+  /** This world's name; absent from a pre-2026-08-14 server. */
+  worldName?: string;
+  /** This world's difficulty rating, 1 (warm) to 100 (punishing). */
+  difficulty?: number;
 }
 
 /**

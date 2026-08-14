@@ -44,6 +44,45 @@ export type SculptMode = 'raise' | 'lower';
 const [connectionStatus, setConnectionStatus] =
   createSignal<ConnectionStatus>('connecting');
 
+/**
+ * Who this world IS, as the join snapshot stated it: its name and its 1–100
+ * difficulty rating. Both fields are nullable because both are optional on the
+ * wire (JoinSnapshotMessage) — a server built before world names sends neither,
+ * and the HUD must show nothing rather than invent either one.
+ */
+export interface WorldIdentity {
+  readonly name: string | null;
+  readonly difficulty: number | null;
+}
+
+const [worldIdentity, setWorldIdentitySignal] = createSignal<WorldIdentity>({
+  name: null,
+  difficulty: null,
+});
+
+/**
+ * Server-derived and therefore NOT persisted (see the file header): a world's
+ * identity arrives on every join, and a cached copy could only ever be a stale
+ * lie — the player may have pointed the client at a different world entirely.
+ *
+ * NORMALISATION LIVES HERE, at the one door into this signal, rather than at
+ * the call site: the fields come off the wire, so a blank name or a non-numeric
+ * difficulty must become "unknown" exactly once, for every caller. A rating is
+ * rounded to an integer because that is what the scale is — the HUD prints it
+ * verbatim and must never render "Difficulty 37.4000001".
+ */
+export function setWorldIdentity(identity: WorldIdentity): void {
+  const name = identity.name?.trim() ?? '';
+  const difficulty = identity.difficulty;
+  setWorldIdentitySignal({
+    name: name === '' ? null : name,
+    difficulty:
+      typeof difficulty === 'number' && Number.isFinite(difficulty)
+        ? Math.round(difficulty)
+        : null,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 //
@@ -273,6 +312,7 @@ export function setShowControls(show: boolean): void {
 export {
   connectionStatus,
   setConnectionStatus,
+  worldIdentity,
   brushRadius,
   brushTool,
   brushProfile,

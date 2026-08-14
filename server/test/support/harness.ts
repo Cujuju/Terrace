@@ -34,6 +34,9 @@ export class RecordingSink implements MessageSink {
   }
 }
 
+/** Stands in for the name a real snapshot carries; fixed so tests read stably. */
+export const TEST_WORLD_NAME = 'Testfall';
+
 /**
  * A flat world with exactly the listed chunks unlocked — bypassing the fresh
  * world's starter region so tests can put a locked chunk exactly where they
@@ -43,6 +46,11 @@ export class RecordingSink implements MessageSink {
  * default, exactly as an unconfigured deployment would get. Suites whose
  * arithmetic depends on a plugin's difficulty-derived numbers pass one
  * explicitly rather than inheriting whatever the default happens to be.
+ *
+ * The world is NAMED, because a real snapshot always carries a name and a
+ * restore without one is the legacy-upgrade path: that path deliberately mints
+ * a name and marks the world dirty (World.restore), which is not the starting
+ * state a pipeline or mask test wants to reason about.
  */
 export function worldWithUnlockedChunks(
   size: number,
@@ -53,7 +61,7 @@ export function worldWithUnlockedChunks(
   for (const [cx, cy] of chunks) {
     unlockChunk(mask, chunkIndex(size, cx, cy));
   }
-  return World.restore(size, createHeightmap(size).cells, mask, difficulty);
+  return World.restore(size, createHeightmap(size).cells, mask, difficulty, TEST_WORLD_NAME);
 }
 
 /** Wraps a plugin object as if discovery had loaded it from plugins/<name>. */

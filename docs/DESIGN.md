@@ -575,6 +575,54 @@ terrace/
   only the two ends as fixed points and interpolate; switching on particular
   values leaves ninety-eight settings undefined.
 
+- **A world has a NAME, and the HUD states who the world is** (owner request,
+  settled 2026-08-14). Two facts about world IDENTITY, shown together in a
+  header above the mana gauge: the world's generated name, and its 1–100
+  difficulty rating.
+
+  **The name is minted once and persisted.** `server/src/world/world-name.ts`
+  composes evocative names from curated word lists in four shapes (`Emberfall`,
+  `Ashmoor Basin`, `The Sundered Reach`, `Isles of Gloamwatch`). It runs exactly
+  once — at genesis, or on the first boot of a world created before names
+  existed — and the result is stored in the snapshot beside the heightmap, so a
+  restart returns the same world by the same name.
+
+  **Where the randomness is allowed to live.** The generator draws from
+  `Math.random` at generation time only; it is never re-derived, so a different
+  draw is impossible rather than merely unlikely. It is server-side, in
+  `server/`, and no part of it touches `shared/` — terrain math and world
+  genesis both stay RNG-free.
+
+  **Persistence, and why the schema version does NOT move.** `snapshots` gains a
+  nullable `world_name TEXT` column, added to existing databases by an
+  idempotent `ALTER TABLE` at open. The column is compatible in both directions
+  — this build reads a row without one as unnamed, an older build ignores it —
+  so `SNAPSHOT_SCHEMA_VERSION` stays 1; bumping it would turn an additive column
+  into a refusal to boot. A world restored unnamed is marked DIRTY, because the
+  snapshot scheduler writes only a changed world and an unwritten name would be
+  re-drawn on every boot; a snapshot is additionally written at the end of boot
+  so a crash in the first minute cannot re-name a world.
+
+  **Name vs difficulty are persisted OPPOSITELY, on purpose.** The name is
+  snapshot state (it is what the world IS, and must come back); the difficulty
+  stays deployment configuration read from the environment (a host re-rates a
+  world by editing it). The two sit side by side on `World` with that difference
+  documented at each.
+
+  **The wire is additive.** `JoinSnapshotMessage` gains optional `worldName` and
+  `difficulty`, following the `seq` pattern: a snapshot from an older server is
+  still valid, and absent means unknown rather than a default. This does not
+  breach "nothing gamey in core" — core already publishes the difficulty dial to
+  plugins and attaches no mechanic to it, and a name is identity, not gameplay.
+
+  **The header is CORE client UI**, not a plugin panel: it is the first child of
+  the `.hud-top-center` column in `client/src/ui/Hud.tsx`, so it stacks above any
+  `top-center` plugin panel whatever plugins are installed. Core is not a plugin
+  and does not compete for a placement slot. Identity arrives on the join
+  snapshot, is normalised once in `state/hudState.ts` (blank name and unusable
+  rating both become "unknown"), and is deliberately not persisted — it is
+  re-sent on every join, and a rejoin may land on a different world.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)

@@ -74,6 +74,7 @@ describe('SnapshotStore', () => {
     const host = new PluginHost(world, [asLoadedPlugin(plugin)]);
     store.saveSnapshot({
       worldSize: world.size,
+      name: world.name,
       cells: world.map.cells,
       mask: world.mask,
       pluginSlices: host.collectPersistence(),
@@ -89,7 +90,16 @@ describe('SnapshotStore', () => {
     if (snapshot === null) return;
 
     expect(snapshot.worldSize).toBe(WORLD_SIZE);
-    const restored = World.restore(snapshot.worldSize, snapshot.cells, snapshot.mask);
+    const restored = World.restore(
+      snapshot.worldSize,
+      snapshot.cells,
+      snapshot.mask,
+      undefined,
+      snapshot.name,
+    );
+    // The world came back as ITSELF: same name, not a newly minted one.
+    expect(snapshot.name).toBe(world.name);
+    expect(restored.name).toBe(world.name);
     expect(Array.from(restored.map.cells)).toEqual(Array.from(world.map.cells));
     expect(Array.from(restored.mask)).toEqual(Array.from(world.mask));
     expect(restored.isChunkUnlocked(0, 0)).toBe(true);
@@ -123,6 +133,7 @@ describe('SnapshotStore', () => {
       ids.push(
         store.saveSnapshot({
           worldSize: world.size,
+          name: world.name,
           cells: world.map.cells,
           mask: world.mask,
           pluginSlices: { counter: { value: i } },
@@ -154,6 +165,7 @@ describe('SnapshotStore', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     store.saveSnapshot({
       worldSize: world.size,
+      name: world.name,
       cells: world.map.cells,
       mask: world.mask,
       pluginSlices: {},
@@ -172,5 +184,90 @@ describe('SnapshotStore', () => {
   it('rejects restoring a snapshot into a differently sized world', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     expect(() => World.restore(WORLD_SIZE * 2, world.map.cells, world.mask)).toThrow(RangeError);
+  });
+
+  // The upgrade path for a self-hoster whose world.db predates world names
+  // (2026-08-14). It must open, not refuse: the name column is additive, so the
+  // schema version is deliberately NOT bumped for it.
+  it('migrates a database created before world names, reading its world as unnamed', () => {
+    const legacyPath = join(dir, 'legacy.db');
+    const legacy = new DatabaseConstructor(legacyPath);
+    // The exact pre-2026-08-14 table: no world_name column at all.
+    legacy.exec(`
+      CREATE TABLE snapshots (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        schema_version INTEGER NOT NULL,
+        created_at     INTEGER NOT NULL,
+        world_size     INTEGER NOT NULL,
+        heightmap      BLOB    NOT NULL,
+        mask           BLOB    NOT NULL
+      );
+      CREATE TABLE plugin_slices (
+        snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+        plugin      TEXT    NOT NULL,
+        data        TEXT    NOT NULL,
+        PRIMARY KEY (snapshot_id, plugin)
+      );
+    `);
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    legacy
+      .prepare(
+        `INSERT INTO snapshots (schema_version, created_at, world_size, heightmap, mask)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        SNAPSHOT_SCHEMA_VERSION,
+        Date.now(),
+        world.size,
+        encodeHeights(world.map.cells),
+        Buffer.copyBytesFrom(world.mask),
+      );
+    legacy.close();
+
+    const store = SnapshotStore.open(legacyPath);
+    const snapshot = store.loadLatest();
+    expect(snapshot?.name).toBeNull();
+
+    // …and the next snapshot this build writes carries a name, in the column
+    // the migration added.
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: 'The Sundered Reach',
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+    });
+    expect(store.loadLatest()?.name).toBe('The Sundered Reach');
+    store.close();
+  });
+});
+
+describe('World naming', () => {
+  it('names a fresh world', () => {
+    expect(World.createFresh(WORLD_SIZE).name.length).toBeGreaterThan(0);
+  });
+
+  it('restores a stored name verbatim, without dirtying the world', () => {
+    const source = World.createFresh(WORLD_SIZE);
+    const restored = World.restore(
+      WORLD_SIZE,
+      source.map.cells,
+      source.mask,
+      undefined,
+      'Gloamwatch Fells',
+    );
+    expect(restored.name).toBe('Gloamwatch Fells');
+    expect(restored.dirty).toBe(false);
+  });
+
+  it('mints a name for an unnamed world AND marks it dirty so the name reaches disk', () => {
+    const source = World.createFresh(WORLD_SIZE);
+    for (const stored of [null, '   ']) {
+      const restored = World.restore(WORLD_SIZE, source.map.cells, source.mask, undefined, stored);
+      expect(restored.name.length).toBeGreaterThan(0);
+      // Without this, the snapshot scheduler (which writes only a dirty world)
+      // would never persist the new name and every boot would re-draw one.
+      expect(restored.dirty).toBe(true);
+    }
   });
 });
