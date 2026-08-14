@@ -53,6 +53,25 @@ export const MANA_COST_PER_SCULPT = 25;
  */
 export const MANA_REGEN_PER_SECOND = 20;
 
+/**
+ * Multiplier bounds for a perk (see setManaPerk). A perk may at most quarter a
+ * price or quadruple it.
+ *
+ * The floor is the load-bearing one and it is NOT arbitrary: without it a
+ * caller passing 0 — a bug, a bad config, or a hostile third-party plugin —
+ * would make sculpting free and delete the economy this plugin exists to
+ * provide, silently and for as long as that player is connected. Clamping into
+ * a band means a wrong multiplier is a wrong price, never an absent one. The
+ * ceiling is the mirror case: a perk cannot be used to freeze a player out.
+ * 0.25 / 4 bracket the perks that ship (half cost, double regen) with a factor
+ * of two of headroom on each side for plugins that stack them.
+ */
+export const MANA_PERK_MIN_MULTIPLIER = 0.25;
+export const MANA_PERK_MAX_MULTIPLIER = 4;
+
+/** The multiplier of a player holding no perk: prices and regen unchanged. */
+export const NEUTRAL_MANA_MULTIPLIER = 1;
+
 /** Un-namespaced type of the server → client balance push (`mana:balance`). */
 export const MANA_BALANCE_MESSAGE = 'balance';
 
@@ -92,6 +111,101 @@ let api: WorldApi | null = null;
  * friendlier of the two wrong answers.
  */
 const poolsByPlayer = new Map<string, ManaPool>();
+
+// ────────────────────────────────────────────────────────────────────────────
+// PERK API — the seam other plugins extend the economy through.
+//
+// Design §3.5 says the plugin API is right only if a mechanic can be built
+// WITHOUT touching core. The relics plugin's mana perks (Azure Heart, Spring of
+// Aether) are the first mechanic that has to touch ANOTHER PLUGIN, and this is
+// how: mana exports a tiny, total function pair, and relics imports it. Core is
+// not involved and does not need to be.
+//
+// The contract is deliberately "the player's TOTAL perk", not "add a perk":
+// mana does not know what a skill is, how many a player may hold, or how two of
+// them combine. The caller owns that composition and pushes the product here.
+// A per-perk registry inside mana would be mana modelling someone else's
+// domain, and would need an eviction rule mana has no basis to choose.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A player's standing modifiers. An omitted field means neutral (1) — this is
+ * a whole-state setter, so a call that omits `regenMultiplier` clears any regen
+ * perk that player previously had.
+ */
+export interface ManaPerk {
+  /** Scales MANA_COST_PER_SCULPT. Below 1 = cheaper. */
+  readonly costMultiplier?: number;
+  /** Scales MANA_REGEN_PER_SECOND. Above 1 = faster. */
+  readonly regenMultiplier?: number;
+}
+
+/** A normalized perk: both fields present, both already validated and clamped. */
+interface EffectiveManaPerk {
+  readonly costMultiplier: number;
+  readonly regenMultiplier: number;
+}
+
+const NEUTRAL_PERK: EffectiveManaPerk = {
+  costMultiplier: NEUTRAL_MANA_MULTIPLIER,
+  regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
+};
+
+/**
+ * Perks by Player.id. Same per-connection keying as the pools above, and the
+ * same reason for it: there is no stable player identity yet (design §3.7).
+ */
+const perksByPlayer = new Map<string, EffectiveManaPerk>();
+
+/**
+ * UNTRUSTED INPUT (from another plugin, which may be third-party and buggy).
+ *
+ * Anything that is not a finite number degrades to neutral rather than
+ * poisoning the pool with NaN — a NaN balance compares false against every
+ * threshold, so it would make a player permanently unable to sculpt AND
+ * permanently unable to notice why. Finite values are clamped into the band
+ * documented on MANA_PERK_MIN_MULTIPLIER.
+ */
+function normalizeMultiplier(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return NEUTRAL_MANA_MULTIPLIER;
+  if (value < MANA_PERK_MIN_MULTIPLIER) return MANA_PERK_MIN_MULTIPLIER;
+  if (value > MANA_PERK_MAX_MULTIPLIER) return MANA_PERK_MAX_MULTIPLIER;
+  return value;
+}
+
+/**
+ * Sets a player's total perk, replacing whatever they had. Safe to call for a
+ * player mana has never seen: the perk is applied the moment they do sculpt,
+ * via the same lazy pool creation the intent path already relies on.
+ */
+export function setManaPerk(playerId: string, perk: ManaPerk): void {
+  perksByPlayer.set(playerId, {
+    costMultiplier: normalizeMultiplier(perk.costMultiplier),
+    regenMultiplier: normalizeMultiplier(perk.regenMultiplier),
+  });
+}
+
+/** Drops a player's perk, returning them to standard prices and regen. */
+export function clearManaPerk(playerId: string): void {
+  perksByPlayer.delete(playerId);
+}
+
+/** A player's effective perk — neutral when they hold none. */
+export function manaPerkOf(playerId: string): EffectiveManaPerk {
+  return perksByPlayer.get(playerId) ?? NEUTRAL_PERK;
+}
+
+/**
+ * What one sculpt costs this player.
+ *
+ * Rounded UP: a fractional price would drift the pool away from the whole-unit
+ * value the HUD shows, and rounding up rather than down means the floor imposed
+ * by MANA_PERK_MIN_MULTIPLIER cannot be undercut into zero by rounding. With
+ * the shipped 0.5 perk this is ceil(12.5) = 13 — "about half", by one unit.
+ */
+export function manaCostFor(playerId: string): number {
+  return Math.ceil(MANA_COST_PER_SCULPT * manaPerkOf(playerId).costMultiplier);
+}
 
 /** The value a HUD would display: whole mana units. */
 function displayBalance(pool: ManaPool): number {
@@ -151,20 +265,26 @@ function poolFor(playerId: string): ManaPool {
  */
 function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   const pool = poolFor(ctx.player.id);
+  // The price this player pays, after any perk another plugin has set on them.
+  // Read per intent rather than cached: a perk can be granted or revoked at any
+  // moment (a relic collected mid-stroke), and a stale price is a wrong charge.
+  const cost = manaCostFor(ctx.player.id);
 
-  if (pool.balance < MANA_COST_PER_SCULPT) {
+  if (pool.balance < cost) {
     // Tell the player why. Core's own rejections are silent on purpose — an
     // error reply would confirm the existence of locked terrain and defeat the
     // mask (pipeline.ts) — but "you are out of mana" leaks nothing about the
     // world, and a player who gets no feedback assumes the server is broken.
+    // The cost travels with it: with perks in play it is no longer a constant
+    // the client could have known.
     api?.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
       balance: displayBalance(pool),
-      cost: MANA_COST_PER_SCULPT,
+      cost,
     });
     return { kind: 'deny', reason: INSUFFICIENT_MANA_REASON };
   }
 
-  pool.balance -= MANA_COST_PER_SCULPT;
+  pool.balance -= cost;
   sendBalance(ctx.player.id, pool);
   return { kind: 'allow' };
 }
@@ -176,11 +296,18 @@ function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
  * TICK_HZ regenerates at the same rate per second.
  */
 function regenerate(dt: number): void {
-  const gain = MANA_REGEN_PER_SECOND * dt;
+  const baseGain = MANA_REGEN_PER_SECOND * dt;
 
   for (const [playerId, pool] of poolsByPlayer) {
     if (pool.balance >= MANA_CAPACITY) continue;
-    pool.balance = Math.min(MANA_CAPACITY, pool.balance + gain);
+    // Per-player, because regen is perk-scaled: a Spring of Aether holder earns
+    // faster than everyone else in the same tick. Capacity is deliberately NOT
+    // scaled — a perk changes the rate you fill at, never how much you can hold,
+    // so a burst of sculpts stays worth the same to every player.
+    pool.balance = Math.min(
+      MANA_CAPACITY,
+      pool.balance + baseGain * manaPerkOf(playerId).regenMultiplier,
+    );
     if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(playerId, pool);
   }
 }
@@ -202,6 +329,13 @@ export const plugin: TerracePlugin = {
 
   onPlayerLeave(player: Player): void {
     poolsByPlayer.delete(player.id);
+    // Perks die with the connection, exactly like the pool. Player.id is a
+    // per-connection sessionId (design §3.7), so leaving a perk behind would
+    // not "remember" that player — it would sit in the map forever, and would
+    // apply to whoever the transport eventually hands the same id to. Neither
+    // outcome is acceptable, so the plugin that granted it does not have to
+    // remember to revoke it: mana forgets on leave, unconditionally.
+    clearManaPerk(player.id);
   },
 
   onTick(_world: WorldApi, dt: number): void {
@@ -223,4 +357,5 @@ export function manaBalanceOf(playerId: string): number | null {
 export function resetManaState(): void {
   api = null;
   poolsByPlayer.clear();
+  perksByPlayer.clear();
 }

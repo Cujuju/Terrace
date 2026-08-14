@@ -15,12 +15,21 @@ import {
 import { plugin as revealPlugin, resetRevealState } from '../../reveal/server/index.ts';
 import {
   INSUFFICIENT_MANA_REASON,
+  MANA_BALANCE_MESSAGE,
   MANA_CAPACITY,
   MANA_COST_PER_SCULPT,
+  MANA_DENIED_MESSAGE,
+  MANA_PERK_MAX_MULTIPLIER,
+  MANA_PERK_MIN_MULTIPLIER,
   MANA_REGEN_PER_SECOND,
+  NEUTRAL_MANA_MULTIPLIER,
+  clearManaPerk,
   manaBalanceOf,
+  manaCostFor,
+  manaPerkOf,
   plugin as manaPlugin,
   resetManaState,
+  setManaPerk,
 } from '../server/index.ts';
 
 /** 64² cells = 4×4 chunks — small enough to reason about cell by cell. */
@@ -189,5 +198,188 @@ describe('mana plugin', () => {
     harness.world.removePlayer(PLAYER.id);
     harness.host.playerLeft(PLAYER);
     expect(manaBalanceOf(PLAYER.id)).toBeNull();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// The perk API: the seam another plugin (relics) extends this economy through.
+// Tested here at the contract level — what setManaPerk promises anyone who
+// calls it — rather than at the relics call site, which is covered by that
+// plugin's own suite.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A second connection, so perked and unperked players can be compared. */
+const OTHER_PLAYER: Player = { id: 'session-2', name: 'Control' };
+
+describe('mana perks', () => {
+  let harness: Harness;
+
+  beforeEach(() => {
+    harness = boot();
+    harness.world.addPlayer(OTHER_PLAYER);
+    harness.host.playerJoined(OTHER_PLAYER);
+    harness.sink.clear();
+  });
+
+  function sculptAs(player: Player) {
+    return handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      player,
+      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius: 1, dir: 1 },
+    );
+  }
+
+  it('defaults every player to neutral', () => {
+    expect(manaPerkOf(PLAYER.id)).toEqual({
+      costMultiplier: NEUTRAL_MANA_MULTIPLIER,
+      regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
+    });
+    expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+  });
+
+  it('charges the perked price on the intent path', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
+    const discounted = manaCostFor(PLAYER.id);
+    expect(discounted).toBe(Math.ceil(MANA_COST_PER_SCULPT * 0.5));
+
+    expect(sculptAs(PLAYER).applied).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - discounted);
+
+    // The unperked player in the same world still pays full price.
+    expect(sculptAs(OTHER_PLAYER).applied).toBe(true);
+    expect(manaBalanceOf(OTHER_PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_SCULPT);
+  });
+
+  it('buys a cheaper player strictly more sculpts before the veto', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
+
+    let perked = 0;
+    while (sculptAs(PLAYER).applied) perked++;
+    let plain = 0;
+    while (sculptAs(OTHER_PLAYER).applied) plain++;
+
+    expect(plain).toBe(MANA_CAPACITY / MANA_COST_PER_SCULPT);
+    expect(perked).toBeGreaterThan(plain);
+  });
+
+  it('reports the perked price in the refusal it sends', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
+    while (sculptAs(PLAYER).applied) {
+      /* drain */
+    }
+    harness.sink.clear();
+
+    sculptAs(PLAYER);
+    const refusals = harness.sink.ofType(`mana:${MANA_DENIED_MESSAGE}`);
+    expect(refusals).toHaveLength(1);
+    expect((refusals[0].payload as { cost: number }).cost).toBe(manaCostFor(PLAYER.id));
+  });
+
+  it('regenerates a perked player faster, and still caps at capacity', () => {
+    setManaPerk(PLAYER.id, { regenMultiplier: 2 });
+
+    // Spend enough that a second of doubled regen still fits under the cap —
+    // otherwise both players simply refill to capacity and the perk is
+    // invisible. Four sculpts each leaves 100 of 200.
+    const sculptsToDrain = 4;
+    for (let n = 0; n < sculptsToDrain; n++) {
+      sculptAs(PLAYER);
+      sculptAs(OTHER_PLAYER);
+    }
+    const spent = sculptsToDrain * MANA_COST_PER_SCULPT;
+    expect(manaBalanceOf(PLAYER.id)).toBe(manaBalanceOf(OTHER_PLAYER.id));
+
+    // One second of simulated time.
+    for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
+
+    const perkedGain = (manaBalanceOf(PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
+    const plainGain = (manaBalanceOf(OTHER_PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
+    expect(plainGain).toBe(MANA_REGEN_PER_SECOND);
+    expect(perkedGain).toBe(MANA_REGEN_PER_SECOND * 2);
+
+    // Capacity is deliberately NOT scaled by the perk.
+    for (let n = 0; n < 100; n++) harness.host.tick(TICK_DT);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
+  });
+
+  it('is whole-state: a later call replaces rather than merges', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5, regenMultiplier: 2 });
+    setManaPerk(PLAYER.id, { regenMultiplier: 2 });
+
+    expect(manaPerkOf(PLAYER.id)).toEqual({
+      costMultiplier: NEUTRAL_MANA_MULTIPLIER,
+      regenMultiplier: 2,
+    });
+  });
+
+  it('clears on request', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5 });
+    clearManaPerk(PLAYER.id);
+    expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+    // Clearing a player who has no perk is a no-op, not an error.
+    expect(() => clearManaPerk('never-seen')).not.toThrow();
+  });
+
+  it('clears on leave, so a recycled session id inherits nothing', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0.5, regenMultiplier: 2 });
+    harness.world.removePlayer(PLAYER.id);
+    harness.host.playerLeft(PLAYER);
+
+    expect(manaPerkOf(PLAYER.id)).toEqual({
+      costMultiplier: NEUTRAL_MANA_MULTIPLIER,
+      regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
+    });
+    expect(manaCostFor(PLAYER.id)).toBe(MANA_COST_PER_SCULPT);
+  });
+
+  it('clamps a multiplier into the documented band', () => {
+    setManaPerk(PLAYER.id, { costMultiplier: 0, regenMultiplier: 1000 });
+    expect(manaPerkOf(PLAYER.id)).toEqual({
+      costMultiplier: MANA_PERK_MIN_MULTIPLIER,
+      regenMultiplier: MANA_PERK_MAX_MULTIPLIER,
+    });
+
+    // The floor is what stops a zero multiplier from deleting the economy: a
+    // perked player is still charged, and can still run out.
+    expect(manaCostFor(PLAYER.id)).toBeGreaterThan(0);
+    let sculpts = 0;
+    while (sculptAs(PLAYER).applied) sculpts++;
+    expect(sculpts).toBeGreaterThan(0);
+    expect(sculptAs(PLAYER)).toEqual({
+      applied: false,
+      reason: 'plugin-denied',
+      detail: INSUFFICIENT_MANA_REASON,
+    });
+  });
+
+  it('degrades a non-numeric multiplier to neutral rather than to NaN', () => {
+    // A NaN balance compares false against every threshold, which would leave
+    // the player permanently unable to sculpt and unable to see why.
+    setManaPerk(PLAYER.id, {
+      costMultiplier: Number.NaN,
+      regenMultiplier: 'fast' as unknown as number,
+    });
+    expect(manaPerkOf(PLAYER.id)).toEqual({
+      costMultiplier: NEUTRAL_MANA_MULTIPLIER,
+      regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
+    });
+
+    expect(sculptAs(PLAYER).applied).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_SCULPT);
+  });
+
+  it('may be set before mana has ever seen the player', () => {
+    // relics can grant a perk from a message handler that runs before this
+    // plugin's lazily-created pool exists; the perk must survive that.
+    const latecomer: Player = { id: 'session-3', name: 'Late' };
+    setManaPerk(latecomer.id, { costMultiplier: 0.5 });
+
+    harness.world.addPlayer(latecomer);
+    harness.host.playerJoined(latecomer);
+    harness.sink.clear();
+
+    expect(sculptAs(latecomer).applied).toBe(true);
+    expect(manaBalanceOf(latecomer.id)).toBe(MANA_CAPACITY - manaCostFor(latecomer.id));
+    expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`).length).toBeGreaterThan(0);
   });
 });
