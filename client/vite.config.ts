@@ -14,6 +14,11 @@ export default defineConfig({
     // The client derives its ws endpoint from the page hostname (config.ts),
     // so a LAN visitor automatically dials this machine's server too.
     host: true,
+    // Vite's DNS-rebinding guard rejects hostnames it does not know. Raw LAN
+    // IPs pass by default; the leading-dot entry allows any mDNS name
+    // (amd.local today, whatever the machine is renamed to tomorrow) while
+    // still refusing arbitrary public domains pointed at this address.
+    allowedHosts: ['.local'],
   },
   test: {
     // Every client test is pure logic (see test/ — picking math, terrain mirror
