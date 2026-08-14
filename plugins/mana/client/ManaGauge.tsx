@@ -154,7 +154,16 @@ const GLASS_CLIP_ID = 'mana-gauge-glass-clip';
  */
 const GAUGE_CSS = `
 .mana-gauge {
-  pointer-events: none;
+  /* HOVERABLE ON PURPOSE, and the reason this is not 'none'. A native title
+     tooltip is delivered by hit-testing, so an element the pointer passes
+     straight through can never show one — the gauge would carry an explanation
+     nobody could ever read. The cost is that the small patch of world directly
+     behind the instrument is no longer sculptable, which is what every other
+     HUD control already costs (the corner panel is pointer-events: auto too);
+     the gauge sits at the top edge, clear of where the brush works, and the
+     camera can pan whatever it hides into reach. */
+  pointer-events: auto;
+  cursor: help;
   user-select: none;
   display: flex;
   flex-direction: row;
@@ -325,10 +334,16 @@ export function ManaGauge(): JSX.Element {
 
   return (
     <Show when={manaPool() !== null}>
+      {/* The `title` is one sentence for the whole instrument, assembled from
+          the same accessors the readouts use so it restates the LIVE numbers
+          rather than a snapshot taken at mount. It ends on the grain because
+          the falling cue is the only part of the gauge whose meaning is not
+          written in words anywhere on screen. */}
       <div
         class="mana-gauge"
         role="img"
         aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${currentBrushCost()}`}
+        title={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)} — the brush in your hand costs ${currentBrushCost()} a click, so one grain falls each time you have earned another.`}
       >
         <style>{GAUGE_CSS}</style>
 
@@ -514,11 +529,21 @@ export function ManaGauge(): JSX.Element {
             {Math.floor(displayed())}
             <span class="mana-gauge__capacity">/{manaPool()!.capacity}</span>
           </span>
-          <span class="mana-gauge__rate">{formatRegenRate(manaPool()!.regenPerSecond)}</span>
+          <span
+            class="mana-gauge__rate"
+            title="Mana this world hands back every second, even while you do nothing."
+          >
+            {formatRegenRate(manaPool()!.regenPerSecond)}
+          </span>
           {/* The price of the CURRENT brush: the one number that makes volume
               pricing visible before the pool drains, and the answer to "why did
               that stamp cost so much more than the last one". */}
-          <span class="mana-gauge__cost">{formatSculptCost(currentBrushCost())}</span>
+          <span
+            class="mana-gauge__cost"
+            title="What one click of the current brush costs — bigger and harder brushes cost more."
+          >
+            {formatSculptCost(currentBrushCost())}
+          </span>
         </div>
       </div>
     </Show>

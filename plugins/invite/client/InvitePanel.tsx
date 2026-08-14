@@ -35,12 +35,18 @@ function copy(url: string): void {
 export function InvitePanel(): JSX.Element {
   return (
     <Show when={shareUrl() !== null}>
-      <div class="hud-row">
+      {/* One title for the label + URL; the button carries its own below. */}
+      <div
+        class="hud-row"
+        title="Anyone who opens this address joins the world you are sculpting."
+      >
         <span class="hud-label">Invite</span>
         <span class="invite-url">{shareUrl()}</span>
         <button
           type="button"
           class="invite-copy"
+          aria-label="Copy invite address"
+          title="Copies the address above, ready to paste to a friend."
           onClick={() => {
             const url = shareUrl();
             if (url !== null) copy(url);

@@ -28,6 +28,18 @@ const ACTION_LABEL: Record<ControlAction, string> = {
   pan: 'Pan',
 };
 
+/**
+ * What each action DOES, phrased to drop into a sentence ("Mouse button dragged
+ * to orbit the camera"). The row's own label is a noun; a tooltip needs a verb,
+ * and 'Pan' on its own does not tell a new player what moves.
+ */
+const ACTION_EFFECT: Record<ControlAction, string> = {
+  raise: 'pile land up',
+  lower: 'dig land down',
+  orbit: 'swing the camera around the world',
+  pan: 'slide the view sideways',
+};
+
 const BUTTON_OPTIONS: readonly { value: MouseButtonName; label: string }[] = [
   { value: 'left', label: 'Left' },
   { value: 'middle', label: 'Middle' },
@@ -50,6 +62,8 @@ export function ControlsPanel(): JSX.Element {
             <span class="controls-label">{ACTION_LABEL[action]}</span>
             <select
               class="controls-select"
+              aria-label={`${ACTION_LABEL[action]}: modifier key`}
+              title={`Key to hold to ${ACTION_EFFECT[action]}; "—" means no key at all.`}
               value={controlBindings()[action].modifier}
               onChange={(e) =>
                 setBinding(action, {
@@ -64,6 +78,8 @@ export function ControlsPanel(): JSX.Element {
             </select>
             <select
               class="controls-select"
+              aria-label={`${ACTION_LABEL[action]}: mouse button`}
+              title={`Mouse button to drag to ${ACTION_EFFECT[action]}.`}
               value={controlBindings()[action].button}
               onChange={(e) =>
                 setBinding(action, {
@@ -85,6 +101,8 @@ export function ControlsPanel(): JSX.Element {
         <span class="controls-label">2-finger drag</span>
         <select
           class="controls-select"
+          aria-label="Two-finger drag gesture"
+          title="What dragging two fingers does; pinching them always zooms, either way."
           value={twoFingerGesture()}
           onChange={(e) =>
             setTwoFingerGesture(e.currentTarget.value as TwoFingerGesture)
@@ -102,6 +120,8 @@ export function ControlsPanel(): JSX.Element {
         <span class="controls-label">Scroll wheel</span>
         <select
           class="controls-select"
+          aria-label="Scroll wheel behaviour"
+          title="Whether scrolling slides the view or zooms it; a pinch always zooms and Alt+scroll always orbits."
           value={wheelBehaviour()}
           onChange={(e) =>
             setWheelBehaviour(e.currentTarget.value as WheelBehaviour)
@@ -123,7 +143,14 @@ export function ControlsPanel(): JSX.Element {
         </p>
       </Show>
 
-      <button type="button" class="controls-reset" onClick={resetBindings}>
+      {/* resetBindings clears the buttons, the touch gesture AND the wheel —
+          every setting on this panel — so the tooltip promises exactly that. */}
+      <button
+        type="button"
+        class="controls-reset"
+        title="Puts every setting on this panel back to how it started."
+        onClick={resetBindings}
+      >
         Reset to defaults
       </button>
     </div>
