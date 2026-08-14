@@ -137,6 +137,13 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   controls.minDistance = CAMERA_MIN_DISTANCE;
   controls.maxDistance = CAMERA_MAX_DISTANCE;
   controls.maxPolarAngle = MathUtils.degToRad(CAMERA_MAX_POLAR_ANGLE_DEGREES);
+  // Wheel zoom dollies toward the point under the POINTER, not the orbit
+  // target (owner, 2026-08-14: "it should zoom in to the location where the
+  // mouse is currently sitting"). OrbitControls' native implementation — it
+  // re-anchors controls.target as it dollies, so the orbit centre lands where
+  // the player was looking. Trackpad pinch (wheelCamera.ts) keeps its own
+  // centre-anchored dolly: there the fingers are the gesture's own anchor.
+  controls.zoomToCursor = true;
   // Which mouse button drives which camera verb is user-configurable and is
   // owned by input/cameraBindings.ts (wired in main.tsx): it sets
   // controls.mouseButtons per press so buttons claimed by the sculpt brush are
