@@ -30,7 +30,10 @@ function openWorld(config: ServerConfig, store: SnapshotStore): {
   const snapshot = store.loadLatest();
   if (snapshot === null) {
     logInfo(`no snapshot found — creating a fresh ${config.worldSize}² world`);
-    return { world: World.createFresh(config.worldSize), pluginSlices: {} };
+    return {
+      world: World.createFresh(config.worldSize, config.difficulty),
+      pluginSlices: {},
+    };
   }
 
   // Changing WORLD_SIZE against an existing database is undefined (see
@@ -46,7 +49,8 @@ function openWorld(config: ServerConfig, store: SnapshotStore): {
   const age = Math.round((Date.now() - snapshot.createdAt) / MILLISECONDS_PER_SECOND);
   logInfo(`restoring snapshot #${snapshot.id} (${snapshot.worldSize}², ${age}s old)`);
   return {
-    world: World.restore(config.worldSize, snapshot.cells, snapshot.mask),
+    // Difficulty comes from the environment, not the snapshot — see World.restore.
+    world: World.restore(config.worldSize, snapshot.cells, snapshot.mask, config.difficulty),
     pluginSlices: snapshot.pluginSlices,
   };
 }
@@ -67,8 +71,8 @@ function snapshotIfDirty(world: World, host: PluginHost, store: SnapshotStore): 
 async function main(): Promise<void> {
   const config = loadConfig();
   logInfo(
-    `starting: world=${config.worldSize}² port=${config.port} tick=${config.tickHz}Hz ` +
-      `snapshot=${config.snapshotIntervalS}s db=${config.dbPath}`,
+    `starting: world=${config.worldSize}² difficulty=${config.difficulty} port=${config.port} ` +
+      `tick=${config.tickHz}Hz snapshot=${config.snapshotIntervalS}s db=${config.dbPath}`,
   );
 
   // Plugins load before the world so a load failure costs nothing but a boot.

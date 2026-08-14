@@ -274,7 +274,9 @@ terrace/
 - Server config via environment variables with sane defaults, `.env.example` in repo:
   `WORLD_SIZE` (default 512), `PORT` (default 2567 — Colyseus convention),
   `DB_PATH` (default `./data/world.db`), `TICK_HZ` (default 10),
-  `SNAPSHOT_INTERVAL_S` (default: open question 4).
+  `SNAPSHOT_INTERVAL_S` (default: open question 4), `WORLD_DIFFICULTY`
+  (default 50 — added 2026-08-14; the one setting that clamps rather than
+  refusing, see the decision entry).
 - No secrets exist in v1 (no accounts); keep it that way — nothing sensitive should
   ever be required to boot a world.
 
@@ -514,6 +516,64 @@ terrace/
      repeats. Both are per-second rates converted with the host's `dt`; the
      equilibrium sits at `T / (1 + W/L)` ≈ 0.94 of target, deliberately never
      pinned to it. Tests assert bounds and statistics, never exact counts.
+
+- **A world has a DIFFICULTY rating, and it is a neutral core scalar** (owner
+  request, settled 2026-08-14: "maps get a difficulty rating 1–100; warm maps
+  regenerate 200 mana/s, difficult maps 20/s").
+
+  **What core owns.** `WORLD_DIFFICULTY` — an integer in `[1, 100]`, default
+  **50**, where 1 is warm/forgiving and 100 is punishing. It is stored on the
+  `World` and published to plugins as `WorldApi.difficulty` (readonly). Core
+  attaches **no mechanics** to it: it reads the number in no simulation path and
+  has no opinion about what a hard world does. That is what keeps it inside
+  "nothing gamey in core" (§3.5) — core is publishing a *dial*, not a difficulty
+  system, in the same way it publishes `worldSize`. It is deployment
+  configuration, **not snapshot state**: re-rating a world is an env edit plus a
+  restart, and an old snapshot never overrides today's setting.
+
+  **Why a 1–100 scalar rather than named tiers.** Consumers interpolate against
+  it, so a continuous scale lets each plugin choose its own two anchors and lerp
+  without core knowing what any of them mean. Named tiers would put that
+  vocabulary — and therefore the game design — in core.
+
+  **Validation: it CLAMPS where the other settings refuse.** Out-of-range is
+  clamped to the nearest end with a warning (`WORLD_DIFFICULTY=250` means "as
+  hard as you can make it", and the ceiling delivers exactly that); non-integer
+  text is still fatal, like every other integer variable. The rule that splits
+  the two is whether the bad value states an intent the clamp can honour — it
+  does for a scale, and it does not for `PORT=70000`. Safe only because a scale
+  has no correctness cliff: no stored data, protocol, or other setting depends
+  on where in the band it lands.
+
+  **First consumer: mana.** Regen's DEFAULT is now interpolated linearly between
+  `MANA_REGEN_AT_DIFFICULTY_1 = 200`/s and `MANA_REGEN_AT_DIFFICULTY_100 = 20`/s:
+
+      regen(d) = 200 + (d − 1)/99 × (20 − 200)
+
+  so difficulty 50 gives ≈**110.9**/s — up from the flat 20/s default this
+  replaces, which is intended (it is the mid-scale answer to the owner's two
+  anchors, not a retune of the old number). Linear because the dial is
+  dimensionless and a plugin author reading "difficulty 25" should be able to
+  predict the rate; any easing would hide a second tuning decision inside the
+  first.
+
+  **Precedence, one-way: an explicit `MANA_REGEN_PER_S` always wins.** A host who
+  writes a number means that number — they are configuring the plugin directly,
+  and a world-level dial silently overruling them would make the setting a lie.
+  Difficulty supplies the *default*, i.e. the answer for a deployment that has
+  said nothing about mana. The existing validation band still applies to
+  whichever source won (200/s sits well inside `MAX_MANA_REGEN_PER_SECOND` =
+  810), and a junk `MANA_REGEN_PER_S` degrades to the difficulty-derived rate
+  with a warning rather than refusing to boot.
+
+  **The wire is unchanged**: `regenPerSecond` already travels in the balance
+  push, so the client HUD animates at the derived rate with no protocol work.
+
+  **Future consumers read the SAME scalar** and pick their own anchors — monster
+  aggression and relic counts are the expected next ones — so a host turns one
+  dial and the whole installed plugin set moves together. A consumer should treat
+  only the two ends as fixed points and interpolate; switching on particular
+  values leaves ninety-eight settings undefined.
 
 ### Version facts recorded at scaffold time (2026-08-13)
 

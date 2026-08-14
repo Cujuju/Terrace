@@ -28,14 +28,22 @@ import {
 import { currentBrushCost, setManaPool } from '../client/state.ts';
 import { sculptManaCost } from '../pricing.ts';
 import {
-  DEFAULT_MANA_REGEN_PER_SECOND,
   MANA_CAPACITY,
   MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
   MANA_COST_PER_MIN_RADIUS_SCULPT,
   MANA_PER_BAND_CELL,
+  MANA_REGEN_AT_DIFFICULTY_100,
   MAX_MANA_REGEN_PER_SECOND,
   MIN_MANA_REGEN_PER_SECOND,
 } from '../server/index.ts';
+
+/**
+ * A concrete, plausible world rate for the examples below. The gauge has no
+ * default rate of its own — it animates whatever the balance push carries — so
+ * this is a stand-in, and the punishing anchor (20/s) is used because it is the
+ * whole number the readout examples in this file were written against.
+ */
+const EXAMPLE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
 
 describe('display advance', () => {
   it('advances at exactly the pushed rate', () => {
@@ -118,9 +126,9 @@ describe('fill level', () => {
 
 describe('pulse period — the rate readout', () => {
   it('is one CURRENT-BRUSH sculpt worth of regen, in seconds', () => {
-    // The point brush at the default rate: 6 mana at 20/s = 0.3 s per grain.
+    // The point brush at 20/s: 6 mana at 20/s = 0.3 s per grain.
     expect(
-      pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, DEFAULT_MANA_REGEN_PER_SECOND),
+      pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, EXAMPLE_REGEN_PER_SECOND),
     ).toBeCloseTo(0.3, 10);
     expect(pulsePeriodSeconds(25, 5)).toBe(5);
   });
@@ -135,11 +143,11 @@ describe('pulse period — the rate readout', () => {
     // regen, but the wait between sculpts is the wait for 45 band-cells.
     const point = pulsePeriodSeconds(
       MANA_COST_PER_MIN_RADIUS_SCULPT,
-      DEFAULT_MANA_REGEN_PER_SECOND,
+      EXAMPLE_REGEN_PER_SECOND,
     );
     const plateau = pulsePeriodSeconds(
       MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
-      DEFAULT_MANA_REGEN_PER_SECOND,
+      EXAMPLE_REGEN_PER_SECOND,
     );
     expect(plateau / point).toBeCloseTo(
       MANA_COST_PER_MAX_RADIUS_HARD_SCULPT / MANA_COST_PER_MIN_RADIUS_SCULPT,
@@ -176,7 +184,7 @@ describe('pulse period — the rate readout', () => {
   it('degrades an unusable rate or cost to the slowest period', () => {
     for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, bad)).toBe(MAX_PULSE_PERIOD_S);
-      expect(pulsePeriodSeconds(bad, DEFAULT_MANA_REGEN_PER_SECOND)).toBe(MAX_PULSE_PERIOD_S);
+      expect(pulsePeriodSeconds(bad, EXAMPLE_REGEN_PER_SECOND)).toBe(MAX_PULSE_PERIOD_S);
     }
   });
 });
@@ -196,7 +204,7 @@ describe('current-brush cost', () => {
     balance: MANA_CAPACITY,
     capacity: MANA_CAPACITY,
     manaPerBandCell: MANA_PER_BAND_CELL,
-    regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+    regenPerSecond: EXAMPLE_REGEN_PER_SECOND,
   };
 
   afterEach(() => {
@@ -288,7 +296,7 @@ describe('brush price readout', () => {
 
 describe('numeric rate readout', () => {
   it('shows whole units at playable rates', () => {
-    expect(formatRegenRate(DEFAULT_MANA_REGEN_PER_SECOND)).toBe('+20/s');
+    expect(formatRegenRate(EXAMPLE_REGEN_PER_SECOND)).toBe('+20/s');
     expect(formatRegenRate(19.7)).toBe('+20/s');
     expect(formatRegenRate(1)).toBe('+1/s');
   });

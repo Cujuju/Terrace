@@ -5,6 +5,11 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_WORLD_DIFFICULTY,
+  MAX_WORLD_DIFFICULTY,
+  MIN_WORLD_DIFFICULTY,
+} from '../src/config.ts';
 import { PluginLoadError, discoverPlugins } from '../src/plugins/discovery.ts';
 import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost } from '../src/plugins/host.ts';
 import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
@@ -170,6 +175,45 @@ describe('PluginHost', () => {
     const targeted = sink.ofType('terraformer:private');
     expect(targeted).toHaveLength(1);
     expect(targeted[0].target).toBe(PLAYER.id);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // WorldApi.difficulty (added 2026-08-14). Core's job is to PUBLISH the world's
+  // rating to plugins and nothing else — the mechanics belong to whoever reads
+  // it — so what core owes a test is exactly: the number reaches the plugin, it
+  // is the world's own, and it stays inside the documented band.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** Boots one plugin on a world of the given difficulty and hands back its API. */
+  function apiForDifficulty(difficulty?: number): WorldApi {
+    let api: WorldApi | undefined;
+    const plugin: TerracePlugin = {
+      name: 'rater',
+      onWorldCreate(world): void {
+        api = world;
+      },
+    };
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]], difficulty);
+    new PluginHost(world, [plugin].map(asLoadedPlugin)).worldCreate();
+    if (api === undefined) throw new Error('onWorldCreate was never called');
+    return api;
+  }
+
+  it('exposes the world’s difficulty rating to plugins', () => {
+    expect(apiForDifficulty(MIN_WORLD_DIFFICULTY).difficulty).toBe(MIN_WORLD_DIFFICULTY);
+    expect(apiForDifficulty(MAX_WORLD_DIFFICULTY).difficulty).toBe(MAX_WORLD_DIFFICULTY);
+    expect(apiForDifficulty(37).difficulty).toBe(37);
+    // An unconfigured deployment: the plugin still sees a usable number.
+    expect(apiForDifficulty().difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
+  });
+
+  it('never hands a plugin a difficulty outside the documented band', () => {
+    // The env path cannot produce these (loadConfig clamps first); this is the
+    // second layer, for every OTHER caller that builds a World directly.
+    expect(apiForDifficulty(0).difficulty).toBe(MIN_WORLD_DIFFICULTY);
+    expect(apiForDifficulty(10_000).difficulty).toBe(MAX_WORLD_DIFFICULTY);
+    expect(apiForDifficulty(Number.NaN).difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
+    expect(apiForDifficulty(50.4).difficulty).toBe(50);
   });
 
   it('stops a runaway onTerrainChanged → sculpt cascade', () => {

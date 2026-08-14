@@ -29,6 +29,27 @@ export interface WorldApi {
   /** Chunks per world edge. */
   readonly chunksPerEdge: number;
 
+  /**
+   * This world's difficulty rating: an integer in [1, 100] where 1 =
+   * warm/forgiving and 100 = punishing. Set per deployment (WORLD_DIFFICULTY)
+   * and constant for the life of the world.
+   *
+   * CORE ATTACHES NO MECHANICS TO IT — PLUGINS INTERPRET IT. Core neither reads
+   * this number in any simulation path nor has an opinion about what a "hard"
+   * world does; it publishes one neutral dial and each plugin decides what its
+   * own mechanic makes of it (decided 2026-08-14 — see docs/DESIGN.md). mana is
+   * the first consumer: it interpolates its default regen rate between two
+   * anchors at difficulty 1 and 100. Monster aggression and relic counts are
+   * expected to read the SAME scalar and pick their own anchors, so a host turns
+   * one dial and the whole installed set of plugins moves together.
+   *
+   * A consumer should treat the ends as the only fixed points and interpolate
+   * between them, rather than switching on particular values: the scale is
+   * continuous on purpose, and a plugin that only handles 1 and 100 leaves
+   * ninety-eight settings undefined.
+   */
+  readonly difficulty: number;
+
   heightAt(x: number, y: number): number;
   isCellUnlocked(x: number, y: number): boolean;
   isChunkUnlocked(cx: number, cy: number): boolean;

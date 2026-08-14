@@ -25,6 +25,11 @@ import {
   type SculptOptions,
   type ServerMessage,
 } from '@terrace/shared';
+import {
+  DEFAULT_WORLD_DIFFICULTY,
+  MAX_WORLD_DIFFICULTY,
+  MIN_WORLD_DIFFICULTY,
+} from '../config.ts';
 import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlock, initialUnlockFootprint } from './initial-unlock.ts';
@@ -130,6 +135,25 @@ export const FRESH_SLOPE_WIDTH_CELLS = CHUNK_SIZE;
  */
 export const FRESH_SHELF_SPAN_DIVISOR = 4;
 
+/**
+ * The second layer of the difficulty guarantee, behind loadConfig's validation.
+ *
+ * WorldApi.difficulty promises plugins an integer in [MIN_WORLD_DIFFICULTY,
+ * MAX_WORLD_DIFFICULTY], and plugins interpolate against it — a NaN or an
+ * out-of-band value would silently become a NaN or an absurd derived rate deep
+ * inside somebody else's economy, which is exactly the class of failure mana
+ * already guards its own inputs against. The env path cannot produce one, so
+ * this exists for the OTHER callers (tests, a future world-gen plugin, a
+ * supervisor building a World directly) and costs one comparison at genesis.
+ */
+function normalizeDifficulty(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_WORLD_DIFFICULTY;
+  const rounded = Math.round(value);
+  if (rounded < MIN_WORLD_DIFFICULTY) return MIN_WORLD_DIFFICULTY;
+  if (rounded > MAX_WORLD_DIFFICULTY) return MAX_WORLD_DIFFICULTY;
+  return rounded;
+}
+
 /** Band depth → height. Genesis heights are exact band floors by construction. */
 function heightAtBandsBelowSea(bands: number): number {
   return SEA_LEVEL - bands * BAND_HEIGHT;
@@ -206,6 +230,22 @@ export class World {
   readonly map: Heightmap;
   readonly mask: Uint8Array;
 
+  /**
+   * This world's difficulty rating: 1 = warm/forgiving, 100 = punishing
+   * (WORLD_DIFFICULTY, decided 2026-08-14 — see config.ts and docs/DESIGN.md).
+   *
+   * The World holds it and NOTHING HERE READS IT. It is a neutral scalar core
+   * publishes to plugins through WorldApi.difficulty; every mechanic derived
+   * from it lives in a plugin. Kept on the World rather than threaded from the
+   * config at each call site because "difficulty" is a property of the world a
+   * plugin is looking at, and the WorldApi is the only thing plugins are given.
+   *
+   * Deployment configuration, NOT snapshot state: it is deliberately absent from
+   * the snapshot, so a host who re-rates their world by editing the environment
+   * gets the new rating on the next boot rather than a value frozen at genesis.
+   */
+  readonly difficulty: number;
+
   private sink: MessageSink = NULL_SINK;
   private readonly playersById = new Map<string, Player>();
 
@@ -217,9 +257,10 @@ export class World {
    */
   private changedSinceSnapshot = false;
 
-  private constructor(map: Heightmap, mask: Uint8Array) {
+  private constructor(map: Heightmap, mask: Uint8Array, difficulty: number) {
     this.map = map;
     this.mask = mask;
+    this.difficulty = difficulty;
   }
 
   /**
@@ -258,7 +299,7 @@ export class World {
    * server has a coast and an abyss. The first `chunkUnlock` overwrites it.
    * Left alone on purpose — the fix belongs in the client's boot state.
    */
-  static createFresh(size: number): World {
+  static createFresh(size: number, difficulty: number = DEFAULT_WORLD_DIFFICULTY): World {
     const map = createHeightmap(size);
     const profile = freshGenesisProfile(size);
 
@@ -272,7 +313,7 @@ export class World {
       }
     }
 
-    const world = new World(map, createChunkMask(size));
+    const world = new World(map, createChunkMask(size), normalizeDifficulty(difficulty));
     applyInitialUnlock(world);
     // The starter unlock is part of world creation, not a mutation of an
     // existing world: the first snapshot will be written by the normal dirty
@@ -285,8 +326,17 @@ export class World {
    * Rebuilds a world from a snapshot. Both buffers are validated against the
    * configured size — a mismatch means the DB was written by a differently
    * configured server, and silently continuing would produce a corrupt world.
+   *
+   * `difficulty` comes from the CURRENT environment, never from the snapshot:
+   * it is deployment configuration, so re-rating a world is an env edit plus a
+   * restart, and an old snapshot never overrides today's setting.
    */
-  static restore(size: number, cells: Int16Array, mask: Uint8Array): World {
+  static restore(
+    size: number,
+    cells: Int16Array,
+    mask: Uint8Array,
+    difficulty: number = DEFAULT_WORLD_DIFFICULTY,
+  ): World {
     const map = createHeightmap(size);
     if (cells.length !== map.cells.length) {
       throw new RangeError(
@@ -301,7 +351,7 @@ export class World {
     }
     map.cells.set(cells);
     expectedMask.set(mask);
-    return new World(map, expectedMask);
+    return new World(map, expectedMask, normalizeDifficulty(difficulty));
   }
 
   get size(): number {

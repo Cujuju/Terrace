@@ -6,6 +6,7 @@
 import { CHUNK_SIZE, DEFAULT_WORLD_SIZE } from '@terrace/shared';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { logWarn } from './log.ts';
 
 /** Colyseus's conventional default port. */
 export const DEFAULT_PORT = 2567;
@@ -35,6 +36,35 @@ export const MAX_TICK_HZ = 60;
 export const MIN_SNAPSHOT_INTERVAL_S = 1;
 export const MAX_SNAPSHOT_INTERVAL_S = 3600;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD DIFFICULTY (decided 2026-08-14 with the owner — see docs/DESIGN.md)
+//
+// A NEUTRAL per-world scalar: 1 = warm/forgiving, 100 = punishing. Core owns the
+// number and NOTHING ELSE — it attaches no mechanic to it, reads it in no
+// simulation path, and never changes behaviour because of it. Interpreting it is
+// entirely the business of plugins (mana is the first consumer; monster
+// aggression and relic counts are the expected next ones), which is what keeps
+// it inside the "nothing gamey in core" rule: core is publishing a dial, not a
+// difficulty system.
+//
+// The scale is 1–100 rather than a named enum because plugins interpolate
+// against it — a continuous scalar lets each consumer pick its own two anchor
+// values and lerp, without core having to know what any of them mean.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The warmest, most forgiving world. */
+export const MIN_WORLD_DIFFICULTY = 1;
+
+/** The most punishing world. */
+export const MAX_WORLD_DIFFICULTY = 100;
+
+/**
+ * Dead centre of the band. A self-hoster who has never heard of this setting
+ * gets a world that is neither the gentlest nor the harshest one on offer, and
+ * every consumer's interpolation lands mid-range for them.
+ */
+export const DEFAULT_WORLD_DIFFICULTY = 50;
+
 /** TCP port range, excluding 0 (which would bind an arbitrary ephemeral port). */
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
@@ -49,6 +79,12 @@ export interface ServerConfig {
   readonly dbPath: string;
   readonly tickHz: number;
   readonly snapshotIntervalS: number;
+  /**
+   * This world's difficulty rating, 1 (warm/forgiving) to 100 (punishing).
+   * Core attaches no mechanics to it — plugins interpret it. See the block
+   * comment above MIN_WORLD_DIFFICULTY.
+   */
+  readonly difficulty: number;
   /** Absolute path to the folder scanned for plugins at boot. */
   readonly pluginsDir: string;
 }
@@ -67,16 +103,15 @@ interface IntegerRange {
 }
 
 /**
- * Parses one integer environment variable. Rejects empty strings, non-numeric
- * text, floats and out-of-range values — `parseInt` is deliberately NOT used
+ * Parses one integer environment variable, WITHOUT range checking. Rejects empty
+ * strings, non-numeric text and floats — `parseInt` is deliberately NOT used
  * because it silently accepts "10abc" and "1.9".
+ *
+ * Text that is not an integer is fatal for EVERY variable, range policy aside:
+ * `TICK_HZ=fast` states no intent that could be honoured, so there is nothing to
+ * recover to but a guess.
  */
-function readInteger(
-  env: NodeJS.ProcessEnv,
-  name: string,
-  fallback: number,
-  range: IntegerRange,
-): number {
+function parseIntegerEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
 
@@ -84,10 +119,58 @@ function readInteger(
   if (!Number.isInteger(value)) {
     throw new ConfigError(`${name} must be an integer, got "${raw}"`);
   }
+  return value;
+}
+
+/**
+ * An integer variable whose range is a HARD requirement: out of range is fatal.
+ *
+ * This is the default policy, and it is right whenever an out-of-range value
+ * would produce a world that boots but is wrong (a 1000 Hz tick, port 0 binding
+ * an arbitrary ephemeral port). Failing at boot is the only moment a self-hoster
+ * is still watching.
+ */
+function readInteger(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  range: IntegerRange,
+): number {
+  const value = parseIntegerEnv(env, name, fallback);
   if (value < range.min || value > range.max) {
     throw new ConfigError(
       `${name} must be between ${range.min} and ${range.max}, got ${value}`,
     );
+  }
+  return value;
+}
+
+/**
+ * An integer variable whose range is a SCALE, so out of range is clamped with a
+ * warning rather than refused.
+ *
+ * The distinction against readInteger is one question: does the out-of-range
+ * value state an intent the clamp can honour? `WORLD_DIFFICULTY=250` says "as
+ * hard as you can make it" and the ceiling delivers exactly that, so refusing to
+ * boot would cost a self-hoster their world over a value whose meaning was never
+ * in doubt. `PORT=70000` says nothing of the kind. Clamping is only safe because
+ * a scale has no correctness cliff — no stored data, no protocol, and no other
+ * setting depends on where in the band the value lands.
+ */
+function readClampedInteger(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  range: IntegerRange,
+): number {
+  const value = parseIntegerEnv(env, name, fallback);
+  if (value < range.min) {
+    logWarn(`${name} ${value} is below ${range.min}; clamped to ${range.min}`);
+    return range.min;
+  }
+  if (value > range.max) {
+    logWarn(`${name} ${value} is above ${range.max}; clamped to ${range.max}`);
+    return range.max;
   }
   return value;
 }
@@ -134,6 +217,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     snapshotIntervalS: readInteger(env, 'SNAPSHOT_INTERVAL_S', DEFAULT_SNAPSHOT_INTERVAL_S, {
       min: MIN_SNAPSHOT_INTERVAL_S,
       max: MAX_SNAPSHOT_INTERVAL_S,
+    }),
+    // CLAMPED, not fatal: difficulty is a scale, and 0 or 250 names an end of it
+    // unambiguously. See readClampedInteger for the rule that splits the two.
+    difficulty: readClampedInteger(env, 'WORLD_DIFFICULTY', DEFAULT_WORLD_DIFFICULTY, {
+      min: MIN_WORLD_DIFFICULTY,
+      max: MAX_WORLD_DIFFICULTY,
     }),
     pluginsDir,
   };

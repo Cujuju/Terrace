@@ -2,12 +2,15 @@
 // a message a self-hoster can act on, never boot a subtly broken world.
 
 import { CHUNK_SIZE, DEFAULT_WORLD_SIZE } from '@terrace/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ConfigError,
   DEFAULT_PORT,
   DEFAULT_SNAPSHOT_INTERVAL_S,
   DEFAULT_TICK_HZ,
+  DEFAULT_WORLD_DIFFICULTY,
+  MAX_WORLD_DIFFICULTY,
+  MIN_WORLD_DIFFICULTY,
   loadConfig,
 } from '../src/config.ts';
 
@@ -18,6 +21,7 @@ describe('loadConfig', () => {
     expect(config.port).toBe(DEFAULT_PORT);
     expect(config.tickHz).toBe(DEFAULT_TICK_HZ);
     expect(config.snapshotIntervalS).toBe(DEFAULT_SNAPSHOT_INTERVAL_S);
+    expect(config.difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
     expect(config.dbPath).toBe('./data/world.db');
     expect(config.pluginsDir.endsWith('plugins')).toBe(true);
   });
@@ -28,6 +32,7 @@ describe('loadConfig', () => {
       PORT: '3000',
       TICK_HZ: '20',
       SNAPSHOT_INTERVAL_S: '5',
+      WORLD_DIFFICULTY: '73',
       DB_PATH: '/tmp/other.db',
     });
     expect(config).toMatchObject({
@@ -35,6 +40,7 @@ describe('loadConfig', () => {
       port: 3000,
       tickHz: 20,
       snapshotIntervalS: 5,
+      difficulty: 73,
       dbPath: '/tmp/other.db',
     });
   });
@@ -54,9 +60,67 @@ describe('loadConfig', () => {
   });
 
   it('treats an empty value as unset rather than as zero', () => {
-    expect(loadConfig({ TICK_HZ: '', DB_PATH: '  ' })).toMatchObject({
+    expect(loadConfig({ TICK_HZ: '', DB_PATH: '  ', WORLD_DIFFICULTY: '' })).toMatchObject({
       tickHz: DEFAULT_TICK_HZ,
+      difficulty: DEFAULT_WORLD_DIFFICULTY,
       dbPath: './data/world.db',
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// WORLD_DIFFICULTY is the one setting that CLAMPS instead of refusing to boot
+// (decided 2026-08-14): it is a scale, so an out-of-range value states an intent
+// the clamp can honour, unlike PORT=70000. Everything else about it follows the
+// house idiom — unset means the default, non-integer text is still fatal.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('loadConfig — WORLD_DIFFICULTY', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Silences the clamp warning so a run full of bad input stays readable. */
+  function silenceWarnings(): void {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  }
+
+  it('defaults to the midpoint of the band when unset', () => {
+    expect(loadConfig({}).difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
+    expect(DEFAULT_WORLD_DIFFICULTY).toBeGreaterThan(MIN_WORLD_DIFFICULTY);
+    expect(DEFAULT_WORLD_DIFFICULTY).toBeLessThan(MAX_WORLD_DIFFICULTY);
+  });
+
+  it('accepts every value in the band, both ends included', () => {
+    for (const value of [MIN_WORLD_DIFFICULTY, 25, DEFAULT_WORLD_DIFFICULTY, 99, MAX_WORLD_DIFFICULTY]) {
+      expect(loadConfig({ WORLD_DIFFICULTY: String(value) }).difficulty).toBe(value);
+    }
+  });
+
+  it('clamps out-of-band values into it, loudly, rather than refusing to boot', () => {
+    silenceWarnings();
+
+    expect(loadConfig({ WORLD_DIFFICULTY: '0' }).difficulty).toBe(MIN_WORLD_DIFFICULTY);
+    expect(loadConfig({ WORLD_DIFFICULTY: '-40' }).difficulty).toBe(MIN_WORLD_DIFFICULTY);
+    expect(loadConfig({ WORLD_DIFFICULTY: '101' }).difficulty).toBe(MAX_WORLD_DIFFICULTY);
+    // A typo'd extra zero: "as hard as you can make it", honoured.
+    expect(loadConfig({ WORLD_DIFFICULTY: '1000' }).difficulty).toBe(MAX_WORLD_DIFFICULTY);
+
+    expect(console.warn).toHaveBeenCalledTimes(4);
+  });
+
+  it('is silent for a value inside the band', () => {
+    silenceWarnings();
+    loadConfig({ WORLD_DIFFICULTY: String(MAX_WORLD_DIFFICULTY) });
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('still refuses text that states no honourable intent', () => {
+    // Clamping is for a value that names an end of the scale. "hard" and "50.5"
+    // name nothing the server could act on, so they stay fatal like every other
+    // integer variable.
+    expect(() => loadConfig({ WORLD_DIFFICULTY: 'hard' })).toThrow(ConfigError);
+    expect(() => loadConfig({ WORLD_DIFFICULTY: '50.5' })).toThrow(/must be an integer/);
+    expect(() => loadConfig({ WORLD_DIFFICULTY: '50abc' })).toThrow(/must be an integer/);
   });
 });

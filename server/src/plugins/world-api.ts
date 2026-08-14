@@ -32,6 +32,12 @@ export function createWorldApi(
     get chunksPerEdge(): number {
       return world.chunksPerEdge;
     },
+    // A getter like the rest, though the World's own field is readonly: keeping
+    // the whole surface one shape means no reader has to know which of these
+    // could move.
+    get difficulty(): number {
+      return world.difficulty;
+    },
     heightAt(x: number, y: number): number {
       return world.heightAt(x, y);
     },
