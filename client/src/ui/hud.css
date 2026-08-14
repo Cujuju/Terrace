@@ -268,6 +268,53 @@ body {
   pointer-events: auto;
 }
 
+/* World header: the name of the world and its difficulty rating, above
+   everything else in the top-centre stack. Same chrome as .hud-panel (border,
+   blur, translucent slate) so it reads as part of the HUD rather than as a
+   title card; it takes pointer events like every other top-centre child, which
+   is what lets its tooltips be hit-tested at the cost of a small patch of
+   canvas at the top edge — the same trade the mana gauge already makes. */
+.world-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 16px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  text-align: center;
+  cursor: help;
+  user-select: none;
+}
+
+/* The name is the one thing on this element meant to be read from across the
+   screen, so it is the only oversized type in the HUD. Wide tracking, small
+   caps-ish weight: a title, not a label. */
+.world-header__name {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: var(--hud-text);
+  /* A generated name is short, but the header sits over the play view: cap it
+     rather than let an unexpectedly long one push the stack off-centre. */
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The rating is a footnote to the name — same muted treatment as the HUD's
+   other secondary readouts, with tabular figures so it does not jitter. */
+.world-header__rating {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-muted);
+}
+
 /* Invite plugin: the share URL must survive narrow panels intact. */
 .invite-url {
   font-size: 12px;

@@ -21,6 +21,14 @@ import { decodeHeights, encodeHeights } from './codec.ts';
  * Bumped whenever the stored layout changes in a way this reader cannot
  * interpret. There are no migrations yet: a snapshot from a future (or
  * incompatible past) version is refused rather than guessed at.
+ *
+ * DELIBERATELY NOT BUMPED for the `world_name` column added 2026-08-14. The
+ * version guard exists to stop a reader from misinterpreting a row it cannot
+ * understand, and this column is compatible in BOTH directions: this build
+ * reads a row without one as an unnamed world (and names it), and an older
+ * build's `SELECT *` simply ignores a column it never asks for. Bumping would
+ * turn a purely additive column into a refusal to boot — i.e. into a
+ * self-hoster losing their world over a string.
  */
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -36,14 +44,22 @@ export const IN_MEMORY_DB_PATH = ':memory:';
 
 export interface SnapshotInput {
   readonly worldSize: number;
+  /** The world's name. A writer always knows it — see World.name. */
+  readonly name: string;
   readonly cells: Int16Array;
   readonly mask: Uint8Array;
   readonly pluginSlices: Record<string, unknown>;
 }
 
-export interface WorldSnapshot extends SnapshotInput {
+export interface WorldSnapshot extends Omit<SnapshotInput, 'name'> {
   readonly id: number;
   readonly createdAt: number;
+  /**
+   * The stored name, or null for a row written before worlds had names. The
+   * asymmetry against SnapshotInput is the point: only a READER can encounter
+   * a nameless world, and World.restore is what names it.
+   */
+  readonly name: string | null;
 }
 
 interface SnapshotRow {
@@ -51,6 +67,7 @@ interface SnapshotRow {
   schema_version: number;
   created_at: number;
   world_size: number;
+  world_name: string | null;
   heightmap: Uint8Array;
   mask: Uint8Array;
 }
@@ -60,12 +77,21 @@ interface SliceRow {
   data: string;
 }
 
+/**
+ * Name of the additive column introduced with world names (2026-08-14).
+ * NULLABLE, and it has to be: SQLite cannot add a NOT NULL column without a
+ * default to a table that already has rows, and there is no honest default for
+ * "what was this world called" — null means "nobody has named it yet".
+ */
+const WORLD_NAME_COLUMN = 'world_name';
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS snapshots (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     schema_version INTEGER NOT NULL,
     created_at     INTEGER NOT NULL,
     world_size     INTEGER NOT NULL,
+    ${WORLD_NAME_COLUMN} TEXT,
     heightmap      BLOB    NOT NULL,
     mask           BLOB    NOT NULL
   );
@@ -77,6 +103,22 @@ const SCHEMA_DDL = `
     PRIMARY KEY (snapshot_id, plugin)
   );
 `;
+
+/**
+ * Adds the world-name column to a database created before it existed.
+ *
+ * `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so the DDL
+ * above only names the column on FRESH databases — every self-hoster who
+ * already has a `world.db` needs this. Idempotent by inspection
+ * (`PRAGMA table_info`) rather than by catching the duplicate-column error,
+ * because a swallowed exception here would hide a real schema problem behind
+ * the same silence.
+ */
+function addWorldNameColumnIfMissing(db: Database): void {
+  const columns = db.pragma('table_info(snapshots)') as { name: string }[];
+  if (columns.some((column) => column.name === WORLD_NAME_COLUMN)) return;
+  db.exec(`ALTER TABLE snapshots ADD COLUMN ${WORLD_NAME_COLUMN} TEXT`);
+}
 
 export class SnapshotStore {
   private readonly db: Database;
@@ -90,8 +132,9 @@ export class SnapshotStore {
   private constructor(db: Database) {
     this.db = db;
     this.insertSnapshot = db.prepare(
-      `INSERT INTO snapshots (schema_version, created_at, world_size, heightmap, mask)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO snapshots
+         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -123,6 +166,7 @@ export class SnapshotStore {
     // Required for the plugin_slices cascade — SQLite defaults it off.
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA_DDL);
+    addWorldNameColumnIfMissing(db);
     return new SnapshotStore(db);
   }
 
@@ -141,6 +185,7 @@ export class SnapshotStore {
         SNAPSHOT_SCHEMA_VERSION,
         Date.now(),
         input.worldSize,
+        input.name,
         heightmap,
         mask,
       );
@@ -189,6 +234,9 @@ export class SnapshotStore {
       id: row.id,
       createdAt: row.created_at,
       worldSize: row.world_size,
+      // `?? null` covers a row written before the column existed AND a row
+      // written by a build that stored nothing in it; both mean "unnamed".
+      name: row.world_name ?? null,
       cells,
       mask,
       pluginSlices,

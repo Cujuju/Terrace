@@ -49,8 +49,18 @@ function openWorld(config: ServerConfig, store: SnapshotStore): {
   const age = Math.round((Date.now() - snapshot.createdAt) / MILLISECONDS_PER_SECOND);
   logInfo(`restoring snapshot #${snapshot.id} (${snapshot.worldSize}², ${age}s old)`);
   return {
-    // Difficulty comes from the environment, not the snapshot — see World.restore.
-    world: World.restore(config.worldSize, snapshot.cells, snapshot.mask, config.difficulty),
+    // Difficulty comes from the environment, not the snapshot; the NAME comes
+    // from the snapshot, not the environment — see World.restore for why the
+    // two are opposite. A null name means a world created before names existed:
+    // restore mints one and marks the world dirty so it is written on the next
+    // snapshot instead of being re-drawn on every boot.
+    world: World.restore(
+      config.worldSize,
+      snapshot.cells,
+      snapshot.mask,
+      config.difficulty,
+      snapshot.name,
+    ),
     pluginSlices: snapshot.pluginSlices,
   };
 }
@@ -60,6 +70,7 @@ function snapshotIfDirty(world: World, host: PluginHost, store: SnapshotStore): 
   if (!world.dirty) return false;
   store.saveSnapshot({
     worldSize: world.size,
+    name: world.name,
     cells: world.map.cells,
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
@@ -80,12 +91,30 @@ async function main(): Promise<void> {
 
   const store = SnapshotStore.open(config.dbPath);
   const { world, pluginSlices } = openWorld(config, store);
+  // The name is how a self-hoster tells one of their worlds from another in a
+  // log; it is fixed for the life of the world, so it is stated once at boot.
+  logInfo(`world is "${world.name}"`);
 
   const host = new PluginHost(world, plugins);
   // Restore first, then announce: onWorldCreate must see a world whose plugin
   // state is already the state it had when the process died.
   host.restorePersistence(pluginSlices);
   host.worldCreate();
+
+  // BELT AND SUSPENDERS FOR WORLD IDENTITY. Booting can leave the world already
+  // differing from the file it came from: a world restored without a name has
+  // just been given one, and a plugin's onWorldCreate may have unlocked chunks.
+  // Waiting SNAPSHOT_INTERVAL_S to write that would mean a crash inside the
+  // first minute silently re-names the world on the next boot — an identity
+  // wobble, not a lost sculpt. One extra write per process start, only when
+  // something actually changed, closes it.
+  try {
+    if (snapshotIfDirty(world, host, store)) logInfo('boot snapshot written');
+  } catch (error) {
+    // Same policy as the periodic snapshot: a failed write must not stop a
+    // world from opening; the world stays dirty and the scheduler retries.
+    logError('boot snapshot failed', error);
+  }
 
   const tickLoop = startTickLoop(config.tickHz, (dt) => host.tick(dt));
 

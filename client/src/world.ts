@@ -28,6 +28,7 @@ import {
   type TerrainMirror,
 } from './terrain/mirror.ts';
 import { HEIGHT_WORLD_SCALE } from './config.ts';
+import { setWorldIdentity } from './state/hudState.ts';
 import {
   createPredictionStore,
   type PredictionStore,
@@ -164,6 +165,17 @@ export function createWorld(viewport: Viewport): World {
 
   return {
     onSnapshot(msg: JoinSnapshotMessage): void {
+      // World identity (name + difficulty) travels on the snapshot and only on
+      // the snapshot, so it is published to the HUD here — on a REJOIN too,
+      // which matters: the client may have been pointed at a different world
+      // while it was away, and the header must follow the terrain it is over.
+      // Writing hudState from the imperative layer is the documented pattern
+      // (see state/hudState.ts's header), not a shortcut around Solid.
+      setWorldIdentity({
+        name: msg.worldName ?? null,
+        difficulty: msg.difficulty ?? null,
+      });
+
       const fresh = resetWorld(msg.worldSize);
       // Through the prediction store like every authoritative message, so the
       // store's authoritative copy is seeded from the snapshot rather than from

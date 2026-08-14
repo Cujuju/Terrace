@@ -150,9 +150,14 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // ANTI-CHEAT: the join snapshot carries ONLY unlocked chunks. A client is
     // never sent terrain it has not been granted, so there is nothing in its
     // memory to reveal (design §3.4, "anti-cheat by omission").
+    // World IDENTITY rides along with the geometry: the name and the difficulty
+    // rating are both constant for the life of the world, so the join snapshot
+    // is the only message that ever needs to carry them (design 2026-08-14).
     const snapshot: JoinSnapshotMessage = {
       type: 'snapshot',
       worldSize: this.context.world.size,
+      worldName: this.context.world.name,
+      difficulty: this.context.world.difficulty,
       chunks: collectUnlockedChunkPayloads(this.context.world),
     };
     client.send('snapshot', snapshot);

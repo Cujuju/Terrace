@@ -37,6 +37,7 @@ import {
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
+import { WorldHeader } from './WorldHeader.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
 import type { SculptProfile, SculptTool } from '@terrace/shared';
 
@@ -142,8 +143,13 @@ export function Hud(): JSX.Element {
   // still read by calling the accessor inline, exactly as before.
   return (
     <div class="hud">
-      {/* Top-centre plugin stack: at-a-glance status (mana gauge etc). */}
+      {/* Top centre, top to bottom: the world header (core — whose world this
+          is), then the plugin stack (at-a-glance status: the mana gauge etc).
+          The header is first in source order and the container is a column, so
+          it sits ABOVE anything a plugin places here, whatever plugins are
+          installed. */}
       <div class="hud-top-center">
+        <WorldHeader />
         <For each={pluginHudPanels().filter((p) => p.placement === 'top-center')}>
           {(panel) => <Dynamic component={panel.component} />}
         </For>
