@@ -8,6 +8,12 @@ export interface ManaPool {
   readonly capacity: number;
   /** Perk-adjusted price of this player's next sculpt (server-pushed). */
   readonly cost: number;
+  /**
+   * Perk-adjusted refill rate in mana per second (server-pushed). Feeds the
+   * gauge's smoothing and its pulse period ONLY — the gate below never reads
+   * it, so the client's affordability answer stays the server's answer.
+   */
+  readonly regenPerSecond: number;
 }
 
 /** Null until the first mana:balance arrives (e.g. server runs no mana). */

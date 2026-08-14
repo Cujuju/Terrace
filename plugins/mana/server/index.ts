@@ -47,17 +47,124 @@ export const MANA_CAPACITY = 600;
 export const MANA_COST_PER_SCULPT = 25;
 
 /**
- * Regeneration, in mana units per second of simulated time. 20/s = one sculpt
- * every 1.25 s sustained, and a full empty-to-capacity refill in 10 s. Slow
- * enough to be felt, fast enough that a self-hoster poking at a fresh world is
- * never left staring at an empty bar.
+ * DEFAULT regeneration, in mana units per second of simulated time, for a world
+ * whose deployment does not configure one. 20/s = one sculpt every 1.25 s
+ * sustained, and a full empty-to-capacity refill in 30 s. Slow enough to be
+ * felt, fast enough that a self-hoster poking at a fresh world is never left
+ * staring at an empty gauge.
+ *
+ * Per-world overrides arrive through MANA_REGEN_ENV (see below): the pace of an
+ * economy is a property of the world being hosted — a sandbox for two friends
+ * and a persistent server for thirty want different answers — not of this
+ * plugin, and the client HUD reads the rate off the wire rather than assuming
+ * this number.
  *
  * NOTE: mana is an economy, not terrain math — the determinism contract in
  * CLAUDE.md governs shared/'s heightmap ops and does not apply here, so a
  * fractional pool is fine. State is still reproducible: regen is driven purely
  * by the fixed tick period the host passes in, never by wall-clock time.
  */
-export const MANA_REGEN_PER_SECOND = 20;
+export const DEFAULT_MANA_REGEN_PER_SECOND = 20;
+
+/**
+ * Environment variable naming this world's regen rate, in mana units per
+ * second. Read at onWorldCreate (like invite's SHARE_URL) rather than at module
+ * load, so tests and a supervisor that restarts the world see the current
+ * environment.
+ */
+export const MANA_REGEN_ENV = 'MANA_REGEN_PER_S';
+
+/**
+ * The longest a fully drained player may have to wait for one more sculpt. Sets
+ * the FLOOR of the configurable band: a rate slower than "one sculpt a minute"
+ * is indistinguishable, from inside the game, from a world where sculpting is
+ * broken — the gauge barely moves and the player has no way to tell "wait" from
+ * "this server is dead". A host who wants a read-only world should unload this
+ * plugin's veto, not starve it.
+ */
+export const MAX_DRAINED_WAIT_S = 60;
+
+/**
+ * The shortest a full empty-to-capacity refill may take. Sets the CEILING:
+ * at one refill per second, one sculpt's worth of regen lands every
+ * MANA_COST_PER_SCULPT / MANA_CAPACITY = ~42 ms, which is already at the edge
+ * of what a person reads as separate events rather than a blur — the HUD gauge
+ * derives its pulse period from exactly that quantity. Faster than this the
+ * economy has stopped being one (every tick refills everything), so the extra
+ * range would buy nothing but a misleading readout.
+ */
+export const MIN_FULL_REFILL_S = 1;
+
+/** Slowest rate a deployment may configure. See MAX_DRAINED_WAIT_S. */
+export const MIN_MANA_REGEN_PER_SECOND = MANA_COST_PER_SCULPT / MAX_DRAINED_WAIT_S;
+
+/** Fastest rate a deployment may configure. See MIN_FULL_REFILL_S. */
+export const MAX_MANA_REGEN_PER_SECOND = MANA_CAPACITY / MIN_FULL_REFILL_S;
+
+/** Logged when MANA_REGEN_PER_S is set to something unusable. */
+export const MANA_REGEN_INVALID_WARNING = `[mana] ${MANA_REGEN_ENV} is not a positive finite number; falling back to ${DEFAULT_MANA_REGEN_PER_SECOND}/s`;
+
+/** Logged when MANA_REGEN_PER_S is usable but outside the supported band. */
+export const MANA_REGEN_CLAMPED_WARNING = `[mana] ${MANA_REGEN_ENV} clamped into [${MIN_MANA_REGEN_PER_SECOND}, ${MAX_MANA_REGEN_PER_SECOND}] mana/s`;
+
+/**
+ * UNTRUSTED INPUT (deployment configuration, i.e. a human with a text editor).
+ *
+ * Resolves the configured regen rate, in three layers, because each failure
+ * mode has a different right answer:
+ *
+ *   unset / blank            → the default. Not configuring is not an error.
+ *   not a positive finite    → the default, loudly. NaN or 0 or -5 would freeze
+ *     number                   every pool at its starting balance forever (and
+ *                              NaN would poison it permanently), so this must
+ *                              never be taken at face value.
+ *   outside the band         → clamped, loudly. A typo'd extra zero should slow
+ *                              or speed the world to its documented limit, not
+ *                              silently ship a world nobody can play.
+ */
+export function resolveManaRegenPerSecond(raw: string | undefined): number {
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return DEFAULT_MANA_REGEN_PER_SECOND;
+  }
+
+  // Number() rather than parseFloat(): parseFloat('20abc') is 20, which would
+  // accept a value the host plainly did not mean.
+  const parsed = Number(raw.trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(MANA_REGEN_INVALID_WARNING);
+    return DEFAULT_MANA_REGEN_PER_SECOND;
+  }
+
+  if (parsed < MIN_MANA_REGEN_PER_SECOND) {
+    console.warn(MANA_REGEN_CLAMPED_WARNING);
+    return MIN_MANA_REGEN_PER_SECOND;
+  }
+  if (parsed > MAX_MANA_REGEN_PER_SECOND) {
+    console.warn(MANA_REGEN_CLAMPED_WARNING);
+    return MAX_MANA_REGEN_PER_SECOND;
+  }
+  return parsed;
+}
+
+/**
+ * This world's base regen rate: the default until onWorldCreate resolves the
+ * environment. Perks scale it per player (see manaRegenFor).
+ */
+let regenPerSecond: number = DEFAULT_MANA_REGEN_PER_SECOND;
+
+/** This world's base regen rate, before any player's perk. */
+export function manaRegenPerSecond(): number {
+  return regenPerSecond;
+}
+
+/**
+ * What THIS player's pool actually earns per second, perk included — the number
+ * the balance push carries so the client gauge can animate at the true rate
+ * instead of guessing at a constant it has no business knowing.
+ */
+export function manaRegenFor(playerId: string): number {
+  return regenPerSecond * manaPerkOf(playerId).regenMultiplier;
+}
 
 /**
  * Multiplier bounds for a perk (see setManaPerk). A perk may at most quarter a
@@ -142,7 +249,7 @@ const poolsByPlayer = new Map<string, ManaPool>();
 export interface ManaPerk {
   /** Scales MANA_COST_PER_SCULPT. Below 1 = cheaper. */
   readonly costMultiplier?: number;
-  /** Scales MANA_REGEN_PER_SECOND. Above 1 = faster. */
+  /** Scales this world's regen rate (manaRegenPerSecond). Above 1 = faster. */
   readonly regenMultiplier?: number;
 }
 
@@ -229,6 +336,10 @@ function sendBalance(playerId: string, pool: ManaPool): void {
     // The perk-adjusted price of this player's next sculpt: what the client's
     // local intent gate compares the balance against (see ../protocol.ts).
     cost: manaCostFor(playerId),
+    // The perk-adjusted rate this pool refills at. Display-only on the client
+    // (it animates the gauge between pushes); the authoritative arithmetic
+    // stays here.
+    regenPerSecond: manaRegenFor(playerId),
   });
 }
 
@@ -308,7 +419,7 @@ function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
  * TICK_HZ regenerates at the same rate per second.
  */
 function regenerate(dt: number): void {
-  const baseGain = MANA_REGEN_PER_SECOND * dt;
+  const baseGain = regenPerSecond * dt;
 
   for (const [playerId, pool] of poolsByPlayer) {
     if (pool.balance >= MANA_CAPACITY) continue;
@@ -329,6 +440,9 @@ export const plugin: TerracePlugin = {
 
   onWorldCreate(world: WorldApi): void {
     api = world;
+    // Read here, not at module load: a supervisor that recreates the world (and
+    // every test that boots one) must see the environment as it is NOW.
+    regenPerSecond = resolveManaRegenPerSecond(process.env[MANA_REGEN_ENV]);
   },
 
   onPlayerJoin(player: Player): void {
@@ -368,6 +482,7 @@ export function manaBalanceOf(playerId: string): number | null {
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetManaState(): void {
   api = null;
+  regenPerSecond = DEFAULT_MANA_REGEN_PER_SECOND;
   poolsByPlayer.clear();
   perksByPlayer.clear();
 }

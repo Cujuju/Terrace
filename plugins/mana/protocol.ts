@@ -26,6 +26,16 @@ export interface ManaBalanceMessage {
    * neither is a constant the client could hard-code.
    */
   readonly cost: number;
+  /**
+   * Mana per second THIS player's pool refills at — the world's configured rate
+   * (MANA_REGEN_PER_S) times whatever regen perk they hold. Strictly positive.
+   *
+   * DISPLAY ONLY. The client advances the gauge between pushes at this rate so
+   * a fast world visibly fills fast and a slow one trickles, and derives the
+   * gauge's pulse period from it; the pool arithmetic that decides whether a
+   * sculpt is affordable stays balance-vs-cost, exactly as before.
+   */
+  readonly regenPerSecond: number;
 }
 
 export interface ManaDeniedMessage {
@@ -40,17 +50,43 @@ function finiteNonNegative(value: unknown): number | null {
     : null;
 }
 
-/** Defensive parse; null means "ignore the message". */
+/**
+ * Defensive parse; null means "ignore the message".
+ *
+ * ALL-OR-NOTHING, including the newer `regenPerSecond` field: both halves of
+ * this plugin ship from the same directory, so a balance push missing a field
+ * is a bug in the server half rather than an older peer to degrade gracefully
+ * for, and a half-parsed pool would drive the local intent gate off numbers
+ * nobody vouched for. A rejected push leaves the client with no pool state at
+ * all, which the gate already treats as "this server declares no economy" and
+ * lets through — the pre-gate behaviour, not a broken one.
+ *
+ * `regenPerSecond` must be strictly positive: zero would make the gauge's pulse
+ * period (cost / regen) infinite and its fill-time estimate a division by zero.
+ */
 export function parseManaBalancePayload(payload: unknown): ManaBalanceMessage | null {
   if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as { balance?: unknown; capacity?: unknown; cost?: unknown };
+  const p = payload as {
+    balance?: unknown;
+    capacity?: unknown;
+    cost?: unknown;
+    regenPerSecond?: unknown;
+  };
   const balance = finiteNonNegative(p.balance);
   const capacity = finiteNonNegative(p.capacity);
   const cost = finiteNonNegative(p.cost);
-  if (balance === null || capacity === null || capacity === 0 || cost === null) {
+  const regenPerSecond = finiteNonNegative(p.regenPerSecond);
+  if (
+    balance === null ||
+    capacity === null ||
+    capacity === 0 ||
+    cost === null ||
+    regenPerSecond === null ||
+    regenPerSecond === 0
+  ) {
     return null;
   }
-  return { balance, capacity, cost };
+  return { balance, capacity, cost, regenPerSecond };
 }
 
 /** Defensive parse; null means "ignore the message". */

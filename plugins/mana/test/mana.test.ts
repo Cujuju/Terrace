@@ -2,7 +2,7 @@
 // both shipped example plugins registered — no stubs for either. If the plugin
 // API cannot express a mana economy, these tests are what fails.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -14,6 +14,7 @@ import {
 } from '../../../server/test/support/harness.ts';
 import { plugin as revealPlugin, resetRevealState } from '../../reveal/server/index.ts';
 import {
+  DEFAULT_MANA_REGEN_PER_SECOND,
   INSUFFICIENT_MANA_REASON,
   MANA_BALANCE_MESSAGE,
   MANA_CAPACITY,
@@ -21,14 +22,20 @@ import {
   MANA_DENIED_MESSAGE,
   MANA_PERK_MAX_MULTIPLIER,
   MANA_PERK_MIN_MULTIPLIER,
-  MANA_REGEN_PER_SECOND,
+  MANA_REGEN_ENV,
+  MAX_DRAINED_WAIT_S,
+  MAX_MANA_REGEN_PER_SECOND,
+  MIN_MANA_REGEN_PER_SECOND,
   NEUTRAL_MANA_MULTIPLIER,
   clearManaPerk,
   manaBalanceOf,
   manaCostFor,
   manaPerkOf,
+  manaRegenFor,
+  manaRegenPerSecond,
   plugin as manaPlugin,
   resetManaState,
+  resolveManaRegenPerSecond,
   setManaPerk,
 } from '../server/index.ts';
 
@@ -101,6 +108,7 @@ describe('mana plugin', () => {
       balance: MANA_CAPACITY,
       capacity: MANA_CAPACITY,
       cost: MANA_COST_PER_SCULPT,
+      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
     });
   });
 
@@ -159,7 +167,7 @@ describe('mana plugin', () => {
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_SCULPT);
 
     // Exactly enough simulated time to earn one sculpt back.
-    const ticksToRefundOneSculpt = MANA_COST_PER_SCULPT / (MANA_REGEN_PER_SECOND * TICK_DT);
+    const ticksToRefundOneSculpt = MANA_COST_PER_SCULPT / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToRefundOneSculpt; n++) harness.host.tick(TICK_DT);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
 
@@ -173,7 +181,7 @@ describe('mana plugin', () => {
     }
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
 
-    const ticksToAffordOneSculpt = MANA_COST_PER_SCULPT / (MANA_REGEN_PER_SECOND * TICK_DT);
+    const ticksToAffordOneSculpt = MANA_COST_PER_SCULPT / (DEFAULT_MANA_REGEN_PER_SECOND * TICK_DT);
     for (let n = 0; n < ticksToAffordOneSculpt; n++) harness.host.tick(TICK_DT);
 
     expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
@@ -298,8 +306,8 @@ describe('mana perks', () => {
 
     const perkedGain = (manaBalanceOf(PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
     const plainGain = (manaBalanceOf(OTHER_PLAYER.id) ?? 0) - (MANA_CAPACITY - spent);
-    expect(plainGain).toBe(MANA_REGEN_PER_SECOND);
-    expect(perkedGain).toBe(MANA_REGEN_PER_SECOND * 2);
+    expect(plainGain).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(perkedGain).toBe(DEFAULT_MANA_REGEN_PER_SECOND * 2);
 
     // Capacity is deliberately NOT scaled by the perk.
     for (let n = 0; n < 100; n++) harness.host.tick(TICK_DT);
@@ -388,15 +396,148 @@ describe('mana perks', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// PER-WORLD REGEN RATE. The rate is deployment configuration (MANA_REGEN_PER_S)
+// with a default, so the three things worth pinning down are: an unconfigured
+// world still works, a configured one is obeyed, and a MIS-configured one can
+// neither freeze the economy nor delete it.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('mana regen configuration', () => {
+  const originalEnv = process.env[MANA_REGEN_ENV];
+
+  beforeEach(() => {
+    delete process.env[MANA_REGEN_ENV];
+    // The resolver warns on every rejected/clamped value by design; silence it
+    // so a suite full of deliberately bad input is still readable.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalEnv === undefined) delete process.env[MANA_REGEN_ENV];
+    else process.env[MANA_REGEN_ENV] = originalEnv;
+  });
+
+  it('falls back to the default when unset or blank', () => {
+    expect(resolveManaRegenPerSecond(undefined)).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('')).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('   ')).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(console.warn).not.toHaveBeenCalled(); // not configuring is not an error
+
+    const harness = boot();
+    expect(manaRegenPerSecond()).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
+      regenPerSecond: DEFAULT_MANA_REGEN_PER_SECOND,
+    });
+  });
+
+  it('accepts a valid rate, whitespace and all, and regenerates at it', () => {
+    const configured = 5;
+    process.env[MANA_REGEN_ENV] = `  ${configured}  `;
+
+    const harness = boot();
+    expect(manaRegenPerSecond()).toBe(configured);
+
+    sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+    const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
+    for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT); // one second
+    expect((manaBalanceOf(PLAYER.id) ?? 0) - afterSpend).toBe(configured);
+  });
+
+  it('rejects anything that is not a positive finite number', () => {
+    for (const bad of ['abc', '0', '-5', 'NaN', 'Infinity', '20abc', 'true']) {
+      expect(resolveManaRegenPerSecond(bad)).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    }
+    expect(console.warn).toHaveBeenCalledTimes(7);
+
+    // End to end: a garbage value must leave a WORKING world, not a frozen one.
+    process.env[MANA_REGEN_ENV] = 'twenty';
+    const harness = boot();
+    expect(manaRegenPerSecond()).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+    sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+    const afterSpend = manaBalanceOf(PLAYER.id) ?? 0;
+    for (let n = 0; n < 1 / TICK_DT; n++) harness.host.tick(TICK_DT);
+    expect((manaBalanceOf(PLAYER.id) ?? 0) - afterSpend).toBe(DEFAULT_MANA_REGEN_PER_SECOND);
+  });
+
+  it('clamps a rate outside the supported band into it', () => {
+    expect(resolveManaRegenPerSecond('0.0001')).toBe(MIN_MANA_REGEN_PER_SECOND);
+    expect(resolveManaRegenPerSecond('1e9')).toBe(MAX_MANA_REGEN_PER_SECOND);
+    // The band's own edges are configurable values, not rejected ones.
+    expect(resolveManaRegenPerSecond(String(MIN_MANA_REGEN_PER_SECOND))).toBe(
+      MIN_MANA_REGEN_PER_SECOND,
+    );
+    expect(resolveManaRegenPerSecond(String(MAX_MANA_REGEN_PER_SECOND))).toBe(
+      MAX_MANA_REGEN_PER_SECOND,
+    );
+
+    // Even at the floor the economy still moves: a drained player recovers a
+    // sculpt inside MAX_DRAINED_WAIT_S, which is what the floor is chosen for.
+    process.env[MANA_REGEN_ENV] = '0.0001';
+    const harness = boot();
+    expect(manaRegenPerSecond()).toBe(MIN_MANA_REGEN_PER_SECOND);
+    while (sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied) {
+      /* drain */
+    }
+    // One tick of slack on top of the minute: the floor is 25/60 mana per
+    // second, and accumulating that in 0.1 s steps lands a hair under 25 in
+    // IEEE arithmetic. The claim under test is the wait, not the last ULP.
+    for (let n = 0; n <= MAX_DRAINED_WAIT_S / TICK_DT; n++) harness.host.tick(TICK_DT);
+    expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
+  });
+
+  it('pushes the PERK-ADJUSTED rate, per player', () => {
+    const configured = 8;
+    process.env[MANA_REGEN_ENV] = String(configured);
+
+    const harness = boot();
+    setManaPerk(PLAYER.id, { regenMultiplier: 2 });
+    expect(manaRegenFor(PLAYER.id)).toBe(configured * 2);
+    expect(manaRegenFor('never-seen')).toBe(configured); // no perk: world rate
+
+    // The push a spend triggers carries this player's own rate, not the world's.
+    harness.sink.clear();
+    sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+    expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
+      regenPerSecond: configured * 2,
+    });
+  });
+});
+
 describe('protocol parse (client half)', () => {
   it('accepts proper payloads and rejects malformed ones', async () => {
     const { parseManaBalancePayload, parseManaDeniedPayload } = await import('../protocol.ts');
-    expect(parseManaBalancePayload({ balance: 150, capacity: 600, cost: 25 })).toEqual({
+    expect(
+      parseManaBalancePayload({ balance: 150, capacity: 600, cost: 25, regenPerSecond: 20 }),
+    ).toEqual({
       balance: 150,
       capacity: 600,
       cost: 25,
+      regenPerSecond: 20,
     });
-    for (const bad of [null, 'x', {}, { balance: 1 }, { balance: -1, capacity: 600, cost: 25 }, { balance: 1, capacity: 0, cost: 25 }, { balance: Number.NaN, capacity: 600, cost: 25 }, { balance: 1, capacity: 600 }]) {
+    // A fractional rate is legal — the configurable band's floor is 25/60.
+    expect(
+      parseManaBalancePayload({ balance: 0, capacity: 600, cost: 25, regenPerSecond: 0.4 }),
+    ).toEqual({ balance: 0, capacity: 600, cost: 25, regenPerSecond: 0.4 });
+    for (const bad of [
+      null,
+      'x',
+      {},
+      { balance: 1 },
+      { balance: -1, capacity: 600, cost: 25, regenPerSecond: 20 },
+      { balance: 1, capacity: 0, cost: 25, regenPerSecond: 20 },
+      { balance: Number.NaN, capacity: 600, cost: 25, regenPerSecond: 20 },
+      { balance: 1, capacity: 600, regenPerSecond: 20 },
+      // The new field: missing, zero (an infinite pulse period), negative, and
+      // not a number at all. All-or-nothing — see parseManaBalancePayload.
+      { balance: 1, capacity: 600, cost: 25 },
+      { balance: 1, capacity: 600, cost: 25, regenPerSecond: 0 },
+      { balance: 1, capacity: 600, cost: 25, regenPerSecond: -20 },
+      { balance: 1, capacity: 600, cost: 25, regenPerSecond: Number.NaN },
+      { balance: 1, capacity: 600, cost: 25, regenPerSecond: Number.POSITIVE_INFINITY },
+      { balance: 1, capacity: 600, cost: 25, regenPerSecond: '20' },
+    ]) {
       expect(parseManaBalancePayload(bad)).toBeNull();
     }
     expect(parseManaDeniedPayload({ balance: 3, cost: 25 })).toEqual({ balance: 3, cost: 25 });
@@ -415,7 +556,7 @@ describe('client local intent gate', () => {
     setManaPool(null);
     expect(gateLocalSculpt()).toBe(true); // no economy declared: never veto
 
-    setManaPool({ balance: 30, capacity: 600, cost: 25 });
+    setManaPool({ balance: 30, capacity: 600, cost: 25, regenPerSecond: 20 });
     expect(gateLocalSculpt()).toBe(true); // 30 -> 5, affordable
     expect(manaPool()?.balance).toBe(5);
 
