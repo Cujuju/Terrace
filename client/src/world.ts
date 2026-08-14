@@ -80,8 +80,24 @@ export function createWorld(viewport: Viewport): World {
     },
 
     onChunkUnlock(msg: ChunkUnlockMessage): void {
-      // A chunk unlock before the snapshot would mean the server sent messages
-      // out of order; drop it rather than guess a world size.
+      // Guard, not an expected path: the snapshot always arrives first, so
+      // this can only fire if that ordering contract is broken.
+      //
+      // The contract is real and was worth pinning down, because Colyseus
+      // makes it easy to violate: `Room._onJoin` pushes the client into
+      // `this.clients` BEFORE awaiting the room's `onJoin`, so a client is
+      // broadcast-reachable before its snapshot has been sent, and the tick
+      // loop (which may carry a plugin's chunkUnlock) is a separate
+      // macrotask. Verified with the Phase 1 server agent against a running
+      // server: their `onJoin` sends the snapshot with nothing awaited before
+      // it, and its `: void` return type now makes marking it `async` a
+      // compile error — so the ordering is enforced at the source rather than
+      // merely observed.
+      //
+      // We still drop rather than guess: without a snapshot there is no world
+      // size, so the mirror cannot be allocated and the chunk has nowhere to
+      // go. Dropping loses one reveal; guessing would render the world at the
+      // wrong scale.
       if (mirror === null || meshes === null) return;
       meshes.update(applyChunkUnlock(mirror, msg));
     },
