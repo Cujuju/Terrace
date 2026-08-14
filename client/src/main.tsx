@@ -36,7 +36,16 @@ createSculptInput({
   // when chunks stream in or a new session starts.
   pickables: () => world.pickables(),
   worldSize: () => world.worldSize(),
-  send: (intent) => connection.sendSculpt(intent),
+  // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
+  // intent locally with the shared terrain math so the brush responds this
+  // frame instead of a round trip later; the world reconciles it against the
+  // authoritative diff when that arrives. Predicting only when the intent
+  // reached the wire is deliberate — an intent dropped while offline will never
+  // be answered, so predicting it would put the local terrain permanently ahead
+  // of the server.
+  send: (intent) => {
+    if (connection.sendSculpt(intent)) world.predictSculpt(intent);
+  },
 });
 
 render(() => <Hud />, hudRoot);
