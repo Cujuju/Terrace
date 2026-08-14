@@ -15,7 +15,11 @@ import {
   type Object3D,
 } from 'three';
 import { SEA_LEVEL } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import {
+  CELL_WORLD_SIZE,
+  HEIGHT_WORLD_SCALE,
+  WATER_SURFACE_LIFT,
+} from '../config.ts';
 
 const WATER_COLOR = 0x2f6f9e;
 /** Translucent enough to show the seabed colour and submerged terraces. */
@@ -56,7 +60,9 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
 
   const mesh = new Mesh(new PlaneGeometry(1, 1), material);
   mesh.rotation.x = PLANE_TO_GROUND_ROTATION_X;
-  mesh.position.y = SEA_LEVEL * HEIGHT_WORLD_SCALE;
+  // Lifted off the SEA_LEVEL plane on purpose — band-0 terrain renders exactly
+  // there and would z-fight. See WATER_SURFACE_LIFT for the full reasoning.
+  mesh.position.y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
   parent.add(mesh);
 
   const setWorldSize = (worldSize: number): void => {
