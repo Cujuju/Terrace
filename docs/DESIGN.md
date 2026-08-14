@@ -229,7 +229,10 @@ terrace/
 - Accounts/auth (deferred; future plugin — see 3.7)
 - Lobbies, matchmaking, or multi-world routing in core (one process = one world)
 - Any game mechanics in core: mana, followers, combat, win conditions (plugins only)
-- Mobile/touch-first UI (desktop browser first; touch can come later)
+- Mobile/touch-first UI **redesign** (desktop browser first). ~~touch can come
+  later~~ — SUPERSEDED 2026-08-14: smooth touch *input* (one-finger sculpt,
+  two-finger camera) is in scope for v1 by owner request; only a touch-first
+  UI layout remains out of scope. See the Phase 2 decisions below.
 - npm plugin distribution (folder-based first; design the loader so npm can be added)
 - Erosion or advanced fluid sim (static/simple water first — see open question 3)
 - Horizontal scaling infrastructure, k8s, etc. (docker compose is the deployment story)
@@ -355,6 +358,19 @@ terrace/
   **colyseus 0.17.x server + @colyseus/sdk 0.17.x client**. Note 0.17's
   `Client<{ userData, auth, messages }>` generic shape and multi-handler
   `onMessage()`.
+
+### Decisions made 2026-08-14 (Phase 2, settled with owner)
+
+- **Touch controls are v1 scope** (owner request, supersedes the §6 non-goal's
+  "touch can come later"): one-finger sculpts in the HUD's sticky raise/lower
+  mode, two-finger pinch zooms with the drag component configurable (pan
+  default, orbit optional). Touch strokes arm after `TOUCH_STROKE_GRACE_MS`
+  so a camera gesture's second finger cancels them before they sculpt.
+- **Control bindings are user-configurable** (owner request): raise/lower/
+  orbit/pan each bind to a mouse button + optional modifier, persisted in
+  localStorage, edited in the HUD's Controls panel. One resolver
+  (`client/src/state/controlPrefs.ts`) owns "who gets this press"; OrbitControls'
+  `mouseButtons`/`touches` are derived from it per press.
 
 ### Version facts recorded at scaffold time (2026-08-13)
 
