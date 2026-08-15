@@ -28,7 +28,9 @@ import {
   FALLBACK_MAX_TRIANGLES,
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   LATTICE_PER_CHUNK,
+  LIT_BY_SCENE,
   SEABED_CAP_SINK,
+  SELF_LIT,
   SKIRT_PICK_INSET,
   VERTICES_PER_TRIANGLE,
   chunkCapTriangles,
@@ -116,6 +118,8 @@ interface Triangle {
   c: Vertex;
   normal: Vertex;
   color: number[];
+  /** The face's self-lit flag; see selfLitOf, which also checks it is a face. */
+  selfLit: number;
 }
 
 function vertexAt(buffers: ChunkGeometryBuffers, index: number): Vertex {
@@ -148,9 +152,26 @@ function trianglesOf(
         buffers.colors[base * 3 + 1],
         buffers.colors[base * 3 + 2],
       ],
+      selfLit: selfLitOf(buffers, base),
     });
   }
   return out;
+}
+
+/**
+ * The self-lit flag of the face starting at vertex `base`.
+ *
+ * It asserts, rather than assumes, that all three corners carry the same value:
+ * the shader interpolates the attribute, so a triangle whose corners disagreed
+ * would fade between lit and unlit across its own surface — which is not a
+ * thing the renderer is allowed to draw, and not a thing a per-face flag can be
+ * read back from.
+ */
+function selfLitOf(buffers: ChunkGeometryBuffers, base: number): number {
+  const value = buffers.selfLit[base];
+  expect(buffers.selfLit[base + 1]).toBe(value);
+  expect(buffers.selfLit[base + 2]).toBe(value);
+  return value;
 }
 
 /** Flat band tops: the ones whose normal points straight up. */
@@ -1102,6 +1123,117 @@ describe('colour attribution', () => {
         luminance(TERRAIN_PALETTE[i]) * 0.85,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SELF-LIT SEABED RIMS (owner, 2026-08-14, low-angle screenshot).
+//
+// The rim palette makes an underwater seam a bright silt line, but a skirt is a
+// VERTICAL face and the scene has one directional sun, so the orientations
+// facing away from it rendered dark whatever colour they carried: the outlines
+// read from overhead and vanished from a low camera. The geometry therefore
+// flags every underwater cut face, and the material shades a flagged face as
+// its own colour (render/terrainMeshes.ts).
+//
+// These assertions are about which FACES carry the flag, which is the half of
+// the contract that can be checked without a GL context; the other half — that
+// the material actually honours it — is asserted in terrainMeshes.test.ts.
+// ---------------------------------------------------------------------------
+describe('self-lit seabed rims', () => {
+  /**
+   * A coast in cross-section: deep seabed (band −3), shelf (band −1), then
+   * land four bands up. It therefore emits underwater skirts, the hairline
+   * shore skirt, and ordinary land cliffs, which is every case the flag has an
+   * opinion about.
+   */
+  const coast = (i: number): number => (i < 5 ? -192 : i < 10 ? -64 : 256);
+
+  /** Whether a face's colour came from the seabed half of the cliff ramp. */
+  const isRimColored = (t: Triangle): boolean =>
+    CLIFF_PALETTE.slice(0, FIRST_LAND_PALETTE_INDEX).some(
+      (rim) => Math.abs(t.color[0] - rim[0]) < 1e-6 && Math.abs(t.color[1] - rim[1]) < 1e-6,
+    );
+
+  it('flags every underwater skirt and nothing else', () => {
+    const { triangles } = writeEdge(coast);
+    const skirts = skirtsOf(triangles);
+    expect(skirts.length).toBeGreaterThan(0);
+
+    // The flag follows the palette regime exactly: a face drawn with a rim
+    // colour is self-lit, and a face drawn with a rock colour is not. Stated
+    // as an equivalence rather than two counts, so neither side can drift.
+    let rims = 0;
+    for (const skirt of skirts) {
+      const rim = isRimColored(skirt);
+      expect(skirt.selfLit).toBe(rim ? SELF_LIT : LIT_BY_SCENE);
+      if (rim) rims++;
+    }
+    expect(rims).toBeGreaterThan(0);
+    expect(rims).toBeLessThan(skirts.length);
+  });
+
+  it('never flags a cap, however deep it is', () => {
+    // A tread faces the sky, so it already catches the sun on every
+    // orientation; unlighting the seabed floor would flatten the depth ramp
+    // the palette exists to show.
+    const { triangles } = writeEdge(coast);
+    const caps = capsOf(triangles);
+    expect(caps.length).toBeGreaterThan(0);
+    for (const cap of caps) expect(cap.selfLit).toBe(LIT_BY_SCENE);
+  });
+
+  it('flags underwater walls in the BLOCKY FALLBACK too', () => {
+    // The fallback draws its own per-cell walls, so a chunk that went blocky
+    // must not also lose its rims — same rule, second emission path.
+    // The checkerboard of the fallback's own suite, sunk four bands under the
+    // sea: every cell alternates between band −6 and band −2, so every level
+    // it crosses is underwater and its contour geometry is far over budget.
+    const { counts, triangles } = writeEdge(
+      (i, j) => ((i + j) % 2) * 4 * BAND_HEIGHT - 6 * BAND_HEIGHT,
+    );
+    expect(counts.usedFallback).toBe(true);
+    const skirts = skirtsOf(triangles);
+    expect(skirts.length).toBeGreaterThan(0);
+    // Every cell of this fixture is underwater, so every wall and curtain the
+    // fallback emits is a rim.
+    for (const skirt of skirts) expect(skirt.selfLit).toBe(SELF_LIT);
+    for (const cap of capsOf(triangles)) expect(cap.selfLit).toBe(LIT_BY_SCENE);
+  });
+
+  it('leaves an all-land chunk with no flagged geometry at all', () => {
+    const { triangles } = writeEdge((i) => (i < 8 ? 128 : 384));
+    expect(skirtsOf(triangles).length).toBeGreaterThan(0);
+    for (const t of triangles) expect(t.selfLit).toBe(LIT_BY_SCENE);
+  });
+
+  it('clears the flag on the unused tail, like every other attribute', () => {
+    // A stale SELF_LIT byte under a later, shorter geometry would light a
+    // triangle that no longer exists if the draw range were ever wrong.
+    const { buffers } = writeEdge(coast);
+    const flat = mirrorWith([edgeChunk(() => 0)]);
+    const after = writeChunkVertexData(flat, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
+    for (let v = after.vertexCount; v < buffers.selfLit.length; v++) {
+      expect(buffers.selfLit[v]).toBe(LIT_BY_SCENE);
+    }
+  });
+
+  it('grows the flag buffer alongside the others', () => {
+    // ensureCapacity replaces all four arrays; a forgotten one would leave the
+    // flags addressing the OLD, shorter buffer and throw away every rim past
+    // the previous capacity.
+    const buffers = createChunkGeometryBuffers(4);
+    const mirror = mirrorWith([edgeChunk(coast)]);
+    const grown = writeChunkVertexData(mirror, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
+    expect(grown.capacityGrew).toBe(true);
+    expect(buffers.selfLit.length).toBe(
+      buffers.triangleCapacity * VERTICES_PER_TRIANGLE,
+    );
+    expect(
+      Array.from(buffers.selfLit.subarray(0, grown.vertexCount)).some(
+        (flag) => flag === SELF_LIT,
+      ),
+    ).toBe(true);
   });
 });
 
