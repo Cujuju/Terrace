@@ -78,10 +78,11 @@ interface Pose {
  * would mean inventing a position no one authorised — and here the despawn is
  * the plot: the thing submerged, it did not wander off.
  *
- * Keyed by id even though there is at most one monster, because ids are never
- * reused (server/summoning.ts): a banishment followed by a later arrival must
- * NOT blend the newcomer out of the departed one's position, and keying by id is
- * what makes that impossible rather than merely unlikely.
+ * Keyed by id, which was already the right shape when a world held at most one
+ * monster and is load-bearing now that it holds one per habitat. Ids are never
+ * reused (server/summoning.ts), so a banishment followed by a later arrival
+ * cannot blend the newcomer out of the departed one's position — and two
+ * monsters alive at once cannot be confused for one that teleported.
  */
 export class MonsterInterpolator {
   /** Pose each monster is being interpolated FROM. */

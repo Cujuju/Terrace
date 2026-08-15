@@ -13,7 +13,8 @@
 // The mist and the lightning around it (./atmosphere.ts) are the same kind of
 // thing one step further: pure presentation, invented here, on the client, out
 // of the position the server already sent and the frame clock. Nothing about
-// them is on the wire, and nothing in the world can observe them.
+// them is on the wire, and nothing in the world can observe them. They are the
+// SEA's weather and only the sea kinds wear them — see MonsterView.dread.
 //
 // Everything it touches arrives through ClientPluginCtx: its own Group in the
 // scene, the rendered terrain height, the message channel, and the frame clock.
@@ -31,13 +32,16 @@ import {
 import { createDread, type Dread } from './atmosphere.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
 import { createMonsterModels, type MonsterModel, type MonsterModels } from './models.ts';
-import { SEA_SURFACE_WORLD_Y, lurkDepthOf, monsterOriginWorldY } from './placement.ts';
+import { SEA_SURFACE_WORLD_Y, monsterOriginY, placementRuleOf } from './placement.ts';
 
 /**
  * Per-monster animation phase offset, in radians per unit of id. The golden
- * angle: consecutive ids land as far apart on the cycle as possible. With one
- * monster at a time this only matters across a banishment and a re-arrival —
- * the newcomer should not resume the departed one's breath mid-stroke.
+ * angle: consecutive ids land as far apart on the cycle as possible.
+ *
+ * It matters in two places now that a world can hold one monster per habitat:
+ * across a banishment and a re-arrival — the newcomer should not resume the
+ * departed one's breath mid-stroke — and between two monsters alive at once,
+ * whose idle cycles should not be in lockstep even when a player can see both.
  */
 const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
 
@@ -51,8 +55,22 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 /** A monster currently in the scene. */
 interface MonsterView {
   readonly model: MonsterModel;
-  /** The mist and lightning around it (./atmosphere.ts). Purely cosmetic. */
-  readonly dread: Dread;
+  /**
+   * The mist and lightning around it (./atmosphere.ts), or null for a kind that
+   * wears no weather.
+   *
+   * IT IS THE SEA'S WEATHER, and that is why the test is the kind's PLACEMENT
+   * rather than a flag: every sheet in the bank is authored at a height above
+   * SEA_SURFACE_WORLD_Y and the whole effect is pinned to the waterline, so it
+   * is meaningful for exactly the kinds that are placed against the sea surface.
+   * On the yeti it would be a bank of mist hanging at sea level under a mountain
+   * nine bands up — not "atmosphere for a land monster" but a visible bug. A
+   * land creature that wants weather wants a DIFFERENT effect (blowing snow),
+   * authored against the ground it stands on; this is not it, and pretending
+   * otherwise by parameterising the height would have made one effect that is
+   * wrong for both.
+   */
+  readonly dread: Dread | null;
   /** Fixed at creation from the id — never recomputed per frame. */
   readonly phase: number;
 }
@@ -84,9 +102,11 @@ let unsubscribeFrames: (() => void) | null = null;
  * Adds/removes scene objects so `views` matches the sampled state.
  *
  * Written as a general reconcile over a map rather than as "if there is one,
- * show it" even though MAX_LIVING_MONSTERS is 1: the wire format is a list, and
- * a client that assumed the list's length would be a client that breaks on the
- * day the server's cap changes — while looking, until then, exactly correct.
+ * show it": the wire format is a list, and a client that assumed the list's
+ * length would be a client that breaks on the day the server's cap changes —
+ * while looking, until then, exactly correct. That day arrived when monster
+ * slots became one PER HABITAT (a sea horror and a yeti can be alive at once)
+ * and this function needed no change at all, which is what it was written for.
  */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void {
   if (models === null || container === null) return;
@@ -95,8 +115,8 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     if (views.has(id)) continue;
     const model = models.create(monster.kind);
     container.add(model.root);
-    const dread = createDread();
-    container.add(dread.root);
+    const dread = placementRuleOf(monster.kind).placement === 'swimmer' ? createDread() : null;
+    if (dread !== null) container.add(dread.root);
     views.set(id, { model, dread, phase: id * PHASE_RADIANS_PER_ID });
   }
 
@@ -111,7 +131,8 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     // The dread is the opposite case: it owns its geometry, its materials and
     // its light outright, so it stays in the scene until it has faded and is
     // then disposed — by renderFrame, which is the only thing here with a dt.
-    retiringDread.push(view.dread);
+    // A kind that wore none leaves nothing behind.
+    if (view.dread !== null) retiringDread.push(view.dread);
     views.delete(id);
   }
 }
@@ -135,16 +156,17 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const view = views.get(id);
     if (view === undefined) continue;
 
-    // The seabed under its centre cell. A single sample is right here: the
-    // monster floats in the water column rather than standing on a footprint,
-    // and the placement rule only uses the seabed as a floor.
-    const seabedY = ctx.terrainHeightAt(Math.floor(monster.x), Math.floor(monster.y));
     const root = view.model.root;
     // CELL_WORLD_SIZE is 1, so cell coordinates ARE world X/Z (see placement.ts).
-    // The lurking depth is the KIND's — the two monsters sit at very different
-    // heights in the same water, which is most of what tells them apart from a
-    // distance.
-    root.position.set(monster.x, monsterOriginWorldY(seabedY, lurkDepthOf(monster.kind)), monster.y);
+    // The VERTICAL rule is the KIND's: the two sea horrors hang from the surface
+    // at very different depths — which is most of what tells them apart from a
+    // distance — and the yeti stands on the snow. placement.ts owns which is
+    // which and how many terrain samples each needs.
+    root.position.set(
+      monster.x,
+      monsterOriginY(monster.kind, (cx, cy) => ctx.terrainHeightAt(cx, cy), monster.x, monster.y),
+      monster.y,
+    );
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and
     // the monster travels toward (cos heading, 0, sin heading) — hence the
     // negation.
@@ -155,14 +177,17 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // THE MIST FOLLOWS THE SAME INTERPOLATED POSE the model does, so the bank
     // cannot lag or lead the thing it belongs to. It sits on the SEA SURFACE
     // rather than at the model's origin (which is down at the lurking depth) and
-    // is never yawed — mist does not turn with the monster.
+    // is never yawed — mist does not turn with the monster. A kind that wears no
+    // weather has none of this (see MonsterView.dread).
     //
     // It is advanced by the CAPPED step rather than the raw dt for the same
     // reason the animation clock is: after a background tab wakes up, a fade
     // must not jump to its end and the lightning clock must not be handed a
     // minute of accumulated waiting.
-    view.dread.root.position.set(monster.x, SEA_SURFACE_WORLD_Y, monster.y);
-    view.dread.update(animationSeconds, step, true);
+    if (view.dread !== null) {
+      view.dread.root.position.set(monster.x, SEA_SURFACE_WORLD_Y, monster.y);
+      view.dread.update(animationSeconds, step, true);
+    }
   }
 
   // Banished monsters' weather, fading in place. Iterated backwards so a
@@ -212,7 +237,7 @@ export const clientPlugin: TerraceClientPlugin = {
       view.model.root.clear();
       // Each dread owns its own GPU resources, so every one of them — living or
       // still fading — is freed here. Nothing may outlive the plugin.
-      view.dread.dispose();
+      view.dread?.dispose();
     }
     views.clear();
     for (const dread of retiringDread) dread.dispose();
