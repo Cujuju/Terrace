@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyBrush,
+  applyLevelFillBrush,
   applySculpt,
   bandOf,
   BAND_HEIGHT,
+  cellIndex,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   heightAt,
@@ -409,7 +411,11 @@ describe('applySculpt — edge profiles', () => {
     expect(heightAt(map, 28, 24)).toBe(0);
   });
 
-  it('radius 1 makes the two profiles identical (footprint is one cell)', () => {
+  it('radius 1 makes the two profiles identical on band-aligned ground', () => {
+    // The footprint is the centre alone, so the falloff and the flat delta
+    // coincide. Band-aligned ground is the qualifier the level fill adds (see
+    // "the level-fill brush" below): off the band grid, hard snaps to the band
+    // boundary while soft adds the full amount.
     const soft = createHeightmap(16);
     const hard = createHeightmap(16);
     applySculpt(soft, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
@@ -423,6 +429,305 @@ describe('applySculpt — edge profiles', () => {
     applySculpt(up, 16, 16, 3, 64, { tool: 'stamp', profile: 'hard' });
     applySculpt(down, 16, 16, 3, -64, { tool: 'stamp', profile: 'hard' });
     for (let i = 0; i < up.cells.length; i++) expect(down.cells[i]).toBe(-up.cells[i] | 0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// THE LEVEL-FILL BRUSH — stamp + hard (owner request, 2026-08-14):
+//   "I would also like the hard edge brush to only work at one level at a time
+//    until it fills out everything at that level. So if I'm at level 2 and I'm
+//    trying to fill out all the ground at a level 2, I don't want it to start
+//    building level 3 until everything within that brush edge is level 2."
+//
+// These are CONTRACT tests: they exercise applySculpt (the one function both the
+// server and the client's prediction store call), not the dispatch inside it.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** stamp + hard: the one combination the level fill applies to. */
+const LEVEL_FILL = { tool: 'stamp', profile: 'hard' } as const;
+
+/**
+ * Writes a 3×3 patch of BAND indices centred on (cx, cy) — exactly the
+ * footprint of a radius-2 brush, the smallest footprint that can hold more than
+ * one band and therefore the smallest one on which a level fill means anything.
+ * Heights are written band-aligned (`band * BAND_HEIGHT`), which is the only
+ * kind of terrain the stamp tool ever produces.
+ */
+function paintFootprint3x3(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  bands: readonly number[],
+): void {
+  for (let k = 0; k < bands.length; k++) {
+    const dx = (k % 3) - 1;
+    const dy = Math.floor(k / 3) - 1;
+    map.cells[cellIndex(map, cx + dx, cy + dy)] = bands[k] * BAND_HEIGHT;
+  }
+}
+
+/** The same 3×3 patch read back as band indices, in the same order. */
+function readFootprintBands3x3(map: Heightmap, cx: number, cy: number): number[] {
+  const bands: number[] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) bands.push(bandOf(heightAt(map, cx + dx, cy + dy)));
+  }
+  return bands;
+}
+
+describe('applySculpt — the level-fill brush (stamp + hard)', () => {
+  it('fills the LOWEST band flat before it starts the next one', () => {
+    const map = createHeightmap(16);
+    // The owner's case, in miniature: ground at three different levels under one
+    // brush. Level 3 must not start while level 2 still has holes in it.
+    paintFootprint3x3(map, 8, 8, [0, 1, 2,
+                                  0, 1, 1,
+                                  2, 0, 1]);
+
+    // Stroke 1 — the band-0 cells come up one level. Everything already at or
+    // above that level is left completely alone.
+    applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([1, 1, 2,
+                                                      1, 1, 1,
+                                                      2, 1, 1]);
+
+    // Stroke 2 — the lowest band is now 1, so THAT is the level being filled.
+    // The two cells already on band 2 still do not move.
+    applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([2, 2, 2,
+                                                      2, 2, 2,
+                                                      2, 2, 2]);
+
+    // Stroke 3 — only now, with the whole footprint level, does band 3 start.
+    applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([3, 3, 3,
+                                                      3, 3, 3,
+                                                      3, 3, 3]);
+  });
+
+  it('never lifts a cell THROUGH the level being filled', () => {
+    const map = createHeightmap(16);
+    // One cell a single unit below the band floor, the rest already on it. A
+    // full-amount stroke would carry that cell almost a whole band past the
+    // level being filled — which is the step this brush exists to prevent.
+    map.cells.fill(BAND_HEIGHT);
+    map.cells[cellIndex(map, 8, 8)] = BAND_HEIGHT - 1;
+
+    applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+
+    expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
+    expect(heightAt(map, 7, 8)).toBe(BAND_HEIGHT); // already there: untouched
+  });
+
+  it('advances at most ONE band per stroke, whatever the amount', () => {
+    // `amount` is server configuration and a plugin may modify it. Four bands'
+    // worth of height still fills exactly one level: "don't start building
+    // level 3" is a statement about levels, not about how hard the stroke hits.
+    const map = createHeightmap(16);
+    applySculpt(map, 8, 8, 2, 4 * BAND_HEIGHT, LEVEL_FILL);
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
+  });
+
+  it('on a FLAT footprint is exactly the old flat stamp: one band, uniformly', () => {
+    // The natural reading of the request, and the compatibility claim that
+    // matters: on ground that is already level — which is all a fresh world has
+    // (docs/DESIGN.md genesis) — nothing about the brush changed. The two agree
+    // because DEFAULT_SCULPT_AMOUNT is exactly BAND_HEIGHT.
+    for (const band of [-3, -1, 0, 5]) {
+      const levelled = createHeightmap(16);
+      const flatDelta = createHeightmap(16);
+      levelled.cells.fill(band * BAND_HEIGHT);
+      flatDelta.cells.fill(band * BAND_HEIGHT);
+
+      applySculpt(levelled, 8, 8, 3, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+      applyBrush(flatDelta, 8, 8, 3, DEFAULT_SCULPT_AMOUNT, new Set<number>(), 'hard');
+
+      expect(levelled.cells).toEqual(flatDelta.cells);
+      expect(heightAt(levelled, 8, 8)).toBe((band + 1) * BAND_HEIGHT);
+    }
+  });
+
+  it('lowering is the same operation mirrored: the HIGHEST band, one level down', () => {
+    const up = createHeightmap(16);
+    const down = createHeightmap(16);
+    paintFootprint3x3(up, 8, 8, [0, 1, 2,
+                                 0, 1, 1,
+                                 2, 0, 1]);
+    paintFootprint3x3(down, 8, 8, [0, -1, -2,
+                                   0, -1, -1,
+                                   -2, 0, -1]);
+
+    // Three strokes, so the mirror covers the whole progression: drain the
+    // highest level flat, then the next one down, then the level below that.
+    for (let stroke = 0; stroke < 3; stroke++) {
+      applySculpt(up, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+      applySculpt(down, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+      // `| 0` only to normalise JavaScript's -0 back to 0 — untouched cells
+      // negate to -0, which Object.is separates from the 0 actually stored.
+      for (let i = 0; i < up.cells.length; i++) expect(down.cells[i]).toBe(-up.cells[i] | 0);
+    }
+  });
+
+  it('clamps at the top and the bottom of the height range', () => {
+    // One unit below the ceiling: the fill reaches MAX_HEIGHT exactly.
+    const nearTop = createHeightmap(16);
+    nearTop.cells.fill(MAX_HEIGHT - 1);
+    applySculpt(nearTop, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(heightAt(nearTop, 8, 8)).toBe(MAX_HEIGHT);
+
+    // AT the ceiling there is no level left to fill — the band above MAX_HEIGHT
+    // is not a place this world has — so nothing moves and the diff is empty.
+    const atTop = createHeightmap(16);
+    atTop.cells.fill(MAX_HEIGHT);
+    expect(applySculpt(atTop, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([]);
+    expect(atTop.cells.every((h) => h === MAX_HEIGHT)).toBe(true);
+
+    const nearFloor = createHeightmap(16);
+    nearFloor.cells.fill(MIN_HEIGHT + 1);
+    applySculpt(nearFloor, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(heightAt(nearFloor, 8, 8)).toBe(MIN_HEIGHT);
+
+    const atFloor = createHeightmap(16);
+    atFloor.cells.fill(MIN_HEIGHT);
+    expect(applySculpt(atFloor, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([]);
+    expect(atFloor.cells.every((h) => h === MIN_HEIGHT)).toBe(true);
+  });
+
+  it('reports only the cells it actually moved', () => {
+    const map = createHeightmap(16);
+    paintFootprint3x3(map, 8, 8, [0, 1, 1,
+                                  1, 1, 1,
+                                  1, 1, 1]);
+    // Eight of the nine footprint cells are already on the level being filled,
+    // so the diff — which is what goes on the wire and what the client's
+    // prediction reconciles against — names exactly the one that was not.
+    expect(applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([
+      { x: 7, y: 7, h: BAND_HEIGHT },
+    ]);
+  });
+
+  it('changes nothing outside its footprint', () => {
+    const map = texturedMap(48);
+    const before = map.cells.slice();
+    const footprint = footprintOf(48, 24, 24, 4);
+
+    applySculpt(map, 24, 24, 4, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+
+    for (let i = 0; i < map.cells.length; i++) {
+      if (footprint.has(i)) continue;
+      expect(map.cells[i]).toBe(before[i]);
+    }
+    // And inside it, every cell is either untouched (already at or above the
+    // level) or moved toward that level without passing it.
+    let lowestBand = Number.POSITIVE_INFINITY;
+    for (const i of footprint) lowestBand = Math.min(lowestBand, bandOf(before[i]));
+    const target = (lowestBand + 1) * BAND_HEIGHT;
+    for (const i of footprint) {
+      const expected =
+        before[i] >= target ? before[i] : Math.min(before[i] + DEFAULT_SCULPT_AMOUNT, target);
+      expect(map.cells[i]).toBe(expected);
+    }
+  });
+
+  it('surveys only in-bounds cells when the brush overhangs the map edge', () => {
+    // Off-map cells are not ground, so they must not be surveyed as band-0
+    // terrain that holds the fill back. All four in-bounds cells of this corner
+    // brush sit on band 1, so the stroke fills band 2 — if the missing cells
+    // counted as band 0, nothing here would move at all.
+    const map = createHeightmap(16);
+    const corner = [[0, 0], [1, 0], [0, 1], [1, 1]] as const;
+    for (const [x, y] of corner) map.cells[cellIndex(map, x, y)] = BAND_HEIGHT;
+
+    applySculpt(map, 0, 0, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+
+    for (const [x, y] of corner) expect(heightAt(map, x, y)).toBe(2 * BAND_HEIGHT);
+  });
+
+  it('at radius 1 snaps an off-grid cell onto the band boundary', () => {
+    // The footprint is one cell, so its own band is the lowest one and the
+    // target is the boundary above it. Only the smooth tool's relaxation makes
+    // off-grid heights, so this is a corner case — but it is the terraced
+    // answer, and it is why "radius 1 makes the two profiles identical" now
+    // carries the qualifier "on band-aligned ground".
+    const map = createHeightmap(16);
+    map.cells[cellIndex(map, 8, 8)] = 10;
+    applySculpt(map, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
+  });
+
+  it('lowering an off-grid cell drops it a RENDERED band, not to its own floor', () => {
+    // 70 renders on band 1 (bandOf floors), so one level down must leave it
+    // rendering on band 0. A perfect negation mirror of the raise would instead
+    // drop it to 64 — still band 1, a stroke with no visible effect. The
+    // half-open band convention is the asymmetry, and it is the right one.
+    const map = createHeightmap(16);
+    map.cells[cellIndex(map, 8, 8)] = 70;
+    applySculpt(map, 8, 8, 1, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    expect(heightAt(map, 8, 8)).toBe(6);
+    expect(bandOf(heightAt(map, 8, 8))).toBe(0);
+  });
+
+  it('does nothing at all for a zero amount', () => {
+    const map = texturedMap(16);
+    const before = map.cells.slice();
+    expect(applySculpt(map, 8, 8, 3, 0, LEVEL_FILL)).toEqual([]);
+    expect(map.cells).toEqual(before);
+  });
+
+  it('is the ONLY combination affected: soft and smooth are untouched', () => {
+    const bands = [0, 1, 2, 0, 1, 1, 2, 0, 1];
+
+    // stamp + soft — still the linear falloff, applied to every footprint cell
+    // regardless of the band it sits on.
+    const soft = createHeightmap(16);
+    const softExpected = createHeightmap(16);
+    paintFootprint3x3(soft, 8, 8, bands);
+    paintFootprint3x3(softExpected, 8, 8, bands);
+    applySculpt(soft, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
+    applyBrush(softExpected, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, new Set<number>(), 'soft');
+    expect(soft.cells).toEqual(softExpected.cells);
+
+    // smooth + hard — still one flat delta over the whole footprint, then the
+    // relaxation pass: "stamp a plateau, let it slump" (docs/DESIGN.md). It is
+    // deliberately NOT level-filled, because relaxation re-slopes the footprint
+    // the instant the brush lifts, so a filled level would not survive it.
+    const slumped = createHeightmap(16);
+    const slumpedExpected = createHeightmap(16);
+    paintFootprint3x3(slumped, 8, 8, bands);
+    paintFootprint3x3(slumpedExpected, 8, 8, bands);
+    applySculpt(slumped, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
+    const expectedChanged = new Set<number>();
+    applyBrush(slumpedExpected, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, expectedChanged, 'hard');
+    smooth(slumpedExpected, expectedChanged);
+    expect(slumped.cells).toEqual(slumpedExpected.cells);
+  });
+
+  it('is deterministic: identical inputs → identical maps and diffs', () => {
+    const a = texturedMap(32);
+    const b = texturedMap(32);
+    const strokes = [
+      [16, 16, 4, DEFAULT_SCULPT_AMOUNT],
+      [16, 16, 4, DEFAULT_SCULPT_AMOUNT],
+      [15, 17, 2, -DEFAULT_SCULPT_AMOUNT],
+      [16, 16, 3, DEFAULT_SCULPT_AMOUNT],
+    ] as const;
+    for (const [x, y, r, amount] of strokes) {
+      expect(applySculpt(a, x, y, r, amount, LEVEL_FILL)).toEqual(
+        applySculpt(b, x, y, r, amount, LEVEL_FILL),
+      );
+    }
+    expect(a.cells).toEqual(b.cells);
+  });
+
+  it('rejects exactly what the plain brush rejects', () => {
+    const map = createHeightmap(16);
+    expect(() => applyLevelFillBrush(map, -1, 0, 2, 64, new Set<number>())).toThrow(RangeError);
+    expect(() => applyLevelFillBrush(map, 8, 8, 0, 64, new Set<number>())).toThrow(RangeError);
+    expect(() =>
+      applyLevelFillBrush(map, 8, 8, MAX_BRUSH_RADIUS + 1, 64, new Set<number>()),
+    ).toThrow(RangeError);
+    expect(() => applyLevelFillBrush(map, 8, 8, 2, 1.5, new Set<number>())).toThrow(RangeError);
   });
 });
 
@@ -604,5 +909,28 @@ describe('sculptDisplacementUnits', () => {
     expect(slumpedDiff.length).toBeGreaterThan(stampedCells.size);
     // And the price is the brush's volume either way — one number, no tool.
     expect(sculptDisplacementUnits(4, 'hard')).toBe(2880);
+  });
+
+  it('prices a LEVEL FILL at the flat-delta volume, deliberately', () => {
+    // stamp+hard (applyLevelFillBrush) moves less than the flat delta whenever
+    // the ground under the brush is not already level, and is priced the same.
+    // DECIDED 2026-08-14, for the reason the `clamping` exclusion exists and one
+    // stronger: the mana plugin gates a stroke on the CLIENT before sending it
+    // and the server charges the same number, so the price must be a pure
+    // function of (radius, profile). A terrain-dependent price would be computed
+    // from heights the client holds only as base-plus-predictions — and not at
+    // all in a locked chunk — and the gate and the server would then disagree.
+    const map = createHeightmap(32);
+    map.cells.fill(BAND_HEIGHT);
+    map.cells[cellIndex(map, 16, 16)] = 0; // one cell a band low
+
+    const diff = applySculpt(map, 16, 16, MAX_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'stamp',
+      profile: 'hard',
+    });
+
+    // A one-cell edit, charged as 45 cells of flat delta. That is the trade.
+    expect(diff).toHaveLength(1);
+    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(2880);
   });
 });

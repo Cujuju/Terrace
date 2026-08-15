@@ -688,6 +688,79 @@ terrace/
   rating both become "unknown"), and is deliberately not persisted — it is
   re-sent on every join, and a rejoin may land on a different world.
 
+- **The hard edge brush LEVEL-FILLS: one terrace at a time** (owner request,
+  settled 2026-08-14: "I would also like the hard edge brush to only work at one
+  level at a time until it fills out everything at that level. So if I'm at
+  level 2 and I'm trying to fill out all the ground at a level 2, I don't want it
+  to start building level 3 until everything within that brush edge is level 2").
+
+  **What it does.** `stamp` + `hard` no longer adds one flat delta to every
+  footprint cell. It surveys the footprint, finds the **lowest** terrace band
+  present, and fills **that** level: cells already at or above the floor of the
+  next band up are untouched; cells below it rise by the sculpt amount but stop
+  AT that floor, never through it. Lowering is the same operation mirrored — the
+  **highest** band present, the floor of the band below it, and only cells above
+  it descend. Repeated strokes therefore flatten the lowest ground under the
+  brush to one level, and only when the whole footprint has reached it does the
+  next level start. The brush can no longer build a step inside its own
+  footprint. Implemented as `applyLevelFillBrush` in `shared/src/heightmap.ts`,
+  dispatched from `applySculpt`.
+
+  **On flat ground nothing changed.** A footprint flat at band B goes uniformly
+  to band B+1 — byte-identical to the flat delta it replaces, because
+  `DEFAULT_SCULPT_AMOUNT` is exactly `BAND_HEIGHT`. Every world starts flat
+  (genesis lays band-aligned terraces), so this change is invisible until a
+  player has made the ground uneven, which is exactly when they asked for it.
+
+  **One band per stroke, whatever the amount.** A plugin-raised amount of two
+  bands still advances the footprint one level: the request is about levels, not
+  about how hard a stroke hits. The amount still governs cells that are *below*
+  the level being filled, which is where a partly-filled level lives.
+
+  **Only `stamp` + `hard`.** `soft` is untouched, and `hard` + `smooth` keeps the
+  flat delta and its documented meaning ("stamp a plateau, let it slump"):
+  relaxation re-slopes the footprint the instant the brush lifts, so "fill this
+  level flat" is a promise that tool cannot keep. The owner's phrase names the
+  hard *edge brush* — the stamp, the player-facing default, and the only
+  combination that leaves the footprint it edited standing.
+
+  **Raise and lower mirror exactly on band-aligned terrain**, which is all the
+  stamp tool produces. Off the band grid — only `smooth`'s relaxation makes such
+  heights — they differ by the half-open band convention `[B·H, (B+1)·H)` that
+  `bandOf` (floor division) defines and terraced rendering draws: a cell at
+  height 70 renders on band 1, so lowering must leave it rendering on band 0
+  (→ 6), and raising must leave it rendering on band 2 (→ 128). A perfect
+  negation mirror would instead drop it to 64 — still band 1, a stroke with no
+  visible effect. The asymmetry is the correct one.
+
+  **PRICING DOES NOT MOVE.** `sculptDisplacementUnits` stays the nominal
+  flat-delta volume, so a level-fill stroke displaces less and costs the same.
+  This is a fourth documented exclusion beside clamping, map edges and relaxation
+  — and the first three are preferences where this one is a constraint: the mana
+  plugin gates a stroke on the CLIENT before it is sent and the server charges
+  the same number (`plugins/mana/pricing.ts`), so the price must be a pure
+  function of `(radius, profile)`. A terrain-dependent price would be derived
+  from heights the client holds only as base-plus-predictions, and not at all in
+  a locked chunk; the local gate and the server would then disagree, which is
+  precisely the phantom-stroke-and-clawback the shared price exists to remove.
+  The softer argument is the `clamping` one: a stroke that moves less because the
+  ground was already level is the same request landing on flatter ground, not a
+  cheaper request.
+
+  **Determinism is unaffected.** Integer-only throughout, two passes over the one
+  fixed-order footprint iterator (min/max over a set is order-independent), and
+  both sides reach it through the same `applySculpt`, so client prediction and
+  the server cannot pick different branches. The footprint itself is now defined
+  in exactly one function (`forEachFootprintOffset`) that `applyBrush`,
+  `applyLevelFillBrush` and `sculptDisplacementUnits` all iterate — previously
+  three verbatim copies of one loop, where a cell surveyed but not edited, or
+  priced but not brushed, would each have been a real defect.
+
+  **Consequence, named.** At radius 1 the two profiles are identical only on
+  band-aligned ground: off it, `hard` snaps the cell to the band boundary while
+  `soft` adds the full amount. That is the terraced answer and it is tested, but
+  it does narrow the older "radius 1 makes the two profiles identical" claim.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
