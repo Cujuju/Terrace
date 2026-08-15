@@ -72,9 +72,14 @@ const TOOL_TITLE: Record<SculptTool, string> = {
   smooth: 'Drags neighbouring terrain along, like pulling fabric — blends shapes.',
 };
 
+// The `hard` title states the level fill (shared/heightmap.ts,
+// applyLevelFillBrush) because that is what the player will actually see with
+// the default Stamp tool; the trailing clause is the Smooth pairing, which
+// keeps the plain flat lift. A tooltip that still promised "the same height
+// change across the whole brush" would be describing the old brush.
 const PROFILE_TITLE: Record<SculptProfile, string> = {
   soft: 'Strongest at the centre and fading to nothing at the rim — a rounded hill.',
-  hard: 'The same height change across the whole brush — a plateau with sheer edges.',
+  hard: 'One terrace at a time: levels the lowest ground under the brush before starting the next. With Smooth, one flat lift that then slumps.',
 };
 
 const HINT_VERB: Record<ControlAction, string> = {

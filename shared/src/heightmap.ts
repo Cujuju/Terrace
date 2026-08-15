@@ -95,7 +95,11 @@ export type SculptTool = 'stamp' | 'smooth';
  *
  * - `soft` — the original linear falloff from the centre (design decision Q2).
  * - `hard` — one flat delta over the whole footprint, edge cells included:
- *            plateaus and clean holes with sheer edges.
+ *            plateaus and clean holes with sheer edges. Paired with the `stamp`
+ *            tool it additionally LEVEL-FILLS — it finishes the lowest terrace
+ *            band under the brush before starting the next one. See
+ *            `applyLevelFillBrush` and the dispatch in `applySculpt`
+ *            (decision 2026-08-14).
  */
 export type SculptProfile = 'soft' | 'hard';
 
@@ -134,10 +138,82 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
 };
 
 /**
- * Applies the sculpt brush over its footprint: cells at integer distance
- * `d = floor(sqrt(dx² + dy²))` from the centre with `d < radius`. Cells at
- * `d >= radius` are never touched by the brush itself. Math.sqrt is IEEE-exact
- * and immediately floored, so the footprint is deterministic cross-platform.
+ * THE BRUSH FOOTPRINT, DEFINED EXACTLY ONCE. Visits every offset `(dx, dy)`
+ * whose integer distance `d = floor(sqrt(dx² + dy²))` from the centre is
+ * `< radius`; offsets at `d >= radius` are not in the footprint and are never
+ * visited. Math.sqrt is IEEE-exact and immediately floored, so the footprint is
+ * identical on every platform, and the scan order (dy outer, dx inner, both
+ * ascending) is part of the determinism contract — see the module header.
+ *
+ * WHY IT IS A FUNCTION AND NOT A LOOP EACH CALLER WRITES OUT. Three callers
+ * must agree on this set of cells, and each disagreement is a real defect:
+ *   applyBrush            — which cells one sculpt moves;
+ *   applyLevelFillBrush   — which cells it SURVEYS for the fill level, and then
+ *                           moves; surveying a different set than it edits is
+ *                           how a "level" fill would leave a cell behind;
+ *   sculptDisplacementUnits — what a sculpt COSTS, so a cell counted here but
+ *                           never touched is mana charged for nothing.
+ * These were three verbatim copies of one loop; one function is what makes
+ * "they agree" a fact rather than a comment.
+ *
+ * The callback takes the OFFSET, not a cell: bounds are the caller's business
+ * (sculptDisplacementUnits has no map at all — it prices an intent, not a
+ * position, so a brush overhanging the map edge still costs full price).
+ */
+function forEachFootprintOffset(
+  radius: number,
+  visit: (dx: number, dy: number, dist: number) => void,
+): void {
+  for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
+    for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
+      const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
+      if (dist >= radius) continue;
+      visit(dx, dy, dist);
+    }
+  }
+}
+
+/**
+ * The radius precondition every brush entry point shares. Untrusted input is
+ * validated in protocol.ts; reaching the math with garbage is a programming
+ * error, so this throws rather than clamping.
+ */
+function assertBrushRadius(radius: number): void {
+  if (
+    !Number.isInteger(radius) ||
+    radius < MIN_BRUSH_RADIUS ||
+    radius > MAX_BRUSH_RADIUS
+  ) {
+    throw new RangeError(`brush radius ${radius} outside [${MIN_BRUSH_RADIUS}, ${MAX_BRUSH_RADIUS}]`);
+  }
+}
+
+/**
+ * The full precondition set for a brush that touches terrain: an in-bounds
+ * centre, a legal radius, an integer amount. Checked in that order so the
+ * thrown message names the first thing wrong, exactly as before this was one
+ * function rather than one copy per brush.
+ */
+function assertBrushArgs(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  amount: number,
+): void {
+  if (!inBounds(map, cx, cy)) {
+    throw new RangeError(`brush center (${cx},${cy}) out of bounds`);
+  }
+  assertBrushRadius(radius);
+  if (!Number.isInteger(amount)) {
+    throw new RangeError(`brush amount must be an integer, got ${amount}`);
+  }
+}
+
+/**
+ * Applies the sculpt brush over its footprint (see forEachFootprintOffset):
+ * cells at integer distance `d = floor(sqrt(dx² + dy²))` from the centre with
+ * `d < radius`. Cells at `d >= radius` are never touched by the brush itself.
  *
  * The per-cell delta depends on `profile`:
  *   soft — `trunc(amount * (radius - d) / radius)`: linear falloff, radius 1
@@ -152,6 +228,10 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
  * Changed cell indices are added to `changed` (for the caller to smooth and
  * diff). Throws on invalid center/radius — validation of untrusted input
  * happens in protocol.ts; reaching here with garbage is a programming error.
+ *
+ * NOT the whole story for `stamp` + `hard`: applySculpt routes that one
+ * combination to applyLevelFillBrush instead. This function stays the plain
+ * per-cell-delta brush every other combination (and every direct caller) runs.
  */
 export function applyBrush(
   map: Heightmap,
@@ -162,44 +242,150 @@ export function applyBrush(
   changed: Set<number>,
   profile: SculptProfile = LIBRARY_DEFAULT_SCULPT_OPTIONS.profile,
 ): void {
-  if (!inBounds(map, cx, cy)) {
-    throw new RangeError(`brush center (${cx},${cy}) out of bounds`);
-  }
-  if (
-    !Number.isInteger(radius) ||
-    radius < MIN_BRUSH_RADIUS ||
-    radius > MAX_BRUSH_RADIUS
-  ) {
-    throw new RangeError(`brush radius ${radius} outside [${MIN_BRUSH_RADIUS}, ${MAX_BRUSH_RADIUS}]`);
-  }
-  if (!Number.isInteger(amount)) {
-    throw new RangeError(`brush amount must be an integer, got ${amount}`);
-  }
+  assertBrushArgs(map, cx, cy, radius, amount);
 
-  // Scan order (dy outer, dx inner, both ascending) is fixed — see module
-  // header. Each cell is written at most once, so order only matters for
+  // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
-  for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
-    for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
-      const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
-      if (dist >= radius) continue;
-      // 'hard': the same flat delta everywhere in the footprint (sheer edges).
-      // 'soft': linear falloff; trunc (toward zero) keeps raise/lower symmetric.
-      // At radius 1 the two are identical — the footprint is the centre alone.
-      const delta =
-        profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
-      if (delta === 0) continue;
-      const x = cx + dx;
-      const y = cy + dy;
-      if (!inBounds(map, x, y)) continue; // brush overhanging the map edge
-      const i = cellIndex(map, x, y);
-      const h = clampHeight(map.cells[i] + delta);
-      if (h !== map.cells[i]) {
-        map.cells[i] = h;
-        changed.add(i);
-      }
+  forEachFootprintOffset(radius, (dx, dy, dist) => {
+    // 'hard': the same flat delta everywhere in the footprint (sheer edges).
+    // 'soft': linear falloff; trunc (toward zero) keeps raise/lower symmetric.
+    // At radius 1 the two are identical — the footprint is the centre alone.
+    const delta =
+      profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
+    if (delta === 0) return;
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return; // brush overhanging the map edge
+    const i = cellIndex(map, x, y);
+    const h = clampHeight(map.cells[i] + delta);
+    if (h !== map.cells[i]) {
+      map.cells[i] = h;
+      changed.add(i);
     }
-  }
+  });
+}
+
+/**
+ * THE LEVEL-FILL BRUSH — what `stamp` + `hard` runs (owner request 2026-08-14:
+ * "I would also like the hard edge brush to only work at one level at a time
+ * until it fills out everything at that level. So if I'm at level 2 and I'm
+ * trying to fill out all the ground at a level 2, I don't want it to start
+ * building level 3 until everything within that brush edge is level 2").
+ *
+ * SEMANTICS. Raising (`amount > 0`):
+ *   1. SURVEY the footprint's in-bounds cells and take the LOWEST terrace band
+ *      present, `minBand = min(bandOf(h))`.
+ *   2. The target is the FLOOR OF THE NEXT BAND UP: `(minBand + 1) *
+ *      BAND_HEIGHT`, clamped into the height range.
+ *   3. Every cell already at or above the target is left completely alone.
+ *      Every cell below it rises by `amount`, stopping AT the target — never
+ *      through it.
+ * Lowering (`amount < 0`) is the same algorithm with the extremes swapped: the
+ * HIGHEST band present, the floor of the band below it, and only cells above
+ * the target descend, stopping at it.
+ *
+ * The consequence the owner asked for: repeated strokes flatten the lowest
+ * ground under the brush up to one uniform level, and only once every cell in
+ * the footprint has reached that level does the next stroke start on the level
+ * above. The brush can never build a step inside its own footprint.
+ *
+ * ONE BAND PER STROKE, EVEN IF `amount` IS BIGGER. `amount` is server
+ * configuration and a plugin may modify it; the target clamp means a stroke
+ * carrying two bands' worth of height still advances the footprint by one band.
+ * That is the request ("don't start building level 3"), not an oversight — the
+ * amount still governs the stroke on ground that is BELOW the target, which is
+ * where a partially-filled level actually lives.
+ *
+ * RAISE AND LOWER ARE THE SAME OPERATION MIRRORED, exactly on the band-aligned
+ * terrain the stamp tool produces (a footprint flat at `B * BAND_HEIGHT` goes to
+ * `(B ± 1) * BAND_HEIGHT`). On terrain that is NOT band-aligned — only the
+ * `smooth` tool's relaxation makes such heights — the two differ by the
+ * half-open band convention `[B·H, (B+1)·H)` that `bandOf` (floor division)
+ * defines and that terraced rendering draws. That is the right asymmetry to
+ * have: a cell at height 70 renders on band 1, so lowering it must leave it
+ * rendering on band 0, and raising it must leave it rendering on band 2. A
+ * perfect negation mirror would instead drop it to 64 — still band 1, a stroke
+ * with no visible effect.
+ *
+ * DETERMINISM. Integer-only throughout; both passes use the one fixed-order
+ * footprint iterator; min/max over a set is order-independent anyway. Server and
+ * client therefore land on identical cells (this is the whole point of shared/).
+ *
+ * Changed cell indices are added to `changed`, exactly as applyBrush does.
+ * Throws on the same invalid arguments applyBrush throws on.
+ */
+export function applyLevelFillBrush(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  amount: number,
+  changed: Set<number>,
+): void {
+  assertBrushArgs(map, cx, cy, radius, amount);
+  // A zero-amount sculpt moves nothing and has no direction to fill in; without
+  // this, the survey below would still run and pick a meaningless target.
+  if (amount === 0) return;
+
+  const raising = amount > 0;
+
+  // PASS 1 — SURVEY. The extreme band across the footprint's in-bounds cells.
+  // Off-map cells are excluded for the same reason applyBrush skips them: they
+  // are not part of this world, so they cannot hold back a fill in it.
+  let surveyed = false;
+  let extremeBand = 0;
+  forEachFootprintOffset(radius, (dx, dy) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return;
+    const band = bandOf(map.cells[cellIndex(map, x, y)]);
+    if (!surveyed) {
+      extremeBand = band;
+      surveyed = true;
+      return;
+    }
+    if (raising ? band < extremeBand : band > extremeBand) extremeBand = band;
+  });
+  // assertBrushArgs proved the CENTRE is in bounds and the centre is always in
+  // the footprint, so this cannot fire — belt and braces against a future
+  // change to either fact leaving `extremeBand` an invented number.
+  if (!surveyed) return;
+
+  // The level being filled: the floor of the band adjacent to the extreme one.
+  // ±1 band is the semantics, not a tunable — "the next level up/down" is what
+  // the brush means, so there is no other value it could take.
+  // Clamped here rather than per cell: the top band's ceiling (band 16 at
+  // BAND_HEIGHT 64) is MAX_HEIGHT + BAND_HEIGHT, i.e. off the map's range, and
+  // the same one band below MIN_HEIGHT.
+  const targetHeight = clampHeight((extremeBand + (raising ? 1 : -1)) * BAND_HEIGHT);
+
+  // PASS 2 — FILL. Same footprint, same order.
+  forEachFootprintOffset(radius, (dx, dy) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return;
+    const i = cellIndex(map, x, y);
+    const h = map.cells[i];
+    // Already at or past the level being filled: untouched. This is what stops
+    // the brush from starting the next level while this one is unfinished.
+    if (raising ? h >= targetHeight : h <= targetHeight) return;
+    // Move by `amount`, but never THROUGH the target — that would build a step
+    // above the level the stroke is filling, which is the whole thing this
+    // brush exists to prevent.
+    const moved = h + amount;
+    const next = raising
+      ? moved > targetHeight ? targetHeight : moved
+      : moved < targetHeight ? targetHeight : moved;
+    // `next` lies between `h` and the already-clamped `targetHeight`, so for
+    // in-range terrain this clamp is a no-op; it is kept so that this brush
+    // gives the same guarantee applyBrush does — nothing it writes is ever
+    // outside [MIN_HEIGHT, MAX_HEIGHT] — whatever it was handed.
+    const clamped = clampHeight(next);
+    if (clamped !== h) {
+      map.cells[i] = clamped;
+      changed.add(i);
+    }
+  });
 }
 
 /**
@@ -218,7 +404,7 @@ export function applyBrush(
  * applyBrush's own observed output for every radius × profile rather than
  * against a re-derivation of it.
  *
- * "NOMINALLY" — three deliberate exclusions, each of which would make the
+ * "NOMINALLY" — four deliberate exclusions, each of which would make the
  * number depend on WHERE the player clicked rather than on WHAT they asked for:
  *
  *   clamping     — a brush hitting MAX_HEIGHT moves less terrain than the same
@@ -236,6 +422,28 @@ export function applyBrush(
  *                  it would price the world's history rather than the player's
  *                  action, and would make an identical intent cost two different
  *                  amounts in two places.
+ *   level fill   — `stamp` + `hard` runs applyLevelFillBrush, which skips cells
+ *                  already at the level being filled and stops the rest AT it,
+ *                  so it moves at most (usually less than) the flat-delta volume
+ *                  priced here. DECIDED 2026-08-14: the price does not move.
+ *                  Two reasons, and the first is not a preference:
+ *                    (a) THE PRICE MUST NOT DEPEND ON THE TERRAIN. The mana
+ *                        plugin gates a stroke locally, on the client, before it
+ *                        is sent (plugins/mana/pricing.ts), and the server
+ *                        charges the same number. A level-fill's real volume is
+ *                        a function of the heights under the brush — heights the
+ *                        client holds only as base-plus-predictions, and not at
+ *                        all in a locked chunk. Pricing it would make the gate
+ *                        and the server disagree, which is exactly the phantom
+ *                        stroke and clawback the shared price exists to remove.
+ *                    (b) It is the same rule as `clamping` above: a stroke that
+ *                        moves less because the ground was already level is not
+ *                        a cheaper request, it is the same request landing on
+ *                        flatter ground.
+ *                  So a level-fill stroke displaces less and is priced the same.
+ *
+ * This function is therefore about `applyBrush`'s arithmetic specifically, and
+ * is pinned to it by test rather than to whatever applySculpt dispatches to.
  *
  * The result is a pure function of (radius, profile), which is what lets the
  * client price an intent identically to the server without knowing the terrain.
@@ -246,37 +454,27 @@ export function sculptDisplacementUnits(
   radius: number,
   profile: SculptProfile,
 ): number {
-  if (
-    !Number.isInteger(radius) ||
-    radius < MIN_BRUSH_RADIUS ||
-    radius > MAX_BRUSH_RADIUS
-  ) {
-    throw new RangeError(`brush radius ${radius} outside [${MIN_BRUSH_RADIUS}, ${MAX_BRUSH_RADIUS}]`);
-  }
+  assertBrushRadius(radius);
 
   let units = 0;
-  // Scan bounds, footprint test and delta expression are COPIED FROM applyBrush
-  // above, verbatim, with `amount` fixed to DEFAULT_SCULPT_AMOUNT — the amount a
-  // sculpt intent actually carries (it is server configuration, never client
-  // input, see protocol.ts). Iteration order is irrelevant to a sum of
-  // non-negative integers, but it is kept identical anyway so the two loops read
-  // as the one loop they are.
-  for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
-    for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
-      const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
-      if (dist >= radius) continue;
-      const delta =
-        profile === 'hard'
-          ? DEFAULT_SCULPT_AMOUNT
-          : Math.trunc((DEFAULT_SCULPT_AMOUNT * (radius - dist)) / radius);
-      // |delta|: raising and lowering displace the same volume, so a lower
-      // costs exactly what the raise that undoes it costs. DEFAULT_SCULPT_AMOUNT
-      // is positive today, so this branch is defensive — but the contract this
-      // function states is "sum of ABSOLUTE deltas", and a plugin-configured
-      // negative amount must not price out as a negative volume.
-      units += delta < 0 ? -delta : delta;
-    }
-  }
+  // The footprint comes from the one iterator applyBrush uses, and the delta
+  // expression is applyBrush's, with `amount` fixed to DEFAULT_SCULPT_AMOUNT —
+  // the amount a sculpt intent actually carries (it is server configuration,
+  // never client input, see protocol.ts). Iteration order is irrelevant to a sum
+  // of non-negative integers, but sharing the iterator is what keeps "the cells
+  // priced are the cells brushed" true by construction rather than by review.
+  forEachFootprintOffset(radius, (_dx, _dy, dist) => {
+    const delta =
+      profile === 'hard'
+        ? DEFAULT_SCULPT_AMOUNT
+        : Math.trunc((DEFAULT_SCULPT_AMOUNT * (radius - dist)) / radius);
+    // |delta|: raising and lowering displace the same volume, so a lower
+    // costs exactly what the raise that undoes it costs. DEFAULT_SCULPT_AMOUNT
+    // is positive today, so this branch is defensive — but the contract this
+    // function states is "sum of ABSOLUTE deltas", and a plugin-configured
+    // negative amount must not price out as a negative volume.
+    units += delta < 0 ? -delta : delta;
+  });
   return units;
 }
 
@@ -385,6 +583,21 @@ export function smooth(map: Heightmap, changed: Set<number>): void {
  * bit — see LIBRARY_DEFAULT_SCULPT_OPTIONS for why that, and not the new
  * player-facing default, is what an absent argument means.
  *
+ * ONE COMBINATION IS DISPATCHED ELSEWHERE: `stamp` + `hard` — the "hard edge
+ * brush" a player holds — runs applyLevelFillBrush, which finishes the lowest
+ * band under the footprint before starting the next one.
+ *
+ * WHY THE LEVEL FILL IS NOT PART OF THE `hard` PROFILE ITSELF, i.e. why
+ * hard+smooth keeps the plain flat delta:
+ *   - the `smooth` tool relaxes the footprint the instant the brush lifts, so a
+ *     level it had just filled would be sloped again before it was drawn. "Fill
+ *     this level flat" is a promise that tool cannot keep;
+ *   - hard+smooth's meaning is settled in docs/DESIGN.md as "stamp a plateau,
+ *     let it slump", and it stays exactly that;
+ *   - the owner's request names the hard EDGE BRUSH: the stamp, which is the
+ *     player-facing default tool, and the only combination that leaves the
+ *     footprint it edited standing.
+ *
  * DETERMINISM: both branches are integer-only over the same fixed iteration
  * order, so server and client predicting with the same options land on the
  * same cells. Predicting with DIFFERENT options than the server applies is a
@@ -404,7 +617,14 @@ export function applySculpt(
   const profile = options?.profile ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.profile;
 
   const changed = new Set<number>();
-  applyBrush(map, cx, cy, radius, amount, changed, profile);
+  // The one dispatch in the sculpt path. Both branches are integer-only over the
+  // same footprint, and both sides of the prediction contract reach them through
+  // this one function, so client and server cannot pick different branches.
+  if (tool === 'stamp' && profile === 'hard') {
+    applyLevelFillBrush(map, cx, cy, radius, amount, changed);
+  } else {
+    applyBrush(map, cx, cy, radius, amount, changed, profile);
+  }
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.
   if (tool === 'smooth') smooth(map, changed);
