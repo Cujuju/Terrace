@@ -21,14 +21,16 @@
 //                       Cthulhu                     Kraken
 //   habitat             deep water, any basin       a TRENCH, and a big one
 //   banishable          NO — nothing removes him    yes, by draining its lair
+//   blocks raising      yes, under and around him   no
 //
-// The two rows are deliberately opposite: Cthulhu is the horror you cannot do
-// anything about, the kraken is the one you can fight with a shovel. Neither
-// behaviour is written into the lifecycle — `banishment: null` is a FIELD, so a
-// third kind picks its own corner of the same table.
+// The two rows are deliberately opposite on both behavioural axes: Cthulhu is
+// the horror you cannot do anything about (you may not even build over him),
+// the kraken is the one you can fight with a shovel. Neither behaviour is
+// written into the lifecycle — `banishment: null` and `protectsGround` are
+// fields, so a third kind picks its own corner of the same table.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, CHUNK_SIZE, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_STEP, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
 import { DEEP_WATER_BANDS_BELOW_SEA } from './habitat.ts';
 
@@ -128,9 +130,10 @@ export const CTHULHU_IDLE_END_PER_SECOND = 0.12;
  * also world units). Wing tip to wing tip on the client model — see
  * client/anatomy.ts, which is where the silhouette's numbers live.
  *
- * The server needs it for exactly one thing: steering. A monster must never
- * commit to a step that would put its SHOULDER through a cliff, so the
- * look-ahead probe is never shorter than half of this.
+ * The server needs it for two things: steering (a monster must never commit to
+ * a step that would put its SHOULDER through a cliff, so the look-ahead probe
+ * is never shorter than half of this) and, for a kind that protects its ground,
+ * the radius of the terrain it forbids raising (./protection.ts).
  */
 export const CTHULHU_FOOTPRINT_CELLS = 7;
 
@@ -290,6 +293,14 @@ export interface MonsterProfile {
   /** How it can be driven off, or null if nothing can drive it off. */
   readonly banishment: BanishmentRule | null;
 
+  /**
+   * True if this kind vetoes RAISE intents whose brush reaches its body (see
+   * ./protection.ts). Lowering is always allowed — for a banishable kind that
+   * is the eviction, and for Cthulhu it is the only sculpt near him that still
+   * does anything.
+   */
+  readonly protectsGround: boolean;
+
   /** Wander speed while not idling, cells per second. */
   readonly lurkSpeedCellsPerSecond: number;
   /** Maximum random heading change, radians per second. */
@@ -313,6 +324,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
     // HE CANNOT BE BANISHED. See BanishmentRule and summoning.ts.
     banishment: null,
+    protectsGround: true,
     lurkSpeedCellsPerSecond: CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
     turnNoiseRadiansPerSecond: CTHULHU_TURN_NOISE_RADIANS_PER_SECOND,
     idleOnsetPerSecond: CTHULHU_IDLE_ONSET_PER_SECOND,
@@ -328,6 +340,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
       lairCollapseDeepCells: KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
       respawnCooldownSeconds: KRAKEN_RESPAWN_COOLDOWN_SECONDS,
     },
+    protectsGround: false,
     lurkSpeedCellsPerSecond: KRAKEN_LURK_SPEED_CELLS_PER_SECOND,
     turnNoiseRadiansPerSecond: KRAKEN_TURN_NOISE_RADIANS_PER_SECOND,
     idleOnsetPerSecond: KRAKEN_IDLE_ONSET_PER_SECOND,
@@ -359,6 +372,40 @@ export function summonRatePerSecond(profile: MonsterProfile): number {
  */
 export function minLairDeepestHeight(profile: MonsterProfile): number {
   return SEA_LEVEL - profile.minLairDepthBands * BAND_HEIGHT;
+}
+
+/**
+ * Extra cells of no-raise standoff around a ground-protecting monster, beyond
+ * its own half-width. ONE cell, and it is derived rather than picked.
+ *
+ * One sculpt intent does not stop at its brush footprint: gradient relaxation
+ * (shared/heightmap.ts) then pulls each over-steep 4-neighbour pair halfway
+ * together. The expression is the STAIRCASE BOUND — how many cells of full
+ * MAX_STEP rise it takes to absorb one raise — and at today's ratio
+ * (DEFAULT_SCULPT_AMOUNT = 2 × MAX_STEP) the actual arithmetic lands on the
+ * same answer: on flat ground a +64 raise lifts its 4-neighbour by half the
+ * 32-unit excess, and the cell beyond THAT sees a 16-unit step, well inside the
+ * limit, and is left alone. One cell is how far an edit reaches past its own
+ * footprint on terrain that is not already at the gradient limit.
+ *
+ * RESIDUAL, STATED RATHER THAN PAPERED OVER: on ground that IS everywhere at
+ * the limit, relaxation carries a diminishing ripple much further (a ±1 step
+ * can travel until it meets slack terrain or SMOOTH_PASS_LIMIT), so no fixed
+ * radius can promise that the seabed under a monster is never lifted by a
+ * distant edit. This guard is about what a player may AIM at; the consequence
+ * of the residual is bounded by the kind that uses it being unbanishable, so
+ * the worst outcome is a monster left standing in a puddle (see summoning.ts),
+ * never one silently destroyed by an edit made a hundred cells away.
+ */
+export const MONSTER_GROUND_STANDOFF_CELLS = DEFAULT_SCULPT_AMOUNT / MAX_STEP - 1;
+
+/**
+ * Radius, in cells, of the ground this kind forbids raising, measured from its
+ * live (fractional) position. Half the body plus the standoff above — 4.5 cells
+ * for both of today's 7-cell kinds.
+ */
+export function groundProtectionRadiusCells(profile: MonsterProfile): number {
+  return profile.footprintCells / 2 + MONSTER_GROUND_STANDOFF_CELLS;
 }
 
 /** The kinds, in the fixed order the summoner considers them. */

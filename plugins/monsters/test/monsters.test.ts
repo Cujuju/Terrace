@@ -41,6 +41,7 @@ import {
   MAX_LIVING_MONSTERS,
   MIN_LAIR_DEEP_CELLS,
   SUMMON_MEAN_WAIT_SECONDS,
+  groundProtectionRadiusCells,
   profileOf,
 } from '../server/kinds.ts';
 import { advanceMonster, isStranded } from '../server/lurk.ts';
@@ -880,5 +881,264 @@ describe('broadcast', () => {
 
     const [entry] = stateMessages(harness)[0]!;
     expect(entry.kind).toBe('kraken');
+  });
+});
+
+describe('the ground a monster will not let you raise', () => {
+  /** One sculpt through the real pipeline, at wire shape. */
+  function sculpt(
+    harness: Harness,
+    x: number,
+    y: number,
+    dir: 1 | -1,
+    radius = MAX_BRUSH_RADIUS,
+    seq?: number,
+  ): ReturnType<typeof handleSculptIntent> {
+    const intent: Record<string, unknown> = {
+      type: 'sculpt',
+      x,
+      y,
+      radius,
+      dir,
+      tool: 'stamp',
+      profile: 'hard',
+    };
+    if (seq !== undefined) intent.seq = seq;
+    return handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      intent,
+    );
+  }
+
+  /** Boots a world, puts Cthulhu in it, and stops the roll. */
+  function withCthulhu(): Harness {
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot();
+    tick(harness, 1);
+    expect(livingMonster()!.kind).toBe('cthulhu');
+    setMonsterRandomSource(NEVER);
+    harness.sink.clear();
+    return harness;
+  }
+
+  /** The cell his body is standing in. */
+  function monsterCell(): { x: number; y: number } {
+    const monster = livingMonster()!;
+    return { x: Math.floor(monster.x), y: Math.floor(monster.y) };
+  }
+
+  it('denies a raise aimed at him, and changes nothing', () => {
+    const harness = withCthulhu();
+    const cell = monsterCell();
+    const before = harness.world.heightAt(cell.x, cell.y);
+
+    const outcome = sculpt(harness, cell.x, cell.y, 1);
+    expect(outcome.applied).toBe(false);
+    expect(outcome.applied === false && outcome.reason).toBe('plugin-denied');
+    // The veto runs BEFORE the heightmap is touched: this is a refusal, not an
+    // edit that gets undone.
+    expect(harness.world.heightAt(cell.x, cell.y)).toBe(before);
+    expect(livingMonster()).not.toBeNull();
+  });
+
+  it('nacks the denial with the intent\'s seq, so the client retires its prediction', () => {
+    const harness = withCthulhu();
+    const cell = monsterCell();
+
+    sculpt(harness, cell.x, cell.y, 1, MAX_BRUSH_RADIUS, 4242);
+    const denials = harness.sink.ofType('sculptDenied');
+    expect(denials).toHaveLength(1);
+    expect(denials[0]!.target).toBe(PLAYER.id);
+    expect(denials[0]!.payload).toEqual({ type: 'sculptDenied', seq: 4242 });
+    // This plugin sends NO message of its own: the refusal is legible in the
+    // world (there is a monster where you aimed), and the nack is core's.
+    expect(harness.sink.messages.some((m) => m.type.startsWith(`${MONSTERS_PLUGIN_NAME}:`) &&
+      m.type !== `${MONSTERS_PLUGIN_NAME}:${MONSTERS_STATE_MESSAGE}`)).toBe(false);
+  });
+
+  it('allows LOWERING the very same cell — you may dig, never build', () => {
+    const harness = withCthulhu();
+    const cell = monsterCell();
+    const before = harness.world.heightAt(cell.x, cell.y);
+
+    const outcome = sculpt(harness, cell.x, cell.y, -1);
+    expect(outcome.applied).toBe(true);
+    expect(harness.world.heightAt(cell.x, cell.y)).toBeLessThan(before);
+  });
+
+  it('draws the line where the two discs stop overlapping', () => {
+    const harness = withCthulhu();
+    const monster = livingMonster()!;
+    const radius = MAX_BRUSH_RADIUS;
+    // The brush covers an open disc of `radius` about its cell centre; the body
+    // covers one of groundProtectionRadiusCells about the monster. They overlap
+    // exactly while the centres are closer than the sum.
+    const reach = radius + groundProtectionRadiusCells(profileOf('cthulhu'));
+
+    // A cell whose CENTRE is a hair inside the sum, and one a hair outside. Both
+    // are on the +X axis from him, so the distance is one subtraction.
+    const insideX = Math.floor(monster.x + reach - 1);
+    const outsideX = Math.ceil(monster.x + reach + 1);
+    const cellY = Math.floor(monster.y);
+    expect(Math.abs(insideX + 0.5 - monster.x)).toBeLessThan(reach);
+    expect(Math.abs(outsideX + 0.5 - monster.x)).toBeGreaterThan(reach);
+
+    expect(sculpt(harness, insideX, cellY, 1, radius).applied).toBe(false);
+    expect(sculpt(harness, outsideX, cellY, 1, radius).applied).toBe(true);
+  });
+
+  it('lets a smaller brush closer, because a smaller brush reaches less far', () => {
+    // The test that the intent's RADIUS is part of the geometry rather than a
+    // fixed keep-out ring: the same cell is refused to a radius-4 brush and
+    // allowed to a radius-1 one.
+    const harness = withCthulhu();
+    const monster = livingMonster()!;
+    const protection = groundProtectionRadiusCells(profileOf('cthulhu'));
+    const cellX = Math.floor(monster.x + protection + 2);
+    const cellY = Math.floor(monster.y);
+
+    expect(sculpt(harness, cellX, cellY, 1, MAX_BRUSH_RADIUS).applied).toBe(false);
+    expect(sculpt(harness, cellX, cellY, 1, 1).applied).toBe(true);
+  });
+
+  it('does not interfere when the world holds no monster', () => {
+    setMonsterRandomSource(NEVER);
+    const harness = boot();
+    tick(harness, 10);
+    expect(livingMonster()).toBeNull();
+
+    expect(sculpt(harness, WORLD_CENTER, WORLD_CENTER, 1).applied).toBe(true);
+    expect(harness.sink.ofType('sculptDenied')).toHaveLength(0);
+  });
+
+  it('does not protect the ground for a kind that does not claim it', () => {
+    // The kraken is banishable BY draining, so a kraken that blocked raises
+    // would be a monster whose only counter it had vetoed. The flag is per kind
+    // for exactly this reason.
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(bowl(TRENCH_RADIUS));
+    tick(harness, 1);
+    expect(livingMonster()!.kind).toBe('kraken');
+    setMonsterRandomSource(NEVER);
+
+    const cell = monsterCell();
+    expect(profileOf('kraken').protectsGround).toBe(false);
+    expect(sculpt(harness, cell.x, cell.y, 1).applied).toBe(true);
+  });
+});
+
+describe('lurking', () => {
+  it('never leaves deep unlocked water, over a long run', () => {
+    const harness = boot();
+    setMonsterRandomSource(ALWAYS);
+    tick(harness, 1);
+    setMonsterRandomSource(seededRandom(99));
+
+    const view = lairView(harness.world);
+    // Ten simulated minutes of wandering.
+    for (let n = 0; n < 6000; n++) {
+      tick(harness, 1);
+      const monster = livingMonster();
+      expect(monster).not.toBeNull();
+      expect(isLairCell(view, monster!.x, monster!.y)).toBe(true);
+    }
+  });
+
+  it('moves no further than its lurk speed allows in one tick', () => {
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot();
+    tick(harness, 1);
+    setMonsterRandomSource(seededRandom(5));
+
+    let previous = { x: livingMonster()!.x, y: livingMonster()!.y };
+    for (let n = 0; n < 600; n++) {
+      tick(harness, 1);
+      const monster = livingMonster()!;
+      const step = Math.hypot(monster.x - previous.x, monster.y - previous.y);
+      expect(step).toBeLessThanOrEqual(CTHULHU_LURK_SPEED_CELLS_PER_SECOND * TICK_DT + 1e-9);
+      previous = { x: monster.x, y: monster.y };
+    }
+  });
+
+  it('lurks slower than anything the wildlife plugin puts in the water', () => {
+    // The wildlife whale cruises at 0.8 cells/s (plugins/wildlife/server/
+    // species.ts) and is the slowest creature there. Cross-referenced, not
+    // imported: plugins must not depend on each other for a number.
+    const WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND = 0.8;
+    expect(CTHULHU_LURK_SPEED_CELLS_PER_SECOND).toBeLessThan(
+      WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND,
+    );
+  });
+
+  it('holds position during an idle beat but still turns', () => {
+    const world = lairView(worldWithTerrain(WORLD_SIZE, bowl(GREAT_BASIN_RADIUS)));
+    const profile = profileOf('cthulhu');
+    const monster = {
+      id: 1,
+      kind: 'cthulhu' as const,
+      x: WORLD_CENTER,
+      y: WORLD_CENTER,
+      heading: 0,
+      idle: false,
+    };
+
+    // A source that fires every gate: the first step flips it into the idle beat
+    // and the step after that is the one under test.
+    setMonsterRandomSource(ALWAYS);
+    advanceMonster(world, monster, TICK_DT);
+    expect(monster.idle).toBe(true);
+
+    const held = { x: monster.x, y: monster.y, heading: monster.heading };
+    // Keep it idle for this step: NEVER never fires the "wake up" gate.
+    setMonsterRandomSource(NEVER);
+    advanceMonster(world, monster, TICK_DT);
+
+    expect(monster.idle).toBe(true);
+    expect(monster.x).toBe(held.x);
+    expect(monster.y).toBe(held.y);
+    // It still turns: NEVER returns 1, so the noise term is +turnNoise·dt.
+    expect(monster.heading).toBeCloseTo(
+      held.heading + profile.turnNoiseRadiansPerSecond * TICK_DT,
+      10,
+    );
+  });
+
+  it('spends roughly the designed share of its time holding still', () => {
+    // The two idle rates are a Markov pair whose steady state is
+    // onset/(onset + end) — 0.05/0.17 ≈ 29% (see the note in kinds.ts). This is
+    // the test that the pair actually produces the beats they claim to, rather
+    // than a comment about arithmetic nobody ran.
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot();
+    tick(harness, 1);
+    setMonsterRandomSource(seededRandom(99));
+
+    const profile = profileOf('cthulhu');
+    const predicted =
+      profile.idleOnsetPerSecond / (profile.idleOnsetPerSecond + profile.idleEndPerSecond);
+
+    const SAMPLES = 6000;
+    let idleTicks = 0;
+    for (let n = 0; n < SAMPLES; n++) {
+      tick(harness, 1);
+      if (livingMonster()!.idle) idleTicks++;
+    }
+
+    const observed = idleTicks / SAMPLES;
+    expect(predicted).toBeCloseTo(0.29, 2);
+    // Ten simulated minutes holds only ~30 beats, so the sampling error is
+    // real: the bound is ±0.15, wide enough for the draw and far too tight for
+    // a plugin that had lost its idle beats or never left them.
+    expect(Math.abs(observed - predicted)).toBeLessThan(0.15);
+  });
+
+  it('probes at least half its own body ahead', () => {
+    // The look-ahead is what keeps a 7-cell-wide body out of cliffs its centre
+    // point would clear. Pinning it here because the failure it prevents is
+    // invisible in a unit test of movement: the model clipping terrain.
+    expect(CTHULHU_FOOTPRINT_CELLS / 2).toBeGreaterThan(
+      CTHULHU_LURK_SPEED_CELLS_PER_SECOND * TICK_DT,
+    );
   });
 });
