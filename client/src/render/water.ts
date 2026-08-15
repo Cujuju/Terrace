@@ -24,7 +24,14 @@ import {
 const WATER_COLOR = 0x2f6f9e;
 /** Translucent enough to show the seabed colour and submerged terraces. */
 const WATER_OPACITY = 0.62;
-const WATER_ROUGHNESS = 0.15;
+/**
+ * 0.15 → 0.6 (owner, 2026-08-14: "I'm not sure I like the sun being so
+ * visible"). At 0.15 the surface was near-mirror and painted a large white
+ * specular bloom of the sun across the sea; 0.6 spreads that highlight into a
+ * broad soft sheen — the water still reads wet, but no patch of it reads as
+ * the sun. Tuned together with the scene's key/fill rebalance in scene.ts.
+ */
+const WATER_ROUGHNESS = 0.6;
 const WATER_METALNESS = 0.1;
 
 /**

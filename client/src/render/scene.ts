@@ -39,11 +39,25 @@ import {
 
 /** Sky/background, and the hemisphere light's sky colour. */
 const SKY_COLOR = 0x9fc7e8;
-/** Bounce colour from below — keeps shaded terrace faces from going black. */
-const GROUND_BOUNCE_COLOR = 0x5b5a4e;
-const HEMISPHERE_LIGHT_INTENSITY = 1.1;
+/**
+ * Bounce colour from below — keeps shaded terrace faces from going black.
+ * Lightened from 0x5b5a4e with the 2026-08-14 rebalance: the old bounce was
+ * charcoal, so a face tilted away from the sky received almost nothing and
+ * read as a black cut whatever the intensities above said.
+ */
+const GROUND_BOUNCE_COLOR = 0x9a948a;
+/**
+ * Key-to-fill balance, retuned 2026-08-14 (owner: "the sun is too harsh. It
+ * acts too much like a spotlight", then "too much shadow. The world is too
+ * dark"). The original 2.2 sun over 1.1 hemisphere put two thirds of a lit
+ * face's light in the directional term, so faces swung hard between blasted
+ * and murky as they turned. Now the FILL leads (1.9) and the sun (1.5) only
+ * models the terraces — its off-axis direction does that work, not raw
+ * intensity — so no face of a step is ever far from daylight.
+ */
+const HEMISPHERE_LIGHT_INTENSITY = 2.1;
 /** Key light. Intensity is tuned against ACES tone mapping, below. */
-const SUN_LIGHT_INTENSITY = 2.2;
+const SUN_LIGHT_INTENSITY = 1.5;
 /**
  * Sun direction as a unit-ish vector. Deliberately off-axis on all three axes
  * so that the four sides of a terrace step each catch a different amount of

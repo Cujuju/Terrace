@@ -166,13 +166,15 @@ const CLIFF_ROCK_TINT: Rgb = rgb(0x6b5a49);
 export const CLIFF_ROCK_TINT_MIX = 0.4;
 
 /**
- * Brightness the tinted face keeps. 0.68 rather than something heavier because
- * the lighting rig already does part of the work: the sun is high (see
- * render/scene.ts) so a vertical face receives markedly less of it than a
- * tread, and two cliff orientations out of four get no direct sun at all.
- * Multiplying those by a harsh factor as well would crush them to black.
+ * Brightness the tinted face keeps. The lighting rig already does part of the
+ * work — a vertical face receives less sun than a tread — so this factor only
+ * needs to state "cut earth is a little darker than the ground above it".
+ * 0.68 was tuned against the old 2.2-intensity sun and, stacked on the rig's
+ * own side-light falloff, crushed shadow-side cliffs to black (owner,
+ * 2026-08-14: "too much shadow. The world is too dark"). 0.82 keeps the
+ * crease readable under the rebalanced fill-led rig in scene.ts.
  */
-export const CLIFF_FACE_DARKEN_FACTOR = 0.68;
+export const CLIFF_FACE_DARKEN_FACTOR = 0.82;
 
 /** Tint toward rock, then darken — the derivation described above. */
 export function cliffFaceColor(top: Rgb): Rgb {
