@@ -10,6 +10,11 @@
 // notice in the water. A counter telling you it is there would be the opposite
 // of the feature.
 //
+// The mist and the lightning around it (./atmosphere.ts) are the same kind of
+// thing one step further: pure presentation, invented here, on the client, out
+// of the position the server already sent and the frame clock. Nothing about
+// them is on the wire, and nothing in the world can observe them.
+//
 // Everything it touches arrives through ClientPluginCtx: its own Group in the
 // scene, the rendered terrain height, the message channel, and the frame clock.
 
@@ -23,9 +28,10 @@ import {
   MONSTERS_STATE_MESSAGE,
   parseMonstersPayload,
 } from '../protocol.ts';
+import { createDread, type Dread } from './atmosphere.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
 import { createMonsterModels, type MonsterModel, type MonsterModels } from './models.ts';
-import { monsterOriginWorldY } from './placement.ts';
+import { SEA_SURFACE_WORLD_Y, monsterOriginWorldY } from './placement.ts';
 
 /**
  * Per-monster animation phase offset, in radians per unit of id. The golden
@@ -45,6 +51,8 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 /** A monster currently in the scene. */
 interface MonsterView {
   readonly model: MonsterModel;
+  /** The mist and lightning around it (./atmosphere.ts). Purely cosmetic. */
+  readonly dread: Dread;
   /** Fixed at creation from the id — never recomputed per frame. */
   readonly phase: number;
 }
@@ -57,6 +65,16 @@ interface MonsterView {
 let models: MonsterModels | null = null;
 let container: Group | null = null;
 const views = new Map<number, MonsterView>();
+/**
+ * The weather of monsters that have LEFT, still fading out where they stood.
+ *
+ * The model goes the instant the server stops listing it — the submersion is the
+ * plot (see interpolation.ts) — but a mist bank that vanished on the same frame
+ * would be a light switch. These outlive their monster by MIST_FADE_SECONDS and
+ * are disposed the moment the fade reaches zero, so the list is empty in every
+ * frame but the couple of hundred after a banishment.
+ */
+const retiringDread: Dread[] = [];
 const interpolator = new MonsterInterpolator();
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
@@ -77,7 +95,9 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     if (views.has(id)) continue;
     const model = models.create(monster.kind);
     container.add(model.root);
-    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID });
+    const dread = createDread();
+    container.add(dread.root);
+    views.set(id, { model, dread, phase: id * PHASE_RADIANS_PER_ID });
   }
 
   for (const [id, view] of views) {
@@ -87,6 +107,11 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     // there is nothing to dispose here — dropping the Mesh objects is the whole
     // teardown. Disposing them here would tear the resource out from under the
     // next monster of the same kind.
+    //
+    // The dread is the opposite case: it owns its geometry, its materials and
+    // its light outright, so it stays in the scene until it has faded and is
+    // then disposed — by renderFrame, which is the only thing here with a dt.
+    retiringDread.push(view.dread);
     views.delete(id);
   }
 }
@@ -123,6 +148,29 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     root.rotation.y = -monster.heading;
 
     view.model.animate(animationSeconds, view.phase);
+
+    // THE MIST FOLLOWS THE SAME INTERPOLATED POSE the model does, so the bank
+    // cannot lag or lead the thing it belongs to. It sits on the SEA SURFACE
+    // rather than at the model's origin (which is down at the lurking depth) and
+    // is never yawed — mist does not turn with the monster.
+    //
+    // It is advanced by the CAPPED step rather than the raw dt for the same
+    // reason the animation clock is: after a background tab wakes up, a fade
+    // must not jump to its end and the lightning clock must not be handed a
+    // minute of accumulated waiting.
+    view.dread.root.position.set(monster.x, SEA_SURFACE_WORLD_Y, monster.y);
+    view.dread.update(animationSeconds, step, true);
+  }
+
+  // Banished monsters' weather, fading in place. Iterated backwards so a
+  // finished one can be spliced out without skipping its neighbour.
+  for (let index = retiringDread.length - 1; index >= 0; index--) {
+    const dread = retiringDread[index]!;
+    dread.update(animationSeconds, step, false);
+    if (!dread.isFaded()) continue;
+    container?.remove(dread.root);
+    dread.dispose();
+    retiringDread.splice(index, 1);
   }
 }
 
@@ -157,8 +205,15 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeMessages = null;
     unsubscribeFrames = null;
 
-    for (const view of views.values()) view.model.root.clear();
+    for (const view of views.values()) {
+      view.model.root.clear();
+      // Each dread owns its own GPU resources, so every one of them — living or
+      // still fading — is freed here. Nothing may outlive the plugin.
+      view.dread.dispose();
+    }
     views.clear();
+    for (const dread of retiringDread) dread.dispose();
+    retiringDread.length = 0;
     interpolator.clear();
 
     container?.clear();
