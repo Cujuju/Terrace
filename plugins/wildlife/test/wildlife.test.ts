@@ -35,6 +35,7 @@ import {
   type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
   type WildlifeSpecies,
+  isWildlifeHabitatSpecies,
   sizeClassIndex,
 } from '../protocol.ts';
 import {
@@ -725,9 +726,15 @@ describe('wildlife sync', () => {
     tick(harness, 2);
 
     const payload = harness.sink.ofType('wildlife:entities')[0].payload as {
-      entities: Array<{ x: number; y: number }>;
+      entities: Array<{ x: number; y: number; species: string }>;
     };
     for (const entity of payload.entities) {
+      // HABITAT species only: their positions derive from terrain, so one in
+      // locked territory would leak it. Birds are exempt by design — a flock's
+      // course is terrain-independent (flocks.ts reads neither heights nor the
+      // mask), it legitimately starts and ends OFF-MAP on the spawn ring, and
+      // an off-map coordinate would make isCellUnlocked itself throw.
+      if (!isWildlifeHabitatSpecies(entity.species)) continue;
       expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
     }
   });

@@ -50,7 +50,14 @@ export interface SwimProfile {
 export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>> = {
   fish: { depthFraction: 0.2, minClearance: 0.25, minSubmergence: 0.3 },
   whale: { depthFraction: 0.5, minClearance: 0.7, minSubmergence: 0.7 },
-  deepsea: { depthFraction: 0.88, minClearance: 0.35, minSubmergence: 0.5 },
+  // minClearance 0.8, NOT the 0.35 it shipped with (owner report 2026-08-14:
+  // the angler "keeps clipping into the terrain"). The model's body ellipsoid
+  // reaches 0.7 below the placement point (models.ts, ellipsoid(1, 0.7, 0.55))
+  // and 0.35 honoured only half of that, so at depthFraction 0.88 the belly
+  // sat inside the seabed — the one species that HUGS the bottom had the one
+  // clearance smaller than its own lower half-height. 0.7 + 0.1 of visible
+  // water under the belly restores the contract stated above the table.
+  deepsea: { depthFraction: 0.88, minClearance: 0.8, minSubmergence: 0.5 },
   // Land species stand on the ground; they have no water column to sit in.
   grazer: null,
   // Flyers have no water column either — see FLIGHT_ALTITUDES.
