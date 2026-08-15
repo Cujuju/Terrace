@@ -12,7 +12,9 @@
 // will fail loudly to tell you so.
 
 import { SEA_LEVEL } from '@terrace/shared';
+import type { MonsterKind } from '../protocol.ts';
 import { CTHULHU_LURK_DEPTH } from './anatomy.ts';
+import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
 
 /**
  * World-space Y of the sea surface.
@@ -30,8 +32,26 @@ import { CTHULHU_LURK_DEPTH } from './anatomy.ts';
 export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
 
 /**
+ * How far each kind's origin rides below the sea surface in water deep enough
+ * to allow it. Both are DERIVED in their anatomy files from the part of the
+ * creature that has to stay clear of the water — Cthulhu's head, the kraken's
+ * eyes — so retuning a silhouette moves its waterline with it.
+ *
+ * A TABLE rather than a parameter with a default: a kind added without a lurk
+ * depth should fail to compile, not float at Cthulhu's.
+ */
+const LURK_DEPTH_BY_KIND: Readonly<Record<MonsterKind, number>> = {
+  cthulhu: CTHULHU_LURK_DEPTH,
+  kraken: KRAKEN_LURK_DEPTH,
+};
+
+export function lurkDepthOf(kind: MonsterKind): number {
+  return LURK_DEPTH_BY_KIND[kind];
+}
+
+/**
  * World Y of the model's origin, given the rendered seabed height under it (or
- * null when that chunk has not arrived).
+ * null when that chunk has not arrived) and this kind's lurking depth.
  *
  * THE RULE: it sinks to its preferred lurking depth, but never through the
  * floor — `max(seabed, surface - lurkDepth)`.
@@ -46,8 +66,9 @@ export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
  *
  * Two consequences, both deliberate:
  *
- *   * in a true abyss it rides at exactly CTHULHU_LURK_DEPTH: head and shoulder
- *     crowns out, torso gone. That is the intended silhouette;
+ *   * in a true abyss it rides at exactly its lurk depth: for Cthulhu, head and
+ *     shoulder crowns out and torso gone; for the kraken, eyes at the waterline
+ *     and the mantle clear. Those are the intended silhouettes;
  *   * in a basin only just past the deep threshold (3 bands = 3 world units), it
  *     STANDS ON THE BOTTOM and correspondingly more of it towers out of the
  *     water. Barely-deep water shows you the whole monster; a real trench leaves
@@ -64,8 +85,8 @@ export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
  * wildlife plugin's for a rendering convenience, which is the wrong layer to
  * settle a rendering question in.
  */
-export function monsterOriginWorldY(seabedY: number | null): number {
-  const preferred = SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH;
+export function monsterOriginWorldY(seabedY: number | null, lurkDepth: number): number {
+  const preferred = SEA_SURFACE_WORLD_Y - lurkDepth;
   if (seabedY === null) return preferred;
   return Math.max(seabedY, preferred);
 }

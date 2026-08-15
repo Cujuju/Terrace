@@ -29,11 +29,18 @@ export const MONSTERS_STATE_MESSAGE = 'state';
 
 /**
  * The monster kinds that exist. Ordered; this is also the deterministic order in
- * which summoning considers kinds, so if a future kind is added the contest for
- * the world's single monster slot resolves predictably rather than by whichever
- * key `for…in` yielded.
+ * which summoning considers kinds, so the contest for the world's single monster
+ * slot resolves predictably rather than by whichever key `for…in` yielded.
+ *
+ * THE ORDER IS STRICTEST HABITAT FIRST, and that is a rule for the table rather
+ * than a fact about these two rows. The kraken's habitat is strictly harder than
+ * Cthulhu's — a deeper trench AND a bigger basin — so every world that can host
+ * a kraken can also host a Cthulhu. Trying the laxer kind first would hand it
+ * most of the slots in exactly the worlds that were dug for the stricter one,
+ * and since Cthulhu cannot be banished (server/kinds.ts) that would be
+ * permanent. Most demanding kind that the world can support gets first refusal.
  */
-export const MONSTER_KINDS = ['cthulhu'] as const;
+export const MONSTER_KINDS = ['kraken', 'cthulhu'] as const;
 
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 

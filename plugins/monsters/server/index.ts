@@ -2,8 +2,9 @@
 //
 // Core knows nothing about monsters. This half owns the whole sim (deep-water
 // survey, the singleton lifecycle, the stochastic arrival, lurking, and
-// persistence) and publishes it on one namespaced message; the client half under
-// ../client draws it.
+// persistence), publishes it on one namespaced message, and VETOES the sculpts a
+// monster will not permit (./protection.ts); the client half under ../client
+// draws it.
 //
 // It is the wildlife plugin's structure applied to the opposite problem. Where
 // wildlife regulates a POPULATION against a habitat-derived target, this
@@ -48,11 +49,12 @@
 // Positions are rounded to MONSTER_POSITION_DECIMALS (1/100 cell) on the way out.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { CellDiff } from '@terrace/shared';
+import type { CellDiff, SculptIntent } from '@terrace/shared';
 // Type-only import of the plugin contract (fully erased at runtime). It reaches
 // into server/src because core publishes no plugin-API entry point yet — the
 // same arrangement the mana, reveal, relics and wildlife plugins use.
 import type {
+  IntentVerdict,
   PersistenceSlice,
   TerracePlugin,
   WorldApi,
@@ -65,6 +67,7 @@ import {
 } from '../protocol.ts';
 import { advanceLurking } from './lurk.ts';
 import { loadMonsters, saveMonsters } from './persistence.ts';
+import { RAISE_BLOCKED_REASON, reachesProtectedGround } from './protection.ts';
 import {
   advanceSummoning,
   enforceHabitat,
@@ -155,6 +158,27 @@ function reactToTerrain(diff: readonly CellDiff[]): void {
   invalidateSurvey();
 }
 
+/**
+ * THE INTENT VETO. Runs inside the host's interceptor chain, after core has
+ * established that the intent is structurally valid and aimed at an unlocked
+ * chunk (server/src/intent/pipeline.ts steps 1–2).
+ *
+ * One question, asked of the living monster only: does this RAISE reach ground
+ * it protects (./protection.ts)? Nothing else here inspects intents, and a world
+ * with no monster in it — or one holding a kind that does not protect its
+ * ground — pays one null check per sculpt.
+ *
+ * `deny` and never `modify`: a raise the monster refuses is not a smaller raise
+ * somewhere else, and rewriting a player's aim would be a stranger thing to do
+ * to them than refusing it.
+ */
+function guardGround(intent: SculptIntent): IntentVerdict | void {
+  const monster = livingMonster();
+  if (monster === null) return;
+  if (!reachesProtectedGround(intent, monster)) return;
+  return { kind: 'deny', reason: RAISE_BLOCKED_REASON };
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return saveMonsters();
@@ -175,6 +199,10 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
+  },
+
+  onIntent(intent: SculptIntent): IntentVerdict | void {
+    return guardGround(intent);
   },
 
   onTerrainChanged(diff: readonly CellDiff[]): void {

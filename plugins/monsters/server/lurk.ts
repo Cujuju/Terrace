@@ -7,6 +7,11 @@
 // DESTINATION LOOK-AHEAD is deep unlocked water, so shorelines and locked
 // territory are walls rather than places it can be pushed out of afterwards.
 //
+// The one case that contract does not cover is a monster that is ALREADY
+// outside its habitat because the world changed under it and its kind cannot be
+// banished for it (see isStranded below). It never MOVED there, so the contract
+// is intact; what it does about it is a separate rule.
+//
 // Everything is scaled by the host's `dt`. There is no wall clock in this file.
 
 import { type LairWorld, isLairCell } from './habitat.ts';
@@ -95,6 +100,18 @@ export function advanceIdleState(monster: Monster, profile: MonsterProfile, dt: 
 }
 
 /**
+ * Is this monster standing somewhere that is no longer its habitat?
+ *
+ * Only ever TRUE for a kind that cannot be banished (./kinds.ts): a banishable
+ * one is removed by enforceHabitat in the same tick this becomes true, so it
+ * never gets a second step. For Cthulhu, whose sea a player has just drained,
+ * this is the normal state of the rest of his life.
+ */
+export function isStranded(world: LairWorld, monster: Monster): boolean {
+  return !isLairCell(world, monster.x, monster.y);
+}
+
+/**
  * Advances one monster by `dt`.
  *
  * Order matters: the idle beat resolves first (so a monster that just woke moves
@@ -104,6 +121,16 @@ export function advanceIdleState(monster: Monster, profile: MonsterProfile, dt: 
  * An idling monster still TURNS — it drifts its gaze — but does not translate.
  * That is the whole visual difference between "holding still" and "switched
  * off", and it costs one steering call.
+ *
+ * STRANDED IS ITS OWN CASE, and it exists because Cthulhu cannot be banished.
+ * When the water around him is gone, EVERY candidate heading fails the probe,
+ * and the ordinary blocked-path answer — reverse, and try again next tick —
+ * would flip his heading by π ten times a second: on a client that is a monster
+ * spinning like a weathervane, which reads as a broken server rather than as a
+ * stranded animal. So a stranded monster holds its position AND its heading,
+ * drifting only by the turn noise, exactly as if it were idling. It costs one
+ * habitat lookup per tick, and if the water ever comes back the probe succeeds
+ * again on that tick and he simply swims off.
  */
 export function advanceMonster(world: LairWorld, monster: Monster, dt: number): void {
   const profile = profileOf(monster.kind);
@@ -111,6 +138,12 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
 
   const noise = (monsterRandom() * 2 - 1) * profile.turnNoiseRadiansPerSecond * dt;
   const desired = normalizeAngle(monster.heading + noise);
+
+  if (isStranded(world, monster)) {
+    monster.heading = desired;
+    return;
+  }
+
   const lookahead = lookaheadCellsFor(profile);
   const steered = steerToValidHeading(world, monster, desired, lookahead);
 
