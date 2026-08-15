@@ -171,10 +171,13 @@ export const CLIFF_ROCK_TINT_MIX = 0.4;
  * needs to state "cut earth is a little darker than the ground above it".
  * 0.68 was tuned against the old 2.2-intensity sun and, stacked on the rig's
  * own side-light falloff, crushed shadow-side cliffs to black (owner,
- * 2026-08-14: "too much shadow. The world is too dark"). 0.82 keeps the
- * crease readable under the rebalanced fill-led rig in scene.ts.
+ * 2026-08-14: "too much shadow. The world is too dark"). 0.78 is the lightest
+ * value that still clears the "visibly darker than the tread" contract
+ * (vertexGrid.test.ts pins every land cliff below 0.85× its tread's
+ * luminance, and the darkest grass stop is the binding case) under the
+ * rebalanced fill-led rig in scene.ts.
  */
-export const CLIFF_FACE_DARKEN_FACTOR = 0.82;
+export const CLIFF_FACE_DARKEN_FACTOR = 0.78;
 
 /** Tint toward rock, then darken — the derivation described above. */
 export function cliffFaceColor(top: Rgb): Rgb {
