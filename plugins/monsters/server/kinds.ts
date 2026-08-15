@@ -13,39 +13,72 @@
 // It is a TABLE rather than a set of cthulhu-named globals because the
 // singleton, the summon roll, the lair test, the banishment rule and the
 // terrain guard are all written against the profile, not against Cthulhu:
-// adding a kraken was adding a row plus a model, not editing the state machine.
+// adding a kraken was adding a row plus a model, and adding a yeti was a row, a
+// model and one new HABITAT REGIME (./habitat.ts) — not editing the lifecycle.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// THE TWO KINDS, AND THE AXES THAT SEPARATE THEM (owner decisions, 2026-08-14)
+// THE THREE KINDS, AND THE AXES THAT SEPARATE THEM (owner decisions, 2026-08-14)
 //
-//                       Cthulhu                     Kraken
-//   habitat             deep water, any basin       a TRENCH, and a big one
-//   banishable          NO — nothing removes him    yes, by draining its lair
-//   blocks raising      yes, under and around him   no
+//                    Cthulhu          Kraken            Yeti
+//   habitat          any deep basin   a TRENCH, big     high snow
+//   banishable       NO, ever         yes, drain it     yes, level it
+//   blocks raising   yes              no                no
 //
-// The two rows are deliberately opposite on both behavioural axes: Cthulhu is
-// the horror you cannot do anything about (you may not even build over him),
-// the kraken is the one you can fight with a shovel. Neither behaviour is
-// written into the lifecycle — `banishment: null` and `protectsGround` are
-// fields, so a third kind picks its own corner of the same table.
+// Cthulhu and the kraken are deliberately opposite on both behavioural axes:
+// Cthulhu is the horror you cannot do anything about (you may not even build
+// over him), the kraken is the one you can fight with a shovel. The yeti takes
+// the kraken's corner of that table in the OTHER habitat — you drove the kraken
+// off by taking its water away, and you drive the yeti off by taking his
+// altitude away. Neither behaviour is written into the lifecycle —
+// `banishment: null` and `protectsGround` are fields, so a fourth kind picks
+// its own corner of the same table.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BAND_HEIGHT, CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_STEP, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
-import { DEEP_WATER_BANDS_BELOW_SEA } from './habitat.ts';
+import {
+  DEEP_WATER_BANDS_BELOW_SEA,
+  HABITAT_REGIMES,
+  LAND_HABITAT,
+  SNOW_LINE_BANDS_ABOVE_SEA,
+  WATER_HABITAT,
+  habitatBoundaryHeight,
+  type HabitatRegime,
+} from './habitat.ts';
 
 /**
- * HARD SINGLETON. The world holds at most this many living monsters, of any
- * kind, ever, at once.
+ * HARD SINGLETON, PER HABITAT REGIME. Each habitat holds at most this many
+ * living monsters, of any kind that lives there, ever, at once.
  *
- * The owner's brief is "no more than one per map", and it is expressed as a
- * WORLD-wide cap rather than a per-kind one on purpose: a map with two
- * different horrors in it is a bestiary, and the entire dramatic weight of this
- * plugin is that the thing in the water is THE thing in the water. It stays at
- * one now that a second KIND exists — the kinds contest the one slot in
- * MONSTER_KINDS order (see SUMMON_ORDER), which is what that order is for.
+ * ONE PER HABITAT, NOT ONE PER WORLD (owner decision, 2026-08-14 — superseding
+ * the world-wide cap of one). The owner's original brief was "no more than one
+ * per map", and it was written as a single world-wide slot because every kind
+ * that existed lived in the sea: two sea horrors in one ocean is a bestiary, and
+ * the dramatic weight of this plugin is that the thing in the water is THE thing
+ * in the water.
+ *
+ * A MOUNTAIN YETI DOES NOT CONTEND FOR THAT. He occupies a disjoint half of the
+ * heightmap: no player can see him and the kraken in one frame without also
+ * seeing the sea and a snow line, and a world where digging a trench silently
+ * cost you the yeti on the peak you spent an hour building reads as a BUG rather
+ * than as scarcity. Scarcity is preserved exactly where it means something — the
+ * sea still holds one thing, and the snow still holds one thing.
+ *
+ * The invariant remains STRUCTURAL rather than counted: summoning.ts holds one
+ * nullable slot per regime, so a second monster in one habitat is
+ * unrepresentable (see the note at the top of that file).
  */
-export const MAX_LIVING_MONSTERS = 1;
+export const MAX_LIVING_MONSTERS_PER_HABITAT = 1;
+
+/**
+ * The world-wide ceiling, DERIVED rather than chosen: one per habitat, times the
+ * habitats that exist. Two today.
+ *
+ * It is what the broadcast's bandwidth note and the client's reconcile are sized
+ * against, and it is the name to grep for the day the shape of this changes
+ * again.
+ */
+export const MAX_LIVING_MONSTERS = MAX_LIVING_MONSTERS_PER_HABITAT * HABITAT_REGIMES.length;
 
 /**
  * Mean wait, in simulated seconds, between a world becoming eligible and a
@@ -55,8 +88,15 @@ export const MAX_LIVING_MONSTERS = 1;
  * arrival pacing is a statement about how often this plugin interrupts a
  * session, which is the same question whichever animal answers the door. What
  * differs between kinds is WHERE they can live, not how eagerly they come. The
- * profile field stays per-kind so a future kind CAN differ; both rows today
- * point at this one number rather than at two copies of it.
+ * profile field stays per-kind so a future kind CAN differ; every row today
+ * points at this one number rather than at three copies of it.
+ *
+ * NOTE ON THE PER-HABITAT SLOTS: each habitat rolls its own arrival, so a world
+ * that can host both a sea kind and the yeti sees two independent Poisson
+ * processes at this rate rather than one. That is the intended reading — "how
+ * often does the sea produce a horror" and "how often does the mountain" are
+ * separate questions — and it is why the mean is stated per kind rather than
+ * per world.
  *
  * 240 s = 4 minutes. The roll is a Poisson process of rate 1/240 per second
  * (see rollEvent), so the derivation is exact rather than approximate:
@@ -255,6 +295,157 @@ export const KRAKEN_IDLE_END_PER_SECOND = 0.2;
  */
 export const KRAKEN_FOOTPRINT_CELLS = 7;
 
+// ── Yeti ─────────────────────────────────────────────────────────────────────
+//
+// The first LAND kind (owner request, 2026-08-14: "I would like to see a snow
+// Yeti that spawns in the high Alps"). Everything below is stated against the
+// land habitat — cells at or above SNOW_LINE_BANDS_ABOVE_SEA (habitat.ts) —
+// exactly as the two sea kinds are stated against deep water. Nothing in the
+// lifecycle knows which habitat it is reading.
+
+/**
+ * Horizontal extent of the modelled body, in cells: shoulder to shoulder,
+ * including the arms that hang either side of them (client/yeti-anatomy.ts).
+ *
+ * FIVE, against the sea kinds' seven, and the difference is the point rather
+ * than an accident of modelling. Cthulhu and the kraken are gods that rise out
+ * of an ocean; the yeti is an ANIMAL — the biggest thing on the mountain, and
+ * still something a mountain could hold several of. Five cells is also what lets
+ * him live on a snowfield a player can plausibly build: his minimum lair below
+ * is derived from this number, and a seven-cell yeti would have demanded half
+ * again as much snow for the same room to move.
+ */
+export const YETI_FOOTPRINT_CELLS = 5;
+
+/**
+ * Cells in the smallest snowfield the yeti will accept as a lair, as a multiple
+ * of a chunk's area.
+ *
+ * TWO chunks — 512 cells, a ~23×23 field if it were square — and it is DERIVED
+ * from Cthulhu's threshold rather than picked: his 1024 cells is 32 cells
+ * across for a 7-cell body, which that constant justifies as "about four and a
+ * half body-widths in every direction … the smallest region in which it can
+ * lurk and wander for minutes without its shoulders grinding along a shoreline".
+ * The same 4.5 body-widths for a 5-cell yeti is 22.5 cells across, i.e. 506
+ * cells, and two chunks is the nearest chunk multiple above it.
+ *
+ * IT IS ALSO THE CONSTRAINT THAT DECIDES WHETHER HE EVER EXISTS, which the
+ * water thresholds never had to worry about. A fresh world is all ocean and no
+ * land (design record, 2026-08-14 genesis): every snow cell in the world is one
+ * a player raised nine bands out of the sea. 512 cells of it is a real project —
+ * roughly a couple of hundred hard-stamp strokes with the level-fill brush — and
+ * that is the intended weight of the event. Four chunks, the sea threshold
+ * verbatim, would have doubled a bill that is already the largest thing this
+ * plugin asks of a player.
+ */
+export const YETI_LAIR_MIN_AREA_CHUNKS = 2;
+export const YETI_MIN_LAIR_SNOW_CELLS = YETI_LAIR_MIN_AREA_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+
+/**
+ * How high the highest cell of the yeti's lair must be, in bands above sea.
+ *
+ * NO EXTRA DEMAND: the global snow line IS his habitat, exactly as the deep
+ * water line is Cthulhu's. The field exists so a future land kind can want a
+ * summit the way the kraken wants a trench; the yeti is the kind that takes any
+ * snow it can stand on.
+ */
+export const YETI_LAIR_MIN_HEIGHT_BANDS = SNOW_LINE_BANDS_ABOVE_SEA;
+
+/**
+ * How much smaller than its arrival threshold a lair must get before its
+ * occupant leaves. A QUARTER.
+ *
+ * Hysteresis, and not sloppiness: arrival and departure being the same number
+ * would mean a player idly nibbling the rim of a marginal lair could evict the
+ * monster and re-qualify the lair repeatedly, turning a dread event into a light
+ * switch. Two distinct numbers mean the habitat has to be genuinely, visibly
+ * gone before the thing goes.
+ *
+ * Named here rather than left implicit because the kraken's pair (9 chunks
+ * arriving, 2 leaving) already encodes it — its own comment calls 2/9 "a
+ * quarter" — and a second kind reproducing that ratio by hand is how two
+ * different hysteresis rules end up in one table. The kraken's numbers are NOT
+ * re-derived from this: they are owner-settled and 2 chunks is a rounder number
+ * than 2.25 would be; this is the rule new rows follow.
+ */
+export const LAIR_COLLAPSE_HYSTERESIS_DIVISOR = 4;
+
+/**
+ * Cells in its own snowfield below which the yeti's lair has COLLAPSED and he
+ * leaves: 128 cells, a ~11×11 patch.
+ *
+ * AREA ONLY, DELIBERATELY — not height, for the reason the kraken's collapse
+ * test is area-only: re-testing an arrival condition every five seconds is the
+ * light switch above. What drives him off is a player carving the snow away from
+ * under him until there is not enough of it left to be a mountain, and the
+ * cheapest way to do that is to take the whole massif below the snow line — one
+ * band off the top turns every cell of a level plateau to bare rock at once.
+ */
+export const YETI_LAIR_COLLAPSE_SNOW_CELLS = Math.floor(
+  YETI_MIN_LAIR_SNOW_CELLS / LAIR_COLLAPSE_HYSTERESIS_DIVISOR,
+);
+
+/**
+ * Simulated seconds after a yeti is driven off before he may be rolled for
+ * again. Ten minutes.
+ *
+ * The same figure the kraken serves, reached from the opposite direction and
+ * therefore worth stating rather than copying. Levelling a snowfield is FASTER
+ * than draining a trench: a hard stamp takes a whole band off ~45 cells at a
+ * time and the level-fill brush works the highest band first, so the ~512 cells
+ * of his lair drop below the snow line in a couple of dozen strokes. A cheap
+ * eviction is exactly the case that needs a LONG absence — anything shorter and
+ * a player could toggle him off and on inside one sculpting session, and an
+ * arrival is supposed to be an event. Ten minutes is long enough to outlast the
+ * session that evicted him and short enough that a world does not become
+ * permanently monster-free by accident; with the 4-minute mean wait on top, a
+ * player who levels his peak and then rebuilds it waits ~14 minutes for the
+ * sequel.
+ */
+export const YETI_RESPAWN_COOLDOWN_SECONDS = 600;
+
+/**
+ * Ambling speed, cells per second.
+ *
+ * 0.45 — between Cthulhu's 0.25 brood and the kraken's 0.6 hunt, and far under
+ * the wildlife plugin's grazer (1.6 cells/s), which is the animal he shares the
+ * hillside with. That last comparison is the one that matters: a monster that
+ * moved at grazer speed would read as livestock, and the whole silhouette
+ * argument (a five-cell biped against a one-cell deer) is undone if it also
+ * moves like one. At 0.45 cells/s he covers his own five-cell width in eleven
+ * seconds — a walk you can watch make progress, and never a stride.
+ */
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = 0.45;
+
+/**
+ * Maximum random heading change, radians per second. 0.35 rad/s is ~20°/s —
+ * twice the kraken's drift, a third of the wildlife grazer's 1.1.
+ *
+ * A walker picks its way: it is turning around rocks and along a ridge, not
+ * holding a course through open water, so the two sea kinds' near-inexorable
+ * drift would read as a man on rails. A grazer's 1.1 is the other failure —
+ * that is browsing, which is a small animal's behaviour.
+ */
+export const YETI_TURN_NOISE_RADIANS_PER_SECOND = 0.35;
+
+/**
+ * IDLE BEATS — and they are decomposed the OPPOSITE way from Cthulhu's on
+ * purpose:
+ *
+ *   onset 0.08/s → while moving, a mean 12.5 s before he stops;
+ *   end   0.25/s → once stopped, a mean 4 s hold.
+ *
+ * Steady state is 0.08/0.33 ≈ 24% of the time stationary, in beats averaging
+ * four seconds. That is a similar SHARE to Cthulhu's 29% and a completely
+ * different rhythm: his is a few long broods (8.3 s each), the yeti's is many
+ * short halts. Share is not what a player reads — beat length is. A yeti that
+ * held still for eight seconds at a time would be borrowing the one behaviour
+ * the table says is Cthulhu's, and four seconds is the length of a halt that
+ * reads as an animal checking the wind before it moves on.
+ */
+export const YETI_IDLE_ONSET_PER_SECOND = 0.08;
+export const YETI_IDLE_END_PER_SECOND = 0.25;
+
 // ── The table ────────────────────────────────────────────────────────────────
 
 /**
@@ -268,8 +459,8 @@ export const KRAKEN_FOOTPRINT_CELLS = 7;
  * nothing to leave unset and nothing to accidentally read.
  */
 export interface BanishmentRule {
-  /** Deep-water cells in its own region below which it leaves. */
-  readonly lairCollapseDeepCells: number;
+  /** Habitat cells in its own region below which it leaves. */
+  readonly lairCollapseCells: number;
   /** Simulated seconds of enforced absence after a banishment. */
   readonly respawnCooldownSeconds: number;
 }
@@ -278,14 +469,25 @@ export interface BanishmentRule {
 export interface MonsterProfile {
   readonly kind: MonsterKind;
 
-  /** Deep-water cells required in one region before this kind will arrive. */
-  readonly minLairDeepCells: number;
   /**
-   * How deep the lair's DEEPEST cell must be, in bands below sea level. The
-   * global deep-water line (habitat.ts) is the floor for every kind; a kind may
+   * WHERE IT LIVES — the half of the heightmap this kind's every rule is read
+   * against (habitat.ts). It decides which survey admits it, which cells its
+   * steering will accept, and which of the world's monster slots it contests.
+   *
+   * It is the regime VALUE rather than an id plus a lookup, so a row cannot name
+   * a habitat that does not exist and no call site has to resolve one.
+   */
+  readonly habitat: HabitatRegime;
+
+  /** Habitat cells required in one connected region before this kind arrives. */
+  readonly minLairCells: number;
+  /**
+   * How far INTO its habitat the lair's most extreme cell must reach, in bands
+   * from sea level — deeper for a water kind, higher for a land one. The
+   * habitat's own threshold (habitat.ts) is the floor for every kind; a kind may
    * demand more, and the kraken does.
    */
-  readonly minLairDepthBands: number;
+  readonly minLairReachBands: number;
 
   /** Mean simulated seconds from "eligible" to "arrived". See rollEvent. */
   readonly summonMeanWaitSeconds: number;
@@ -318,9 +520,10 @@ export interface MonsterProfile {
 export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
   cthulhu: {
     kind: 'cthulhu',
-    minLairDeepCells: MIN_LAIR_DEEP_CELLS,
+    habitat: WATER_HABITAT,
+    minLairCells: MIN_LAIR_DEEP_CELLS,
     // No extra demand: the global deep-water line IS his habitat.
-    minLairDepthBands: DEEP_WATER_BANDS_BELOW_SEA,
+    minLairReachBands: DEEP_WATER_BANDS_BELOW_SEA,
     summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
     // HE CANNOT BE BANISHED. See BanishmentRule and summoning.ts.
     banishment: null,
@@ -333,11 +536,12 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
   },
   kraken: {
     kind: 'kraken',
-    minLairDeepCells: KRAKEN_MIN_LAIR_DEEP_CELLS,
-    minLairDepthBands: KRAKEN_LAIR_MIN_DEPTH_BANDS,
+    habitat: WATER_HABITAT,
+    minLairCells: KRAKEN_MIN_LAIR_DEEP_CELLS,
+    minLairReachBands: KRAKEN_LAIR_MIN_DEPTH_BANDS,
     summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
     banishment: {
-      lairCollapseDeepCells: KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
+      lairCollapseCells: KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
       respawnCooldownSeconds: KRAKEN_RESPAWN_COOLDOWN_SECONDS,
     },
     protectsGround: false,
@@ -346,6 +550,32 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     idleOnsetPerSecond: KRAKEN_IDLE_ONSET_PER_SECOND,
     idleEndPerSecond: KRAKEN_IDLE_END_PER_SECOND,
     footprintCells: KRAKEN_FOOTPRINT_CELLS,
+  },
+  yeti: {
+    kind: 'yeti',
+    habitat: LAND_HABITAT,
+    minLairCells: YETI_MIN_LAIR_SNOW_CELLS,
+    // No extra demand: the snow line IS his habitat, as the deep-water line is
+    // Cthulhu's. Both of the "takes any of it" kinds sit at their habitat's own
+    // threshold, and both of them are the kind a world gets first.
+    minLairReachBands: YETI_LAIR_MIN_HEIGHT_BANDS,
+    summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
+    // LEVELLING HIS PEAKS DRIVES HIM OFF. Same machinery as the kraken's
+    // drained trench, pointed at the land predicate.
+    banishment: {
+      lairCollapseCells: YETI_LAIR_COLLAPSE_SNOW_CELLS,
+      respawnCooldownSeconds: YETI_RESPAWN_COOLDOWN_SECONDS,
+    },
+    // HE DOES NOT BLOCK SCULPTING, and the two fields are one decision: a
+    // banishable kind that vetoed raises would be half-vetoing its own counter,
+    // and a player who wants him gone has to be able to reach the ground he is
+    // standing on. Cthulhu is the only kind that gets both.
+    protectsGround: false,
+    lurkSpeedCellsPerSecond: YETI_AMBLE_SPEED_CELLS_PER_SECOND,
+    turnNoiseRadiansPerSecond: YETI_TURN_NOISE_RADIANS_PER_SECOND,
+    idleOnsetPerSecond: YETI_IDLE_ONSET_PER_SECOND,
+    idleEndPerSecond: YETI_IDLE_END_PER_SECOND,
+    footprintCells: YETI_FOOTPRINT_CELLS,
   },
 };
 
@@ -366,12 +596,18 @@ export function summonRatePerSecond(profile: MonsterProfile): number {
 }
 
 /**
- * The height at or below which this kind's lair must bottom out. Bands are what
- * the table states (rule 1 at the top of this file); heights are what the
- * survey measures, and this is the one place the two meet.
+ * The height this kind's lair must reach past — at or below it for a water
+ * kind, at or above it for a land one. Bands are what the table states (rule 1
+ * at the top of this file); heights are what the survey measures, and this is
+ * the one place the two meet.
+ *
+ * The admission test itself is `reachesIntoHabitat` (habitat.ts), which compares
+ * in the habitat's own direction so no caller has to know which way that is.
+ * This is here for the tests and for anyone reading a profile who wants the
+ * number in world terms.
  */
-export function minLairDeepestHeight(profile: MonsterProfile): number {
-  return SEA_LEVEL - profile.minLairDepthBands * BAND_HEIGHT;
+export function minLairExtremeHeight(profile: MonsterProfile): number {
+  return habitatBoundaryHeight(profile.habitat, profile.minLairReachBands);
 }
 
 /**
@@ -410,3 +646,22 @@ export function groundProtectionRadiusCells(profile: MonsterProfile): number {
 
 /** The kinds, in the fixed order the summoner considers them. */
 export const SUMMON_ORDER: readonly MonsterKind[] = MONSTER_KINDS;
+
+/**
+ * The kinds that live in one habitat, in SUMMON_ORDER.
+ *
+ * Computed once per regime at module load rather than filtered per summon
+ * attempt: the summon pass runs every tick for every empty slot, and this is a
+ * fixed property of the table. Empty for a habitat no kind claims, which is a
+ * legal (if dull) table — the summoner simply never fills that slot.
+ */
+const KINDS_BY_HABITAT: ReadonlyMap<HabitatRegime, readonly MonsterKind[]> = new Map(
+  HABITAT_REGIMES.map((regime) => [
+    regime,
+    SUMMON_ORDER.filter((kind) => MONSTER_PROFILES[kind].habitat === regime),
+  ]),
+);
+
+export function kindsInHabitat(regime: HabitatRegime): readonly MonsterKind[] {
+  return KINDS_BY_HABITAT.get(regime) ?? [];
+}

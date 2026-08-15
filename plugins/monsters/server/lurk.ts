@@ -1,11 +1,13 @@
-// Lurking: the slow wander, the long stillnesses, and the refusal to leave deep
-// water.
+// Lurking: the slow wander, the long stillnesses, and the refusal to leave the
+// habitat — deep water for the sea kinds, snow for the yeti.
 //
 // The steering contract, in one sentence — the same one the wildlife plugin
 // keeps, because it is the contract that makes "a monster is never outside its
 // habitat" true by construction: a monster only ever commits to a step whose
-// DESTINATION LOOK-AHEAD is deep unlocked water, so shorelines and locked
-// territory are walls rather than places it can be pushed out of afterwards.
+// DESTINATION LOOK-AHEAD is unlocked ground of ITS OWN HABITAT, so shorelines,
+// snow lines and locked territory are all walls rather than places it can be
+// pushed out of afterwards. The probe asks the kind's own regime, so the same
+// three lines make a shore a wall to Cthulhu and a snow line a wall to the yeti.
 //
 // The one case that contract does not cover is a monster that is ALREADY
 // outside its habitat because the world changed under it and its kind cannot be
@@ -17,13 +19,13 @@
 import { type LairWorld, isLairCell } from './habitat.ts';
 import { profileOf, type MonsterProfile } from './kinds.ts';
 import { monsterRandom, rollEvent } from './rng.ts';
-import { type Monster, livingMonster } from './summoning.ts';
+import { type Monster, livingMonsters } from './summoning.ts';
 
 const TWO_PI = Math.PI * 2;
 
 /**
  * How far ahead it checks, in seconds of its own travel. It looks at where it
- * will be in 4 seconds and refuses to go there if that is not deep water.
+ * will be in 4 seconds and refuses to go there if that is not its habitat.
  *
  * Much longer than wildlife's 0.6 s, and necessarily so: at 0.25 cells/s, 0.6 s
  * of travel is 0.15 cells — a probe well inside its own body, which would let a
@@ -65,9 +67,9 @@ export function lookaheadCellsFor(profile: MonsterProfile): number {
 }
 
 /**
- * Picks a heading whose look-ahead cell is deep unlocked water, preferring
- * `desired` and then the smallest deviation from it. Null when it is boxed in on
- * all eight candidates — the caller then holds position.
+ * Picks a heading whose look-ahead cell is unlocked ground of this monster's own
+ * habitat, preferring `desired` and then the smallest deviation from it. Null
+ * when it is boxed in on all eight candidates — the caller then holds position.
  */
 export function steerToValidHeading(
   world: LairWorld,
@@ -75,13 +77,14 @@ export function steerToValidHeading(
   desired: number,
   lookahead: number,
 ): number | null {
+  const regime = profileOf(monster.kind).habitat;
   for (let attempt = 0; attempt < AVOID_TURN_ATTEMPTS; attempt++) {
     // 0, +45°, -45°, +90°, -90°, … — smallest workable turn first.
     const step = Math.ceil(attempt / 2) * AVOID_TURN_STEP_RADIANS;
     const heading = desired + (attempt % 2 === 1 ? step : -step);
     const probeX = monster.x + Math.cos(heading) * lookahead;
     const probeY = monster.y + Math.sin(heading) * lookahead;
-    if (isLairCell(world, probeX, probeY)) return normalizeAngle(heading);
+    if (isLairCell(regime, world, probeX, probeY)) return normalizeAngle(heading);
   }
   return null;
 }
@@ -108,7 +111,7 @@ export function advanceIdleState(monster: Monster, profile: MonsterProfile, dt: 
  * this is the normal state of the rest of his life.
  */
 export function isStranded(world: LairWorld, monster: Monster): boolean {
-  return !isLairCell(world, monster.x, monster.y);
+  return !isLairCell(profileOf(monster.kind).habitat, world, monster.x, monster.y);
 }
 
 /**
@@ -164,10 +167,10 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
   // BELT AND SUSPENDERS. The look-ahead validated a cell several cells away,
   // which is much further than one tick's travel; that covers the ordinary case
   // but says nothing about the cells in between, so a narrow tongue of shallows
-  // crossing the path could still be stepped into. Re-checking the actual
-  // destination makes the invariant "the monster is always in deep water" true
-  // by construction rather than by trusting the probe distance.
-  if (!isLairCell(world, nextX, nextY)) {
+  // (or of bare rock) crossing the path could still be stepped into. Re-checking
+  // the actual destination makes the invariant "the monster is always inside its
+  // habitat" true by construction rather than by trusting the probe distance.
+  if (!isLairCell(profile.habitat, world, nextX, nextY)) {
     monster.heading = normalizeAngle(monster.heading + Math.PI);
     return;
   }
@@ -176,9 +179,13 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
   monster.y = nextY;
 }
 
-/** Advances the living monster, if there is one. */
+/**
+ * Advances every living monster.
+ *
+ * Iterated over the habitat slots in fixed order (livingMonsters), so a world
+ * holding both a kraken and a yeti consumes the shared random source in the same
+ * order every tick — which is what keeps a seeded test reproducible.
+ */
 export function advanceLurking(world: LairWorld, dt: number): void {
-  const monster = livingMonster();
-  if (monster === null) return;
-  advanceMonster(world, monster, dt);
+  for (const monster of livingMonsters()) advanceMonster(world, monster, dt);
 }

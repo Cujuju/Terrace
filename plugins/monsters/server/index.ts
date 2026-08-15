@@ -1,10 +1,10 @@
-// monsters — the thing in the water, as a plugin.
+// monsters — the thing in the water and the thing on the mountain, as a plugin.
 //
-// Core knows nothing about monsters. This half owns the whole sim (deep-water
-// survey, the singleton lifecycle, the stochastic arrival, lurking, and
-// persistence), publishes it on one namespaced message, and VETOES the sculpts a
-// monster will not permit (./protection.ts); the client half under ../client
-// draws it.
+// Core knows nothing about monsters. This half owns the whole sim (the habitat
+// survey, the per-habitat singleton lifecycle, the stochastic arrival, lurking,
+// and persistence), publishes it on one namespaced message, and VETOES the
+// sculpts a monster will not permit (./protection.ts); the client half under
+// ../client draws it.
 //
 // It is the wildlife plugin's structure applied to the opposite problem. Where
 // wildlife regulates a POPULATION against a habitat-derived target, this
@@ -14,22 +14,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SYNC: FULL STATE, ONCE A SECOND.
 //
-// Every broadcast carries the entire monster list — which is zero or one entry.
-// The same v1 choice wildlife made, with the same three consequences:
+// Every broadcast carries the entire monster list — at most one entry per
+// habitat, so two today. The same v1 choice wildlife made, with the same three
+// consequences:
 //
 //   * self-healing — a dropped or reordered message costs one second of
 //     staleness and nothing else; there is no diff stream to desynchronise;
 //   * no join handshake — a joining client is caught up by the next broadcast,
 //     so this plugin needs no onPlayerJoin snapshot path at all;
-//   * bounded cost — MAX_LIVING_MONSTERS is 1, so the payload is a constant.
+//   * bounded cost — MAX_LIVING_MONSTERS is 2, so the payload is a constant.
 //
-// BANDWIDTH. The payload is five keys — id, kind, x, y, heading — which msgpack
+// BANDWIDTH. One entry is five keys — id, kind, x, y, heading — which msgpack
 // encodes in roughly 60 B including the key strings and the "cthulhu" value
 // (Colyseus re-sends keys on every message; there is no schema here). An empty
-// list is ~20 B.
+// list is ~20 B, and the worst case (a sea monster AND a yeti) is ~120 B.
 //
-//   every tick   (10 Hz): 600 B/s ≈ 4.8 kbit/s per client
-//   every 10th tick (1 Hz):  60 B/s ≈ 0.5 kbit/s per client   ← chosen
+//   every tick   (10 Hz): 1 200 B/s ≈ 9.6 kbit/s per client
+//   every 10th tick (1 Hz):  120 B/s ≈ 1.0 kbit/s per client   ← chosen
 //
 // Both are rounding error next to wildlife's ~210 kbit/s, so bandwidth is NOT
 // what picks the cadence here — motion is, and it points the same way:
@@ -37,7 +38,9 @@
 //   * wildlife chose 5 Hz because its fastest species covers 0.6 cells between
 //     updates. Cthulhu lurks at 0.25 cells/s (./kinds.ts), so a ONE-SECOND
 //     window is 0.25 cells — less than half wildlife's per-window travel, and
-//     1/28th of the monster's own 7-cell width. Interpolation (client/
+//     1/28th of the monster's own 7-cell width. The fastest kind in the table
+//     is the kraken at 0.6 cells/s (the yeti ambles at 0.45), which is exactly
+//     wildlife's per-window figure at a fifth of its cadence. Interpolation (client/
 //     interpolation.ts) renders that as a continuous glide; a player cannot tell
 //     it from 10 Hz, so the other 4.3 kbit/s buys literally nothing.
 //   * 1 Hz is also the FLOOR, not just the choice. The client interpolates
@@ -72,7 +75,7 @@ import {
   advanceSummoning,
   enforceHabitat,
   invalidateSurvey,
-  livingMonster,
+  livingMonsters,
   resetSummoning,
 } from './summoning.ts';
 
@@ -92,34 +95,34 @@ let api: WorldApi | null = null;
 /** Ticks since boot, for the broadcast cadence. */
 let tickCount = 0;
 
-/** The broadcast payload's list: zero or one monster at wire precision. */
+/**
+ * The broadcast payload's list: every living monster at wire precision, in the
+ * fixed habitat order livingMonsters() iterates.
+ */
 export function monsterStates(): MonsterState[] {
-  const monster = livingMonster();
-  if (monster === null) return [];
-  return [
-    {
-      id: monster.id,
-      kind: monster.kind,
-      x: roundBroadcastPosition(monster.x),
-      y: roundBroadcastPosition(monster.y),
-      heading: roundBroadcastPosition(monster.heading),
-    },
-  ];
+  return livingMonsters().map((monster) => ({
+    id: monster.id,
+    kind: monster.kind,
+    x: roundBroadcastPosition(monster.x),
+    y: roundBroadcastPosition(monster.y),
+    heading: roundBroadcastPosition(monster.heading),
+  }));
 }
 
 /**
  * THE SIM STEP — CRITICAL PATH.
  *
  * Fixed order, once per host tick:
- *   1. summoning — clock, cooldown, the periodic lair survey with its collapse
- *      test, and the arrival roll. Nothing else may create or destroy a monster;
- *   2. lurking — the slow wander, which steers around anything that is not deep
- *      unlocked water;
+ *   1. summoning — clock, cooldowns, the periodic per-habitat lair survey with
+ *      its collapse test, and the arrival rolls. Nothing else may create or
+ *      destroy a monster;
+ *   2. lurking — the slow wander, which steers around anything that is not
+ *      unlocked ground of the monster's own habitat;
  *   3. habitat check — a monster standing somewhere invalid is banished. Step 2
  *      vetoes bad steps, so in practice this catches the case where the TERRAIN
  *      moved out from under it. It runs anyway, unconditionally: it is two
- *      lookups, and it is the invariant "the monster is always in deep water"
- *      made true by construction rather than by trusting step 2;
+ *      lookups per monster, and it is the invariant "a monster is always inside
+ *      its habitat" made true by construction rather than by trusting step 2;
  *   4. broadcast, on the cadence.
  *
  * Steps 1–3 are all driven by `dt`; nothing here reads a wall clock.
@@ -141,12 +144,14 @@ function simulate(world: WorldApi, dt: number): void {
  * about not making a player wait out the survey interval to see the consequence
  * of their own sculpt:
  *
- *   * if the edit raised the ground out from under the monster, it submerges
+ *   * if the edit moved the ground out from under a monster — raised the seabed
+ *     under the kraken, took the snow off the peak under the yeti — it leaves
  *     immediately;
- *   * the lair survey is invalidated, so the next tick re-derives region sizes.
- *     That is what turns "I drained the bay" into "it is gone" within a tick,
- *     and equally what lets a newly dug basin qualify at once (it still has to
- *     win the summon roll — arrival is never instant).
+ *   * every habitat's lair survey is invalidated, so the next tick re-derives
+ *     region sizes. That is what turns "I drained the bay" into "it is gone"
+ *     within a tick, and equally what lets a newly dug basin or a newly raised
+ *     summit qualify at once (it still has to win the summon roll — arrival is
+ *     never instant).
  *
  * Note this is called from inside the sculpt that caused it. It only reads
  * heights and writes plugin state — it never calls world.sculpt — so it cannot
@@ -163,20 +168,26 @@ function reactToTerrain(diff: readonly CellDiff[]): void {
  * established that the intent is structurally valid and aimed at an unlocked
  * chunk (server/src/intent/pipeline.ts steps 1–2).
  *
- * One question, asked of the living monster only: does this RAISE reach ground
- * it protects (./protection.ts)? Nothing else here inspects intents, and a world
- * with no monster in it — or one holding a kind that does not protect its
- * ground — pays one null check per sculpt.
+ * One question, asked of each living monster: does this RAISE reach ground it
+ * protects (./protection.ts)? Nothing else here inspects intents, and a world
+ * with no monster in it — or one holding only kinds that do not protect their
+ * ground — pays one empty loop per sculpt.
+ *
+ * ASKED OF EVERY LIVING MONSTER, not of "the" monster: there is one per habitat
+ * now, and a guard that only consulted the first would be a guard that stopped
+ * working the day the list was ordered differently. Only Cthulhu answers yes
+ * today, and only one Cthulhu can exist, so at most one of these ever matters —
+ * but that is a fact about the table, not a property the loop should assume.
  *
  * `deny` and never `modify`: a raise the monster refuses is not a smaller raise
  * somewhere else, and rewriting a player's aim would be a stranger thing to do
  * to them than refusing it.
  */
 function guardGround(intent: SculptIntent): IntentVerdict | void {
-  const monster = livingMonster();
-  if (monster === null) return;
-  if (!reachesProtectedGround(intent, monster)) return;
-  return { kind: 'deny', reason: RAISE_BLOCKED_REASON };
+  for (const monster of livingMonsters()) {
+    if (!reachesProtectedGround(intent, monster)) continue;
+    return { kind: 'deny', reason: RAISE_BLOCKED_REASON };
+  }
 }
 
 const persistence: PersistenceSlice = {
