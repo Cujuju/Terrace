@@ -62,7 +62,8 @@
 // respecified mid-stroke, because a driver-side buffer respec is what shows up
 // as a frame spike rather than as a lower average frame rate.
 //
-// MEMORY at rest: 108 bytes per triangle (3 unshared vertices × 9 floats).
+// MEMORY at rest: 111 bytes per triangle (3 unshared vertices × 9 floats, plus
+// the one-byte self-lit flag each vertex carries — see SELF_LIT_ATTRIBUTE).
 // Non-indexed is deliberate — every triangle owning its own three vertices is
 // what gives flat shading a hard crease at every cap/skirt boundary, and an
 // index buffer that never shares a vertex is pure overhead.
@@ -103,6 +104,101 @@ const TERRAIN_ROUGHNESS = 0.95;
 const TERRAIN_METALNESS = 0;
 
 /**
+ * Name of the per-vertex self-lit attribute, shared by the geometry (which
+ * writes it) and the shader patch below (which reads it). One string, so a
+ * rename cannot silently unbind the attribute and leave every rim dark again.
+ */
+const SELF_LIT_ATTRIBUTE = 'selfLit';
+
+/**
+ * Makes the terrain material honour that attribute: a vertex flagged SELF_LIT
+ * is shaded as its own colour and nothing else.
+ *
+ * WHY THE MATERIAL HAS TO KNOW (owner, 2026-08-14, low-angle screenshot).
+ * Underwater terrace seams are outlined by the brightened silt rim on each
+ * one-band skirt (terrain/bandColors.ts). A skirt is vertical and the rig is a
+ * single directional sun plus a hemisphere fill (render/scene.ts), so the two
+ * orientations facing away from the sun receive almost no direct light: the
+ * rims read from overhead and disappear from a low camera. That is a lighting
+ * dependence and only the shading stage can remove it — the palette cannot,
+ * because whatever value it produces is about to be multiplied by a factor that
+ * varies ~5× with which way the terrace happens to turn.
+ *
+ * WHAT IT DOES. `outgoingLight` is the fully accumulated radiance for the
+ * fragment, assembled just before `<opaque_fragment>` in three's meshphysical
+ * shader; `diffuseColor.rgb` at that point is exactly the material colour times
+ * the vertex colour, i.e. the palette entry in linear space. Mixing between
+ * them by the flag replaces lit shading with the raw palette entry for flagged
+ * vertices and leaves every other vertex byte-identical. The injection sits
+ * BEFORE `<opaque_fragment>`, so tone mapping, output colour space and scene
+ * fog all still apply to a rim exactly as they do to everything else — a rim in
+ * the distance still fogs away; it just never goes dark for facing the wrong
+ * way. Verified against three 0.185's src/renderers/shaders/ShaderLib/
+ * meshphysical.glsl.js, where the include order is opaque → tonemapping →
+ * colorspace → fog.
+ *
+ * WHY NOT A SECOND MATERIAL. BufferGeometry.addGroup with an unlit
+ * MeshBasicMaterial is the native way to say "these triangles are not lit", and
+ * it was the first candidate. It costs a second draw call on every chunk that
+ * has any underwater geometry — and a Terrace world starts as an ocean, so that
+ * is every chunk, doubling a fully revealed world's 1024 draw calls. It would
+ * also force the emission order to put all rim triangles in one contiguous
+ * range, which the builder's level-by-level walk does not naturally produce.
+ * One byte per vertex and one line of GLSL costs neither.
+ *
+ * WHY NOT FAKE THE NORMALS. Pointing rim normals at the sky would light them
+ * like treads with no new attribute at all, but flatShading derives its normal
+ * from screen-space derivatives and ignores the attribute entirely, so it would
+ * first require dropping flatShading; and it would leave the rims' brightness
+ * still tied to the rig — a sun moved lower would darken every outline again.
+ * It treats the symptom (these faces are dark) rather than the cause (these
+ * faces are lit at all).
+ */
+function makeSelfLitAware(material: MeshStandardMaterial): void {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = spliceShader(
+      spliceShader(
+        shader.vertexShader,
+        '#include <common>',
+        `#include <common>\nattribute float ${SELF_LIT_ATTRIBUTE};\nvarying float vSelfLit;`,
+      ),
+      '#include <begin_vertex>',
+      `vSelfLit = ${SELF_LIT_ATTRIBUTE};\n#include <begin_vertex>`,
+    );
+    shader.fragmentShader = spliceShader(
+      spliceShader(
+        shader.fragmentShader,
+        '#include <common>',
+        '#include <common>\nvarying float vSelfLit;',
+      ),
+      '#include <opaque_fragment>',
+      'outgoingLight = mix( outgoingLight, diffuseColor.rgb, vSelfLit );\n#include <opaque_fragment>',
+    );
+  };
+}
+
+/**
+ * String substitution into a stock three shader that REFUSES to no-op.
+ *
+ * A plain `.replace` on a missing needle returns the source untouched, and the
+ * only symptom would be underwater outlines quietly going dark again on some
+ * future three upgrade — the exact bug this whole path exists to close, back
+ * in a form no test would notice. Every anchor used here is a shader include
+ * that three has carried for many major versions, so this can only fire when
+ * an upgrade genuinely moves the ground under the patch: it throws on the
+ * first frame, on the developer's machine, naming the anchor that moved.
+ */
+function spliceShader(source: string, anchor: string, replacement: string): string {
+  if (!source.includes(anchor)) {
+    throw new Error(
+      `terrain shader patch failed: three no longer emits "${anchor}". ` +
+        'Re-anchor the self-lit injection in render/terrainMeshes.ts.',
+    );
+  }
+  return source.replace(anchor, replacement);
+}
+
+/**
  * Three's working colour space is linear; the palettes in bandColors.ts are
  * sRGB (that is how the hex values were chosen). Converting the nine palette
  * entries ONCE here, rather than per vertex per patch, is the whole reason
@@ -124,6 +220,7 @@ interface ChunkMesh {
   positionAttribute: BufferAttribute;
   normalAttribute: BufferAttribute;
   colorAttribute: BufferAttribute;
+  selfLitAttribute: BufferAttribute;
 }
 
 export interface TerrainMeshes {
@@ -161,6 +258,7 @@ export function createTerrainMeshes(
     // here (no shadows, no transparency) and avoids the holes that would show.
     side: DoubleSide,
   });
+  makeSelfLitAware(material);
 
   const meshes = new Map<number, ChunkMesh>();
 
@@ -175,15 +273,20 @@ export function createTerrainMeshes(
     const positionAttribute = new BufferAttribute(entry.buffers.positions, 3);
     const normalAttribute = new BufferAttribute(entry.buffers.normals, 3);
     const colorAttribute = new BufferAttribute(entry.buffers.colors, 3);
-    // All three attributes are rewritten on every edit that touches this chunk.
+    // NORMALISED, so the shader reads the flag's 0/255 bytes as 0.0/1.0 and the
+    // injected mix() needs no conversion of its own.
+    const selfLitAttribute = new BufferAttribute(entry.buffers.selfLit, 1, true);
+    // All four attributes are rewritten on every edit that touches this chunk.
     positionAttribute.setUsage(DynamicDrawUsage);
     normalAttribute.setUsage(DynamicDrawUsage);
     colorAttribute.setUsage(DynamicDrawUsage);
+    selfLitAttribute.setUsage(DynamicDrawUsage);
 
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', positionAttribute);
     geometry.setAttribute('normal', normalAttribute);
     geometry.setAttribute('color', colorAttribute);
+    geometry.setAttribute(SELF_LIT_ATTRIBUTE, selfLitAttribute);
 
     const previous = entry.mesh.geometry;
     entry.mesh.geometry = geometry;
@@ -195,6 +298,7 @@ export function createTerrainMeshes(
     entry.positionAttribute = positionAttribute;
     entry.normalAttribute = normalAttribute;
     entry.colorAttribute = colorAttribute;
+    entry.selfLitAttribute = selfLitAttribute;
   };
 
   /**
@@ -215,6 +319,7 @@ export function createTerrainMeshes(
     entry.positionAttribute.needsUpdate = true;
     entry.normalAttribute.needsUpdate = true;
     entry.colorAttribute.needsUpdate = true;
+    entry.selfLitAttribute.needsUpdate = true;
 
     // The live prefix of the buffers. Three honours drawRange in BOTH the
     // renderer and Mesh.raycast, so the unused tail is neither drawn nor
@@ -243,6 +348,7 @@ export function createTerrainMeshes(
       positionAttribute: placeholder,
       normalAttribute: placeholder,
       colorAttribute: placeholder,
+      selfLitAttribute: placeholder,
     };
     bindGeometry(entry);
     // One code path fills the buffers and sets the draw range, whether the

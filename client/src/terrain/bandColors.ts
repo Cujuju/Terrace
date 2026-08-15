@@ -122,6 +122,20 @@ export function bandColorOf(height: number): Rgb {
   return TERRAIN_PALETTE[bandPaletteIndex(height)];
 }
 
+/**
+ * True for the palette indices BELOW the waterline — the seabed regime.
+ *
+ * The waterline is the material boundary this module is organised around, and
+ * three decisions hang off it: which derivation a cut face takes (rim or rock,
+ * below), and — because a rim is an OUTLINE rather than a lit surface —
+ * whether the geometry builder flags that face SELF-LIT and whether the
+ * renderer draws it that way (terrain/vertexGrid.ts, render/terrainMeshes.ts).
+ * One predicate, so those three cannot drift apart.
+ */
+export function isSeabedPaletteIndex(index: number): boolean {
+  return index < SEABED_DEPTH_STOPS;
+}
+
 // ---------------------------------------------------------------------------
 // Cliff faces
 //
@@ -183,6 +197,26 @@ export function cliffFaceColor(top: Rgb): Rgb {
 // silts an edge with — reads from above as a thin outline around each terrace,
 // which is the requested border without any new geometry: the one-band cliff
 // skirt already runs along precisely the seam being outlined.
+//
+// AND THE PALETTE IS ONLY HALF OF IT (owner, 2026-08-14, second report with a
+// low-angle screenshot: the rims read from overhead and disappear from a low
+// camera). A rim face is VERTICAL, and the terrain material is lit by one
+// directional sun plus a hemisphere fill, so the two skirt orientations facing
+// away from the sun receive almost no direct light and render dark no matter
+// how bright their vertex colour is. That is a LIGHTING dependence, and no
+// palette value can remove it: brightening further would only scale a number
+// that is about to be multiplied by ~0.15 on half the faces and ~1.0 on the
+// other half, so the rim would still read as four different lines depending on
+// which way the terrace happens to turn.
+//
+// So a seabed rim is drawn SELF-LIT — its rendered colour is exactly the entry
+// below, before any light touches it (render/terrainMeshes.ts patches the
+// terrain material to do this for flagged vertices only; land cliffs keep the
+// lit look, which is correct for them because a cliff IS a surface). Two
+// consequences worth stating: the factors below are now judged against the
+// colour that actually reaches the screen rather than against a guess at how
+// much light a sliver catches, and a future change to the lighting rig can no
+// longer make the outlines vanish again.
 // ---------------------------------------------------------------------------
 
 /** The pale silt-aqua a seabed rim is pulled toward. */
@@ -198,11 +232,16 @@ export const SEABED_RIM_TINT_MIX = 0.55;
 /**
  * Brightness applied after the tint. Sized against the VIEWING GEOMETRY, not
  * just the treads: from the game's usual high camera a one-band skirt is a
- * few pixels of slanted sliver, dimmed twice — by the water tint and by the
- * lighting rig's weak side-light on vertical faces (first pass at 1.25 was
- * confirmed invisible from above, 2026-08-14). 1.5 with the deeper tint mix
- * pushes the rim to roughly double a shelf tread's luminance, which survives
- * both dimmings as a clear outline while the clamp keeps it short of white.
+ * few pixels of slanted sliver, dimmed by the translucent water tint over it
+ * (first pass at 1.25 was confirmed invisible from above, 2026-08-14). 1.5
+ * with the deeper tint mix pushes the rim to roughly double a shelf tread's
+ * luminance, which survives that dimming as a clear outline while the clamp
+ * keeps it short of white.
+ *
+ * The rig's weak side-light on vertical faces WAS the second dimming this
+ * factor had to cover, and it no longer is: a rim is self-lit (see the section
+ * header), so this factor now describes the colour that reaches the screen
+ * rather than an input to a light calculation that varies per orientation.
  */
 export const SEABED_RIM_BRIGHTEN_FACTOR = 1.5;
 
@@ -230,7 +269,7 @@ export function seabedRimColor(top: Rgb): Rgb {
  * per-vertex colour maths happens on the patch path.
  */
 export const CLIFF_PALETTE: readonly Rgb[] = TERRAIN_PALETTE.map((top, index) =>
-  index < SEABED_DEPTH_STOPS ? seabedRimColor(top) : cliffFaceColor(top),
+  isSeabedPaletteIndex(index) ? seabedRimColor(top) : cliffFaceColor(top),
 );
 
 /** Bands the ramp covers explicitly, i.e. before snow clamping kicks in. */

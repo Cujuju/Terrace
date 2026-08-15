@@ -27,7 +27,11 @@
 //   3. TRIANGULATION of the resulting region — outer loops with holes, so a pit
 //      inside a plateau is a real hole — into a flat cap at k·BAND_WORLD_HEIGHT.
 //   4. SKIRTS: a vertical quad strip extruded one band down along every contour
-//      segment that is not part of the chunk border.
+//      segment that is not part of the chunk border. Every skirt vertex also
+//      carries a SELF-LIT flag (see LIT_BY_SCENE/SELF_LIT): underwater skirts
+//      are seam OUTLINES rather than lit surfaces and must read identically on
+//      all four orientations, which no vertex colour alone can achieve under a
+//      directional sun.
 //
 // Caps stack: level k's cap covers the WHOLE region {band ≥ k}, not just the
 // annulus that ends up visible. Nested caps at different heights are correct by
@@ -106,7 +110,7 @@ import {
   CELL_WORLD_SIZE,
   WATER_SURFACE_LIFT,
 } from '../config.ts';
-import { bandPaletteIndex, type Rgb } from './bandColors.ts';
+import { bandPaletteIndex, isSeabedPaletteIndex, type Rgb } from './bandColors.ts';
 import { sampleHeight, type TerrainMirror } from './mirror.ts';
 
 // ---------------------------------------------------------------------------
@@ -353,8 +357,9 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
  * hit: an ordinary crater plus a few spires needs 5,250, so normal heavy play
  * flipped chunks to blocky and the terrain read as a patchwork.
  *
- * MEMORY. Attributes are 108 bytes per triangle (3 unshared vertices × 9
- * floats), and ensureCapacity doubles rather than fits, so the ceiling this
+ * MEMORY. Attributes are 111 bytes per triangle (3 unshared vertices × 9
+ * floats, plus one self-lit byte each), and ensureCapacity doubles rather than
+ * fits, so the ceiling this
  * budget sets is a 16,384-triangle capacity = 1.77 MB per chunk, against
  * 442 KB at the old 4,096. That is a per-chunk HIGH-WATER MARK reached only by
  * a chunk whose own geometry demanded it, never an allocation every chunk
@@ -426,6 +431,31 @@ const COMPONENTS_PER_COLOR = 3;
 /** Three corners per triangle, none shared — unshared is what creases cliffs. */
 export const VERTICES_PER_TRIANGLE = 3;
 
+/**
+ * The two values of the per-vertex SELF-LIT flag.
+ *
+ * WHAT IT IS FOR (owner, 2026-08-14, low-angle screenshot). Underwater terrace
+ * seams are drawn as brightened silt-aqua rims on the one-band skirt that runs
+ * along each seam (terrain/bandColors.ts). A skirt is a VERTICAL face and the
+ * terrain material is lit by a single directional sun, so the orientations
+ * facing away from it render dark whatever colour they carry: the outlines read
+ * from overhead and vanish from a low camera. The dependence on lighting is the
+ * bug, so the flag removes the dependence — a flagged vertex is shaded as its
+ * own colour and nothing else (see render/terrainMeshes.ts, which is where the
+ * shading half of this contract lives).
+ *
+ * WHY A PER-VERTEX FLAG rather than a second material. Splitting the rims into
+ * their own geometry group with an unlit material is the native mechanism and
+ * would cost nothing per vertex, but it costs a SECOND DRAW CALL on every chunk
+ * that has underwater geometry — which, on a world that starts as an ocean, is
+ * every chunk there is. One byte per vertex (2.8% on top of the 108 bytes a
+ * triangle already costs) buys the same result with the draw call count
+ * untouched. It is stored as a NORMALISED Uint8, so the shader reads 0.0 or 1.0
+ * with no conversion of ours.
+ */
+export const LIT_BY_SCENE = 0;
+export const SELF_LIT = 255;
+
 // ---------------------------------------------------------------------------
 // Public shapes
 // ---------------------------------------------------------------------------
@@ -462,6 +492,8 @@ export interface ChunkGeometryBuffers {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  /** One byte per vertex, LIT_BY_SCENE or SELF_LIT — see those constants. */
+  selfLit: Uint8Array;
   triangleCapacity: number;
 }
 
@@ -484,6 +516,7 @@ export function createChunkGeometryBuffers(
     positions: new Float32Array(vertices * COMPONENTS_PER_POSITION),
     normals: new Float32Array(vertices * COMPONENTS_PER_NORMAL),
     colors: new Float32Array(vertices * COMPONENTS_PER_COLOR),
+    selfLit: new Uint8Array(vertices),
     triangleCapacity,
   };
 }
@@ -523,6 +556,13 @@ interface ContourLevel {
   skirtDrop: number;
   capColor: Rgb;
   skirtColor: Rgb;
+  /**
+   * SELF_LIT for the skirts below the waterline — they are seam OUTLINES, not
+   * lit surfaces, and must read the same on all four orientations. Decided by
+   * the palette's own regime predicate, so a face that took the rim colour is
+   * exactly the face that is drawn self-lit.
+   */
+  skirtSelfLit: number;
   /**
    * Null for band boundaries, which interpolate the raw heights (biased by
    * CONTOUR_SAMPLE_CLEARANCE). The waterline overrides it with
@@ -1613,6 +1653,7 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
       skirtDrop: k === lowestBand ? 0 : capY - below,
       capColor: palettes.top[paletteIndex],
       skirtColor: palettes.cliff[paletteIndex],
+      skirtSelfLit: selfLitFor(paletteIndex),
       crossingOverride: null,
       loops: [],
     });
@@ -1620,7 +1661,8 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
       // The waterline: the same flat band 0, one height unit up, where the
       // seabed becomes beach. It is a colour boundary rather than a step, so it
       // gets the dry-land cap at exactly y = 0 and only a hairline skirt down
-      // to the seabed it covers.
+      // to the seabed it covers. That hairline is DRY beach — the first land
+      // entry of the ramp — so it is lit like every other land cliff.
       const shoreIndex = bandPaletteIndex(SEA_LEVEL + 1);
       levels.push({
         threshold: SEA_LEVEL + 1,
@@ -1628,6 +1670,7 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
         skirtDrop: SEABED_CAP_SINK,
         capColor: palettes.top[shoreIndex],
         skirtColor: palettes.cliff[shoreIndex],
+        skirtSelfLit: selfLitFor(shoreIndex),
         crossingOverride: SHORE_EDGE_CROSSING,
         loops: [],
       });
@@ -1639,6 +1682,19 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
 // ---------------------------------------------------------------------------
 // Emission
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether a cut face taking this palette entry is drawn self-lit.
+ *
+ * The single decision point for the whole module: every skirt, wall and curtain
+ * the builder emits gets its flag from here, keyed by the very same palette
+ * index that chose its colour. So "seabed rims are outlines, land cliffs are
+ * surfaces" is stated once and cannot be forgotten at one of the four emission
+ * sites.
+ */
+function selfLitFor(paletteIndex: number): number {
+  return isSeabedPaletteIndex(paletteIndex) ? SELF_LIT : LIT_BY_SCENE;
+}
 
 /** Write cursor into the chunk's buffers; module state for the write only. */
 let outBuffers: ChunkGeometryBuffers | null = null;
@@ -1652,8 +1708,10 @@ function pushVertex(
   ny: number,
   nz: number,
   color: Rgb,
+  selfLit: number,
 ): void {
   const buffers = outBuffers as ChunkGeometryBuffers;
+  buffers.selfLit[outVertex] = selfLit;
   let p = outVertex * COMPONENTS_PER_POSITION;
   buffers.positions[p++] = x;
   buffers.positions[p++] = y;
@@ -1673,6 +1731,10 @@ function pushVertex(
  * A flat cap triangle. Loops are counter-clockwise in the (x,z) plane, and the
  * 3D basis (X, Z) has X × Z = −Y, so a counter-clockwise loop's own winding
  * faces DOWN — the corners are emitted reversed to make the tread face the sky.
+ *
+ * Caps are never self-lit, seabed ones included: a tread IS a surface, it faces
+ * the sky so it already receives the sun on every orientation, and unlighting
+ * the seabed floor would flatten the depth ramp the palette exists to show.
  */
 function emitCapTriangle(
   a: ContourPoint,
@@ -1681,9 +1743,10 @@ function emitCapTriangle(
   y: number,
   color: Rgb,
 ): void {
-  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, 1, 0, color);
-  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, 1, 0, color);
-  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, 1, 0, color);
+  const lit = LIT_BY_SCENE;
+  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, 1, 0, color, lit);
+  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, 1, 0, color, lit);
+  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, 1, 0, color, lit);
 }
 
 /**
@@ -1700,6 +1763,7 @@ function emitSkirtQuad(
   topY: number,
   drop: number,
   color: Rgb,
+  selfLit: number,
 ): void {
   const dx = q.x - p.x;
   const dz = q.z - p.z;
@@ -1713,13 +1777,13 @@ function emitSkirtQuad(
   const qz = (q.z - outZ * SKIRT_PICK_INSET) * CELL_WORLD_SIZE;
   const bottomY = topY - drop;
 
-  pushVertex(px, topY, pz, outX, 0, outZ, color);
-  pushVertex(qx, topY, qz, outX, 0, outZ, color);
-  pushVertex(qx, bottomY, qz, outX, 0, outZ, color);
+  pushVertex(px, topY, pz, outX, 0, outZ, color, selfLit);
+  pushVertex(qx, topY, qz, outX, 0, outZ, color, selfLit);
+  pushVertex(qx, bottomY, qz, outX, 0, outZ, color, selfLit);
 
-  pushVertex(px, topY, pz, outX, 0, outZ, color);
-  pushVertex(qx, bottomY, qz, outX, 0, outZ, color);
-  pushVertex(px, bottomY, pz, outX, 0, outZ, color);
+  pushVertex(px, topY, pz, outX, 0, outZ, color, selfLit);
+  pushVertex(qx, bottomY, qz, outX, 0, outZ, color, selfLit);
+  pushVertex(px, bottomY, pz, outX, 0, outZ, color, selfLit);
 }
 
 /** True for a segment lying along the chunk border, which grows no skirt. */
@@ -1820,10 +1884,20 @@ function writeBlockyFallback(
       if (hereY === nextY) continue;
       const westHigher = hereY > nextY;
       const planeX = originX + i + CELL_HALF_EXTENT;
-      const color = palettes.cliff[bandPaletteIndex(westHigher ? here : next)];
+      // The fallback draws underwater walls too, so it takes the same self-lit
+      // rule from the same palette index — a chunk that went blocky must not
+      // also lose its rims.
+      const index = bandPaletteIndex(westHigher ? here : next);
       const a = { x: planeX, z: westHigher ? loZ(j) : hiZ(j), rect: RECT_NONE };
       const b = { x: planeX, z: westHigher ? hiZ(j) : loZ(j), rect: RECT_NONE };
-      emitSkirtQuad(a, b, Math.max(hereY, nextY), Math.abs(hereY - nextY), color);
+      emitSkirtQuad(
+        a,
+        b,
+        Math.max(hereY, nextY),
+        Math.abs(hereY - nextY),
+        palettes.cliff[index],
+        selfLitFor(index),
+      );
       skirts += 2;
     }
   }
@@ -1836,10 +1910,17 @@ function writeBlockyFallback(
       if (hereY === nextY) continue;
       const northHigher = hereY > nextY;
       const planeZ = originZ + j + CELL_HALF_EXTENT;
-      const color = palettes.cliff[bandPaletteIndex(northHigher ? here : next)];
+      const index = bandPaletteIndex(northHigher ? here : next);
       const a = { x: northHigher ? hiX(i) : loX(i), z: planeZ, rect: RECT_NONE };
       const b = { x: northHigher ? loX(i) : hiX(i), z: planeZ, rect: RECT_NONE };
-      emitSkirtQuad(a, b, Math.max(hereY, nextY), Math.abs(hereY - nextY), color);
+      emitSkirtQuad(
+        a,
+        b,
+        Math.max(hereY, nextY),
+        Math.abs(hereY - nextY),
+        palettes.cliff[index],
+        selfLitFor(index),
+      );
       skirts += 2;
     }
   }
@@ -1854,12 +1935,14 @@ function writeBlockyFallback(
     height: number,
   ): void => {
     if (topY <= floorY) return;
+    const index = bandPaletteIndex(height);
     emitSkirtQuad(
       { x: ax, z: az, rect: RECT_NONE },
       { x: bx, z: bz, rect: RECT_NONE },
       topY,
       topY - floorY,
-      palettes.cliff[bandPaletteIndex(height)],
+      palettes.cliff[index],
+      selfLitFor(index),
     );
     skirts += 2;
   };
@@ -1992,7 +2075,14 @@ export function writeChunkVertexData(
         const a = loop[i];
         const b = loop[(i + 1) % loop.length];
         if (isBorderSegment(a, b)) continue;
-        emitSkirtQuad(a, b, level.capY, level.skirtDrop, level.skirtColor);
+        emitSkirtQuad(
+          a,
+          b,
+          level.capY,
+          level.skirtDrop,
+          level.skirtColor,
+          level.skirtSelfLit,
+        );
         skirtEmitted += 2;
       }
     }
@@ -2049,6 +2139,7 @@ function ensureCapacity(buffers: ChunkGeometryBuffers, triangles: number): boole
   buffers.positions = grown.positions;
   buffers.normals = grown.normals;
   buffers.colors = grown.colors;
+  buffers.selfLit = grown.selfLit;
   buffers.triangleCapacity = capacity;
   return true;
 }
@@ -2066,7 +2157,7 @@ function ensureCapacity(buffers: ChunkGeometryBuffers, triangles: number): boole
  *     triangles rather than as garbage.
  */
 function collapseTail(buffers: ChunkGeometryBuffers, vertexCount: number): void {
-  const { positions, normals, colors } = buffers;
+  const { positions, normals, colors, selfLit } = buffers;
   const total = buffers.triangleCapacity * VERTICES_PER_TRIANGLE;
   const anchorX = positions[0];
   const anchorY = positions[1];
@@ -2084,6 +2175,7 @@ function collapseTail(buffers: ChunkGeometryBuffers, vertexCount: number): void 
     colors[c] = 0;
     colors[c + 1] = 0;
     colors[c + 2] = 0;
+    selfLit[v] = LIT_BY_SCENE;
   }
 }
 

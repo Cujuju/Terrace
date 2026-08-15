@@ -4,7 +4,14 @@
 // (design doc §8 "Testing").
 
 import { describe, expect, it } from 'vitest';
-import { BufferAttribute, Group, type BufferGeometry } from 'three';
+import {
+  BufferAttribute,
+  Group,
+  ShaderLib,
+  type BufferGeometry,
+  type Material,
+  type MeshStandardMaterial,
+} from 'three';
 import { CHUNK_SIZE, chunkIndex, type ChunkPayload } from '@terrace/shared';
 import {
   applySnapshot,
@@ -275,6 +282,102 @@ describe('createTerrainMeshes', () => {
     expect(mesh.geometry.getAttribute('position').count).toBeGreaterThanOrEqual(
       mesh.geometry.drawRange.count,
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // SELF-LIT SEABED RIMS (owner, 2026-08-14). The geometry builder flags the
+  // underwater cut faces (asserted in vertexGrid.test.ts); this is the other
+  // half of that contract — the material has to be wired to honour the flag,
+  // and the wiring is a string patch against three's stock shader, which is
+  // exactly the kind of thing that fails silently on a dependency upgrade.
+  // -------------------------------------------------------------------------
+
+  /** The one shader-patching material every chunk mesh shares. */
+  function terrainMaterial(mesh: { material: Material | Material[] }): MeshStandardMaterial {
+    const material = mesh.material;
+    if (Array.isArray(material)) throw new Error('expected a single material');
+    return material as MeshStandardMaterial;
+  }
+
+  it('binds the self-lit flag as a normalised one-byte attribute', () => {
+    const { meshes } = setup([chunkPayload(0, 0, 0)]);
+    const attribute = plainAttribute(meshes.pickables()[0].geometry, 'selfLit');
+    expect(attribute.itemSize).toBe(1);
+    // Normalised, so the builder's 0/255 bytes arrive in the shader as 0.0/1.0
+    // and the injected mix() needs no scaling of its own.
+    expect(attribute.normalized).toBe(true);
+    expect(attribute.array).toBeInstanceOf(Uint8Array);
+    expect(attribute.count).toBe(
+      INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
+    );
+  });
+
+  it('re-uploads and rebinds the flag alongside the other attributes', () => {
+    const { meshes, mirror } = setup([chunkPayload(0, 0, 0)]);
+    const mesh = meshes.pickables()[0];
+    const before = plainAttribute(mesh.geometry, 'selfLit');
+    const versionBefore = before.version;
+
+    meshes.update(
+      applyTerrainDiff(mirror, { type: 'terrainDiff', cells: [{ x: 2, y: 3, h: 256 }] }),
+    );
+    expect(plainAttribute(mesh.geometry, 'selfLit')).toBe(before);
+    expect(before.version).toBeGreaterThan(versionBefore);
+
+    // And on the growth path it must be replaced too, or the flags would keep
+    // addressing the old, shorter buffer.
+    const cells = [];
+    for (let y = 0; y < CHUNK_SIZE; y++) {
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        cells.push({ x, y, h: Math.round(360 - 3 * ((x - 8) ** 2 + (y - 8) ** 2)) });
+      }
+    }
+    meshes.update(applyTerrainDiff(mirror, { type: 'terrainDiff', cells }));
+    const grown = plainAttribute(mesh.geometry, 'selfLit');
+    expect(grown).not.toBe(before);
+    expect(grown.count).toBeGreaterThanOrEqual(mesh.geometry.drawRange.count);
+  });
+
+  it('patches the terrain shader so a flagged vertex is shaded unlit', () => {
+    // Run the material's own onBeforeCompile over three's REAL stock shader for
+    // MeshStandardMaterial. This is the regression guard: if a three upgrade
+    // moves the anchors, the patch must not quietly no-op and leave every
+    // underwater outline dark again.
+    const { meshes } = setup([chunkPayload(0, 0, 0)]);
+    const material = terrainMaterial(meshes.pickables()[0]);
+    const shader = {
+      uniforms: {},
+      vertexShader: ShaderLib.physical.vertexShader,
+      fragmentShader: ShaderLib.physical.fragmentShader,
+    };
+    material.onBeforeCompile(shader as never, null as never);
+
+    expect(shader.vertexShader).toContain('attribute float selfLit;');
+    expect(shader.vertexShader).toContain('vSelfLit = selfLit;');
+    expect(shader.fragmentShader).toContain('varying float vSelfLit;');
+    // The mix has to sit BEFORE <opaque_fragment>, where outgoingLight is
+    // already assembled and tone mapping, colour space and fog have not run —
+    // a rim must still fog with distance, it just must not go dark for facing
+    // away from the sun.
+    const mixAt = shader.fragmentShader.indexOf(
+      'outgoingLight = mix( outgoingLight, diffuseColor.rgb, vSelfLit );',
+    );
+    const opaqueAt = shader.fragmentShader.indexOf('#include <opaque_fragment>');
+    const fogAt = shader.fragmentShader.indexOf('#include <fog_fragment>');
+    expect(mixAt).toBeGreaterThan(-1);
+    expect(mixAt).toBeLessThan(opaqueAt);
+    expect(opaqueAt).toBeLessThan(fogAt);
+  });
+
+  it('refuses to silently no-op when three moves an anchor', () => {
+    const { meshes } = setup([chunkPayload(0, 0, 0)]);
+    const material = terrainMaterial(meshes.pickables()[0]);
+    expect(() =>
+      material.onBeforeCompile(
+        { uniforms: {}, vertexShader: 'void main() {}', fragmentShader: '' } as never,
+        null as never,
+      ),
+    ).toThrow(/shader patch failed/);
   });
 
   it('drops every mesh on clear', () => {
