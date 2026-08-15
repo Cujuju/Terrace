@@ -21,11 +21,46 @@ export const WILDLIFE_PLUGIN_NAME = 'wildlife';
 export const WILDLIFE_ENTITIES_MESSAGE = 'entities';
 
 /**
- * The species that exist. Ordered; this order is also the deterministic order in
- * which spawning considers species, so a habitat that can only support a few
- * more creatures fills predictably rather than by whichever key `for…in` yielded.
+ * The HABITAT species: the ones the census counts, the population equilibrium
+ * regulates, and the habitat/unlock steering confines. Ordered; this order is
+ * also the deterministic order in which spawning considers species, so a habitat
+ * that can only support a few more creatures fills predictably rather than by
+ * whichever key `for…in` yielded.
+ *
+ * A species is in this list exactly when it has a `habitat` — a class of cell it
+ * must stand in — which is what every piece of the population machinery is
+ * written against. Birds are not (see WILDLIFE_FLOCK_SPECIES): the sky is not a
+ * cell class, so there is nothing for a census to count.
  */
-export const WILDLIFE_SPECIES = ['fish', 'whale', 'deepsea', 'grazer'] as const;
+export const WILDLIFE_HABITAT_SPECIES = ['fish', 'whale', 'deepsea', 'grazer'] as const;
+
+export type WildlifeHabitatSpecies = (typeof WILDLIFE_HABITAT_SPECIES)[number];
+
+/**
+ * The FLOCK species: transient ambience that crosses the world overhead and
+ * leaves at the far side, spawned by its own lightweight timer
+ * (server/flocks.ts) rather than by a habitat census.
+ *
+ * They are listed separately, and the two lists are separate TYPES, because the
+ * split is a real one and the compiler is the right place to enforce it: a bird
+ * has no habitat, no census target, and no respawn credit, so every function
+ * that needs one of those takes a WildlifeHabitatSpecies and simply cannot be
+ * handed a bird. Adding 'bird' to one flat list instead would have meant a
+ * `habitat: never` in the profile table and a runtime skip in five loops.
+ */
+export const WILDLIFE_FLOCK_SPECIES = ['bird'] as const;
+
+export type WildlifeFlockSpecies = (typeof WILDLIFE_FLOCK_SPECIES)[number];
+
+/**
+ * Every species that can appear on the wire — the client's render vocabulary.
+ * Derived from the two lists above rather than typed out a third time, so a new
+ * species is added in exactly one place.
+ */
+export const WILDLIFE_SPECIES = [
+  ...WILDLIFE_HABITAT_SPECIES,
+  ...WILDLIFE_FLOCK_SPECIES,
+] as const;
 
 export type WildlifeSpecies = (typeof WILDLIFE_SPECIES)[number];
 
@@ -134,6 +169,11 @@ export interface WildlifeEntitiesPayload {
 
 export function isWildlifeSpecies(value: unknown): value is WildlifeSpecies {
   return (WILDLIFE_SPECIES as readonly string[]).includes(value as string);
+}
+
+/** Narrower guard: is this one of the census-driven, habitat-bound species? */
+export function isWildlifeHabitatSpecies(value: unknown): value is WildlifeHabitatSpecies {
+  return (WILDLIFE_HABITAT_SPECIES as readonly string[]).includes(value as string);
 }
 
 function isFiniteNumber(value: unknown): value is number {

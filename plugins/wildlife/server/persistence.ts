@@ -7,9 +7,9 @@
 
 import {
   DEFAULT_SIZE_CLASS,
-  WILDLIFE_SPECIES,
+  type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
-  type WildlifeSpecies,
+  isWildlifeHabitatSpecies,
   sizeClassAt,
   sizeClassIndex,
 } from '../protocol.ts';
@@ -43,7 +43,7 @@ export const WILDLIFE_SLICE_VERSION = 1;
  */
 interface PersistedEntity {
   readonly id: number;
-  readonly species: WildlifeSpecies;
+  readonly species: WildlifeHabitatSpecies;
   readonly x: number;
   readonly y: number;
   readonly heading: number;
@@ -121,7 +121,11 @@ export function loadPopulation(data: unknown): void {
         const entry = raw as Partial<PersistedEntity>;
         const id = entry.id;
         if (!Number.isInteger(id) || (id as number) <= 0 || seenIds.has(id as number)) continue;
-        if (!(WILDLIFE_SPECIES as readonly string[]).includes(entry.species as string)) continue;
+        // HABITAT species only, deliberately: birds are never written here
+        // (see the persistence note in ./index.ts), so a row claiming to be one
+        // is a hand-edited or forward-versioned file and is dropped rather than
+        // resurrected as an immortal, censusless creature standing on the sea.
+        if (!isWildlifeHabitatSpecies(entry.species)) continue;
         if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) continue;
         if (!Number.isFinite(entry.heading)) continue;
 
@@ -139,7 +143,7 @@ export function loadPopulation(data: unknown): void {
 
         restored.push({
           id: id as number,
-          species: entry.species as WildlifeSpecies,
+          species: entry.species,
           schoolId,
           size: sizeOf(entry.size),
           x: entry.x as number,

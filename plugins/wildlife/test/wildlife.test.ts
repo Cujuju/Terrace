@@ -29,8 +29,10 @@ import {
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
 import {
   DEFAULT_SIZE_CLASS,
+  WILDLIFE_HABITAT_SPECIES,
   WILDLIFE_SIZE_CLASSES,
   WILDLIFE_SPECIES,
+  type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
   type WildlifeSpecies,
   sizeClassIndex,
@@ -43,10 +45,34 @@ import {
   targetsFor,
 } from '../server/census.ts';
 import {
+  BROADCAST_ENTITY_CEILING,
   FLEE_RADIUS_CELLS,
   plugin as wildlifePlugin,
   resetWildlifeState,
 } from '../server/index.ts';
+import {
+  BIRDS_PER_FLOCK_MAX,
+  BIRDS_PER_FLOCK_MIN,
+  BIRD_CRUISE_SPEED_CELLS_PER_SECOND,
+  BIRD_FLOCK_LOOSENESS,
+  BIRD_TURN_NOISE_RADIANS_PER_SECOND,
+  FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND,
+  FLOCK_MEAN_SPAWN_INTERVAL_SECONDS,
+  FLOCK_SPAWN_SCATTER_CELLS,
+  MAX_BIRDS_ALOFT,
+  MAX_CONCURRENT_FLOCKS,
+  type Flock,
+  type FlockWorld,
+  advanceFlocks,
+  birdStates,
+  crossingRadiusCells,
+  despawnRadiusCells,
+  flockCentroid,
+  flockLifetimeLimitSeconds,
+  livingBirds,
+  livingFlocks,
+  spawnFlock,
+} from '../server/flocks.ts';
 import {
   FLEE_SPEED_MULTIPLIER,
   SCHOOL_ALIGNMENT_RADIANS_PER_SECOND,
@@ -204,11 +230,16 @@ function fillPopulation(harness: Harness): void {
 /** Sum of the current per-species targets. */
 function totalTarget(): number {
   const targets = populationTargets();
-  return WILDLIFE_SPECIES.reduce((sum, species) => sum + targets[species], 0);
+  return WILDLIFE_HABITAT_SPECIES.reduce((sum, species) => sum + targets[species], 0);
 }
 
-function countsBySpecies(): Record<WildlifeSpecies, number> {
-  const counts: Record<WildlifeSpecies, number> = { fish: 0, whale: 0, deepsea: 0, grazer: 0 };
+function countsBySpecies(): Record<WildlifeHabitatSpecies, number> {
+  const counts: Record<WildlifeHabitatSpecies, number> = {
+    fish: 0,
+    whale: 0,
+    deepsea: 0,
+    grazer: 0,
+  };
   for (const entity of livingEntities()) counts[entity.species]++;
   return counts;
 }
@@ -328,7 +359,7 @@ describe('population targets', () => {
   it('holds a full 512² world near, and never above, the cap', () => {
     // Nominal half-land / half-water 512², water split 40/60 shallow/deep.
     const targets = targetsFor({ land: 131072, shallow: 52429, deep: 78643 });
-    const total = WILDLIFE_SPECIES.reduce((sum, s) => sum + targets[s], 0);
+    const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
     // The documented ecosystem after the 2026-08-14 retunes: 246 asked for
     // (131 fish / 52 deepsea / 48 grazer / 15 whale), the cap scaling that by
@@ -350,7 +381,7 @@ describe('population targets', () => {
     const targets = targetsFor(census.cellsByHabitat);
 
     // The documented densities, restated as the outcome they were chosen for.
-    for (const species of WILDLIFE_SPECIES) {
+    for (const species of WILDLIFE_HABITAT_SPECIES) {
       const profile = profileOf(species);
       expect(targets[species]).toBe(
         Math.floor(census.cellsByHabitat[profile.habitat] / profile.habitatCellsPerIndividual),
@@ -379,7 +410,7 @@ describe('population targets', () => {
 
   it('scales every species down proportionally rather than truncating one', () => {
     const uncapped = targetsFor({ land: 0, shallow: 300000, deep: 300000 });
-    const total = WILDLIFE_SPECIES.reduce((sum, s) => sum + uncapped[s], 0);
+    const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + uncapped[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
     // Whales are rare but not erased by the fish quota.
     expect(uncapped.whale).toBeGreaterThan(0);
@@ -407,7 +438,7 @@ describe('wildlife plugin', () => {
 
     // Never ABOVE target: credits are only ever issued for a deficit, so this is
     // an invariant of the credit path and can be asserted exactly.
-    for (const species of WILDLIFE_SPECIES) {
+    for (const species of WILDLIFE_HABITAT_SPECIES) {
       expect(counts[species]).toBeLessThanOrEqual(targets[species]);
     }
 
@@ -661,7 +692,11 @@ describe('wildlife sync', () => {
     expect(messages[0].target).toBe('broadcast');
 
     const payload = messages[0].payload as { entities: Array<Record<string, unknown>> };
-    expect(payload.entities).toHaveLength(livingEntities().length);
+    // ONE message carries both subsystems: the habitat population and whatever
+    // birds happen to be crossing (server/flocks.ts). The sky is usually empty
+    // over a short run, so this is written as the sum rather than as the
+    // population alone — it must not start passing by accident.
+    expect(payload.entities).toHaveLength(livingEntities().length + livingBirds().length);
 
     for (const entity of payload.entities) {
       // `size` is on the wire (the client scales the model by it); `schoolId`
@@ -1081,7 +1116,13 @@ describe('the cohesion blend', () => {
       fishAt(away, -1, 0, 'small'),
     ]).get(1)!;
 
-    const steered = steerWithSchool(subject, school, subject.heading, TICK_DT);
+    const steered = steerWithSchool(
+      subject,
+      school,
+      SCHOOL_LOOSENESS_BY_SIZE[subject.size],
+      subject.heading,
+      TICK_DT,
+    );
     expect(Math.abs(normalizeAngle(steered - subject.heading))).toBeLessThanOrEqual(
       (SCHOOL_MAX_PULL_RADIANS_PER_SECOND + SCHOOL_ALIGNMENT_RADIANS_PER_SECOND) * TICK_DT + 1e-9,
     );
@@ -1092,7 +1133,9 @@ describe('the cohesion blend', () => {
   it('leaves a lone member unsteered', () => {
     const subject = fishAt(0, 0, 1.2, 'small');
     const school = summarizeSchools([subject]).get(1)!;
-    expect(steerWithSchool(subject, school, 1.2, TICK_DT)).toBe(1.2);
+    expect(steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, 1.2, TICK_DT)).toBe(
+      1.2,
+    );
   });
 
   it('excludes the member itself from its own school centroid', () => {
@@ -1102,7 +1145,9 @@ describe('the cohesion blend', () => {
     const subject = fishAt(0, 0, 0, 'small');
     const school = summarizeSchools([subject, fishAt(10, 0, 0, 'small')]).get(1)!;
     // Facing north, with the other fish due east: it turns clockwise, toward 0.
-    expect(steerWithSchool(subject, school, Math.PI / 2, TICK_DT)).toBeLessThan(Math.PI / 2);
+    expect(
+      steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, Math.PI / 2, TICK_DT),
+    ).toBeLessThan(Math.PI / 2);
   });
 
   it('ignores the mean heading of a school that has just scattered', () => {
@@ -1118,7 +1163,9 @@ describe('the cohesion blend', () => {
     ]).get(1)!;
     // Everyone is at the same point, so cohesion is zero too: the heading comes
     // back untouched, which is the whole assertion.
-    expect(steerWithSchool(subject, school, 0.75, TICK_DT)).toBe(0.75);
+    expect(
+      steerWithSchool(subject, school, SCHOOL_LOOSENESS_BY_SIZE.small, 0.75, TICK_DT),
+    ).toBe(0.75);
   });
 });
 
@@ -1402,7 +1449,7 @@ describe('fish size classes drive schooling', () => {
     expect(FISH_SIZE_WEIGHTS[medium]).toBeGreaterThan(FISH_SIZE_WEIGHTS[large]);
     // Every non-fish species has exactly one size, so nothing else in the plugin
     // needs a "does this species vary" flag.
-    for (const species of WILDLIFE_SPECIES) {
+    for (const species of WILDLIFE_HABITAT_SPECIES) {
       if (species === 'fish') continue;
       const weights = profileOf(species).sizeWeights;
       expect(WILDLIFE_SIZE_CLASSES.filter((size) => weights[size] > 0)).toEqual([
@@ -1484,5 +1531,303 @@ describe('fish size classes drive schooling', () => {
     const schools = livingEntities().map((entity) => entity.schoolId);
     expect(new Set(schools).size).toBe(schools.length);
     for (const entity of livingEntities()) expect(entity.size).toBe(DEFAULT_SIZE_CLASS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BIRD FLOCKS
+//
+// The flock subsystem is deliberately independent of the habitat population
+// (server/flocks.ts), so most of it is tested against a bare FlockWorld — a
+// worldSize and nothing else. That the tests CAN be written that way is itself
+// the contract: the day a bird needs terrain, this object stops being enough.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FLOCK_WORLD: FlockWorld = { worldSize: WORLD_SIZE };
+
+/** The flock with this id, or undefined once it has left. */
+function flockById(id: number): Flock | undefined {
+  return livingFlocks().find((flock) => flock.id === id);
+}
+
+/** Distance of the furthest member from its flock's centroid, in cells. */
+function flockSpreadCells(flock: Flock): number {
+  const centroid = flockCentroid(flock);
+  let furthest = 0;
+  for (const bird of flock.birds) {
+    furthest = Math.max(furthest, Math.hypot(bird.x - centroid.x, bird.y - centroid.y));
+  }
+  return furthest;
+}
+
+function distanceFromWorldCentre(x: number, y: number): number {
+  const centre = WORLD_SIZE / 2;
+  return Math.hypot(x - centre, y - centre);
+}
+
+describe('bird flocks arrive, cross and leave', () => {
+  beforeEach(() => {
+    resetWildlifeState();
+  });
+
+  it('is born off the map, in a cluster, on a course aimed across it', () => {
+    const flock = spawnFlock(FLOCK_WORLD);
+
+    expect(flock.birds.length).toBeGreaterThanOrEqual(BIRDS_PER_FLOCK_MIN);
+    expect(flock.birds.length).toBeLessThanOrEqual(BIRDS_PER_FLOCK_MAX);
+
+    // Off the map: the crossing ring circumscribes the square world, so every
+    // bird starts beyond the furthest cell a player can be looking at, minus at
+    // most the diagonal of its own spawn scatter.
+    const ring = crossingRadiusCells(WORLD_SIZE);
+    for (const bird of flock.birds) {
+      expect(distanceFromWorldCentre(bird.x, bird.y)).toBeGreaterThan(
+        ring - FLOCK_SPAWN_SCATTER_CELLS * Math.SQRT2 - 1e-9,
+      );
+      // One shared course at birth — a flock leaves the ring as a flock.
+      expect(bird.heading).toBe(flock.courseHeading);
+    }
+
+    // …and the course points INTO the world, not along the ring: the aim point
+    // is near the centre, so flying it must reduce the distance to the centre.
+    const before = flockCentroid(flock);
+    const step = BIRD_CRUISE_SPEED_CELLS_PER_SECOND;
+    const after = {
+      x: before.x + Math.cos(flock.courseHeading) * step,
+      y: before.y + Math.sin(flock.courseHeading) * step,
+    };
+    expect(distanceFromWorldCentre(after.x, after.y)).toBeLessThan(
+      distanceFromWorldCentre(before.x, before.y),
+    );
+  });
+
+  it('crosses in a roughly straight line and departs at the far side', () => {
+    const flock = spawnFlock(FLOCK_WORLD);
+    const id = flock.id;
+    const start = flockCentroid(flock);
+
+    let elapsed = 0;
+    let pathLength = 0;
+    let previous = start;
+    let closestApproach = distanceFromWorldCentre(start.x, start.y);
+    let last = start;
+
+    // Bounded by the lifetime guard, which is 2× the straight-line crossing: if
+    // the flock were still here after that, the guard — not the crossing — would
+    // have removed it, and the assertions below say which happened.
+    const limit = flockLifetimeLimitSeconds(WORLD_SIZE);
+    while (flockById(id) !== undefined && elapsed < limit) {
+      advanceFlocks(FLOCK_WORLD, TICK_DT);
+      elapsed += TICK_DT;
+      const current = flockById(id);
+      if (current === undefined) break;
+      last = flockCentroid(current);
+      pathLength += Math.hypot(last.x - previous.x, last.y - previous.y);
+      previous = last;
+      closestApproach = Math.min(closestApproach, distanceFromWorldCentre(last.x, last.y));
+    }
+
+    expect(flockById(id)).toBeUndefined();
+    // It left by CROSSING, comfortably before the wedged-flock guard could fire.
+    expect(elapsed).toBeLessThan(limit);
+
+    // It really crossed the world rather than clipping the ring: the aim spread
+    // keeps every course through the middle of the map.
+    expect(closestApproach).toBeLessThan((WORLD_SIZE / 2) * Math.SQRT2);
+    // …and it went out the FAR side, not back the way it came. `last` is the
+    // final centroid this test could OBSERVE — the flock is removed inside the
+    // same advanceFlocks call that carries it past the ring — so the bound is
+    // the despawn radius less the one tick of travel that finished the job.
+    expect(distanceFromWorldCentre(last.x, last.y)).toBeGreaterThan(
+      despawnRadiusCells(WORLD_SIZE) - BIRD_CRUISE_SPEED_CELLS_PER_SECOND * TICK_DT,
+    );
+
+    // ROUGHLY STRAIGHT, stated as a number: net displacement over distance
+    // actually flown. Perfectly straight is 1; the course-hold is 4× the wander
+    // noise, so the wander costs a couple of percent at most.
+    const displacement = Math.hypot(last.x - start.x, last.y - start.y);
+    expect(displacement / pathLength).toBeGreaterThan(0.95);
+  });
+
+  it('holds together as a loose cluster for the whole crossing', () => {
+    const flock = spawnFlock(FLOCK_WORLD);
+    const id = flock.id;
+
+    // The radius at which cohesion is already pulling as hard as it can. A flock
+    // that never reaches it never had a straggler worth the name.
+    const dispersed = SCHOOL_FULL_PULL_RADIUS_CELLS * BIRD_FLOCK_LOOSENESS;
+
+    let worst = 0;
+    for (let n = 0; n < ticksFor(flockLifetimeLimitSeconds(WORLD_SIZE)); n++) {
+      advanceFlocks(FLOCK_WORLD, TICK_DT);
+      const current = flockById(id);
+      if (current === undefined) break;
+      worst = Math.max(worst, flockSpreadCells(current));
+    }
+
+    // Not a point, and not a smear: a cluster.
+    expect(worst).toBeGreaterThan(0);
+    expect(worst).toBeLessThan(dispersed);
+  });
+
+  it('never has more than MAX_CONCURRENT_FLOCKS aloft, or MAX_BIRDS_ALOFT birds', () => {
+    // Long enough that the arrival hazard fires many times over.
+    for (let n = 0; n < ticksFor(FLOCK_MEAN_SPAWN_INTERVAL_SECONDS * 20); n++) {
+      advanceFlocks(FLOCK_WORLD, TICK_DT);
+      expect(livingFlocks().length).toBeLessThanOrEqual(MAX_CONCURRENT_FLOCKS);
+      expect(livingBirds().length).toBeLessThanOrEqual(MAX_BIRDS_ALOFT);
+    }
+  });
+
+  it('keeps producing flocks — the sky never runs dry', () => {
+    const seen = new Set<number>();
+    for (let n = 0; n < ticksFor(FLOCK_MEAN_SPAWN_INTERVAL_SECONDS * 20); n++) {
+      advanceFlocks(FLOCK_WORLD, TICK_DT);
+      for (const flock of livingFlocks()) seen.add(flock.id);
+    }
+    // Twenty mean intervals against two slots: several distinct crossings, so
+    // arrivals are an ongoing process and not a one-off at boot.
+    expect(seen.size).toBeGreaterThan(2);
+  });
+
+  it('bounds the whole broadcast at the population cap plus the sky', () => {
+    expect(MAX_BIRDS_ALOFT).toBe(MAX_CONCURRENT_FLOCKS * BIRDS_PER_FLOCK_MAX);
+    expect(BROADCAST_ENTITY_CEILING).toBe(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
+  });
+});
+
+describe('birds are not habitat fauna', () => {
+  let harness: Harness;
+
+  beforeEach(() => {
+    harness = boot();
+  });
+
+  it('survives ticks that would cull a creature standing where it flies', () => {
+    // Nothing about a bird's position is habitat, so the per-tick habitat sweep
+    // — the thing that would delete a fifth census species instantly — must not
+    // see it at all.
+    const flock = spawnFlock({ worldSize: harness.world.size });
+    const born = flock.birds.length;
+
+    tick(harness, ticksFor(5));
+    expect(flockById(flock.id)?.birds.length).toBe(born);
+  });
+
+  it('is unmoved by the sculpt panic that scatters a school', () => {
+    const flock = spawnFlock({ worldSize: harness.world.size });
+    const before = flock.birds.map((bird) => ({ ...bird }));
+
+    // Startle everything at the flock's own position, with a radius that covers
+    // the whole world. Fish there would bolt; birds have no flee state at all,
+    // because panic is a habitat concept.
+    const centroid = flockCentroid(flock);
+    startleNear(centroid.x, centroid.y, WORLD_SIZE * 2);
+
+    expect(flockById(flock.id)?.birds).toEqual(before);
+  });
+
+  it('shares the entity-id space with the habitat population', () => {
+    fillPopulation(harness);
+    spawnFlock({ worldSize: harness.world.size });
+    spawnFlock({ worldSize: harness.world.size });
+
+    const ids = [...livingEntities().map((e) => e.id), ...livingBirds().map((b) => b.id)];
+    expect(ids.length).toBeGreaterThan(BIRDS_PER_FLOCK_MIN);
+    // One allocator, so no bird can inherit a fish's interpolation on the client.
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('appears in the same broadcast as everything else', () => {
+    spawnFlock({ worldSize: harness.world.size });
+    harness.sink.clear();
+    tick(harness, 2);
+
+    const payload = harness.sink.ofType('wildlife:entities')[0].payload as {
+      entities: Array<Record<string, unknown>>;
+    };
+    const birds = payload.entities.filter((entity) => entity.species === 'bird');
+    expect(birds.length).toBe(livingBirds().length);
+    // The same six keys as every other creature — no altitude, no flock id, no
+    // wing phase. The client derives all three.
+    for (const bird of birds) {
+      expect(Object.keys(bird).sort()).toEqual(['heading', 'id', 'size', 'species', 'x', 'y']);
+    }
+  });
+
+  it('is not persisted, and a restore clears the sky', () => {
+    spawnFlock({ worldSize: harness.world.size });
+    expect(birdStates().length).toBeGreaterThan(0);
+
+    const slices = harness.host.collectPersistence();
+    const slice = slices.wildlife as { entities: Array<{ species: string }> };
+    // A crossing is not world state: nothing about it survives the snapshot.
+    expect(slice.entities.some((entity) => entity.species === 'bird')).toBe(false);
+
+    harness.host.restorePersistence(slices);
+    // …and a restore resets the shared id counter, so the sky has to be cleared
+    // with it or an airborne bird would hold an id about to be reissued.
+    expect(livingBirds()).toHaveLength(0);
+  });
+
+  it('refuses to restore a bird someone wrote into a snapshot', () => {
+    resetWildlifeState();
+    loadPopulation({
+      version: 1,
+      nextId: 3,
+      entities: [
+        { id: 1, species: 'fish', x: 10, y: 10, heading: 0, schoolId: 1, size: 0 },
+        { id: 2, species: 'bird', x: 20, y: 20, heading: 0, schoolId: 2, size: 1 },
+      ],
+    });
+
+    // A bird in a slice is a hand-edited or forward-versioned file. Restoring it
+    // as a habitat creature would produce something with no habitat, which the
+    // sweep would then delete anyway — dropping the row is the honest read.
+    expect(livingEntities().map((entity) => entity.species)).toEqual(['fish']);
+  });
+});
+
+describe('flock steering keeps its priorities in order', () => {
+  beforeEach(() => {
+    resetWildlifeState();
+  });
+
+  it('ranks course-hold above the wander noise and below cohesion', () => {
+    // The three terms that share one heading, in the order they must beat each
+    // other. The cohesion figure is the EFFECTIVE one — cohesionPullRadiansPerSecond
+    // divides the maximum by the looseness — which is the number a retune of
+    // either constant is most likely to get wrong.
+    const effectiveCohesion = SCHOOL_MAX_PULL_RADIANS_PER_SECOND / BIRD_FLOCK_LOOSENESS;
+    expect(FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND).toBeGreaterThan(
+      BIRD_TURN_NOISE_RADIANS_PER_SECOND,
+    );
+    expect(FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND).toBeLessThan(effectiveCohesion);
+  });
+
+  it('closes the gap on a bird displaced across the course', () => {
+    // The behaviour that ordering buys: a straggler wants to rejoin more than it
+    // wants to hold the line. A course-hold that outranked cohesion would leave
+    // the two flying perfectly straight parallel courses — which no straightness
+    // measurement can see, so it is asserted here instead.
+    const flock = spawnFlock(FLOCK_WORLD);
+    const centre = flockCentroid(flock);
+    const stray = flock.birds[0];
+    const across = flock.courseHeading + Math.PI / 2;
+    const displacement = SCHOOL_FULL_PULL_RADIUS_CELLS * BIRD_FLOCK_LOOSENESS * 3;
+    stray.x = centre.x + Math.cos(across) * displacement;
+    stray.y = centre.y + Math.sin(across) * displacement;
+
+    const gapToRest = (): number => {
+      const others = flock.birds.slice(1);
+      const rest = flockCentroid({ ...flock, birds: others });
+      return Math.hypot(stray.x - rest.x, stray.y - rest.y);
+    };
+
+    const before = gapToRest();
+    for (let n = 0; n < ticksFor(30); n++) advanceFlocks(FLOCK_WORLD, TICK_DT);
+    // Measured at ~55% closed over 30 s; asserted loosely, because the wander is
+    // unseeded and this is a rate, not a target.
+    expect(gapToRest()).toBeLessThan(before * 0.75);
   });
 });

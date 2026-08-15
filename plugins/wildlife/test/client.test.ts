@@ -4,12 +4,13 @@
 // node environment as the server tests.
 
 import { describe, expect, it } from 'vitest';
-import { SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
   DEFAULT_SIZE_CLASS_INDEX,
   WILDLIFE_SIZE_CLASSES,
   WILDLIFE_SIZE_MODEL_SCALE,
+  WILDLIFE_SPECIES,
   parseEntitiesPayload,
   sizeClassAt,
   sizeClassIndex,
@@ -22,10 +23,15 @@ import {
   lerpAngle,
 } from '../client/interpolation.ts';
 import {
+  BIRD_ALTITUDE_HEADROOM_WORLD_UNITS,
+  BIRD_FLIGHT_WORLD_Y,
+  FLIGHT_ALTITUDES,
+  MAX_TERRAIN_WORLD_Y,
   SEA_SURFACE_WORLD_Y,
   SWIM_PROFILES,
   UNKNOWN_TERRAIN_WORLD_Y,
   creatureWorldY,
+  placementKindOf,
   walkerGroundY,
 } from '../client/placement.ts';
 
@@ -326,5 +332,41 @@ describe('walkerGroundY — footprint sampling', () => {
     expect(walkerGroundY(() => null, 5, 5)).toBeNull();
     const halfNull = (cx: number) => (cx >= 5 ? 1 : null);
     expect(walkerGroundY(halfNull, 5.5, 5.5)).toBe(1);
+  });
+});
+
+describe('birds fly overhead', () => {
+  it('clears the tallest terrain this game can contain, with named headroom', () => {
+    // MAX_HEIGHT is the sculpt ceiling; MAX_TERRAIN_WORLD_Y is that in world
+    // units. The requirement is "well above", not "above", so the headroom is
+    // asserted as a share of the mountain rather than as a bare inequality.
+    expect(MAX_TERRAIN_WORLD_Y).toBe(MAX_HEIGHT / BAND_HEIGHT);
+    expect(BIRD_FLIGHT_WORLD_Y).toBe(MAX_TERRAIN_WORLD_Y + BIRD_ALTITUDE_HEADROOM_WORLD_UNITS);
+    expect(BIRD_ALTITUDE_HEADROOM_WORLD_UNITS).toBeGreaterThanOrEqual(MAX_TERRAIN_WORLD_Y / 2);
+  });
+
+  it('places a bird at its altitude whatever the ground below it is doing', () => {
+    // Including "there is no ground": a bird over a chunk this client has never
+    // been sent must not sag to the unknown-terrain default the way a walker
+    // does — its Y does not come from the terrain at all.
+    for (const terrainY of [null, -20, 0, 4, MAX_TERRAIN_WORLD_Y]) {
+      expect(creatureWorldY('bird', terrainY)).toBe(BIRD_FLIGHT_WORLD_Y);
+    }
+  });
+
+  it('classifies every species into exactly one placement kind', () => {
+    expect(placementKindOf('bird')).toBe('flyer');
+    expect(placementKindOf('grazer')).toBe('walker');
+    for (const species of ['fish', 'whale', 'deepsea'] as const) {
+      expect(placementKindOf(species)).toBe('swimmer');
+    }
+    // A flyer has no swim profile and a swimmer no altitude: the two tables are
+    // disjoint, which is what makes the kind well-defined rather than a
+    // precedence rule that happens to work today.
+    for (const species of WILDLIFE_SPECIES) {
+      const flies = FLIGHT_ALTITUDES[species] !== null;
+      const swims = SWIM_PROFILES[species] !== null;
+      expect(flies && swims).toBe(false);
+    }
   });
 });

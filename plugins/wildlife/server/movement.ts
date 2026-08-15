@@ -184,6 +184,23 @@ export function lookaheadCellsFor(entity: WildlifeEntity): number {
 // ── School aggregates ────────────────────────────────────────────────────────
 
 /**
+ * The minimum a thing must be for the cohesion maths to steer it: a position and
+ * a facing.
+ *
+ * STRUCTURAL ON PURPOSE. The steering below is geometry — "turn toward where the
+ * rest of your group is, and toward the way it is facing" — and nothing in it
+ * depends on habitat, size class or species. Typing it against this interface
+ * rather than against WildlifeEntity is what lets the bird flocks in ./flocks.ts
+ * reuse the SAME cohesion and alignment terms as the fish schools instead of
+ * growing a second copy that drifts from this one.
+ */
+export interface SchoolMember {
+  readonly x: number;
+  readonly y: number;
+  readonly heading: number;
+}
+
+/**
  * Everything the cohesion terms need about one school, as running sums so a
  * member can subtract ITSELF out (see `steerWithSchool`).
  *
@@ -202,25 +219,40 @@ export interface SchoolSummary {
   readonly sumSin: number;
 }
 
+/**
+ * Aggregates one already-grouped body of members. Callers that hold their groups
+ * directly (a bird flock owns its birds) use this; callers holding a flat
+ * population use `summarizeSchools`, which is written in terms of it so the sums
+ * exist exactly once.
+ */
+export function summarizeSchool(members: readonly SchoolMember[]): SchoolSummary {
+  let sumX = 0;
+  let sumY = 0;
+  let sumCos = 0;
+  let sumSin = 0;
+  for (const member of members) {
+    sumX += member.x;
+    sumY += member.y;
+    sumCos += Math.cos(member.heading);
+    sumSin += Math.sin(member.heading);
+  }
+  return { count: members.length, sumX, sumY, sumCos, sumSin };
+}
+
 /** Groups a population by school id. */
 export function summarizeSchools(
-  population: readonly WildlifeEntity[],
+  population: readonly (SchoolMember & { readonly schoolId: number })[],
 ): Map<number, SchoolSummary> {
-  const schools = new Map<number, { count: number; sumX: number; sumY: number; sumCos: number; sumSin: number }>();
+  const grouped = new Map<number, SchoolMember[]>();
 
   for (const entity of population) {
-    let school = schools.get(entity.schoolId);
-    if (school === undefined) {
-      school = { count: 0, sumX: 0, sumY: 0, sumCos: 0, sumSin: 0 };
-      schools.set(entity.schoolId, school);
-    }
-    school.count++;
-    school.sumX += entity.x;
-    school.sumY += entity.y;
-    school.sumCos += Math.cos(entity.heading);
-    school.sumSin += Math.sin(entity.heading);
+    const members = grouped.get(entity.schoolId);
+    if (members === undefined) grouped.set(entity.schoolId, [entity]);
+    else members.push(entity);
   }
 
+  const schools = new Map<number, SchoolSummary>();
+  for (const [schoolId, members] of grouped) schools.set(schoolId, summarizeSchool(members));
   return schools;
 }
 
@@ -243,8 +275,27 @@ export function cohesionPullRadiansPerSecond(distanceCells: number, looseness: n
 }
 
 /** Clamps a turn to `limit` radians while keeping its direction. */
-function limitTurn(turn: number, limit: number): number {
+export function limitTurn(turn: number, limit: number): number {
   return Math.max(-limit, Math.min(limit, turn));
+}
+
+/**
+ * Turns `heading` toward `target` by at most `radiansPerSecond × dt`, and never
+ * past it.
+ *
+ * The shape every steering term in this plugin has: clamped by a rate AND by the
+ * angle actually remaining, so terms compose additively without any of them
+ * being able to overshoot. Extracted because the flock course-hold in
+ * ./flocks.ts is precisely this and nothing else.
+ */
+export function turnToward(
+  heading: number,
+  target: number,
+  radiansPerSecond: number,
+  dt: number,
+): number {
+  const remaining = normalizeAngle(target - heading);
+  return normalizeAngle(heading + limitTurn(remaining, radiansPerSecond * dt));
 }
 
 /**
@@ -265,10 +316,16 @@ function limitTurn(turn: number, limit: number): number {
  * of its school is, not toward an average that includes its own position: with
  * two members, including self would halve the perceived offset and make the
  * smallest, most fragile schools the loosest ones.
+ *
+ * `looseness` is the caller's spacing multiplier — SCHOOL_LOOSENESS_BY_SIZE for
+ * a fish, BIRD_FLOCK_LOOSENESS for a bird. It is a parameter rather than a
+ * lookup inside this function so the steering stays pure geometry and works for
+ * any group of any species (see SchoolMember).
  */
 export function steerWithSchool(
-  entity: WildlifeEntity,
+  member: SchoolMember,
   school: SchoolSummary,
+  looseness: number,
   wanderHeading: number,
   dt: number,
 ): number {
@@ -277,14 +334,13 @@ export function steerWithSchool(
   // did. This is also the "a school that has shrunk to its last member" case.
   if (others < 1) return wanderHeading;
 
-  const looseness = SCHOOL_LOOSENESS_BY_SIZE[entity.size];
   let heading = wanderHeading;
 
   // (b) COHESION — toward the centroid of the other members.
-  const centroidX = (school.sumX - entity.x) / others;
-  const centroidY = (school.sumY - entity.y) / others;
-  const dx = centroidX - entity.x;
-  const dy = centroidY - entity.y;
+  const centroidX = (school.sumX - member.x) / others;
+  const centroidY = (school.sumY - member.y) / others;
+  const dx = centroidX - member.x;
+  const dy = centroidY - member.y;
   const distance = Math.hypot(dx, dy);
   const pull = cohesionPullRadiansPerSecond(distance, looseness);
   if (pull > 0) {
@@ -294,8 +350,8 @@ export function steerWithSchool(
 
   // (c) ALIGNMENT — toward the mean heading of the other members, if they agree
   // on one at all (see SCHOOL_MIN_HEADING_COHERENCE).
-  const meanCos = (school.sumCos - Math.cos(entity.heading)) / others;
-  const meanSin = (school.sumSin - Math.sin(entity.heading)) / others;
+  const meanCos = (school.sumCos - Math.cos(member.heading)) / others;
+  const meanSin = (school.sumSin - Math.sin(member.heading)) / others;
   if (Math.hypot(meanCos, meanSin) >= SCHOOL_MIN_HEADING_COHERENCE) {
     const toMean = normalizeAngle(Math.atan2(meanSin, meanCos) - heading);
     heading = normalizeAngle(
@@ -366,7 +422,9 @@ export function advanceEntity(
 
   const wander = normalizeAngle(entity.heading + noise);
   const desired =
-    fleeing || school === undefined ? wander : steerWithSchool(entity, school, wander, dt);
+    fleeing || school === undefined
+      ? wander
+      : steerWithSchool(entity, school, SCHOOL_LOOSENESS_BY_SIZE[entity.size], wander, dt);
   const lookahead = lookaheadCellsFor(entity);
   const steered = steerToValidHeading(world, entity, desired, lookahead);
 

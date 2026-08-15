@@ -22,7 +22,7 @@ import {
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import { createWildlifeModels, type CreatureModel, type WildlifeModels } from './models.ts';
-import { SWIM_PROFILES, creatureWorldY, walkerGroundY } from './placement.ts';
+import { creatureWorldY, placementKindOf, walkerGroundY } from './placement.ts';
 
 /**
  * Per-creature animation phase offset, in radians per unit of entity id. The
@@ -102,14 +102,22 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const view = views.get(id);
     if (view === undefined) continue;
 
-    // Walkers stand on the highest band their FOOTPRINT overlaps (see
-    // walkerGroundY — the single-cell sample is the body-through-the-riser
-    // clipping bug); swimmers float in the column over their centre cell, so
-    // the single sample is right for them.
+    // Three placement rules, one per PlacementKind (client/placement.ts):
+    //   * flyers cruise at a fixed altitude and never sample the terrain at all
+    //     — which is also why a bird over an unrevealed chunk is drawn correctly
+    //     instead of sagging to the unknown-terrain default;
+    //   * walkers stand on the highest band their FOOTPRINT overlaps (see
+    //     walkerGroundY — the single-cell sample is the body-through-the-riser
+    //     clipping bug);
+    //   * swimmers float in the column over their centre cell, so the single
+    //     sample is right for them.
+    const kind = placementKindOf(entity.species);
     const terrainY =
-      SWIM_PROFILES[entity.species] === null
-        ? walkerGroundY((cx, cy) => ctx.terrainHeightAt(cx, cy), entity.x, entity.y)
-        : ctx.terrainHeightAt(Math.floor(entity.x), Math.floor(entity.y));
+      kind === 'flyer'
+        ? null
+        : kind === 'walker'
+          ? walkerGroundY((cx, cy) => ctx.terrainHeightAt(cx, cy), entity.x, entity.y)
+          : ctx.terrainHeightAt(Math.floor(entity.x), Math.floor(entity.y));
     const root = view.model.root;
     // CELL_WORLD_SIZE is 1, so cell coordinates ARE world X/Z (see placement.ts).
     root.position.set(entity.x, creatureWorldY(entity.species, terrainY), entity.y);

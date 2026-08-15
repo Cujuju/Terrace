@@ -17,8 +17,8 @@ import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
   WILDLIFE_SIZE_CLASSES,
+  type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
-  type WildlifeSpecies,
 } from '../protocol.ts';
 
 /** Where a creature can live. Derived from cell height alone (see rule 2). */
@@ -133,7 +133,7 @@ export const SCHOOL_LOOSENESS_BY_SIZE: Readonly<Record<WildlifeSizeClass, number
 
 /** Tuning for one species. All rates are per SECOND of simulated time. */
 export interface SpeciesProfile {
-  readonly species: WildlifeSpecies;
+  readonly species: WildlifeHabitatSpecies;
   readonly habitat: Habitat;
 
   /** Ordinary wander speed, cells per second. */
@@ -268,7 +268,7 @@ export const FISH_SCHOOLS_ON_FRESH_SHELF = 2;
  * broadcast cadence (5 Hz) the fastest of them moves 0.6 cells between updates,
  * which is what makes 5 Hz + interpolation indistinguishable from 10 Hz.
  */
-export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>> = {
+export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesProfile>> = {
   fish: {
     species: 'fish',
     habitat: 'shallow',
@@ -323,7 +323,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeSpecies, SpeciesProfile>>
   },
 };
 
-/** Deterministic iteration order over species (see WILDLIFE_SPECIES). */
-export function profileOf(species: WildlifeSpecies): SpeciesProfile {
+/** Deterministic iteration order over species (see WILDLIFE_HABITAT_SPECIES). */
+export function profileOf(species: WildlifeHabitatSpecies): SpeciesProfile {
   return SPECIES_PROFILES[species];
 }
