@@ -84,13 +84,18 @@ export const MAX_ACTIVE_SYSTEMS = 3;
  * Mean simulated seconds between system arrivals, as a constant hazard of 1/T
  * per second (see rollEvent), so arrivals are memoryless rather than metronomic.
  *
- * 90 s against a mean lifetime of 240 s and three slots. The equilibrium of a
- * birth-death process with these numbers is ~2.1 systems alive of the 3
- * available, so the sky is usually busy but the cap is not permanently pinned —
- * a slot is free most of the time, which is what lets a newly-dissipated system
- * be replaced somewhere else rather than never.
+ * 40 s (measured retune, 2026-08-14 — first shipped as 90). The 90-second
+ * figure's ~2.1 equilibrium assumed systems die of old age (240 s), but on a
+ * small world DRIFT is the dominant killer: a system crosses 128 cells in
+ * 64–210 s and is removed at the far edge, so the effective lifetime is far
+ * shorter and the sky measured EMPTY 60% of the time on the live 128² world —
+ * the owner's report was "I don't see any weather spawning", and he was right.
+ * At 40 s the same birth-death arithmetic against the drift-shortened lifetime
+ * keeps at least one system alive most of the time on a small world and runs
+ * 2–3 on a 512² one, where crossings are long enough for old age to matter
+ * again.
  */
-export const SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS = 90;
+export const SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS = 40;
 
 /**
  * Mean simulated seconds a system lives before it starts dissipating, again as a
