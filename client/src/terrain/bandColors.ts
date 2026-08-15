@@ -189,19 +189,22 @@ export function cliffFaceColor(top: Rgb): Rgb {
 const SEABED_RIM_TINT: Rgb = rgb(0x9fd4c8);
 
 /**
- * How much of the rim tint replaces the tread colour. 0.35 keeps the rim
- * clearly of its own terrace (a deep rim stays darker than a shelf rim) while
- * shifting it visibly off the tread; "slight", as asked, not chalk lines.
+ * How much of the rim tint replaces the tread colour. 0.55 keeps a residue of
+ * the terrace's own colour (a deep rim still reads darker than a shelf rim)
+ * while committing the face to the silt line.
  */
-export const SEABED_RIM_TINT_MIX = 0.35;
+export const SEABED_RIM_TINT_MIX = 0.55;
 
 /**
- * Brightness applied after the tint. 1.25 lifts the rim above BOTH
- * neighbouring treads — an outline must beat the brighter side of the seam,
- * not just its own — sized against the ~20%-per-band tread steps so the rim
- * outshines the shallower neighbour by a visible margin through the water.
+ * Brightness applied after the tint. Sized against the VIEWING GEOMETRY, not
+ * just the treads: from the game's usual high camera a one-band skirt is a
+ * few pixels of slanted sliver, dimmed twice — by the water tint and by the
+ * lighting rig's weak side-light on vertical faces (first pass at 1.25 was
+ * confirmed invisible from above, 2026-08-14). 1.5 with the deeper tint mix
+ * pushes the rim to roughly double a shelf tread's luminance, which survives
+ * both dimmings as a clear outline while the clamp keeps it short of white.
  */
-export const SEABED_RIM_BRIGHTEN_FACTOR = 1.25;
+export const SEABED_RIM_BRIGHTEN_FACTOR = 1.5;
 
 /** Tint toward silt-aqua, then brighten — never past white. */
 export function seabedRimColor(top: Rgb): Rgb {
