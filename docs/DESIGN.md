@@ -582,6 +582,93 @@ terrace/
   written before this change restores as independent wanderers of default size,
   which is the honest reading of data that never had the information.
 
+- **Bird flocks cross the world overhead, on their own spawner** (owner request,
+  settled 2026-08-14: "we need random flocks of birds flying overhead").
+  Entirely inside `plugins/wildlife`; core is untouched, and so is the census.
+
+  **The split, and the trade-off it buys.** Birds are a *transient* — they
+  arrive, cross, and leave — while `census.ts`/`population.ts` regulate a
+  *standing* population toward a habitat-derived equilibrium. Every mechanism
+  there is the wrong shape for a bird: `targetsFor` divides habitat *cells* by a
+  density (birds occupy none), the per-tick `despawnInvalidHabitat` sweep deletes
+  anything outside its habitat (a bird is outside every habitat by definition,
+  so it would be culled the tick it appeared), and the respawn-credit loop exists
+  to *heal* a count that dropped, which is precisely what a departing flock is
+  not. So flocks get their own ~150-line spawner, `plugins/wildlife/server/
+  flocks.ts`. **Named cost:** birds sit outside `WILDLIFE_POPULATION_CAP`, the
+  equilibrium arithmetic, and the snapshot; their wire cost is bounded by a
+  second ceiling (`MAX_BIRDS_ALOFT`) that must be kept in step with the first by
+  hand. `BROADCAST_ENTITY_CEILING` in `server/index.ts` is the one place the two
+  are added up.
+
+  **What is reused, not re-implemented.** The boids-lite cohesion + alignment
+  from `movement.ts`, unchanged — a flock *is* a school. `steerWithSchool` now
+  takes a structural `SchoolMember` (x, y, heading) and a `looseness` parameter
+  instead of a fish and a size-class lookup, which is what makes it species-
+  agnostic geometry rather than fish code a bird borrows.
+
+  **Loose cluster, not a V.** A V is a *formation*, not steering: it needs a
+  leader, per-bird slot assignment behind-and-outboard, and a re-assignment rule
+  when a slot's occupant is lost — a solver, not two more terms in a blend. And
+  it would not read: a V is only legible from directly below or above, and this
+  game's camera looks *down* from an 80+ cell orbit, at which angle a V projects
+  to the same smear the existing steering already produces for free.
+  `BIRD_FLOCK_LOOSENESS = 2` widens the shared cohesion radii to a 5-cell comfort
+  / 10-cell full-pull skein, because birds hold wingspans of clearance where fish
+  hold body lengths.
+
+  **The crossing.** A flock is born on a circle that circumscribes the square
+  world (`worldSize × √½`, plus a chunk of margin) so it is never seen popping
+  into existence, aims at a random point inside the middle half of the map, and
+  is removed once its centroid passes back out through that ring. Straightness is
+  a `FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND = 1` pull back onto the course —
+  net displacement over distance flown measures 1.00. That rate sits deliberately
+  *between* the wander noise (0.5) and the *effective* cohesion pull (1.5 — the
+  nominal 3 divided by the looseness), because the three terms share one heading:
+  a course-hold at or above cohesion buys straightness by taking it out of a
+  straggler's ability to rejoin, and the two would then fly perfectly straight
+  parallel courses, which no straightness measurement can see. Measured over 40
+  trials of a bird displaced 30 cells across the course, mean gap after 30 s:
+  13.3 at rate 0.5, **13.8 at 1**, 18.4 at 2, 18.8 at 4 — 1 is the knee, and the
+  ordering is pinned by test. A `FLOCK_LIFETIME_SLACK_FACTOR = 2` guard removes a flock that somehow
+  fails to cross, so a wedged flock cannot permanently occupy one of the two
+  concurrency slots and silently stop the sky.
+
+  **Altitude is not on the wire.** Every bird flies at one world Y,
+  `MAX_TERRAIN_WORLD_Y + BIRD_ALTITUDE_HEADROOM_WORLD_UNITS` = 16 + 8 = **24** —
+  half the tallest possible mountain again in clear air above the tallest
+  possible mountain, so "overhead" holds at the worst case and not just the
+  typical one. The client already knows that constant, so the payload stays the
+  same six keys as every other creature; wing flap is likewise derived from
+  elapsed time and the entity id, client-side, like every other idle animation
+  here. Adding birds *did* mean the client's "is this a walker" test — previously
+  `SWIM_PROFILES[species] === null` — became a named three-way `PlacementKind`
+  (`flyer | swimmer | walker`), because a two-valued test on a table with nothing
+  to say about flight would have made birds walk.
+
+  **Bandwidth, recomputed.** 150 habitat creatures + 18 birds (2 flocks × 9) =
+  **168** entities × 58 B ≈ **9.7 KB** per full-state broadcast, **48.7 KB/s ≈
+  390 kbit/s** per client at the unchanged 5 Hz cadence, ≈3.9 Mbit/s of server
+  upstream at ~10 players. That is +12% over the 348 kbit/s before birds; an
+  empty sky still costs exactly the old figure. `BIRD_CRUISE_SPEED_CELLS_PER_
+  SECOND = 8` is chosen against that cadence: 1.6 cells between updates, just
+  under the 1.8 a fleeing fish already interpolates smoothly, so the fastest
+  thing in the world needs no cadence of its own.
+
+  **Persistence: none, deliberately.** A flock's entire state is how far along a
+  path it will have finished in a minute or two, so restoring one resumes a
+  journey nobody was watching; the spawner puts a fresh flock up within a mean
+  interval anyway. A snapshot *restore* also clears the sky, which is not
+  tidiness — `replacePopulation` resets the shared entity-id counter, so an
+  airborne bird would be holding an id about to be reissued.
+
+  **Anti-cheat.** `flocks.ts` reads no terrain and no unlock mask; the only world
+  property it touches is `worldSize`. A bird's position is a function of RNG
+  alone, so the un-filtered broadcast leaks nothing about locked land — the same
+  guarantee the habitat population gets from "creatures only exist in unlocked
+  chunks", reached from the opposite direction. Accepted consequence: a flock is
+  visible over ground the player has not revealed, and tells them nothing.
+
 - **A world has a DIFFICULTY rating, and it is a neutral core scalar** (owner
   request, settled 2026-08-14: "maps get a difficulty rating 1–100; warm maps
   regenerate 200 mana/s, difficult maps 20/s").

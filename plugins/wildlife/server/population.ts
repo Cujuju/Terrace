@@ -60,11 +60,11 @@
 import { CHUNK_SIZE } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
+  WILDLIFE_HABITAT_SPECIES,
   WILDLIFE_SIZE_CLASSES,
-  WILDLIFE_SPECIES,
   type WildlifeEntityState,
+  type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
-  type WildlifeSpecies,
   roundBroadcastPosition,
   sizeClassIndex,
 } from '../protocol.ts';
@@ -82,7 +82,7 @@ import { SCHOOLING_PROBABILITY_BY_SIZE, type SizeWeights, profileOf } from './sp
 /** A living creature. Mutable — the tick loop writes these in place. */
 export interface WildlifeEntity {
   readonly id: number;
-  readonly species: WildlifeSpecies;
+  readonly species: WildlifeHabitatSpecies;
 
   /**
    * The school this creature belongs to. Allocated at spawn and never changed:
@@ -116,7 +116,7 @@ export interface WildlifeEntity {
 
 /** A pending spawn. `readyAt` is accumulated SIMULATED seconds, never wall-clock. */
 interface RespawnCredit {
-  readonly species: WildlifeSpecies;
+  readonly species: WildlifeHabitatSpecies;
   readonly readyAt: number;
 }
 
@@ -197,7 +197,7 @@ let simSeconds = 0;
 let lastCensusSeconds = Number.NEGATIVE_INFINITY;
 
 /** Per-species population targets from the most recent census. */
-let targets: Record<WildlifeSpecies, number> = emptySpeciesCounts();
+let targets: Record<WildlifeHabitatSpecies, number> = emptySpeciesCounts();
 
 /** Unlocked chunk coordinates from the most recent census; the spawn pool. */
 let spawnChunks: ReadonlyArray<readonly [number, number]> = [];
@@ -228,7 +228,7 @@ export function naturalDepartureCount(): number {
   return naturalDepartures;
 }
 
-export function populationTargets(): Readonly<Record<WildlifeSpecies, number>> {
+export function populationTargets(): Readonly<Record<WildlifeHabitatSpecies, number>> {
   return targets;
 }
 
@@ -242,6 +242,21 @@ export function pendingCreditCount(): number {
  */
 export function nextEntityIdValue(): number {
   return nextEntityId;
+}
+
+/**
+ * THE ONE ENTITY-ID ALLOCATOR for everything this plugin broadcasts — habitat
+ * creatures here and birds in ./flocks.ts alike.
+ *
+ * It has to be one counter rather than one per subsystem: the client keys its
+ * interpolation purely by id (client/interpolation.ts), so two allocators would
+ * eventually hand out the same number and a bird would inherit a fish's pose.
+ * Birds are not persisted, so ids they consume simply advance the counter that
+ * IS persisted — which is exactly right, because the invariant the snapshot
+ * cares about is "never reuse an id", not "never skip one".
+ */
+export function allocateEntityId(): number {
+  return nextEntityId++;
 }
 
 /** The id the next school will take. Persisted alongside nextEntityIdValue. */
@@ -267,13 +282,13 @@ export function resetPopulation(): void {
   naturalDepartures = 0;
 }
 
-function countOf(species: WildlifeSpecies): number {
+function countOf(species: WildlifeHabitatSpecies): number {
   let count = 0;
   for (const entity of entities) if (entity.species === species) count++;
   return count;
 }
 
-function creditsFor(species: WildlifeSpecies): number {
+function creditsFor(species: WildlifeHabitatSpecies): number {
   let count = 0;
   for (const credit of credits) if (credit.species === species) count++;
   return count;
@@ -285,7 +300,7 @@ function creditsFor(species: WildlifeSpecies): number {
  * that are no longer wanted (a drained sea must not keep spawning fish).
  */
 function reconcileToTargets(): void {
-  for (const species of WILDLIFE_SPECIES) {
+  for (const species of WILDLIFE_HABITAT_SPECIES) {
     const deficit = targets[species] - countOf(species) - creditsFor(species);
 
     if (deficit > 0) {
@@ -331,7 +346,7 @@ function sampleUnlockedCell(): { x: number; y: number } | null {
 /** Rejection-samples a spawn point for `species`. Null when none was found. */
 function findSpawnCell(
   world: HabitatWorld,
-  species: WildlifeSpecies,
+  species: WildlifeHabitatSpecies,
 ): { x: number; y: number } | null {
   for (let attempt = 0; attempt < SPAWN_SAMPLE_ATTEMPTS; attempt++) {
     const candidate = sampleUnlockedCell();
@@ -384,7 +399,7 @@ function drawSizeClass(weights: SizeWeights): WildlifeSizeClass {
  * Returns how many were actually created, so the caller consumes exactly that
  * many credits.
  */
-function spawnGroup(world: HabitatWorld, species: WildlifeSpecies, wanted: number): number {
+function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted: number): number {
   const seed = findSpawnCell(world, species);
   if (seed === null) return 0;
 
@@ -406,7 +421,7 @@ function spawnGroup(world: HabitatWorld, species: WildlifeSpecies, wanted: numbe
     const y = n === 0 ? seed.y : seed.y + (Math.random() * 2 - 1) * scatter;
     if (!isValidCellFor(world, species, x, y)) continue;
     entities.push({
-      id: nextEntityId++,
+      id: allocateEntityId(),
       species,
       schoolId: cohesive ? groupSchoolId : nextSchoolId++,
       size,

@@ -6,7 +6,7 @@
 // population maths directly against a hand-built world.
 
 import { CHUNK_SIZE } from '@terrace/shared';
-import { WILDLIFE_SPECIES, type WildlifeSpecies } from '../protocol.ts';
+import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type Habitat, habitatOf, profileOf } from './species.ts';
 
 /** The slice of the server's WorldApi this plugin actually reads. */
@@ -39,6 +39,12 @@ export interface HabitatWorld {
  *
  * It now BINDS on a fully revealed 512² world (the densities ask for 246 there,
  * see species.ts), which is the accepted cost of enough fish to see schools.
+ *
+ * SCOPE, since 2026-08-14: this caps the HABITAT population only. Birds are not
+ * censused and do not consume it (server/flocks.ts); their own hard ceiling is
+ * MAX_BIRDS_ALOFT, and the two together are what the broadcast actually costs.
+ * The combined arithmetic lives in server/index.ts's header, in one place, so
+ * there is a single answer to "what does a full message weigh".
  */
 export const WILDLIFE_POPULATION_CAP = 150;
 
@@ -62,7 +68,7 @@ export const HABITAT_CENSUS_INTERVAL_SECONDS = 5;
  */
 export function isValidCellFor(
   world: HabitatWorld,
-  species: WildlifeSpecies,
+  species: WildlifeHabitatSpecies,
   cellX: number,
   cellY: number,
 ): boolean {
@@ -103,8 +109,8 @@ export function takeCensus(world: HabitatWorld): Census {
   return { cellsByHabitat, chunks };
 }
 
-/** All-zero per-species counts. */
-export function emptySpeciesCounts(): Record<WildlifeSpecies, number> {
+/** All-zero per-species counts, over the census-driven species only. */
+export function emptySpeciesCounts(): Record<WildlifeHabitatSpecies, number> {
   return { fish: 0, whale: 0, deepsea: 0, grazer: 0 };
 }
 
@@ -122,10 +128,10 @@ export function emptySpeciesCounts(): Record<WildlifeSpecies, number> {
  */
 export function targetsFor(
   cellsByHabitat: Readonly<Record<Habitat, number>>,
-): Record<WildlifeSpecies, number> {
+): Record<WildlifeHabitatSpecies, number> {
   const raw = emptySpeciesCounts();
   let total = 0;
-  for (const species of WILDLIFE_SPECIES) {
+  for (const species of WILDLIFE_HABITAT_SPECIES) {
     const profile = profileOf(species);
     const count = Math.floor(cellsByHabitat[profile.habitat] / profile.habitatCellsPerIndividual);
     raw[species] = count;
@@ -136,6 +142,6 @@ export function targetsFor(
 
   const scale = WILDLIFE_POPULATION_CAP / total;
   const capped = emptySpeciesCounts();
-  for (const species of WILDLIFE_SPECIES) capped[species] = Math.floor(raw[species] * scale);
+  for (const species of WILDLIFE_HABITAT_SPECIES) capped[species] = Math.floor(raw[species] * scale);
   return capped;
 }

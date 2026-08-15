@@ -12,7 +12,7 @@
 // stops being 1, every size and position in this plugin's client half needs a
 // multiply, and nothing here will fail loudly to tell you so.
 
-import { SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import type { WildlifeSpecies } from '../protocol.ts';
 
 /**
@@ -53,7 +53,93 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
   deepsea: { depthFraction: 0.88, minClearance: 0.35, minSubmergence: 0.5 },
   // Land species stand on the ground; they have no water column to sit in.
   grazer: null,
+  // Flyers have no water column either — see FLIGHT_ALTITUDES.
+  bird: null,
 };
+
+// ── Flight ───────────────────────────────────────────────────────────────────
+
+/**
+ * World-space Y of the highest terrain this game can contain.
+ *
+ * MAX_HEIGHT (@terrace/shared) is the sculpt ceiling in HEIGHT UNITS; the
+ * renderer draws one terrace band as one world unit (BAND_WORLD_HEIGHT =
+ * CELL_WORLD_SIZE = 1 in client/src/config.ts, so HEIGHT_WORLD_SCALE is
+ * 1/BAND_HEIGHT). Deriving the world-space figure from those two shared
+ * constants rather than writing 16 is what keeps this correct if either moves —
+ * and BAND_HEIGHT is explicitly provisional.
+ *
+ * This plugin cannot import client/src/config.ts's HEIGHT_WORLD_SCALE without
+ * dragging `import.meta.env` into a node test run (see plugins/mana/client/
+ * env.d.ts for the same trap), so the ratio is restated from its two shared
+ * inputs. RESIDUAL, named: if BAND_WORLD_HEIGHT ever stops equalling
+ * CELL_WORLD_SIZE, this figure is wrong by that ratio and nothing fails loudly —
+ * exactly the CELL_WORLD_SIZE residual already recorded at the top of this file,
+ * on the vertical axis.
+ */
+export const MAX_TERRAIN_WORLD_Y = MAX_HEIGHT / BAND_HEIGHT;
+
+/**
+ * Clearance between the highest possible mountain and the birds, in world units.
+ *
+ * Eight — half of MAX_TERRAIN_WORLD_Y (16). The requirement is that birds read
+ * as flying OVER the world rather than skimming it, and that has to hold at the
+ * worst case, not the typical one: a player who builds a maximum-height peak and
+ * then watches a flock pass must still see clear sky between the two. Half the
+ * tallest possible mountain again is a gap you cannot mistake for a near miss,
+ * and it is still tiny against the camera's 20-cell minimum orbit distance, so
+ * birds never crowd the near plane.
+ *
+ * Everything real is far below it: a fresh world's seabed is 3 bands DOWN, and a
+ * mountain a player actually builds is a handful of bands up.
+ */
+export const BIRD_ALTITUDE_HEADROOM_WORLD_UNITS = MAX_TERRAIN_WORLD_Y / 2;
+
+/**
+ * The single world-space Y every bird flies at.
+ *
+ * ONE ALTITUDE FOR ALL BIRDS, and that is what keeps altitude off the wire: the
+ * server sends a bird's cell position and heading like any other creature, and
+ * the client already knows the third coordinate. A per-flock altitude would be a
+ * float per bird per broadcast (or a per-flock message this plugin does not
+ * have) to buy vertical variety at a distance where the eye reads a flock's
+ * height off its position against the ground, not off its parallax.
+ */
+export const BIRD_FLIGHT_WORLD_Y = MAX_TERRAIN_WORLD_Y + BIRD_ALTITUDE_HEADROOM_WORLD_UNITS;
+
+/**
+ * Fixed cruising altitude of each FLYING species, in world units; null for
+ * anything that is not a flyer.
+ *
+ * A flyer's Y is a constant, not a function of the ground: it is the one
+ * placement rule in this file that does not read the terrain at all, which is
+ * also why a bird over a chunk this client has never been sent is drawn in
+ * exactly the right place rather than sagging to UNKNOWN_TERRAIN_WORLD_Y.
+ */
+export const FLIGHT_ALTITUDES: Readonly<Record<WildlifeSpecies, number | null>> = {
+  fish: null,
+  whale: null,
+  deepsea: null,
+  grazer: null,
+  bird: BIRD_FLIGHT_WORLD_Y,
+};
+
+/**
+ * How a species is placed vertically. Three genuinely different rules, so this
+ * is three cases and not two.
+ *
+ * IT IS A NAMED KIND, not the nullness of some other table. Before birds, "is
+ * this a walker" was read off `SWIM_PROFILES[species] === null` at the render
+ * call site — a two-valued test on a table that had nothing to say about a third
+ * kind, and adding a bird to it would silently have made birds walk. The kind is
+ * now the thing the caller asks for, and both tables answer to it.
+ */
+export type PlacementKind = 'flyer' | 'swimmer' | 'walker';
+
+export function placementKindOf(species: WildlifeSpecies): PlacementKind {
+  if (FLIGHT_ALTITUDES[species] !== null) return 'flyer';
+  return SWIM_PROFILES[species] === null ? 'walker' : 'swimmer';
+}
 
 /**
  * Terrain Y a creature is placed against when the client has never been sent the
@@ -89,10 +175,15 @@ export function swimmerWorldY(seabedY: number, profile: SwimProfile): number {
 
 /**
  * World Y for one creature. `terrainY` is the ground/seabed height under it —
- * for a walker, use walkerGroundY, not a single-cell sample — or null before
- * the first snapshot arrives.
+ * for a walker, use walkerGroundY, not a single-cell sample — or null before the
+ * first snapshot arrives (and always, for a flyer, which ignores it).
  */
 export function creatureWorldY(species: WildlifeSpecies, terrainY: number | null): number {
+  const altitude = FLIGHT_ALTITUDES[species];
+  // A flyer's altitude is absolute: the ground beneath it is irrelevant, and so
+  // is whether this client has even been sent that ground.
+  if (altitude !== null) return altitude;
+
   const surfaceY = terrainY ?? UNKNOWN_TERRAIN_WORLD_Y;
   const profile = SWIM_PROFILES[species];
   // Land species' models are built with the origin at their feet, so the ground

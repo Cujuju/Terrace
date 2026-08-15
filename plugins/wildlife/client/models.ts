@@ -1,4 +1,4 @@
-// Low-poly procedural creatures: spheres, cones and boxes, flat-shaded, in four
+// Low-poly procedural creatures: spheres, cones and boxes, flat-shaded, in five
 // silhouettes you can tell apart at fifty cells.
 //
 // Rules this file keeps:
@@ -53,12 +53,32 @@ const DEEPSEA_COLOR = 0x161c26; // near-black, an abyssal silhouette
 const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
 const GRAZER_BODY_COLOR = 0xa8814f; // tan, warmer than any terrain band
 const GRAZER_LEG_COLOR = 0x6d5334;
+/**
+ * Birds are read as SILHOUETTES, not as coloured objects: they are the only
+ * creature seen against the sky (0x9fc7e8 in render/scene.ts) rather than
+ * against terrain or water, and they are the smallest thing on screen. A dark
+ * slate keeps that contrast from every camera angle — a bird tinted to look
+ * "right" in isolation would vanish into the background at distance, which is
+ * the only distance birds are ever seen from.
+ */
+const BIRD_COLOR = 0x2e3646;
 
 /** Idle-animation rates, in cycles per second. Slower = larger, by convention. */
 const FISH_TAIL_HZ = 3.2;
 const WHALE_FLUKE_HZ = 0.45;
 const DEEPSEA_SWAY_HZ = 0.7;
 const GRAZER_BOB_HZ = 2.4;
+/**
+ * Wing beats per second. The fastest animation here, which is the convention
+ * this list follows (slower = larger) and also just true of small birds.
+ *
+ * Bounded above by the display, not by taste: at 60 fps a 5.5 Hz cycle is ~11
+ * frames, so the wing is drawn several times on each stroke and reads as
+ * flapping. Push it toward 10 Hz and consecutive frames start landing on
+ * opposite ends of the stroke — the wing aliases into a blur or, worse, appears
+ * to beat slowly backwards.
+ */
+const BIRD_WING_FLAP_HZ = 5.5;
 
 const FISH_TAIL_SWING_RADIANS = 0.55;
 const WHALE_FLUKE_SWING_RADIANS = 0.3;
@@ -67,6 +87,34 @@ const DEEPSEA_SWAY_RADIANS = 0.22;
 const GRAZER_BOB_AMPLITUDE = 0.05;
 /** How far the lure bobs on its stalk, in world units. */
 const DEEPSEA_LURE_BOB = 0.05;
+/**
+ * Half the wing's travel, in radians. 0.7 is ~40° either side of level — a 80°
+ * total stroke, which is the range at which a wing seen from above (this game's
+ * camera) visibly changes its projected width. A smaller stroke reads as a rigid
+ * glider; a much larger one folds the wings over the bird's own back.
+ */
+const BIRD_WING_FLAP_RADIANS = 0.7;
+/**
+ * Vertical travel of the body over one wing beat, in world units. Tiny by
+ * design: it exists so the bird rises fractionally on the downstroke, which is
+ * what stops the flap looking like a hinge bolted to a static body. Same trick,
+ * same scale, as the fish's counter-roll.
+ */
+const BIRD_BODY_BOB = 0.04;
+/**
+ * Span of ONE wing panel, in world units. Two of them plus the body gives a
+ * ~1.3-unit wingspan against a 0.6-unit body — roughly a bird's proportions, and
+ * more than twice a fish's total length, because a bird is drawn at
+ * BIRD_FLIGHT_WORLD_Y and is the furthest thing in this file from the camera.
+ */
+const BIRD_WING_LENGTH = 0.62;
+/**
+ * Where a wing's pivot sits relative to its panel, along Z: half the panel's own
+ * length, so the panel's inner edge lands on the body's centreline and the hinge
+ * is at the shoulder rather than out in mid-air. Derived, so the two cannot
+ * drift apart.
+ */
+const BIRD_WING_ROOT_OFFSET = BIRD_WING_LENGTH / 2;
 
 const TWO_PI = Math.PI * 2;
 
@@ -142,6 +190,18 @@ export function createWildlifeModels(): WildlifeModels {
   deepseaJaw.rotateZ(-Math.PI / 2);
   const deepseaStalk = keepGeometry(new BoxGeometry(0.5, 0.04, 0.04));
   const deepseaLure = ellipsoid(0.14, 0.14, 0.14);
+
+  // A bird is authored roughly one cell across the wings — twice its body
+  // length, which is what a bird's proportions are and what makes the silhouette
+  // read as a bird rather than as a small fish flying. It is bigger than a fish
+  // (0.55 long) on purpose: it is seen from BIRD_FLIGHT_WORLD_Y further away
+  // than anything else in this file.
+  const birdMaterial = lambert(BIRD_COLOR);
+  const birdBody = ellipsoid(0.6, 0.18, 0.18);
+  /** One wing panel. Its LENGTH runs along Z, so it hinges about the X axis. */
+  const birdWing = keepGeometry(new BoxGeometry(0.32, 0.03, BIRD_WING_LENGTH));
+  const birdTail = keepGeometry(new ConeGeometry(0.13, 0.26, CONE_SEGMENTS));
+  birdTail.rotateZ(Math.PI / 2);
 
   const grazerBodyMaterial = lambert(GRAZER_BODY_COLOR);
   const grazerLegMaterial = lambert(GRAZER_LEG_COLOR);
@@ -248,11 +308,44 @@ export function createWildlifeModels(): WildlifeModels {
     };
   }
 
+  function createBird(): CreatureModel {
+    const { root, rig } = rigged();
+    rig.add(part(birdBody, birdMaterial, 0, 0, 0));
+    rig.add(part(birdTail, birdMaterial, -0.38, 0, 0));
+
+    // Each wing gets its own pivot Group AT THE SHOULDER, with the panel offset
+    // outboard inside it. Rotating the panel directly would swing it about its
+    // own centre, which lifts the root through the bird's back and drops the tip
+    // only half as far as it should.
+    function wing(sign: number): Group {
+      const pivot = new Group();
+      pivot.add(part(birdWing, birdMaterial, 0, 0, sign * BIRD_WING_ROOT_OFFSET));
+      rig.add(pivot);
+      return pivot;
+    }
+    const leftWing = wing(1);
+    const rightWing = wing(-1);
+
+    return {
+      root,
+      animate(seconds, phase) {
+        const swing = Math.sin(seconds * BIRD_WING_FLAP_HZ * TWO_PI + phase);
+        // Rotation about X maps a point at +Z to y = -L·sin(θ), so the two wings
+        // take OPPOSITE signs to send both tips the same way. Getting this wrong
+        // is a bird rolling on the spot rather than flapping.
+        leftWing.rotation.x = -swing * BIRD_WING_FLAP_RADIANS;
+        rightWing.rotation.x = swing * BIRD_WING_FLAP_RADIANS;
+        rig.position.y = swing * BIRD_BODY_BOB;
+      },
+    };
+  }
+
   const constructors: Readonly<Record<WildlifeSpecies, () => CreatureModel>> = {
     fish: createFish,
     whale: createWhale,
     deepsea: createDeepsea,
     grazer: createGrazer,
+    bird: createBird,
   };
 
   return {
