@@ -8,21 +8,42 @@
 // can produce a second.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, SEA_LEVEL, isWater } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  MAX_BRUSH_RADIUS,
+  MAX_HEIGHT,
+  MAX_STEP,
+  MIN_HEIGHT,
+  SEA_LEVEL,
+  isWater,
+} from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
-import { MONSTERS_PLUGIN_NAME, MONSTERS_STATE_MESSAGE, type MonsterState } from '../protocol.ts';
+import {
+  MONSTERS_PLUGIN_NAME,
+  MONSTERS_STATE_MESSAGE,
+  MONSTER_KINDS,
+  type MonsterState,
+} from '../protocol.ts';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
+  HABITAT_REGIMES,
+  LAND_HABITAT,
+  SNOW_LINE_BANDS_ABOVE_SEA,
+  SNOW_LINE_MIN_HEIGHT,
+  WATER_HABITAT,
   type LairRegion,
   type LairSurvey,
   type LairWorld,
+  habitatReachHeightUnits,
   isDeepWaterHeight,
   isLairCell,
+  isSnowHeight,
   surveyLairs,
 } from '../server/habitat.ts';
 import {
@@ -36,12 +57,20 @@ import {
   CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
   KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
   KRAKEN_LAIR_MIN_DEPTH_BANDS,
+  KRAKEN_LURK_SPEED_CELLS_PER_SECOND,
   KRAKEN_MIN_LAIR_DEEP_CELLS,
   KRAKEN_RESPAWN_COOLDOWN_SECONDS,
   MAX_LIVING_MONSTERS,
+  MAX_LIVING_MONSTERS_PER_HABITAT,
   MIN_LAIR_DEEP_CELLS,
   SUMMON_MEAN_WAIT_SECONDS,
+  YETI_AMBLE_SPEED_CELLS_PER_SECOND,
+  YETI_FOOTPRINT_CELLS,
+  YETI_LAIR_COLLAPSE_SNOW_CELLS,
+  YETI_MIN_LAIR_SNOW_CELLS,
+  YETI_RESPAWN_COOLDOWN_SECONDS,
   groundProtectionRadiusCells,
+  kindsInHabitat,
   profileOf,
 } from '../server/kinds.ts';
 import { advanceMonster, isStranded } from '../server/lurk.ts';
@@ -49,11 +78,13 @@ import { loadMonsters, saveMonsters } from '../server/persistence.ts';
 import { setMonsterRandomSource } from '../server/rng.ts';
 import {
   LAIR_SURVEY_INTERVAL_SECONDS,
+  type Monster,
   advanceSummoning,
   cooldownRemainingSeconds,
   enforceHabitat,
-  livingMonster,
+  livingMonsterIn,
   livingMonsterCount,
+  livingMonsters,
 } from '../server/summoning.ts';
 import { seededRandom, worldWithTerrain } from './support/world.ts';
 
@@ -63,6 +94,18 @@ const WORLD_CENTER = WORLD_SIZE / 2;
 
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
+
+/**
+ * Wall-clock budget for the statistical trials, in milliseconds.
+ *
+ * Vitest's default is 5 s, and the seeded mean-wait trial deliberately simulates
+ * about ninety minutes of world time across two dozen worlds — one full habitat
+ * survey per five simulated seconds PER HABITAT, which is where the time goes.
+ * Raised rather than trimmed because the trial count is what makes the assertion
+ * about the mean meaningful, and trimming it would loosen the bound it checks.
+ * Measured at ~5 s on this machine, so this is a 6× margin for a slower one.
+ */
+const SEEDED_TRIAL_TIMEOUT_MS = 30_000;
 
 /**
  * A conical bowl centred on the map: height rises linearly with distance from
@@ -82,6 +125,50 @@ function bowl(radius: number): (x: number, y: number) => number {
     const dx = x - WORLD_CENTER;
     const dy = y - WORLD_CENTER;
     return Math.round((Math.sqrt(dx * dx + dy * dy) - radius) * BOWL_SLOPE_PER_CELL);
+  };
+}
+
+/**
+ * Centre of every mountain in this file, stubbed or real.
+ *
+ * 24, and it is a CLEARANCE: it is 56.6 cells from the basin's centre, and the
+ * largest deep disc any test here digs has radius 46 while the largest snowfield
+ * has radius 14 — so 56.6 > 46 + 14 and no mountain in this file can ever touch
+ * the sea. A world where the two habitats overlapped would make every sea test
+ * quietly a mountain test as well.
+ */
+const MASSIF_CENTER = 24;
+
+/**
+ * A SHEER MESA raised out of the bowl's dry land: the yeti's country.
+ *
+ * Sheer-sided rather than a cone, and that is a real-world shape rather than a
+ * convenience: the hard stamp's level-fill brush (the player-facing default)
+ * builds exactly this, a plateau with a cliff edge. It also keeps the mountain
+ * from reaching the sea — a 29-cell skirt at any walkable grade would have eaten
+ * a third of the basin, and then the sea tests would quietly have been mountain
+ * tests.
+ *
+ * Two bands over the snow line, so a level-fill stroke has to take three whole
+ * bands off it before it stops being habitat. Radius 14 → ~613 cells, over the
+ * yeti's 512-cell demand and under a fifth of the map.
+ */
+const ALPINE_PEAK_HEIGHT = (SNOW_LINE_BANDS_ABOVE_SEA + 2) * BAND_HEIGHT;
+const ALPINE_PLATEAU_RADIUS = 14;
+
+/**
+ * The bowl, with the mesa standing in the dry land north-west of it.
+ *
+ * Its centre is MASSIF_CENTER — 56.6 cells from the basin's, so the mesa's rim
+ * is 42 cells clear of the deep water and neither habitat can touch the other.
+ */
+function alpine(seaRadius: number): (x: number, y: number) => number {
+  const sea = bowl(seaRadius);
+  return (x, y) => {
+    const dx = x - MASSIF_CENTER;
+    const dy = y - MASSIF_CENTER;
+    if (Math.sqrt(dx * dx + dy * dy) <= ALPINE_PLATEAU_RADIUS) return ALPINE_PEAK_HEIGHT;
+    return sea(x, y);
   };
 }
 
@@ -172,6 +259,30 @@ const ALWAYS = (): number => 0;
 /** A random source that never fires any Poisson gate. */
 const NEVER = (): number => 1;
 
+/**
+ * The world's single living monster.
+ *
+ * Every world in this file except the alpine ones holds no snow at all (pinned
+ * by a test below), so its land slot can never fill and "the" monster is
+ * unambiguous. The helper ASSERTS that rather than assuming it, which is what
+ * makes every pre-yeti test in this file also a test that the yeti stays off a
+ * map with no mountain on it.
+ */
+function livingMonster(): Monster | null {
+  const alive = livingMonsters();
+  // A throw rather than an `expect`: this is called from inside loops that run
+  // tens of thousands of iterations, and a matcher per iteration is measurably
+  // slower than the simulation it is watching.
+  if (alive.length > MAX_LIVING_MONSTERS_PER_HABITAT) {
+    throw new Error(`expected at most one monster, found ${alive.length}`);
+  }
+  return alive[0] ?? null;
+}
+
+/** The monster in the water / on the snow, or null. */
+const seaMonster = (): Monster | null => livingMonsterIn(WATER_HABITAT);
+const snowMonster = (): Monster | null => livingMonsterIn(LAND_HABITAT);
+
 beforeEach(() => {
   resetMonstersState();
   setMonsterRandomSource(null);
@@ -201,11 +312,73 @@ describe('deep water', () => {
   });
 });
 
+describe('the snow line', () => {
+  it('is nine bands above sea level — the palette\'s snow stop', () => {
+    // The client draws band 9 and above as snow (client/src/terrain/
+    // bandColors.ts). Restated here rather than imported, so this is the test
+    // that says the two are meant to agree.
+    expect(SNOW_LINE_BANDS_ABOVE_SEA).toBe(9);
+    expect(SNOW_LINE_MIN_HEIGHT).toBe(SEA_LEVEL + 9 * BAND_HEIGHT);
+    // Whole bands, for the reason the deep-water line is: the threshold has to
+    // survive a BAND_HEIGHT retune as a statement about terraces.
+    expect(SNOW_LINE_MIN_HEIGHT % BAND_HEIGHT === 0).toBe(true);
+  });
+
+  it('classifies the boundary the same way on both sides', () => {
+    expect(isSnowHeight(SNOW_LINE_MIN_HEIGHT)).toBe(true);
+    expect(isSnowHeight(SNOW_LINE_MIN_HEIGHT + 1)).toBe(true);
+    expect(isSnowHeight(SNOW_LINE_MIN_HEIGHT - 1)).toBe(false);
+    expect(isSnowHeight(SEA_LEVEL)).toBe(false);
+  });
+
+  it('is never water, and deep water is never snow — the two habitats are disjoint', () => {
+    for (let h = MIN_HEIGHT; h <= MAX_HEIGHT; h++) {
+      if (isSnowHeight(h)) expect(isWater(h)).toBe(false);
+      expect(isSnowHeight(h) && isDeepWaterHeight(h)).toBe(false);
+    }
+  });
+
+  it('is at least eighteen cells from any shoreline, by the gradient limit', () => {
+    // MAX_STEP is BAND_HEIGHT/2, so terrain climbs at most half a band per cell:
+    // nine bands up is eighteen cells of slope at the steepest legal grade. That
+    // is what makes the threshold mean "the high country" rather than "a colour
+    // someone picked" — three times the six cells the deep-water line buys.
+    expect(MAX_STEP).toBe(BAND_HEIGHT / 2);
+    expect(SNOW_LINE_MIN_HEIGHT / MAX_STEP).toBe(18);
+  });
+});
+
+describe('habitat regimes', () => {
+  it('measures reach inward, whichever way inward is', () => {
+    // THE one primitive: everything else in habitat.ts is a comparison of two of
+    // these, which is what stops the land regime disagreeing with itself about
+    // which way is up.
+    expect(habitatReachHeightUnits(WATER_HABITAT, SEA_LEVEL - 100)).toBe(100);
+    expect(habitatReachHeightUnits(WATER_HABITAT, SEA_LEVEL + 100)).toBe(-100);
+    expect(habitatReachHeightUnits(LAND_HABITAT, SEA_LEVEL + 100)).toBe(100);
+    expect(habitatReachHeightUnits(LAND_HABITAT, SEA_LEVEL - 100)).toBe(-100);
+  });
+
+  it('gives every kind a habitat, and every habitat its kinds', () => {
+    expect(kindsInHabitat(WATER_HABITAT)).toEqual(['kraken', 'cthulhu']);
+    expect(kindsInHabitat(LAND_HABITAT)).toEqual(['yeti']);
+    // Every kind lands in exactly one habitat's list — no kind is homeless and
+    // none is in two, which is what makes "one slot per habitat" a partition.
+    const listed = HABITAT_REGIMES.flatMap((regime) => [...kindsInHabitat(regime)]);
+    expect([...listed].sort()).toEqual([...MONSTER_KINDS].sort());
+  });
+
+  it('derives the world cap from the per-habitat one', () => {
+    expect(MAX_LIVING_MONSTERS_PER_HABITAT).toBe(1);
+    expect(MAX_LIVING_MONSTERS).toBe(MAX_LIVING_MONSTERS_PER_HABITAT * HABITAT_REGIMES.length);
+  });
+});
+
 describe('lair survey', () => {
   it('counts a whole basin as one region and picks its deepest cell', () => {
     const heightOf = bowl(GREAT_BASIN_RADIUS);
     const harness = boot(heightOf);
-    const survey = surveyLairs(lairView(harness.world));
+    const survey = surveyLairs(WATER_HABITAT, lairView(harness.world));
 
     expect(survey.regions).toHaveLength(1);
     const region = survey.regions[0]!;
@@ -214,7 +387,7 @@ describe('lair survey', () => {
     // The bowl's floor is its centre, and the survey reports how deep it is —
     // which is the number a kind with a trench requirement is admitted on.
     expect({ x: region.x, y: region.y }).toEqual({ x: WORLD_CENTER, y: WORLD_CENTER });
-    expect(region.deepestHeight).toBe(heightOf(WORLD_CENTER, WORLD_CENTER));
+    expect(region.extremeHeight).toBe(heightOf(WORLD_CENTER, WORLD_CENTER));
   });
 
   it('ignores locked territory entirely', () => {
@@ -226,7 +399,7 @@ describe('lair survey', () => {
       Math.floor(x / CHUNK_SIZE) === lockedCX && Math.floor(y / CHUNK_SIZE) === lockedCY;
 
     const harness = boot(heightOf, (cx, cy) => cx === lockedCX && cy === lockedCY);
-    const survey = surveyLairs(lairView(harness.world));
+    const survey = surveyLairs(WATER_HABITAT, lairView(harness.world));
 
     // The basin minus one chunk is still a single connected region (the notch is
     // interior, and the water goes round it).
@@ -237,7 +410,7 @@ describe('lair survey', () => {
 
   it('reports nothing when there is no deep water', () => {
     const harness = boot(bowl(NO_DEEP_WATER_RADIUS));
-    const survey = surveyLairs(lairView(harness.world));
+    const survey = surveyLairs(WATER_HABITAT, lairView(harness.world));
     expect(survey.regions).toHaveLength(0);
     expect(largestRegion(survey)).toBeNull();
   });
@@ -246,11 +419,11 @@ describe('lair survey', () => {
     const harness = boot(bowl(GREAT_BASIN_RADIUS));
     const view = lairView(harness.world);
 
-    const inside = surveyLairs(view, { x: WORLD_CENTER, y: WORLD_CENTER });
+    const inside = surveyLairs(WATER_HABITAT, view, { x: WORLD_CENTER, y: WORLD_CENTER });
     expect(inside.occupiedRegionCells).toBe(largestRegion(inside)!.cells);
 
     // A cell on dry land belongs to no region at all.
-    const outside = surveyLairs(view, { x: 0, y: 0 });
+    const outside = surveyLairs(WATER_HABITAT, view, { x: 0, y: 0 });
     expect(outside.occupiedRegionCells).toBe(0);
     expect(largestRegion(outside)!.cells).toBeGreaterThan(0);
   });
@@ -297,7 +470,7 @@ describe('the arrival gates', () => {
     // the spawn path could add a second monster, three thousand chances is where
     // it shows up.
     tick(harness, 3000);
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS);
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_HABITAT);
     expect(livingMonster()!.id).toBe(id);
   });
 
@@ -308,7 +481,7 @@ describe('the arrival gates', () => {
 
     const monster = livingMonster();
     expect(monster).not.toBeNull();
-    expect(isLairCell(lairView(harness.world), monster!.x, monster!.y)).toBe(true);
+    expect(isLairCell(WATER_HABITAT, lairView(harness.world), monster!.x, monster!.y)).toBe(true);
   });
 });
 
@@ -363,7 +536,7 @@ describe('the summon roll', () => {
     // ±2.4 standard errors of an exponential mean at n = 24 (SE = mean/√n).
     expect(mean).toBeGreaterThan(SUMMON_MEAN_WAIT_SECONDS * 0.5);
     expect(mean).toBeLessThan(SUMMON_MEAN_WAIT_SECONDS * 2);
-  });
+  }, SEEDED_TRIAL_TIMEOUT_MS);
 });
 
 /**
@@ -385,21 +558,92 @@ interface BasinState {
   floorHeight: number;
 }
 
+/**
+ * Ground everywhere neither feature covers: one band above the sea. Dry land,
+ * so it is not water; nine bands under the snow line, so it is not snow either.
+ * A stubbed world's "everywhere else" must belong to NO habitat, or a test about
+ * one feature would silently be a test about a world-sized second one.
+ */
+const NEUTRAL_GROUND_HEIGHT = BAND_HEIGHT;
+
+/** Height inside the basin, or null outside it. */
+function basinHeightAt(state: BasinState, x: number, y: number): number | null {
+  const dx = x - WORLD_CENTER;
+  const dy = y - WORLD_CENTER;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (state.radius <= 0 || distance > state.radius) return null;
+  const toRim = distance / state.radius;
+  return Math.round(state.floorHeight + (DEEP_WATER_MAX_HEIGHT - state.floorHeight) * toRim);
+}
+
 function basinWorld(state: BasinState): LairWorld {
   return {
     worldSize: WORLD_SIZE,
+    heightAt: (x, y) => basinHeightAt(state, x, y) ?? NEUTRAL_GROUND_HEIGHT,
+    isCellUnlocked: () => true,
+  };
+}
+
+/**
+ * A round MASSIF, stubbed — the mirror image of the basin above, and the land
+ * habitat's equivalent of it.
+ *
+ * Highest at its centre, so the survey's summon cell is the summit and not a rim
+ * cell a shrink would strand, falling linearly to exactly the snow line at the
+ * rim. It sits well away from the basin's centre so a world can hold both
+ * without them overlapping (asserted where they are combined).
+ */
+interface MassifState {
+  radius: number;
+  peakHeight: number;
+}
+
+/** Height inside the massif, or null outside it. */
+function massifHeightAt(state: MassifState, x: number, y: number): number | null {
+  const dx = x - MASSIF_CENTER;
+  const dy = y - MASSIF_CENTER;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (state.radius <= 0 || distance > state.radius) return null;
+  const toRim = distance / state.radius;
+  return Math.round(state.peakHeight + (SNOW_LINE_MIN_HEIGHT - state.peakHeight) * toRim);
+}
+
+function massifWorld(state: MassifState): LairWorld {
+  return {
+    worldSize: WORLD_SIZE,
+    heightAt: (x, y) => massifHeightAt(state, x, y) ?? NEUTRAL_GROUND_HEIGHT,
+    isCellUnlocked: () => true,
+  };
+}
+
+/**
+ * A world holding BOTH — one basin and one massif, each with its own dial.
+ *
+ * The two features never overlap (the basin is centred on the map, the massif a
+ * quarter of the way in), so `heightAt` can answer with whichever one covers the
+ * cell and neither is a `Math.max` of the other. This is the only world in the
+ * file whose two habitats are both non-empty, and it is what the per-habitat
+ * slot and cooldown rules are tested against.
+ */
+function alpineStubWorld(sea: BasinState, snow: MassifState): LairWorld {
+  return {
+    worldSize: WORLD_SIZE,
     heightAt(x, y) {
-      const dx = x - WORLD_CENTER;
-      const dy = y - WORLD_CENTER;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      if (state.radius <= 0 || distance > state.radius) return BAND_HEIGHT;
-      const toRim = distance / state.radius;
-      return Math.round(
-        state.floorHeight + (DEEP_WATER_MAX_HEIGHT - state.floorHeight) * toRim,
-      );
+      const summit = massifHeightAt(snow, x, y);
+      if (summit !== null) return summit;
+      return basinHeightAt(sea, x, y) ?? NEUTRAL_GROUND_HEIGHT;
     },
     isCellUnlocked: () => true,
   };
+}
+
+/**
+ * A snowfield the yeti qualifies for: radius 14 → ~613 cells, past his 512-cell
+ * demand, and its summit two bands over the line. The radius is also what keeps
+ * it clear of every basin here — see MASSIF_CENTER.
+ */
+function yetiMassif(): MassifState {
+  return { radius: 14, peakHeight: SNOW_LINE_MIN_HEIGHT + 2 * BAND_HEIGHT };
 }
 
 /** A basin Cthulhu qualifies for and the kraken does not: big, but not a trench. */
@@ -427,7 +671,7 @@ describe('Cthulhu cannot be banished', () => {
 
     // The sea is gone. Not shrunk — GONE: every cell is land, including his.
     basin.radius = 0;
-    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(false);
+    expect(isLairCell(WATER_HABITAT, world, livingMonster()!.x, livingMonster()!.y)).toBe(false);
 
     // Both departure paths, run against the drained world: the per-tick habitat
     // check and the periodic collapse test. Neither may remove him.
@@ -440,7 +684,7 @@ describe('Cthulhu cannot be banished', () => {
     expect(livingMonster()).not.toBeNull();
     expect(livingMonster()!.id).toBe(id);
     // No banishment means no cooldown either — the two are one decision.
-    expect(cooldownRemainingSeconds()).toBe(0);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
   });
 
   it('stays when his basin collapses to a puddle around him', () => {
@@ -455,13 +699,13 @@ describe('Cthulhu cannot be banished', () => {
     // the exact scenario that used to banish him.
     basin.radius = 4;
     expect(Math.PI * basin.radius * basin.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
-    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
+    expect(isLairCell(WATER_HABITAT, world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
 
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
     expect(livingMonster()).not.toBeNull();
-    expect(cooldownRemainingSeconds()).toBe(0);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
   });
 
   it('holds position and heading once stranded, rather than spinning', () => {
@@ -516,7 +760,7 @@ describe('Cthulhu cannot be banished', () => {
     for (let n = 0; n < 100; n++) advanceMonster(world, monster, TICK_DT);
 
     expect(Math.hypot(monster.x - stranded.x, monster.y - stranded.y)).toBeGreaterThan(0);
-    expect(isLairCell(world, monster.x, monster.y)).toBe(true);
+    expect(isLairCell(WATER_HABITAT, world, monster.x, monster.y)).toBe(true);
   });
 });
 
@@ -533,14 +777,14 @@ describe('the kraken can be banished', () => {
     // deep, so the ONLY thing that can banish it is the region test.
     trench.radius = 4;
     expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
-    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
+    expect(isLairCell(WATER_HABITAT, world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
 
     // Survey cadence: the collapse is noticed on the next survey, not instantly.
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
     expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds()).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
   });
 
   it('submerges when the ground is raised out from under it', () => {
@@ -577,7 +821,7 @@ describe('the kraken can be banished', () => {
     expect(isDeepWaterHeight(harness.world.heightAt(cellX, cellY))).toBe(false);
     // The terrain reaction fires inside the sculpt — no tick needed.
     expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds()).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
   });
 
   it('refuses to summon again until the cooldown is served, then summons exactly one', () => {
@@ -601,7 +845,7 @@ describe('the kraken can be banished', () => {
       advanceSummoning(world, TICK_DT);
     }
     expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds()).toBeGreaterThan(0);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBeGreaterThan(0);
 
     for (let n = 0; n < 3 / TICK_DT; n++) advanceSummoning(world, TICK_DT);
     expect(livingMonsterCount()).toBe(1);
@@ -619,8 +863,8 @@ describe('the kinds contest one slot', () => {
     const monster = livingMonster();
     expect(monster).not.toBeNull();
     expect(monster!.kind).toBe('kraken');
-    expect(isLairCell(lairView(harness.world), monster!.x, monster!.y)).toBe(true);
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS);
+    expect(isLairCell(WATER_HABITAT, lairView(harness.world), monster!.x, monster!.y)).toBe(true);
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_HABITAT);
   });
 
   it('gives a big SHALLOW basin to Cthulhu, and never to the kraken', () => {
@@ -704,8 +948,10 @@ describe('persistence', () => {
       );
     }
     const snapshot = saveMonsters();
-    expect(snapshot.monster).toBeNull();
-    expect(snapshot.cooldownSeconds).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(snapshot.monsters).toEqual([]);
+    expect(snapshot.cooldownSeconds.water).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    // The mountain never had anything to do with this and is not written at all.
+    expect(snapshot.cooldownSeconds.land).toBeUndefined();
 
     // Reboot onto the same world. Without the persisted cooldown, the very next
     // tick would roll for a fresh monster — a restart would be a way to skip the
@@ -714,7 +960,7 @@ describe('persistence', () => {
     loadMonsters(JSON.parse(JSON.stringify(snapshot)) as unknown);
     tick(rebooted, 100);
     expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds()).toBeGreaterThan(0);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBeGreaterThan(0);
   });
 
   it('cannot be made to hold two monsters by a restart', () => {
@@ -731,7 +977,7 @@ describe('persistence', () => {
     loadMonsters(snapshot);
     tick(rebooted, 2000);
 
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS);
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_HABITAT);
     expect(livingMonster()!.id).toBe(id);
   });
 
@@ -741,7 +987,14 @@ describe('persistence', () => {
       undefined,
       42,
       {},
-      { version: 999, monster: { id: 1, kind: 'cthulhu', x: 1, y: 1, heading: 0 } },
+      { version: 999, monsters: [{ id: 1, kind: 'cthulhu', x: 1, y: 1, heading: 0 }] },
+      { version: 2, monsters: 'yes', nextId: 2 },
+      { version: 2, monsters: [{ id: 0, kind: 'cthulhu', x: 1, y: 1, heading: 0 }], nextId: 2 },
+      { version: 2, monsters: [{ id: 1, kind: 'dagon', x: 1, y: 1, heading: 0 }], nextId: 2 },
+      { version: 2, monsters: [{ id: 1, kind: 'cthulhu', x: NaN, y: 1, heading: 0 }], nextId: 2 },
+      { version: 2, monsters: ['yes'], nextId: 2 },
+      { version: 2, monsters: [], cooldownSeconds: 'later', nextId: 2 },
+      // The same garbage in the version-1 shape, which is still read (migrated).
       { version: 1, monster: { id: 0, kind: 'cthulhu', x: 1, y: 1, heading: 0 }, nextId: 2 },
       { version: 1, monster: { id: 1, kind: 'dagon', x: 1, y: 1, heading: 0 }, nextId: 2 },
       { version: 1, monster: { id: 1, kind: 'cthulhu', x: NaN, y: 1, heading: 0 }, nextId: 2 },
@@ -751,27 +1004,36 @@ describe('persistence', () => {
     for (const slice of corrupt) {
       resetMonstersState();
       loadMonsters(slice);
-      expect(livingMonster()).toBeNull();
-      // No invented banishment: a bad byte must not suppress arrivals.
-      expect(cooldownRemainingSeconds()).toBe(0);
+      expect(livingMonsters()).toEqual([]);
+      // No invented banishment, in EITHER habitat: a bad byte must not suppress
+      // arrivals.
+      for (const regime of HABITAT_REGIMES) {
+        expect(cooldownRemainingSeconds(regime)).toBe(0);
+      }
     }
   });
 
   it('clamps a nonsense cooldown instead of trusting it', () => {
     for (const cooldownSeconds of [-5, Number.NaN, Number.POSITIVE_INFINITY]) {
       resetMonstersState();
+      loadMonsters({ version: 2, monsters: [], nextId: 3, cooldownSeconds: { water: cooldownSeconds, land: cooldownSeconds } });
+      for (const regime of HABITAT_REGIMES) {
+        expect(cooldownRemainingSeconds(regime)).toBe(0);
+      }
+
+      // ...and in the version-1 shape, where the cooldown was one scalar.
+      resetMonstersState();
       loadMonsters({ version: 1, monster: null, nextId: 3, cooldownSeconds });
-      expect(cooldownRemainingSeconds()).toBe(0);
+      expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
     }
   });
 
   it('never reuses an id after a restore, even from a garbage counter', () => {
     resetMonstersState();
     loadMonsters({
-      version: 1,
+      version: 2,
       nextId: 'nonsense',
-      cooldownSeconds: 0,
-      monster: { id: 9, kind: 'cthulhu', x: WORLD_CENTER, y: WORLD_CENTER, heading: 0 },
+      monsters: [{ id: 9, kind: 'cthulhu', x: WORLD_CENTER, y: WORLD_CENTER, heading: 0 }],
     });
     expect(livingMonster()!.id).toBe(9);
 
@@ -781,15 +1043,14 @@ describe('persistence', () => {
     setMonsterRandomSource(ALWAYS);
     const harness = boot(bowl(TRENCH_RADIUS));
     loadMonsters({
-      version: 1,
+      version: 2,
       nextId: 'nonsense',
-      cooldownSeconds: 0,
-      monster: { id: 9, kind: 'kraken', x: 0, y: 0, heading: 0 },
+      monsters: [{ id: 9, kind: 'kraken', x: 0, y: 0, heading: 0 }],
     });
     // (0, 0) is dry land in the bowl, so the first tick's habitat check removes
     // it — which is also the "restored onto a changed world" path.
     tick(harness, 1);
-    expect(cooldownRemainingSeconds()).toBeGreaterThan(0);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBeGreaterThan(0);
 
     tick(harness, KRAKEN_RESPAWN_COOLDOWN_SECONDS / TICK_DT + 2);
     expect(livingMonster()).not.toBeNull();
@@ -802,17 +1063,59 @@ describe('persistence', () => {
     setMonsterRandomSource(NEVER);
     const harness = boot();
     loadMonsters({
-      version: 1,
+      version: 2,
       nextId: 20,
-      cooldownSeconds: 0,
-      monster: { id: 9, kind: 'cthulhu', x: 0, y: 0, heading: 0 },
+      monsters: [{ id: 9, kind: 'cthulhu', x: 0, y: 0, heading: 0 }],
     });
     tick(harness, 100);
 
     expect(livingMonster()).not.toBeNull();
     expect(livingMonster()!.id).toBe(9);
-    expect(isLairCell(lairView(harness.world), 0, 0)).toBe(false);
-    expect(cooldownRemainingSeconds()).toBe(0);
+    expect(isLairCell(WATER_HABITAT, lairView(harness.world), 0, 0)).toBe(false);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+  });
+
+  it('migrates a version-1 slice, and its cooldown is the WATER habitat\'s', () => {
+    // Version 1 predates the land habitat entirely — every kind it could name
+    // lives in the sea — so its one world-wide cooldown is a water cooldown by
+    // construction rather than by guess, and the mountain starts free.
+    resetMonstersState();
+    loadMonsters({
+      version: 1,
+      nextId: 12,
+      cooldownSeconds: 42,
+      monster: { id: 11, kind: 'kraken', x: 3.5, y: 4.5, heading: 1 },
+    });
+
+    expect(seaMonster()).toMatchObject({ id: 11, kind: 'kraken', x: 3.5, y: 4.5 });
+    expect(snowMonster()).toBeNull();
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(42);
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(0);
+  });
+
+  it('round-trips one monster per habitat, and drops a smuggled duplicate', () => {
+    resetMonstersState();
+    loadMonsters({
+      version: 2,
+      nextId: 30,
+      cooldownSeconds: { land: 7 },
+      monsters: [
+        { id: 21, kind: 'cthulhu', x: 1.5, y: 2.5, heading: 0 },
+        { id: 22, kind: 'yeti', x: 3.5, y: 4.5, heading: 1 },
+        // A hand-edited second sea monster. The slot is the gate: it is dropped.
+        { id: 23, kind: 'kraken', x: 5.5, y: 6.5, heading: 2 },
+      ],
+    });
+
+    expect(livingMonsterCount()).toBe(2);
+    expect(seaMonster()!.id).toBe(21);
+    expect(snowMonster()!.id).toBe(22);
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(7);
+
+    // ...and the save side agrees, per habitat, in the fixed regime order.
+    const saved = saveMonsters();
+    expect(saved.monsters.map((entry) => entry.kind)).toEqual(['cthulhu', 'yeti']);
+    expect(saved.cooldownSeconds).toEqual({ land: 7 });
   });
 });
 
@@ -1041,7 +1344,7 @@ describe('lurking', () => {
       tick(harness, 1);
       const monster = livingMonster();
       expect(monster).not.toBeNull();
-      expect(isLairCell(view, monster!.x, monster!.y)).toBe(true);
+      expect(isLairCell(WATER_HABITAT, view, monster!.x, monster!.y)).toBe(true);
     }
   });
 
@@ -1140,5 +1443,311 @@ describe('lurking', () => {
     expect(CTHULHU_FOOTPRINT_CELLS / 2).toBeGreaterThan(
       CTHULHU_LURK_SPEED_CELLS_PER_SECOND * TICK_DT,
     );
+  });
+});
+
+describe('the yeti in the high Alps', () => {
+  /** Counts snow cells directly, as an independent check on the flood fill. */
+  function countSnowCells(heightOf: (x: number, y: number) => number): number {
+    let count = 0;
+    for (let y = 0; y < WORLD_SIZE; y++) {
+      for (let x = 0; x < WORLD_SIZE; x++) {
+        if (isSnowHeight(heightOf(x, y))) count++;
+      }
+    }
+    return count;
+  }
+
+  it('leaves every sea-only world in this file alone — none of them holds snow', () => {
+    // This is what makes the `livingMonster()` helper's "at most one" assertion
+    // safe in every other block, and it is worth pinning rather than assuming:
+    // the bowl worlds climb to band 5 at the map corners, four bands short.
+    for (const radius of [
+      GREAT_BASIN_RADIUS,
+      TRENCH_RADIUS,
+      SMALL_POOL_RADIUS,
+      NO_DEEP_WATER_RADIUS,
+    ]) {
+      expect(countSnowCells(bowl(radius))).toBe(0);
+    }
+    // ...and the stubbed basins are dry land (one band up) everywhere else.
+    expect(isSnowHeight(NEUTRAL_GROUND_HEIGHT)).toBe(false);
+  });
+
+  it('surveys a massif exactly as it surveys a basin, and picks the SUMMIT', () => {
+    const snow = yetiMassif();
+    const world = massifWorld(snow);
+    const survey = surveyLairs(LAND_HABITAT, world);
+
+    expect(survey.regions).toHaveLength(1);
+    const region = survey.regions[0]!;
+    expect(region.cells).toBeGreaterThan(YETI_MIN_LAIR_SNOW_CELLS);
+    // The extreme cell of a land region is its HIGHEST, where a basin's is its
+    // deepest — the one behaviour the generalisation had to get right.
+    expect({ x: region.x, y: region.y }).toEqual({ x: MASSIF_CENTER, y: MASSIF_CENTER });
+    expect(region.extremeHeight).toBe(snow.peakHeight);
+    // The same world holds no water habitat at all.
+    expect(surveyLairs(WATER_HABITAT, world).regions).toHaveLength(0);
+  });
+
+  it('arrives on a snowfield, at its summit', () => {
+    setMonsterRandomSource(ALWAYS);
+    const world = massifWorld(yetiMassif());
+    advanceSummoning(world, TICK_DT);
+
+    const yeti = snowMonster();
+    expect(yeti).not.toBeNull();
+    expect(yeti!.kind).toBe('yeti');
+    expect(isLairCell(LAND_HABITAT, world, yeti!.x, yeti!.y)).toBe(true);
+    // Cell centre, at the summit the survey named.
+    expect(yeti!.x).toBe(MASSIF_CENTER + 0.5);
+    expect(seaMonster()).toBeNull();
+  });
+
+  it('never arrives on a snowfield too small to be a lair', () => {
+    setMonsterRandomSource(ALWAYS);
+    // Deep enough into the snow, far too little of it: height alone is not a
+    // lair, which is the half of the rule the area threshold carries.
+    const world = massifWorld({ radius: 8, peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT });
+    expect(Math.PI * 8 * 8).toBeLessThan(YETI_MIN_LAIR_SNOW_CELLS);
+
+    for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonsters()).toEqual([]);
+  });
+
+  it('never arrives on high ground that is below the snow line', () => {
+    setMonsterRandomSource(ALWAYS);
+    // A whole map of band-8 plateau: enormous, high, and one band short.
+    const world: LairWorld = {
+      worldSize: WORLD_SIZE,
+      heightAt: () => SNOW_LINE_MIN_HEIGHT - BAND_HEIGHT,
+      isCellUnlocked: () => true,
+    };
+    for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonsters()).toEqual([]);
+  });
+
+  it('holds the mountain and the sea AT ONCE — the slots are per habitat', () => {
+    // THE decision this feature turns on. A world with both a basin and a
+    // snowfield gets both monsters; neither blocks the other, because a player
+    // standing on a peak and a player looking at the sea are looking at
+    // different places.
+    setMonsterRandomSource(ALWAYS);
+    const heightOf = alpine(GREAT_BASIN_RADIUS);
+    expect(countSnowCells(heightOf)).toBeGreaterThan(YETI_MIN_LAIR_SNOW_CELLS);
+    expect(countDeepCells(heightOf)).toBeGreaterThan(MIN_LAIR_DEEP_CELLS);
+
+    const harness = boot(heightOf);
+    tick(harness, 1);
+
+    expect(seaMonster()!.kind).toBe('cthulhu');
+    expect(snowMonster()!.kind).toBe('yeti');
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS);
+
+    // Five simulated minutes of a roll that fires on EVERY tick: if either slot
+    // could take a second occupant, three thousand chances is where it shows up.
+    const ids = livingMonsters().map((monster) => monster.id);
+    tick(harness, 3000);
+    expect(livingMonsters().map((monster) => monster.id)).toEqual(ids);
+  });
+
+  it('broadcasts both, each under its own kind, in a stable order', () => {
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(alpine(GREAT_BASIN_RADIUS));
+    tick(harness, 1);
+    harness.sink.clear();
+    tick(harness, BROADCAST_TICK_INTERVAL);
+
+    const messages = harness.sink
+      .ofType(`${MONSTERS_PLUGIN_NAME}:${MONSTERS_STATE_MESSAGE}`)
+      .map((message) => (message.payload as { monsters: MonsterState[] }).monsters);
+    expect(messages).toHaveLength(1);
+    // Water first, then land: HABITAT_REGIMES order, so the payload does not
+    // wobble between ticks.
+    expect(messages[0]!.map((entry) => entry.kind)).toEqual(['cthulhu', 'yeti']);
+    expect(monsterStates().map((entry) => entry.kind)).toEqual(['cthulhu', 'yeti']);
+  });
+
+  it('leaves when his snowfield collapses, and serves the full cooldown', () => {
+    const snow = yetiMassif();
+    const world = massifWorld(snow);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    expect(snowMonster()!.kind).toBe('yeti');
+
+    // Shrink it below the collapse threshold while his own cell stays snow, so
+    // the ONLY thing that can drive him off is the region test.
+    snow.radius = 4;
+    expect(Math.PI * snow.radius * snow.radius).toBeLessThan(YETI_LAIR_COLLAPSE_SNOW_CELLS);
+    expect(isLairCell(LAND_HABITAT, world, snowMonster()!.x, snowMonster()!.y)).toBe(true);
+
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(snowMonster()).toBeNull();
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(YETI_RESPAWN_COOLDOWN_SECONDS);
+  });
+
+  it('leaves when a player levels the peak out from under him', () => {
+    // The owner's rule, through the REAL intent pipeline: the hard stamp's
+    // level-fill takes a whole band off the plateau per stroke, and the third
+    // one puts his cell below the snow line.
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(alpine(GREAT_BASIN_RADIUS));
+    tick(harness, 1);
+    expect(snowMonster()!.kind).toBe('yeti');
+    // Stop the roll: this test is about the departure.
+    setMonsterRandomSource(NEVER);
+
+    const cellX = Math.floor(snowMonster()!.x);
+    const cellY = Math.floor(snowMonster()!.y);
+
+    // No ticks in between, so he cannot walk away — this is specifically the
+    // "the world changed under him" case. He does not protect his ground, so
+    // the intents are accepted.
+    let strokes = 0;
+    for (let n = 0; n < 40 && isSnowHeight(harness.world.heightAt(cellX, cellY)); n++) {
+      handleSculptIntent({ world: harness.world, interceptors: harness.host }, PLAYER, {
+        type: 'sculpt',
+        x: cellX,
+        y: cellY,
+        radius: MAX_BRUSH_RADIUS,
+        dir: -1,
+        tool: 'stamp',
+        profile: 'hard',
+      });
+      strokes++;
+    }
+
+    expect(isSnowHeight(harness.world.heightAt(cellX, cellY))).toBe(false);
+    // Three bands to take off a summit two bands over the line, one per stroke.
+    expect(strokes).toBe(3);
+    // The terrain reaction fires inside the sculpt — no tick needed.
+    expect(snowMonster()).toBeNull();
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(YETI_RESPAWN_COOLDOWN_SECONDS);
+    // ...and the sea is untouched by any of it.
+    expect(seaMonster()).not.toBeNull();
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+  });
+
+  it('cools down without suppressing the sea, and vice versa', () => {
+    // The other half of the per-habitat decision: banishing one must not keep
+    // the other's habitat empty. A stubbed world with both features, a yeti and
+    // a kraken in it, and the mountain taken away.
+    const sea = krakenTrench();
+    const snow = yetiMassif();
+    const world = alpineStubWorld(sea, snow);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    expect(seaMonster()!.kind).toBe('kraken');
+    expect(snowMonster()!.kind).toBe('yeti');
+    const krakenId = seaMonster()!.id;
+
+    snow.radius = 4;
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(snowMonster()).toBeNull();
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBeGreaterThan(0);
+
+    // The kraken is exactly where it was, on no cooldown at all.
+    expect(seaMonster()!.id).toBe(krakenId);
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+
+    // Now drain the sea instead. The mountain is back and still cooling: each
+    // habitat serves its own absence and neither reads the other's.
+    snow.radius = yetiMassif().radius;
+    sea.radius = 4;
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(seaMonster()).toBeNull();
+    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBeLessThan(YETI_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBeGreaterThan(0);
+    expect(snowMonster()).toBeNull();
+  });
+
+  it('does not protect the ground he stands on — you may build under him', () => {
+    // He is banishable BY levelling, so a yeti that vetoed raises would be a
+    // monster whose only counter it had half-vetoed. Raising is allowed too:
+    // it makes his mountain taller, which is nothing he objects to.
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(alpine(GREAT_BASIN_RADIUS));
+    tick(harness, 1);
+    const yeti = snowMonster()!;
+    setMonsterRandomSource(NEVER);
+
+    expect(profileOf('yeti').protectsGround).toBe(false);
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      {
+        type: 'sculpt',
+        x: Math.floor(yeti.x),
+        y: Math.floor(yeti.y),
+        radius: MAX_BRUSH_RADIUS,
+        dir: 1,
+        tool: 'stamp',
+        profile: 'hard',
+      },
+    );
+    expect(outcome.applied).toBe(true);
+    expect(snowMonster()).not.toBeNull();
+  });
+
+  it('never leaves the snow, over a long run', () => {
+    const harness = boot(alpine(GREAT_BASIN_RADIUS));
+    setMonsterRandomSource(ALWAYS);
+    tick(harness, 1);
+    setMonsterRandomSource(seededRandom(4242));
+
+    const view = lairView(harness.world);
+    // Ten simulated minutes of ambling, on a plateau 28 cells across.
+    for (let n = 0; n < 6000; n++) {
+      tick(harness, 1);
+      const yeti = snowMonster();
+      expect(yeti).not.toBeNull();
+      expect(isLairCell(LAND_HABITAT, view, yeti!.x, yeti!.y)).toBe(true);
+    }
+  });
+
+  it('ambles between the two sea kinds\' speeds, and far under a grazer', () => {
+    // The comparison that matters is the last one: the wildlife plugin's grazer
+    // cruises at 1.6 cells/s on the same hillsides (plugins/wildlife/server/
+    // species.ts). Cross-referenced, not imported — plugins must not depend on
+    // each other for a number. A monster that moved like livestock would undo
+    // every silhouette decision in the model.
+    const WILDLIFE_GRAZER_CRUISE_CELLS_PER_SECOND = 1.6;
+    expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeGreaterThan(
+      CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
+    );
+    expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeLessThan(KRAKEN_LURK_SPEED_CELLS_PER_SECOND);
+    expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeLessThan(
+      WILDLIFE_GRAZER_CRUISE_CELLS_PER_SECOND / 3,
+    );
+  });
+
+  it('probes at least half its own body ahead', () => {
+    // Same guarantee the sea kinds get: the look-ahead is what keeps a 5-cell
+    // body out of cliffs its centre point would clear.
+    expect(YETI_FOOTPRINT_CELLS / 2).toBeGreaterThan(
+      YETI_AMBLE_SPEED_CELLS_PER_SECOND * TICK_DT,
+    );
+  });
+
+  it('halts often and briefly, where Cthulhu broods rarely and at length', () => {
+    // Similar SHARE of the time stationary, decomposed the opposite way. Share
+    // is not what a player reads; beat length is.
+    const yeti = profileOf('yeti');
+    const cthulhu = profileOf('cthulhu');
+    const shareOf = (profile: typeof yeti): number =>
+      profile.idleOnsetPerSecond / (profile.idleOnsetPerSecond + profile.idleEndPerSecond);
+    const beatOf = (profile: typeof yeti): number => 1 / profile.idleEndPerSecond;
+
+    expect(Math.abs(shareOf(yeti) - shareOf(cthulhu))).toBeLessThan(0.1);
+    expect(beatOf(yeti)).toBeLessThan(beatOf(cthulhu) / 2);
   });
 });

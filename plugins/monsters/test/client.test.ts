@@ -82,6 +82,7 @@ import {
   KRAKEN_MANTLE_RADIUS,
   KRAKEN_MANTLE_TOP,
   KRAKEN_MANTLE_WRINKLE_DEPTH,
+  KRAKEN_SHADE_VARIATION,
   KRAKEN_TENTACLE_COUNT,
   KRAKEN_TENTACLE_CREST_HEIGHT,
   KRAKEN_TENTACLE_TIP_HEIGHT,
@@ -92,11 +93,55 @@ import {
 } from '../client/kraken-anatomy.ts';
 import {
   SEA_SURFACE_WORLD_Y,
+  UNKNOWN_TERRAIN_WORLD_Y,
   lurkDepthOf,
   monsterOriginWorldY,
+  monsterOriginY,
+  placementRuleOf,
   submergedFraction,
+  walkerGroundWorldY,
 } from '../client/placement.ts';
-import { CTHULHU_FOOTPRINT_CELLS, KRAKEN_FOOTPRINT_CELLS } from '../server/kinds.ts';
+import {
+  YETI_AMBLE_HZ,
+  YETI_AMBLE_SPEED_CELLS_PER_SECOND as YETI_MODEL_AMBLE_SPEED,
+  YETI_ARM_HAND_DROP,
+  YETI_ARM_HAND_FLARE,
+  YETI_ARM_HAND_FORWARD,
+  YETI_ARM_SWING_RADIANS,
+  YETI_BOB_CELLS,
+  YETI_FOOT_CENTER_HEIGHT,
+  YETI_FOOT_GROUND_HALF_EXTENT_CELLS,
+  YETI_FOOT_RISE,
+  YETI_FOOT_WIDTH,
+  YETI_FUR_WRINKLE_DEPTH,
+  YETI_HAND_HEIGHT,
+  YETI_HAND_RADIUS,
+  YETI_HAND_REACH,
+  YETI_HEAD_TOP,
+  YETI_HIP_HEIGHT,
+  YETI_LEAN_RADIANS,
+  YETI_LEG_LENGTH,
+  YETI_LEG_SWING_RADIANS,
+  YETI_RUFF_REACH,
+  YETI_RUFF_TUFT_COUNT,
+  YETI_RUFF_TUFT_TIP_RADIUS,
+  YETI_SHADE_VARIATION,
+  YETI_SHOULDER_HALF_SPAN,
+  YETI_SHOULDER_JOINT_HALF_SPAN,
+  YETI_SHOULDER_JOINT_HEIGHT,
+  YETI_SHOULDER_WIDTH,
+  YETI_STANCE_HALF_WIDTH,
+  YETI_STRIDE_CELLS,
+  YETI_TORSO_WIDTH,
+  YETI_TOTAL_HEIGHT,
+  YETI_WIDTH_CELLS,
+} from '../client/yeti-anatomy.ts';
+import {
+  CTHULHU_FOOTPRINT_CELLS,
+  KRAKEN_FOOTPRINT_CELLS,
+  YETI_AMBLE_SPEED_CELLS_PER_SECOND,
+  YETI_FOOTPRINT_CELLS,
+} from '../server/kinds.ts';
 
 function monster(id: number, overrides: Partial<MonsterState> = {}): MonsterState {
   return { id, kind: 'cthulhu', x: 0, y: 0, heading: 0, ...overrides };
@@ -487,7 +532,203 @@ describe('the kraken silhouette', () => {
   });
 });
 
+describe('the yeti is placed on the ground, not in the water', () => {
+  /** A terrain sampler over a hand-written height field, in world Y. */
+  function sampler(heights: Record<string, number>): (x: number, y: number) => number | null {
+    return (x, y) => heights[`${x},${y}`] ?? null;
+  }
+
+  it('is a walker, and the two sea kinds are swimmers', () => {
+    expect(placementRuleOf('yeti').placement).toBe('walker');
+    expect(placementRuleOf('cthulhu').placement).toBe('swimmer');
+    expect(placementRuleOf('kraken').placement).toBe('swimmer');
+  });
+
+  it('has no lurking depth to ask for', () => {
+    // A caller asking a mountain animal how deep it lurks has a bug, and a
+    // plausible answer (zero, or Cthulhu's) would hide it.
+    expect(() => lurkDepthOf('yeti')).toThrow();
+  });
+
+  it('stands ON the terrain — the origin IS the ground height', () => {
+    const ground = sampler({ '10,10': 9, '9,9': 9, '9,11': 9, '11,9': 9, '11,11': 9 });
+    expect(monsterOriginY('yeti', ground, 10.5, 10.5)).toBe(9);
+  });
+
+  it('stands on the HIGHEST band its feet overlap, not the one under its centre', () => {
+    // The clipping bug the wildlife plugin already reported: a walker whose
+    // centre is on a low band but whose foot overhangs a higher one stands at
+    // the low height and its body intersects the riser face.
+    const straddling = sampler({ '10,10': 9, '11,11': 12, '9,9': 9, '9,11': 9, '11,9': 9 });
+    expect(monsterOriginY('yeti', straddling, 10.5, 10.5)).toBe(12);
+    expect(walkerGroundWorldY(straddling, 10.5, 10.5, YETI_FOOT_GROUND_HALF_EXTENT_CELLS)).toBe(12);
+  });
+
+  it('falls back to the DRAWN ground when its chunk has not arrived', () => {
+    // The opposite answer from the swimmers', and both are right: band 0 is what
+    // the mesh draws for unknown cells, so a walker standing there matches what
+    // the player sees — where a swimmer clamped against it would be beached at
+    // full height on the sea surface.
+    expect(monsterOriginY('yeti', () => null, 10.5, 10.5)).toBe(UNKNOWN_TERRAIN_WORLD_Y);
+    expect(monsterOriginY('cthulhu', () => null, 10.5, 10.5)).toBeLessThan(
+      UNKNOWN_TERRAIN_WORLD_Y,
+    );
+  });
+
+  it('routes the swimmers through the same entry point, unchanged', () => {
+    const seabed = sampler({ '10,10': -20 });
+    expect(monsterOriginY('kraken', seabed, 10.5, 10.5)).toBe(
+      monsterOriginWorldY(-20, lurkDepthOf('kraken')),
+    );
+  });
+
+  it('samples the FEET, which are narrower than the body', () => {
+    // A walker stands on what it steps on. Sampling the shoulders would have him
+    // ride up onto every band his elbow overhangs.
+    expect(YETI_FOOT_GROUND_HALF_EXTENT_CELLS).toBeGreaterThanOrEqual(
+      YETI_STANCE_HALF_WIDTH + YETI_FOOT_WIDTH / 2,
+    );
+    expect(YETI_FOOT_GROUND_HALF_EXTENT_CELLS).toBeLessThan(YETI_WIDTH_CELLS / 2);
+  });
+
+  it('puts the sole exactly on the origin plane', () => {
+    // The walker's equivalent of the swimmers' waterline bite: the client places
+    // the origin at the terrain height, so the bottom of the foot has to BE the
+    // origin's height, or he hovers.
+    expect(YETI_FOOT_CENTER_HEIGHT - YETI_FOOT_RISE / 2).toBe(0);
+  });
+});
+
+describe('the yeti silhouette', () => {
+  const halfFootprint = YETI_WIDTH_CELLS / 2;
+
+  it('agrees with the server about how wide he is', () => {
+    // Same arrangement as the other two kinds': the server steers by its own
+    // copy of this number, the client half must not be imported by the server,
+    // so the two are pinned to each other here.
+    expect(YETI_WIDTH_CELLS).toBe(YETI_FOOTPRINT_CELLS);
+    // ...and he is NARROWER than the sea horrors, on purpose: he is an animal,
+    // and his minimum snowfield is derived from this number.
+    expect(YETI_FOOTPRINT_CELLS).toBeLessThan(CTHULHU_FOOTPRINT_CELLS);
+    expect(YETI_FOOTPRINT_CELLS).toBeLessThan(KRAKEN_FOOTPRINT_CELLS);
+  });
+
+  it('is the smallest of the three, and still taller than he is wide', () => {
+    expect(YETI_TOTAL_HEIGHT).toBeLessThan(KRAKEN_TOTAL_HEIGHT);
+    expect(YETI_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
+    expect(YETI_TOTAL_HEIGHT).toBeGreaterThan(YETI_WIDTH_CELLS);
+    // The crown of the head is the highest point, which is what the total is.
+    expect(YETI_TOTAL_HEIGHT).toBe(YETI_HEAD_TOP);
+  });
+
+  it('hangs its hands below its hips — the one proportion that says APE', () => {
+    expect(YETI_HAND_HEIGHT).toBeLessThan(YETI_HIP_HEIGHT);
+  });
+
+  it('keeps the shoulders and the ruff inside the footprint', () => {
+    expect(YETI_SHOULDER_HALF_SPAN + YETI_SHOULDER_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
+    expect(YETI_RUFF_REACH + YETI_RUFF_TUFT_TIP_RADIUS).toBeLessThanOrEqual(halfFootprint);
+    expect(YETI_TORSO_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
+    // Odd, so a tuft lies on the centre line and the collar is symmetric about
+    // the way he faces. (Cthulhu's face tentacles are odd for the same reason.)
+    expect(YETI_RUFF_TUFT_COUNT % 2).toBe(1);
+  });
+
+  it('keeps a hand inside it — the binding constraint, standing still', () => {
+    expect(YETI_HAND_REACH + YETI_HAND_RADIUS).toBeLessThanOrEqual(halfFootprint);
+    // ...and it really is the widest thing on him.
+    expect(YETI_HAND_REACH + YETI_HAND_RADIUS).toBeGreaterThan(
+      YETI_SHOULDER_HALF_SPAN + YETI_SHOULDER_WIDTH / 2,
+    );
+  });
+
+  it('keeps a hand inside it while the gait is running, too', () => {
+    // Written the way the builder computes it: the arm swings about its shoulder
+    // joint in the fore-aft plane, then the LEAN rolls the whole upper body
+    // about the rig's origin. Both are taken at their peaks at once, which the
+    // animation never actually does — the lean is a cosine and the swing a sine
+    // of the same wave, so they are a quarter cycle apart — making this a strict
+    // upper bound on a measured worst case of 2.15 cells.
+    const swung = {
+      x:
+        YETI_ARM_HAND_DROP * Math.sin(YETI_ARM_SWING_RADIANS) +
+        YETI_ARM_HAND_FORWARD * Math.cos(YETI_ARM_SWING_RADIANS),
+      y:
+        YETI_SHOULDER_JOINT_HEIGHT -
+        (YETI_ARM_HAND_DROP * Math.cos(YETI_ARM_SWING_RADIANS) -
+          YETI_ARM_HAND_FORWARD * Math.sin(YETI_ARM_SWING_RADIANS)),
+      z: YETI_SHOULDER_JOINT_HALF_SPAN + YETI_ARM_HAND_FLARE,
+    };
+    // The lean can only push the outboard hand further out by |y|·sin(lean).
+    const leaned =
+      swung.z * Math.cos(YETI_LEAN_RADIANS) + swung.y * Math.sin(YETI_LEAN_RADIANS);
+    const reach = Math.hypot(swung.x, leaned) + YETI_HAND_RADIUS;
+
+    expect(reach).toBeLessThanOrEqual(halfFootprint);
+  });
+
+  it('wears fur rather than skin: a deeper carve and the strongest mottle', () => {
+    // A white mass in sunlight has no contrast of its own, which is why he needs
+    // the largest shade variation of the three, and fur is a surface that is
+    // broken everywhere, which is why the carve is the deepest.
+    expect(YETI_FUR_WRINKLE_DEPTH).toBeGreaterThan(KRAKEN_MANTLE_WRINKLE_DEPTH);
+    expect(YETI_FUR_WRINKLE_DEPTH).toBeGreaterThan(CTHULHU_BODY_WRINKLE_DEPTH);
+    expect(YETI_SHADE_VARIATION).toBeGreaterThan(KRAKEN_SHADE_VARIATION);
+  });
+});
+
+describe('the yeti gait', () => {
+  it('derives its rate from the speed the server actually moves him at', () => {
+    // The skating-feet bug is a walk cycle whose rate has nothing to do with how
+    // fast the thing travels. The client half restates the server's speed rather
+    // than importing it (the bundle must not pull the server in); this is the
+    // test that says the two are meant to be the same number.
+    expect(YETI_MODEL_AMBLE_SPEED).toBe(YETI_AMBLE_SPEED_CELLS_PER_SECOND);
+    expect(YETI_AMBLE_HZ * YETI_STRIDE_CELLS).toBeCloseTo(YETI_AMBLE_SPEED_CELLS_PER_SECOND, 10);
+  });
+
+  it('takes a short step, and derives the swing angle from it', () => {
+    // A heavy short-legged animal picking its way over snow strides well under
+    // half its leg length.
+    expect(YETI_STRIDE_CELLS / 2).toBeLessThan(YETI_LEG_LENGTH / 2);
+    expect(Math.sin(YETI_LEG_SWING_RADIANS) * YETI_LEG_LENGTH).toBeCloseTo(
+      YETI_STRIDE_CELLS / 4,
+      10,
+    );
+  });
+
+  it('reads as a weight shift rather than a march when he is standing still', () => {
+    // The wire carries no gait flag — deliberately (protocol.ts) — so the cycle
+    // runs whatever he is doing. Under 15° is the amplitude that survives that;
+    // a convincing WALK (25–30°, as a human's) would make a stationary yeti look
+    // like he was marching on the spot.
+    expect(YETI_LEG_SWING_RADIANS).toBeLessThan(0.26);
+    expect(YETI_ARM_SWING_RADIANS).toBeLessThan(YETI_LEG_SWING_RADIANS);
+  });
+
+  it('never puts a foot through the ground it was placed on', () => {
+    // The bob is written as (1 - cos)/2 — zero at its lowest, never negative —
+    // and the LEAN is applied to the upper body only, so nothing that can dip
+    // below the origin plane is ever rotated. Both are bounds the placement
+    // maths depends on; the amplitudes are pinned here so a retune cannot
+    // quietly make either of them two-sided.
+    expect(YETI_BOB_CELLS).toBeGreaterThan(0);
+    expect(YETI_BOB_CELLS).toBeLessThan(YETI_FOOT_RISE);
+    expect(YETI_LEAN_RADIANS).toBeGreaterThan(0);
+  });
+});
+
 describe('dread: the mist bank', () => {
+  it('belongs to the SEA kinds only', () => {
+    // The client attaches it on exactly this test (client/index.ts), and the
+    // reason is geometric rather than aesthetic: every sheet in the bank is
+    // authored above SEA_SURFACE_WORLD_Y, so on a mountain animal it would be a
+    // mist bank at sea level under a peak nine bands up.
+    expect(placementRuleOf('cthulhu').placement).toBe('swimmer');
+    expect(placementRuleOf('kraken').placement).toBe('swimmer');
+    expect(placementRuleOf('yeti').placement).not.toBe('swimmer');
+  });
+
   const topLayer = MIST_LAYERS[MIST_LAYERS.length - 1]!;
 
   it('never drifts over the eyes', () => {
