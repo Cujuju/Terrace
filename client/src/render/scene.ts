@@ -6,6 +6,7 @@
 
 import {
   ACESFilmicToneMapping,
+  AmbientLight,
   Color,
   DirectionalLight,
   Group,
@@ -55,9 +56,21 @@ const GROUND_BOUNCE_COLOR = 0x9a948a;
  * models the terraces — its off-axis direction does that work, not raw
  * intensity — so no face of a step is ever far from daylight.
  */
-const HEMISPHERE_LIGHT_INTENSITY = 2.1;
+const HEMISPHERE_LIGHT_INTENSITY = 1.5;
 /** Key light. Intensity is tuned against ACES tone mapping, below. */
-const SUN_LIGHT_INTENSITY = 1.5;
+const SUN_LIGHT_INTENSITY = 1.2;
+
+/**
+ * The FLOOR under every face, from an AmbientLight — the one lamp with no
+ * direction at all. The sun is directional and the hemisphere is vertical-
+ * orientation-dependent, so with only those two a face turned away from both
+ * is dark from SOME camera angle whatever their intensities are — which is
+ * exactly the report this closes (owner, 2026-08-14, third round: "it still
+ * doesn't fix the darker view when looking at the side of terrain"). 0.9
+ * guarantees roughly a third of full daylight to the worst-oriented face;
+ * modeling contrast on top comes from the (now gentler) sun and hemisphere.
+ */
+const AMBIENT_FLOOR_INTENSITY = 0.9;
 /**
  * Sun direction as a unit-ish vector. Deliberately off-axis on all three axes
  * so that the four sides of a terrace step each catch a different amount of
@@ -149,6 +162,9 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     HEMISPHERE_LIGHT_INTENSITY,
   );
   scene.add(hemisphere);
+
+  // The orientation-independent floor — see AMBIENT_FLOOR_INTENSITY.
+  scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
 
   const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
   sun.position.copy(SUN_DIRECTION).normalize().multiplyScalar(SUN_DISTANCE_CELLS);

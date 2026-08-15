@@ -31,8 +31,14 @@ const WATER_OPACITY = 0.62;
  * broad soft sheen — the water still reads wet, but no patch of it reads as
  * the sun. Tuned together with the scene's key/fill rebalance in scene.ts.
  */
-const WATER_ROUGHNESS = 0.6;
-const WATER_METALNESS = 0.1;
+const WATER_ROUGHNESS = 0.9;
+/**
+ * Zero, with the roughness above near-full (second pass, 2026-08-14: at 0.6 /
+ * 0.1 the lowered sun still washed a broad white sheen across the whole
+ * sun-side sea — the owner's "white aura"). The water reads as water from its
+ * colour, translucency and the seabed under it, not from reflecting the sun.
+ */
+const WATER_METALNESS = 0;
 
 /**
  * Cells of open ocean drawn beyond the world's edge. Purely cosmetic: it stops
