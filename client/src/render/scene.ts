@@ -64,12 +64,20 @@ const SUN_LIGHT_INTENSITY = 1.5;
  * light — an axis-aligned sun makes opposite faces identical and the steps
  * stop reading as steps.
  */
-const SUN_DIRECTION = new Vector3(0.55, 0.7, 0.45);
+// LOWERED 2026-08-14 (owner: the light "feels like it's overhead and still
+// harsh so the sides of terrain appears dark"): y dropped 0.7 → 0.45 takes
+// the sun from ~45° to ~27° elevation, so terrace WALLS now catch real sun
+// while treads keep enough of it to stay the brightest surfaces. Still
+// off-axis on all three axes for the reasons above.
+const SUN_DIRECTION = new Vector3(0.7, 0.45, 0.55);
 /** Distance to place the (directional) sun at; only its direction matters. */
 const SUN_DISTANCE_CELLS = 200;
 
 /** Pixel-ratio cap: beyond 2x the fill cost buys nothing visible. */
 const MAX_PIXEL_RATIO = 2;
+
+/** See the assignment site next to renderer.toneMapping for the reasoning. */
+const TONE_MAPPING_EXPOSURE = 1.25;
 
 /** Initial orbit angles, before a world size is known. */
 const INITIAL_AZIMUTH_DEGREES = 45;
@@ -118,6 +126,12 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   // ACES keeps the bright snow band and the dark seabed both readable without
   // per-material tuning.
   renderer.toneMapping = ACESFilmicToneMapping;
+  // Above the default 1: the third dial of the 2026-08-14 daylight retune
+  // (with the key/fill balance and the lowered sun above). Exposure lifts
+  // EVERYTHING — including the shadow sides the owner reported as too dark —
+  // where intensity changes shift the key/fill balance; ACES soft-clips the
+  // top end so treads and snow do not blow out.
+  renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
 
   const scene = new Scene();
   scene.background = new Color(SKY_COLOR);
