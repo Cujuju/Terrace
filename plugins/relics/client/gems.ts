@@ -118,18 +118,22 @@ export function gemSpinAngle(elapsedS: number, phaseS: number): number {
  * DOES expose is pickTerrainCell, the app's own click → ground ray. So a click
  * is resolved to a ground cell and a relic near that cell is claimed.
  *
- * 2 cells is sized from the parallax this introduces: a gem floats
- * GEM_HOVER_CELLS above the surface, so the ray that visually passes through it
- * lands on the ground a little beyond it — at the default 55° polar orbit that
- * offset is on the order of one cell, and 2 covers it with room for the bob.
- * The generosity is not a compromise: a relic is a pickup, and pickups should
- * be forgiving to click. The server validates the CLAIM, not the aim (see the
- * identity notes in server/index.ts), so a loose tolerance costs nothing.
+ * 4 cells (owner, 2026-08-14: "make the hitbox for relics two times larger" —
+ * doubled from the original 2). The floor of the sizing is parallax: a gem
+ * floats GEM_HOVER_CELLS above the surface, so the ray that visually passes
+ * through it lands on the ground a little beyond it — at the default 55°
+ * polar orbit that offset is on the order of one cell. Everything above the
+ * floor is deliberate generosity: a relic is a pickup, pickups should be
+ * forgiving to click (doubly so on touch, where the finger hides the gem),
+ * and the server validates the CLAIM, not the aim (see the identity notes in
+ * server/index.ts), so a loose tolerance costs nothing. Relics spawn far
+ * apart, and `relicUnderCell` resolves to the NEAREST candidate anyway, so
+ * even overlapping tolerances still claim the gem actually clicked.
  *
  * Cross-referenced in the report as the second half of the same API gap as
  * CELL_WORLD_SIZE above; a `pickPluginObject` on the ctx would replace this.
  */
-export const RELIC_PICK_RADIUS_CELLS = 2;
+export const RELIC_PICK_RADIUS_CELLS = 4;
 
 /**
  * The relic a click on `cell` should claim: the nearest one within the
