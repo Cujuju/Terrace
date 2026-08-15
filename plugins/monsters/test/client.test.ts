@@ -36,6 +36,27 @@ import {
   CTHULHU_WING_TIP_HEIGHT,
 } from '../client/anatomy.ts';
 import {
+  BOLT_BOTTOM_CELLS,
+  BOLT_MAX_RADIUS_CELLS,
+  BOLT_MIN_RADIUS_CELLS,
+  BOLT_TOP_CELLS,
+  EYE_HEIGHT_ABOVE_WATER_CELLS,
+  FLASH_ATTACK_SECONDS,
+  FLASH_DURATION_SECONDS,
+  LightningSchedule,
+  MAX_FLASH_INTERVAL_SECONDS,
+  MEAN_FLASH_INTERVAL_SECONDS,
+  MIN_FLASH_INTERVAL_SECONDS,
+  MIST_FADE_SECONDS,
+  MIST_LAYERS,
+  MIST_RADIUS_CELLS,
+  SILHOUETTE_ABOVE_WATER_CELLS,
+  approachEnvelope,
+  createStrikeRandom,
+  flashBrightness,
+  nextFlashIntervalSeconds,
+} from '../client/dread.ts';
+import {
   DEFAULT_INTERPOLATION_SECONDS,
   MAX_INTERPOLATION_SECONDS,
   MonsterInterpolator,
@@ -307,5 +328,219 @@ describe('footprint', () => {
       (CTHULHU_WING_FINGER_COUNT - 1) * CTHULHU_WING_FINGER_SPREAD +
       CTHULHU_WING_FINGER_RADIUS;
     expect(fingerReach).toBeLessThanOrEqual(halfFootprint);
+  });
+});
+
+describe('dread: the mist bank', () => {
+  const topLayer = MIST_LAYERS[MIST_LAYERS.length - 1]!;
+
+  it('never drifts over the eyes', () => {
+    // The face is what the model is for; mist that covered it would be
+    // atmosphere bought by hiding the thing the atmosphere is about. The bob is
+    // in the sum because the sheet spends half its time above its stated height.
+    expect(topLayer.height + topLayer.bobCells).toBeLessThan(EYE_HEIGHT_ABOVE_WATER_CELLS);
+  });
+
+  it('keeps every sheet above the water it lies on', () => {
+    // A sheet whose bob took it below the sea surface would spend half of every
+    // cycle being dimmed by a translucent plane the size of the world.
+    for (const layer of MIST_LAYERS) {
+      expect(layer.height - layer.bobCells).toBeGreaterThan(0);
+    }
+  });
+
+  it('stacks: each sheet sits higher, narrower and fainter than the last', () => {
+    for (let index = 1; index < MIST_LAYERS.length; index++) {
+      const below = MIST_LAYERS[index - 1]!;
+      const above = MIST_LAYERS[index]!;
+      expect(above.height).toBeGreaterThan(below.height);
+      expect(above.radiusScale).toBeLessThan(below.radiusScale);
+      expect(above.opacity).toBeLessThan(below.opacity);
+    }
+  });
+
+  it('stays local — it can never read as fog over the scene', () => {
+    // Every sheet is inside the stated bank radius, which is a small multiple of
+    // the monster's own footprint. Nothing here touches scene.fog, which is the
+    // global this effect exists to avoid.
+    for (const layer of MIST_LAYERS) {
+      expect(layer.radiusScale).toBeGreaterThan(0);
+      expect(layer.radiusScale).toBeLessThanOrEqual(1);
+    }
+    expect(MIST_RADIUS_CELLS).toBeGreaterThan(0);
+  });
+
+  it('fades all the way in and all the way back out, in the stated time', () => {
+    // ARRIVAL is the contract: the plugin frees the effect's GPU resources when
+    // the fade reaches zero, so an envelope that only approached it would leak.
+    const dt = 1 / 60;
+    let envelope = 0;
+    let frames = 0;
+    while (envelope < 1 && frames < 10_000) {
+      envelope = approachEnvelope(envelope, 1, dt, MIST_FADE_SECONDS);
+      frames++;
+    }
+    expect(envelope).toBe(1);
+    expect(frames * dt).toBeCloseTo(MIST_FADE_SECONDS, 1);
+
+    frames = 0;
+    while (envelope > 0 && frames < 10_000) {
+      envelope = approachEnvelope(envelope, 0, dt, MIST_FADE_SECONDS);
+      frames++;
+    }
+    expect(envelope).toBe(0);
+    expect(frames * dt).toBeCloseTo(MIST_FADE_SECONDS, 1);
+  });
+
+  it('never overshoots its target', () => {
+    // A frame far longer than the fade (a background tab coming back) must land
+    // ON the target rather than past it and back.
+    expect(approachEnvelope(0, 1, 60, MIST_FADE_SECONDS)).toBe(1);
+    expect(approachEnvelope(1, 0, 60, MIST_FADE_SECONDS)).toBe(0);
+  });
+});
+
+describe('dread: lightning', () => {
+  it('strikes clear of the model, inside the mist', () => {
+    // The bolt is additive and depth-tested: one drawn through the wings would
+    // light the inside of the monster, which reads as a bug, not as weather.
+    expect(BOLT_MIN_RADIUS_CELLS).toBeGreaterThan(CTHULHU_WIDTH_CELLS / 2);
+    expect(BOLT_MAX_RADIUS_CELLS).toBeGreaterThan(BOLT_MIN_RADIUS_CELLS);
+    expect(BOLT_MAX_RADIUS_CELLS).toBeLessThanOrEqual(MIST_RADIUS_CELLS);
+  });
+
+  it('falls out of the sky and terminates in the bank', () => {
+    expect(BOLT_TOP_CELLS).toBeGreaterThan(SILHOUETTE_ABOVE_WATER_CELLS);
+    expect(BOLT_BOTTOM_CELLS).toBe(MIST_LAYERS[MIST_LAYERS.length - 1]!.height);
+    expect(BOLT_TOP_CELLS).toBeGreaterThan(BOLT_BOTTOM_CELLS);
+  });
+
+  it('clamps every sampled interval into the safety floor and the tail ceiling', () => {
+    for (let step = 0; step <= 1000; step++) {
+      const interval = nextFlashIntervalSeconds(step / 1000);
+      expect(interval).toBeGreaterThanOrEqual(MIN_FLASH_INTERVAL_SECONDS);
+      expect(interval).toBeLessThanOrEqual(MAX_FLASH_INTERVAL_SECONDS);
+    }
+    // Degenerate inputs no generator here produces, handled anyway.
+    expect(nextFlashIntervalSeconds(1)).toBe(MAX_FLASH_INTERVAL_SECONDS);
+    expect(nextFlashIntervalSeconds(-1)).toBe(MIN_FLASH_INTERVAL_SECONDS);
+  });
+
+  it('averages an occasional strike, not a rhythm', () => {
+    const random = createStrikeRandom(7);
+    const samples = 20_000;
+    let total = 0;
+    for (let sample = 0; sample < samples; sample++) {
+      total += nextFlashIntervalSeconds(random());
+    }
+    // The two clamps pull the realised mean either side of the nominal one; what
+    // matters is that it stays inside the "occasional" band the effect is for.
+    expect(MEAN_FLASH_INTERVAL_SECONDS).toBeGreaterThanOrEqual(8);
+    expect(MEAN_FLASH_INTERVAL_SECONDS).toBeLessThanOrEqual(15);
+    expect(total / samples).toBeGreaterThan(8);
+    expect(total / samples).toBeLessThan(15);
+  });
+
+  it('rises once and falls once, and is dark outside the strike', () => {
+    expect(flashBrightness(-1)).toBe(0);
+    expect(flashBrightness(FLASH_DURATION_SECONDS)).toBe(0);
+    expect(flashBrightness(FLASH_DURATION_SECONDS * 2)).toBe(0);
+    expect(flashBrightness(FLASH_ATTACK_SECONDS)).toBeCloseTo(1, 10);
+
+    let direction = 0;
+    let turns = 0;
+    let previous = 0;
+    for (let step = 1; step <= 2000; step++) {
+      const brightness = flashBrightness((step / 1000) * FLASH_DURATION_SECONDS);
+      expect(brightness).toBeGreaterThanOrEqual(0);
+      expect(brightness).toBeLessThanOrEqual(1);
+      const sign = Math.sign(brightness - previous);
+      if (sign !== 0 && sign !== direction) {
+        turns++;
+        direction = sign;
+      }
+      previous = brightness;
+    }
+    // Exactly two: up, then down. A third would be a flicker, which is the
+    // waveform this effect is forbidden to produce.
+    expect(turns).toBe(2);
+  });
+
+  it('holds the photosensitivity floor across an hour of frames', () => {
+    // THE CONTRACT, asserted end to end rather than constant by constant: over a
+    // real frame loop, no three brightness transitions fall inside one second.
+    const schedule = new LightningSchedule(createStrikeRandom(20260814));
+    const dt = 1 / 60;
+    const strikeTimes: number[] = [];
+    const transitionTimes: number[] = [];
+    let elapsed = 0;
+    let previous = 0;
+    let direction = 0;
+
+    for (let frame = 0; frame < 60 * 60 * 60; frame++) {
+      if (schedule.advance(dt, true) !== null) strikeTimes.push(elapsed);
+      elapsed += dt;
+      const brightness = schedule.brightness();
+      if (!(brightness >= 0 && brightness <= 1)) {
+        throw new Error(`brightness out of range: ${brightness}`);
+      }
+      const sign = Math.sign(brightness - previous);
+      if (sign !== 0 && sign !== direction) {
+        transitionTimes.push(elapsed);
+        direction = sign;
+      }
+      previous = brightness;
+    }
+
+    expect(strikeTimes.length).toBeGreaterThan(0);
+    for (let index = 1; index < strikeTimes.length; index++) {
+      // Minus one frame: the countdown is only checked at frame boundaries.
+      expect(strikeTimes[index]! - strikeTimes[index - 1]!).toBeGreaterThan(
+        MIN_FLASH_INTERVAL_SECONDS - dt,
+      );
+    }
+    for (let index = 0; index + 3 < transitionTimes.length; index++) {
+      expect(transitionTimes[index + 3]! - transitionTimes[index]!).toBeGreaterThan(1);
+    }
+  });
+
+  it('starts nothing while disarmed, and lets a strike in progress die away', () => {
+    // Disarmed is both "the monster has been banished" and "the user asked for
+    // reduced motion": no new lightning, and no bolt frozen in the air either.
+    const schedule = new LightningSchedule(createStrikeRandom(3));
+    const dt = 1 / 60;
+    let started: unknown = null;
+    for (let frame = 0; frame < 60 * 60 && started === null; frame++) {
+      started = schedule.advance(dt, true);
+    }
+    expect(started).not.toBeNull();
+
+    let sawBrightness = false;
+    for (let frame = 0; frame < 60 * 60; frame++) {
+      expect(schedule.advance(dt, false)).toBeNull();
+      if (schedule.brightness() > 0) sawBrightness = true;
+    }
+    expect(sawBrightness).toBe(true);
+    expect(schedule.brightness()).toBe(0);
+  });
+
+  it('gives every client the same mist and a different bolt', () => {
+    // The randomness is seeded client-side on purpose: this is visual weather,
+    // not world state. Two differently seeded generators must diverge — if they
+    // did not, the seeding would be decoration.
+    const one = createStrikeRandom(1);
+    const two = createStrikeRandom(2);
+    let differed = false;
+    for (let sample = 0; sample < 16; sample++) {
+      const a = one();
+      const b = two();
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThan(1);
+      if (a !== b) differed = true;
+    }
+    expect(differed).toBe(true);
+    // ...while the MIST is geometry: no random anywhere in it, so every client
+    // builds the same bank, exactly as every client builds the same wrinkles.
+    expect(MIST_LAYERS.every((layer) => Number.isFinite(layer.height))).toBe(true);
   });
 });
