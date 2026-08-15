@@ -1,5 +1,5 @@
-// Vertical placement: turning "the rendered seabed under it is at world Y = s"
-// into "this monster's origin belongs at world Y = y".
+// Vertical placement: turning "the terrain under it is at world Y = s" into
+// "this monster's origin belongs at world Y = y".
 //
 // Pure arithmetic, no three, no DOM — which is what lets it be tested in the
 // same node environment as the rest of the suite (the project ships no headless
@@ -10,11 +10,29 @@
 // rather than papered over: if CELL_WORLD_SIZE ever stops being 1, every size
 // and position in this plugin's client half needs a multiply, and nothing here
 // will fail loudly to tell you so.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// TWO RULES, AND THEY ARE A NAMED KIND (2026-08-14, for the yeti)
+//
+// A swimmer hangs from the SEA SURFACE and is clamped by the seabed; a walker
+// stands ON the ground. Those are different questions, not one question with a
+// parameter, and the table below answers with a discriminated union so a kind
+// added without a placement rule fails to compile rather than floating at
+// Cthulhu's depth.
+//
+// This is the wildlife plugin's PlacementKind lesson (plugins/wildlife/client/
+// placement.ts), which learned it the hard way: "is this a walker" used to be
+// read off the nullness of the swim table, and adding a third kind to a
+// two-valued test on a table with nothing to say about it would silently have
+// made birds walk. Restated rather than imported — plugins are independently
+// installable.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { SEA_LEVEL } from '@terrace/shared';
 import type { MonsterKind } from '../protocol.ts';
 import { CTHULHU_LURK_DEPTH } from './anatomy.ts';
 import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
+import { YETI_FOOT_GROUND_HALF_EXTENT_CELLS } from './yeti-anatomy.ts';
 
 /**
  * World-space Y of the sea surface.
@@ -32,25 +50,68 @@ import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
 export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
 
 /**
- * How far each kind's origin rides below the sea surface in water deep enough
- * to allow it. Both are DERIVED in their anatomy files from the part of the
- * creature that has to stay clear of the water — Cthulhu's head, the kraken's
- * eyes — so retuning a silhouette moves its waterline with it.
+ * Terrain Y a WALKER is placed against when the client has never been sent the
+ * chunk it is standing in. Band 0 is what the terrain mesh draws for unknown
+ * cells (see ClientPluginCtx.terrainHeightAt), and band 0 is world Y 0, so this
+ * is exactly what the player sees there.
  *
- * A TABLE rather than a parameter with a default: a kind added without a lurk
- * depth should fail to compile, not float at Cthulhu's.
+ * IT IS THE OPPOSITE ANSWER FROM THE SWIMMERS' (see monsterOriginWorldY, where
+ * unknown means "no clamp"), and the two are both right: a walker standing on
+ * the ground that is drawn is correct even when the drawn ground is a
+ * placeholder, whereas band 0 is ALSO the sea surface, so clamping a swimmer
+ * against it would beach a ten-cell horror at full height. In practice a monster
+ * only ever exists in unlocked territory (the server refuses to summon or steer
+ * one anywhere else), so this covers the one frame between its first broadcast
+ * and its chunk arriving.
  */
-const LURK_DEPTH_BY_KIND: Readonly<Record<MonsterKind, number>> = {
-  cthulhu: CTHULHU_LURK_DEPTH,
-  kraken: KRAKEN_LURK_DEPTH,
+export const UNKNOWN_TERRAIN_WORLD_Y = 0;
+
+/**
+ * How a kind is placed vertically.
+ *
+ * `swimmer` carries the depth its origin rides below the sea surface in water
+ * deep enough to allow it; both of today's are DERIVED in their anatomy files
+ * from the part of the creature that has to stay clear of the water — Cthulhu's
+ * head, the kraken's eyes — so retuning a silhouette moves its waterline with
+ * it.
+ *
+ * `walker` carries the half-extent of the ground its FEET cover, which is what
+ * the terrain sample is taken over.
+ */
+export type MonsterPlacementRule =
+  | { readonly placement: 'swimmer'; readonly lurkDepth: number }
+  | { readonly placement: 'walker'; readonly footGroundHalfExtentCells: number };
+
+/**
+ * A TABLE rather than a parameter with a default: a kind added without a
+ * placement rule should fail to compile, not float at Cthulhu's depth.
+ */
+const PLACEMENT_BY_KIND: Readonly<Record<MonsterKind, MonsterPlacementRule>> = {
+  cthulhu: { placement: 'swimmer', lurkDepth: CTHULHU_LURK_DEPTH },
+  kraken: { placement: 'swimmer', lurkDepth: KRAKEN_LURK_DEPTH },
+  yeti: { placement: 'walker', footGroundHalfExtentCells: YETI_FOOT_GROUND_HALF_EXTENT_CELLS },
 };
 
-export function lurkDepthOf(kind: MonsterKind): number {
-  return LURK_DEPTH_BY_KIND[kind];
+export function placementRuleOf(kind: MonsterKind): MonsterPlacementRule {
+  return PLACEMENT_BY_KIND[kind];
 }
 
 /**
- * World Y of the model's origin, given the rendered seabed height under it (or
+ * How far a kind's origin rides below the sea surface. Swimmers only — a walker
+ * has no such number, which is why this throws rather than returning zero: a
+ * caller asking a mountain animal how deep it lurks has a bug, and a plausible
+ * answer would hide it.
+ */
+export function lurkDepthOf(kind: MonsterKind): number {
+  const rule = placementRuleOf(kind);
+  if (rule.placement !== 'swimmer') {
+    throw new Error(`${kind} is not placed in the water`);
+  }
+  return rule.lurkDepth;
+}
+
+/**
+ * World Y of a SWIMMER's origin, given the rendered seabed height under it (or
  * null when that chunk has not arrived) and this kind's lurking depth.
  *
  * THE RULE: it sinks to its preferred lurking depth, but never through the
@@ -92,9 +153,74 @@ export function monsterOriginWorldY(seabedY: number | null, lurkDepth: number): 
 }
 
 /**
+ * World Y of a WALKER's origin: the HIGHEST rendered cell under its feet, not
+ * the single cell under its centre.
+ *
+ * The single-cell version is a clipping bug the wildlife plugin already
+ * reported and fixed (plugins/wildlife/client/placement.ts, walkerGroundY): a
+ * walker whose centre is on a low band but whose body overhangs a neighbouring
+ * higher band stands at the low height and its body intersects the riser face.
+ * Sampling the four corners of the footprint plus the centre and standing on the
+ * max means the model clears every band it overlaps; while crossing a riser it
+ * pops up a band the moment its leading edge reaches it — a step, which is how a
+ * terraced world walks.
+ *
+ * THE FOOTPRINT SAMPLED IS THE FEET, not the body (see
+ * YETI_FOOT_GROUND_HALF_EXTENT_CELLS): a walker stands on what it steps on, and
+ * sampling the shoulders would have him ride up onto every band his elbow
+ * overhangs.
+ *
+ * Returns null only when the client has been sent none of those cells; the
+ * caller substitutes UNKNOWN_TERRAIN_WORLD_Y.
+ */
+export function walkerGroundWorldY(
+  sampleRenderedY: (cellX: number, cellY: number) => number | null,
+  x: number,
+  y: number,
+  halfExtentCells: number,
+): number | null {
+  let ground: number | null = null;
+  for (const [dx, dy] of [
+    [0, 0],
+    [-halfExtentCells, -halfExtentCells],
+    [-halfExtentCells, halfExtentCells],
+    [halfExtentCells, -halfExtentCells],
+    [halfExtentCells, halfExtentCells],
+  ]) {
+    const sampled = sampleRenderedY(Math.floor(x + dx!), Math.floor(y + dy!));
+    if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
+  }
+  return ground;
+}
+
+/**
+ * World Y of one monster's origin, whichever rule its kind is placed by.
+ *
+ * ONE entry point, so the render path cannot forget a case: it hands over the
+ * terrain sampler and the position, and the table decides what to do with them.
+ * The swimmers take one sample under their centre — they float in the water
+ * column rather than standing on a footprint, and the seabed is only ever used
+ * as a floor.
+ */
+export function monsterOriginY(
+  kind: MonsterKind,
+  sampleRenderedY: (cellX: number, cellY: number) => number | null,
+  x: number,
+  y: number,
+): number {
+  const rule = placementRuleOf(kind);
+  if (rule.placement === 'walker') {
+    const ground = walkerGroundWorldY(sampleRenderedY, x, y, rule.footGroundHalfExtentCells);
+    return ground ?? UNKNOWN_TERRAIN_WORLD_Y;
+  }
+  return monsterOriginWorldY(sampleRenderedY(Math.floor(x), Math.floor(y)), rule.lurkDepth);
+}
+
+/**
  * How much of the model is under water at a given origin Y — a fraction of its
  * total height, clamped to [0, 1]. Not used by the renderer; it is the property
- * the placement rule exists to produce, so it is what the tests assert against.
+ * the swimmers' placement rule exists to produce, so it is what the tests assert
+ * against.
  */
 export function submergedFraction(originY: number, totalHeight: number): number {
   if (totalHeight <= 0) return 0;

@@ -17,7 +17,8 @@ export const MONSTERS_PLUGIN_NAME = 'monsters';
  * There is exactly one message type and it carries FULL state every time — the
  * same choice the wildlife plugin made, for the same self-healing reasons, and
  * here it is nearly free: the list holds at most MAX_LIVING_MONSTERS entries
- * (one). See the bandwidth note in server/index.ts.
+ * (one per habitat regime, so two today). See the bandwidth note in
+ * server/index.ts.
  *
  * The list being EMPTY is meaningful and is broadcast just as faithfully as a
  * populated one: it is how a client learns the monster is gone. A despawn that
@@ -29,18 +30,25 @@ export const MONSTERS_STATE_MESSAGE = 'state';
 
 /**
  * The monster kinds that exist. Ordered; this is also the deterministic order in
- * which summoning considers kinds, so the contest for the world's single monster
+ * which summoning considers kinds, so the contest for a habitat's single monster
  * slot resolves predictably rather than by whichever key `for…in` yielded.
  *
  * THE ORDER IS STRICTEST HABITAT FIRST, and that is a rule for the table rather
- * than a fact about these two rows. The kraken's habitat is strictly harder than
+ * than a fact about these rows. The kraken's habitat is strictly harder than
  * Cthulhu's — a deeper trench AND a bigger basin — so every world that can host
  * a kraken can also host a Cthulhu. Trying the laxer kind first would hand it
  * most of the slots in exactly the worlds that were dug for the stricter one,
  * and since Cthulhu cannot be banished (server/kinds.ts) that would be
  * permanent. Most demanding kind that the world can support gets first refusal.
+ *
+ * THE ORDER ONLY DECIDES CONTESTS WITHIN ONE HABITAT (2026-08-14). A monster
+ * slot exists per HABITAT REGIME — one thing in the water, one thing on the
+ * high snow — so the yeti's position in this list is free: it is the only land
+ * kind, and it never contends with either sea kind for anything. It is last
+ * because it was added last, and the day a second land kind exists the two of
+ * them have to be ordered against each other by the rule above.
  */
-export const MONSTER_KINDS = ['kraken', 'cthulhu'] as const;
+export const MONSTER_KINDS = ['kraken', 'cthulhu', 'yeti'] as const;
 
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 

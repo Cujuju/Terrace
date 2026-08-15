@@ -848,6 +848,91 @@ terrace/
   `soft` adds the full amount. That is the terraced answer and it is tested, but
   it does narrow the older "radius 1 makes the two profiles identical" claim.
 
+- **A SNOW YETI lives on the high peaks, and monster slots become one per
+  HABITAT** (owner request, settled 2026-08-14: "I would like to see a snow Yeti
+  that spawns in the high Alps"). Entirely inside `plugins/monsters`; core is
+  untouched.
+
+  **Habitat stops meaning "deep water".** `plugins/monsters/server/habitat.ts`
+  used to know exactly one thing about the world — how deep the sea was — and
+  the connected-region flood fill, the minimum-area rule, the survey interval
+  and the "arrive at the region's extreme cell" rule are all habitat-AGNOSTIC.
+  So a kind now names a **HabitatRegime**: a direction (`inward`, ±1) and the
+  band from sea level where the habitat begins. Every question the plugin asks
+  about a height — is it habitat, is this cell further in than that one, is this
+  region deep/high enough for this kind — is a comparison of two
+  `habitatReachHeightUnits(regime, h)` values, so the land regime cannot
+  disagree with itself about which way is up. A basin's extreme cell is its
+  deepest; a massif's is its summit; the same twenty lines find both.
+
+  | regime | inward | begins at | who lives there |
+  |---|---|---|---|
+  | water | down | `DEEP_WATER_BANDS_BELOW_SEA` = 3 | kraken, Cthulhu |
+  | land | up | `SNOW_LINE_BANDS_ABOVE_SEA` = 9 | yeti |
+
+  **The snow line is 9 bands, restated rather than imported.** The client's
+  palette draws band 9+ as snow (`client/src/terrain/bandColors.ts`) — that is
+  where a mountain turns white on screen, and the server may not import the
+  client. It is also a good threshold on its own: `MAX_STEP` is `BAND_HEIGHT/2`,
+  so a snow cell is at least **18 cells** from the nearest shoreline (three
+  times what the deep-water line buys) and 9 of the 16 bands `MAX_HEIGHT`
+  allows.
+
+  **ONE LIVING MONSTER PER HABITAT, not per world** — the decision this feature
+  turns on, and a deliberate revision of the earlier world-wide singleton. That
+  rule was written when every kind lived in the sea, where two horrors in one
+  ocean is a bestiary. A mountain yeti contends for none of that: the habitats
+  are disjoint halves of the heightmap, and a world where digging a trench
+  silently cost you the yeti on the peak you spent an hour building reads as a
+  bug rather than as scarcity. Scarcity is kept exactly where it means
+  something — one thing in the sea, one thing on the snow. The invariant stays
+  STRUCTURAL (one nullable slot per regime, so two-in-one-habitat is
+  unrepresentable) rather than counted; `MAX_LIVING_MONSTERS` is now derived as
+  per-habitat × regimes. Everything downstream was verified against it: the
+  summon pass, the collapse test and the cooldown are per habitat (banishing the
+  yeti must not keep the kraken out of the water); the broadcast list is
+  iterated in a fixed regime order; the client's reconcile and interpolation were
+  already keyed by id and needed no change, which is what they were written for;
+  the sculpt veto asks every living monster rather than "the" monster.
+
+  **The persistence slice goes to version 2**, with version 1 read and migrated:
+  its single monster keeps its slot and its one world-wide cooldown becomes the
+  WATER cooldown — exact rather than guessed, because version 1 predates the land
+  habitat and every kind it could name lives in the sea.
+
+  **The yeti's profile**, and each number stated against the two sea kinds:
+  lair = a connected snowfield of **512 cells** (two chunks, ~23 across — the
+  same 4.5 body-widths Cthulhu's threshold is justified by, for a 5-cell animal
+  instead of a 7-cell one), **banishable by levelling** his peaks below the snow
+  line (the collapse machinery pointed at the land predicate, with the same
+  quarter-of-arrival hysteresis and a ten-minute absence), **does not block
+  sculpting** (a banishable kind that vetoed raises would be half-vetoing its own
+  counter), ambles at **0.45 cells/s** — between Cthulhu's brood and the kraken's
+  hunt, and under a third of a wildlife grazer, because a monster that moves like
+  livestock reads as livestock. He halts often and briefly where Cthulhu broods
+  rarely and at length: a similar share of the time stationary, decomposed the
+  opposite way, because beat length is what a player reads.
+
+  **A fresh world cannot host him, and that is intended.** Genesis makes an
+  ocean with no land at all, so every snow cell in the world is one a player
+  raised nine bands out of the sea — roughly a couple of hundred level-fill
+  strokes for the minimum lair. The sea monsters are what a new world has; the
+  yeti is something a player builds the country for.
+
+  **Client.** A per-kind model file like the other two (`client/yeti-anatomy.ts`
+  + `client/yeti.ts`, ~6 100 triangles against the kraken's 7 700): a hunched
+  white biped, mass in the shoulders, arms below the hips, a ruff of brighter fur
+  at the neck because a white animal on white snow needs a broken silhouette
+  edge rather than a colour change. He is the first WALKER — placement became a
+  named kind (`swimmer | walker`) rather than the nullness of the lurk-depth
+  table, the wildlife plugin's lesson — and stands on the highest band his FEET
+  overlap. His gait rate is DERIVED from the server's amble speed over his
+  stride length so his feet cannot skate, and its amplitude is chosen to read as
+  a weight shift when he is standing still, because the wire deliberately
+  carries no gait flag. **He wears no dread**: the mist and lightning are the
+  SEA's weather, authored above the waterline, and on a peak nine bands up they
+  would be a bug rather than atmosphere.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
