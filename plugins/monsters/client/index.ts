@@ -31,7 +31,7 @@ import {
 import { createDread, type Dread } from './atmosphere.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
 import { createMonsterModels, type MonsterModel, type MonsterModels } from './models.ts';
-import { SEA_SURFACE_WORLD_Y, monsterOriginWorldY } from './placement.ts';
+import { SEA_SURFACE_WORLD_Y, lurkDepthOf, monsterOriginWorldY } from './placement.ts';
 
 /**
  * Per-monster animation phase offset, in radians per unit of id. The golden
@@ -141,7 +141,10 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const seabedY = ctx.terrainHeightAt(Math.floor(monster.x), Math.floor(monster.y));
     const root = view.model.root;
     // CELL_WORLD_SIZE is 1, so cell coordinates ARE world X/Z (see placement.ts).
-    root.position.set(monster.x, monsterOriginWorldY(seabedY), monster.y);
+    // The lurking depth is the KIND's — the two monsters sit at very different
+    // heights in the same water, which is most of what tells them apart from a
+    // distance.
+    root.position.set(monster.x, monsterOriginWorldY(seabedY, lurkDepthOf(monster.kind)), monster.y);
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and
     // the monster travels toward (cos heading, 0, sin heading) — hence the
     // negation.

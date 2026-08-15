@@ -62,8 +62,41 @@ import {
   MonsterInterpolator,
   lerpAngle,
 } from '../client/interpolation.ts';
-import { SEA_SURFACE_WORLD_Y, monsterOriginWorldY, submergedFraction } from '../client/placement.ts';
-import { CTHULHU_FOOTPRINT_CELLS } from '../server/kinds.ts';
+import {
+  KRAKEN_ARM_COUNT,
+  KRAKEN_ARM_CREST_HEIGHT,
+  KRAKEN_ARM_CREST_REACH,
+  KRAKEN_ARM_DRIFT,
+  KRAKEN_ARM_RADIUS,
+  KRAKEN_ARM_TIP_HEIGHT,
+  KRAKEN_ARM_TIP_RADIUS,
+  KRAKEN_ARM_TIP_REACH,
+  KRAKEN_CLUB_LENGTH,
+  KRAKEN_EYE_BOTTOM,
+  KRAKEN_FIN_SPAN,
+  KRAKEN_HEAD_TOP,
+  KRAKEN_HEAD_WRINKLE_DEPTH,
+  KRAKEN_LIMB_COUNT,
+  KRAKEN_LURK_DEPTH,
+  KRAKEN_MANTLE_BASE_HEIGHT,
+  KRAKEN_MANTLE_RADIUS,
+  KRAKEN_MANTLE_TOP,
+  KRAKEN_MANTLE_WRINKLE_DEPTH,
+  KRAKEN_TENTACLE_COUNT,
+  KRAKEN_TENTACLE_CREST_HEIGHT,
+  KRAKEN_TENTACLE_TIP_HEIGHT,
+  KRAKEN_TENTACLE_TIP_REACH,
+  KRAKEN_TOTAL_HEIGHT,
+  KRAKEN_WATERLINE_BITE,
+  KRAKEN_WIDTH_CELLS,
+} from '../client/kraken-anatomy.ts';
+import {
+  SEA_SURFACE_WORLD_Y,
+  lurkDepthOf,
+  monsterOriginWorldY,
+  submergedFraction,
+} from '../client/placement.ts';
+import { CTHULHU_FOOTPRINT_CELLS, KRAKEN_FOOTPRINT_CELLS } from '../server/kinds.ts';
 
 function monster(id: number, overrides: Partial<MonsterState> = {}): MonsterState {
   return { id, kind: 'cthulhu', x: 0, y: 0, heading: 0, ...overrides };
@@ -185,17 +218,30 @@ describe('interpolation', () => {
 });
 
 describe('placement', () => {
+  /** The depth every kind's origin is asked for by name, never by default. */
+  const CTHULHU_DEPTH = lurkDepthOf('cthulhu');
+
+  it('looks each kind\'s lurking depth up by kind', () => {
+    expect(CTHULHU_DEPTH).toBe(CTHULHU_LURK_DEPTH);
+    expect(lurkDepthOf('kraken')).toBe(KRAKEN_LURK_DEPTH);
+  });
+
   it('rides at its lurking depth when the water is deep enough', () => {
     const abyssY = -20;
-    expect(monsterOriginWorldY(abyssY)).toBe(SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH);
+    expect(monsterOriginWorldY(abyssY, CTHULHU_DEPTH)).toBe(
+      SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH,
+    );
+    expect(monsterOriginWorldY(abyssY, lurkDepthOf('kraken'))).toBe(
+      SEA_SURFACE_WORLD_Y - KRAKEN_LURK_DEPTH,
+    );
   });
 
   it('stands on the bottom rather than sinking through it', () => {
     // The shallowest water it can ever be in: exactly the deep threshold, three
     // bands = three world units below the surface.
     const shallowestLairY = -3;
-    expect(monsterOriginWorldY(shallowestLairY)).toBe(shallowestLairY);
-    expect(monsterOriginWorldY(shallowestLairY)).toBeGreaterThan(
+    expect(monsterOriginWorldY(shallowestLairY, CTHULHU_DEPTH)).toBe(shallowestLairY);
+    expect(monsterOriginWorldY(shallowestLairY, CTHULHU_DEPTH)).toBeGreaterThan(
       SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH,
     );
   });
@@ -203,12 +249,14 @@ describe('placement', () => {
   it('assumes deep water, not band 0, when the chunk has not arrived', () => {
     // Band 0 is the sea SURFACE plane; clamping against it would beach the
     // model. Unknown must mean "no clamp".
-    expect(monsterOriginWorldY(null)).toBe(SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH);
-    expect(monsterOriginWorldY(null)).toBeLessThan(SEA_LEVEL);
+    expect(monsterOriginWorldY(null, CTHULHU_DEPTH)).toBe(
+      SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH,
+    );
+    expect(monsterOriginWorldY(null, CTHULHU_DEPTH)).toBeLessThan(SEA_LEVEL);
   });
 
   it('leaves the head clear of the water and the torso under it', () => {
-    const originY = monsterOriginWorldY(-20);
+    const originY = monsterOriginWorldY(-20, CTHULHU_DEPTH);
     // Head bottom just under the surface by the waterline bite; head top well
     // clear of it.
     expect(originY + CTHULHU_HEAD_BOTTOM).toBeCloseTo(-CTHULHU_WATERLINE_BITE, 10);
@@ -221,10 +269,33 @@ describe('placement', () => {
   });
 
   it('is mostly submerged at its lurking depth', () => {
-    const originY = monsterOriginWorldY(-20);
+    const originY = monsterOriginWorldY(-20, CTHULHU_DEPTH);
     const fraction = submergedFraction(originY, CTHULHU_TOTAL_HEIGHT);
     expect(fraction).toBeGreaterThan(0.5);
     expect(fraction).toBeLessThan(0.8);
+  });
+
+  it('shows the kraken where it hides Cthulhu — the two are placed oppositely', () => {
+    // The contrast is the feature (kraken-anatomy.ts: "two monsters that hid the
+    // same amount of themselves would be one monster twice"). Cthulhu is mostly
+    // gone; the kraken has surfaced and shows nearly all of itself.
+    const krakenOriginY = monsterOriginWorldY(-20, lurkDepthOf('kraken'));
+    const krakenSubmerged = submergedFraction(krakenOriginY, KRAKEN_TOTAL_HEIGHT);
+    expect(krakenSubmerged).toBeLessThan(0.2);
+    expect(krakenSubmerged).toBeLessThan(
+      submergedFraction(monsterOriginWorldY(-20, CTHULHU_DEPTH), CTHULHU_TOTAL_HEIGHT),
+    );
+  });
+
+  it('puts the kraken\'s eyes at the waterline and its mantle clear of it', () => {
+    const originY = monsterOriginWorldY(-20, lurkDepthOf('kraken'));
+    // Eye bottoms exactly one waterline bite under; the mantle standing out.
+    expect(originY + KRAKEN_EYE_BOTTOM).toBeCloseTo(-KRAKEN_WATERLINE_BITE, 10);
+    expect(originY + KRAKEN_MANTLE_TOP).toBeGreaterThan(SEA_SURFACE_WORLD_Y);
+    // ...and the arms lying ON the water: their crests break it, their tips do
+    // not. That is the whole read of the crown from a boat.
+    expect(originY + KRAKEN_ARM_CREST_HEIGHT).toBeGreaterThan(SEA_SURFACE_WORLD_Y);
+    expect(originY + KRAKEN_ARM_TIP_HEIGHT).toBeLessThan(SEA_SURFACE_WORLD_Y);
   });
 });
 
@@ -328,6 +399,91 @@ describe('footprint', () => {
       (CTHULHU_WING_FINGER_COUNT - 1) * CTHULHU_WING_FINGER_SPREAD +
       CTHULHU_WING_FINGER_RADIUS;
     expect(fingerReach).toBeLessThanOrEqual(halfFootprint);
+  });
+});
+
+describe('the kraken silhouette', () => {
+  const halfFootprint = KRAKEN_WIDTH_CELLS / 2;
+
+  it('agrees with the server about how wide it is', () => {
+    // Same arrangement as Cthulhu's: the server steers by its own copy of this
+    // number, the client half must not be imported by the server, so the two are
+    // pinned to each other here.
+    expect(KRAKEN_WIDTH_CELLS).toBe(KRAKEN_FOOTPRINT_CELLS);
+    // ...and both kinds share the box on purpose — the second kind was fitted to
+    // the first one's footprint rather than widening the steering probe and the
+    // atmosphere's lightning clearance that were derived from it.
+    expect(KRAKEN_FOOTPRINT_CELLS).toBe(CTHULHU_FOOTPRINT_CELLS);
+  });
+
+  it('keeps the arm tips — its widest point — inside that footprint', () => {
+    expect(KRAKEN_ARM_TIP_REACH + KRAKEN_ARM_TIP_RADIUS).toBeLessThanOrEqual(halfFootprint);
+  });
+
+  it('keeps the crest, the drift, the tentacle clubs, the fins and the mantle inside it too', () => {
+    // The crest is out at its reach AND drifted sideways, so its distance from
+    // the axis is the hypotenuse of the two, plus the tube's radius there.
+    const crestReach = Math.hypot(KRAKEN_ARM_CREST_REACH, KRAKEN_ARM_DRIFT) + KRAKEN_ARM_RADIUS;
+    expect(crestReach).toBeLessThanOrEqual(halfFootprint);
+    expect(KRAKEN_TENTACLE_TIP_REACH + KRAKEN_CLUB_LENGTH / 2).toBeLessThanOrEqual(halfFootprint);
+    expect(KRAKEN_FIN_SPAN).toBeLessThanOrEqual(halfFootprint);
+    expect(KRAKEN_MANTLE_RADIUS).toBeLessThanOrEqual(halfFootprint);
+    // ...and the arm tip really is the widest of them, which is what the anatomy
+    // claims when it names the binding constraint.
+    expect(KRAKEN_ARM_TIP_REACH + KRAKEN_ARM_TIP_RADIUS).toBeGreaterThan(crestReach);
+  });
+
+  it('fits inside the lightning clearance the atmosphere derived from Cthulhu', () => {
+    // dread.ts keeps every bolt outside CTHULHU_WIDTH_CELLS/2 + clearance so a
+    // strike never lights the inside of the model. The second kind shares the
+    // effect, so it has to share the assumption — this is the test that says so
+    // rather than a screenshot of a bolt inside a crown of arms.
+    expect(BOLT_MIN_RADIUS_CELLS).toBeGreaterThan(halfFootprint);
+  });
+
+  it('is a ring of ten limbs: eight arms and two tentacles', () => {
+    expect(KRAKEN_ARM_COUNT).toBe(8);
+    expect(KRAKEN_TENTACLE_COUNT).toBe(2);
+    expect(KRAKEN_LIMB_COUNT).toBe(KRAKEN_ARM_COUNT + KRAKEN_TENTACLE_COUNT);
+    // Even, so the crown is a ring rather than a fan with a middle. (Cthulhu's
+    // tentacle count is odd for exactly the opposite reason.)
+    expect(KRAKEN_LIMB_COUNT % 2).toBe(0);
+  });
+
+  it('rears higher on its tentacles than on its arms, and hangs deeper', () => {
+    // They cannot reach FURTHER — the footprint forbids it — so this is the
+    // whole difference between the hunting pair and the other eight.
+    expect(KRAKEN_TENTACLE_CREST_HEIGHT).toBeGreaterThan(KRAKEN_ARM_CREST_HEIGHT);
+    expect(KRAKEN_TENTACLE_TIP_HEIGHT).toBeLessThan(KRAKEN_ARM_TIP_HEIGHT);
+    expect(KRAKEN_TENTACLE_TIP_REACH).toBeLessThan(KRAKEN_ARM_TIP_REACH);
+  });
+
+  it('is shorter than Cthulhu and wears its height as a mantle, not a skull', () => {
+    expect(KRAKEN_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
+    expect(KRAKEN_TOTAL_HEIGHT).toBe(KRAKEN_MANTLE_TOP);
+    expect(KRAKEN_MANTLE_TOP).toBeGreaterThan(KRAKEN_HEAD_TOP);
+    // Taller than it is wide, like the other one: a raft is not a monster.
+    expect(KRAKEN_TOTAL_HEIGHT).toBeGreaterThan(KRAKEN_WIDTH_CELLS);
+  });
+
+  it('buries the mantle\'s collar inside the head instead of balancing it on top', () => {
+    expect(KRAKEN_MANTLE_BASE_HEIGHT).toBeLessThan(KRAKEN_HEAD_TOP);
+  });
+
+  it('cannot wrinkle skin back through the waterline it was placed against', () => {
+    // Same contract as Cthulhu's carve: the lurk depth is derived from the eye
+    // bottoms, so a dent deeper than the bite could dunk skin the placement
+    // maths lifted clear — or lift skin it sank.
+    expect(KRAKEN_MANTLE_WRINKLE_DEPTH).toBeGreaterThan(0);
+    expect(KRAKEN_HEAD_WRINKLE_DEPTH).toBeGreaterThan(0);
+    expect(KRAKEN_MANTLE_WRINKLE_DEPTH).toBeLessThan(KRAKEN_WATERLINE_BITE);
+    expect(KRAKEN_HEAD_WRINKLE_DEPTH).toBeLessThan(KRAKEN_WATERLINE_BITE);
+  });
+
+  it('derives its lurk depth from the eyes rather than choosing one', () => {
+    expect(KRAKEN_LURK_DEPTH).toBe(KRAKEN_EYE_BOTTOM + KRAKEN_WATERLINE_BITE);
+    // Far shallower than Cthulhu's: the two are placed oppositely on purpose.
+    expect(KRAKEN_LURK_DEPTH).toBeLessThan(CTHULHU_LURK_DEPTH);
   });
 });
 

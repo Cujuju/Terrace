@@ -24,6 +24,12 @@ import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
  *
  * If wildlife's number ever moves, this one is a considered decision to follow
  * it, not an automatic one.
+ *
+ * IT IS THE FLOOR, NOT THE WHOLE RULE. This is what "water a monster can be in"
+ * means, and it is what the flood fill, the steering probe and the per-tick
+ * habitat check all read. A KIND may demand more of the basin it moves INTO —
+ * the kraken wants a trench eight bands down (kinds.ts) — but nothing may be
+ * anywhere shallower than this line.
  */
 export const DEEP_WATER_BANDS_BELOW_SEA = 3;
 
@@ -60,17 +66,34 @@ export function isLairCell(world: LairWorld, cellX: number, cellY: number): bool
   return isDeepWaterHeight(world.heightAt(x, y));
 }
 
+/**
+ * One connected deep-water region, as the survey measured it.
+ *
+ * The DEEPEST cell is carried rather than a centroid for two reasons: a
+ * centroid can fall outside a crescent-shaped basin, and the abyssal point of a
+ * basin is the right place for a thing to rise from anyway. Its HEIGHT is
+ * carried too, because "how deep does this basin get" is a per-kind admission
+ * test (a kraken wants a trench, Cthulhu takes any deep water) and the flood
+ * fill has already visited every cell — re-deriving it later would mean a
+ * second pass over the region for a number that was in hand.
+ */
+export interface LairRegion {
+  readonly cells: number;
+  /** Deepest cell of the region; ties broken by BFS visit order. */
+  readonly x: number;
+  readonly y: number;
+  /** Height of that cell. Lower is deeper; always ≤ DEEP_WATER_MAX_HEIGHT. */
+  readonly deepestHeight: number;
+}
+
 /** What one survey learned about the world's deep water. */
 export interface LairSurvey {
-  /** Cells in the largest connected deep-water region. 0 if there is none. */
-  readonly largestRegionCells: number;
   /**
-   * The DEEPEST cell of that region — the point a monster is summoned to. Null
-   * when there is no deep water at all. Deepest rather than central because a
-   * centroid can fall outside a crescent-shaped basin, and because the abyssal
-   * point of a basin is the right place for the thing to rise from anyway.
+   * Every connected deep-water region, in scan order (row-major by seed cell).
+   * WHICH of them qualifies as a lair is a per-kind POLICY question and is
+   * answered in summoning.ts; this file only reports what the world contains.
    */
-  readonly summonCell: { readonly x: number; readonly y: number } | null;
+  readonly regions: readonly LairRegion[];
   /**
    * Cells in the region containing the queried `occupied` cell, or 0 when no
    * cell was queried / it is not deep water. This is what the collapse test
@@ -81,8 +104,7 @@ export interface LairSurvey {
 }
 
 export const EMPTY_LAIR_SURVEY: LairSurvey = {
-  largestRegionCells: 0,
-  summonCell: null,
+  regions: [],
   occupiedRegionCells: 0,
 };
 
@@ -111,14 +133,6 @@ export function releaseSurveyScratch(): void {
   queue = null;
 }
 
-/** What one flood fill found. */
-interface FloodedRegion {
-  readonly cells: number;
-  /** Deepest cell of the region; ties broken by BFS visit order. */
-  readonly deepestX: number;
-  readonly deepestY: number;
-}
-
 /**
  * Floods one connected deep-water region from `seedIndex`, writing `label` into
  * every cell it reaches.
@@ -136,7 +150,7 @@ function floodRegion(
   queue: Int32Array,
   seedIndex: number,
   label: number,
-): FloodedRegion {
+): LairRegion {
   let head = 0;
   let tail = 0;
   labels[seedIndex] = label;
@@ -179,12 +193,12 @@ function floodRegion(
     }
   }
 
-  return { cells, deepestX, deepestY };
+  return { cells, x: deepestX, y: deepestY, deepestHeight };
 }
 
 /**
- * Labels every connected deep-water region and reports the biggest one, its
- * deepest cell, and the size of the region under `occupied`.
+ * Labels every connected deep-water region and reports all of them, plus the
+ * size of the region under `occupied`.
  *
  * CONNECTIVITY IS 4-NEIGHBOUR. Two basins joined only at a diagonal pinch are
  * two basins: that is a corner a body 7 cells wide cannot swim through, so
@@ -212,11 +226,8 @@ export function surveyLairs(
   const scratch = scratchFor(cellCount);
   scratch.labels.fill(UNLABELLED);
 
-  /** Cells per region, indexed by label. */
-  const regionSizes: number[] = [];
-
-  let largestRegionCells = 0;
-  let summonCell: { x: number; y: number } | null = null;
+  /** Regions, in scan order. A region's index in here IS its label. */
+  const regions: LairRegion[] = [];
 
   for (let seedY = 0; seedY < size; seedY++) {
     for (let seedX = 0; seedX < size; seedX++) {
@@ -224,20 +235,9 @@ export function surveyLairs(
       if (scratch.labels[seedIndex] !== UNLABELLED) continue;
       if (!isLairCell(world, seedX, seedY)) continue;
 
-      const region = floodRegion(
-        world,
-        size,
-        scratch.labels,
-        scratch.queue,
-        seedIndex,
-        regionSizes.length,
+      regions.push(
+        floodRegion(world, size, scratch.labels, scratch.queue, seedIndex, regions.length),
       );
-      regionSizes.push(region.cells);
-
-      if (region.cells > largestRegionCells) {
-        largestRegionCells = region.cells;
-        summonCell = { x: region.deepestX, y: region.deepestY };
-      }
     }
   }
 
@@ -247,9 +247,9 @@ export function surveyLairs(
     const y = Math.floor(occupied.y);
     if (x >= 0 && y >= 0 && x < size && y < size) {
       const label = scratch.labels[y * size + x];
-      if (label !== UNLABELLED) occupiedRegionCells = regionSizes[label];
+      if (label !== UNLABELLED) occupiedRegionCells = regions[label]!.cells;
     }
   }
 
-  return { largestRegionCells, summonCell, occupiedRegionCells };
+  return { regions, occupiedRegionCells };
 }

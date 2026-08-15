@@ -18,6 +18,8 @@ import { MONSTERS_PLUGIN_NAME, MONSTERS_STATE_MESSAGE, type MonsterState } from 
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
+  type LairRegion,
+  type LairSurvey,
   type LairWorld,
   isDeepWaterHeight,
   isLairCell,
@@ -32,20 +34,23 @@ import {
 import {
   CTHULHU_FOOTPRINT_CELLS,
   CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
-  CTHULHU_RESPAWN_COOLDOWN_SECONDS,
-  CTHULHU_SUMMON_MEAN_WAIT_SECONDS,
-  LAIR_COLLAPSE_DEEP_CELLS,
+  KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
+  KRAKEN_LAIR_MIN_DEPTH_BANDS,
+  KRAKEN_MIN_LAIR_DEEP_CELLS,
+  KRAKEN_RESPAWN_COOLDOWN_SECONDS,
   MAX_LIVING_MONSTERS,
   MIN_LAIR_DEEP_CELLS,
+  SUMMON_MEAN_WAIT_SECONDS,
   profileOf,
 } from '../server/kinds.ts';
-import { advanceMonster } from '../server/lurk.ts';
+import { advanceMonster, isStranded } from '../server/lurk.ts';
 import { loadMonsters, saveMonsters } from '../server/persistence.ts';
 import { setMonsterRandomSource } from '../server/rng.ts';
 import {
   LAIR_SURVEY_INTERVAL_SECONDS,
   advanceSummoning,
   cooldownRemainingSeconds,
+  enforceHabitat,
   livingMonster,
   livingMonsterCount,
 } from '../server/summoning.ts';
@@ -81,6 +86,15 @@ function bowl(radius: number): (x: number, y: number) => number {
 
 /** Deep disc radius 26 → ~2 120 cells, comfortably over MIN_LAIR_DEEP_CELLS. */
 const GREAT_BASIN_RADIUS = 50;
+/**
+ * A KRAKEN TRENCH. Deep disc radius 46 → ~6 600 cells (over the kraken's 2 304)
+ * and 560 height units at the floor — 8.75 bands, past its 8-band demand.
+ *
+ * The GREAT_BASIN above deliberately fails BOTH kraken tests (2 120 cells, 6.25
+ * bands), which is what keeps every Cthulhu test in this file summoning a
+ * Cthulhu even though the kraken is considered first.
+ */
+const TRENCH_RADIUS = 70;
 /** Deep disc radius 16 → ~800 cells: real deep water, but not a lair. */
 const SMALL_POOL_RADIUS = 40;
 /** No cell anywhere reaches the deep threshold. */
@@ -143,6 +157,15 @@ function countDeepCells(
   return count;
 }
 
+/** The largest region a survey found, by cells. Null when it found none. */
+function largestRegion(survey: LairSurvey): LairRegion | null {
+  let best: LairRegion | null = null;
+  for (const region of survey.regions) {
+    if (best === null || region.cells > best.cells) best = region;
+  }
+  return best;
+}
+
 /** A random source that always fires every Poisson gate. */
 const ALWAYS = (): number => 0;
 /** A random source that never fires any Poisson gate. */
@@ -183,10 +206,14 @@ describe('lair survey', () => {
     const harness = boot(heightOf);
     const survey = surveyLairs(lairView(harness.world));
 
-    expect(survey.largestRegionCells).toBe(countDeepCells(heightOf));
-    expect(survey.largestRegionCells).toBeGreaterThan(MIN_LAIR_DEEP_CELLS);
-    // The bowl's floor is its centre.
-    expect(survey.summonCell).toEqual({ x: WORLD_CENTER, y: WORLD_CENTER });
+    expect(survey.regions).toHaveLength(1);
+    const region = survey.regions[0]!;
+    expect(region.cells).toBe(countDeepCells(heightOf));
+    expect(region.cells).toBeGreaterThan(MIN_LAIR_DEEP_CELLS);
+    // The bowl's floor is its centre, and the survey reports how deep it is —
+    // which is the number a kind with a trench requirement is admitted on.
+    expect({ x: region.x, y: region.y }).toEqual({ x: WORLD_CENTER, y: WORLD_CENTER });
+    expect(region.deepestHeight).toBe(heightOf(WORLD_CENTER, WORLD_CENTER));
   });
 
   it('ignores locked territory entirely', () => {
@@ -202,18 +229,16 @@ describe('lair survey', () => {
 
     // The basin minus one chunk is still a single connected region (the notch is
     // interior, and the water goes round it).
-    expect(survey.largestRegionCells).toBe(
-      countDeepCells(heightOf, (x, y) => !inLockedChunk(x, y)),
-    );
-    expect(survey.summonCell).not.toBeNull();
-    expect(inLockedChunk(survey.summonCell!.x, survey.summonCell!.y)).toBe(false);
+    const region = largestRegion(survey)!;
+    expect(region.cells).toBe(countDeepCells(heightOf, (x, y) => !inLockedChunk(x, y)));
+    expect(inLockedChunk(region.x, region.y)).toBe(false);
   });
 
   it('reports nothing when there is no deep water', () => {
     const harness = boot(bowl(NO_DEEP_WATER_RADIUS));
     const survey = surveyLairs(lairView(harness.world));
-    expect(survey.largestRegionCells).toBe(0);
-    expect(survey.summonCell).toBeNull();
+    expect(survey.regions).toHaveLength(0);
+    expect(largestRegion(survey)).toBeNull();
   });
 
   it('reports the size of the region under the queried cell, not the biggest one', () => {
@@ -221,12 +246,12 @@ describe('lair survey', () => {
     const view = lairView(harness.world);
 
     const inside = surveyLairs(view, { x: WORLD_CENTER, y: WORLD_CENTER });
-    expect(inside.occupiedRegionCells).toBe(inside.largestRegionCells);
+    expect(inside.occupiedRegionCells).toBe(largestRegion(inside)!.cells);
 
     // A cell on dry land belongs to no region at all.
     const outside = surveyLairs(view, { x: 0, y: 0 });
     expect(outside.occupiedRegionCells).toBe(0);
-    expect(outside.largestRegionCells).toBeGreaterThan(0);
+    expect(largestRegion(outside)!.cells).toBeGreaterThan(0);
   });
 });
 
@@ -309,16 +334,16 @@ describe('the summon roll', () => {
     // late. The bounds are wide on purpose: this pins the SHAPE — a stochastic
     // arrival on the order of the configured mean — not one seed's exact draw.
     expect(arrivalSeconds).toBeGreaterThan(TICK_DT);
-    expect(arrivalSeconds).toBeLessThan(CTHULHU_SUMMON_MEAN_WAIT_SECONDS * 10);
+    expect(arrivalSeconds).toBeLessThan(SUMMON_MEAN_WAIT_SECONDS * 10);
   });
 
   it('waits about the configured mean across many seeded worlds', () => {
-    // The rate is derived from CTHULHU_SUMMON_MEAN_WAIT_SECONDS through the
+    // The rate is derived from SUMMON_MEAN_WAIT_SECONDS through the
     // exponential form in rollEvent; this is the test that the derivation is
     // real and not just a comment. Deterministic: one seed drives every trial.
     const random = seededRandom(7);
     const TRIALS = 24;
-    const CAP_SECONDS = CTHULHU_SUMMON_MEAN_WAIT_SECONDS * 12;
+    const CAP_SECONDS = SUMMON_MEAN_WAIT_SECONDS * 12;
 
     let total = 0;
     for (let trial = 0; trial < TRIALS; trial++) {
@@ -335,24 +360,193 @@ describe('the summon roll', () => {
 
     const mean = total / TRIALS;
     // ±2.4 standard errors of an exponential mean at n = 24 (SE = mean/√n).
-    expect(mean).toBeGreaterThan(CTHULHU_SUMMON_MEAN_WAIT_SECONDS * 0.5);
-    expect(mean).toBeLessThan(CTHULHU_SUMMON_MEAN_WAIT_SECONDS * 2);
+    expect(mean).toBeGreaterThan(SUMMON_MEAN_WAIT_SECONDS * 0.5);
+    expect(mean).toBeLessThan(SUMMON_MEAN_WAIT_SECONDS * 2);
   });
 });
 
-describe('losing the lair', () => {
-  /** Ticks a harness until it holds a monster, with a bounded number of tries. */
-  function summonNow(harness: Harness): number {
+/**
+ * A round basin, stubbed, with a radius and a floor a test can move.
+ *
+ * THE STUBBED WORLDS IN THIS FILE ALL COME FROM HERE, and the reason is the same
+ * one the original collapse test gave: these rules are about a REGION shrinking
+ * or a floor rising by hundreds of units, and a sculpt reaches MAX_BRUSH_RADIUS
+ * (4) cells. Draining a 2 000-cell basin through the intent pipeline would be
+ * hundreds of intents of setup to exercise one comparison. The world is stubbed;
+ * the plugin's own lifecycle code never is.
+ *
+ * Deepest at the centre — so the survey's summon cell is the middle of the basin
+ * and not a rim cell that a shrink would strand — rising linearly to exactly the
+ * deep-water line at the rim.
+ */
+interface BasinState {
+  radius: number;
+  floorHeight: number;
+}
+
+function basinWorld(state: BasinState): LairWorld {
+  return {
+    worldSize: WORLD_SIZE,
+    heightAt(x, y) {
+      const dx = x - WORLD_CENTER;
+      const dy = y - WORLD_CENTER;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (state.radius <= 0 || distance > state.radius) return BAND_HEIGHT;
+      const toRim = distance / state.radius;
+      return Math.round(
+        state.floorHeight + (DEEP_WATER_MAX_HEIGHT - state.floorHeight) * toRim,
+      );
+    },
+    isCellUnlocked: () => true,
+  };
+}
+
+/** A basin Cthulhu qualifies for and the kraken does not: big, but not a trench. */
+function cthulhuBasin(): BasinState {
+  return { radius: 30, floorHeight: DEEP_WATER_MAX_HEIGHT - 30 };
+}
+
+/** A trench the kraken qualifies for: past its depth demand and its area. */
+function krakenTrench(): BasinState {
+  return {
+    radius: 40,
+    floorHeight: SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS + 1) * BAND_HEIGHT,
+  };
+}
+
+describe('Cthulhu cannot be banished', () => {
+  it('stays where he is when the water is taken away, and starts no cooldown', () => {
+    const basin = cthulhuBasin();
+    const world = basinWorld(basin);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    expect(livingMonster()!.kind).toBe('cthulhu');
+    const id = livingMonster()!.id;
+
+    // The sea is gone. Not shrunk — GONE: every cell is land, including his.
+    basin.radius = 0;
+    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(false);
+
+    // Both departure paths, run against the drained world: the per-tick habitat
+    // check and the periodic collapse test. Neither may remove him.
+    expect(enforceHabitat(world)).toBe(false);
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+      enforceHabitat(world);
+    }
+
+    expect(livingMonster()).not.toBeNull();
+    expect(livingMonster()!.id).toBe(id);
+    // No banishment means no cooldown either — the two are one decision.
+    expect(cooldownRemainingSeconds()).toBe(0);
+  });
+
+  it('stays when his basin collapses to a puddle around him', () => {
+    const basin = cthulhuBasin();
+    const world = basinWorld(basin);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    expect(livingMonster()).not.toBeNull();
+
+    // A pool far below any collapse threshold, with his own cell still deep —
+    // the exact scenario that used to banish him.
+    basin.radius = 4;
+    expect(Math.PI * basin.radius * basin.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
+    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
+
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(livingMonster()).not.toBeNull();
+    expect(cooldownRemainingSeconds()).toBe(0);
+  });
+
+  it('holds position and heading once stranded, rather than spinning', () => {
+    // The failure this prevents: every steering candidate fails on dry land, and
+    // the ordinary blocked-path answer (reverse) would flip his heading by π ten
+    // times a second — a weathervane, not a stranded animal.
+    const basin = cthulhuBasin();
+    const world = basinWorld(basin);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    const monster = livingMonster()!;
+    basin.radius = 0;
+    expect(isStranded(world, monster)).toBe(true);
+
+    const held = { x: monster.x, y: monster.y, heading: monster.heading };
+    setMonsterRandomSource(seededRandom(11));
+    let maxTurn = 0;
+    for (let n = 0; n < 600; n++) {
+      const before = monster.heading;
+      advanceMonster(world, monster, TICK_DT);
+      maxTurn = Math.max(maxTurn, Math.abs(monster.heading - before));
+    }
+
+    expect(monster.x).toBe(held.x);
+    expect(monster.y).toBe(held.y);
+    // It drifts its gaze by the turn noise and by nothing else — one tick of a
+    // reversal would be π, five hundred times this bound.
+    expect(maxTurn).toBeLessThanOrEqual(
+      profileOf('cthulhu').turnNoiseRadiansPerSecond * TICK_DT + 1e-9,
+    );
+  });
+
+  it('swims again the moment the water comes back', () => {
+    const basin = cthulhuBasin();
+    const world = basinWorld(basin);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    const monster = livingMonster()!;
+    // NEVER from here on: it fires no Poisson gate, so he cannot wander into an
+    // idle beat and hold position for a reason that has nothing to do with the
+    // water. (ALWAYS would put him in one on the first step.)
+    setMonsterRandomSource(NEVER);
+
+    basin.radius = 0;
+    advanceMonster(world, monster, TICK_DT);
+    const stranded = { x: monster.x, y: monster.y };
+
+    // Reflooded. Nothing else changes: no re-summon, no new id, he simply moves.
+    basin.radius = 30;
+    for (let n = 0; n < 100; n++) advanceMonster(world, monster, TICK_DT);
+
+    expect(Math.hypot(monster.x - stranded.x, monster.y - stranded.y)).toBeGreaterThan(0);
+    expect(isLairCell(world, monster.x, monster.y)).toBe(true);
+  });
+});
+
+describe('the kraken can be banished', () => {
+  it('submerges when its trench collapses, and serves the full cooldown', () => {
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    expect(livingMonster()!.kind).toBe('kraken');
+
+    // Shrink it below the collapse threshold while the monster's own cell stays
+    // deep, so the ONLY thing that can banish it is the region test.
+    trench.radius = 4;
+    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
+    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
+
+    // Survey cadence: the collapse is noticed on the next survey, not instantly.
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(livingMonster()).toBeNull();
+    expect(cooldownRemainingSeconds()).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+  });
+
+  it('submerges when the ground is raised out from under it', () => {
+    const harness = boot(bowl(TRENCH_RADIUS));
     setMonsterRandomSource(ALWAYS);
     tick(harness, 1);
-    const monster = livingMonster();
-    expect(monster).not.toBeNull();
-    return monster!.id;
-  }
-
-  it('submerges when the ground is raised out from under it, and starts the cooldown', () => {
-    const harness = boot();
-    summonNow(harness);
+    expect(livingMonster()!.kind).toBe('kraken');
     // Stop the roll: this test is about the departure, and an always-firing roll
     // would re-summon it the moment the cooldown is examined.
     setMonsterRandomSource(NEVER);
@@ -361,7 +555,8 @@ describe('losing the lair', () => {
     const cellY = Math.floor(livingMonster()!.y);
 
     // Raise its own cell out of the deep. No ticks in between, so it cannot swim
-    // away — this is specifically the "the world changed under it" case.
+    // away — this is specifically the "the world changed under it" case. The
+    // kraken does not protect its ground, so the intents are accepted.
     for (let n = 0; n < 40 && isDeepWaterHeight(harness.world.heightAt(cellX, cellY)); n++) {
       handleSculptIntent(
         { world: harness.world, interceptors: harness.host },
@@ -381,83 +576,82 @@ describe('losing the lair', () => {
     expect(isDeepWaterHeight(harness.world.heightAt(cellX, cellY))).toBe(false);
     // The terrain reaction fires inside the sculpt — no tick needed.
     expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds()).toBe(CTHULHU_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSeconds()).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
   });
 
   it('refuses to summon again until the cooldown is served, then summons exactly one', () => {
-    const harness = boot();
-    const firstId = summonNow(harness);
-
-    const cellX = Math.floor(livingMonster()!.x);
-    const cellY = Math.floor(livingMonster()!.y);
-    for (let n = 0; n < 40 && isDeepWaterHeight(harness.world.heightAt(cellX, cellY)); n++) {
-      handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        {
-          type: 'sculpt',
-          x: cellX,
-          y: cellY,
-          radius: MAX_BRUSH_RADIUS,
-          dir: 1,
-          tool: 'stamp',
-          profile: 'hard',
-        },
-      );
-    }
-    expect(livingMonster()).toBeNull();
-
-    // A roll that fires on every single tick, for one second short of the
-    // cooldown. The gate is the only thing holding it back.
-    setMonsterRandomSource(ALWAYS);
-    tick(harness, (CTHULHU_RESPAWN_COOLDOWN_SECONDS - 2) / TICK_DT);
-    expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds()).toBeGreaterThan(0);
-
-    tick(harness, 3 / TICK_DT);
-    expect(livingMonsterCount()).toBe(1);
-    // A NEW monster, not the old one restored: ids are never reused.
-    expect(livingMonster()!.id).toBeGreaterThan(firstId);
-  });
-
-  it('submerges when its own basin collapses, even while its own cell stays deep', () => {
-    // THE ONE STUBBED WORLD IN THIS FILE, and why: the collapse rule is about a
-    // REGION shrinking below LAIR_COLLAPSE_DEEP_CELLS, and a sculpt reaches
-    // MAX_BRUSH_RADIUS (4) cells. Draining a 2 000-cell basin through the intent
-    // pipeline would be hundreds of intents of setup to exercise one comparison.
-    // The world is stubbed; the plugin's own lifecycle code is not.
-    let basinRadius = 30;
-    const world: LairWorld = {
-      worldSize: WORLD_SIZE,
-      heightAt(x, y) {
-        const dx = x - WORLD_CENTER;
-        const dy = y - WORLD_CENTER;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance > basinRadius) return BAND_HEIGHT;
-        // Deepest at the centre, so the survey's summon cell is the middle of
-        // the basin and not a rim cell that the shrink would strand.
-        return DEEP_WATER_MAX_HEIGHT - (basinRadius - distance);
-      },
-      isCellUnlocked: () => true,
-    };
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
 
     setMonsterRandomSource(ALWAYS);
     advanceSummoning(world, TICK_DT);
-    expect(livingMonster()).not.toBeNull();
+    const firstId = livingMonster()!.id;
 
-    // Shrink the basin to a pool far below the collapse threshold, while leaving
-    // the cell the monster is standing in deep — so the ONLY thing that can
-    // banish it is the region test.
-    basinRadius = 4;
-    expect(Math.PI * basinRadius * basinRadius).toBeLessThan(LAIR_COLLAPSE_DEEP_CELLS);
-    expect(isLairCell(world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
-
-    // Survey cadence: the collapse is noticed on the next survey, not instantly.
+    trench.radius = 4;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
     expect(livingMonster()).toBeNull();
+
+    // The trench is back, and a roll that fires on every single tick, for one
+    // second short of the cooldown. The gate is the only thing holding it back.
+    trench.radius = 40;
+    for (let n = 0; n < (KRAKEN_RESPAWN_COOLDOWN_SECONDS - 2) / TICK_DT; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(livingMonster()).toBeNull();
     expect(cooldownRemainingSeconds()).toBeGreaterThan(0);
+
+    for (let n = 0; n < 3 / TICK_DT; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonsterCount()).toBe(1);
+    // A NEW monster, not the old one restored: ids are never reused.
+    expect(livingMonster()!.id).toBeGreaterThan(firstId);
+  });
+});
+
+describe('the kinds contest one slot', () => {
+  it('gives a trench world to the kraken — the stricter habitat gets first refusal', () => {
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(bowl(TRENCH_RADIUS));
+    tick(harness, 1);
+
+    const monster = livingMonster();
+    expect(monster).not.toBeNull();
+    expect(monster!.kind).toBe('kraken');
+    expect(isLairCell(lairView(harness.world), monster!.x, monster!.y)).toBe(true);
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS);
+  });
+
+  it('gives a big SHALLOW basin to Cthulhu, and never to the kraken', () => {
+    const heightOf = bowl(GREAT_BASIN_RADIUS);
+    // The basin fails BOTH of the kraken's demands, which is what makes this a
+    // test of the habitat rather than of the ordering.
+    expect(countDeepCells(heightOf)).toBeGreaterThan(MIN_LAIR_DEEP_CELLS);
+    expect(countDeepCells(heightOf)).toBeLessThan(KRAKEN_MIN_LAIR_DEEP_CELLS);
+    expect(heightOf(WORLD_CENTER, WORLD_CENTER)).toBeGreaterThan(
+      SEA_LEVEL - KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT,
+    );
+
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(heightOf);
+    // Five simulated minutes of a roll that fires on every tick: if the kraken
+    // could ever take this world, three thousand chances is where it shows up.
+    tick(harness, 3000);
+    expect(livingMonster()!.kind).toBe('cthulhu');
+  });
+
+  it('summons nobody into a trench that is deep but tiny', () => {
+    // Deep enough for the kraken, far too small for either kind. Depth alone is
+    // not a lair, which is the half of the rule the area threshold carries.
+    const world = basinWorld({
+      radius: 10,
+      floorHeight: SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS + 1) * BAND_HEIGHT,
+    });
+    expect(Math.PI * 10 * 10).toBeLessThan(MIN_LAIR_DEEP_CELLS);
+
+    setMonsterRandomSource(ALWAYS);
+    for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonster()).toBeNull();
   });
 });
 
@@ -484,9 +678,12 @@ describe('persistence', () => {
   });
 
   it('keeps a banished monster banished across a restart', () => {
+    // A KRAKEN world: only a banishable kind can test that a banishment
+    // survives a reboot, and Cthulhu is no longer one.
     setMonsterRandomSource(ALWAYS);
-    const harness = boot();
+    const harness = boot(bowl(TRENCH_RADIUS));
     tick(harness, 1);
+    expect(livingMonster()!.kind).toBe('kraken');
 
     const cellX = Math.floor(livingMonster()!.x);
     const cellY = Math.floor(livingMonster()!.y);
@@ -507,12 +704,12 @@ describe('persistence', () => {
     }
     const snapshot = saveMonsters();
     expect(snapshot.monster).toBeNull();
-    expect(snapshot.cooldownSeconds).toBe(CTHULHU_RESPAWN_COOLDOWN_SECONDS);
+    expect(snapshot.cooldownSeconds).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
 
     // Reboot onto the same world. Without the persisted cooldown, the very next
     // tick would roll for a fresh monster — a restart would be a way to skip the
     // banishment.
-    const rebooted = boot();
+    const rebooted = boot(bowl(TRENCH_RADIUS));
     loadMonsters(JSON.parse(JSON.stringify(snapshot)) as unknown);
     tick(rebooted, 100);
     expect(livingMonster()).toBeNull();
@@ -578,23 +775,43 @@ describe('persistence', () => {
     expect(livingMonster()!.id).toBe(9);
 
     // Banish it and let the world summon another: the new id must be past the
-    // restored one.
+    // restored one. A KRAKEN, restored onto its own trench world — Cthulhu
+    // could not be banished to make room for the successor.
     setMonsterRandomSource(ALWAYS);
-    const harness = boot();
+    const harness = boot(bowl(TRENCH_RADIUS));
     loadMonsters({
       version: 1,
       nextId: 'nonsense',
       cooldownSeconds: 0,
-      monster: { id: 9, kind: 'cthulhu', x: 0, y: 0, heading: 0 },
+      monster: { id: 9, kind: 'kraken', x: 0, y: 0, heading: 0 },
     });
     // (0, 0) is dry land in the bowl, so the first tick's habitat check removes
     // it — which is also the "restored onto a changed world" path.
     tick(harness, 1);
     expect(cooldownRemainingSeconds()).toBeGreaterThan(0);
 
-    tick(harness, CTHULHU_RESPAWN_COOLDOWN_SECONDS / TICK_DT + 2);
+    tick(harness, KRAKEN_RESPAWN_COOLDOWN_SECONDS / TICK_DT + 2);
     expect(livingMonster()).not.toBeNull();
     expect(livingMonster()!.id).toBeGreaterThan(9);
+  });
+
+  it('restores an unbanishable monster onto a drained world and leaves him there', () => {
+    // The restart is not a way to be rid of him either: the first tick's habitat
+    // check runs, finds him on dry land, and has no power to remove him.
+    setMonsterRandomSource(NEVER);
+    const harness = boot();
+    loadMonsters({
+      version: 1,
+      nextId: 20,
+      cooldownSeconds: 0,
+      monster: { id: 9, kind: 'cthulhu', x: 0, y: 0, heading: 0 },
+    });
+    tick(harness, 100);
+
+    expect(livingMonster()).not.toBeNull();
+    expect(livingMonster()!.id).toBe(9);
+    expect(isLairCell(lairView(harness.world), 0, 0)).toBe(false);
+    expect(cooldownRemainingSeconds()).toBe(0);
   });
 });
 
@@ -641,6 +858,7 @@ describe('broadcast', () => {
 
     const [entry] = messages[0];
     expect(entry.kind).toBe('cthulhu');
+    expect(entry.kind).toBe(livingMonster()!.kind);
     expect(entry.id).toBe(livingMonster()!.id);
     expect(Object.keys(entry).sort()).toEqual(['heading', 'id', 'kind', 'x', 'y']);
     for (const value of [entry.x, entry.y, entry.heading]) {
@@ -652,119 +870,15 @@ describe('broadcast', () => {
   it('reports the empty list from monsterStates when the slot is empty', () => {
     expect(monsterStates()).toEqual([]);
   });
-});
 
-describe('lurking', () => {
-  it('never leaves deep unlocked water, over a long run', () => {
-    const harness = boot();
+  it('broadcasts the kraken under its own kind, so the client picks its model', () => {
     setMonsterRandomSource(ALWAYS);
+    const harness = boot(bowl(TRENCH_RADIUS));
     tick(harness, 1);
-    setMonsterRandomSource(seededRandom(99));
+    harness.sink.clear();
+    tick(harness, BROADCAST_TICK_INTERVAL);
 
-    const view = lairView(harness.world);
-    // Ten simulated minutes of wandering.
-    for (let n = 0; n < 6000; n++) {
-      tick(harness, 1);
-      const monster = livingMonster();
-      expect(monster).not.toBeNull();
-      expect(isLairCell(view, monster!.x, monster!.y)).toBe(true);
-    }
-  });
-
-  it('moves no further than its lurk speed allows in one tick', () => {
-    setMonsterRandomSource(ALWAYS);
-    const harness = boot();
-    tick(harness, 1);
-    setMonsterRandomSource(seededRandom(5));
-
-    let previous = { x: livingMonster()!.x, y: livingMonster()!.y };
-    for (let n = 0; n < 600; n++) {
-      tick(harness, 1);
-      const monster = livingMonster()!;
-      const step = Math.hypot(monster.x - previous.x, monster.y - previous.y);
-      expect(step).toBeLessThanOrEqual(CTHULHU_LURK_SPEED_CELLS_PER_SECOND * TICK_DT + 1e-9);
-      previous = { x: monster.x, y: monster.y };
-    }
-  });
-
-  it('lurks slower than anything the wildlife plugin puts in the water', () => {
-    // The wildlife whale cruises at 0.8 cells/s (plugins/wildlife/server/
-    // species.ts) and is the slowest creature there. Cross-referenced, not
-    // imported: plugins must not depend on each other for a number.
-    const WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND = 0.8;
-    expect(CTHULHU_LURK_SPEED_CELLS_PER_SECOND).toBeLessThan(
-      WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND,
-    );
-  });
-
-  it('holds position during an idle beat but still turns', () => {
-    const world = lairView(worldWithTerrain(WORLD_SIZE, bowl(GREAT_BASIN_RADIUS)));
-    const profile = profileOf('cthulhu');
-    const monster = {
-      id: 1,
-      kind: 'cthulhu' as const,
-      x: WORLD_CENTER,
-      y: WORLD_CENTER,
-      heading: 0,
-      idle: false,
-    };
-
-    // A source that fires every gate: the first step flips it into the idle beat
-    // and the step after that is the one under test.
-    setMonsterRandomSource(ALWAYS);
-    advanceMonster(world, monster, TICK_DT);
-    expect(monster.idle).toBe(true);
-
-    const held = { x: monster.x, y: monster.y, heading: monster.heading };
-    // Keep it idle for this step: NEVER never fires the "wake up" gate.
-    setMonsterRandomSource(NEVER);
-    advanceMonster(world, monster, TICK_DT);
-
-    expect(monster.idle).toBe(true);
-    expect(monster.x).toBe(held.x);
-    expect(monster.y).toBe(held.y);
-    // It still turns: NEVER returns 1, so the noise term is +turnNoise·dt.
-    expect(monster.heading).toBeCloseTo(
-      held.heading + profile.turnNoiseRadiansPerSecond * TICK_DT,
-      10,
-    );
-  });
-
-  it('spends roughly the designed share of its time holding still', () => {
-    // The two idle rates are a Markov pair whose steady state is
-    // onset/(onset + end) — 0.05/0.17 ≈ 29% (see the note in kinds.ts). This is
-    // the test that the pair actually produces the beats they claim to, rather
-    // than a comment about arithmetic nobody ran.
-    setMonsterRandomSource(ALWAYS);
-    const harness = boot();
-    tick(harness, 1);
-    setMonsterRandomSource(seededRandom(99));
-
-    const profile = profileOf('cthulhu');
-    const predicted =
-      profile.idleOnsetPerSecond / (profile.idleOnsetPerSecond + profile.idleEndPerSecond);
-
-    const SAMPLES = 6000;
-    let idleTicks = 0;
-    for (let n = 0; n < SAMPLES; n++) {
-      tick(harness, 1);
-      if (livingMonster()!.idle) idleTicks++;
-    }
-
-    const observed = idleTicks / SAMPLES;
-    expect(predicted).toBeCloseTo(0.29, 2);
-    // Ten simulated minutes holds only ~30 beats, so the sampling error is
-    // real: the bound is ±0.15, wide enough for the draw and far too tight for
-    // a plugin that had lost its idle beats or never left them.
-    expect(Math.abs(observed - predicted)).toBeLessThan(0.15);
-  });
-
-  it('probes at least half its own body ahead', () => {
-    // The look-ahead is what keeps a 7-cell-wide body out of cliffs its centre
-    // point would clear. Pinning it here because the failure it prevents is
-    // invisible in a unit test of movement: the model clipping terrain.
-    expect(CTHULHU_FOOTPRINT_CELLS / 2).toBeGreaterThan(
-      CTHULHU_LURK_SPEED_CELLS_PER_SECOND * TICK_DT,
-    );
+    const [entry] = stateMessages(harness)[0]!;
+    expect(entry.kind).toBe('kraken');
   });
 });

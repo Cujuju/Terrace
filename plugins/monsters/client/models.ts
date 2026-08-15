@@ -4,14 +4,14 @@
 // says `kind`; what do I add to the scene?", and each creature lives in its own
 // file beside it:
 //
-//   ./geometry.ts   the workshop — the toolkit and the resource pool;
-//   ./anatomy.ts    Cthulhu's numbers        ./cthulhu.ts  his builder.
+//   ./geometry.ts        the workshop — the toolkit and the resource pool;
+//   ./anatomy.ts         Cthulhu's numbers          ./cthulhu.ts  his builder;
+//   ./kraken-anatomy.ts  the kraken's numbers       ./kraken.ts   its builder.
 //
 // That split is the point: adding a kind is adding two files and one row here,
-// and no two animals can quietly borrow a constant from each other. The
-// alternative — every builder inlined into this file — is a module in which the
-// creatures and the tools they share are interleaved, and it grows by a
-// thousand lines per kind.
+// and neither animal can quietly borrow a constant from the other. The alternative
+// — a second builder inlined into this file — was a 1 400-line module in which
+// the two creatures and the tools they share were interleaved.
 //
 // ONE WORKSHOP FOR ALL KINDS, built at attach and disposed exactly once. Every
 // kind's geometry and materials are created up front, not on first sight of that
@@ -22,6 +22,7 @@
 import type { MonsterKind } from '../protocol.ts';
 import { createCthulhuFactory } from './cthulhu.ts';
 import { createWorkshop } from './geometry.ts';
+import { createKrakenFactory } from './kraken.ts';
 
 // Re-exported so the rest of the client half keeps importing its model contract
 // from `./models.ts` — the workshop is an implementation detail of this folder.
@@ -42,6 +43,7 @@ export function createMonsterModels(): MonsterModels {
 
   const constructors: Readonly<Record<MonsterKind, () => MonsterModel>> = {
     cthulhu: createCthulhuFactory(workshop),
+    kraken: createKrakenFactory(workshop),
   };
 
   return {
