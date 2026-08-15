@@ -131,12 +131,22 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     return cell === null ? null : { ...cell, surfaceY: point.y };
   };
 
-  /** hoverTarget's cache — see the interface doc for the contract. */
+  /**
+   * hoverTarget's cache — see the interface doc for the contract. The key
+   * covers BOTH things that move the ray: the pointer AND the camera (owner,
+   * 2026-08-14: the outline "needs to follow the mouse even during a pan" —
+   * a pointer-only key froze it mid-pan and snapped it on the next move).
+   * The camera part quantises position and orientation finely enough that a
+   * one-cell change of aim can never hide inside one bucket, while damping's
+   * sub-visible tail settles into a bucket instead of re-picking every frame.
+   */
   let hoverKey = '';
   let hoverCache: { x: number; y: number; surfaceY: number } | null = null;
   const hoverTarget = (): { x: number; y: number; surfaceY: number } | null => {
+    const p = camera.position;
+    const q = camera.quaternion;
     const key = havePointer
-      ? `${pointerClientX},${pointerClientY},${worldSize()}`
+      ? `${pointerClientX},${pointerClientY},${worldSize()},${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${q.x.toFixed(3)},${q.y.toFixed(3)},${q.z.toFixed(3)},${q.w.toFixed(3)}`
       : 'away';
     if (key !== hoverKey) {
       hoverKey = key;
