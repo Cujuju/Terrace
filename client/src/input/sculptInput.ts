@@ -57,6 +57,14 @@ export interface SculptInputOptions {
 }
 
 export interface SculptInput {
+  /**
+   * The cell under the cursor right now, with the picked surface height —
+   * what the brush-outline preview (render/brushPreview.ts) follows. Cached
+   * per pointer position: the underlying raycast re-runs only when the
+   * pointer has actually moved (or the world changed size), so calling this
+   * every frame costs nothing while the mouse is still.
+   */
+  hoverTarget(): { x: number; y: number; surfaceY: number } | null;
   dispose(): void;
 }
 
@@ -102,7 +110,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * cell under it, or null if the ray missed (empty sea, locked territory, or
    * off-screen).
    */
-  const pickCell = (): { x: number; y: number } | null => {
+  const pickCell = (): { x: number; y: number; surfaceY: number } | null => {
     const size = worldSize();
     if (size <= 0 || !havePointer) return null;
 
@@ -118,7 +126,23 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (hits.length === 0) return null;
 
     const point = hits[0].point;
-    return worldPointToCell(point.x / CELL_WORLD_SIZE, point.z / CELL_WORLD_SIZE, size);
+    const cell = worldPointToCell(point.x / CELL_WORLD_SIZE, point.z / CELL_WORLD_SIZE, size);
+    // surfaceY rides along for the hover preview; intents ignore it.
+    return cell === null ? null : { ...cell, surfaceY: point.y };
+  };
+
+  /** hoverTarget's cache — see the interface doc for the contract. */
+  let hoverKey = '';
+  let hoverCache: { x: number; y: number; surfaceY: number } | null = null;
+  const hoverTarget = (): { x: number; y: number; surfaceY: number } | null => {
+    const key = havePointer
+      ? `${pointerClientX},${pointerClientY},${worldSize()}`
+      : 'away';
+    if (key !== hoverKey) {
+      hoverKey = key;
+      hoverCache = pickCell();
+    }
+    return hoverCache;
   };
 
   /**
@@ -324,6 +348,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   window.addEventListener('blur', onWindowBlur);
 
   return {
+    hoverTarget,
     dispose(): void {
       stopRepeat();
       canvas.removeEventListener('pointerdown', onPointerDown);

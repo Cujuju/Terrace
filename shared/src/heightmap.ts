@@ -154,13 +154,16 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
  *   sculptDisplacementUnits — what a sculpt COSTS, so a cell counted here but
  *                           never touched is mana charged for nothing.
  * These were three verbatim copies of one loop; one function is what makes
- * "they agree" a fact rather than a comment.
+ * "they agree" a fact rather than a comment. EXPORTED (2026-08-14) for a
+ * fourth consumer with the same must-agree stake: the client's brush-outline
+ * preview (client/src/render/brushPreview.ts) — an outline drawn from any
+ * other loop would promise cells the brush does not touch.
  *
  * The callback takes the OFFSET, not a cell: bounds are the caller's business
  * (sculptDisplacementUnits has no map at all — it prices an intent, not a
  * position, so a brush overhanging the map edge still costs full price).
  */
-function forEachFootprintOffset(
+export function forEachFootprintOffset(
   radius: number,
   visit: (dx: number, dy: number, dist: number) => void,
 ): void {

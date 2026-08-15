@@ -13,7 +13,8 @@ import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { createWorld } from './world.ts';
-import { setConnectionStatus } from './state/hudState.ts';
+import { brushRadius, setConnectionStatus } from './state/hudState.ts';
+import { createBrushPreview } from './render/brushPreview.ts';
 import { Hud } from './ui/Hud.tsx';
 import './ui/hud.css';
 
@@ -44,7 +45,7 @@ const connection = connect({
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
 });
 
-createSculptInput({
+const sculptInput = createSculptInput({
   canvas,
   camera: viewport.camera,
   // Accessors, not snapshots: both the mesh list and the world size change
@@ -67,6 +68,12 @@ createSculptInput({
     if (connection.sendSculpt(intent)) world.predictSculpt(intent);
   },
 });
+
+// The brush outline follows the hover pick each frame. hoverTarget is cached
+// per pointer position, so a still mouse costs nothing; brushRadius is read
+// live so the outline resizes the moment the HUD changes it.
+const brushPreview = createBrushPreview(viewport.scene);
+viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadius()));
 
 render(() => <Hud />, hudRoot);
 
