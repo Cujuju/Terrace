@@ -2,6 +2,7 @@
 // a message a self-hoster can act on, never boot a subtly broken world.
 
 import { CHUNK_SIZE, DEFAULT_WORLD_SIZE } from '@terrace/shared';
+import { isAbsolute, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ConfigError,
@@ -24,6 +25,9 @@ describe('loadConfig', () => {
     expect(config.difficulty).toBe(DEFAULT_WORLD_DIFFICULTY);
     expect(config.dbPath).toBe('./data/world.db');
     expect(config.pluginsDir.endsWith('plugins')).toBe(true);
+    // Sibling of pluginsDir's own repo-root convention, but under client/dist
+    // (issue #20) rather than the repo-root plugins/ folder.
+    expect(config.clientDistPath.endsWith(join('client', 'dist'))).toBe(true);
   });
 
   it('reads overrides', () => {
@@ -65,6 +69,30 @@ describe('loadConfig', () => {
       difficulty: DEFAULT_WORLD_DIFFICULTY,
       dbPath: './data/world.db',
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// CLIENT_DIST_PATH (issue #20): resolved the same way as PLUGINS_DIR — always
+// an absolute path, never validated for existence here (that is index.ts's
+// job at boot: serve it if index.html is there, log "unbuilt" if not).
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('loadConfig — CLIENT_DIST_PATH', () => {
+  it('defaults to client/dist next to server/, as an absolute path', () => {
+    const config = loadConfig({});
+    expect(isAbsolute(config.clientDistPath)).toBe(true);
+    expect(config.clientDistPath.endsWith(join('client', 'dist'))).toBe(true);
+  });
+
+  it('accepts an override and resolves it to an absolute path', () => {
+    const config = loadConfig({ CLIENT_DIST_PATH: 'somewhere/else' });
+    expect(config.clientDistPath).toBe(resolve('somewhere/else'));
+  });
+
+  it('treats an empty value as unset, like every other path variable', () => {
+    const config = loadConfig({ CLIENT_DIST_PATH: '   ' });
+    expect(config.clientDistPath.endsWith(join('client', 'dist'))).toBe(true);
   });
 });
 
