@@ -40,11 +40,10 @@ body {
   pointer-events: none;
 }
 
+/* Panel CHROME only — where a panel sits is its anchor class's business
+   (2026-08-19 layout: three sections in three corners, one chrome). */
 .hud-panel {
   pointer-events: auto;
-  position: absolute;
-  top: 16px;
-  left: 16px;
   min-width: 210px;
   padding: 12px 14px;
   border: 1px solid var(--hud-border);
@@ -53,6 +52,26 @@ body {
   backdrop-filter: blur(6px);
   font-size: 13px;
   line-height: 1.4;
+}
+
+/* The three corners. Bottom anchors clear the mana gauge's bottom-centre
+   stack by construction: the gauge is centred and these hug the edges. */
+.hud-anchor-top-left {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+}
+
+.hud-anchor-bottom-left {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+}
+
+.hud-anchor-bottom-right {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
 }
 
 /* The collapsed face of the tools panel: same chrome as .hud-panel, shrunk to
@@ -208,20 +227,39 @@ body {
   max-width: 220px;
 }
 
-/* Control-bindings editor */
+/* Control-bindings editor — the bottom-right SETTINGS section: a compact
+   button, and the editor as a popup growing UPWARD from it so the button
+   never moves when the popup opens (a control that jumps under the pointer
+   would eat its own second click). */
 
-.controls-toggle {
-  border: none;
-  background: transparent;
-  color: var(--hud-muted);
+.hud-settings {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none; /* only the button/popup take events, like the centre stacks */
+}
+
+.hud-settings > * {
+  pointer-events: auto;
+}
+
+.hud-settings-button {
+  min-width: 0;
+  padding: 8px 12px;
   font: inherit;
-  padding: 0;
+  color: var(--hud-muted);
   cursor: pointer;
 }
 
-.controls-toggle:hover,
-.controls-toggle.open {
+.hud-settings-button:hover,
+.hud-settings-button.open {
   color: var(--hud-text);
+  border-color: var(--hud-accent);
+}
+
+.hud-settings-popup {
+  min-width: 230px;
 }
 
 .controls-row {

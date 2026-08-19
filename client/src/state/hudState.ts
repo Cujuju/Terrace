@@ -118,11 +118,18 @@ export const DEFAULT_BRUSH_PROFILE: SculptProfile =
 /** Raise is the default direction; lowering is the deliberate act. */
 export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
-/** The Controls panel starts collapsed — the HUD is a sculpting tool first. */
+/**
+ * The control-settings editor starts hidden — the HUD is a sculpting tool
+ * first. (Since the 2026-08-19 layout it is the bottom-right settings POPUP;
+ * before that, an inline collapsed section. Same fact persisted either way:
+ * "the player has the control settings showing".)
+ */
 export const DEFAULT_SHOW_CONTROLS = false;
 
 /**
- * Whether the whole tools panel starts expanded, PER DEVICE CLASS (owner
+ * Whether the INFO panel (top left: status, plugin panels, control hints —
+ * the whole tools panel, before the 2026-08-19 corner split moved the brush
+ * out of it) starts expanded, PER DEVICE CLASS (owner
  * report, 2026-08-14: on an iPhone the open panel covers half the world).
  * A touchscreen starts collapsed to a tab and expands on tap; a desktop, with
  * screen to spare and a hover cursor, starts open as it always has. The

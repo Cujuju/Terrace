@@ -1,13 +1,24 @@
 // The HUD. Solid owns this and nothing else — the canvas underneath belongs to
 // the imperative renderer (design doc §3.1).
 //
+// LAYOUT (owner redesign, 2026-08-19): three sections in three corners —
+//   * TOP LEFT      the info panel: connection status, the control hint text
+//                    and 'panel'-placed plugin panels. Collapsible to a tab,
+//                    as the old all-in-one panel was.
+//   * BOTTOM LEFT   the brush panel: radius, tool, edge, mode — the things a
+//                    sculpting hand actually reaches for, always visible.
+//   * BOTTOM RIGHT  a settings button that pops up the control-bindings
+//                    editor (ControlsPanel) — hidden until asked for.
+// Top/bottom CENTRE stay what they were: world header + top-center plugin
+// stack, and the bottom-center instruments (mana gauge).
+//
 // SOLID REACTIVITY: every reactive value below is read by CALLING its accessor
 // at the point of use, inside JSX or inside an event handler. A component body
 // runs exactly once, so a `const status = connectionStatus()` here would freeze
 // the dot on whatever the status happened to be at mount. There are no such
 // consts in this file, by construction.
 
-import { For, Show, type JSX } from 'solid-js';
+import { For, Show, onCleanup, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import {
@@ -144,17 +155,39 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 }
 
 export function Hud(): JSX.Element {
-  // Panel visibility used to be a component-local signal. It now lives in
-  // hudState.ts so it is persisted with the rest of the HUD — an expanded
-  // Controls panel survives a reload like every other choice made here. It is
-  // still read by calling the accessor inline, exactly as before.
+  // The settings popup's container, for the click-outside dismissal below. A
+  // plain let-ref (Solid idiom); assigned once when the section renders.
+  let settingsRoot: HTMLDivElement | undefined;
+
+  // DISMISSAL: Escape and click-outside both close the settings popup — a
+  // popup that only its own button can close feels stuck. Registered once (the
+  // component body runs once) on window, reading showControls() at EVENT time
+  // rather than tracking it. Neither handler claims the event: a click that
+  // dismisses the popup still reaches whatever it landed on (canvas included),
+  // matching how every native popover behaves.
+  const onWindowKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && showControls()) setShowControls(false);
+  };
+  const onWindowPointerDown = (event: PointerEvent): void => {
+    if (!showControls()) return;
+    if (settingsRoot !== undefined && event.target instanceof Node && settingsRoot.contains(event.target)) {
+      return;
+    }
+    setShowControls(false);
+  };
+  window.addEventListener('keydown', onWindowKeyDown);
+  window.addEventListener('pointerdown', onWindowPointerDown);
+  onCleanup(() => {
+    window.removeEventListener('keydown', onWindowKeyDown);
+    window.removeEventListener('pointerdown', onWindowPointerDown);
+  });
+
   return (
     <div class="hud">
       {/* Top centre, top to bottom: the world header (core — whose world this
-          is), then the plugin stack (at-a-glance status: the mana gauge etc).
-          The header is first in source order and the container is a column, so
-          it sits ABOVE anything a plugin places here, whatever plugins are
-          installed. */}
+          is), then the plugin stack (at-a-glance status). The header is first
+          in source order and the container is a column, so it sits ABOVE
+          anything a plugin places here, whatever plugins are installed. */}
       <div class="hud-top-center">
         <WorldHeader />
         <For each={pluginHudPanels().filter((p) => p.placement === 'top-center')}>
@@ -170,48 +203,79 @@ export function Hud(): JSX.Element {
         </For>
       </div>
 
-      {/* The whole tools panel collapses to a tab (owner, 2026-08-14: on a
-          phone the open panel hides half the world). The status dot lives on
-          BOTH faces, so the connection stays glanceable while collapsed. */}
+      {/* TOP LEFT — the INFO panel: status, plugin 'panel' panels, and the
+          control descriptions. Collapses to a tab exactly as the old
+          all-in-one panel did (owner, 2026-08-14: on a phone the open panel
+          hides half the world); the status dot lives on BOTH faces, so the
+          connection stays glanceable while collapsed. */}
       <Show
         when={panelOpen()}
         fallback={
           <button
             type="button"
-            class="hud-panel hud-panel-tab"
+            class="hud-panel hud-anchor-top-left hud-panel-tab"
             aria-expanded={false}
-            title="Open the brush and camera menu."
+            title="Open the status and help panel."
             onClick={() => setPanelOpen(true)}
           >
             <span
               class="status-dot"
               classList={{ [`status-${connectionStatus()}`]: true }}
             />
-            Menu ▸
+            Info ▸
           </button>
         }
       >
-      <div class="hud-panel">
-        {/* The status row doubles as the collapse control — it is the panel's
-            first row on every device, so open and closed toggle in the same
-            place. Its title stays the STATUS meaning (the row is a readout
-            first); the chevron and aria-expanded carry the collapse affordance. */}
-        <button
-          type="button"
-          class="hud-row hud-status panel-header"
-          aria-expanded={true}
-          title={STATUS_TITLE[connectionStatus()]}
-          onClick={() => setPanelOpen(false)}
-        >
-          {/* classList keeps the reactive read inline rather than in a const. */}
-          <span
-            class="status-dot"
-            classList={{ [`status-${connectionStatus()}`]: true }}
-          />
-          <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
-          <span class="panel-chevron">▴</span>
-        </button>
+        <div class="hud-panel hud-anchor-top-left">
+          {/* The status row doubles as the collapse control — it is the
+              panel's first row on every device, so open and closed toggle in
+              the same place. Its title stays the STATUS meaning (the row is a
+              readout first); the chevron and aria-expanded carry the collapse
+              affordance. */}
+          <button
+            type="button"
+            class="hud-row hud-status panel-header"
+            aria-expanded={true}
+            title={STATUS_TITLE[connectionStatus()]}
+            onClick={() => setPanelOpen(false)}
+          >
+            {/* classList keeps the reactive read inline rather than in a const. */}
+            <span
+              class="status-dot"
+              classList={{ [`status-${connectionStatus()}`]: true }}
+            />
+            <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
+            <span class="panel-chevron">▴</span>
+          </button>
 
+          {/* Plugin panels (design §3.5): each client plugin may register
+              components; 'panel'-placed ones stack inside the info panel —
+              the placement contract's meaning ("the corner panel",
+              client/src/plugins/types.ts) is unchanged, only the corner's
+              contents around them slimmed down. */}
+          <For each={pluginHudPanels().filter((p) => p.placement === 'panel')}>
+            {(panel) => (
+              <div class="hud-plugin-panel">
+                <Dynamic component={panel.component} />
+              </div>
+            )}
+          </For>
+
+          <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
+          {/* Touch capability is static per device, so the guard can be a
+              plain expression — it never needs to re-run. */}
+          <Show when={navigator.maxTouchPoints > 0}>
+            <p class="hud-hint">
+              1-finger sculpts (tap Mode to switch) · 2-finger{' '}
+              {twoFingerGesture() === 'orbit' ? 'orbits' : 'pans'} + pinch zooms
+            </p>
+          </Show>
+        </div>
+      </Show>
+
+      {/* BOTTOM LEFT — the BRUSH panel: what a playing hand reaches for.
+          Always visible; collapsing the info panel never takes the tools away. */}
+      <div class="hud-panel hud-anchor-bottom-left">
         <div class="hud-row">
           <span class="hud-label">Brush</span>
           <div class="brush-picker">
@@ -293,45 +357,34 @@ export function Hud(): JSX.Element {
             {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
           </button>
         </div>
-
-        <div class="hud-row">
-          <button
-            type="button"
-            class="controls-toggle"
-            classList={{ open: showControls() }}
-            aria-expanded={showControls()}
-            title="Show or hide the mouse, touch and scroll settings."
-            onClick={() => setShowControls(!showControls())}
-          >
-            Controls {showControls() ? '▾' : '▸'}
-          </button>
-        </div>
-
-        <Show when={showControls()}>
-          <ControlsPanel />
-        </Show>
-
-        {/* Plugin panels (design §3.5): each client plugin may register
-            components; 'panel'-placed ones stack under the core controls. */}
-        <For each={pluginHudPanels().filter((p) => p.placement === 'panel')}>
-          {(panel) => (
-            <div class="hud-plugin-panel">
-              <Dynamic component={panel.component} />
-            </div>
-          )}
-        </For>
-
-        <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
-        {/* Touch capability is static per device, so the guard can be a plain
-            expression — it never needs to re-run. */}
-        <Show when={navigator.maxTouchPoints > 0}>
-          <p class="hud-hint">
-            1-finger sculpts (tap Mode to switch) · 2-finger{' '}
-            {twoFingerGesture() === 'orbit' ? 'orbits' : 'pans'} + pinch zooms
-          </p>
-        </Show>
       </div>
-      </Show>
+
+      {/* BOTTOM RIGHT — the SETTINGS section: a small button, and the
+          control-bindings editor as a popup above it when asked for. The
+          popup and the button share one container so the click-outside
+          dismissal (top of the component) can treat them as one region. */}
+      <div class="hud-settings hud-anchor-bottom-right" ref={settingsRoot}>
+        <Show when={showControls()}>
+          <div
+            class="hud-panel hud-settings-popup"
+            role="dialog"
+            aria-label="Control settings"
+          >
+            <ControlsPanel />
+          </div>
+        </Show>
+        <button
+          type="button"
+          class="hud-panel hud-settings-button"
+          classList={{ open: showControls() }}
+          aria-expanded={showControls()}
+          aria-haspopup="dialog"
+          title="Show or hide the mouse, touch and scroll settings."
+          onClick={() => setShowControls(!showControls())}
+        >
+          ⚙ Settings
+        </button>
+      </div>
     </div>
   );
 }
