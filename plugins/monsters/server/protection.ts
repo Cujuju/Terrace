@@ -44,13 +44,28 @@ export const RAISE_BLOCKED_REASON = 'monster occupies the ground';
 /**
  * Does this intent's brush reach the monster's protected ground?
  *
- * GEOMETRY, in cells, and both discs are stated exactly:
+ * GEOMETRY, in cells. Two discs, each stated exactly — the monster's as an
+ * equality, the brush's as a bound, for the reason given below:
  *
- *   * the brush covers the cells with `floor(sqrt(dx² + dy²)) < radius` around
- *     its centre cell (shared/heightmap.ts applyBrush) — which is precisely the
- *     open disc of `intent.radius` about that cell's CENTRE, since flooring a
- *     distance below an integer is the same test as the distance being below
- *     it. The `+ 0.5` on the intent's integer cell coordinates is that centre;
+ *   * the brush is CONTAINED BY the open disc of `intent.radius` about its
+ *     centre cell's centre — the `+ 0.5` on the intent's integer cell
+ *     coordinates is that centre.
+ *
+ *     CONTAINED BY, NOT EQUAL TO, and the distinction is a correction (2026-08-19
+ *     correctness pass). This comment used to claim equality, quoting
+ *     applyBrush's old membership test `floor(sqrt(dx² + dy²)) < radius`
+ *     (algebraically `dx² + dy² < radius²`). That test no longer exists:
+ *     shared's `forEachFootprintOffset` was tightened the same day to the
+ *     TIGHT disc `dx² + dy² < radius·(radius − 1)`, with radius 1 the centre
+ *     cell alone. Since `radius·(radius − 1) < radius²` for every legal
+ *     radius, `intent.radius` remains a correct UPPER BOUND on how far the
+ *     footprint reaches — which is the direction that matters here, because
+ *     erring wide refuses a raise that could not have touched the monster,
+ *     while erring narrow would let one land on it. It is a bound and not a
+ *     restatement, so the day the footprint widens this stops being true
+ *     silently; `test/monsters.test.ts` pins the containment against shared's
+ *     own footprint function for every legal radius so that day fails a test
+ *     instead;
  *   * the monster occupies the disc of groundProtectionRadiusCells about its
  *     LIVE fractional position — the same value the broadcast interpolates
  *     between, not a rounded or cell-snapped copy of it, so the refusal matches

@@ -17,12 +17,18 @@ import {
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   SEA_LEVEL,
+  forEachFootprintOffset,
   isWater,
 } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
-import type { World } from '../../../server/src/world/world.ts';
+import { initialUnlockFootprint } from '../../../server/src/world/initial-unlock.ts';
+import {
+  buildFreshGenesisTerrain,
+  freshGenesisHeightAt,
+  type World,
+} from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
   asLoadedPlugin,
@@ -328,9 +334,18 @@ describe('deep water', () => {
   });
 
   it('is always water by shared\'s definition, never a second opinion about the sea', () => {
-    for (let h = -1024; h <= 1024; h++) {
+    // MIN_HEIGHT..MAX_HEIGHT, not the -1024..1024 this swept until the
+    // 2026-08-19 correctness pass: Deep Strata took MIN_HEIGHT to -1536, and
+    // the bands it added (basalt, obsidian, lava) are exactly the range the
+    // old literal stopped covering — a range the water habitat DOES admit, so
+    // a disagreement down there would have shipped untested.
+    for (let h = MIN_HEIGHT; h <= MAX_HEIGHT; h++) {
       if (isDeepWaterHeight(h)) expect(isWater(h)).toBe(true);
     }
+    // The deepest cell a world can hold is habitat, not an off-by-one hole:
+    // a monster standing on the lava floor is deep water by this definition.
+    expect(isDeepWaterHeight(MIN_HEIGHT)).toBe(true);
+    expect(isWater(MIN_HEIGHT)).toBe(true);
   });
 });
 
@@ -1011,6 +1026,84 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     );
   });
 
+  // ── The derivation, checked against the REAL generator ────────────────────
+  //
+  // The bar's comment in kinds.ts used to assert three facts about worldgen
+  // that a correctness pass (2026-08-19) found wrong. These pin the corrected
+  // ones against server/src/world/world.ts itself — the same
+  // assert-the-core-relation-from-the-plugin-side arrangement wildlife uses
+  // for FRESH_SEABED_BANDS_BELOW_SEA, and for the same reason: core cannot
+  // import a plugin's constants, so the plugin owns the agreement.
+
+  /** A fixed seed list: genesis is a pure function of it, so this is stable. */
+  const GENESIS_PROBE_SEEDS = Array.from({ length: 48 }, (_, i) => (i * 2654435761) >>> 0);
+  const GENESIS_PROBE_SIZE = 128;
+
+  /** Deepest genesis cell of one world, whole-world and inside the unlock box. */
+  function genesisFloors(seed: number): { world: number; unlocked: number } {
+    const terrain = buildFreshGenesisTerrain(GENESIS_PROBE_SIZE, seed);
+    const { startChunk, spanChunks } = initialUnlockFootprint(GENESIS_PROBE_SIZE);
+    const lo = startChunk * CHUNK_SIZE;
+    const hi = lo + spanChunks * CHUNK_SIZE - 1;
+
+    let world = Number.POSITIVE_INFINITY;
+    let unlocked = Number.POSITIVE_INFINITY;
+    for (let y = 0; y < GENESIS_PROBE_SIZE; y++) {
+      for (let x = 0; x < GENESIS_PROBE_SIZE; x++) {
+        const height = freshGenesisHeightAt(terrain, x, y);
+        if (height < world) world = height;
+        if (x >= lo && x <= hi && y >= lo && y <= hi && height < unlocked) unlocked = height;
+      }
+    }
+    return { world, unlocked };
+  }
+
+  it('reads a genesis floor as an exact band multiple — nothing smooths it', () => {
+    // The FIRST corrected claim. World.createFresh writes
+    // outerTerrainBandAt(...) * BAND_HEIGHT and never relaxes, so -496 is not
+    // a height genesis can produce: it is a genesis floor a later EDIT shaved.
+    // If this ever fails, the -MAX_STEP/2 margin has stopped being a margin
+    // and started being part of a height the generator actually writes.
+    for (const seed of GENESIS_PROBE_SEEDS) {
+      const { world } = genesisFloors(seed);
+      expect(world % BAND_HEIGHT === 0).toBe(true);
+    }
+  });
+
+  it('does not promise every world a dig-free kraken — only a deep-floored one', () => {
+    // The SECOND and THIRD corrected claims, together, and the reason this
+    // test asserts a MIXTURE rather than a guarantee: the noise draws its
+    // floor per seed, and only UNLOCKED cells are habitat (isLairCell), so on
+    // day one the starter square is the whole question.
+    //
+    // A future change that made every world qualify would be a silently
+    // different game (every world hands out a kraken); one that made none
+    // qualify would be the mandatory dig the owner's decision removed. Both
+    // fail here.
+    const qualifies = GENESIS_PROBE_SEEDS.map(
+      (seed) =>
+        reachesIntoHabitat(
+          WATER_HABITAT,
+          genesisFloors(seed).unlocked,
+          KRAKEN_LAIR_MIN_DEPTH_BANDS,
+        ),
+    );
+    expect(qualifies.some((ok) => ok)).toBe(true);
+    expect(qualifies.some((ok) => !ok)).toBe(true);
+  });
+
+  it('is not the deepest band genesis can reach — the reference is not a bound', () => {
+    // Band -8 was written into the comment as "the deepest an ordinary ocean
+    // settles at". The lattice range is [-10, +4], so worlds go deeper; this
+    // pins that the reference band is a REFERENCE and the bar admits what lies
+    // below it, rather than the bar being the floor of the world.
+    const deepest = Math.min(...GENESIS_PROBE_SEEDS.map((seed) => genesisFloors(seed).world));
+    expect(deepest).toBeLessThan(SEA_LEVEL - NATURAL_OCEAN_FLOOR_MIN_DEPTH);
+    expect(
+      reachesIntoHabitat(WATER_HABITAT, deepest, KRAKEN_LAIR_MIN_DEPTH_BANDS),
+    ).toBe(true);
+  });
+
   it('is 7 whole bands, and Deep Strata must not drag it', () => {
     // Deep Strata deepened MIN_HEIGHT from −1024 to −1536 the same day this
     // bar was decided. The bar derives from the natural ocean floor, NOT from
@@ -1431,6 +1524,26 @@ describe('the ground a monster will not let you raise', () => {
 
     expect(sculpt(harness, insideX, cellY, 1, radius).applied).toBe(false);
     expect(sculpt(harness, outsideX, cellY, 1, radius).applied).toBe(true);
+  });
+
+  it('bounds the brush by intent.radius — shared\'s own footprint, every radius', () => {
+    // THE CONTRACT, not the callsite. reachesProtectedGround models the brush
+    // as the open disc of `intent.radius` about its centre cell's centre. That
+    // was written when applyBrush's membership test WAS `dx² + dy² < radius²`;
+    // shared tightened it to `dx² + dy² < radius·(radius − 1)` (issue: the
+    // rounder Populous brush, 2026-08-19) and the model became a BOUND rather
+    // than an equality.
+    //
+    // A bound is fine — erring wide refuses a raise that could not have
+    // touched the monster — but only while it holds. Asked of shared's own
+    // forEachFootprintOffset so the day the footprint widens past the disc,
+    // this fails instead of the aura silently going fail-open and letting a
+    // raise land on Cthulhu.
+    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+      forEachFootprintOffset(radius, (dx, dy) => {
+        expect(dx * dx + dy * dy).toBeLessThan(radius * radius);
+      });
+    }
   });
 
   it('lets a smaller brush closer, because a smaller brush reaches less far', () => {

@@ -225,21 +225,48 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SI
  *     bar from 8 to 12 bands — the opposite of the decision. The crust is not
  *     sea; a deeper world floor says nothing about what "deep water" means.
  *
- * THE MECHANISM, so the numbers below are a derivation rather than a ledger:
- * genesis noise floors bottom out in whole bands (world.ts writes band
- * multiples; its lattice reaches OUTER_TERRAIN_MIN_BAND_OFFSET = −10 bands,
- * and band −8 is the deepest an ordinary ocean settles at — the palette's
- * depth ramp documents the same fact from the render side). A genesis floor
- * does not STAY a band multiple: the first relaxation that touches its rim
- * moves the extreme cell by up to half the gradient limit (MAX_STEP / 2 = 16;
- * see shared's smoothing contract, "higher loses floor(e/2)"), which is
- * exactly how the live world's deepest natural floor reads −496 rather than
- * −512. The bar the owner ratified is that RELAXED natural floor, expressed
- * in the whole bands the admission test (reachesIntoHabitat) counts:
- * floor((8·64 − 16) / 64) = 7 bands. A natural −496 trench qualifies; no dig
- * required.
+ * THE MECHANISM, MEASURED RATHER THAN ASSERTED. The first version of this
+ * comment derived the bar from three claims about worldgen, and a correctness
+ * pass (2026-08-19, read against server/src/world/world.ts and measured over
+ * 400 seeds) found all three wrong. They are corrected here rather than
+ * deleted, because the SHAPE of the derivation is what the owner ratified and
+ * the next person will re-derive from it:
  *
- * Worlds whose noise never dipped to band −8 still summon no kraken until
+ *   * GENESIS WRITES EXACT BAND MULTIPLES, AND KEEPS THEM. `World.createFresh`
+ *     never smooths: every cell is `outerTerrainBandAt(...) * BAND_HEIGHT`, a
+ *     floored integer band. So a FRESH world's floor is always a whole band,
+ *     and the −496 the live world reads is not a genesis height at all — it is
+ *     a genesis floor some later EDIT relaxed. (Nor is that shave capped at
+ *     MAX_STEP / 2 = 16: relaxation gives the LOWER cell `ceil(e/2)` of the
+ *     excess `e` over MAX_STEP, and 16 is only the value for a single
+ *     one-band step. A floor beside a neighbour raised again and again rises
+ *     again and again.)
+ *   * BAND −8 IS NOT THE DEEPEST an ordinary ocean settles at. The noise
+ *     lattice draws band offsets across its whole
+ *     [OUTER_TERRAIN_MIN_BAND_OFFSET, OUTER_TERRAIN_MAX_BAND_OFFSET] =
+ *     [−10, +4] range, so the deepest floor is a per-seed draw, not a
+ *     constant: over 400 seeds at 512² the world-wide deepest cell was band
+ *     −10 in 12% of worlds and band −3 — the starter square's FRESH_SEABED
+ *     clamp, i.e. no deep ocean anywhere — in 23%.
+ *   * THE BAR THEREFORE REMOVES THE MANDATORY DIG FOR SOME WORLDS, NOT ALL.
+ *     Only UNLOCKED cells are habitat (isLairCell), and on day one that is the
+ *     starter square alone; over the same 400 seeds its deepest cell clears 7
+ *     bands in 121 of them — 30%. The other 70% still dig, which is the
+ *     paragraph below, restated as the common case rather than the exception.
+ *
+ * WHY 7 IS STILL THE RIGHT NUMBER, on the corrected facts: it is the deepest
+ * bar that admits BOTH an untouched band-8 genesis floor and that same floor
+ * after one one-band relaxation shave (−496), expressed in the whole bands the
+ * admission test (reachesIntoHabitat) counts — floor((8·64 − 16) / 64) = 7. The
+ * `− MAX_STEP / 2` is a ONE-BAND MARGIN against relaxation, not a bound on it.
+ * Going shallower to make the dig-free case universal is not on the table: the
+ * shallowest "deepest natural floor" a world can have is the 3-band
+ * FRESH_SEABED clamp, which is Cthulhu's own line, and a kraken bar there
+ * would erase the only thing separating the two sea kinds. Moving it is an
+ * owner decision, not a tuning one. `test/monsters.test.ts` pins every claim
+ * above against the real generator, so none of them can rot again.
+ *
+ * Worlds whose noise never dipped that deep still summon no kraken until
  * someone digs — unchanged, and correct: the decision removes the mandatory
  * dig from worlds that HAVE a deep floor, it does not hand every puddle a
  * kraken.
@@ -250,15 +277,26 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SI
  */
 export const WORLD_WATER_COLUMN_BANDS = SEA_COLUMN_BANDS;
 
-/** Deepest band an ordinary genesis ocean settles at (see mechanism above). */
-export const DEEPEST_NATURAL_OCEAN_BAND_DEPTH = 8;
+/**
+ * The band a world WITH a deep ocean is taken to bottom out at — the reference
+ * the owner's bar is set from.
+ *
+ * NOT "the deepest band genesis produces" (it was named that, wrongly, until
+ * the correctness pass above): the lattice can reach band −10, and a calm
+ * seed reaches only −3. Eight is the reference point, and what makes it the
+ * right one is the sentence in the mechanism above — it is the shallowest
+ * reference whose derived bar still keeps the kraken meaningfully deeper than
+ * Cthulhu.
+ */
+export const GENESIS_DEEP_OCEAN_REFERENCE_BAND = 8;
 
 /**
- * That floor after the relaxation shave that inevitably reaches it: the
+ * That reference floor with one band of relaxation margin taken off it: the
  * height the owner's decision names (−496 below sea, as a positive depth).
+ * See the mechanism above for why the margin is a margin and not a bound.
  */
 export const NATURAL_OCEAN_FLOOR_MIN_DEPTH =
-  DEEPEST_NATURAL_OCEAN_BAND_DEPTH * BAND_HEIGHT - MAX_STEP / 2;
+  GENESIS_DEEP_OCEAN_REFERENCE_BAND * BAND_HEIGHT - MAX_STEP / 2;
 
 export const KRAKEN_LAIR_MIN_DEPTH_BANDS = Math.floor(
   NATURAL_OCEAN_FLOOR_MIN_DEPTH / BAND_HEIGHT,
