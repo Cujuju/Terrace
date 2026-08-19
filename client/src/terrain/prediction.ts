@@ -56,6 +56,8 @@ import {
   DEFAULT_SCULPT_AMOUNT,
   applySculpt,
   cellIndex,
+  cellX,
+  cellY,
   chunkIndex,
   sculptOptionsOf,
   validateSculptIntent,
@@ -166,17 +168,13 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
     chunkIndex(size, Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE));
 
   /** Chunk index owning a flat cell index. */
-  const chunkOfCellIndex = (i: number): number => {
-    const x = i % size;
-    return chunkOfCell(x, (i - x) / size);
-  };
+  const chunkOfCellIndex = (i: number): number =>
+    chunkOfCell(cellX(size, i), cellY(size, i));
 
   /** Marks every chunk whose mesh reads a cell this prediction touched. */
   const addJournalChunks = (p: PendingPrediction, dirty: Set<number>): void => {
     for (const i of p.indices) {
-      const x = i % size;
-      const y = (i - x) / size;
-      for (const idx of chunksDirtiedByCell(size, x, y)) dirty.add(idx);
+      for (const idx of chunksDirtiedByCell(size, cellX(size, i), cellY(size, i))) dirty.add(idx);
     }
   };
 

@@ -49,6 +49,23 @@ export function cellIndex(map: Heightmap, x: number, y: number): number {
   return y * map.size + x;
 }
 
+/**
+ * Inverse of cellIndex for the row-major layout above, split into two
+ * allocation-free halves because decomposition runs in per-cell hot loops
+ * (smooth's bounding box, the wire diff, client prediction). These take the
+ * bare size rather than the map so call sites that hold only a size — the
+ * client's prediction journal — can share the one layout fact (#14).
+ */
+export function cellX(size: number, i: number): number {
+  return i % size;
+}
+
+export function cellY(size: number, i: number): number {
+  // Subtracting the remainder first keeps this exact integer division —
+  // integer-only per the determinism contract, no float floor involved.
+  return (i - (i % size)) / size;
+}
+
 export function heightAt(map: Heightmap, x: number, y: number): number {
   return map.cells[cellIndex(map, x, y)];
 }
@@ -549,33 +566,48 @@ function relaxPair(cells: Int16Array, i: number, j: number, changed: Set<number>
  * box that grows by one cell per pass so spillover can propagate outward.
  *
  * Exits as soon as a full pass changes nothing. SMOOTH_PASS_LIMIT (see
- * constants.ts) is a safety cap sized to the worst realistic cascade; if it
- * is ever hit, the gradient invariant may be locally violated until a later
- * edit resumes relaxation — accepted and documented residual.
+ * constants.ts) is a safety cap sized so every single-stroke cascade a player
+ * can construct converges first (#12); if it is ever hit, the gradient
+ * invariant may be locally violated until a later edit resumes relaxation —
+ * accepted and documented residual, observable via the returned pass count.
  *
- * Every adjusted cell's index is added to `changed`.
+ * Every adjusted cell's index is added to `changed`. `bboxSeed`, when given,
+ * supplies the cells the initial bounding box is computed from instead of
+ * `changed` — the smooth tool passes the brush footprint when the brush
+ * itself changed nothing (a fully clamped stroke), so the stroke still
+ * relaxes the ground under the brush (#12).
+ *
+ * Returns the number of passes that adjusted at least one pair. A return
+ * value strictly below SMOOTH_PASS_LIMIT proves a clean pass ran, i.e. the
+ * cascade converged.
  *
  * INVARIANT (tested): starting from a map that satisfies the gradient limit,
  * applyBrush + smooth leaves no 4-neighbor pair exceeding MAX_STEP.
  * Relaxation moves values strictly toward each other, so it can never leave
  * [MIN_HEIGHT, MAX_HEIGHT] and never needs clamping.
  */
-export function smooth(map: Heightmap, changed: Set<number>): void {
-  if (changed.size === 0) return;
+export function smooth(
+  map: Heightmap,
+  changed: Set<number>,
+  bboxSeed?: ReadonlySet<number>,
+): number {
+  const seed = bboxSeed ?? changed;
+  if (seed.size === 0) return 0;
 
   const { size, cells } = map;
 
   // Bounding box of the initial edit.
   let minX = size, minY = size, maxX = -1, maxY = -1;
-  for (const i of changed) {
-    const x = i % size;
-    const y = (i - x) / size;
+  for (const i of seed) {
+    const x = cellX(size, i);
+    const y = cellY(size, i);
     if (x < minX) minX = x;
     if (x > maxX) maxX = x;
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
   }
 
+  let adjustingPasses = 0;
   for (let pass = 0; pass < SMOOTH_PASS_LIMIT; pass++) {
     // Expand one ring per pass: excess travels at most one cell per pass, so
     // this always covers the frontier. Everything outside the box satisfied
@@ -598,7 +630,9 @@ export function smooth(map: Heightmap, changed: Set<number>): void {
     }
 
     if (!changedThisPass) break;
+    adjustingPasses++;
   }
+  return adjustingPasses;
 }
 
 /**
@@ -657,13 +691,31 @@ export function applySculpt(
   }
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.
-  if (tool === 'smooth') smooth(map, changed);
+  if (tool === 'smooth') {
+    if (changed.size === 0) {
+      // A fully clamped brush (e.g. stroking a MAX_HEIGHT plateau) changes
+      // nothing itself, which used to make the smooth tool a silent no-op
+      // that left standing cliffs unrelaxed (#12). Seeding the bounding box
+      // from the footprint keeps the stroke's promise — relax the ground
+      // under the brush — while `changed` still records (and the diff still
+      // carries) only cells relaxation actually moved. Strokes whose brush
+      // DID move cells keep the pre-#12 seed bit for bit.
+      const footprint = new Set<number>();
+      forEachFootprintOffset(radius, (dx, dy) => {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (inBounds(map, x, y)) footprint.add(cellIndex(map, x, y));
+      });
+      smooth(map, changed, footprint);
+    } else {
+      smooth(map, changed);
+    }
+  }
 
   const indices = Array.from(changed).sort((a, b) => a - b);
   const diff: CellDiff[] = [];
   for (const i of indices) {
-    const x = i % map.size;
-    diff.push({ x, y: (i - x) / map.size, h: map.cells[i] });
+    diff.push({ x: cellX(map.size, i), y: cellY(map.size, i), h: map.cells[i] });
   }
   return diff;
 }

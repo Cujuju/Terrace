@@ -6,6 +6,8 @@ import {
   bandOf,
   BAND_HEIGHT,
   cellIndex,
+  cellX,
+  cellY,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   heightAt,
@@ -19,7 +21,9 @@ import {
   quantizeToBand,
   sculptDisplacementUnits,
   smooth,
+  SMOOTH_PASS_LIMIT,
   type Heightmap,
+  type SculptOptions,
 } from '../src/index.ts';
 
 /** Cells a brush of this radius covers: integer distance strictly under it. */
@@ -932,5 +936,79 @@ describe('sculptDisplacementUnits', () => {
     // A one-cell edit, charged as 45 cells of flat delta. That is the trade.
     expect(diff).toHaveLength(1);
     expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(2880);
+  });
+});
+
+describe('cellX/cellY — the exported inverse of cellIndex (#14)', () => {
+  it('round-trips every cell of a small map', () => {
+    const map = createHeightmap(7);
+    for (let y = 0; y < 7; y++) {
+      for (let x = 0; x < 7; x++) {
+        const i = cellIndex(map, x, y);
+        expect(cellX(map.size, i)).toBe(x);
+        expect(cellY(map.size, i)).toBe(y);
+      }
+    }
+  });
+});
+
+describe('smooth — cascades from stamped terrain (#12)', () => {
+  const SIZE = 128;
+  const C = SIZE / 2;
+  const STAMP: SculptOptions = { tool: 'stamp', profile: 'hard' };
+  const SMOOTH_HARD: SculptOptions = { tool: 'smooth', profile: 'hard' };
+
+  /** Stamps `bands` level-fill strokes at (x, y), radius 4 — the player's default brush. */
+  function stampPlateau(map: Heightmap, x: number, y: number, bands: number): void {
+    for (let s = 0; s < bands; s++) {
+      applySculpt(map, x, y, 4, DEFAULT_SCULPT_AMOUNT, STAMP);
+    }
+  }
+
+  it('one smooth stroke fully relaxes a 15-band stamped plateau (the pass-cap repro)', () => {
+    // 15 strokes: plateau at 960, so the smooth stroke's own brush still moves
+    // cells (changed is non-empty) and the cascade must converge inside
+    // SMOOTH_PASS_LIMIT — the case the old 64-pass cap truncated.
+    const map = createHeightmap(SIZE);
+    stampPlateau(map, C, C, 15);
+    applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
+    expectGradientLimitHolds(map);
+  });
+
+  it('a fully clamped smooth stroke still relaxes the cliffs under the brush', () => {
+    // 16 strokes: plateau at MAX_HEIGHT. The smooth stroke's brush is then
+    // fully clamped (changed stays empty) — the old code early-returned and
+    // left a 1024-unit cliff standing.
+    const map = createHeightmap(SIZE);
+    stampPlateau(map, C, C, 16);
+    expect(heightAt(map, C, C)).toBe(MAX_HEIGHT);
+    applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
+    expectGradientLimitHolds(map);
+  });
+
+  it('converges across the full height range: MAX plateau beside a MIN moat', () => {
+    // Worst single-stroke cascade a player can construct: full 2048-unit
+    // relief within one brush's reach. Pins that SMOOTH_PASS_LIMIT's budget
+    // (SMOOTH_PASSES_PER_SPREAD_CELL per cell of spread) covers the extreme.
+    const map = createHeightmap(SIZE);
+    stampPlateau(map, C, C, 16);
+    for (let s = 0; s < 16; s++) {
+      applySculpt(map, C + 8, C, 4, -DEFAULT_SCULPT_AMOUNT, STAMP);
+    }
+    applySculpt(map, C + 4, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
+    expectGradientLimitHolds(map);
+  });
+
+  it('reports a convergence-proving pass count strictly below the cap', () => {
+    // smooth returns the number of adjusting passes; < SMOOTH_PASS_LIMIT
+    // proves a clean pass ran. Drive the worst repro through the raw API.
+    const map = createHeightmap(SIZE);
+    stampPlateau(map, C, C, 15);
+    const changed = new Set<number>();
+    applyBrush(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, changed, 'hard');
+    const passes = smooth(map, changed);
+    expect(passes).toBeGreaterThan(0);
+    expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
+    expectGradientLimitHolds(map);
   });
 });

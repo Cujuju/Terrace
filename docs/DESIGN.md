@@ -467,7 +467,14 @@ terrace/
   relaxation reaches a boundary will slump it once, with a larger-than-usual
   diff bounded by `SMOOTH_PASS_LIMIT`. Accepted: that is the smooth tool doing
   its job on a terrace edge, and a ramped coast would trade the terraced house
-  style for it.
+  style for it. (Re-decided 2026-08-18, issue #12: the cap's original
+  travel-distance derivation, 64 passes, was exhausted by ordinary stamp-then-
+  smooth play, silently violating the gradient invariant. It is now
+  `SMOOTH_SPREAD_CELLS × SMOOTH_PASSES_PER_SPREAD_CELL` = 256, sized off the
+  measured worst player-constructible strokes with 2× headroom and pinned by
+  stress tests; `smooth` returns its pass count so truncation is observable.
+  A fully clamped smooth stroke also now relaxes its footprint instead of
+  no-opping.)
 
   **Where it lives, and why not in `shared/`.** The server fills the floor;
   `createHeightmap` stays zero-filled. `shared/` is the determinism contract

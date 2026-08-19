@@ -71,11 +71,33 @@ export const MIN_BRUSH_RADIUS = 1;
 export const MAX_BRUSH_RADIUS = 4;
 
 /**
- * Safety bound on smoothing passes. The relaxation loop exits as soon as a
- * pass changes nothing; this cap only guards against a pathological cascade.
- * Worst realistic spread of one edit is the full height range at maximum
- * slope: (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 64 cells — one pass per cell
- * of travel. If a pass ever hits this cap the invariant "no step exceeds
- * MAX_STEP" may be locally violated until the next edit resumes relaxation.
+ * How far excess can travel from one edit: relaxation stops where the slope
+ * everywhere respects MAX_STEP, so the full height range laid out at maximum
+ * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 64 cells. Math.floor
+ * guards the value against a future range/step change that stops dividing
+ * exactly (today's division is exact).
  */
-export const SMOOTH_PASS_LIMIT = (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP;
+export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP);
+
+/**
+ * Relaxation passes budgeted per cell of spread. One pass per cell is NOT
+ * enough (#12): each relaxation moves only half the excess, and the row-major
+ * sweep propagates against the sweep direction (-x/-y) at one cell per pass,
+ * so real cascades need a small multiple of the travel distance. Measured on
+ * the worst player-constructible single strokes (a MAX_HEIGHT stamp plateau
+ * smoothed in one stroke; the same plateau beside a MIN_HEIGHT moat): ~2.2
+ * passes per cell of spread. 4 doubles the measured worst case; the stress
+ * tests in shared/test/heightmap.test.ts pin that the budget converges there.
+ */
+export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
+
+/**
+ * Safety bound on smoothing passes. The relaxation loop exits as soon as a
+ * pass changes nothing; this cap bounds the authoritative server's CPU per
+ * intent. It is sized so every single-stroke cascade a player can construct
+ * converges first (see SMOOTH_PASSES_PER_SPREAD_CELL); if it is ever hit the
+ * gradient invariant may be locally violated until a later edit resumes
+ * relaxation — deterministic on both sides, and `smooth` reports its pass
+ * count so callers can observe a truncated cascade.
+ */
+export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;
