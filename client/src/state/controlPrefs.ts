@@ -208,11 +208,13 @@ export function setTwoFingerGesture(gesture: TwoFingerGesture): void {
 // ---------------------------------------------------------------------------
 // Wheel
 //
-// What a scroll does, pinches aside: 'pan' (default) translates the map, which
-// is what a trackpad's two-finger scroll must do — it is the reflexive gesture
-// on a laptop, and dollying on it made the camera lurch. 'zoom' hands non-pinch
-// wheels back to OrbitControls' damped dolly, for mouse users who want their
-// wheel to zoom.
+// What a scroll does, pinches aside: 'zoom' (default — owner decision
+// 2026-08-19, issue #24) hands non-pinch wheels to OrbitControls' damped
+// dolly, the reflex a mouse wheel trains. 'pan' translates the map instead,
+// which is what a trackpad's two-finger scroll wants — dollying on it made
+// the camera lurch — so laptop users flip this once in the Controls panel.
+// The stored preference always wins over the default, so nobody who already
+// chose a behaviour is moved by this change.
 //
 // A pinch always zooms in both modes: it is reported separately (ctrlKey, or
 // Safari's gesture events) and needs no heuristic to recognise, so it is never
@@ -221,7 +223,7 @@ export function setTwoFingerGesture(gesture: TwoFingerGesture): void {
 
 export type WheelBehaviour = 'pan' | 'zoom';
 
-export const DEFAULT_WHEEL_BEHAVIOUR: WheelBehaviour = 'pan';
+export const DEFAULT_WHEEL_BEHAVIOUR: WheelBehaviour = 'zoom';
 
 const WHEEL_STORAGE_KEY = 'terrace.wheelControls.v1';
 

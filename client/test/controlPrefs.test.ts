@@ -132,14 +132,15 @@ describe('persistence', () => {
     expect(second.wheelBehaviour()).toBe('zoom');
   });
 
-  it('defaults the wheel to pan and keeps its own storage key', async () => {
+  it('defaults the wheel to zoom and keeps its own storage key', async () => {
     const { prefs, storage } = await freshPrefs();
-    // Pan is the default because a trackpad two-finger scroll must not dolly.
-    expect(prefs.wheelBehaviour()).toBe('pan');
-    expect(prefs.DEFAULT_WHEEL_BEHAVIOUR).toBe('pan');
+    // Zoom is the default (owner decision 2026-08-19, issue #24) — a mouse
+    // wheel's reflex; trackpad users opt into 'pan' in the Controls panel.
+    expect(prefs.wheelBehaviour()).toBe('zoom');
+    expect(prefs.DEFAULT_WHEEL_BEHAVIOUR).toBe('zoom');
     // Editing one preference must not disturb the other two.
-    prefs.setWheelBehaviour('zoom');
-    expect(storage.getItem(WHEEL_KEY)).toBe(JSON.stringify({ wheel: 'zoom' }));
+    prefs.setWheelBehaviour('pan');
+    expect(storage.getItem(WHEEL_KEY)).toBe(JSON.stringify({ wheel: 'pan' }));
     expect(storage.getItem(BINDINGS_KEY)).toBeNull();
     expect(storage.getItem(TOUCH_KEY)).toBeNull();
   });
@@ -155,7 +156,7 @@ describe('persistence', () => {
     }
   });
 
-  it('falls back to pan on a corrupt or unknown stored wheel behaviour', async () => {
+  it('falls back to zoom on a corrupt or unknown stored wheel behaviour', async () => {
     for (const bad of [
       'not json',
       '42',
@@ -166,7 +167,7 @@ describe('persistence', () => {
       JSON.stringify({ wheel: 7 }),
     ]) {
       const { prefs } = await freshPrefs({ [WHEEL_KEY]: bad });
-      expect(prefs.wheelBehaviour()).toBe('pan');
+      expect(prefs.wheelBehaviour()).toBe('zoom');
     }
   });
 
@@ -197,11 +198,11 @@ describe('persistence', () => {
     const { prefs, storage } = await freshPrefs();
     prefs.setBinding('pan', { button: 'right', modifier: 'alt' });
     prefs.setTwoFingerGesture('orbit');
-    prefs.setWheelBehaviour('zoom');
+    prefs.setWheelBehaviour('pan');
     prefs.resetBindings();
     expect(prefs.controlBindings()).toEqual(prefs.DEFAULT_BINDINGS);
     expect(prefs.twoFingerGesture()).toBe('pan');
-    expect(prefs.wheelBehaviour()).toBe('pan');
+    expect(prefs.wheelBehaviour()).toBe('zoom');
     expect(storage.getItem(BINDINGS_KEY)).toBeNull();
     expect(storage.getItem(TOUCH_KEY)).toBeNull();
     expect(storage.getItem(WHEEL_KEY)).toBeNull();
@@ -214,7 +215,7 @@ describe('no localStorage at all', () => {
     // beforeEach already deleted the stub; import with nothing installed.
     const prefs: Prefs = await import('../src/state/controlPrefs.ts');
     expect(prefs.controlBindings()).toEqual(prefs.DEFAULT_BINDINGS);
-    expect(prefs.wheelBehaviour()).toBe('pan');
+    expect(prefs.wheelBehaviour()).toBe('zoom');
     prefs.setBinding('raise', { button: 'middle', modifier: 'none' });
     expect(prefs.resolvePress(1, NO_MODS)).toBe('raise');
     // Setting a preference with no storage at all must not throw.

@@ -12,13 +12,15 @@
 //   - alt held → orbit, in both preference modes. Alt+scroll is an explicit
 //     two-handed gesture, not the ambient scroll the 'zoom' preference is
 //     about, so the preference has no say over it.
-//   - anything else → pan, or in 'zoom' mode hand the event to OrbitControls.
+//   - anything else → the preference: in 'zoom' mode (the default — owner
+//     decision 2026-08-19, issue #24) hand the event to OrbitControls; in
+//     'pan' mode translate the map.
 // OrbitControls dollies on every wheel event it sees, which on a MacBook made
 // an idle two-finger scroll — the most reflexive gesture on the machine —
 // lurch the camera. Telling a trackpad scroll from a mouse notch by inspecting
-// deltas is guesswork that fails on some hardware every time; panning on all
-// of them is one predictable rule, and the mouse users who want a zooming
-// wheel say so once in the Controls panel (state/controlPrefs.ts, 'zoom').
+// deltas is guesswork that fails on some hardware every time; the preference
+// is one predictable rule instead, and the trackpad users who want a panning
+// scroll say so once in the Controls panel (state/controlPrefs.ts, 'pan').
 //
 // WHY ALT FOR ORBIT: Option+drag is the orbit convention in Mac 3D apps
 // (Blender, SketchUp, Fusion), ctrl is already spoken for by pinch, and shift
