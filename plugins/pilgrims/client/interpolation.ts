@@ -4,11 +4,14 @@
 // constant are wildlife's; see that file for the full reasoning (measured
 // window, render-pose continuation, drop-don't-ease despawns).
 
-import type { PilgrimEntityState, SettlerRace } from '../protocol.ts';
+import type { PilgrimEntityState, SettlerRace, WalkerKind } from '../protocol.ts';
 
-/** A pilgrim's pose for one frame. */
+/** A walker's pose for one frame. */
 export interface InterpolatedPilgrim {
   readonly id: number;
+  /** Stable for the walker's lifetime (ids are never reused across kinds),
+   *  so the view layer may bind a model to it at first sight. */
+  readonly kind: WalkerKind;
   readonly race: SettlerRace;
   readonly x: number;
   readonly y: number;
@@ -99,6 +102,7 @@ export class PilgrimInterpolator {
       }
       poses.set(pilgrim.id, {
         id: pilgrim.id,
+        kind: pilgrim.kind,
         race: pilgrim.race,
         x: lerp(start.x, pilgrim.x, t),
         y: lerp(start.y, pilgrim.y, t),

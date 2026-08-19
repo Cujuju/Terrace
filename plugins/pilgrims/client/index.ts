@@ -40,7 +40,9 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
 
   for (const [id, pilgrim] of sampled) {
     if (views.has(id)) continue;
-    const model = models.create(pilgrim.race);
+    // kind is stable per id (the allocator never reuses one across kinds), so
+    // binding the model at first sight is safe.
+    const model = models.create(pilgrim.race, pilgrim.kind);
     container.add(model.root);
     views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID });
   }

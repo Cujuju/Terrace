@@ -40,7 +40,7 @@ import {
   type Material,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { SettlerRace } from '../protocol.ts';
+import type { SettlerRace, WalkerKind } from '../protocol.ts';
 
 /** Overall height, world units — a little person: knee-high to a yeti. */
 export const PILGRIM_HEIGHT = 0.62;
@@ -95,7 +95,11 @@ export interface PilgrimModel {
 }
 
 export interface PilgrimModels {
-  create(race: SettlerRace): PilgrimModel;
+  /** `kind` decides the props alone: a pilgrim carries the staff of a long
+   *  journey, a wanderer strolls empty-pawed — the ONE at-a-glance
+   *  difference between the walker kinds (body, gait and palette are the
+   *  race's, not the kind's). Defaults to 'pilgrim' for old callers. */
+  create(race: SettlerRace, kind?: WalkerKind): PilgrimModel;
   dispose(): void;
 }
 
@@ -279,12 +283,12 @@ export function createPilgrimModels(): PilgrimModels {
     new TorusGeometry(0.1, 0.015, 10, 20, 2.0).translate(-0.1, 0, 0),
   );
 
-  function create(race: SettlerRace): PilgrimModel {
+  function create(race: SettlerRace, kind: WalkerKind = 'pilgrim'): PilgrimModel {
     const rudy = race === 'rudy';
     const fur = rudy ? rudyFurMaterial : unoFurMaterial;
 
     const root = new Group();
-    root.name = `pilgrims:${race}`;
+    root.name = `pilgrims:${kind}:${race}`;
 
     // The bobbing body carries everything but the legs, so the bob never
     // lifts the feet off the ground.
@@ -313,11 +317,15 @@ export function createPilgrimModels(): PilgrimModels {
     rightArm.position.set(0, shoulderY, shoulderZ);
     body.add(leftArm, rightArm);
 
-    const staff = new Mesh(staffGeometry, staffMaterial);
-    // In the arm's own frame: seated IN the paw (the arm's low end) — round 2
-    // had it floating a visible gap outside the hand.
-    staff.position.set(0.045, -0.105, 0.012);
-    rightArm.add(staff);
+    // Only the long-journey walker carries a staff; a strolling wanderer is
+    // empty-pawed — the kinds' single visual distinguisher.
+    if (kind === 'pilgrim') {
+      const staff = new Mesh(staffGeometry, staffMaterial);
+      // In the arm's own frame: seated IN the paw (the arm's low end) — round
+      // 2 had it floating a visible gap outside the hand.
+      staff.position.set(0.045, -0.105, 0.012);
+      rightArm.add(staff);
+    }
 
     // Tail pivots where it meets the body — LOW on the rear (at shoulder
     // height a tail reads as a third arm from any angle; hard-learned).
