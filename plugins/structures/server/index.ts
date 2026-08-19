@@ -60,6 +60,7 @@ import {
   generationChunksPerTick,
   type LiveCellRecord,
 } from './life.ts';
+import { isBuildableCell as isBuildableCellDev } from './suitability.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 
@@ -93,6 +94,9 @@ let lastKeepaliveSeconds = 0;
 
 /** Fractional chunks owed to the CA sweep, carried between ticks. */
 let scanCredit = 0;
+
+/** TEMPORARY VERIFICATION SEED — reverted before commit. */
+let devSeeded = false;
 
 /** Restored from a snapshot, held until onWorldCreate — flora's identical seam. */
 let restoredLive: Map<number, LiveCellRecord> = new Map();
@@ -301,12 +305,70 @@ export const plugin: TerracePlugin = {
     restoredLive = new Map();
     restoredGeneration = 0;
 
+    // TEMPORARY VERIFICATION SEED — reverted before commit. Plants a lattice
+    // of structures across every buildable cell so all six tiers stand at
+    // once, instead of waiting ~4 simulated minutes on the CA.
     // No players are connected yet — this is only so a client already
     // listening at boot is not left empty for up to a keepalive.
     broadcastAll(world);
   },
 
   onTick(world: WorldApi, dt: number): void {
+    // TEMPORARY VERIFICATION SEED — reverted before commit. Plants a lattice
+    // of structures across every buildable cell so all six tiers stand at
+    // once, instead of waiting ~4 simulated minutes on the CA.
+    if (process.env.STRUCTURES_DEV_SEED === '1' && !devSeeded) {
+      devSeeded = true;
+      // A fresh world is entirely below sea level, so raise a LUMPY island
+      // first: a broad dome for the land, then dozens of small overlapping
+      // raises so the terraced renderer cuts many band steps through it — the
+      // point of the verification world is buildings standing NEXT TO terrace
+      // edges, which a single smooth dome never produces.
+      const dome = (limit: number, amount: number, step: number, radius: number): void => {
+        for (let y = 6; y < 74; y += step) {
+          for (let x = 6; x < 74; x += step) {
+            if (Math.hypot(x - 40, y - 40) > limit) continue;
+            world.sculpt(x, y, radius, amount);
+          }
+        }
+      };
+      dome(32, 260, 3, 4); // lift the whole island clear of the sea
+      dome(32, 200, 3, 4);
+      dome(24, 150, 3, 4); // second terrace
+      dome(14, 150, 3, 4); // third terrace
+      // Lumps: small raises on a coprime-stride lattice, amounts cycling
+      // through a spread of band fractions so steps land at many heights.
+      for (let i = 0; i < 260; i++) {
+        const x = 8 + ((i * 17) % 64);
+        const y = 8 + ((i * 29) % 64);
+        world.sculpt(x, y, 2 + (i % 3), 40 + (i % 7) * 30);
+      }
+      let n = 0;
+      // A DENSE core first — adjacent cells, the shape a Game-of-Life
+      // settlement actually makes — so neighbouring buildings are seen
+      // shoulder to shoulder, then a sparser lattice over the rest of the
+      // island for isolated-building and terrace-edge cases.
+      for (let y = 30; y < 46; y++) {
+        for (let x = 30; x < 46; x++) {
+          if (!isBuildableCellDev(world, x, y)) continue;
+          live.set(structureKey(x, y), { age: 99, tier: n % 6 });
+          n++;
+        }
+      }
+      for (let y = 0; y < world.worldSize; y += 2) {
+        for (let x = 0; x < world.worldSize; x += 2) {
+          if (n >= 500) break;
+          if (live.has(structureKey(x, y))) continue;
+          if (!isBuildableCellDev(world, x, y)) continue;
+          live.set(structureKey(x, y), { age: 99, tier: n % 6 });
+          n++;
+        }
+      }
+      console.log('DEV SEED planted', n, 'structures');
+      broadcastAll(world);
+      return;
+    }
+    if (process.env.STRUCTURES_DEV_SEED === '1') return; // freeze the CA so the seed stays put
     simulate(world, dt);
   },
 
@@ -315,6 +377,17 @@ export const plugin: TerracePlugin = {
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
+    // TEMPORARY VERIFICATION SEED — reverted before commit. Unlocks the whole
+    // board for this player so the seeded lattice is actually visible; the
+    // per-chunk unlock hook broadcasts each chunk's structures on its own.
+    if (process.env.STRUCTURES_DEV_SEED === '1') {
+      const chunks = Math.ceil(world.worldSize / CHUNK_SIZE);
+      let granted = 0;
+      for (let cy = 0; cy < chunks; cy++) {
+        for (let cx = 0; cx < chunks; cx++) if (world.unlockChunkForToken(player.token, cx, cy)) granted++;
+      }
+      console.log('DEV SEED join: chunks', chunks, 'granted', granted, 'live', live.size);
+    }
     // FOG OF WAR (issue #18): filtered to the structures inside THIS player's
     // own unlocked view (onlyPlayerId), same skipEmpty rule as every other
     // send in this plugin — a player who has just joined and unlocked
