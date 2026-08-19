@@ -364,7 +364,7 @@ describe('authoritative state seeding', () => {
   });
 });
 
-describe('rejectSeq — the sculptDenied fast path', () => {
+describe('resolveSeq — the sculptDenied / sculptApplied fast path', () => {
   it('rolls back exactly the nacked prediction and keeps the others', () => {
     const { mirror, store } = createClient();
 
@@ -373,7 +373,7 @@ describe('rejectSeq — the sculptDenied fast path', () => {
     const deniedHeight = heightAt(mirror.map, CENTRE.x, CENTRE.y);
     expect(deniedHeight).toBeGreaterThan(0);
 
-    const dirty = store.rejectSeq(1);
+    const dirty = store.resolveSeq(1);
     expect(dirty.size).toBeGreaterThan(0);
     expect(store.pendingCount()).toBe(1);
     // The denied stroke is gone from the rendered map...
@@ -387,8 +387,280 @@ describe('rejectSeq — the sculptDenied fast path', () => {
     store.predict({ ...raise(), seq: 5 }, 0);
     const before = heightAt(mirror.map, CENTRE.x, CENTRE.y);
 
-    expect(store.rejectSeq(999).size).toBe(0);
+    expect(store.resolveSeq(999).size).toBe(0);
     expect(store.pendingCount()).toBe(1);
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(before);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FRONTIER REVERT (issue #21) — owner report: "when I am moving land around
+// it sometimes goes back and redraws the outline and removes areas that I just
+// sculpted".
+//
+// The fixture is one player's territory (chunk (0,0)) against a world that is
+// NOT at sea level behind it. That gap is the whole bug: the mirror holds
+// never-received cells at SEA_LEVEL as a rendering choice, and the shared
+// sculpt math reads them as if they were terrain.
+
+/** Ground height of the fixture world — one full terrace band above the sea. */
+const FRONTIER_GROUND = 160;
+/** Column of chunk (0,0)'s last cell; the frontier is between it and x+1. */
+const FRONTIER_EDGE_X = CHUNK_SIZE - 1;
+/** Row well inside chunk (0,0), so nothing here touches the world edge. */
+const FRONTIER_Y = 8;
+
+/**
+ * The client sees ONE chunk of a world that is `FRONTIER_GROUND` high
+ * everywhere; the server sees all of it. Returns both, so a test can assert
+ * the client's rendered map against the server's own cells.
+ */
+function frontierFixture(): {
+  mirror: ReturnType<typeof createTerrainMirror>;
+  store: PredictionStore;
+  server: Heightmap;
+} {
+  const server = createHeightmap(WORLD);
+  server.cells.fill(FRONTIER_GROUND);
+  const { mirror, store } = createClient([chunkPayload(0, 0, FRONTIER_GROUND)]);
+  return { mirror, store, server };
+}
+
+/**
+ * The server's outgoing diff filter (server/src/world/mask-filter.ts): cells in
+ * locked chunks never reach the wire. `unlocked` is the UNION mask — every
+ * chunk unlocked for ANYONE — which is deliberately wider than one player's own
+ * chunks (issue #17), so this also models a neighbour's territory.
+ */
+function filterToUnlocked(diff: TerrainDiffMessage, unlocked: ReadonlySet<number>): TerrainDiffMessage {
+  return {
+    type: 'terrainDiff',
+    cells: diff.cells.filter((cell) =>
+      unlocked.has(chunkIndex(WORLD, Math.floor(cell.x / CHUNK_SIZE), Math.floor(cell.y / CHUNK_SIZE))),
+    ),
+  };
+}
+
+/** Heights along the fixture's test row, inside the client's own chunk. */
+function rowInOwnChunk(cells: Int16Array | Heightmap['cells']): number[] {
+  const out: number[] = [];
+  for (let x = 0; x <= FRONTIER_EDGE_X; x++) out.push(cells[FRONTIER_Y * WORLD + x]);
+  return out;
+}
+
+describe('frontier sculpts (issue #21)', () => {
+  it('never renders below the authoritative heights after a frontier stroke', () => {
+    // THE REPRO. Before the fix this client predicted the smooth tool's
+    // relaxation against a phantom sea behind its frontier, "corrected" a cliff
+    // that does not exist, and — because that prediction could never be
+    // value-confirmed — replayed the drag-down ON TOP of the server's own copy
+    // of the edit. The row read 181 where the server said 224: the player
+    // watched ground they had just raised sink instead.
+    const { mirror, store, server } = frontierFixture();
+    const own = new Set([chunkIndex(WORLD, 0, 0)]);
+
+    // A smooth stroke whose radius-3 footprint reaches past the frontier.
+    const intent: SculptIntent = {
+      type: 'sculpt',
+      x: FRONTIER_EDGE_X - 1,
+      y: FRONTIER_Y,
+      radius: 3,
+      dir: 1,
+      tool: 'smooth',
+      profile: 'soft',
+      seq: 1,
+    };
+
+    store.predict(intent, 0);
+    const diff = serverSculpt(server, intent);
+    store.applyAuthoritative((m) => applyTerrainDiff(m, filterToUnlocked(diff, own)), 10);
+    store.resolveSeq(1);
+
+    expect(rowInOwnChunk(mirror.map.cells)).toEqual(rowInOwnChunk(server.cells));
+    expect(store.pendingCount()).toBe(0);
+  });
+
+  it('refuses to predict a stroke whose footprint reads terrain it was never sent', () => {
+    // The contract behind the test above: a prediction is only shown when every
+    // cell the shared math reads is in a chunk we hold. The stroke still goes
+    // to the server — it is the local preview that is skipped, because a
+    // preview computed from SEA_LEVEL placeholders is a wrong preview.
+    const { mirror, store } = frontierFixture();
+
+    const dirty = store.predict(
+      {
+        type: 'sculpt',
+        x: FRONTIER_EDGE_X - 1,
+        y: FRONTIER_Y,
+        radius: 3,
+        dir: 1,
+        tool: 'smooth',
+        profile: 'soft',
+      },
+      0,
+    );
+
+    expect(dirty.size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+    expect(rowInOwnChunk(mirror.map.cells).every((h) => h === FRONTIER_GROUND)).toBe(true);
+  });
+
+  it('refuses the level-fill brush at the frontier, whose survey the sea would poison', () => {
+    // The level-fill brush (stamp + hard) surveys its WHOLE footprint for the
+    // lowest terrace band present and fills to one band above it. A single
+    // unseen cell reading SEA_LEVEL drags that survey to band 0, so the client
+    // would target a level the ground is already above and predict no change at
+    // all, while the server fills a band two terraces higher. This test pins
+    // both halves: the client declines, and the local math it declined to run
+    // really would have disagreed.
+    const { mirror, store, server } = frontierFixture();
+    const intent: SculptIntent = {
+      type: 'sculpt',
+      x: FRONTIER_EDGE_X - 1,
+      y: FRONTIER_Y,
+      radius: 3,
+      dir: 1,
+      tool: 'stamp',
+      profile: 'hard',
+      seq: 1,
+    };
+
+    expect(store.predict(intent, 0).size).toBe(0);
+    expect(store.pendingCount()).toBe(0);
+
+    // What the declined prediction WOULD have produced, run on a copy of the
+    // client's own mirror: it fills the phantom sea up to band 1 and leaves
+    // every cell of our REAL ground alone, because band 0 is already behind us.
+    // The server, surveying the same footprint over land it can actually see,
+    // fills that ground two terraces higher. Zero overlap — the whole visible
+    // stroke would have gone missing.
+    const wouldHavePredicted = createHeightmap(WORLD);
+    wouldHavePredicted.cells.set(mirror.map.cells);
+    const localDiff = applySculpt(
+      wouldHavePredicted,
+      intent.x,
+      intent.y,
+      intent.radius,
+      DEFAULT_SCULPT_AMOUNT,
+      sculptOptionsOf(intent),
+    );
+    const serverDiff = serverSculpt(server, intent);
+    expect(localDiff.filter((cell) => cell.x <= FRONTIER_EDGE_X)).toHaveLength(0);
+    expect(serverDiff.cells.filter((cell) => cell.x <= FRONTIER_EDGE_X).length).toBeGreaterThan(0);
+
+    // And the authoritative answer still lands intact.
+    store.applyAuthoritative(
+      (m) => applyTerrainDiff(m, filterToUnlocked(serverDiff, new Set([chunkIndex(WORLD, 0, 0)]))),
+      10,
+    );
+    store.resolveSeq(1);
+    expect(rowInOwnChunk(mirror.map.cells)).toEqual(rowInOwnChunk(server.cells));
+  });
+
+  it('still predicts a stroke that stays clear of the frontier by the halo', () => {
+    // The guard must not cost prediction on ground we fully hold. A radius-3
+    // brush whose footprint plus its one-cell relaxation halo stops short of
+    // the border is predicted exactly, and confirms by value as it always did.
+    const { mirror, store, server } = frontierFixture();
+    const intent: SculptIntent = {
+      type: 'sculpt',
+      x: FRONTIER_EDGE_X - 4,
+      y: FRONTIER_Y,
+      radius: 3,
+      dir: 1,
+      tool: 'smooth',
+      profile: 'soft',
+      seq: 1,
+    };
+
+    expect(store.predict(intent, 0).size).toBeGreaterThan(0);
+    expect(store.pendingCount()).toBe(1);
+
+    const diff = serverSculpt(server, intent);
+    store.applyAuthoritative(
+      (m) => applyTerrainDiff(m, filterToUnlocked(diff, new Set([chunkIndex(WORLD, 0, 0)]))),
+      10,
+    );
+
+    expect(rowInOwnChunk(mirror.map.cells)).toEqual(rowInOwnChunk(server.cells));
+    expect(store.pendingCount()).toBe(0);
+  });
+
+  it('a neighbour sculpting into a chunk we do not hold cannot revert our ground', () => {
+    // The second-order case. The outgoing diff filter is UNION-masked (issue
+    // #17), so a diff can legitimately carry cells for a chunk this client was
+    // never sent — a neighbour's territory. Those cells land in the mirror's
+    // backing array but in no mesh, and the chunk's real heights arrive whole
+    // if it is ever unlocked for us. Nothing about that path may disturb the
+    // ground we DO hold.
+    const { mirror, store, server } = frontierFixture();
+    const union = new Set([chunkIndex(WORLD, 0, 0), chunkIndex(WORLD, 1, 0)]);
+
+    const neighbour: SculptIntent = {
+      type: 'sculpt',
+      x: CHUNK_SIZE + 2,
+      y: FRONTIER_Y,
+      radius: 3,
+      dir: 1,
+      tool: 'smooth',
+      profile: 'soft',
+    };
+    const ours: SculptIntent = {
+      type: 'sculpt',
+      x: FRONTIER_EDGE_X - 4,
+      y: FRONTIER_Y,
+      radius: 3,
+      dir: 1,
+      tool: 'smooth',
+      profile: 'soft',
+      seq: 1,
+    };
+
+    store.predict(ours, 0);
+    // The neighbour's edit reaches the server first and is broadcast to us
+    // with its own chunk's cells included, exactly as the union filter allows.
+    store.applyAuthoritative(
+      (m) => applyTerrainDiff(m, filterToUnlocked(serverSculpt(server, neighbour), union)),
+      5,
+    );
+    store.applyAuthoritative(
+      (m) => applyTerrainDiff(m, filterToUnlocked(serverSculpt(server, ours), union)),
+      10,
+    );
+    store.resolveSeq(1);
+
+    expect(rowInOwnChunk(mirror.map.cells)).toEqual(rowInOwnChunk(server.cells));
+    expect(store.pendingCount()).toBe(0);
+  });
+
+  it("retires a prediction the value heuristic cannot recognise, on the server's ack", () => {
+    // The general form of the bug, with the frontier taken out of it: whenever
+    // our arithmetic and the server's disagree — here a plugin that rewrote the
+    // intent's centre before it was applied, so the diff describes an edit we
+    // never predicted — isConfirmed returns false, and a prediction that is
+    // never confirmed is drawn ON TOP of the server's own copy of the stroke.
+    // The ack is what ends that, one round trip after the stroke instead of one
+    // second, and it works because the server echoes the CLIENT's seq rather
+    // than the rewritten intent's.
+    const { mirror, store } = createClient();
+    const server = createHeightmap(WORLD);
+
+    const ours: SculptIntent = { ...raise(), seq: 1 };
+    store.predict(ours, 0);
+    const rewritten = serverSculpt(server, { ...ours, x: CENTRE.x + 2 });
+    store.applyAuthoritative((m) => applyTerrainDiff(m, rewritten), 10);
+
+    // Unrecognised, so still pending and still drawn over the truth — this is
+    // the doubled edit, and the state the old code sat in for a full
+    // PREDICTION_TTL_MS with no way out but the deadline.
+    expect(store.pendingCount()).toBe(1);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).not.toBe(
+      heightAt(server, CENTRE.x, CENTRE.y),
+    );
+
+    store.resolveSeq(1);
+
+    expect(store.pendingCount()).toBe(0);
+    expect(mirror.map.cells).toEqual(server.cells);
   });
 });

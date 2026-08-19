@@ -51,17 +51,25 @@ export const TEST_WORLD_NAME = 'Testfall';
  * restore without one is the legacy-upgrade path: that path deliberately mints
  * a name and marks the world dirty (World.restore), which is not the starting
  * state a pipeline or mask test wants to reason about.
+ *
+ * `fillHeight` starts every cell at that height instead of at SEA_LEVEL, for
+ * the suites whose subject is what happens at a height LIMIT (a stroke that
+ * clamps everywhere and therefore changes nothing). It lives here rather than
+ * in those suites so the mask construction above stays stated once.
  */
 export function worldWithUnlockedChunks(
   size: number,
   chunks: ReadonlyArray<readonly [number, number]>,
   difficulty?: number,
+  fillHeight?: number,
 ): World {
   const mask = createChunkMask(size);
   for (const [cx, cy] of chunks) {
     unlockChunk(mask, chunkIndex(size, cx, cy));
   }
-  return World.restore(size, createHeightmap(size).cells, mask, difficulty, TEST_WORLD_NAME);
+  const cells = createHeightmap(size).cells;
+  if (fillHeight !== undefined) cells.fill(fillHeight);
+  return World.restore(size, cells, mask, difficulty, TEST_WORLD_NAME);
 }
 
 /** Wraps a plugin object as if discovery had loaded it from plugins/<name>. */

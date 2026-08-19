@@ -1,7 +1,7 @@
 // The intent pipeline is the anti-cheat surface: every test here is a rule a
 // hostile or buggy client (or plugin) must not be able to break.
 
-import { DEFAULT_SCULPT_AMOUNT, type SculptIntent } from '@terrace/shared';
+import { DEFAULT_SCULPT_AMOUNT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
 import { PluginHost } from '../src/plugins/host.ts';
@@ -365,5 +365,121 @@ describe('sculptDenied nack', () => {
     expect(outcome.applied).toBe(false);
     if (!outcome.applied) expect(outcome.reason).toBe('locked');
     expect(sink.messages).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ANSWER CONTRACT (issue #21). Every seq-carrying intent gets exactly one
+// answer back to its sender, and the applied answer must be the LAST thing that
+// sender hears about the edit: a client retires its prediction on the answer,
+// so anything still in flight behind it would be drawn over pre-sculpt ground.
+describe('sculptApplied ack', () => {
+  let world: World;
+  let sink: RecordingSink;
+
+  beforeEach(() => {
+    world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    sink = new RecordingSink();
+    world.setSink(sink);
+  });
+
+  it('acks an applied intent to the sender only, AFTER the diff broadcast', () => {
+    const outcome = handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ seq: 7 }));
+    expect(outcome.applied).toBe(true);
+
+    // Order IS the contract, so the whole transcript is asserted, not a filter.
+    expect(sink.messages.map((message) => [message.target, message.type])).toEqual([
+      ['broadcast', 'terrainDiff'],
+      [PLAYER.id, 'sculptApplied'],
+    ]);
+    expect(sink.ofType('sculptApplied')[0].payload).toEqual({
+      type: 'sculptApplied',
+      seq: 7,
+    });
+  });
+
+  it('acks AFTER the chunkUnlock a frontier sculpt earned for the sculptor', () => {
+    // The per-player creep plugin unlocks from onTerrainChanged, which runs
+    // inside applyServerSculpt — i.e. before the pipeline acks. This is the
+    // ordering that matters most: the ack must not overtake the terrain the
+    // very same stroke just revealed to this player.
+    const creeper: TerracePlugin = {
+      name: 'creeper',
+      onTerrainChanged(api, _diff, sculptorToken): void {
+        if (sculptorToken !== undefined) api.unlockChunkForToken(sculptorToken, 1, 0);
+      },
+    };
+    world.addPlayer(PLAYER);
+    sink.clear();
+
+    handleSculptIntent(makeDeps(world, [creeper]), PLAYER, sculptMessage({ seq: 8 }));
+
+    expect(sink.messages.map((message) => [message.target, message.type])).toEqual([
+      ['broadcast', 'terrainDiff'],
+      [PLAYER.id, 'chunkUnlock'],
+      [PLAYER.id, 'sculptApplied'],
+    ]);
+  });
+
+  it('acks even when the applied edit changed nothing', () => {
+    // "Applied, and it moved nothing" is a real outcome, and it is exactly the
+    // case where a client that predicted movement most needs telling — no diff
+    // will ever arrive to reconcile against. A raise on a world already at
+    // MAX_HEIGHT clamps everywhere and moves no cell at all.
+    const ceiling = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]], undefined, MAX_HEIGHT);
+    const ceilingSink = new RecordingSink();
+    ceiling.setSink(ceilingSink);
+
+    const outcome = handleSculptIntent(
+      makeDeps(ceiling, []),
+      PLAYER,
+      sculptMessage({ dir: 1, radius: 1, seq: 9 }),
+    );
+
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff).toHaveLength(0);
+    expect(ceilingSink.messages.map((message) => [message.target, message.type])).toEqual([
+      [PLAYER.id, 'sculptApplied'],
+    ]);
+  });
+
+  it('sends no ack for an intent that carried no seq', () => {
+    handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
+    expect(sink.ofType('sculptApplied')).toHaveLength(0);
+  });
+
+  it("echoes the CLIENT's seq even when a plugin rewrote the intent", () => {
+    // The seq identifies the prediction the client is holding, not the edit the
+    // server ended up making, so a plugin that rewrites (and drops) the field
+    // must not be able to strand that prediction until its deadline.
+    const mover: TerracePlugin = {
+      name: 'mover',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, x: 8, y: 8, seq: undefined } };
+      },
+    };
+    handleSculptIntent(makeDeps(world, [mover]), PLAYER, sculptMessage({ seq: 11 }));
+
+    expect(sink.ofType('sculptApplied')[0].payload).toEqual({
+      type: 'sculptApplied',
+      seq: 11,
+    });
+  });
+
+  it('sends no ack when a plugin rewrote the intent into something invalid', () => {
+    const breaker: TerracePlugin = {
+      name: 'breaker',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, x: -1 } };
+      },
+    };
+    const outcome = handleSculptIntent(
+      makeDeps(world, [breaker]),
+      PLAYER,
+      sculptMessage({ seq: 12 }),
+    );
+
+    expect(outcome.applied).toBe(false);
+    expect(sink.ofType('sculptApplied')).toHaveLength(0);
   });
 });

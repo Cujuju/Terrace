@@ -14,6 +14,7 @@ import { DEFAULT_WORLD_SIZE, quantizeToBand } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
@@ -236,7 +237,18 @@ export function createWorld(viewport: Viewport): World {
       if (meshes === null || predictions === null) return;
       // The denied stroke comes off the screen the moment the nack lands —
       // one round trip — instead of at the prediction deadline.
-      meshes.update(predictions.rejectSeq(msg.seq));
+      meshes.update(predictions.resolveSeq(msg.seq));
+      armExpiryTimer();
+    },
+
+    onSculptApplied(msg: SculptAppliedMessage): void {
+      if (meshes === null || predictions === null) return;
+      // The ack arrives AFTER the terrainDiff it acknowledges (the ordering
+      // contract on SculptAppliedMessage), so the authoritative map already
+      // holds the server's version of this edit and dropping our own copy of
+      // it changes nothing on screen — which is exactly the point: keeping it
+      // would draw the same edit twice until the deadline (issue #21).
+      meshes.update(predictions.resolveSeq(msg.seq));
       armExpiryTimer();
     },
 
