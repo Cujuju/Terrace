@@ -104,6 +104,12 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
+      // The Durand's sign flash runs every frame regardless of pendingGround
+      // — it is not gated on the ground-retry condition below, which exists
+      // for a completely different reason (a chunk that has not streamed in
+      // yet).
+      models?.animate(dt);
+
       if (pendingGround === 0) return;
       sinceRetrySeconds += dt;
       if (sinceRetrySeconds < STRUCTURES_GROUND_RETRY_SECONDS) return;
