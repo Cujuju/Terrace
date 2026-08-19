@@ -1039,6 +1039,74 @@ terrace/
   per-player masks exist to close — closing it is the SAME fog-of-war
   follow-up, not a gap in this one.
 
+### Decisions made 2026-08-19 (issue #21 — the frontier revert)
+
+Owner report: "when I am moving land around it sometimes goes back and redraws
+the outline and removes areas that I just sculpted."
+
+**Root cause.** The client had no way to be TOLD that its intent was applied,
+so it inferred acknowledgement by comparing the authoritative heights against
+the ones its own prediction produced (`isConfirmed`). That inference only works
+while the client can reproduce the server's arithmetic, and at a territory
+frontier it provably cannot: the shared brush and relaxation math read cells in
+chunks the client was never sent, and the mirror holds those at SEA_LEVEL as a
+RENDERING choice (so revealed land slopes into the sea rather than ending in a
+floating cliff). The prediction therefore never matched, was never retired, and
+was replayed on top of the server's own copy of the same edit for a full
+PREDICTION_TTL_MS — dragging just-sculpted ground down and then snapping it
+back. Measured on the repro: the client rendered 181 where the server said 224,
+and pulled its own frontier column to 149 from a starting 160.
+
+Two changes, at the contract layer rather than at the call sites.
+
+- **1. THE ANSWER CONTRACT (protocol, additive).** A new
+  `SculptAppliedMessage { type, seq }`, sent to the ORIGINATING client only, is
+  the twin of the existing `SculptDeniedMessage`: an intent carrying a `seq`
+  now gets exactly one answer — applied or denied — and the client retires that
+  prediction on the answer instead of guessing. **Ordering is the contract**:
+  the ack is sent from `server/src/intent/pipeline.ts` only AFTER
+  `applyServerSculpt` has returned, so it lands behind the terrainDiff and
+  behind any `chunkUnlock` the same stroke earned. Verified from source
+  (@colyseus/core 0.17.50 `Room.broadcastMessageType`, @colyseus/ws-transport
+  0.17.13 `WebSocketClient.send`) that both funnel into the same per-client
+  `enqueueRaw` synchronously, so call order is wire order. Retiring earlier
+  would show pre-sculpt ground for a frame. Value agreement is kept as the
+  fallback for a seq-less intent; the deadline stays as the safety net.
+  The seq echoed is the CLIENT's, not a plugin-rewritten intent's — it
+  identifies the prediction being held, not the edit the server made.
+- **2. PREDICT ONLY WHAT YOU CAN COMPUTE (client).** `predict` already refused
+  an intent whose brush CENTRE was in a chunk it had never received; that rule
+  was right and merely too narrow — a brush is not one cell. It now refuses any
+  intent whose footprint, plus the one-cell ring the relaxation compares
+  against (`PREDICTION_HALO_CELLS`), reaches a chunk it has never received.
+  The stroke is still sent and still applied; only the local preview is
+  skipped, and only where it would have been wrong. This matters most for the
+  level-fill brush (stamp + hard), which SURVEYS its whole footprint for the
+  lowest terrace band: one unseen cell reading SEA_LEVEL drags the survey to
+  band 0 and the entire stroke targets the wrong terrace.
+
+**Not the cause, checked and recorded so it is not re-suspected.** The #17
+union-vs-per-token asymmetry cannot produce a revert. Every per-token mask is
+ORed into the union when it is granted, so the union is always a superset: a
+client is never denied a diff cell for a chunk it holds. The asymmetry can only
+send a client cells for a chunk it does NOT hold, which land in the mirror's
+backing array, are in no mesh, and are overwritten whole by `writeChunkHeights`
+if that chunk is ever unlocked for it. That is the fog-of-war leak already
+tracked from #17, not this bug.
+
+**"Redraws the outline" is a symptom, not a second defect.** The brush outline
+follows the picked surface height and the terrace bands are a quantisation of
+height (`bandColors.ts`), so both redraw whenever the heights under them move.
+Nothing in the render layer was changed.
+
+**Residual, stated rather than punted.** A stroke whose footprint is entirely
+on known ground but whose relaxation cascade travels far enough to read past
+the frontier anyway still predicts wrong — the halo bounds the brush's own
+neighbour reads, not an arbitrarily long cascade. It is bounded to ONE ROUND
+TRIP by the ack instead of to PREDICTION_TTL_MS, and it can no longer double.
+Closing it exactly would mean having the shared math report its read set, which
+is a change to `shared/` for a case the ack already makes invisible.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
