@@ -1024,8 +1024,9 @@ terrace/
   upgrade — while the simulation (wildlife, flora, monsters) is unaffected,
   since it only ever read the union.
 
-  **Known accepted residual, not fixed here.** Global entity broadcasts
-  (wildlife, flora, monsters, structures) still reference positions over
+  **Known accepted residual, not fixed here — CLOSED by issue #18 (see the
+  decisions block immediately below).** Global entity broadcasts (wildlife,
+  flora, monsters, structures) still reference positions over
   chunks a given player has not personally unlocked — they were never
   filtered per-player before this change, and per-player masks existing in
   core does not by itself filter them. Tracked as a fog-of-war follow-up; the
@@ -1038,6 +1039,92 @@ terrace/
   seeing further edits there is shared-world behaviour, not the leak
   per-player masks exist to close — closing it is the SAME fog-of-war
   follow-up, not a gap in this one.
+
+### Decisions made 2026-08-19 (settled with owner, issue #18)
+
+- **Strict fog of war: one fan-out primitive, not per-plugin filtering.**
+  `WorldApi` gains `broadcastVisible(type, items, positionOf, buildPayload,
+  options?)` — the ONE place a plugin loops `players()` and filters by
+  visibility. For every connected player (or, with `options.onlyPlayerId`,
+  exactly one of them) it filters `items` down to the ones visible over that
+  player's own token mask (`isCellVisibleTo`, via `positionOf`) and hands the
+  filtered subset to `buildPayload` to build that recipient's own wire
+  payload. `options.skipEmpty` (default `false`) picks the disappearance
+  contract: `false` — used for a FULL-STATE replace message (wildlife's
+  `entities`, monsters' `state`) — always sends, even an empty payload,
+  because the only way a client learns something it could see has left its
+  view is that the next full list omits it; `true` — used for an ADDITIVE
+  delta or a snapshot of content that never moves once placed (flora's
+  grown/felled, structures' founded/upgraded/demolished, either plugin's join
+  snapshot and keepalive) — sends nothing at all to a recipient whose subset
+  is empty, which is safe *because* per-token masks only ever grow (issue
+  #17): a position invisible to a player now was equally invisible whenever
+  that item last changed, so there is nothing an empty send could ever have
+  corrected. The join-snapshot side of each such plugin uses the SAME flag
+  for the SAME reason, so the two paths cannot disagree about what silence
+  means.
+
+- **Migrated:** wildlife's `entities` broadcast, monsters' `state` broadcast,
+  flora's `forest`/`changes` broadcasts and join snapshot, structures'
+  `all`/`changes` broadcasts and join snapshot. **Not migrated:** relics —
+  its own global, unfiltered five-item broadcast was never named in issue
+  #17's residual note or in #18 itself; flagged here as a follow-up, not
+  silently left as an oversight.
+
+- **Weather is EXEMPT, verified rather than assumed.** Its broadcast stays a
+  single unfiltered `world.broadcast` to everyone. A weather system's
+  position is a function of RNG and the shared wind alone; the one place the
+  sim reads terrain at all (snow siting) already refuses to look at a locked
+  cell (`SNOW_MIN_TERRAIN_BANDS_ABOVE_SEA`'s guard, `isCellUnlocked`), so the
+  payload carries no information about locked terrain shape to filter in the
+  first place — weather's own file header already documented this
+  reasoning before #18 and it was independently re-verified, not assumed,
+  while implementing this issue. Wildlife's birds get the identical
+  exemption for the identical reason: `flocks.ts` reads neither heights nor
+  the mask, a flock's course is terrain-independent ambience exactly like a
+  weather system's, and a bird legitimately spawns and despawns OFF the map
+  — running one through `isCellVisibleTo` would throw (shared's `chunkIndex`
+  bounds-checks by contract), so birds are spliced into every recipient's
+  payload unfiltered rather than gated by position.
+
+- **Appearance on creep.** Wildlife (5 Hz) and monsters (1 Hz) need no extra
+  mechanism: `broadcastVisible` re-reads every connected player's own mask on
+  every call, so a chunk a player just earned is reflected on the very next
+  cadence tick regardless. Flora and structures cannot rely on their cadence
+  — their periodic full resync is a 60 s REPAIR cadence, not a sync
+  mechanism, and a delta only announces what just changed, not what has been
+  standing there all along — so `TerracePlugin` gains one additive optional
+  hook, `onChunkUnlockedForToken(world, token, cx, cy)`, fired by
+  `WorldApi.unlockChunkForToken`'s wrapper after a REAL (non-idempotent) unlock,
+  once per plugin. Flora and structures each push a targeted, ADDITIVE delta
+  (never their "replace the whole list" message type, which would wipe out
+  everything else the player already knows) containing whatever already
+  stands in that one chunk.
+
+- **Disappearance for a moving entity, verified client-side, no client
+  change needed.** Both the wildlife and monsters clients already replace
+  their whole entity map on every message and drop whatever id the newest
+  message omits (`WildlifeInterpolator`/`MonsterInterpolator`'s own doc
+  comments already say so) — fog-of-war's per-player, sometimes-smaller list
+  is exactly the input that path was built for. Flora and structures never
+  need an equivalent: their content is static and per-token masks are
+  monotonic, so a position visible to a player now was visible to them at
+  every earlier moment too — there is no "used to see it, now don't" case for
+  a tree or a building to hit.
+
+- **Perf, estimated at the shipped caps and ~10 players (the same anchor the
+  bandwidth arithmetic elsewhere in this section uses).** `broadcastVisible`
+  is O(players × items); at 10 players this is ≈1 680 `isCellVisibleTo` calls
+  per wildlife broadcast (168 entities, 5 Hz ⇒ ≈8 400/s), ≈20/s for monsters
+  (2 entities, 1 Hz), and for flora/structures — bounded by FLORA_TREE_CAP
+  (3 000) / STRUCTURES_CAP (512) but almost never exercised at the cap on a
+  keepalive (60 s) and typically single-digit item counts on a delta — a
+  worst-case ≈30 000/500/s amortised on the keepalive and negligible on
+  deltas. Every `isCellVisibleTo` call is O(1) (a couple of `Map`/typed-array
+  lookups); one filtered array is allocated per recipient per call. All of
+  this is rounding error next to the per-tick work these plugins already do
+  (flora/structures each already scan thousands of cells a tick for their own
+  survey/CA sweep).
 
 ### Version facts recorded at scaffold time (2026-08-13)
 
