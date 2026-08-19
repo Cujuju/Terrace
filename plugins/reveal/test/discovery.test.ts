@@ -41,8 +41,11 @@ describe('shipped example plugins', () => {
     expect(mana?.onTick).toBeTypeOf('function');
     expect(mana?.onPlayerJoin).toBeTypeOf('function');
 
+    // reveal is STATELESS since issue #17 (2026-08-19): its per-player creep
+    // policy reads and writes core's own per-token masks (WorldApi.
+    // unlockChunkForToken), so it has nothing of its own left to persist.
     const reveal = byName.get('reveal');
     expect(reveal?.onTerrainChanged).toBeTypeOf('function');
-    expect(reveal?.persistence?.save).toBeTypeOf('function');
+    expect(reveal?.persistence).toBeUndefined();
   });
 });

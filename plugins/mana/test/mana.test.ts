@@ -27,7 +27,7 @@ import {
   asLoadedPlugin,
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
-import { plugin as revealPlugin, resetRevealState } from '../../reveal/server/index.ts';
+import { plugin as revealPlugin } from '../../reveal/server/index.ts';
 import { sculptManaCost } from '../pricing.ts';
 import {
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
@@ -91,7 +91,7 @@ const SUITE_DIFFICULTY = MAX_WORLD_DIFFICULTY;
 /** The regen rate SUITE_DIFFICULTY produces. Exact, by the anchor above. */
 const SUITE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
 
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /**
  * The cheapest sculpt there is: the radius-1 point brush, one band over one
@@ -134,7 +134,7 @@ interface Harness {
  */
 function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   resetManaState();
-  resetRevealState();
+  // reveal is stateless since issue #17 (2026-08-19) — no reset needed.
 
   const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], difficulty);
   const sink = new RecordingSink();
@@ -145,6 +145,12 @@ function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
 
   world.addPlayer(PLAYER);
   host.playerJoined(PLAYER);
+  // A real join seeds the starter square into the joining token's OWN mask
+  // (terrace-room.ts's applyInitialUnlockForToken) before this harness's
+  // equivalent of the join snapshot is ever read; this harness never builds
+  // one, so nothing here depends on PLAYER's per-token mask — only the union
+  // mask worldWithUnlockedChunks sets up, which every existing assertion in
+  // this file already reasons about.
 
   return { world, host, sink };
 }
@@ -297,7 +303,7 @@ describe('mana plugin', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 /** A second connection, so perked and unperked players can be compared. */
-const OTHER_PLAYER: Player = { id: 'session-2', name: 'Control' };
+const OTHER_PLAYER: Player = { id: 'session-2', token: 'token-2', name: 'Control' };
 
 describe('mana perks', () => {
   let harness: Harness;
@@ -484,7 +490,7 @@ describe('mana perks', () => {
   it('may be set before mana has ever seen the player', () => {
     // relics can grant a perk from a message handler that runs before this
     // plugin's lazily-created pool exists; the perk must survive that.
-    const latecomer: Player = { id: 'session-3', name: 'Late' };
+    const latecomer: Player = { id: 'session-3', token: 'token-3', name: 'Late' };
     setManaPerk(latecomer.id, { costMultiplier: 0.5 });
 
     harness.world.addPlayer(latecomer);

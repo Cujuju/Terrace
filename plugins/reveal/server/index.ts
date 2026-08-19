@@ -1,40 +1,62 @@
 // reveal — the flagship example plugin (design §3.5, MVP criterion 5).
 //
-// Core knows about the unlocked-chunk mask and streams a chunk the moment its
-// bit flips (World.unlockChunk). Core does NOT know *when* territory should
-// unlock — that policy lives here, in a plugin, and nothing in server/src had to
-// change to make this file work.
+// Core knows about per-token unlock (World.unlockChunkForToken, published to
+// plugins as WorldApi.unlockChunkForToken — issue #17). Core does NOT know
+// *when* territory should unlock for a given player — that policy lives here,
+// in a plugin, and nothing in server/src had to change to make this file work
+// beyond the WorldApi surface issue #17 added.
 //
 // ────────────────────────────────────────────────────────────────────────────
-// THE POLICY: frontier pressure.
+// THE POLICY (re-decided 2026-08-19, issue #17): INSTANT PER-PLAYER CREEP.
 //
-//   Sculpting near the edge of your territory physically reshapes the locked
-//   land behind it. Once a locked chunk has been reshaped as many times as it
-//   has cells, it stops being unknown territory and unlocks.
+//   Sculpting near the edge of YOUR territory physically reshapes the locked
+//   land behind it — the brush footprint and the gradient-limit relaxation
+//   that follows it do not stop at a chunk border. The instant that spill
+//   lands a changed cell in a chunk YOU personally have not unlocked, that
+//   chunk unlocks FOR YOU, immediately. No threshold, no counter: one cell is
+//   enough, because a cell only changes at all when your own edit reached it.
 //
-// Mechanically: every applied edit hands this plugin the FULL server-side diff
-// (sculpt-service.ts deliberately gives plugins the unfiltered diff, mask and
-// all). Neither the brush footprint nor the gradient-limit relaxation that
-// follows it stops at a chunk border, so a sculpt near the frontier — and ONLY
-// a sculpt near the frontier — produces changed cells inside a locked chunk.
-// Each such cell is one unit of "pressure" on that chunk; at
-// FRONTIER_PRESSURE_CELLS_PER_UNLOCK the chunk unlocks and streams to every
-// client. Measured with the shipped brush: 8 radius-4 sculpts on the border
-// column of a chunk unlock its locked neighbour.
+// SUPERSEDES the original "frontier pressure" policy — a per-chunk counter
+// that required CHUNK_SIZE² cumulative cell-changes, against a single
+// world-wide mask everyone shared, before a chunk unlocked for everyone at
+// once. Two owner-settled facts (issue #17) forced the change:
 //
-// Why this policy rather than, say, "count sculpt intents near a border":
+//   1. Per-player masks. Once unlocking happens FOR A TOKEN rather than for
+//      the whole world, "pressure accrued against a chunk" has no single
+//      owner to accrue toward — the counter's premise (one shared frontier)
+//      stopped existing the moment two players could each unlock the SAME
+//      chunk independently.
+//   2. Instant beats counted, now that there is one sculptor per creep event.
+//      The old counter's whole reason to exist was resisting a single
+//      griefer hammering one border, over and over, to open a chunk EVERY
+//      OTHER PLAYER would then see for free. That griefer now only ever
+//      unlocks the chunk for themselves — there is no one left to protect
+//      the counter from.
 //
-//   * It is a property of the terrain, not of the message stream, so it cannot
-//     be farmed by spamming intents that change nothing (a sculpt that hits the
-//     height clamp produces an empty diff and therefore no pressure).
-//   * It needs no player identity and no post-apply intent hook, so it observes
-//     only what actually happened — an intent denied by another plugin (mana,
-//     for instance) never reaches the terrain and therefore never counts.
-//   * It is directional and legible in-game: the land you are already pushing
-//     into is the land that opens next. Sculpting in the middle of your
-//     territory reveals nothing.
-//   * It is monotone and deterministic: same edits in the same order → same
-//     unlocks, on any machine, on a restored world as much as a fresh one.
+// WHY THIS IS STILL NOT FARMABLE, restated for the new mechanics:
+//   * It is a property of the terrain, not of the message stream — a sculpt
+//     that hits the height clamp produces an empty diff and unlocks nothing.
+//   * It needs no post-apply intent hook: a diff exists only because it was
+//     already applied, which means it already survived every other plugin's
+//     onIntent (mana, cooldowns, …) — a denied intent contributes nothing.
+//   * It is directional and legible in-game: the land you are already
+//     pushing into is the land that opens for you. Sculpting in the middle
+//     of your own territory reveals nothing (there is no locked chunk left
+//     to touch there).
+//   * It is monotone and deterministic per token: the same edits by the same
+//     sculptor in the same order → the same unlocks for that sculptor, on
+//     any machine, on a restored world as much as a fresh one.
+//
+// STATELESS. Every bit this plugin used to own (pressureByChunk, and the
+// persistence slice that carried it across a restart) is GONE. The per-token
+// unlock masks that replace it are core's own, on World — not because this
+// plugin lost a privilege, but because unlockChunkForToken had to be a
+// WorldApi primitive other plugins (and the planned fog-of-war follow-up) can
+// also reach, and a capability core owns keeps its state in core, in the same
+// binary shape the union mask already uses (see snapshot-store.ts's
+// TOKEN_MASKS TABLE comment for the persistence-home decision). This file
+// only ever decided WHEN unlockChunkForToken should fire; it never actually
+// needed to remember anything to do that.
 // ────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE, chunkIndex, type CellDiff } from '@terrace/shared';
@@ -42,120 +64,45 @@ import { CHUNK_SIZE, chunkIndex, type CellDiff } from '@terrace/shared';
 // core publishes no plugin-API entry point yet (see the report accompanying
 // this Phase 2 work); `import type` is fully erased, so nothing here depends on
 // server code at runtime.
-import type { PersistenceSlice, TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
+import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /**
- * Cell-changes a locked chunk must absorb before it unlocks. One chunk's worth
- * of cells (CHUNK_SIZE² = 256): the frontier chunk has, in aggregate, been
- * reworked as thoroughly as if every one of its cells had been sculpted once.
+ * Unlocks every locked chunk one sculptor's diff touched, FOR THAT SCULPTOR.
  *
- * Expressed in terms of CHUNK_SIZE rather than as a bare number so the policy
- * keeps its meaning if chunk granularity is ever retuned (design open question
- * 5). With the shipped brush (radius ≤ 4, one band per click) a border sculpt
- * spills 19–64 cells into the neighbouring chunk — growing as the frontier hill
- * gets taller and its relaxation reaches further — so this is 8 deliberate
- * edits at the frontier: long enough to be earned, short enough that a
- * self-hoster sees it happen in their first session.
+ * Deduping by chunk index within one diff avoids calling
+ * `unlockChunkForToken` more than once for the same chunk in a single
+ * sculpt — a cheap saving, not a correctness requirement, since that call is
+ * already idempotent per token on its own (World.unlockChunkForToken).
  */
-export const FRONTIER_PRESSURE_CELLS_PER_UNLOCK = CHUNK_SIZE * CHUNK_SIZE;
-
-/** Schema version of this plugin's persistence slice. */
-export const REVEAL_SLICE_VERSION = 1;
-
-/** Persisted shape. Pressure is a sparse list of [chunkIndex, cellChanges]. */
-interface RevealSlice {
-  readonly version: number;
-  readonly pressure: ReadonlyArray<readonly [number, number]>;
-}
-
-/** Accumulated pressure per LOCKED chunk, keyed by flat chunk index. */
-const pressureByChunk = new Map<number, number>();
-
-/**
- * Accrues pressure for one applied edit and unlocks whatever crosses the
- * threshold.
- *
- * Cells in already-unlocked chunks are skipped: pressure only ever describes
- * land the players cannot see yet. A chunk that unlocks is removed from the map
- * rather than left at its final count, so the bookkeeping stays proportional to
- * the size of the live frontier, not to the size of the world.
- */
-function accruePressure(world: WorldApi, diff: readonly CellDiff[]): void {
+function creepForSculptor(
+  world: WorldApi,
+  diff: readonly CellDiff[],
+  sculptorToken: string,
+): void {
   const worldSize = world.worldSize;
+  const touchedChunks = new Set<number>();
 
   for (const cell of diff) {
     const cx = Math.floor(cell.x / CHUNK_SIZE);
     const cy = Math.floor(cell.y / CHUNK_SIZE);
-    if (world.isChunkUnlocked(cx, cy)) continue;
-
     // Diff cells always come from the authoritative heightmap, so they are in
     // bounds and chunkIndex cannot throw here.
     const index = chunkIndex(worldSize, cx, cy);
-    const pressure = (pressureByChunk.get(index) ?? 0) + 1;
+    if (touchedChunks.has(index)) continue;
+    touchedChunks.add(index);
 
-    if (pressure < FRONTIER_PRESSURE_CELLS_PER_UNLOCK) {
-      pressureByChunk.set(index, pressure);
-      continue;
-    }
-
-    // Threshold crossed. Core flips the mask bit and streams the chunk's
-    // heights to every client in one step, so "the chunk is unlocked" and
-    // "clients know about it" cannot drift apart. Later cells of this same diff
-    // now see an unlocked chunk and are skipped by the check above.
-    pressureByChunk.delete(index);
-    world.unlockChunk(cx, cy);
+    world.unlockChunkForToken(sculptorToken, cx, cy);
   }
 }
-
-/**
- * Reads back a persisted slice defensively. The data comes from this server's
- * own SQLite file, but a truncated or hand-edited row must degrade to "no
- * pressure recorded" rather than crash a world on boot — the world itself is
- * still perfectly playable with an empty frontier map.
- */
-function loadSlice(data: unknown): void {
-  pressureByChunk.clear();
-  if (typeof data !== 'object' || data === null) return;
-
-  const slice = data as Partial<RevealSlice>;
-  if (slice.version !== REVEAL_SLICE_VERSION) return;
-  if (!Array.isArray(slice.pressure)) return;
-
-  for (const entry of slice.pressure) {
-    if (!Array.isArray(entry) || entry.length !== 2) continue;
-    const [index, pressure] = entry as [unknown, unknown];
-    if (!Number.isInteger(index) || (index as number) < 0) continue;
-    if (!Number.isInteger(pressure) || (pressure as number) <= 0) continue;
-    if ((pressure as number) >= FRONTIER_PRESSURE_CELLS_PER_UNLOCK) continue;
-    pressureByChunk.set(index as number, pressure as number);
-  }
-}
-
-const persistence: PersistenceSlice = {
-  save(): RevealSlice {
-    return { version: REVEAL_SLICE_VERSION, pressure: Array.from(pressureByChunk) };
-  },
-  load(data: unknown): void {
-    loadSlice(data);
-  },
-};
 
 export const plugin: TerracePlugin = {
   name: 'reveal',
 
-  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
-    accruePressure(world, diff);
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[], sculptorToken?: string): void {
+    // No sculptor → a plugin-initiated edit (e.g. weather, structures
+    // terraforming their own way), not a player's own sculpt. There is no
+    // one to creep territory for, so this policy has nothing to do.
+    if (sculptorToken === undefined) return;
+    creepForSculptor(world, diff, sculptorToken);
   },
-
-  persistence,
 };
-
-/** Test seam: current pressure on a chunk (0 when none has been recorded). */
-export function frontierPressureAt(chunkIdx: number): number {
-  return pressureByChunk.get(chunkIdx) ?? 0;
-}
-
-/** Test seam: drops all accumulated state so a suite can start from zero. */
-export function resetRevealState(): void {
-  pressureByChunk.clear();
-}
