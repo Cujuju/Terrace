@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Structures preview (throwaway)</title>
+    <style>
+      /* Neutral studio backdrop — see previewStructures.ts for why: this page
+         exists only to screenshot one building at a time in isolation, not
+         to look like the game's own sky/terrain. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #808080;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness (see CLAUDE.md task notes) — not part of
+         the shipped app, not linked from index.html, reachable only by
+         navigating here directly. Renders exactly one structures tier's
+         model, or the Durand's variant, chosen by this page's own query
+         string; see previewStructures.ts for the full contract. -->
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/previewStructures.ts"></script>
+  </body>
+</html>
