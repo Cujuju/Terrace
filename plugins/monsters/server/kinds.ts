@@ -21,7 +21,7 @@
 //
 //                    Cthulhu          Kraken            Yeti
 //   habitat          any deep basin   a TRENCH, big     high snow
-//   banishable       NO, ever         yes, drain it     yes, level it
+//   banishable       NO, ever         not for now       yes, level it
 //   blocks raising   yes              no                no
 //
 // Cthulhu and the kraken are deliberately opposite on both behavioural axes:
@@ -32,6 +32,24 @@
 // altitude away. Neither behaviour is written into the lifecycle —
 // `banishment: null` and `protectsGround` are fields, so a fourth kind picks
 // its own corner of the same table.
+//
+// AMENDED 2026-08-19 — THE KRAKEN'S MIDDLE CELL IS NOW EMPTY (owner: "For now,
+// no eviction. Later, if we do boats, they can attack the kraken."). "Fight it
+// with a shovel" was the paragraph above's whole argument for the kraken, and a
+// correctness pass found the code never implemented it: the collapse test
+// counted DEEP-WATER cells, not trench cells, so refilling its trench did
+// nothing, draining it properly meant raising ~87% of a fresh world's ocean,
+// and the only cheap counter was walling it into a pocket — a trick nothing
+// documented. Rather than retune three numbers to rescue a mechanic nobody had
+// designed, the owner withdrew it until it has a fiction: BOATS attack the
+// kraken (backlog issue #43), terrain does not.
+//
+// SO THE TABLE'S SHAPE SURVIVES AND ONLY THE KRAKEN'S ROW MOVED: the yeti is
+// still the banishable kind, Cthulhu is still the one nothing touches, and the
+// kraken now sits between them — removable in principle (it keeps a cooldown
+// and a BanishmentRule, which is what boats will hang off) but with nothing in
+// the world today that removes it, save the physics every kind obeys: raise the
+// ground out from under it and it cannot stay standing on land.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BAND_HEIGHT, CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_STEP, SEA_COLUMN_BANDS, SEA_LEVEL } from '@terrace/shared';
@@ -327,26 +345,27 @@ export const KRAKEN_LAIR_MIN_DEPTH_BANDS = Math.floor(
   NATURAL_OCEAN_FLOOR_MIN_DEPTH / BAND_HEIGHT,
 );
 
-/**
- * Cells in its own region below which the kraken's trench has COLLAPSED and it
- * leaves, as a multiple of a chunk's area.
- *
- * Two chunks (512 cells, ~23×23). A QUARTER of the arrival threshold, which is
- * hysteresis and not sloppiness: arrival and departure being the same number
- * would mean a player idly nibbling the rim of a marginal basin could evict the
- * monster and re-qualify the basin repeatedly, turning a dread event into a
- * light switch. Two distinct numbers mean the water has to be genuinely,
- * visibly gone before it submerges.
- *
- * AREA ONLY, DELIBERATELY — not depth. Refilling the trench to shallower than
- * KRAKEN_LAIR_MIN_DEPTH_BANDS does NOT evict it: the depth requirement says
- * where it comes FROM, and re-testing an arrival condition every five seconds
- * is exactly the light switch the previous paragraph rejects. Draining is the
- * eviction, and it is the one a player can see themselves doing.
- */
-export const KRAKEN_LAIR_COLLAPSE_AREA_CHUNKS = 2;
-export const KRAKEN_LAIR_COLLAPSE_DEEP_CELLS =
-  KRAKEN_LAIR_COLLAPSE_AREA_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+// THE KRAKEN'S COLLAPSE THRESHOLD USED TO LIVE HERE, and its absence is the
+// 2026-08-19 owner ruling ("For now, no eviction. Later, if we do boats, they
+// can attack the kraken"), not an oversight — see the amendment in this file's
+// header and the one in summoning.ts.
+//
+// It was KRAKEN_LAIR_COLLAPSE_AREA_CHUNKS = 2 (512 cells), justified as a
+// quarter of the arrival threshold for hysteresis. The hysteresis reasoning was
+// sound; what was wrong was the quantity being measured. It counted cells of
+// the DEEP-WATER region (3 bands, the habitat's own floor) rather than of the
+// TRENCH the kraken actually demanded (7 bands), so the mechanic the comment
+// advertised — "drain its trench and it goes" — could not fire from draining a
+// trench at all. That is recorded here rather than in a commit message because
+// the next person to give the kraken a departure rule needs to know which of
+// the two regions to count, and the honest answer is neither by default: the
+// boats arc should remove it because something FOUGHT it, not because a region
+// crossed a number.
+//
+// The kraken's row keeps its BanishmentRule and its cooldown (below). Only the
+// threshold is gone, expressed as a null `lairCollapseCells` so the field goes
+// on meaning "losing the habitat around it removes it" for the kind that still
+// works that way — the yeti — instead of becoming a dead 0 on every row.
 
 /**
  * Simulated seconds after a kraken is banished before it may be rolled for
@@ -357,6 +376,16 @@ export const KRAKEN_LAIR_COLLAPSE_DEEP_CELLS =
  * not so long that a world becomes permanently monster-free by accident. With
  * the 4-minute mean wait on top, a player who banishes it and then refloods the
  * trench waits ~14 minutes on average for the sequel.
+ *
+ * AMENDED 2026-08-19: draining is no longer a way to be rid of it — the
+ * collapse threshold is gone (owner ruling, see this file's header). What can
+ * still banish a kraken is raising the seabed under its own feet, which
+ * enforceHabitat answers, and that is the departure this cooldown governs
+ * today. The figure is DELIBERATELY UNCHANGED and the constant is DELIBERATELY
+ * KEPT: ten minutes is the right absence for any cause, the reasoning above
+ * transfers to the boats arc unaltered (being rid of it should be earned and
+ * should last), and deleting the number would mean re-deriving it from scratch
+ * the day something is allowed to drive the kraken off on purpose.
  */
 export const KRAKEN_RESPAWN_COOLDOWN_SECONDS = 600;
 
@@ -481,11 +510,19 @@ export const YETI_LAIR_MIN_HEIGHT_BANDS = SNOW_LINE_BANDS_ABOVE_SEA;
  * gone before the thing goes.
  *
  * Named here rather than left implicit because the kraken's pair (9 chunks
- * arriving, 2 leaving) already encodes it — its own comment calls 2/9 "a
+ * arriving, 2 leaving) already encoded it — its own comment called 2/9 "a
  * quarter" — and a second kind reproducing that ratio by hand is how two
- * different hysteresis rules end up in one table. The kraken's numbers are NOT
- * re-derived from this: they are owner-settled and 2 chunks is a rounder number
+ * different hysteresis rules end up in one table. The kraken's numbers were NOT
+ * re-derived from this: they were owner-settled and 2 chunks is a rounder number
  * than 2.25 would be; this is the rule new rows follow.
+ *
+ * THE KRAKEN'S HALF OF THAT STORY IS HISTORY as of 2026-08-19 — it has no
+ * collapse threshold any more (owner ruling, see this file's header), so the
+ * yeti is the only kind this divisor governs. It is kept, and kept general,
+ * because it is the RULE rather than the row: the argument it encodes — that
+ * arrival and departure must be two different numbers or the monster becomes a
+ * light switch — is what any future departure rule has to satisfy, the boats
+ * arc's included.
  */
 export const LAIR_COLLAPSE_HYSTERESIS_DIVISOR = 4;
 
@@ -579,8 +616,24 @@ export const YETI_IDLE_END_PER_SECOND = 0.25;
  * nothing to leave unset and nothing to accidentally read.
  */
 export interface BanishmentRule {
-  /** Habitat cells in its own region below which it leaves. */
-  readonly lairCollapseCells: number;
+  /**
+   * Habitat cells in its own region below which it leaves, or NULL for a kind
+   * that losing the habitat AROUND it does not remove.
+   *
+   * THE TWO QUESTIONS ARE SEPARATE, which is why this is nullable inside a rule
+   * that is itself nullable, and the pair is not one flag: `banishment === null`
+   * asks "can anything remove this kind at all" (Cthulhu: no), and this asks
+   * "does its habitat shrinking do it" (the kraken since the 2026-08-19 owner
+   * ruling: no). A kraken can still be removed — the ground under its own feet
+   * becoming land removes it, which is enforceHabitat, and it serves a cooldown
+   * when it happens — it simply has no threshold on the region's SIZE.
+   *
+   * Null rather than a sentinel 0 or Infinity: those are numbers that a
+   * comparison silently accepts, and "no threshold" then reads as "a threshold
+   * nothing can cross", which is the same behaviour by accident instead of on
+   * purpose. Null makes the collapse test say `continue` in so many words.
+   */
+  readonly lairCollapseCells: number | null;
   /** Simulated seconds of enforced absence after a banishment. */
   readonly respawnCooldownSeconds: number;
 }
@@ -660,8 +713,13 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     minLairCells: KRAKEN_MIN_LAIR_DEEP_CELLS,
     minLairReachBands: KRAKEN_LAIR_MIN_DEPTH_BANDS,
     summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
+    // NO COLLAPSE THRESHOLD (owner, 2026-08-19: "For now, no eviction. Later,
+    // if we do boats, they can attack the kraken"). The rule is present, not
+    // null, and that is the distinction the table draws: something CAN remove
+    // a kraken — the seabed rising under its own feet does, and this cooldown
+    // is what follows — but no amount of taking the ocean away around it will.
     banishment: {
-      lairCollapseCells: KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
+      lairCollapseCells: null,
       respawnCooldownSeconds: KRAKEN_RESPAWN_COOLDOWN_SECONDS,
     },
     protectsGround: false,

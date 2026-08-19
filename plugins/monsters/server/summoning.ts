@@ -91,6 +91,29 @@
 // The kraken keeps the original behaviour, which is what the field is for: its
 // trench collapses, it goes, and its ten minutes of absence begin. The yeti is
 // the same rule on land: level his snowfield and he leaves.
+//
+// AMENDED 2026-08-19 — THE KRAKEN NO LONGER HAS A COLLAPSE THRESHOLD (owner:
+// "For now, no eviction. Later, if we do boats, they can attack the kraken.").
+// A correctness pass found that the paragraph above never described what the
+// code did: collapse counts cells of the 3-band DEEP-WATER region, not of the
+// 7-band trench, so refilling the trench that summoned it did nothing at all,
+// genuinely draining it meant raising ~87% of a fresh world's ocean, and the
+// only cheap counter was an undocumented trick — walling it into a pocket. The
+// owner's answer was not to retune those numbers but to WITHDRAW the mechanic
+// until there is a fiction for it: a monster you fight with terrain was never
+// the intent, and boats are (backlog issue #43).
+//
+// WHAT REMAINS, AND WHY IT IS NOT THE SAME THING. enforceHabitat still banishes
+// a kraken whose OWN CELL has stopped being deep water. That is not eviction
+// policy, it is physics — a kraken standing on dry land is not a gameplay
+// outcome, it is a rendering bug — and it stays the one departure a player can
+// cause, by raising the seabed directly under it. The cooldown machinery is
+// kept whole rather than deleted: enforceHabitat uses it today, and it is what
+// the boats arc will need the day something is allowed to drive the kraken off
+// again.
+//
+// THE YETI IS UNCHANGED. The ruling was about the kraken; levelling a snowfield
+// still drives him off, and his threshold is why lairCollapseCells exists.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
@@ -103,6 +126,7 @@ import {
   type LairSurvey,
   type LairWorld,
   isLairCell,
+  qualifyingCellsIn,
   reachesIntoHabitat,
   releaseSurveyScratch,
   surveyLairs,
@@ -114,7 +138,7 @@ import {
   profileOf,
   summonRatePerSecond,
 } from './kinds.ts';
-import { monsterRandom, rollEvent } from './rng.ts';
+import { hashToIndex, monsterRandom, rollEvent } from './rng.ts';
 
 /** A living monster. Mutable — the lurk step writes it in place. */
 export interface Monster {
@@ -448,6 +472,61 @@ function bestLairFor(profile: MonsterProfile): LairRegion | null {
  * arrived: any deep basin qualifies Cthulhu, and once summoned he never
  * leaves.)
  */
+/**
+ * WHERE IN THE LAIR IT RISES (owner decision, 2026-08-19: spread the arrivals).
+ *
+ * THE DEFECT THIS REPLACES. The summon cell used to be `region.x/region.y` —
+ * the region's EXTREME cell, the single deepest one the survey found. That made
+ * the arrival point a pure function of the terrain, and a very sharp one: the
+ * deepest cell of an ocean is unique almost always, so ONE cell owned every
+ * future arrival of every sea kind. Since Deep Strata gave players 24 bands to
+ * dig through, that cell is now typically a one-cell shaft somebody sank on
+ * purpose, and both sea kinds would surface in it forever — including on top of
+ * each other, which made the co-location the owner permits STRUCTURAL rather
+ * than incidental.
+ *
+ * THE RULE NOW: uniform among the region's QUALIFYING cells — every cell that
+ * reaches this kind's own `minLairReachBands`, which is exactly the set that
+ * would have admitted the region on its own. Not "the deepest cells": a set
+ * defined by the maximum would have the same single-cell failure the moment one
+ * pit is one band deeper than the rest, which is the failure being fixed.
+ *
+ * IT STAYS PER KIND, so the two sea kinds did not become one animal: the
+ * kraken scatters across trench cells (7 bands) and Cthulhu across any deep
+ * water (3), the same bars their admission tests already use. Overlap may still
+ * happen by chance — the owner's ruling that co-location is allowed stands —
+ * but it is now a coincidence rather than a guarantee.
+ *
+ * THE SEED IS `nextMonsterId`: the id this monster is about to take. It is a
+ * per-world counter, it is PERSISTED (so it keeps advancing across restarts
+ * rather than replaying the same pick), it is unique per summon, and it differs
+ * between two kinds summoned on the same tick — which is what de-correlates the
+ * pair rather than merely spreading each. Deterministic end to end: same world,
+ * same counter, same cell, on any machine (see hashToIndex).
+ *
+ * Returns null when the region has stopped qualifying since the survey named
+ * it, which the caller answers with a re-survey rather than a stale summon.
+ */
+function summonCellIn(
+  profile: MonsterProfile,
+  world: LairWorld,
+  region: LairRegion,
+): { readonly x: number; readonly y: number } | null {
+  const candidates = qualifyingCellsIn(
+    profile.habitat,
+    world,
+    region.x,
+    region.y,
+    profile.minLairReachBands,
+  );
+  if (candidates.length === 0) return null;
+
+  const index = candidates[hashToIndex(nextMonsterId, candidates.length)]!;
+  const size = world.worldSize;
+  const x = index % size;
+  return { x, y: (index - x) / size };
+}
+
 function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
   const state = stateOf(kind);
   if (state.cooldownSeconds > 0) return;
@@ -467,7 +546,16 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
     return;
   }
 
-  summon(profile, cell.x, cell.y);
+  // The pick re-walks the region against the world as it is NOW, so it is also
+  // the second half of that staleness check: a region whose qualifying cells
+  // have all been filled in since the survey yields nothing to summon into.
+  const spot = summonCellIn(profile, world, cell);
+  if (spot === null) {
+    invalidateSurvey();
+    return;
+  }
+
+  summon(profile, spot.x, spot.y);
 }
 
 /**
@@ -513,7 +601,13 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
       for (let i = 0; i < occupants.length; i++) {
         const monster = occupants[i];
         const banishment = profileOf(monster.kind).banishment;
-        if (banishment === null) continue;
+        // Two separate questions, and a kind may answer yes to the first and no
+        // to the second: `null` banishment is "nothing removes it" (Cthulhu),
+        // and a null `lairCollapseCells` is "losing the habitat AROUND it does
+        // not" (the kraken since the 2026-08-19 no-eviction ruling — see
+        // kinds.ts). Only the ground under its own feet does, and that is
+        // enforceHabitat's job, not this one's.
+        if (banishment === null || banishment.lairCollapseCells === null) continue;
         if (survey.occupiedRegionCells[i]! < banishment.lairCollapseCells) {
           banish(monster);
         }

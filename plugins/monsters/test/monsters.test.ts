@@ -78,7 +78,6 @@ import {
   CTHULHU_FOOTPRINT_CELLS,
   CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
   GENESIS_DEEP_OCEAN_REFERENCE_BAND,
-  KRAKEN_LAIR_COLLAPSE_DEEP_CELLS,
   KRAKEN_LAIR_MIN_DEPTH_BANDS,
   KRAKEN_LURK_SPEED_CELLS_PER_SECOND,
   KRAKEN_MIN_LAIR_DEEP_CELLS,
@@ -111,6 +110,7 @@ import {
   livingMonstersIn,
   livingMonsterCount,
   livingMonsters,
+  restoreSummoning,
 } from '../server/summoning.ts';
 import { seededRandom, worldWithTerrain } from './support/world.ts';
 
@@ -739,10 +739,17 @@ describe('Cthulhu cannot be banished', () => {
     advanceSummoning(world, TICK_DT);
     expect(livingMonster()).not.toBeNull();
 
-    // A pool far below any collapse threshold, with his own cell still deep —
-    // the exact scenario that used to banish him.
+    // Park him at the basin's deepest point first: since the 2026-08-19 summon
+    // spread he arrives anywhere in the qualifying water, and a rim arrival
+    // would dry out under him, which is the stranding case the NEXT test is
+    // about. This one is about the region shrinking around him.
+    livingMonster()!.x = WORLD_CENTER + 0.5;
+    livingMonster()!.y = WORLD_CENTER + 0.5;
+
+    // A pool far below the basin that admitted him, with his own cell still
+    // deep — the exact scenario that used to banish him.
     basin.radius = 4;
-    expect(Math.PI * basin.radius * basin.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
+    expect(Math.PI * basin.radius * basin.radius).toBeLessThan(MIN_LAIR_DEEP_CELLS);
     expect(isLairCell(WATER_HABITAT, world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
 
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
@@ -808,31 +815,208 @@ describe('Cthulhu cannot be banished', () => {
   });
 });
 
-describe('the kraken can be banished', () => {
-  it('submerges when its trench collapses, and serves the full cooldown', () => {
+// ────────────────────────────────────────────────────────────────────────────
+// WHERE A MONSTER RISES (owner decision, 2026-08-19: spread the arrivals)
+//
+// The summon cell used to be the region's single deepest cell, which made every
+// future arrival of every sea kind land on one cell — and after Deep Strata gave
+// players 24 bands to dig through, that cell is typically a one-cell shaft
+// somebody sank. It is now hash-picked among the region's QUALIFYING cells.
+//
+// These pin the three properties that decision has to have: it spreads, it is
+// per kind, and it is exactly repeatable. The last one is why the pick is a hash
+// of a counter rather than a call to the random source — see rng.hashToIndex.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('summon cells are spread, not pinned to the deepest cell', () => {
+  /**
+   * Summons one kraken into `world` with the id counter at `nextId`, and
+   * reports the cell it took.
+   *
+   * Driving the counter directly is what makes a distribution testable at all:
+   * the seed IS the id (summoning.ts), and a fresh world would otherwise always
+   * hand out id 1 and therefore always the same cell. restoreSummoning is the
+   * supported way to set it — the same seam persistence uses.
+   */
+  function summonAt(world: LairWorld, nextId: number): { x: number; y: number } {
+    restoreSummoning([], nextId, {});
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
+    return { x: kraken!.x, y: kraken!.y };
+  }
+
+  /** A spread of ids wide enough that one repeated cell cannot hide in it. */
+  const PROBE_IDS = Array.from({ length: 32 }, (_, i) => i + 1);
+
+  it('lands on many different cells across successive summons', () => {
+    const world = basinWorld(krakenTrench());
+    const seen = new Set(PROBE_IDS.map((id) => {
+      const cell = summonAt(world, id);
+      return `${cell.x},${cell.y}`;
+    }));
+
+    // THE DEFECT THIS REPLACES would score exactly 1 here — one cell, forever,
+    // for every id. Half the probes landing somewhere new is far below what the
+    // hash actually achieves and far above anything the old rule could reach,
+    // so it fails loudly on a regression without pinning an exact spread.
+    expect(seen.size).toBeGreaterThan(PROBE_IDS.length / 2);
+  });
+
+  it('picks a QUALIFYING cell every time, never merely a habitat one', () => {
+    // The spread must not become a licence to surface in the shallows: every
+    // cell it can pick has to clear the kraken's own trench bar, which is the
+    // bar that admitted the region in the first place.
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
+    for (const id of PROBE_IDS) {
+      const cell = summonAt(world, id);
+      const height = world.heightAt(Math.floor(cell.x), Math.floor(cell.y));
+      expect(reachesIntoHabitat(WATER_HABITAT, height, KRAKEN_LAIR_MIN_DEPTH_BANDS)).toBe(true);
+    }
+  });
+
+  it('is exactly repeatable — same world, same counter, same cell', () => {
+    // DETERMINISM, and it is the property that makes the other two testable at
+    // all. Two independently constructed worlds of the same shape, driven to the
+    // same counter, must agree cell for cell; if this ever fails the pick has
+    // picked up a float or the random source.
+    const first = PROBE_IDS.map((id) => summonAt(basinWorld(krakenTrench()), id));
+    const second = PROBE_IDS.map((id) => summonAt(basinWorld(krakenTrench()), id));
+    expect(second).toEqual(first);
+  });
+
+  it('does not force the two sea kinds onto one cell any more', () => {
+    // The owner's ruling that co-location is ALLOWED stands — this pins only
+    // that it is no longer STRUCTURAL. Both kinds qualify the same trench and
+    // arrive on the same tick; before the spread they shared the region's
+    // extreme cell every single time, by construction.
+    let apart = 0;
+    for (const id of PROBE_IDS) {
+      const world = basinWorld(krakenTrench());
+      restoreSummoning([], id, {});
+      setMonsterRandomSource(ALWAYS);
+      advanceSummoning(world, TICK_DT);
+      const kraken = livingMonsterOfKind('kraken')!;
+      const cthulhu = livingMonsterOfKind('cthulhu')!;
+      if (kraken.x !== cthulhu.x || kraken.y !== cthulhu.y) apart++;
+    }
+    expect(apart).toBe(PROBE_IDS.length);
+  });
+
+  it('scatters the yeti over his snowfield too — the rule is habitat-agnostic', () => {
+    // Nothing in the lifecycle knows which habitat it is reading (habitat.ts),
+    // and the summon pick is deliberately no exception: a sea-only spread would
+    // have been the first rule in this plugin that named a regime, and the
+    // summit of a player-built massif is exactly as much a single owned cell as
+    // the bottom of a player-dug shaft.
+    const world = massifWorld(yetiMassif());
+    const seen = new Set(
+      PROBE_IDS.map((id) => {
+        restoreSummoning([], id, {});
+        setMonsterRandomSource(ALWAYS);
+        advanceSummoning(world, TICK_DT);
+        const yeti = snowMonster()!;
+        return `${yeti.x},${yeti.y}`;
+      }),
+    );
+    expect(seen.size).toBeGreaterThan(PROBE_IDS.length / 2);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// THE KRAKEN'S DEPARTURE RULE (owner ruling, 2026-08-19: "For now, no eviction.
+// Later, if we do boats, they can attack the kraken.")
+//
+// The three tests below are the whole contract, and they are written as the
+// three things a player might TRY, because the previous rule's defect was that
+// it advertised one of them and implemented none. Terrain no longer drives the
+// kraken off by taking its habitat away, however that habitat is taken; the
+// only departure left is the ground under its own feet, which is physics rather
+// than policy. See kinds.ts and summoning.ts for the amendment.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('the kraken is not evicted by terrain (owner ruling, 2026-08-19)', () => {
+  it('stays when its region shrinks to a puddle around it', () => {
     const trench = krakenTrench();
     const world = basinWorld(trench);
 
     setMonsterRandomSource(ALWAYS);
     advanceSummoning(world, TICK_DT);
     // A trench qualifies Cthulhu too (per-kind slots, 2026-08-19); this test
-    // follows the KRAKEN through its collapse and ignores his roommate.
+    // follows the KRAKEN and ignores his roommate.
     const kraken = livingMonsterOfKind('kraken');
     expect(kraken).not.toBeNull();
 
-    // Shrink it below the collapse threshold while the monster's own cell stays
-    // deep, so the ONLY thing that can banish it is the region test.
+    // The old collapse threshold was 2 chunks (512 cells). This pool is an
+    // order of magnitude under it, and under the kraken's own arrival bar, with
+    // the monster's own cell still deep water — which is precisely the state
+    // that used to banish it and now must not.
     trench.radius = 4;
-    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
+    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_MIN_LAIR_DEEP_CELLS);
     expect(isLairCell(WATER_HABITAT, world, kraken!.x, kraken!.y)).toBe(true);
 
-    // Survey cadence: the collapse is noticed on the next survey, not instantly.
-    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+    // Well past the survey cadence: if a region test were still running, this
+    // is where it would fire.
+    for (let n = 0; n < (LAIR_SURVEY_INTERVAL_SECONDS * 3) / TICK_DT; n++) {
       advanceSummoning(world, TICK_DT);
+      enforceHabitat(world);
     }
+    expect(livingMonsterOfKind('kraken')).not.toBeNull();
+    expect(livingMonsterOfKind('kraken')!.id).toBe(kraken!.id);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
+  });
+
+  it('stays when its trench is refilled to shallower than the depth that summoned it', () => {
+    // THE MECHANIC THE OLD COMMENT SOLD, now correct BY DESIGN rather than by
+    // accident. It never worked — collapse counted 3-band deep-water cells, so
+    // filling a 7-band trench back to 4 bands changed nothing it measured — and
+    // the ruling makes that the intended answer instead of a latent bug.
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
+
+    // Refill: still deep water everywhere, but nowhere near a trench any more.
+    trench.floorHeight = SEA_LEVEL - (DEEP_WATER_BANDS_BELOW_SEA + 1) * BAND_HEIGHT;
+    expect(
+      reachesIntoHabitat(WATER_HABITAT, trench.floorHeight, KRAKEN_LAIR_MIN_DEPTH_BANDS),
+    ).toBe(false);
+    expect(isDeepWaterHeight(trench.floorHeight)).toBe(true);
+
+    for (let n = 0; n < (LAIR_SURVEY_INTERVAL_SECONDS * 3) / TICK_DT; n++) {
+      advanceSummoning(world, TICK_DT);
+      enforceHabitat(world);
+    }
+    expect(livingMonsterOfKind('kraken')!.id).toBe(kraken!.id);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
+  });
+
+  it('submerges the moment its OWN cell stops being deep water — physics, not policy', () => {
+    // The one departure a player can still cause, and the reason the kraken
+    // keeps a BanishmentRule and a cooldown at all: a kraken standing on dry
+    // land is a rendering bug, not a gameplay outcome.
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
+
+    setMonsterRandomSource(ALWAYS);
+    advanceSummoning(world, TICK_DT);
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
+
+    // The sea is GONE, its own cell included.
+    trench.radius = 0;
+    expect(isLairCell(WATER_HABITAT, world, kraken!.x, kraken!.y)).toBe(false);
+
+    // No survey needed — the habitat check runs every tick, and here directly.
+    expect(enforceHabitat(world)).toBe(true);
     expect(livingMonsterOfKind('kraken')).toBeNull();
     expect(cooldownRemainingSecondsFor('kraken')).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
-    // The unbanishable roommate is untouched by the kraken's collapse.
+    // The unbanishable roommate is left standing in the dry basin.
     expect(livingMonsterOfKind('cthulhu')).not.toBeNull();
   });
 
@@ -889,10 +1073,10 @@ describe('the kraken can be banished', () => {
     advanceSummoning(world, TICK_DT);
     const firstId = livingMonsterOfKind('kraken')!.id;
 
-    trench.radius = 4;
-    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
-      advanceSummoning(world, TICK_DT);
-    }
+    // Dry the basin out from under it — the only departure terrain can still
+    // cause (owner ruling, 2026-08-19), and the one that starts the cooldown.
+    trench.radius = 0;
+    expect(enforceHabitat(world)).toBe(true);
     expect(livingMonsterOfKind('kraken')).toBeNull();
 
     // The trench is back, and a roll that fires on every single tick, for one
@@ -952,11 +1136,14 @@ describe('per-kind slots (2026-08-19 — was: the kinds contest one slot)', () =
     for (let n = 0; n < 2; n++) advanceSummoning(world, TICK_DT);
     expect(livingMonsterCount()).toBe(2);
 
-    // Shrink the trench below the kraken's collapse threshold: the kraken
-    // leaves and serves its cooldown; Cthulhu (unbanishable) stays put.
-    trench.radius = 4;
+    // Dry the basin out from under BOTH of them: the kraken leaves on the
+    // physics rule and serves its cooldown, Cthulhu (unbanishable) stays put
+    // exactly where he was. Shrinking the region no longer moves either one
+    // (owner ruling, 2026-08-19), so the departure has to come from the cell.
+    trench.radius = 0;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
+      enforceHabitat(world);
     }
     expect(livingMonsterOfKind('kraken')).toBeNull();
     expect(cooldownRemainingSecondsFor('kraken')).toBeGreaterThan(0);
@@ -1269,20 +1456,22 @@ describe('persistence', () => {
   it('keeps a banished monster banished across a restart', () => {
     // A KRAKEN world: only a banishable kind can test that a banishment
     // survives a reboot, and Cthulhu is no longer one. Cthulhu co-arrives on
-    // any trench (per-kind slots, 2026-08-19) — and since he protects his
-    // ground and may stand on the same cell, the eviction here goes through
-    // the REGION COLLAPSE (shrinking the trench) rather than raising the
-    // kraken's cell out from under an unbanishable bodyguard.
+    // any trench (per-kind slots, 2026-08-19) and rides along in the slice.
+    //
+    // The eviction is the PHYSICS one — the water taken away from under it —
+    // because since the 2026-08-19 owner ruling that is the only departure
+    // terrain can cause. (It used to shrink the trench and let the region test
+    // fire; that test no longer exists for the kraken.) This is a stub world,
+    // so Cthulhu's ground protection is not in the loop and his presence costs
+    // this test nothing.
     setMonsterRandomSource(ALWAYS);
     const trench = krakenTrench();
     const world = basinWorld(trench);
     advanceSummoning(world, TICK_DT);
     expect(livingMonsterOfKind('kraken')).not.toBeNull();
 
-    trench.radius = 4;
-    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
-      advanceSummoning(world, TICK_DT);
-    }
+    trench.radius = 0;
+    expect(enforceHabitat(world)).toBe(true);
     expect(livingMonsterOfKind('kraken')).toBeNull();
 
     const snapshot = saveMonsters();
@@ -1973,7 +2162,7 @@ describe('the yeti in the high Alps', () => {
     expect(surveyLairs(WATER_HABITAT, world).regions).toHaveLength(0);
   });
 
-  it('arrives on a snowfield, at its summit', () => {
+  it('arrives on a snowfield, on a cell that qualifies', () => {
     setMonsterRandomSource(ALWAYS);
     const world = massifWorld(yetiMassif());
     advanceSummoning(world, TICK_DT);
@@ -1982,8 +2171,20 @@ describe('the yeti in the high Alps', () => {
     expect(yeti).not.toBeNull();
     expect(yeti!.kind).toBe('yeti');
     expect(isLairCell(LAND_HABITAT, world, yeti!.x, yeti!.y)).toBe(true);
-    // Cell centre, at the summit the survey named.
-    expect(yeti!.x).toBe(MASSIF_CENTER + 0.5);
+    // WAS "at its summit" until the 2026-08-19 spread (owner decision): the
+    // summon cell is now hash-picked among the region's qualifying cells, so
+    // the summit is one candidate rather than the answer. What survives is the
+    // half that was ever load-bearing — he stands on ground that meets his own
+    // bar — plus the cell-centre offset, which is why the halves are .5.
+    expect(
+      reachesIntoHabitat(
+        LAND_HABITAT,
+        world.heightAt(Math.floor(yeti!.x), Math.floor(yeti!.y)),
+        profileOf('yeti').minLairReachBands,
+      ),
+    ).toBe(true);
+    expect(yeti!.x % 1).toBe(0.5);
+    expect(yeti!.y % 1).toBe(0.5);
     expect(seaMonster()).toBeNull();
   });
 
@@ -2076,6 +2277,14 @@ describe('the yeti in the high Alps', () => {
     advanceSummoning(world, TICK_DT);
     expect(snowMonster()!.kind).toBe('yeti');
 
+    // Park him at the summit before shrinking. Since the 2026-08-19 summon
+    // spread he arrives anywhere on the massif, and a rim arrival would leave
+    // his own cell bare rock — which is the PHYSICS departure, not the region
+    // test this test is about. Positions are live-mutable; the lurk step writes
+    // them the same way.
+    snowMonster()!.x = MASSIF_CENTER + 0.5;
+    snowMonster()!.y = MASSIF_CENTER + 0.5;
+
     // Shrink it below the collapse threshold while his own cell stays snow, so
     // the ONLY thing that can drive him off is the region test.
     snow.radius = 3;
@@ -2147,6 +2356,12 @@ describe('the yeti in the high Alps', () => {
     expect(snowMonster()!.kind).toBe('yeti');
     const krakenId = livingMonsterOfKind('kraken')!.id;
 
+    // Park the yeti on the summit first — see the collapse test above: since the
+    // summon spread he can arrive on the rim, and this test wants the REGION
+    // rule to be what removes him, not the ground under his feet.
+    snowMonster()!.x = MASSIF_CENTER + 0.5;
+    snowMonster()!.y = MASSIF_CENTER + 0.5;
+
     snow.radius = 3;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
@@ -2161,12 +2376,25 @@ describe('the yeti in the high Alps', () => {
     // Now drain the sea instead. The mountain is back and still cooling: each
     // habitat serves its own absence and neither reads the other's.
     snow.radius = yetiMassif().radius;
-    sea.radius = 4;
-    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
-      advanceSummoning(world, TICK_DT);
-    }
+    // Drained to nothing, not merely shrunk: since the 2026-08-19 owner ruling
+    // the kraken has no region-collapse rule, so the water has to leave its own
+    // cell for it to go.
+    sea.radius = 0;
+    // The habitat check is per TICK, not per survey, so this fires at once —
+    // which is why the cooldown is asserted here rather than after the loop
+    // below has had five simulated seconds to decay it.
+    expect(enforceHabitat(world)).toBe(true);
     expect(livingMonsterOfKind('kraken')).toBeNull();
     expect(cooldownRemainingSecondsFor('kraken')).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+
+    // Now run past a survey interval: the mountain is back and still cooling,
+    // and neither habitat's absence is allowed to end the other's.
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+      enforceHabitat(world);
+    }
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBeGreaterThan(0);
     expect(cooldownRemainingSecondsFor('yeti')).toBeLessThan(YETI_RESPAWN_COOLDOWN_SECONDS);
     expect(cooldownRemainingSecondsFor('yeti')).toBeGreaterThan(0);
     expect(snowMonster()).toBeNull();

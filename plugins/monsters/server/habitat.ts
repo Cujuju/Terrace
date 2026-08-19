@@ -398,6 +398,120 @@ function floodRegion(
 }
 
 /**
+ * Every cell of ONE region that reaches at least `bands` into the habitat, as
+ * row-major cell indices in flood order.
+ *
+ * WHY IT EXISTS (owner decision, 2026-08-19: spread the arrivals). A region's
+ * survey carries one cell — the extreme one — and for a long time that was also
+ * the summon point, which made the arrival cell a pure function of the terrain:
+ * one player-dug pit one band deeper than anything else owned every future
+ * arrival of every sea kind, forever. The fix is to summon among the cells that
+ * QUALIFY rather than at the single cell that wins, so this reports the set and
+ * summoning.ts picks from it.
+ *
+ * "QUALIFY" IS THE KIND'S OWN BAR, not the habitat's — `bands` is the caller's
+ * `minLairReachBands`. That is what keeps the two sea kinds meaningfully
+ * different after the change: the kraken's candidates are trench cells and
+ * Cthulhu's are any deep water, exactly as their admission tests already differ.
+ * It is also why this takes a band count rather than reading the regime's own
+ * threshold — a function that spread every kind over the same set would have
+ * quietly made them one animal again.
+ *
+ * SEEDED FROM A CELL, not from a region id, because the survey's regions are
+ * scratch state that the next regime's walk overwrites: re-flooding from the
+ * region's extreme cell re-derives exactly the same region (connectivity is
+ * deterministic and the terrain has not moved within a tick), with no per-region
+ * memory to keep alive across the tick.
+ *
+ * COST is one flood fill, and it is paid ONLY on a summon that has already won
+ * its Poisson roll — a mean of once every SUMMON_MEAN_WAIT_SECONDS per kind, so
+ * on the order of a millisecond every few minutes. That is why the set is built
+ * on demand instead of being carried on every LairRegion of every survey, where
+ * it would have cost a megabyte of cell lists per walk, five seconds apart,
+ * forever, to answer a question almost no walk is ever asked.
+ *
+ * Returns an empty array if the seed cell is not habitat at all (the terrain
+ * moved since the survey), which is the caller's signal to re-survey rather
+ * than to summon into a stale cell.
+ *
+ * ORDER IS THE FLOOD'S — fixed (FIFO, west/east/north/south), so the same world
+ * and the same seed cell produce the same list, and therefore the same pick.
+ */
+export function qualifyingCellsIn(
+  regime: HabitatRegime,
+  world: LairWorld,
+  seedX: number,
+  seedY: number,
+  bands: number,
+): number[] {
+  const size = world.worldSize;
+  if (size <= 0) return [];
+
+  const x = Math.floor(seedX);
+  const y = Math.floor(seedY);
+  if (!isLairCell(regime, world, x, y)) return [];
+
+  const scratch = scratchFor(size * size);
+  scratch.labels.fill(UNLABELLED);
+
+  const { labels, queue } = scratch;
+  /** The one label this walk uses; the buffer is re-filled on every call. */
+  const VISITED = 0;
+
+  let head = 0;
+  let tail = 0;
+  const seedIndex = y * size + x;
+  labels[seedIndex] = VISITED;
+  queue[tail++] = seedIndex;
+
+  const qualifying: number[] = [];
+
+  while (head < tail) {
+    const index = queue[head++]!;
+    const cellX = index % size;
+    const cellY = (index - cellX) / size;
+
+    if (reachesIntoHabitat(regime, world.heightAt(cellX, cellY), bands)) {
+      qualifying.push(index);
+    }
+
+    // The same 4-neighbourhood, in the same fixed order, as floodRegion — the
+    // two must agree on what "one region" means or the candidate set could
+    // include a cell the survey counted in a different region.
+    if (cellX > 0 && labels[index - 1] === UNLABELLED && isLairCell(regime, world, cellX - 1, cellY)) {
+      labels[index - 1] = VISITED;
+      queue[tail++] = index - 1;
+    }
+    if (
+      cellX + 1 < size &&
+      labels[index + 1] === UNLABELLED &&
+      isLairCell(regime, world, cellX + 1, cellY)
+    ) {
+      labels[index + 1] = VISITED;
+      queue[tail++] = index + 1;
+    }
+    if (
+      cellY > 0 &&
+      labels[index - size] === UNLABELLED &&
+      isLairCell(regime, world, cellX, cellY - 1)
+    ) {
+      labels[index - size] = VISITED;
+      queue[tail++] = index - size;
+    }
+    if (
+      cellY + 1 < size &&
+      labels[index + size] === UNLABELLED &&
+      isLairCell(regime, world, cellX, cellY + 1)
+    ) {
+      labels[index + size] = VISITED;
+      queue[tail++] = index + size;
+    }
+  }
+
+  return qualifying;
+}
+
+/**
  * Labels every connected region of one habitat and reports all of them, plus the
  * size of the region under each `occupied` position (one habitat can hold one
  * monster per kind since 2026-08-19, so the occupants come as a list).
