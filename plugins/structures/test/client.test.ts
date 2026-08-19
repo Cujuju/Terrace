@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_SCALE_MIN,
@@ -22,6 +23,7 @@ import {
   type StructureCell,
 } from '../protocol.ts';
 import { placementsFor } from '../client/placement.ts';
+import { DURANDS_SHARE_OF_256, isDurandsCell } from '../client/durands.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -163,5 +165,74 @@ describe('placement', () => {
     );
     expect(placements).toHaveLength(1);
     expect(pendingGround).toBe(2);
+  });
+});
+
+describe("Durand's variant selection", () => {
+  it('is a pure function of tier and cell, so every client renders the same choice', () => {
+    for (const [x, y] of [
+      [0, 0],
+      [17, 4],
+      [511, 300],
+    ] as const) {
+      expect(isDurandsCell(MAX_STRUCTURE_TIER, x, y)).toBe(isDurandsCell(MAX_STRUCTURE_TIER, x, y));
+    }
+  });
+
+  it('never fires below the top tier, whatever the cell', () => {
+    // Sweep every tier below the top one, over a wide enough patch of cells
+    // that if the tier gate were missing, some cell in this sweep would be
+    // all but guaranteed to roll Durand's by chance (DURANDS_SHARE_OF_256 is
+    // ~1 in 6, and this sweep covers 40 * 40 = 1600 cells per tier).
+    for (let tier = 0; tier < MAX_STRUCTURE_TIER; tier++) {
+      for (let x = 0; x < 40; x++) {
+        for (let y = 0; y < 40; y++) {
+          expect(isDurandsCell(tier, x, y)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('only ever returns true at the top tier, and only for its declared share of cells', () => {
+    let durandsCount = 0;
+    let sampleCount = 0;
+    for (let x = 0; x < 100; x++) {
+      for (let y = 0; y < 100; y++) {
+        sampleCount++;
+        if (isDurandsCell(MAX_STRUCTURE_TIER, x, y)) durandsCount++;
+      }
+    }
+    const expectedShare = DURANDS_SHARE_OF_256 / 256;
+    // A tolerance band around the expected share, not an exact count: this is
+    // a hash's distribution over a finite sample, not a controlled random
+    // draw, so some variance around the mean is normal — the test asserts
+    // the roll is landing near ~1-in-6, not landing on a to-the-cell count.
+    expect(durandsCount / sampleCount).toBeGreaterThan(expectedShare - 0.05);
+    expect(durandsCount / sampleCount).toBeLessThan(expectedShare + 0.05);
+  });
+
+  it('does not correlate with the yaw/scale roll structureVariation reads from the same hash', () => {
+    // structureVariation spends bits 0-23; isDurandsCell reads bits 24-31.
+    // This does not prove independence, but it does prove the two are not
+    // reading the SAME bits, which would be the actual bug this guards
+    // against (e.g. a copy-paste that reused structureVariation's mask).
+    let sawDurandsWithMinScale = false;
+    let sawDurandsWithMaxScale = false;
+    for (let x = 0; x < 200; x++) {
+      for (let y = 0; y < 200; y++) {
+        if (!isDurandsCell(MAX_STRUCTURE_TIER, x, y)) continue;
+        const { scale } = structureVariation(x, y);
+        if (scale < STRUCTURE_SCALE_MIN + (STRUCTURE_SCALE_MAX - STRUCTURE_SCALE_MIN) * 0.5) {
+          sawDurandsWithMinScale = true;
+        } else {
+          sawDurandsWithMaxScale = true;
+        }
+      }
+    }
+    // Both halves of the scale range appear among Durand's cells — if the
+    // selection roll were secretly reading the same bits as the scale roll,
+    // Durand's would cluster entirely on one side.
+    expect(sawDurandsWithMinScale).toBe(true);
+    expect(sawDurandsWithMaxScale).toBe(true);
   });
 });
