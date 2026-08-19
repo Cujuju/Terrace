@@ -22,7 +22,7 @@
 // intent has cleared every interceptor and actually landed.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, sculptOptionsOf } from '@terrace/shared';
-import type { SculptIntent } from '@terrace/shared';
+import type { CellDiff, SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
 // The difficulty band core publishes (WorldApi.difficulty lives inside it). A
 // RUNTIME import into core, unlike the type-only one below, and the dependency
@@ -702,11 +702,37 @@ function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict
  * this player's perk or this intent's shape (the pipeline runs both phases of
  * one intent synchronously, with no other intent able to interleave).
  */
-function commitCharge(intent: SculptIntent, ctx: IntentCtx): void {
+function commitCharge(
+  intent: SculptIntent,
+  ctx: IntentCtx,
+  diff: readonly CellDiff[],
+): void {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
-  const cost = manaCostFor(ctx.player.id, intent);
 
+  // CHARGE FOLLOWS EFFECT (owner bug report 2026-08-19: sculpting at the
+  // world floor "is not changing the landscape … but it's taking my mana").
+  // A stroke whose applied diff is EMPTY built nothing and costs nothing.
+  // This is deliberately narrower than making the PRICE terrain-dependent:
+  // the price of any stroke that moved at least one cell is still the full
+  // nominal volume (the 2026-08-14 decision and both its reasons stand — the
+  // client gate and the server must price an intent identically without
+  // knowing the terrain, and flatter ground is not a cheaper request). Only
+  // the degenerate all-or-nothing case changes, and it is decided HERE, in
+  // the effect phase, where the authoritative diff is already in hand — the
+  // shared price function stays a pure function of (radius, profile).
+  //
+  // The balance push still goes out: the client's local gate debited its
+  // estimate the moment the intent was sent, and a FULL pool never
+  // regen-pushes, so without this push that phantom debit would stand
+  // indefinitely — the same standing-phantom failure onIntentDenied closes
+  // on the deny path.
+  if (diff.length === 0) {
+    sendBalance(world, ctx.player.id, pool);
+    return;
+  }
+
+  const cost = manaCostFor(ctx.player.id, intent);
   pool.balance -= cost;
   sendBalance(world, ctx.player.id, pool);
 }
@@ -773,8 +799,8 @@ export const plugin: TerracePlugin = {
     return checkAffordability(intent, ctx);
   },
 
-  onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
-    commitCharge(intent, ctx);
+  onIntentApplied(intent: SculptIntent, ctx: IntentCtx, diff: readonly CellDiff[]): void {
+    commitCharge(intent, ctx, diff);
   },
 
   /**

@@ -7,7 +7,9 @@ import {
   BAND_HEIGHT,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
+  MIN_HEIGHT,
   SCULPT_PROFILES,
+  SCULPT_TOOLS,
   type SculptProfile,
   sculptDisplacementUnits,
   sculptOptionsOf,
@@ -135,6 +137,7 @@ interface Harness {
  */
 function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   resetManaState();
+  nextHelperDir = 1;
   // reveal is stateless since issue #17 (2026-08-19) — no reset needed.
 
   const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], difficulty);
@@ -156,6 +159,25 @@ function boot(difficulty: number = SUITE_DIFFICULTY): Harness {
   return { world, host, sink };
 }
 
+/**
+ * Direction for the next helper-sent stroke, ALTERNATING raise/lower per call
+ * (reset in boot() so every test sees the same sequence). WHY (charge-follows-
+ * effect, 2026-08-19): a stroke that moves nothing is free, so the old
+ * raise-forever drain loops would saturate one cell at the anchor ceiling
+ * (~64 raises from height 0) and then spin on free strokes instead of
+ * draining. An up-down alternation always moves terrain, so every helper
+ * stroke is charged — which is the property all of this file's balance
+ * arithmetic actually relies on. Price is direction-independent, so no
+ * assertion changes meaning. Tests that care about direction pass it
+ * explicitly.
+ */
+let nextHelperDir: 1 | -1 = 1;
+function helperDir(): 1 | -1 {
+  const dir = nextHelperDir;
+  nextHelperDir = dir === 1 ? -1 : 1;
+  return dir;
+}
+
 function sculptAt(
   harness: Harness,
   x: number,
@@ -166,7 +188,7 @@ function sculptAt(
   return handleSculptIntent(
     { world: harness.world, interceptors: harness.host },
     PLAYER,
-    { type: 'sculpt', x, y, radius, dir: 1, ...(profile !== undefined ? { profile } : {}) },
+    { type: 'sculpt', x, y, radius, dir: helperDir(), ...(profile !== undefined ? { profile } : {}) },
   );
 }
 
@@ -320,7 +342,9 @@ describe('mana perks', () => {
     return handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       player,
-      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius: 1, dir: 1 },
+      // Alternating direction — see helperDir(): a drain loop must never
+      // saturate the cell into free (zero-effect) strokes.
+      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius: 1, dir: helperDir() },
     );
   }
 
@@ -979,11 +1003,11 @@ describe('charging per intent, through the real pipeline', () => {
     harness = boot();
   });
 
-  function sculptWith(radius: number, profile: SculptProfile) {
+  function sculptWith(radius: number, profile: SculptProfile, dir?: 1 | -1) {
     return handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: 1, profile },
+      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: dir ?? helperDir(), profile },
     );
   }
 
@@ -1018,6 +1042,8 @@ describe('charging per intent, through the real pipeline', () => {
   it('denies at the threshold of THE INTENT’S cost, not a flat one', () => {
     // Drain to a balance that can still pay for a point stamp but not for a
     // radius-4 hard plateau. The old flat price could not tell these apart.
+    // (Helper strokes alternate raise/lower — see helperDir() — so the drain
+    // can never saturate the cell into free zero-effect strokes.)
     while ((manaBalanceOf(PLAYER.id) ?? 0) >= MANA_COST_PER_MAX_RADIUS_HARD_SCULPT) {
       expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
     }
@@ -1047,6 +1073,85 @@ describe('charging per intent, through the real pipeline', () => {
     let plateaus = 0;
     while (sculptWith(MAX_BRUSH_RADIUS, 'hard').applied) plateaus++;
     expect(plateaus).toBe(FULL_POOL_MAX_RADIUS_HARD_STAMPS);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// CHARGE FOLLOWS EFFECT (owner bug report 2026-08-19): sculpting at the world
+// floor "is not changing the landscape … but it's taking my mana". A stroke
+// whose applied diff is EMPTY costs nothing; a stroke that moved even one cell
+// still costs the full nominal price (the 2026-08-14 terrain-independent
+// pricing decision stands — only the degenerate zero-effect case changes, and
+// it is decided in the effect phase, where the authoritative diff is in hand).
+// ────────────────────────────────────────────────────────────────────────────
+describe('charge follows effect — a stroke that changes nothing costs nothing', () => {
+  /** A world already at the absolute floor everywhere: every lowering stroke
+   *  is a genuine terrain no-op, whatever the brush. */
+  function bootAtWorldFloor(): Harness {
+    resetManaState();
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], SUITE_DIFFICULTY, MIN_HEIGHT);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    host.playerJoined(PLAYER);
+    return { world, host, sink };
+  }
+
+  function lowerAt(harness: Harness, radius: number, tool: string, profile: string) {
+    return handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius, dir: -1, tool, profile },
+    );
+  }
+
+  it('a zero-effect stroke is applied, costs zero, and still pushes the balance — every tool × profile', () => {
+    for (const tool of SCULPT_TOOLS) {
+      for (const profile of SCULPT_PROFILES) {
+        const harness = bootAtWorldFloor();
+        harness.sink.clear();
+
+        const outcome = lowerAt(harness, MAX_BRUSH_RADIUS, tool, profile);
+        // The intent is legal and APPLIED (not denied) — it simply moved
+        // nothing, so the diff is empty and the charge is zero.
+        expect(outcome.applied).toBe(true);
+        if (outcome.applied) expect(outcome.diff).toEqual([]);
+        expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
+
+        // The balance push still goes out: the client's local gate debited
+        // its estimate on send, and a full pool never regen-pushes, so this
+        // push is what erases the phantom (same shape as the deny path).
+        const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
+        expect(pushes.length).toBeGreaterThan(0);
+        const last = pushes[pushes.length - 1].payload as { balance: number };
+        expect(last.balance).toBe(MANA_CAPACITY);
+      }
+    }
+  });
+
+  it('a stroke that moves even one cell still costs the full nominal price', () => {
+    // Floor world, but RAISING: every footprint cell can move, and the price
+    // must be the same nominal volume as anywhere else — no discount for the
+    // clamps and anchors the terrain applies (the 2026-08-14 decision).
+    const harness = bootAtWorldFloor();
+    const outcome = handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      {
+        type: 'sculpt',
+        x: INTERIOR_CELL.x,
+        y: INTERIOR_CELL.y,
+        radius: MIN_BRUSH_RADIUS,
+        dir: 1,
+        tool: 'stamp',
+        profile: 'soft',
+      },
+    );
+    expect(outcome.applied).toBe(true);
+    if (outcome.applied) expect(outcome.diff.length).toBeGreaterThan(0);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_MIN_RADIUS_SCULPT);
   });
 });
 
