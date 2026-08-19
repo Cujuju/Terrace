@@ -28,13 +28,16 @@ CONFIG = {
     "CLIENT_DIST_PATH": None,     # None -> client/dist sibling of server/
 }
 
-# When to `pnpm --dir client build` before starting the server:
-#   "auto"   - only if client/dist/index.html is missing (first run, or after
-#              a clean); NOTE: it does NOT rebuild on source changes - after
-#              pulling client changes, use "always" once or delete client/dist.
-#   "always" - every launch (slower start, never stale)
-#   "never"  - skip; the server falls back to its unbuilt-client notice
-BUILD_CLIENT = "auto"
+# How the browser client is provided (owner call 2026-08-19: default to just
+# running the client alongside the server, no build step):
+#   "dev"    - spawn the Vite dev server (`pnpm dev` in client/) alongside the
+#              game server; play at http://localhost:5173. Always current -
+#              Vite serves sources directly, nothing to rebuild.
+#   "static" - build client/dist if missing, let the game server serve it;
+#              play at http://localhost:<PORT>. NOTE: does NOT rebuild on
+#              source changes - delete client/dist after pulling client code.
+#   "none"   - server only.
+CLIENT_MODE = "dev"
 
 # Repo root = directory holding this script; server/client live beside it.
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -43,17 +46,14 @@ CLIENT_DIR = os.path.join(REPO_ROOT, "client")
 CLIENT_INDEX = os.path.join(CLIENT_DIR, "dist", "index.html")
 
 
-def build_client_if_needed() -> bool:
-    if BUILD_CLIENT == "never":
+def prepare_static_client() -> bool:
+    if os.path.isfile(CLIENT_INDEX):
         return True
-    if BUILD_CLIENT == "auto" and os.path.isfile(CLIENT_INDEX):
-        return True
-    print(f"[run_server] building client ({BUILD_CLIENT}: dist "
-          f"{'present' if os.path.isfile(CLIENT_INDEX) else 'missing'})...")
+    print("[run_server] building client (dist missing)...")
     result = subprocess.call(["pnpm", "build"], cwd=CLIENT_DIR)
     if result != 0:
         print("[run_server] client build failed - fix the build or set "
-              "BUILD_CLIENT = \"never\" to start the server anyway",
+              "CLIENT_MODE = \"none\" to start the server anyway",
               file=sys.stderr)
         return False
     return True
@@ -65,16 +65,45 @@ def main() -> int:
         if value is not None:
             # setdefault: an override exported in the shell beats CONFIG.
             env.setdefault(name, str(value))
+
+    children = []  # (name, Popen) - every child gets its own process group
+
+    def reap(proc, sig):
+        # pnpm spawns node as a child; signalling pnpm alone orphans it, so
+        # each child runs in its own session and is killed as a whole group.
+        import signal as signals
+        if proc.poll() is None:
+            os.killpg(proc.pid, sig)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signals.SIGKILL)
+
     try:
-        if not build_client_if_needed():
+        if CLIENT_MODE == "static" and not prepare_static_client():
             return 1
-        return subprocess.call(["pnpm", "start"], cwd=SERVER_DIR, env=env)
+        if CLIENT_MODE == "dev":
+            vite = subprocess.Popen(["pnpm", "dev"], cwd=CLIENT_DIR, start_new_session=True)
+            children.append(vite)
+            print("[run_server] client dev server starting - "
+                  "play at http://localhost:5173 once Vite is ready")
+        server = subprocess.Popen(["pnpm", "start"], cwd=SERVER_DIR, env=env,
+                                  start_new_session=True)
+        children.append(server)
+        return server.wait()
     except KeyboardInterrupt:
-        # Ctrl-C: pnpm/node receive the same SIGINT and shut down; not an error.
+        # Ctrl-C: the finally below shuts every child down; not an error.
         return 0
     except FileNotFoundError:
         print("pnpm not found on PATH - install pnpm (or run: corepack enable)", file=sys.stderr)
         return 1
+    finally:
+        # Whatever ends this script (Ctrl-C, crash, clean exit) also ends every
+        # child it started - never leave an orphan holding a port. SIGINT for
+        # the server so its clean-shutdown snapshot path runs; SIGTERM for vite.
+        import signal
+        for proc in reversed(children):
+            reap(proc, signal.SIGINT)
 
 
 if __name__ == "__main__":
