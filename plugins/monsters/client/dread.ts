@@ -22,6 +22,12 @@ import {
   CTHULHU_TOTAL_HEIGHT,
   CTHULHU_WIDTH_CELLS,
 } from './anatomy.ts';
+import {
+  KRAKEN_EYE_HEIGHT,
+  KRAKEN_LURK_DEPTH,
+  KRAKEN_TOTAL_HEIGHT,
+  KRAKEN_WIDTH_CELLS,
+} from './kraken-anatomy.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -265,6 +271,92 @@ export const BOLT_BOTTOM_CELLS = MIST_LAYERS[MIST_LAYERS.length - 1]!.height;
 export const BOLT_CLEARANCE_CELLS = 1;
 export const BOLT_MIN_RADIUS_CELLS = CTHULHU_WIDTH_CELLS / 2 + BOLT_CLEARANCE_CELLS;
 export const BOLT_MAX_RADIUS_CELLS = MIST_RADIUS_CELLS;
+
+// ── Per-kind derivation ──────────────────────────────────────────────────────
+//
+// EVERY vertical in the effect above was authored against ONE anatomy —
+// Cthulhu's — and then applied to every swimmer (found by the 2026-08-19
+// correctness pass): the mist ceiling sat OVER the kraken's waterline eyes
+// (0.30 above water against a bank authored for 2.40) and the flash light sat
+// INSIDE its old silhouette. The block below is the fix at the contract layer:
+// the authored values become the REFERENCE BANK, and each swimmer kind gets
+// the same weather re-derived from its own anatomy. Cthulhu's spec reproduces
+// the authored numbers exactly — parameterised, not retuned.
+
+/** Clearance of the flash light above a kind's silhouette: enough to rake
+ *  across the model instead of lighting it from inside. */
+export const FLASH_LIGHT_CLEARANCE_CELLS = 1.5;
+
+/** Everything about the dread that depends on WHICH swimmer it surrounds. */
+export interface SwimmerDreadSpec {
+  /** Eye height above the water at the lurk depth — the mist's hard ceiling. */
+  readonly eyeHeightAboveWaterCells: number;
+  /** Silhouette top above the water at the lurk depth. */
+  readonly silhouetteAboveWaterCells: number;
+  /** The bank, scaled so its top layer plus bob stays under the eyes. */
+  readonly mistLayers: readonly MistLayerSpec[];
+  readonly flashLightHeightCells: number;
+  readonly boltMinRadiusCells: number;
+  /** Bolts terminate in the bank: the kind's top mist layer height. */
+  readonly boltBottomCells: number;
+}
+
+/**
+ * Scales the authored bank to a kind's eye height. Heights AND bobs scale by
+ * the same factor, so the authored invariant — top layer + bob under the eyes
+ * — survives any eye height by construction: it holds for the reference
+ * (1.25 + 0.14 < 2.40) and every term is linear in the scale.
+ */
+function scaledMistLayers(eyeHeightAboveWaterCells: number): readonly MistLayerSpec[] {
+  const scale = eyeHeightAboveWaterCells / EYE_HEIGHT_ABOVE_WATER_CELLS;
+  return MIST_LAYERS.map((layer) => ({
+    ...layer,
+    height: layer.height * scale,
+    bobCells: layer.bobCells * scale,
+  }));
+}
+
+function swimmerSpec(
+  eyeHeight: number,
+  lurkDepth: number,
+  totalHeight: number,
+  widthCells: number,
+): SwimmerDreadSpec {
+  const eyeAbove = eyeHeight - lurkDepth;
+  const layers = scaledMistLayers(eyeAbove);
+  return {
+    eyeHeightAboveWaterCells: eyeAbove,
+    silhouetteAboveWaterCells: totalHeight - lurkDepth,
+    mistLayers: layers,
+    flashLightHeightCells: totalHeight - lurkDepth + FLASH_LIGHT_CLEARANCE_CELLS,
+    boltMinRadiusCells: widthCells / 2 + BOLT_CLEARANCE_CELLS,
+    boltBottomCells: layers[layers.length - 1]!.height,
+  };
+}
+
+/** The swimmer kinds and their dread, each derived from its own anatomy. On
+ *  the kraken (eyes 0.30 above the water) the bank is a film skimming the sea
+ *  under two lamps — which is what a mist that must never cover the eyes
+ *  MEANS for an animal whose eyes ride the waterline. */
+export const SWIMMER_DREAD_SPECS: Readonly<Record<'cthulhu' | 'kraken', SwimmerDreadSpec>> = {
+  cthulhu: swimmerSpec(
+    CTHULHU_EYE_HEIGHT,
+    CTHULHU_LURK_DEPTH,
+    CTHULHU_TOTAL_HEIGHT,
+    CTHULHU_WIDTH_CELLS,
+  ),
+  kraken: swimmerSpec(
+    KRAKEN_EYE_HEIGHT,
+    KRAKEN_LURK_DEPTH,
+    KRAKEN_TOTAL_HEIGHT,
+    KRAKEN_WIDTH_CELLS,
+  ),
+};
+
+/** The spec for a kind, or null for one that has no dread (the walkers). */
+export function dreadSpecOf(kind: string): SwimmerDreadSpec | null {
+  return kind === 'cthulhu' || kind === 'kraken' ? SWIMMER_DREAD_SPECS[kind] : null;
+}
 
 /**
  * The bolt ribbon: how wide it is at the top, how much of that width is left at

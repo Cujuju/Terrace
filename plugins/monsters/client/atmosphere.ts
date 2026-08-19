@@ -40,17 +40,14 @@ import {
   DoubleSide,
 } from 'three';
 import {
-  BOLT_BOTTOM_CELLS,
   BOLT_JAG_CELLS,
   BOLT_MAX_RADIUS_CELLS,
-  BOLT_MIN_RADIUS_CELLS,
   BOLT_TIP_WIDTH_FRACTION,
   BOLT_TOP_CELLS,
   BOLT_WIDTH_CELLS,
   FLASH_COLOR,
   FLASH_GLOW_LAYER_INDEX,
   FLASH_GLOW_OPACITY,
-  FLASH_LIGHT_HEIGHT_CELLS,
   FLASH_LIGHT_PEAK_INTENSITY,
   FLASH_LIGHT_RANGE_CELLS,
   LightningSchedule,
@@ -62,9 +59,9 @@ import {
   MIST_EDGE_SOFTNESS,
   MIST_EDGE_WOBBLE,
   MIST_FADE_SECONDS,
-  MIST_LAYERS,
   MIST_RADIUS_CELLS,
   approachEnvelope,
+  type SwimmerDreadSpec,
 } from './dread.ts';
 
 const TWO_PI = Math.PI * 2;
@@ -209,10 +206,10 @@ function buildMistGeometry(): BufferGeometry {
  * face. Cheaper and steadier than billboarding, which would have to re-orient
  * the strip every frame against a camera this module has no access to.
  */
-function buildBoltGeometry(): BufferGeometry {
+function buildBoltGeometry(bottomCells: number): BufferGeometry {
   const positions: number[] = [];
   const indices: number[] = [];
-  const span = BOLT_TOP_CELLS - BOLT_BOTTOM_CELLS;
+  const span = BOLT_TOP_CELLS - bottomCells;
 
   /** Emits one ribbon; `sideways` is which horizontal axis it spreads along. */
   function ribbon(sideways: 'x' | 'z'): void {
@@ -275,16 +272,16 @@ export interface Dread {
   dispose(): void;
 }
 
-export function createDread(): Dread {
+export function createDread(spec: SwimmerDreadSpec): Dread {
   const root = new Group();
   root.name = 'monsters:dread';
 
   const mistGeometry = buildMistGeometry();
-  const boltGeometry = buildBoltGeometry();
+  const boltGeometry = buildBoltGeometry(spec.boltBottomCells);
 
   const mistMaterials: MeshBasicMaterial[] = [];
   const mistSheets: Mesh[] = [];
-  for (const layer of MIST_LAYERS) {
+  for (const layer of spec.mistLayers) {
     const material = new MeshBasicMaterial({
       color: MIST_COLOR,
       transparent: true,
@@ -324,7 +321,7 @@ export function createDread(): Dread {
     depthWrite: false,
   });
   const glowSheet = new Mesh(mistGeometry, glowMaterial);
-  glowSheet.position.y = MIST_LAYERS[FLASH_GLOW_LAYER_INDEX]!.height;
+  glowSheet.position.y = spec.mistLayers[FLASH_GLOW_LAYER_INDEX]!.height;
   glowSheet.renderOrder = DREAD_RENDER_ORDER;
   glowSheet.visible = false;
   root.add(glowSheet);
@@ -362,7 +359,7 @@ export function createDread(): Dread {
    * summoning and at the banishment — is a cost nobody can see.
    */
   const flashLight = new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
-  flashLight.position.y = FLASH_LIGHT_HEIGHT_CELLS;
+  flashLight.position.y = spec.flashLightHeightCells;
   root.add(flashLight);
 
   const reducedMotion = watchReducedMotion();
@@ -384,7 +381,7 @@ export function createDread(): Dread {
         : approachEnvelope(envelope, target, dt, MIST_FADE_SECONDS);
 
       for (let index = 0; index < mistSheets.length; index++) {
-        const layer = MIST_LAYERS[index]!;
+        const layer = spec.mistLayers[index]!;
         const sheet = mistSheets[index]!;
         mistMaterials[index]!.opacity = layer.opacity * envelope;
         // Nothing to draw at zero, and a transparent draw call that contributes
@@ -410,13 +407,13 @@ export function createDread(): Dread {
       const strike = lightning.advance(dt, present && !reduced);
       if (strike !== null) {
         const distance =
-          BOLT_MIN_RADIUS_CELLS +
-          strike.reach * (BOLT_MAX_RADIUS_CELLS - BOLT_MIN_RADIUS_CELLS);
+          spec.boltMinRadiusCells +
+          strike.reach * (BOLT_MAX_RADIUS_CELLS - spec.boltMinRadiusCells);
         const x = Math.cos(strike.bearing) * distance;
         const z = Math.sin(strike.bearing) * distance;
         boltPivot.position.set(x, 0, z);
         boltPivot.rotation.y = strike.yaw;
-        flashLight.position.set(x, FLASH_LIGHT_HEIGHT_CELLS, z);
+        flashLight.position.set(x, spec.flashLightHeightCells, z);
       }
 
       // The fade multiplies the flash as well, so a monster banished mid-strike

@@ -44,6 +44,9 @@ import {
   EYE_HEIGHT_ABOVE_WATER_CELLS,
   FLASH_ATTACK_SECONDS,
   FLASH_DURATION_SECONDS,
+  FLASH_LIGHT_CLEARANCE_CELLS,
+  FLASH_LIGHT_HEIGHT_CELLS,
+  dreadSpecOf,
   LightningSchedule,
   MAX_FLASH_INTERVAL_SECONDS,
   MEAN_FLASH_INTERVAL_SECONDS,
@@ -847,6 +850,59 @@ describe('the yeti gait', () => {
     expect(YETI_BOB_CELLS).toBeGreaterThan(0);
     expect(YETI_BOB_CELLS).toBeLessThan(YETI_FOOT_RISE);
     expect(YETI_LEAN_RADIANS).toBeGreaterThan(0);
+  });
+});
+
+describe('dread: per-kind derivation (2026-08-19)', () => {
+  // The whole effect was authored against Cthulhu's anatomy and then applied
+  // to every swimmer; on the kraken the bank sat OVER its waterline eyes and
+  // the flash light INSIDE its silhouette. These are the four invariants, per
+  // kind, that the correctness pass found unpinned.
+  const SWIMMERS = ['cthulhu', 'kraken'] as const;
+
+  it('exists for exactly the swimmer kinds', () => {
+    expect(dreadSpecOf('cthulhu')).not.toBeNull();
+    expect(dreadSpecOf('kraken')).not.toBeNull();
+    expect(dreadSpecOf('yeti')).toBeNull();
+  });
+
+  it('keeps every kind\'s mist bank under its own eyes, bob included', () => {
+    for (const kind of SWIMMERS) {
+      const spec = dreadSpecOf(kind)!;
+      const top = spec.mistLayers[spec.mistLayers.length - 1]!;
+      expect(top.height + top.bobCells).toBeLessThan(spec.eyeHeightAboveWaterCells);
+      // Bolts terminate in that same bank, whatever height it scaled to.
+      expect(spec.boltBottomCells).toBe(top.height);
+    }
+  });
+
+  it('rakes each kind\'s flash light across its silhouette from just above it', () => {
+    for (const kind of SWIMMERS) {
+      const spec = dreadSpecOf(kind)!;
+      expect(spec.flashLightHeightCells).toBeGreaterThan(spec.silhouetteAboveWaterCells);
+      expect(BOLT_TOP_CELLS).toBeGreaterThan(spec.silhouetteAboveWaterCells);
+    }
+  });
+
+  it('keeps every kind\'s bolts outside its own footprint', () => {
+    expect(dreadSpecOf('cthulhu')!.boltMinRadiusCells).toBeGreaterThan(CTHULHU_WIDTH_CELLS / 2);
+    expect(dreadSpecOf('kraken')!.boltMinRadiusCells).toBeGreaterThan(KRAKEN_WIDTH_CELLS / 2);
+    for (const kind of SWIMMERS) {
+      expect(dreadSpecOf(kind)!.boltMinRadiusCells).toBeLessThan(BOLT_MAX_RADIUS_CELLS);
+    }
+  });
+
+  it('reproduces the authored values exactly for the anatomy they were authored on', () => {
+    // Parameterised, not retuned: Cthulhu's spec IS the original effect.
+    const spec = dreadSpecOf('cthulhu')!;
+    expect(spec.eyeHeightAboveWaterCells).toBe(EYE_HEIGHT_ABOVE_WATER_CELLS);
+    expect(spec.silhouetteAboveWaterCells).toBe(SILHOUETTE_ABOVE_WATER_CELLS);
+    expect(spec.flashLightHeightCells).toBe(FLASH_LIGHT_HEIGHT_CELLS);
+    expect(spec.boltMinRadiusCells).toBe(BOLT_MIN_RADIUS_CELLS);
+    expect(spec.mistLayers).toEqual(MIST_LAYERS);
+    expect(FLASH_LIGHT_HEIGHT_CELLS).toBe(
+      SILHOUETTE_ABOVE_WATER_CELLS + FLASH_LIGHT_CLEARANCE_CELLS,
+    );
   });
 });
 
