@@ -427,6 +427,31 @@ body {
     /* Right-anchored under a narrow viewport: never wider than the screen. */
     max-width: calc(100vw - 16px);
   }
+
+  /* The banner shares the top edge with the collapsed Info tab (left) and
+     the version watermark (right). The book icon widened it just enough to
+     collide at phone widths (caught eyes-on, 2026-08-19), so here the banner
+     gives ground instead of its neighbours: tighter type, padding and gap,
+     and the name yields to ellipsis inside whatever width remains between
+     the tab and the screen edge. */
+  .world-header {
+    padding: 5px 10px;
+    /* DERIVED, not eyeballed: the banner is centred, so an element of width
+       W starts at (100vw − W) / 2. The collapsed Info tab reaches ~110px
+       from the left edge and the watermark ~110px from the right, so the
+       banner clears both exactly when W ≤ 100vw − 2·120 (120 = 110 + 10px
+       breathing room). A long world name pays with its own ellipsis. */
+    max-width: calc(100vw - 240px);
+  }
+
+  .world-header__name {
+    font-size: 15px;
+    max-width: 100%;
+  }
+
+  .world-header__title-row {
+    gap: 6px;
+  }
 }
 
 /* Coarse pointers (touch) get finger-sized targets whatever the width. */
