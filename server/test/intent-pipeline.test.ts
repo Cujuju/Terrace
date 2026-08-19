@@ -11,7 +11,7 @@ import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './suppor
 
 /** 4×4 chunks of 16 cells: chunk (0,0) covers cells [0..15]². */
 const WORLD_SIZE = 64;
-const PLAYER = { id: 'session-1', name: 'Tester' };
+const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /** A cell well inside the single unlocked chunk. */
 const UNLOCKED_CELL = { x: 4, y: 4 };
@@ -209,6 +209,24 @@ describe('handleSculptIntent', () => {
 
     expect(seenDiffs).toHaveLength(1);
     expect(seenDiffs[0]).toBeGreaterThan(0);
+  });
+
+  // Issue #17: onTerrainChanged's sculptorToken is how the reveal plugin's
+  // per-player creep policy knows WHO to unlock a chunk for. This is the
+  // contract at the pipeline layer — reveal's own tests cover the policy that
+  // consumes it.
+  it('hands onTerrainChanged the SCULPTOR\'s token for a player-originated edit', () => {
+    const seenTokens: Array<string | undefined> = [];
+    const watcher: TerracePlugin = {
+      name: 'token-watcher',
+      onTerrainChanged(_world, _diff, sculptorToken): void {
+        seenTokens.push(sculptorToken);
+      },
+    };
+
+    handleSculptIntent(makeDeps(world, [watcher]), PLAYER, sculptMessage());
+
+    expect(seenTokens).toEqual([PLAYER.token]);
   });
 });
 

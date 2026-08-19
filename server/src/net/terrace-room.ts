@@ -19,10 +19,10 @@ import type {
   TerrainDiffMessage,
 } from '@terrace/shared';
 import { logInfo } from '../log.ts';
-import { sanitizePlayerName, type Player } from '../player.ts';
+import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
 import type { PluginHost } from '../plugins/host.ts';
 import { handleSculptIntent } from '../intent/pipeline.ts';
-import { collectUnlockedChunkPayloads } from '../world/mask-filter.ts';
+import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { World } from '../world/world.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
 
@@ -139,17 +139,32 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
    * `async` (or awaiting anything before the send) is a compile error rather
    * than a silent, timing-dependent bug in the client's renderer.
    */
-  override onJoin(client: TerraceClient, options?: { name?: unknown }): void {
+  override onJoin(client: TerraceClient, options?: { name?: unknown; token?: unknown }): void {
     const player: Player = {
       id: client.sessionId,
+      // DURABLE IDENTITY (issue #17): a client-generated opaque token, sent as
+      // a join option, sanitized exactly like the display name below — bad
+      // input degrades to a session-scoped fallback rather than blocking the
+      // join. This is what per-player unlock masks are keyed by, so it must
+      // be resolved before anything below reads it.
+      token: sanitizePlayerToken(options?.token, client.sessionId),
       name: sanitizePlayerName(options?.name, client.sessionId),
     };
     client.userData = { player };
     this.context.world.addPlayer(player);
 
-    // ANTI-CHEAT: the join snapshot carries ONLY unlocked chunks. A client is
-    // never sent terrain it has not been granted, so there is nothing in its
-    // memory to reveal (design §3.4, "anti-cheat by omission").
+    // Every token starts in the same home square, and this has to land BEFORE
+    // the snapshot below is built: a RETURNING token already has these bits
+    // set (see World.seedChunkForToken), so this only ever adds anything for
+    // a token this world has never seen.
+    applyInitialUnlockForToken(this.context.world, player.token);
+
+    // ANTI-CHEAT: the join snapshot carries ONLY chunks unlocked FOR THIS
+    // TOKEN (issue #17 decision 2) — never the union of everything anyone has
+    // ever unlocked, or one adventurous player's progress would leak into
+    // every other join. A client is never sent terrain it has not personally
+    // been granted, so there is nothing in its memory to reveal (design §3.4,
+    // "anti-cheat by omission").
     // World IDENTITY rides along with the geometry: the name and the difficulty
     // rating are both constant for the life of the world, so the join snapshot
     // is the only message that ever needs to carry them (design 2026-08-14).
@@ -158,7 +173,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       worldSize: this.context.world.size,
       worldName: this.context.world.name,
       difficulty: this.context.world.difficulty,
-      chunks: collectUnlockedChunkPayloads(this.context.world),
+      chunks: this.context.world.chunkPayloadsForToken(player.token),
     };
     client.send('snapshot', snapshot);
 

@@ -18,7 +18,7 @@ import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './suppor
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const WORLD_SIZE = 64;
-const PLAYER = { id: 'session-1', name: 'Tester' };
+const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 describe('discoverPlugins', () => {
   it('loads server halves in deterministic alphabetical directory order', async () => {
@@ -183,6 +183,64 @@ describe('PluginHost', () => {
     const targeted = sink.ofType('terraformer:private');
     expect(targeted).toHaveLength(1);
     expect(targeted[0].target).toBe(PLAYER.id);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Per-player unlock primitives (issue #17): unlockChunkForToken is the new
+  // WorldApi write; isChunkVisibleTo/isCellVisibleTo are the read primitives
+  // added for the planned fog-of-war follow-up (nothing calls them yet — see
+  // their doc comments in plugins/types.ts and world.ts).
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it('exposes unlockChunkForToken and the per-player visibility reads on WorldApi', () => {
+    let api: WorldApi | undefined;
+    const plugin: TerracePlugin = {
+      name: 'territory',
+      onWorldCreate(world): void {
+        api = world;
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER);
+    new PluginHost(world, [plugin].map(asLoadedPlugin)).worldCreate();
+
+    expect(api).toBeDefined();
+    if (!api) return;
+
+    expect(api.isChunkVisibleTo(PLAYER.id, 2, 2)).toBe(false);
+    expect(api.unlockChunkForToken(PLAYER.token, 2, 2)).toBe(true);
+    expect(api.unlockChunkForToken(PLAYER.token, 2, 2)).toBe(false); // idempotent per token
+
+    expect(api.isChunkVisibleTo(PLAYER.id, 2, 2)).toBe(true);
+    expect(api.isCellVisibleTo(PLAYER.id, 2 * 16 + 1, 2 * 16 + 1)).toBe(true);
+    // Nobody connected under this id — the safe default is false, not a throw.
+    expect(api.isChunkVisibleTo('no-such-player', 2, 2)).toBe(false);
+
+    const targeted = sink.ofType('chunkUnlock');
+    expect(targeted).toHaveLength(1);
+    expect(targeted[0].target).toBe(PLAYER.id); // sendTo, never a broadcast
+  });
+
+  it('forwards the sculptor token from a player edit to onTerrainChanged, and omits it for a plugin edit', () => {
+    const seen: Array<string | undefined> = [];
+    const plugin: TerracePlugin = {
+      name: 'token-watcher',
+      onTerrainChanged(_world, _diff, sculptorToken): void {
+        seen.push(sculptorToken);
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [plugin].map(asLoadedPlugin));
+    host.worldCreate();
+
+    host.notifyTerrainChanged([{ x: 1, y: 1, h: 64 }], PLAYER.token);
+    host.notifyTerrainChanged([{ x: 2, y: 2, h: 64 }]); // no sculptor — a plugin's own edit
+
+    expect(seen).toEqual([PLAYER.token, undefined]);
   });
 
   // ──────────────────────────────────────────────────────────────────────────

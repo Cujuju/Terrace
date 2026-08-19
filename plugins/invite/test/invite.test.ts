@@ -16,7 +16,7 @@ import { parseInviteInfoPayload } from '../protocol.ts';
 import { SHARE_URL_ENV, plugin, resetInviteState } from '../server/index.ts';
 
 const WORLD_SIZE = 64;
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 function boot(): RecordingSink {
   resetInviteState();

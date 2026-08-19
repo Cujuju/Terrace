@@ -122,8 +122,12 @@ export class PluginHost implements TerrainChangeListener {
   /**
    * Fan-out after an applied edit, with the full server-side diff. Guarded
    * against runaway re-entrancy (see MAX_TERRAIN_CHANGE_DEPTH).
+   *
+   * `sculptorToken` (issue #17) is forwarded to every plugin verbatim — see
+   * TerracePlugin.onTerrainChanged's doc comment for what it means and why
+   * it can be absent.
    */
-  notifyTerrainChanged(diff: readonly CellDiff[]): void {
+  notifyTerrainChanged(diff: readonly CellDiff[], sculptorToken?: string): void {
     if (this.terrainChangeDepth >= MAX_TERRAIN_CHANGE_DEPTH) {
       logError(
         `terrain-change cascade exceeded depth ${MAX_TERRAIN_CHANGE_DEPTH}; ` +
@@ -137,7 +141,9 @@ export class PluginHost implements TerrainChangeListener {
       for (const { loaded, api } of this.entries) {
         const { plugin } = loaded;
         if (!plugin.onTerrainChanged) continue;
-        this.safely(plugin, 'onTerrainChanged', () => plugin.onTerrainChanged?.(api, diff));
+        this.safely(plugin, 'onTerrainChanged', () =>
+          plugin.onTerrainChanged?.(api, diff, sculptorToken),
+        );
       }
     } finally {
       this.terrainChangeDepth--;

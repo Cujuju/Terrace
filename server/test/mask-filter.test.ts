@@ -16,7 +16,7 @@ import { World } from '../src/world/world.ts';
 import { RecordingSink, worldWithUnlockedChunks } from './support/harness.ts';
 
 const WORLD_SIZE = 64;
-const PLAYER = { id: 'session-1', name: 'Tester' };
+const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /** Last cell of chunk (0,0) — a sculpt here provably spills into neighbours. */
 const EDGE_CELL = { x: CHUNK_SIZE - 1, y: CHUNK_SIZE - 1 };

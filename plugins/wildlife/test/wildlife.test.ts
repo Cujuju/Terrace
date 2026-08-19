@@ -180,7 +180,7 @@ function isChunkLocked(cx: number, _cy: number): boolean {
   return cx === LOCKED_CHUNK_COLUMN;
 }
 
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 interface Harness {
   readonly world: World;

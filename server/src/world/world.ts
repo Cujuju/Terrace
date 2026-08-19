@@ -23,6 +23,7 @@ import {
   SEA_LEVEL,
   unlockChunk,
   type CellDiff,
+  type ChunkPayload,
   type Heightmap,
   type SculptOptions,
   type ServerMessage,
@@ -35,7 +36,7 @@ import {
 import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlock, initialUnlockFootprint } from './initial-unlock.ts';
-import { chunkPayloadOf } from './mask-filter.ts';
+import { chunkPayloadOf, collectUnlockedChunkPayloads } from './mask-filter.ts';
 import { generateWorldName } from './world-name.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -580,6 +581,18 @@ export class World {
   private readonly playersById = new Map<string, Player>();
 
   /**
+   * Per-token unlock masks (issue #17 — per-player territory). `mask` above
+   * stays the SIMULATION/union mask (wildlife census, flora, monsters — every
+   * existing consumer keeps reading it, unchanged); this is the NEW per-token
+   * layer a chunk unlock actually happens against. Keyed by Player.token, not
+   * by connection id, so a reconnect with the same token finds its own mask
+   * again under a brand-new sessionId. Lazily populated — a token nobody has
+   * granted anything to simply has no entry, which reads identically to an
+   * all-locked createChunkMask() without allocating one.
+   */
+  private readonly masksByToken = new Map<string, Uint8Array>();
+
+  /**
    * Set whenever terrain or mask changes; cleared when a snapshot is written.
    * The snapshot scheduler writes ONLY when this is true (design open question
    * 4, decided: "snapshot every SNAPSHOT_INTERVAL_S only if the world changed"),
@@ -731,6 +744,26 @@ export class World {
    * stored. `null` means the snapshot predates world names (or was written by a
    * build that stored none), and the world is named here, once — see
    * mintedName below for why that also marks the world dirty.
+   *
+   * `tokenMasks` is per-token unlock state (issue #17), keyed by the same
+   * token a reconnecting client resends. LEGACY RESTORE, STATED LOUDLY: a
+   * snapshot written before issue #17 has no such rows at all, so this
+   * defaults to an empty map — the union `mask` above still carries every
+   * chunk that was ever unlocked (unchanged, since it was always the ONLY
+   * mask), but every per-token mask starts from nothing. Concretely: every
+   * player who reconnects to an upgraded server re-creeps their own view of
+   * territory the world already contains, even land they had personally
+   * opened before the upgrade. This is the exact, owner-accepted legacy
+   * behaviour from issue #17 decision 4 — not a bug to chase.
+   *
+   * A per-token entry whose mask byte length does not match this world's
+   * chunk count (corruption, a hand-edited DB, a foreign world's row) is
+   * DROPPED rather than thrown on: unlike the heightmap/union-mask length
+   * checks above — where a mismatch means the whole snapshot belongs to a
+   * differently-sized world and continuing would misalign every row — one
+   * bad per-token row only costs ONE player their remembered creep, which is
+   * exactly the same "re-creep, nothing else breaks" outcome as a legacy
+   * snapshot, so degrading it is honest rather than a special case.
    */
   static restore(
     size: number,
@@ -738,6 +771,7 @@ export class World {
     mask: Uint8Array,
     difficulty: number = DEFAULT_WORLD_DIFFICULTY,
     name: string | null = null,
+    tokenMasks: ReadonlyMap<string, Uint8Array> = new Map(),
   ): World {
     const map = createHeightmap(size);
     if (cells.length !== map.cells.length) {
@@ -763,6 +797,13 @@ export class World {
       normalizeDifficulty(difficulty),
       mintedName ?? stored,
     );
+
+    for (const [token, tokenMask] of tokenMasks) {
+      if (tokenMask.length !== expectedMask.length) continue; // see doc comment: degrade, don't throw
+      const copy = createChunkMask(size);
+      copy.set(tokenMask);
+      world.masksByToken.set(token, copy);
+    }
 
     // THE NAME MUST REACH DISK, and `dirty` is the only mechanism that gets it
     // there: the snapshot scheduler writes ONLY a changed world, so an existing
@@ -832,6 +873,17 @@ export class World {
   /**
    * ANTI-CHEAT: the check the intent pipeline runs on a brush centre. Callers
    * must have bounds-checked (x,y) first — chunkIndexOfCell throws otherwise.
+   *
+   * DELIBERATELY STILL THE UNION MASK after issue #17. Per-player masks
+   * (below) gate what STREAMS to a given player, not what they may aim a
+   * brush at: once a chunk is unlocked for anyone, the server itself no
+   * longer treats its terrain as secret, so a second player sculpting there
+   * is shared-world behaviour, not a leak. Making sculpt permission — or the
+   * ongoing terrainDiff broadcast in sculpt-service.ts, which also still
+   * filters against this same union mask — per-player as well is the
+   * fog-of-war follow-up flagged in the issue, not this change: see
+   * isChunkVisibleTo/isCellVisibleTo below for the primitive that follow-up
+   * will need.
    */
   isCellUnlocked(x: number, y: number): boolean {
     return isChunkUnlocked(this.mask, chunkIndexOfCell(this.map.size, x, y));
@@ -844,6 +896,11 @@ export class World {
    * plugin, typically) can unlock idempotently without re-sending 512 B of
    * heights. Streaming here — rather than at the call site — guarantees that a
    * chunk becoming visible and clients learning about it cannot drift apart.
+   *
+   * GLOBAL / BROADCAST unlock — flips the bit for every player at once. Kept
+   * for genesis (initial-unlock.ts) and any future plugin that genuinely wants
+   * "unlocked for the whole world"; per-player policy (the reveal plugin,
+   * since issue #17) uses unlockChunkForToken below instead.
    */
   unlockChunk(cx: number, cy: number): boolean {
     const index = chunkIndex(this.map.size, cx, cy);
@@ -853,6 +910,139 @@ export class World {
     this.changedSinceSnapshot = true;
     this.broadcast({ type: 'chunkUnlock', chunks: [chunkPayloadOf(this, cx, cy)] });
     return true;
+  }
+
+  /** Lazily allocates and returns ONE token's own mask. Never returns the shared union `mask`. */
+  private maskForToken(token: string): Uint8Array {
+    let tokenMask = this.masksByToken.get(token);
+    if (tokenMask === undefined) {
+      tokenMask = createChunkMask(this.map.size);
+      this.masksByToken.set(token, tokenMask);
+    }
+    return tokenMask;
+  }
+
+  /**
+   * Flips a chunk's bit in ONE TOKEN'S mask, and ORs it into the union/
+   * simulation mask too (issue #17 decision: "the union mask ORs in any chunk
+   * when its first token earns it" — idempotent no matter which token gets
+   * there first, or whether several already have). NEVER SENDS ANYTHING —
+   * see unlockChunkForToken and seedChunkForToken below, the two callers that
+   * layer messaging policy on top of this shared mutation. Returns false when
+   * already unlocked FOR THIS TOKEN specifically (a chunk long since union-
+   * unlocked by some other token still returns true here).
+   */
+  private grantChunkToToken(token: string, cx: number, cy: number): boolean {
+    const index = chunkIndex(this.map.size, cx, cy);
+    const tokenMask = this.maskForToken(token);
+    if (isChunkUnlocked(tokenMask, index)) return false;
+
+    unlockChunk(tokenMask, index);
+    this.changedSinceSnapshot = true;
+    unlockChunk(this.mask, index); // union — see isChunkUnlocked's doc comment.
+    return true;
+  }
+
+  /**
+   * SILENT per-token unlock: mutates masks only, streams nothing. The one
+   * caller is the join-time starter-square seed (initial-unlock.ts's
+   * applyInitialUnlockForToken): every newly seen token must start with the
+   * same home square, but that seed has to land BEFORE the join snapshot is
+   * built, not arrive afterward as a chunkUnlock message — the client is not
+   * sized to receive one until the snapshot has told it worldSize (see the
+   * ordering contract in terrace-room.ts). Idempotent per token: a RETURNING
+   * token already has these bits set, so every call after the first is a
+   * costless no-op.
+   */
+  seedChunkForToken(token: string, cx: number, cy: number): boolean {
+    return this.grantChunkToToken(token, cx, cy);
+  }
+
+  /**
+   * THE PER-PLAYER CREEP PRIMITIVE (design doc §reveal/frontier-pressure,
+   * issue #17). Unlocks a chunk FOR ONE TOKEN and streams it ONLY to that
+   * token's own live session(s) via sendTo — never a broadcast, because an
+   * unrelated player must not learn the chunk exists (issue #17 decision 2:
+   * "one adventurous player must not expose the world to everyone"). A token
+   * can be open in more than one browser tab; every live session presenting
+   * it is "the player who earned it", which is why this filters players() by
+   * token rather than targeting a single connection id.
+   *
+   * Returns false when already unlocked for this token, so a policy plugin
+   * (reveal) can call this unconditionally for every touched cell without a
+   * separate read check first.
+   */
+  unlockChunkForToken(token: string, cx: number, cy: number): boolean {
+    if (!this.grantChunkToToken(token, cx, cy)) return false;
+
+    const message: ServerMessage = {
+      type: 'chunkUnlock',
+      chunks: [chunkPayloadOf(this, cx, cy)],
+    };
+    for (const player of this.players()) {
+      if (player.token === token) this.sendTo(player.id, message);
+    }
+    return true;
+  }
+
+  /** Per-token read. Mirrors isChunkUnlocked, but against ONE token's mask rather than the union. */
+  isChunkUnlockedForToken(token: string, cx: number, cy: number): boolean {
+    const index = chunkIndex(this.map.size, cx, cy);
+    const tokenMask = this.masksByToken.get(token);
+    return tokenMask !== undefined && isChunkUnlocked(tokenMask, index);
+  }
+
+  /**
+   * Whether the CONNECTED PLAYER identified by `playerId` has personally
+   * unlocked the chunk at (cx, cy) — answered from THEIR OWN token mask,
+   * never the union. Added for the fog-of-war follow-up named in issue #17's
+   * accepted residual (global entity broadcasts — wildlife/flora/monsters/
+   * structures — still reference positions over chunks a player hasn't
+   * unlocked): that follow-up needs exactly this primitive, plus the token
+   * each connected Player already carries via players() (also issue #17).
+   * NOTHING IN CORE CALLS THIS YET — no broadcast is filtered by it today;
+   * it exists so the next change is a caller, not another contract change.
+   *
+   * A playerId with no connected Player (already left, or never existed)
+   * answers false — nobody has unlocked anything for a session that is not
+   * here, which is also the safe default for a query about to gate what
+   * reaches a wire.
+   */
+  isChunkVisibleTo(playerId: string, cx: number, cy: number): boolean {
+    const player = this.getPlayer(playerId);
+    return player !== undefined && this.isChunkUnlockedForToken(player.token, cx, cy);
+  }
+
+  /** Cell-granularity isChunkVisibleTo — see its doc comment for the fog-of-war context. */
+  isCellVisibleTo(playerId: string, x: number, y: number): boolean {
+    return this.isChunkVisibleTo(
+      playerId,
+      Math.floor(x / CHUNK_SIZE),
+      Math.floor(y / CHUNK_SIZE),
+    );
+  }
+
+  /**
+   * Every chunk unlocked for ONE TOKEN — the entire terrain content of that
+   * token's join snapshot (issue #17 decision 2: "join snapshot sends only
+   * the joining token's chunks"). An unseen token (nothing granted yet, e.g.
+   * a query that races ahead of applyInitialUnlockForToken) returns an empty
+   * list, exactly like a freshly allocated mask would.
+   */
+  chunkPayloadsForToken(token: string): ChunkPayload[] {
+    const tokenMask = this.masksByToken.get(token) ?? createChunkMask(this.map.size);
+    return collectUnlockedChunkPayloads({ map: this.map, mask: tokenMask });
+  }
+
+  /**
+   * Every per-token mask, for the snapshot writer (index.ts) to persist
+   * alongside the union `mask`. Returns the LIVE maps, not copies — safe
+   * because the only caller reads them synchronously within one
+   * SnapshotStore.saveSnapshot call, the same trust level `mask` and
+   * `map.cells` are already handed out at just below.
+   */
+  tokenMasks(): ReadonlyMap<string, Uint8Array> {
+    return this.masksByToken;
   }
 
   /**

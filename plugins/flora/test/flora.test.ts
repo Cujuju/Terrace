@@ -56,7 +56,7 @@ const WORLD_SIZE = 64;
 /** Host tick period, matching the shipped TICK_HZ of 10. */
 const DT = 0.1;
 
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /** Namespaced message types, as they appear on the RecordingSink. */
 const FOREST_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_FOREST_MESSAGE}`;

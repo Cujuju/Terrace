@@ -131,6 +131,9 @@ export function handleSculptIntent(
     effective.radius,
     amount,
     sculptOptionsOf(effective),
+    // The SCULPTOR (issue #17): this is a player's own edit, so the reveal
+    // plugin's per-player creep policy has someone to unlock chunks for.
+    player.token,
   );
 
   return { applied: true, intent: effective, diff };
