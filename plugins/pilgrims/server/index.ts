@@ -23,7 +23,8 @@ import {
 } from '../protocol.ts';
 import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
 import { applyBlessedCells, bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
-import { Pilgrimage } from './pilgrimage.ts';
+import { Pilgrimage, WalkerIdAllocator } from './pilgrimage.ts';
+import { Wandering } from './wandering.ts';
 
 /**
  * Ticks between broadcasts. 2 → 5 Hz at the shipped TICK_HZ of 10 —
@@ -33,7 +34,11 @@ import { Pilgrimage } from './pilgrimage.ts';
 export const BROADCAST_TICK_INTERVAL = 2;
 
 let tickCount = 0;
-let pilgrimage = new Pilgrimage();
+// One id sequence across BOTH walker populations — the client keys views by
+// bare id (see WalkerIdAllocator's note).
+let walkerIds = new WalkerIdAllocator();
+let pilgrimage = new Pilgrimage(walkerIds);
+let wandering = new Wandering(walkerIds);
 
 /** The last blessed set pushed, for change detection (order-insensitive). */
 let lastBlessedKeys: readonly number[] = [];
@@ -46,7 +51,10 @@ function sameKeySet(a: readonly number[], b: readonly number[]): boolean {
 }
 
 function simulate(world: WorldApi, dt: number): void {
-  pilgrimage.advance(world, bridgedMonsters(), bridgedStructures(), dt);
+  const settlements = bridgedStructures();
+  pilgrimage.advance(world, bridgedMonsters(), settlements, dt);
+  // The ambient walkers (card 26): same towns, no monsters, no blessing.
+  wandering.advance(world, settlements, dt);
 
   // Push the blessing only when the route set actually changed — structures'
   // replace semantics make re-sends harmless, but a write per tick would be
@@ -65,11 +73,14 @@ function simulate(world: WorldApi, dt: number): void {
   // (WorldApi.broadcastVisible's own doc, wildlife's identical call).
   world.broadcastVisible(
     PILGRIMS_ENTITIES_MESSAGE,
-    pilgrimage.states(),
-    (pilgrim) => ({ x: Math.floor(pilgrim.x), y: Math.floor(pilgrim.y) }),
+    // Both walker kinds on the one wire: pilgrims first, then wanderers —
+    // fixed concatenation order, so the payload is deterministic too.
+    [...pilgrimage.states(), ...wandering.states()],
+    (walker) => ({ x: Math.floor(walker.x), y: Math.floor(walker.y) }),
     (visible) => ({
       pilgrims: visible.map((p) => ({
         id: p.id,
+        kind: p.kind,
         race: p.race,
         x: roundBroadcastPosition(p.x),
         y: roundBroadcastPosition(p.y),
@@ -96,11 +107,18 @@ export const plugin: TerracePlugin = {
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetPilgrimsState(): void {
   tickCount = 0;
-  pilgrimage = new Pilgrimage();
+  walkerIds = new WalkerIdAllocator();
+  pilgrimage = new Pilgrimage(walkerIds);
+  wandering = new Wandering(walkerIds);
   lastBlessedKeys = [];
 }
 
 /** Test seam: the live population, for suites asserting on the sim's state. */
 export function currentPilgrimage(): Pilgrimage {
   return pilgrimage;
+}
+
+/** Test seam: the ambient population, same purpose. */
+export function currentWandering(): Wandering {
+  return wandering;
 }

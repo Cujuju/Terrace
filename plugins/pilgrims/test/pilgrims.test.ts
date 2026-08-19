@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SEA_LEVEL, BAND_HEIGHT } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
+  WALKERS_WIRE_CAP,
+  WANDERERS_CAP,
   parseEntitiesPayload,
   roundBroadcastPosition,
   settlementRace,
@@ -20,10 +22,17 @@ import {
   Pilgrimage,
   SettlednessTracker,
   VIEWPOINT_RING_CELLS,
+  WalkerIdAllocator,
   isWalkableCell,
   pickViewpoint,
   type PilgrimWorld,
 } from '../server/pilgrimage.ts';
+import {
+  WANDERER_MIN_TIER,
+  WANDER_EPOCH_SECONDS,
+  WANDER_RANGE_CELLS,
+  Wandering,
+} from '../server/wandering.ts';
 import {
   STRUCTURES_UNAVAILABLE_WARNING,
   applyBlessedCells,
@@ -85,7 +94,7 @@ describe('the race copy', () => {
 
 describe('the wire format', () => {
   it('round-trips a valid payload and drops malformed rows individually', () => {
-    const good = { id: 1, race: 'rudy', x: 3.25, y: 4.5, heading: 0.5 };
+    const good = { id: 1, kind: 'pilgrim', race: 'rudy', x: 3.25, y: 4.5, heading: 0.5 };
     const parsed = parseEntitiesPayload({
       pilgrims: [
         good,
@@ -95,7 +104,21 @@ describe('the wire format', () => {
         { id: 4, race: 'uno', x: 1, y: 2, heading: 3 },
       ],
     });
-    expect(parsed).toEqual([good, { id: 4, race: 'uno', x: 1, y: 2, heading: 3 }]);
+    // A row without a kind is from a pre-wanderer server, which only ever
+    // sent pilgrims — the parser restores that meaning, never guesses.
+    expect(parsed).toEqual([good, { id: 4, kind: 'pilgrim', race: 'uno', x: 1, y: 2, heading: 3 }]);
+  });
+
+  it('accepts wanderer rows and drops rows whose kind it does not know', () => {
+    const parsed = parseEntitiesPayload({
+      pilgrims: [
+        { id: 1, kind: 'wanderer', race: 'uno', x: 1, y: 2, heading: 3 },
+        { id: 2, kind: 'merchant', race: 'rudy', x: 0, y: 0, heading: 0 }, // future kind
+      ],
+    });
+    // The unknown kind is dropped whole: a render loop must never meet a
+    // model it cannot build (a newer server is an ordinary event).
+    expect(parsed).toEqual([{ id: 1, kind: 'wanderer', race: 'uno', x: 1, y: 2, heading: 3 }]);
   });
 
   it('rejects a payload that is not a list at all', () => {
@@ -105,14 +128,14 @@ describe('the wire format', () => {
   });
 
   it('never parses past the cap the client allocated for', () => {
-    const rows = Array.from({ length: PILGRIMS_CAP + 10 }, (_, i) => ({
+    const rows = Array.from({ length: WALKERS_WIRE_CAP + 10 }, (_, i) => ({
       id: i,
       race: 'rudy',
       x: 0,
       y: 0,
       heading: 0,
     }));
-    expect(parseEntitiesPayload({ pilgrims: rows })).toHaveLength(PILGRIMS_CAP);
+    expect(parseEntitiesPayload({ pilgrims: rows })).toHaveLength(WALKERS_WIRE_CAP);
   });
 
   it('rounds broadcast positions to the declared precision', () => {
@@ -274,6 +297,122 @@ describe('the journey', () => {
         expect(isWalkableCell(world, p.x, p.y)).toBe(true);
       }
     }
+  });
+});
+
+describe('the wandering', () => {
+  // ROLL_EVERY_EPOCH collapses the dispatch hash to "every qualifying town,
+  // every epoch" (the documented test seam) so journey and cap tests need no
+  // hash hunting; the determinism test below runs the REAL modulus.
+  const ROLL_EVERY_EPOCH = 1;
+
+  function runWander(
+    sim: Wandering,
+    world: PilgrimWorld,
+    settlements: ReadonlyArray<{ x: number; y: number; tier: number }>,
+    seconds: number,
+  ): void {
+    const ticks = Math.round(seconds / TICK);
+    for (let i = 0; i < ticks; i++) sim.advance(world, settlements, TICK);
+  }
+
+  const TOWN = { x: 40, y: 60, tier: WANDERER_MIN_TIER };
+  const NEIGHBOUR = { x: 52, y: 60, tier: WANDERER_MIN_TIER }; // 12 cells away
+
+  it('dispatches from an established town to a neighbour, visits, and walks home', () => {
+    const world = islandWorld();
+    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    sim.advance(world, [TOWN, NEIGHBOUR], TICK); // epoch 0 rolls on first tick
+
+    expect(sim.populationCount()).toBe(2); // both towns rolled — each strolls
+    const [first] = sim.states();
+    expect(first.kind).toBe('wanderer');
+    expect(first.race).toBe(settlementRace(TOWN.x, TOWN.y));
+
+    // 12 cells out + visit + 12 back at 0.5 c/s ≈ 58 s; give slack, but stay
+    // inside epoch 1 hasn't-re-rolled… it HAS re-rolled at 60 s — so prove
+    // completion the pilgrims' way: the original ids are gone.
+    runWander(sim, world, [TOWN, NEIGHBOUR], 90);
+    expect(sim.states().every((w) => w.id !== first.id)).toBe(true);
+  });
+
+  it('never dispatches from below the establishment tier, or with nowhere to go', () => {
+    const world = islandWorld();
+    const camp = { ...TOWN, tier: WANDERER_MIN_TIER - 1 };
+    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    sim.advance(world, [camp, { ...NEIGHBOUR, tier: WANDERER_MIN_TIER - 1 }], TICK);
+    expect(sim.populationCount()).toBe(0); // camps stroll nowhere
+
+    const lonely = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    lonely.advance(world, [TOWN], TICK); // no other town within range
+    expect(lonely.populationCount()).toBe(0);
+
+    const remote = { x: TOWN.x + WANDER_RANGE_CELLS + 5, y: TOWN.y, tier: WANDERER_MIN_TIER };
+    const outOfRange = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    outOfRange.advance(world, [TOWN, remote], TICK);
+    expect(outOfRange.populationCount()).toBe(0);
+  });
+
+  it('caps the ambient crowd at WANDERERS_CAP', () => {
+    const world = islandWorld();
+    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    const towns = Array.from({ length: WANDERERS_CAP + 8 }, (_, i) => ({
+      x: 20 + i * 3,
+      y: 60,
+      tier: WANDERER_MIN_TIER,
+    }));
+    sim.advance(world, towns, TICK);
+    expect(sim.populationCount()).toBe(WANDERERS_CAP);
+  });
+
+  it('is deterministic at the real modulus: two sims, same feed, identical traffic', () => {
+    const world = islandWorld();
+    // A dense honest town grid — SOME cells roll at SOME epoch; which ones is
+    // exactly what must reproduce.
+    const towns: Array<{ x: number; y: number; tier: number }> = [];
+    for (let x = 8; x < 120; x += 6) {
+      for (let y = 40; y < 80; y += 6) towns.push({ x, y, tier: WANDERER_MIN_TIER });
+    }
+    const a = new Wandering();
+    const b = new Wandering();
+    let sawTraffic = false;
+    for (let s = 0; s < 3 * WANDER_EPOCH_SECONDS; s += 10) {
+      runWander(a, world, towns, 10);
+      runWander(b, world, towns, 10);
+      expect(a.states()).toEqual(b.states());
+      sawTraffic ||= a.populationCount() > 0;
+    }
+    // And the agreement was about something: the honest modulus really rolled
+    // somebody in three epochs of a ~130-town grid (P(silence) ≈ 0.97^390).
+    expect(sawTraffic).toBe(true);
+  });
+
+  it('keeps every wanderer on land for the whole stroll', () => {
+    const world = islandWorld();
+    const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    for (let i = 0; i < Math.round(120 / TICK); i++) {
+      sim.advance(world, [TOWN, NEIGHBOUR], TICK);
+      for (const w of sim.states()) {
+        expect(isWalkableCell(world, w.x, w.y)).toBe(true);
+      }
+    }
+  });
+
+  it('mints ids from the shared allocator — never colliding with pilgrims', () => {
+    const world = islandWorld();
+    const ids = new WalkerIdAllocator();
+    const pilgrims = new Pilgrimage(ids);
+    const wanderers = new Wandering(ids, ROLL_EVERY_EPOCH);
+
+    const MONSTER = { id: 1, x: 64, y: 64 };
+    const HOME = { x: 40, y: 64 };
+    for (let i = 0; i < Math.round((PILGRIMAGE_ONSET_SECONDS + 5) / TICK); i++) {
+      pilgrims.advance(world, [MONSTER], [HOME], TICK);
+      wanderers.advance(world, [TOWN, NEIGHBOUR], TICK);
+    }
+    const all = [...pilgrims.states(), ...wanderers.states()];
+    expect(all.length).toBeGreaterThan(1); // both populations are live
+    expect(new Set(all.map((w) => w.id)).size).toBe(all.length);
   });
 });
 

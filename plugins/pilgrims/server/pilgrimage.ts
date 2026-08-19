@@ -236,6 +236,24 @@ export function pickViewpoint(
 
 export type PilgrimLeg = 'outbound' | 'lingering' | 'homebound';
 
+/**
+ * One id sequence for EVERY walker on the wire, whichever sim spawned it —
+ * the client keys its views and interpolation by bare id, so the pilgrimage
+ * and the wandering populations must never mint the same number. index.ts
+ * creates one allocator and hands it to both sims.
+ */
+export class WalkerIdAllocator {
+  private next = 1;
+
+  allocate(): number {
+    return this.next++;
+  }
+
+  reset(): void {
+    this.next = 1;
+  }
+}
+
 export interface Pilgrim {
   readonly id: number;
   readonly race: SettlerRace;
@@ -253,8 +271,21 @@ export interface Pilgrim {
   stuckSeconds: number;
 }
 
-/** One walking step with water avoidance — wildlife's veto-the-step shape. */
-function step(world: PilgrimWorld, pilgrim: Pilgrim, dt: number): void {
+/** The moving slice of a walker — what stepWalker needs, and nothing more.
+ *  Both the pilgrimage and the wandering sims feed their walkers through it. */
+export interface MovingWalker {
+  x: number;
+  y: number;
+  heading: number;
+  goalX: number;
+  goalY: number;
+}
+
+/** One walking step with water avoidance — wildlife's veto-the-step shape.
+ *  EXPORTED since the wanderers (card 26) landed: one movement rule for every
+ *  little person on the road, so a pilgrim and a wanderer meeting the same
+ *  bay detour identically. */
+export function stepWalker(world: PilgrimWorld, pilgrim: MovingWalker, dt: number): void {
   const toGoalX = pilgrim.goalX - pilgrim.x;
   const toGoalY = pilgrim.goalY - pilgrim.y;
   const desired = Math.atan2(toGoalY, toGoalX);
@@ -295,7 +326,15 @@ function goalDistanceSq(pilgrim: Pilgrim): number {
 export class Pilgrimage {
   private readonly tracker = new SettlednessTracker();
   private readonly pilgrims = new Map<number, Pilgrim>();
-  private nextId = 1;
+  private readonly ids: WalkerIdAllocator;
+  /** True when this sim minted its own allocator — then clear() may reset it.
+   *  A SHARED allocator is never reset here: the other sim's walkers live on. */
+  private readonly ownsIds: boolean;
+
+  constructor(ids?: WalkerIdAllocator) {
+    this.ids = ids ?? new WalkerIdAllocator();
+    this.ownsIds = ids === undefined;
+  }
 
   advance(
     world: PilgrimWorld,
@@ -343,7 +382,7 @@ export class Pilgrimage {
         if (!isWalkableCell(world, cell.x, cell.y)) continue;
         if (this.hasPilgrimFrom(cell.x, cell.y, monster.monsterId)) continue;
 
-        const id = this.nextId++;
+        const id = this.ids.allocate();
         this.pilgrims.set(id, {
           id,
           race: settlementRace(cell.x, cell.y),
@@ -381,7 +420,7 @@ export class Pilgrimage {
       }
 
       const before = goalDistanceSq(pilgrim);
-      step(world, pilgrim, dt);
+      stepWalker(world, pilgrim, dt);
       const after = goalDistanceSq(pilgrim);
 
       // Net progress resets the stuck clock; anything else runs it.
@@ -428,6 +467,7 @@ export class Pilgrimage {
     for (const pilgrim of this.pilgrims.values()) {
       rows.push({
         id: pilgrim.id,
+        kind: 'pilgrim',
         race: pilgrim.race,
         x: pilgrim.x,
         y: pilgrim.y,
@@ -458,6 +498,6 @@ export class Pilgrimage {
   clear(): void {
     this.tracker.clear();
     this.pilgrims.clear();
-    this.nextId = 1;
+    if (this.ownsIds) this.ids.reset();
   }
 }

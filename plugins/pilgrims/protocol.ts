@@ -36,6 +36,37 @@ export const PILGRIMS_ENTITIES_MESSAGE = 'entities';
  */
 export const PILGRIMS_CAP = 24;
 
+/**
+ * The walker kinds this wire carries. 'pilgrim' is the original journey-to-a-
+ * monster walker (card 47); 'wanderer' is ambient town-to-town strolling
+ * (card 26, "Peeps", owner-picked 2026-08-19) — purely cosmetic, no blessing,
+ * no gameplay effect. One wire for both: they share every field, and a second
+ * message type would duplicate the interpolator and the fog plumbing for no
+ * contract gain.
+ */
+export const WALKER_KINDS = ['pilgrim', 'wanderer'] as const;
+
+export type WalkerKind = (typeof WALKER_KINDS)[number];
+
+export function isWalkerKind(value: unknown): value is WalkerKind {
+  return (WALKER_KINDS as readonly string[]).includes(value as string);
+}
+
+/**
+ * Hard ceiling on wanderers abroad at once.
+ *
+ * 16 — deliberately BELOW the pilgrim cap: a pilgrimage is an event the
+ * player caused (a monster settled), so it may crowd; wandering is standing
+ * background and must never read as a swarm. On the wire the combined worst
+ * case (24 + 16 rows, six short fields) is ~2 KB per message, ~80 kbit/s at
+ * the 5 Hz cadence — still around a quarter of wildlife's budget, so both
+ * walker kinds together disappear into the same allowance.
+ */
+export const WANDERERS_CAP = 16;
+
+/** The most walker rows one entities message may carry (both kinds). */
+export const WALKERS_WIRE_CAP = PILGRIMS_CAP + WANDERERS_CAP;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Settler races — OWN COPY of the structures plugin's derivation (its
 // protocol.ts, commit 5756ef2). Copied, not imported: every plugin must build
@@ -89,15 +120,19 @@ export function roundBroadcastPosition(value: number): number {
   return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
 }
 
-/** One pilgrim, as it appears on the wire. */
+/** One walker (pilgrim or wanderer), as it appears on the wire. */
 export interface PilgrimEntityState {
-  /** Stable for the pilgrim's whole journey; the client keys views by it. */
+  /** Stable for the walker's whole journey; the client keys views by it.
+   *  Ids are unique ACROSS kinds (one allocator feeds both sims). */
   readonly id: number;
+  /** What kind of journey this is — decides the model (pilgrims carry a
+   *  staff, wanderers don't) and nothing else. */
+  readonly kind: WalkerKind;
   readonly race: SettlerRace;
   /** Cell-space position (fractional). World X/Z, since CELL_WORLD_SIZE is 1. */
   readonly x: number;
   readonly y: number;
-  /** Radians; the pilgrim walks toward (cos heading, sin heading). */
+  /** Radians; the walker walks toward (cos heading, sin heading). */
   readonly heading: number;
 }
 
@@ -123,14 +158,30 @@ export function parseEntitiesPayload(payload: unknown): PilgrimEntityState[] | n
 
   const parsed: PilgrimEntityState[] = [];
   for (const raw of pilgrims) {
-    if (parsed.length >= PILGRIMS_CAP) break;
+    if (parsed.length >= WALKERS_WIRE_CAP) break;
     if (typeof raw !== 'object' || raw === null) continue;
     const entry = raw as Partial<PilgrimEntityState>;
     if (!isFiniteNumber(entry.id)) continue;
     if (!isSettlerRace(entry.race)) continue;
     if (!isFiniteNumber(entry.x) || !isFiniteNumber(entry.y)) continue;
     if (!isFiniteNumber(entry.heading)) continue;
-    parsed.push({ id: entry.id, race: entry.race, x: entry.x, y: entry.y, heading: entry.heading });
+    // A missing kind is a row from a pre-wanderer server, which only ever
+    // sent pilgrims — additive-field rule, same as the join snapshot's
+    // optional fields: absent means the old meaning, never a guess. An
+    // UNRECOGNIZED kind is a newer server than this client; drop the row
+    // (the render loop must never meet a model it cannot build).
+    let kind: WalkerKind;
+    if (entry.kind === undefined) kind = 'pilgrim';
+    else if (isWalkerKind(entry.kind)) kind = entry.kind;
+    else continue;
+    parsed.push({
+      id: entry.id,
+      kind,
+      race: entry.race,
+      x: entry.x,
+      y: entry.y,
+      heading: entry.heading,
+    });
   }
   return parsed;
 }
