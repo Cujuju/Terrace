@@ -21,7 +21,12 @@ import {
   type TerracePlugin,
   type WorldApi,
 } from './types.ts';
-import { type ChunkUnlockListener, createWorldApi, namespacedMessageType } from './world-api.ts';
+import {
+  type ChunkUnlockListener,
+  type WorldEventListener,
+  createWorldApi,
+  namespacedMessageType,
+} from './world-api.ts';
 
 /**
  * How deep onTerrainChanged → plugin sculpt → onTerrainChanged is allowed to
@@ -32,14 +37,24 @@ import { type ChunkUnlockListener, createWorldApi, namespacedMessageType } from 
  */
 export const MAX_TERRAIN_CHANGE_DEPTH = 4;
 
+/**
+ * How deep onWorldEvent → plugin emitEvent → onWorldEvent may nest — the same
+ * hazard MAX_TERRAIN_CHANGE_DEPTH guards on the terrain side, with the same
+ * bound for the same reason: a two- or three-plugin reaction chain is
+ * legitimate, an unconditional emit-from-handler is an infinite loop that
+ * would take the tick down with it.
+ */
+export const MAX_WORLD_EVENT_DEPTH = 4;
+
 interface PluginEntry {
   readonly loaded: LoadedPlugin;
   readonly api: WorldApi;
 }
 
-export class PluginHost implements TerrainChangeListener, ChunkUnlockListener {
+export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, WorldEventListener {
   private readonly entries: readonly PluginEntry[];
   private terrainChangeDepth = 0;
+  private worldEventDepth = 0;
 
   constructor(world: World, plugins: readonly LoadedPlugin[]) {
     // The WorldApi handed to a plugin routes edits back through this host, so
@@ -211,6 +226,33 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener {
       this.safely(plugin, 'onChunkUnlockedForToken', () =>
         plugin.onChunkUnlockedForToken?.(api, token, cx, cy),
       );
+    }
+  }
+
+  /**
+   * Fan-out for `WorldApi.emitEvent` (2026-08-19): every plugin's
+   * onWorldEvent, in load order, the emitter's own included. `event` arrives
+   * here already namespaced by world-api.ts. Guarded against runaway
+   * emit-from-handler cascades exactly like notifyTerrainChanged.
+   */
+  notifyWorldEvent(event: string, payload: unknown): void {
+    if (this.worldEventDepth >= MAX_WORLD_EVENT_DEPTH) {
+      logError(
+        `world-event cascade exceeded depth ${MAX_WORLD_EVENT_DEPTH} at "${event}"; ` +
+          'a plugin is emitting from onWorldEvent without a stop condition',
+      );
+      return;
+    }
+
+    this.worldEventDepth++;
+    try {
+      for (const { loaded, api } of this.entries) {
+        const { plugin } = loaded;
+        if (!plugin.onWorldEvent) continue;
+        this.safely(plugin, 'onWorldEvent', () => plugin.onWorldEvent?.(api, event, payload));
+      }
+    } finally {
+      this.worldEventDepth--;
     }
   }
 

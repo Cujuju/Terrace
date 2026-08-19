@@ -33,9 +33,20 @@ export interface ChunkUnlockListener {
   notifyChunkUnlockedForToken(token: string, cx: number, cy: number): void;
 }
 
+/**
+ * The third reach-back (2026-08-19, alongside terrain changes and per-token
+ * unlocks): fanning a plugin's `emitEvent` out to every plugin's
+ * `onWorldEvent`. Its own interface for the same reason ChunkUnlockListener
+ * is — each listener contract names exactly one event, so an implementer
+ * cannot half-implement the pair.
+ */
+export interface WorldEventListener {
+  notifyWorldEvent(event: string, payload: unknown): void;
+}
+
 export function createWorldApi(
   world: World,
-  listener: TerrainChangeListener & ChunkUnlockListener,
+  listener: TerrainChangeListener & ChunkUnlockListener & WorldEventListener,
   pluginName: string,
 ): WorldApi {
   return {
@@ -116,6 +127,11 @@ export function createWorldApi(
 
         world.sendRawTo(player.id, wireType, buildPayload(visible));
       }
+    },
+    emitEvent(type: string, payload: unknown): void {
+      // Namespaced exactly like broadcast/sendTo, and for the same reason: the
+      // emitter's name is stamped HERE, so no plugin can forge another's events.
+      listener.notifyWorldEvent(namespacedMessageType(pluginName, type), payload);
     },
   };
 }

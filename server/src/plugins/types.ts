@@ -165,6 +165,29 @@ export interface WorldApi {
       readonly onlyPlayerId?: string;
     },
   ): void;
+
+  /**
+   * THE CROSS-PLUGIN EVENT PRIMITIVE (added 2026-08-19 for the chronicle
+   * plugin — the first plugin whose whole mechanic is REACTING to other
+   * plugins' facts). Fans `onWorldEvent` out to every installed plugin,
+   * synchronously and in load order, with the event name namespaced
+   * `<pluginName>:<type>` exactly like `broadcast` — so an emitter cannot
+   * forge another plugin's events and two plugins cannot collide on a name.
+   *
+   * SERVER-SIDE ONLY: nothing here touches the wire. A consumer that wants
+   * clients to know converts the event into its OWN broadcast, under its own
+   * name and its own fog-of-war policy.
+   *
+   * The contract between emitter and consumer is deliberately loose — the
+   * payload is `unknown`, and a consumer subscribes by the emitter's NAME
+   * (the same by-name coupling the message namespace already establishes),
+   * never by importing the emitter's code: a plugin must still build and
+   * test with every other plugin deleted. Consumers therefore validate
+   * payloads structurally, exactly as they do untrusted client messages —
+   * not because an emitter is untrusted, but because the emitter may be a
+   * different version or absent entirely.
+   */
+  emitEvent(type: string, payload: unknown): void;
 }
 
 /** Context handed to onIntent alongside the intent itself. */
@@ -353,6 +376,18 @@ export interface TerracePlugin {
    * moving entities that do not need this, simply does not implement it.
    */
   onChunkUnlockedForToken?(world: WorldApi, token: string, cx: number, cy: number): void;
+
+  /**
+   * Fired for every `WorldApi.emitEvent` from any plugin, THIS PLUGIN'S OWN
+   * INCLUDED (an emitter that also consumes must filter itself out if it
+   * cares). `event` is the full namespaced name (`structures:changes`) and
+   * `payload` is whatever the emitter passed, to be validated structurally —
+   * see emitEvent's doc comment for the by-name coupling rule this half of
+   * the contract lives under. Runs synchronously inside the emitting call,
+   * guarded against runaway emit-from-handler cascades exactly like
+   * onTerrainChanged (host.ts's MAX_WORLD_EVENT_DEPTH).
+   */
+  onWorldEvent?(world: WorldApi, event: string, payload: unknown): void;
 
   /** Namespaced client → server handlers, keyed by the un-namespaced type. */
   readonly messages?: Readonly<Record<string, PluginMessageHandler>>;
