@@ -1549,7 +1549,14 @@ function dancerSegment(x1: number, y1: number, x2: number, y2: number, z: number
 /** One circle of the figure, as a scale on the shared head-sized sphere geometry. */
 function dancerCircle(x: number, y: number, z: number, radius: number): Matrix4 {
   const scale = radius / DURANDS_DANCER_HEAD_RADIUS;
-  return new Matrix4().compose(new Vector3(x, y, z), new Quaternion(), new Vector3(scale, scale, scale));
+  // Depth is NOT the drawn radius. A neon "circle" is a flat loop of tube, and
+  // a full sphere at head/bust radius reaches deeper than the figure's
+  // tube-radius stand-off from the board — the head and bust spheres poked out
+  // of the board's BACK face (seen in-world as pink dots on the sign's rear).
+  // Squashing every circle to the tube's own half-depth puts its back face
+  // exactly on the board face, whatever its drawn radius.
+  const depthScale = DURANDS_DANCER_TUBE_RADIUS / DURANDS_DANCER_HEAD_RADIUS;
+  return new Matrix4().compose(new Vector3(x, y, z), new Quaternion(), new Vector3(scale, scale, depthScale));
 }
 
 /**
@@ -1763,21 +1770,62 @@ function buildDurandsParts(): DurandsBuilding {
     localMatrices: [at(postX, postHeight / 2, postZ), at(-postX, postHeight / 2, postZ)],
   };
 
+  // Flat roof cap over the second storey — the missing plane that made the
+  // building read as an open-topped box from behind and above. A frontier
+  // false-front building has a flat (very shallow) roof hidden behind the
+  // parapet; a thin dark slab inset from the jetty's edges reads as exactly
+  // that, and its inset keeps it clear of the false front's own back face.
+  const roofCapThickness = 0.025;
+  const roofCapInset = 0.03;
+  const roofCap: StructurePart = {
+    geometry: new BoxGeometry(
+      jettyHalfWidth * 2 - roofCapInset,
+      roofCapThickness,
+      secondDepth - roofCapInset,
+    ),
+    material: lambert(0x3f2418),
+    localMatrices: [at(0, secondFloorTopY + roofCapThickness / 2, secondCenterZ - roofCapInset / 2)],
+  };
+
   // Lit windows: two upstairs on the jetty, two flanking the doors under the
   // porch. The ground-floor pair is new in the composition pass — under a deep
   // porch roof the whole ground floor fell into shadow, so the storey the
   // saloon doors are in read as an empty void beneath the building.
+  //
+  // REAR AND SIDE OPENINGS (missing-sections pass): the same window part now
+  // carries two rear upstairs windows and one lit window on each jetty side —
+  // the building is orbited in-game, and every face it shows blank reads as
+  // an unfinished model, not as a modest back wall. Side windows are the same
+  // thin box yawed a quarter turn so its glass faces ±X.
   const windowZ = secondFrontZ + 0.01;
   const groundWindowZ = bodyFrontZ + 0.01;
+  const upstairsWindowY = groundFloorHeight + secondFloorHeight * 0.55;
+  const rearWindowZ = backZ - 0.01;
+  const sideWindowQuarterTurn = new Quaternion().setFromAxisAngle(Y_AXIS, Math.PI / 2);
+  const sideWindowAt = (x: number, y: number, z: number): Matrix4 =>
+    new Matrix4().compose(new Vector3(x, y, z), sideWindowQuarterTurn, new Vector3(1, 1, 1));
   const windows: StructurePart = {
     geometry: new BoxGeometry(0.11, 0.13, 0.02),
     material: windowMaterial(),
     localMatrices: [
-      at(0.24, groundFloorHeight + secondFloorHeight * 0.55, windowZ),
-      at(-0.24, groundFloorHeight + secondFloorHeight * 0.55, windowZ),
+      at(0.24, upstairsWindowY, windowZ),
+      at(-0.24, upstairsWindowY, windowZ),
       at(0.28, groundFloorHeight * 0.6, groundWindowZ),
       at(-0.28, groundFloorHeight * 0.6, groundWindowZ),
+      at(0.22, upstairsWindowY, rearWindowZ),
+      at(-0.22, upstairsWindowY, rearWindowZ),
+      sideWindowAt(jettyHalfWidth + 0.01, upstairsWindowY, secondCenterZ),
+      sideWindowAt(-(jettyHalfWidth + 0.01), upstairsWindowY, secondCenterZ),
     ],
+  };
+
+  // Back door: plain, unlit, and off-centre — the service entrance a saloon
+  // actually has, and one more thing that stops the rear face reading blank.
+  const backDoorHeight = 0.3;
+  const backDoor: StructurePart = {
+    geometry: new BoxGeometry(0.13, backDoorHeight, 0.02),
+    material: lambert(0x3a1410),
+    localMatrices: [at(0.15, backDoorHeight / 2, rearWindowZ)],
   };
 
   // Saloon doors: a pair of half-height café doors, hung clear of the floor —
@@ -1968,9 +2016,11 @@ function buildDurandsParts(): DurandsBuilding {
       groundFloor,
       secondFloor,
       falseFront,
+      roofCap,
       porchRoof,
       porchPosts,
       windows,
+      backDoor,
       saloonDoors,
       sign,
       marqueeBulbsPhaseA,
