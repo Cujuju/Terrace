@@ -435,30 +435,77 @@ terrace/
   Anti-cheat is unaffected: tool and profile choose the SHAPE of an edit, never
   its power. The amount stays server-side.
 
-- **A fresh world starts as an ocean with a coast, not a flat shoreline** (owner
-  request, settled 2026-08-14, from the report "we need more wildlife, I don't
-  see any deep sea creatures"). `World.createFresh`
-  (`server/src/world/world.ts`) generates three concentric terraces by Chebyshev
-  (square-ring) distance from the starter region's centre:
+- **A fresh world starts as an ocean with a coast, not a flat shoreline**
+  (owner request, settled 2026-08-14, from the report "we need more wildlife,
+  I don't see any deep sea creatures"). **Superseded in shape, not in intent,
+  by two later passes on the same feature — 2026-08-18's seeded randomization
+  and 2026-08-19's starter-square shrink, both folded into this entry rather
+  than left as a stale description of code that no longer exists; the
+  starter-square shrink's own wildlife consequences are broken out as their
+  own entry immediately below.** `World.createFresh`
+  (`server/src/world/world.ts`) still generates three concentric terraces by
+  Chebyshev (square-ring) distance from the starter region's centre, but as of
+  2026-08-18 that fixed profile is now scoped to the starter unlock square
+  only:
 
   | region | depth | constant | height |
   |---|---|---|---|
-  | shelf — a centred square of `spanChunks / FRESH_SHELF_SPAN_DIVISOR` (= 2) chunks | 1 band | `FRESH_SHELF_BANDS_BELOW_SEA` | −64 |
+  | shelf — a centred square of `spanChunks / FRESH_SHELF_SPAN_DIVISOR` (= 4, floored, never below one chunk) chunks | 1 band | `FRESH_SHELF_BANDS_BELOW_SEA` | −64 |
   | slope ring — `FRESH_SLOPE_WIDTH_CELLS` (= `CHUNK_SIZE`, 16) cells wide | 2 bands | `FRESH_SLOPE_BANDS_BELOW_SEA` | −128 |
-  | open sea — everything beyond | 3 bands | `FRESH_SEABED_BANDS_BELOW_SEA` | −192 |
+  | open sea beyond the slope ring, still inside the starter square | 3 bands or deeper | `FRESH_SEABED_BANDS_BELOW_SEA`, a floor | ≤ −192, seed-varied |
+  | open sea outside the starter square entirely | unconstrained | seeded value noise | seed-varied, any band |
 
-  Deterministic and integer-only: no RNG anywhere in genesis, so a size always
-  produces the same world and tests assert it cell by cell. The shelf is placed
-  from `initialUnlockFootprint()` — the one definition of the starter square,
-  which `applyInitialUnlock` also reads — rather than from a second copy of its
-  centring rule.
+  The shelf is placed from `initialUnlockFootprint()` — the one definition of
+  the starter square, which `applyInitialUnlock` also reads — rather than from
+  a second copy of its centring rule, so the 2026-08-19 span change below
+  moves the shelf with it automatically.
+
+  **No longer deterministic end to end — by design, and precisely scoped.**
+  The original fix was integer-only with no RNG anywhere; the 2026-08-18 pass
+  ("Doesn't look very creative; we need something more creative and maybe less
+  deterministic… every world should have at least some fairly deep water. It's
+  OK to create flat worlds, but the terrain should be randomized" — owner) adds
+  exactly ONE random draw per world: a 32-bit seed (`drawGenesisSeed`, backed
+  by `Math.random`), drawn once at `World.createFresh` and never re-derived —
+  the same "this is the one place it's allowed" boundary `generateWorldName`
+  already uses for the world's name. Every height in the map is then a PURE
+  function of `(size, seed)` via `mulberry32Rng`, a small public-domain 32-bit
+  PRNG — same seed, same world, byte for byte, which is what keeps client-side
+  prediction and every test in `server/test/fresh-world.test.ts` reproducible
+  by simply passing a seed explicitly. The shelf and slope ring stay BYTE-
+  IDENTICAL across every seed at a given size — no noise reaches them at all —
+  because the wildlife plugin's day-one census (`plugins/wildlife/test/
+  wildlife.test.ts`) counts that exact region and asserts exact cell counts;
+  changing plugin behaviour is out of this change's scope. Everything OUTSIDE
+  the starter square is a seeded value-noise field (`buildOuterTerrainLattice`
+  + bilinear `outerTerrainBandAt`, one lattice point per 4 chunks, integer
+  arithmetic throughout) that can put a continent, an island chain, a basin,
+  rolling hills, or — on a low `roughness` draw — something close to a flat
+  sea wherever the noise lands; `roughness` and a per-world `baseline` are
+  drawn together so a "calm" (low-roughness) world is flat at a height the
+  SEED chose, not silently collapsed to the same sea-level plate every calm
+  seed would otherwise share. The open-sea CELLS still inside the starter
+  square (beyond the slope ring) also read this noise field, but are clamped
+  to never come out SHALLOWER than `FRESH_SEABED_HEIGHT` — a one-way ratchet,
+  deeper-only — so the wildlife census's deep-water classification there can
+  never move even though the exact depth now varies by seed. Only the deep
+  water GUARANTEE is enforced outside the seed's control: after generation,
+  `World.createFresh` re-scans for the deepest cell and, on the documented
+  valid size range, the starter-square clamp already proves one exists; on a
+  world small enough that the shelf and its fixed-width slope ring cover every
+  cell (below the shipped 128² minimum), a `carveFallbackAbyss` fallback
+  forces the single farthest cell down to `FRESH_SEABED_HEIGHT` directly, and
+  a boot-time throw backstops the (expected-unreachable) case where even that
+  fails — the same "fail loudly at boot rather than serve a broken world"
+  idiom `applyInitialUnlock` already uses.
 
   **Root cause this fixes.** `createHeightmap` allocates zeros and `SEA_LEVEL`
   is 0, so every cell of a fresh world sat *exactly* at the waterline: the sea
   had no depth anywhere. Nothing that classifies water by depth could ever fire
   — the wildlife plugin's deep-water habitat begins three bands down, so whales
   and deep-sea creatures had literally nowhere to exist unless a player hand-dug
-  a trench. The ocean was a surface, not a volume.
+  a trench. The ocean was a surface, not a volume. Still the diagnosis today —
+  the 2026-08-18 pass changed HOW the fix varies, not why it exists.
 
   **Why these depths.** Three bands is the shallowest depth satisfying
   `FRESH_SEABED_BANDS_BELOW_SEA >= DEEP_WATER_BANDS_BELOW_SEA` — the open sea
@@ -470,18 +517,25 @@ terrace/
   both relations (open sea deep, shelf and ring shallow) are pinned by tests on
   the plugin side (`plugins/wildlife/test/wildlife.test.ts`).
 
-  **Why the shelf is a quarter of the starter square.** The habitat census only
-  counts *unlocked* cells, so the starter square's 16 384 cells (identical on
-  every world size) are the entire day-one habitat budget, and
-  `FRESH_SHELF_SPAN_DIVISOR` is what splits it. At 4 the split is 4 096 shallow
-  / 12 288 deep — the coarsest setting that still buys 2 whales at 5 000 deep
-  cells each. A larger shelf eats the open sea this change exists to create; a
-  smaller one leaves no coast for fish.
+  **Why the shelf is a quarter of the starter square, and why that quarter now
+  buys fewer whales.** The habitat census only counts *unlocked* cells, so the
+  starter square is the entire day-one habitat budget, and
+  `FRESH_SHELF_SPAN_DIVISOR` (4, unchanged since 2026-08-14) is what splits it
+  between coastal and open-sea species. The split's absolute numbers moved when
+  the starter square itself shrank (2026-08-19, see the entry below): at the
+  ORIGINAL 8-chunk / 16 384-cell square the split was 4 096 shallow / 12 288
+  deep, comfortably buying 2 whales at 5 000 deep cells each; at the CURRENT
+  5-chunk / 6 400-cell square it is 2 304 shallow / 4 096 deep, which no longer
+  reaches a whale's 5 000-cell need at all. The divisor itself was never
+  retuned for this — 4 is still "coarse enough that a larger shelf would eat
+  the open sea this whole change exists to create, and a smaller one would
+  leave no coast for fish" — the starter square just got smaller out from under
+  it, an accepted consequence named in full in the entry below.
 
   **Residual, named.** A one-band step is `BAND_HEIGHT` (64) against a gradient
-  limit of `MAX_STEP` (32), so the two ring boundaries do not satisfy the
-  relaxation invariant at genesis. Nothing enforces it at rest — the stamp tool
-  violates it deliberately on every spire — but a `smooth` sculpt whose
+  limit of `MAX_STEP` (32), so the shelf/slope/noise boundaries do not satisfy
+  the relaxation invariant at genesis. Nothing enforces it at rest — the stamp
+  tool violates it deliberately on every spire — but a `smooth` sculpt whose
   relaxation reaches a boundary will slump it once, with a larger-than-usual
   diff bounded by `SMOOTH_PASS_LIMIT`. Accepted: that is the smooth tool doing
   its job on a terrace edge, and a ramped coast would trade the terraced house
@@ -494,25 +548,84 @@ terrace/
   A fully clamped smooth stroke also now relaxes its footprint instead of
   no-opping.)
 
-  **Where it lives, and why not in `shared/`.** The server fills the floor;
-  `createHeightmap` stays zero-filled. `shared/` is the determinism contract
-  that client and server both run, and world *genesis* is not part of it — the
-  client never generates terrain, it receives chunks. This also keeps "what a
-  new world looks like" a server policy a future world-gen plugin can replace.
+  **Where it lives, and why not in `shared/`.** The server fills the floor —
+  and, since 2026-08-18, draws the one random seed and builds the noise field
+  — while `createHeightmap` stays zero-filled. `shared/` is the determinism
+  contract that client and server both run, and world *genesis*, seed draw
+  included, is not part of it: the client never generates terrain, it receives
+  chunks, so a non-deterministic server-only step here breaks nothing on that
+  contract. This also keeps "what a new world looks like" a server policy a
+  future world-gen plugin can replace.
 
   **Consequences, accepted:**
   - Raising land costs band-steps it did not before, and how many now varies by
-    place: two sculpts to break the surface on the starter shelf, four out in
-    the open sea. Intended — the ocean is a volume with a bottom.
-  - A fresh world has **no land**. Land-habitat species (the wildlife plugin's
-    grazers) have nowhere to be until a player raises an island; water species,
-    coastal and open-sea alike, have somewhere from the first tick.
-  - Snapshot-restored worlds are untouched: genesis applies to the no-snapshot
-    path only, so existing self-hosted worlds do not silently gain a coastline.
+    place AND by seed: two sculpts to break the surface on the starter shelf
+    (fixed, every world), more out in the open sea where seeded noise can push
+    the floor deeper than the old fixed abyss. Intended — the ocean is a volume
+    with a bottom, and now a volume with a variable one.
+  - A fresh world has **no land inside the starter square** — the wildlife
+    plugin's day-one census depends on that (see above) — but land is possible,
+    and expected, beyond it: the seeded noise field can and does place islands,
+    coastlines and hills there, decided at genesis and not before. Land-habitat
+    species (the wildlife plugin's grazers) still have nowhere to be on day one
+    regardless; water species, coastal and open-sea alike, have somewhere from
+    the first tick.
+  - Every generated world still contains water at least as deep as
+    `FRESH_SEABED_HEIGHT`, guaranteed by construction (the starter-square clamp
+    can only push that region deeper, never shallower) and re-checked, loudly,
+    right after generation.
+  - Snapshot-restored worlds are untouched: genesis (fixed profile AND seeded
+    noise alike) applies to the no-snapshot path only, so existing self-hosted
+    worlds do not silently gain a coastline or a reroll on upgrade.
   - The client boots its local heightmap at band 0, so for the single frame
-    before the first chunk arrives it draws a flat shoreline where the server has
-    a coast and an abyss. Cosmetic, pre-connect only, and **not fixed here** — it
-    belongs in the client's boot state.
+    before the first chunk arrives it draws a flat shoreline where the server
+    has a coast and (now) seed-varied terrain beyond it. Cosmetic, pre-connect
+    only, and **not fixed here** — it belongs in the client's boot state.
+
+- **The starter unlock square shrinks from 8 chunks to 5** (owner decision
+  2026-08-19, `server/src/world/initial-unlock.ts`). `INITIAL_UNLOCK_CHUNK_SPAN`
+  moves from 8 to **5** — 80×80 = 6 400 cells, down from 128×128 = 16 384,
+  ~39% of the old footprint. Distinct from, and not part of, the per-player
+  creep/territory-mask redesign filed under issue #17 below: this is a change
+  to the SIZE of the region genesis and the fallback unlock policy agree on,
+  not to how or when territory unlocks. Deliberately small — the static
+  genesis profile inside the starter square stops mattering as much once most
+  of the world is earned by sculpting (per-player creep, issue #17), so a
+  smaller guaranteed-safe starting point trades less day-one certainty for
+  more of the map being "the seeded, varied kind" sooner.
+
+  **Why 5 and not 4.** Five is the smallest span whose genesis geometry stays
+  clean: the shelf (`spanChunks / FRESH_SHELF_SPAN_DIVISOR`, floored) comes out
+  to exactly 1 chunk, the remaining 4 chunks split symmetrically around it, and
+  the 16-cell slope ring sits strictly inside the square with a uniform
+  one-chunk-deep frame beyond it on every side. Span 4 was rejected: it leaves
+  an off-centre shelf and a slope ring touching the square's own edge, which
+  both `freshGenesisProfile`'s concentricity assumption and the wildlife
+  census's exact-cell-count assertions depend on not happening.
+
+  **Wildlife day-one consequences, named rather than discovered later**
+  (`plugins/wildlife/server/species.ts`'s own doc comment states the same
+  numbers against the code):
+
+  | species | old day-one (8-chunk square, 16 384 cells: 4 096 shallow / 12 288 deep) | new day-one (5-chunk square, 6 400 cells: 2 304 shallow / 4 096 deep) |
+  |---|---|---|
+  | fish | 10 (two schools of 5) | 5 (one school) |
+  | deep-sea | 8 | 2 |
+  | whale | 2 | **0** — a whale needs 5 000 deep cells; only 4 096 exist |
+  | grazer | 0 | 0 (unchanged — a fresh world still has no land) |
+
+  Whales no longer fit on day one at all — the 4 096 deep cells inside the
+  new, smaller starter square fall short of a whale's 5 000-cell habitat need
+  regardless of how the shelf/deep split is tuned (see the "why the shelf is a
+  quarter" paragraph above). This supersedes the 2026-08-14 wildlife-density
+  tuning goal of "2–3 whales immediately"; whales now arrive once a player's
+  own per-player creep (issue #17) grows their personal unlocked area past the
+  threshold, which was already the intended long-run shape for every species
+  as territory expands — day one just no longer includes them. Fish and
+  deep-sea counts both roughly halve for the same reason (smaller day-one
+  census, same per-individual densities) without ceasing to exist outright.
+  `FRESH_SHELF_SPAN_DIVISOR` itself is unchanged (4) — see the entry above for
+  why moving it was rejected as the fix.
 
 - **Wildlife is denser, and its population is a living process rather than an
   inventory** (owner request, settled 2026-08-14, same report). Two parts:
