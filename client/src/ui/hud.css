@@ -54,24 +54,40 @@ body {
   line-height: 1.4;
 }
 
-/* The three corners. Bottom anchors clear the mana gauge's bottom-centre
-   stack by construction: the gauge is centred and these hug the edges. */
+/* The top-left corner keeps its absolute anchor; the bottom edge is a STRIP
+   (owner refinement 2026-08-19): one grid row holding brush panel, gauge and
+   gear. `minmax(0, 1fr)` sides are the load-bearing part — they let the side
+   cells SHRINK below their content's natural width on a phone (plain 1fr
+   would grow to fit and silently overflow the viewport), so the middle cell's
+   gauge stays visible at every width, dead-centred whenever the sides fit. */
 .hud-anchor-top-left {
   position: absolute;
   top: 16px;
   left: 16px;
 }
 
-.hud-anchor-bottom-left {
+.hud-bottom-strip {
   position: absolute;
-  bottom: 16px;
-  left: 16px;
+  left: 12px;
+  right: 12px;
+  /* Safe-area inset keeps the strip above an iPhone's home indicator. */
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+  pointer-events: none; /* sections take their own events, canvas stays free */
+}
+
+.hud-anchor-bottom-left {
+  justify-self: start;
+  pointer-events: auto;
+  /* The panel chrome's 210px min-width would defeat the shrinkable cell. */
+  min-width: 0;
 }
 
 .hud-anchor-bottom-right {
-  position: absolute;
-  bottom: 16px;
-  right: 16px;
+  justify-self: end;
 }
 
 /* The collapsed face of the tools panel: same chrome as .hud-panel, shrunk to
@@ -244,10 +260,19 @@ body {
   pointer-events: auto;
 }
 
+/* Icon-only (owner, 2026-08-19): the gear glyph is the whole face, sized as a
+   square so it reads as a button, with aria-label/title carrying the words. */
 .hud-settings-button {
   min-width: 0;
-  padding: 8px 12px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
+  font-size: 19px;
+  line-height: 1;
   color: var(--hud-muted);
   cursor: pointer;
 }
@@ -260,6 +285,9 @@ body {
 
 .hud-settings-popup {
   min-width: 230px;
+  /* A short landscape phone must still reach every binding row. */
+  max-height: min(72vh, 420px);
+  overflow-y: auto;
 }
 
 .controls-row {
@@ -341,13 +369,9 @@ body {
   pointer-events: auto;
 }
 
-/* Bottom-centre plugin stack: the top-centre stack mirrored to the bottom
-   edge, same clearance, growing upward from it. */
+/* Bottom-centre plugin stack: the strip's middle cell (no longer its own
+   absolute anchor — the grid centres it), still a column growing upward. */
 .hud-bottom-center {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   flex-direction: column-reverse;
   align-items: center;
@@ -357,6 +381,74 @@ body {
 
 .hud-bottom-center > * {
   pointer-events: auto;
+}
+
+/* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, gauge and
+   gear all usable at once on an iPhone). Below 640px the brush rows drop
+   their text labels — every control keeps its title and aria-label — and the
+   chrome tightens, which brings the whole strip inside a 390px viewport. ── */
+@media (max-width: 640px) {
+  .hud-anchor-bottom-left .hud-label {
+    display: none;
+  }
+
+  .hud-anchor-bottom-left {
+    padding: 8px;
+  }
+
+  /* One row cannot hold panel + gauge + gear at phone width (the gauge alone
+     is ~230px), so the strip FLOWS onto two rows: brush above, instruments
+     and the gear below — everything stays visible and under the thumb. */
+  .hud-bottom-strip {
+    left: 8px;
+    right: 8px;
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'brush brush'
+      'center gear';
+  }
+
+  .hud-anchor-bottom-left {
+    grid-area: brush;
+  }
+
+  .hud-bottom-center {
+    grid-area: center;
+    justify-self: center;
+  }
+
+  .hud-anchor-bottom-right {
+    grid-area: gear;
+  }
+
+  .hud-settings-popup {
+    /* Right-anchored under a narrow viewport: never wider than the screen. */
+    max-width: calc(100vw - 16px);
+  }
+}
+
+/* Coarse pointers (touch) get finger-sized targets whatever the width. */
+@media (pointer: coarse) {
+  .brush-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brush-button-wide {
+    width: auto;
+    padding: 0 10px;
+  }
+
+  .mode-value {
+    padding: 6px 12px;
+  }
+
+  .hud-settings-button {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
 }
 
 /* World header: the name of the world and its difficulty rating, above

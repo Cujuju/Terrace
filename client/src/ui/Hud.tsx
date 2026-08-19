@@ -7,10 +7,19 @@
 //                    as the old all-in-one panel was.
 //   * BOTTOM LEFT   the brush panel: radius, tool, edge, mode — the things a
 //                    sculpting hand actually reaches for, always visible.
-//   * BOTTOM RIGHT  a settings button that pops up the control-bindings
+//   * BOTTOM RIGHT  a settings gear that pops up the control-bindings
 //                    editor (ControlsPanel) — hidden until asked for.
-// Top/bottom CENTRE stay what they were: world header + top-center plugin
-// stack, and the bottom-center instruments (mana gauge).
+// Top CENTRE stays what it was: world header + top-center plugin stack.
+//
+// THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): brush panel,
+// bottom-center instruments (mana gauge) and the gear live in one grid row —
+// `minmax(0,1fr) auto minmax(0,1fr)` — so a desktop keeps the gauge
+// dead-centre while a phone shrinks the side cells and everything flows along
+// the bottom instead of the three absolutely-anchored pieces colliding. On
+// narrow screens the brush rows drop their text labels (hud.css) — every
+// button keeps its title and aria-label — and coarse pointers get larger
+// touch targets. All three sections must stay visible AND operable at iPhone
+// portrait width; that is the requirement this strip exists to meet.
 //
 // SOLID REACTIVITY: every reactive value below is read by CALLING its accessor
 // at the point of use, inside JSX or inside an event handler. A component body
@@ -195,12 +204,140 @@ export function Hud(): JSX.Element {
         </For>
       </div>
 
-      {/* Bottom centre: persistent instruments (the mana gauge), kept along
-          the bottom edge so the world's centre stays clear. */}
-      <div class="hud-bottom-center">
-        <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
-          {(panel) => <Dynamic component={panel.component} />}
-        </For>
+      {/* THE BOTTOM STRIP (owner refinement, 2026-08-19): brush panel, the
+          bottom-centre instruments and the settings gear share ONE grid row —
+          `minmax(0,1fr) auto minmax(0,1fr)` — so the gauge stays dead-centre
+          on a desktop while a phone-width screen shrinks the side cells and
+          the three sections flow along the bottom edge instead of colliding.
+          The strip itself never takes pointer events; each section does. */}
+      <div class="hud-bottom-strip">
+        {/* BOTTOM LEFT — the BRUSH panel: what a playing hand reaches for.
+            Always visible; collapsing the info panel never takes the tools
+            away. On narrow screens its row labels hide (every button keeps
+            its title and aria-label) so the whole panel fits beside the
+            gauge and the gear. */}
+        <div class="hud-panel hud-anchor-bottom-left">
+          <div class="hud-row">
+            <span class="hud-label">Brush</span>
+            <div class="brush-picker">
+              <For each={BRUSH_RADII}>
+                {(radius) => (
+                  <button
+                    type="button"
+                    class="brush-button"
+                    classList={{ active: brushRadius() === radius }}
+                    aria-label={`Brush radius ${radius}`}
+                    title={`Brush radius ${radius} — a wider brush moves more land and costs more mana.`}
+                    onClick={() => setBrushRadius(radius)}
+                  >
+                    {radius}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          {/* Brush SHAPE: which tool, and how its edge falls off. Orthogonal
+              by design — hard+smooth stamps a plateau and lets it slump.
+              Every reactive value is read by calling its accessor inline, per
+              the file header; the labels are static maps, so they need no
+              accessor. */}
+          <div class="hud-row">
+            <span class="hud-label">Tool</span>
+            <div class="brush-picker">
+              <For each={BRUSH_TOOLS}>
+                {(tool) => (
+                  <button
+                    type="button"
+                    class="brush-button brush-button-wide"
+                    classList={{ active: brushTool() === tool }}
+                    aria-label={`${TOOL_LABEL[tool]} tool`}
+                    title={TOOL_TITLE[tool]}
+                    onClick={() => setBrushTool(tool)}
+                  >
+                    {TOOL_LABEL[tool]}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="hud-row">
+            <span class="hud-label">Edge</span>
+            <div class="brush-picker">
+              <For each={BRUSH_PROFILES}>
+                {(profile) => (
+                  <button
+                    type="button"
+                    class="brush-button brush-button-wide"
+                    classList={{ active: brushProfile() === profile }}
+                    aria-label={`${PROFILE_LABEL[profile]} edge`}
+                    title={PROFILE_TITLE[profile]}
+                    onClick={() => setBrushProfile(profile)}
+                  >
+                    {PROFILE_LABEL[profile]}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <div class="hud-row">
+            <span class="hud-label">Mode</span>
+            {/* A button, not a label: on touch there are no modifier keys, so
+                tapping this is how one-finger sculpting switches direction. */}
+            <button
+              type="button"
+              class="mode-value"
+              classList={{ lower: sculptMode() === 'lower' }}
+              aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
+              title={modeTitle(sculptMode(), controlBindings())}
+              onClick={() =>
+                setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
+              }
+            >
+              {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
+            </button>
+          </div>
+        </div>
+
+        {/* Bottom centre: persistent instruments (the mana gauge), the
+            strip's middle cell so the world's centre stays clear above it. */}
+        <div class="hud-bottom-center">
+          <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
+            {(panel) => <Dynamic component={panel.component} />}
+          </For>
+        </div>
+
+        {/* BOTTOM RIGHT — the SETTINGS section: the gear, and the
+            control-bindings editor as a popup above it when asked for. The
+            popup and the button share one container so the click-outside
+            dismissal (top of the component) can treat them as one region.
+            Icon-only (owner, 2026-08-19); the aria-label and title carry the
+            words the face no longer does. */}
+        <div class="hud-settings hud-anchor-bottom-right" ref={settingsRoot}>
+          <Show when={showControls()}>
+            <div
+              class="hud-panel hud-settings-popup"
+              role="dialog"
+              aria-label="Control settings"
+            >
+              <ControlsPanel />
+            </div>
+          </Show>
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            classList={{ open: showControls() }}
+            aria-expanded={showControls()}
+            aria-haspopup="dialog"
+            aria-label="Control settings"
+            title="Show or hide the mouse, touch and scroll settings."
+            onClick={() => setShowControls(!showControls())}
+          >
+            ⚙
+          </button>
+        </div>
       </div>
 
       {/* TOP LEFT — the INFO panel: status, plugin 'panel' panels, and the
@@ -273,118 +410,6 @@ export function Hud(): JSX.Element {
         </div>
       </Show>
 
-      {/* BOTTOM LEFT — the BRUSH panel: what a playing hand reaches for.
-          Always visible; collapsing the info panel never takes the tools away. */}
-      <div class="hud-panel hud-anchor-bottom-left">
-        <div class="hud-row">
-          <span class="hud-label">Brush</span>
-          <div class="brush-picker">
-            <For each={BRUSH_RADII}>
-              {(radius) => (
-                <button
-                  type="button"
-                  class="brush-button"
-                  classList={{ active: brushRadius() === radius }}
-                  aria-label={`Brush radius ${radius}`}
-                  title={`Brush radius ${radius} — a wider brush moves more land and costs more mana.`}
-                  onClick={() => setBrushRadius(radius)}
-                >
-                  {radius}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-
-        {/* Brush SHAPE: which tool, and how its edge falls off. Orthogonal by
-            design — hard+smooth stamps a plateau and lets it slump. Every
-            reactive value is read by calling its accessor inline, per the file
-            header; the labels are static maps, so they need no accessor. */}
-        <div class="hud-row">
-          <span class="hud-label">Tool</span>
-          <div class="brush-picker">
-            <For each={BRUSH_TOOLS}>
-              {(tool) => (
-                <button
-                  type="button"
-                  class="brush-button brush-button-wide"
-                  classList={{ active: brushTool() === tool }}
-                  aria-label={`${TOOL_LABEL[tool]} tool`}
-                  title={TOOL_TITLE[tool]}
-                  onClick={() => setBrushTool(tool)}
-                >
-                  {TOOL_LABEL[tool]}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-
-        <div class="hud-row">
-          <span class="hud-label">Edge</span>
-          <div class="brush-picker">
-            <For each={BRUSH_PROFILES}>
-              {(profile) => (
-                <button
-                  type="button"
-                  class="brush-button brush-button-wide"
-                  classList={{ active: brushProfile() === profile }}
-                  aria-label={`${PROFILE_LABEL[profile]} edge`}
-                  title={PROFILE_TITLE[profile]}
-                  onClick={() => setBrushProfile(profile)}
-                >
-                  {PROFILE_LABEL[profile]}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-
-        <div class="hud-row">
-          <span class="hud-label">Mode</span>
-          {/* A button, not a label: on touch there are no modifier keys, so
-              tapping this is how one-finger sculpting switches direction. */}
-          <button
-            type="button"
-            class="mode-value"
-            classList={{ lower: sculptMode() === 'lower' }}
-            aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
-            title={modeTitle(sculptMode(), controlBindings())}
-            onClick={() =>
-              setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
-            }
-          >
-            {sculptMode() === 'lower' ? 'Lower' : 'Raise'}
-          </button>
-        </div>
-      </div>
-
-      {/* BOTTOM RIGHT — the SETTINGS section: a small button, and the
-          control-bindings editor as a popup above it when asked for. The
-          popup and the button share one container so the click-outside
-          dismissal (top of the component) can treat them as one region. */}
-      <div class="hud-settings hud-anchor-bottom-right" ref={settingsRoot}>
-        <Show when={showControls()}>
-          <div
-            class="hud-panel hud-settings-popup"
-            role="dialog"
-            aria-label="Control settings"
-          >
-            <ControlsPanel />
-          </div>
-        </Show>
-        <button
-          type="button"
-          class="hud-panel hud-settings-button"
-          classList={{ open: showControls() }}
-          aria-expanded={showControls()}
-          aria-haspopup="dialog"
-          title="Show or hide the mouse, touch and scroll settings."
-          onClick={() => setShowControls(!showControls())}
-        >
-          ⚙ Settings
-        </button>
-      </div>
     </div>
   );
 }
