@@ -85,7 +85,18 @@ function Reader(): JSX.Element {
             'border-bottom': '1px solid var(--hud-border)',
           }}
         >
-          <span class="hud-label" style={{ 'font-size': '0.95rem' }}>The Chronicle</span>
+          {/* A plain styled span, NOT .hud-label: that class carries the HUD
+              row's fixed label width, which wraps or overlaps a modal title. */}
+          <span
+            style={{
+              'font-weight': '650',
+              'font-size': '0.95rem',
+              'white-space': 'nowrap',
+              color: 'var(--hud-text)',
+            }}
+          >
+            The Chronicle
+          </span>
           <span style={{ color: 'var(--hud-muted)', 'font-size': '0.8rem', flex: '1 1 auto' }}>
             as the world remembers it
           </span>
