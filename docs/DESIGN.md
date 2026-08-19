@@ -1586,6 +1586,63 @@ NEVER read); the canvas painting and the Solid overlay live in
 `client/src/ui/Cartographer.tsx`. Chart-open state is deliberately not
 persisted — reopening a modal on reload is a surprise, not a preference.
 
+### Decisions made 2026-08-19 (world events & the Chronicle — mechanics card 46)
+
+**World events & the Chronicle.** Core gains one neutral primitive:
+`WorldApi.emitEvent(type, payload)` fans out to every plugin's `onWorldEvent`
+in load order, server-side only, event name namespaced with the emitter's name
+exactly like wire messages (unforgeable, collision-free), depth-guarded at 4
+like terrain cascades. Consumers subscribe by emitter NAME and validate
+payloads structurally — never by import; cross-plugin agreement travels as
+documented copies pinned by shared golden vectors (chronicle ↔ structures race
+derivation). Emitters: structures `changes` (cause generation/sculpt), relics
+`collected`, monsters `arrived`/`departed` (queued at summon/banish, the
+lifecycle's single entrance/exit; snapshot restores never announce). The
+chronicle plugin is the first pure consumer: deterministic saga lines (no RNG;
+integer-millisecond clock, 600 s = one "day"; hashed place names), coordinates
+never on the wire so plain `broadcast` is fog-safe by construction; slice
+persisted in the world snapshot, capped at 512 entries oldest-out. What earns a
+line: placed seeds, world-first tiers above camp, ≥3 homes lost in one chunk in
+one event (below = CA churn), collections, monster firsts/returns/departures.
+
+### Decisions made 2026-08-19 (settler races & Pilgrim Routes — mechanics card 47)
+
+**Settler races & Pilgrim Routes (owner decisions 2026-08-19).** Two settler
+races: Rudys (little dog people) and Unos (cat people); ids `rudy`/`uno`,
+plural Rudys/Unos. Race is derived, never stored: bit 24 of the structures
+cell-hash over 16-cell district coordinates (`SETTLER_DISTRICT_CELLS`), one
+race per district. Other plugins copy the derivation (plugin-isolation rule)
+and pin the shared golden vectors: (0,0) rudy, (16,16) uno, (100,100) uno,
+(511,511) rudy. Pilgrim routes (card 47): monster settled = 16-cell circle
+held 120 s; catchment 64 cells; viewpoint = highest walkable cell on a 24-cell
+ring (8 = measured largest protection aura 4.5 rounded up + drift margin,
+deliberately not imported); walk 0.5 c/s, linger 30 s, cap 24; all constants
+derived in `pilgrims/server/pilgrimage.ts`. Route blessing: structures waives
+only `STRUCTURE_UPGRADE_MIN_NEIGHBORS` for blessed cells (age gate and B3/S23
+untouched), replace-semantics total state, not persisted. Pilgrims plugin
+reads monsters/structures via relics→mana-style dynamic bridges; difficulty
+deliberately unread (monsters already scale with it).
+
+### Decisions made 2026-08-19 (build-identity watermark, and two knobs closed)
+
+**Version watermark (owner request).** Both halves of the stack stamp a build
+identity `<commit count>.<short hash>` derived from git — server at boot
+(`server/src/version.ts`, carried on the join snapshot as `serverVersion`),
+client at Vite start (`define` in `client/vite.config.ts`). The HUD renders
+both top-right (`ui/VersionWatermark.tsx`) and turns loud on mismatch. Why:
+2026-08-19, a Vite-only restart after a shared/ commit served a client on
+newer terrain math than the server — every stroke previewed one thing and
+applied another. Derived-from-git means versions bump on every commit by
+construction; `TERRACE_VERSION` overrides where .git is absent (docker, #8).
+Operational rule that goes with it: **a stack restart restarts both halves
+together, always.**
+
+**Knobs closed with the owner (2026-08-19):** co-located sea-monster spawns
+stay as they are — overlapping god-beasts shielding each other is emergent
+flavor, not a bug (no spawn offset); the three #25 test towers and consumed
+relics on Frostwick Hollows stay as landmarks. (The kraken reachability knob
+was closed the same day — see the Deep Strata section above.)
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
