@@ -1686,6 +1686,65 @@ pit at MIN_HEIGHT works — wall cells inside the footprint keep descending
 toward the floor; a footprint entirely AT the floor is a true no-op with an
 empty diff, under both tools and both profiles.
 
+### Decisions made 2026-08-19 (flora × structures — buildings always win)
+
+**Trees despawn under buildings, by two layers, not one.** Owner report: "if
+buildings are going to spawn over trees, then the trees need to de-spawn."
+structures' `changes` world-event (b47d09e) names `seeded`/`upgraded` cells,
+but that list is deliberately narrower than "every new structure" — it
+excludes ordinary B3/S23 births and stir sparks, which chronicle treats as
+churn, not history. A consumer needing "every occupied cell" cannot get it
+from the event alone. Fix: flora's onWorldEvent fells a tree the instant its
+cell is named seeded/upgraded (instant, matches the event's own causes); its
+existing periodic survey (~5 s cadence) additionally treats every
+structure-occupied cell — read via a new read-only cross-plugin bridge,
+flora/server/structures-bridge.ts, the established dynamic-import pattern
+(relics→mana) — as unplantable, culling anything already standing there.
+This second layer is load-bearing, not redundant: it is what actually
+guarantees the invariant for ordinary births/stir sparks and for buildings
+that predate this feature. Structure death does not replant; the cell
+recolonizes on flora's ordinary schedule once it drops out of the occupied
+set.
+
+### Decisions made 2026-08-19 (kraken correctness pass, commit 268cf9a)
+
+**Kraken depth bar — derivation corrected.** The bar stays at 7 bands (−448);
+the reasoning recorded for it did not survive checking. Genesis never
+smooths, so a fresh world's floor is always an exact band multiple and −496
+is an *edited* floor, not a natural one; the relaxation shave is `ceil(e/2)`,
+not a MAX_STEP/2 bound. Band −8 is a reference, not a maximum — the noise
+lattice spans bands −10..+4. And because only unlocked cells count as
+habitat, the "no mandatory dig" benefit lands in ~30% of fresh worlds
+(measured over 400 seeds at both 128² and 512²), not all of them. Seven
+remains the right number on the corrected facts: it is the deepest bar
+admitting both an untouched band-8 floor and that floor after one one-band
+shave, and going shallower would collapse onto the 3-band `FRESH_SEABED`
+clamp — Cthulhu's own line — erasing the only thing that separates the two
+sea kinds. Owner ratified the follow-through the same day: worldgen will
+GUARANTEE one qualifying trench per fresh world (issue #42) rather than move
+the bar.
+
+**Monster aura geometry.** The no-raise disc bounds the brush by
+`intent.radius`; since the tight-disc footprint (`dx²+dy² < r·(r−1)`,
+2026-08-19) that is an upper bound, not an equality. Erring wide refuses a
+raise that could not have touched the monster, which is the safe direction
+and is deliberate; a contract test pins the containment against shared's own
+footprint function for every legal radius.
+
+### Decisions made 2026-08-19 (the banner is the chronicle's door)
+
+**World-header action registry (owner move).** Core gains a world-header
+action registry (`plugins/hudPanels.ts`): ONE plugin may claim the top-centre
+world banner — core renders the claimant's icon right of the world name and
+the whole banner becomes a button (aria-label from the action; the
+name/rating tooltips survive as inner titles). First registration wins, the
+`onCanvasPress` precedence rule; later claims warn and are ignored;
+unclaimed = the inert title card. The chronicle claims it and its info-panel
+row is gone; its reader mounts from a bare `top-center` host ('panel'
+placement would unmount with a collapsed phone panel). Phone widths: the
+banner's max-width is derived as `100vw − 2·120px` so a centred banner clears
+the ~110px Info tab and watermark; long names ellipsize.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
