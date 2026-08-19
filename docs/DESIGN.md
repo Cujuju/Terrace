@@ -1745,6 +1745,160 @@ placement would unmount with a collapsed phone panel). Phone widths: the
 banner's max-width is derived as `100vw − 2·120px` so a centred banner clears
 the ~110px Info tab and watermark; long names ellipsize.
 
+### Decisions made 2026-08-19 (touch-dolly guard — the two-finger camera reset)
+
+**Touch-dolly guard.** OrbitControls' two-finger dolly divides each move's
+finger separation by the last one it saw, unguarded; iOS touch coalescing can
+collapse the reported separation to ~zero for one frame, which slams the
+orbit distance to a zoom clamp (owner: "two-finger tap resets the camera to a
+default location"; reproduced via CDP, 200px→1px → distance 80→900 — and at
+distance 900 the distance-scaled pan explains the earlier "jumps across the
+map"). Two independent layers sit in front of OrbitControls, which stays
+unpatched: a pair born under `TOUCH_DOLLY_MIN_SEPARATION_PX` (24 px) is
+treated as one coalesced contact and gets `touches.TWO: null` for its
+gesture, and any move stepping separation beyond `TOUCH_DOLLY_MAX_STEP_RATIO`
+(1.5×) in one event is swallowed at document capture. The guard's baseline
+advances only on moves OrbitControls actually saw, so a swallowed artifact
+costs nothing and honest pinches are untouched (verified live: 80→56.5
+across a 120→170 px spread, exactly the theoretical ratio). Contract pinned
+in `client/test/touchGuard.test.ts`.
+
+### Decisions made 2026-08-19 (mesh budgets recalibrated — the blocky fallback, #38)
+
+**Mesh budgets recalibrated for Deep Strata.** The blocky fallback fired on a
+legitimate dig: a brush-4 hard pit from the coastal shelf to the lava floor
+measures 10,575 triangles against the 10,240 budget calibrated 08-14 on land
+fixtures — bordered underwater risers count double and Deep Strata added 8
+bands, so floor-depth digs stack ~26 contour levels per chunk. New submerged
+fixtures (wire-default anchored brush, provably bottoming at MIN_HEIGHT)
+remeasured the table; heaviest legitimate chunk = 28,033 tris / 777k work.
+Legitimate triangle counts now exceed adversarial pit-fields', so the
+triangle budget stops discriminating and becomes purely the memory bound:
+32,768 (one capacity doubling, 3.64 MB high-water). The work budget stays
+1,000,000 as the sole discriminating guard (legit ≤ 777k, adversarial ≥
+1,695k; depth adds levels — linear; adversarial shapes add holes —
+quadratic). Counts report triangulationWork; the legitimate-sculpting
+contract is pinned both ways in tests. Known cost: the worst legitimate chunk
+builds in ~9 ms — an occasional dropped frame at the bottom of the world,
+chosen over drawing the dig as blocks; the architectural remedy is
+async/multi-frame meshing (#47, flagged, not built).
+
+### Decisions made 2026-08-19 (every fresh world contains a kraken trench, #42)
+
+**Every fresh world contains a kraken trench (owner-decided).** The kraken
+bar moved to the natural ocean floor earlier the same day, but whether a
+world HAD such a floor was a per-seed coin toss: over 48 seeds, a lair-sized
+basin reaching 7 bands existed on 46% of 128² worlds and 58% of 512². The
+rest owed their players a mandatory dig. Genesis now guarantees it. After the
+noise field is drawn, `buildFreshGenesisTerrain` surveys the oceans it
+produced and — only if none is both lair-sized (`KRAKEN_MIN_LAIR_DEEP_CELLS`,
+restated core-side) and already deep enough — cuts a capsule trench to
+`GENESIS_DEEP_OCEAN_REFERENCE_BAND` through the deepest ocean it has, along
+one of eight seed-chosen integer axes. Integer-only, derived from
+`(size, seed)`, no additional RNG draws, tie-broken by total orders rather
+than traversal order. The load-bearing rule is that it only ever LOWERS cells
+that are already open ocean: the set of deep-water cells is exactly what the
+noise produced, so no classification moves, the wildlife day-one census is
+untouched, and the chosen region keeps its area. It is a byte-for-byte no-op
+on every world whose noise already qualified (verified: the no-op count
+equals the already-qualifying count exactly), and it runs on the genesis path
+only, so snapshot-restored worlds are unaffected. Trench walls descend one
+band per `BAND_HEIGHT / MAX_STEP` cells — the steepest slope that still
+satisfies the relaxation invariant — so a smooth stroke cannot slump the
+floor the guarantee rests on. The guarantee is about terrain, not
+progression: `isLairCell` still requires an unlocked cell, so day one remains
+a mixture (33/48 and 29/48, up from 15/48 and 19/48) and a trench outside the
+starter square arrives with territory creep. Rejected: stamping a fixed basin
+(cuts through whatever the noise placed) and biasing a lattice point deeper
+(a soft bowl, and not actually a guarantee).
+
+### Decisions made 2026-08-19 (kraken eviction withdrawn; arrivals scatter)
+
+**The kraken has no eviction (owner: "For now, no eviction. Later, if we do
+boats, they can attack the kraken.").** The collapse rule is withdrawn rather
+than retuned. It had never described what the code did — it counted cells of
+the 3-band deep-water region, not of the 7-band trench, so refilling the
+trench that summoned the kraken did nothing, genuinely draining it meant
+raising ~87% of a fresh world's ocean, and the only cheap counter was an
+undocumented trick, walling it into a sub-threshold pocket. Rather than pick
+new numbers for a mechanic nobody had designed, the mechanic waits for a
+fiction: boats fight the kraken (#43), terrain does not. What remains is
+physics — raise the seabed under its own cell and it cannot stay, which
+starts the usual ten-minute absence — and the cooldown machinery is kept
+whole for the boats arc. The yeti's collapse rule is unaffected;
+LAIR_COLLAPSE_HYSTERESIS_DIVISOR stands as the rule any future departure rule
+must satisfy.
+
+**Monsters no longer rise from one cell (owner-decided).** The summon point
+was a region's single deepest cell, so after Deep Strata gave players 24
+bands to dig through, one hand-sunk shaft owned every future arrival of every
+kind — and made the permitted co-location of the two sea kinds structural
+rather than incidental. Arrivals are now hash-picked uniformly among the
+region's qualifying cells: the kind's own reach bar, so the kraken scatters
+over trench cells and Cthulhu over any deep water and they remain different
+animals. The pick is seeded from the persisted monster-id counter and mixed
+with murmur3's fmix32 — integer-only, exactly repeatable, unique per summon,
+and different for two kinds arriving on the same tick. Co-location remains
+allowed; it is now a coincidence. Applied to all kinds, the yeti included,
+because nothing else in this lifecycle special-cases a habitat.
+
+### Decisions made 2026-08-19 (hi-res settler models)
+
+**Hi-res settler models (owner decision).** Pilgrim folk are the one
+deliberately smooth family of models in an otherwise flat-shaded blocky world
+(approved concept: artifact d6cf5ca4). Construction: per race, all static
+body parts merge into one vertex-colored Lambert geometry and the glossy
+eyes/nose into one Phong geometry — 8 draw calls, ~7k triangles per pilgrim,
+shared geometry across instances. Vertex colors are stored exactly as
+`new Color(hex)` yields them — three r152+ already converts to working space;
+converting again double-darkens (round-1 defect). No lighting/shadow changes:
+smoothness comes from geometry and smooth normals under the existing
+hemisphere+sun rig. The rig contract (`create(race)` → `{root,
+animate(seconds, phase)}`, feet at y=0, +X forward, joint meshes) is
+unchanged; animals, monsters and structures stay blocky pending a separate
+owner decision.
+
+### Decisions made 2026-08-19 (wanderers — ambient settlers, card 26)
+
+**Wanderers.** A second walker kind on the pilgrims wire (`kind: 'pilgrim' |
+'wanderer'`; absent kind parses as pilgrim, unknown kinds drop; one id
+allocator across both sims). Deterministic dispatch: time cut into 60 s
+epochs; each epoch every qualifying settlement rolls
+`hashCell(hashCell(x,y)^epoch, epoch) % 4 === 0`; the roll's high bits pick
+the destination. Qualifying = SENDER has survived ≥ 4 CA generations
+(structures' own `age`, carried over the bridge since 2026-08-19;
+wire-neutral; absent age = old build = qualifies); destination = ANY standing
+settlement 8–48 cells away, walkable — the card demands "stood some while" of
+the sender only, and the measured world (snapshot gen 3401: 14 cells, ages
+mostly 0–2) has no established pairs. Journey: walk out, visit 10 s, walk
+home, despawn; pilgrims' stuck rules verbatim. Purely cosmetic by contract —
+no blessing, no mana, no monster reads. Cap 16 (< pilgrims' 24: events may
+crowd, ambience may not). Visual: same race body/gait/palette, no staff — the
+one at-a-glance kind difference. Tuning is sized to the MEASURED world and
+recorded as such; a dense future world rides the cap.
+
+### Decisions made 2026-08-19 (the kraken's body; dread derives per kind)
+
+**The kraken's body, corrected (owner: "physically wrong").** The first
+kraken stood its 6.4-cell mantle near-vertically on a floating head — ~90% of
+the animal above the waterline, fins as a mid-air brim — which no soft-bodied
+floating animal can do. The model now follows surfaced-cephalopod fact: a
+humped back arching from the head to a fin-fluked tail riding at the
+waterline, arms draped along the surface with tips just under, tentacles
+rearing higher and hanging deeper. Eyes stay at the waterline (ratified
+intent). The 7-cell footprint holds, with the mantle's swept SKIN (axis +
+local radius, sampled off the real curve by test) inside the half-footprint
+and the arm tip still the binding constraint; `KRAKEN_TOTAL_HEIGHT` is a
+tested upper bound on the skin top. The kraken is now deliberately WIDER than
+it is tall — the "spider on the water" its own design prose always claimed.
+
+**Dread weather derives per kind (#44).** The authored effect was Cthulhu's
+anatomy applied to every swimmer; each swimmer now gets mist ceiling,
+flash-light height, bolt annulus, and bolt bottom derived from its own
+anatomy (`dreadSpecOf`), with Cthulhu's spec reproducing the authored values
+exactly. On the kraken — eyes 0.30 above water — the bank is by construction
+a low film on the sea, never over the lamps.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
