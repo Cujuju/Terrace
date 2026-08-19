@@ -38,13 +38,19 @@ import type { SettlerRace } from '../protocol.ts';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Settlement tier below which a town sends nobody. 2 — the first tier above
- * a camp: a camp is a CA cell that may die next generation, and a wanderer
- * from a town that vanished mid-stroll walks home to nothing. "Has stood some
- * while" is exactly what the tier ladder already measures; re-measuring age
- * here would duplicate structures' clock.
+ * Settlement tier below which a town sends nobody. 1 — the FIRST TIER ABOVE
+ * A CAMP: structures' ladder is 0-BASED (its protocol.ts: STRUCTURE_TIERS =
+ * ['camp', …], camp = 0), so "outlived camphood" is tier ≥ 1, restated here
+ * by value under the own-copy rule. A camp is a CA cell that may die next
+ * generation, and a wanderer from a town that vanished mid-stroll walks home
+ * to nothing; anything above that has stood some while — which is exactly
+ * what the tier ladder already measures, so re-measuring age here would
+ * duplicate structures' clock. (Shipped first as 2 on the unverified guess
+ * that tiers were 1-based; on the live world that demanded the third rung of
+ * BOTH endpoints and produced zero wanderers in twenty epochs — caught by
+ * the wire probe, 2026-08-19.)
  */
-export const WANDERER_MIN_TIER = 2;
+export const WANDERER_MIN_TIER = 1;
 
 /**
  * Seconds per dispatch epoch. 60 — four CA generations (15 s each): long

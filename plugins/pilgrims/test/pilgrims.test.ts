@@ -336,6 +336,14 @@ describe('the wandering', () => {
     expect(sim.states().every((w) => w.id !== first.id)).toBe(true);
   });
 
+  it('establishment means "outlived camphood" on structures’ 0-based ladder', () => {
+    // Golden pin against the ladder this constant restates (own-copy rule):
+    // structures' STRUCTURE_TIERS[0] is 'camp', so the first tier above a
+    // camp is 1. Shipping this as 2 (a 1-based guess) silenced every stroll
+    // on the live world — this pin makes the next such guess fail loudly.
+    expect(WANDERER_MIN_TIER).toBe(1);
+  });
+
   it('never dispatches from below the establishment tier, or with nowhere to go', () => {
     const world = islandWorld();
     const camp = { ...TOWN, tier: WANDERER_MIN_TIER - 1 };
