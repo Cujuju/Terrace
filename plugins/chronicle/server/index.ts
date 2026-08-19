@@ -1,0 +1,366 @@
+// chronicle — the world's history, written by the systems themselves. The
+// first pure CONSUMER plugin: it sculpts nothing and gates nothing, it only
+// listens to the cross-plugin event stream (WorldApi.emitEvent /
+// onWorldEvent, the primitive added alongside it) and writes what mattered.
+//
+// WHAT GETS A LINE, AND WHAT NEVER DOES. The chronicle is a saga, not a
+// debug log; its whole value is that reading it feels like history, which
+// means almost everything must be left OUT. The rules, one per event kind:
+//
+//   structures — a placed seed pattern (new settlers), the world's FIRST of
+//                each tier above camp (the first founding is the seed line's
+//                job), and clustered loss: CHRONICLE_CALAMITY_MIN_HOMES homes
+//                gone in one chunk in one event. Ordinary B3/S23 churn never
+//                appears.
+//   relics     — every collection. Rare by construction (one relic per skill,
+//                45 s respawn), and always a player's own act.
+//   monsters   — arrivals and departures, with "first ever of this kind"
+//                called out. (Emitter lands with the monsters plugin's own
+//                emission; the handler is contract-tested here either way.)
+//
+// PLACES ARE NAMES, NEVER COORDINATES (protocol.ts's fog-of-war note): the
+// wire entry is { day, text } and the text names chunks via names.ts. The
+// chronicle is world lore — plain `broadcast`, no visibility filter, and
+// nothing in it that the unlock mask protects.
+//
+// DETERMINISM: no RNG anywhere. Names hash from chunk coords; lines are
+// pure functions of validated event data; the clock is summed fixed-dt ticks;
+// the host fans events out in load order. Same events, same saga.
+
+import { CHUNK_SIZE } from '@terrace/shared';
+import type {
+  PersistenceSlice,
+  Player,
+  TerracePlugin,
+  WorldApi,
+} from '../../../server/src/plugins/types.ts';
+import {
+  CHRONICLE_APPEND_MESSAGE,
+  CHRONICLE_LOG_MESSAGE,
+  CHRONICLE_MAX_ENTRIES,
+  CHRONICLE_PLUGIN_NAME,
+  packEntries,
+  parseEntries,
+  type ChronicleEntry,
+} from '../protocol.ts';
+import { placeName } from './names.ts';
+import { settlementRace } from './races.ts';
+import {
+  CHRONICLE_CALAMITY_MIN_HOMES,
+  calamityLine,
+  firstTierLine,
+  godsHandLine,
+  monsterArrivedLine,
+  monsterDepartedLine,
+  parseMonsterEvent,
+  parseRelicCollected,
+  parseStructuresChanges,
+  relicLine,
+  seededLine,
+  type EventCell,
+} from './saga.ts';
+
+/**
+ * Simulated seconds per chronicle "day" — the saga's coarsest unit, used only
+ * to stamp and group entries. Ten minutes: the pacing the world's slowest
+ * rhythms already sit at (the kraken's banishment cooldown is exactly 600 s,
+ * structures' repair cadence is a tenth of it), so one play sitting spans a
+ * few readable "days" instead of one endless day or a blur of hundreds.
+ */
+export const CHRONICLE_SECONDS_PER_DAY = 600;
+
+/** Persistence slice version, structures/relics convention. */
+export const CHRONICLE_SLICE_VERSION = 1;
+
+/** The genesis line a fresh (never-persisted) world opens its saga with. */
+export const GENESIS_TEXT = 'The world was young, and its history unwritten.';
+
+// ── Mutable module state ─────────────────────────────────────────────────────
+// Module-level singletons with a reset seam, the same shape as every other
+// plugin here.
+
+let entries: ChronicleEntry[] = [];
+/**
+ * Accumulated simulated MILLISECONDS — this plugin's only clock, kept as an
+ * integer on purpose: summing the float `dt` drifts (12 000 ticks of 0.1
+ * accumulate measurably below 1 200 s), which would make day boundaries
+ * engine- and history-sensitive. `Math.round(dt * 1000)` is exact for any
+ * millisecond-representable tick rate, and integers add without error — the
+ * same integer-determinism rule the terrain math lives under.
+ */
+let simMillis = 0;
+/** Tiers already chronicled as a world first. */
+let tierFirsts = new Set<number>();
+/** Monster kinds that have ever arrived (for "the first yeti"). */
+let monsterKindsSeen = new Set<string>();
+/** Day-scoped repeat suppression: keys told on `toldDay`. */
+let toldToday = new Set<string>();
+let toldDay = -1;
+
+/** Restored-slice holders, applied in onWorldCreate (structures' seam). */
+let restored: {
+  entries: ChronicleEntry[];
+  simMillis: number;
+  tierFirsts: number[];
+  monsterKinds: string[];
+  toldDay: number;
+  toldToday: string[];
+} | null = null;
+
+// ── Clock and places ─────────────────────────────────────────────────────────
+
+const MILLISECONDS_PER_SECOND = 1000;
+
+function currentDay(): number {
+  return Math.floor(simMillis / (CHRONICLE_SECONDS_PER_DAY * MILLISECONDS_PER_SECOND));
+}
+
+function placeOf(cell: EventCell): string {
+  return placeName(Math.floor(cell.x / CHUNK_SIZE), Math.floor(cell.y / CHUNK_SIZE));
+}
+
+function chunkKeyOf(cell: EventCell): string {
+  return `${Math.floor(cell.x / CHUNK_SIZE)},${Math.floor(cell.y / CHUNK_SIZE)}`;
+}
+
+/**
+ * True if `key` was already told today (and marks it told). Day-scoped, so a
+ * place that suffers again TOMORROW gets a fresh line — suppression exists to
+ * stop one afternoon's back-and-forth from filling a page, not to erase
+ * recurring history.
+ */
+function alreadyToldToday(key: string): boolean {
+  const day = currentDay();
+  if (day !== toldDay) {
+    toldDay = day;
+    toldToday = new Set();
+  }
+  if (toldToday.has(key)) return true;
+  toldToday.add(key);
+  return false;
+}
+
+// ── Writing ──────────────────────────────────────────────────────────────────
+
+function write(world: WorldApi, texts: readonly string[]): void {
+  if (texts.length === 0) return;
+  const day = currentDay();
+  const added = texts.map((text): ChronicleEntry => ({ day, text }));
+  entries.push(...added);
+  // Oldest pages crumble first (protocol.ts's cap note).
+  if (entries.length > CHRONICLE_MAX_ENTRIES) {
+    entries = entries.slice(entries.length - CHRONICLE_MAX_ENTRIES);
+  }
+  world.broadcast(CHRONICLE_APPEND_MESSAGE, { entries: packEntries(added) });
+}
+
+// ── Event handlers ───────────────────────────────────────────────────────────
+
+/** Groups cells by chunk; the saga names losses per PLACE, not per event. */
+function groupByChunk(cells: readonly EventCell[]): Map<string, EventCell[]> {
+  const groups = new Map<string, EventCell[]>();
+  for (const cell of cells) {
+    const key = chunkKeyOf(cell);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [cell]);
+    else group.push(cell);
+  }
+  return groups;
+}
+
+function onStructuresChanges(world: WorldApi, payload: unknown): void {
+  const event = parseStructuresChanges(payload);
+  if (event === null) return;
+
+  const lines: string[] = [];
+
+  // New settlers: one line per seed placement's place, at most once a day per
+  // place (a seed landing twice in one chunk in one day is one story). The
+  // anchor cell's district decides which people arrived (races.ts).
+  if (event.seeded.length > 0) {
+    const anchor = event.seeded[0];
+    if (!alreadyToldToday(`seed:${chunkKeyOf(anchor)}`)) {
+      lines.push(seededLine(settlementRace(anchor.x, anchor.y), placeOf(anchor)));
+    }
+  }
+
+  // World firsts, above camp: the first CAMP is the seed line's story, and
+  // every founded cell is a camp — chronicling "the first camp" would fire on
+  // the first generation of every world. Ascending, so a snapshotless world
+  // that leaps two tiers in one event still reads in order.
+  const newTiers = [...new Set(
+    event.upgraded.map((cell) => cell.tier).filter((tier) => tier >= 1 && !tierFirsts.has(tier)),
+  )].sort((a, b) => a - b);
+  for (const tier of newTiers) {
+    tierFirsts.add(tier);
+    const where = event.upgraded.find((cell) => cell.tier === tier);
+    if (where !== undefined) {
+      lines.push(firstTierLine(settlementRace(where.x, where.y), tier, placeOf(where)));
+    }
+  }
+
+  // Clustered loss, per place. The generation path is fate ("ruin"), the
+  // sculpt path is a hand ("the god's hand") — different sentences because a
+  // reader should be able to tell the two apart.
+  for (const [key, cells] of groupByChunk(event.died)) {
+    if (cells.length < CHRONICLE_CALAMITY_MIN_HOMES) continue;
+    const kind = event.cause === 'sculpt' ? 'hand' : 'calamity';
+    if (alreadyToldToday(`${kind}:${key}`)) continue;
+    // One chunk = one district = one people (races.ts), so the group's first
+    // cell speaks for all of it.
+    const race = settlementRace(cells[0].x, cells[0].y);
+    lines.push(
+      event.cause === 'sculpt'
+        ? godsHandLine(cells.length, race, placeOf(cells[0]))
+        : calamityLine(cells.length, race, placeOf(cells[0])),
+    );
+  }
+
+  write(world, lines);
+}
+
+function onRelicCollected(world: WorldApi, payload: unknown): void {
+  const event = parseRelicCollected(payload);
+  if (event === null) return;
+  write(world, [relicLine(event.player, event.label)]);
+}
+
+function onMonsterArrived(world: WorldApi, payload: unknown): void {
+  const event = parseMonsterEvent(payload);
+  if (event === null) return;
+  if (alreadyToldToday(`beast:${event.kind}`)) return;
+  const isFirstEver = !monsterKindsSeen.has(event.kind);
+  monsterKindsSeen.add(event.kind);
+  write(world, [monsterArrivedLine(event.kind, placeOf(event), isFirstEver)]);
+}
+
+function onMonsterDeparted(world: WorldApi, payload: unknown): void {
+  const event = parseMonsterEvent(payload);
+  if (event === null) return;
+  write(world, [monsterDepartedLine(event.kind)]);
+}
+
+// ── Persistence ──────────────────────────────────────────────────────────────
+
+const persistence: PersistenceSlice = {
+  save(): unknown {
+    return {
+      v: CHRONICLE_SLICE_VERSION,
+      simMillis,
+      entries: packEntries(entries),
+      tierFirsts: [...tierFirsts],
+      monsterKinds: [...monsterKindsSeen],
+      toldDay,
+      toldToday: [...toldToday],
+    };
+  },
+  load(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const slice = data as {
+      v?: unknown;
+      simMillis?: unknown;
+      entries?: unknown;
+      tierFirsts?: unknown;
+      monsterKinds?: unknown;
+      toldDay?: unknown;
+      toldToday?: unknown;
+    };
+    if (slice.v !== CHRONICLE_SLICE_VERSION) return;
+
+    const parsedEntries = parseEntries({ entries: slice.entries });
+    const millis =
+      Number.isInteger(slice.simMillis) && (slice.simMillis as number) >= 0
+        ? (slice.simMillis as number)
+        : 0;
+    restored = {
+      entries: parsedEntries ?? [],
+      simMillis: millis,
+      tierFirsts: Array.isArray(slice.tierFirsts)
+        ? slice.tierFirsts.filter((t): t is number => Number.isInteger(t))
+        : [],
+      monsterKinds: Array.isArray(slice.monsterKinds)
+        ? slice.monsterKinds.filter((k): k is string => typeof k === 'string')
+        : [],
+      toldDay: Number.isInteger(slice.toldDay) ? (slice.toldDay as number) : -1,
+      toldToday: Array.isArray(slice.toldToday)
+        ? slice.toldToday.filter((k): k is string => typeof k === 'string')
+        : [],
+    };
+  },
+};
+
+// ── The plugin ───────────────────────────────────────────────────────────────
+
+export const plugin: TerracePlugin = {
+  name: CHRONICLE_PLUGIN_NAME,
+
+  onWorldCreate(world: WorldApi): void {
+    if (restored !== null) {
+      entries = restored.entries;
+      simMillis = restored.simMillis;
+      tierFirsts = new Set(restored.tierFirsts);
+      monsterKindsSeen = new Set(restored.monsterKinds);
+      toldDay = restored.toldDay;
+      toldToday = new Set(restored.toldToday);
+      restored = null;
+      return;
+    }
+    // A never-persisted world opens its own saga, so the scroll is never
+    // blank and the whole write → broadcast path is exercised from boot.
+    write(world, [GENESIS_TEXT]);
+  },
+
+  onTick(_world: WorldApi, dt: number): void {
+    // Exact for any millisecond-representable tick period — see simMillis.
+    simMillis += Math.round(dt * MILLISECONDS_PER_SECOND);
+  },
+
+  onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
+    // By-name subscriptions (see the module header): the emitter's plugin
+    // name is the coupling, exactly like a wire-message namespace.
+    switch (event) {
+      case 'structures:changes':
+        onStructuresChanges(world, payload);
+        break;
+      case 'relics:collected':
+        onRelicCollected(world, payload);
+        break;
+      case 'monsters:arrived':
+        onMonsterArrived(world, payload);
+        break;
+      case 'monsters:departed':
+        onMonsterDeparted(world, payload);
+        break;
+      default:
+        break;
+    }
+  },
+
+  onPlayerJoin(world: WorldApi, player: Player): void {
+    // The full scroll, to the joiner alone. Entries carry no coordinates, so
+    // no visibility filter applies (protocol.ts).
+    world.sendTo(player.id, CHRONICLE_LOG_MESSAGE, { entries: packEntries(entries) });
+  },
+
+  persistence,
+};
+
+// ── Test seams ───────────────────────────────────────────────────────────────
+
+export function chronicleEntries(): readonly ChronicleEntry[] {
+  return entries;
+}
+
+export function chronicleSimSeconds(): number {
+  return simMillis / MILLISECONDS_PER_SECOND;
+}
+
+export function resetChronicleState(): void {
+  entries = [];
+  simMillis = 0;
+  tierFirsts = new Set();
+  monsterKindsSeen = new Set();
+  toldToday = new Set();
+  toldDay = -1;
+  restored = null;
+}

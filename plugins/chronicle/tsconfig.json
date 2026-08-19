@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is needed by the CLIENT half's contract (client/src/plugins/types.ts
+    // types onCanvasPress with PointerEvent). Same reason flora's tsconfig
+    // carries it.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
+    // nested workspace package; these tests compile server sources that use
+    // node: builtins, so the types are named explicitly (matches flora).
+    "types": ["node"],
+    // The server loads this plugin's TypeScript through Node 24's type
+    // STRIPPING (CLAUDE.md's hard rule) — no parameter properties, enums or
+    // namespaces anywhere under server/. See flora/tsconfig.json for the
+    // incident this flag was added to catch.
+    "erasableSyntaxOnly": true,
+    // Matches client/tsconfig.json exactly: the HUD panel is a Solid component
+    // and is compiled by the client's vite-plugin-solid, which expects
+    // untransformed JSX (relics' identical arrangement).
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js"
+  },
+  "include": ["protocol.ts", "server", "client", "test"]
+}
