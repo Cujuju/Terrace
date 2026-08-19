@@ -3,7 +3,7 @@
 // shape must stay stable enough that such a plugin can attach identity later
 // without core changes — hence `id` is an opaque string, not a database key.
 
-/** Maximum accepted display-name length, in UTF-16 code units. */
+/** Maximum accepted display-name length, in code points. */
 export const MAX_PLAYER_NAME_LENGTH = 24;
 
 /** Fallback name prefix when a client joins without a usable display name. */
@@ -50,5 +50,8 @@ export function sanitizePlayerName(raw: unknown, sessionId: string): string {
   if (typeof raw !== 'string') return ANONYMOUS_NAME_PREFIX + sessionId;
   const cleaned = stripControlCharacters(raw).trim();
   if (cleaned.length === 0) return ANONYMOUS_NAME_PREFIX + sessionId;
-  return cleaned.slice(0, MAX_PLAYER_NAME_LENGTH);
+  // Cap by code point, not UTF-16 code unit: slice() cuts code units, which
+  // can land inside a surrogate pair (e.g. an emoji) and leave a lone,
+  // unpaired surrogate in the stored/broadcast name.
+  return Array.from(cleaned).slice(0, MAX_PLAYER_NAME_LENGTH).join('');
 }
