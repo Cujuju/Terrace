@@ -23,9 +23,20 @@
 // Both paths write to the same board and emit the same delta message, so a
 // client applies "the ground moved, three buildings fell" and "a block
 // aged into a hut" through one code path.
+//
+// FOG OF WAR (added issue #18). Every send — the CA's own delta, the join
+// snapshot, the keepalive — is now per RECIPIENT: a player is sent only the
+// structures inside chunks they have personally unlocked (WorldApi.
+// broadcastVisible), and a recipient whose own subset is empty is sent
+// nothing at all rather than an empty message (STRUCTURES_SKIP_EMPTY is safe
+// for the same reason flora's identical flag is — see its doc comment). The
+// one gap a 60 s keepalive cannot close fast enough — a player creeping into
+// a chunk that already has buildings standing in it — gets its own targeted
+// push instead of waiting: see onChunkUnlockedForToken / refreshUnlockedChunk
+// below, flora's identical mechanism applied to this plugin's own wire shape.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
@@ -100,15 +111,51 @@ function liveCells(): StructureCell[] {
   return cells;
 }
 
-function allPayload(): { structures: number[] } {
-  return { structures: packStructureCells(liveCells()) };
+/** A structure cell's own position — what `WorldApi.broadcastVisible` gates visibility by. */
+function structurePosition(cell: { readonly x: number; readonly y: number }): {
+  x: number;
+  y: number;
+} {
+  return { x: cell.x, y: cell.y };
 }
 
+/**
+ * FOG OF WAR (issue #18). Every broadcastVisible call this plugin makes
+ * passes `skipEmpty: true` — safe for the identical reason flora's own
+ * FLORA_SKIP_EMPTY is: per-player masks only ever GROW (issue #17), so a
+ * structure invisible to a player right now was equally invisible to them
+ * whenever it last changed. See WorldApi.broadcastVisible's doc comment for
+ * the general rule.
+ */
+const STRUCTURES_SKIP_EMPTY = { skipEmpty: true } as const;
+
 function broadcastAll(world: WorldApi): void {
-  world.broadcast(STRUCTURES_ALL_MESSAGE, allPayload());
+  world.broadcastVisible(
+    STRUCTURES_ALL_MESSAGE,
+    liveCells(),
+    structurePosition,
+    (visible) => ({ structures: packStructureCells(visible) }),
+    STRUCTURES_SKIP_EMPTY,
+  );
   lastKeepaliveSeconds = simSeconds;
 }
 
+/** One cell tagged with which of `structures:changes`' three lists it belongs to. */
+interface TaggedStructureChange {
+  readonly kind: 'founded' | 'upgraded' | 'demolished';
+  readonly x: number;
+  readonly y: number;
+  /** Only meaningful for founded/upgraded; demolished carries no tier on the wire. */
+  readonly tier: number;
+}
+
+/**
+ * Sends one delta. Silent when nothing changed anywhere — the common case by
+ * far between generations. Per RECIPIENT, silence is more common still:
+ * broadcastVisible additionally skips any player whose own subset of THIS
+ * delta is empty (STRUCTURES_SKIP_EMPTY) — the ordinary case for a change
+ * happening in someone else's territory.
+ */
 function broadcastChanges(
   world: WorldApi,
   founded: readonly StructureCell[],
@@ -116,11 +163,50 @@ function broadcastChanges(
   demolished: ReadonlyArray<{ x: number; y: number }>,
 ): void {
   if (founded.length === 0 && upgraded.length === 0 && demolished.length === 0) return;
-  world.broadcast(STRUCTURES_CHANGES_MESSAGE, {
-    founded: packStructureCells(founded),
-    upgraded: packStructureCells(upgraded),
-    demolished: packCells(demolished),
-  });
+
+  const tagged: TaggedStructureChange[] = [
+    ...founded.map((c): TaggedStructureChange => ({ kind: 'founded', x: c.x, y: c.y, tier: c.tier })),
+    ...upgraded.map((c): TaggedStructureChange => ({ kind: 'upgraded', x: c.x, y: c.y, tier: c.tier })),
+    ...demolished.map((c): TaggedStructureChange => ({ kind: 'demolished', x: c.x, y: c.y, tier: 0 })),
+  ];
+  world.broadcastVisible(
+    STRUCTURES_CHANGES_MESSAGE,
+    tagged,
+    structurePosition,
+    (visible) => ({
+      founded: packStructureCells(visible.filter((c) => c.kind === 'founded')),
+      upgraded: packStructureCells(visible.filter((c) => c.kind === 'upgraded')),
+      demolished: packCells(visible.filter((c) => c.kind === 'demolished')),
+    }),
+    STRUCTURES_SKIP_EMPTY,
+  );
+}
+
+/**
+ * THE TARGETED-REFRESH PATH (issue #18) — flora's identical mechanism
+ * (server/index.ts's refreshUnlockedChunk), for the same reason: the 60 s
+ * keepalive is a REPAIR cadence, far too slow for "a player just earned a
+ * chunk that already has buildings in it" to feel instant. Fired once per
+ * successful per-token unlock. Sent as a `founded` DELTA, not a
+ * `structures:all` snapshot — the client's ALL-message handler REPLACES its
+ * whole board (see ../client/index.ts), which would wipe out every other
+ * chunk this player already knows about, whereas `founded` is additive.
+ */
+function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: number): void {
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const inChunk: StructureCell[] = [];
+  for (const cell of liveCells()) {
+    if (cell.x >= x0 && cell.x < x0 + CHUNK_SIZE && cell.y >= y0 && cell.y < y0 + CHUNK_SIZE) {
+      inChunk.push(cell);
+    }
+  }
+  if (inChunk.length === 0) return;
+
+  const payload = { founded: packStructureCells(inChunk), upgraded: [], demolished: [] };
+  for (const player of world.players()) {
+    if (player.token === token) world.sendTo(player.id, STRUCTURES_CHANGES_MESSAGE, payload);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -229,7 +315,22 @@ export const plugin: TerracePlugin = {
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
-    world.sendTo(player.id, STRUCTURES_ALL_MESSAGE, allPayload());
+    // FOG OF WAR (issue #18): filtered to the structures inside THIS player's
+    // own unlocked view (onlyPlayerId), same skipEmpty rule as every other
+    // send in this plugin — a player who has just joined and unlocked
+    // nothing of their own yet is sent nothing, which is exactly what their
+    // client already renders by default.
+    world.broadcastVisible(
+      STRUCTURES_ALL_MESSAGE,
+      liveCells(),
+      structurePosition,
+      (visible) => ({ structures: packStructureCells(visible) }),
+      { ...STRUCTURES_SKIP_EMPTY, onlyPlayerId: player.id },
+    );
+  },
+
+  onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
+    refreshUnlockedChunk(world, token, cx, cy);
   },
 
   persistence,
