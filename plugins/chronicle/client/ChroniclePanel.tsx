@@ -11,6 +11,7 @@
 // properties so it follows the core theme.
 
 import { For, Show, createEffect, onCleanup, type JSX } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import type { ChronicleEntry } from '../protocol.ts';
 import { entries, readerOpen, setReaderOpen } from './state.ts';
 
@@ -156,8 +157,13 @@ export function ChroniclePanel(): JSX.Element {
         {latest()}
       </p>
 
+      {/* Portal to <body>: the HUD panel's backdrop-filter makes it a
+          containing block for fixed-position descendants, so a reader
+          rendered in place would be trapped inside the corner panel. */}
       <Show when={readerOpen()}>
-        <Reader />
+        <Portal mount={document.body}>
+          <Reader />
+        </Portal>
       </Show>
     </>
   );
