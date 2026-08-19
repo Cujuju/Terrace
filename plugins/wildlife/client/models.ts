@@ -139,10 +139,14 @@ const WHALE_PECTORAL_BACKSWEEP_RADIANS = 0.3;
  * shape this replaces: see git history for the single 0.7-tall cone this used
  * to be). Sized against SWIM_PROFILES.whale (client/placement.ts), which
  * guarantees only 0.7 of clearance between the swim origin and the sea
- * surface: at the hump's x-position (-0.3, embedded at y=0.42) the torso
- * ellipsoid's own surface sits at y≈0.53, so the hump's crown lands at
- * y≈0.54 — a 0.16 margin under the 0.7 budget. Confirmed numerically and
- * against the preview render, not trusted from a single arithmetic pass.
+ * surface: at the hump's x-position (-0.3, embedded at y=0.55) the torso
+ * ellipsoid's own surface sits at y≈0.53, so the hump's base sits ~0.10
+ * inside the torso (no floating seam) and its crown lands at y≈0.67 —
+ * under the 0.7 budget even with the ±0.036 rad swim roll (≈0.011 at this
+ * x). The previous y=0.42 buried the whole cone: crown 0.54 vs surface
+ * 0.53 left 0.007 protruding, an invisible dorsal — which removed the one
+ * "this way up" cue on an otherwise top/bottom-symmetric body (owner
+ * report 2026-08-19: whale looked upside down).
  */
 const WHALE_DORSAL_HEIGHT = 0.24;
 
@@ -305,7 +309,7 @@ export function createWildlifeModels(): WildlifeModels {
     // A small backward-hooked hump, roughly two-thirds of the way back —
     // see WHALE_DORSAL_HEIGHT for why it stops well short of the torso's own
     // crown.
-    rig.add(part(whaleDorsal, whaleMaterial, -0.3, 0.42, 0));
+    rig.add(part(whaleDorsal, whaleMaterial, -0.3, 0.55, 0));
 
     // Pectoral fins: the same pivot-per-side recipe createBird uses for
     // wings — a Group at the shoulder with the panel offset outward inside
@@ -316,15 +320,15 @@ export function createWildlifeModels(): WildlifeModels {
       const pivot = new Group();
       pivot.position.set(0.75, -0.05, 0);
       pivot.add(part(whalePectoralFin, whaleMaterial, 0, 0, sign * WHALE_PECTORAL_ROOT_OFFSET));
-      // Opposite sign on the droop (X) so both tips hang the SAME way — the
-      // bird wing's own rule (see its comment on leftWing/rightWing) applies
-      // unchanged here. Matching sign on the sweep (Y) so both tips trail the
-      // SAME way backward: unlike the droop, the sweep rotation composes with
-      // the panel's already-mirrored Z offset such that a shared sign cancels
-      // out into one consistent world direction — checked against the preview
-      // render, not trusted from the arithmetic alone.
-      pivot.rotation.x = -sign * WHALE_PECTORAL_DOWNSWEEP_RADIANS;
-      pivot.rotation.y = sign * WHALE_PECTORAL_BACKSWEEP_RADIANS;
+      // Signs verified numerically (Euler XYZ: the panel point is swept by Y
+      // then drooped by X). Rotation about X maps a point at z to
+      // y' = -z·sin(θx), so a tip at z = sign·offset needs θx = +sign·droop to
+      // land BELOW the body — the previous -sign sent BOTH tips up, which read
+      // as a capsized whale (owner report 2026-08-19). Likewise rotation about
+      // Y maps that z to x' = z·sin(θy), so trailing BACKWARD (-X) needs
+      // θy = -sign·sweep.
+      pivot.rotation.x = sign * WHALE_PECTORAL_DOWNSWEEP_RADIANS;
+      pivot.rotation.y = -sign * WHALE_PECTORAL_BACKSWEEP_RADIANS;
       rig.add(pivot);
     }
     pectoralFin(1);
