@@ -230,9 +230,19 @@ export function connect(options: ConnectionOptions): Connection {
       // degrades a bad/missing value to a session-scoped identity, so a
       // malformed token here can never block the join, only cost this
       // session its territory memory.
-      const joined = await client.joinOrCreate(roomName, {
-        token: getOrCreatePlayerToken(),
-      });
+      // Token acquisition must never kill the join: a throw here used to be
+      // swallowed by the catch below as "server not up" and retried forever —
+      // an unconditional, silent Offline (the secure-context randomUUID bug,
+      // reproduced on LAN-served dev pages). Omitting the token instead lets
+      // the server degrade this session to a session-scoped identity: worse
+      // (territory memory lost) but connected, and the loss is loggable.
+      const joinOptions: { token?: string } = {};
+      try {
+        joinOptions.token = getOrCreatePlayerToken();
+      } catch (error) {
+        console.warn('player token unavailable — joining with session-scoped identity', error);
+      }
+      const joined = await client.joinOrCreate(roomName, joinOptions);
       if (disposed) {
         void joined.leave();
         return;

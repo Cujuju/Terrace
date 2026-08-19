@@ -52,11 +52,30 @@ function writeStoredToken(token: string): void {
 }
 
 /**
+ * Mints a fresh v4 UUID. `crypto.randomUUID()` when it exists — but that API
+ * is SECURE-CONTEXT-ONLY (https or localhost; verified against the WebCrypto
+ * spec and reproduced live), so a LAN-served dev page (http://192.168.x.x:5173,
+ * the normal phone-testing path) does not have it and calling it threw,
+ * silently killing the join and pinning the client at "Offline" while
+ * localhost worked. `crypto.getRandomValues` has no such restriction, so the
+ * fallback assembles the same RFC 4122 v4 shape from it byte for byte.
+ */
+function mintToken(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  // RFC 4122 §4.4: version nibble = 4, variant top bits = 10.
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
  * Returns this browser's durable player token, generating and persisting one
- * on first call. `crypto.randomUUID()` is the owner-specified generator
- * (design decision, issue #17) — available in every browser this client
- * targets and in the Node 24 the server/tests run under, so no polyfill is
- * needed on either side.
+ * on first call. See mintToken for why generation must not assume a secure
+ * context.
  */
 export function getOrCreatePlayerToken(): string {
   if (cachedToken !== null) return cachedToken;
@@ -67,7 +86,7 @@ export function getOrCreatePlayerToken(): string {
     return cachedToken;
   }
 
-  const fresh = crypto.randomUUID();
+  const fresh = mintToken();
   writeStoredToken(fresh);
   cachedToken = fresh;
   return fresh;

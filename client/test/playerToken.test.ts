@@ -110,3 +110,26 @@ describe('getOrCreatePlayerToken', () => {
     expect(mod.getOrCreatePlayerToken().length).toBeGreaterThan(0);
   });
 });
+
+describe('insecure-context fallback (no crypto.randomUUID)', () => {
+  it('mints a valid v4 UUID from getRandomValues alone', async () => {
+    // http:// LAN origins have crypto but NOT crypto.randomUUID (secure-context
+    // API) — the exact environment of phone/LAN dev testing. Simulate it.
+    const realCrypto = globalThis.crypto;
+    vi.stubGlobal('crypto', {
+      getRandomValues: realCrypto.getRandomValues.bind(realCrypto),
+    });
+    try {
+      vi.resetModules();
+      const mod = await import('../src/state/playerToken.ts');
+      const token = mod.getOrCreatePlayerToken();
+      expect(token).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      // Stable across calls, like the primary path.
+      expect(mod.getOrCreatePlayerToken()).toBe(token);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
