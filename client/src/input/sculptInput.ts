@@ -183,7 +183,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let nextSeq = 1;
 
   const emitIntent = (): void => {
-    const cell = pickCell();
+    // THE ONE PICK AUTHORITY (issue #25): the intent targets the SAME cached
+    // cell the brush-outline preview draws, so the two can never disagree.
+    // The cache re-picks when the pointer or camera moves — a drag still
+    // steers the brush — but deliberately NOT when the terrain changes:
+    // re-picking each repeat against the stroke's OWN rising ground made the
+    // ray land on the new mound's skirt, which picking resolves to the higher
+    // cell, so a stationary held raise on a slope marched uphill cell by cell,
+    // building ahead of the outline the player was shown.
+    const cell = hoverTarget();
     if (cell === null) return;
     const action = currentStrokeAction();
     setSculptMode(action);
@@ -215,9 +223,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
   };
 
-  /** First intent now, then hold-repeat. Re-picks each time rather than
-   * reusing the pressed cell: the terrain rises under the cursor and the
-   * pointer may be dragging, so the target is wherever the cursor is NOW. */
+  /** First intent now, then hold-repeat. Each repeat reads the shared hover
+   * pick rather than reusing the pressed cell, so a DRAG still re-targets
+   * wherever the cursor is now — but a stationary hold keeps its cell even as
+   * the terrain rises (see emitIntent's issue-#25 comment). */
   const armStroke = (): void => {
     emitIntent();
     repeatTimer = setInterval(emitIntent, SCULPT_REPEAT_INTERVAL_MS);
