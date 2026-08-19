@@ -1,7 +1,7 @@
 // invite, driven through the REAL plugin host — the same harness the other
 // plugin suites use — plus the pure client-side fallback logic.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import {
@@ -9,7 +9,9 @@ import {
   asLoadedPlugin,
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
+import { copy } from '../client/copy.ts';
 import { deriveLocalShareUrl } from '../client/derive.ts';
+import { justCopied, setJustCopied } from '../client/state.ts';
 import { parseInviteInfoPayload } from '../protocol.ts';
 import { SHARE_URL_ENV, plugin, resetInviteState } from '../server/index.ts';
 
@@ -75,6 +77,58 @@ describe('protocol parse', () => {
     for (const bad of [null, 42, 'str', {}, { shareUrl: '' }, { shareUrl: 7 }]) {
       expect(parseInviteInfoPayload(bad)).toEqual({ shareUrl: null });
     }
+  });
+});
+
+describe('client copy button', () => {
+  beforeEach(() => {
+    setJustCopied(false);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('does not surface a rejected clipboard write as an unhandled rejection', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('permission denied'));
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    copy('http://example.test');
+    // Flushes the microtask the rejection settles on; an uncaught rejection
+    // here would otherwise fail the test via Vitest's unhandled-rejection trap.
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(writeText).toHaveBeenCalledWith('http://example.test');
+    expect(justCopied()).toBe(false);
+  });
+
+  it('only the most recent click reverts the Copied flash', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    copy('http://example.test'); // click #1 at t=0
+    await vi.advanceTimersByTimeAsync(0); // let its .then run
+    expect(justCopied()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1000); // t=1000
+    copy('http://example.test'); // click #2, well within click #1's flash window
+    await vi.advanceTimersByTimeAsync(0); // let its .then run
+
+    // t=1500: click #1's timer would fire here if it were not cleared.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(justCopied()).toBe(true);
+
+    // t=2500: click #2's own timer, 1500ms after ITS click.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(justCopied()).toBe(false);
   });
 });
 

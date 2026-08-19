@@ -4,11 +4,9 @@
 // standing rule — no reactive read is ever frozen in a component-body const.
 
 import { Show, type JSX } from 'solid-js';
+import { copy } from './copy.ts';
 import { deriveLocalShareUrl } from './derive.ts';
-import { justCopied, serverShareUrl, setJustCopied } from './state.ts';
-
-/** How long the Copy button acknowledges a click before reverting. */
-const COPIED_FLASH_MS = 1500;
+import { justCopied, serverShareUrl } from './state.ts';
 
 /**
  * Server-configured URL first; the visitor's own origin as the fallback.
@@ -20,16 +18,6 @@ function shareUrl(): string | null {
     serverShareUrl() ??
     deriveLocalShareUrl(window.location.hostname, window.location.origin)
   );
-}
-
-function copy(url: string): void {
-  // Clipboard access needs a secure context or localhost; over plain LAN http
-  // the API is absent. Selecting-and-copying by hand still works — the URL is
-  // rendered as text — so failure here is silently tolerated.
-  void navigator.clipboard?.writeText(url).then(() => {
-    setJustCopied(true);
-    setTimeout(() => setJustCopied(false), COPIED_FLASH_MS);
-  });
 }
 
 export function InvitePanel(): JSX.Element {
