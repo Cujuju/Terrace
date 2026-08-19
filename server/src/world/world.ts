@@ -19,6 +19,7 @@ import {
   heightAt,
   isChunkUnlocked,
   MAX_HEIGHT,
+  MAX_STEP,
   MIN_HEIGHT,
   SEA_LEVEL,
   unlockChunk,
@@ -124,6 +125,16 @@ import { generateWorldName } from './world-name.ts';
 // height in the map is a pure function of that seed from then on — same seed,
 // same world, byte for byte; a caller (tests, chiefly) that supplies its own
 // seed gets full reproducibility. See `mulberry32Rng` below.
+//
+// THE ONE GUARANTEE ON TOP OF THE NOISE (owner-decided 2026-08-19). Leaving the
+// ocean floor entirely to the seed meant fewer than half of fresh worlds had a
+// basin deep and large enough for the monsters plugin's kraken, and the rest
+// owed their players a mandatory dig. So a third, POST-NOISE step runs: the
+// trench pass (see "The trench" section below) surveys the oceans the noise
+// actually drew and, only if none of them qualifies, deepens the best one it
+// found. It is derived from `(size, seed)` by integer arithmetic with no
+// further RNG draws, it only ever lowers cells that are already open ocean, and
+// it is a byte-for-byte no-op on every world whose noise already qualified.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -453,6 +464,12 @@ export interface FreshGenesisTerrain {
   readonly unlockMinCell: number;
   readonly unlockMaxCell: number;
   readonly outerLattice: OuterTerrainLattice;
+  /**
+   * The one trench this world's noise did NOT give it, or `null` when the
+   * noise already produced a kraken-qualifying basin and the pass is a no-op.
+   * See the trench section below.
+   */
+  readonly trench: GenesisTrench | null;
 }
 
 /**
@@ -460,18 +477,28 @@ export interface FreshGenesisTerrain {
  * function in genesis that touches the RNG or `Math.random`
  * (`buildOuterTerrainLattice` takes an already-constructed generator) — call
  * it exactly once per world, the same way `World.createFresh` does.
+ *
+ * TWO PHASES, and the order matters. The noise field is drawn first and is
+ * exactly what it always was — the RNG is consumed by `buildOuterTerrainLattice`
+ * and by nothing else, in the same fixed sequence, so a given seed still draws
+ * the same lattice it drew before the trench pass existed. The trench is then
+ * planned from that finished field by pure integer arithmetic on `(size, seed)`
+ * with no further draws, which is what makes it a no-op — byte for byte — on
+ * every world whose own noise already qualifies.
  */
 export function buildFreshGenesisTerrain(size: number, seed: number): FreshGenesisTerrain {
   const profile = freshGenesisProfile(size);
   const { startChunk, spanChunks } = initialUnlockFootprint(size);
   const unlockMinCell = startChunk * CHUNK_SIZE;
   const rng = mulberry32Rng(seed);
-  return {
+  const untrenched: FreshGenesisTerrain = {
     profile,
     unlockMinCell,
     unlockMaxCell: unlockMinCell + spanChunks * CHUNK_SIZE - 1,
     outerLattice: buildOuterTerrainLattice(size, rng),
+    trench: null,
   };
+  return { ...untrenched, trench: planGenesisTrench(untrenched, size, seed) };
 }
 
 function withinUnlockFootprint(terrain: FreshGenesisTerrain, x: number, y: number): boolean {
@@ -496,6 +523,11 @@ function withinUnlockFootprint(terrain: FreshGenesisTerrain, x: number, y: numbe
  * an exact cell count, so this cell's only freedom is how much DEEPER than
  * the old fixed abyss it gets, never shallower — the classification the
  * plugin depends on can't move, but the depth players actually see can.
+ *
+ * The trench pass (below) is applied LAST, after both the shelf/slope early
+ * returns and the starter-square clamp, and only ever lowers a cell that is
+ * already open ocean — so neither the fixed terraces nor the deep/shallow
+ * classification of a single cell can move, whatever it does.
  */
 export function freshGenesisHeightAt(terrain: FreshGenesisTerrain, x: number, y: number): number {
   const { profile } = terrain;
@@ -504,10 +536,457 @@ export function freshGenesisHeightAt(terrain: FreshGenesisTerrain, x: number, y:
   if (outside <= profile.slopeWidthCells) return FRESH_SLOPE_HEIGHT;
 
   const noiseHeight = clampHeight(outerTerrainBandAt(terrain.outerLattice, x, y) * BAND_HEIGHT);
-  if (withinUnlockFootprint(terrain, x, y)) {
-    return noiseHeight < FRESH_SEABED_HEIGHT ? noiseHeight : FRESH_SEABED_HEIGHT;
+  const clamped = withinUnlockFootprint(terrain, x, y)
+    ? noiseHeight < FRESH_SEABED_HEIGHT
+      ? noiseHeight
+      : FRESH_SEABED_HEIGHT
+    : noiseHeight;
+  return deepenedByTrench(terrain.trench, x, y, clamped);
+}
+
+// ── The trench: every fresh world gets one basin deep enough for a kraken ─────
+//
+// THE PROBLEM. Outer terrain draws its floor per seed across the whole
+// [OUTER_TERRAIN_MIN_BAND_OFFSET, OUTER_TERRAIN_MAX_BAND_OFFSET] range, so how
+// deep a fresh world's deepest ocean gets is a coin toss. Measured over 48
+// fixed seeds before this pass existed, a basin deep AND large enough to host
+// the monsters plugin's kraken existed on 46% of 128² worlds and 58% of 512²
+// worlds; every other world's players had to hand-dig one before the deep ever
+// gave them anything. The owner ratified the guarantee (2026-08-19): a fresh
+// world always HAS one. Whether it is unlocked yet stays a progression
+// question and is deliberately untouched here.
+//
+// THE PASS, in one sentence: after the noise field is drawn, genesis surveys
+// its own oceans, and if none of them is both large enough and deep enough, it
+// gouges a trench along a seed-chosen axis through the deepest ocean it did
+// produce — lowering cells that are ALREADY open ocean and nothing else.
+//
+// WHY "ALREADY OCEAN" IS THE LOAD-BEARING RULE. Because the pass only ever
+// lowers cells that are at or below FRESH_SEABED_HEIGHT, the SET of deep-water
+// cells is bit-for-bit what the noise produced: no cell enters deep water, none
+// leaves it, no region splits or merges, and every connected region keeps its
+// exact area. The wildlife plugin's day-one census (which counts that exact
+// classification, to the cell) therefore cannot move, and the chosen region is
+// still the same size afterwards — it has simply gained a floor. All the pass
+// changes is how far DOWN some ocean cells go, which is the one freedom the
+// starter-square clamp already documents itself as having.
+//
+// WHY IT IS A NO-OP WHERE IT IS NOT NEEDED. `planGenesisTrench` returns null
+// the moment it finds a region that already qualifies, and a null trench is
+// not consulted at all — so a world whose noise was already generous is byte-
+// identical to what the same seed produced before this pass existed.
+//
+// REJECTED ALTERNATIVE 1: stamp a fixed basin at a fixed place (or at the
+// world's centre). Deterministic and two lines shorter, but every world would
+// wear the same rectangle in the same spot, and it would cut through whatever
+// island the noise had put there.
+// REJECTED ALTERNATIVE 2: bias the noise itself — force one lattice point to
+// the deep end of its range. Cheapest of all, but the lattice is interpolated
+// over 64-cell spacing, so a single deep point produces a broad soft bowl that
+// (a) reads nothing like a trench and (b) does not actually guarantee the
+// result: the qualifying cell can still be clipped by the starter-square
+// clamp or land in a region too small to be a lair. A guarantee you have to
+// re-check is not a guarantee.
+// REJECTED ALTERNATIVE 3: make the trench meander (a per-column wobble) for
+// looks. Deterministic, but it buys shape at the cost of a second geometry to
+// reason about; clipping a straight gouge to the ocean's own outline already
+// keeps it from reading as a stamp, and the owner's bar was explicitly "a
+// modest deterministic deepening pass beats a fancy one".
+
+/**
+ * Cells the trench's chosen basin must have, as a multiple of a chunk's area.
+ *
+ * A DELIBERATE RESTATEMENT of the monsters plugin's KRAKEN_LAIR_MIN_AREA_CHUNKS
+ * (plugins/monsters/server/kinds.ts), not an import — core must not depend on a
+ * plugin, so the agreement is pinned from the plugin side instead
+ * (plugins/monsters/test/monsters.test.ts), exactly as
+ * FRESH_SEABED_BANDS_BELOW_SEA's relation to the wildlife plugin is.
+ */
+export const GENESIS_TRENCH_MIN_BASIN_CHUNKS = 9;
+
+/** That area in cells: 2304, a 48×48 basin if it were square. */
+export const GENESIS_TRENCH_MIN_BASIN_CELLS =
+  GENESIS_TRENCH_MIN_BASIN_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+
+/**
+ * How deep the trench's own floor is cut, in bands below sea level.
+ *
+ * The same DELIBERATE RESTATEMENT arrangement as the area above: this is the
+ * monsters plugin's GENESIS_DEEP_OCEAN_REFERENCE_BAND — "the band a world WITH
+ * a deep ocean is taken to bottom out at", the reference its kraken bar is
+ * derived from. Cutting to exactly that band is the point: the trench is not a
+ * special deeper thing the generator can make, it is the deep ocean floor the
+ * bar was written against, placed where the noise failed to put one.
+ */
+export const GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA = 8;
+
+/**
+ * The depth a basin must already reach for the pass to leave the world alone,
+ * in whole bands below sea level — 7.
+ *
+ * A RESTATEMENT OF THE DERIVATION rather than of the number: the plugin's bar
+ * is the reference floor with one band of relaxation margin taken off it
+ * (`GENESIS_DEEP_OCEAN_REFERENCE_BAND * BAND_HEIGHT - MAX_STEP / 2`), counted
+ * in the whole bands its admission test counts. Restating the derivation and
+ * not the literal is what makes the two sides move together if the reference
+ * band is ever retuned; that they agree TODAY is pinned plugin-side.
+ *
+ * This is the number the no-op test uses, so it must be the plugin's bar and
+ * not the trench's own deeper floor: a world whose noise already bottoms out at
+ * exactly band 7 qualifies, and re-cutting it would edit a world that did not
+ * need editing.
+ */
+export const GENESIS_TRENCH_QUALIFYING_BANDS_BELOW_SEA = Math.floor(
+  (GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * BAND_HEIGHT - MAX_STEP / 2) / BAND_HEIGHT,
+);
+
+/** That bar as a height: -448. A basin at or below this needs no trench. */
+export const GENESIS_TRENCH_QUALIFYING_HEIGHT = heightAtBandsBelowSea(
+  GENESIS_TRENCH_QUALIFYING_BANDS_BELOW_SEA,
+);
+
+/**
+ * Cells of horizontal run the trench walls take per band of descent — 2.
+ *
+ * DERIVED, not chosen: BAND_HEIGHT / MAX_STEP is the shortest run over which a
+ * one-band step still satisfies the terrain gradient invariant, so the trench
+ * walls are the steepest slope the sculpt rules call stable. That matters here
+ * more than it does elsewhere in genesis, which openly does NOT satisfy the
+ * invariant at its terrace edges (see the file header's "residual"): a wall
+ * that did not satisfy it would slump the first time a smooth stroke reached
+ * the trench, and the floor this guarantee rests on would shallow out.
+ */
+const GENESIS_TRENCH_WALL_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
+
+/**
+ * Half the length of the trench's flat floor, in cells — 24, so the floor runs
+ * 48 cells end to end.
+ *
+ * DERIVED from the minimum basin: 48 is the side of the smallest square that
+ * would meet GENESIS_TRENCH_MIN_BASIN_CELLS, so the trench is exactly as long
+ * as the shortest lair the kraken accepts is wide. Long enough to read as a
+ * rift rather than a crater, and short enough to sit inside the 80-cell starter
+ * square, which on a calm world is the only ocean there is.
+ */
+const GENESIS_TRENCH_HALF_LENGTH_CELLS = Math.round(
+  Math.sqrt(GENESIS_TRENCH_MIN_BASIN_CELLS) / 2,
+);
+
+/**
+ * How far from the floor segment the trench still has any effect, in cells:
+ * the point at which the walls have climbed all the way back to sea level.
+ * Used as a cheap bounding-box reject, so it is an upper bound and not a
+ * shape — the walls stop mattering much earlier, as soon as they rise above
+ * whatever ocean floor they are cutting into.
+ */
+const GENESIS_TRENCH_REACH_CELLS =
+  GENESIS_TRENCH_HALF_LENGTH_CELLS +
+  GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * GENESIS_TRENCH_WALL_CELLS_PER_BAND;
+
+/**
+ * The eight directions a trench may run, as PRIMITIVE INTEGER vectors.
+ *
+ * Integer directions rather than an angle keep the whole distance computation
+ * exact: the dot and cross products below are integers, and the single
+ * `Math.sqrt` per cell is floored immediately (the same "integer-only, or an
+ * exactly-specified IEEE op with an immediate floor" rule shared/ terrain math
+ * follows). Eight is enough that the trench does not read as axis-aligned
+ * furniture; the 2:1 diagonals are there so the set is not just the compass
+ * rose. Order is fixed — it IS the mapping from seed to orientation.
+ */
+const GENESIS_TRENCH_AXES: readonly (readonly [number, number])[] = [
+  [1, 0],
+  [2, 1],
+  [1, 1],
+  [1, 2],
+  [0, 1],
+  [-1, 2],
+  [-1, 1],
+  [-2, 1],
+];
+
+/** One planned trench: a line segment to cut along, and how far it reaches. */
+interface GenesisTrench {
+  /** Centre of the floor segment — the deepest cell of the chosen basin. */
+  readonly centreX: number;
+  readonly centreY: number;
+  /** Primitive integer direction the floor segment runs along. */
+  readonly axisX: number;
+  readonly axisY: number;
+  /** |axis|², an exact integer: the scale the dot/cross products carry. */
+  readonly axisLengthSquared: number;
+  /** Half the floor length, pre-multiplied by |axis| to match that scale. */
+  readonly halfLengthScaled: number;
+}
+
+/**
+ * One connected region of a fresh world's open ocean, as the trench pass's own
+ * survey measured it. Deliberately the same three facts the monsters plugin's
+ * LairRegion carries (area, extreme cell, its height) — this is genesis asking
+ * the plugin's question of itself, and the answer has to be comparable.
+ *
+ * The extreme cell is chosen by (lowest height, then lowest anchor score, then
+ * lowest cell index), which is a TOTAL order on cells and therefore independent
+ * of the order the flood fill happens to visit them in. That is what lets the
+ * fill use a plain depth-first stack — cheap, and no queue the size of the
+ * world — without the result depending on the traversal.
+ *
+ * WHY THE SCORE IS IN THAT ORDER AND NOT JUST THE INDEX. A calm seed's ocean is
+ * FLAT: every one of its tens of thousands of cells ties at the same height, so
+ * "lowest index" resolves the tie to cell 0 — the world's top-left corner —
+ * on every calm world ever generated, and half the trench falls off the map.
+ * The score (see `genesisTrenchAnchorScore`) breaks those ties somewhere
+ * seed-dependent inside the region instead, and does nothing at all when the
+ * basin has a genuine single deepest point, which is the common case.
+ */
+interface GenesisOceanRegion {
+  cells: number;
+  extremeHeight: number;
+  extremeScore: number;
+  extremeIndex: number;
+}
+
+/**
+ * Labels every connected region of open ocean in a world's UNTRENCHED genesis
+ * field. "Open ocean" is `<= FRESH_SEABED_HEIGHT`, which this file already
+ * pins as at least as deep as the deep-water line every habitat consumer uses
+ * — measuring at a deeper line can only UNDER-count a region, never invent
+ * one, so a guarantee built on this survey is conservative by construction.
+ *
+ * CONNECTIVITY IS 4-NEIGHBOUR, matching the monsters plugin's own survey (a
+ * diagonal pinch is not water a 7-cell-wide animal swims through). If the two
+ * disagreed, genesis could hand the kraken a basin its own admission test
+ * would then split in half.
+ *
+ * COST: one full evaluation of the genesis field into a scratch Int16Array
+ * plus one visited byte per cell — 3 bytes per cell, transient, on the world's
+ * single genesis call. The default 512² world is 786 KB of that; the largest
+ * documented size (4096²) is 50 MB for the duration of one function call.
+ */
+function surveyGenesisOceanRegions(
+  untrenched: FreshGenesisTerrain,
+  size: number,
+  seed: number,
+): GenesisOceanRegion[] {
+  const cellCount = size * size;
+  const heights = new Int16Array(cellCount);
+  for (let y = 0; y < size; y++) {
+    const row = y * size;
+    for (let x = 0; x < size; x++) heights[row + x] = freshGenesisHeightAt(untrenched, x, y);
   }
-  return noiseHeight;
+
+  const visited = new Uint8Array(cellCount);
+  const regions: GenesisOceanRegion[] = [];
+  const stack: number[] = [];
+
+  for (let seedIndex = 0; seedIndex < cellCount; seedIndex++) {
+    if (visited[seedIndex] === 1 || heights[seedIndex]! > FRESH_SEABED_HEIGHT) continue;
+
+    const region: GenesisOceanRegion = {
+      cells: 0,
+      extremeHeight: Number.POSITIVE_INFINITY,
+      extremeScore: Number.POSITIVE_INFINITY,
+      extremeIndex: seedIndex,
+    };
+    visited[seedIndex] = 1;
+    stack.push(seedIndex);
+
+    while (stack.length > 0) {
+      const index = stack.pop()!;
+      const height = heights[index]!;
+      region.cells++;
+      const score = genesisTrenchAnchorScore(index, seed);
+      if (
+        height < region.extremeHeight ||
+        (height === region.extremeHeight &&
+          (score < region.extremeScore ||
+            (score === region.extremeScore && index < region.extremeIndex)))
+      ) {
+        region.extremeHeight = height;
+        region.extremeScore = score;
+        region.extremeIndex = index;
+      }
+
+      const x = index % size;
+      const y = (index - x) / size;
+      if (x > 0) pushOceanNeighbour(heights, visited, stack, index - 1);
+      if (x + 1 < size) pushOceanNeighbour(heights, visited, stack, index + 1);
+      if (y > 0) pushOceanNeighbour(heights, visited, stack, index - size);
+      if (y + 1 < size) pushOceanNeighbour(heights, visited, stack, index + size);
+    }
+
+    regions.push(region);
+  }
+
+  return regions;
+}
+
+function pushOceanNeighbour(
+  heights: Int16Array,
+  visited: Uint8Array,
+  stack: number[],
+  index: number,
+): void {
+  if (visited[index] === 1 || heights[index]! > FRESH_SEABED_HEIGHT) return;
+  visited[index] = 1;
+  stack.push(index);
+}
+
+/**
+ * Picks the trench this world needs, or `null` if it needs none.
+ *
+ * THE NO-OP CASE FIRST: any ocean region that is both big enough to be a lair
+ * and already reaches GENESIS_TRENCH_QUALIFYING_HEIGHT ends the search — the
+ * noise did the job, and the world is left exactly as it was drawn.
+ *
+ * Otherwise the trench is centred on the deepest cell of the deepest ocean
+ * region that IS big enough, so the guarantee lands in the ocean the world
+ * already has rather than somewhere the generator picked. Ties break on more
+ * cells, then on the lower cell index: a total order, so the choice never
+ * depends on region discovery order.
+ *
+ * THE DEGENERATE FALLBACK, named rather than discovered later: a world can be
+ * too small for ANY of its ocean to be a lair (below ~80 cells the starter
+ * square's own open sea, the one region every world has, is under 2304 cells).
+ * Such a world cannot host a kraken at any depth, trench or no trench, so this
+ * deepens its largest ocean anyway and lets the area half of the admission test
+ * do the refusing — the alternative, throwing, would make an unusual
+ * self-hosted WORLD_SIZE unbootable for a guarantee it was never able to keep.
+ * The same reasoning, and the same size regime, as `carveFallbackAbyss` below.
+ */
+function planGenesisTrench(
+  untrenched: FreshGenesisTerrain,
+  size: number,
+  seed: number,
+): GenesisTrench | null {
+  let deepestLairSized: GenesisOceanRegion | null = null;
+  let largest: GenesisOceanRegion | null = null;
+
+  for (const region of surveyGenesisOceanRegions(untrenched, size, seed)) {
+    if (
+      largest === null ||
+      region.cells > largest.cells ||
+      (region.cells === largest.cells && region.extremeIndex < largest.extremeIndex)
+    ) {
+      largest = region;
+    }
+
+    if (region.cells < GENESIS_TRENCH_MIN_BASIN_CELLS) continue;
+    if (region.extremeHeight <= GENESIS_TRENCH_QUALIFYING_HEIGHT) return null;
+
+    if (
+      deepestLairSized === null ||
+      region.extremeHeight < deepestLairSized.extremeHeight ||
+      (region.extremeHeight === deepestLairSized.extremeHeight &&
+        (region.cells > deepestLairSized.cells ||
+          (region.cells === deepestLairSized.cells &&
+            region.extremeIndex < deepestLairSized.extremeIndex)))
+    ) {
+      deepestLairSized = region;
+    }
+  }
+
+  const chosen = deepestLairSized ?? largest;
+  if (chosen === null) return null;
+
+  const [axisX, axisY] = GENESIS_TRENCH_AXES[genesisTrenchAxisIndex(seed)]!;
+  const axisLengthSquared = axisX * axisX + axisY * axisY;
+  const centreX = chosen.extremeIndex % size;
+  return {
+    centreX,
+    centreY: (chosen.extremeIndex - centreX) / size,
+    axisX,
+    axisY,
+    axisLengthSquared,
+    halfLengthScaled: Math.floor(
+      GENESIS_TRENCH_HALF_LENGTH_CELLS * Math.sqrt(axisLengthSquared),
+    ),
+  };
+}
+
+/**
+ * Which of GENESIS_TRENCH_AXES this world's trench runs along.
+ *
+ * An integer avalanche (the xorshift-multiply pair from Murmur3's finaliser)
+ * rather than `seed % 8`, because seeds are not always random: the test suites
+ * — and any operator pinning a world — use small consecutive integers, whose
+ * low three bits would march through the axis list in lockstep. It draws
+ * nothing from the world's RNG on purpose, so adding it left the lattice's
+ * draw sequence, and therefore every already-qualifying world, untouched.
+ */
+function genesisTrenchAxisIndex(seed: number): number {
+  const mixed = Math.imul(seed ^ 0x9e37_79b9, 0x85eb_ca6b) >>> 0;
+  return mixed % GENESIS_TRENCH_AXES.length;
+}
+
+/**
+ * A cell's tie-break score when a basin has no single deepest cell — an
+ * integer avalanche of (cell index, world seed), so a FLAT ocean anchors its
+ * trench somewhere that varies with the seed instead of always at cell 0.
+ *
+ * Deliberately not a distance-to-centroid rule, which was the obvious
+ * alternative: a region's centroid can fall outside a crescent-shaped region
+ * entirely (the same trap the monsters plugin's LairRegion documents for its
+ * own extreme cell), so it would need its own "nearest cell that IS in the
+ * region" search — a second pass over the region for a tie-break.
+ */
+function genesisTrenchAnchorScore(index: number, seed: number): number {
+  // The two inputs are mixed SEPARATELY and then combined, rather than XORed
+  // together first: `index ^ seed` maps the pair (0, 0) — cell zero of a world
+  // seeded zero, which is exactly a test's first world — onto the smallest
+  // score there is, handing the corner the tie all over again.
+  let mixed = (Math.imul(index + 1, 0x27d4_eb2d) ^ Math.imul(seed + 1, 0x9e37_79b9)) >>> 0;
+  mixed = (mixed ^ (mixed >>> 15)) >>> 0;
+  return Math.imul(mixed, 0x85eb_ca6b) >>> 0;
+}
+
+/**
+ * The trench's own floor at one cell, applied to that cell's untrenched genesis
+ * height. Returns `base` untouched unless ALL of these hold:
+ *
+ *   * this world has a trench at all;
+ *   * the cell is already open ocean (see the section header — this is the
+ *     rule that keeps every habitat classification exactly where the noise put
+ *     it, and keeps the trench from gouging a canyon across an island);
+ *   * the cell is inside the trench, and the trench wants it DEEPER than it is.
+ *
+ * The depth profile is a capsule: full depth within `halfLength` of the centre
+ * along the axis, then one band shallower per GENESIS_TRENCH_WALL_CELLS_PER_BAND
+ * cells of distance from that segment, so the result is always an exact band
+ * multiple — the invariant the monsters suite pins on genesis output.
+ *
+ * `along` and `across` are the dot and cross products with the axis, so both
+ * carry a factor of |axis|; the distance is de-scaled by dividing the squared
+ * sum by |axis|² inside the one `Math.sqrt`, whose result is floored on the
+ * spot.
+ */
+function deepenedByTrench(
+  trench: GenesisTrench | null,
+  x: number,
+  y: number,
+  base: number,
+): number {
+  if (trench === null || base > FRESH_SEABED_HEIGHT) return base;
+
+  const dx = x - trench.centreX;
+  const dy = y - trench.centreY;
+  if (dx > GENESIS_TRENCH_REACH_CELLS || dx < -GENESIS_TRENCH_REACH_CELLS) return base;
+  if (dy > GENESIS_TRENCH_REACH_CELLS || dy < -GENESIS_TRENCH_REACH_CELLS) return base;
+
+  const along = Math.abs(dx * trench.axisX + dy * trench.axisY) - trench.halfLengthScaled;
+  const overhang = along > 0 ? along : 0;
+  const across = dx * trench.axisY - dy * trench.axisX;
+  const distance = Math.floor(
+    Math.sqrt((overhang * overhang + across * across) / trench.axisLengthSquared),
+  );
+
+  const bands =
+    GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA -
+    Math.floor(distance / GENESIS_TRENCH_WALL_CELLS_PER_BAND);
+  if (bands <= 0) return base;
+
+  const floor = clampHeight(heightAtBandsBelowSea(bands));
+  return floor < base ? floor : base;
 }
 
 /**

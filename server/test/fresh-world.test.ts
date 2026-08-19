@@ -28,7 +28,11 @@ import {
   FRESH_SLOPE_BANDS_BELOW_SEA,
   FRESH_SLOPE_HEIGHT,
   FRESH_SLOPE_WIDTH_CELLS,
+  GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA,
+  GENESIS_TRENCH_QUALIFYING_HEIGHT,
   World,
+  buildFreshGenesisTerrain,
+  freshGenesisHeightAt,
   freshGenesisProfile,
 } from '../src/world/world.ts';
 import { worldWithUnlockedChunks } from './support/harness.ts';
@@ -49,6 +53,14 @@ const VALID_SIZES = [64, 80, 128, 144, 256, 512, 1024, 4096];
 
 /** Small, fixed seeds so a failing assertion is easy to reproduce by hand. */
 const SEEDS = Array.from({ length: 20 }, (_, i) => i * 104729 + 1); // 104729 is prime; just decorrelates the sequence
+
+/**
+ * Wall-clock budget for the trench sweeps, in milliseconds. Each one generates
+ * whole 512² worlds and re-evaluates the genesis field cell by cell beside
+ * them; measured at ~3 s on this machine, so this is a 5× margin rather than a
+ * reason to shrink the seed sample the assertions rest on.
+ */
+const TRENCH_SWEEP_TIMEOUT_MS = 15_000;
 
 describe('the fresh-world genesis profile', () => {
   it('is three descending terraces, all water, inside the sculpt range', () => {
@@ -296,6 +308,28 @@ describe('the fresh-world genesis profile', () => {
     expect(stepsToDryLand(FRESH_SHELF_HEIGHT)).toBe(FRESH_SHELF_BANDS_BELOW_SEA + 1);
   });
 
+  it('cuts its trench floor to an exact band multiple, at the reference band', () => {
+    // The trench's own depth claim, and the invariant the monsters suite pins
+    // on genesis output from the other side. The anchor cell — the centre of
+    // the trench's floor segment — is at the reference ocean floor exactly,
+    // which is what makes the guarantee clear the kraken's bar with the one
+    // band of margin the bar's derivation names.
+    for (const size of [128, WORLD_SIZE_WITH_OUTER_TERRAIN]) {
+      for (const seed of SEEDS.slice(0, 8)) {
+        const { trench } = buildFreshGenesisTerrain(size, seed);
+        if (trench === null) continue;
+
+        const world = World.createFresh(size, undefined, undefined, seed);
+        const floor = world.heightAt(trench.centreX, trench.centreY);
+        expect(floor).toBe(SEA_LEVEL - GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * BAND_HEIGHT);
+        expect(floor).toBeLessThanOrEqual(GENESIS_TRENCH_QUALIFYING_HEIGHT);
+        // `=== 0`, not the raw remainder: an exact negative multiple gives -0,
+        // which the file's band-alignment sweep above documents the same way.
+        expect(floor % BAND_HEIGHT === 0).toBe(true);
+      }
+    }
+  });
+
   it('keeps the starter unlock square unchanged', () => {
     // Genesis reads the unlock footprint; it must not move it. INITIAL_UNLOCK_
     // CHUNK_SPAN² chunks, centred, exactly as before.
@@ -306,5 +340,150 @@ describe('the fresh-world genesis profile', () => {
     expect(world.isChunkUnlocked(startChunk, startChunk)).toBe(true);
     expect(world.isChunkUnlocked(startChunk - 1, startChunk)).toBe(false);
     expect(world.isChunkUnlocked(startChunk + spanChunks, startChunk)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TRENCH PASS (owner decision, 2026-08-19)
+//
+// Genesis now guarantees that every fresh world contains one basin deep and
+// large enough to host the monsters plugin's kraken — see the "The trench"
+// section in server/src/world/world.ts. THAT guarantee is measured where it is
+// consumed, against the real habitat survey, in
+// plugins/monsters/test/monsters.test.ts; core cannot import a plugin, so it
+// cannot state its own conclusion here.
+//
+// What IS core's to state, and what these tests hold, is the pass's structural
+// contract — the four properties every other consumer of genesis is relying on
+// while the guarantee is being kept:
+//
+//   * it only ever moves a cell DOWN;
+//   * it only ever moves a cell that was ALREADY open ocean, so no cell's
+//     shallow/deep classification changes and the wildlife plugin's day-one
+//     census (which counts that classification to the cell) cannot move;
+//   * it is a byte-for-byte no-op on a world whose own noise already qualified;
+//   * what it writes is still an exact band multiple, and still reproducible
+//     from the seed alone.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the kraken trench pass', () => {
+  /** Smallest shipped world, and the default. */
+  const TRENCH_SIZES = [128, WORLD_SIZE_WITH_OUTER_TERRAIN];
+
+  /**
+   * The genesis field with the trench pass nulled out. By construction this IS
+   * the field genesis produced before the pass existed — the trench is the only
+   * term `freshGenesisHeightAt` gained — so comparing against it is the honest
+   * before/after, with no second copy of the generator to drift.
+   */
+  function untrenchedTerrain(size: number, seed: number) {
+    const planned = buildFreshGenesisTerrain(size, seed);
+    return { planned: planned.trench, terrain: { ...planned, trench: null } };
+  }
+
+  it('plans a trench where the noise fell short, and none where it did not', () => {
+    // Both branches must be live at both sizes, or the tests below are
+    // measuring only one of them.
+    for (const size of TRENCH_SIZES) {
+      const planned = SEEDS.map((seed) => buildFreshGenesisTerrain(size, seed).trench);
+      expect(planned.some((trench) => trench !== null)).toBe(true);
+      expect(planned.some((trench) => trench === null)).toBe(true);
+    }
+  });
+
+  it('only ever deepens cells that were already open ocean, and moves none otherwise', () => {
+    // The whole structural contract in one sweep, counted in raw JS with the
+    // assertions at the boundary — the same "keep the loop cheap" shape as the
+    // band-alignment sweep above.
+    for (const size of TRENCH_SIZES) {
+      for (const seed of SEEDS.slice(0, 5)) {
+        const { planned, terrain: before } = untrenchedTerrain(size, seed);
+        const after = World.createFresh(size, undefined, undefined, seed).map.cells;
+
+        let raised = 0;
+        let movedDryLandOrShallows = 0;
+        let deepened = 0;
+        let deepBefore = 0;
+        let deepAfter = 0;
+
+        for (let y = 0; y < size; y++) {
+          const row = y * size;
+          for (let x = 0; x < size; x++) {
+            const was = freshGenesisHeightAt(before, x, y);
+            const is = after[row + x]!;
+            if (was <= FRESH_SEABED_HEIGHT) deepBefore++;
+            if (is <= FRESH_SEABED_HEIGHT) deepAfter++;
+            if (is > was) raised++;
+            else if (is < was) {
+              deepened++;
+              if (was > FRESH_SEABED_HEIGHT) movedDryLandOrShallows++;
+            }
+          }
+        }
+
+        // Never up, and never anywhere but the open ocean.
+        expect({ raised, movedDryLandOrShallows }).toEqual({
+          raised: 0,
+          movedDryLandOrShallows: 0,
+        });
+        // Therefore the deep/shallow classification is bit-for-bit unmoved.
+        expect(deepAfter).toBe(deepBefore);
+        // And the pass edits a world exactly when it planned to.
+        expect(deepened > 0).toBe(planned !== null);
+      }
+    }
+  }, TRENCH_SWEEP_TIMEOUT_MS);
+
+  it('leaves an already-qualifying world byte-identical to what the noise drew', () => {
+    // The no-op claim stated as an equality over the whole heightmap rather
+    // than inferred from "trench === null". A seed whose noise already gave it
+    // a deep enough basin must generate exactly the world it generated before
+    // the pass existed — the upgrade path for anyone who pinned a seed.
+    let checked = 0;
+    for (const size of TRENCH_SIZES) {
+      for (const seed of SEEDS) {
+        const { planned, terrain: before } = untrenchedTerrain(size, seed);
+        if (planned !== null) continue;
+
+        const after = World.createFresh(size, undefined, undefined, seed).map.cells;
+        let differences = 0;
+        for (let y = 0; y < size; y++) {
+          const row = y * size;
+          for (let x = 0; x < size; x++) {
+            if (after[row + x] !== freshGenesisHeightAt(before, x, y)) differences++;
+          }
+        }
+        expect(differences).toBe(0);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  }, TRENCH_SWEEP_TIMEOUT_MS);
+
+  it('is deterministic: the same seed plans the same trench, twice', () => {
+    // Genesis is a pure function of (size, seed) and the trench pass must not
+    // be the thing that breaks that: it draws nothing from the world's RNG,
+    // and its own tie-breaks are total orders rather than traversal order.
+    for (const size of TRENCH_SIZES) {
+      for (const seed of SEEDS.slice(0, 5)) {
+        expect(buildFreshGenesisTerrain(size, seed).trench).toEqual(
+          buildFreshGenesisTerrain(size, seed).trench,
+        );
+      }
+    }
+  });
+
+  it('does not disturb genesis for a snapshot-restored world', () => {
+    // The pass runs inside buildFreshGenesisTerrain, which World.restore never
+    // calls. Stated here as well as in the restore test above because THIS is
+    // the change that would have been tempting to put in a place both paths
+    // share.
+    const stored = new Int16Array(WORLD_SIZE * WORLD_SIZE);
+    stored.fill(SEA_LEVEL);
+
+    const restored = World.restore(WORLD_SIZE, stored, World.createFresh(WORLD_SIZE).mask);
+
+    let deepest = MAX_HEIGHT;
+    for (const h of restored.map.cells) if (h < deepest) deepest = h;
+    expect(deepest).toBe(SEA_LEVEL);
   });
 });

@@ -254,6 +254,24 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SI
  *     bands in 121 of them — 30%. The other 70% still dig, which is the
  *     paragraph below, restated as the common case rather than the exception.
  *
+ * SUPERSEDED THE SAME DAY, on the TERRAIN half only (owner decision
+ * 2026-08-19, after the correctness pass above surfaced the number): worldgen
+ * now GUARANTEES the deep floor rather than rolling for it. Genesis surveys the
+ * oceans its noise drew and, when none of them is both lair-sized and deep
+ * enough, cuts a trench to the reference band through the deepest one it has
+ * (server/src/world/world.ts, "The trench"). So the third bullet's measurement
+ * still describes the NOISE — and the monsters suite goes on pinning that it
+ * does, so the guarantee can never quietly become vacuous — but it no longer
+ * describes a shipped world: every fresh world now CONTAINS a qualifying basin,
+ * at 128² and 512² alike, measured over 48 seeds through the real survey.
+ *
+ * NOTHING ON THIS SIDE MOVED. The bar is still 7 bands, still derived the same
+ * way, and the generator restates it rather than importing it (pinned both ways
+ * in test/monsters.test.ts). What changed is where the trench comes from. The
+ * UNLOCK half of the sentence is untouched and still true: a basin outside the
+ * starter square is habitat only once a player's territory reaches it, so day
+ * one remains a mixture and progression still means something.
+ *
  * WHY 7 IS STILL THE RIGHT NUMBER, on the corrected facts: it is the deepest
  * bar that admits BOTH an untouched band-8 genesis floor and that same floor
  * after one one-band relaxation shave (−496), expressed in the whole bands the
@@ -266,10 +284,12 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SI
  * owner decision, not a tuning one. `test/monsters.test.ts` pins every claim
  * above against the real generator, so none of them can rot again.
  *
- * Worlds whose noise never dipped that deep still summon no kraken until
- * someone digs — unchanged, and correct: the decision removes the mandatory
- * dig from worlds that HAVE a deep floor, it does not hand every puddle a
- * kraken.
+ * Worlds whose noise never dipped that deep no longer exist as SHIPPED worlds
+ * — see the supersession above; genesis gives every one of them a trench. The
+ * bar still does not hand every puddle a kraken, and that is still the point:
+ * a basin must be lair-sized AND reach this depth AND be unlocked. What the
+ * guarantee removed is the coin toss on the middle condition, not the other
+ * two.
  *
  * For scale against the other threshold: the deep-water line is 3 bands, so a
  * kraken trench is still well over twice as deep as the shallowest water
@@ -287,6 +307,11 @@ export const WORLD_WATER_COLUMN_BANDS = SEA_COLUMN_BANDS;
  * right one is the sentence in the mechanism above — it is the shallowest
  * reference whose derived bar still keeps the kraken meaningfully deeper than
  * Cthulhu.
+ *
+ * As of the 2026-08-19 guarantee it is also the band genesis's trench pass cuts
+ * its floor TO, so on a world that needed a trench this is not a reference at
+ * all but the literal depth of the ocean floor. Core restates the number rather
+ * than importing it; the two are pinned equal in test/monsters.test.ts.
  */
 export const GENESIS_DEEP_OCEAN_REFERENCE_BAND = 8;
 
