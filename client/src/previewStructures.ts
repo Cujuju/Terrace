@@ -60,6 +60,8 @@ import {
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURE_TIER_COUNT,
+  settlementRace,
+  type SettlerRace,
 } from '../../plugins/structures/protocol.ts';
 import {
   createStructureModels,
@@ -208,6 +210,11 @@ function main(): void {
   // has to search rather than hardcode a cell — see findTopTierCell's own
   // comment.
   const cell = tier === MAX_STRUCTURE_TIER ? findTopTierCell(durandsRequested) : { x: 0, y: 0 };
+  // `?race=rudy|uno` pins the tint for side-by-side review shots; absent, the
+  // preview derives it from the cell exactly as the game client does.
+  const raceParam = query.get('race');
+  const race: SettlerRace =
+    raceParam === 'rudy' || raceParam === 'uno' ? raceParam : settlementRace(cell.x, cell.y);
   const placement: StructurePlacement = {
     x: cell.x,
     z: cell.y,
@@ -215,6 +222,7 @@ function main(): void {
     tier,
     scale: 1,
     yaw: 0,
+    race,
   };
   models.apply([placement]);
 

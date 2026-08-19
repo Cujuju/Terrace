@@ -265,3 +265,53 @@ export function structureVariation(x: number, y: number): StructureVariation {
     scale: STRUCTURE_SCALE_MIN + (scaleRoll / 0xff) * (STRUCTURE_SCALE_MAX - STRUCTURE_SCALE_MIN),
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settler races (owner decision 2026-08-19). Every settlement belongs to one
+// of two peoples: RUDYS — little dog people — or UNOS — cat people. Race is
+// DERIVED, never stored and never on the wire: it is a pure integer function
+// of WHERE a settlement stands, so server and client agree without a byte of
+// sync and a demolished-then-refounded cell keeps its people.
+//
+// RACE IS PER DISTRICT, NOT PER CELL, deliberately: a CA cluster is one town,
+// and a town whose huts rolled race independently would read as noise, not as
+// "a Rudy village". Hashing the district a cell stands in gives whole
+// neighbourhoods one people while still splitting the wider world roughly
+// evenly between the two.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The two settler races. Order is meaningful: index = the race hash bit. */
+export const SETTLER_RACES = ['rudy', 'uno'] as const;
+
+export type SettlerRace = (typeof SETTLER_RACES)[number];
+
+/**
+ * Edge, in cells, of the square district that shares one race.
+ *
+ * 16 — one chunk (shared's CHUNK_SIZE), restated here as its own constant
+ * because this protocol module stays dependency-free (see the header). The
+ * chunk is already the game's neighbourhood unit (unlock creep, the CA sweep,
+ * targeted refreshes all move in chunks), so "a town that grows up inside one
+ * chunk is one people" needs no second spatial unit. The two values drifting
+ * apart would not be a bug — districts never touch chunk logic — merely a
+ * missed rhyme.
+ */
+export const SETTLER_DISTRICT_CELLS = 16;
+
+/**
+ * The race of the settlement standing at cell (x, y).
+ *
+ * Bit 24 of the DISTRICT hash. The cell-hash consumers (structureVariation's
+ * bits 0–23 here, isDurandsCell's bits 24–31 in the client) hash CELL
+ * coordinates; this hashes district coordinates, a different input domain, so
+ * no correlation arises even where the two share a bit index — except at
+ * district (0, 0), whose hash input coincides with cell (0, 0)'s, where the
+ * race bit and one Durand's roll bit are the same coin flip for exactly one
+ * cell of the world. Named rather than fixed: it is one landmark cell, both
+ * reads are cosmetic, and dodging it would cost a second hash function.
+ */
+export function settlementRace(x: number, y: number): SettlerRace {
+  const districtX = Math.floor(x / SETTLER_DISTRICT_CELLS);
+  const districtY = Math.floor(y / SETTLER_DISTRICT_CELLS);
+  return SETTLER_RACES[(hashStructureCell(districtX, districtY) >>> 24) & 1];
+}

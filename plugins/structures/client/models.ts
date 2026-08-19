@@ -49,6 +49,7 @@
 import {
   BoxGeometry,
   CanvasTexture,
+  Color,
   ConeGeometry,
   CylinderGeometry,
   Group,
@@ -66,6 +67,7 @@ import {
   STRUCTURES_CAP,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_TIER_COUNT,
+  type SettlerRace,
   type StructureTier,
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
@@ -2212,7 +2214,25 @@ export interface StructurePlacement {
   readonly tier: StructureTier;
   readonly scale: number;
   readonly yaw: number;
+  /** Which people live here — drives the per-instance race tint below. */
+  readonly race: SettlerRace;
 }
+
+/**
+ * Per-race whole-building tints, applied through InstancedMesh.setColorAt so
+ * the tier materials stay SHARED (one material per part, as ever) while every
+ * instance still declares its people. THREE multiplies the instance colour
+ * into the material colour, so both values sit near white: far enough from it
+ * that two districts read as different at gameplay zoom, close enough that a
+ * watchtower still reads as the same stone.
+ *
+ *   * RUDYS (dog people) — a warm hearth cast, sunned timber and tan hides;
+ *   * UNOS (cat people) — a cool moonlit cast, slate and cream.
+ */
+export const RACE_TINTS: Readonly<Record<SettlerRace, number>> = {
+  rudy: 0xffe9cf,
+  uno: 0xd9e4f5,
+};
 
 export interface StructureModels {
   readonly root: Group;
@@ -2280,6 +2300,12 @@ export function createStructureModels(): StructureModels {
   const buildingScale = new Vector3();
   const buildingMatrix = new Matrix4();
   const instanceMatrix = new Matrix4();
+  // One scratch Color per race, built once — a tint never changes, so there is
+  // nothing to recompute per instance.
+  const raceTints: Readonly<Record<SettlerRace, Color>> = {
+    rudy: new Color(RACE_TINTS.rudy),
+    uno: new Color(RACE_TINTS.uno),
+  };
 
   /** Seconds since attach — the only state animate() advances. */
   let durandsFlashElapsedSeconds = 0;
@@ -2291,7 +2317,12 @@ export function createStructureModels(): StructureModels {
    * Shared by both the per-tier path and the Durand's path below so the two
    * do not carry two copies of the same nested loop.
    */
-  function writeInstances(parts: StructurePart[], meshes: InstancedMesh[], counts: number[]): void {
+  function writeInstances(
+    parts: StructurePart[],
+    meshes: InstancedMesh[],
+    counts: number[],
+    tint: Color | null,
+  ): void {
     for (let partIndex = 0; partIndex < parts.length; partIndex++) {
       const part = parts[partIndex];
       const mesh = meshes[partIndex];
@@ -2302,6 +2333,14 @@ export function createStructureModels(): StructureModels {
       // so `count` cannot outrun `mesh.instanceMatrix`.
       for (const local of part.localMatrices) {
         instanceMatrix.multiplyMatrices(buildingMatrix, local);
+        // Tint before matrix, at the same index: setColorAt lazily allocates
+        // the instanceColor buffer zero-filled (i.e. black), so every slot at
+        // or below a mesh's final count must be written each pass — which
+        // this loop guarantees, because every instance of a tinted mesh comes
+        // through here. Durand's passes null and its meshes therefore never
+        // grow an instanceColor buffer at all: the landmark stays exactly the
+        // neon it was authored as, whichever district it lights up.
+        if (tint !== null) mesh.setColorAt(count, tint);
         mesh.setMatrixAt(count++, instanceMatrix);
       }
       counts[partIndex] = count;
@@ -2314,6 +2353,10 @@ export function createStructureModels(): StructureModels {
       const mesh = meshes[partIndex];
       mesh.count = counts[partIndex];
       mesh.instanceMatrix.needsUpdate = true;
+      // Present exactly when writeInstances tinted this mesh at least once in
+      // its lifetime (setColorAt allocates it) — flagged every pass for the
+      // same reason the matrix is.
+      if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
       // MANDATORY, not tidiness — see flora's identical call: an
       // InstancedMesh's cached bounding sphere is stale after any matrix
       // change, and frustum culling against a stale sphere makes a building
@@ -2338,14 +2381,14 @@ export function createStructureModels(): StructureModels {
         // isDurandsCell's own contract gates this to MAX_STRUCTURE_TIER (see
         // ./durands.ts) — nothing below the top tier can ever come back true.
         if (isDurandsCell(placement.tier, placement.x, placement.z)) {
-          writeInstances(durands.parts, durandsMeshes, durandsCounts);
+          writeInstances(durands.parts, durandsMeshes, durandsCounts, null);
           continue;
         }
 
         const parts = tierParts[placement.tier];
         const meshes = meshesByTier[placement.tier];
         if (parts === undefined || meshes === undefined) continue; // defensive: unknown tier, dropped rather than crashing the frame
-        writeInstances(parts, meshes, counts[placement.tier]);
+        writeInstances(parts, meshes, counts[placement.tier], raceTints[placement.race]);
       }
 
       for (let tier = 0; tier < meshesByTier.length; tier++) finalizeMeshes(meshesByTier[tier], counts[tier]);

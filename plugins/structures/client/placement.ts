@@ -8,7 +8,7 @@
 // structure stands ON the rendered surface and never moves, because any
 // height change under it demolishes it server-side.
 
-import { structureVariation, type StructureCell } from '../protocol.ts';
+import { settlementRace, structureVariation, type StructureCell } from '../protocol.ts';
 import type { StructurePlacement } from './models.ts';
 
 /**
@@ -52,6 +52,7 @@ export function placementsFor(
       tier: cell.tier,
       scale: variation.scale,
       yaw: variation.yaw,
+      race: settlementRace(cell.x, cell.y),
     });
   }
 

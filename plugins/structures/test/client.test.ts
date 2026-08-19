@@ -6,12 +6,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_STRUCTURE_TIER,
+  SETTLER_DISTRICT_CELLS,
   STRUCTURES_CAP,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_SCALE_MIN,
   STRUCTURE_TIER_COUNT,
   cellOfKey,
   hashStructureCell,
+  settlementRace,
+  type SettlerRace,
   packCells,
   packStructureCells,
   parseAllPayload,
@@ -155,6 +158,7 @@ describe('placement', () => {
       tier: 2,
       scale: variation.scale,
       yaw: variation.yaw,
+      race: settlementRace(3, 4),
     });
   });
 
@@ -234,5 +238,65 @@ describe("Durand's variant selection", () => {
     // Durand's would cluster entirely on one side.
     expect(sawDurandsWithMinScale).toBe(true);
     expect(sawDurandsWithMaxScale).toBe(true);
+  });
+});
+
+describe('settler races', () => {
+  it('is deterministic and matches the pinned golden vectors', () => {
+    // Golden values computed from the shipped hash — a change to the hash,
+    // the district size, or the bit slice shows up here as a diff, which is
+    // the point: race placement is a WORLD fact players will name on maps,
+    // so it must never drift silently between builds (or between this
+    // function and any other plugin's documented copy of it).
+    for (const [x, y, race] of [
+      [0, 0, 'rudy'],
+      [8, 12, 'rudy'],
+      [16, 16, 'uno'],
+      [100, 100, 'uno'],
+      [255, 17, 'uno'],
+      [511, 511, 'rudy'],
+    ] as const) {
+      expect(settlementRace(x, y)).toBe(race);
+    }
+  });
+
+  it('gives every cell of one district the same race', () => {
+    for (const [baseX, baseY] of [
+      [0, 0],
+      [16, 16],
+      [240, 240],
+    ] as const) {
+      const district = settlementRace(baseX, baseY);
+      for (const [dx, dy] of [
+        [0, 0],
+        [SETTLER_DISTRICT_CELLS - 1, 0],
+        [0, SETTLER_DISTRICT_CELLS - 1],
+        [SETTLER_DISTRICT_CELLS - 1, SETTLER_DISTRICT_CELLS - 1],
+        [7, 9],
+      ] as const) {
+        expect(settlementRace(baseX + dx, baseY + dy)).toBe(district);
+      }
+    }
+  });
+
+  it('splits a full world of districts roughly evenly between the peoples', () => {
+    const counts: Record<SettlerRace, number> = { rudy: 0, uno: 0 };
+    const districtsPerEdge = 32; // a 512-cell world edge
+    for (let dy = 0; dy < districtsPerEdge; dy++) {
+      for (let dx = 0; dx < districtsPerEdge; dx++) {
+        counts[settlementRace(dx * SETTLER_DISTRICT_CELLS, dy * SETTLER_DISTRICT_CELLS)]++;
+      }
+    }
+    const total = districtsPerEdge * districtsPerEdge;
+    // 529 / 495 with the shipped hash; the assertion is the property (no
+    // race owns more than ~60% of the world), not the exact split.
+    expect(counts.rudy + counts.uno).toBe(total);
+    expect(counts.rudy).toBeGreaterThan(total * 0.4);
+    expect(counts.uno).toBeGreaterThan(total * 0.4);
+  });
+
+  it('flows into placements so the renderer tints without re-deriving', () => {
+    const result = placementsFor(cells([0, 0, 0], [16, 16, 2]), () => 5);
+    expect(result.placements.map((p) => p.race)).toEqual(['rudy', 'uno']);
   });
 });
