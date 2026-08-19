@@ -1554,6 +1554,106 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     for (const i of higher) expect(map.cells[i]).toBe(before[i]);
   });
 
+  // ── The anchor must survive the relaxation pass (owner bug report
+  // 2026-08-19, "smooth, soft appears to be broken"). The wire options every
+  // player stroke actually carries: smooth + banded + clicked. Before the fix
+  // the anchored BRUSH honoured the ceiling and the relaxation immediately
+  // broke it — eroding the protected higher terrace down ("it sometimes
+  // resets top layers") and lifting just-raised ground past the clicked
+  // level. These pin the composed stroke, not the brush pass alone. ──
+  const WIRE_SMOOTH_SOFT: SculptOptions = {
+    tool: 'smooth',
+    profile: 'soft',
+    spill: 'banded',
+    anchor: 'clicked',
+  };
+
+  it('smooth+soft raising: the higher terrace under the brush survives the RELAXATION too', () => {
+    const { map, higher } = unevenLedge();
+    const before = Int16Array.from(map.cells);
+    const target = 7 * BAND_HEIGHT;
+
+    applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+
+    // The band-7 cells are byte-untouched by the WHOLE stroke — brush AND
+    // relaxation. This is the exact cell set the pre-fix relaxation eroded.
+    for (const i of higher) expect(map.cells[i]).toBe(before[i]);
+    // And nothing anywhere ends above the clicked ceiling unless it started
+    // there — relaxation may no longer carry ground past the anchor.
+    for (let i = 0; i < map.cells.length; i++) {
+      expect(map.cells[i]).toBeLessThanOrEqual(Math.max(before[i], target));
+    }
+  });
+
+  it('smooth+soft lowering mirrors: cells below the anchored floor are byte-untouched', () => {
+    const { map, lower } = unevenLedge();
+    // Deepen the band-5 pocket to band 4 so the fixture holds ground BELOW
+    // the lowering target (band-5 floor = 320) — the mirror of `higher`.
+    const deepened: number[] = [];
+    for (const i of lower) {
+      map.cells[i] = 4 * BAND_HEIGHT + 8; // band 4 (264), below the 320 floor
+      deepened.push(i);
+    }
+    const before = Int16Array.from(map.cells);
+    const floor = 5 * BAND_HEIGHT;
+
+    applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+
+    for (const i of deepened) expect(map.cells[i]).toBe(before[i]);
+    for (let i = 0; i < map.cells.length; i++) {
+      expect(map.cells[i]).toBeGreaterThanOrEqual(Math.min(before[i], floor));
+    }
+  });
+
+  it('widening the world floor works: wall cells inside the footprint still descend', () => {
+    // A pit already at MIN_HEIGHT with a wall through the footprint — the
+    // owner's "make the bottom larger" situation. Lowering anchored at the
+    // pit floor targets MIN_HEIGHT (one band down, clamped), so the wall
+    // cells must keep moving down while the floor cells stay put.
+    const map = createHeightmap(32);
+    map.cells.fill(MIN_HEIGHT + 4 * BAND_HEIGHT); // wall ground, 4 bands up
+    const floorCells: number[] = [];
+    forEachFootprintOffset(3, (dx, dy) => {
+      if (dx <= 0) {
+        const i = cellIndex(map, 16 + dx, 16 + dy);
+        map.cells[i] = MIN_HEIGHT;
+        floorCells.push(i);
+      }
+    });
+    const before = Int16Array.from(map.cells);
+
+    const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+
+    // The stroke is NOT a no-op: the wall half of the footprint descended.
+    expect(diff.length).toBeGreaterThan(0);
+    let wallMoved = 0;
+    forEachFootprintOffset(3, (dx, dy) => {
+      const i = cellIndex(map, 16 + dx, 16 + dy);
+      if (before[i] > MIN_HEIGHT && map.cells[i] < before[i]) wallMoved++;
+    });
+    expect(wallMoved).toBeGreaterThan(0);
+    // And nothing anywhere is below the world floor.
+    for (let i = 0; i < map.cells.length; i++) {
+      expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
+    }
+  });
+
+  it('a footprint entirely at the world floor is a true no-op: empty diff, both profiles, both tools', () => {
+    for (const profile of ['soft', 'hard'] as const) {
+      for (const tool of ['stamp', 'smooth'] as const) {
+        const map = createHeightmap(32);
+        map.cells.fill(MIN_HEIGHT);
+        const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, {
+          tool,
+          profile,
+          spill: 'banded',
+          anchor: 'clicked',
+        });
+        expect(diff).toEqual([]);
+      }
+    }
+  });
+
   it('anchored wire options are deterministic: two identical runs, identical worlds', () => {
     const runs: Int16Array[] = [];
     for (let run = 0; run < 2; run++) {

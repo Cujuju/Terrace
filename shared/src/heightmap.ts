@@ -373,6 +373,30 @@ function assertBrushArgs(
 }
 
 /**
+ * THE ANCHOR TARGET — the one derivation of "the level the clicked cell
+ * implies": the floor of the band adjacent (above when raising, below when
+ * lowering) to the CENTRE cell's band, clamped into the height range. Read
+ * from the map BEFORE any write of the stroke — the centre is itself a
+ * footprint cell, and a target computed after it moved would anchor the
+ * stroke to the wrong band.
+ *
+ * Extracted (2026-08-19, owner bug report) because THREE call sites must
+ * agree bit for bit or the anchored stroke contradicts itself: applyBrush's
+ * ceiling, applyLevelFillBrush's fill level, and applySculpt's relaxation
+ * containment for anchored smooth strokes.
+ */
+function anchoredTargetHeight(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  raising: boolean,
+): number {
+  return clampHeight(
+    (bandOf(map.cells[cellIndex(map, cx, cy)]) + (raising ? 1 : -1)) * BAND_HEIGHT,
+  );
+}
+
+/**
  * Applies the sculpt brush over its footprint — the tight integer disc
  * forEachFootprintOffset defines. Cells outside the footprint are never
  * touched by the brush itself.
@@ -426,9 +450,7 @@ export function applyBrush(
   // has no direction to anchor and writes nothing anyway.
   const raising = amount > 0;
   const anchored = anchor === 'clicked' && amount !== 0;
-  const target = anchored
-    ? clampHeight((bandOf(map.cells[cellIndex(map, cx, cy)]) + (raising ? 1 : -1)) * BAND_HEIGHT)
-    : 0;
+  const target = anchored ? anchoredTargetHeight(map, cx, cy, raising) : 0;
 
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
@@ -529,11 +551,16 @@ export function applyLevelFillBrush(
 
   const raising = amount > 0;
 
-  let extremeBand = 0;
   if (anchor === 'clicked') {
-    // ANCHORED: the level the player pointed at, read before any write.
-    extremeBand = bandOf(map.cells[cellIndex(map, cx, cy)]);
-  } else {
+    // ANCHORED: the level the player pointed at, read before any write — the
+    // same derivation the other two anchored call sites use.
+    const targetHeight = anchoredTargetHeight(map, cx, cy, raising);
+    fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight);
+    return;
+  }
+
+  let extremeBand = 0;
+  {
     // PASS 1 — SURVEY. The extreme band across the footprint's in-bounds cells.
     // Off-map cells are excluded for the same reason applyBrush skips them: they
     // are not part of this world, so they cannot hold back a fill in it.
@@ -560,8 +587,25 @@ export function applyLevelFillBrush(
   // BAND_HEIGHT 64) is MAX_HEIGHT + BAND_HEIGHT, i.e. off the map's range, and
   // the same one band below MIN_HEIGHT.
   const targetHeight = clampHeight((extremeBand + (raising ? 1 : -1)) * BAND_HEIGHT);
+  fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight);
+}
 
-  // PASS 2 — FILL. Same footprint, same order.
+/**
+ * PASS 2 of the level fill — one footprint sweep moving every cell short of
+ * `targetHeight` by `amount`, stopping AT the target, leaving cells at or past
+ * it untouched. Shared by both of applyLevelFillBrush's target derivations
+ * (anchored and surveyed) so the fill semantics cannot fork between them.
+ */
+function fillTowardTarget(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  amount: number,
+  changed: Set<number>,
+  raising: boolean,
+  targetHeight: number,
+): void {
   forEachFootprintCell(map, cx, cy, radius, (i) => {
     const h = map.cells[i];
     // Already at or past the level being filled: untouched. This is what stops
@@ -836,12 +880,26 @@ function relaxPair(
  * MAX_STEP invariant above is then explicitly NOT guaranteed where a cap
  * binds — see movePair's ACCEPTED RESIDUAL note. Omitting `spillFree` is the
  * pre-#26 relaxation, bit for bit.
+ *
+ * ANCHOR CONTAINMENT (2026-08-19, owner bug report "smooth, soft appears to
+ * be broken"). When `anchorBounds` is given (applySculpt builds it for
+ * anchored smooth strokes, one entry per footprint cell), those cells are
+ * bounded INSIDE the footprint too: relaxation may not carry any footprint
+ * cell past the stroke's anchor target, and may not move at all a cell that
+ * started past it — the cells the anchored brush promised to leave alone
+ * (the higher terrace under a raising brush) can no longer be eroded by the
+ * relaxation pass that follows it. Where a bound bites, the pair is left
+ * over-steep — the SAME accepted residual as the banded spill above, for the
+ * same reason: the wall the player deliberately kept is not relaxation's to
+ * repair. `anchorBounds` takes precedence over `spillFree` membership; cells
+ * in neither behave exactly as before.
  */
 export function smooth(
   map: Heightmap,
   changed: Set<number>,
   bboxSeed?: ReadonlySet<number>,
   spillFree?: ReadonlySet<number>,
+  anchorBounds?: ReadonlyMap<number, SpillBand>,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -849,10 +907,15 @@ export function smooth(
   const { size, cells } = map;
 
   let boundsOf: SpillBoundsOf | null = null;
-  if (spillFree !== undefined) {
+  if (spillFree !== undefined || anchorBounds !== undefined) {
     const captured = new Map<number, SpillBand>();
     boundsOf = (index: number): SpillBand | null => {
-      if (spillFree.has(index)) return null;
+      // Anchored footprint cells carry their own interval; it wins over the
+      // footprint's blanket freedom because it is strictly more specific —
+      // the whole reason it exists is to bound cells `spillFree` would free.
+      const anchored = anchorBounds?.get(index);
+      if (anchored !== undefined) return anchored;
+      if (spillFree === undefined || spillFree.has(index)) return null;
       let band = captured.get(index);
       if (band === undefined) {
         // First touch: the cell is at its pre-stroke height (see the doc
@@ -972,6 +1035,11 @@ export function applySculpt(
   const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
 
   const changed = new Set<number>();
+  // The anchor target for the RELAXATION containment below, read before the
+  // brush writes anything — the same pre-stroke-centre derivation the brushes
+  // themselves use (anchoredTargetHeight), or the three would disagree.
+  const anchoredSmooth = tool === 'smooth' && anchor === 'clicked' && amount !== 0;
+  const anchorTarget = anchoredSmooth ? anchoredTargetHeight(map, cx, cy, amount > 0) : 0;
   // The one dispatch in the sculpt path. Both branches are integer-only over the
   // same footprint, and both sides of the prediction contract reach them through
   // this one function, so client and server cannot pick different branches.
@@ -1001,16 +1069,47 @@ export function applySculpt(
     // Strokes with spill 'free' whose brush DID move cells keep the pre-#12
     // call shape (no footprint computed at all) bit for bit.
     let footprint: Set<number> | undefined;
-    if (changed.size === 0 || spill === 'banded') {
+    if (changed.size === 0 || spill === 'banded' || anchoredSmooth) {
       const cells = new Set<number>();
       forEachFootprintCell(map, cx, cy, radius, (i) => cells.add(i));
       footprint = cells;
+    }
+    // ANCHOR CONTAINMENT (2026-08-19, owner bug report). The anchored brush
+    // promised two things relaxation used to break in the very next pass:
+    // cells past the target stay byte-untouched (the higher terrace beside a
+    // raising brush was being eroded down — "it sometimes resets top layers"),
+    // and nothing the stroke moves ends past the target (raised ground was
+    // relaxed above the clicked ceiling). So an anchored smooth stroke bounds
+    // its own footprint cells for the relaxation pass, from their pre-relax
+    // heights: past the target → frozen; short of it → movable up to the
+    // target in the stroke's direction, unbounded against it (slump stays
+    // physical; a wall may still shed INTO a dug ring). Both are per-stroke
+    // intervals, deterministic, and the map is only ever read via .get — no
+    // iteration-order dependence.
+    let anchorBounds: Map<number, SpillBand> | undefined;
+    if (anchoredSmooth) {
+      const raising = amount > 0;
+      anchorBounds = new Map<number, SpillBand>();
+      for (const i of footprint as Set<number>) {
+        const h = map.cells[i];
+        if (raising ? h > anchorTarget : h < anchorTarget) {
+          anchorBounds.set(i, { lo: h, hi: h });
+        } else {
+          anchorBounds.set(
+            i,
+            raising
+              ? { lo: MIN_HEIGHT, hi: anchorTarget }
+              : { lo: anchorTarget, hi: MAX_HEIGHT },
+          );
+        }
+      }
     }
     smooth(
       map,
       changed,
       changed.size === 0 ? footprint : undefined,
       spill === 'banded' ? footprint : undefined,
+      anchorBounds,
     );
   }
 
