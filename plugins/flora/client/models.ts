@@ -76,9 +76,16 @@ const BROADLEAF_CROWN_RADIUS = 0.46;
 const BROADLEAF_CROWN_SEGMENTS = 6;
 const BROADLEAF_CROWN_RINGS = 4;
 
+/**
+ * The broadleaf crown sinks slightly below where its radius would place it, so
+ * the sphere overlaps the trunk top instead of balancing tangent to it — a
+ * bare sphere-on-cylinder join reads as a seam, and the overlap hides it.
+ */
+const BROADLEAF_CROWN_TRUNK_OVERLAP = 0.95;
+
 /** Total height either kind reaches at scale 1: 1.5 and ~1.36 world units. */
 const CONIFER_CROWN_CENTRE_Y = TRUNK_HEIGHT + CONIFER_CROWN_HEIGHT / 2;
-const BROADLEAF_CROWN_CENTRE_Y = TRUNK_HEIGHT + BROADLEAF_CROWN_RADIUS * 0.95;
+const BROADLEAF_CROWN_CENTRE_Y = TRUNK_HEIGHT + BROADLEAF_CROWN_RADIUS * BROADLEAF_CROWN_TRUNK_OVERLAP;
 
 /**
  * Colours, picked against the ground each kind stands on rather than in

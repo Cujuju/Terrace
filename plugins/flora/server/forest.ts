@@ -73,7 +73,7 @@ export const FLORA_SURVEY_INTERVAL_SECONDS = 5;
  *
  * At 12, a 16×16 chunk of pure grass settles at 21 trees — a copse you can walk
  * around, on ground you can still read. It also sits comfortably above the
- * densest packing the spacing rule allows (1 in 9), so the two constants shape
+ * densest packing the spacing rule allows (1 in 4), so the two constants shape
  * the pattern together instead of fighting: see FLORA_MIN_TREE_SPACING_CELLS.
  */
 export const FLORA_CELLS_PER_TREE = 12;
@@ -87,7 +87,7 @@ export const FLORA_CELLS_PER_TREE = 12;
  * cells visibly interpenetrate and read as one shapeless mass. One clear cell
  * between them is the least that keeps them separate.
  *
- * It caps local density at 1 tree per 9 cells, which is denser than the 1-in-12
+ * It caps local density at 1 tree per 4 cells, which is denser than the 1-in-12
  * the target asks for — deliberately, so the spacing rule never becomes the thing
  * that decides how many trees a world has. It only decides where they are not.
  */

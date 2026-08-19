@@ -107,9 +107,6 @@ export function createBrushPreview(scene: Scene): BrushPreview {
   const line = new LineSegments(geometries[0], material);
   line.renderOrder = 998;
   line.visible = false;
-  // The outline follows the cursor every frame; recomputing a world matrix for
-  // a hidden or unmoved line is wasted work three would otherwise do per frame.
-  line.matrixAutoUpdate = true;
   scene.add(line);
 
   let shownRadius = MIN_BRUSH_RADIUS;
