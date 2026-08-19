@@ -807,16 +807,63 @@ function rectangleBorderPoints(count: number, hw: number, hh: number): Array<{ x
   return points;
 }
 
+// ── Neon dancer: a two-pose sign figure at the right porch post ─────────────
+//
+// Owner request: a dancer figure on one of the two porch poles. Rendered the
+// way a Vegas sign would render it — a stylized NEON SILHOUETTE, not an
+// anatomical model: thin glowing segments and a sphere head, mannequin-
+// abstract by construction. Two fixed poses are built as separate instanced
+// parts and ALTERNATE being lit on the marquee's own phase clock (pose A lit
+// with bulb phase A, pose B with phase B), the classic two-pose animated-sign
+// trick: apparent motion with zero per-frame matrix work, and no new flash
+// frequency — the figure rides the 1.25 Hz bulb sine already counted in the
+// marquee's 3 Hz-ceiling arithmetic above, in the same visual cluster.
+/** Neon-pink tube glow; deliberately not the marquee's gold so the figure reads as its own sign element. */
+const DURANDS_DANCER_NEON_COLOR = 0xff5f9e;
+/** Dark tube base — same "dark socket, bright emissive" split the bulbs keep, so the unlit pose actually reads OFF. */
+const DURANDS_DANCER_TUBE_COLOR = 0x33202b;
+const DURANDS_DANCER_EMISSIVE_MIN = 0.04;
+/** Slightly under the bulbs' own max: the figure is set dressing, the sign stays the focal point. */
+const DURANDS_DANCER_EMISSIVE_MAX = 1.0;
+/** Neon-tube radius: thin enough to read as outline, thick enough to survive game camera distance. */
+const DURANDS_DANCER_TUBE_RADIUS = 0.009;
+/** Unit length the shared segment cylinder is built at; per-segment matrices scale Y to the real length. */
+const DURANDS_DANCER_SEGMENT_UNIT = 0.1;
+const DURANDS_DANCER_HEAD_RADIUS = 0.021;
+
 /**
- * A saloon building plus its flashing sign and marquee bulbs, and the three
- * materials animate() needs a handle to pulse: the sign, and the two bulb
- * phase groups.
+ * One neon tube segment BETWEEN two joints in the building's front (x, y)
+ * plane: midpoint, length and Z-tilt are derived from the endpoints, so the
+ * figure is authored as a joint skeleton and every limb connects by
+ * construction — hand-placed midpoints proved unreviewable (the first draft
+ * rendered as a disconnected jumble; this helper is the fix).
+ */
+function dancerSegment(x1: number, y1: number, x2: number, y2: number, z: number): Matrix4 {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  // rotZ(θ) maps the cylinder's +Y axis onto (-sin θ, cos θ), so this angle
+  // points the tube from joint 1 to joint 2.
+  const tiltZ = Math.atan2(-dx, dy);
+  const length = Math.hypot(dx, dy);
+  return new Matrix4().compose(
+    new Vector3((x1 + x2) / 2, (y1 + y2) / 2, z),
+    new Quaternion().setFromAxisAngle(Z_AXIS, tiltZ),
+    new Vector3(1, length / DURANDS_DANCER_SEGMENT_UNIT, 1),
+  );
+}
+
+/**
+ * A saloon building plus its flashing sign and marquee bulbs, and the
+ * materials animate() needs a handle to pulse: the sign, the two bulb phase
+ * groups, and the dancer's two pose groups (lit on the same phase clock).
  */
 interface DurandsBuilding {
   readonly parts: StructurePart[];
   readonly signMaterial: MeshLambertMaterial;
   readonly marqueePhaseAMaterial: MeshLambertMaterial;
   readonly marqueePhaseBMaterial: MeshLambertMaterial;
+  readonly dancerPoseAMaterial: MeshLambertMaterial;
+  readonly dancerPoseBMaterial: MeshLambertMaterial;
 }
 
 /**
@@ -919,6 +966,10 @@ function buildDurandsParts(): DurandsBuilding {
   const signHalfHeight = 0.08;
   const signThickness = 0.02;
   const signGap = 0.01;
+  // Owner call (2026-08-19): the sign hangs on the RIGHT side of the false
+  // front, flush with its right edge, not centred — the marquee frame below
+  // derives from the sign's own centre, so it rides along automatically.
+  const signX = secondHalfWidth - signHalfWidth;
   const signY = groundFloorHeight + secondFloorHeight + falseFrontHeight * 0.5;
   const signZ = falseFrontZ + falseFrontDepth / 2 + signThickness / 2 + signGap;
   const signMaterial = new MeshLambertMaterial({
@@ -930,7 +981,7 @@ function buildDurandsParts(): DurandsBuilding {
   const sign: StructurePart = {
     geometry: new BoxGeometry(signHalfWidth * 2, signHalfHeight * 2, signThickness),
     material: signMaterial,
-    localMatrices: [at(0, signY, signZ)],
+    localMatrices: [at(signX, signY, signZ)],
   };
 
   // Marquee bulbs: a closed ring of small spheres walking the sign board's
@@ -955,7 +1006,7 @@ function buildDurandsParts(): DurandsBuilding {
   const marqueePhaseAMatrices: Matrix4[] = [];
   const marqueePhaseBMatrices: Matrix4[] = [];
   marqueeBorder.forEach((point, index) => {
-    const matrix = at(point.x, signY + point.y, marqueeBulbZ);
+    const matrix = at(signX + point.x, signY + point.y, marqueeBulbZ);
     (index % 2 === 0 ? marqueePhaseAMatrices : marqueePhaseBMatrices).push(matrix);
   });
 
@@ -982,6 +1033,77 @@ function buildDurandsParts(): DurandsBuilding {
     localMatrices: marqueePhaseBMatrices,
   };
 
+  // The dancer, at the RIGHT porch post ("one of those two poles in the
+  // front" — owner). The post itself is the dance pole; both poses hug it.
+  // Segment coordinates are hand-placed midpoints in the building's own
+  // space, one Z-plane just proud of the post so the tubes never z-fight it.
+  const dancerZ = postZ + 0.02;
+  const dancerPoseAMaterial = new MeshLambertMaterial({
+    color: DURANDS_DANCER_TUBE_COLOR,
+    flatShading: true,
+    emissive: DURANDS_DANCER_NEON_COLOR,
+    emissiveIntensity: DURANDS_DANCER_EMISSIVE_MAX,
+  });
+  const dancerPoseBMaterial = new MeshLambertMaterial({
+    color: DURANDS_DANCER_TUBE_COLOR,
+    flatShading: true,
+    emissive: DURANDS_DANCER_NEON_COLOR,
+    emissiveIntensity: DURANDS_DANCER_EMISSIVE_MIN,
+  });
+  const dancerSegmentGeometry = new CylinderGeometry(
+    DURANDS_DANCER_TUBE_RADIUS,
+    DURANDS_DANCER_TUBE_RADIUS,
+    DURANDS_DANCER_SEGMENT_UNIT,
+    5,
+  );
+  const dancerHeadGeometry = new SphereGeometry(DURANDS_DANCER_HEAD_RADIUS, 6, 4);
+
+  // Pose A — upright at the pole: standing leg on the porch, one leg
+  // extended, torso up the pole, one arm gripping above, one arm out.
+  // Joints are (x, y) in the building's front plane; the porch floor is y=0.
+  const hipAX = postX + 0.01;
+  const hipAY = 0.16;
+  const shoulderAX = postX + 0.02;
+  const shoulderAY = 0.3;
+  const dancerPoseA: StructurePart = {
+    geometry: dancerSegmentGeometry,
+    material: dancerPoseAMaterial,
+    localMatrices: [
+      dancerSegment(postX, 0, hipAX, hipAY, dancerZ), // standing leg
+      dancerSegment(hipAX, hipAY, postX - 0.14, 0.21, dancerZ), // extended leg
+      dancerSegment(hipAX, hipAY, shoulderAX, shoulderAY, dancerZ), // torso
+      dancerSegment(shoulderAX, shoulderAY, postX + 0.03, 0.42, dancerZ - 0.01), // arm gripping pole
+      dancerSegment(shoulderAX, shoulderAY, postX - 0.1, 0.24, dancerZ), // free arm out
+    ],
+  };
+  const dancerPoseAHead: StructurePart = {
+    geometry: dancerHeadGeometry,
+    material: dancerPoseAMaterial,
+    localMatrices: [at(shoulderAX + 0.005, shoulderAY + 0.045, dancerZ)],
+  };
+
+  // Pose B — arched lean away from the pole, one hand keeping hold of it,
+  // the other arm trailing.
+  const hipBX = postX - 0.03;
+  const hipBY = 0.15;
+  const shoulderBX = postX - 0.1;
+  const shoulderBY = 0.27;
+  const dancerPoseB: StructurePart = {
+    geometry: dancerSegmentGeometry,
+    material: dancerPoseBMaterial,
+    localMatrices: [
+      dancerSegment(postX, 0, hipBX, hipBY, dancerZ), // legs together
+      dancerSegment(hipBX, hipBY, shoulderBX, shoulderBY, dancerZ), // arched torso
+      dancerSegment(shoulderBX, shoulderBY, postX + 0.01, 0.38, dancerZ - 0.01), // arm holding pole
+      dancerSegment(shoulderBX, shoulderBY, postX - 0.2, 0.2, dancerZ), // trailing arm
+    ],
+  };
+  const dancerPoseBHead: StructurePart = {
+    geometry: dancerHeadGeometry,
+    material: dancerPoseBMaterial,
+    localMatrices: [at(shoulderBX - 0.025, shoulderBY + 0.045, dancerZ)],
+  };
+
   return {
     parts: [
       groundFloor,
@@ -994,10 +1116,16 @@ function buildDurandsParts(): DurandsBuilding {
       sign,
       marqueeBulbsPhaseA,
       marqueeBulbsPhaseB,
+      dancerPoseA,
+      dancerPoseAHead,
+      dancerPoseB,
+      dancerPoseBHead,
     ],
     signMaterial,
     marqueePhaseAMaterial,
     marqueePhaseBMaterial,
+    dancerPoseAMaterial,
+    dancerPoseBMaterial,
   };
 }
 
@@ -1170,6 +1298,15 @@ export function createStructureModels(): StructureModels {
         DURANDS_MARQUEE_BULB_EMISSIVE_MIN + phaseAT * (DURANDS_MARQUEE_BULB_EMISSIVE_MAX - DURANDS_MARQUEE_BULB_EMISSIVE_MIN);
       durands.marqueePhaseBMaterial.emissiveIntensity =
         DURANDS_MARQUEE_BULB_EMISSIVE_MIN + phaseBT * (DURANDS_MARQUEE_BULB_EMISSIVE_MAX - DURANDS_MARQUEE_BULB_EMISSIVE_MIN);
+
+      // Neon dancer: the two poses swap on the SAME phase clock as the bulbs
+      // (pose A lit with phase A, pose B with phase B) — the two-pose sign
+      // trick. No new frequency is introduced; see the dancer constants'
+      // banner for why this stays inside the marquee's ceiling arithmetic.
+      durands.dancerPoseAMaterial.emissiveIntensity =
+        DURANDS_DANCER_EMISSIVE_MIN + phaseAT * (DURANDS_DANCER_EMISSIVE_MAX - DURANDS_DANCER_EMISSIVE_MIN);
+      durands.dancerPoseBMaterial.emissiveIntensity =
+        DURANDS_DANCER_EMISSIVE_MIN + phaseBT * (DURANDS_DANCER_EMISSIVE_MAX - DURANDS_DANCER_EMISSIVE_MIN);
     },
 
     dispose(): void {
