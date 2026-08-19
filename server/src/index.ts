@@ -10,7 +10,8 @@
 // shutdown → transport close → onShutdown). We hook that instead of installing
 // competing handlers, so there is exactly one shutdown path.
 
-import { Server } from 'colyseus';
+import './quiet-boot.ts'; // must precede any Colyseus import — see that file's comment
+import { Server } from '@colyseus/core';
 import { loadConfig, ConfigError, type ServerConfig } from './config.ts';
 import { logError, logInfo } from './log.ts';
 import { SnapshotStore } from './persistence/snapshot-store.ts';
@@ -132,7 +133,9 @@ async function main(): Promise<void> {
 
   // Bind before define(): a room can be created as soon as the server listens.
   bindRoomContext({ world, host });
-  const gameServer = new Server();
+  // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
+  // (@colyseus/core ServerOptions.greet, default true).
+  const gameServer = new Server({ greet: false });
   gameServer.define(ROOM_NAME, TerraceRoom);
 
   gameServer.onBeforeShutdown(() => {

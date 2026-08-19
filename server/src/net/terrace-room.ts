@@ -12,7 +12,7 @@
 //  - message payloads are encoded with MsgPack by the transport, so we hand it
 //    plain protocol objects and never serialize by hand.
 
-import { Room, type Client } from 'colyseus';
+import { Room, type Client } from '@colyseus/core';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,

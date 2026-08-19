@@ -12,9 +12,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@colyseus/core": "^0.17.50",
+    "@colyseus/ws-transport": "^0.17.13",
     "@terrace/shared": "workspace:*",
-    "better-sqlite3": "^13.0.2",
-    "colyseus": "^0.17.10"
+    "better-sqlite3": "^13.0.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
