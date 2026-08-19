@@ -142,9 +142,18 @@ export async function discoverPlugins(pluginsDir: string): Promise<LoadedPlugin[
   try {
     const entries = await readdir(root, { withFileTypes: true });
     directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch {
-    logInfo(`no plugins directory at ${root} — running with core only`);
-    return [];
+  } catch (error) {
+    // ENOENT (directory genuinely absent) is the one expected failure — core
+    // runs fine with no plugins. Anything else (EACCES on a misconfigured
+    // mount, ENOTDIR, ...) is a real I/O problem: it must abort boot rather
+    // than be reported as "no plugins directory", or a self-hoster gets the
+    // silently-degraded world the malformed-plugin policy above exists to rule
+    // out.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      logInfo(`no plugins directory at ${root} — running with core only`);
+      return [];
+    }
+    throw error;
   }
 
   directories.sort();

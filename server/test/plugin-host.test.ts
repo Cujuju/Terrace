@@ -49,6 +49,14 @@ describe('discoverPlugins', () => {
     expect(await discoverPlugins(join(FIXTURES, 'does-not-exist'))).toEqual([]);
   });
 
+  it('propagates a real I/O error instead of reporting it as "no plugins directory"', async () => {
+    // "not-a-directory" is a plain file, so readdir() fails with ENOTDIR, not
+    // ENOENT. Only ENOENT (directory genuinely absent) may resolve to [];
+    // any other error is a misconfiguration (e.g. EACCES on a bad mount) and
+    // must abort boot rather than silently come up with zero plugins.
+    await expect(discoverPlugins(join(FIXTURES, 'not-a-directory'))).rejects.toThrow();
+  });
+
   it('aborts on an illegal plugin name', async () => {
     await expect(discoverPlugins(join(FIXTURES, 'bad-name-plugins'))).rejects.toThrow(
       PluginLoadError,
