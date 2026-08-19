@@ -25,13 +25,21 @@ foreach ($port in 5173, 2567) {
     Write-Host "Forwarded 0.0.0.0:$port -> ${wslIp}:$port (firewall open)"
 }
 
-$lanIp = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.InterfaceAlias -notmatch "vEthernet|Loopback" -and $_.IPAddress -notlike "169.254.*" } |
+# The LAN IP that actually routes: the interface carrying the default route,
+# not merely the first IPv4 adapter (VirtualBox/WSL host adapters would win).
+$defaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" |
+    Sort-Object RouteMetric | Select-Object -First 1
+$lanIp = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $defaultRoute.ifIndex |
     Select-Object -First 1).IPAddress
 Write-Host ""
-Write-Host "On your phone (same Wi-Fi):"
+Write-Host "On your phone (same Wi-Fi) - USE THIS IP, not a .local name:"
 Write-Host "  dev client    : http://${lanIp}:5173"
 Write-Host "  static client : http://${lanIp}:2567"
+Write-Host ""
+Write-Host "WHY NOT amd.local: it answers with several addresses (an IPv6 link-local"
+Write-Host "plus every virtual adapter) and these forwards are IPv4-only, so any"
+Write-Host "device that picks the wrong answer - iPhones prefer the IPv6 - fails to"
+Write-Host "connect, apparently at random. The raw IP is deterministic."
 Write-Host ""
 Write-Host "NOTE (dev mode): the Vite client dials ws://<hostname>:2567 for the game"
 Write-Host "socket, so the 2567 forward above is what makes the phone actually connect."
