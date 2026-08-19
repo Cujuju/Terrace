@@ -257,7 +257,46 @@ export function cliffFaceColor(top: Rgb): Rgb {
 // colour that actually reaches the screen rather than against a guess at how
 // much light a sliver catches, and a future change to the lighting rig can no
 // longer make the outlines vanish again.
+//
+// AMENDMENT (owner, 2026-08-19, after the depth ramp landed): the whole-face
+// silt-aqua rim above is SUPERSEDED. With every band now carrying its own
+// depth colour, a uniform bright rim on the full riser fought the ramp — the
+// side walls read as one glowing material at every depth. The owner's spec:
+// "the sidebands for the terrain in the water need to be roughly the same
+// color as the level they represent, but slightly lightened, and ... a single
+// one pixel border at the top edge of that band ... the same color as the
+// next layer down." So an underwater riser FACE is now its own band's tread
+// nudged toward white (seabedRiserFaceColor below) — risers darken with depth
+// alongside their treads — and the thin top-edge border (a geometry sliver,
+// capEmission.ts) takes the NEXT BAND DOWN's tread colour straight from
+// TERRAIN_PALETTE, no derivation of its own. The SELF-LIT decision above is
+// KEPT and matters more, not less: the face must track its tread on all four
+// orientations, which a sun-lit vertical face cannot do. seabedRimColor and
+// its factors remain below, unreferenced, as the record of the 2026-08-14
+// treatment this replaces.
 // ---------------------------------------------------------------------------
+
+/**
+ * How far an underwater riser face is nudged toward white over its own tread
+ * (owner, 2026-08-19: "roughly the same color as the level they represent,
+ * but slightly lightened").
+ *
+ * A LERP TOWARD WHITE rather than a multiplicative brighten, deliberately:
+ * the deep half of the ramp lives near black (band −16 is 0x030813), where a
+ * multiplier changes nothing a screen can show — lerping adds a floor of
+ * lift that survives the abyss AND the translucent water tint over it. 0.16
+ * keeps the face unmistakably "the same colour as the level": the lift is
+ * smaller than the ramp's own step between adjacent bands at the shallow end,
+ * so a riser never reads brighter than the tread one band up.
+ */
+export const SEABED_RISER_LIGHTEN_MIX = 0.16;
+
+/** The band's own tread, slightly lightened — the underwater riser face. */
+export function seabedRiserFaceColor(top: Rgb): Rgb {
+  const lift = (channel: number): number =>
+    channel + (1 - channel) * SEABED_RISER_LIGHTEN_MIX;
+  return [lift(top[0]), lift(top[1]), lift(top[2])];
+}
 
 /** The pale silt-aqua a seabed rim is pulled toward. */
 const SEABED_RIM_TINT: Rgb = rgb(0x9fd4c8);
@@ -303,13 +342,15 @@ export function seabedRimColor(top: Rgb): Rgb {
 /**
  * The cliff ramp, index-for-index with TERRAIN_PALETTE so a wall can be looked
  * up with the very same `bandPaletteIndex` the tread above it used. Seabed
- * entries take the rim derivation, land entries the rock one — the waterline
- * is the material boundary between the two regimes. Derived once at module
- * load; the renderer converts it to linear alongside the top palette, so no
- * per-vertex colour maths happens on the patch path.
+ * entries take the lightened-tread riser derivation (owner, 2026-08-19 — see
+ * the amendment above; they took the silt-aqua rim before that), land entries
+ * the rock one — the waterline is the material boundary between the two
+ * regimes. Derived once at module load; the renderer converts it to linear
+ * alongside the top palette, so no per-vertex colour maths happens on the
+ * patch path.
  */
 export const CLIFF_PALETTE: readonly Rgb[] = TERRAIN_PALETTE.map((top, index) =>
-  isSeabedPaletteIndex(index) ? seabedRimColor(top) : cliffFaceColor(top),
+  isSeabedPaletteIndex(index) ? seabedRiserFaceColor(top) : cliffFaceColor(top),
 );
 
 /** Bands the ramp covers explicitly, i.e. before snow clamping kicks in. */

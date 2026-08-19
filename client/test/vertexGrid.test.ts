@@ -30,6 +30,7 @@ import {
   LATTICE_PER_CHUNK,
   LIT_BY_SCENE,
   SEABED_CAP_SINK,
+  SEABED_RISER_BORDER_WORLD_HEIGHT,
   SELF_LIT,
   SKIRT_PICK_INSET,
   VERTICES_PER_TRIANGLE,
@@ -1114,6 +1115,63 @@ describe('colour attribution', () => {
     expectColor(topSkirts[0].color, CLIFF_PALETTE[bandPaletteIndex(4 * BAND_HEIGHT)]);
   });
 
+  it('splits each underwater riser into a next-band-down border sliver over a lightened-tread face (owner, 2026-08-19)', () => {
+    // A submerged step: band −1 shelf standing over a band −3 floor. Levels
+    // −2 and −1 each hang a one-band riser, and both are underwater, so each
+    // riser must be TWO stacked quads: a SEABED_RISER_BORDER_WORLD_HEIGHT
+    // sliver at the top edge painted as the NEXT BAND DOWN's tread, and the
+    // face below painted as the riser's own band's tread, lightened
+    // (CLIFF_PALETTE's seabed derivation). Both self-lit.
+    const { triangles } = writeEdge((i) => (i < 8 ? -3 * BAND_HEIGHT : -BAND_HEIGHT));
+    const skirts = skirtsOf(triangles);
+
+    const shelfTop = -1 * BAND_WORLD_HEIGHT;
+    const spanOf = (t: Triangle): number =>
+      Math.max(t.a.y, t.b.y, t.c.y) - Math.min(t.a.y, t.b.y, t.c.y);
+    const topOf = (t: Triangle): number => Math.max(t.a.y, t.b.y, t.c.y);
+
+    // The band −1 riser's border: starts exactly at the shelf's cap.
+    const borders = skirts.filter(
+      (t) =>
+        Math.abs(topOf(t) - shelfTop) < 1e-6 &&
+        Math.abs(spanOf(t) - SEABED_RISER_BORDER_WORLD_HEIGHT) < 1e-6,
+    );
+    expect(borders.length).toBeGreaterThan(0);
+    for (const border of borders) {
+      // "the same color as the next layer down": band −2's tread, unmodified.
+      expectColor(border.color, TERRAIN_PALETTE[bandPaletteIndex(-2 * BAND_HEIGHT)]);
+      expect(border.selfLit).toBe(SELF_LIT);
+    }
+
+    // The face below it: the remaining drop, in band −1's lightened tread.
+    const faces = skirts.filter(
+      (t) => Math.abs(topOf(t) - (shelfTop - SEABED_RISER_BORDER_WORLD_HEIGHT)) < 1e-6,
+    );
+    expect(faces.length).toBeGreaterThan(0);
+    for (const face of faces) {
+      expect(spanOf(face)).toBeCloseTo(
+        BAND_WORLD_HEIGHT - SEABED_RISER_BORDER_WORLD_HEIGHT,
+        6,
+      );
+      expectColor(face.color, CLIFF_PALETTE[bandPaletteIndex(-BAND_HEIGHT)]);
+      expect(face.selfLit).toBe(SELF_LIT);
+    }
+  });
+
+  it('keeps LAND cliffs single-quad — no border sliver above the waterline', () => {
+    // The border is an underwater treatment only; a land riser stays one
+    // full-height quad, so no skirt triangle of sliver height may exist.
+    const { triangles } = writeEdge((i) => (i < 8 ? 128 : 384));
+    const skirts = skirtsOf(triangles);
+    expect(skirts.length).toBeGreaterThan(0);
+    for (const skirt of skirts) {
+      const span =
+        Math.max(skirt.a.y, skirt.b.y, skirt.c.y) -
+        Math.min(skirt.a.y, skirt.b.y, skirt.c.y);
+      expect(span).toBeGreaterThan(SEABED_RISER_BORDER_WORLD_HEIGHT * 2);
+    }
+  });
+
   it('makes LAND cliff faces visibly darker than the tread they sit under', () => {
     // Land only since the seabed rim change (2026-08-14): underwater the same
     // skirt is a seam OUTLINE and brightens instead — that regime's contract
@@ -1150,10 +1208,19 @@ describe('self-lit seabed rims', () => {
    */
   const coast = (i: number): number => (i < 5 ? -192 : i < 10 ? -64 : 256);
 
-  /** Whether a face's colour came from the seabed half of the cliff ramp. */
-  const isRimColored = (t: Triangle): boolean =>
-    CLIFF_PALETTE.slice(0, FIRST_LAND_PALETTE_INDEX).some(
-      (rim) => Math.abs(t.color[0] - rim[0]) < 1e-6 && Math.abs(t.color[1] - rim[1]) < 1e-6,
+  /**
+   * Whether a face's colour came from the seabed regime: the lightened-tread
+   * riser faces (seabed half of the cliff ramp) or, since the 2026-08-19
+   * top-edge borders, the seabed TREADS themselves — a border sliver is
+   * painted as the next band down's tread and rides the same self-lit flag as
+   * the face it caps.
+   */
+  const isSeabedColored = (t: Triangle): boolean =>
+    [
+      ...CLIFF_PALETTE.slice(0, FIRST_LAND_PALETTE_INDEX),
+      ...TERRAIN_PALETTE.slice(0, FIRST_LAND_PALETTE_INDEX),
+    ].some(
+      (c) => Math.abs(t.color[0] - c[0]) < 1e-6 && Math.abs(t.color[1] - c[1]) < 1e-6,
     );
 
   it('flags every underwater skirt and nothing else', () => {
@@ -1161,17 +1228,18 @@ describe('self-lit seabed rims', () => {
     const skirts = skirtsOf(triangles);
     expect(skirts.length).toBeGreaterThan(0);
 
-    // The flag follows the palette regime exactly: a face drawn with a rim
-    // colour is self-lit, and a face drawn with a rock colour is not. Stated
-    // as an equivalence rather than two counts, so neither side can drift.
-    let rims = 0;
+    // The flag follows the palette regime exactly: a face drawn with a seabed
+    // colour (riser face or border sliver) is self-lit, and a face drawn with
+    // a rock colour is not. Stated as an equivalence rather than two counts,
+    // so neither side can drift.
+    let seabedFaces = 0;
     for (const skirt of skirts) {
-      const rim = isRimColored(skirt);
-      expect(skirt.selfLit).toBe(rim ? SELF_LIT : LIT_BY_SCENE);
-      if (rim) rims++;
+      const seabed = isSeabedColored(skirt);
+      expect(skirt.selfLit).toBe(seabed ? SELF_LIT : LIT_BY_SCENE);
+      if (seabed) seabedFaces++;
     }
-    expect(rims).toBeGreaterThan(0);
-    expect(rims).toBeLessThan(skirts.length);
+    expect(seabedFaces).toBeGreaterThan(0);
+    expect(seabedFaces).toBeLessThan(skirts.length);
   });
 
   it('never flags a cap, however deep it is', () => {

@@ -17,6 +17,7 @@ import {
   TERRAIN_PALETTE,
   bandColorOf,
   bandPaletteIndex,
+  seabedRiserFaceColor,
 } from '../src/terrain/bandColors.ts';
 
 describe('TERRAIN_PALETTE', () => {
@@ -79,26 +80,41 @@ describe('bandPaletteIndex', () => {
     }
   });
 
-  it('outlines seabed seams with rims brighter than both treads they part', () => {
-    // The owner-reported invisible seams (2026-08-14): underwater the cliff
-    // skirt IS the seam outline, so its colour must beat the brighter
-    // (shallower) tread beside it, not just its own — on land the same skirt
-    // is a cut face and darkens instead. The waterline splits the regimes.
+  it('lightens each underwater riser face over its own tread, and nothing more (owner, 2026-08-19)', () => {
+    // Supersedes the 2026-08-14 "rim brighter than both treads" pin: the
+    // silt-aqua outline gave way to faces that are "roughly the same color as
+    // the level they represent, but slightly lightened" — the seam line moved
+    // into the geometry (capEmission.ts's top-edge border sliver). So each
+    // seabed cliff entry must sit ABOVE its own tread ("lightened") and track
+    // the exact derivation ("the same color") — while land cliffs keep
+    // darkening, as ever. The waterline still splits the regimes.
     const luminance = ([r, g, b]: readonly [number, number, number]): number =>
       r + g + b;
     for (let stop = 0; stop < SEABED_DEPTH_STOPS; stop++) {
       expect(luminance(CLIFF_PALETTE[stop])).toBeGreaterThan(
         luminance(TERRAIN_PALETTE[stop]),
       );
-      if (stop > 0) {
-        expect(luminance(CLIFF_PALETTE[stop])).toBeGreaterThan(
-          luminance(TERRAIN_PALETTE[stop - 1]),
-        );
-      }
+      const derived = seabedRiserFaceColor(TERRAIN_PALETTE[stop]);
+      expect(CLIFF_PALETTE[stop][0]).toBeCloseTo(derived[0], 10);
+      expect(CLIFF_PALETTE[stop][1]).toBeCloseTo(derived[1], 10);
+      expect(CLIFF_PALETTE[stop][2]).toBeCloseTo(derived[2], 10);
     }
     for (let i = FIRST_LAND_PALETTE_INDEX; i <= LAST_PALETTE_INDEX; i++) {
       expect(luminance(CLIFF_PALETTE[i])).toBeLessThan(
         luminance(TERRAIN_PALETTE[i]),
+      );
+    }
+  });
+
+  it('keeps underwater riser faces darkening with depth, like the treads they represent', () => {
+    // "Roughly the same color as the level" also means the faces inherit the
+    // depth ramp: strictly darker at every stop, so the side of a deep
+    // terrace can never outshine the side of a shallow one.
+    const luminance = ([r, g, b]: readonly [number, number, number]): number =>
+      r + g + b;
+    for (let stop = 1; stop < SEABED_DEPTH_STOPS; stop++) {
+      expect(luminance(CLIFF_PALETTE[stop])).toBeLessThan(
+        luminance(CLIFF_PALETTE[stop - 1]),
       );
     }
   });

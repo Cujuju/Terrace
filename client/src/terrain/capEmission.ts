@@ -90,6 +90,25 @@ export const SKIRT_PICK_INSET = 1 / 1024;
 export const SEABED_CAP_SINK = WATER_SURFACE_LIFT / 2;
 
 /**
+ * Height of the hairline border along the TOP edge of an underwater riser, in
+ * world units (owner, 2026-08-19: "a single one pixel border at the top edge
+ * of that band ... the same color as the next layer down").
+ *
+ * The border is GEOMETRY — a second, sliver-height quad above the main face —
+ * because the owner asked for a border, not a fade, and per-vertex colours
+ * interpolate: one quad with different top/bottom colours would gradient the
+ * whole face. A sixteenth of a band: at the game's usual orbit a one-band
+ * riser stands ~10–20 px tall, so the sliver reads as the requested ~1 px
+ * line while staying a real, pickable part of the same riser (both quads take
+ * the same inset and resolve to the same cell). A negative power of two, so
+ * the split heights are exact in binary like every other Y this module emits.
+ * It is 4× SEABED_CAP_SINK, so even the shortest underwater riser the level
+ * stack produces (band 0's seabed cap over band −1, one band minus the sink)
+ * is ~15× taller than its border and the face below never degenerates.
+ */
+export const SEABED_RISER_BORDER_WORLD_HEIGHT = BAND_WORLD_HEIGHT / 16;
+
+/**
  * Triangles a chunk's buffers hold before they first have to grow.
  *
  * 1024 triangles is 110 KB of attributes per chunk — the same order as the old
@@ -171,6 +190,13 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
  * 3× above the reported crater itself. The OLD value, 4,096, is what the owner
  * hit: an ordinary crater plus a few spires needs 5,250, so normal heavy play
  * flipped chunks to blocky and the terrain read as a patchwork.
+ *
+ * UNDERWATER RISERS COUNT DOUBLE since 2026-08-19: each carries a top-edge
+ * border sliver (SEABED_RISER_BORDER_WORLD_HEIGHT), so a segment costs 4
+ * skirt triangles below the waterline against 2 on land. The table above was
+ * measured on land fixtures and still holds for them; an all-underwater chunk
+ * reaches this budget at half the skirt segments, which only moves the
+ * blocky threshold for terrain that is BOTH adversarial and fully submerged.
  *
  * MEMORY. Attributes are 111 bytes per triangle (3 unshared vertices × 9
  * floats, plus one self-lit byte each), and ensureCapacity doubles rather than
@@ -329,10 +355,22 @@ interface ContourLevel {
   capColor: Rgb;
   skirtColor: Rgb;
   /**
-   * SELF_LIT for the skirts below the waterline — they are seam OUTLINES, not
-   * lit surfaces, and must read the same on all four orientations. Decided by
-   * the palette's own regime predicate, so a face that took the rim colour is
-   * exactly the face that is drawn self-lit.
+   * Colour of the hairline border along the riser's top edge — the NEXT BAND
+   * DOWN's tread (owner, 2026-08-19), read straight from the top palette.
+   * Non-null exactly for the underwater risers, which are the ones emitted as
+   * border sliver + face (see SEABED_RISER_BORDER_WORLD_HEIGHT); null keeps a
+   * land cliff a single quad. Decided HERE, in makeLevels, so the triangle
+   * counting and the emission below cannot disagree about which skirts split.
+   */
+  skirtBorderColor: Rgb | null;
+  /**
+   * SELF_LIT for the skirts below the waterline — they read as part of the
+   * water-dimmed seabed, not lit surfaces, and must track their tread's
+   * colour on all four orientations (see bandColors.ts's seabed section; the
+   * 2026-08-19 lightened-tread faces keep the flag for the same reason the
+   * 2026-08-14 rims introduced it). Decided by the palette's own regime
+   * predicate, so a face that took the seabed derivation is exactly the face
+   * that is drawn self-lit — the border sliver rides the same flag.
    */
   skirtSelfLit: number;
   /**
@@ -379,13 +417,25 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
     // height — see SEABED_CAP_SINK.
     const capY = k === 0 ? -SEABED_CAP_SINK : k * BAND_WORLD_HEIGHT;
     const below = k - 1 === 0 ? -SEABED_CAP_SINK : (k - 1) * BAND_WORLD_HEIGHT;
+    // The lowest cap is the chunk's floor: nothing is under it to fall to.
+    const skirtDrop = k === lowestBand ? 0 : capY - below;
+    // Underwater risers carry the top-edge border, coloured as the NEXT BAND
+    // DOWN's tread — the band this skirt lands on, (k−1), through the same
+    // palette lookup its own cap used. Land cliffs stay single-quad (null).
+    // The drop guard is belt-and-braces: every underwater drop the stack can
+    // produce is at least a band minus SEABED_CAP_SINK, ~15× the border.
+    const bordered =
+      isSeabedPaletteIndex(paletteIndex) &&
+      skirtDrop > SEABED_RISER_BORDER_WORLD_HEIGHT;
     levels.push({
       threshold: k * BAND_HEIGHT,
       capY,
-      // The lowest cap is the chunk's floor: nothing is under it to fall to.
-      skirtDrop: k === lowestBand ? 0 : capY - below,
+      skirtDrop,
       capColor: palettes.top[paletteIndex],
       skirtColor: palettes.cliff[paletteIndex],
+      skirtBorderColor: bordered
+        ? palettes.top[bandPaletteIndex((k - 1) * BAND_HEIGHT)]
+        : null,
       skirtSelfLit: selfLitFor(paletteIndex),
       crossingOverride: null,
       loops: [],
@@ -403,6 +453,9 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
         skirtDrop: SEABED_CAP_SINK,
         capColor: palettes.top[shoreIndex],
         skirtColor: palettes.cliff[shoreIndex],
+        // Dry land: never bordered (and its hairline drop is under the border
+        // height anyway).
+        skirtBorderColor: null,
         skirtSelfLit: selfLitFor(shoreIndex),
         crossingOverride: SHORE_EDGE_CROSSING,
         loops: [],
@@ -619,7 +672,13 @@ function writeBlockyFallback(
       const planeX = originX + i + CELL_HALF_EXTENT;
       // The fallback draws underwater walls too, so it takes the same self-lit
       // rule from the same palette index — a chunk that went blocky must not
-      // also lose its rims.
+      // also lose its seabed treatment. It deliberately does NOT split the
+      // top-edge border sliver off its walls (2026-08-19): the fallback's
+      // whole contract is fixed-size degraded geometry ("correct heights,
+      // correct colours, correct picking, no smoothing"), and the hairline is
+      // a beauty feature. The face still takes the lightened-tread colour, so
+      // a blocky chunk matches its smoothed neighbours' material, just
+      // without the line.
       const index = bandPaletteIndex(westHigher ? here : next);
       const a = { x: planeX, z: westHigher ? loZ(j) : hiZ(j), rect: RECT_NONE };
       const b = { x: planeX, z: westHigher ? hiZ(j) : loZ(j), rect: RECT_NONE };
@@ -761,10 +820,15 @@ export function writeChunkVertexData(
       triangulationWork += merged * merged;
     }
     if (level.skirtDrop > 0) {
+      // A bordered (underwater) riser is two stacked quads per segment — the
+      // top-edge sliver and the face — so it counts 4 triangles where a land
+      // cliff counts 2. Split-ness was decided once, in makeLevels, so this
+      // count and the emission below cannot disagree.
+      const trianglesPerSegment = level.skirtBorderColor !== null ? 4 : 2;
       for (const loop of level.loops) {
         for (let i = 0; i < loop.length; i++) {
           if (!isBorderSegment(loop[i], loop[(i + 1) % loop.length])) {
-            skirtTriangles += 2;
+            skirtTriangles += trianglesPerSegment;
           }
         }
       }
@@ -808,15 +872,39 @@ export function writeChunkVertexData(
         const a = loop[i];
         const b = loop[(i + 1) % loop.length];
         if (isBorderSegment(a, b)) continue;
-        emitSkirtQuad(
-          a,
-          b,
-          level.capY,
-          level.skirtDrop,
-          level.skirtColor,
-          level.skirtSelfLit,
-        );
-        skirtEmitted += 2;
+        if (level.skirtBorderColor !== null) {
+          // Underwater: the hairline top-edge border in the next band down's
+          // tread colour, then the face — the band's own tread, lightened —
+          // filling the rest of the drop. Same inset, same flag: one riser,
+          // two colours, a crisp line where they meet.
+          emitSkirtQuad(
+            a,
+            b,
+            level.capY,
+            SEABED_RISER_BORDER_WORLD_HEIGHT,
+            level.skirtBorderColor,
+            level.skirtSelfLit,
+          );
+          emitSkirtQuad(
+            a,
+            b,
+            level.capY - SEABED_RISER_BORDER_WORLD_HEIGHT,
+            level.skirtDrop - SEABED_RISER_BORDER_WORLD_HEIGHT,
+            level.skirtColor,
+            level.skirtSelfLit,
+          );
+          skirtEmitted += 4;
+        } else {
+          emitSkirtQuad(
+            a,
+            b,
+            level.capY,
+            level.skirtDrop,
+            level.skirtColor,
+            level.skirtSelfLit,
+          );
+          skirtEmitted += 2;
+        }
       }
     }
   }
