@@ -396,30 +396,31 @@ body {
     padding: 8px;
   }
 
-  /* One row cannot hold panel + gauge + gear at phone width (the gauge alone
-     is ~230px), so the strip FLOWS onto two rows: brush above, instruments
-     and the gear below — everything stays visible and under the thumb. */
+  /* One row, asymmetric (owner follow-up, 2026-08-19): the brush cluster
+     sits ALL THE WAY in the bottom-left corner (safe-area insets aside), and
+     the gauge gives up the centre — it slides right into whatever space is
+     free beside the gear. `auto` left cell = the brush takes exactly what it
+     needs; the gauge's `minmax(0,1fr)` cell absorbs the slack with the gauge
+     end-aligned inside it. (An earlier symmetric 1fr|auto|1fr row overflowed
+     not because the row was too small but because the LEFT cell was.) */
   .hud-bottom-strip {
-    left: 8px;
+    left: env(safe-area-inset-left, 0px);
     right: 8px;
+    bottom: env(safe-area-inset-bottom, 0px);
     gap: 6px;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      'brush brush'
-      'center gear';
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
-  .hud-anchor-bottom-left {
-    grid-area: brush;
-  }
-
+  /* Centred in the FREE SPACE (owner refinement): the middle cell spans from
+     the brush cluster's right edge to the gear's left edge, and the gauge
+     sits at that span's midpoint — not against either neighbour. */
   .hud-bottom-center {
-    grid-area: center;
     justify-self: center;
   }
 
-  .hud-anchor-bottom-right {
-    grid-area: gear;
+  /* Seated flush in the corner: square the corner that touches it. */
+  .hud-anchor-bottom-left {
+    border-bottom-left-radius: 0;
   }
 
   .hud-settings-popup {
