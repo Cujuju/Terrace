@@ -1,29 +1,45 @@
-// Low-poly pilgrim folk: RUDYS (little dog people) and UNOS (cat people).
+// High-resolution pilgrim folk: RUDYS (little dog people) and UNOS (cat
+// people), matching the owner-approved concept (artifact d6cf5ca4, decision
+// 2026-08-19): chibi ~1:2 head-to-body proportions, soft rounded forms with
+// SMOOTH normals — the one family of models in the world that is deliberately
+// not blocky. The environment stays flat-shaded; these little people are lit
+// by the same hemisphere + sun rig as everything else, their smoothness comes
+// from curved geometry and smooth shading, not from any lighting change.
 //
-// Same construction discipline as wildlife's creatures: shared geometries and
-// materials built once, per-pilgrim Meshes referencing them, boxes and cones
-// with flatShading so the chunky read matches everything else in the world.
-// Models face +X (the repo-wide convention); the caller positions and yaws
-// the root and drives `animate`.
+// CONSTRUCTION. Every static part of a race's body (coat, cream mask, muzzle,
+// ears, collar, tag base) is baked into ONE merged, vertex-colored geometry
+// per race, built once and shared by every instance — so a whole pilgrim is
+// eight draw calls: merged body, merged glossy bits (eyes + nose), two legs,
+// two arms, tail, staff. The glossy bits are a separate merge because they
+// carry the model's single specular material (dark wet eyes and nose are what
+// make a soft face read as alive); everything else is matte Lambert. Animated
+// parts (legs, arms, tail) stay their own meshes because they rotate at
+// joints, exactly like the previous low-poly rig — the animate() contract and
+// the gait constants are unchanged, this is a model swap, not a behaviour
+// change.
 //
-// SILHOUETTE OVER DETAIL. At gameplay zoom a pilgrim is ~15 px tall, so the
-// races must separate by OUTLINE, not texture: a Rudy is stocky with floppy
-// ears, a broad snout and an up-curled wagging tail; an Uno is slender with
-// tall triangular ears, a short muzzle and a long raised tail that sways
-// rather than wags. Both carry the same pilgrim staff — the one prop that
-// says "journey" at any distance. Tunic colours echo the district tints the
-// structures plugin paints their home towns with (its RACE_TINTS), so a
-// pilgrim on the road visibly belongs to the architecture it came from.
+// SILHOUETTE STILL WINS AT DISTANCE: a Rudy is round and tan with floppy ears
+// and an up-curled wagging tail; an Uno is slimmer and slate with tall
+// pointed ears and a long swaying tail. Collars echo the district tints the
+// structures plugin paints their home towns with (warm hearth / cool
+// moonlit), same as the old tunics did.
 
 import {
-  BoxGeometry,
+  BufferAttribute,
+  CapsuleGeometry,
+  Color,
   ConeGeometry,
   CylinderGeometry,
   Group,
   Mesh,
   MeshLambertMaterial,
+  MeshPhongMaterial,
+  SphereGeometry,
+  TorusGeometry,
   type BufferGeometry,
+  type Material,
 } from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { SettlerRace } from '../protocol.ts';
 
 /** Overall height, world units — a little person: knee-high to a yeti. */
@@ -53,16 +69,23 @@ const BOB_AMPLITUDE = 0.012;
 const RUDY_WAG_RADIANS = 0.45;
 const UNO_SWAY_RADIANS = 0.14;
 
-// Palettes. Tunics echo structures' district tints (warm hearth / cool
-// moonlit); fur and details stay in the same temperature family.
-const RUDY_TUNIC_COLOR = 0xb5713a;
-const RUDY_FUR_COLOR = 0xa9834f;
-const RUDY_EAR_COLOR = 0x7c5a33;
-const UNO_TUNIC_COLOR = 0x5a6b8c;
-const UNO_FUR_COLOR = 0x9aa0ad;
-const UNO_EAR_COLOR = 0x6e7480;
+// ── Palettes, from the approved concept stills ─────────────────────────────
+// Rudy: russet/tan coat over a cream muzzle-and-belly mask, warm collar.
+// Uno: slate-grey coat over a cream chest, cool collar. Collar hues echo
+// structures' RACE_TINTS temperature families.
+const RUDY_COAT_COLOR = 0xbe8f63;
+const RUDY_EAR_COLOR = 0x9d7248;
+const RUDY_CREAM_COLOR = 0xf2e7d3;
+const RUDY_COLLAR_COLOR = 0xd2703c;
+const RUDY_NOSE_COLOR = 0x46342a;
+const UNO_COAT_COLOR = 0x9fa9bc;
+const UNO_EAR_COLOR = 0x8791a5;
+const UNO_CREAM_COLOR = 0xf0ede6;
+const UNO_COLLAR_COLOR = 0x6f8fc9;
+const UNO_NOSE_COLOR = 0xb08585;
+const TAG_COLOR = 0xe3c56b;
+const EYE_COLOR = 0x1d1a16;
 const STAFF_COLOR = 0x6b4a2b;
-const EYE_COLOR = 0x241d15;
 
 export interface PilgrimModel {
   /** Positioned and yawed by the caller; never touched by `animate`. */
@@ -76,72 +99,188 @@ export interface PilgrimModels {
   dispose(): void;
 }
 
+/**
+ * Bakes a solid vertex color onto a geometry so same-material parts can merge
+ * into one draw call. `new Color(hex)` already converts the sRGB hex into the
+ * renderer's working color space (three r152+ color management) — converting
+ * again here double-darkens every merged part, which is exactly how round 1's
+ * coats came out chocolate instead of tan while the plain-material limbs
+ * stayed correct. Store the managed color as-is.
+ */
+function paint(geometry: BufferGeometry, hex: number): BufferGeometry {
+  const linear = new Color(hex);
+  const count = geometry.getAttribute('position').count;
+  const colors = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    colors[i * 3] = linear.r;
+    colors[i * 3 + 1] = linear.g;
+    colors[i * 3 + 2] = linear.b;
+  }
+  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  return geometry;
+}
+
+/** Merge helper: paints, merges, and asserts the merge succeeded (it only
+ *  fails if attribute sets diverge, which would be a programming error). */
+function mergePainted(parts: [BufferGeometry, number][]): BufferGeometry {
+  const merged = mergeGeometries(
+    parts.map(([geometry, color]) => paint(geometry, color)),
+    false,
+  );
+  if (merged === null) {
+    throw new Error('pilgrims: geometry merge failed — attribute mismatch');
+  }
+  for (const [geometry] of parts) geometry.dispose();
+  return merged;
+}
+
 export function createPilgrimModels(): PilgrimModels {
   const geometries: BufferGeometry[] = [];
-  const materials: MeshLambertMaterial[] = [];
+  const materials: Material[] = [];
 
   function keep<T extends BufferGeometry>(geometry: T): T {
     geometries.push(geometry);
     return geometry;
   }
 
-  function lambert(color: number): MeshLambertMaterial {
-    const material = new MeshLambertMaterial({ color, flatShading: true });
+  function matte(color: number): MeshLambertMaterial {
+    const material = new MeshLambertMaterial({ color });
     materials.push(material);
     return material;
   }
 
-  // ── Shared resources, built once ───────────────────────────────────────────
-  // Legs pivot at the hip: the geometry is shifted so its TOP sits at the
-  // mesh origin, and the mesh is placed at hip height — rotation about Z then
-  // swings the leg forward/back (+X is forward) about the hip for free.
-  const legGeometry = keep(new BoxGeometry(0.055, 0.17, 0.055));
-  legGeometry.translate(0, -0.085, 0);
+  // ── Shared resources, built once ─────────────────────────────────────────
+  // The matte body material reads its color from the merged geometry's vertex
+  // colors; the glossy material does the same for eyes vs nose. Both are lit
+  // by the world's existing rig — no new lights, no shadow maps.
+  const bodyMaterial = new MeshLambertMaterial({ vertexColors: true });
+  const glossMaterial = new MeshPhongMaterial({
+    vertexColors: true,
+    shininess: 90,
+    specular: 0x777777,
+  });
+  materials.push(bodyMaterial, glossMaterial);
 
-  // Arms pivot at the shoulder, same trick as the legs.
-  const armGeometry = keep(new BoxGeometry(0.04, 0.14, 0.04));
-  armGeometry.translate(0, -0.07, 0);
+  // Limbs pivot at the hip/shoulder: geometry shifted so its TOP sits at the
+  // mesh origin, mesh placed at joint height — rotation about Z then swings
+  // the limb forward/back (+X is forward), exactly the old rig's trick.
+  // Capsules give rounded stubby chibi limbs with smooth normals for free.
+  const legGeometry = keep(new CapsuleGeometry(0.034, 0.052, 6, 16));
+  legGeometry.translate(0, -0.048, 0);
+  const armGeometry = keep(new CapsuleGeometry(0.028, 0.07, 6, 16));
+  armGeometry.translate(0, -0.058, 0);
 
-  const rudyTorso = keep(new BoxGeometry(0.17, 0.22, 0.2)); // stocky
-  const unoTorso = keep(new BoxGeometry(0.14, 0.24, 0.15)); // slender
-  const rudyHead = keep(new BoxGeometry(0.14, 0.13, 0.15));
-  const unoHead = keep(new BoxGeometry(0.12, 0.12, 0.12));
-  const rudySnout = keep(new BoxGeometry(0.08, 0.05, 0.07));
-  const unoMuzzle = keep(new BoxGeometry(0.04, 0.035, 0.05));
+  const staffGeometry = keep(new CylinderGeometry(0.012, 0.012, 0.5, 12));
 
-  // Eyes: two dark studs on the face — the single cheapest thing that makes
-  // a box with ears read as a PERSON at preview distance.
-  const eyeGeometry = keep(new BoxGeometry(0.012, 0.022, 0.022));
+  const staffMaterial = matte(STAFF_COLOR);
+  const rudyFurMaterial = matte(RUDY_COAT_COLOR);
+  const unoFurMaterial = matte(UNO_COAT_COLOR);
 
-  // Rudy ears hang from the head's SIDES: origin at the top edge so an
-  // X-rotation drapes them outward, never over the face.
-  const rudyEar = keep(new BoxGeometry(0.03, 0.1, 0.05));
-  rudyEar.translate(0, -0.05, 0);
-  // Uno ears stand on the head's top corners: cones, origin at the base.
-  const unoEar = keep(new ConeGeometry(0.026, 0.075, 4));
-  unoEar.translate(0, 0.0375, 0);
+  // ── Rudy: static body, one merged vertex-colored geometry ────────────────
+  // Baked in place (feet at y=0, +X forward). The egg body overlaps the big
+  // head so no neck seam shows; the cream belly and muzzle bulge through the
+  // coat as slightly smaller inset spheres — the concept's two-tone mask
+  // without any texture.
+  const rudyBody = keep(
+    mergePainted([
+      // coat: egg torso
+      [new SphereGeometry(0.125, 24, 18).scale(0.95, 1.2, 1).translate(0, 0.2, 0), RUDY_COAT_COLOR],
+      // cream belly, bulging forward-low through the coat
+      [new SphereGeometry(0.105, 20, 14).scale(0.85, 1.05, 0.9).translate(0.045, 0.185, 0), RUDY_CREAM_COLOR],
+      // head — the chibi half of the 1:2 ratio
+      [new SphereGeometry(0.155, 28, 20).scale(1, 0.95, 1).translate(0.01, 0.46, 0), RUDY_COAT_COLOR],
+      // broad cream muzzle
+      [new SphereGeometry(0.07, 20, 14).scale(1.15, 0.75, 0.95).translate(0.145, 0.415, 0), RUDY_CREAM_COLOR],
+      // floppy ears: long flattened spheres hung from the head's top sides,
+      // draped well outward so they frame the face (round 1: small nubs on
+      // top read as a bear, not a dog)
+      [
+        new SphereGeometry(0.066, 16, 12)
+          .scale(0.42, 1.55, 0.85)
+          .translate(0, -0.07, 0)
+          .rotateX(-1.5)
+          .translate(0.005, 0.545, -0.128),
+        RUDY_EAR_COLOR,
+      ],
+      [
+        new SphereGeometry(0.066, 16, 12)
+          .scale(0.42, 1.55, 0.85)
+          .translate(0, -0.07, 0)
+          .rotateX(1.5)
+          .translate(0.005, 0.545, 0.128),
+        RUDY_EAR_COLOR,
+      ],
+      // collar + hanging tag
+      [new TorusGeometry(0.082, 0.013, 10, 24).rotateX(Math.PI / 2).translate(0.005, 0.345, 0), RUDY_COLLAR_COLOR],
+      [new SphereGeometry(0.016, 10, 8).translate(0.09, 0.322, 0), TAG_COLOR],
+    ]),
+  );
+  // Glossy bits: eyes + nose. Separate merge, single specular material.
+  const rudyGloss = keep(
+    mergePainted([
+      [new SphereGeometry(0.026, 14, 12).translate(0.135, 0.49, -0.056), EYE_COLOR],
+      [new SphereGeometry(0.026, 14, 12).translate(0.135, 0.49, 0.056), EYE_COLOR],
+      [new SphereGeometry(0.023, 12, 10).scale(1.1, 0.85, 1).translate(0.218, 0.432, 0), RUDY_NOSE_COLOR],
+    ]),
+  );
+  // Up-curled wagging tail: a torus arc with its BASE at the mesh origin and
+  // base tangent vertical — the circle's centre sits directly behind the base
+  // (translate −r), so the arc rises from the pivot and bows back over the
+  // rump. rotation.y at the pivot then wags it side to side.
+  const rudyTail = keep(
+    new TorusGeometry(0.05, 0.021, 10, 16, 2.1).translate(-0.05, 0, 0),
+  );
 
-  // Tails pivot where they meet the body (origin at the near end), LOW on the
-  // rear — at shoulder height a tail reads as a third arm from any angle.
-  const rudyTail = keep(new BoxGeometry(0.09, 0.035, 0.035));
-  rudyTail.translate(-0.045, 0, 0);
-  const unoTail = keep(new BoxGeometry(0.15, 0.022, 0.022));
-  unoTail.translate(-0.075, 0, 0);
-
-  const staffGeometry = keep(new CylinderGeometry(0.012, 0.012, 0.5, 5));
-
-  const rudyTunicMaterial = lambert(RUDY_TUNIC_COLOR);
-  const rudyFurMaterial = lambert(RUDY_FUR_COLOR);
-  const rudyEarMaterial = lambert(RUDY_EAR_COLOR);
-  const unoTunicMaterial = lambert(UNO_TUNIC_COLOR);
-  const unoFurMaterial = lambert(UNO_FUR_COLOR);
-  const unoEarMaterial = lambert(UNO_EAR_COLOR);
-  const staffMaterial = lambert(STAFF_COLOR);
-  const eyeMaterial = lambert(EYE_COLOR);
+  // ── Uno: same construction, feline proportions ────────────────────────────
+  const unoBody = keep(
+    mergePainted([
+      // coat: slimmer egg
+      [new SphereGeometry(0.115, 24, 18).scale(0.85, 1.25, 0.9).translate(0, 0.2, 0), UNO_COAT_COLOR],
+      // cream chest
+      [new SphereGeometry(0.095, 20, 14).scale(0.8, 1.1, 0.85).translate(0.04, 0.19, 0), UNO_CREAM_COLOR],
+      // rounder, slightly smaller head
+      [new SphereGeometry(0.145, 28, 20).translate(0.01, 0.465, 0), UNO_COAT_COLOR],
+      // short cream muzzle
+      [new SphereGeometry(0.055, 18, 12).scale(1, 0.72, 0.95).translate(0.135, 0.42, 0), UNO_CREAM_COLOR],
+      // tall pointed ears on the head's top FRONT corners, spread wide and
+      // tilted outward — round 1 had them centred and rear, which read as one
+      // wizard hat from the side
+      [
+        new ConeGeometry(0.04, 0.1, 18, 4)
+          .translate(0, 0.05, 0)
+          .rotateX(-0.38)
+          .rotateZ(-0.14)
+          .translate(0.015, 0.582, -0.094),
+        UNO_EAR_COLOR,
+      ],
+      [
+        new ConeGeometry(0.04, 0.1, 18, 4)
+          .translate(0, 0.05, 0)
+          .rotateX(0.38)
+          .rotateZ(-0.14)
+          .translate(0.015, 0.582, 0.094),
+        UNO_EAR_COLOR,
+      ],
+      // collar + tag
+      [new TorusGeometry(0.076, 0.012, 10, 24).rotateX(Math.PI / 2).translate(0.005, 0.35, 0), UNO_COLLAR_COLOR],
+      [new SphereGeometry(0.015, 10, 8).translate(0.093, 0.318, 0), TAG_COLOR],
+    ]),
+  );
+  const unoGloss = keep(
+    mergePainted([
+      [new SphereGeometry(0.026, 14, 12).translate(0.128, 0.492, -0.052), EYE_COLOR],
+      [new SphereGeometry(0.026, 14, 12).translate(0.128, 0.492, 0.052), EYE_COLOR],
+      [new SphereGeometry(0.015, 12, 10).scale(1.1, 0.8, 1).translate(0.186, 0.437, 0), UNO_NOSE_COLOR],
+    ]),
+  );
+  // Long swaying tail: same base-at-origin construction as Rudy's, wider and
+  // thinner — a question-mark sweep up and back.
+  const unoTail = keep(
+    new TorusGeometry(0.1, 0.015, 10, 20, 2.0).translate(-0.1, 0, 0),
+  );
 
   function create(race: SettlerRace): PilgrimModel {
     const rudy = race === 'rudy';
-    const tunic = rudy ? rudyTunicMaterial : unoTunicMaterial;
     const fur = rudy ? rudyFurMaterial : unoFurMaterial;
 
     const root = new Group();
@@ -152,77 +291,38 @@ export function createPilgrimModels(): PilgrimModels {
     const body = new Group();
     root.add(body);
 
-    const hipY = 0.17;
-    const torsoHeight = rudy ? 0.22 : 0.24;
-    const torsoCentreY = hipY + torsoHeight / 2 - 0.02;
-    const shoulderY = torsoCentreY + torsoHeight / 2 - 0.02;
-    const torsoHalfWidth = (rudy ? 0.2 : 0.15) / 2;
-    const headY = hipY + torsoHeight + 0.05;
-    const headHalfDepth = (rudy ? 0.15 : 0.12) / 2;
-    const faceX = rudy ? 0.14 / 2 : 0.12 / 2; // the head's front plane (+X)
+    const hipY = 0.1;
+    const shoulderY = 0.3;
+    const shoulderZ = rudy ? 0.115 : 0.105;
 
     const leftLeg = new Mesh(legGeometry, fur);
-    leftLeg.position.set(0, hipY, -0.05);
+    leftLeg.position.set(0, hipY, -0.048);
     const rightLeg = new Mesh(legGeometry, fur);
-    rightLeg.position.set(0, hipY, 0.05);
+    rightLeg.position.set(0, hipY, 0.048);
     root.add(leftLeg, rightLeg);
 
-    const torso = new Mesh(rudy ? rudyTorso : unoTorso, tunic);
-    torso.position.set(0, torsoCentreY, 0);
-    body.add(torso);
+    const trunk = new Mesh(rudy ? rudyBody : unoBody, bodyMaterial);
+    const gloss = new Mesh(rudy ? rudyGloss : unoGloss, glossMaterial);
+    body.add(trunk, gloss);
 
-    // Arms hang from the shoulders, just outside the tunic; the right hand is
+    // Arms hang from the shoulders, just outside the coat; the right hand is
     // the staff hand, so the staff is parented to THAT arm and swings with it.
     const leftArm = new Mesh(armGeometry, fur);
-    leftArm.position.set(0, shoulderY, -(torsoHalfWidth + 0.025));
+    leftArm.position.set(0, shoulderY, -shoulderZ);
     const rightArm = new Mesh(armGeometry, fur);
-    rightArm.position.set(0, shoulderY, torsoHalfWidth + 0.025);
+    rightArm.position.set(0, shoulderY, shoulderZ);
     body.add(leftArm, rightArm);
 
     const staff = new Mesh(staffGeometry, staffMaterial);
-    // In the arm's own frame: at the hand (the arm's low end), standing tall.
-    staff.position.set(0.05, -0.1, 0.03);
+    // In the arm's own frame: seated IN the paw (the arm's low end) — round 2
+    // had it floating a visible gap outside the hand.
+    staff.position.set(0.045, -0.105, 0.012);
     rightArm.add(staff);
 
-    const head = new Mesh(rudy ? rudyHead : unoHead, fur);
-    head.position.set(0.02, headY, 0);
-    body.add(head);
-
-    const snout = new Mesh(rudy ? rudySnout : unoMuzzle, fur);
-    snout.position.set(0.02 + faceX + (rudy ? 0.03 : 0.015), headY - 0.02, 0);
-    body.add(snout);
-
-    const leftEye = new Mesh(eyeGeometry, eyeMaterial);
-    leftEye.position.set(0.02 + faceX + 0.002, headY + 0.025, -0.035);
-    const rightEye = new Mesh(eyeGeometry, eyeMaterial);
-    rightEye.position.set(0.02 + faceX + 0.002, headY + 0.025, 0.035);
-    body.add(leftEye, rightEye);
-
-    const earMaterial = rudy ? rudyEarMaterial : unoEarMaterial;
-    const leftEar = new Mesh(rudy ? rudyEar : unoEar, earMaterial);
-    const rightEar = new Mesh(rudy ? rudyEar : unoEar, earMaterial);
-    if (rudy) {
-      // Hung from the head's top SIDE edges, draped outward — never over the
-      // face (review round 1: draping forward covered it).
-      leftEar.position.set(0.02, headY + 0.05, -(headHalfDepth + 0.005));
-      leftEar.rotation.x = -0.45;
-      rightEar.position.set(0.02, headY + 0.05, headHalfDepth + 0.005);
-      rightEar.rotation.x = 0.45;
-    } else {
-      // Standing on the head's top corners, spread wide enough that a side
-      // view shows TWO ears, not one party hat (review round 1).
-      leftEar.position.set(0.02, headY + 0.058, -0.045);
-      leftEar.rotation.x = -0.15;
-      rightEar.position.set(0.02, headY + 0.058, 0.045);
-      rightEar.rotation.x = 0.15;
-    }
-    body.add(leftEar, rightEar);
-
-    // Low on the rear (review round 1: at shoulder height it reads as a third
-    // arm). Rudy's short tail curls steeply up; Uno's long tail sweeps back.
+    // Tail pivots where it meets the body — LOW on the rear (at shoulder
+    // height a tail reads as a third arm from any angle; hard-learned).
     const tail = new Mesh(rudy ? rudyTail : unoTail, fur);
-    tail.position.set(-(rudy ? 0.085 : 0.07), hipY + 0.06, 0);
-    tail.rotation.z = rudy ? 0.9 : 0.35;
+    tail.position.set(rudy ? -0.12 : -0.1, rudy ? 0.16 : 0.13, 0);
     body.add(tail);
 
     return {
