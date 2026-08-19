@@ -1,0 +1,80 @@
+// TIER PROGRESSION — pure maths, so the tests can assert it without a world.
+//
+// A live cell's tier is no longer a pure function of its age (that was the
+// pre-Game-of-Life design; see git history). It now needs BOTH conditions the
+// owner asked for, checked fresh every generation:
+//
+//   * SURVIVING GENERATIONS — `age` must have reached the next tier's
+//     threshold (CA_GENERATIONS_PER_TIER per step, same shape as before);
+//   * LIVE NEIGHBOURS — the cell's Moore-neighbourhood count THIS generation
+//     must be at or above STRUCTURE_UPGRADE_MIN_NEIGHBORS.
+//
+// A cell that is old enough but under-neighboured does NOT downgrade — it
+// simply stops advancing until a later generation where both hold at once.
+// That is why tier is its own piece of persisted state rather than something
+// re-derived from age alone: age and tier can and do diverge.
+
+import { MAX_STRUCTURE_TIER } from '../protocol.ts';
+
+/**
+ * Generations of continuous survival a cell needs to EARN each tier step.
+ *
+ * 3: with MAX_STRUCTURE_TIER = 5, a cell that keeps qualifying every single
+ * generation reaches the top tier after 15 generations. At
+ * CA_GENERATION_INTERVAL_SECONDS = 15 s (life.ts) that is ~3.75 simulated
+ * minutes — long enough to read as a settling process, short enough that a
+ * demo session actually sees a watchtower stand up.
+ */
+export const CA_GENERATIONS_PER_TIER = 3;
+
+/**
+ * Minimum live Moore neighbours (of 8) a surviving cell must have THIS
+ * generation to be allowed to advance a tier.
+ *
+ * 3 — NOT 2, and this is load-bearing rather than an arbitrary middle value.
+ * Under B3/S23, any cell that is alive after a step survived the S rule,
+ * which only keeps a cell alive with EXACTLY 2 or 3 live neighbours — those
+ * are the only two values a living cell's own neighbour count can ever take.
+ * A threshold of 2 would therefore pass almost every survivor (no
+ * differentiation at all), and anything above 3 could never fire (no
+ * surviving cell can have 4+ neighbours — it would have died of
+ * overpopulation instead). 3 is the ONLY threshold that splits survivors into
+ * two meaningfully different groups: dense, mutually-supporting still-life
+ * cores (a block's four cells each keep exactly 3 neighbours forever) advance
+ * every eligible generation, while sparser oscillator members (a blinker's
+ * centre cell has exactly 2, always — see the test suite) never do. That is
+ * the "isolated frontier shacks stay shacks; dense stable cores become towns"
+ * shape the owner asked for, and it falls out of the CA's own arithmetic
+ * rather than a second, independently-tuned number.
+ *
+ * NOT SCALED WITH TIER, for the same reason: every step beyond this one would
+ * ask for a neighbour count no living cell can ever present, which would only
+ * look like a design decision while actually being an unreachable tier. If
+ * that ever needs revisiting, it is a rule about the CA's neighbourhood
+ * (Moore vs. a larger radius) before it is a rule about this constant.
+ */
+export const STRUCTURE_UPGRADE_MIN_NEIGHBORS = 3;
+
+/**
+ * The generation-age threshold a cell must reach to be ELIGIBLE for
+ * `tier + 1`. Pure restatement of CA_GENERATIONS_PER_TIER as a schedule, kept
+ * as its own function so the eligibility rule has exactly one definition.
+ */
+function ageThresholdFor(nextTier: number): number {
+  return nextTier * CA_GENERATIONS_PER_TIER;
+}
+
+/**
+ * Advances a cell by AT MOST ONE tier for this generation. Both conditions —
+ * age-eligibility and this generation's neighbour count — are required
+ * simultaneously; failing either leaves `tier` exactly as it was (no
+ * downgrade, ever). Called once per surviving cell, per completed generation
+ * (life.ts), with `neighborCount` the Moore-neighbour count that generation's
+ * step already computed for the B3/S23 rule — free reuse, not a second pass.
+ */
+export function maybeAdvanceTier(age: number, tier: number, neighborCount: number): number {
+  if (tier >= MAX_STRUCTURE_TIER) return tier;
+  if (age < ageThresholdFor(tier + 1)) return tier;
+  if (neighborCount < STRUCTURE_UPGRADE_MIN_NEIGHBORS) return tier;
+  return tier + 1;
+}
