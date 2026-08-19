@@ -442,6 +442,18 @@ function handleCollect(world: WorldApi, player: Player, payload: unknown): void 
 
   grantSkill(world, player.id, taken.skill);
   broadcastRelics(world);
+
+  // THE CHRONICLE'S EAR (2026-08-19): a collection is a player's own act and
+  // rare by construction, so every one is a world event. The display label
+  // travels WITH the event — the emitter owns its skill names, and a consumer
+  // must not need this plugin's roster to print one.
+  world.emitEvent('collected', {
+    skill: taken.skill,
+    label: skillInfo(taken.skill).name,
+    player: player.name,
+    x: taken.x,
+    y: taken.y,
+  });
 }
 
 /**

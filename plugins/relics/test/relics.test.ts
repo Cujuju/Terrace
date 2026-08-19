@@ -682,3 +682,49 @@ describe('relics plugin', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// World events — the emission half of the chronicle contract (2026-08-19).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('world events (relics:collected)', () => {
+  it('a collection emits the skill, its display label, the collector, and the gem’s cell', () => {
+    resetManaState();
+    resetRelicsState();
+    resetManaBridge();
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, unlockedChunksExcept(LOCKED_CHUNK));
+    world.setSink(new RecordingSink());
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const recorder = {
+      name: 'recorder',
+      onWorldEvent(_world: unknown, event: string, payload: unknown): void {
+        events.push({ event, payload });
+      },
+    };
+    const host = new PluginHost(world, [manaPlugin, relicsPlugin, recorder].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    host.playerJoined(PLAYER);
+
+    const relic = currentRelics().find((entry) => entry.skill === 'quake');
+    expect(relic).toBeDefined();
+    const wireType = `relics:${COLLECT_MESSAGE}`;
+    const entry = host.messageHandlers().find(([name]) => name === wireType);
+    entry?.[1](PLAYER, { id: relic?.id });
+
+    const collected = events.filter((heard) => heard.event === 'relics:collected');
+    expect(collected).toHaveLength(1);
+    expect(collected[0].payload).toEqual({
+      skill: 'quake',
+      label: 'Quake',
+      player: PLAYER.name,
+      x: relic?.x,
+      y: relic?.y,
+    });
+
+    // A rejected claim (stale id) emits nothing.
+    entry?.[1](PLAYER, { id: relic?.id });
+    expect(events.filter((heard) => heard.event === 'relics:collected')).toHaveLength(1);
+  });
+});
