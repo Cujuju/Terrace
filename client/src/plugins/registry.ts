@@ -11,6 +11,7 @@ import { clientPlugin as invite } from '../../../plugins/invite/client/index.ts'
 import { clientPlugin as mana } from '../../../plugins/mana/client/index.ts';
 import { clientPlugin as monsters } from '../../../plugins/monsters/client/index.ts';
 import { clientPlugin as relics } from '../../../plugins/relics/client/index.ts';
+import { clientPlugin as structures } from '../../../plugins/structures/client/index.ts';
 import { clientPlugin as weather } from '../../../plugins/weather/client/index.ts';
 import { clientPlugin as wildlife } from '../../../plugins/wildlife/client/index.ts';
 import type { TerraceClientPlugin } from './types.ts';
@@ -21,6 +22,7 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   relics,
   wildlife,
   flora,
+  structures,
   monsters,
   weather,
 ];

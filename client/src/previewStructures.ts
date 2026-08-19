@@ -14,6 +14,11 @@
 //                                         dimmest ("off") point, so a driver
 //                                         can capture both halves of the
 //                                         flash without waiting on real time
+//   ?view=front|rear|left|right         — which 3/4 angle the camera takes
+//                                         (default front, the original view);
+//                                         rear/left/right exist so a driver
+//                                         can inspect every face for missing
+//                                         sections, not just the show side
 //   ?bulbphase=a|b                      — durands=1 only, overrides ?flash:
 //                                         freezes the marquee bulb chase at
 //                                         phase A brightest/phase B dimmest
@@ -153,8 +158,21 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   return { scene, camera, renderer };
 }
 
+/**
+ * Camera directions per `?view=` value. `front` is the original hand-tuned
+ * 3/4 view; the others are its mirrors so a driver can walk all four sides
+ * of a building — the rear/side faces are exactly where "missing sections"
+ * hide from a single fixed angle.
+ */
+const VIEW_DIRECTIONS: Readonly<Record<string, Vector3>> = {
+  front: new Vector3(0.6, 0.45, 0.85),
+  rear: new Vector3(-0.6, 0.45, -0.85),
+  left: new Vector3(-0.85, 0.45, 0.6),
+  right: new Vector3(0.85, 0.45, -0.6),
+};
+
 /** Points `camera` at `object`'s bounding sphere, close enough to fill the frame with `CAMERA_FRAMING_PADDING` of headroom. */
-function frameCameraOn(camera: PerspectiveCamera, object: { root: Group }): void {
+function frameCameraOn(camera: PerspectiveCamera, object: { root: Group }, view: string): void {
   const box = new Box3().setFromObject(object.root);
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
@@ -163,7 +181,7 @@ function frameCameraOn(camera: PerspectiveCamera, object: { root: Group }): void
   const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
   const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2);
 
-  const direction = new Vector3(0.6, 0.45, 0.85).normalize();
+  const direction = (VIEW_DIRECTIONS[view] ?? VIEW_DIRECTIONS.front).clone().normalize();
   camera.position.copy(center).addScaledVector(direction, distance);
   camera.lookAt(center);
   camera.updateProjectionMatrix();
@@ -227,7 +245,7 @@ function main(): void {
     models.animate(dt);
   }
 
-  frameCameraOn(camera, models);
+  frameCameraOn(camera, models, query.get('view') ?? 'front');
 
   let framesRendered = 0;
   function renderFrame(): void {
