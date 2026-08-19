@@ -1266,6 +1266,8 @@ const DURANDS_DANCER_TUBE_RADIUS = 0.009;
 /** Unit length the shared segment cylinder is built at; per-segment matrices scale Y to the real length. */
 const DURANDS_DANCER_SEGMENT_UNIT = 0.1;
 const DURANDS_DANCER_HEAD_RADIUS = 0.021;
+/** Bust spheres on the figure's chest — silhouette curve only, same neon register (owner request 2026-08-19). */
+const DURANDS_DANCER_BUST_RADIUS = 0.012;
 
 /**
  * One neon tube segment BETWEEN two joints in the building's front (x, y)
@@ -1514,10 +1516,25 @@ function buildDurandsParts(): DurandsBuilding {
       dancerSegment(shoulderAX, shoulderAY, postX - 0.1, 0.24, dancerZ), // free arm out
     ],
   };
+  // Head part also carries the bust: two smaller instances of the same
+  // sphere geometry (scaled per-matrix) at chest height, offset perpendicular
+  // to the torso line — the silhouette curve the owner asked for, kept in the
+  // same stylized neon register as the rest of the figure.
+  const bustScale = DURANDS_DANCER_BUST_RADIUS / DURANDS_DANCER_HEAD_RADIUS;
+  const bustSphere = (x: number, y: number, z: number): Matrix4 =>
+    new Matrix4().compose(
+      new Vector3(x, y, z),
+      new Quaternion(),
+      new Vector3(bustScale, bustScale, bustScale),
+    );
   const dancerPoseAHead: StructurePart = {
     geometry: dancerHeadGeometry,
     material: dancerPoseAMaterial,
-    localMatrices: [at(shoulderAX + 0.005, shoulderAY + 0.045, dancerZ)],
+    localMatrices: [
+      at(shoulderAX + 0.005, shoulderAY + 0.045, dancerZ),
+      bustSphere(shoulderAX - 0.006, shoulderAY - 0.048, dancerZ + 0.012),
+      bustSphere(shoulderAX + 0.018, shoulderAY - 0.046, dancerZ + 0.012),
+    ],
   };
 
   // Pose B — arched lean away from the pole, one hand keeping hold of it,
@@ -1539,7 +1556,11 @@ function buildDurandsParts(): DurandsBuilding {
   const dancerPoseBHead: StructurePart = {
     geometry: dancerHeadGeometry,
     material: dancerPoseBMaterial,
-    localMatrices: [at(shoulderBX - 0.025, shoulderBY + 0.045, dancerZ)],
+    localMatrices: [
+      at(shoulderBX - 0.025, shoulderBY + 0.045, dancerZ),
+      bustSphere(shoulderBX + 0.002, shoulderBY - 0.04, dancerZ + 0.012),
+      bustSphere(shoulderBX + 0.022, shoulderBY - 0.028, dancerZ + 0.012),
+    ],
   };
 
   return {
