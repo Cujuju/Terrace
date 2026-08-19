@@ -14,6 +14,15 @@
 //                                         dimmest ("off") point, so a driver
 //                                         can capture both halves of the
 //                                         flash without waiting on real time
+//   ?bulbphase=a|b                      — durands=1 only, overrides ?flash:
+//                                         freezes the marquee bulb chase at
+//                                         phase A brightest/phase B dimmest
+//                                         ("a") or the reverse ("b"), with
+//                                         the SIGN left at the same
+//                                         brightness in both, so a driver
+//                                         capturing durands-phase-a.png and
+//                                         durands-phase-b.png sees only the
+//                                         bulbs swap
 //
 // The lighting rig (hemisphere + directional + ambient, ACES tone mapping)
 // is copied from render/scene.ts's own recipe — "nicely lit" here means "lit
@@ -49,6 +58,7 @@ import {
 } from '../../plugins/structures/protocol.ts';
 import {
   createStructureModels,
+  DURANDS_MARQUEE_BULB_PERIOD_SECONDS,
   DURANDS_SIGN_FLASH_PERIOD_SECONDS,
   type StructurePlacement,
 } from '../../plugins/structures/client/models.ts';
@@ -163,6 +173,7 @@ function main(): void {
   const query = readQuery();
   const durandsRequested = query.get('durands') === '1';
   const flashOn = query.get('flash') !== 'off';
+  const bulbPhaseParam = query.get('bulbphase');
   const requestedTier = Number(query.get('tier') ?? '0');
   const tier = durandsRequested
     ? MAX_STRUCTURE_TIER
@@ -192,11 +203,28 @@ function main(): void {
   if (durandsRequested) {
     // A single animate() call sets the flash clock to exactly `dt` seconds
     // since attach (models.ts's elapsed accumulator starts at 0) — a quarter
-    // period lands the sine wave at its peak (sign at its brightest), three
-    // quarters lands it at its trough (sign at its dimmest). See
-    // models.ts's animate() for the same formula this mirrors.
-    const quarterPeriod = DURANDS_SIGN_FLASH_PERIOD_SECONDS / 4;
-    models.animate(flashOn ? quarterPeriod : quarterPeriod * 3);
+    // period lands a sine wave at its peak, three quarters at its trough. See
+    // models.ts's animate() for the same formula both branches below mirror.
+    let dt: number;
+    if (bulbPhaseParam === 'a' || bulbPhaseParam === 'b') {
+      // The marquee bulb period is half the sign's own (see
+      // DURANDS_MARQUEE_BULB_PERIOD_SECONDS's comment in models.ts), so a
+      // quarter of IT lands phase A at its peak (and phase B, exactly π out
+      // of phase, at its trough); a further half-period on top swaps which
+      // phase is which without moving the sign — sin(x) and sin(x + π) at
+      // t = quarter + half both sit at the SAME sign angle they started at
+      // (the sign's own period being twice as long), so both captures show
+      // an identically-lit sign and only the bulbs swap.
+      const marqueeQuarterPeriod = DURANDS_MARQUEE_BULB_PERIOD_SECONDS / 4;
+      dt =
+        bulbPhaseParam === 'a'
+          ? marqueeQuarterPeriod
+          : marqueeQuarterPeriod + DURANDS_MARQUEE_BULB_PERIOD_SECONDS / 2;
+    } else {
+      const quarterPeriod = DURANDS_SIGN_FLASH_PERIOD_SECONDS / 4;
+      dt = flashOn ? quarterPeriod : quarterPeriod * 3;
+    }
+    models.animate(dt);
   }
 
   frameCameraOn(camera, models);
