@@ -421,13 +421,6 @@ interface ManaPool {
 const NO_BALANCE_SENT = -1;
 
 /**
- * The WorldApi, captured at onWorldCreate. onPlayerJoin/onPlayerLeave are not
- * handed one, so a plugin that wants to talk to a joining player has no other
- * way to reach `sendTo`. See the API-gap notes in the Phase 2 report.
- */
-let api: WorldApi | null = null;
-
-/**
  * Pools keyed by Player.id — currently the Colyseus sessionId, which is
  * per-connection. That is why this plugin has no `persistence` slice: there is
  * no stable player identity to key persisted balances by, so a snapshot of them
@@ -574,11 +567,10 @@ function displayBalance(pool: ManaPool): number {
 }
 
 /** Pushes `mana:balance` to one player and records what was sent. */
-function sendBalance(playerId: string, pool: ManaPool): void {
-  if (api === null) return;
+function sendBalance(world: WorldApi, playerId: string, pool: ManaPool): void {
   const balance = displayBalance(pool);
   pool.lastSentBalance = balance;
-  api.sendTo(playerId, MANA_BALANCE_MESSAGE, {
+  world.sendTo(playerId, MANA_BALANCE_MESSAGE, {
     balance,
     capacity: MANA_CAPACITY,
     // The perk-adjusted RATE, not a price: prices depend on the brush the
@@ -638,6 +630,7 @@ function poolFor(playerId: string): ManaPool {
  * not in a workaround here; it is written up in the Phase 2 report.
  */
 function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
+  const { world } = ctx;
   const pool = poolFor(ctx.player.id);
   // The price of THIS intent for THIS player: the volume its brush displaces at
   // the rate this player pays, after any perk another plugin has set on them.
@@ -658,7 +651,7 @@ function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
     // exact sculpt would have cost, which is the number a "you cannot afford
     // that" readout needs; re-deriving it from the rate would work but would
     // make the refusal depend on the client still holding the brush it sent.
-    api?.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
+    world.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
       balance: displayBalance(pool),
       cost,
     });
@@ -666,7 +659,7 @@ function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   }
 
   pool.balance -= cost;
-  sendBalance(ctx.player.id, pool);
+  sendBalance(world, ctx.player.id, pool);
   return { kind: 'allow' };
 }
 
@@ -676,7 +669,7 @@ function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
  * so regen is tied to simulated time and a server configured at a different
  * TICK_HZ regenerates at the same rate per second.
  */
-function regenerate(dt: number): void {
+function regenerate(world: WorldApi, dt: number): void {
   const baseGain = regenPerSecond * dt;
 
   for (const [playerId, pool] of poolsByPlayer) {
@@ -689,7 +682,7 @@ function regenerate(dt: number): void {
       MANA_CAPACITY,
       pool.balance + baseGain * manaPerkOf(playerId).regenMultiplier,
     );
-    if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(playerId, pool);
+    if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(world, playerId, pool);
   }
 }
 
@@ -697,7 +690,6 @@ export const plugin: TerracePlugin = {
   name: 'mana',
 
   onWorldCreate(world: WorldApi): void {
-    api = world;
     // Read here, not at module load: a supervisor that recreates the world (and
     // every test that boots one) must see the environment as it is NOW.
     // Explicit MANA_REGEN_PER_S if the host set one, otherwise derived from THIS
@@ -706,15 +698,15 @@ export const plugin: TerracePlugin = {
     regenPerSecond = resolveManaRegenPerSecond(process.env[MANA_REGEN_ENV], world.difficulty);
   },
 
-  onPlayerJoin(player: Player): void {
+  onPlayerJoin(world: WorldApi, player: Player): void {
     const pool: ManaPool = { balance: MANA_CAPACITY, lastSentBalance: NO_BALANCE_SENT };
     poolsByPlayer.set(player.id, pool);
     // The room sends the join snapshot before calling this hook, so the client
     // is already sized and listening; this is the first thing its HUD sees.
-    sendBalance(player.id, pool);
+    sendBalance(world, player.id, pool);
   },
 
-  onPlayerLeave(player: Player): void {
+  onPlayerLeave(_world: WorldApi, player: Player): void {
     poolsByPlayer.delete(player.id);
     // Perks die with the connection, exactly like the pool. Player.id is a
     // per-connection sessionId (design §3.7), so leaving a perk behind would
@@ -725,8 +717,8 @@ export const plugin: TerracePlugin = {
     clearManaPerk(player.id);
   },
 
-  onTick(_world: WorldApi, dt: number): void {
-    regenerate(dt);
+  onTick(world: WorldApi, dt: number): void {
+    regenerate(world, dt);
   },
 
   onIntent(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
@@ -742,7 +734,6 @@ export function manaBalanceOf(playerId: string): number | null {
 
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetManaState(): void {
-  api = null;
   // Back to the pre-onWorldCreate value: the rate of a default-difficulty world.
   regenPerSecond = manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY);
   poolsByPlayer.clear();

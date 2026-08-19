@@ -186,6 +186,69 @@ describe('PluginHost', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // onTerrainChanged / onPlayerJoin / onPlayerLeave get a WorldApi (issue #15).
+  //
+  // onWorldCreate/onTick/onIntent always carried one; these three did not, which
+  // forced every plugin that reacted to terrain or players (invite, reveal,
+  // flora, mana, monsters, relics, wildlife) to stash the WorldApi from
+  // onWorldCreate in a module-level variable, guard every use of it against
+  // "the hook fired before onWorldCreate", and reset that variable in a test
+  // seam that existed for no other reason. This is the CONTRACT test: one
+  // fixture plugin, asserting the API hooks in favor of the shared behaviour
+  // the host owes every plugin, not a per-plugin wiring check.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it('hands onTerrainChanged, onPlayerJoin and onPlayerLeave a working WorldApi', () => {
+    let worldCreateApi: WorldApi | undefined;
+    const seenApis: WorldApi[] = [];
+
+    const fixture: TerracePlugin = {
+      name: 'terrain-and-player-hooks',
+      onWorldCreate(world): void {
+        worldCreateApi = world;
+      },
+      onTerrainChanged(world): void {
+        seenApis.push(world);
+      },
+      onPlayerJoin(world): void {
+        seenApis.push(world);
+      },
+      onPlayerLeave(world): void {
+        seenApis.push(world);
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    const host = new PluginHost(world, [fixture].map(asLoadedPlugin));
+    host.worldCreate();
+    if (worldCreateApi === undefined) throw new Error('onWorldCreate was never called');
+
+    // Drives onTerrainChanged through the real edit path (the same one a
+    // player's own sculpt takes), rather than calling the host method directly
+    // — the contract under test is what a plugin's sculpt actually triggers.
+    worldCreateApi.sculpt(4, 4, 1, 64);
+    host.playerJoined(PLAYER);
+    host.playerLeft(PLAYER);
+
+    expect(seenApis).toHaveLength(3);
+
+    // Every hook gets the SAME per-plugin instance onWorldCreate/onTick/onIntent
+    // already receive — not a fresh proxy, not undefined.
+    for (const api of seenApis) expect(api).toBe(worldCreateApi);
+
+    // And it is a WORKING WorldApi, not a stub: each one can read the world and
+    // reach `sculpt`/`broadcast` without the plugin stashing anything of its
+    // own — which is the whole point of the fix.
+    for (const api of seenApis) {
+      expect(api.worldSize).toBe(WORLD_SIZE);
+      api.broadcast('ping', {});
+    }
+    expect(sink.ofType('terrain-and-player-hooks:ping')).toHaveLength(3);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // WorldApi.difficulty (added 2026-08-14). Core's job is to PUBLISH the world's
   // rating to plugins and nothing else — the mechanics belong to whoever reads
   // it — so what core owes a test is exactly: the number reaches the plugin, it

@@ -134,10 +134,10 @@ export class PluginHost implements TerrainChangeListener {
 
     this.terrainChangeDepth++;
     try {
-      for (const { loaded } of this.entries) {
+      for (const { loaded, api } of this.entries) {
         const { plugin } = loaded;
         if (!plugin.onTerrainChanged) continue;
-        this.safely(plugin, 'onTerrainChanged', () => plugin.onTerrainChanged?.(diff));
+        this.safely(plugin, 'onTerrainChanged', () => plugin.onTerrainChanged?.(api, diff));
       }
     } finally {
       this.terrainChangeDepth--;
@@ -145,18 +145,18 @@ export class PluginHost implements TerrainChangeListener {
   }
 
   playerJoined(player: Player): void {
-    for (const { loaded } of this.entries) {
+    for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onPlayerJoin) continue;
-      this.safely(plugin, 'onPlayerJoin', () => plugin.onPlayerJoin?.(player));
+      this.safely(plugin, 'onPlayerJoin', () => plugin.onPlayerJoin?.(api, player));
     }
   }
 
   playerLeft(player: Player): void {
-    for (const { loaded } of this.entries) {
+    for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onPlayerLeave) continue;
-      this.safely(plugin, 'onPlayerLeave', () => plugin.onPlayerLeave?.(player));
+      this.safely(plugin, 'onPlayerLeave', () => plugin.onPlayerLeave?.(api, player));
     }
   }
 

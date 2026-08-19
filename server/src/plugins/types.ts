@@ -134,11 +134,18 @@ export interface TerracePlugin {
   /** Interceptor chain: allow / deny / modify. See IntentVerdict. */
   onIntent?(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void;
 
-  /** Fired after any applied edit, with the FULL server-side diff. */
-  onTerrainChanged?(diff: readonly CellDiff[]): void;
+  /**
+   * Fired after any applied edit, with the FULL server-side diff. Handed the
+   * same WorldApi as onTick/onIntent, so a plugin that reacts to terrain
+   * (re-checking a habitat, accruing frontier pressure, felling a tree) needs
+   * no stash of its own to reach `sculpt`, `broadcast`, or any other member.
+   */
+  onTerrainChanged?(world: WorldApi, diff: readonly CellDiff[]): void;
 
-  onPlayerJoin?(player: Player): void;
-  onPlayerLeave?(player: Player): void;
+  /** Handed the same WorldApi as onTick/onIntent — see onTerrainChanged. */
+  onPlayerJoin?(world: WorldApi, player: Player): void;
+  /** Handed the same WorldApi as onTick/onIntent — see onTerrainChanged. */
+  onPlayerLeave?(world: WorldApi, player: Player): void;
 
   /** Namespaced client → server handlers, keyed by the un-namespaced type. */
   readonly messages?: Readonly<Record<string, PluginMessageHandler>>;

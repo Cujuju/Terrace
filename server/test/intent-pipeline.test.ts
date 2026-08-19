@@ -200,7 +200,7 @@ describe('handleSculptIntent', () => {
     const seenDiffs: number[] = [];
     const watcher: TerracePlugin = {
       name: 'watcher',
-      onTerrainChanged(diff): void {
+      onTerrainChanged(_world, diff): void {
         seenDiffs.push(diff.length);
       },
     };

@@ -27,14 +27,12 @@ import { INVITE_INFO_MESSAGE, INVITE_PLUGIN_NAME } from '../protocol.ts';
 /** Environment variable naming the address players should share. */
 export const SHARE_URL_ENV = 'SHARE_URL';
 
-let api: WorldApi | null = null;
 let shareUrl: string | null = null;
 
 export const plugin: TerracePlugin = {
   name: INVITE_PLUGIN_NAME,
 
-  onWorldCreate(world: WorldApi): void {
-    api = world;
+  onWorldCreate(): void {
     const configured = process.env[SHARE_URL_ENV];
     // Whitespace-only or empty degrades to "not configured" rather than
     // broadcasting a blank string for every HUD to render.
@@ -44,15 +42,14 @@ export const plugin: TerracePlugin = {
         : null;
   },
 
-  onPlayerJoin(player: Player): void {
+  onPlayerJoin(world: WorldApi, player: Player): void {
     // Sent per join rather than broadcast: the value never changes while the
     // world runs, so each client needs to hear it exactly once.
-    api?.sendTo(player.id, INVITE_INFO_MESSAGE, { shareUrl });
+    world.sendTo(player.id, INVITE_INFO_MESSAGE, { shareUrl });
   },
 };
 
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetInviteState(): void {
-  api = null;
   shareUrl = null;
 }
