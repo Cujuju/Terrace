@@ -71,10 +71,23 @@ function ageThresholdFor(nextTier: number): number {
  * downgrade, ever). Called once per surviving cell, per completed generation
  * (life.ts), with `neighborCount` the Moore-neighbour count that generation's
  * step already computed for the B3/S23 rule — free reuse, not a second pass.
+ *
+ * `blessed` (pilgrim routes, owner decision 2026-08-19) waives ONLY the
+ * neighbour gate — the age schedule stands. The neighbour rule exists to
+ * split dense cores from sparse frontier cells (see its comment above), and a
+ * pilgrim route is precisely a reason for a sparse frontier cell to prosper
+ * anyway: the road brings what the neighbourhood lacks. Waiving age too would
+ * make blessing an instant promotion, which is a different (and rejected)
+ * mechanic — prosperity is still earned in survived generations.
  */
-export function maybeAdvanceTier(age: number, tier: number, neighborCount: number): number {
+export function maybeAdvanceTier(
+  age: number,
+  tier: number,
+  neighborCount: number,
+  blessed = false,
+): number {
   if (tier >= MAX_STRUCTURE_TIER) return tier;
   if (age < ageThresholdFor(tier + 1)) return tier;
-  if (neighborCount < STRUCTURE_UPGRADE_MIN_NEIGHBORS) return tier;
+  if (!blessed && neighborCount < STRUCTURE_UPGRADE_MIN_NEIGHBORS) return tier;
   return tier + 1;
 }

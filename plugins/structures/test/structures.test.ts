@@ -44,6 +44,12 @@ import {
   STRUCTURE_UPGRADE_MIN_NEIGHBORS,
   maybeAdvanceTier,
 } from '../server/tiers.ts';
+import {
+  blessedStructureCellCount,
+  isBlessedStructureCell,
+  resetBlessings,
+  setBlessedStructureCells,
+} from '../server/blessings.ts';
 import { isBuildableCell, isFlatEnough, type StructuresWorld } from '../server/suitability.ts';
 import {
   currentGeneration,
@@ -832,5 +838,92 @@ describe('persistence', () => {
 
     advance(drowned, 15 + DT); // one generation
     expect(standingStructures()).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('route blessings (pilgrim routes contract)', () => {
+  // The blinker's centre cell is the canonical under-neighboured survivor:
+  // it lives forever with EXACTLY 2 neighbours (see tiers.ts), so without a
+  // blessing it can never advance a tier — which makes it the sharpest probe
+  // for "blessing waives the neighbour gate and changes nothing else".
+  function blinkerAt(x: number, y: number): Map<number, LiveCellRecord> {
+    return boardOf([
+      [x - 1, y],
+      [x, y],
+      [x + 1, y],
+    ]);
+  }
+
+  function runGenerations(
+    world: StructuresWorld,
+    live: Map<number, LiveCellRecord>,
+    generations: number,
+  ): ReadonlyMap<number, LiveCellRecord> {
+    let board: ReadonlyMap<number, LiveCellRecord> = live;
+    for (let i = 0; i < generations; i++) board = stepGeneration(world, board).nextLive;
+    return board;
+  }
+
+  beforeEach(() => {
+    resetBlessings();
+  });
+
+  it('lets a blessed under-neighboured survivor earn tiers on the age schedule', () => {
+    const world = openWorld();
+    const centre = structureKey(20, 20);
+    setBlessedStructureCells([centre]);
+
+    const board = runGenerations(world, blinkerAt(20, 20), CA_GENERATIONS_PER_TIER);
+    // Age met, neighbour gate waived: exactly one step up, not a jump.
+    expect(board.get(centre)?.tier).toBe(1);
+
+    const later = runGenerations(world, new Map(board), CA_GENERATIONS_PER_TIER);
+    expect(later.get(centre)?.tier).toBe(2);
+  });
+
+  it('changes nothing for the same cell unblessed', () => {
+    const world = openWorld();
+    const centre = structureKey(20, 20);
+    const board = runGenerations(world, blinkerAt(20, 20), CA_GENERATIONS_PER_TIER * 3);
+    expect(board.get(centre)?.tier).toBe(0);
+  });
+
+  it('never keeps a blessed cell alive — the CA itself is untouched', () => {
+    const world = openWorld();
+    // A lone pair dies of underpopulation next generation, blessed or not.
+    const a = structureKey(30, 30);
+    const b = structureKey(31, 30);
+    setBlessedStructureCells([a, b]);
+    const board = runGenerations(world, boardOf([[30, 30], [31, 30]]), 1);
+    expect(board.has(a)).toBe(false);
+    expect(board.has(b)).toBe(false);
+  });
+
+  it('replaces the whole set on every call and clears on an empty one', () => {
+    setBlessedStructureCells([1, 2, 3]);
+    expect(blessedStructureCellCount()).toBe(3);
+    setBlessedStructureCells([7]);
+    expect(isBlessedStructureCell(7)).toBe(true);
+    expect(isBlessedStructureCell(1)).toBe(false);
+    setBlessedStructureCells([]);
+    expect(blessedStructureCellCount()).toBe(0);
+  });
+
+  it('drops malformed keys and caps the set at the structure cap', () => {
+    const flood: number[] = [];
+    for (let n = 0; n < STRUCTURES_CAP + 10; n++) flood.push(n);
+    setBlessedStructureCells([-1, 1.5, Number.NaN, ...flood]);
+    expect(blessedStructureCellCount()).toBe(STRUCTURES_CAP);
+  });
+
+  it('waives only the neighbour gate in maybeAdvanceTier, never the age gate', () => {
+    // Direct contract probe, no board: age below threshold stays put even
+    // blessed; age met with 0 neighbours advances only when blessed.
+    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER - 1, 0, 0, true)).toBe(0);
+    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, 0, true)).toBe(1);
+    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, 0, false)).toBe(0);
+    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS, false)).toBe(1);
   });
 });

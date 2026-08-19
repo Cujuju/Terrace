@@ -65,6 +65,7 @@ import {
   generationChunksPerTick,
   type LiveCellRecord,
 } from './life.ts';
+import { resetBlessings } from './blessings.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 
@@ -361,6 +362,13 @@ export const plugin: TerracePlugin = {
 // Test seams
 // ────────────────────────────────────────────────────────────────────────────
 
+// THE PILGRIMS-FACING SURFACE (owner decision 2026-08-19). The pilgrims
+// plugin duck-types both of these off this module through the relics→mana
+// dynamic-import bridge pattern: `standingStructures` to find the towns near
+// a settled monster, `setBlessedStructureCells` to prosper the ones on an
+// active route. Re-exported here so the bridge has ONE module to load.
+export { setBlessedStructureCells } from './blessings.ts';
+
 export function standingStructures(): StructureCell[] {
   return liveCells();
 }
@@ -378,6 +386,7 @@ export function resetStructuresState(): void {
   live = new Map();
   generation = 0;
   survey = new GenerationSurvey();
+  resetBlessings();
   rng = createStructuresRng(STRUCTURES_RNG_DEFAULT_SEED);
   simSeconds = 0;
   lastKeepaliveSeconds = 0;

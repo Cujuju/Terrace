@@ -43,6 +43,7 @@
 
 import { CHUNK_SIZE } from '@terrace/shared';
 import { STRUCTURES_CAP, cellOfKey, structureKey, type StructureCell } from '../protocol.ts';
+import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import type { StructuresRng } from './rng.ts';
@@ -235,7 +236,9 @@ export class GenerationSurvey {
 
         if (current !== undefined) {
           const age = current.age + 1;
-          const tier = maybeAdvanceTier(age, current.tier, neighborCount);
+          // Blessing (pilgrim routes) is read at the tier gate ONLY — the
+          // survives/birthed decisions above never consult it (blessings.ts).
+          const tier = maybeAdvanceTier(age, current.tier, neighborCount, isBlessedStructureCell(key));
           this.staged.set(key, { age, tier });
         } else {
           // The population cap throttles BIRTHS ONLY. Every survivor was
