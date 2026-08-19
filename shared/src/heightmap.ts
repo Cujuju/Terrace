@@ -177,6 +177,54 @@ export function forEachFootprintOffset(
 }
 
 /**
+ * `forEachFootprintOffset` narrowed to CELLS: turns each offset into an
+ * absolute (x, y), drops it if off-map, and hands the caller the cell index
+ * and distance directly. Built on top of forEachFootprintOffset so the scan
+ * order and the `floor(sqrt) < radius` footprint test still exist exactly
+ * once — this only adds the offset→bounds-check→index step, and adds it once.
+ *
+ * Off-map cells are excluded: a brush overhanging the map edge loses the
+ * cells outside it, because they are not part of this world. That matters
+ * beyond applyBrush — applyLevelFillBrush's survey pass and fill pass must
+ * see exactly the same in-bounds set or the fill is not level (see its doc),
+ * and sharing this iterator is what makes that true by construction.
+ */
+function forEachFootprintCell(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  visit: (i: number, dist: number) => void,
+): void {
+  forEachFootprintOffset(radius, (dx, dy, dist) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return; // brush overhanging the map edge
+    visit(cellIndex(map, x, y), dist);
+  });
+}
+
+/**
+ * The per-cell delta a brush of `profile` applies at distance `dist` from its
+ * centre, for a stroke of `amount` over the given `radius`. Shared by
+ * applyBrush (which applies it) and sculptDisplacementUnits (which prices it)
+ * so the two agree by construction rather than by review — see
+ * sculptDisplacementUnits's doc for why that agreement matters.
+ *
+ * 'hard': the same flat delta everywhere in the footprint (sheer edges).
+ * 'soft': linear falloff; trunc (toward zero) keeps raise/lower symmetric.
+ * At radius 1 the two are identical — the footprint is the centre alone.
+ */
+function brushDelta(
+  amount: number,
+  radius: number,
+  dist: number,
+  profile: SculptProfile,
+): number {
+  return profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
+}
+
+/**
  * The radius precondition every brush entry point shares. Untrusted input is
  * validated in protocol.ts; reaching the math with garbage is a programming
  * error, so this throws rather than clamping.
@@ -249,17 +297,9 @@ export function applyBrush(
 
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
-  forEachFootprintOffset(radius, (dx, dy, dist) => {
-    // 'hard': the same flat delta everywhere in the footprint (sheer edges).
-    // 'soft': linear falloff; trunc (toward zero) keeps raise/lower symmetric.
-    // At radius 1 the two are identical — the footprint is the centre alone.
-    const delta =
-      profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
+  forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
+    const delta = brushDelta(amount, radius, dist, profile);
     if (delta === 0) return;
-    const x = cx + dx;
-    const y = cy + dy;
-    if (!inBounds(map, x, y)) return; // brush overhanging the map edge
-    const i = cellIndex(map, x, y);
     const h = clampHeight(map.cells[i] + delta);
     if (h !== map.cells[i]) {
       map.cells[i] = h;
@@ -337,11 +377,8 @@ export function applyLevelFillBrush(
   // are not part of this world, so they cannot hold back a fill in it.
   let surveyed = false;
   let extremeBand = 0;
-  forEachFootprintOffset(radius, (dx, dy) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    if (!inBounds(map, x, y)) return;
-    const band = bandOf(map.cells[cellIndex(map, x, y)]);
+  forEachFootprintCell(map, cx, cy, radius, (i) => {
+    const band = bandOf(map.cells[i]);
     if (!surveyed) {
       extremeBand = band;
       surveyed = true;
@@ -363,11 +400,7 @@ export function applyLevelFillBrush(
   const targetHeight = clampHeight((extremeBand + (raising ? 1 : -1)) * BAND_HEIGHT);
 
   // PASS 2 — FILL. Same footprint, same order.
-  forEachFootprintOffset(radius, (dx, dy) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    if (!inBounds(map, x, y)) return;
-    const i = cellIndex(map, x, y);
+  forEachFootprintCell(map, cx, cy, radius, (i) => {
     const h = map.cells[i];
     // Already at or past the level being filled: untouched. This is what stops
     // the brush from starting the next level while this one is unfinished.
@@ -461,16 +494,15 @@ export function sculptDisplacementUnits(
 
   let units = 0;
   // The footprint comes from the one iterator applyBrush uses, and the delta
-  // expression is applyBrush's, with `amount` fixed to DEFAULT_SCULPT_AMOUNT —
-  // the amount a sculpt intent actually carries (it is server configuration,
-  // never client input, see protocol.ts). Iteration order is irrelevant to a sum
-  // of non-negative integers, but sharing the iterator is what keeps "the cells
-  // priced are the cells brushed" true by construction rather than by review.
+  // comes from brushDelta, the one function applyBrush itself calls, with
+  // `amount` fixed to DEFAULT_SCULPT_AMOUNT — the amount a sculpt intent
+  // actually carries (it is server configuration, never client input, see
+  // protocol.ts). Iteration order is irrelevant to a sum of non-negative
+  // integers, but sharing the iterator AND the delta function is what keeps
+  // "the cells priced are the cells brushed" true by construction rather than
+  // by review.
   forEachFootprintOffset(radius, (_dx, _dy, dist) => {
-    const delta =
-      profile === 'hard'
-        ? DEFAULT_SCULPT_AMOUNT
-        : Math.trunc((DEFAULT_SCULPT_AMOUNT * (radius - dist)) / radius);
+    const delta = brushDelta(DEFAULT_SCULPT_AMOUNT, radius, dist, profile);
     // |delta|: raising and lowering displace the same volume, so a lower
     // costs exactly what the raise that undoes it costs. DEFAULT_SCULPT_AMOUNT
     // is positive today, so this branch is defensive — but the contract this
@@ -479,6 +511,33 @@ export function sculptDisplacementUnits(
     units += delta < 0 ? -delta : delta;
   });
   return units;
+}
+
+/**
+ * Relaxes one 4-neighbor pair toward the gradient limit: if `cells[i]` and
+ * `cells[j]` differ by more than MAX_STEP, the higher of the two loses
+ * `floor(e/2)` (`e` the excess over MAX_STEP) and the lower gains the rest,
+ * leaving the pair at exactly MAX_STEP. Both indices are added to `changed`
+ * when the pair is adjusted. Returns whether it was, so a sweep can tell
+ * whether the pass changed anything.
+ */
+function relaxPair(cells: Int16Array, i: number, j: number, changed: Set<number>): boolean {
+  const d = cells[i] - cells[j];
+  if (d > MAX_STEP) {
+    const e = d - MAX_STEP;
+    cells[i] -= e >> 1;
+    cells[j] += e - (e >> 1);
+    changed.add(i); changed.add(j);
+    return true;
+  }
+  if (d < -MAX_STEP) {
+    const e = -d - MAX_STEP;
+    cells[j] -= e >> 1;
+    cells[i] += e - (e >> 1);
+    changed.add(i); changed.add(j);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -533,40 +592,8 @@ export function smooth(map: Heightmap, changed: Set<number>): void {
       for (let x = minX; x <= maxX; x++) {
         const i = row + x;
         // Each pair visited once, via its "forward" (right/down) neighbor.
-        if (x < maxX) {
-          const j = i + 1;
-          const d = cells[i] - cells[j];
-          if (d > MAX_STEP) {
-            const e = d - MAX_STEP;
-            cells[i] -= e >> 1;
-            cells[j] += e - (e >> 1);
-            changed.add(i); changed.add(j);
-            changedThisPass = true;
-          } else if (d < -MAX_STEP) {
-            const e = -d - MAX_STEP;
-            cells[j] -= e >> 1;
-            cells[i] += e - (e >> 1);
-            changed.add(i); changed.add(j);
-            changedThisPass = true;
-          }
-        }
-        if (y < maxY) {
-          const j = i + size;
-          const d = cells[i] - cells[j];
-          if (d > MAX_STEP) {
-            const e = d - MAX_STEP;
-            cells[i] -= e >> 1;
-            cells[j] += e - (e >> 1);
-            changed.add(i); changed.add(j);
-            changedThisPass = true;
-          } else if (d < -MAX_STEP) {
-            const e = -d - MAX_STEP;
-            cells[j] -= e >> 1;
-            cells[i] += e - (e >> 1);
-            changed.add(i); changed.add(j);
-            changedThisPass = true;
-          }
-        }
+        if (x < maxX && relaxPair(cells, i, i + 1, changed)) changedThisPass = true;
+        if (y < maxY && relaxPair(cells, i, i + size, changed)) changedThisPass = true;
       }
     }
 
