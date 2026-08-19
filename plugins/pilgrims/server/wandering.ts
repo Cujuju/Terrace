@@ -73,14 +73,28 @@ function isEstablished(cell: SettlementCell): boolean {
 export const WANDER_EPOCH_SECONDS = 60;
 
 /**
- * One town in this many rolls a wanderer each epoch. 32 — sized against the
- * journey, not the map: a full stroll below (2 × 48 cells at 0.5 cells/s,
- * plus the visit) is ~3.5 minutes ≈ 3.5 epochs, so a world of N qualifying
- * towns holds ~N × 3.5 / 32 wanderers abroad at once — a lively hundred-town
- * world sits near 11, inside the cap with room, and the cap (not this
- * modulus) is the guarantee.
+ * One town in this many rolls a wanderer each epoch. 4 — sized to the
+ * MEASURED world, not an imagined one (snapshot #144, generation 3401: the
+ * whole world held 14 standing cells, most aged 0–2 — the CA churns hard and
+ * established towns are a handful). "Occasionally" per town means a stroll
+ * every ~4 epochs ≈ every four minutes from each standing veteran; on the
+ * measured 2–4 qualifying senders that is one visible journey every minute
+ * or two — alive, not crowded. A future dense world does not swarm: at 100
+ * senders the roll rate hits ~25/epoch and WANDERERS_CAP (the guarantee)
+ * clamps the population, exactly what the cap is for. (Shipped first at 32,
+ * derived from a "lively hundred-town world" that does not exist — the wire
+ * probe read zero wanderers in ten epochs, and the snapshot explained why.)
  */
-export const WANDER_DISPATCH_MODULUS = 32;
+export const WANDER_DISPATCH_MODULUS = 4;
+
+/**
+ * Minimum stroll distance, in cells. 8 — half a race district (structures'
+ * 16-cell SETTLER_DISTRICT_CELLS, restated by value): a settlement is a BLOB
+ * of adjacent live cells, and without this floor "the nearest settlement" is
+ * the cell next door — a fourteen-second hop nobody would ever see. A stroll
+ * must leave its own block to read as a journey.
+ */
+export const WANDER_MIN_DISTANCE_CELLS = 8;
 
 /**
  * How far away a stroll's destination town may be, in cells. 48 — three
@@ -230,11 +244,15 @@ export class Wandering {
       const roll = hashCell(hashCell(cell.x, cell.y) ^ epoch, epoch);
       if (roll % this.dispatchModulus !== 0) continue;
 
-      // Destination: another qualifying town within range, walkable, sorted
-      // by (distance, cell order) — the same tie-break discipline as the
-      // pilgrims' catchment sort — then indexed by the roll's high bits, so
-      // strolls spread across neighbours instead of always visiting the
-      // nearest one.
+      // Destination: ANY standing settlement a real journey away — the card
+      // demands standing-some-while of the SENDER only ("settlements that
+      // have stood some while … send a wanderer to a nearby settlement"),
+      // and on the measured churning world, demanding it of both endpoints
+      // leaves no legal pairs at all. Walkable, at least MIN_DISTANCE out
+      // (leave your own blob), within range; sorted by (distance, cell
+      // order) — the pilgrims' tie-break discipline — then indexed by the
+      // roll's high bits, so strolls spread across neighbours instead of
+      // always visiting the nearest one.
       const candidates = ordered
         .map((other) => {
           const dx = other.x - cell.x;
@@ -243,9 +261,8 @@ export class Wandering {
         })
         .filter(
           (c) =>
-            c.distanceSq > 0 &&
+            c.distanceSq >= WANDER_MIN_DISTANCE_CELLS * WANDER_MIN_DISTANCE_CELLS &&
             c.distanceSq <= WANDER_RANGE_CELLS * WANDER_RANGE_CELLS &&
-            isEstablished(c.other) &&
             isWalkableCell(world, c.other.x, c.other.y),
         )
         .sort(

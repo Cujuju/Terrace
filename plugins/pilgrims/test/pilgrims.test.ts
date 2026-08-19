@@ -30,6 +30,7 @@ import {
 import {
   WANDERER_MIN_AGE_GENERATIONS,
   WANDER_EPOCH_SECONDS,
+  WANDER_MIN_DISTANCE_CELLS,
   WANDER_RANGE_CELLS,
   Wandering,
 } from '../server/wandering.ts';
@@ -369,6 +370,27 @@ describe('the wandering', () => {
     const outOfRange = new Wandering(undefined, ROLL_EVERY_EPOCH);
     outOfRange.advance(world, [TOWN, remote], TICK);
     expect(outOfRange.populationCount()).toBe(0);
+  });
+
+  it('gates age on the sender alone, and a stroll must leave its own block', () => {
+    const world = islandWorld();
+    // The destination may be brand new — the card demands "stood some while"
+    // of the SENDER only, and the measured churning world has almost no
+    // established PAIRS (snapshot #144: 14 cells, most aged 0–2).
+    const youngDestination = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    youngDestination.advance(world, [TOWN, { ...NEIGHBOUR, age: 0 }], TICK);
+    expect(youngDestination.populationCount()).toBe(1);
+
+    // A settlement is a blob of adjacent cells; the cell next door is not a
+    // journey. Only candidates at least WANDER_MIN_DISTANCE_CELLS away count.
+    const blobOnly = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    blobOnly.advance(
+      world,
+      [TOWN, { x: TOWN.x + 1, y: TOWN.y, age: TOWN.age }, { x: TOWN.x, y: TOWN.y + 2, age: TOWN.age }],
+      TICK,
+    );
+    expect(blobOnly.populationCount()).toBe(0);
+    expect(WANDER_MIN_DISTANCE_CELLS).toBeLessThan(WANDER_RANGE_CELLS);
   });
 
   it('caps the ambient crowd at WANDERERS_CAP', () => {
