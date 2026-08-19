@@ -154,6 +154,31 @@ export const PINCH_ZOOM_BASE = 1.01;
 export const TRACKPAD_PAN_SPEED = 1.5 / 1000;
 
 /**
+ * Two-finger separations below this, in CSS pixels, are treated as one merged
+ * contact rather than a pinch pair (input/cameraBindings.ts touch-dolly
+ * guard). iOS coalesces two adjacent touches into one and re-splits them,
+ * momentarily reporting near-zero separation; OrbitControls divides by that
+ * separation, so without a floor a single such frame dollies the camera by
+ * hundreds of times in one event (reproduced 2026-08-19: a two-finger tap
+ * slammed the orbit distance to its 900 clamp — the owner's "camera resets to
+ * a default location"). 24 px is under half a fingertip: no intentional pinch
+ * operates below it, and every merge artifact does.
+ */
+export const TOUCH_DOLLY_MIN_SEPARATION_PX = 24;
+
+/**
+ * Largest growth (or shrink, as its reciprocal) of the two-finger separation
+ * OrbitControls may be shown in ONE pointermove event. Real fingers at ≥60 Hz
+ * event delivery change separation by a few percent per event; a stalled
+ * main thread batching moves can reach tens of percent. 1.5× sits far above
+ * both and far below the coalescing artifacts this guards against (30–200×
+ * in the 2026-08-19 reproduction). A swallowed step is not lost motion: the
+ * guard's baseline holds, and the fingers' true separation passes on the
+ * next in-bounds event.
+ */
+export const TOUCH_DOLLY_MAX_STEP_RATIO = 1.5;
+
+/**
  * Wheel-delta pixels one edge-to-edge two-finger swipe across the trackpad
  * reports. The reference for the orbit rates below, and an APPROXIMATION: the
  * OS scales finger travel to wheel deltas with an acceleration curve that
