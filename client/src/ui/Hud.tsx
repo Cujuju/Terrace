@@ -60,6 +60,8 @@ import {
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
+import { Cartographer, chartOpen, setChartOpen } from './Cartographer.tsx';
+import type { ChartSource } from '../terrain/chart.ts';
 import type { ConnectionStatus } from '../net/connection.ts';
 import type { SculptProfile, SculptTool } from '@terrace/shared';
 
@@ -163,7 +165,10 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
     : `Drags pile land up — click or tap to switch to lowering, or ${chord}-drag to lower.`;
 }
 
-export function Hud(): JSX.Element {
+export function Hud(props: {
+  /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
+  chartSource: () => ChartSource | null;
+}): JSX.Element {
   // The settings popup's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
   let settingsRoot: HTMLDivElement | undefined;
@@ -175,6 +180,9 @@ export function Hud(): JSX.Element {
   // dismisses the popup still reaches whatever it landed on (canvas included),
   // matching how every native popover behaves.
   const onWindowKeyDown = (event: KeyboardEvent): void => {
+    // The chart overlay owns Escape while it is open (Cartographer.tsx has its
+    // own listener); one press must close one layer, not both.
+    if (chartOpen()) return;
     if (event.key === 'Escape' && showControls()) setShowControls(false);
   };
   const onWindowPointerDown = (event: PointerEvent): void => {
@@ -325,6 +333,25 @@ export function Hud(): JSX.Element {
               <ControlsPanel />
             </div>
           </Show>
+          {/* The Cartographer's door: stacked ABOVE the gear so the bottom
+              strip gains no width — the phone-width flow (file header) is
+              untouched. Icon-only like the gear; an inline stroke SVG rather
+              than an emoji so it takes the HUD's muted colour. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            classList={{ open: chartOpen() }}
+            aria-expanded={chartOpen()}
+            aria-haspopup="dialog"
+            aria-label="Chart of the known world"
+            title="Open the chart: your known world as an inked map, exportable as an image."
+            onClick={() => setChartOpen(!chartOpen())}
+          >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" />
+              <path d="M9 4v14M15 6v14" />
+            </svg>
+          </button>
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -408,6 +435,12 @@ export function Hud(): JSX.Element {
             </p>
           </Show>
         </div>
+      </Show>
+
+      {/* The Cartographer overlay, mounted only while open — mounting IS the
+          draw (its onMount charts the world of that moment). */}
+      <Show when={chartOpen()}>
+        <Cartographer source={props.chartSource} />
       </Show>
 
     </div>

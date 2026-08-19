@@ -521,3 +521,70 @@ body {
   border-color: var(--hud-accent);
   color: var(--hud-text);
 }
+
+/* ── The Cartographer (ui/Cartographer.tsx): a modal chart overlay. The chart
+   itself is a parchment canvas; the chrome around it stays HUD chrome so the
+   controls read as the game's, not the document's. ── */
+
+.chart-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  background: rgba(8, 10, 14, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Above the rest of the HUD: an open document covers the instruments. */
+  z-index: 10;
+}
+
+.chart-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 94vw;
+  max-height: 94vh;
+}
+
+.chart-canvas {
+  /* The canvas backing store is large (export quality); on screen it scales
+     to fit. It is square, so one bound per axis keeps the aspect. */
+  max-width: 94vw;
+  max-height: calc(94vh - 56px); /* leave room for the toolbar row */
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+.chart-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.chart-button {
+  pointer-events: auto;
+  border: 1px solid var(--hud-border);
+  border-radius: 8px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  color: var(--hud-text);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.chart-button:hover {
+  border-color: var(--hud-accent);
+}
+
+.chart-empty {
+  color: var(--hud-text);
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  padding: 14px 18px;
+}

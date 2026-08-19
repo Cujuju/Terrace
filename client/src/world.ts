@@ -10,7 +10,13 @@
 // for that reason — a stale direct reference would silently keep drawing the
 // previous session's terrain.
 
-import { DEFAULT_WORLD_SIZE, quantizeToBand } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  DEFAULT_WORLD_SIZE,
+  cellIndex,
+  chunkIndex,
+  quantizeToBand,
+} from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
@@ -39,6 +45,7 @@ import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, type Water } from './render/water.ts';
+import type { ChartSource } from './terrain/chart.ts';
 
 export interface World extends TerrainSink {
   /**
@@ -58,6 +65,14 @@ export interface World extends TerrainSink {
    * snapshot. Consumed by the client plugin host (plugins/host.ts).
    */
   terrainHeightAt(x: number, y: number): number | null;
+  /**
+   * A read-only window onto the mirror for the Cartographer (ui/Cartographer):
+   * the world size, raw heights, and which cells sit in received chunks. Null
+   * before the first snapshot. The returned source closes over the CURRENT
+   * mirror, so a chart being drawn stays internally consistent even if a
+   * rejoin replaces the world mid-draw — it charts the world it was opened on.
+   */
+  chartSource(): ChartSource | null;
   dispose(): void;
 }
 
@@ -286,6 +301,27 @@ export function createWorld(viewport: Viewport): World {
     terrainHeightAt(x: number, y: number): number | null {
       if (mirror === null) return null;
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
+    },
+
+    chartSource(): ChartSource | null {
+      const m = mirror;
+      if (m === null) return null;
+      return {
+        size: m.map.size,
+        heightAt: (x: number, y: number): number =>
+          m.map.cells[cellIndex(m.map, x, y)],
+        // "Revealed" for the chart is exactly the renderer's own notion of
+        // what exists: the cell's owning chunk is in `received` (mirror.ts
+        // invariant 1). No reveal-plugin knowledge leaks in here.
+        revealedAt: (x: number, y: number): boolean =>
+          m.received.has(
+            chunkIndex(
+              m.map.size,
+              Math.floor(x / CHUNK_SIZE),
+              Math.floor(y / CHUNK_SIZE),
+            ),
+          ),
+      };
     },
 
     pickables(): Mesh[] {

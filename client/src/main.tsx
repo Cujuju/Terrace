@@ -75,7 +75,7 @@ const sculptInput = createSculptInput({
 const brushPreview = createBrushPreview(viewport.scene);
 viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadius()));
 
-render(() => <Hud />, hudRoot);
+render(() => <Hud chartSource={() => world.chartSource()} />, hudRoot);
 
 // Dev-only handle for headless smoke automation: lets a driver read the real
 // camera matrices and world state instead of guessing them. import.meta.env.DEV
