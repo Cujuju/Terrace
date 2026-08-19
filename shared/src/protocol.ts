@@ -79,6 +79,10 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // intent cannot name it (see sculptOptionsOf below), because containment is
   // a fairness rule, not a brush shape, so it is not the client's to choose.
   spill: 'banded',
+  // Player sculpts are always locked to the clicked cell's level (owner
+  // decision 2026-08-19: the brush periphery must never climb past the level
+  // the player pointed at). Not a wire field, same argument as `spill`.
+  anchor: 'clicked',
 };
 
 /**
@@ -97,10 +101,12 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     tool: intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool,
     profile: intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile,
     // Deliberately NOT read from the intent: spill containment is fixed
-    // policy for player sculpts (issue #26). Both the server pipeline and
-    // client prediction resolve through this line, so both sides run banded
-    // by construction — the same lockstep argument as the doc above.
+    // policy for player sculpts (issue #26), and so is the clicked-cell
+    // anchor (2026-08-19). Both the server pipeline and client prediction
+    // resolve through these lines, so both sides run banded+anchored by
+    // construction — the same lockstep argument as the doc above.
     spill: WIRE_DEFAULT_SCULPT_OPTIONS.spill,
+    anchor: WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
   };
 }
 

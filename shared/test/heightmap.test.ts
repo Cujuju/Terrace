@@ -10,6 +10,7 @@ import {
   cellY,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
+  forEachFootprintOffset,
   heightAt,
   isWater,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
@@ -26,12 +27,17 @@ import {
   type SculptOptions,
 } from '../src/index.ts';
 
-/** Cells a brush of this radius covers: integer distance strictly under it. */
+/**
+ * Cells a brush of this radius covers — the tight integer disc (2026-08-19):
+ * dx² + dy² < radius·(radius−1), radius 1 the centre alone. Deliberately an
+ * independent re-derivation, NOT an import of forEachFootprintOffset, so a
+ * drift in the shipped footprint fails here instead of following it.
+ */
 function footprintOf(size: number, cx: number, cy: number, radius: number): Set<number> {
   const cells = new Set<number>();
   for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
     for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
-      if (Math.floor(Math.sqrt(dx * dx + dy * dy)) >= radius) continue;
+      if (radius > 1 && dx * dx + dy * dy >= radius * (radius - 1)) continue;
       const x = cx + dx;
       const y = cy + dy;
       if (x < 0 || y < 0 || x >= size || y >= size) continue;
@@ -118,10 +124,12 @@ describe('applyBrush', () => {
     const changed = new Set<number>();
     applyBrush(map, 16, 16, 2, 64, changed);
     expect(heightAt(map, 16, 16)).toBe(64);
-    // Orthogonal and diagonal neighbors are both integer distance 1.
+    // Orthogonal neighbors are the plus-shaped disc's distance-1 ring.
     expect(heightAt(map, 17, 16)).toBe(32);
     expect(heightAt(map, 16, 15)).toBe(32);
-    expect(heightAt(map, 17, 17)).toBe(32);
+    // Diagonals are OUTSIDE the tight disc (2026-08-19 footprint decision:
+    // dx²+dy² = 2 >= 2·1) — they used to receive 32 under floor(sqrt) < r.
+    expect(heightAt(map, 17, 17)).toBe(0);
     // Distance 2 is outside a radius-2 brush.
     expect(heightAt(map, 18, 16)).toBe(0);
   });
@@ -280,6 +288,8 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       const explicitDiff = applySculpt(explicit, x, y, r, amt, {
         tool: 'smooth',
         profile: 'soft',
+        spill: 'free',
+        anchor: 'free',
       });
       expect(legacyDiff).toEqual(explicitDiff);
       expect(legacy.cells).toEqual(explicit.cells);
@@ -289,7 +299,12 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
   it('the library default is smooth+soft, NOT the wire default', () => {
     // Stated as a value so the compatibility promise is greppable, and so a
     // future edit to it fails here rather than silently re-tuning plugins.
-    expect(LIBRARY_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'smooth', profile: 'soft', spill: 'free' });
+    expect(LIBRARY_DEFAULT_SCULPT_OPTIONS).toEqual({
+      tool: 'smooth',
+      profile: 'soft',
+      spill: 'free',
+      anchor: 'free',
+    });
   });
 
   it('the smooth tool reproduces the old brush→smooth→diff composition exactly', () => {
@@ -470,6 +485,23 @@ function paintFootprint3x3(
   }
 }
 
+/**
+ * Paints the radius-2 footprint — the 5-cell plus the tight disc gives
+ * (2026-08-19) — by compass position, in band units.
+ */
+function paintFootprintPlus(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  bands: { n: number; w: number; c: number; e: number; s: number },
+): void {
+  map.cells[cellIndex(map, cx, cy - 1)] = bands.n * BAND_HEIGHT;
+  map.cells[cellIndex(map, cx - 1, cy)] = bands.w * BAND_HEIGHT;
+  map.cells[cellIndex(map, cx, cy)] = bands.c * BAND_HEIGHT;
+  map.cells[cellIndex(map, cx + 1, cy)] = bands.e * BAND_HEIGHT;
+  map.cells[cellIndex(map, cx, cy + 1)] = bands.s * BAND_HEIGHT;
+}
+
 /** The same 3×3 patch read back as band indices, in the same order. */
 function readFootprintBands3x3(map: Heightmap, cx: number, cy: number): number[] {
   const bands: number[] = [];
@@ -482,31 +514,32 @@ function readFootprintBands3x3(map: Heightmap, cx: number, cy: number): number[]
 describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   it('fills the LOWEST band flat before it starts the next one', () => {
     const map = createHeightmap(16);
-    // The owner's case, in miniature: ground at three different levels under one
-    // brush. Level 3 must not start while level 2 still has holes in it.
-    paintFootprint3x3(map, 8, 8, [0, 1, 2,
-                                  0, 1, 1,
-                                  2, 0, 1]);
+    // The owner's case, in miniature: ground at three different levels under
+    // one brush. Level 3 must not start while level 2 still has holes in it.
+    // The radius-2 footprint is the 5-cell plus (2026-08-19 disc), so the
+    // fixture paints exactly those cells; the 3×3 read below still shows the
+    // corners, which are OUTSIDE the brush and must never move from band 0.
+    paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 2, s: 0 });
 
     // Stroke 1 — the band-0 cells come up one level. Everything already at or
     // above that level is left completely alone.
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([1, 1, 2,
-                                                      1, 1, 1,
-                                                      2, 1, 1]);
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 1, 0,
+                                                      1, 1, 2,
+                                                      0, 1, 0]);
 
-    // Stroke 2 — the lowest band is now 1, so THAT is the level being filled.
-    // The two cells already on band 2 still do not move.
+    // Stroke 2 — the lowest band under the brush is now 1, so THAT is the
+    // level being filled. The cell already on band 2 still does not move.
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([2, 2, 2,
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 2, 0,
                                                       2, 2, 2,
-                                                      2, 2, 2]);
+                                                      0, 2, 0]);
 
     // Stroke 3 — only now, with the whole footprint level, does band 3 start.
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([3, 3, 3,
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 3, 0,
                                                       3, 3, 3,
-                                                      3, 3, 3]);
+                                                      0, 3, 0]);
   });
 
   it('never lifts a cell THROUGH the level being filled', () => {
@@ -529,7 +562,8 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     // level 3" is a statement about levels, not about how hard the stroke hits.
     const map = createHeightmap(16);
     applySculpt(map, 8, 8, 2, 4 * BAND_HEIGHT, LEVEL_FILL);
-    expect(readFootprintBands3x3(map, 8, 8)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
+    // The plus fills one band; the 3×3 read's corners are outside the brush.
+    expect(readFootprintBands3x3(map, 8, 8)).toEqual([0, 1, 0, 1, 1, 1, 0, 1, 0]);
     expect(heightAt(map, 8, 8)).toBe(BAND_HEIGHT);
   });
 
@@ -600,14 +634,12 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
   it('reports only the cells it actually moved', () => {
     const map = createHeightmap(16);
-    paintFootprint3x3(map, 8, 8, [0, 1, 1,
-                                  1, 1, 1,
-                                  1, 1, 1]);
-    // Eight of the nine footprint cells are already on the level being filled,
+    paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 1, s: 1 });
+    // Four of the five footprint cells are already on the level being filled,
     // so the diff — which is what goes on the wire and what the client's
     // prediction reconciles against — names exactly the one that was not.
     expect(applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([
-      { x: 7, y: 7, h: BAND_HEIGHT },
+      { x: 8, y: 7, h: BAND_HEIGHT },
     ]);
   });
 
@@ -636,16 +668,21 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
   it('surveys only in-bounds cells when the brush overhangs the map edge', () => {
     // Off-map cells are not ground, so they must not be surveyed as band-0
-    // terrain that holds the fill back. All four in-bounds cells of this corner
-    // brush sit on band 1, so the stroke fills band 2 — if the missing cells
-    // counted as band 0, nothing here would move at all.
+    // terrain that holds the fill back. All three in-bounds cells of this
+    // corner brush (the plus loses its north and west arms off-map) sit on
+    // band 1, so the stroke fills band 2 — if the missing cells counted as
+    // band 0, nothing here would move at all.
     const map = createHeightmap(16);
-    const corner = [[0, 0], [1, 0], [0, 1], [1, 1]] as const;
+    const corner = [[0, 0], [1, 0], [0, 1]] as const;
     for (const [x, y] of corner) map.cells[cellIndex(map, x, y)] = BAND_HEIGHT;
+    // The old 3×3 footprint's fourth corner cell: outside the plus, so it
+    // must hold whatever it started with even though the brush box covers it.
+    map.cells[cellIndex(map, 1, 1)] = BAND_HEIGHT;
 
     applySculpt(map, 0, 0, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
     for (const [x, y] of corner) expect(heightAt(map, x, y)).toBe(2 * BAND_HEIGHT);
+    expect(heightAt(map, 1, 1)).toBe(BAND_HEIGHT);
   });
 
   it('at radius 1 snaps an off-grid cell onto the band boundary', () => {
@@ -868,22 +905,25 @@ describe('sculptDisplacementUnits', () => {
    * re-pricing the whole economy. Every value is height-units × cells, at
    * DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT = 64.
    *
-   *   radius  cells   soft (band-cells)   hard (band-cells)
-   *      1      1        64  ( 1  )          64  ( 1 )
-   *      2      9       320  ( 5  )         576  ( 9 )
-   *      3     25       736  (11.5)        1600  (25 )
-   *      4     45      1280  (20  )        2880  (45 )
+   * Recomputed 2026-08-19 for the tight-disc footprint (the pre-disc square
+   * numbers were 9/25/45 cells → soft 320/736/1280, hard 576/1600/2880):
+   *
+   *   radius  cells   soft (band-cells)    hard (band-cells)
+   *      1      1        64  ( 1    )        64  ( 1 )
+   *      2      5       192  ( 3    )       320  ( 5 )
+   *      3     21       652  (10.19 )      1344  (21 )
+   *      4     37      1152  (18    )      2368  (37 )
    */
   it('matches the published table of displacement volumes', () => {
     expect(sculptDisplacementUnits(1, 'soft')).toBe(64);
-    expect(sculptDisplacementUnits(2, 'soft')).toBe(320);
-    expect(sculptDisplacementUnits(3, 'soft')).toBe(736);
-    expect(sculptDisplacementUnits(4, 'soft')).toBe(1280);
+    expect(sculptDisplacementUnits(2, 'soft')).toBe(192);
+    expect(sculptDisplacementUnits(3, 'soft')).toBe(652);
+    expect(sculptDisplacementUnits(4, 'soft')).toBe(1152);
 
     expect(sculptDisplacementUnits(1, 'hard')).toBe(64);
-    expect(sculptDisplacementUnits(2, 'hard')).toBe(576);
-    expect(sculptDisplacementUnits(3, 'hard')).toBe(1600);
-    expect(sculptDisplacementUnits(4, 'hard')).toBe(2880);
+    expect(sculptDisplacementUnits(2, 'hard')).toBe(320);
+    expect(sculptDisplacementUnits(3, 'hard')).toBe(1344);
+    expect(sculptDisplacementUnits(4, 'hard')).toBe(2368);
   });
 
   it('is one band-cell at the point brush, where the two profiles coincide', () => {
@@ -944,11 +984,11 @@ describe('sculptDisplacementUnits', () => {
       profile: 'hard',
     });
 
-    // The brush alone touched its 45 footprint cells; the same brush plus
+    // The brush alone touched its 37 footprint cells; the same brush plus
     // relaxation touched strictly more of the world than that.
     expect(slumpedDiff.length).toBeGreaterThan(stampedCells.size);
     // And the price is the brush's volume either way — one number, no tool.
-    expect(sculptDisplacementUnits(4, 'hard')).toBe(2880);
+    expect(sculptDisplacementUnits(4, 'hard')).toBe(2368);
   });
 
   it('prices a LEVEL FILL at the flat-delta volume, deliberately', () => {
@@ -969,9 +1009,9 @@ describe('sculptDisplacementUnits', () => {
       profile: 'hard',
     });
 
-    // A one-cell edit, charged as 45 cells of flat delta. That is the trade.
+    // A one-cell edit, charged as 37 cells of flat delta. That is the trade.
     expect(diff).toHaveLength(1);
-    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(2880);
+    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(2368);
   });
 });
 
@@ -1282,7 +1322,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     }
   });
 
-  it('#12 cascade, banded: converges under the pass cap on the worst plateau (9 passes)', () => {
+  it('#12 cascade, banded: converges under the pass cap on the worst plateau (8 passes)', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, 15);
     const changed = new Set<number>();
@@ -1290,9 +1330,11 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     const passes = smooth(map, changed, undefined, footprintOf(128, 64, 64, 4));
     expect(passes).toBeGreaterThan(0);
     expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
-    // Pinned: the caps stop the excess from travelling, so banded converges
-    // in 9 passes where the free path needs 67 on this same scenario.
-    expect(passes).toBe(9);
+    // Pinned: the caps stop the excess from travelling, so banded converges in
+    // single-digit passes where the free path needed dozens on this scenario.
+    // (9 on the pre-disc square footprint; 8 since the 2026-08-19 tight disc
+    // rounded the plateau's corners off — re-measured, not derived.)
+    expect(passes).toBe(8);
   });
 
   it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {
@@ -1327,5 +1369,164 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
         }
       }
     }
+  });
+});
+
+describe('forEachFootprintOffset — the tight-disc footprint (2026-08-19)', () => {
+  function offsets(radius: number): string[] {
+    const out: string[] = [];
+    forEachFootprintOffset(radius, (dx, dy) => out.push(`${dx},${dy}`));
+    return out;
+  }
+
+  it('radius 1 is the centre cell alone', () => {
+    expect(offsets(1)).toEqual(['0,0']);
+  });
+
+  it('radius 2 is the 5-cell plus — the old 3×3 minus its corners', () => {
+    expect(new Set(offsets(2))).toEqual(new Set(['0,0', '1,0', '-1,0', '0,1', '0,-1']));
+  });
+
+  it('radius 3 is the 21-cell disc — 5×5 minus its 4 corners', () => {
+    const cells = new Set(offsets(3));
+    expect(cells.size).toBe(21);
+    for (const corner of ['2,2', '2,-2', '-2,2', '-2,-2']) expect(cells.has(corner)).toBe(false);
+    for (const kept of ['2,1', '1,2', '2,0', '0,2', '1,1']) expect(cells.has(kept)).toBe(true);
+  });
+
+  it('radius 4 is the 37-cell rounded octagon', () => {
+    const cells = new Set(offsets(4));
+    expect(cells.size).toBe(37);
+    // The ring the rounding removes vs keeps, spelled out: dx²+dy² < 12.
+    for (const gone of ['3,2', '2,3', '3,3', '-3,2', '2,-3', '-3,-3']) {
+      expect(cells.has(gone)).toBe(false);
+    }
+    for (const kept of ['3,0', '0,3', '3,1', '1,3', '2,2', '-3,-1']) {
+      expect(cells.has(kept)).toBe(true);
+    }
+  });
+
+  it('scan order is row-major ascending, unchanged by the disc rule', () => {
+    const seen = offsets(3);
+    const sorted = [...seen].sort((a, b) => {
+      const [ax, ay] = a.split(',').map(Number);
+      const [bx, by] = b.split(',').map(Number);
+      return ay - by || ax - bx;
+    });
+    expect(seen).toEqual(sorted);
+  });
+});
+
+describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
+  /** Wire-style options minus the relaxation, so the BRUSH contract is bare. */
+  const STAMP_SOFT_ANCHORED: SculptOptions = { tool: 'stamp', profile: 'soft', anchor: 'clicked' };
+  const STAMP_HARD_ANCHORED: SculptOptions = { tool: 'stamp', profile: 'hard', anchor: 'clicked' };
+
+  /**
+   * The owner's complaint as a fixture: clicking a band-6 tread whose brush
+   * overlaps ground both lower (band 5) and higher (band 7). Centre at 400
+   * (band 6) ⇒ a raise targets 7·64 = 448 and nothing under the brush may
+   * cross it.
+   */
+  function unevenLedge(): { map: Heightmap; lower: number[]; higher: number[] } {
+    const map = createHeightmap(32);
+    map.cells.fill(6 * BAND_HEIGHT + 16); // band 6 (400)
+    const lower: number[] = [];
+    const higher: number[] = [];
+    forEachFootprintOffset(3, (dx, dy) => {
+      if (dy < -1) {
+        const i = cellIndex(map, 16 + dx, 16 + dy);
+        map.cells[i] = 5 * BAND_HEIGHT + 10; // band 5 (330)
+        lower.push(i);
+      } else if (dy > 1) {
+        const i = cellIndex(map, 16 + dx, 16 + dy);
+        map.cells[i] = 7 * BAND_HEIGHT + 2; // band 7 (450)
+        higher.push(i);
+      }
+    });
+    return { map, lower, higher };
+  }
+
+  it('raising never lifts ANY footprint cell past the level above the clicked cell', () => {
+    const { map, higher } = unevenLedge();
+    const before = Int16Array.from(map.cells);
+    const target = 7 * BAND_HEIGHT;
+
+    applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_SOFT_ANCHORED);
+
+    for (let i = 0; i < map.cells.length; i++) {
+      // No cell the stroke moved ends past the target...
+      if (map.cells[i] !== before[i]) expect(map.cells[i]).toBeLessThanOrEqual(target);
+      // ...and nothing anywhere ends above where it started unless it was
+      // below the target (i.e. the periphery can never be pushed past the
+      // level the player clicked).
+      expect(map.cells[i]).toBeLessThanOrEqual(Math.max(before[i], target));
+    }
+    // The band-7 cells under the brush are byte-untouched — the exact cells
+    // the pre-anchor brush used to shove toward band 8.
+    for (const i of higher) expect(map.cells[i]).toBe(before[i]);
+  });
+
+  it('the periphery never ends above the centre when the ground under it started lower', () => {
+    const map = createHeightmap(32);
+    map.cells.fill(6 * BAND_HEIGHT); // band-aligned band 6, everywhere
+    // Hold the stroke: several anchored raises. Each stroke re-anchors to the
+    // centre's NEW band (the centre climbs one band per stroke), and after
+    // every one of them the falloff cells trail the centre — never pass it.
+    for (let s = 0; s < 4; s++) {
+      applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_SOFT_ANCHORED);
+      const centre = heightAt(map, 16, 16);
+      forEachFootprintOffset(3, (dx, dy) => {
+        expect(heightAt(map, 16 + dx, 16 + dy)).toBeLessThanOrEqual(centre);
+      });
+    }
+    expect(heightAt(map, 16, 16)).toBe((6 + 4) * BAND_HEIGHT);
+  });
+
+  it('lowering mirrors: nothing under the brush drops past the level below the clicked cell', () => {
+    const { map, lower } = unevenLedge();
+    const before = Int16Array.from(map.cells);
+    const floor = 5 * BAND_HEIGHT;
+
+    applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, STAMP_SOFT_ANCHORED);
+
+    for (let i = 0; i < map.cells.length; i++) {
+      if (map.cells[i] !== before[i]) expect(map.cells[i]).toBeGreaterThanOrEqual(floor);
+      expect(map.cells[i]).toBeGreaterThanOrEqual(Math.min(before[i], floor));
+    }
+    // The band-5 cells (330 > floor 320) may descend to the floor but the
+    // ones already AT or below it would be untouched; here they move by at
+    // most 10 units — never below 320.
+    for (const i of lower) expect(map.cells[i]).toBeGreaterThanOrEqual(floor);
+  });
+
+  it('hard + clicked anchors the level fill to the clicked band, not the footprint minimum', () => {
+    const { map, lower, higher } = unevenLedge();
+    const before = Int16Array.from(map.cells);
+    const target = 7 * BAND_HEIGHT;
+
+    applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_ANCHORED);
+
+    // Band-5 holes rise by the full amount toward the CLICKED level — they do
+    // not hold the fill back the way the surveyed ('free') fill has it.
+    for (const i of lower) expect(map.cells[i]).toBe(before[i] + DEFAULT_SCULPT_AMOUNT);
+    // Band-6 ground reaches the target exactly (400 + 64 caps at 448).
+    expect(heightAt(map, 16, 16)).toBe(target);
+    // Band-7 ground under the brush is byte-untouched.
+    for (const i of higher) expect(map.cells[i]).toBe(before[i]);
+  });
+
+  it('anchored wire options are deterministic: two identical runs, identical worlds', () => {
+    const runs: Int16Array[] = [];
+    for (let run = 0; run < 2; run++) {
+      const map = createHeightmap(48);
+      for (let i = 0; i < map.cells.length; i++) map.cells[i] = ((i * 37) % 9 - 4) * BAND_HEIGHT;
+      const wire: SculptOptions = { tool: 'smooth', profile: 'soft', spill: 'banded', anchor: 'clicked' };
+      applySculpt(map, 24, 24, 3, DEFAULT_SCULPT_AMOUNT, wire);
+      applySculpt(map, 26, 23, 4, -DEFAULT_SCULPT_AMOUNT, wire);
+      applySculpt(map, 24, 24, 2, DEFAULT_SCULPT_AMOUNT, wire);
+      runs.push(Int16Array.from(map.cells));
+    }
+    expect(runs[0]).toEqual(runs[1]);
   });
 });

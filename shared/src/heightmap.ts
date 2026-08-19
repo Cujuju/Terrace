@@ -152,11 +152,44 @@ export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
  */
 export type SculptSpill = 'banded' | 'free';
 
+/**
+ * What level a stroke's own brush writes are locked to (owner decision
+ * 2026-08-19: raising must be "locked at that layer that I'm clicking on" —
+ * the periphery of a brush must never end up above its centre).
+ *
+ * - `clicked` — the stroke computes ONE target level from the CENTRE cell's
+ *               pre-stroke band: raising, the floor of the band above it;
+ *               lowering, the floor of the band below it. Footprint cells
+ *               already at/past that level are untouched; every other cell
+ *               moves by its profile's delta but never past the target. This
+ *               is what every PLAYER sculpt runs (WIRE_DEFAULT_SCULPT_OPTIONS)
+ *               — for `soft` it caps the falloff cone, for `hard` it anchors
+ *               the level fill to the clicked cell instead of the footprint
+ *               survey (see applyLevelFillBrush's supersession note).
+ * - `free`    — the unanchored originals, verbatim: soft's cone grows without
+ *               a ceiling, hard's fill targets the footprint's own extreme
+ *               band. The library default, for the same compatibility reason
+ *               as `spill` (plugin terraforms were tuned against it).
+ *
+ * THE CEILING BINDS ONLY THE BRUSH'S OWN WRITES. The smooth tool's relaxation
+ * afterwards is governed by `spill` alone: outside the footprint it is
+ * band-capped ('banded') or unbounded ('free'); INSIDE the footprint it stays
+ * unrestricted either way, exactly as before — slump may still redistribute
+ * what the anchored brush deposited. The two options compose; neither reads
+ * the other.
+ *
+ * NOT a wire field, same as `spill`: the anchor is what clicking MEANS, not a
+ * brush shape, so it is fixed policy and mirrored into prediction through the
+ * one shared resolver (sculptOptionsOf).
+ */
+export type SculptAnchor = 'clicked' | 'free';
+
 /** Caller-supplied sculpt options; every field defaults when absent. */
 export interface SculptOptions {
   readonly tool?: SculptTool;
   readonly profile?: SculptProfile;
   readonly spill?: SculptSpill;
+  readonly anchor?: SculptAnchor;
 }
 
 /** Sculpt options with nothing left to default — what the math actually runs. */
@@ -164,6 +197,7 @@ export interface ResolvedSculptOptions {
   readonly tool: SculptTool;
   readonly profile: SculptProfile;
   readonly spill: SculptSpill;
+  readonly anchor: SculptAnchor;
 }
 
 /**
@@ -185,15 +219,36 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // that behaviour had no spill containment (issue #26 added it for PLAYER
   // sculpts only — see SculptSpill and WIRE_DEFAULT_SCULPT_OPTIONS).
   spill: 'free',
+  // 'free' by the same contract once more: the clicked-cell ceiling
+  // (2026-08-19) is player-sculpt policy; plugin terraforms rely on the
+  // unanchored cone/fill. See SculptAnchor.
+  anchor: 'free',
 };
 
 /**
  * THE BRUSH FOOTPRINT, DEFINED EXACTLY ONCE. Visits every offset `(dx, dy)`
- * whose integer distance `d = floor(sqrt(dx² + dy²))` from the centre is
- * `< radius`; offsets at `d >= radius` are not in the footprint and are never
- * visited. Math.sqrt is IEEE-exact and immediately floored, so the footprint is
- * identical on every platform, and the scan order (dy outer, dx inner, both
- * ascending) is part of the determinism contract — see the module header.
+ * with `dx² + dy² < radius·(radius−1)` — a TIGHT integer disc — except
+ * radius 1, which is the centre cell alone (the product is 0 there, and a
+ * point brush is the point of radius 1). Integer arithmetic only, so the
+ * footprint is identical on every platform, and the scan order (dy outer, dx
+ * inner, both ascending) is part of the determinism contract — see the module
+ * header.
+ *
+ * WHY r·(r−1) AND NOT r² (owner decision 2026-08-19: a rounder,
+ * Populous-feeling brush). The old test, `floor(sqrt(dx²+dy²)) < r`, is
+ * algebraically `dx²+dy² < r²`, and on the integer lattice that fills the
+ * whole bounding square at small radii — radius 2 was a 3×3 block and
+ * radius 3 a full 5×5, which is why the brush read as square. r·(r−1) is the
+ * geometric-mean radius between r−1 and r, and it carves the corners off at
+ * every size:
+ *
+ *   radius 1 →  1 cell  (centre; special-cased)
+ *   radius 2 →  5 cells (the plus/diamond — the old 3×3 minus its corners)
+ *   radius 3 → 21 cells (5×5 minus its 4 corners)
+ *   radius 4 → 37 cells (rounded octagon; the old shape kept its corners)
+ *
+ * `dist` handed to the callback is unchanged — `floor(sqrt(dx²+dy²))`, the
+ * soft profile's falloff ring index — only MEMBERSHIP tightened.
  *
  * WHY IT IS A FUNCTION AND NOT A LOOP EACH CALLER WRITES OUT. Three callers
  * must agree on this set of cells, and each disagreement is a real defect:
@@ -217,11 +272,17 @@ export function forEachFootprintOffset(
   radius: number,
   visit: (dx: number, dy: number, dist: number) => void,
 ): void {
+  if (radius === 1) {
+    // r·(r−1) = 0 would exclude even the centre; radius 1 IS the point brush.
+    visit(0, 0, 0);
+    return;
+  }
+  const discBound = radius * (radius - 1);
   for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
     for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
-      const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
-      if (dist >= radius) continue;
-      visit(dx, dy, dist);
+      const dSquared = dx * dx + dy * dy;
+      if (dSquared >= discBound) continue;
+      visit(dx, dy, Math.floor(Math.sqrt(dSquared)));
     }
   }
 }
@@ -312,9 +373,9 @@ function assertBrushArgs(
 }
 
 /**
- * Applies the sculpt brush over its footprint (see forEachFootprintOffset):
- * cells at integer distance `d = floor(sqrt(dx² + dy²))` from the centre with
- * `d < radius`. Cells at `d >= radius` are never touched by the brush itself.
+ * Applies the sculpt brush over its footprint — the tight integer disc
+ * forEachFootprintOffset defines. Cells outside the footprint are never
+ * touched by the brush itself.
  *
  * The per-cell delta depends on `profile`:
  *   soft — `trunc(amount * (radius - d) / radius)`: linear falloff, radius 1
@@ -334,6 +395,18 @@ function assertBrushArgs(
  * either tool, since 2026-08-19; stamp-only before that) to
  * applyLevelFillBrush instead. This function stays the plain per-cell-delta
  * brush the `soft` combinations (and every direct caller) run.
+ *
+ * THE CLICKED-CELL CEILING (`anchor: 'clicked'`, owner decision 2026-08-19:
+ * "everything at the edge or peripheral of that brush should not be going
+ * higher than the center of the brush, like it should be locked at that layer
+ * that I'm clicking on"). Raising, the target is the floor of the band above
+ * the CENTRE cell's pre-stroke band; cells already at/above it are untouched,
+ * every other cell's falloff delta stops AT it. Lowering mirrors (the floor of
+ * the band below; cells at/below it untouched). The soft cone therefore fills
+ * toward the level the player pointed at instead of stacking past it wherever
+ * the ground under the falloff already ran high. `'free'` (the default, for
+ * the library-compatibility contract) is the pre-2026-08-19 arithmetic, bit
+ * for bit — the target computation does not even run.
  */
 export function applyBrush(
   map: Heightmap,
@@ -343,16 +416,35 @@ export function applyBrush(
   amount: number,
   changed: Set<number>,
   profile: SculptProfile = LIBRARY_DEFAULT_SCULPT_OPTIONS.profile,
+  anchor: SculptAnchor = LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
+
+  // The ceiling/floor is pinned from the centre BEFORE any write: the centre
+  // is itself a footprint cell, and computing the target mid-scan (after the
+  // centre moved) would anchor the periphery to the wrong band. amount === 0
+  // has no direction to anchor and writes nothing anyway.
+  const raising = amount > 0;
+  const anchored = anchor === 'clicked' && amount !== 0;
+  const target = anchored
+    ? clampHeight((bandOf(map.cells[cellIndex(map, cx, cy)]) + (raising ? 1 : -1)) * BAND_HEIGHT)
+    : 0;
 
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
   forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
     const delta = brushDelta(amount, radius, dist, profile);
     if (delta === 0) return;
-    const h = clampHeight(map.cells[i] + delta);
-    if (h !== map.cells[i]) {
+    const before = map.cells[i];
+    if (anchored && (raising ? before >= target : before <= target)) return;
+    let moved = before + delta;
+    if (anchored) {
+      moved = raising
+        ? moved > target ? target : moved
+        : moved < target ? target : moved;
+    }
+    const h = clampHeight(moved);
+    if (h !== before) {
       map.cells[i] = h;
       changed.add(i);
     }
@@ -409,6 +501,17 @@ export function applyBrush(
  *
  * Changed cell indices are added to `changed`, exactly as applyBrush does.
  * Throws on the same invalid arguments applyBrush throws on.
+ *
+ * THE ANCHOR (2026-08-19, second decision of the day — supersedes the SURVEY
+ * for player sculpts). With `anchor: 'clicked'` the fill level is derived
+ * from the CENTRE cell's pre-stroke band — the level the player is pointing
+ * at — and the survey pass does not run at all. The owner chose this knowing
+ * the trade: a hole under the brush's edge no longer holds the fill back the
+ * way the original 2026-08-14 request ("don't start building level 3 until
+ * everything within that brush edge is level 2") had it — the brush builds
+ * toward the CLICKED level over whatever lies beneath, and low cells simply
+ * rise by `amount` toward it. `'free'` (the default) keeps the surveyed
+ * extreme, bit for bit, for direct library callers.
  */
 export function applyLevelFillBrush(
   map: Heightmap,
@@ -417,6 +520,7 @@ export function applyLevelFillBrush(
   radius: number,
   amount: number,
   changed: Set<number>,
+  anchor: SculptAnchor = LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
   // A zero-amount sculpt moves nothing and has no direction to fill in; without
@@ -425,24 +529,29 @@ export function applyLevelFillBrush(
 
   const raising = amount > 0;
 
-  // PASS 1 — SURVEY. The extreme band across the footprint's in-bounds cells.
-  // Off-map cells are excluded for the same reason applyBrush skips them: they
-  // are not part of this world, so they cannot hold back a fill in it.
-  let surveyed = false;
   let extremeBand = 0;
-  forEachFootprintCell(map, cx, cy, radius, (i) => {
-    const band = bandOf(map.cells[i]);
-    if (!surveyed) {
-      extremeBand = band;
-      surveyed = true;
-      return;
-    }
-    if (raising ? band < extremeBand : band > extremeBand) extremeBand = band;
-  });
-  // assertBrushArgs proved the CENTRE is in bounds and the centre is always in
-  // the footprint, so this cannot fire — belt and braces against a future
-  // change to either fact leaving `extremeBand` an invented number.
-  if (!surveyed) return;
+  if (anchor === 'clicked') {
+    // ANCHORED: the level the player pointed at, read before any write.
+    extremeBand = bandOf(map.cells[cellIndex(map, cx, cy)]);
+  } else {
+    // PASS 1 — SURVEY. The extreme band across the footprint's in-bounds cells.
+    // Off-map cells are excluded for the same reason applyBrush skips them: they
+    // are not part of this world, so they cannot hold back a fill in it.
+    let surveyed = false;
+    forEachFootprintCell(map, cx, cy, radius, (i) => {
+      const band = bandOf(map.cells[i]);
+      if (!surveyed) {
+        extremeBand = band;
+        surveyed = true;
+        return;
+      }
+      if (raising ? band < extremeBand : band > extremeBand) extremeBand = band;
+    });
+    // assertBrushArgs proved the CENTRE is in bounds and the centre is always in
+    // the footprint, so this cannot fire — belt and braces against a future
+    // change to either fact leaving `extremeBand` an invented number.
+    if (!surveyed) return;
+  }
 
   // The level being filled: the floor of the band adjacent to the extreme one.
   // ±1 band is the semantics, not a tunable — "the next level up/down" is what
@@ -484,8 +593,8 @@ export function applyLevelFillBrush(
  * has for one. Deterministic and integer, like every other number in here.
  *
  * WHY IT LIVES BESIDE applyBrush AND NOT IN THE PLUGIN THAT PRICES SCULPTS.
- * This is terrain math: it is the SAME loop, the same footprint test
- * (`floor(sqrt(dx² + dy²)) < radius`) and the same per-cell delta expression
+ * This is terrain math: it is the SAME loop, the same footprint test (the
+ * tight disc in forEachFootprintOffset) and the same per-cell delta expression
  * (including the same `Math.trunc`) that applyBrush runs, and the two must
  * agree exactly or a price would be charged for an edit that never happens.
  * shared/ is where math that both sides must agree on lives (CLAUDE.md), and
@@ -493,8 +602,16 @@ export function applyLevelFillBrush(
  * applyBrush's own observed output for every radius × profile rather than
  * against a re-derivation of it.
  *
- * "NOMINALLY" — four deliberate exclusions, each of which would make the
+ * "NOMINALLY" — five deliberate exclusions, each of which would make the
  * number depend on WHERE the player clicked rather than on WHAT they asked for:
+ *
+ *   anchor       — the clicked-cell ceiling (`anchor: 'clicked'`, 2026-08-19)
+ *                  stops the brush's own deltas at the level above/below the
+ *                  centre's band, so an anchored stroke usually moves less
+ *                  than the flat cone priced here. Same rule and same two
+ *                  reasons as `level fill` below: the ceiling's bite depends
+ *                  on the terrain under the brush, which the client cannot be
+ *                  required to know to agree on a price.
  *
  *   clamping     — a brush hitting MAX_HEIGHT moves less terrain than the same
  *                  brush in open ground. Pricing that would make a sculpt
@@ -800,7 +917,10 @@ export function smooth(
  * hard+smooth (level-fill, then let it slump) is a legal, meaningful combination.
  * The third field, `spill`, bounds how far the smooth tool's relaxation may
  * move terrain outside the footprint (see SculptSpill); it is meaningless for
- * `stamp`, which never touches an outside cell in the first place.
+ * `stamp`, which never touches an outside cell in the first place. The
+ * fourth, `anchor`, locks the brush's own writes to the level the clicked
+ * cell implies (see SculptAnchor) — it governs the brush pass, never the
+ * relaxation, so the two compose without reading each other.
  * OMITTING `options` ENTIRELY reproduces the pre-2026-08-14 behaviour bit for
  * bit — see LIBRARY_DEFAULT_SCULPT_OPTIONS for why that, and not the new
  * player-facing default, is what an absent argument means.
@@ -849,17 +969,20 @@ export function applySculpt(
   const tool = options?.tool ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.tool;
   const profile = options?.profile ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.profile;
   const spill = options?.spill ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spill;
+  const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
 
   const changed = new Set<number>();
   // The one dispatch in the sculpt path. Both branches are integer-only over the
   // same footprint, and both sides of the prediction contract reach them through
   // this one function, so client and server cannot pick different branches.
   // `hard` dispatches on the PROFILE alone (2026-08-19 supersession above):
-  // the level fill is what "hard" means now, under either tool.
+  // the level fill is what "hard" means now, under either tool. `anchor`
+  // reaches both branches — it decides where the fill/ceiling level comes
+  // from (the clicked cell for players, the old derivations for the library).
   if (profile === 'hard') {
-    applyLevelFillBrush(map, cx, cy, radius, amount, changed);
+    applyLevelFillBrush(map, cx, cy, radius, amount, changed, anchor);
   } else {
-    applyBrush(map, cx, cy, radius, amount, changed, profile);
+    applyBrush(map, cx, cy, radius, amount, changed, profile, anchor);
   }
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.

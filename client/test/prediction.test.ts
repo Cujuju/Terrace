@@ -505,14 +505,18 @@ describe('frontier sculpts (issue #21)', () => {
     expect(rowInOwnChunk(mirror.map.cells).every((h) => h === FRONTIER_GROUND)).toBe(true);
   });
 
-  it('refuses the level-fill brush at the frontier, whose survey the sea would poison', () => {
-    // The level-fill brush (stamp + hard) surveys its WHOLE footprint for the
-    // lowest terrace band present and fills to one band above it. A single
-    // unseen cell reading SEA_LEVEL drags that survey to band 0, so the client
-    // would target a level the ground is already above and predict no change at
-    // all, while the server fills a band two terraces higher. This test pins
-    // both halves: the client declines, and the local math it declined to run
-    // really would have disagreed.
+  it('refuses the level-fill brush at the frontier, where unseen cells poison the fill', () => {
+    // HISTORY: the level-fill brush used to SURVEY its whole footprint for the
+    // lowest band, so one unseen cell reading SEA_LEVEL dragged the target to
+    // band 0 and the whole visible stroke went missing locally. Since the
+    // clicked-cell anchor (2026-08-19) a player fill targets the CENTRE cell's
+    // band — a cell the client always holds — so the VISIBLE side of the local
+    // math now agrees with the server. What remains, and still justifies the
+    // refusal, is the phantom side: the local fill would raise never-received
+    // cells from their placeholder SEA_LEVEL, writing fiction into the mirror
+    // that the server's diff for those cells would then have to fight. This
+    // test pins both halves: the client declines, and the local math's unseen
+    // side really does diverge from the server's.
     const { mirror, store, server } = frontierFixture();
     const intent: SculptIntent = {
       type: 'sculpt',
@@ -529,11 +533,10 @@ describe('frontier sculpts (issue #21)', () => {
     expect(store.pendingCount()).toBe(0);
 
     // What the declined prediction WOULD have produced, run on a copy of the
-    // client's own mirror: it fills the phantom sea up to band 1 and leaves
-    // every cell of our REAL ground alone, because band 0 is already behind us.
-    // The server, surveying the same footprint over land it can actually see,
-    // fills that ground two terraces higher. Zero overlap — the whole visible
-    // stroke would have gone missing.
+    // client's own mirror. The anchored fill agrees with the server on the
+    // ground this client can actually see — and raises the phantom sea beyond
+    // the frontier from its placeholder heights, which the server (filling
+    // the REAL terrain there) does not reproduce cell for cell.
     const wouldHavePredicted = createHeightmap(WORLD);
     wouldHavePredicted.cells.set(mirror.map.cells);
     const localDiff = applySculpt(
@@ -545,8 +548,20 @@ describe('frontier sculpts (issue #21)', () => {
       sculptOptionsOf(intent),
     );
     const serverDiff = serverSculpt(server, intent);
-    expect(localDiff.filter((cell) => cell.x <= FRONTIER_EDGE_X)).toHaveLength(0);
-    expect(serverDiff.cells.filter((cell) => cell.x <= FRONTIER_EDGE_X).length).toBeGreaterThan(0);
+    const visible = (cell: { x: number }): boolean => cell.x <= FRONTIER_EDGE_X;
+    // Visible side: the two maths now agree (the clicked-cell anchor removed
+    // the poisoned survey), so the refusal is not about this half any more.
+    expect(localDiff.filter(visible)).toEqual(serverDiff.cells.filter(visible));
+    // Phantom side: the local math writes into never-received cells, and what
+    // it writes there is fiction the server's own diff does not contain.
+    const phantomLocal = localDiff.filter((cell) => !visible(cell));
+    expect(phantomLocal.length).toBeGreaterThan(0);
+    const serverByCell = new Map(
+      serverDiff.cells.map((cell) => [`${cell.x},${cell.y}`, cell.h]),
+    );
+    expect(
+      phantomLocal.some((cell) => serverByCell.get(`${cell.x},${cell.y}`) !== cell.h),
+    ).toBe(true);
 
     // And the authoritative answer still lands intact.
     store.applyAuthoritative(

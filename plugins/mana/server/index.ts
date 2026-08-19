@@ -97,8 +97,10 @@ export const MANA_COST_PER_MIN_RADIUS_SCULPT = sculptManaCost(
 
 /**
  * The most expensive sculpt that exists: a radius-4 HARD stamp, which moves a
- * full band across all 45 cells of its footprint — 45 band-cells, 45× the point
- * brush. The pool is sized against this (see MANA_CAPACITY).
+ * full band across every cell of its footprint — 37 band-cells since the
+ * 2026-08-19 tight-disc footprint (45 on the old square), 37× the point
+ * brush. DERIVED, so it re-tuned itself when the footprint changed. The pool
+ * is sized against this (see MANA_CAPACITY).
  */
 export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
   MANA_PER_BAND_CELL,
@@ -132,20 +134,22 @@ export const FULL_POOL_MAX_RADIUS_HARD_STAMPS = 3;
  * than written down, so the constraint is executable and re-tuning the rate
  * re-sizes the pool with it:
  *
- *   MANA_CAPACITY = 3 × 270 = 810
+ *   MANA_CAPACITY = 3 × 222 = 666   (3 × 270 = 810 before the 2026-08-19
+ *                                    tight-disc footprint shrank the radius-4
+ *                                    hard stamp from 45 to 37 band-cells)
  *
  * What that buys, at rate 6 (pinned by a test, so these numbers cannot rot):
  *
- *   radius 1 (either profile)  6 mana   → 135 stamps from a full pool
- *   radius 2 soft / hard      30 / 54   →  27 / 15
- *   radius 3 soft / hard      69 / 150  →  11 /  5
- *   radius 4 soft / hard     120 / 270  →   6 /  3
+ *   radius 1 (either profile)  6 mana   → 111 stamps from a full pool
+ *   radius 2 soft / hard      18 / 30   →  37 / 22
+ *   radius 3 soft / hard      62 / 126  →  10 /  5
+ *   radius 4 soft / hard     108 / 222  →   6 /  3
  *
- * Up from 600 with the flat 25-per-sculpt price (24 sculpts of any size). The
- * held brush emits ~8 intents/s, so 135 point stamps is ~17 s of continuous
- * fine detailing before the economy bites, while three big plateaus empty the
- * same pool — which is the point of pricing by volume: the player now chooses
- * between reach and stamina instead of always taking the biggest brush.
+ * The held brush emits ~8 intents/s, so 111 point stamps is ~14 s of
+ * continuous fine detailing before the economy bites, while three big plateaus
+ * empty the same pool — which is the point of pricing by volume: the player
+ * chooses between reach and stamina instead of always taking the biggest
+ * brush.
  */
 export const MANA_CAPACITY =
   FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT;
@@ -266,7 +270,7 @@ export const MAX_DRAINED_WAIT_S = 60;
  *
  * WHAT THE GAUGE DOES UP HERE, since the old derivation of this bound leaned on
  * it: at this ceiling one point stamp's worth of regen lands every
- * MANA_COST_PER_MIN_RADIUS_SCULPT / MANA_CAPACITY = 6/810 ≈ 7 ms, far below the
+ * MANA_COST_PER_MIN_RADIUS_SCULPT / MANA_CAPACITY = 6/666 ≈ 9 ms, far below the
  * gauge's MIN_PULSE_PERIOD_S (0.25 s) floor. The falling-grain cue therefore
  * saturates at its fastest legible rhythm rather than trying to draw ~135 grains
  * a second, which is both a flicker hazard and unreadable. That clamp lives in

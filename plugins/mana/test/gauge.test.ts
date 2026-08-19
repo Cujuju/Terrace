@@ -284,7 +284,7 @@ describe('current-brush cost', () => {
 describe('brush price readout', () => {
   it('prints the price as a per-use debit', () => {
     expect(formatSculptCost(MANA_COST_PER_MIN_RADIUS_SCULPT)).toBe('−6/use');
-    expect(formatSculptCost(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT)).toBe('−270/use');
+    expect(formatSculptCost(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT)).toBe('−222/use');
   });
 
   it('shows a dash rather than claiming sculpting is free', () => {

@@ -416,6 +416,30 @@ terrace/
   level FLAT and leave it standing" remains stamp+hard's promise alone, since
   smooth's relaxation still re-slopes the fill the instant the brush lifts.
 
+  **AMENDED 2026-08-19 (owner-settled, later the same day): player sculpts are
+  ANCHORED to the clicked cell's level.** "It should be locked at that layer
+  that I'm clicking on": a raise computes one target — the floor of the band
+  above the clicked cell's pre-stroke band — and no footprint cell may cross
+  it (cells already past it are untouched; lowering mirrors with the band
+  below). `soft` keeps its centre-out falloff under that ceiling, which is
+  what stops the periphery from ever ending above the centre; `hard`'s level
+  fill anchors to the clicked band instead of the footprint's surveyed
+  minimum — the owner chose this knowing a hole under the brush edge no
+  longer holds the fill back (superseding that clause of the 2026-08-14
+  level-fill request). Plumbing mirrors `spill`: a resolved option
+  (`anchor: 'clicked'` on the wire path, `'free'` for the library/plugins),
+  never a wire field. Pricing deliberately ignores the ceiling, same rule as
+  the clamping/level-fill exclusions.
+
+  **AMENDED 2026-08-19 (owner-settled, same session): the brush footprint is a
+  tight integer disc.** `dx² + dy² < r·(r−1)` (radius 1 = the centre cell) —
+  1/5/21/37 cells at radii 1–4 — replacing `floor(sqrt) < r`, whose lattice
+  fill made radius 2–3 literal squares. Chosen after reviewing Populous's own
+  mechanic (single-point edits on an isometric diamond grid); the disc is the
+  rounder, more organic footprint the owner asked for. Displacement volumes
+  (and therefore mana prices) re-derive through the one shared footprint
+  iterator: soft 64/192/652/1152, hard 64/320/1344/2368.
+
   **AMENDED 2026-08-19 (issue #26, owner-settled): player-facing smooth spill
   is band-contained.** "Today's behaviour verbatim" above now describes the
   LIBRARY path only. A PLAYER's smooth stroke still relaxes terrain outside the

@@ -127,9 +127,13 @@ export const MAX_PENDING_PREDICTIONS = Math.ceil(
  * placeholder is reading fiction. Two ways it goes wrong, both observed:
  *   * the relaxation "corrects" a cliff that does not exist, dragging the
  *     client's own frontier column DOWN while the player asked for a raise;
- *   * the level-fill brush (stamp + hard) SURVEYS its whole footprint for the
- *     lowest band present, so a single unseen cell drags the surveyed level to
- *     the sea floor and the entire stroke targets the wrong terrace.
+ *   * the level-fill brush (the hard profile) used to SURVEY its whole
+ *     footprint for the lowest band, so a single unseen cell dragged the
+ *     level to the sea floor and the entire stroke targeted the wrong
+ *     terrace. (Since the clicked-cell anchor, 2026-08-19, a player fill
+ *     targets the centre's band instead — but the fill still WRITES into
+ *     unseen footprint cells at their placeholder heights, which is fiction
+ *     in the mirror all the same.)
  *
  * The stroke is not lost — it is sent, applied and drawn from the server's
  * authoritative diff one round trip later. Only the local preview is skipped,

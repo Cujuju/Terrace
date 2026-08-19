@@ -915,21 +915,22 @@ describe('the price of a sculpt', () => {
     expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBeGreaterThanOrEqual(5);
     expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBeLessThanOrEqual(8);
 
-    // The most expensive brush: 45 band-cells, 45× the point stamp. The pool is
+    // The most expensive brush: 37 band-cells since the 2026-08-19 tight-disc
+    // footprint (45 before), 37× the point stamp. The pool is
     // three of those, the low end of the owner's "≈3–4" — see the derivation on
     // FULL_POOL_MAX_RADIUS_HARD_STAMPS for why the other constraint ("≈100
     // point stamps") cannot be met at the same time.
-    expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(270);
+    expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(222);
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(3);
-    expect(MANA_CAPACITY).toBe(810);
+    expect(MANA_CAPACITY).toBe(666);
     expect(MANA_CAPACITY).toBe(
       FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
     );
-    expect(POINT_STAMPS_PER_POOL).toBe(135);
+    expect(POINT_STAMPS_PER_POOL).toBe(111);
 
     // Radius-4 soft lands proportionally between the two, by volume alone.
     const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft');
-    expect(softPlateau).toBe(120);
+    expect(softPlateau).toBe(108);
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
