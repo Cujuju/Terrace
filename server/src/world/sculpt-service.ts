@@ -13,9 +13,14 @@ import type { World } from './world.ts';
 /**
  * What this service needs from the plugin host. Structural, so tests can pass a
  * stub and so world code never imports the host (no cycles).
+ *
+ * `sculptorToken` (added issue #17) identifies WHO made this edit, when it was
+ * a player: the reveal plugin's per-player creep policy needs to know whose
+ * mask to unlock into, and nothing else upstream of onTerrainChanged carries
+ * that. Optional because not every edit has a sculptor — see applyServerSculpt.
  */
 export interface TerrainChangeListener {
-  notifyTerrainChanged(diff: readonly CellDiff[]): void;
+  notifyTerrainChanged(diff: readonly CellDiff[], sculptorToken?: string): void;
 }
 
 /**
@@ -32,10 +37,16 @@ export interface TerrainChangeListener {
  *    routinely-hit filter, not a formality.
  * 3. Broadcast the filtered diff — skipped entirely when nothing visible
  *    changed, so an edit whose whole cascade lands in locked terrain generates
- *    no traffic at all (and leaks nothing by its mere existence).
+ *    no traffic at all (and leaks nothing by its mere existence). Still
+ *    filtered against the UNION mask and still ONE broadcast — see the doc
+ *    comment on World.isCellUnlocked for why issue #17 deliberately leaves
+ *    this step alone.
  * 4. Notify plugins with the FULL diff: plugins are trusted server-side code
  *    and need the true world state (a mana plugin charging per changed cell
- *    must not be fooled by the mask).
+ *    must not be fooled by the mask). `sculptorToken` rides along unchanged
+ *    from the caller — a player's own sculpt carries theirs (intent/
+ *    pipeline.ts), a plugin-initiated edit via WorldApi.sculpt carries none,
+ *    because there is no player to credit a creep unlock to.
  *
  * Returns the full diff.
  */
@@ -47,6 +58,7 @@ export function applyServerSculpt(
   radius: number,
   amount: number,
   options?: SculptOptions,
+  sculptorToken?: string,
 ): CellDiff[] {
   const diff = world.applySculpt(x, y, radius, amount, options);
   if (diff.length === 0) return diff;
@@ -56,6 +68,6 @@ export function applyServerSculpt(
     world.broadcast({ type: 'terrainDiff', cells: visible });
   }
 
-  listener.notifyTerrainChanged(diff);
+  listener.notifyTerrainChanged(diff, sculptorToken);
   return diff;
 }

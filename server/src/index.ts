@@ -61,6 +61,10 @@ function openWorld(config: ServerConfig, store: SnapshotStore): {
       snapshot.mask,
       config.difficulty,
       snapshot.name,
+      // Per-player unlock masks (issue #17). Empty on a legacy snapshot —
+      // World.restore's own doc comment states what that means for a
+      // returning player.
+      snapshot.tokenMasks,
     ),
     pluginSlices: snapshot.pluginSlices,
   };
@@ -75,6 +79,9 @@ function snapshotIfDirty(world: World, host: PluginHost, store: SnapshotStore): 
     cells: world.map.cells,
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
+    // Per-player unlock masks (issue #17) — persisted beside the union mask
+    // for the reasons in snapshot-store.ts's TOKEN_MASKS TABLE comment.
+    tokenMasks: world.tokenMasks(),
   });
   world.markSnapshotted();
   return true;

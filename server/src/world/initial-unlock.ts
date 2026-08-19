@@ -76,3 +76,31 @@ export function applyInitialUnlock(world: World): void {
     );
   }
 }
+
+/**
+ * Grants the SAME centred starter square to one TOKEN's own unlock mask
+ * (issue #17 — per-player territory). Every player starts in the same home
+ * square, so the join path calls this for every joining token BEFORE the join
+ * snapshot is built (see terrace-room.ts's onJoin): a new token's snapshot
+ * then simply already contains these chunks, rather than needing a follow-up
+ * chunkUnlock message the client is not yet sized to receive.
+ *
+ * SILENT by construction — World.seedChunkForToken never sends anything — and
+ * idempotent per token, so calling this on every join (not just the first) is
+ * correct and cheap: a returning token's bits are already set, and the loop
+ * below is CHUNK_SPAN² no-op checks.
+ *
+ * Unlike applyInitialUnlock above, this never touches the union mask's own
+ * "did genesis succeed" sanity check — that check is genesis's job and runs
+ * exactly once, at world creation; a per-token seed at join time has nothing
+ * new to verify (the union mask already proved the square is unlockable).
+ */
+export function applyInitialUnlockForToken(world: World, token: string): void {
+  const { startChunk: start, spanChunks: span } = initialUnlockFootprint(world.size);
+
+  for (let cy = start; cy < start + span; cy++) {
+    for (let cx = start; cx < start + span; cx++) {
+      world.seedChunkForToken(token, cx, cy);
+    }
+  }
+}

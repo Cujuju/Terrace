@@ -115,6 +115,63 @@ describe('SnapshotStore', () => {
     reopened.close();
   });
 
+  // Per-player unlock masks (issue #17). World-level behaviour (mutation,
+  // streaming, restore validation) is covered in world-token-masks.test.ts;
+  // this is the SnapshotStore-level round trip through a real SQLite file,
+  // matching the pattern every other column/table in this file is tested by.
+  it('round-trips per-token unlock masks across a restart', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.addPlayer({ id: 'session-a', token: 'token-a', name: 'A' });
+    world.unlockChunkForToken('token-a', 2, 2);
+
+    const store = SnapshotStore.open(dbPath);
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+      tokenMasks: world.tokenMasks(),
+    });
+    store.close();
+
+    const reopened = SnapshotStore.open(dbPath);
+    const snapshot = reopened.loadLatest();
+    expect(snapshot).not.toBeNull();
+    if (snapshot === null) return;
+
+    expect(Array.from(snapshot.tokenMasks.keys())).toEqual(['token-a']);
+    const restored = World.restore(
+      snapshot.worldSize,
+      snapshot.cells,
+      snapshot.mask,
+      undefined,
+      snapshot.name,
+      snapshot.tokenMasks,
+    );
+    expect(restored.isChunkUnlockedForToken('token-a', 2, 2)).toBe(true);
+    reopened.close();
+  });
+
+  it('a snapshot saved WITHOUT tokenMasks reads back with an empty map, not undefined', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const store = SnapshotStore.open(dbPath);
+    // No tokenMasks field at all — the additive/optional case every
+    // pre-issue-#17 caller (and most of this file's other tests) exercises.
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+    });
+
+    const snapshot = store.loadLatest();
+    expect(snapshot?.tokenMasks).toBeInstanceOf(Map);
+    expect(snapshot?.tokenMasks.size).toBe(0);
+    store.close();
+  });
+
   it('returns null for a fresh database', () => {
     const store = SnapshotStore.open(dbPath);
     expect(store.loadLatest()).toBeNull();
@@ -227,6 +284,12 @@ describe('SnapshotStore', () => {
     const store = SnapshotStore.open(legacyPath);
     const snapshot = store.loadLatest();
     expect(snapshot?.name).toBeNull();
+    // The pre-2026-08-14 fixture above predates token_masks too (issue #17)
+    // — open() creates the table fresh, but this snapshot_id has no rows in
+    // it, so per-token state reads back as empty while the UNION mask (read
+    // separately, below) is exactly what it always was.
+    expect(snapshot?.tokenMasks.size).toBe(0);
+    expect(Array.from(snapshot?.mask ?? [])).toEqual(Array.from(world.mask));
 
     // …and the next snapshot this build writes carries a name, in the column
     // the migration added.

@@ -47,6 +47,12 @@ export function createWorldApi(
     isChunkUnlocked(cx: number, cy: number): boolean {
       return world.isChunkUnlocked(cx, cy);
     },
+    isChunkVisibleTo(playerId: string, cx: number, cy: number): boolean {
+      return world.isChunkVisibleTo(playerId, cx, cy);
+    },
+    isCellVisibleTo(playerId: string, x: number, y: number): boolean {
+      return world.isCellVisibleTo(playerId, x, y);
+    },
     sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
       // Same service the intent pipeline uses: filtered broadcast included.
       // No options argument ON PURPOSE — that is the shared library's
@@ -56,6 +62,9 @@ export function createWorldApi(
     },
     unlockChunk(cx: number, cy: number): boolean {
       return world.unlockChunk(cx, cy);
+    },
+    unlockChunkForToken(token: string, cx: number, cy: number): boolean {
+      return world.unlockChunkForToken(token, cx, cy);
     },
     players(): readonly Player[] {
       return world.players();

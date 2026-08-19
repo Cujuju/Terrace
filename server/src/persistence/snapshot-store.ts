@@ -49,9 +49,19 @@ export interface SnapshotInput {
   readonly cells: Int16Array;
   readonly mask: Uint8Array;
   readonly pluginSlices: Record<string, unknown>;
+  /**
+   * Per-player unlock masks, keyed by token (issue #17 — see the TOKEN_MASKS
+   * TABLE comment below for the format and why it is its own table). OPTIONAL
+   * and additive, following the same pattern as `world_name` before it: a
+   * caller that has never touched per-token unlocks (most of this file's
+   * existing tests) simply omits it, and an omitted map persists as "nothing
+   * to write" rather than as a type error every pre-existing call site would
+   * otherwise need fixing for.
+   */
+  readonly tokenMasks?: ReadonlyMap<string, Uint8Array>;
 }
 
-export interface WorldSnapshot extends Omit<SnapshotInput, 'name'> {
+export interface WorldSnapshot extends Omit<SnapshotInput, 'name' | 'tokenMasks'> {
   readonly id: number;
   readonly createdAt: number;
   /**
@@ -60,6 +70,14 @@ export interface WorldSnapshot extends Omit<SnapshotInput, 'name'> {
    * a nameless world, and World.restore is what names it.
    */
   readonly name: string | null;
+  /**
+   * Per-token unlock masks recorded against this snapshot. ALWAYS PRESENT on
+   * a read (unlike SnapshotInput's optional field) — a legacy snapshot or one
+   * that simply had no per-token state yet reads back as an EMPTY map, never
+   * undefined, so World.restore's own default parameter is the only place
+   * "no per-token history" has to be spelled out.
+   */
+  readonly tokenMasks: ReadonlyMap<string, Uint8Array>;
 }
 
 interface SnapshotRow {
@@ -77,6 +95,11 @@ interface SliceRow {
   data: string;
 }
 
+interface TokenMaskRow {
+  token: string;
+  mask: Uint8Array;
+}
+
 /**
  * Name of the additive column introduced with world names (2026-08-14).
  * NULLABLE, and it has to be: SQLite cannot add a NOT NULL column without a
@@ -84,6 +107,38 @@ interface SliceRow {
  * "what was this world called" — null means "nobody has named it yet".
  */
 const WORLD_NAME_COLUMN = 'world_name';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
+// per (snapshot, token) — persisted BESIDE the union `mask` on `snapshots`,
+// not inside a plugin's `plugin_slices` JSON blob. CORE'S OWN TABLE, chosen
+// over a reveal-plugin slice, for one reason: unlockChunkForToken lives on
+// WorldApi, not inside the reveal plugin (issue #17's "minimal API addition"
+// — see world.ts), so the state it produces belongs with the OTHER core mask
+// it is a per-player refinement of, in the same binary BLOB shape `mask`
+// already uses, rather than smuggled through a JSON column meant for
+// plugin-private data a plugin no longer even keeps (reveal is stateless
+// after this change — see plugins/reveal/server/index.ts).
+//
+// A WHOLE NEW TABLE, not a column, mirrors how `world_name` was added: a
+// second `CREATE TABLE IF NOT EXISTS` picks it up for free on every open(),
+// fresh database or years-old one, with no ALTER-style migration function
+// needed (unlike a column, a missing table costs nothing to add later).
+// SNAPSHOT_SCHEMA_VERSION does NOT move for the same reason it didn't for
+// world_name: the table is invisible to an older build's `SELECT *` (which
+// never names it), and THIS build reads a snapshot with no matching rows —
+// exactly what a pre-#17 snapshot has — as "no per-token masks recorded",
+// which is precisely the legacy-restore behaviour issue #17 decision 4 asks
+// for (union mask preserved, every per-token mask starts empty). See
+// World.restore's doc comment for what that means for a returning player.
+const TOKEN_MASKS_DDL = `
+  CREATE TABLE IF NOT EXISTS token_masks (
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+    token       TEXT    NOT NULL,
+    mask        BLOB    NOT NULL,
+    PRIMARY KEY (snapshot_id, token)
+  )
+`;
 
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS snapshots (
@@ -102,6 +157,8 @@ const SCHEMA_DDL = `
     data        TEXT    NOT NULL,
     PRIMARY KEY (snapshot_id, plugin)
   );
+
+  ${TOKEN_MASKS_DDL}
 `;
 
 /**
@@ -124,8 +181,10 @@ export class SnapshotStore {
   private readonly db: Database;
   private readonly insertSnapshot: Statement;
   private readonly insertSlice: Statement;
+  private readonly insertTokenMask: Statement;
   private readonly selectLatest: Statement;
   private readonly selectSlices: Statement;
+  private readonly selectTokenMasks: Statement;
   private readonly pruneOld: Statement;
   private readonly countAll: Statement;
 
@@ -139,11 +198,18 @@ export class SnapshotStore {
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
     );
+    this.insertTokenMask = db.prepare(
+      'INSERT INTO token_masks (snapshot_id, token, mask) VALUES (?, ?, ?)',
+    );
     this.selectLatest = db.prepare('SELECT * FROM snapshots ORDER BY id DESC LIMIT 1');
     this.selectSlices = db.prepare(
       'SELECT plugin, data FROM plugin_slices WHERE snapshot_id = ?',
     );
-    // Keep the newest N rows; ON DELETE CASCADE removes their slices.
+    this.selectTokenMasks = db.prepare(
+      'SELECT token, mask FROM token_masks WHERE snapshot_id = ?',
+    );
+    // Keep the newest N rows; ON DELETE CASCADE removes their slices and
+    // token_masks rows too — both reference snapshots(id) the same way.
     this.pruneOld = db.prepare(
       'DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT ?)',
     );
@@ -179,6 +245,10 @@ export class SnapshotStore {
     const heightmap = encodeHeights(input.cells);
     const mask = Buffer.copyBytesFrom(input.mask);
     const entries = Object.entries(input.pluginSlices);
+    // `?? []`: an omitted tokenMasks means "this caller never touched
+    // per-token unlocks" (see SnapshotInput's doc comment) — nothing to write,
+    // not an error.
+    const tokenMaskEntries = input.tokenMasks ?? [];
 
     const write = this.db.transaction((): number => {
       const result = this.insertSnapshot.run(
@@ -195,6 +265,12 @@ export class SnapshotStore {
         // human-readable column is worth a lot when debugging someone else's
         // plugin from a self-hoster's database.
         this.insertSlice.run(snapshotId, plugin, JSON.stringify(data));
+      }
+      for (const [token, tokenMask] of tokenMaskEntries) {
+        // BINARY, like `mask` above and unlike plugin_slices: a per-token
+        // mask is the same bitset shape as the union mask, not small JSON a
+        // human would want to eyeball.
+        this.insertTokenMask.run(snapshotId, token, Buffer.copyBytesFrom(tokenMask));
       }
       this.pruneOld.run(SNAPSHOT_RETENTION);
       return snapshotId;
@@ -230,6 +306,19 @@ export class SnapshotStore {
       pluginSlices[slice.plugin] = JSON.parse(slice.data);
     }
 
+    // A legacy (pre-#17) snapshot has NO rows here at all — the table exists
+    // (added by SCHEMA_DDL on open()) but nothing was ever written against
+    // this snapshot_id — so this loop simply never runs and tokenMasks stays
+    // the empty map. That IS the legacy-restore contract (see World.restore's
+    // doc comment): no special-casing needed here, only in what an empty map
+    // means downstream.
+    const tokenMasks = new Map<string, Uint8Array>();
+    for (const maskRow of this.selectTokenMasks.all(row.id) as TokenMaskRow[]) {
+      const copy = new Uint8Array(maskRow.mask.byteLength);
+      copy.set(maskRow.mask);
+      tokenMasks.set(maskRow.token, copy);
+    }
+
     return {
       id: row.id,
       createdAt: row.created_at,
@@ -237,6 +326,7 @@ export class SnapshotStore {
       // `?? null` covers a row written before the column existed AND a row
       // written by a build that stored nothing in it; both mean "unnamed".
       name: row.world_name ?? null,
+      tokenMasks,
       cells,
       mask,
       pluginSlices,

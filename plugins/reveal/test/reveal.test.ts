@@ -1,13 +1,14 @@
 // reveal, driven through the REAL intent pipeline and the REAL plugin host with
 // both shipped example plugins registered. This is MVP criterion 5's test: the
-// PLUGIN unlocks territory (core never decides when), and clients see the new
-// chunk stream in.
+// PLUGIN unlocks territory (core never decides when), and — since issue #17 —
+// it does so PER PLAYER: a chunk streams only to the token that earned it.
 
-import { chunkIndex, type SculptIntent } from '@terrace/shared';
+import type { SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
+import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
@@ -21,18 +22,12 @@ import {
   plugin as manaPlugin,
   resetManaState,
 } from '../../mana/server/index.ts';
-import {
-  FRONTIER_PRESSURE_CELLS_PER_UNLOCK,
-  REVEAL_SLICE_VERSION,
-  frontierPressureAt,
-  plugin as revealPlugin,
-  resetRevealState,
-} from '../server/index.ts';
+import { plugin as revealPlugin } from '../server/index.ts';
 
 /** 64² cells = 4×4 chunks. */
 const WORLD_SIZE = 64;
 
-/** The one unlocked chunk; cells (16..31, 16..31). */
+/** The shared home chunk; cells (16..31, 16..31). Every player starts here. */
 const HOME_CHUNK: readonly [number, number] = [1, 1];
 
 /** The locked chunk east of home; cells (32..47, 16..31). */
@@ -44,30 +39,14 @@ const BORDER_CELL = { x: 31, y: 24 } as const;
 /** Centre of HOME_CHUNK, 8 cells from every border. */
 const INTERIOR_CELL = { x: 24, y: 24 } as const;
 
-/**
- * Interior sculpts used by the "reveals nothing" test. A hill grows a wider
- * relaxation skirt every time it is raised, and at the 8th stacked radius-4
- * sculpt even a centred hill finally reaches a border — correct policy
- * behaviour, but not what that test is about, so it stops short of it.
- */
-const INTERIOR_SCULPTS = 6;
-
-/**
- * Upper bound on border sculpts allowed before the frontier chunk must unlock.
- * Measured today: 8 radius-4 sculpts. The bound is deliberately loose because
- * the exact count is a product of feel-tuned terrain constants (MAX_STEP,
- * DEFAULT_SCULPT_AMOUNT) that Phase 2 may still retune; the contract under test
- * is "sustained frontier work unlocks, a single edit does not".
- */
-const BORDER_SCULPT_BUDGET = 20;
-
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
 
 /** Safety cap on the regen wait, so a broken economy fails instead of hanging. */
 const MAX_REGEN_TICKS = 1000;
 
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER_A: Player = { id: 'session-a', token: 'token-a', name: 'A' };
+const PLAYER_B: Player = { id: 'session-b', token: 'token-b', name: 'B' };
 
 interface Harness {
   readonly world: World;
@@ -75,43 +54,61 @@ interface Harness {
   readonly sink: RecordingSink;
 }
 
-/** Boots both example plugins in real discovery order (mana, then reveal). */
-function boot(): Harness {
+/**
+ * Boots both example plugins in real discovery order (mana, then reveal),
+ * with every listed player joined AND seeded into HOME_CHUNK's own per-token
+ * mask — mirroring what a real join does via applyInitialUnlockForToken
+ * (terrace-room.ts), since this harness bypasses the room entirely.
+ * `worldWithUnlockedChunks` only sets the union mask, which is deliberately
+ * NOT what per-player sculpt-permission or streaming reads (see
+ * World.isCellUnlocked's doc comment) — so without this seeding step no
+ * listed player could even aim a brush at HOME_CHUNK's cells as themselves.
+ */
+function boot(players: readonly Player[], extraPlugins: readonly TerracePlugin[] = []): Harness {
   resetManaState();
-  resetRevealState();
 
   const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK]);
   const sink = new RecordingSink();
   world.setSink(sink);
 
-  const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+  const host = new PluginHost(
+    world,
+    [manaPlugin, revealPlugin, ...extraPlugins].map(asLoadedPlugin),
+  );
   host.worldCreate();
 
-  world.addPlayer(PLAYER);
-  host.playerJoined(PLAYER);
+  for (const player of players) {
+    world.addPlayer(player);
+    host.playerJoined(player);
+    world.seedChunkForToken(player.token, ...HOME_CHUNK);
+  }
+
+  // The seed above is silent (World.seedChunkForToken never sends), and
+  // reveal/mana emit nothing from onPlayerJoin either — but clear anyway so
+  // every test starts from a genuinely empty sink, independent of how many
+  // players booted.
+  sink.clear();
 
   return { world, host, sink };
 }
 
 /**
- * One sculpt, paid for. The mana plugin is live in this host, so the test ticks
- * the world forward until the player can afford the edit — which is exactly
- * what a real player does, and proves the two plugins compose rather than
- * merely coexist.
+ * One sculpt, paid for by `player`. The mana plugin is live in this host, so
+ * the test ticks the world forward until that player can afford the edit —
+ * exactly what a real player does, and proves the two plugins compose rather
+ * than merely coexist.
  */
-function paidSculpt(harness: Harness, x: number, y: number, radius: number) {
+function paidSculpt(harness: Harness, player: Player, x: number, y: number, radius: number) {
   const intent: SculptIntent = { type: 'sculpt', x, y, radius, dir: 1 };
-  // Mana prices a sculpt by the volume its brush displaces (2026-08-14), so the
-  // amount to wait for is THIS intent's price, not a per-sculpt constant.
-  const cost = manaCostFor(PLAYER.id, intent);
+  const cost = manaCostFor(player.id, intent);
   let ticks = 0;
-  while ((manaBalanceOf(PLAYER.id) ?? 0) < cost) {
+  while ((manaBalanceOf(player.id) ?? 0) < cost) {
     harness.host.tick(TICK_DT);
     if (++ticks > MAX_REGEN_TICKS) throw new Error('mana never regenerated');
   }
   return handleSculptIntent(
     { world: harness.world, interceptors: harness.host },
-    PLAYER,
+    player,
     intent,
   );
 }
@@ -119,139 +116,130 @@ function paidSculpt(harness: Harness, x: number, y: number, radius: number) {
 describe('reveal plugin', () => {
   let harness: Harness;
 
-  beforeEach(() => {
-    harness = boot();
-  });
-
-  it('unlocks the frontier chunk after sustained sculpting at the border', () => {
-    expect(harness.world.isChunkUnlocked(...FRONTIER_CHUNK)).toBe(false);
-
-    // One edit is never enough: the threshold is a chunk's worth of cell
-    // changes, and a single border sculpt contributes a few dozen.
-    expect(paidSculpt(harness, BORDER_CELL.x, BORDER_CELL.y, 4).applied).toBe(true);
-    expect(harness.world.isChunkUnlocked(...FRONTIER_CHUNK)).toBe(false);
-    expect(frontierPressureAt(chunkIndex(WORLD_SIZE, ...FRONTIER_CHUNK))).toBeGreaterThan(0);
-
-    let sculpts = 1;
-    while (!harness.world.isChunkUnlocked(...FRONTIER_CHUNK)) {
-      expect(sculpts).toBeLessThan(BORDER_SCULPT_BUDGET);
-      paidSculpt(harness, BORDER_CELL.x, BORDER_CELL.y, 4);
-      sculpts++;
-    }
-
-    // CRITERION 5: clients see the new chunk stream in. Core does that when the
-    // mask bit flips, but only the plugin decided that it should.
-    const streamed = harness.sink.ofType('chunkUnlock');
-    expect(streamed).toHaveLength(1);
-    expect(streamed[0].target).toBe('broadcast');
-    expect(streamed[0].payload).toMatchObject({
-      type: 'chunkUnlock',
-      chunks: [{ cx: FRONTIER_CHUNK[0], cy: FRONTIER_CHUNK[1] }],
+  describe('single player', () => {
+    beforeEach(() => {
+      harness = boot([PLAYER_A]);
     });
 
-    // Pressure bookkeeping is released once a chunk is no longer frontier.
-    expect(frontierPressureAt(chunkIndex(WORLD_SIZE, ...FRONTIER_CHUNK))).toBe(0);
-  });
+    it('unlocks the frontier chunk for the sculptor, instantly, on the very first border sculpt', () => {
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, ...FRONTIER_CHUNK)).toBe(false);
 
-  it('reveals nothing when the sculpting stays away from the border', () => {
-    for (let n = 0; n < INTERIOR_SCULPTS; n++) {
-      expect(paidSculpt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, 4).applied).toBe(true);
-    }
+      expect(paidSculpt(harness, PLAYER_A, BORDER_CELL.x, BORDER_CELL.y, 4).applied).toBe(true);
 
-    expect(harness.sink.ofType('chunkUnlock')).toHaveLength(0);
-    for (let cy = 0; cy < WORLD_SIZE / 16; cy++) {
-      for (let cx = 0; cx < WORLD_SIZE / 16; cx++) {
-        if (cx === HOME_CHUNK[0] && cy === HOME_CHUNK[1]) continue;
-        expect(harness.world.isChunkUnlocked(cx, cy)).toBe(false);
-        expect(frontierPressureAt(chunkIndex(WORLD_SIZE, cx, cy))).toBe(0);
+      // No threshold: one sculpt that spills into the frontier is enough.
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, ...FRONTIER_CHUNK)).toBe(true);
+      expect(harness.world.isChunkUnlocked(...FRONTIER_CHUNK)).toBe(true); // union OR'd too
+
+      const streamed = harness.sink.ofType('chunkUnlock');
+      expect(streamed).toHaveLength(1);
+      // TARGETED, not a broadcast (issue #17 decision 2).
+      expect(streamed[0].target).toBe(PLAYER_A.id);
+      expect(streamed[0].payload).toMatchObject({
+        type: 'chunkUnlock',
+        chunks: [{ cx: FRONTIER_CHUNK[0], cy: FRONTIER_CHUNK[1] }],
+      });
+    });
+
+    it('reveals nothing when the sculpting stays away from the border', () => {
+      expect(paidSculpt(harness, PLAYER_A, INTERIOR_CELL.x, INTERIOR_CELL.y, 4).applied).toBe(true);
+
+      expect(harness.sink.ofType('chunkUnlock')).toHaveLength(0);
+      for (let cy = 0; cy < WORLD_SIZE / 16; cy++) {
+        for (let cx = 0; cx < WORLD_SIZE / 16; cx++) {
+          if (cx === HOME_CHUNK[0] && cy === HOME_CHUNK[1]) continue;
+          expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, cx, cy)).toBe(false);
+        }
       }
-    }
-  });
+    });
 
-  it('accrues nothing from an intent another plugin denied', () => {
-    const frontierIndex = chunkIndex(WORLD_SIZE, ...FRONTIER_CHUNK);
+    it('does not re-stream a chunk the sculptor already has', () => {
+      // HOME_CHUNK is already unlocked for A (seeded by boot()) — sculpting
+      // deep inside it must not fire a redundant unlockChunkForToken.
+      expect(paidSculpt(harness, PLAYER_A, INTERIOR_CELL.x, INTERIOR_CELL.y, 1).applied).toBe(true);
+      expect(harness.sink.ofType('chunkUnlock')).toHaveLength(0);
+    });
 
-    // Earn some frontier pressure, then spend the rest of the pool inland so
-    // the border chunk is left part-way to its threshold with an empty wallet.
-    // The drain ALTERNATES raise and lower at one interior cell: the wallet
-    // empties at full speed while the terrain stays put, so however large the
-    // pool is tuned (it has grown once already), the drain can never stack an
-    // interior hill whose relaxation skirt reaches a border and muddies the
-    // pressure this test reasons about.
-    paidSculpt(harness, BORDER_CELL.x, BORDER_CELL.y, 4);
-    // Radius-4 sculpts, at whatever the current pricing charges for one.
-    const affordableFromFull = Math.floor(
-      MANA_CAPACITY /
-        manaCostFor(PLAYER.id, {
-          type: 'sculpt',
-          x: INTERIOR_CELL.x,
-          y: INTERIOR_CELL.y,
-          radius: 4,
-          dir: 1,
-        }),
-    );
-    let drained = 0;
-    for (;;) {
-      const outcome = handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        {
-          type: 'sculpt',
-          x: INTERIOR_CELL.x,
-          y: INTERIOR_CELL.y,
-          radius: 4,
-          dir: drained % 2 === 0 ? 1 : -1,
+    it('unlocks nothing from an intent another plugin denied', () => {
+      // Drain A's wallet completely so mana denies the next sculpt outright.
+      const affordable = Math.floor(
+        MANA_CAPACITY / manaCostFor(PLAYER_A.id, { type: 'sculpt', ...INTERIOR_CELL, radius: 4, dir: 1 }),
+      );
+      let drained = 0;
+      for (;;) {
+        const outcome = handleSculptIntent(
+          { world: harness.world, interceptors: harness.host },
+          PLAYER_A,
+          { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius: 4, dir: drained % 2 === 0 ? 1 : -1 },
+        );
+        if (!outcome.applied) break;
+        expect(++drained).toBeLessThanOrEqual(affordable);
+      }
+
+      // Broke: a border sculpt is now denied by mana before it ever reaches
+      // the terrain, so onTerrainChanged never fires and nothing unlocks.
+      for (let n = 0; n < 10; n++) {
+        const outcome = handleSculptIntent(
+          { world: harness.world, interceptors: harness.host },
+          PLAYER_A,
+          { type: 'sculpt', x: BORDER_CELL.x, y: BORDER_CELL.y, radius: 4, dir: 1 },
+        );
+        expect(outcome).toMatchObject({ applied: false, reason: 'plugin-denied' });
+      }
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, ...FRONTIER_CHUNK)).toBe(false);
+    });
+
+    it('does not creep for a plugin-initiated sculpt (no sculptor token)', () => {
+      // A third plugin, IN THE SAME HOST as reveal, whose own edit reaches
+      // into the frontier via WorldApi.sculpt — the same path any other
+      // terraforming plugin (weather, structures) uses. That call carries no
+      // player, so sculpt-service.ts hands onTerrainChanged `sculptorToken:
+      // undefined`, and reveal's own guard clause must treat that as "nobody
+      // to creep for" rather than falling back to some default identity.
+      let api: WorldApi | undefined;
+      const terraformer: TerracePlugin = {
+        name: 'terraformer',
+        onWorldCreate(world) {
+          api = world;
         },
-      );
-      if (!outcome.applied) break;
-      expect(++drained).toBeLessThanOrEqual(affordableFromFull);
-    }
+      };
+      harness = boot([PLAYER_A], [terraformer]);
+      if (api === undefined) throw new Error('onWorldCreate was never called');
 
-    const pressureWhenBroke = frontierPressureAt(frontierIndex);
-    expect(pressureWhenBroke).toBeGreaterThan(0);
-    expect(harness.world.isChunkUnlocked(...FRONTIER_CHUNK)).toBe(false);
+      api.sculpt(BORDER_CELL.x, BORDER_CELL.y, 4, 64); // real terrain change, no sculptor
 
-    // Denied intents never reach the terrain, so they generate no diff and
-    // therefore no reveal pressure — the policy cannot be farmed by spamming
-    // intents you cannot pay for.
-    for (let n = 0; n < 10; n++) {
-      const outcome = handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        { type: 'sculpt', x: BORDER_CELL.x, y: BORDER_CELL.y, radius: 4, dir: 1 },
-      );
-      expect(outcome).toMatchObject({ applied: false, reason: 'plugin-denied' });
-    }
-    expect(frontierPressureAt(frontierIndex)).toBe(pressureWhenBroke);
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, ...FRONTIER_CHUNK)).toBe(false);
+      expect(harness.sink.ofType('chunkUnlock')).toHaveLength(0);
+    });
   });
 
-  it('never accrues pressure on a chunk that is already unlocked', () => {
-    paidSculpt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y, 4);
-    expect(frontierPressureAt(chunkIndex(WORLD_SIZE, ...HOME_CHUNK))).toBe(0);
-  });
+  describe('two players (issue #17 decision 2: per-player streaming)', () => {
+    beforeEach(() => {
+      harness = boot([PLAYER_A, PLAYER_B]);
+    });
 
-  it('carries frontier progress across a snapshot restore', () => {
-    paidSculpt(harness, BORDER_CELL.x, BORDER_CELL.y, 4);
-    const frontierIndex = chunkIndex(WORLD_SIZE, ...FRONTIER_CHUNK);
-    const earned = frontierPressureAt(frontierIndex);
-    expect(earned).toBeGreaterThan(0);
-    expect(earned).toBeLessThan(FRONTIER_PRESSURE_CELLS_PER_UNLOCK);
+    it('streams a newly earned chunk to the sculptor only — the other player gets nothing', () => {
+      expect(paidSculpt(harness, PLAYER_A, BORDER_CELL.x, BORDER_CELL.y, 4).applied).toBe(true);
 
-    const slice = revealPlugin.persistence?.save();
-    expect(slice).toMatchObject({ version: REVEAL_SLICE_VERSION });
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_A.token, ...FRONTIER_CHUNK)).toBe(true);
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_B.token, ...FRONTIER_CHUNK)).toBe(false);
 
-    // Simulate a process restart: fresh state, then the host's restore step.
-    resetRevealState();
-    expect(frontierPressureAt(frontierIndex)).toBe(0);
-    revealPlugin.persistence?.load(slice);
+      const streamed = harness.sink.ofType('chunkUnlock');
+      expect(streamed).toHaveLength(1);
+      expect(streamed[0].target).toBe(PLAYER_A.id);
+      expect(streamed.some((m) => m.target === PLAYER_B.id)).toBe(false);
+      expect(streamed.some((m) => m.target === 'broadcast')).toBe(false);
+    });
 
-    expect(frontierPressureAt(frontierIndex)).toBe(earned);
-  });
+    it('lets B earn the same frontier chunk independently, later, for themselves', () => {
+      paidSculpt(harness, PLAYER_A, BORDER_CELL.x, BORDER_CELL.y, 4);
+      harness.sink.clear();
 
-  it('survives a corrupt persistence slice instead of bricking the world', () => {
-    for (const junk of [null, undefined, 42, 'nope', { version: 99 }, { version: REVEAL_SLICE_VERSION, pressure: 'x' }]) {
-      expect(() => revealPlugin.persistence?.load(junk)).not.toThrow();
-      expect(frontierPressureAt(0)).toBe(0);
-    }
+      expect(paidSculpt(harness, PLAYER_B, BORDER_CELL.x, BORDER_CELL.y, 4).applied).toBe(true);
+
+      expect(harness.world.isChunkUnlockedForToken(PLAYER_B.token, ...FRONTIER_CHUNK)).toBe(true);
+      const streamed = harness.sink.ofType('chunkUnlock');
+      expect(streamed).toHaveLength(1);
+      expect(streamed[0].target).toBe(PLAYER_B.id);
+    });
   });
 });

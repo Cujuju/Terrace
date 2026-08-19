@@ -55,6 +55,20 @@ export interface WorldApi {
   isChunkUnlocked(cx: number, cy: number): boolean;
 
   /**
+   * Whether the CONNECTED PLAYER `playerId` has personally unlocked the
+   * chunk/cell — answered from THEIR OWN per-token mask, never the union
+   * `isChunkUnlocked`/`isCellUnlocked` above (issue #17). Added for the
+   * fog-of-war follow-up named as issue #17's accepted residual (global
+   * entity broadcasts still reference positions over chunks a player hasn't
+   * unlocked): NO core or shipped-plugin broadcast is filtered by these yet —
+   * they exist so that follow-up is a new caller, not a new contract.
+   * `players()` below already carries each connected player's `token`, which
+   * is the other primitive a per-player broadcast fan-out needs.
+   */
+  isChunkVisibleTo(playerId: string, cx: number, cy: number): boolean;
+  isCellVisibleTo(playerId: string, x: number, y: number): boolean;
+
+  /**
    * Applies an edit through the authoritative path: shared brush + gradient
    * relaxation, full diff kept server-side, mask-filtered diff broadcast.
    * Returns the full (unfiltered) diff — plugins are trusted server code.
@@ -71,6 +85,15 @@ export interface WorldApi {
 
   /** Unlocks a chunk and streams it to clients. False if already unlocked. */
   unlockChunk(cx: number, cy: number): boolean;
+
+  /**
+   * THE PER-PLAYER CREEP PRIMITIVE (issue #17). Unlocks a chunk FOR ONE
+   * TOKEN and streams it ONLY to that token's own live session(s) — never a
+   * broadcast (see World.unlockChunkForToken for the full contract). This,
+   * not `unlockChunk` above, is what the reveal plugin's per-player policy
+   * calls: `unlockChunk` unlocks for the whole world at once.
+   */
+  unlockChunkForToken(token: string, cx: number, cy: number): boolean;
 
   players(): readonly Player[];
 
@@ -137,10 +160,20 @@ export interface TerracePlugin {
   /**
    * Fired after any applied edit, with the FULL server-side diff. Handed the
    * same WorldApi as onTick/onIntent, so a plugin that reacts to terrain
-   * (re-checking a habitat, accruing frontier pressure, felling a tree) needs
-   * no stash of its own to reach `sculpt`, `broadcast`, or any other member.
+   * (re-checking a habitat, creeping a player's territory, felling a tree)
+   * needs no stash of its own to reach `sculpt`, `broadcast`, or any other
+   * member.
+   *
+   * `sculptorToken` (added issue #17) identifies the PLAYER whose intent
+   * produced this diff, when there was one: a player's own sculpt carries
+   * their token (intent/pipeline.ts resolves it once, before this fires), a
+   * plugin-initiated edit via `WorldApi.sculpt` carries none — there is no
+   * player to credit. The reveal plugin's per-player creep policy is the
+   * first, and so far only, reader of this parameter; every other existing
+   * plugin's `onTerrainChanged` ignores it (a JS function may always declare
+   * fewer parameters than its call site provides).
    */
-  onTerrainChanged?(world: WorldApi, diff: readonly CellDiff[]): void;
+  onTerrainChanged?(world: WorldApi, diff: readonly CellDiff[], sculptorToken?: string): void;
 
   /** Handed the same WorldApi as onTick/onIntent — see onTerrainChanged. */
   onPlayerJoin?(world: WorldApi, player: Player): void;

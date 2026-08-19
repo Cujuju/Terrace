@@ -940,6 +940,105 @@ terrace/
   SEA's weather, authored above the waterline, and on a peak nine bands up they
   would be a bug rather than atmosphere.
 
+### Decisions made 2026-08-19 (settled with owner, issue #17)
+
+- **Per-player territory: the reveal/frontier-pressure policy is REPLACED by
+  instant per-player creep, and unlocks stop being world-wide** (owner
+  decisions on issue #17: "Per-player territory: instant creep on spillover,
+  browser-token identity"). Four parts.
+
+  **1. Identity.** The client generates an opaque token
+  (`crypto.randomUUID()`), persists it in `localStorage`, and resends it as a
+  join option on every connection — first join, reconnect, or a later browser
+  session. Pre-auth-plugin and §3.7-compatible: player identity was already an
+  opaque string (the Colyseus sessionId), and this only adds a SECOND, DURABLE
+  opaque string alongside it. The server sanitizes it exactly like
+  `sanitizePlayerName` (length cap, closed charset, and ANY unusable value
+  degrades to a session-scoped fallback identity rather than blocking the
+  join — `server/src/player.ts`'s `sanitizePlayerToken`). `Player.id` stays
+  the Colyseus sessionId (a connection); `Player.token` is the new durable
+  identity attached to it.
+
+  **2. Per-player masks in core.** The world-level unlocked-chunk mask
+  (`World.mask`) is REDEFINED as the SIMULATION mask — the union of every
+  player's own progress. Every existing reader (wildlife census, flora,
+  monsters, the sculpt-permission check, and the ongoing `terrainDiff`
+  broadcast filter) keeps reading it, with UNCHANGED semantics — see the
+  "known residual" note below for why the latter two were deliberately left
+  alone. A new per-token layer is added beside it: a chunk unlock happens FOR
+  A TOKEN (`World.unlockChunkForToken`, published to plugins as
+  `WorldApi.unlockChunkForToken`), and the union mask ORs in a chunk the
+  instant its FIRST token earns it. The join snapshot sends only the joining
+  token's OWN chunks (`World.chunkPayloadsForToken`), and a `chunkUnlock`
+  message goes only to that token's live session(s) via `sendTo` — never a
+  broadcast, so "one adventurous player must not expose the world to
+  everyone" holds structurally, not by convention. The client needed NO new
+  mask logic for this: it already infers unlocked-ness purely from which
+  chunks it was sent, so per-player streaming is invisible to it — only the
+  token plumbing (join options, `localStorage`) is client work.
+
+  **Minimal API addition, and why this shape.** `WorldApi` gains exactly one
+  write primitive, `unlockChunkForToken(token, cx, cy): boolean`, mirroring
+  `unlockChunk`'s existing idempotent-boolean contract so the reveal plugin
+  can call it unconditionally per touched cell with no separate read check.
+  `onTerrainChanged` gains one additive optional parameter, `sculptorToken?:
+  string` — WHO made this edit, when it was a player (an intent carries
+  `player.token` through `sculpt-service.ts`); a plugin-initiated edit via
+  the existing `WorldApi.sculpt` carries none, so a policy plugin has an
+  explicit "nobody to credit" signal instead of an invented default. Two
+  read primitives were added at the same time for a NAMED FOLLOW-UP
+  (fog-of-war, filtering the global entity broadcasts below) rather than
+  discovered later as a second contract change: `WorldApi.isChunkVisibleTo` /
+  `isCellVisibleTo(playerId, …)`, answering from one connected player's own
+  token mask. Nothing calls them yet.
+
+  **3. Creep policy (reveal plugin).** The old "frontier pressure" counter —
+  a locked chunk unlocked once it had absorbed `CHUNK_SIZE²` cumulative
+  cell-changes from ANYONE, against the single world-wide mask that existed
+  before this decision — is DELETED entirely, counter and persistence slice
+  both. Replaced with: on terrain change, any changed cell landing in a chunk
+  not yet in the SCULPTOR's own mask unlocks that chunk FOR THAT SCULPTOR,
+  immediately — no threshold. The counter's reason to exist (resisting a
+  single griefer forcing an unlock everyone else would then see for free)
+  stopped applying the moment unlocking became per-player: that griefer now
+  only ever unlocks the chunk for themselves. The plugin stays the policy
+  owner (core still does not decide WHEN territory unlocks); it is now
+  STATELESS, because the state it used to keep (pressure per chunk) is gone
+  and the state it now acts through (per-token masks) lives in core.
+
+  **4. Persistence: core's own table, not a reveal slice — decided, not
+  defaulted.** Per-token masks are the SAME binary bitset shape as the
+  existing union `mask`, and `unlockChunkForToken` is a `WorldApi` capability
+  any plugin can reach, not reveal-plugin-private state — so they are stored
+  beside `mask`, in a new `token_masks` SQLite table (one row per
+  snapshot × token), the same way `world_name` was added: an additive
+  `CREATE TABLE IF NOT EXISTS`, `SNAPSHOT_SCHEMA_VERSION` left UNCHANGED
+  (an older build's `SELECT *` never sees the new table; this build reads a
+  snapshot with no matching rows — exactly what every pre-#17 snapshot has —
+  as "no per-token masks recorded"). **Legacy restore, stated loudly because
+  it is a real, accepted regression:** an old snapshot's world-level mask
+  becomes the new union/simulation mask (unchanged, since it was always the
+  only mask); every per-token mask starts EMPTY. Concretely, a returning
+  player on an upgraded server re-creeps their own view of territory the
+  world already contains — even land they had personally opened before the
+  upgrade — while the simulation (wildlife, flora, monsters) is unaffected,
+  since it only ever read the union.
+
+  **Known accepted residual, not fixed here.** Global entity broadcasts
+  (wildlife, flora, monsters, structures) still reference positions over
+  chunks a given player has not personally unlocked — they were never
+  filtered per-player before this change, and per-player masks existing in
+  core does not by itself filter them. Tracked as a fog-of-war follow-up; the
+  `isChunkVisibleTo`/`isCellVisibleTo` primitives above exist so that
+  follow-up is a new caller, not another contract change. The same
+  reasoning is why the intent pipeline's sculpt-permission check and the
+  `terrainDiff` broadcast filter were deliberately left reading the UNION
+  mask, unchanged: once a chunk is unlocked for anyone, the server itself no
+  longer treats its terrain as secret, so a second player sculpting or
+  seeing further edits there is shared-world behaviour, not the leak
+  per-player masks exist to close — closing it is the SAME fog-of-war
+  follow-up, not a gap in this one.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)

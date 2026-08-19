@@ -342,7 +342,7 @@ describe('world-wide caps', () => {
 
 const WORLD_SIZE = 160;
 const DT = 0.1;
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 const ALL_WIRE_TYPE = `${STRUCTURES_PLUGIN_NAME}:${STRUCTURES_ALL_MESSAGE}`;
 const CHANGES_WIRE_TYPE = `${STRUCTURES_PLUGIN_NAME}:${STRUCTURES_CHANGES_MESSAGE}`;
 

@@ -188,7 +188,7 @@ const SMALL_POOL_RADIUS = 40;
 /** No cell anywhere reaches the deep threshold. */
 const NO_DEEP_WATER_RADIUS = 20;
 
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 interface Harness {
   readonly world: World;

@@ -85,7 +85,7 @@ const TARGET_CELL = { x: 24, y: 24 } as const;
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
 
-const PLAYER: Player = { id: 'session-1', name: 'Tester' };
+const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 function unlockedChunksExcept(
   excluded: readonly [number, number],
