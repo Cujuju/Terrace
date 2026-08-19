@@ -34,6 +34,7 @@ import {
   type PredictionStore,
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
+import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, type Water } from './render/water.ts';
@@ -71,6 +72,10 @@ export function createWorld(viewport: Viewport): World {
   // A sea exists from the first frame, before any server contact, so the
   // "disconnected" boot state is a plausible empty ocean rather than a void.
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
+  // One fog curtain for the whole session, like water — its segments are
+  // synced (added/disposed) against whatever mirror currently exists rather
+  // than being torn down and recreated on every rejoin.
+  const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
 
   let mirror: TerrainMirror | null = null;
   let meshes: TerrainMeshes | null = null;
@@ -186,6 +191,11 @@ export function createWorld(viewport: Viewport): World {
           nowMs(),
         ),
       );
+      // The frontier is a fact about `received`, which the snapshot just
+      // changed — sync unconditionally, whether this is a first join (empty
+      // -> starter footprint) or a rejoin (old world's segments dropped, this
+      // session's rebuilt).
+      fog.sync(fresh.mirror);
     },
 
     onChunkUnlock(msg: ChunkUnlockMessage): void {
@@ -207,10 +217,13 @@ export function createWorld(viewport: Viewport): World {
       // size, so the mirror cannot be allocated and the chunk has nowhere to
       // go. Dropping loses one reveal; guessing would render the world at the
       // wrong scale.
-      if (meshes === null || predictions === null) return;
+      if (meshes === null || predictions === null || mirror === null) return;
       meshes.update(
         predictions.applyAuthoritative((m) => applyChunkUnlock(m, msg), nowMs()),
       );
+      // Territory just crept outward — move the mist with it. `received`
+      // changed, which is the only thing the frontier is defined from.
+      fog.sync(mirror);
       armExpiryTimer();
     },
 
@@ -260,6 +273,7 @@ export function createWorld(viewport: Viewport): World {
       mirror = null;
       predictions = null;
       water.dispose();
+      fog.dispose();
     },
   };
 }
