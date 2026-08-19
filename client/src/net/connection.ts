@@ -40,6 +40,7 @@ import type {
   TerrainDiffMessage,
 } from '@terrace/shared';
 import { ROOM_NAME, SERVER_URL } from '../config.ts';
+import { getOrCreatePlayerToken } from '../state/playerToken.ts';
 import {
   MSG_CHUNK_UNLOCK,
   MSG_SCULPT,
@@ -210,7 +211,16 @@ export function connect(options: ConnectionOptions): Connection {
     if (disposed || room !== null) return;
     setStatus('connecting');
     try {
-      const joined = await client.joinOrCreate(roomName);
+      // DURABLE IDENTITY (issue #17): the same opaque token on every join —
+      // first connection, reconnect, or a later session on this browser —
+      // is what lets the server hand back the same per-player unlock mask.
+      // The server sanitizes this defensively (server/src/player.ts) and
+      // degrades a bad/missing value to a session-scoped identity, so a
+      // malformed token here can never block the join, only cost this
+      // session its territory memory.
+      const joined = await client.joinOrCreate(roomName, {
+        token: getOrCreatePlayerToken(),
+      });
       if (disposed) {
         void joined.leave();
         return;
