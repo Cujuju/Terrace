@@ -130,11 +130,28 @@ export function lurkDepthOf(kind: MonsterKind): number {
  *   * in a true abyss it rides at exactly its lurk depth: for Cthulhu, head and
  *     shoulder crowns out and torso gone; for the kraken, eyes at the waterline
  *     and the mantle clear. Those are the intended silhouettes;
- *   * in a basin only just past the deep threshold (3 bands = 3 world units), it
- *     STANDS ON THE BOTTOM and correspondingly more of it towers out of the
- *     water. Barely-deep water shows you the whole monster; a real trench leaves
- *     you a head. That inversion is a feature — digging deeper is rewarded with
- *     the more menacing, less legible silhouette.
+ *   * in a basin only just past the deep threshold (3 bands = 3 world units), a
+ *     kind whose lurk depth is DEEPER than that threshold STANDS ON THE BOTTOM
+ *     and correspondingly more of it towers out of the water. Barely-deep water
+ *     shows you the whole monster; a real trench leaves you a head. That
+ *     inversion is a feature — digging deeper is rewarded with the more
+ *     menacing, less legible silhouette.
+ *
+ *     WHICH KINDS, EXACTLY — stated because this read as a rule about swimmers
+ *     until a correctness pass (2026-08-19) checked it against both of them:
+ *     it is CTHULHU'S behaviour and only his. His lurk depth is 6.6 world
+ *     units, past the 3-unit deep-water line, so the clamp fires in every
+ *     basin shallower than that. The KRAKEN lurks at 0.85 — its eyes ride a
+ *     waterline bite under the surface by construction (kraken-anatomy.ts) —
+ *     and no cell it may legally occupy is shallower than 3, so `max` picks
+ *     the preferred depth every time and the seabed argument NEVER binds. Its
+ *     silhouette is therefore depth-invariant: identical in a three-band
+ *     puddle and on the lava floor twenty-four units down. That is the
+ *     anatomy's intent and not an oversight — the kraken is the sea kind you
+ *     are meant to SEE — so it must not be "fixed" by making it sink. The
+ *     inertness is pinned by a test, so a lurk-depth retune that pushed it
+ *     past the deep-water line (and started dropping it onto the floor) fails
+ *     loudly instead of quietly changing what the animal looks like.
  *
  * REJECTED ALTERNATIVE: pin the origin at the lurk depth unconditionally and let
  * the submerged body intersect the seabed. It keeps the silhouette constant, and

@@ -17,7 +17,8 @@ export const MONSTERS_PLUGIN_NAME = 'monsters';
  * There is exactly one message type and it carries FULL state every time — the
  * same choice the wildlife plugin made, for the same self-healing reasons, and
  * here it is nearly free: the list holds at most MAX_LIVING_MONSTERS entries
- * (one per habitat regime, so two today). See the bandwidth note in
+ * (one per KIND since the 2026-08-19 per-kind slots, so three today — it was
+ * one per habitat regime, and two, before that). See the bandwidth note in
  * server/index.ts.
  *
  * The list being EMPTY is meaningful and is broadcast just as faithfully as a
@@ -47,6 +48,16 @@ export const MONSTERS_STATE_MESSAGE = 'state';
  * kind, and it never contends with either sea kind for anything. It is last
  * because it was added last, and the day a second land kind exists the two of
  * them have to be ordered against each other by the rule above.
+ *
+ * SUPERSEDED 2026-08-19 — THERE IS NO CONTEST LEFT TO DECIDE. Slots became one
+ * per KIND (server/summoning.ts), so every kind rolls its own arrival against
+ * its own lair requirements and no kind can take another's slot; the
+ * strictest-first rule above is the historical reason this order exists, not a
+ * live mechanism. What the order still does is REAL and worth keeping stable:
+ * it is the fixed iteration order of the summon pass, of `livingMonsters()`,
+ * and therefore of the broadcast list and the client's reconcile — a list whose
+ * order wobbled between ticks would be a wire payload that changed for no
+ * reason. Reorder this and the payload's key order changes; nothing else does.
  */
 export const MONSTER_KINDS = ['kraken', 'cthulhu', 'yeti'] as const;
 

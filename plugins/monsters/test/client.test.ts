@@ -4,7 +4,7 @@
 // run in the same node environment as the server tests.
 
 import { describe, expect, it } from 'vitest';
-import { SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { parseMonstersPayload, type MonsterState } from '../protocol.ts';
 import {
   CTHULHU_BODY_WRINKLE_DEPTH,
@@ -288,6 +288,56 @@ describe('placement', () => {
     expect(monsterOriginWorldY(shallowestLairY, CTHULHU_DEPTH)).toBe(shallowestLairY);
     expect(monsterOriginWorldY(shallowestLairY, CTHULHU_DEPTH)).toBeGreaterThan(
       SEA_SURFACE_WORLD_Y - CTHULHU_LURK_DEPTH,
+    );
+  });
+
+  /**
+   * The world's floor and the deep-water line, in the WORLD units placement
+   * speaks. One band is one world unit (client/src/config.ts:
+   * BAND_WORLD_HEIGHT = CELL_WORLD_SIZE), restated here rather than imported
+   * for the reason everything else in this plugin's client half is: the plugin
+   * must build and test with the rest of the client absent. Deriving the floor
+   * from shared's MIN_HEIGHT — rather than writing -24 — is what makes these
+   * follow a Deep Strata retune instead of pinning yesterday's world.
+   */
+  const WORLD_FLOOR_Y = MIN_HEIGHT / BAND_HEIGHT;
+  const DEEP_WATER_LINE_Y = -3;
+
+  it('never lets the seabed bind the kraken — its silhouette is depth-invariant', () => {
+    // THE CONTRACT, checked across the WHOLE range a cell may legally hold
+    // since Deep Strata took the floor to -1536 (-24 world units): from the
+    // shallowest water the kraken may occupy down to the lava floor, `max`
+    // must pick the preferred depth every time.
+    //
+    // Why it is a contract and not a coincidence: the kraken's lurk depth is
+    // derived from its EYES (kraken-anatomy.ts), which puts it far above the
+    // deep-water line, and the server will not place it anywhere shallower
+    // than that line. If a retune ever pushed the lurk depth past 3, this
+    // fails — and it should, because the animal would start dropping onto the
+    // floor in shallow basins, which is Cthulhu's read, not the kraken's.
+    const krakenDepth = lurkDepthOf('kraken');
+    expect(krakenDepth).toBeLessThan(-DEEP_WATER_LINE_Y);
+    for (let seabedY = DEEP_WATER_LINE_Y; seabedY >= WORLD_FLOOR_Y; seabedY--) {
+      expect(monsterOriginWorldY(seabedY, krakenDepth)).toBe(
+        SEA_SURFACE_WORLD_Y - krakenDepth,
+      );
+    }
+    // Including the exact floor, which is not on the integer walk above if the
+    // strata stack ever stops dividing evenly.
+    expect(monsterOriginWorldY(WORLD_FLOOR_Y, krakenDepth)).toBe(
+      SEA_SURFACE_WORLD_Y - krakenDepth,
+    );
+  });
+
+  it('does let the seabed bind Cthulhu — the clamp is his, and the contrast is the point', () => {
+    // The other half of the same contract: the clamp is not dead code, it is
+    // one kind's behaviour. Cthulhu lurks past the deep-water line, so every
+    // basin shallower than his lurk depth stands him on the bottom.
+    expect(CTHULHU_DEPTH).toBeGreaterThan(-DEEP_WATER_LINE_Y);
+    expect(monsterOriginWorldY(DEEP_WATER_LINE_Y, CTHULHU_DEPTH)).toBe(DEEP_WATER_LINE_Y);
+    // ...and in the deep strata he floats, exactly as the kraken always does.
+    expect(monsterOriginWorldY(WORLD_FLOOR_Y, CTHULHU_DEPTH)).toBe(
+      SEA_SURFACE_WORLD_Y - CTHULHU_DEPTH,
     );
   });
 

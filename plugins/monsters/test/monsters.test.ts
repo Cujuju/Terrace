@@ -25,9 +25,12 @@ import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import { initialUnlockFootprint } from '../../../server/src/world/initial-unlock.ts';
 import {
+  GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA,
+  GENESIS_TRENCH_MIN_BASIN_CELLS,
+  GENESIS_TRENCH_QUALIFYING_BANDS_BELOW_SEA,
+  World,
   buildFreshGenesisTerrain,
   freshGenesisHeightAt,
-  type World,
 } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
@@ -1070,23 +1073,130 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     }
   });
 
-  it('does not promise every world a dig-free kraken — only a deep-floored one', () => {
-    // The SECOND and THIRD corrected claims, together, and the reason this
-    // test asserts a MIXTURE rather than a guarantee: the noise draws its
-    // floor per seed, and only UNLOCKED cells are habitat (isLairCell), so on
-    // day one the starter square is the whole question.
-    //
-    // A future change that made every world qualify would be a silently
-    // different game (every world hands out a kraken); one that made none
-    // qualify would be the mandatory dig the owner's decision removed. Both
-    // fail here.
-    const qualifies = GENESIS_PROBE_SEEDS.map(
-      (seed) =>
-        reachesIntoHabitat(
-          WATER_HABITAT,
-          genesisFloors(seed).unlocked,
-          KRAKEN_LAIR_MIN_DEPTH_BANDS,
-        ),
+  // ── The guarantee, superseding the mixture this block used to pin ─────────
+  //
+  // WHAT THIS REPLACED, and why the replacement is not a weakening. Until
+  // 2026-08-19 this block held a test called "does not promise every world a
+  // dig-free kraken — only a deep-floored one". It asserted a MIXTURE over
+  // these same 48 seeds — some qualify, some do not — and it deliberately
+  // failed if ALL of them qualified, on the reading that a worldgen change
+  // handing every world a kraken would be a silently different game. That
+  // reading was correct AS A GUARD: it was written to force the question to an
+  // owner rather than let it drift. The owner has now answered it. Every fresh
+  // world gets a qualifying basin, by construction, from the trench pass in
+  // `server/src/world/world.ts` (see its "The trench" section).
+  //
+  // So the mixture assertion is gone and the guarantee is pinned in its place.
+  // The guard it provided is NOT gone: the second test below keeps measuring
+  // the mixture the NOISE ALONE produces, so if worldgen ever flattens — or
+  // the trench pass turns into a stamp that would have fired anyway — the
+  // guarantee stops being attributable to the pass and this block goes red
+  // rather than vacuously green.
+  //
+  // THE UNLOCK CAVEAT, restated rather than dropped. The guarantee is about
+  // TERRAIN. `isLairCell` still requires an unlocked cell, so a world whose
+  // trench lies outside the starter square hands its kraken over when the
+  // player's territory reaches it — that is progression, it is unchanged, and
+  // it is why these tests survey with unlock answered "yes" everywhere.
+
+  /** Both sizes the 2026-08-19 review measured: smallest shipped, and default. */
+  const GENESIS_PROBE_SIZES = [128, 512];
+
+  /**
+   * A 512²-per-seed sweep, twice over, is a real amount of work: two full world
+   * generations and two full habitat surveys per seed. Measured at ~4 s on this
+   * machine, so this is a 5× margin.
+   */
+  const GENESIS_SWEEP_TIMEOUT_MS = 20_000;
+
+  /**
+   * Does this heightmap contain a basin the kraken would take? Asked through
+   * the REAL survey and the REAL admission predicate — no reimplementation of
+   * either — so what it answers is precisely what summoning.ts would answer.
+   *
+   * `isCellUnlocked` says yes everywhere ON PURPOSE: see the unlock caveat
+   * above. This measures what the generator BUILT, not what day one reveals.
+   */
+  function hasQualifyingBasin(heights: Int16Array, size: number): boolean {
+    const view: LairWorld = {
+      worldSize: size,
+      heightAt: (x, y) => heights[y * size + x]!,
+      isCellUnlocked: () => true,
+    };
+    return surveyLairs(WATER_HABITAT, view).regions.some(
+      (region) =>
+        region.cells >= KRAKEN_MIN_LAIR_DEEP_CELLS &&
+        reachesIntoHabitat(WATER_HABITAT, region.extremeHeight, KRAKEN_LAIR_MIN_DEPTH_BANDS),
+    );
+  }
+
+  /** A fresh world exactly as the server ships it, trench pass included. */
+  function freshWorldHeights(size: number, seed: number): Int16Array {
+    return World.createFresh(size, undefined, undefined, seed).map.cells;
+  }
+
+  /**
+   * The same world as the seeded NOISE alone drew it — the trench pass nulled
+   * out, which is by construction the field genesis produced before the pass
+   * existed (the trench is the only term added to `freshGenesisHeightAt`).
+   */
+  function untrenchedWorldHeights(size: number, seed: number): Int16Array {
+    const terrain = { ...buildFreshGenesisTerrain(size, seed), trench: null };
+    const heights = new Int16Array(size * size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) heights[y * size + x] = freshGenesisHeightAt(terrain, x, y);
+    }
+    return heights;
+  }
+
+  it(
+    'promises EVERY fresh world a kraken-qualifying basin (owner-ratified 2026-08-19)',
+    () => {
+      // THE GUARANTEE, at both shipped sizes, over the same 48 seeds the
+      // mixture test used. Not "most", not "the deep-floored ones": all of
+      // them, or the owner's decision has regressed.
+      for (const size of GENESIS_PROBE_SIZES) {
+        const missing = GENESIS_PROBE_SEEDS.filter(
+          (seed) => !hasQualifyingBasin(freshWorldHeights(size, seed), size),
+        );
+        expect({ size, missing }).toEqual({ size, missing: [] });
+      }
+    },
+    GENESIS_SWEEP_TIMEOUT_MS,
+  );
+
+  it(
+    'gets that promise from the trench pass — the noise alone still varies',
+    () => {
+      // THE ANTI-VACUOUS COMPANION, and the surviving half of the mixture test
+      // this block replaced. If worldgen is ever flattened, or the noise range
+      // widened until every seed digs its own trench, the guarantee above would
+      // still pass while meaning nothing. This fails in that case: the noise on
+      // its own must go on producing BOTH kinds of world.
+      for (const size of GENESIS_PROBE_SIZES) {
+        const qualifies = GENESIS_PROBE_SEEDS.map((seed) =>
+          hasQualifyingBasin(untrenchedWorldHeights(size, seed), size),
+        );
+        expect(qualifies.some((ok) => ok)).toBe(true);
+        expect(qualifies.some((ok) => !ok)).toBe(true);
+      }
+    },
+    GENESIS_SWEEP_TIMEOUT_MS,
+  );
+
+  it('leaves the day-one UNLOCKED floor a mixture — progression is untouched', () => {
+    // The half of the old mixture test that is still true, kept because it is
+    // still the honest answer to "does every new world hand out a kraken on
+    // day one". It does not: only UNLOCKED cells are habitat, the starter
+    // square is day one's whole world, and the trench lands wherever the
+    // world's deepest ocean already was. Some worlds get it immediately;
+    // the rest get it as their territory grows.
+    const qualifies = GENESIS_PROBE_SEEDS.map((seed) =>
+      reachesIntoHabitat(
+        WATER_HABITAT,
+        genesisFloors(seed).unlocked,
+        KRAKEN_LAIR_MIN_DEPTH_BANDS,
+      ),
     );
     expect(qualifies.some((ok) => ok)).toBe(true);
     expect(qualifies.some((ok) => !ok)).toBe(true);
@@ -1111,6 +1221,25 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     // the derivation has regressed to a range-anchored one and the bar moved
     // without an owner decision.
     expect(KRAKEN_LAIR_MIN_DEPTH_BANDS).toBe(7);
+  });
+
+  it('is the same bar the generator plans its trench against', () => {
+    // THE RESTATEMENT PIN. server/src/world/world.ts cannot import this
+    // plugin's constants (core must not depend on a plugin), so the trench
+    // pass restates three of them — the lair area, the reference ocean floor,
+    // and the bar derived from it. This is the plugin side of that agreement,
+    // the same arrangement wildlife owns for FRESH_SEABED_BANDS_BELOW_SEA: if
+    // either side is retuned alone, THIS fails, rather than every fresh world
+    // silently losing (or being handed) a kraken.
+    expect(GENESIS_TRENCH_MIN_BASIN_CELLS).toBe(KRAKEN_MIN_LAIR_DEEP_CELLS);
+    expect(GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA).toBe(GENESIS_DEEP_OCEAN_REFERENCE_BAND);
+    expect(GENESIS_TRENCH_QUALIFYING_BANDS_BELOW_SEA).toBe(KRAKEN_LAIR_MIN_DEPTH_BANDS);
+
+    // And the margin the bar's own derivation names: the generator cuts to the
+    // reference floor, which is strictly deeper than the bar it must clear.
+    expect(GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA).toBeGreaterThan(
+      GENESIS_TRENCH_QUALIFYING_BANDS_BELOW_SEA,
+    );
   });
 });
 
