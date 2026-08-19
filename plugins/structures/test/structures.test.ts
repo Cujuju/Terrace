@@ -927,3 +927,96 @@ describe('route blessings (pilgrim routes contract)', () => {
     expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS, false)).toBe(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// World events — the emission half of the chronicle contract (2026-08-19).
+// The chronicle's own suite tests consumption against synthetic events; these
+// pin that THIS plugin actually emits them, with the agreed shape and cause.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('world events (structures:changes)', () => {
+  interface HeardEvent {
+    readonly event: string;
+    readonly payload: unknown;
+  }
+
+  /** Boots structures PLUS a recording consumer in one real host. */
+  function bootWithRecorder(
+    board: ReadonlyArray<readonly [number, number]>,
+  ): { world: World; host: PluginHost; events: HeardEvent[] } {
+    resetStructuresState();
+    const world = worldWithTerrain(OPEN_WORLD_SIZE, () => OPEN_BAND * BAND_HEIGHT);
+    world.setSink(new RecordingSink());
+    const events: HeardEvent[] = [];
+    const recorder = {
+      name: 'recorder',
+      onWorldEvent(_world: unknown, event: string, payload: unknown): void {
+        events.push({ event, payload });
+      },
+    };
+    const host = new PluginHost(world, [structuresPlugin, recorder].map(asLoadedPlugin));
+    const rng = createStructuresRng(1);
+    host.restorePersistence({
+      [STRUCTURES_PLUGIN_NAME]: saveStructures(boardOf(board), 0, rng),
+    });
+    host.worldCreate();
+    return { world, host, events };
+  }
+
+  it('a generation emits cause "generation" carrying the CA’s own deaths', () => {
+    // A blinker: (30,30)-(32,30) flips to vertical, so exactly (30,30) and
+    // (32,30) die in generation one, whatever else the seed rolls do.
+    const { host, events } = bootWithRecorder([
+      [30, 30],
+      [31, 30],
+      [32, 30],
+    ]);
+
+    for (let elapsed = 0; elapsed < 20; elapsed += DT) host.tick(DT);
+
+    const changes = events.filter((heard) => heard.event === 'structures:changes');
+    expect(changes.length).toBeGreaterThan(0);
+    const first = changes[0].payload as {
+      cause: string;
+      died: Array<{ x: number; y: number }>;
+    };
+    expect(first.cause).toBe('generation');
+    expect(first.died).toContainEqual({ x: 30, y: 30 });
+    expect(first.died).toContainEqual({ x: 32, y: 30 });
+  });
+
+  it('a sculpt demolition emits cause "sculpt" with the demolished cells — and nothing on a miss', () => {
+    // A 2×2 block: a still life, so no generation event competes.
+    const { world, host, events } = bootWithRecorder([
+      [40, 40],
+      [41, 40],
+      [40, 41],
+      [41, 41],
+    ]);
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+
+    // A sculpt that touches no structure emits no event at all.
+    handleSculptIntent(
+      { world, interceptors: host },
+      PLAYER,
+      { type: 'sculpt', x: 10, y: 10, radius: 1, dir: 1 },
+    );
+    expect(events.filter((heard) => heard.event === 'structures:changes')).toHaveLength(0);
+
+    handleSculptIntent(
+      { world, interceptors: host },
+      PLAYER,
+      { type: 'sculpt', x: 40, y: 40, radius: MAX_BRUSH_RADIUS, dir: 1 },
+    );
+    const changes = events.filter((heard) => heard.event === 'structures:changes');
+    expect(changes).toHaveLength(1);
+    const payload = changes[0].payload as {
+      cause: string;
+      died: Array<{ x: number; y: number }>;
+    };
+    expect(payload.cause).toBe('sculpt');
+    expect(payload.died).toHaveLength(4);
+    expect(payload.died).toContainEqual({ x: 40, y: 40 });
+  });
+});

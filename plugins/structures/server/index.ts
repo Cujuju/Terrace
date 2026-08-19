@@ -269,6 +269,21 @@ function simulate(world: WorldApi, dt: number): void {
       }
 
       broadcastChanges(world, [...outcome.born, ...seeded, ...stirred], outcome.upgraded, outcome.died);
+
+      // THE CHRONICLE'S EAR (2026-08-19): the same generation facts, as a
+      // server-side world event. `seeded` (a new settlement) and the tier/loss
+      // lists are what a historian can use; routine births and stir sparks
+      // are churn, deliberately not part of the event's meaning — consumers
+      // get `seeded`, `upgraded`, `died`, nothing else. Emitted only when
+      // something happened, so a quiet generation costs no fan-out.
+      if (seeded.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
+        world.emitEvent('changes', {
+          cause: 'generation',
+          seeded,
+          upgraded: outcome.upgraded,
+          died: outcome.died,
+        });
+      }
     }
   }
 
@@ -291,6 +306,10 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
     }
   }
   broadcastChanges(world, [], [], demolished);
+
+  // The chronicle's ear, sculpt side: an edit-caused loss is a different
+  // STORY than a generation's (a hand, not fate), so the cause travels.
+  if (demolished.length > 0) world.emitEvent('changes', { cause: 'sculpt', died: demolished });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
