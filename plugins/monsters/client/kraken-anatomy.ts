@@ -23,12 +23,13 @@
 // carried forward, and 61% of it hidden under the water at rest. He is a figure.
 //
 // The kraken is RADIAL and LOW-SLUNG: a crown of eight arms lying ON the water
-// in every direction, a squat head at the waterline with two lamp eyes, and a
-// single finned mantle rearing back out of the middle of it. There is no front
-// to it except the way it happens to be swimming, nothing is folded, and the
-// parts that break the surface are limbs rather than a face. At a hundred cells
-// the two read as a standing man and a spider on the water, which is the
-// distance the silhouettes have to hold at.
+// in every direction, a squat head at the waterline with two lamp eyes, and the
+// long humped back of its mantle running down into the sea behind it, tail
+// fins slicing the surface at the far end. There is no front to it except the
+// way it happens to be swimming, nothing is folded, and the parts that break
+// the surface are limbs and a back rather than a face. At a hundred cells the
+// two read as a standing man and a spider on the water, which is the distance
+// the silhouettes have to hold at.
 //
 // SAME BOX, DIFFERENT SHAPE. It is built to the SAME 7-cell footprint (see
 // KRAKEN_WIDTH_CELLS), which is the number the server's steering probe and the
@@ -51,51 +52,102 @@ export const KRAKEN_HEAD_WIDTH = 2.8;
 export const KRAKEN_HEAD_TOP = KRAKEN_HEAD_CENTER_HEIGHT + KRAKEN_HEAD_HEIGHT / 2;
 
 /**
- * MANTLE: the cone that rears out of the head, and the whole silhouette from a
- * distance.
+ * MANTLE: the animal's great back — an ARCH, not a tower.
  *
- * It is a swept tube rather than an ellipsoid so its profile can be stated as a
- * curve: it leaves the head at BASE_RADIUS, swells to its widest a quarter of
- * the way up (the shoulder — a squid's mantle is fattest near its collar), then
- * tapers over the remaining three quarters to a point.
+ * SUPERSEDED 2026-08-19 (owner: "the model is physically wrong"): the first
+ * mantle stood 6.4 cells NEAR-VERTICAL out of the head, which put ~90% of the
+ * body above the waterline — a soft-bodied animal cantilevering its whole mass
+ * into the sky off a floating head, wearing its fins as a hat brim. It read as
+ * a witch's hat standing on the sea. A real cephalopod's mantle is COLLINEAR
+ * with its body axis: at the surface it lies along the water, not across it.
  *
- * The RAKE leans it back over the arms. That is what stops the thing reading as
- * a traffic cone standing in the sea: a cone is symmetric and therefore has no
- * attitude, and this creature needs to look like it is holding itself up.
+ * So the mantle is now a swept tube along an arched axis in the fore-aft
+ * plane: it leaves the back of the head, crests at the APEX — the humped back
+ * of a surfaced animal, the new tallest point of the whole model — and runs
+ * back DOWN to a tip that rides just under the waterline behind it, where the
+ * fins are. Most of its volume sits at or below the water, which is what a
+ * floating body looks like; what shows is a hump, exactly like the surfaced
+ * whale-back read the sea already trades in.
+ *
+ * All three axis points are stated here as (backset, height) pairs — backset
+ * measured from the axis like every reach — so the footprint tests can sample
+ * the REAL swept curve and hold its rearmost skin inside the 3.5-cell
+ * half-footprint the server steers by.
  */
-export const KRAKEN_MANTLE_BASE_HEIGHT = 1.6;
-export const KRAKEN_MANTLE_HEIGHT = 6.4;
-export const KRAKEN_MANTLE_BASE_RADIUS = 1;
+export const KRAKEN_MANTLE_ROOT_BACKSET = 0.7;
+export const KRAKEN_MANTLE_ROOT_HEIGHT = 1;
+/** A fourth axis point between root and apex (round 3): without it the
+ *  three-point curve left a pinched notch between the back of the head and
+ *  the hump's front face — the hump read as a backpack, not a back. */
+export const KRAKEN_MANTLE_RISE_BACKSET = 1.2;
+export const KRAKEN_MANTLE_RISE_HEIGHT = 1.9;
+export const KRAKEN_MANTLE_APEX_BACKSET = 2;
+/** The AXIS height of the hump's crest; the skin above it adds the local tube
+ *  radius, which is why KRAKEN_TOTAL_HEIGHT below carries the max radius too. */
+export const KRAKEN_MANTLE_APEX_HEIGHT = 2.35;
+export const KRAKEN_MANTLE_TIP_BACKSET = 2.75;
+/** Just under the waterline (which sits at KRAKEN_LURK_DEPTH + bite ≈ 0.85). */
+export const KRAKEN_MANTLE_TIP_HEIGHT = 0.55;
+export const KRAKEN_MANTLE_BASE_RADIUS = 0.8;
 export const KRAKEN_MANTLE_RADIUS = 1.35;
-/** Where along the mantle the widest ring sits, 0 at the base and 1 at the tip. */
-export const KRAKEN_MANTLE_SHOULDER = 0.25;
-/** Taper curve above the shoulder: radius = lerp(max, tip, t^exponent). */
+/** Where along the mantle the widest ring sits, 0 at the base and 1 at the tip.
+ *  PAST the crest on purpose (round 2 eyes-on): the fattest ring on the
+ *  DOWNSLOPE puts the belly of the mass in the water — buoyancy where the
+ *  buoyancy should be — where a fat ring at the crest read as a looming cowl. */
+export const KRAKEN_MANTLE_SHOULDER = 0.55;
+/** Taper curve past the shoulder: radius = lerp(max, tip, t^exponent). */
 export const KRAKEN_MANTLE_TAPER_EXPONENT = 0.85;
 /** The tip. Not zero: a tube that closes to a true point pinches its shading. */
 export const KRAKEN_MANTLE_TIP_RADIUS = 0.06;
-/** Backward lean, radians. ~10°, so the tip lands 1.16 cells behind the axis. */
-export const KRAKEN_MANTLE_RAKE_RADIANS = 0.18;
-/** Top of the mantle above the origin — the tallest point on the model. */
-export const KRAKEN_MANTLE_TOP = KRAKEN_MANTLE_BASE_HEIGHT + KRAKEN_MANTLE_HEIGHT;
 
 /**
- * FINS: two thin blades high on the mantle, one per flank.
+ * The mantle's radius profile: swelling from the collar to the shoulder, then a
+ * long taper to the tip. Two segments, each stated as a lerp, so the widest
+ * ring is exactly KRAKEN_MANTLE_RADIUS and exactly where SHOULDER says.
  *
- * They are the second thing that tells the shape apart from a cone, and they sit
- * HIGH because a squid's are at the far end of the mantle rather than amidships.
- * Each is an ellipsoid whose lateral extent runs from the axis outward, so its
- * inner half is buried in the mantle at any taper and there is no gap to appear
- * between blade and body when either is retuned.
+ * A PURE FUNCTION, HERE, so the builder (kraken.ts) and the footprint test
+ * sweep the SAME skin: the test samples axis point + this radius along the
+ * whole curve and holds it inside the half-footprint — a bound on the real
+ * surface, not on control points.
  */
-export const KRAKEN_FIN_CENTER_HEIGHT = 5.4;
-/** Fore-and-aft chord of a fin. */
-export const KRAKEN_FIN_LENGTH = 2.4;
+export function krakenMantleRadiusAt(along: number): number {
+  if (along <= KRAKEN_MANTLE_SHOULDER) {
+    const swell = along / KRAKEN_MANTLE_SHOULDER;
+    return KRAKEN_MANTLE_BASE_RADIUS + (KRAKEN_MANTLE_RADIUS - KRAKEN_MANTLE_BASE_RADIUS) * swell;
+  }
+  const taper = (along - KRAKEN_MANTLE_SHOULDER) / (1 - KRAKEN_MANTLE_SHOULDER);
+  return (
+    KRAKEN_MANTLE_RADIUS +
+    (KRAKEN_MANTLE_TIP_RADIUS - KRAKEN_MANTLE_RADIUS) *
+      Math.pow(taper, KRAKEN_MANTLE_TAPER_EXPONENT)
+  );
+}
+
+/**
+ * FINS: two thin horizontal blades flanking the mantle's TIP, half-awash.
+ *
+ * A squid's fins live at the far end of the mantle — which is now the tail
+ * riding at the waterline behind the hump, so the blades slice the surface the
+ * way a tail fluke does instead of hanging in mid-air. Each is an ellipsoid
+ * whose lateral extent runs from the mantle's own line outward, so its inner
+ * half is buried in the tube at any taper and no gap can open when either is
+ * retuned.
+ */
+export const KRAKEN_FIN_CENTER_HEIGHT = 0.7;
+/** Fore-and-aft chord of a fin. Sized so the fin's rear edge (BACKSET +
+ *  LENGTH/2 = 3.15) stays inside the arm tips' 3.195 — the arm stays the
+ *  binding constraint the footprint doc names. */
+export const KRAKEN_FIN_LENGTH = 1.1;
 /** Vertical extent — thin, but never zero: an edge-on plane is invisible. */
-export const KRAKEN_FIN_RISE = 0.5;
-/** How far out from the axis the blade reaches. */
-export const KRAKEN_FIN_SPAN = 1.5;
-/** How far behind the axis a fin's centre sits, following the mantle's lean. */
-export const KRAKEN_FIN_BACKSET = 0.7;
+export const KRAKEN_FIN_RISE = 0.32;
+/** How far out from the axis the blade reaches. Overlapped well into the tail
+ *  tube (round 3) so blade and body fuse into one fluke instead of two
+ *  pancakes floating beside it. */
+export const KRAKEN_FIN_SPAN = 1.3;
+/** How far behind the axis a fin's centre sits: ON the tail, where the tube
+ *  has tapered thin enough (round 2: blades at the hump's fat base read as
+ *  detached pancakes; a fluke belongs where the body ENDS). */
+export const KRAKEN_FIN_BACKSET = 2.6;
 
 /**
  * EYES: two large lamps on the sides of the head, at the waterline.
@@ -134,11 +186,23 @@ export const KRAKEN_EYE_BOTTOM = KRAKEN_EYE_HEIGHT - KRAKEN_EYE_RADIUS;
 export const KRAKEN_ARM_COUNT = 8;
 export const KRAKEN_ARM_ROOT_REACH = 0.85;
 export const KRAKEN_ARM_ROOT_HEIGHT = 0.55;
-export const KRAKEN_ARM_CREST_REACH = 2;
-export const KRAKEN_ARM_CREST_HEIGHT = 1.5;
+/**
+ * DRAPED, NOT PLANTED (same 2026-08-19 correction as the mantle): the first
+ * crown crested 1.5 high and dove to −3.4, which made every arm a rigid stilt
+ * the animal seemed to STAND on. An arm floats: it crests barely above the
+ * waterline (≈0.85 in model space), reaches most of its length along the
+ * surface, and its tip trails a modest way under — weight in the water, not
+ * legs on it.
+ */
+export const KRAKEN_ARM_CREST_REACH = 2.3;
+export const KRAKEN_ARM_CREST_HEIGHT = 0.95;
 export const KRAKEN_ARM_TIP_REACH = 3.15;
-export const KRAKEN_ARM_TIP_HEIGHT = -3.4;
-export const KRAKEN_ARM_RADIUS = 0.3;
+/** Round 3: tips trail JUST under the surface (waterline ≈ 0.85 in model
+ *  space, so this is ~0.5 cells of water over them). Deeper tips turned the
+ *  submerged run of every arm into a steep blue cone — legs again. A floating
+ *  animal's arms lie ALONG the water; only the tentacles hunt deep. */
+export const KRAKEN_ARM_TIP_HEIGHT = 0.35;
+export const KRAKEN_ARM_RADIUS = 0.42;
 export const KRAKEN_ARM_TIP_RADIUS = 0.045;
 /**
  * Taper curve: radius = lerp(root, tip, t^exponent). Below 1, so the thinning
@@ -172,17 +236,22 @@ export const KRAKEN_ARM_LENGTH_VARIATION = 0.22;
  * that a manipulating arm does not.
  */
 export const KRAKEN_TENTACLE_COUNT = 2;
-export const KRAKEN_TENTACLE_CREST_REACH = 1.7;
-export const KRAKEN_TENTACLE_CREST_HEIGHT = 3.2;
+export const KRAKEN_TENTACLE_CREST_REACH = 1.9;
+/** Rears above the crown — the pair stays the tallest limbs — but no longer
+ *  past the hump: the 2026-08-19 correction keeps every limb subordinate to
+ *  the body mass, the way a lure is smaller than the animal casting it. */
+export const KRAKEN_TENTACLE_CREST_HEIGHT = 2.1;
 export const KRAKEN_TENTACLE_TIP_REACH = 2.6;
-export const KRAKEN_TENTACLE_TIP_HEIGHT = -5;
+export const KRAKEN_TENTACLE_TIP_HEIGHT = -1.6;
 export const KRAKEN_TENTACLE_RADIUS = 0.2;
 export const KRAKEN_TENTACLE_TIP_RADIUS = 0.04;
-/** The club: a flattened paddle near the tip, and where along the arc it sits. */
+/** The club: a flattened paddle near the tip, and where along the arc it sits.
+ *  Bigger than the first pass — at gameplay distance a 0.5-cell paddle on a
+ *  0.04-cell wire simply vanished, and the pair read as antennae. */
 export const KRAKEN_CLUB_AT = 0.86;
-export const KRAKEN_CLUB_LENGTH = 0.9;
-export const KRAKEN_CLUB_RISE = 0.34;
-export const KRAKEN_CLUB_WIDTH = 0.5;
+export const KRAKEN_CLUB_LENGTH = 1;
+export const KRAKEN_CLUB_RISE = 0.4;
+export const KRAKEN_CLUB_WIDTH = 0.6;
 
 /**
  * THE LIMB RING. All ten limbs sit on ONE evenly spaced ring rather than on an
@@ -201,11 +270,15 @@ export const KRAKEN_LIMB_STEP_RADIANS = (Math.PI * 2) / KRAKEN_LIMB_COUNT;
 export const KRAKEN_TENTACLE_SPREAD_RADIANS = KRAKEN_LIMB_STEP_RADIANS;
 
 /**
- * Total modelled height, origin to the mantle's tip — 8 cells, against
- * Cthulhu's 10.9. The kraken is the SHORTER animal and the one that shows far
- * more of itself; see the lurk depth below.
+ * Total modelled height: the hump's axis crest plus the widest ring the skin
+ * could add above it — a stated UPPER BOUND on the silhouette (the fattest
+ * ring actually sits past the crest, so the real skin tops a little lower).
+ * ~3.7 cells against Cthulhu's 10.9: the kraken is the LOW, BROAD animal (its
+ * own header: "a standing man and a spider on the water"), and after the
+ * 2026-08-19 correction its height finally agrees with that sentence — what
+ * shows above the sea is a humped back and a crown of arms, not a tower.
  */
-export const KRAKEN_TOTAL_HEIGHT = KRAKEN_MANTLE_TOP;
+export const KRAKEN_TOTAL_HEIGHT = KRAKEN_MANTLE_APEX_HEIGHT + KRAKEN_MANTLE_RADIUS;
 
 /**
  * Widest horizontal extent: arm tip to arm tip across the crown.
@@ -219,10 +292,12 @@ export const KRAKEN_TOTAL_HEIGHT = KRAKEN_MANTLE_TOP;
  *
  * THE BINDING CONSTRAINT is an arm tip: KRAKEN_ARM_TIP_REACH plus the tube's own
  * tip radius, 3.195 against the 3.5 half-footprint. Every other candidate — the
- * crest with its drift, a tentacle club, a fin, the mantle's widest ring — is
- * further inside, and all of them are pinned by tests. Widening any of these
- * without re-checking is how a limb ends up inside a cliff the server's probe
- * said was clear.
+ * crest with its drift, a tentacle club, a fin's rear edge, and (since the
+ * 2026-08-19 arch) the mantle's rearmost SKIN, tip backset plus local radius
+ * along the whole swept curve — is further inside, and all of them are pinned
+ * by tests (the mantle by sampling the real curve, not by adding two numbers).
+ * Widening any of these without re-checking is how a limb ends up inside a
+ * cliff the server's probe said was clear.
  */
 export const KRAKEN_WIDTH_CELLS = 7;
 

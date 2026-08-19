@@ -4,6 +4,7 @@
 // run in the same node environment as the server tests.
 
 import { describe, expect, it } from 'vitest';
+import { CatmullRomCurve3, Vector3 } from 'three';
 import { BAND_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { parseMonstersPayload, type MonsterState } from '../protocol.ts';
 import {
@@ -78,10 +79,23 @@ import {
   KRAKEN_HEAD_WRINKLE_DEPTH,
   KRAKEN_LIMB_COUNT,
   KRAKEN_LURK_DEPTH,
-  KRAKEN_MANTLE_BASE_HEIGHT,
+  KRAKEN_HEAD_CENTER_HEIGHT,
+  KRAKEN_HEAD_HEIGHT,
+  KRAKEN_HEAD_LENGTH,
+  KRAKEN_FIN_BACKSET,
+  KRAKEN_FIN_CENTER_HEIGHT,
+  KRAKEN_FIN_LENGTH,
+  KRAKEN_MANTLE_APEX_BACKSET,
+  KRAKEN_MANTLE_APEX_HEIGHT,
   KRAKEN_MANTLE_RADIUS,
-  KRAKEN_MANTLE_TOP,
+  KRAKEN_MANTLE_RISE_BACKSET,
+  KRAKEN_MANTLE_RISE_HEIGHT,
+  KRAKEN_MANTLE_ROOT_BACKSET,
+  KRAKEN_MANTLE_ROOT_HEIGHT,
+  KRAKEN_MANTLE_TIP_BACKSET,
+  KRAKEN_MANTLE_TIP_HEIGHT,
   KRAKEN_MANTLE_WRINKLE_DEPTH,
+  krakenMantleRadiusAt,
   KRAKEN_SHADE_VARIATION,
   KRAKEN_TENTACLE_COUNT,
   KRAKEN_TENTACLE_CREST_HEIGHT,
@@ -376,17 +390,24 @@ describe('placement', () => {
     // gone; the kraken has surfaced and shows nearly all of itself.
     const krakenOriginY = monsterOriginWorldY(-20, lurkDepthOf('kraken'));
     const krakenSubmerged = submergedFraction(krakenOriginY, KRAKEN_TOTAL_HEIGHT);
-    expect(krakenSubmerged).toBeLessThan(0.2);
+    // Under 0.35 since the 2026-08-19 anatomy correction (was 0.2 for the old
+    // vertical mantle): the surfaced read survives, but a floating body now
+    // carries an honest share of itself in the water instead of 90% in the sky.
+    expect(krakenSubmerged).toBeLessThan(0.35);
     expect(krakenSubmerged).toBeLessThan(
       submergedFraction(monsterOriginWorldY(-20, CTHULHU_DEPTH), CTHULHU_TOTAL_HEIGHT),
     );
   });
 
-  it('puts the kraken\'s eyes at the waterline and its mantle clear of it', () => {
+  it('puts the kraken\'s eyes at the waterline, its hump out of it, its tail in it', () => {
     const originY = monsterOriginWorldY(-20, lurkDepthOf('kraken'));
-    // Eye bottoms exactly one waterline bite under; the mantle standing out.
+    // Eye bottoms exactly one waterline bite under; the hump's crest standing
+    // out of the sea; the mantle's TAIL riding under it — the surfaced-animal
+    // read of the 2026-08-19 anatomy correction: a back breaking the water,
+    // not a tower balanced on it.
     expect(originY + KRAKEN_EYE_BOTTOM).toBeCloseTo(-KRAKEN_WATERLINE_BITE, 10);
-    expect(originY + KRAKEN_MANTLE_TOP).toBeGreaterThan(SEA_SURFACE_WORLD_Y);
+    expect(originY + KRAKEN_MANTLE_APEX_HEIGHT).toBeGreaterThan(SEA_SURFACE_WORLD_Y);
+    expect(originY + KRAKEN_MANTLE_TIP_HEIGHT).toBeLessThan(SEA_SURFACE_WORLD_Y);
     // ...and the arms lying ON the water: their crests break it, their tips do
     // not. That is the whole read of the crown from a boat.
     expect(originY + KRAKEN_ARM_CREST_HEIGHT).toBeGreaterThan(SEA_SURFACE_WORLD_Y);
@@ -522,10 +543,45 @@ describe('the kraken silhouette', () => {
     expect(crestReach).toBeLessThanOrEqual(halfFootprint);
     expect(KRAKEN_TENTACLE_TIP_REACH + KRAKEN_CLUB_LENGTH / 2).toBeLessThanOrEqual(halfFootprint);
     expect(KRAKEN_FIN_SPAN).toBeLessThanOrEqual(halfFootprint);
+    // The fins live at the TAIL since 2026-08-19, so their REAR edge is a
+    // horizontal-extent candidate too, not just their lateral span.
+    const finRear = KRAKEN_FIN_BACKSET + KRAKEN_FIN_LENGTH / 2;
+    expect(finRear).toBeLessThanOrEqual(halfFootprint);
     expect(KRAKEN_MANTLE_RADIUS).toBeLessThanOrEqual(halfFootprint);
     // ...and the arm tip really is the widest of them, which is what the anatomy
     // claims when it names the binding constraint.
-    expect(KRAKEN_ARM_TIP_REACH + KRAKEN_ARM_TIP_RADIUS).toBeGreaterThan(crestReach);
+    const armTip = KRAKEN_ARM_TIP_REACH + KRAKEN_ARM_TIP_RADIUS;
+    expect(armTip).toBeGreaterThan(crestReach);
+    expect(armTip).toBeGreaterThan(finRear);
+    expect(armTip).toBeGreaterThan(KRAKEN_TENTACLE_TIP_REACH + KRAKEN_CLUB_LENGTH / 2);
+  });
+
+  it('holds the mantle\'s swept SKIN inside the footprint, sampled off the real curve', () => {
+    // The arch (2026-08-19) runs backward along X, so the rearmost skin is a
+    // property of the whole swept tube — axis point plus local radius — not of
+    // any single constant. This samples the exact curve the builder sweeps
+    // (same control points, same radius function; three's CatmullRom is plain
+    // maths and runs fine under node) and holds every sample inside the
+    // half-footprint. It also proves KRAKEN_TOTAL_HEIGHT really is an upper
+    // bound on the skin's top, which the placement and dread maths lean on.
+    const axis = new CatmullRomCurve3([
+      new Vector3(-KRAKEN_MANTLE_ROOT_BACKSET, KRAKEN_MANTLE_ROOT_HEIGHT, 0),
+      new Vector3(-KRAKEN_MANTLE_RISE_BACKSET, KRAKEN_MANTLE_RISE_HEIGHT, 0),
+      new Vector3(-KRAKEN_MANTLE_APEX_BACKSET, KRAKEN_MANTLE_APEX_HEIGHT, 0),
+      new Vector3(-KRAKEN_MANTLE_TIP_BACKSET, KRAKEN_MANTLE_TIP_HEIGHT, 0),
+    ]);
+    const SAMPLES = 128;
+    let maxBack = 0;
+    let maxTop = -Infinity;
+    for (let step = 0; step <= SAMPLES; step++) {
+      const along = step / SAMPLES;
+      const point = axis.getPoint(along, new Vector3());
+      const radius = krakenMantleRadiusAt(along);
+      maxBack = Math.max(maxBack, Math.abs(point.x) + radius);
+      maxTop = Math.max(maxTop, point.y + radius);
+    }
+    expect(maxBack).toBeLessThanOrEqual(halfFootprint);
+    expect(maxTop).toBeLessThanOrEqual(KRAKEN_TOTAL_HEIGHT);
   });
 
   it('fits inside the lightning clearance the atmosphere derived from Cthulhu', () => {
@@ -553,16 +609,37 @@ describe('the kraken silhouette', () => {
     expect(KRAKEN_TENTACLE_TIP_REACH).toBeLessThan(KRAKEN_ARM_TIP_REACH);
   });
 
-  it('is shorter than Cthulhu and wears its height as a mantle, not a skull', () => {
-    expect(KRAKEN_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
-    expect(KRAKEN_TOTAL_HEIGHT).toBe(KRAKEN_MANTLE_TOP);
-    expect(KRAKEN_MANTLE_TOP).toBeGreaterThan(KRAKEN_HEAD_TOP);
-    // Taller than it is wide, like the other one: a raft is not a monster.
-    expect(KRAKEN_TOTAL_HEIGHT).toBeGreaterThan(KRAKEN_WIDTH_CELLS);
+  it('is far shorter than Cthulhu and wears its height as a humped back', () => {
+    // 2026-08-19 anatomy correction: the height IS the hump — apex plus the
+    // widest ring the skin can add — and the animal is deliberately WIDER than
+    // it is tall. The old pin ("taller than it is wide") described the
+    // physically-wrong tower; the spider-on-the-water read the header claims
+    // was only ever true of a low, broad silhouette.
+    expect(KRAKEN_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT / 2);
+    expect(KRAKEN_TOTAL_HEIGHT).toBe(KRAKEN_MANTLE_APEX_HEIGHT + KRAKEN_MANTLE_RADIUS);
+    expect(KRAKEN_MANTLE_APEX_HEIGHT).toBeGreaterThan(KRAKEN_HEAD_TOP);
+    expect(KRAKEN_WIDTH_CELLS).toBeGreaterThan(KRAKEN_TOTAL_HEIGHT);
   });
 
-  it('buries the mantle\'s collar inside the head instead of balancing it on top', () => {
-    expect(KRAKEN_MANTLE_BASE_HEIGHT).toBeLessThan(KRAKEN_HEAD_TOP);
+  it('grows the mantle out of the head instead of balancing it on top', () => {
+    // The axis root must sit INSIDE the head ellipsoid, so the arch reads as
+    // the animal's own back leaving its body — no seam, no backpack.
+    const headHalfLength = KRAKEN_HEAD_LENGTH / 2;
+    const headHalfHeight = KRAKEN_HEAD_HEIGHT / 2;
+    const normalized =
+      (KRAKEN_MANTLE_ROOT_BACKSET / headHalfLength) ** 2 +
+      ((KRAKEN_MANTLE_ROOT_HEIGHT - KRAKEN_HEAD_CENTER_HEIGHT) / headHalfHeight) ** 2;
+    expect(normalized).toBeLessThan(1);
+  });
+
+  it('rides its tail at the waterline, fins fused into it', () => {
+    // The fins are the tail's fluke (2026-08-19): their centre must overlap
+    // the mantle's own tip fore-and-aft, and sit at its height — a blade
+    // floating beside the body is a pancake, not a fin.
+    expect(Math.abs(KRAKEN_FIN_BACKSET - KRAKEN_MANTLE_TIP_BACKSET)).toBeLessThan(
+      KRAKEN_FIN_LENGTH / 2,
+    );
+    expect(Math.abs(KRAKEN_FIN_CENTER_HEIGHT - KRAKEN_MANTLE_TIP_HEIGHT)).toBeLessThan(0.5);
   });
 
   it('cannot wrinkle skin back through the waterline it was placed against', () => {
@@ -664,7 +741,12 @@ describe('the yeti silhouette', () => {
   });
 
   it('is the smallest of the three, and still taller than he is wide', () => {
-    expect(YETI_TOTAL_HEIGHT).toBeLessThan(KRAKEN_TOTAL_HEIGHT);
+    // Size ordering by each animal's own magnitude axis: the yeti stands under
+    // Cthulhu's height and inside the kraken's spread. (Height-vs-height
+    // against the kraken stopped meaning anything on 2026-08-19, when the
+    // kraken traded its physically-wrong tower for a low, broad surfaced
+    // body — its bigness is its 7-cell crown, not its stature.)
+    expect(YETI_TOTAL_HEIGHT).toBeLessThan(KRAKEN_WIDTH_CELLS);
     expect(YETI_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
     expect(YETI_TOTAL_HEIGHT).toBeGreaterThan(YETI_WIDTH_CELLS);
     // The crown of the head is the highest point, which is what the total is.

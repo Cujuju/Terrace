@@ -1,5 +1,6 @@
-// The kraken, built procedurally: a finned mantle rearing out of a squat head,
-// ringed by ten swept limbs that arch over the water and fall away under it.
+// The kraken, built procedurally: the humped back of its mantle arching out of
+// a squat head and running down to fin-flanked tail at the waterline, ringed by
+// ten swept limbs that drape over the water and trail away under it.
 //
 // Same rules and same tools as the Cthulhu builder (./geometry.ts): no textures,
 // no per-model lights, no Math.random anywhere in the geometry, shared resources
@@ -91,16 +92,17 @@ import {
   KRAKEN_HEAD_WRINKLE_DEPTH,
   KRAKEN_LIMB_COUNT,
   KRAKEN_LIMB_STEP_RADIANS,
-  KRAKEN_MANTLE_BASE_HEIGHT,
-  KRAKEN_MANTLE_BASE_RADIUS,
+  KRAKEN_MANTLE_APEX_BACKSET,
+  KRAKEN_MANTLE_APEX_HEIGHT,
   KRAKEN_MANTLE_COLOR,
-  KRAKEN_MANTLE_HEIGHT,
-  KRAKEN_MANTLE_RADIUS,
-  KRAKEN_MANTLE_RAKE_RADIANS,
-  KRAKEN_MANTLE_SHOULDER,
-  KRAKEN_MANTLE_TAPER_EXPONENT,
-  KRAKEN_MANTLE_TIP_RADIUS,
+  KRAKEN_MANTLE_RISE_BACKSET,
+  KRAKEN_MANTLE_RISE_HEIGHT,
+  KRAKEN_MANTLE_ROOT_BACKSET,
+  KRAKEN_MANTLE_ROOT_HEIGHT,
+  KRAKEN_MANTLE_TIP_BACKSET,
+  KRAKEN_MANTLE_TIP_HEIGHT,
   KRAKEN_MANTLE_WRINKLE_DEPTH,
+  krakenMantleRadiusAt,
   KRAKEN_PULSE_HZ,
   KRAKEN_PULSE_RISE,
   KRAKEN_PULSE_SWELL,
@@ -132,20 +134,8 @@ const MANTLE_RADIAL_SEGMENTS_BASE = 3;
 const LIMB_PATH_SEGMENTS_BASE = 5;
 const LIMB_RADIAL_SEGMENTS_BASE = 2;
 
-/**
- * Control points sampled along the mantle's axis. Three is the fewest that can
- * express a lean that grows with height (base, middle, tip) rather than a
- * straight tilt; more would be sampling a curve that has no more shape in it.
- */
-const MANTLE_AXIS_POINTS = 3;
-/**
- * How much of the tip's total rake the mantle has taken up by its midpoint.
- *
- * 0.6 rather than 0.5, which is what makes the lean a CURVE: the mantle leaves
- * the head almost upright, bends back through the middle, and finishes with its
- * tip trailing furthest. A straight rake reads as a leaning cone.
- */
-const MANTLE_MID_RAKE_FRACTION = 0.6;
+// (The mantle's axis is stated point-for-point in kraken-anatomy.ts — root,
+// apex, tip — so the footprint test can sample the very same curve.)
 
 /** This creature's skin, at a given carve depth. See cthulhu.ts for the shape. */
 function krakenSkin(wrinkleDepth: number): SkinFinish {
@@ -240,49 +230,29 @@ export function createKrakenFactory(workshop: ModelWorkshop): () => MonsterModel
   // ── Mantle ─────────────────────────────────────────────────────────────────
 
   /**
-   * The mantle's axis: up from inside the head, leaning back as it climbs.
+   * The mantle's axis: out of the back of the head, over the hump's apex, down
+   * to the tail riding at the waterline — the three (backset, height) pairs the
+   * anatomy states (2026-08-19: the arch that replaced the standing cone).
    *
-   * X is negative going back (the model faces +X), and the rake is applied as a
-   * horizontal offset per unit of rise rather than as a rotation of the tube, so
-   * KRAKEN_MANTLE_TOP stays the exact height of the tip instead of its height
-   * times a cosine.
+   * X is negative going back (the model faces +X). The SAME three points are
+   * re-sampled by the footprint test in test/client.test.ts, which is what
+   * holds the swept curve — not just its control points — inside the stated
+   * half-footprint.
    */
   function mantleAxis(): CatmullRomCurve3 {
-    const totalRake = Math.tan(KRAKEN_MANTLE_RAKE_RADIANS) * KRAKEN_MANTLE_HEIGHT;
-    const points: Vector3[] = [];
-    for (let step = 0; step < MANTLE_AXIS_POINTS; step++) {
-      const along = step / (MANTLE_AXIS_POINTS - 1);
-      // Half way up the mantle has already taken MID_RAKE_FRACTION of the lean,
-      // so the curve bends back rather than tilting.
-      const rake = along === 0.5 ? totalRake * MANTLE_MID_RAKE_FRACTION : totalRake * along;
-      points.push(new Vector3(-rake, KRAKEN_MANTLE_BASE_HEIGHT + KRAKEN_MANTLE_HEIGHT * along, 0));
-    }
-    return new CatmullRomCurve3(points);
-  }
-
-  /**
-   * The mantle's radius profile: swelling from the collar to the shoulder, then
-   * a long taper to the tip. Two segments, each stated as a lerp, so the widest
-   * ring is exactly KRAKEN_MANTLE_RADIUS and exactly where the anatomy says.
-   */
-  function mantleRadiusAt(along: number): number {
-    if (along <= KRAKEN_MANTLE_SHOULDER) {
-      const swell = along / KRAKEN_MANTLE_SHOULDER;
-      return KRAKEN_MANTLE_BASE_RADIUS + (KRAKEN_MANTLE_RADIUS - KRAKEN_MANTLE_BASE_RADIUS) * swell;
-    }
-    const taper = (along - KRAKEN_MANTLE_SHOULDER) / (1 - KRAKEN_MANTLE_SHOULDER);
-    return (
-      KRAKEN_MANTLE_RADIUS +
-      (KRAKEN_MANTLE_TIP_RADIUS - KRAKEN_MANTLE_RADIUS) *
-        Math.pow(taper, KRAKEN_MANTLE_TAPER_EXPONENT)
-    );
+    return new CatmullRomCurve3([
+      new Vector3(-KRAKEN_MANTLE_ROOT_BACKSET, KRAKEN_MANTLE_ROOT_HEIGHT, 0),
+      new Vector3(-KRAKEN_MANTLE_RISE_BACKSET, KRAKEN_MANTLE_RISE_HEIGHT, 0),
+      new Vector3(-KRAKEN_MANTLE_APEX_BACKSET, KRAKEN_MANTLE_APEX_HEIGHT, 0),
+      new Vector3(-KRAKEN_MANTLE_TIP_BACKSET, KRAKEN_MANTLE_TIP_HEIGHT, 0),
+    ]);
   }
 
   const mantleGeometry = organicSurface(
     [
       taperedTube(
         mantleAxis(),
-        mantleRadiusAt,
+        krakenMantleRadiusAt,
         segments(MANTLE_PATH_SEGMENTS_BASE),
         segments(MANTLE_RADIAL_SEGMENTS_BASE),
       ),
@@ -519,9 +489,12 @@ export function createKrakenFactory(workshop: ModelWorkshop): () => MonsterModel
         // rather than as a second animation happening at the same time.
         const pulse = Math.sin(seconds * KRAKEN_PULSE_HZ * TWO_PI + phase);
         rig.position.y = pulse * KRAKEN_PULSE_RISE;
-        // Along the mantle's own axis only: swelling it in every direction would
-        // fatten the fins with it, and a fin is a blade, not a bladder.
-        mantle.scale.set(1 + pulse * KRAKEN_PULSE_SWELL, 1, 1 + pulse * KRAKEN_PULSE_SWELL);
+        // ACROSS the mantle only — vertical and lateral, never fore-aft: the
+        // arch now runs backward along X (2026-08-19), and a fore-aft swell
+        // would push the tail past the footprint the server steers by. The
+        // vertical component lifts the hump a hair at the top of the pulse,
+        // which is what a body moving water through itself looks like.
+        mantle.scale.set(1, 1 + pulse * KRAKEN_PULSE_SWELL, 1 + pulse * KRAKEN_PULSE_SWELL);
 
         // THE WAVE: each limb leads the next by its phase step, so the crown
         // ripples around itself instead of flapping as one piece. One rotation

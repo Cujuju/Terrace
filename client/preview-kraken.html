@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kraken preview (throwaway)</title>
+    <style>
+      /* Same neutral studio backdrop as preview.html / preview-pilgrims.html. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #808080;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness, mirroring preview-pilgrims.html for the
+         monsters plugin's sea kinds. Not part of the shipped app: reached only
+         by navigating here directly. Renders one swimmer at its true lurk
+         depth against a translucent waterline plane, because how much of the
+         animal is above the water IS the thing under review — see
+         previewKraken.ts for the contract. -->
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/previewKraken.ts"></script>
+  </body>
+</html>
