@@ -595,22 +595,28 @@ type SpillBoundsOf = (index: number) => SpillBand | null;
  * is left alone and reported UNCHANGED, which is what lets the sweep still
  * converge (a capped pair that cannot move must not count as progress).
  *
- * ACCEPTED RESIDUAL (documented like #12's): where a band cap binds, the pair
- * can be left exceeding MAX_STEP — a standing over-steep ring at the brush
- * edge — until a later edit whose footprint covers it relaxes it. That is the
- * owner's trade (issue #26): a rendered level appearing outside the brush is
- * worse than a locally over-steep slope at its edge.
+ * STANDING RESIDUAL (issue #26, measured 2026-08-19): where a band cap binds,
+ * the pair is left exceeding MAX_STEP — an over-steep wall at the brush ring.
+ * Banded relaxation can NEVER repair it: the capped side cannot rise past its
+ * band, and the coupled rule then refuses to move the free side either
+ * (t = 0), so further banded smooth strokes leave the wall standing however
+ * many are thrown at it (measured: hundreds of strokes, excess never falls).
+ * It is removed only by deliberately LOWERING the high side — brush deltas
+ * are uncapped inside the footprint — or by a 'free' (plugin) sculpt covering
+ * it. That permanence is consistent with the game's own precedent: the stamp
+ * tool deliberately builds sheer walls that relaxation never touches.
  *
- * Both indices are added to `changed` whenever the pair is adjusted (even the
- * side whose own delta rounded to zero — the pre-#26 behaviour, kept so free
- * mode's changed-set, and therefore the wire diff, is bit-identical).
+ * REJECTED ALTERNATIVE: resolving a capped pair by moving ONLY the free side
+ * down to `capped + MAX_STEP`. It would "repair" the wall by eroding the
+ * mound at its ring (~25k height-units lost on a measured slope scenario) and
+ * would cap every smooth-built structure at the ring's band + MAX_STEP —
+ * a worse trade than a standing wall the player built on purpose.
  */
 function movePair(
   cells: Int16Array,
   hiIdx: number,
   loIdx: number,
   e: number,
-  changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
 ): boolean {
   let drop = e >> 1;
@@ -632,8 +638,6 @@ function movePair(
   }
   cells[hiIdx] -= drop;
   cells[loIdx] += rise;
-  changed.add(hiIdx);
-  changed.add(loIdx);
   return true;
 }
 
@@ -642,9 +646,11 @@ function movePair(
  * `cells[j]` differ by more than MAX_STEP, the higher of the two loses
  * `floor(e/2)` (`e` the excess over MAX_STEP) and the lower gains the rest,
  * leaving the pair at exactly MAX_STEP — subject to band caps when `boundsOf`
- * is non-null (see movePair). Both indices are added to `changed` when the
- * pair is adjusted. Returns whether it was, so a sweep can tell whether the
- * pass changed anything.
+ * is non-null (see movePair). Both indices are added to `changed`, in (i, j)
+ * caller order and even when one side's own delta rounded to zero — the
+ * pre-#26 behaviour, kept so free mode's changed-set is bit-identical in
+ * contents AND insertion order. Returns whether the pair was adjusted, so a
+ * sweep can tell whether the pass changed anything.
  */
 function relaxPair(
   cells: Int16Array,
@@ -654,13 +660,17 @@ function relaxPair(
   boundsOf: SpillBoundsOf | null,
 ): boolean {
   const d = cells[i] - cells[j];
+  let moved = false;
   if (d > MAX_STEP) {
-    return movePair(cells, i, j, d - MAX_STEP, changed, boundsOf);
+    moved = movePair(cells, i, j, d - MAX_STEP, boundsOf);
+  } else if (d < -MAX_STEP) {
+    moved = movePair(cells, j, i, -d - MAX_STEP, boundsOf);
   }
-  if (d < -MAX_STEP) {
-    return movePair(cells, j, i, -d - MAX_STEP, changed, boundsOf);
+  if (moved) {
+    changed.add(i);
+    changed.add(j);
   }
-  return false;
+  return moved;
 }
 
 /**
@@ -834,8 +844,9 @@ export function applySculpt(
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.
   if (tool === 'smooth') {
-    // The footprint set serves two masters, from the ONE footprint iterator
-    // (forEachFootprintOffset — see its doc for why agreement is structural):
+    // The footprint set serves two masters, built by forEachFootprintCell —
+    // the same offset→bounds-check→index step every brush runs, shared so the
+    // agreement is structural (see forEachFootprintOffset's doc):
     //   - the bounding-box seed of a fully clamped stroke (#12): a brush that
     //     changed nothing (e.g. stroking a MAX_HEIGHT plateau) used to make
     //     the smooth tool a silent no-op that left standing cliffs
@@ -848,12 +859,9 @@ export function applySculpt(
     // call shape (no footprint computed at all) bit for bit.
     let footprint: Set<number> | undefined;
     if (changed.size === 0 || spill === 'banded') {
-      footprint = new Set<number>();
-      forEachFootprintOffset(radius, (dx, dy) => {
-        const x = cx + dx;
-        const y = cy + dy;
-        if (inBounds(map, x, y)) footprint?.add(cellIndex(map, x, y));
-      });
+      const cells = new Set<number>();
+      forEachFootprintCell(map, cx, cy, radius, (i) => cells.add(i));
+      footprint = cells;
     }
     smooth(
       map,

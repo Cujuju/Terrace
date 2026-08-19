@@ -414,8 +414,18 @@ terrace/
   when the stroke touched it — the spill can slope ground, it can never create
   or erase a rendered level outside the brush ("area outside of the brush
   should never be raised or lowered ahead of the structure under the brush").
-  Accepted residual: where the cap binds, the MAX_STEP invariant may stand
-  exceeded at the brush ring until a later edit covers it. Plumbed as a third
+  Standing residual (measured 2026-08-19): where the cap binds, the MAX_STEP
+  invariant stands exceeded at the brush ring — PERMANENTLY, as far as banded
+  relaxation is concerned: the capped side cannot rise past its band and the
+  coupled transfer rule then moves neither side, so further banded smooth
+  strokes never lower the excess (verified over hundreds of strokes). The wall
+  is removed only by deliberately lowering the high side (brush deltas are
+  uncapped inside the footprint) or by a plugin's 'free' sculpt covering it —
+  consistent with the stamp tool's precedent that sheer player-built walls are
+  legal and permanent. Rejected alternative: slumping only the free side down
+  to the cap + MAX_STEP — it erodes the built mound at its ring (~25k
+  height-units on a measured slope scenario) and caps every smooth build at
+  the ring's band + MAX_STEP. Plumbed as a third
   resolved option, `spill: 'banded' | 'free'` — never carried on the wire
   (fairness policy, not brush shape); wire default `banded`, library default
   `free` so plugin terraforms keep the unbounded relaxation they were tuned

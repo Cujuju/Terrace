@@ -99,5 +99,14 @@ export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
  * gradient invariant may be locally violated until a later edit resumes
  * relaxation — deterministic on both sides, and `smooth` reports its pass
  * count so callers can observe a truncated cascade.
+ *
+ * BANDED SPILL NOTE (issue #26, measured 2026-08-19): the per-spread-cell
+ * budget above was measured on the FREE relaxation path. Banded containment
+ * shifts the worst cases without breaking the budget: on legal (invariant-
+ * satisfying) maps the banded worst case observed runs ~2.3× the free path's
+ * passes (83 vs 36) — still well under the cap — while the worst
+ * PLAYER-CONSTRUCTIBLE cascades converge far faster banded than free (9 vs 67
+ * passes), because the band caps stop the excess from travelling. The #12
+ * stress tests pin both modes.
  */
 export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;

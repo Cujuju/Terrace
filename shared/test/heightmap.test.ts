@@ -1048,18 +1048,30 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     const map = ledgeMap(64);
     const before = Int16Array.from(map.cells);
     const fp = footprintOf(64, CX, CY, RADIUS);
-    for (let s = 0; s < STROKES; s++) {
+    // Per-stroke outside movement: the containment contract has two phases —
+    // early strokes still drag outside terrain (the fabric pull survives),
+    // then the band caps fill and the spill SATURATES: later strokes move
+    // nothing outside at all. Both phases are the contract, so both are
+    // asserted, per stroke rather than as one accumulated count.
+    const movedPerStroke: number[] = [];
+    const strokes = 12;
+    for (let s = 0; s < strokes; s++) {
+      const preStroke = Int16Array.from(map.cells);
       applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
+      let moved = 0;
+      for (let i = 0; i < map.cells.length; i++) {
+        if (!fp.has(i) && map.cells[i] !== preStroke[i]) moved++;
+      }
+      movedPerStroke.push(moved);
     }
-    let outsideMoved = 0;
     for (let i = 0; i < map.cells.length; i++) {
       if (fp.has(i)) continue;
       expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
-      if (map.cells[i] !== before[i]) outsideMoved++;
     }
-    // The containment must not degenerate into "no spill at all": the fabric
-    // pull still moved outside terrain, just within its own bands.
-    expect(outsideMoved).toBeGreaterThan(0);
+    // Phase 1: the containment is not "no spill at all".
+    expect(movedPerStroke[0]).toBeGreaterThan(0);
+    // Phase 2: the caps saturate and outside terrain stops moving entirely.
+    expect(movedPerStroke[strokes - 1]).toBe(0);
   });
 
   it('never changes the rendered band of a cell outside the footprint (lowering)', () => {
@@ -1104,23 +1116,23 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
   });
 
-  it('a capped ring never bleeds the mound: a raising stroke nets at least the brush volume', () => {
-    // THE EROSION GUARD. If clamping were uncoupled — the free side shedding
-    // its half while the capped side cannot absorb it — every extra pass
-    // would delete terrain at the brush ring and this sum would fall below
-    // the volume the brush itself added. Coupled transfers make every
-    // relaxation move net >= 0 for the map total (free pairs may round +1 on
-    // an odd excess; banded pairs move both sides equally, net 0), so the
-    // stroke's net volume must be at least the brush's own.
+  it('a capped ring never bleeds the mound: banded relaxation alone never nets negative', () => {
+    // THE EROSION GUARD, as a relaxation-ONLY run so no brush delta can mask
+    // the leak. If clamping were uncoupled — the free side shedding its half
+    // while the capped side cannot absorb it — every pass would delete
+    // terrain at the ring and the map total would fall. Coupled transfers
+    // make every relaxation move net >= 0 for the map total (free pairs may
+    // round +1 on an odd excess; banded pairs move both sides equally, net
+    // 0), so pure relaxation must never lower the sum.
     const map = ledgeMap(64);
-    const brushOnly = ledgeMap(64);
+    const fp = footprintOf(64, CX, CY, RADIUS);
+    // A hand-built spire on the footprint: tall enough that its ring binds
+    // the caps hard and relaxation has many passes in which to leak.
+    for (const i of fp) map.cells[i] += DEFAULT_SCULPT_AMOUNT * 8;
     const sum = (m: Heightmap) => m.cells.reduce((a, b) => a + b, 0);
     const before = sum(map);
-    applyBrush(brushOnly, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, new Set(), 'soft');
-    const brushVolume = sum(brushOnly) - before;
-    expect(brushVolume).toBeGreaterThan(0);
-    applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
-    expect(sum(map) - before).toBeGreaterThanOrEqual(brushVolume);
+    smooth(map, new Set<number>(), fp, fp);
+    expect(sum(map) - before).toBeGreaterThanOrEqual(0);
   });
 
   it('is deterministic: identical banded strokes give identical maps and diffs', () => {
@@ -1153,5 +1165,131 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
       expect(da).toEqual(db);
     }
     expect(absent.cells).toEqual(explicit.cells);
+  });
+
+  /** Max gradient excess over MAX_STEP across the whole map. */
+  function maxExcess(map: Heightmap): number {
+    const { size, cells } = map;
+    let worst = 0;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = y * size + x;
+        if (x < size - 1) worst = Math.max(worst, Math.abs(cells[i] - cells[i + 1]) - MAX_STEP);
+        if (y < size - 1) worst = Math.max(worst, Math.abs(cells[i] - cells[i + size]) - MAX_STEP);
+      }
+    }
+    return worst;
+  }
+
+  /** The #12 plateau: `bands` level-fill strokes at (x, y), radius 4. */
+  function stampPlateau(map: Heightmap, x: number, y: number, bands: number): void {
+    for (let s = 0; s < bands; s++) {
+      applySculpt(map, x, y, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
+    }
+  }
+
+  const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
+
+  it('pins the standing residual of the #12 plateau scenario: 871 units of excess', () => {
+    // The STANDING RESIDUAL made concrete (see movePair's doc): a 15-band
+    // stamped plateau smoothed with one banded stroke leaves the ring
+    // exceeding MAX_STEP by exactly this much — 871 = 27× MAX_STEP — and
+    // banded relaxation can never lower it (next test). A change to this
+    // number is a change to the containment maths and must be deliberate.
+    const map = createHeightmap(128);
+    stampPlateau(map, 64, 64, 15);
+    applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
+    expect(maxExcess(map)).toBe(871);
+  });
+
+  it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
+    const map = createHeightmap(128);
+    stampPlateau(map, 64, 64, 15);
+    applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
+    const standing = maxExcess(map);
+    for (let s = 0; s < 20; s++) {
+      applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
+    }
+    expect(maxExcess(map)).toBeGreaterThanOrEqual(standing);
+  });
+
+  // The three #12 cascade scenarios, re-run banded (see the free-path
+  // originals in 'smooth — cascades from stamped terrain (#12)'). The free
+  // path's assertion — the gradient limit holds everywhere — is exactly what
+  // banded gives up at the ring, so here the contract is: outside bands
+  // untouched, and convergence stays inside the pass budget (measured: the
+  // player-constructible cascades converge FASTER banded, 9 vs 67 passes,
+  // because the caps stop the excess from travelling — see SMOOTH_PASS_LIMIT).
+  it('#12 cascade, banded: one smooth stroke on a 15-band plateau', () => {
+    const map = createHeightmap(128);
+    stampPlateau(map, 64, 64, 15);
+    const before = Int16Array.from(map.cells);
+    const fp = footprintOf(128, 64, 64, 4);
+    applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
+    for (let i = 0; i < map.cells.length; i++) {
+      if (!fp.has(i)) expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+    }
+  });
+
+  it('#12 cascade, banded: a fully clamped smooth stroke still relaxes under the brush', () => {
+    const map = createHeightmap(128);
+    stampPlateau(map, 64, 64, 16);
+    expect(heightAt(map, 64, 64)).toBe(MAX_HEIGHT);
+    const before = Int16Array.from(map.cells);
+    const fp = footprintOf(128, 64, 64, 4);
+    const diff = applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
+    // The stroke still does its #12 job (relaxes SOMETHING despite the
+    // clamped brush) without leaking a band outside the footprint.
+    expect(diff.length).toBeGreaterThan(0);
+    for (let i = 0; i < map.cells.length; i++) {
+      if (!fp.has(i)) expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+    }
+  });
+
+  it('#12 cascade, banded: converges under the pass cap on the worst plateau (9 passes)', () => {
+    const map = createHeightmap(128);
+    stampPlateau(map, 64, 64, 15);
+    const changed = new Set<number>();
+    applyBrush(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, changed, 'hard');
+    const passes = smooth(map, changed, undefined, footprintOf(128, 64, 64, 4));
+    expect(passes).toBeGreaterThan(0);
+    expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
+    // Pinned: the caps stop the excess from travelling, so banded converges
+    // in 9 passes where the free path needs 67 on this same scenario.
+    expect(passes).toBe(9);
+  });
+
+  it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {
+    // Deterministic LCG so a failure reproduces exactly.
+    let seed = 0x2f26;
+    const next = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed;
+    };
+    for (let trial = 0; trial < 8; trial++) {
+      const size = 48;
+      const map = createHeightmap(size);
+      for (let i = 0; i < map.cells.length; i++) {
+        map.cells[i] = (next() % 2049) - 1024; // anywhere in [MIN, MAX]
+      }
+      for (let stroke = 0; stroke < 5; stroke++) {
+        const cx = next() % size;
+        const cy = next() % size;
+        const radius = 1 + (next() % 4);
+        const profile = next() % 2 === 0 ? 'soft' : 'hard';
+        const amount = (next() % 2 === 0 ? 1 : -1) * DEFAULT_SCULPT_AMOUNT;
+        const fp = footprintOf(size, cx, cy, radius);
+        const before = Int16Array.from(map.cells);
+        applySculpt(map, cx, cy, radius, amount, { tool: 'smooth', profile, spill: 'banded' });
+        for (let i = 0; i < map.cells.length; i++) {
+          if (!fp.has(i) && bandOf(map.cells[i]) !== bandOf(before[i])) {
+            throw new Error(
+              `trial ${trial} stroke ${stroke} (${cx},${cy}) r${radius} ${profile} ${amount}: ` +
+              `cell ${i} band ${bandOf(before[i])} -> ${bandOf(map.cells[i])}`,
+            );
+          }
+        }
+      }
+    }
   });
 });
