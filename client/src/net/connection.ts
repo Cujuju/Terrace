@@ -153,9 +153,12 @@ export function connect(options: ConnectionOptions): Connection {
     retryDelay = RECONNECT_MIN_DELAY_MS;
 
     // Terrain routing. Payloads arrive already msgpack-decoded. They are
-    // trusted only as far as the shared helpers allow — writeChunkHeights and
-    // the diff loop both bounds-check — so a malformed message cannot corrupt
-    // the mirror.
+    // trusted only as far as the shared helpers allow — writeChunkHeights
+    // validates the chunk coords, payload length, and every height, and the
+    // diff loop bounds-checks each cell's coords and height the same way —
+    // so a malformed message cannot corrupt the mirror; mirror.ts catches and
+    // drops (with a console warning) any chunk that still fails validation,
+    // rather than letting it throw out of this handler.
     joined.onMessage<JoinSnapshotMessage>(MSG_SNAPSHOT, (msg) => {
       options.sink.onSnapshot(msg);
     });

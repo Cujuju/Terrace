@@ -23,6 +23,7 @@ import {
   chunkIndex,
   chunksPerEdge,
   createHeightmap,
+  isValidHeight,
   writeChunkHeights,
   type ChunkPayload,
   type ChunkUnlockMessage,
@@ -111,9 +112,20 @@ export function chunksDirtiedByCell(
  */
 function applyChunkPayload(mirror: TerrainMirror, chunk: ChunkPayload): number[] {
   const worldSize = mirror.map.size;
-  // writeChunkHeights bounds-checks the chunk coords and the payload length,
-  // so a malformed server message throws here rather than corrupting the map.
-  writeChunkHeights(mirror.map, chunk.cx, chunk.cy, chunk.heights);
+  // writeChunkHeights bounds-checks the chunk coords, the payload length, and
+  // now every individual height (isValidHeight) — a malformed server message
+  // throws rather than silently corrupting the map. Caught immediately below
+  // and dropped: the established drop-don't-crash policy for server-
+  // originated messages (see applyTerrainDiff below), because one bad chunk
+  // in a broadcast must not take down every client's render loop, and the
+  // chunk is simply never marked received.
+  try {
+    writeChunkHeights(mirror.map, chunk.cx, chunk.cy, chunk.heights);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[terrace] dropping malformed chunk (${chunk.cx},${chunk.cy}): ${message}`);
+    return [];
+  }
 
   const idx = chunkIndex(worldSize, chunk.cx, chunk.cy);
   mirror.received.add(idx);
@@ -161,10 +173,11 @@ export function applyChunkUnlock(
  * Applies an authoritative cell diff — the hot path: this runs for every
  * sculpt anyone in the world performs.
  *
- * Cells outside the map are dropped defensively rather than thrown on: a diff
- * is a broadcast to every client, and one malformed entry must not take down
- * a client's whole render loop. (The server validates intents before applying
- * them, so this is belt-and-suspenders, not an expected path.)
+ * Cells outside the map, or carrying an invalid height, are dropped
+ * defensively rather than thrown on: a diff is a broadcast to every client,
+ * and one malformed entry must not take down a client's whole render loop.
+ * (The server validates intents before applying them, so this is
+ * belt-and-suspenders, not an expected path.)
  *
  * Returns the chunk indices to re-patch. Note it returns chunks regardless of
  * whether we hold them; the renderer ignores indices with no mesh.
@@ -183,7 +196,8 @@ export function applyTerrainDiff(
       cell.x < 0 ||
       cell.y < 0 ||
       cell.x >= worldSize ||
-      cell.y >= worldSize
+      cell.y >= worldSize ||
+      !isValidHeight(cell.h)
     ) {
       continue;
     }
