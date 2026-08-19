@@ -18,6 +18,13 @@ export interface BridgedStructureCell {
   readonly x: number;
   readonly y: number;
   readonly tier: number;
+  /**
+   * Generations the cell has survived (structures' LiveCellRecord.age),
+   * OPTIONAL: a structures build from before 2026-08-19 doesn't send it.
+   * Consumers treat absence as "old enough" — degrading an age gate to the
+   * ungated old behaviour, never to silence.
+   */
+  readonly age?: number;
 }
 
 /** The slice of structures this plugin uses — deliberately tiny. */

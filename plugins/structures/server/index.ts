@@ -388,8 +388,24 @@ export const plugin: TerracePlugin = {
 // active route. Re-exported here so the bridge has ONE module to load.
 export { setBlessedStructureCells } from './blessings.ts';
 
-export function standingStructures(): StructureCell[] {
-  return liveCells();
+/**
+ * A standing town as bridge consumers see it: the wire cell plus how long it
+ * has STOOD — `age` is life.ts's generations-survived counter (resets on
+ * birth), the CA's own measure of "has been here some while". Deliberately
+ * NOT on the client wire: packStructureCells packs x/y/tier explicitly, so
+ * this field costs the broadcast nothing.
+ */
+export interface StandingStructure extends StructureCell {
+  readonly age: number;
+}
+
+export function standingStructures(): StandingStructure[] {
+  const cells: StandingStructure[] = [];
+  for (const [key, record] of live) {
+    const cell = cellOfKey(key);
+    cells.push({ x: cell.x, y: cell.y, tier: record.tier, age: record.age });
+  }
+  return cells;
 }
 
 /** The live board's raw records (age AND tier), for suites asserting on the CA's own state. */

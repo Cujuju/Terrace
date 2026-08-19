@@ -28,7 +28,7 @@ import {
   type PilgrimWorld,
 } from '../server/pilgrimage.ts';
 import {
-  WANDERER_MIN_TIER,
+  WANDERER_MIN_AGE_GENERATIONS,
   WANDER_EPOCH_SECONDS,
   WANDER_RANGE_CELLS,
   Wandering,
@@ -309,15 +309,15 @@ describe('the wandering', () => {
   function runWander(
     sim: Wandering,
     world: PilgrimWorld,
-    settlements: ReadonlyArray<{ x: number; y: number; tier: number }>,
+    settlements: ReadonlyArray<{ x: number; y: number; age?: number }>,
     seconds: number,
   ): void {
     const ticks = Math.round(seconds / TICK);
     for (let i = 0; i < ticks; i++) sim.advance(world, settlements, TICK);
   }
 
-  const TOWN = { x: 40, y: 60, tier: WANDERER_MIN_TIER };
-  const NEIGHBOUR = { x: 52, y: 60, tier: WANDERER_MIN_TIER }; // 12 cells away
+  const TOWN = { x: 40, y: 60, age: WANDERER_MIN_AGE_GENERATIONS };
+  const NEIGHBOUR = { x: 52, y: 60, age: WANDERER_MIN_AGE_GENERATIONS }; // 12 cells away
 
   it('dispatches from an established town to a neighbour, visits, and walks home', () => {
     const world = islandWorld();
@@ -336,26 +336,36 @@ describe('the wandering', () => {
     expect(sim.states().every((w) => w.id !== first.id)).toBe(true);
   });
 
-  it('establishment means "outlived camphood" on structures’ 0-based ladder', () => {
-    // Golden pin against the ladder this constant restates (own-copy rule):
-    // structures' STRUCTURE_TIERS[0] is 'camp', so the first tier above a
-    // camp is 1. Shipping this as 2 (a 1-based guess) silenced every stroll
-    // on the live world — this pin makes the next such guess fail loudly.
-    expect(WANDERER_MIN_TIER).toBe(1);
+  it('establishment is the CA clock: one epoch of survived generations', () => {
+    // Golden derivation pin: 4 generations × structures' 15 s cadence (own-
+    // copy restatement) IS the dispatch epoch, so "old enough to stroll" and
+    // "outlived a full roll cycle" stay the same statement. This gate shipped
+    // twice as a TIER bar and both times silenced every stroll on the live
+    // world — a changed relationship here must be a decision, not a drift.
+    const STRUCTURES_GENERATION_SECONDS = 15;
+    expect(WANDERER_MIN_AGE_GENERATIONS * STRUCTURES_GENERATION_SECONDS).toBe(
+      WANDER_EPOCH_SECONDS,
+    );
   });
 
-  it('never dispatches from below the establishment tier, or with nowhere to go', () => {
+  it('never dispatches from the too-young, and absent age qualifies', () => {
     const world = islandWorld();
-    const camp = { ...TOWN, tier: WANDERER_MIN_TIER - 1 };
+    const newborn = { ...TOWN, age: WANDERER_MIN_AGE_GENERATIONS - 1 };
     const sim = new Wandering(undefined, ROLL_EVERY_EPOCH);
-    sim.advance(world, [camp, { ...NEIGHBOUR, tier: WANDERER_MIN_TIER - 1 }], TICK);
-    expect(sim.populationCount()).toBe(0); // camps stroll nowhere
+    sim.advance(world, [newborn, { ...NEIGHBOUR, age: 0 }], TICK);
+    expect(sim.populationCount()).toBe(0); // fresh cells stroll nowhere
+
+    // A structures build too old to send age: the gate degrades to ungated
+    // (both endpoints dispatch), never to silence.
+    const ageless = new Wandering(undefined, ROLL_EVERY_EPOCH);
+    ageless.advance(world, [{ x: TOWN.x, y: TOWN.y }, { x: NEIGHBOUR.x, y: NEIGHBOUR.y }], TICK);
+    expect(ageless.populationCount()).toBe(2);
 
     const lonely = new Wandering(undefined, ROLL_EVERY_EPOCH);
     lonely.advance(world, [TOWN], TICK); // no other town within range
     expect(lonely.populationCount()).toBe(0);
 
-    const remote = { x: TOWN.x + WANDER_RANGE_CELLS + 5, y: TOWN.y, tier: WANDERER_MIN_TIER };
+    const remote = { x: TOWN.x + WANDER_RANGE_CELLS + 5, y: TOWN.y, age: TOWN.age };
     const outOfRange = new Wandering(undefined, ROLL_EVERY_EPOCH);
     outOfRange.advance(world, [TOWN, remote], TICK);
     expect(outOfRange.populationCount()).toBe(0);
@@ -367,7 +377,7 @@ describe('the wandering', () => {
     const towns = Array.from({ length: WANDERERS_CAP + 8 }, (_, i) => ({
       x: 20 + i * 3,
       y: 60,
-      tier: WANDERER_MIN_TIER,
+      age: WANDERER_MIN_AGE_GENERATIONS,
     }));
     sim.advance(world, towns, TICK);
     expect(sim.populationCount()).toBe(WANDERERS_CAP);
@@ -377,9 +387,9 @@ describe('the wandering', () => {
     const world = islandWorld();
     // A dense honest town grid — SOME cells roll at SOME epoch; which ones is
     // exactly what must reproduce.
-    const towns: Array<{ x: number; y: number; tier: number }> = [];
+    const towns: Array<{ x: number; y: number; age?: number }> = [];
     for (let x = 8; x < 120; x += 6) {
-      for (let y = 40; y < 80; y += 6) towns.push({ x, y, tier: WANDERER_MIN_TIER });
+      for (let y = 40; y < 80; y += 6) towns.push({ x, y, age: WANDERER_MIN_AGE_GENERATIONS });
     }
     const a = new Wandering();
     const b = new Wandering();

@@ -38,19 +38,31 @@ import type { SettlerRace } from '../protocol.ts';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Settlement tier below which a town sends nobody. 1 — the FIRST TIER ABOVE
- * A CAMP: structures' ladder is 0-BASED (its protocol.ts: STRUCTURE_TIERS =
- * ['camp', …], camp = 0), so "outlived camphood" is tier ≥ 1, restated here
- * by value under the own-copy rule. A camp is a CA cell that may die next
- * generation, and a wanderer from a town that vanished mid-stroll walks home
- * to nothing; anything above that has stood some while — which is exactly
- * what the tier ladder already measures, so re-measuring age here would
- * duplicate structures' clock. (Shipped first as 2 on the unverified guess
- * that tiers were 1-based; on the live world that demanded the third rung of
- * BOTH endpoints and produced zero wanderers in twenty epochs — caught by
- * the wire probe, 2026-08-19.)
+ * Generations a settlement must have SURVIVED before it sends (or receives)
+ * wanderers. This is the card's own phrase — "settlements that have stood
+ * some while" — measured by the CA's own clock: structures' per-cell `age`
+ * counter (generations survived, reset on every birth), carried over the
+ * bridge since 2026-08-19.
+ *
+ * 4 — one dispatch epoch: 4 CA generations × 15 s = 60 s = WANDER_EPOCH_
+ * SECONDS, so "old enough to stroll" and "has outlived a full roll cycle"
+ * are the same statement, and a B3/S23 blinker edge (which dies in 1–2
+ * generations) can never send anyone. An absent age (older structures build)
+ * qualifies — the gate degrades to ungated, never to silence.
+ *
+ * WHY AGE AND NOT TIER, recorded: this gate shipped twice as a tier bar
+ * (first tier ≥ 2 on a 1-based guess, then ≥ 1 corrected to the 0-based
+ * ladder) and the live wire probe still showed ZERO wanderers in twenty
+ * epochs — tier-ups are world-events on a young world (the chronicle
+ * celebrates the FIRST hut), so any tier bar gates the feature on prestige
+ * the world barely has. Age is what "stood some while" actually says.
  */
-export const WANDERER_MIN_TIER = 1;
+export const WANDERER_MIN_AGE_GENERATIONS = 4;
+
+/** True when a settlement row is old enough to take part in wandering. */
+function isEstablished(cell: SettlementCell): boolean {
+  return (cell.age ?? Infinity) >= WANDERER_MIN_AGE_GENERATIONS;
+}
 
 /**
  * Seconds per dispatch epoch. 60 — four CA generations (15 s each): long
@@ -108,7 +120,8 @@ interface Wanderer {
 interface SettlementCell {
   readonly x: number;
   readonly y: number;
-  readonly tier: number;
+  /** Generations survived; absent from a pre-age structures build. */
+  readonly age?: number;
 }
 
 /**
@@ -207,7 +220,7 @@ export class Wandering {
 
     for (const cell of ordered) {
       if (this.wanderers.size >= WANDERERS_CAP) break;
-      if (cell.tier < WANDERER_MIN_TIER) continue;
+      if (!isEstablished(cell)) continue;
       if (!isWalkableCell(world, cell.x, cell.y)) continue;
       if (this.hasWandererFrom(cell.x, cell.y)) continue;
 
@@ -232,7 +245,7 @@ export class Wandering {
           (c) =>
             c.distanceSq > 0 &&
             c.distanceSq <= WANDER_RANGE_CELLS * WANDER_RANGE_CELLS &&
-            c.other.tier >= WANDERER_MIN_TIER &&
+            isEstablished(c.other) &&
             isWalkableCell(world, c.other.x, c.other.y),
         )
         .sort(
