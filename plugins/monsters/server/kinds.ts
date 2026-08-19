@@ -337,9 +337,16 @@ export const YETI_FOOTPRINT_CELLS = 5;
  * that is the intended weight of the event. Four chunks, the sea threshold
  * verbatim, would have doubled a bill that is already the largest thing this
  * plugin asks of a player.
+ *
+ * AMENDMENT (owner decision, 2026-08-19): the bar is lowered to ONE THIRD of
+ * the above — 170 cells — so a yeti is reachable without a mega-project. The
+ * chunk-multiple framing above no longer holds at a third of a chunk, so the
+ * source of truth is now the CELL COUNT itself, derived directly from the
+ * pre-cut figure this comment justified. What it counts is unchanged: a TOTAL
+ * over one connected, flood-filled region, of any shape — never a chunk grid
+ * cell, never a bounding box.
  */
-export const YETI_LAIR_MIN_AREA_CHUNKS = 2;
-export const YETI_MIN_LAIR_SNOW_CELLS = YETI_LAIR_MIN_AREA_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+export const YETI_MIN_LAIR_SNOW_CELLS = Math.floor((2 * CHUNK_SIZE * CHUNK_SIZE) / 3);
 
 /**
  * How high the highest cell of the yeti's lair must be, in bands above sea.
@@ -372,7 +379,8 @@ export const LAIR_COLLAPSE_HYSTERESIS_DIVISOR = 4;
 
 /**
  * Cells in its own snowfield below which the yeti's lair has COLLAPSED and he
- * leaves: 128 cells, a ~11×11 patch.
+ * leaves: a quarter of the (now 170-cell) arrival threshold — 42 cells, a
+ * ~6.5×6.5 patch.
  *
  * AREA ONLY, DELIBERATELY — not height, for the reason the kraken's collapse
  * test is area-only: re-testing an arrival condition every five seconds is the

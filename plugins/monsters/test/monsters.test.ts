@@ -163,7 +163,8 @@ const MASSIF_CENTER = 24;
  *
  * Two bands over the snow line, so a level-fill stroke has to take three whole
  * bands off it before it stops being habitat. Radius 14 → ~613 cells, over the
- * yeti's 512-cell demand and under a fifth of the map.
+ * yeti's 170-cell demand (owner decision, 2026-08-19) and under a fifth of the
+ * map.
  */
 const ALPINE_PEAK_HEIGHT = (SNOW_LINE_BANDS_ABOVE_SEA + 2) * BAND_HEIGHT;
 const ALPINE_PLATEAU_RADIUS = 14;
@@ -655,9 +656,10 @@ function alpineStubWorld(sea: BasinState, snow: MassifState): LairWorld {
 }
 
 /**
- * A snowfield the yeti qualifies for: radius 14 → ~613 cells, past his 512-cell
- * demand, and its summit two bands over the line. The radius is also what keeps
- * it clear of every basin here — see MASSIF_CENTER.
+ * A snowfield the yeti qualifies for: radius 14 → ~613 cells, past his
+ * 170-cell demand (owner decision, 2026-08-19), and its summit two bands over
+ * the line. The radius is also what keeps it clear of every basin here — see
+ * MASSIF_CENTER.
  */
 function yetiMassif(): MassifState {
   return { radius: 14, peakHeight: SNOW_LINE_MIN_HEIGHT + 2 * BAND_HEIGHT };
@@ -1612,12 +1614,27 @@ describe('the yeti in the high Alps', () => {
   it('never arrives on a snowfield too small to be a lair', () => {
     setMonsterRandomSource(ALWAYS);
     // Deep enough into the snow, far too little of it: height alone is not a
-    // lair, which is the half of the rule the area threshold carries.
-    const world = massifWorld({ radius: 8, peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT });
-    expect(Math.PI * 8 * 8).toBeLessThan(YETI_MIN_LAIR_SNOW_CELLS);
+    // lair, which is the half of the rule the area threshold carries. Radius 6
+    // → ~113 cells, under the 170-cell demand.
+    const world = massifWorld({ radius: 6, peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT });
+    expect(Math.PI * 6 * 6).toBeLessThan(YETI_MIN_LAIR_SNOW_CELLS);
 
     for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
     expect(livingMonsters()).toEqual([]);
+  });
+
+  it('arrives on a snowfield too small for the pre-amendment 512-cell bar', () => {
+    // Owner decision, 2026-08-19: the bar dropped from 512 cells to a third of
+    // that (170). Radius 8 → ~197 cells — past the CURRENT demand and short of
+    // the OLD one — so this world pins the actual behaviour change: it summons
+    // a yeti now and would have summoned nothing before the amendment.
+    expect(Math.PI * 8 * 8).toBeGreaterThan(YETI_MIN_LAIR_SNOW_CELLS);
+    expect(Math.PI * 8 * 8).toBeLessThan(512);
+
+    setMonsterRandomSource(ALWAYS);
+    const world = massifWorld({ radius: 8, peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT });
+    advanceSummoning(world, TICK_DT);
+    expect(snowMonster()!.kind).toBe('yeti');
   });
 
   it('never arrives on high ground that is below the snow line', () => {
@@ -1683,7 +1700,7 @@ describe('the yeti in the high Alps', () => {
 
     // Shrink it below the collapse threshold while his own cell stays snow, so
     // the ONLY thing that can drive him off is the region test.
-    snow.radius = 4;
+    snow.radius = 3;
     expect(Math.PI * snow.radius * snow.radius).toBeLessThan(YETI_LAIR_COLLAPSE_SNOW_CELLS);
     expect(isLairCell(LAND_HABITAT, world, snowMonster()!.x, snowMonster()!.y)).toBe(true);
 
@@ -1750,7 +1767,7 @@ describe('the yeti in the high Alps', () => {
     expect(snowMonster()!.kind).toBe('yeti');
     const krakenId = seaMonster()!.id;
 
-    snow.radius = 4;
+    snow.radius = 3;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
