@@ -77,6 +77,7 @@ import {
   takeCensus,
   targetsFor,
 } from './census.ts';
+import { randomSigned } from './rng.ts';
 import { SCHOOLING_PROBABILITY_BY_SIZE, type SizeWeights, profileOf } from './species.ts';
 
 /** A living creature. Mutable — the tick loop writes these in place. */
@@ -237,6 +238,20 @@ export function pendingCreditCount(): number {
 }
 
 /**
+ * Snapshot of every pending credit's species and readyAt, for tests that need
+ * to check WHICH credits survived a removal — pendingCreditCount() alone
+ * cannot distinguish "the ripe credit that earned this spawn was removed" from
+ * "the not-yet-ripe one was removed instead", which is exactly the distinction
+ * the removal step in consumeCredits has to get right (see its comment).
+ */
+export function pendingCreditsSnapshot(): ReadonlyArray<{
+  readonly species: WildlifeHabitatSpecies;
+  readonly readyAt: number;
+}> {
+  return credits.map((credit) => ({ ...credit }));
+}
+
+/**
  * The id the next spawn will take. Persisted, so ids are never reused across a
  * restart even when every creature happened to be despawned at snapshot time.
  */
@@ -313,8 +328,9 @@ function reconcileToTargets(): void {
     }
     if (deficit === 0) continue;
 
-    // Surplus. Cancel unripe credits first — cheaper, and it avoids despawning
-    // something a player may currently be looking at.
+    // Surplus. Cancel the most-recently-added credits for this species first
+    // (scanning from the end) — cheaper than despawning a living creature, and
+    // it avoids despawning something a player may currently be looking at.
     let surplus = -deficit;
     for (let i = credits.length - 1; i >= 0 && surplus > 0; i--) {
       if (credits[i].species !== species) continue;
@@ -417,8 +433,8 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
 
   for (let n = 0; n < wanted; n++) {
     // Member 0 sits exactly on the known-valid seed; the rest scatter.
-    const x = n === 0 ? seed.x : seed.x + (Math.random() * 2 - 1) * scatter;
-    const y = n === 0 ? seed.y : seed.y + (Math.random() * 2 - 1) * scatter;
+    const x = n === 0 ? seed.x : seed.x + randomSigned(scatter);
+    const y = n === 0 ? seed.y : seed.y + randomSigned(scatter);
     if (!isValidCellFor(world, species, x, y)) continue;
     entities.push({
       id: allocateEntityId(),
@@ -485,9 +501,16 @@ function consumeCredits(world: HabitatWorld, dt: number): void {
       return;
     }
 
+    // Debit exactly the credits `created` was earned against: ripe ones, same
+    // as ripeCreditCount()'s and findIndex's predicate above. A habitat-loss
+    // credit pushed for this species (readyAt still in the future) must never
+    // be removed here just because it happens to sit later in the array than
+    // the ripe credits that actually paid for this spawn — that would both
+    // discard a recovery nobody has hatched yet AND leave the ripe credit that
+    // DID pay for it still pending, to spawn a duplicate later.
     let removed = 0;
     for (let i = credits.length - 1; i >= 0 && removed < created; i--) {
-      if (credits[i].species !== species) continue;
+      if (credits[i].species !== species || credits[i].readyAt > simSeconds) continue;
       credits.splice(i, 1);
       removed++;
     }

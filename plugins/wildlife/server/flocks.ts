@@ -59,6 +59,7 @@ import {
   turnToward,
 } from './movement.ts';
 import { allocateEntityId } from './population.ts';
+import { randomSigned } from './rng.ts';
 
 /** The only flock species today. Named once so nothing spells it inline. */
 const BIRD_SPECIES: WildlifeFlockSpecies = 'bird';
@@ -355,8 +356,8 @@ export function spawnFlock(world: FlockWorld): Flock {
   const entryY = centre + Math.sin(entryAngle) * radius;
 
   const aimSpread = world.worldSize * FLOCK_AIM_SPREAD_FRACTION;
-  const aimX = centre + (Math.random() * 2 - 1) * aimSpread;
-  const aimY = centre + (Math.random() * 2 - 1) * aimSpread;
+  const aimX = centre + randomSigned(aimSpread);
+  const aimY = centre + randomSigned(aimSpread);
   const courseHeading = Math.atan2(aimY - entryY, aimX - entryX);
 
   const birds: Bird[] = [];
@@ -364,8 +365,8 @@ export function spawnFlock(world: FlockWorld): Flock {
   for (let n = 0; n < wanted; n++) {
     birds.push({
       id: allocateEntityId(),
-      x: entryX + (Math.random() * 2 - 1) * FLOCK_SPAWN_SCATTER_CELLS,
-      y: entryY + (Math.random() * 2 - 1) * FLOCK_SPAWN_SCATTER_CELLS,
+      x: entryX + randomSigned(FLOCK_SPAWN_SCATTER_CELLS),
+      y: entryY + randomSigned(FLOCK_SPAWN_SCATTER_CELLS),
       // One shared heading at birth; cohesion and noise take it from there.
       heading: courseHeading,
     });
@@ -407,7 +408,7 @@ export function advanceBird(
   school: SchoolSummary,
   dt: number,
 ): void {
-  const noise = (Math.random() * 2 - 1) * BIRD_TURN_NOISE_RADIANS_PER_SECOND * dt;
+  const noise = randomSigned(BIRD_TURN_NOISE_RADIANS_PER_SECOND * dt);
   const wander = normalizeAngle(bird.heading + noise);
   const onCourse = turnToward(
     wander,

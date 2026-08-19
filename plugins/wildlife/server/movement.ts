@@ -10,6 +10,7 @@
 import { WILDLIFE_SIZE_MODEL_SCALE } from '../protocol.ts';
 import { type HabitatWorld, isValidCellFor } from './census.ts';
 import { type WildlifeEntity, livingEntities } from './population.ts';
+import { randomSigned } from './rng.ts';
 import { SCHOOL_LOOSENESS_BY_SIZE, profileOf } from './species.ts';
 
 const TWO_PI = Math.PI * 2;
@@ -418,7 +419,7 @@ export function advanceEntity(
   const profile = profileOf(entity.species);
   const fleeing = entity.fleeSecondsRemaining > 0;
   // A fleeing creature swims straight: panic suppresses idle meandering.
-  const noise = fleeing ? 0 : (Math.random() * 2 - 1) * profile.turnNoiseRadiansPerSecond * dt;
+  const noise = fleeing ? 0 : randomSigned(profile.turnNoiseRadiansPerSecond * dt);
 
   const wander = normalizeAngle(entity.heading + noise);
   const desired =

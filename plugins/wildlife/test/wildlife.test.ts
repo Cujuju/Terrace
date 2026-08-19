@@ -92,14 +92,17 @@ import {
 } from '../server/movement.ts';
 import { loadPopulation } from '../server/persistence.ts';
 import {
+  HABITAT_LOSS_RESPAWN_DELAY_SECONDS,
   NATURAL_LIFESPAN_SECONDS,
   SPAWN_MEAN_WAIT_SECONDS,
+  advancePopulation,
   applyNaturalTurnover,
   despawnInvalidHabitat,
   despawnWithCredit,
   livingEntities,
   naturalDepartureCount,
   pendingCreditCount,
+  pendingCreditsSnapshot,
   populationTargets,
   type WildlifeEntity,
 } from '../server/population.ts';
@@ -664,6 +667,85 @@ describe('wildlife plugin', () => {
       }
     }
     expect(newFishSeen.size).toBeGreaterThan(0);
+  });
+});
+
+describe('credit removal after a spawn honours ripeness, not recency', () => {
+  beforeEach(() => {
+    resetWildlifeState();
+  });
+
+  // Regression test for the bug consumeCredits' removal loop used to have: it
+  // sized `wanted` off every credit for a species (ripe or not) but then
+  // debited the removal purely by species and array position (scanning from
+  // the end), with no readyAt check. A habitat-loss credit is always PUSHED
+  // last, so it always sat at the end of the array — meaning the removal loop
+  // would delete it first, before it had ever ripened, while the ripe credit
+  // that actually earned the spawn stayed pending to fire again later.
+  //
+  // This drives population.ts directly (no PluginHost, no movement) so the dt
+  // handed to each event can be chosen exactly: with every ripe credit's
+  // readyAt at 0, `ripe * dt / SPAWN_MEAN_WAIT_SECONDS` is EXACT, not
+  // statistical, so dt = SPAWN_MEAN_WAIT_SECONDS / ripe drives the clamped
+  // probability to exactly 1 and the spawn roll is certain — no seeded RNG
+  // needed, and none used.
+  it('never removes a not-yet-ripe habitat-loss credit to pay for a ripe one’s spawn', () => {
+    // Uniform shallow water, fully unlocked: only fish have habitat here, so
+    // every credit in play is unambiguously fish and nothing else competes for
+    // WILDLIFE_POPULATION_CAP.
+    const world = habitatView(worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL));
+    let simSeconds = 0;
+
+    // First census: the whole deficit becomes ripe credits in one shot (this
+    // plugin's "how a brand new world fills up").
+    advancePopulation(world, 0);
+    const target = populationTargets().fish;
+    expect(target).toBeGreaterThan(0);
+    expect(pendingCreditCount()).toBe(target);
+
+    // Event 1: certain to fire (ratio pinned to exactly 1), spawns one group
+    // from the ripe deficit credits. How many actually land is irrelevant here
+    // — read it back rather than assuming spawnGroup's scatter always
+    // succeeds.
+    const firstDt = SPAWN_MEAN_WAIT_SECONDS / target;
+    advancePopulation(world, firstDt);
+    simSeconds += firstDt;
+    const spawnedInFirstEvent = livingEntities().length;
+    expect(spawnedInFirstEvent).toBeGreaterThan(0);
+
+    // Manufacture the race: a habitat-loss despawn on one of those fish pushes
+    // a credit that must not hatch for HABITAT_LOSS_RESPAWN_DELAY_SECONDS —
+    // onto the SAME species' queue that still holds ripe, census-deficit
+    // credits from event 1. despawnWithCredit always PUSHES, so this credit is
+    // now the last element of the array — exactly the position the old bug's
+    // end-scanning removal always hit first.
+    despawnWithCredit(0);
+    const delayedReadyAt = simSeconds + HABITAT_LOSS_RESPAWN_DELAY_SECONDS;
+    const fishCreditsBeforeEvent2 = pendingCreditsSnapshot().filter((c) => c.species === 'fish');
+    expect(fishCreditsBeforeEvent2.some((c) => c.readyAt === delayedReadyAt)).toBe(true);
+
+    const ripeBeforeEvent2 = fishCreditsBeforeEvent2.filter((c) => c.readyAt <= simSeconds).length;
+    // The race only exists if there is at least one OTHER ripe credit for the
+    // roll to fire on; with target comfortably above the fish group size, the
+    // deficit left over from event 1 guarantees this.
+    expect(ripeBeforeEvent2).toBeGreaterThan(0);
+
+    // Event 2: again pinned to certain, sized off the ripe credits only — and
+    // small enough that simSeconds cannot reach delayedReadyAt, so the
+    // habitat-loss credit is definitely still unripe when this event's
+    // removal runs.
+    const secondDt = SPAWN_MEAN_WAIT_SECONDS / ripeBeforeEvent2;
+    expect(simSeconds + secondDt).toBeLessThan(delayedReadyAt);
+    advancePopulation(world, secondDt);
+    simSeconds += secondDt;
+    expect(livingEntities().length).toBeGreaterThan(spawnedInFirstEvent - 1);
+
+    // THE ASSERTION: the still-unripe habitat-loss credit survived the
+    // removal untouched. Under the bug this fails deterministically — the
+    // credit sat last in the array, and the old removal always consumed from
+    // the end.
+    const fishCreditsAfterEvent2 = pendingCreditsSnapshot().filter((c) => c.species === 'fish');
+    expect(fishCreditsAfterEvent2.some((c) => c.readyAt === delayedReadyAt)).toBe(true);
   });
 });
 
