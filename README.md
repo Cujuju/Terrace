@@ -280,13 +280,27 @@ Two behaviours worth knowing:
 ## Development setup
 
 You need **Node 24+** (the server runs `.ts` directly via Node's type stripping — no
-build step) and **pnpm 10** (`corepack enable` gets you the pinned version).
+build step) and **pnpm 10** (`corepack enable` gets you the pinned version). **Python
+3** is only needed for the `run_server.py` convenience launcher below — skip it and run
+the two `pnpm` commands yourself if you don't have it.
 
 ```sh
 pnpm install            # a warning about ignored build scripts for better-sqlite3
                         # and msgpackr-extract is expected — both ship prebuilt
                         # binaries, nothing needs compiling
+```
 
+Then start the dev stack. `run_server.py` is one command for both halves:
+
+```sh
+python3 run_server.py   # world server on :2567 + Vite dev client on :5173;
+                        # Ctrl-C stops both cleanly (each runs in its own
+                        # process group so neither is orphaned)
+```
+
+or run them yourself in two terminals:
+
+```sh
 pnpm --filter @terrace/server start     # world server on :2567
 pnpm --filter @terrace/client dev       # Vite dev server on :5173
 ```
@@ -294,12 +308,51 @@ pnpm --filter @terrace/client dev       # Vite dev server on :5173
 Open <http://localhost:5173>. The dev client defaults to `ws://localhost:2567`;
 `VITE_SERVER_URL` and `VITE_ROOM_NAME` override it.
 
+`run_server.py`'s `CONFIG` dict at the top mirrors the server's own env vars (`PORT`,
+`WORLD_SIZE`, `WORLD_DIFFICULTY`, `DB_PATH`, `TICK_HZ`, `SNAPSHOT_INTERVAL_S`,
+`PLUGINS_DIR`, `CLIENT_DIST_PATH`) — edit a value there, set it to `None` to fall back
+to the server's built-in default, or export it in the shell for a one-off override
+(`PORT=2599 python3 run_server.py`). Its `CLIENT_MODE` switches between `"dev"`
+(default — spawns the Vite dev server, always current, nothing to rebuild), `"static"`
+(builds `client/dist` once if missing and lets the game server serve it on `:PORT`,
+but does **not** rebuild on source changes) and `"none"` (server only).
+
 ```sh
 pnpm typecheck          # every workspace package
 pnpm test               # Vitest across the workspace
 ```
 
 Both must pass before any commit that touches `shared/`.
+
+### LAN play from WSL2
+
+If the server runs inside WSL2 (Windows), phones and other PCs on the LAN can't reach
+it directly — WSL2 sits behind its own NAT'd address. In an **elevated** PowerShell on
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\expose-lan.ps1
+```
+
+This forwards ports `5173` (Vite dev client) and `2567` (game server / WebSocket
+protocol, and the built client in `"static"` mode) from Windows to the current WSL IP
+via `netsh interface portproxy`, opens matching inbound firewall rules, and prints the
+LAN IP to hand out. The WSL IP drifts across reboots, so **re-run this after every
+reboot** if phones stop connecting.
+
+**Use the raw IP the script prints, not a `<hostname>.local` name.** A `.local` mDNS
+name answers with several addresses at once (an IPv6 link-local plus every virtual
+adapter), and a device that picks the wrong one — iPhones prefer IPv6 — fails to
+connect, apparently at random. The raw IPv4 address is deterministic.
+
+One LAN-specific gotcha already fixed: `crypto.randomUUID()`, used to mint a player's
+identity token, only works in a browser
+[secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)
+(HTTPS or `localhost`) — a phone opening `http://<lan-ip>:5173` is neither, and calling
+it threw, which the join code misread as "server not up" and retried forever (silent,
+permanent "Offline"). The client now falls back to building the same UUID shape from
+`crypto.getRandomValues` (no secure-context restriction) when `randomUUID` is missing,
+so plain-HTTP LAN play works — see `client/src/state/playerToken.ts`.
 
 ### Workspace layout
 
@@ -312,7 +365,16 @@ client/     Vite + SolidJS + Three.js. Solid owns the HUD; a plain imperative
             render loop owns the canvas.
 server/     Colyseus room, tick loop, intent pipeline, unlock mask, SQLite
             snapshots, plugin host. One process = one world.
-plugins/    auto-discovered at boot.
+plugins/    auto-discovered at boot, alphabetical directory order:
+              flora       trees grow in on green ground left undisturbed
+              invite      hands joining players a shareable URL for their friends
+              mana        a regenerating resource pool that vetoes/charges sculpts
+              monsters    a singleton habitat creature that guards its territory
+              relics      collectible skill gems (passive and active) players find
+              reveal      per-player progressive territory unlock
+              structures  settlements as Conway's Game of Life over buildable land
+              weather     ambient rain/storm/snow/fog — reads terrain, never writes it
+              wildlife    ambient/reactive fauna population sim
 ```
 
 Conventions that matter if you send a patch: TypeScript strict, named exports,
