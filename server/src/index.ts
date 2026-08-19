@@ -203,6 +203,14 @@ async function main(): Promise<void> {
 
   await gameServer.listen(config.port);
   logInfo(`listening on ws://0.0.0.0:${config.port} (room "${ROOM_NAME}")`);
+  // The line a self-hoster actually needs: where to point a browser. The ws://
+  // line above is the protocol endpoint, not a page — printing only that
+  // reads as "the client lives at 2567" while a browser gets a 404 (#20).
+  if (clientExpressHook !== undefined) {
+    logInfo(`play at http://localhost:${config.port} (same URL on your LAN address)`);
+  } else {
+    logInfo(`no built client to serve — browse the Vite dev server instead (pnpm --dir client dev)`);
+  }
 }
 
 main().catch((error: unknown) => {
