@@ -13,6 +13,7 @@ import {
   createTerrainMirror,
   hasChunk,
   sampleHeight,
+  sampleRenderHeight,
 } from '../src/terrain/mirror.ts';
 
 /** 64 cells = 4×4 chunks: small enough to reason about, big enough for corners. */
@@ -50,6 +51,76 @@ describe('sampleHeight', () => {
     expect(sampleHeight(mirror, -5, -5)).toBe(300);
     // Past the far edge clamps onto the last cell, which is unreceived → 0.
     expect(sampleHeight(mirror, WORLD + 10, WORLD + 10)).toBe(0);
+  });
+});
+
+describe('sampleRenderHeight', () => {
+  /** A chunk whose heights come from each cell's own WORLD coordinates. */
+  function chunkPayloadFrom(
+    cx: number,
+    cy: number,
+    height: (x: number, y: number) => number,
+  ): ChunkPayload {
+    const heights: number[] = [];
+    for (let j = 0; j < CHUNK_SIZE; j++) {
+      for (let i = 0; i < CHUNK_SIZE; i++) {
+        heights.push(height(cx * CHUNK_SIZE + i, cy * CHUNK_SIZE + j));
+      }
+    }
+    return { cx, cy, heights };
+  }
+
+  /** Distinct-per-cell heights, small enough to be valid at any coordinate. */
+  const coordHeight = (x: number, y: number): number => x * 10 + y;
+
+  function mirrorWithCoordChunks(chunks: Array<[number, number]>) {
+    const mirror = createTerrainMirror(WORLD);
+    applySnapshot(mirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: chunks.map(([cx, cy]) => chunkPayloadFrom(cx, cy, coordHeight)),
+    });
+    return mirror;
+  }
+
+  it('returns received cells untouched, exactly like sampleHeight', () => {
+    const mirror = mirrorWithCoordChunks([[0, 0]]);
+    expect(sampleRenderHeight(mirror, 5, 5)).toBe(sampleHeight(mirror, 5, 5));
+    expect(sampleRenderHeight(mirror, 15, 15)).toBe(coordHeight(15, 15));
+  });
+
+  it('pulls a column-seam sample in an unreceived chunk back one cell west', () => {
+    const mirror = mirrorWithCoordChunks([[0, 0]]);
+    // (16, 5) is chunk (1,0)'s first column — never received. sampleHeight
+    // reads the phantom zero; the renderer's sampler steps back onto the
+    // received terrain instead (issue #22, no accidental frontier cliff).
+    expect(sampleHeight(mirror, CHUNK_SIZE, 5)).toBe(0);
+    expect(sampleRenderHeight(mirror, CHUNK_SIZE, 5)).toBe(coordHeight(CHUNK_SIZE - 1, 5));
+  });
+
+  it('pulls a row-seam sample back one cell north', () => {
+    const mirror = mirrorWithCoordChunks([[0, 0]]);
+    expect(sampleRenderHeight(mirror, 5, CHUNK_SIZE)).toBe(coordHeight(5, CHUNK_SIZE - 1));
+  });
+
+  it('resolves a chunk-corner sample in one fixed order every reader agrees on', () => {
+    const corner = CHUNK_SIZE; // world (16,16): owned by chunk (1,1)
+    // Only the diagonal (0,0) received → falls through to its corner cell.
+    expect(
+      sampleRenderHeight(mirrorWithCoordChunks([[0, 0]]), corner, corner),
+    ).toBe(coordHeight(CHUNK_SIZE - 1, CHUNK_SIZE - 1));
+    // North neighbour (1,0) received → its cell (16,15) wins, first in order.
+    expect(
+      sampleRenderHeight(mirrorWithCoordChunks([[0, 0], [1, 0]]), corner, corner),
+    ).toBe(coordHeight(corner, CHUNK_SIZE - 1));
+    // West neighbour (0,1) received (north not) → its cell (15,16) is next.
+    expect(
+      sampleRenderHeight(mirrorWithCoordChunks([[0, 0], [0, 1]]), corner, corner),
+    ).toBe(coordHeight(CHUNK_SIZE - 1, corner));
+    // Owner (1,1) received → the real sample, untouched.
+    expect(
+      sampleRenderHeight(mirrorWithCoordChunks([[1, 1]]), corner, corner),
+    ).toBe(coordHeight(corner, corner));
   });
 });
 

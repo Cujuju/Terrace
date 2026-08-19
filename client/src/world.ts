@@ -106,6 +106,20 @@ export function createWorld(viewport: Viewport): World {
    * by design (see the server's intent pipeline), so nothing else would ever
    * take that prediction back off the screen.
    */
+  /**
+   * The one door every HEIGHT change goes through on its way to the screen:
+   * patches the dirty chunks' terrain meshes AND rewrites the frontier-fog
+   * segments standing on them, so the mist bank (which hugs the ground —
+   * render/frontierFog.ts) can never be left floating over a sculpt at the
+   * boundary. Events that change `received` (snapshot, chunkUnlock) call
+   * fog.sync afterwards as well; that is about WHICH segments exist, not
+   * their heights.
+   */
+  const applyDirty = (dirty: Set<number>): void => {
+    meshes?.update(dirty);
+    if (mirror !== null) fog.refresh(mirror, dirty);
+  };
+
   const armExpiryTimer = (): void => {
     clearExpiryTimer();
     const dueAt = predictions?.nextExpiryAtMs();
@@ -114,7 +128,7 @@ export function createWorld(viewport: Viewport): World {
       () => {
         expiryTimer = null;
         if (meshes === null || predictions === null) return;
-        meshes.update(predictions.expire(nowMs()));
+        applyDirty(predictions.expire(nowMs()));
         armExpiryTimer(); // predictions may remain that expire later
       },
       Math.max(0, dueAt - nowMs()),
@@ -234,7 +248,7 @@ export function createWorld(viewport: Viewport): World {
       // predictions rolled off and any the server has now confirmed retired),
       // then patch only the chunk meshes those cells touch — including
       // neighbours across a shared border.
-      meshes.update(
+      applyDirty(
         predictions.applyAuthoritative((m) => applyTerrainDiff(m, msg), nowMs()),
       );
       armExpiryTimer();
@@ -242,7 +256,7 @@ export function createWorld(viewport: Viewport): World {
 
     predictSculpt(intent: SculptIntent): void {
       if (meshes === null || predictions === null) return;
-      meshes.update(predictions.predict(intent, nowMs()));
+      applyDirty(predictions.predict(intent, nowMs()));
       armExpiryTimer();
     },
 
@@ -250,7 +264,7 @@ export function createWorld(viewport: Viewport): World {
       if (meshes === null || predictions === null) return;
       // The denied stroke comes off the screen the moment the nack lands —
       // one round trip — instead of at the prediction deadline.
-      meshes.update(predictions.resolveSeq(msg.seq));
+      applyDirty(predictions.resolveSeq(msg.seq));
       armExpiryTimer();
     },
 
@@ -261,7 +275,7 @@ export function createWorld(viewport: Viewport): World {
       // holds the server's version of this edit and dropping our own copy of
       // it changes nothing on screen — which is exactly the point: keeping it
       // would draw the same edit twice until the deadline (issue #21).
-      meshes.update(predictions.resolveSeq(msg.seq));
+      applyDirty(predictions.resolveSeq(msg.seq));
       armExpiryTimer();
     },
 

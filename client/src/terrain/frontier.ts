@@ -19,6 +19,11 @@
 // so no skirt — is ever generated. That is the whole inconsistency: whether
 // the frontier shows a cliff is an accident of the LOCAL HEIGHT at the edge,
 // never a deliberate, uniform statement that "revealed territory ends here".
+// — FIXED at the sampling layer since issue #22: mirror.sampleRenderHeight now
+// pulls a sample in a never-received chunk back onto received terrain, so the
+// accidental frontier cliff is no longer drawn at all and the mist built from
+// this module is the frontier's ONLY rendering. The diagnosis above is kept
+// because it documents why the fix lives in the sampler, not here.
 //
 // This module deliberately reads none of that. A frontier edge is a fact
 // about the RECEIVED-CHUNK SET alone — never a height — which is what makes

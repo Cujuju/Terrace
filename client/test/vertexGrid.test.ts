@@ -967,15 +967,16 @@ describe('chunk seams', () => {
     expect(counts.skirtTriangleCount).toBe(0);
   });
 
-  it('walls off the edge of received territory down to the sea', () => {
-    // Chunk (1,0) was never sent, so its cells read height 0 through the
-    // mirror. The revealed plateau therefore ends in a cliff down to the
-    // waterline rather than in mid-air.
-    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 300)]), 0, 0);
-    const skirts = skirtsOf(triangles);
-    expect(skirts.length).toBeGreaterThan(0);
-    const lowest = Math.min(...skirts.flatMap((t) => [t.a.y, t.b.y, t.c.y]));
-    expect(lowest).toBeCloseTo(-SEABED_CAP_SINK);
+  it('grows no skirt where received territory simply ends — the frontier renders like the world border (issue #22)', () => {
+    // Chunk (0,0)'s east/south neighbours were never sent. The renderer pulls
+    // their samples back onto received terrain (mirror.sampleRenderHeight),
+    // so the plateau extends flat to the domain edge instead of contouring a
+    // cliff against a phantom sea-level neighbour — the mist bank
+    // (render/frontierFog.ts) is the frontier's only rendering. This INVERTS
+    // the pre-#22 pin ("walls off the edge of received territory down to the
+    // sea"), which asserted the accidental cliff this fix removes.
+    const { counts } = write(mirrorWith([chunkPayload(0, 0, 300)]), 0, 0);
+    expect(counts.skirtTriangleCount).toBe(0);
   });
 
   it('emits no skirt at the world border, where sampling clamps', () => {

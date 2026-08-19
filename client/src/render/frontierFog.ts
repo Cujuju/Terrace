@@ -1,37 +1,38 @@
-// The frontier mist: a soft fog curtain marking the edge of the player's
-// revealed territory, replacing the old inconsistent skirt-cliff look.
+// The frontier mist: a soft, ground-hugging fog bank marking the edge of the
+// player's revealed territory.
 //
 // WHY A SEPARATE LAYER FROM vertexGrid.ts's SKIRTS. That module's skirts stay
 // exactly as they were — they are the terrace-cliff look INSIDE revealed
 // territory, and the design record (2026-08-14) calls that the app's
-// namesake silhouette. The frontier is different: terrain/frontier.ts's
-// header documents why the old treatment there was an accident of local
-// height (skirts only appear where the edge cell happens to sit above sea
-// level) rather than a deliberate boundary. Rather than teach vertexGrid.ts a
-// second, height-independent reason to draw a wall — which would entangle
-// the frontier's correctness with the cap/skirt/contour pipeline's — this
-// module draws an entirely separate curtain, positioned purely from the
-// mirror's `received` set (terrain/frontier.ts), that sits in front of
-// whatever vertexGrid.ts drew there and reads as one consistent ring
-// regardless of what is happening underneath it.
+// namesake silhouette. The frontier is different: since issue #22 the mesh
+// builder samples never-received chunks through mirror.sampleRenderHeight,
+// which pulls the sample back onto received terrain — so the terrain simply
+// extends flat to the reveal boundary and stops, exactly like the world's
+// outer border, and draws no cliff there at all. This module is the ONLY
+// frontier treatment: a mist bank positioned from the mirror's `received` set
+// (terrain/frontier.ts) that veils the raw cross-section where the terrain
+// mesh ends.
 //
-// GEOMETRY. One quad-strip per frontier edge (a whole 16-cell chunk side),
-// four rows of vertices tall: transparent at the very bottom, a soft ramp up
-// to a translucent plateau, the plateau held across the middle of the
-// height range, then a ramp back down to transparent at the very top. The
-// curtain therefore never shows a second hard edge of its own — it dissolves
-// before its own geometry ends — while staying substantially opaque across
-// the entire range real terrain can occupy, which is what "tall enough to
-// mask the cross-section at any height difference" requires.
+// GEOMETRY (issue #22 — this REPLACES the original full-height curtain, which
+// spanned MIN_HEIGHT..MAX_HEIGHT and read as a towering white wall). One quad
+// strip per frontier edge (a whole 16-cell chunk side), FOG_COLUMNS columns
+// wide so it can follow the ground, three rows tall:
 //
-// COLOUR. Bottom row is a lightened WATER_COLOR, top row a lightened
-// SKY_COLOR (both imported from where the scene already defines them — see
-// their export comments), linearly blended row to row. MIN_HEIGHT and
-// MAX_HEIGHT are exact negatives of each other and SEA_LEVEL is 0
-// (shared/src/constants.ts), so the curtain's Y span is symmetric about the
-// waterline BY CONSTRUCTION: a plain linear gradient from bottom to top
-// therefore already crosses from "water tint" to "sky tint" centred on sea
-// level, with no separate transition point to compute or keep in sync.
+//   top    — a bank's height above the LOCAL ground, fully transparent;
+//   knee   — a fraction of the bank above the ground, fully opaque;
+//   base   — one flat row just below min(local terrain, sea level), fully
+//            opaque, so the strip also veils the exposed cross-section between
+//            the sea and a high cap's edge without ever showing a bottom hem.
+//
+// Each column's knee/top follow the heights of the border cells on the
+// RECEIVED side of the edge, so the bank is scaled to the local terrain
+// cross-section — a low haze over a beach, a taller veil where a plateau meets
+// the frontier — never to the world's full height range.
+//
+// COLOUR. Base row is a lightened WATER_COLOR, top row a lightened SKY_COLOR
+// (both imported from where the scene already defines them — see their export
+// comments), blended row to row, so the haze reads as weather between sea and
+// sky rather than as a painted wall.
 //
 // LIFECYCLE. One shared, unlit MeshBasicMaterial (fog is atmospheric, not a
 // lit surface — matching why water.ts's own translucent plane needs no
@@ -40,14 +41,18 @@
 // frontierEdgeKey so `sync` can diff the previous edge set against the new
 // one and add/dispose exactly the segments that changed, in place, whatever
 // event (join, chunk unlock, rejoin at a new world size) triggered it.
+// Because the geometry now depends on HEIGHTS as well as the edge set,
+// surviving segments are refreshed in place (same mesh, same geometry, same
+// arrays — attribute rewrite only) by `sync`, and `refresh` does the same for
+// terrain diffs — see the interface docs.
 //
 // ANIMATION. A single slow "opacity breathing" driven by the shared
 // material's own `opacity`, via the render loop's onFrame hook
 // (render/scene.ts) — gentle and global rather than per-vertex, because the
 // alpha shape baked into each segment's vertex colours already encodes the
-// soft top/bottom falloff; breathing only needs to scale it uniformly over
-// time. See FOG_BREATH_* below for the rate and why it is nowhere near the
-// 3 Hz photosensitivity ceiling other plugins cite.
+// soft top falloff; breathing only needs to scale it uniformly over time. See
+// FOG_BREATH_* below for the rate and why it is nowhere near the 3 Hz
+// photosensitivity ceiling other plugins cite.
 
 import {
   BufferAttribute,
@@ -59,65 +64,74 @@ import {
   MeshBasicMaterial,
   type Object3D,
 } from 'three';
-import { MAX_HEIGHT, MIN_HEIGHT, chunksPerEdge } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import {
   frontierEdgeKey,
-  frontierEdgeSpan,
   frontierEdges,
   type FrontierEdge,
 } from '../terrain/frontier.ts';
-import type { TerrainMirror } from '../terrain/mirror.ts';
+import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 import { SKY_COLOR } from './scene.ts';
 import { WATER_COLOR } from './water.ts';
 
 // ---------------------------------------------------------------------------
-// Shape: the four-row alpha/colour profile every segment shares.
+// Shape: the bank profile every segment shares.
 // ---------------------------------------------------------------------------
 
-/** World Y the curtain's top row sits at: the highest a sculpt can ever reach. */
-const FOG_TOP_WORLD_Y = MAX_HEIGHT * HEIGHT_WORLD_SCALE;
-/** World Y the curtain's bottom row sits at: the lowest a sculpt can ever reach. */
-const FOG_BOTTOM_WORLD_Y = MIN_HEIGHT * HEIGHT_WORLD_SCALE;
+/**
+ * How far the bank rises above the local ground, in height units. A band and a
+ * quarter: tall enough that the flat cap ending at the boundary is veiled with
+ * margin even where the ground sample under a column sits a little below the
+ * cap's own band floor, low enough to read as a bank of mist lying on the
+ * ground rather than a wall standing on it.
+ */
+const FOG_BANK_RISE = BAND_HEIGHT * 1.25;
 
 /**
- * Fraction of the curtain's total height spent ramping from transparent to
- * the plateau at each end, rather than jumping straight to it. 0.15 leaves a
- * solid 70%-of-span plateau in the middle — comfortably wider than terrain
- * ever needs: BAND_HEIGHT quantises height into steps well inside
- * [MIN_HEIGHT, MAX_HEIGHT], so an ordinary game never even sculpts into the
- * fade zone, and the curtain still fully masks the rare stroke that does.
+ * Fraction of FOG_BANK_RISE the bank stays fully opaque above the ground
+ * before fading to nothing at the top. Just under half: most of the bank's
+ * height is fade, which is what makes the upper edge dissolve instead of
+ * ending in a visible hem.
  */
-const FOG_FADE_FRACTION = 0.15;
+const FOG_BANK_KNEE = 0.45;
 
 /**
- * Peak alpha at the plateau (the two middle rows), before the breathing
- * modulation below scales it. Translucent enough to still read as mist and
- * let the sky/sea show through — the same order as the water plane's own
- * WATER_OPACITY (0.62, render/water.ts) — rather than an opaque wall, which
- * is exactly the "raw cliff" look this replaces.
+ * How far the base row sits BELOW the sea surface, in height units. The base
+ * anchors at the WATERLINE, not at the local seabed: the sea plane and this
+ * material both skip the depth buffer, so a bank anchored at a deep seabed
+ * renders its whole underwater span as a bright veil THROUGH the water —
+ * the towering-wall look all over again, just submerged (found in the #22
+ * screenshot pass). Half a band below the surface buries the bottom hem so
+ * no camera angle can peek under the bank, while everything deeper stays the
+ * water plane's own business.
  */
-const FOG_PLATEAU_ALPHA = 0.55;
+const FOG_BASE_DROP = BAND_HEIGHT / 2;
+
+/**
+ * Peak alpha (the base and knee rows), before the breathing modulation below
+ * scales it. Deliberately far below the water plane's WATER_OPACITY (0.62,
+ * render/water.ts): the owner's acceptance for issue #22 is "opacity low
+ * enough to read as haze" — the terrain edge should remain guessable through
+ * it, softened rather than hidden behind a wall.
+ */
+const FOG_PLATEAU_ALPHA = 0.3;
 
 /** How far toward white each end colour is lightened before blending. */
 const FOG_COLOR_WHITEN = 0.35;
 
-const FOG_ROW_COUNT = 4;
-
-/** Row Y positions, bottom to top: fade start, plateau start, plateau end, fade end. */
-function fogRowYs(): readonly number[] {
-  const span = FOG_TOP_WORLD_Y - FOG_BOTTOM_WORLD_Y;
-  const fade = span * FOG_FADE_FRACTION;
-  return [
-    FOG_BOTTOM_WORLD_Y,
-    FOG_BOTTOM_WORLD_Y + fade,
-    FOG_TOP_WORLD_Y - fade,
-    FOG_TOP_WORLD_Y,
-  ];
-}
+/** Rows bottom-to-top: base, knee, top. */
+const FOG_ROW_COUNT = 3;
 
 /** Row alpha, normalised to the plateau's peak of 1 — scaled by material.opacity. */
-const FOG_ROW_ALPHA: readonly number[] = [0, 1, 1, 0];
+const FOG_ROW_ALPHA: readonly number[] = [1, 1, 0];
+
+/**
+ * Columns across a segment: one per lattice point of the 16-cell chunk side,
+ * so the bank's top can follow the same per-cell ground the terrain mesh
+ * renders.
+ */
+const FOG_COLUMNS = CHUNK_SIZE + 1;
 
 function fogRowColors(): readonly Color[] {
   const water = new Color(WATER_COLOR).lerp(new Color(0xffffff), FOG_COLOR_WHITEN);
@@ -142,9 +156,9 @@ function fogRowColors(): readonly Color[] {
 const FOG_BREATH_PERIOD_S = 9;
 
 /**
- * Fraction of FOG_PLATEAU_ALPHA the breathing swings by by, e.g. 0.15 takes
+ * Fraction of FOG_PLATEAU_ALPHA the breathing swings by, e.g. 0.15 takes
  * the visible plateau alpha between 0.85x and 1.15x of its base value.
- * Subtle on purpose: the curtain's job is to read as a stable boundary, not
+ * Subtle on purpose: the bank's job is to read as a stable boundary, not
  * to draw the eye the way a strong pulse would.
  */
 const FOG_BREATH_AMPLITUDE_FRACTION = 0.15;
@@ -155,7 +169,7 @@ const FOG_BREATH_ANGULAR_FREQUENCY = (2 * Math.PI) / FOG_BREATH_PERIOD_S;
 // Geometry for one segment.
 // ---------------------------------------------------------------------------
 
-const VERTICES_PER_SEGMENT = FOG_ROW_COUNT * 2; // two columns (start, end) per row
+const VERTICES_PER_SEGMENT = FOG_ROW_COUNT * FOG_COLUMNS;
 const POSITION_COMPONENTS = VERTICES_PER_SEGMENT * 3;
 const COLOR_COMPONENTS = VERTICES_PER_SEGMENT * 4; // RGBA — itemSize 4 is what
 // triggers three's per-vertex alpha path (WebGLPrograms.js `vertexAlphas`),
@@ -163,71 +177,149 @@ const COLOR_COMPONENTS = VERTICES_PER_SEGMENT * 4; // RGBA — itemSize 4 is wha
 // `diffuseColor *= vColor` runs whenever material.vertexColors is true AND
 // the geometry's color attribute has itemSize 4, with no shader patch needed.
 
-function buildSegmentGeometry(edge: FrontierEdge): BufferGeometry {
-  const span = frontierEdgeSpan(edge);
-  const x0 = span.x0 * CELL_WORLD_SIZE;
-  const z0 = span.z0 * CELL_WORLD_SIZE;
-  const x1 = span.x1 * CELL_WORLD_SIZE;
-  const z1 = span.z1 * CELL_WORLD_SIZE;
+/**
+ * The 16 border cells on the RECEIVED side of a frontier edge, plus the
+ * boundary line the segment stands on, both derived from the same chunk-side
+ * facts frontierEdgeSpan documents (chunk origin 16·(cx,cy), CHUNK_SIZE cells
+ * a side). `cellStep`/`lineStep` run in the same +x/+z direction whatever the
+ * edge's winding, so column k's ground always sits beside column k's position.
+ */
+function edgeSampling(edge: FrontierEdge): {
+  cellX: number;
+  cellY: number;
+  cellStepX: number;
+  cellStepY: number;
+  lineX: number;
+  lineZ: number;
+  lineStepX: number;
+  lineStepZ: number;
+} {
+  const x0 = edge.cx * CHUNK_SIZE;
+  const y0 = edge.cy * CHUNK_SIZE;
+  switch (edge.dir) {
+    case 'N':
+      return {
+        cellX: x0, cellY: y0, cellStepX: 1, cellStepY: 0,
+        lineX: x0, lineZ: y0, lineStepX: 1, lineStepZ: 0,
+      };
+    case 'S':
+      return {
+        cellX: x0, cellY: y0 + CHUNK_SIZE - 1, cellStepX: 1, cellStepY: 0,
+        lineX: x0, lineZ: y0 + CHUNK_SIZE, lineStepX: 1, lineStepZ: 0,
+      };
+    case 'E':
+      return {
+        cellX: x0 + CHUNK_SIZE - 1, cellY: y0, cellStepX: 0, cellStepY: 1,
+        lineX: x0 + CHUNK_SIZE, lineZ: y0, lineStepX: 0, lineStepZ: 1,
+      };
+    case 'W':
+      return {
+        cellX: x0, cellY: y0, cellStepX: 0, cellStepY: 1,
+        lineX: x0, lineZ: y0, lineStepX: 0, lineStepZ: 1,
+      };
+  }
+}
 
-  const rowYs = fogRowYs();
+/**
+ * (Re)writes one segment's vertex positions and colours from the mirror's
+ * CURRENT heights. Positions and colours only — the index buffer never
+ * changes, which is what lets `refresh` rewrite a live segment without
+ * touching its geometry or mesh identity.
+ */
+function writeSegmentArrays(
+  mirror: TerrainMirror,
+  edge: FrontierEdge,
+  positions: Float32Array,
+  colors: Float32Array,
+): void {
+  const s = edgeSampling(edge);
   const rowColors = fogRowColors();
 
-  const positions = new Float32Array(POSITION_COMPONENTS);
-  const colors = new Float32Array(COLOR_COMPONENTS);
+  // Ground height per border cell, then per column: a column between two
+  // cells takes the HIGHER neighbour, so the opaque part of the bank always
+  // reaches above whichever cap actually ends at that point of the boundary.
+  // Underwater ground clamps to the WATERLINE — the bank hugs whichever
+  // surface the player actually sees there (see FOG_BASE_DROP for why it must
+  // never chase the seabed down).
+  const cellHeights: number[] = [];
+  for (let t = 0; t < CHUNK_SIZE; t++) {
+    const h = sampleHeight(mirror, s.cellX + t * s.cellStepX, s.cellY + t * s.cellStepY);
+    cellHeights.push(h > SEA_LEVEL ? h : SEA_LEVEL);
+  }
+  const baseY = (SEA_LEVEL - FOG_BASE_DROP) * HEIGHT_WORLD_SCALE;
+
   let p = 0;
   let c = 0;
   for (let r = 0; r < FOG_ROW_COUNT; r++) {
-    const y = rowYs[r];
     const alpha = FOG_ROW_ALPHA[r];
     const color = rowColors[r];
-    for (const [x, z] of [
-      [x0, z0],
-      [x1, z1],
-    ] as const) {
-      positions[p++] = x;
+    for (let k = 0; k < FOG_COLUMNS; k++) {
+      const left = cellHeights[k - 1 < 0 ? 0 : k - 1];
+      const right = cellHeights[k >= CHUNK_SIZE ? CHUNK_SIZE - 1 : k];
+      const ground = left > right ? left : right;
+      const rise =
+        r === 0 ? 0 : r === 1 ? FOG_BANK_RISE * FOG_BANK_KNEE : FOG_BANK_RISE;
+      const y = r === 0 ? baseY : (ground + rise) * HEIGHT_WORLD_SCALE;
+      positions[p++] = (s.lineX + k * s.lineStepX) * CELL_WORLD_SIZE;
       positions[p++] = y;
-      positions[p++] = z;
+      positions[p++] = (s.lineZ + k * s.lineStepZ) * CELL_WORLD_SIZE;
       colors[c++] = color.r;
       colors[c++] = color.g;
       colors[c++] = color.b;
       colors[c++] = alpha;
     }
   }
+}
 
+function buildSegmentIndices(): number[] {
   const indices: number[] = [];
   for (let r = 0; r < FOG_ROW_COUNT - 1; r++) {
-    const a = r * 2;
-    const b = r * 2 + 1;
-    const nextA = (r + 1) * 2;
-    const nextB = (r + 1) * 2 + 1;
-    // MeshBasicMaterial ignores normals entirely (no lighting to orient
-    // against), and the material is DoubleSide, so winding is not
-    // load-bearing here — either diagonal tiles the band correctly.
-    indices.push(a, b, nextA, b, nextB, nextA);
+    for (let k = 0; k < FOG_COLUMNS - 1; k++) {
+      const a = r * FOG_COLUMNS + k;
+      const b = a + 1;
+      const nextA = a + FOG_COLUMNS;
+      const nextB = b + FOG_COLUMNS;
+      // MeshBasicMaterial ignores normals entirely (no lighting to orient
+      // against), and the material is DoubleSide, so winding is not
+      // load-bearing here — either diagonal tiles the band correctly.
+      indices.push(a, b, nextA, b, nextB, nextA);
+    }
   }
-
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new BufferAttribute(colors, 4));
-  geometry.setIndex(indices);
-  return geometry;
+  return indices;
 }
 
 // ---------------------------------------------------------------------------
 // Public interface.
 // ---------------------------------------------------------------------------
 
+interface FogSegment {
+  mesh: Mesh;
+  geometry: BufferGeometry;
+  positionAttribute: BufferAttribute;
+  colorAttribute: BufferAttribute;
+  edge: FrontierEdge;
+  /** Flat chunk index of the edge's own (received) chunk — refresh's key. */
+  chunkIdx: number;
+}
+
 export interface FrontierFog {
   /**
-   * Re-derives the frontier from the mirror's CURRENT received set and adds
-   * or disposes exactly the segments that changed. Call after every event
-   * that can change which chunks are received — a join snapshot or a
-   * chunkUnlock — never on a plain terrain diff, since a diff never changes
-   * `received` and the frontier is defined purely from that set
-   * (terrain/frontier.ts).
+   * Re-derives the frontier from the mirror's CURRENT received set: adds or
+   * disposes exactly the segments whose EDGE changed, and rewrites the heights
+   * of every surviving segment in place (same mesh and geometry identity).
+   * Call after every event that can change which chunks are received — a join
+   * snapshot or a chunkUnlock.
    */
   sync(mirror: TerrainMirror): void;
+  /**
+   * Rewrites, in place, the segments whose own chunk is in `dirtyChunks` —
+   * the same dirty set the terrain meshes were just patched with. Call after
+   * every event that changes HEIGHTS without changing `received` (a terrain
+   * diff, a local prediction, a prediction expiry/ack), so a sculpt at the
+   * boundary moves the bank with the ground it hugs. Cheap: a handful of
+   * border samples per affected segment, no allocation.
+   */
+  refresh(mirror: TerrainMirror, dirtyChunks: ReadonlySet<number>): void;
   dispose(): void;
 }
 
@@ -249,7 +341,7 @@ export function createFrontierFog(
     side: DoubleSide,
   });
 
-  const segments = new Map<string, { mesh: Mesh; geometry: BufferGeometry }>();
+  const segments = new Map<string, FogSegment>();
 
   let elapsedS = 0;
   const stopAnimating = onFrame((dt: number) => {
@@ -258,6 +350,43 @@ export function createFrontierFog(
       1 + FOG_BREATH_AMPLITUDE_FRACTION * Math.sin(elapsedS * FOG_BREATH_ANGULAR_FREQUENCY);
     material.opacity = FOG_PLATEAU_ALPHA * breathe;
   });
+
+  const rewriteSegment = (mirror: TerrainMirror, segment: FogSegment): void => {
+    writeSegmentArrays(
+      mirror,
+      segment.edge,
+      segment.positionAttribute.array as Float32Array,
+      segment.colorAttribute.array as Float32Array,
+    );
+    segment.positionAttribute.needsUpdate = true;
+    segment.colorAttribute.needsUpdate = true;
+    // Heights moved, so the culling bound is stale — same rule as
+    // terrainMeshes.ts's writeChunk, and just as cheap at 51 vertices.
+    segment.geometry.computeBoundingSphere();
+  };
+
+  const buildSegment = (mirror: TerrainMirror, edge: FrontierEdge, chunkCols: number): FogSegment => {
+    const positions = new Float32Array(POSITION_COMPONENTS);
+    const colors = new Float32Array(COLOR_COMPONENTS);
+    writeSegmentArrays(mirror, edge, positions, colors);
+
+    const geometry = new BufferGeometry();
+    const positionAttribute = new BufferAttribute(positions, 3);
+    const colorAttribute = new BufferAttribute(colors, 4);
+    geometry.setAttribute('position', positionAttribute);
+    geometry.setAttribute('color', colorAttribute);
+    geometry.setIndex(buildSegmentIndices());
+
+    const mesh = new Mesh(geometry, material);
+    return {
+      mesh,
+      geometry,
+      positionAttribute,
+      colorAttribute,
+      edge,
+      chunkIdx: edge.cy * chunkCols + edge.cx,
+    };
+  };
 
   return {
     sync(mirror: TerrainMirror): void {
@@ -274,16 +403,29 @@ export function createFrontierFog(
         segments.delete(key);
       }
 
-      // Add segments for edges that are new. Existing ones (same chunk side,
-      // same world) are left untouched — their geometry does not depend on
-      // anything but (cx, cy, dir), so there is nothing to refresh.
+      // Add segments for edges that are new; refresh the heights of the ones
+      // that survive. A surviving edge's POSITION depends only on (cx, cy,
+      // dir), but its bank now follows the ground, and a rejoin can hand this
+      // same key a different world's terrain — so the arrays are rewritten in
+      // place (identity preserved) rather than trusted.
       for (const edge of nextEdges) {
         const key = frontierEdgeKey(edge);
-        if (segments.has(key)) continue;
-        const geometry = buildSegmentGeometry(edge);
-        const mesh = new Mesh(geometry, material);
-        group.add(mesh);
-        segments.set(key, { mesh, geometry });
+        const existing = segments.get(key);
+        if (existing !== undefined) {
+          rewriteSegment(mirror, existing);
+          continue;
+        }
+        const segment = buildSegment(mirror, edge, chunkCols);
+        group.add(segment.mesh);
+        segments.set(key, segment);
+      }
+    },
+
+    refresh(mirror: TerrainMirror, dirtyChunks: ReadonlySet<number>): void {
+      if (dirtyChunks.size === 0) return;
+      for (const segment of segments.values()) {
+        if (!dirtyChunks.has(segment.chunkIdx)) continue;
+        rewriteSegment(mirror, segment);
       }
     },
 

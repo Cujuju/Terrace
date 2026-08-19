@@ -64,9 +64,11 @@
 // SEAM CONTRACT — adjacent chunks must emit bit-identical border vertices:
 //
 //   S1. Samples are read at CANONICAL WORLD cell centres through
-//       mirror.sampleHeight, exactly as the old wall renderer did, so both
-//       chunks see the same heights across a border (and clamped, so the world
-//       border needs no special case).
+//       mirror.sampleRenderHeight, exactly as the old wall renderer did, so
+//       both chunks see the same heights across a border (and clamped, so the
+//       world border needs no special case; samples in never-received chunks
+//       are pulled back onto received terrain by the same principle — see that
+//       function's seam-safety note, issue #22).
 //   S2. The marching-squares lattice is the world's, not the chunk's: chunk
 //       (cx,cy) marches the unit squares whose lower-left sample is one of its
 //       OWN cells. Every square in the world therefore belongs to exactly one
@@ -111,7 +113,7 @@ import {
   WATER_SURFACE_LIFT,
 } from '../config.ts';
 import { bandPaletteIndex, isSeabedPaletteIndex, type Rgb } from './bandColors.ts';
-import { sampleHeight, type TerrainMirror } from './mirror.ts';
+import { sampleRenderHeight, type TerrainMirror } from './mirror.ts';
 
 // ---------------------------------------------------------------------------
 // Tuning constants. Every one of them is a shape decision, so every one is
@@ -609,12 +611,23 @@ const edgeHasEntry = new Uint8Array(EDGE_COUNT);
  *
  * Seam contract S1: canonical world sample positions, read through the shared
  * mirror, so a border sample is the same number in both chunks — and so the
- * world border needs no special case, because sampleHeight clamps there.
+ * world border needs no special case, because the sampler clamps there.
+ *
+ * Read through `sampleRenderHeight`, not raw `sampleHeight` (issue #22): a
+ * sample falling in a never-received chunk is pulled back onto received
+ * terrain, so the frontier extends flat like the world border instead of
+ * contouring a cliff against a phantom sea-level neighbour. The pull-back is a
+ * pure function of the world position and the received set (see its doc), so
+ * S1/S3 hold unchanged between received chunks.
  */
 function loadSamples(mirror: TerrainMirror, originX: number, originZ: number): void {
   for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
     for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
-      samples[j * LATTICE_PER_CHUNK + i] = sampleHeight(mirror, originX + i, originZ + j);
+      samples[j * LATTICE_PER_CHUNK + i] = sampleRenderHeight(
+        mirror,
+        originX + i,
+        originZ + j,
+      );
     }
   }
 }

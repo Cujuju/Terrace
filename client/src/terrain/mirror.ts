@@ -13,6 +13,12 @@
 //      SEA_LEVEL. That is deliberate: it makes the edge of revealed territory
 //      slope down into the sea instead of ending in a floating cliff (see
 //      vertexGrid.ts, which samples across chunk borders for seam continuity).
+//      — PARTLY SUPERSEDED (issue #22): the RENDERER no longer reads those
+//      zeros. `sampleRenderHeight` below pulls a sample in a never-received
+//      chunk back onto received terrain, so the frontier draws no accidental
+//      cliff at all; the mist curtain (render/frontierFog.ts) marks the
+//      boundary instead. The zeros still back every non-render consumer of
+//      `sampleHeight`.
 //
 // This module is deliberately free of Three.js and DOM references so it can be
 // unit-tested headless — see test/mirror.test.ts.
@@ -62,6 +68,77 @@ export function sampleHeight(mirror: TerrainMirror, x: number, y: number): numbe
 
 export function hasChunk(mirror: TerrainMirror, chunkIdx: number): boolean {
   return mirror.received.has(chunkIdx);
+}
+
+/** Whether the chunk OWNING cell (x, y) has been received. In-bounds only. */
+function cellChunkReceived(mirror: TerrainMirror, x: number, y: number): boolean {
+  return mirror.received.has(
+    chunkIndex(
+      mirror.map.size,
+      Math.floor(x / CHUNK_SIZE),
+      Math.floor(y / CHUNK_SIZE),
+    ),
+  );
+}
+
+/**
+ * `sampleHeight` for the RENDERER: a sample that falls in a never-received
+ * chunk is pulled back across the frontier onto received terrain, exactly the
+ * way the world border is handled by clamping (issue #22).
+ *
+ * WHY. The mesh builder (vertexGrid.ts) samples one cell past its chunk on
+ * the +x/+y sides for seam continuity. Reading a never-received chunk there
+ * returns the allocated zero — a phantom sea-level neighbour — and the
+ * ordinary contour/skirt machinery then draws a frontier-shaped CLIFF wherever
+ * the edge terrain happens to sit above sea level (see terrain/frontier.ts's
+ * header for why that inconsistency is an accident, not a boundary). Pulling
+ * the sample back instead makes the caps extend flat to the domain edge and
+ * grow no contour and no skirt — the frontier renders exactly like the world's
+ * outer border, whatever the local height, and the mist curtain
+ * (render/frontierFog.ts) is the only boundary treatment left.
+ *
+ * SEAM SAFETY. The pull-back must be a pure function of the WORLD sample
+ * position and the received set — never of which chunk is asking — or two
+ * received chunks sharing a border would disagree about a corner sample and
+ * crack the seam (contract S1/S3 in vertexGrid.ts). An out-of-chunk sample
+ * always lies on a chunk seam (the lattice overflows by exactly one cell), so:
+ *
+ *   - sample on a COLUMN seam only (x % CHUNK_SIZE === 0): its one possible
+ *     reader is the chunk to the west — step one cell back west;
+ *   - sample on a ROW seam only: mirror-image, step one cell back north;
+ *   - sample on BOTH (a chunk corner): up to three received chunks read it, so
+ *     the replacement is chosen in one fixed order (north neighbour's cell,
+ *     then west's, then the diagonal's) that every reader computes
+ *     identically.
+ *
+ * Samples inside a RECEIVED chunk — every sample two received chunks share —
+ * are returned untouched, so seams between received chunks are bit-identical
+ * to before.
+ */
+export function sampleRenderHeight(mirror: TerrainMirror, x: number, y: number): number {
+  const max = mirror.map.size - 1;
+  const sx = x < 0 ? 0 : x > max ? max : x;
+  const sy = y < 0 ? 0 : y > max ? max : y;
+  if (cellChunkReceived(mirror, sx, sy)) {
+    return mirror.map.cells[cellIndex(mirror.map, sx, sy)];
+  }
+  const onColumnSeam = sx > 0 && sx % CHUNK_SIZE === 0;
+  const onRowSeam = sy > 0 && sy % CHUNK_SIZE === 0;
+  if (onColumnSeam && onRowSeam) {
+    if (cellChunkReceived(mirror, sx, sy - 1)) {
+      return mirror.map.cells[cellIndex(mirror.map, sx, sy - 1)];
+    }
+    if (cellChunkReceived(mirror, sx - 1, sy)) {
+      return mirror.map.cells[cellIndex(mirror.map, sx - 1, sy)];
+    }
+    return mirror.map.cells[cellIndex(mirror.map, sx - 1, sy - 1)];
+  }
+  if (onColumnSeam) return mirror.map.cells[cellIndex(mirror.map, sx - 1, sy)];
+  if (onRowSeam) return mirror.map.cells[cellIndex(mirror.map, sx, sy - 1)];
+  // Interior of a never-received chunk: no received chunk's lattice reaches
+  // here (the overflow is exactly one cell, always landing on a seam), so the
+  // value is unobservable by any mesh — return the allocated height unchanged.
+  return mirror.map.cells[cellIndex(mirror.map, sx, sy)];
 }
 
 /**
