@@ -68,15 +68,6 @@ interface RevealSlice {
   readonly pressure: ReadonlyArray<readonly [number, number]>;
 }
 
-/**
- * The WorldApi, captured at onWorldCreate.
- *
- * Only onWorldCreate/onTick/onIntent are handed a WorldApi; onTerrainChanged is
- * not, so a plugin that reacts to terrain has no choice but to stash it. See
- * the API-gap notes in the Phase 2 report.
- */
-let api: WorldApi | null = null;
-
 /** Accumulated pressure per LOCKED chunk, keyed by flat chunk index. */
 const pressureByChunk = new Map<number, number>();
 
@@ -89,14 +80,13 @@ const pressureByChunk = new Map<number, number>();
  * rather than left at its final count, so the bookkeeping stays proportional to
  * the size of the live frontier, not to the size of the world.
  */
-function accruePressure(diff: readonly CellDiff[]): void {
-  if (api === null) return;
-  const worldSize = api.worldSize;
+function accruePressure(world: WorldApi, diff: readonly CellDiff[]): void {
+  const worldSize = world.worldSize;
 
   for (const cell of diff) {
     const cx = Math.floor(cell.x / CHUNK_SIZE);
     const cy = Math.floor(cell.y / CHUNK_SIZE);
-    if (api.isChunkUnlocked(cx, cy)) continue;
+    if (world.isChunkUnlocked(cx, cy)) continue;
 
     // Diff cells always come from the authoritative heightmap, so they are in
     // bounds and chunkIndex cannot throw here.
@@ -113,7 +103,7 @@ function accruePressure(diff: readonly CellDiff[]): void {
     // "clients know about it" cannot drift apart. Later cells of this same diff
     // now see an unlocked chunk and are skipped by the check above.
     pressureByChunk.delete(index);
-    api.unlockChunk(cx, cy);
+    world.unlockChunk(cx, cy);
   }
 }
 
@@ -153,12 +143,8 @@ const persistence: PersistenceSlice = {
 export const plugin: TerracePlugin = {
   name: 'reveal',
 
-  onWorldCreate(world: WorldApi): void {
-    api = world;
-  },
-
-  onTerrainChanged(diff: readonly CellDiff[]): void {
-    accruePressure(diff);
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
+    accruePressure(world, diff);
   },
 
   persistence,
@@ -171,6 +157,5 @@ export function frontierPressureAt(chunkIdx: number): number {
 
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetRevealState(): void {
-  api = null;
   pressureByChunk.clear();
 }

@@ -87,13 +87,6 @@ export const FLORA_KEEPALIVE_SECONDS = 60;
 // Module-level singletons with a reset seam, matching the shape of every other
 // plugin here (the host constructs one plugin instance per server process).
 
-/**
- * The WorldApi, captured at onWorldCreate. onTerrainChanged is not handed one
- * (see the same note in reveal and wildlife) and the reactive path has to
- * broadcast, so it must be stashed.
- */
-let api: WorldApi | null = null;
-
 const forest = new Forest();
 
 /**
@@ -139,8 +132,8 @@ function forestPayload(): { trees: number[] } {
   return { trees: packTreeCells(forest.cells()) };
 }
 
-function broadcastForest(): void {
-  api?.broadcast(FLORA_FOREST_MESSAGE, forestPayload());
+function broadcastForest(world: WorldApi): void {
+  world.broadcast(FLORA_FOREST_MESSAGE, forestPayload());
   lastKeepaliveSeconds = simSeconds;
 }
 
@@ -149,9 +142,13 @@ function broadcastForest(): void {
  * most surveys of a settled world grow nothing, and a message saying so would be
  * this plugin's entire steady-state bandwidth spent on nothing.
  */
-function broadcastChanges(grown: readonly TreeCell[], felled: readonly TreeCell[]): void {
+function broadcastChanges(
+  world: WorldApi,
+  grown: readonly TreeCell[],
+  felled: readonly TreeCell[],
+): void {
   if (grown.length === 0 && felled.length === 0) return;
-  api?.broadcast(FLORA_CHANGES_MESSAGE, {
+  world.broadcast(FLORA_CHANGES_MESSAGE, {
     grown: packTreeCells(grown),
     felled: packTreeCells(felled),
   });
@@ -217,10 +214,10 @@ function simulate(world: WorldApi, dt: number): void {
   if (budget > 0) {
     scanCredit -= budget;
     const { grown, felled } = forest.advanceSurvey(world, stability, simSeconds, rng, budget);
-    broadcastChanges(grown, felled);
+    broadcastChanges(world, grown, felled);
   }
 
-  if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) broadcastForest();
+  if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) broadcastForest(world);
 }
 
 /**
@@ -246,7 +243,7 @@ function simulate(world: WorldApi, dt: number): void {
  * writes plugin state — it never calls world.sculpt — so it cannot feed the
  * host's terrain-change cascade guard.
  */
-function reactToTerrain(diff: readonly CellDiff[]): void {
+function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (stability === null || diff.length === 0) return;
 
   const felled: TreeCell[] = [];
@@ -255,7 +252,7 @@ function reactToTerrain(diff: readonly CellDiff[]): void {
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
   }
 
-  broadcastChanges([], felled);
+  broadcastChanges(world, [], felled);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -277,7 +274,6 @@ export const plugin: TerracePlugin = {
   name: FLORA_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
-    api = world;
     stability = new StabilityMap(world.worldSize);
 
     // Any snapshot has already been restored by the time this runs, so the trees
@@ -290,25 +286,25 @@ export const plugin: TerracePlugin = {
     // No players are connected at world create, so this is not how anyone gets
     // their first forest (onPlayerJoin is). It is here so that a client which is
     // somehow already listening is not left empty for up to a keepalive.
-    broadcastForest();
+    broadcastForest(world);
   },
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
   },
 
-  onTerrainChanged(diff: readonly CellDiff[]): void {
-    reactToTerrain(diff);
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
+    reactToTerrain(world, diff);
   },
 
-  onPlayerJoin(player: Player): void {
+  onPlayerJoin(world: WorldApi, player: Player): void {
     // The room sends the core join snapshot before this hook, so the client is
     // already sized and listening. The whole forest goes directly to that one
     // player rather than being left to the keepalive: a joining player must
     // never look at a bare world for up to FLORA_KEEPALIVE_SECONDS, and
     // broadcasting it to everyone would re-send 18 KB to every existing client
     // every time somebody connects.
-    api?.sendTo(player.id, FLORA_FOREST_MESSAGE, forestPayload());
+    world.sendTo(player.id, FLORA_FOREST_MESSAGE, forestPayload());
   },
 
   persistence,
@@ -335,7 +331,6 @@ export function currentStability(): StabilityMap | null {
 
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetFloraState(): void {
-  api = null;
   stability = null;
   forest.replaceAll([]);
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);

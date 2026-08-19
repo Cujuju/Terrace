@@ -207,9 +207,6 @@ interface RelicsSlice {
   readonly respawns: ReadonlyArray<readonly [string, number]>;
 }
 
-/** The WorldApi, captured at onWorldCreate (the only hook that is handed one). */
-let api: WorldApi | null = null;
-
 let relics: Relic[] = [];
 let respawns: PendingRespawn[] = [];
 
@@ -235,8 +232,8 @@ function relicViews(): RelicView[] {
   return relics.map((relic) => ({ id: relic.id, x: relic.x, y: relic.y, skill: relic.skill }));
 }
 
-function broadcastRelics(): void {
-  api?.broadcast(RELICS_MESSAGE, { relics: relicViews() });
+function broadcastRelics(world: WorldApi): void {
+  world.broadcast(RELICS_MESSAGE, { relics: relicViews() });
   sinceKeepaliveS = 0;
 }
 
@@ -263,12 +260,12 @@ function skillViews(sessionId: string): SkillView[] {
   return views;
 }
 
-function sendSkills(sessionId: string): void {
-  api?.sendTo(sessionId, SKILLS_MESSAGE, { skills: skillViews(sessionId) });
+function sendSkills(world: WorldApi, sessionId: string): void {
+  world.sendTo(sessionId, SKILLS_MESSAGE, { skills: skillViews(sessionId) });
 }
 
-function denyCast(sessionId: string, skill: string, reason: string): void {
-  api?.sendTo(sessionId, CAST_DENIED_MESSAGE, { skill, reason });
+function denyCast(world: WorldApi, sessionId: string, skill: string, reason: string): void {
+  world.sendTo(sessionId, CAST_DENIED_MESSAGE, { skill, reason });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -291,14 +288,12 @@ function occupiedCells(size: number): Set<number> {
  * Places one relic carrying `skill`. Returns false when the search found no
  * suitable cell.
  */
-function spawnRelic(skill: SkillId): boolean {
-  if (api === null) return false;
-
+function spawnRelic(world: WorldApi, skill: SkillId): boolean {
   const serial = nextSerial;
   const cell = chooseRelicCell(
-    api,
+    world,
     rng,
-    occupiedCells(api.worldSize),
+    occupiedCells(world.worldSize),
     preferredTerrainFor(serial),
   );
   if (cell === null) return false;
@@ -323,14 +318,14 @@ function spawnRelic(skill: SkillId): boolean {
  * failure here would leave the skill in neither list and it would never be
  * looked at again.
  */
-function topUpRelics(): boolean {
+function topUpRelics(world: WorldApi): boolean {
   const present = new Set(relics.map((relic) => relic.skill));
   const waiting = new Set(respawns.map((entry) => entry.skill));
 
   let spawned = false;
   for (const skill of SKILL_IDS) {
     if (present.has(skill) || waiting.has(skill)) continue;
-    if (spawnRelic(skill)) spawned = true;
+    if (spawnRelic(world, skill)) spawned = true;
     else respawns.push({ skill, remainingS: RELIC_SPAWN_RETRY_S });
   }
   return spawned;
@@ -353,7 +348,7 @@ function syncManaPerk(sessionId: string): void {
   applyManaPerk(sessionId, composeManaPerk(held ?? []));
 }
 
-function grantSkill(sessionId: string, skill: SkillId): void {
+function grantSkill(world: WorldApi, sessionId: string, skill: SkillId): void {
   let held = skillsBySession.get(sessionId);
   if (held === undefined) {
     held = new Set<SkillId>();
@@ -362,7 +357,7 @@ function grantSkill(sessionId: string, skill: SkillId): void {
   held.add(skill);
 
   if (isPerkSkill(skill)) syncManaPerk(sessionId);
-  sendSkills(sessionId);
+  sendSkills(world, sessionId);
 }
 
 function startCooldown(sessionId: string, skill: SkillId): void {
@@ -386,7 +381,7 @@ function startCooldown(sessionId: string, skill: SkillId): void {
  * and for the same reason: a 10 Hz tick would otherwise send ten identical-
  * looking messages a second to redraw a number that only moves once.
  */
-function advanceCooldowns(dt: number): void {
+function advanceCooldowns(world: WorldApi, dt: number): void {
   for (const [sessionId, cooldowns] of cooldownsBySession) {
     let displayChanged = false;
 
@@ -405,7 +400,7 @@ function advanceCooldowns(dt: number): void {
     }
 
     if (cooldowns.size === 0) cooldownsBySession.delete(sessionId);
-    if (displayChanged) sendSkills(sessionId);
+    if (displayChanged) sendSkills(world, sessionId);
   }
 }
 
@@ -428,9 +423,9 @@ function advanceCooldowns(dt: number): void {
  * The relic is removed BEFORE anything is granted, so a duplicate message that
  * arrives in the same tick finds nothing and grants nothing.
  */
-// `_world` is unused: collection touches no terrain. It is in the signature
-// because PluginMessageHandler passes a WorldApi to every handler.
-function handleCollect(_world: WorldApi, player: Player, payload: unknown): void {
+// `world` is used only to push the grant and the corrected relic list, not to
+// touch terrain: collection has no sculpt of its own.
+function handleCollect(world: WorldApi, player: Player, payload: unknown): void {
   const message = parseCollectPayload(payload);
   if (message === null) return;
 
@@ -445,8 +440,8 @@ function handleCollect(_world: WorldApi, player: Player, payload: unknown): void
   const [taken] = relics.splice(index, 1);
   respawns.push({ skill: taken.skill, remainingS: RELIC_RESPAWN_S });
 
-  grantSkill(player.id, taken.skill);
-  broadcastRelics();
+  grantSkill(world, player.id, taken.skill);
+  broadcastRelics(world);
 }
 
 /**
@@ -482,23 +477,23 @@ function handleCast(world: WorldApi, player: Player, payload: unknown): void {
   const held = skillsBySession.get(player.id);
   const steps = TERRAFORM_BY_SKILL.get(skill);
   if (held === undefined || !held.has(skill) || steps === undefined) {
-    denyCast(player.id, skill, CAST_DENIED_UNOWNED);
+    denyCast(world, player.id, skill, CAST_DENIED_UNOWNED);
     return;
   }
 
   if (cooldownRemaining(player.id, skill) > 0) {
-    denyCast(player.id, skill, CAST_DENIED_COOLDOWN);
+    denyCast(world, player.id, skill, CAST_DENIED_COOLDOWN);
     return;
   }
 
   if (!world.isCellUnlocked(x, y)) {
-    denyCast(player.id, skill, CAST_DENIED_TARGET);
+    denyCast(world, player.id, skill, CAST_DENIED_TARGET);
     return;
   }
 
   applyTerraform(world, x, y, steps);
   startCooldown(player.id, skill);
-  sendSkills(player.id);
+  sendSkills(world, player.id);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -599,8 +594,6 @@ export const plugin: TerracePlugin = {
   name: 'relics',
 
   onWorldCreate(world: WorldApi): void {
-    api = world;
-
     // CROSS-PLUGIN DEPENDENCY (see mana-bridge.ts for the full pattern). Kicked
     // off, deliberately not awaited: every plugin hook is synchronous, and a
     // perk granted before the import settles is buffered and replayed by the
@@ -610,23 +603,23 @@ export const plugin: TerracePlugin = {
     // Persistence has already been restored by the host at this point
     // (server/src/index.ts: restorePersistence, then worldCreate), so this both
     // fills a fresh world and tops up a restored one.
-    topUpRelics();
-    broadcastRelics();
+    topUpRelics(world);
+    broadcastRelics(world);
   },
 
-  onPlayerJoin(player: Player): void {
+  onPlayerJoin(world: WorldApi, player: Player): void {
     // The room sends the core join snapshot before this hook, so the client is
     // already sized and listening. Relics are pushed directly rather than being
     // left to the keepalive: a player should never see an empty world for up to
     // RELIC_KEEPALIVE_S seconds.
-    api?.sendTo(player.id, RELICS_MESSAGE, { relics: relicViews() });
+    world.sendTo(player.id, RELICS_MESSAGE, { relics: relicViews() });
     // An empty skill list, on purpose: it tells a reconnecting client to clear
     // whatever its HUD was showing before, which is the truth (see identity
     // decision 2 — skills do not survive a connection).
-    sendSkills(player.id);
+    sendSkills(world, player.id);
   },
 
-  onPlayerLeave(player: Player): void {
+  onPlayerLeave(_world: WorldApi, player: Player): void {
     skillsBySession.delete(player.id);
     cooldownsBySession.delete(player.id);
     // Unconditional: revoking a perk the player never had is a no-op, and one
@@ -636,8 +629,8 @@ export const plugin: TerracePlugin = {
     revokeManaPerk(player.id);
   },
 
-  onTick(_world: WorldApi, dt: number): void {
-    advanceCooldowns(dt);
+  onTick(world: WorldApi, dt: number): void {
+    advanceCooldowns(world, dt);
 
     // Respawn timers. Entries that come due are removed first, then handed to
     // the top-up, so a spawn that fails to find a cell simply leaves that skill
@@ -650,11 +643,11 @@ export const plugin: TerracePlugin = {
     }
     if (due) {
       respawns = respawns.filter((entry) => entry.remainingS > 0);
-      if (topUpRelics()) broadcastRelics();
+      if (topUpRelics(world)) broadcastRelics(world);
     }
 
     sinceKeepaliveS += dt;
-    if (sinceKeepaliveS >= RELIC_KEEPALIVE_S) broadcastRelics();
+    if (sinceKeepaliveS >= RELIC_KEEPALIVE_S) broadcastRelics(world);
   },
 
   /**
@@ -738,7 +731,6 @@ export function cooldownOf(sessionId: string, skill: SkillId): number {
 
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetRelicsState(): void {
-  api = null;
   relics = [];
   respawns = [];
   nextSerial = 1;

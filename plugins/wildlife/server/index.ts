@@ -115,13 +115,6 @@ export const BROADCAST_ENTITY_CEILING = WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOF
  */
 export const FLEE_RADIUS_CELLS = MAX_BRUSH_RADIUS * 3;
 
-/**
- * The WorldApi, captured at onWorldCreate. onTerrainChanged is not handed one
- * (see the same note in the reveal plugin), and the reactive path needs to
- * re-check habitat validity, so it must be stashed.
- */
-let api: WorldApi | null = null;
-
 /** Ticks since boot, for the broadcast cadence. */
 let tickCount = 0;
 
@@ -182,8 +175,8 @@ function simulate(world: WorldApi, dt: number): void {
  * heights and writes plugin state — it never calls world.sculpt — so it cannot
  * feed the host's terrain-change cascade guard.
  */
-function reactToTerrain(diff: readonly CellDiff[]): void {
-  if (api === null || diff.length === 0) return;
+function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
+  if (diff.length === 0) return;
 
   let sumX = 0;
   let sumY = 0;
@@ -193,7 +186,7 @@ function reactToTerrain(diff: readonly CellDiff[]): void {
   }
   startleNear(sumX / diff.length, sumY / diff.length, FLEE_RADIUS_CELLS);
 
-  despawnInvalidHabitat(api);
+  despawnInvalidHabitat(world);
 }
 
 /**
@@ -225,18 +218,12 @@ const persistence: PersistenceSlice = {
 export const plugin: TerracePlugin = {
   name: WILDLIFE_PLUGIN_NAME,
 
-  onWorldCreate(world: WorldApi): void {
-    api = world;
-    // Any snapshot has already been restored by the time this runs, so the
-    // population here is either empty (fresh world) or the persisted one.
-  },
-
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
   },
 
-  onTerrainChanged(diff: readonly CellDiff[]): void {
-    reactToTerrain(diff);
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
+    reactToTerrain(world, diff);
   },
 
   persistence,
@@ -244,7 +231,6 @@ export const plugin: TerracePlugin = {
 
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetWildlifeState(): void {
-  api = null;
   tickCount = 0;
   resetPopulation();
   resetFlocks();

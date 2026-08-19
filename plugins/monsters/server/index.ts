@@ -85,13 +85,6 @@ import {
  */
 export const BROADCAST_TICK_INTERVAL = 10;
 
-/**
- * The WorldApi, captured at onWorldCreate. onTerrainChanged is not handed one
- * (see the same note in the reveal and wildlife plugins), and the reactive path
- * needs to re-check habitat validity, so it must be stashed.
- */
-let api: WorldApi | null = null;
-
 /** Ticks since boot, for the broadcast cadence. */
 let tickCount = 0;
 
@@ -157,9 +150,9 @@ function simulate(world: WorldApi, dt: number): void {
  * heights and writes plugin state — it never calls world.sculpt — so it cannot
  * feed the host's terrain-change cascade guard.
  */
-function reactToTerrain(diff: readonly CellDiff[]): void {
-  if (api === null || diff.length === 0) return;
-  enforceHabitat(api);
+function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
+  if (diff.length === 0) return;
+  enforceHabitat(world);
   invalidateSurvey();
 }
 
@@ -202,12 +195,6 @@ const persistence: PersistenceSlice = {
 export const plugin: TerracePlugin = {
   name: MONSTERS_PLUGIN_NAME,
 
-  onWorldCreate(world: WorldApi): void {
-    api = world;
-    // Any snapshot has already been restored by the time this runs, so the slot
-    // here holds either nothing (fresh world) or the persisted monster.
-  },
-
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
   },
@@ -216,8 +203,8 @@ export const plugin: TerracePlugin = {
     return guardGround(intent);
   },
 
-  onTerrainChanged(diff: readonly CellDiff[]): void {
-    reactToTerrain(diff);
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
+    reactToTerrain(world, diff);
   },
 
   persistence,
@@ -232,7 +219,6 @@ export const plugin: TerracePlugin = {
  * like a sim bug.
  */
 export function resetMonstersState(): void {
-  api = null;
   tickCount = 0;
   resetSummoning();
 }
