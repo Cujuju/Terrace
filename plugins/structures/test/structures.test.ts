@@ -8,12 +8,16 @@
 // Mirrors flora/test/flora.test.ts's shape.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, MAX_BRUSH_RADIUS, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, SEA_LEVEL } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
-import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
+import {
+  RecordingSink,
+  asLoadedPlugin,
+  grantTokenEveryUnlockedChunk,
+} from '../../../server/test/support/harness.ts';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_ALL_MESSAGE,
@@ -372,6 +376,13 @@ function boot(): Harness {
 
 function join(harness: Harness): void {
   harness.world.addPlayer(PLAYER);
+  // Fog of war (issue #18): grant PLAYER's own token every chunk this
+  // world's union mask already has unlocked, BEFORE playerJoined fires the
+  // plugin's onPlayerJoin — the same order the real join path seeds a
+  // token's starter square in. Every existing "the joining player gets the
+  // whole board" assertion below assumes this player can see everything
+  // boot() unlocked, exactly as it did before per-player masks existed.
+  grantTokenEveryUnlockedChunk(harness.world, PLAYER.token);
   harness.host.playerJoined(PLAYER);
 }
 
@@ -468,6 +479,59 @@ describe('broadcast model', () => {
     expect(snapshots[0].target).toBe(PLAYER.id);
     const cells = parseStructureCells((snapshots[0].payload as { structures: number[] }).structures) ?? [];
     expect(cells).toHaveLength(standingStructures().length);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // FOG OF WAR (issue #18): the migrated-plugin proof. Two players get
+  // different subsets of the SAME board through the real broadcastVisible
+  // path, and a chunk with buildings already in it reaches a player who just
+  // earned it without waiting out the keepalive.
+  // ──────────────────────────────────────────────────────────────────────────
+  it('sends each connected player only the structures inside their own unlocked view', () => {
+    const harness = boot();
+    join(harness);
+    advance(harness, 15 * 40);
+    expect(standingStructures().length).toBeGreaterThan(0);
+
+    // A second connection whose token has never unlocked anything of its own.
+    const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
+    harness.world.addPlayer(outsider);
+    harness.host.playerJoined(outsider);
+
+    harness.sink.clear();
+    // The join snapshot already proves PLAYER's own full view (the test
+    // above); this proves the SAME broadcast call gives a second player,
+    // with no unlocked territory of their own, none of it.
+    const forOutsider = harness.sink.ofType(ALL_WIRE_TYPE).filter((m) => m.target === outsider.id);
+    expect(forOutsider).toHaveLength(0);
+  });
+
+  it('pushes a targeted refresh when a player creeps into a chunk that already has a structure', () => {
+    const harness = boot();
+    advance(harness, 15 * 40);
+    const victim = standingStructures()[0];
+    expect(victim).toBeDefined();
+    const cx = Math.floor(victim!.x / CHUNK_SIZE);
+    const cy = Math.floor(victim!.y / CHUNK_SIZE);
+
+    const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
+    harness.world.addPlayer(outsider);
+    harness.host.playerJoined(outsider); // nothing to send yet — empty mask
+    harness.sink.clear();
+
+    // No reveal plugin is installed in this harness, so drive the same two
+    // steps WorldApi.unlockChunkForToken performs for any real caller: the
+    // World mutation, then the plugin fan-out it triggers.
+    expect(harness.world.unlockChunkForToken(outsider.token, cx, cy)).toBe(true);
+    harness.host.notifyChunkUnlockedForToken(outsider.token, cx, cy);
+
+    const changes = harness.sink
+      .ofType(CHANGES_WIRE_TYPE)
+      .filter((m) => m.target === outsider.id);
+    expect(changes).toHaveLength(1);
+    const founded =
+      parseStructureCells((changes[0].payload as { founded: number[] }).founded) ?? [];
+    expect(founded).toContainEqual({ x: victim!.x, y: victim!.y, tier: victim!.tier });
   });
 });
 

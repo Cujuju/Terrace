@@ -20,9 +20,22 @@ export function namespacedMessageType(pluginName: string, type: string): string 
   return `${pluginName}${PLUGIN_MESSAGE_SEPARATOR}${type}`;
 }
 
+/**
+ * The second thing (issue #18, alongside sculpt-service.ts's
+ * TerrainChangeListener) a plugin's edits need to reach back into the plugin
+ * host for: fanning `onChunkUnlockedForToken` out to every plugin after a
+ * successful per-token unlock. Kept as its own interface rather than folded
+ * into TerrainChangeListener — that one is sculpt-service.ts's own narrow
+ * contract for an unrelated event, and giving it a second, unrelated method
+ * would blur what it means to implement it.
+ */
+export interface ChunkUnlockListener {
+  notifyChunkUnlockedForToken(token: string, cx: number, cy: number): void;
+}
+
 export function createWorldApi(
   world: World,
-  listener: TerrainChangeListener,
+  listener: TerrainChangeListener & ChunkUnlockListener,
   pluginName: string,
 ): WorldApi {
   return {
@@ -64,7 +77,12 @@ export function createWorldApi(
       return world.unlockChunk(cx, cy);
     },
     unlockChunkForToken(token: string, cx: number, cy: number): boolean {
-      return world.unlockChunkForToken(token, cx, cy);
+      const unlocked = world.unlockChunkForToken(token, cx, cy);
+      // Only on a REAL unlock (see types.ts's doc comment): the World call is
+      // already idempotent per token, and re-running every plugin's targeted
+      // refresh for a chunk that token already had would be pure waste.
+      if (unlocked) listener.notifyChunkUnlockedForToken(token, cx, cy);
+      return unlocked;
     },
     players(): readonly Player[] {
       return world.players();
@@ -74,6 +92,30 @@ export function createWorldApi(
     },
     sendTo(playerId: string, type: string, payload: unknown): void {
       world.sendRawTo(playerId, namespacedMessageType(pluginName, type), payload);
+    },
+    broadcastVisible<T>(
+      type: string,
+      items: readonly T[],
+      positionOf: (item: T) => { readonly x: number; readonly y: number },
+      buildPayload: (visible: readonly T[]) => unknown,
+      options?: { readonly skipEmpty?: boolean; readonly onlyPlayerId?: string },
+    ): void {
+      const skipEmpty = options?.skipEmpty ?? false;
+      const onlyPlayerId = options?.onlyPlayerId;
+      const wireType = namespacedMessageType(pluginName, type);
+
+      for (const player of world.players()) {
+        if (onlyPlayerId !== undefined && player.id !== onlyPlayerId) continue;
+
+        const visible: T[] = [];
+        for (const item of items) {
+          const { x, y } = positionOf(item);
+          if (world.isCellVisibleTo(player.id, x, y)) visible.push(item);
+        }
+        if (skipEmpty && visible.length === 0) continue;
+
+        world.sendRawTo(player.id, wireType, buildPayload(visible));
+      }
     },
   };
 }

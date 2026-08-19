@@ -92,6 +92,12 @@ export interface WorldApi {
    * broadcast (see World.unlockChunkForToken for the full contract). This,
    * not `unlockChunk` above, is what the reveal plugin's per-player policy
    * calls: `unlockChunk` unlocks for the whole world at once.
+   *
+   * ALSO fans `onChunkUnlockedForToken` out to every plugin on a successful
+   * (non-idempotent) unlock — added issue #18, so a plugin with static
+   * per-chunk content (flora, structures) can push a targeted refresh into
+   * the newly-visible chunk instead of waiting out a slow keepalive. See that
+   * hook's own doc comment on TerracePlugin.
    */
   unlockChunkForToken(token: string, cx: number, cy: number): boolean;
 
@@ -101,6 +107,64 @@ export interface WorldApi {
   broadcast(type: string, payload: unknown): void;
   /** Sends `<pluginName>:<type>` to one player. */
   sendTo(playerId: string, type: string, payload: unknown): void;
+
+  /**
+   * THE FOG-OF-WAR FAN-OUT PRIMITIVE (issue #18). Sends `<pluginName>:<type>`
+   * to every connected player (or, with `options.onlyPlayerId`, to exactly
+   * one of them), with each recipient's own payload built from ONLY the
+   * `items` visible to THEIR OWN unlock mask (`isCellVisibleTo`, via
+   * `positionOf`) — this is the ONE place a plugin needs to loop
+   * `players()` and hand-filter by visibility; every migrated broadcast in
+   * this codebase (wildlife, monsters, flora, structures) goes through it
+   * rather than reimplementing the filter.
+   *
+   * DISAPPEARANCE SEMANTICS, decided per issue #18 and controlled by
+   * `options.skipEmpty` (default `false`, i.e. "always send"):
+   *
+   *   - `skipEmpty: false` — the recipient is sent a payload EVERY call, even
+   *     one built from an empty subset. Required for a FULL-STATE / replace
+   *     message (wildlife's `entities`, monsters' `state`): the only way a
+   *     client learns "the thing you could see has moved out of your sight"
+   *     is that the next full list simply omits it, so omitting the SEND
+   *     itself on an empty subset would leave the client's last (non-empty)
+   *     payload stale — exactly the leak this primitive exists to prevent.
+   *   - `skipEmpty: true` — a recipient whose filtered subset is empty is
+   *     sent nothing at all. Safe ONLY for an ADDITIVE delta or a snapshot of
+   *     content that never moves once placed (flora's grown/felled trees,
+   *     structures' founded/upgraded/demolished cells, either plugin's join
+   *     snapshot or keepalive): because per-player masks only ever GROW
+   *     (issue #17 — a chunk unlock is never undone), a position that is
+   *     invisible to a player right now was equally invisible whenever this
+   *     same item last changed, so there is nothing that empty send could
+   *     ever have corrected. The join-snapshot side of each such plugin uses
+   *     the SAME flag for the SAME reason, so the two paths cannot disagree
+   *     about what a silent, empty response means.
+   *
+   * `positionOf` and `buildPayload` are pure: `positionOf` maps one item to
+   * the cell that gates its visibility, and `buildPayload` turns one
+   * recipient's own filtered subset into that message type's wire shape (a
+   * caller with more than one item CATEGORY per message — e.g. a delta's
+   * `grown`/`felled` — tags each item with its category and re-partitions
+   * the filtered subset inside `buildPayload`; see the flora/structures
+   * server code for the pattern).
+   *
+   * COST: O(players × items) per call — every item is visibility-tested once
+   * per connected player. At the shipped caps this is negligible; see the
+   * cost note beside each migrated broadcast call site for the actual
+   * numbers at ~10 players.
+   */
+  broadcastVisible<T>(
+    type: string,
+    items: readonly T[],
+    positionOf: (item: T) => { readonly x: number; readonly y: number },
+    buildPayload: (visible: readonly T[]) => unknown,
+    options?: {
+      /** See the disappearance-semantics doc above. Default false. */
+      readonly skipEmpty?: boolean;
+      /** Restrict the fan-out to one connected player (e.g. a join snapshot). */
+      readonly onlyPlayerId?: string;
+    },
+  ): void;
 }
 
 /** Context handed to onIntent alongside the intent itself. */
@@ -238,6 +302,29 @@ export interface TerracePlugin {
   onPlayerJoin?(world: WorldApi, player: Player): void;
   /** Handed the same WorldApi as onTick/onIntent — see onTerrainChanged. */
   onPlayerLeave?(world: WorldApi, player: Player): void;
+
+  /**
+   * THE TARGETED-REFRESH HOOK (issue #18). Fired after `WorldApi.
+   * unlockChunkForToken` successfully unlocks chunk (cx, cy) FOR ONE TOKEN —
+   * never for `unlockChunk`'s world-wide unlock, which every connected
+   * player already learns about directly. `token`, not a playerId: the token
+   * can be live in more than one session (issue #17), and this plugin is
+   * expected to resolve `world.players()` filtered by `player.token ===
+   * token` itself, exactly as `World.unlockChunkForToken` does for the core
+   * `chunkUnlock` message.
+   *
+   * WHY THIS EXISTS, rather than leaving every plugin to catch up on its own
+   * cadence: a moving-entity plugin (wildlife, monsters) already re-sends
+   * its full state every broadcast, so the newly unlocked chunk's occupants
+   * reach the player on the very next cycle (≤ 1 s) with no extra code. A
+   * STATIC-content plugin (flora, structures) does not — its periodic
+   * full resync is a 60 s REPAIR cadence, not a sync mechanism (see each
+   * plugin's own header), so without this hook a tree or a building already
+   * standing in a chunk a player just earned would not reach them for up to
+   * a minute. A plugin with nothing already sitting in that chunk, or with
+   * moving entities that do not need this, simply does not implement it.
+   */
+  onChunkUnlockedForToken?(world: WorldApi, token: string, cx: number, cy: number): void;
 
   /** Namespaced client → server handlers, keyed by the un-namespaced type. */
   readonly messages?: Readonly<Record<string, PluginMessageHandler>>;

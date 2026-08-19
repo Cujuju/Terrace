@@ -24,6 +24,16 @@
 // precisely the combination terrain itself is synced under. The full bandwidth
 // arithmetic, and the failure mode deltas buy, are in ../protocol.ts.
 //
+// FOG OF WAR (added issue #18). Every send in "join, keepalive, delta" above is
+// now per RECIPIENT: a player is sent only the trees inside chunks they have
+// personally unlocked (WorldApi.broadcastVisible), and a recipient whose own
+// subset is empty is sent nothing at all rather than an empty message — see
+// FLORA_SKIP_EMPTY's doc comment for why that is always safe for content that
+// never moves once placed. The one gap a 60 s keepalive cannot close fast
+// enough — a player creeping into a chunk that already has standing trees —
+// gets its own targeted push instead of waiting: see onChunkUnlockedForToken /
+// refreshUnlockedChunk below.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 // THE TWO PATHS.
 //
@@ -41,7 +51,7 @@
 // through one code path.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
 // Type-only import of the plugin contract (fully erased at runtime). It reaches
 // into server/src because core publishes no plugin-API entry point yet — the
 // same arrangement mana, reveal, relics and wildlife use.
@@ -128,19 +138,49 @@ let restoredCells: readonly TreeCell[] = [];
 // Wire
 // ────────────────────────────────────────────────────────────────────────────
 
-function forestPayload(): { trees: number[] } {
-  return { trees: packTreeCells(forest.cells()) };
-}
-
-function broadcastForest(world: WorldApi): void {
-  world.broadcast(FLORA_FOREST_MESSAGE, forestPayload());
-  lastKeepaliveSeconds = simSeconds;
+/** A tree's own cell — what `WorldApi.broadcastVisible` gates visibility by. */
+function treePosition(cell: TreeCell): { x: number; y: number } {
+  return { x: cell.x, y: cell.y };
 }
 
 /**
- * Sends one delta. Silent when nothing changed — the common case by far, since
- * most surveys of a settled world grow nothing, and a message saying so would be
- * this plugin's entire steady-state bandwidth spent on nothing.
+ * FOG OF WAR (issue #18). Every broadcastVisible call this plugin makes
+ * passes `skipEmpty: true`, and this is why that is always safe here, not
+ * just convenient: per-player masks only ever GROW (issue #17 — a chunk
+ * unlock is never undone), so a tree invisible to some player right now was
+ * EQUALLY invisible to them at every earlier moment this same tree's state
+ * could have been announced. There is no "it used to be visible and now
+ * is not" case for a thing that never moves once planted, so an empty send
+ * would never have corrected anything a fuller send could — see
+ * WorldApi.broadcastVisible's own doc comment for the general rule.
+ */
+const FLORA_SKIP_EMPTY = { skipEmpty: true } as const;
+
+function broadcastForest(world: WorldApi): void {
+  world.broadcastVisible(
+    FLORA_FOREST_MESSAGE,
+    forest.cells(),
+    treePosition,
+    (visible) => ({ trees: packTreeCells(visible) }),
+    FLORA_SKIP_EMPTY,
+  );
+  lastKeepaliveSeconds = simSeconds;
+}
+
+/** One cell tagged with which half of a `flora:changes` delta it belongs to. */
+interface TaggedTreeChange {
+  readonly kind: 'grown' | 'felled';
+  readonly cell: TreeCell;
+}
+
+/**
+ * Sends one delta. Silent when nothing changed anywhere — the common case by
+ * far, since most surveys of a settled world grow nothing, and a message
+ * saying so would be this plugin's entire steady-state bandwidth spent on
+ * nothing. Per RECIPIENT, silence is more common still: `broadcastVisible`
+ * additionally skips any player whose own subset of THIS delta is empty
+ * (FLORA_SKIP_EMPTY) — the ordinary case for a change happening in someone
+ * else's territory.
  */
 function broadcastChanges(
   world: WorldApi,
@@ -148,10 +188,53 @@ function broadcastChanges(
   felled: readonly TreeCell[],
 ): void {
   if (grown.length === 0 && felled.length === 0) return;
-  world.broadcast(FLORA_CHANGES_MESSAGE, {
-    grown: packTreeCells(grown),
-    felled: packTreeCells(felled),
-  });
+
+  const tagged: TaggedTreeChange[] = [
+    ...grown.map((cell): TaggedTreeChange => ({ kind: 'grown', cell })),
+    ...felled.map((cell): TaggedTreeChange => ({ kind: 'felled', cell })),
+  ];
+  world.broadcastVisible(
+    FLORA_CHANGES_MESSAGE,
+    tagged,
+    (change) => treePosition(change.cell),
+    (visible) => ({
+      grown: packTreeCells(visible.filter((c) => c.kind === 'grown').map((c) => c.cell)),
+      felled: packTreeCells(visible.filter((c) => c.kind === 'felled').map((c) => c.cell)),
+    }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/**
+ * THE TARGETED-REFRESH PATH (issue #18). `broadcastForest`'s keepalive is a
+ * 60 s REPAIR cadence (see FLORA_KEEPALIVE_SECONDS), not a sync mechanism —
+ * far too slow for "a player just earned a chunk that already has trees in
+ * it" to feel instant. Fired once per successful per-token unlock
+ * (WorldApi.unlockChunkForToken / TerracePlugin.onChunkUnlockedForToken), so
+ * a chunk with nothing standing in it costs one bounding-box scan and no
+ * message at all.
+ *
+ * Sent as a GROWTH DELTA, not a `flora:forest` snapshot: the client's forest
+ * handler REPLACES its whole tree map on that message type (see
+ * ../client/index.ts), which would wipe out every other chunk this player
+ * already knows about. `flora:changes`' `grown` list is additive, exactly
+ * what "these trees, which already existed, are now yours to see" means.
+ */
+function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: number): void {
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const inChunk: TreeCell[] = [];
+  for (const tree of forest.cells()) {
+    if (tree.x >= x0 && tree.x < x0 + CHUNK_SIZE && tree.y >= y0 && tree.y < y0 + CHUNK_SIZE) {
+      inChunk.push(tree);
+    }
+  }
+  if (inChunk.length === 0) return;
+
+  const payload = { grown: packTreeCells(inChunk), felled: [] };
+  for (const player of world.players()) {
+    if (player.token === token) world.sendTo(player.id, FLORA_CHANGES_MESSAGE, payload);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -299,12 +382,28 @@ export const plugin: TerracePlugin = {
 
   onPlayerJoin(world: WorldApi, player: Player): void {
     // The room sends the core join snapshot before this hook, so the client is
-    // already sized and listening. The whole forest goes directly to that one
+    // already sized and listening. The forest goes directly to that one
     // player rather than being left to the keepalive: a joining player must
     // never look at a bare world for up to FLORA_KEEPALIVE_SECONDS, and
     // broadcasting it to everyone would re-send 18 KB to every existing client
     // every time somebody connects.
-    world.sendTo(player.id, FLORA_FOREST_MESSAGE, forestPayload());
+    //
+    // FOG OF WAR (issue #18): filtered to the trees inside THIS player's own
+    // unlocked view (onlyPlayerId), same skipEmpty rule as every other send
+    // in this plugin (FLORA_SKIP_EMPTY) — a player who has just joined and
+    // unlocked nothing of their own yet is sent nothing, which is exactly
+    // what their client already renders by default.
+    world.broadcastVisible(
+      FLORA_FOREST_MESSAGE,
+      forest.cells(),
+      treePosition,
+      (visible) => ({ trees: packTreeCells(visible) }),
+      { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
+    );
+  },
+
+  onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
+    refreshUnlockedChunk(world, token, cx, cy);
   },
 
   persistence,

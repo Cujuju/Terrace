@@ -24,6 +24,15 @@
 //     so this plugin needs no onPlayerJoin snapshot path at all;
 //   * bounded cost — MAX_LIVING_MONSTERS is 2, so the payload is a constant.
 //
+// FOG OF WAR (added issue #18, does not change the arithmetic below). "Every
+// broadcast carries the entire monster list" is per RECIPIENT, not one shared
+// payload: each connected player's own list is the living monsters filtered to
+// chunks they have personally unlocked (WorldApi.broadcastVisible). The three
+// consequences above are unchanged — in particular "no join handshake" still
+// holds, because broadcastVisible re-reads world.players() and each one's own
+// mask on every call, so a just-joined or just-crept player is caught up on
+// the very next cycle (≤ 1 s) with no extra code.
+//
 // BANDWIDTH. One entry is five keys — id, kind, x, y, heading — which msgpack
 // encodes in roughly 60 B including the key strings and the "cthulhu" value
 // (Colyseus re-sends keys on every message; there is no schema here). An empty
@@ -127,7 +136,20 @@ function simulate(world: WorldApi, dt: number): void {
 
   tickCount++;
   if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
-  world.broadcast(MONSTERS_STATE_MESSAGE, { monsters: monsterStates() });
+
+  // FOG OF WAR (issue #18): each connected player is sent only the monsters
+  // standing over chunks THEY have personally unlocked. Never skipEmpty
+  // (default false) — this is a FULL-STATE replace message, so the empty
+  // list a player with no visible monster gets is itself the signal that
+  // whatever they used to see left their view (see WorldApi.broadcastVisible's
+  // doc comment; monsters' own header above already documents the "empty
+  // list ~20 B" case this reuses unchanged).
+  world.broadcastVisible(
+    MONSTERS_STATE_MESSAGE,
+    monsterStates(),
+    (monster) => ({ x: monster.x, y: monster.y }),
+    (visible) => ({ monsters: visible }),
+  );
 }
 
 /**

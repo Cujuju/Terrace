@@ -12,7 +12,11 @@ import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
-import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
+import {
+  RecordingSink,
+  asLoadedPlugin,
+  grantTokenEveryUnlockedChunk,
+} from '../../../server/test/support/harness.ts';
 import {
   FLORA_CHANGES_MESSAGE,
   FLORA_FOREST_MESSAGE,
@@ -114,6 +118,13 @@ function boot(locked: (cx: number, cy: number) => boolean = isChunkLocked): Harn
 
 function join(harness: Harness): void {
   harness.world.addPlayer(PLAYER);
+  // Fog of war (issue #18): grant PLAYER's own token every chunk this
+  // world's union mask already has unlocked, BEFORE playerJoined fires the
+  // plugin's onPlayerJoin — the same order the real join path seeds a
+  // token's starter square in. Every existing "the joining player gets the
+  // whole forest" assertion below assumes this player can see everything
+  // boot() unlocked, exactly as it did before per-player masks existed.
+  grantTokenEveryUnlockedChunk(harness.world, PLAYER.token);
   harness.host.playerJoined(PLAYER);
 }
 
@@ -348,6 +359,13 @@ describe('growth', () => {
     // small world sweeping faster than a large one would silently grow its
     // forest several times too fast. (It did: the first cut of the budget
     // rounded up to whole chunks and this 64² world swept every 1.6 s.)
+    //
+    // This test counts SURVEYS via the wire, so it needs a connected, fully
+    // visible player (issue #18 fog of war: broadcastVisible correctly sends
+    // nothing to nobody, and this suite's default boot() joins no one) —
+    // otherwise a sweep that legitimately grew something would still leave
+    // zero messages to count.
+    join(harness);
     advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS);
     harness.sink.clear();
 
@@ -478,12 +496,98 @@ describe('broadcast model', () => {
   it('repairs a drifted client with a keepalive snapshot', () => {
     const harness = boot(() => false);
     join(harness);
+    // Some real content to repair: an empty forest's keepalive is legitimately
+    // silent under fog of war (issue #18) — a recipient whose own visible
+    // subset is empty is sent nothing at all (FLORA_SKIP_EMPTY), same as a
+    // delta would be, so this test needs standing trees to prove the keepalive
+    // actually carries them.
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
+    expect(standingTrees().length).toBeGreaterThan(0);
     harness.sink.clear();
 
     advance(harness, FLORA_KEEPALIVE_SECONDS + 1);
     const snapshots = harness.sink.ofType(FOREST_WIRE_TYPE);
     expect(snapshots.length).toBeGreaterThan(0);
-    expect(snapshots[0].target).toBe('broadcast');
+    // Fog of war (issue #18): the fan-out is per connected player now, never
+    // a single shared broadcast — with exactly one player joined here that
+    // is still exactly one message, addressed to them.
+    expect(snapshots[0].target).toBe(PLAYER.id);
+    // Non-empty and real content, not just a message: growth keeps happening
+    // during the keepalive window too, so this is a floor, not an equality.
+    const cells = parseTreeCells((snapshots[0].payload as { trees: number[] }).trees) ?? [];
+    expect(cells.length).toBeGreaterThan(0);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // FOG OF WAR (issue #18). First: two players get different subsets of the
+  // SAME forest through the real broadcastVisible path. Second: the targeted
+  // refresh — a chunk with trees already in it must reach a player who just
+  // earned it, not wait out FLORA_KEEPALIVE_SECONDS.
+  // ──────────────────────────────────────────────────────────────────────────
+  it('sends each connected player only the trees inside their own unlocked view', () => {
+    const harness = boot(() => false);
+    join(harness);
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
+    expect(standingTrees().length).toBeGreaterThan(0);
+
+    // A second connection whose token has never unlocked anything of its own.
+    const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
+    harness.world.addPlayer(outsider);
+    harness.host.playerJoined(outsider);
+
+    harness.sink.clear();
+    advance(harness, FLORA_KEEPALIVE_SECONDS + 1);
+
+    const forPlayer = harness.sink
+      .ofType(FOREST_WIRE_TYPE)
+      .filter((m) => m.target === PLAYER.id);
+    const forOutsider = harness.sink
+      .ofType(FOREST_WIRE_TYPE)
+      .filter((m) => m.target === outsider.id);
+
+    // PLAYER's token was granted the whole unlocked world (join()), so their
+    // keepalive carries real content — growth keeps happening during the
+    // keepalive window too, so this is a floor, not an equality (the same
+    // reasoning as the plain keepalive test above).
+    expect(forPlayer.length).toBeGreaterThan(0);
+    const playerCells = parseTreeCells((forPlayer[0].payload as { trees: number[] }).trees) ?? [];
+    expect(playerCells.length).toBeGreaterThan(0);
+
+    // The outsider's token has unlocked nothing: skipEmpty means their
+    // keepalive is silent rather than an empty message, which is the
+    // documented, safe disappearance-semantics choice for content that never
+    // moves once placed (FLORA_SKIP_EMPTY).
+    expect(forOutsider).toHaveLength(0);
+  });
+
+  it('pushes a targeted refresh when a player creeps into a chunk that already has trees', () => {
+    const harness = boot(() => false);
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 5);
+    const victim = standingTrees()[0];
+    expect(victim).toBeDefined();
+    const cx = Math.floor(victim.x / CHUNK_SIZE);
+    const cy = Math.floor(victim.y / CHUNK_SIZE);
+
+    const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
+    harness.world.addPlayer(outsider);
+    harness.host.playerJoined(outsider); // nothing to send yet — empty mask
+    harness.sink.clear();
+
+    // No reveal plugin is installed in this harness, so drive the same two
+    // steps WorldApi.unlockChunkForToken performs for any real caller: the
+    // World mutation (+ its own core chunkUnlock send), then the plugin
+    // fan-out it triggers (world-api.ts's unlockChunkForToken wrapper).
+    expect(harness.world.unlockChunkForToken(outsider.token, cx, cy)).toBe(true);
+    harness.host.notifyChunkUnlockedForToken(outsider.token, cx, cy);
+
+    const changes = harness.sink
+      .ofType(CHANGES_WIRE_TYPE)
+      .filter((m) => m.target === outsider.id);
+    expect(changes).toHaveLength(1);
+    const grown = parseTreeCells((changes[0].payload as { grown: number[] }).grown) ?? [];
+    expect(grown).toContainEqual({ x: victim.x, y: victim.y });
+    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
+    expect(felled).toHaveLength(0);
   });
 });
 

@@ -26,7 +26,11 @@ import {
   World,
   freshGenesisProfile,
 } from '../../../server/src/world/world.ts';
-import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
+import {
+  RecordingSink,
+  asLoadedPlugin,
+  grantTokenEveryUnlockedChunk,
+} from '../../../server/test/support/harness.ts';
 import {
   DEFAULT_SIZE_CLASS,
   WILDLIFE_HABITAT_SPECIES,
@@ -198,6 +202,11 @@ function bootOn(world: World): Harness {
   const host = new PluginHost(world, [wildlifePlugin].map(asLoadedPlugin));
   host.worldCreate();
   world.addPlayer(PLAYER);
+  // Fog of war (issue #18): this suite's PLAYER is the one player every test
+  // reasons about seeing "the whole (unlocked) world" — grant their own
+  // per-token mask the same chunks worldWithTerrain already unlocked, or
+  // every broadcast in "wildlife sync" below would filter down to nothing.
+  grantTokenEveryUnlockedChunk(world, PLAYER.token);
   host.playerJoined(PLAYER);
 
   return { world, host, sink };
@@ -775,7 +784,10 @@ describe('wildlife sync', () => {
 
     const messages = harness.sink.ofType('wildlife:entities');
     expect(messages).toHaveLength(1);
-    expect(messages[0].target).toBe('broadcast');
+    // Fog of war (issue #18): the fan-out is per connected player now, never
+    // a single shared broadcast — with exactly one player in this harness
+    // that is still exactly one message, addressed to them.
+    expect(messages[0].target).toBe(PLAYER.id);
 
     const payload = messages[0].payload as { entities: Array<Record<string, unknown>> };
     // ONE message carries both subsystems: the habitat population and whatever
@@ -822,6 +834,49 @@ describe('wildlife sync', () => {
       if (!isWildlifeHabitatSpecies(entity.species)) continue;
       expect(harness.world.isCellUnlocked(Math.floor(entity.x), Math.floor(entity.y))).toBe(true);
     }
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // FOG OF WAR (issue #18): the migrated-plugin proof. `harness`'s PLAYER has
+  // the whole unlocked world granted to their own token (see bootOn); a
+  // second player who has earned nothing of their own must be sent none of
+  // the habitat population, through the REAL plugin path (WorldApi.
+  // broadcastVisible), not a stub.
+  // ──────────────────────────────────────────────────────────────────────────
+  it('sends each connected player only the habitat population inside their own unlocked view', () => {
+    fillPopulation(harness);
+    expect(livingEntities().length).toBeGreaterThan(0);
+
+    // A second connection whose token has never unlocked anything of its own
+    // — the honest "just joined, has not crept anywhere yet" state.
+    const outsider: Player = { id: 'session-2', token: 'token-2', name: 'Outsider' };
+    harness.world.addPlayer(outsider);
+    harness.host.playerJoined(outsider);
+
+    harness.sink.clear();
+    tick(harness, 2);
+
+    const messages = harness.sink.ofType('wildlife:entities');
+    const forPlayer = messages.find((m) => m.target === PLAYER.id);
+    const forOutsider = messages.find((m) => m.target === outsider.id);
+    // Full-state semantics (skipEmpty defaults false): BOTH connected players
+    // are sent a message every cycle, even the one whose subset is empty —
+    // that empty send is how a client would learn something it used to see
+    // has left its view (see WorldApi.broadcastVisible's doc comment).
+    expect(forPlayer).toBeDefined();
+    expect(forOutsider).toBeDefined();
+
+    const habitatOnly = (payload: unknown) =>
+      (payload as { entities: Array<{ species: string }> }).entities.filter((entity) =>
+        isWildlifeHabitatSpecies(entity.species),
+      );
+
+    // PLAYER's token was granted the whole unlocked world (bootOn), so their
+    // view matches the real population exactly.
+    expect(habitatOnly(forPlayer!.payload).length).toBe(livingEntities().length);
+    // The outsider's token has unlocked nothing, so their subset of the SAME
+    // population — computed by the SAME broadcast call — is empty.
+    expect(habitatOnly(forOutsider!.payload).length).toBe(0);
   });
 });
 
