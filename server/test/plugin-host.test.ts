@@ -4,6 +4,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { CellDiff, SculptIntent } from '@terrace/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_WORLD_DIFFICULTY,
@@ -370,6 +371,70 @@ describe('PluginHost', () => {
     // The guard fired: the cascade ran exactly to the cap and stopped there,
     // instead of recursing until the stack (or the tick) died.
     expect(depth).toBe(MAX_TERRAIN_CHANGE_DEPTH);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // onIntentApplied — the effect phase of the two-phase intent pipeline
+  // (issue #19). PluginHost's own contract is narrow: notifyIntentApplied is a
+  // plain fan-out, handing every plugin a working WorldApi, the same shape
+  // runIntent (IntentCtx) uses. The GUARANTEE that it only ever gets called
+  // after every interceptor allowed lives one layer up, in the pipeline
+  // (server/test/intent-pipeline.test.ts covers that end to end) — this suite
+  // covers what PluginHost itself owes the call.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it('hands onIntentApplied a working WorldApi and the same player/intent/diff it was given', () => {
+    const seen: Array<{ intent: SculptIntent; playerId: string; diffLength: number }> = [];
+    const fixture: TerracePlugin = {
+      name: 'ledger',
+      onIntentApplied(intent, ctx, diff): void {
+        seen.push({ intent, playerId: ctx.player.id, diffLength: diff.length });
+        // A WORKING api, not a stub — reachable without the plugin stashing
+        // anything of its own, exactly like onTerrainChanged's contract.
+        ctx.world.broadcast('ping', {});
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    const host = new PluginHost(world, [fixture].map(asLoadedPlugin));
+
+    const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
+    const diff: CellDiff[] = [{ x: 4, y: 4, h: 64 }];
+    host.notifyIntentApplied(intent, PLAYER, diff);
+
+    expect(seen).toEqual([{ intent, playerId: PLAYER.id, diffLength: 1 }]);
+    expect(sink.ofType('ledger:ping')).toHaveLength(1);
+  });
+
+  it('runs onIntentApplied for every plugin in load order, and keeps going if one throws', () => {
+    const calls: string[] = [];
+    const broken: TerracePlugin = {
+      name: 'broken',
+      onIntentApplied(): void {
+        throw new Error('boom');
+      },
+    };
+    const first: TerracePlugin = { name: 'a-first', onIntentApplied: () => calls.push('a') };
+    const second: TerracePlugin = { name: 'b-second', onIntentApplied: () => calls.push('b') };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [first, broken, second].map(asLoadedPlugin));
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
+    expect(() => host.notifyIntentApplied(intent, PLAYER, [])).not.toThrow();
+    errors.mockRestore();
+
+    expect(calls).toEqual(['a', 'b']);
+  });
+
+  it('does nothing when no plugin implements onIntentApplied', () => {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [{ name: 'silent' }].map(asLoadedPlugin));
+    const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
+    expect(() => host.notifyIntentApplied(intent, PLAYER, [])).not.toThrow();
   });
 
   it('ignores snapshot slices belonging to plugins that are no longer installed', () => {

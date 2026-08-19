@@ -7,11 +7,21 @@
 //                               bounds, radius, direction. Untrusted input is
 //                               never trusted past this line.
 //   2. MASK CHECK             — the brush CENTRE cell's chunk must be unlocked.
-//   3. PLUGIN INTERCEPTORS    — allow / deny / modify, first deny wins.
+//   3. PLUGIN INTERCEPTORS    — the VERDICT PHASE: allow / deny / modify, first
+//      (VERDICT PHASE)           deny wins. NO plugin-owned state may change
+//                                here — see onIntent's doc comment in
+//                                plugins/types.ts. This is PluginHost.runIntent.
 //   4. RE-VALIDATION          — only if a plugin modified the intent.
 //   5. NORMALISE + APPLY +    — absent tool/profile resolved through shared's
 //      BROADCAST                 sculptOptionsOf, then applied via
 //                                sculpt-service (mask-filtered on the wire).
+//   6. PLUGIN EFFECTS         — the EFFECT PHASE (issue #19): fires ONLY here,
+//      (EFFECT PHASE)            after step 5 actually applied the edit, i.e.
+//                                only when every step-3 interceptor allowed.
+//                                This is PluginHost.notifyIntentApplied — a
+//                                mana-style plugin debits its economy here,
+//                                never in step 3, so a deny anywhere in the
+//                                chain costs the player nothing.
 //
 // The sculpt AMOUNT is server-side (DEFAULT_SCULPT_AMOUNT × direction) and is
 // never read from the message, so a hacked client cannot sculpt harder than
@@ -49,6 +59,8 @@ export interface IntentPipelineDeps {
   readonly world: World;
   readonly interceptors: {
     runIntent(intent: SculptIntent, player: Player): IntentVerdict;
+    /** The effect phase — see PluginHost.notifyIntentApplied. */
+    notifyIntentApplied(intent: SculptIntent, player: Player, diff: readonly CellDiff[]): void;
   } & TerrainChangeListener;
 }
 
@@ -135,6 +147,15 @@ export function handleSculptIntent(
     // plugin's per-player creep policy has someone to unlock chunks for.
     player.token,
   );
+
+  // 6. THE EFFECT PHASE (issue #19): every interceptor allowed and the edit is
+  // now real, so this is the one point a plugin may commit an irreversible
+  // side effect (a mana plugin debiting its economy, chief among them) — see
+  // TerracePlugin.onIntentApplied's doc comment for the contract this fires.
+  // Reached ONLY via this line: every earlier `return` above is a rejection,
+  // so a deny anywhere in step 3, or a failed re-validation in step 4, skips
+  // this call entirely and nothing here ever runs for it.
+  interceptors.notifyIntentApplied(effective, player, diff);
 
   return { applied: true, intent: effective, diff };
 }

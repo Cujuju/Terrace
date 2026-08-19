@@ -14,6 +14,7 @@ import {
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
+  MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   SEA_LEVEL,
   isWater,
@@ -23,6 +24,13 @@ import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
+import {
+  MANA_CAPACITY,
+  MANA_COST_PER_MIN_RADIUS_SCULPT,
+  manaBalanceOf,
+  plugin as manaPlugin,
+  resetManaState,
+} from '../../mana/server/index.ts';
 import {
   MONSTERS_PLUGIN_NAME,
   MONSTERS_STATE_MESSAGE,
@@ -1328,6 +1336,94 @@ describe('the ground a monster will not let you raise', () => {
     const cell = monsterCell();
     expect(profileOf('kraken').protectsGround).toBe(false);
     expect(sculpt(harness, cell.x, cell.y, 1).applied).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// ISSUE #19 — THE EXACT SCENARIO THE ISSUE WAS FILED FOR: a raise refused
+// because Cthulhu occupies the ground must cost the player nothing. Loads the
+// REAL mana plugin alongside monsters, in the real discovery order (mana
+// sorts before monsters alphabetically — plugins/mana, plugins/monsters), so
+// the fix is proven against the two plugins that exposed the bug, not a
+// stand-in for either.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('issue #19 — Cthulhu’s veto costs zero mana', () => {
+  /** Boots mana + monsters together, mana first — the real load order. */
+  function bootWithMana(): Harness {
+    resetMonstersState();
+    resetManaState();
+
+    const world = worldWithTerrain(WORLD_SIZE, bowl(GREAT_BASIN_RADIUS));
+    const sink = new RecordingSink();
+    world.setSink(sink);
+
+    const host = new PluginHost(world, [manaPlugin, monstersPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    host.playerJoined(PLAYER);
+
+    return { world, host, sink };
+  }
+
+  function sculptWithMana(
+    harness: Harness,
+    x: number,
+    y: number,
+    dir: 1 | -1,
+    radius = MAX_BRUSH_RADIUS,
+  ): ReturnType<typeof handleSculptIntent> {
+    return handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { type: 'sculpt', x, y, radius, dir, tool: 'stamp', profile: 'hard' },
+    );
+  }
+
+  it('refuses a raise aimed at Cthulhu and charges the player nothing', () => {
+    setMonsterRandomSource(ALWAYS);
+    const harness = bootWithMana();
+    tick(harness, 1);
+    expect(livingMonster()!.kind).toBe('cthulhu');
+    setMonsterRandomSource(NEVER);
+    harness.sink.clear();
+
+    const before = manaBalanceOf(PLAYER.id);
+    expect(before).toBe(MANA_CAPACITY);
+
+    const monster = livingMonster()!;
+    const cell = { x: Math.floor(monster.x), y: Math.floor(monster.y) };
+    const outcome = sculptWithMana(harness, cell.x, cell.y, 1);
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('plugin-denied');
+    // The load-bearing assertion (issue #19): mana's own onIntent had already
+    // allowed by the time monsters denied — the pool must still be untouched.
+    expect(manaBalanceOf(PLAYER.id)).toBe(before);
+  });
+
+  it('still charges the standard price for a raise Cthulhu does not contest', () => {
+    setMonsterRandomSource(ALWAYS);
+    const harness = bootWithMana();
+    tick(harness, 1);
+    expect(livingMonster()!.kind).toBe('cthulhu');
+    setMonsterRandomSource(NEVER);
+    harness.sink.clear();
+
+    const before = manaBalanceOf(PLAYER.id);
+
+    // Well clear of his protected disc: the same clearance the "draws the
+    // line" test above uses, plus a margin, on the opposite axis so a radius-1
+    // brush's own footprint cannot reach him either.
+    const monster = livingMonster()!;
+    const reach = MIN_BRUSH_RADIUS + groundProtectionRadiusCells(profileOf('cthulhu'));
+    const clearX = Math.floor(monster.x + reach + 5);
+    const clearY = Math.floor(monster.y);
+
+    const outcome = sculptWithMana(harness, clearX, clearY, 1, MIN_BRUSH_RADIUS);
+
+    expect(outcome.applied).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe((before ?? 0) - MANA_COST_PER_MIN_RADIUS_SCULPT);
   });
 });
 

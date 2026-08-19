@@ -20,6 +20,7 @@ import {
 } from '../../../server/src/config.ts';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
+import { ALLOW, type IntentVerdict, type TerracePlugin } from '../../../server/src/plugins/types.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import {
@@ -1045,6 +1046,85 @@ describe('charging per intent, through the real pipeline', () => {
     let plateaus = 0;
     while (sculptWith(MAX_BRUSH_RADIUS, 'hard').applied) plateaus++;
     expect(plateaus).toBe(FULL_POOL_MAX_RADIUS_HARD_STAMPS);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// ISSUE #19 — TWO-PHASE INTENT PROCESSING. mana used to charge in the same
+// verdict pass a later interceptor could still veto (monsters denying a raise
+// near a living Cthulhu was the real-world case the issue was filed for).
+// mana now only checks affordability in onIntent and only spends in
+// onIntentApplied, which core fires exclusively after every interceptor in
+// the chain — including a plugin loaded AFTER mana — has allowed. These tests
+// exercise that through the REAL mana plugin and the real pipeline, with a
+// minimal stand-in for "some later plugin vetoes it", so the contract is
+// pinned independent of any one denying plugin's own reasons.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
+  /** Denies every intent it sees. Stands in for monsters/relics/any plugin. */
+  const laterDenier: TerracePlugin = {
+    name: 'zzz-later-denier',
+    onIntent(): IntentVerdict {
+      return { kind: 'deny', reason: 'vetoed by a later plugin' };
+    },
+  };
+
+  /** Boots mana with an extra plugin appended AFTER it in the chain. */
+  function bootWithLaterPlugin(laterPlugin: TerracePlugin): Harness {
+    resetManaState();
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [HOME_CHUNK], SUITE_DIFFICULTY);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+
+    // manaPlugin FIRST, laterPlugin SECOND — this is the exact ordering
+    // relationship the bug depended on (mana sorts before every other shipped
+    // plugin alphabetically), reproduced explicitly rather than relying on
+    // directory names.
+    const host = new PluginHost(world, [manaPlugin, laterPlugin].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    host.playerJoined(PLAYER);
+
+    return { world, host, sink };
+  }
+
+  it('charges NOTHING when a plugin ordered after mana denies the intent', () => {
+    const harness = bootWithLaterPlugin(laterDenier);
+    const before = manaBalanceOf(PLAYER.id);
+    expect(before).toBe(MANA_CAPACITY);
+
+    const outcome = sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('plugin-denied');
+    // The load-bearing assertion: mana's own onIntent allowed (it never got a
+    // chance to deny), yet the pool is untouched because it never charges
+    // until the effect phase, which a deny skips entirely.
+    expect(manaBalanceOf(PLAYER.id)).toBe(before);
+    expect(harness.world.heightAt(INTERIOR_CELL.x, INTERIOR_CELL.y)).toBe(0);
+  });
+
+  it('charges exactly the shared price when every interceptor — including a later one — allows', () => {
+    const allower: TerracePlugin = { name: 'zzz-later-allower', onIntent: () => ALLOW };
+    const harness = bootWithLaterPlugin(allower);
+
+    const outcome = sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
+
+    expect(outcome.applied).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
+  });
+
+  it('the same intent costs zero when denied and exactly POINT_COST when allowed — same pool, same brush', () => {
+    // Denied first, so a bug that charged anyway would be visible as a balance
+    // drop the very next assertion catches.
+    const denyHarness = bootWithLaterPlugin(laterDenier);
+    expect(sculptAt(denyHarness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY);
+
+    const allowHarness = bootWithLaterPlugin({ name: 'zzz-later-allower', onIntent: () => ALLOW });
+    expect(sculptAt(allowHarness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
   });
 });
 

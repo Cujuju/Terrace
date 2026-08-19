@@ -18,13 +18,15 @@
 // ten-cell-tall horror occupying the cells you aimed at. A toast explaining
 // that would be telling a player what they are already looking at.
 //
-// KNOWN INTERACTION, stated rather than papered over: plugins run in directory
-// order, so `mana` charges for a sculpt before `monsters` denies it, and a raise
-// refused here still costs the player its mana. That is the residual failure
-// mode mana's own onIntent already documents ("a third-party plugin sorting
-// after mana would expose it"); this is the first plugin in the repo to do so.
-// The fix belongs in core — a post-chain hook so a charge can be committed or
-// refunded — not in a workaround here or a reordering of the load rules.
+// FIXED INTERACTION (was: KNOWN, issue #19, 2026-08-18): plugins still run in
+// directory order — `mana` sees an intent before `monsters` does — but mana no
+// longer charges during that verdict pass. Core's intent pipeline is now
+// two-phase (server/src/intent/pipeline.ts steps 3 and 6): every interceptor,
+// this one included, only answers allow/deny/modify in the verdict phase, and
+// a plugin that wants to spend a resource does so in `onIntentApplied`, which
+// core calls only once every interceptor has allowed and the edit has
+// actually landed. A raise refused here — DENY, in the verdict phase, before
+// mana's own effect hook ever runs — costs the player nothing.
 
 import type { SculptIntent } from '@terrace/shared';
 import { groundProtectionRadiusCells, profileOf } from './kinds.ts';
