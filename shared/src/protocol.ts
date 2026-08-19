@@ -43,11 +43,16 @@ export interface SculptIntent {
    */
   profile?: SculptProfile;
   /**
-   * Client-chosen correlation id, echoed back on SculptDeniedMessage so the
-   * sender can retire the exact client-side prediction a denial refers to.
+   * Client-chosen correlation id, echoed back on the server's ANSWER to this
+   * intent — SculptAppliedMessage when it was applied, SculptDeniedMessage
+   * when a plugin denied it — so the sender can retire the exact client-side
+   * prediction that answer refers to.
+   *
    * Optional: an intent without one is still valid — it simply cannot be
-   * nacked by seq, and its prediction falls back to the value/deadline
-   * reconciliation in the client's prediction store.
+   * answered by seq, and its prediction falls back to the value/deadline
+   * reconciliation in the client's prediction store. That fallback is a
+   * heuristic that provably fails at a territory frontier (issue #21), so a
+   * client that wants its own edits reconciled exactly must send a seq.
    */
   seq?: number;
 }
@@ -103,6 +108,45 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
 export interface SculptDeniedMessage {
   type: 'sculptDenied';
   /** The denied intent's seq, verbatim. */
+  seq: number;
+}
+
+/**
+ * Server → the ORIGINATING client only: the intent carrying this seq WAS
+ * applied authoritatively, and every message describing what it did has
+ * already been sent on this connection.
+ *
+ * THE ACKNOWLEDGEMENT CONTRACT (issue #21). This is the other half of
+ * SculptDeniedMessage: an intent with a seq gets exactly one answer — applied
+ * or denied — and the sender retires the prediction it made for that intent on
+ * the answer, instead of GUESSING from the heights in the broadcast diff.
+ *
+ * Guessing was the bug. A client cannot reproduce the server's result for any
+ * edit whose shared math reads terrain the client was never sent (the brush
+ * footprint or the gradient relaxation crossing its territory frontier), so
+ * its prediction never matched, was never recognised as acknowledged, and was
+ * replayed on top of the server's own copy of the same edit until the
+ * reconciliation deadline — visibly dragging just-sculpted ground away and
+ * then snapping it back a second later.
+ *
+ * ORDERING, and why it is load-bearing: this message MUST be sent AFTER the
+ * terrainDiff carrying the edit and after any chunkUnlock the edit earned, on
+ * the same connection. Retiring a prediction before its authoritative
+ * replacement has landed would show the pre-sculpt ground for one frame. The
+ * server side of that contract is stated and enforced in
+ * server/src/intent/pipeline.ts.
+ *
+ * ANTI-CHEAT NOTE: an ack tells the sender only that its OWN intent landed.
+ * Absence of an ack is not a new oracle for the unlock mask — the mask
+ * rejection it would have to be distinguished from is already directly
+ * observable, because the terrainDiff broadcast filter is union-mask-based
+ * (see World.isCellUnlocked, and the fog-of-war follow-up flagged with issue
+ * #17): a client that sculpts into a union-unlocked chunk already receives the
+ * resulting heights whether or not that chunk is unlocked for it personally.
+ */
+export interface SculptAppliedMessage {
+  type: 'sculptApplied';
+  /** The applied intent's seq, verbatim. */
   seq: number;
 }
 
@@ -164,6 +208,7 @@ export type ServerMessage =
   | TerrainDiffMessage
   | ChunkUnlockMessage
   | JoinSnapshotMessage
+  | SculptAppliedMessage
   | SculptDeniedMessage;
 
 /**

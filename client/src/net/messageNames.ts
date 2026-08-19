@@ -14,6 +14,7 @@
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
@@ -33,3 +34,10 @@ export const MSG_SCULPT: SculptIntent['type'] = 'sculpt';
 
 /** Server → the sender only: a plugin denied the intent with this seq. */
 export const MSG_SCULPT_DENIED: SculptDeniedMessage['type'] = 'sculptDenied';
+
+/**
+ * Server → the sender only: the intent with this seq was applied, and
+ * everything describing what it did has already arrived. The other half of the
+ * answer contract above — see SculptAppliedMessage in shared/src/protocol.ts.
+ */
+export const MSG_SCULPT_APPLIED: SculptAppliedMessage['type'] = 'sculptApplied';

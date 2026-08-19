@@ -35,6 +35,7 @@ import { Client, type Room } from '@colyseus/sdk';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
@@ -44,6 +45,7 @@ import { getOrCreatePlayerToken } from '../state/playerToken.ts';
 import {
   MSG_CHUNK_UNLOCK,
   MSG_SCULPT,
+  MSG_SCULPT_APPLIED,
   MSG_SCULPT_DENIED,
   MSG_SNAPSHOT,
   MSG_TERRAIN_DIFF,
@@ -82,6 +84,13 @@ export interface TerrainSink {
   onTerrainDiff(msg: TerrainDiffMessage): void;
   /** A plugin denied our intent with this seq: retire its prediction NOW. */
   onSculptDenied(msg: SculptDeniedMessage): void;
+  /**
+   * The server applied our intent with this seq and has already sent
+   * everything that describes it: retire its prediction NOW. The authoritative
+   * result is in the mirror by the time this arrives (see the ordering
+   * contract on SculptAppliedMessage), so the swap is invisible.
+   */
+  onSculptApplied(msg: SculptAppliedMessage): void;
 }
 
 export interface ConnectionOptions {
@@ -171,6 +180,9 @@ export function connect(options: ConnectionOptions): Connection {
     });
     joined.onMessage<SculptDeniedMessage>(MSG_SCULPT_DENIED, (msg) => {
       options.sink.onSculptDenied(msg);
+    });
+    joined.onMessage<SculptAppliedMessage>(MSG_SCULPT_APPLIED, (msg) => {
+      options.sink.onSculptApplied(msg);
     });
 
     // Plugin routing. Plugin messages are namespaced `<plugin>:<type>` by the

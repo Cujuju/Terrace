@@ -22,6 +22,22 @@
 //                                mana-style plugin debits its economy here,
 //                                never in step 3, so a deny anywhere in the
 //                                chain costs the player nothing.
+//   7. ANSWER THE SENDER      — a sculptApplied ack carrying the intent's seq.
+//
+// THE ANSWER CONTRACT (issue #21). An intent that carries a seq gets exactly
+// one answer back to its sender: 'sculptApplied' from step 6, or 'sculptDenied'
+// from step 3. Both exist for the same reason — the client retires the exact
+// prediction it made for that intent when its answer arrives, instead of
+// inferring acknowledgement from the heights in the broadcast diff. That
+// inference cannot work for an edit whose shared math reads terrain the client
+// was never sent (see SculptAppliedMessage in shared/src/protocol.ts), which is
+// every edit at a territory frontier.
+//
+// The two silent rejections — 'malformed' and 'locked' — deliberately stay
+// unanswered (see below), so their predictions still fall back to the client's
+// reconciliation deadline. Neither is reachable from a well-behaved client: it
+// runs the same validator, and it only predicts inside chunks it was actually
+// sent, which are always a subset of the union mask this pipeline checks.
 //
 // The sculpt AMOUNT is server-side (DEFAULT_SCULPT_AMOUNT × direction) and is
 // never read from the message, so a hacked client cannot sculpt harder than
@@ -156,6 +172,34 @@ export function handleSculptIntent(
   // so a deny anywhere in step 3, or a failed re-validation in step 4, skips
   // this call entirely and nothing here ever runs for it.
   interceptors.notifyIntentApplied(effective, player, diff);
+
+  // 7. ANSWER THE SENDER — and only after applyServerSculpt has returned.
+  //
+  // ORDERING IS THE WHOLE POINT, so this call sits here rather than inside
+  // sculpt-service.ts. By the time applyServerSculpt returns it has already
+  // (a) broadcast the filtered terrainDiff and (b) run the plugin listeners,
+  // which is where the reveal plugin's per-player creep sends this sculptor
+  // any chunkUnlock the spill just earned. Colyseus routes broadcast and
+  // sendTo through the same per-client send queue, in call order (verified in
+  // @colyseus/ws-transport 0.17.13: Room.broadcastMessageType and
+  // Client.send both funnel into WebSocketClient.enqueueRaw), so the sender
+  // sees diff → unlock → ack. Acking any earlier would retire the prediction
+  // while the authoritative replacement was still in flight, and the sculpted
+  // ground would drop for a frame — the very flicker this fixes.
+  //
+  // The ack is sent even when the diff was EMPTY. "Applied, and it moved
+  // nothing" is a real outcome (a stroke clamped at MAX_HEIGHT, or a level
+  // fill whose footprint is already at the target level), and it is exactly
+  // the case where a client that predicted movement most needs telling.
+  //
+  // The seq comes from the ORIGINAL intent, not from `effective`: it is the
+  // CLIENT's correlation id for the prediction it is holding, so a plugin that
+  // rewrites the intent (and drops or changes the field) must not be able to
+  // strand that prediction until the deadline. Same reasoning, same source, as
+  // the sculptDenied nack above.
+  if (intent.seq !== undefined) {
+    world.sendTo(player.id, { type: 'sculptApplied', seq: intent.seq });
+  }
 
   return { applied: true, intent: effective, diff };
 }

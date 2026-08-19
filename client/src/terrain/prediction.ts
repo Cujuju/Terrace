@@ -17,34 +17,49 @@
 // replays whatever predictions are still outstanding. Predictions are therefore
 // never mixed into the authoritative record; they only ever sit on top of it.
 //
-// WHY NOT A SEQUENCE NUMBER. The obvious reconciliation — tag each intent with
-// a sequence number and have the server echo it back on the diff that applied
-// it — is not available: `shared/src/protocol.ts` is the locked contract and
-// `TerrainDiffMessage` carries no correlation id, no sender id, and no ordering
-// field. A client literally cannot tell its own diff from another player's. So
-// acknowledgement is inferred by VALUE instead (see `isConfirmed`), with a
-// deadline as the safety net. Adding `seq` to the protocol is the correct
-// long-term fix and would replace `isConfirmed` wholesale.
+// RECONCILIATION POLICY, in priority order:
 //
-// RECONCILIATION POLICY: a prediction is retired when the authoritative map
-// agrees with it (`isConfirmed`), and unconditionally once it is older than
-// PREDICTION_TTL_MS. Survivors are replayed, in order, on top of the new base.
+//   1. THE SERVER'S ANSWER (`resolveSeq`). Every intent carrying a `seq` is
+//      answered exactly once — 'sculptApplied' or 'sculptDenied' — and the
+//      answer retires that intent's prediction outright. This is the whole
+//      reconciliation in the normal case, and it needs no guessing.
+//   2. VALUE AGREEMENT (`isConfirmed`), the fallback for a seq-less intent or
+//      a server too old to answer. A prediction whose cells already hold the
+//      heights it produced is redundant and is dropped.
+//   3. THE DEADLINE (PREDICTION_TTL_MS), the safety net for an intent that is
+//      never answered at all (lost packet, silent rejection).
 //
-// RESIDUAL FAILURE MODES — each one resolves within PREDICTION_TTL_MS, none is
-// permanent, and none can affect the authoritative state:
-//   * DOUBLED EDIT. The server applied our intent, but to a base that had moved
-//     under it (an overlapping simultaneous edit, or relaxation fed by locked
-//     terrain we have never been sent), so the values differ and the prediction
-//     is not recognised as acknowledged. Ours is drawn on top of the server's
-//     copy of it until the deadline. See `isConfirmed`.
-//   * REJECTED INTENT. The unlock mask or a plugin veto silently drops the
-//     intent; no diff ever arrives, and the deadline is the only thing that
-//     takes the prediction back off. See PREDICTION_TTL_MS.
-//   * MODIFIED INTENT. A plugin rewrites the intent (centre, radius) or the
-//     deployment overrides the sculpt amount, so the server's result cannot
-//     match ours. Behaves exactly like a rejected intent.
+// Survivors are replayed, in order, on top of the new base.
+//
+// WHY THE SERVER'S ANSWER HAD TO EXIST (issue #21). Value agreement was once
+// the ONLY mechanism, because `TerrainDiffMessage` carries no correlation id —
+// a client cannot tell its own diff from another player's. It works only while
+// the client can reproduce the server's arithmetic, and at a territory
+// frontier it provably cannot: the shared brush and relaxation math read cells
+// in chunks the client was never sent, which its mirror holds at SEA_LEVEL
+// (see mirror.ts invariant 2). The prediction therefore never matched, was
+// never recognised as acknowledged, and was REPLAYED ON TOP of the server's
+// own copy of the same edit for a full second — visibly dragging just-sculpted
+// frontier ground down, then snapping it back. `predict` now also refuses the
+// predictions it cannot compute exactly (see PREDICTION_HALO_CELLS), so that
+// window is not merely short but usually empty.
+//
+// RESIDUAL FAILURE MODES — none is permanent, and none can affect the
+// authoritative state:
+//   * SILENTLY REJECTED INTENT. The unlock mask drops the intent, or a plugin
+//     rewrites it into something invalid; no diff and no answer ever arrive,
+//     and the deadline is the only thing that takes the prediction back off.
+//     Unreachable from this client for the mask case — `predict` below refuses
+//     any intent whose brush centre is in a chunk we were never sent, and what
+//     we were sent is always a subset of what the server's mask allows.
+//   * DEEP RELAXATION CASCADE. A stroke whose footprint is entirely on known
+//     ground, but whose relaxation cascade travels far enough to read past the
+//     frontier anyway, still predicts wrong — the halo guard bounds the brush's
+//     own reads, not an arbitrarily long cascade. Bounded to ONE ROUND TRIP by
+//     the server's answer instead of to PREDICTION_TTL_MS, and it can no longer
+//     double: the prediction comes off when the answer lands.
 //   * SLOW LINK. Round trips longer than the deadline retire predictions before
-//     their diffs arrive, so the brush snaps back and then forward again. The
+//     their answers arrive, so the brush snaps back and then forward again. The
 //     alternative — no deadline — is a local world permanently ahead of the
 //     server, which is worse.
 //
@@ -59,6 +74,7 @@ import {
   cellX,
   cellY,
   chunkIndex,
+  forEachFootprintOffset,
   sculptOptionsOf,
   validateSculptIntent,
   type SculptIntent,
@@ -92,6 +108,35 @@ export const MAX_PENDING_PREDICTIONS = Math.ceil(
   PREDICTION_TTL_MS / SCULPT_REPEAT_INTERVAL_MS,
 );
 
+/**
+ * How far beyond the brush footprint a prediction is allowed to READ, in cells,
+ * before the client declares itself unqualified to predict the stroke at all
+ * (issue #21).
+ *
+ * ONE, because one is exactly the reach of the shared math's neighbour reads:
+ * `relaxPair` (heightmap.ts) compares each cell with its 4-neighbours, so
+ * running the gradient relaxation over the footprint reads one ring outside it
+ * even where nothing there moves. It is not a safety margin and not a tunable —
+ * raising it would refuse strokes that are perfectly predictable, and lowering
+ * it to zero would re-admit the frontier case this exists to exclude.
+ *
+ * WHY A READ ACROSS THE FRONTIER IS FATAL rather than merely inaccurate: the
+ * mirror holds never-received cells at SEA_LEVEL on purpose (mirror.ts
+ * invariant 2 — it is a RENDERING choice, so revealed territory slopes into the
+ * sea instead of ending in a floating cliff). Simulation reading that
+ * placeholder is reading fiction. Two ways it goes wrong, both observed:
+ *   * the relaxation "corrects" a cliff that does not exist, dragging the
+ *     client's own frontier column DOWN while the player asked for a raise;
+ *   * the level-fill brush (stamp + hard) SURVEYS its whole footprint for the
+ *     lowest band present, so a single unseen cell drags the surveyed level to
+ *     the sea floor and the entire stroke targets the wrong terrace.
+ *
+ * The stroke is not lost — it is sent, applied and drawn from the server's
+ * authoritative diff one round trip later. Only the local preview is skipped,
+ * and only where it would have been wrong.
+ */
+export const PREDICTION_HALO_CELLS = 1;
+
 /** One locally applied sculpt awaiting its authoritative counterpart. */
 interface PendingPrediction {
   readonly intent: SculptIntent;
@@ -107,9 +152,12 @@ export interface PredictionStore {
   /**
    * Applies the local player's sculpt immediately, using the same shared math
    * the server will run. Returns the chunk indices whose meshes are now stale.
-   * Silently ignores an intent the server would certainly reject (malformed, or
-   * centred on a chunk we were never sent) — predicting those would guarantee a
-   * snap.
+   *
+   * Silently ignores an intent it cannot predict FAITHFULLY: one the server
+   * would certainly reject (malformed, or centred on a chunk we were never
+   * sent), and one whose math would read cells we were never sent (see
+   * PREDICTION_HALO_CELLS). Both would guarantee a wrong preview; the second is
+   * the frontier case behind issue #21.
    */
   predict(intent: SculptIntent, nowMs: number): Set<number>;
 
@@ -125,15 +173,26 @@ export interface PredictionStore {
   ): Set<number>;
 
   /**
-   * Retires the prediction whose intent carried this seq — the server's
-   * sculptDenied nack. This is the fast path that makes a plugin denial
-   * (out of mana, on cooldown) read as "the brush stopped" rather than as a
-   * one-second rubber-band: without it the denied prediction stays on screen
-   * until PREDICTION_TTL_MS. A seq with no pending prediction is a no-op —
-   * the deadline or a value-confirmation may legitimately have got there
-   * first. Returns stale chunk indices.
+   * Retires the prediction whose intent carried this seq — THE SERVER HAS
+   * ANSWERED it, either way.
+   *
+   * ONE METHOD FOR BOTH ANSWERS, because the local consequence is identical:
+   * the prediction has done its job and must come off, cleanly, without
+   * disturbing the ones around it.
+   *   * 'sculptDenied' (a plugin said no — out of mana, on cooldown): the
+   *     authoritative map never changed, so retiring makes the brush read as
+   *     "it stopped" instead of as a one-second rubber-band.
+   *   * 'sculptApplied' (issue #21): the authoritative map ALREADY holds the
+   *     server's own version of this edit, because the ack is sent after the
+   *     diff on the same connection, so retiring is invisible — and it is what
+   *     stops a prediction the client could not compute exactly from being
+   *     replayed on top of the server's copy of it.
+   *
+   * A seq with no pending prediction is a no-op — the deadline or a value
+   * confirmation may legitimately have got there first. Returns stale chunk
+   * indices.
    */
-  rejectSeq(seq: number): Set<number>;
+  resolveSeq(seq: number): Set<number>;
 
   /** Drops predictions past PREDICTION_TTL_MS. Returns stale chunk indices. */
   expire(nowMs: number): Set<number>;
@@ -170,6 +229,48 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   /** Chunk index owning a flat cell index. */
   const chunkOfCellIndex = (i: number): number =>
     chunkOfCell(cellX(size, i), cellY(size, i));
+
+  /**
+   * True when cell (x,y) either is not part of this world at all, or lives in a
+   * chunk the server has sent us.
+   *
+   * OFF-MAP COUNTS AS KNOWN, and that is not a shortcut: the shared math skips
+   * out-of-bounds cells entirely (`forEachFootprintCell` bounds-checks, and
+   * `smooth` clamps its bounding box to the map), so nothing off the world edge
+   * is ever read. Treating the edge as unknown would silently disable
+   * prediction along all four borders of every world.
+   */
+  const cellIsKnown = (x: number, y: number): boolean =>
+    x < 0 || y < 0 || x >= size || y >= size || hasChunk(mirror, chunkOfCell(x, y));
+
+  /**
+   * Whether this brush can be predicted from data we actually hold: every cell
+   * the shared math will read — the footprint, plus the PREDICTION_HALO_CELLS
+   * ring its relaxation compares against — is in a received chunk.
+   *
+   * Iterated with `forEachFootprintOffset`, the shared footprint definition the
+   * brush itself edits with, so "the cells we check we have" and "the cells the
+   * stroke reads" cannot drift apart. Runs at most once per intent (ten a
+   * second while a brush is held) over a few hundred offsets.
+   */
+  const canPredictFaithfully = (cx: number, cy: number, radius: number): boolean => {
+    let known = true;
+    forEachFootprintOffset(radius, (dx, dy) => {
+      if (!known) return;
+      const x = cx + dx;
+      const y = cy + dy;
+      if (
+        !cellIsKnown(x, y) ||
+        !cellIsKnown(x - PREDICTION_HALO_CELLS, y) ||
+        !cellIsKnown(x + PREDICTION_HALO_CELLS, y) ||
+        !cellIsKnown(x, y - PREDICTION_HALO_CELLS) ||
+        !cellIsKnown(x, y + PREDICTION_HALO_CELLS)
+      ) {
+        known = false;
+      }
+    });
+    return known;
+  };
 
   /** Marks every chunk whose mesh reads a cell this prediction touched. */
   const addJournalChunks = (p: PendingPrediction, dirty: Set<number>): void => {
@@ -234,7 +335,14 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
    * relaxation spilling in from a locked chunk whose real heights this client
    * has never seen and predicts as sea level), yields different values, is not
    * recognised, and is replayed on top of the server's own copy of it — a
-   * doubled edit that persists until PREDICTION_TTL_MS retires it.
+   * doubled edit.
+   *
+   * DEMOTED TO A FALLBACK by issue #21: that false negative is the bug the
+   * server's explicit answer (`resolveSeq`) now closes, so this test no longer
+   * has to be right for reconciliation to work. It is retained because it is
+   * still the only reconciliation available to a seq-less intent or against a
+   * server built before the answer contract existed, and because retiring a
+   * provably-invisible prediction early costs nothing.
    *
    * A prediction with no comparable cells at all is never confirmed: zero
    * evidence must not read as agreement.
@@ -261,6 +369,10 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       // The server rejects an intent whose brush CENTRE is in a locked chunk
       // (intent pipeline step 2). "Locked" on the client is "never received".
       if (!hasChunk(mirror, chunkOfCell(validated.x, validated.y))) return dirty;
+      // ...and the server will happily apply an intent whose FOOTPRINT reaches
+      // past what we hold, which we cannot reproduce. Send it, draw nothing,
+      // and let the authoritative diff show what it did (issue #21).
+      if (!canPredictFaithfully(validated.x, validated.y, validated.radius)) return dirty;
 
       if (pending.length >= MAX_PENDING_PREDICTIONS) {
         // Drop the oldest and re-derive, so the rendered map is exactly
@@ -317,7 +429,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       return dirty;
     },
 
-    rejectSeq(seq: number): Set<number> {
+    resolveSeq(seq: number): Set<number> {
       const dirty = new Set<number>();
       const index = pending.findIndex((p) => p.intent.seq === seq);
       if (index === -1) return dirty;
