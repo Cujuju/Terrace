@@ -29,8 +29,18 @@ function rgb(hex: number): Rgb {
  * water — monster habitat — begins, so everything at that depth and below
  * sharing the darkest stop is a statement, not a truncation: past the light,
  * the deep is one material.
+ *
+ * AMENDMENT (owner request, 2026-08-19: "the sea bottom to get progressively
+ * darker as you go down the layers until it ends in a very dark blue"). The
+ * four-stop truncation above is superseded: the ramp now runs the FULL water
+ * column — seventeen stops, one per band from the h = 0 flats (band 0) down
+ * to band −16 at MIN_HEIGHT — so no two depths share a colour and the descent
+ * ends in a very dark blue rather than plateauing at the old deep-water stop.
+ * The first four stops are unchanged (waterline, shelf, ring, and the old
+ * deep stop, which is now simply band −3's own), so worlds that never dig
+ * past genesis depth render exactly as before this change.
  */
-export const SEABED_DEPTH_STOPS = 4;
+export const SEABED_DEPTH_STOPS = 17;
 
 /**
  * Index 0 is the SHALLOWEST seabed (the h = 0 flats — also every cell of a
@@ -47,30 +57,55 @@ export const FIRST_LAND_PALETTE_INDEX = SEABED_DEPTH_STOPS;
  * relief, unambiguously a mountain top, so there is nothing above it that
  * needs its own colour.
  *
- * The seabed stops keep the established muddy-green family (the old single
- * seabed sat between today's 0 and 1) but step ~20% darker and bluer per
- * band, sized so the difference still reads through the translucent water
- * tint that compresses whatever contrast the treads have.
+ * The shallow seabed stops keep the established muddy-green family (the old
+ * single seabed sat between today's 0 and 1) and step ~20% darker and bluer
+ * per band, sized so the difference still reads through the translucent
+ * water tint that compresses whatever contrast the treads have. Below the
+ * genesis strata the descent continues to MIN_HEIGHT with two properties,
+ * both judged through the water plane rather than on the raw swatches:
+ *
+ *   * luminance falls STRICTLY at every stop (the depth-contrast contract,
+ *     pinned by test), front-loaded — bigger steps through the bands a
+ *     worldgen ocean actually shows (−4..−8, the deepest genesis floor is
+ *     ~band −8), smaller steps in the abyssal tail a player has to dig for,
+ *     because equal dark-end steps read as nothing through the tint;
+ *   * the hue crosses from the shallow muddy-teal to BLUE-dominant (b > g
+ *     from band −3 down), ending at 0x030813 — the requested very dark blue,
+ *     kept a hair above black so the self-lit silt rims still have a tread
+ *     to outline rather than a void.
  */
 export const TERRAIN_PALETTE: readonly Rgb[] = [
   rgb(0x6a7f68), // 0 seabed, waterline flats (h = 0)
   rgb(0x50705d), // 1 seabed, band −1 — the shelf
   rgb(0x3a5b52), // 2 seabed, band −2 — the ring
-  rgb(0x274347), // 3 seabed, band −3 and deeper — deep water, monster country
+  rgb(0x274347), // 3 seabed, band −3 — deep water begins, monster country
+  rgb(0x1f3a44), // 4 seabed, band −4
+  rgb(0x183243), // 5 seabed, band −5
+  rgb(0x122a40), // 6 seabed, band −6
+  rgb(0x0d233c), // 7 seabed, band −7
+  rgb(0x0a1d37), // 8 seabed, band −8 — the deepest a genesis ocean reaches
+  rgb(0x081931), // 9 seabed, band −9
+  rgb(0x07152b), // 10 seabed, band −10
+  rgb(0x061226), // 11 seabed, band −11
+  rgb(0x050f21), // 12 seabed, band −12
+  rgb(0x040d1d), // 13 seabed, band −13
+  rgb(0x040b19), // 14 seabed, band −14
+  rgb(0x030916), // 15 seabed, band −15
+  rgb(0x030813), // 16 seabed, band −16 (MIN_HEIGHT) — the very dark blue
   // Three sand-and-soil stops before any green (owner, 2026-08-14: "multiple
   // layers of sand and soil color near the water. Greener layers should start
   // higher up") — the coast reads as coast for two full terraces before
   // vegetation takes over at band 3.
-  rgb(0xd9c89a), // 4 band 0 — wet beach sand at the waterline
-  rgb(0xc0a468), // 5 band 1 — dry sand
-  rgb(0x96774a), // 6 band 2 — bare soil
-  rgb(0x8fc25a), // 7 band 3 — bright lowland grass
-  rgb(0x69a244), // 8 band 4 — grass
-  rgb(0x467a33), // 9 band 5 — dark highland grass
-  rgb(0x736f61), // 10 band 6 — dark exposed rock
-  rgb(0x908c80), // 11 band 7 — rock
-  rgb(0xb3aea2), // 12 band 8 — pale high rock
-  rgb(0xf2f4f6), // 13 band 9+ — snow
+  rgb(0xd9c89a), // 17 band 0 — wet beach sand at the waterline
+  rgb(0xc0a468), // 18 band 1 — dry sand
+  rgb(0x96774a), // 19 band 2 — bare soil
+  rgb(0x8fc25a), // 20 band 3 — bright lowland grass
+  rgb(0x69a244), // 21 band 4 — grass
+  rgb(0x467a33), // 22 band 5 — dark highland grass
+  rgb(0x736f61), // 23 band 6 — dark exposed rock
+  rgb(0x908c80), // 24 band 7 — rock
+  rgb(0xb3aea2), // 25 band 8 — pale high rock
+  rgb(0xf2f4f6), // 26 band 9+ — snow
 ];
 
 /**

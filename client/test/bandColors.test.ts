@@ -42,16 +42,20 @@ describe('TERRAIN_PALETTE', () => {
 });
 
 describe('bandPaletteIndex', () => {
-  it('steps one seabed stop per band of depth, clamping at the deepest', () => {
+  it('steps one seabed stop per band of depth, all the way to MIN_HEIGHT', () => {
     // The flats (h = 0) are stop 0; each band down takes the next stop —
-    // mirroring how the dry side steps at band edges — and everything past
-    // the ramp shares the deepest stop rather than wrapping into land colours.
+    // mirroring how the dry side steps at band edges. Since the 2026-08-19
+    // full-column ramp, no two depths share a stop: the ladder runs one stop
+    // per band down to band −16, whose floor IS MIN_HEIGHT, so the deepest
+    // stop is reached exactly and the clamp guards nothing in-range (it stays
+    // as a belt against a future MIN_HEIGHT change, not as behaviour).
     expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
     expect(bandPaletteIndex(SEA_LEVEL - 1)).toBe(SEABED_PALETTE_INDEX + 1);
     expect(bandPaletteIndex(-BAND_HEIGHT)).toBe(SEABED_PALETTE_INDEX + 1);
     expect(bandPaletteIndex(-BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 2);
-    expect(bandPaletteIndex(-2 * BAND_HEIGHT - 1)).toBe(SEABED_DEPTH_STOPS - 1);
-    expect(bandPaletteIndex(-3 * BAND_HEIGHT - 1)).toBe(SEABED_DEPTH_STOPS - 1);
+    expect(bandPaletteIndex(-2 * BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 3);
+    expect(bandPaletteIndex(-3 * BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 4);
+    expect(bandPaletteIndex(-15 * BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 16);
     expect(bandPaletteIndex(MIN_HEIGHT)).toBe(SEABED_DEPTH_STOPS - 1);
   });
 
