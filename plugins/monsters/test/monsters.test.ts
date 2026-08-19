@@ -2010,3 +2010,95 @@ describe('the yeti in the high Alps', () => {
     expect(beatOf(yeti)).toBeLessThan(beatOf(cthulhu) / 2);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// World events — the emission half of the chronicle contract (2026-08-19).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('world events (monsters:arrived / monsters:departed)', () => {
+  it('an arrival and a terrain-forced departure each leave as one event, in the causing call', () => {
+    resetMonstersState();
+    const world = worldWithTerrain(WORLD_SIZE, bowl(TRENCH_RADIUS));
+    world.setSink(new RecordingSink());
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const recorder = {
+      name: 'recorder',
+      onWorldEvent(_world: unknown, event: string, payload: unknown): void {
+        events.push({ event, payload });
+      },
+    };
+    const host = new PluginHost(world, [monstersPlugin, recorder].map(asLoadedPlugin));
+    host.worldCreate();
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    host.playerJoined(PLAYER);
+
+    setMonsterRandomSource(ALWAYS);
+    for (let n = 0; n < 10; n++) host.tick(TICK_DT);
+
+    const arrivals = events.filter((heard) => heard.event === 'monsters:arrived');
+    expect(arrivals.length).toBeGreaterThan(0);
+    for (const arrival of arrivals) {
+      const payload = arrival.payload as { kind: string; x: number; y: number };
+      expect(typeof payload.kind).toBe('string');
+      expect(Number.isInteger(payload.x)).toBe(true);
+      expect(Number.isInteger(payload.y)).toBe(true);
+    }
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
+    setMonsterRandomSource(NEVER);
+
+    // Walk Cthulhu clear so his ground protection cannot veto the raises
+    // (same arrangement as "submerges when the ground is raised" above).
+    const cthulhu = livingMonsterOfKind('cthulhu');
+    if (cthulhu !== null) {
+      cthulhu.x = 1.5;
+      cthulhu.y = 1.5;
+    }
+
+    const cellX = Math.floor(kraken!.x);
+    const cellY = Math.floor(kraken!.y);
+    for (let n = 0; n < 40 && isDeepWaterHeight(world.heightAt(cellX, cellY)); n++) {
+      handleSculptIntent(
+        { world, interceptors: host },
+        PLAYER,
+        { type: 'sculpt', x: cellX, y: cellY, radius: MAX_BRUSH_RADIUS, dir: 1, tool: 'stamp', profile: 'hard' },
+      );
+    }
+
+    const departures = events.filter((heard) => heard.event === 'monsters:departed');
+    expect(departures).toHaveLength(1);
+    expect((departures[0].payload as { kind: string }).kind).toBe('kraken');
+  });
+
+  it('a snapshot restore re-seats monsters without announcing arrivals', () => {
+    resetMonstersState();
+    const world = worldWithTerrain(WORLD_SIZE, bowl(TRENCH_RADIUS));
+    world.setSink(new RecordingSink());
+    setMonsterRandomSource(ALWAYS);
+    const first = new PluginHost(world, [monstersPlugin].map(asLoadedPlugin));
+    first.worldCreate();
+    for (let n = 0; n < 10; n++) first.tick(TICK_DT);
+    expect(livingMonsterOfKind('kraken')).not.toBeNull();
+    const slices = first.collectPersistence();
+
+    resetMonstersState();
+    setMonsterRandomSource(NEVER);
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const recorder = {
+      name: 'recorder',
+      onWorldEvent(_world: unknown, event: string, payload: unknown): void {
+        events.push({ event, payload });
+      },
+    };
+    const world2 = worldWithTerrain(WORLD_SIZE, bowl(TRENCH_RADIUS));
+    world2.setSink(new RecordingSink());
+    const second = new PluginHost(world2, [monstersPlugin, recorder].map(asLoadedPlugin));
+    second.restorePersistence(slices);
+    second.worldCreate();
+    for (let n = 0; n < 10; n++) second.tick(TICK_DT);
+
+    expect(livingMonsterOfKind('kraken')).not.toBeNull();
+    expect(events.filter((heard) => heard.event === 'monsters:arrived')).toHaveLength(0);
+  });
+});

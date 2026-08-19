@@ -203,6 +203,31 @@ let lastSurveySeconds = Number.NEGATIVE_INFINITY;
  */
 let nextMonsterId = 1;
 
+/**
+ * Lifecycle transitions awaiting emission as world events (2026-08-19, for
+ * the chronicle). QUEUED here rather than emitted here because summon/banish
+ * are pure module functions with no WorldApi — index.ts drains this right
+ * after each call that can grow it, so an event leaves in the same tick it
+ * happened. Snapshot restore deliberately never queues: restoring a saved
+ * world is not an arrival.
+ */
+export interface MonsterTransition {
+  readonly event: 'arrived' | 'departed';
+  readonly kind: MonsterKind;
+  /** The cell it happened on (floored from the monster's position). */
+  readonly x: number;
+  readonly y: number;
+}
+
+let pendingTransitions: MonsterTransition[] = [];
+
+/** Returns and clears the queued transitions, in the order they happened. */
+export function drainMonsterTransitions(): MonsterTransition[] {
+  const drained = pendingTransitions;
+  pendingTransitions = [];
+  return drained;
+}
+
 function stateOf(kind: MonsterKind): KindState {
   return kindStates[kind];
 }
@@ -281,6 +306,7 @@ export function resetSummoning(): void {
   simSeconds = 0;
   lastSurveySeconds = Number.NEGATIVE_INFINITY;
   nextMonsterId = 1;
+  pendingTransitions = [];
   releaseSurveyScratch();
 }
 
@@ -322,6 +348,7 @@ function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster 
     heading: monsterRandom() * Math.PI * 2,
     idle: false,
   };
+  pendingTransitions.push({ event: 'arrived', kind: profile.kind, x: cellX, y: cellY });
   return state.living;
 }
 
@@ -354,6 +381,12 @@ export function banish(monster: Monster): boolean {
   if (rule === null) return false;
   state.cooldownSeconds = rule.respawnCooldownSeconds;
   state.living = null;
+  pendingTransitions.push({
+    event: 'departed',
+    kind: monster.kind,
+    x: Math.floor(monster.x),
+    y: Math.floor(monster.y),
+  });
   return true;
 }
 

@@ -85,6 +85,7 @@ import { loadMonsters, saveMonsters } from './persistence.ts';
 import { RAISE_BLOCKED_REASON, reachesProtectedGround } from './protection.ts';
 import {
   advanceSummoning,
+  drainMonsterTransitions,
   enforceHabitat,
   invalidateSurvey,
   livingMonsters,
@@ -132,10 +133,27 @@ export function monsterStates(): MonsterState[] {
  *
  * Steps 1–3 are all driven by `dt`; nothing here reads a wall clock.
  */
+/**
+ * THE CHRONICLE'S EAR (2026-08-19): every arrival and departure summon/banish
+ * queued (summoning.ts's pendingTransitions) leaves as a world event in the
+ * same call that caused it. Restores never queue, so a rebooted world does
+ * not re-announce its standing monsters.
+ */
+function emitTransitions(world: WorldApi): void {
+  for (const transition of drainMonsterTransitions()) {
+    world.emitEvent(transition.event, {
+      kind: transition.kind,
+      x: transition.x,
+      y: transition.y,
+    });
+  }
+}
+
 function simulate(world: WorldApi, dt: number): void {
   advanceSummoning(world, dt);
   advanceLurking(world, dt);
   enforceHabitat(world);
+  emitTransitions(world);
 
   tickCount++;
   if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
@@ -178,6 +196,7 @@ function simulate(world: WorldApi, dt: number): void {
 function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (diff.length === 0) return;
   enforceHabitat(world);
+  emitTransitions(world);
   invalidateSurvey();
 }
 
