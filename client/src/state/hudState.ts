@@ -83,6 +83,24 @@ export function setWorldIdentity(identity: WorldIdentity): void {
   });
 }
 
+/**
+ * Build identity of the connected server, from the join snapshot's
+ * `serverVersion` (see shared/protocol.ts on the field and
+ * ui/VersionWatermark.tsx for the why). Server-derived, so NOT persisted (file
+ * header rule): a cached stamp for a server this client is no longer talking
+ * to could only ever be a stale lie. Null until a snapshot arrives, and null
+ * after a snapshot from a server too old to send one — the watermark then
+ * shows the client stamp alone rather than inventing a match.
+ */
+const [serverVersion, setServerVersionSignal] = createSignal<string | null>(
+  null,
+);
+
+export function setServerVersion(version: string | null | undefined): void {
+  const trimmed = version?.trim() ?? '';
+  setServerVersionSignal(trimmed === '' ? null : trimmed);
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 //
@@ -359,6 +377,7 @@ export {
   connectionStatus,
   setConnectionStatus,
   worldIdentity,
+  serverVersion,
   brushRadius,
   brushTool,
   brushProfile,

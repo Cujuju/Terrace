@@ -2,9 +2,42 @@
 // so one file configures both the dev/build pipeline and the test runner.
 import { defineConfig } from 'vitest/config';
 import solid from 'vite-plugin-solid';
+import { execSync, type ExecSyncOptions } from 'node:child_process';
+
+/**
+ * Build identity stamped into the bundle as `__CLIENT_VERSION__` (rendered by
+ * ui/VersionWatermark.tsx): `<commit count>.<short hash>` derived from git, so
+ * it bumps on every commit with no hand-maintained number to forget.
+ *
+ * Computed ONCE, when this config loads — i.e. at dev-server or build start.
+ * That is the honest scope: Vite on this mount never watches (dev-ops note),
+ * so "the source as of Vite start" and "what this process serves" are the
+ * same thing, and a commit made under a running Vite is exactly the skew the
+ * watermark exists to expose. The server derives its stamp the same way at
+ * boot (server/src/version.ts — keep the format in sync; the two derivations
+ * live in their own build contexts because one runs inside Vite's node
+ * process and one at server boot). TERRACE_VERSION overrides for git-less
+ * environments (docker, issue #8); no git degrades to 'unversioned'.
+ */
+function buildVersion(): string {
+  const fromEnv = process.env['TERRACE_VERSION'];
+  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv.trim();
+  try {
+    const opts: ExecSyncOptions = { stdio: ['ignore', 'pipe', 'ignore'] };
+    const count = execSync('git rev-list --count HEAD', opts).toString().trim();
+    const hash = execSync('git rev-parse --short HEAD', opts).toString().trim();
+    if (/^\d+$/.test(count) && /^[0-9a-f]+$/.test(hash)) return `${count}.${hash}`;
+  } catch {
+    // No git here — fall through to the sentinel.
+  }
+  return 'unversioned';
+}
 
 export default defineConfig({
   plugins: [solid()],
+  define: {
+    __CLIENT_VERSION__: JSON.stringify(buildVersion()),
+  },
   server: {
     // Colyseus owns 2567 (design doc §8 "Configuration"); keep the dev server
     // clear of it so both can run side by side.

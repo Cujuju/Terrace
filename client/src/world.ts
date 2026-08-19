@@ -35,7 +35,7 @@ import {
   type TerrainMirror,
 } from './terrain/mirror.ts';
 import { HEIGHT_WORLD_SCALE } from './config.ts';
-import { setWorldIdentity } from './state/hudState.ts';
+import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
 import {
   createPredictionStore,
   type PredictionStore,
@@ -210,6 +210,11 @@ export function createWorld(viewport: Viewport): World {
         name: msg.worldName ?? null,
         difficulty: msg.difficulty ?? null,
       });
+      // Build identity travels with world identity, and matters on a REJOIN
+      // for the same reason: the server may have been restarted onto a new
+      // commit while this client's bundle stayed put — which is exactly the
+      // skew the watermark exists to expose.
+      setServerVersion(msg.serverVersion);
 
       const fresh = resetWorld(msg.worldSize);
       // Through the prediction store like every authoritative message, so the

@@ -211,6 +211,17 @@ export interface JoinSnapshotMessage {
   worldName?: string;
   /** This world's difficulty rating, 1 (warm) to 100 (punishing). */
   difficulty?: number;
+  /**
+   * Build identity of the server that sent this snapshot — `<commit
+   * count>.<short hash>` derived from git at boot (server/src/version.ts), or
+   * an operator's TERRACE_VERSION. DIAGNOSTIC, not gameplay: the client only
+   * displays it and compares it against its own bundle stamp
+   * (ui/VersionWatermark.tsx) to expose a skewed dev stack — a client and
+   * server running different shared/ math preview one stroke and apply
+   * another (owner-hit, 2026-08-19). Optional and additive like `worldName`:
+   * absent means "server too old to say", never a default.
+   */
+  serverVersion?: string;
 }
 
 /**

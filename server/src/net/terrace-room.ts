@@ -25,6 +25,7 @@ import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { World } from '../world/world.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
+import { SERVER_VERSION } from '../version.ts';
 
 /** The matchmaking name clients join. Agreed with the Phase 1 client agent. */
 export const ROOM_NAME = 'world';
@@ -173,6 +174,10 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       worldSize: this.context.world.size,
       worldName: this.context.world.name,
       difficulty: this.context.world.difficulty,
+      // Build identity rides the same message as world identity: constant for
+      // the life of the process, needed exactly once per join (the client's
+      // skew watermark — see shared/protocol.ts on the field).
+      serverVersion: SERVER_VERSION,
       chunks: this.context.world.chunkPayloadsForToken(player.token),
     };
     client.send('snapshot', snapshot);

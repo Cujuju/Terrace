@@ -30,6 +30,7 @@
 import { For, Show, onCleanup, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
+import { VersionWatermark } from './VersionWatermark.tsx';
 import {
   BRUSH_PROFILES,
   BRUSH_RADII,
@@ -211,6 +212,12 @@ export function Hud(props: {
           {(panel) => <Dynamic component={panel.component} />}
         </For>
       </div>
+
+      {/* TOP RIGHT: the build-identity watermark — core diagnostic chrome,
+          outside every panel so it stays readable however the HUD is
+          collapsed (see VersionWatermark.tsx for the 2026-08-19 skew story
+          it exists to expose). */}
+      <VersionWatermark />
 
       {/* THE BOTTOM STRIP (owner refinement, 2026-08-19): brush panel, the
           bottom-centre instruments and the settings gear share ONE grid row —
