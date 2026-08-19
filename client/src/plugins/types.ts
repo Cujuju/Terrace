@@ -62,6 +62,20 @@ export interface ClientPluginCtx {
   ): void;
 
   /**
+   * Claims the top-centre world banner as this plugin's entry point: core
+   * renders `icon` to the right of the world name and makes the whole banner
+   * a button firing `onClick`, labelled `label` for tooltip and screen
+   * readers. ONE claimant per client — first registration wins (the same rule
+   * as onCanvasPress); later claims warn and are ignored. Unclaimed, the
+   * banner stays an inert title card.
+   */
+  registerWorldHeaderAction(action: {
+    icon: Component;
+    label: string;
+    onClick: () => void;
+  }): void;
+
+  /**
    * Lets the plugin claim pointer presses on the canvas BEFORE the sculpt
    * brush or the camera see them (the host listens in the capture phase and
    * stops a claimed event's propagation). Return true to claim — e.g. a click

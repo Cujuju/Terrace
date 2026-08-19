@@ -1,14 +1,17 @@
-// The chronicle's HUD presence: one corner-panel row showing the latest line
-// of history, and a "Read" button that raises the full scroll as an overlay.
+// The chronicle's HUD presence: the top-centre world banner is its entry
+// point (owner move, 2026-08-19 — the info-panel row and latest-line preview
+// are gone). index.ts claims the core world-header action with the book icon
+// and label below; this file keeps the reader overlay and its always-mounted
+// host.
 //
 // SOLID REACTIVITY, THE SAME DISCIPLINE AS EVERY PANEL HERE: the component
 // body runs once; every reactive value is read through an accessor at its use
 // site, never stashed in a plain const.
 //
-// Styling: a plugin cannot add to client/src/ui/hud.css, so the row reuses
-// the core classes (hud-row, hud-label, hud-hint, brush-button) and the
-// overlay carries its chrome inline, built from the HUD's own custom
-// properties so it follows the core theme.
+// Styling: a plugin cannot add to client/src/ui/hud.css, so the overlay
+// carries its chrome inline, built from the HUD's own custom properties so it
+// follows the core theme; the icon inherits currentColor so core's banner
+// styles own its colour.
 
 import { For, Show, createEffect, onCleanup, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
@@ -141,41 +144,49 @@ function Reader(): JSX.Element {
   );
 }
 
-export function ChroniclePanel(): JSX.Element {
-  const latest = (): string => {
-    const all = entries();
-    return all.length === 0 ? 'Nothing has happened yet.' : all[all.length - 1].text;
-  };
-
+/**
+ * The open-book glyph the banner shows right of the world name. Same inline-
+ * SVG idiom as the HUD's own icon buttons (stroke currentColor, aria-hidden);
+ * sized a step under the name's 17px type so it reads as a suffix, not a
+ * second title.
+ */
+export function BookIcon(): JSX.Element {
   return (
-    <>
-      <div class="hud-row" title="The world's history, written by the world itself.">
-        <span class="hud-label">Chronicle</span>
-        <button
-          type="button"
-          class="brush-button"
-          style={{ width: 'auto', padding: '0 8px', 'margin-left': 'auto' }}
-          aria-haspopup="dialog"
-          aria-expanded={readerOpen()}
-          aria-label="Read the chronicle"
-          title="Open the full scroll of the world's history."
-          onClick={() => setReaderOpen(!readerOpen())}
-        >
-          Read
-        </button>
-      </div>
-      <p class="hud-hint" style={{ 'font-style': 'italic' }}>
-        {latest()}
-      </p>
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+    </svg>
+  );
+}
 
-      {/* Portal to <body>: the HUD panel's backdrop-filter makes it a
-          containing block for fixed-position descendants, so a reader
-          rendered in place would be trapped inside the corner panel. */}
-      <Show when={readerOpen()}>
-        <Portal mount={document.body}>
-          <Reader />
-        </Portal>
-      </Show>
-    </>
+/**
+ * The reader's mount. The banner action that OPENS the reader has no mounted
+ * component of its own, so this host carries the overlay: registered
+ * 'top-center' (children there render bare and are never unmounted by the
+ * info panel's collapse — 'panel' placement would wrap it in visible chrome
+ * and disappear with a collapsed panel on phones), and it renders nothing at
+ * all while the reader is closed.
+ *
+ * Portal to <body>: the HUD containers' backdrop-filter makes them containing
+ * blocks for fixed-position descendants, so a reader rendered in place would
+ * be trapped inside its host's box.
+ */
+export function ChronicleReaderHost(): JSX.Element {
+  return (
+    <Show when={readerOpen()}>
+      <Portal mount={document.body}>
+        <Reader />
+      </Portal>
+    </Show>
   );
 }

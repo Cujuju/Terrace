@@ -490,6 +490,53 @@ body {
   white-space: nowrap;
 }
 
+/* The name and the claimant's icon share one centred row; the icon sits to
+   the RIGHT of the name (owner spec, 2026-08-19) and never wraps away from
+   it. */
+.world-header__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.world-header__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--hud-muted);
+}
+
+/* A claimed banner is a real button (world-header action registry): same
+   chrome as the inert card, plus the HUD's standard interactive language —
+   pointer cursor, accent border on hover, visible keyboard focus. `font:
+   inherit` neutralises the UA button font so the two states stay visually
+   byte-identical at rest. */
+button.world-header {
+  font: inherit;
+}
+
+.world-header--action {
+  cursor: pointer;
+}
+
+.world-header--action:hover {
+  border-color: var(--hud-accent);
+}
+
+.world-header--action:hover .world-header__icon {
+  color: var(--hud-text);
+}
+
+.world-header--action:active {
+  transform: translateY(1px);
+}
+
+.world-header--action:focus-visible {
+  outline: 2px solid var(--hud-accent);
+  outline-offset: 2px;
+}
+
 /* The rating is a footnote to the name — same muted treatment as the HUD's
    other secondary readouts, with tabular figures so it does not jitter. */
 .world-header__rating {

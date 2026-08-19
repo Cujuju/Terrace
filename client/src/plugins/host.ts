@@ -15,7 +15,7 @@ import type { Connection } from '../net/connection.ts';
 import type { Viewport } from '../render/scene.ts';
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
-import { addPluginHudPanel } from './hudPanels.ts';
+import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
 import type { ClientPluginCtx, TerraceClientPlugin } from './types.ts';
 
 export interface ClientPluginHost {
@@ -144,6 +144,9 @@ export function createClientPluginHost(
           component,
           placement: options?.placement ?? 'panel',
         });
+      },
+      registerWorldHeaderAction(action) {
+        claimWorldHeaderAction({ ...action, pluginName: plugin.name });
       },
       onCanvasPress(handler) {
         pressHandlers.push(handler);

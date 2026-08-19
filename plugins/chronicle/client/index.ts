@@ -1,7 +1,9 @@
-// chronicle — the client half. Two responsibilities, in the two things the
-// ctx grants it: onMessage keeps the replicated scroll current (a `log`
-// replace on join, `append` deltas after), and registerHudPanel mounts the
-// panel + reader. No scene layer, no canvas claims — history has no meshes.
+// chronicle — the client half. Two responsibilities, in the things the ctx
+// grants it: onMessage keeps the replicated scroll current (a `log` replace
+// on join, `append` deltas after); the world banner is claimed as the
+// chronicle's entry point (owner move, 2026-08-19 — the world's name IS its
+// history's title) and a bare top-center host mounts the reader overlay. No
+// scene layer, no canvas claims — history has no meshes.
 
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
@@ -10,8 +12,8 @@ import {
   CHRONICLE_PLUGIN_NAME,
   parseEntries,
 } from '../protocol.ts';
-import { ChroniclePanel } from './ChroniclePanel.tsx';
-import { appendEntries, replaceEntries } from './state.ts';
+import { BookIcon, ChronicleReaderHost } from './ChroniclePanel.tsx';
+import { appendEntries, replaceEntries, setReaderOpen } from './state.ts';
 
 export const clientPlugin: TerraceClientPlugin = {
   name: CHRONICLE_PLUGIN_NAME,
@@ -26,6 +28,13 @@ export const clientPlugin: TerraceClientPlugin = {
       if (parsed !== null) appendEntries(parsed);
     });
 
-    ctx.registerHudPanel(ChroniclePanel);
+    ctx.registerWorldHeaderAction({
+      icon: BookIcon,
+      label: 'Read the chronicle',
+      onClick: () => setReaderOpen(true),
+    });
+    // The reader overlay still needs a mounted component; see the host's own
+    // comment for why it lives top-center.
+    ctx.registerHudPanel(ChronicleReaderHost, { placement: 'top-center' });
   },
 };
