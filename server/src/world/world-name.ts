@@ -5,12 +5,16 @@
 // (persistence/snapshot-store.ts), so it survives restarts and every player who
 // ever joins sees the same name. Nothing reads it back into the world model.
 //
-// WHY RANDOMNESS IS SAFE HERE, AND ONLY HERE. Terrain math is a determinism
-// contract shared by client and server (design §3.3), and world genesis itself
-// is deliberately RNG-free (see freshGenesisHeightAt). This file is neither: it
-// produces a string that is stored the instant it is made and never re-derived,
-// so a different draw next boot is impossible by construction rather than by
-// discipline. It lives server-side, in `server/`, and shared/ never sees it.
+// WHY RANDOMNESS IS SAFE HERE. Terrain math is a determinism contract shared by
+// client and server (design §3.3) and lives in shared/, which this file never
+// touches; world GENESIS (world.ts) draws a random seed too, for the same
+// reason this file draws a random name, but turns that one draw into a pure
+// function from then on (same seed, same heightmap) so a world can still be
+// pinned and reproduced in a test. This file doesn't even need that: it
+// produces a string that is stored the instant it is made and never
+// re-derived, so a different draw next boot is impossible by construction
+// rather than by discipline. It lives server-side, in `server/`, and shared/
+// never sees it.
 //
 // STYLE (owner brief: "evocative god-game world names"). Word-pair composition
 // from curated roots, in four sentence shapes: a bare compound (Emberfall), a

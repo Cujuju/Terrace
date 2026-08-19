@@ -18,6 +18,8 @@ import {
   createHeightmap,
   heightAt,
   isChunkUnlocked,
+  MAX_HEIGHT,
+  MIN_HEIGHT,
   SEA_LEVEL,
   unlockChunk,
   type CellDiff,
@@ -37,39 +39,90 @@ import { chunkPayloadOf } from './mask-filter.ts';
 import { generateWorldName } from './world-name.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FRESH-WORLD GENESIS (decided 2026-08-14 with the owner — see docs/DESIGN.md)
+// FRESH-WORLD GENESIS
 //
-// A brand-new world is an OCEAN WITH A COAST, not a flat sheet at sea level.
+// A brand-new world is an OCEAN WITH A COAST, not a flat sheet at sea level,
+// and — as of the 2026-08-18 "make it creative" pass — no two fresh worlds of
+// the same size look the same either.
 //
-// THE DEFECT THIS FIXES. `createHeightmap` allocates an all-zero grid and
-// SEA_LEVEL is 0, so every cell of a fresh world used to sit EXACTLY at the
-// waterline: the sea had zero depth everywhere, and anything classifying water
-// by depth had nothing to classify. The wildlife plugin's deep-water habitat
-// begins DEEP_WATER_BANDS_BELOW_SEA (3) bands down, so whales and deep-sea
-// creatures had literally nowhere to exist until a player hand-dug a trench.
+// THE ORIGINAL DEFECT (fixed 2026-08-14, see docs/DESIGN.md). `createHeightmap`
+// allocates an all-zero grid and SEA_LEVEL is 0, so every cell of a fresh world
+// used to sit EXACTLY at the waterline: the sea had zero depth everywhere, and
+// anything classifying water by depth had nothing to classify. The wildlife
+// plugin's deep-water habitat begins DEEP_WATER_BANDS_BELOW_SEA (3) bands
+// down, so whales and deep-sea creatures had literally nowhere to exist until
+// a player hand-dug a trench.
 //
-// THE PROFILE. Three concentric terraces, by Chebyshev (square-ring) distance
-// from the starter region's own centre, so the shelf is concentric with the
-// unlocked square rather than merely near it:
+// THE SECOND COMPLAINT (2026-08-18, owner report): the fix above was a FIXED
+// radial profile — three concentric terraces, by Chebyshev (square-ring)
+// distance from the starter region's own centre — so it solved "no deep
+// water" but every world it produced was geometrically identical. "Doesn't
+// look very creative; we need something more creative and maybe less
+// deterministic. Every world should have at least some fairly deep water.
+// It's OK to create flat worlds, but the terrain should be randomized."
 //
-//        ┌──────────── deep, FRESH_SEABED_BANDS_BELOW_SEA ─────────────┐
+// THE CURRENT SHAPE. Two zones, split at the edge of the starter unlock
+// square (`initialUnlockFootprint`, initial-unlock.ts):
+//
+//   1. THE STARTER SQUARE keeps the original fixed profile, UNCHANGED, cell
+//      for cell:
+//
+//        ┌──── rest of starter square, deep-safe (see clamp below) ────┐
 //        │      ┌──── slope ring, FRESH_SLOPE_BANDS_BELOW_SEA ────┐    │
 //        │      │        ┌── shelf, FRESH_SHELF_BANDS_BELOW_SEA ──┐    │
-//        │      │        │           (world centre)               │    │
+//        │      │        │           (starter square centre)      │    │
 //
-// Both boundaries are one clean band step. That is deliberate: this is a
-// TERRACED game whose default brush is a stamp that cuts sheer faces, so a
-// genesis coast that steps rather than ramps is the house style, and every
-// height in it is a band floor that the terraced renderer draws exactly.
+//      This is NOT an oversight — it is the one piece of genesis a plugin
+//      already depends on exactly. The wildlife plugin's day-one census
+//      (plugins/wildlife/test/wildlife.test.ts) counts habitat over the
+//      starter square ONLY (the census only sees unlocked cells) and asserts
+//      EXACT cell counts — 4 096 shallow, 12 288 deep, 0 land at the size it
+//      tests — derived from this exact shelf/slope geometry. Core cannot
+//      change plugin behaviour and this change's scope is server/ only, so
+//      the starter square's shelf and slope stay bit-identical band steps,
+//      and the deep water beyond them is free to vary in DEPTH (never in
+//      classification — see the clamp in `freshGenesisHeightAt`), which can
+//      give even a fully-enclosed small world (starter square == whole world,
+//      sizes up to 128²) seed-driven texture on its ocean floor. Only "can",
+//      not "always does": the clamp is a one-way ratchet (deeper only, never
+//      shallower), so a seed whose noise never dips past it anywhere on the
+//      map collapses that whole region to the same flat plate any other
+//      such seed would — correct and load-bearing, not a bug (see
+//      server/test/fresh-world.test.ts, "varies with the seed even at the
+//      smallest shipped size").
+//
+//   2. EVERYTHING OUTSIDE the starter square is genuinely new terrain: a
+//      seeded value-noise field (`buildOuterLattice`) that can put a
+//      continent, an island chain, a basin, gently rolling hills, or — on a
+//      low `roughness` draw — something close to a flat sea wherever the
+//      noise lands. This is most of any real-sized world (93.75% of the cells
+//      on a default 512² world) and it is where "every world should look
+//      different" actually happens.
+//
+// Every genesis height, in both zones, is still an exact multiple of
+// BAND_HEIGHT (a "band floor"): shelf/slope are single clean band steps by
+// construction, same as before, and the noise field is built from integer
+// band offsets rather than raw heights, so nothing here needs a separate
+// quantizing pass. This is a TERRACED game whose default brush is a stamp
+// that cuts sheer faces, so a genesis surface that steps rather than ramps is
+// the house style, and every height in it is a floor the terraced renderer
+// draws exactly.
 //
 // RESIDUAL, NAMED. A one-band step is BAND_HEIGHT (64) against a gradient limit
-// of MAX_STEP (32), so the two ring boundaries do NOT satisfy the relaxation
-// invariant at genesis. Nothing enforces that invariant at rest — the stamp
-// tool violates it on purpose every time it builds a spire — but a `smooth`
-// sculpt whose relaxation reaches a boundary WILL slump it once, producing a
-// larger-than-usual diff. That is the smooth tool doing exactly its job on a
-// terrace edge, it is bounded by SMOOTH_PASS_LIMIT, and it happens at most once
-// per stretch of coast. Accepted rather than papered over with a ramp.
+// of MAX_STEP (32), so shelf/slope/noise boundaries do NOT generally satisfy
+// the relaxation invariant at genesis. Nothing enforces that invariant at
+// rest — the stamp tool violates it on purpose every time it builds a spire —
+// but a `smooth` sculpt whose relaxation reaches a boundary WILL slump it
+// once, producing a larger-than-usual diff bounded by SMOOTH_PASS_LIMIT.
+// Accepted rather than papered over with a ramp, exactly as it was for the
+// original two-terrace coast.
+//
+// THE SEED. `World.createFresh` draws one random 32-bit seed per world (the
+// ONE intentionally non-deterministic moment in genesis, mirroring
+// `generateWorldName`'s own use of `Math.random` in world-name.ts) and every
+// height in the map is a pure function of that seed from then on — same seed,
+// same world, byte for byte; a caller (tests, chiefly) that supplies its own
+// seed gets full reproducibility. See `mulberry32Rng` below.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -188,8 +241,9 @@ export interface FreshGenesisProfile {
  * The shelf is a centred square of `spanChunks / FRESH_SHELF_SPAN_DIVISOR`
  * chunks, never smaller than one chunk, centred INSIDE the unlock square by the
  * same floor-the-remainder rule the unlock square itself uses. Pure integer
- * arithmetic on chunk counts, so it is reproducible and testable and there is no
- * RNG anywhere in world genesis.
+ * arithmetic on chunk counts and never touches the seed — this geometry is the
+ * one part of genesis every fresh world of a given size shares, on purpose
+ * (see the file-header comment on why).
  */
 export function freshGenesisProfile(size: number): FreshGenesisProfile {
   const { startChunk, spanChunks } = initialUnlockFootprint(size);
@@ -217,14 +271,275 @@ function cellsOutsideShelf(profile: FreshGenesisProfile, x: number, y: number): 
 }
 
 /**
- * Genesis height of one cell. Exported so tests can state the profile's shape
+ * A one-line duplicate of shared/src/heightmap.ts's own (unexported)
+ * `clampHeight` — not imported because it isn't part of that module's public
+ * surface, and this change's scope is server/ only, so exporting it there is
+ * out of bounds here. Both sides are exactly `MAX_HEIGHT`/`MIN_HEIGHT`
+ * clamping and nothing else; if that ever needs to change, it changes in two
+ * places, which is the honest cost of the scope boundary rather than a
+ * remnant of not looking for the existing one.
+ */
+function clampHeight(h: number): number {
+  return h > MAX_HEIGHT ? MAX_HEIGHT : h < MIN_HEIGHT ? MIN_HEIGHT : h;
+}
+
+// ── Seeded randomness (server-only — see the file-header comment) ─────────────
+
+/**
+ * Draws the one intentionally non-deterministic value in genesis: a fresh
+ * unsigned 32-bit seed, used only when a caller (real boot traffic) doesn't
+ * supply its own. Mirrors `generateWorldName`'s default `Math.random` source
+ * in world-name.ts — same reasoning, same file, same "this is the one place
+ * it's allowed" boundary. Everything downstream of the returned value is a
+ * pure function of it.
+ */
+function drawGenesisSeed(): number {
+  return Math.floor(Math.random() * 0x1_0000_0000);
+}
+
+/**
+ * mulberry32 — a small, public-domain 32-bit seeded PRNG (Tommy Ettinger).
+ * Not cryptographic and doesn't need to be: genesis only needs "looks random
+ * and is fully determined by a 32-bit seed", and mulberry32 is a handful of
+ * integer operations, well below the bar for adding a dependency. `seed` is
+ * coerced with `>>> 0` so any finite JS number — including a negative one, or
+ * one out of 32-bit range, both of which a test may reasonably pass — is a
+ * valid seed rather than a silent NaN cascade.
+ *
+ * Returns a generator of floats in [0, 1), same contract as `Math.random`.
+ */
+function mulberry32Rng(seed: number): () => number {
+  let state = seed >>> 0;
+  return function nextRandom(): number {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ── Outer terrain: seeded value noise beyond the starter square ───────────────
+
+/**
+ * Spacing, in cells, between the noise lattice points that shape outer
+ * terrain. One sample per 4 chunks (64 cells): coarse enough that a default
+ * 512² world reads as a handful of continents/basins rather than pixel static,
+ * fine enough that even the smallest world with any room outside the starter
+ * square (144², the first multiple-of-16 size bigger than the 128² starter
+ * square) still spans more than one lattice cell.
+ */
+const OUTER_TERRAIN_LATTICE_SPACING_CELLS = CHUNK_SIZE * 4;
+
+/**
+ * Deepest a noise lattice point can push outer terrain, in bands below sea
+ * level. -10 bands is dramatic ocean-trench territory while staying well
+ * inside MIN_HEIGHT's -16 bands, so the clamp in `clampHeight` is a backstop
+ * that should never actually fire rather than a value this range depends on.
+ */
+const OUTER_TERRAIN_MIN_BAND_OFFSET = -10;
+
+/**
+ * Highest a noise lattice point can push outer terrain, in bands above sea
+ * level. +4 bands buys hills and small islands without turning every fresh
+ * world into a mountain range — deliberately modest against MAX_HEIGHT's +16
+ * bands of headroom, because genesis is meant to be a starting point, not the
+ * most dramatic terrain a world will ever have.
+ */
+const OUTER_TERRAIN_MAX_BAND_OFFSET = 4;
+
+/**
+ * A fresh world's noise field: enough to answer "what band offset does outer
+ * terrain want at (x, y)" without re-deriving it, and built once per world so
+ * the RNG is consumed in one fixed, documented order (see
+ * `buildFreshGenesisTerrain`) rather than reseeded or re-ordered per cell.
+ */
+interface OuterTerrainLattice {
+  /** Row-major band offsets, `latticeCols` wide, `latticeCols` tall. */
+  readonly bandOffsets: Int16Array;
+  readonly latticeCols: number;
+}
+
+/**
+ * Draws the lattice for one world. Three RNG draws — `baseline`, `roughness`,
+ * then two per lattice point — in a fixed, size-independent sequence, so the
+ * same seed always consumes the RNG the same way regardless of what the
+ * caller later does with the result.
+ *
+ * ROUGHNESS AND BASELINE, TOGETHER. `roughness`, in [0, 1), is how far each
+ * lattice point is allowed to wander from `baseline` (itself a drawn band
+ * offset): at roughness 1 a point can land anywhere in the full amplitude
+ * range same as before, and at roughness 0 every point collapses exactly
+ * onto `baseline` — a flat world (owner: "it's OK to create flat worlds"),
+ * both ends of the SAME continuum rather than a special-cased flat mode
+ * bolted on beside the noise.
+ *
+ * `baseline` is drawn PER WORLD and is why this is two draws instead of one.
+ * An earlier version collapsed roughness toward the noise range's own zero
+ * point (sea level) instead of toward a drawn baseline: every sufficiently
+ * "calm" seed produced the exact same flat-at-sea-level result regardless of
+ * what the seed actually was, so distinct seeds could produce byte-identical
+ * worlds — silently, and with no error, just two "different" fresh worlds
+ * that happened to look the same. Server test/fresh-world.test.ts caught it
+ * as a flaky "different seeds differ" failure. Drawing the flat point instead
+ * of assuming it means a calm world is flat at a height the SEED chose, so
+ * two different calm seeds essentially never coincide.
+ */
+function buildOuterTerrainLattice(size: number, rng: () => number): OuterTerrainLattice {
+  const spacing = OUTER_TERRAIN_LATTICE_SPACING_CELLS;
+  // +2, not +1: interpolation reads lattice[gx + 1], so the grid needs one
+  // more column/row than the number of spacing-steps across the world.
+  const latticeCols = Math.floor((size - 1) / spacing) + 2;
+  const span = OUTER_TERRAIN_MAX_BAND_OFFSET - OUTER_TERRAIN_MIN_BAND_OFFSET;
+  const baseline = OUTER_TERRAIN_MIN_BAND_OFFSET + rng() * span;
+  const roughness = rng();
+
+  const bandOffsets = new Int16Array(latticeCols * latticeCols);
+  for (let j = 0; j < latticeCols; j++) {
+    const row = j * latticeCols;
+    for (let i = 0; i < latticeCols; i++) {
+      const draw = OUTER_TERRAIN_MIN_BAND_OFFSET + rng() * span;
+      bandOffsets[row + i] = Math.round(baseline + (draw - baseline) * roughness);
+    }
+  }
+  return { bandOffsets, latticeCols };
+}
+
+/**
+ * Bilinearly interpolated band offset at one cell, entirely in integer
+ * arithmetic: the two interpolation weights are the integer cell-within-
+ * lattice-square offsets `fx`/`fy` (each in `[0, spacing)`) rather than a
+ * `[0, 1)` float, so every intermediate product is an exact integer and the
+ * one division at the end is the only place rounding happens. This keeps
+ * genesis on the same "integer math, no accumulated float error" footing as
+ * the rest of the terrain code (see the determinism contract in
+ * shared/src/constants.ts) even though genesis itself sits outside that
+ * contract (server-only, never re-run on the client).
+ */
+function outerTerrainBandAt(lattice: OuterTerrainLattice, x: number, y: number): number {
+  const spacing = OUTER_TERRAIN_LATTICE_SPACING_CELLS;
+  const cols = lattice.latticeCols;
+  const offsets = lattice.bandOffsets;
+
+  const gx = Math.floor(x / spacing);
+  const gy = Math.floor(y / spacing);
+  const fx = x - gx * spacing;
+  const fy = y - gy * spacing;
+
+  const topLeft = offsets[gy * cols + gx];
+  const topRight = offsets[gy * cols + gx + 1];
+  const bottomLeft = offsets[(gy + 1) * cols + gx];
+  const bottomRight = offsets[(gy + 1) * cols + gx + 1];
+
+  const top = topLeft * (spacing - fx) + topRight * fx;
+  const bottom = bottomLeft * (spacing - fx) + bottomRight * fx;
+  return Math.floor((top * (spacing - fy) + bottom * fy) / (spacing * spacing));
+}
+
+// ── Putting genesis together ───────────────────────────────────────────────────
+
+/**
+ * Everything genesis needs to answer "what height is (x, y)", built once per
+ * world by `buildFreshGenesisTerrain`. Bundled so `freshGenesisHeightAt` stays
+ * a pure function of `(terrain, x, y)` — no RNG state, no world size lookups —
+ * exactly as `freshGenesisHeightAt(profile, x, y)` was before the noise field
+ * existed.
+ */
+export interface FreshGenesisTerrain {
+  readonly profile: FreshGenesisProfile;
+  /** The starter unlock square's cell-space bounds, both axes, inclusive. */
+  readonly unlockMinCell: number;
+  readonly unlockMaxCell: number;
+  readonly outerLattice: OuterTerrainLattice;
+}
+
+/**
+ * Builds one world's genesis terrain from its size and seed. The only
+ * function in genesis that touches the RNG or `Math.random`
+ * (`buildOuterTerrainLattice` takes an already-constructed generator) — call
+ * it exactly once per world, the same way `World.createFresh` does.
+ */
+export function buildFreshGenesisTerrain(size: number, seed: number): FreshGenesisTerrain {
+  const profile = freshGenesisProfile(size);
+  const { startChunk, spanChunks } = initialUnlockFootprint(size);
+  const unlockMinCell = startChunk * CHUNK_SIZE;
+  const rng = mulberry32Rng(seed);
+  return {
+    profile,
+    unlockMinCell,
+    unlockMaxCell: unlockMinCell + spanChunks * CHUNK_SIZE - 1,
+    outerLattice: buildOuterTerrainLattice(size, rng),
+  };
+}
+
+function withinUnlockFootprint(terrain: FreshGenesisTerrain, x: number, y: number): boolean {
+  return (
+    x >= terrain.unlockMinCell &&
+    x <= terrain.unlockMaxCell &&
+    y >= terrain.unlockMinCell &&
+    y <= terrain.unlockMaxCell
+  );
+}
+
+/**
+ * Genesis height of one cell. Exported so tests can state genesis's shape
  * without re-deriving its geometry, and so a future world-gen plugin has an
  * obvious seam to replace.
+ *
+ * Shelf and slope are unchanged from the original fixed profile — see the
+ * file-header comment for why they stay exact. Beyond the slope ring, height
+ * comes from the seeded noise field, EXCEPT that a cell still inside the
+ * starter square is clamped to at most `FRESH_SEABED_HEIGHT`: the wildlife
+ * plugin's day-one census counts that exact region as deep water and asserts
+ * an exact cell count, so this cell's only freedom is how much DEEPER than
+ * the old fixed abyss it gets, never shallower — the classification the
+ * plugin depends on can't move, but the depth players actually see can.
  */
-export function freshGenesisHeightAt(profile: FreshGenesisProfile, x: number, y: number): number {
+export function freshGenesisHeightAt(terrain: FreshGenesisTerrain, x: number, y: number): number {
+  const { profile } = terrain;
   const outside = cellsOutsideShelf(profile, x, y);
   if (outside === 0) return FRESH_SHELF_HEIGHT;
-  return outside <= profile.slopeWidthCells ? FRESH_SLOPE_HEIGHT : FRESH_SEABED_HEIGHT;
+  if (outside <= profile.slopeWidthCells) return FRESH_SLOPE_HEIGHT;
+
+  const noiseHeight = clampHeight(outerTerrainBandAt(terrain.outerLattice, x, y) * BAND_HEIGHT);
+  if (withinUnlockFootprint(terrain, x, y)) {
+    return noiseHeight < FRESH_SEABED_HEIGHT ? noiseHeight : FRESH_SEABED_HEIGHT;
+  }
+  return noiseHeight;
+}
+
+/**
+ * Last-resort fallback for the deep-water guarantee, used only when a world
+ * is so small that the shelf and its fixed-width slope ring
+ * (FRESH_SLOPE_WIDTH_CELLS cells, a constant regardless of world size) cover
+ * every cell — below the smallest shipped size (128²) and the documented
+ * valid range (64..4096) — so ordinary genesis never had a chance to place
+ * any deep water at all. Forces the single cell farthest (by the same
+ * Chebyshev metric as the shelf/slope split) from the shelf down to
+ * FRESH_SEABED_HEIGHT, and returns that height so the caller can re-verify
+ * the guarantee now holds.
+ *
+ * Deliberately a POST-CHECK fallback rather than folded into the main
+ * construction: this path is expected to run zero times for every size
+ * anyone actually ships, and keeping it separate and rare-path means the
+ * primary generation loop stays a simple, easily-audited pure function of
+ * `(terrain, x, y)`.
+ */
+function carveFallbackAbyss(map: Heightmap, profile: FreshGenesisProfile, size: number): number {
+  let farthestX = 0;
+  let farthestY = 0;
+  let farthestDistance = -1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const distance = cellsOutsideShelf(profile, x, y);
+      if (distance > farthestDistance) {
+        farthestDistance = distance;
+        farthestX = x;
+        farthestY = y;
+      }
+    }
+  }
+  map.cells[farthestY * size + farthestX] = FRESH_SEABED_HEIGHT;
+  return FRESH_SEABED_HEIGHT;
 }
 
 export class World {
@@ -286,10 +601,11 @@ export class World {
 
   /**
    * A brand-new world: an OCEAN WITH A COAST — a shallow shelf at the centre,
-   * a slope ring around it, open sea everywhere beyond — with the provisional
-   * starter region unlocked (see initial-unlock.ts). Used when no snapshot
-   * exists. The profile and every constant in it are documented at the top of
-   * this file.
+   * a slope ring around it — and, beyond that, terrain that is different every
+   * time: seeded value noise standing in for what used to be a flat abyss.
+   * The provisional starter region is unlocked as before (see
+   * initial-unlock.ts). Used when no snapshot exists. Every constant and the
+   * two-zone split are documented at the top of this file.
    *
    * The terrain is generated HERE, on the server, and deliberately not in
    * `createHeightmap`: shared/ is the determinism contract that client and
@@ -298,18 +614,29 @@ export class World {
    * the honest shared primitive and "what a new world looks like" stays a
    * server policy that a future world-gen plugin can replace.
    *
+   * `seed` defaults to a fresh random draw (`drawGenesisSeed`) — the one
+   * intentionally non-deterministic moment in genesis. A caller that supplies
+   * its own seed (tests, chiefly) gets a fully reproducible world: genesis is
+   * a pure function of `(size, seed)` from that point on, so the same pair
+   * always produces the same heightmap, byte for byte.
+   *
    * CONSEQUENCES, ALL INTENDED AND ALL REAL:
    *
-   *   1. Raising land now costs band-steps that it did not before: two sculpts
-   *      to break the surface on the starter shelf (at DEFAULT_SCULPT_AMOUNT =
-   *      one band per intent), four out in the open sea. The ocean is a volume
-   *      with a bottom, and how far down that bottom is now varies by place.
-   *   2. A fresh world has NO LAND. Land-habitat species have nowhere to be
-   *      until a player raises an island; water species have somewhere from the
-   *      first tick, coastal AND open-sea both.
-   *   3. Genesis is one-time and deterministic — integer band arithmetic over a
-   *      Chebyshev distance, no RNG — so the same size always produces the same
-   *      world and tests can assert it cell by cell.
+   *   1. Raising land costs band-steps it did not before: two sculpts to break
+   *      the surface on the starter shelf (at DEFAULT_SCULPT_AMOUNT = one band
+   *      per intent), more out in the open sea, and by how much now varies by
+   *      seed as well as by place.
+   *   2. The starter square still has no land — the wildlife plugin's day-one
+   *      census depends on that (see the file-header comment) — but land is
+   *      possible, and expected, beyond it: a future reveal plugin may uncover
+   *      an island, a mountain range, or more open sea, decided at genesis and
+   *      not before.
+   *   3. Every generated world still contains water at least as deep as
+   *      `FRESH_SEABED_HEIGHT` (`FRESH_SEABED_BANDS_BELOW_SEA` bands down) —
+   *      guaranteed by construction (the starter-square clamp below can only
+   *      make outer terrain deeper there, never shallower) and checked again,
+   *      loudly, right after generation, the same "fail at boot rather than
+   *      serve a broken world" idiom `applyInitialUnlock` already uses below.
    *
    * Only this path generates. `restore` rebuilds whatever a snapshot holds, so
    * existing worlds are untouched.
@@ -317,25 +644,63 @@ export class World {
    * Not a cosmetic mismatch worth chasing on the client: the client boots its
    * local heightmap at band 0 and shows a flat sea until the first chunk
    * arrives, so for the one pre-connect frame it draws a shoreline where the
-   * server has a coast and an abyss. The first `chunkUnlock` overwrites it.
-   * Left alone on purpose — the fix belongs in the client's boot state.
+   * server has a coast and (now) varied terrain beyond it. The first
+   * `chunkUnlock` overwrites it. Left alone on purpose — the fix belongs in
+   * the client's boot state.
    */
   static createFresh(
     size: number,
     difficulty: number = DEFAULT_WORLD_DIFFICULTY,
     name: string = generateWorldName(),
+    seed: number = drawGenesisSeed(),
   ): World {
     const map = createHeightmap(size);
-    const profile = freshGenesisProfile(size);
+    const terrain = buildFreshGenesisTerrain(size, seed);
 
     // Row-major, ascending, matching every other sweep over the grid. Order is
     // irrelevant to the result here (each cell is a pure function of its own
-    // coordinates) and kept conventional so it stays that way.
+    // coordinates plus the prebuilt `terrain`, never of iteration order) and
+    // kept conventional so it stays that way.
+    let deepestHeight = MAX_HEIGHT;
     for (let y = 0; y < size; y++) {
       const row = y * size;
       for (let x = 0; x < size; x++) {
-        map.cells[row + x] = freshGenesisHeightAt(profile, x, y);
+        const height = freshGenesisHeightAt(terrain, x, y);
+        map.cells[row + x] = height;
+        if (height < deepestHeight) deepestHeight = height;
       }
+    }
+
+    // Every fresh world must contain water at least as deep as the wildlife
+    // plugin's deep-water threshold (see FRESH_SEABED_BANDS_BELOW_SEA above)
+    // or the original bug — whales with nowhere to live — comes back. Proven
+    // true by construction for every size in the documented valid range
+    // (64..4096, see server/test/fresh-world.test.ts): the starter-square
+    // clamp in `freshGenesisHeightAt` can only push that region deeper than
+    // FRESH_SEABED_HEIGHT, never shallower.
+    //
+    // BUT config.ts enforces no such minimum — WORLD_SIZE only has to be a
+    // positive multiple of CHUNK_SIZE — and FRESH_SLOPE_WIDTH_CELLS is a
+    // FIXED cell count, not a fraction of world size, so a small enough world
+    // lets the slope ring geometrically cover every cell, leaving nothing for
+    // the clamp to act on (this is a latent property of the ORIGINAL
+    // shelf/slope geometry, not something this change introduces — it was
+    // simply never checked before there was an invariant to violate). Rather
+    // than leave an unusual self-hosted WORLD_SIZE permanently unbootable,
+    // fall back to carving the guarantee in directly.
+    if (deepestHeight > FRESH_SEABED_HEIGHT) {
+      deepestHeight = carveFallbackAbyss(map, terrain.profile, size);
+    }
+
+    // Should be unreachable — carveFallbackAbyss always sets one cell to
+    // exactly FRESH_SEABED_HEIGHT — but fail loudly rather than silently ship
+    // a world with no deep water, the same idiom applyInitialUnlock uses for
+    // its own boot-time sanity check just below.
+    if (deepestHeight > FRESH_SEABED_HEIGHT) {
+      throw new Error(
+        `fresh genesis produced no water at or below FRESH_SEABED_HEIGHT ` +
+          `(deepest cell was ${deepestHeight}) — deep-water guarantee violated`,
+      );
     }
 
     const world = new World(
