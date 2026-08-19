@@ -11,12 +11,15 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
+  MIN_HEIGHT,
   SEA_LEVEL,
   applySculpt,
   createHeightmap,
   heightAt,
   quantizeToBand,
   type ChunkPayload,
+  type SculptAnchor,
+  type SculptProfile,
 } from '@terrace/shared';
 import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
@@ -265,6 +268,15 @@ interface Stroke {
   clicks: number;
   /** Raise instead of lower — how a remnant column is left standing. */
   up?: boolean;
+  /** Edge profile; the original fixtures were measured with 'soft'. */
+  profile?: SculptProfile;
+  /**
+   * Brush anchor; the original fixtures predate anchoring and keep the
+   * library default ('free') so their measured rows stay pinned. The deep
+   * fixtures (2026-08-19) play the WIRE default ('clicked') — what a player's
+   * click actually does since the anchored brush shipped.
+   */
+  anchor?: SculptAnchor;
 }
 
 /** Cell the fixture strokes are centred on: the middle of the fixture chunk. */
@@ -311,6 +323,55 @@ const SPIRE_STROKES: readonly Stroke[] = [
 const offsetStrokes = (strokes: readonly Stroke[], dx: number, dy: number): Stroke[] =>
   strokes.map((s) => ({ ...s, dx: s.dx + dx, dy: s.dy + dy }));
 
+// ---------------------------------------------------------------------------
+// DEEP-SEA FIXTURES (2026-08-19, Deep Strata). The world floor moved from
+// band −16 to band −24 and underwater risers now cost DOUBLE skirt triangles
+// (border sliver + face), so the budgets' worst legitimate chunk got a new
+// shape: a pit dug from the coastal shelf all the way to the lava floor.
+// These rows are what recalibrated the budgets — see CHUNK_TRIANGLE_BUDGET.
+//
+// Unlike the land fixtures they play the WIRE defaults of the day they were
+// added (anchor 'clicked'): they model what the OWNER's clicks did in the
+// 2026-08-19 report, not what the pre-anchor brush did.
+// ---------------------------------------------------------------------------
+
+/** The coastal shelf the deep digs start from: two bands under the sea. */
+const SHELF_BASE = -2 * BAND_HEIGHT;
+
+/** Same strokes, played harder: every click count multiplied. */
+const scaledStrokes = (strokes: readonly Stroke[], factor: number): Stroke[] =>
+  strokes.map((s) => ({ ...s, clicks: s.clicks * factor }));
+
+/** Wire-default deep play: the anchored, clicked brush. */
+const asDeepPlay = (strokes: readonly Stroke[]): Stroke[] =>
+  strokes.map((s) => ({ ...s, anchor: 'clicked' as const }));
+
+/**
+ * THE OWNER'S PIT (2026-08-19 screenshot): brush 4, HARD edge, lower, held at
+ * one spot with small wanders until the dig bottoms out on the world floor —
+ * the exact stroke pattern that rendered blocky on stack 231.8d78097. The
+ * anchored hard brush moves one band per click, so the click counts walk the
+ * shelf (band −2) down 22 more bands with a ragged rim left by the wander.
+ */
+const DEEP_PIT_STROKES: readonly Stroke[] = asDeepPlay([
+  { dx: 0, dy: 0, radius: 4, clicks: 10, profile: 'hard' },
+  { dx: 1, dy: 1, radius: 4, clicks: 8, profile: 'hard' },
+  { dx: -1, dy: 0, radius: 4, clicks: 8, profile: 'hard' },
+  { dx: 0, dy: -2, radius: 3, clicks: 6, profile: 'hard' },
+  { dx: 2, dy: 2, radius: 3, clicks: 4, profile: 'hard' },
+]);
+
+/**
+ * A SOFT deep crater: the original ragged crater played 3× as long under the
+ * anchored brush (which moves at most a band per click, so depth ≈ clicks),
+ * remnant columns and all — the soft-brush version of reaching the floor.
+ */
+const DEEP_CRATER_STROKES: readonly Stroke[] = asDeepPlay([
+  ...scaledStrokes(CRATER_STROKES, 3),
+  { dx: 0, dy: 0, radius: 3, clicks: 10 },
+  { dx: 1, dy: -1, radius: 2, clicks: 8 },
+]);
+
 /**
  * Applies strokes to a world that starts flat at `base`, and returns every
  * chunk of it — neighbours included, so the fixture chunk's lattice reads real
@@ -327,7 +388,11 @@ function sculptedWorld(strokes: readonly Stroke[], base: number): ChunkPayload[]
         SCULPT_CENTRE + stroke.dy,
         stroke.radius,
         stroke.up ? DEFAULT_SCULPT_AMOUNT : -DEFAULT_SCULPT_AMOUNT,
-        { tool: 'stamp', profile: 'soft' },
+        {
+          tool: 'stamp',
+          profile: stroke.profile ?? 'soft',
+          anchor: stroke.anchor ?? 'free',
+        },
       );
     }
   }
@@ -1413,5 +1478,145 @@ describe('buffers', () => {
     expect(Array.from(second.positions)).toEqual(Array.from(first.positions));
     expect(Array.from(second.normals)).toEqual(Array.from(first.normals));
     expect(Array.from(second.colors)).toEqual(Array.from(first.colors));
+  });
+});
+
+describe('deep strata sculpting (2026-08-19) — the digs that recalibrated the budgets', () => {
+  /** Min height of the fixture chunk after the strokes — how deep it really goes. */
+  function fixtureFloor(strokes: readonly Stroke[], base: number): number {
+    const map = createHeightmap(WORLD);
+    map.cells.fill(base);
+    for (const stroke of strokes) {
+      for (let c = 0; c < stroke.clicks; c++) {
+        applySculpt(
+          map,
+          SCULPT_CENTRE + stroke.dx,
+          SCULPT_CENTRE + stroke.dy,
+          stroke.radius,
+          stroke.up ? DEFAULT_SCULPT_AMOUNT : -DEFAULT_SCULPT_AMOUNT,
+          { tool: 'stamp', profile: stroke.profile ?? 'soft', anchor: stroke.anchor ?? 'free' },
+        );
+      }
+    }
+    let min = Infinity;
+    for (let j = 0; j < CHUNK_SIZE; j++) {
+      for (let i = 0; i < CHUNK_SIZE; i++) {
+        min = Math.min(min, heightAt(map, FIXTURE_ORIGIN + i, FIXTURE_ORIGIN + j));
+      }
+    }
+    return min;
+  }
+
+  it('the deep fixtures provably bottom out on the world floor', () => {
+    // Without this, the fixtures could silently stop short and the budget
+    // calibration would be measured against a shallower world than the one
+    // players dig in.
+    expect(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
+    expect(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
+  });
+
+  it("draws the owner's hard-dug floor pit organically (the 2026-08-19 report)", () => {
+    const { counts } = writeSculpted(DEEP_PIT_STROKES, SHELF_BASE);
+    expect(counts.usedFallback).toBe(false);
+    // Real deep geometry: the bordered underwater skirts dominate.
+    expect(counts.skirtTriangleCount).toBeGreaterThan(counts.capTriangleCount);
+  });
+
+  it('draws a soft floor-depth crater, remnant spires and all, organically', () => {
+    const withSpires = [...DEEP_CRATER_STROKES, ...asDeepPlay(SPIRE_STROKES)];
+    expect(writeSculpted(withSpires, SHELF_BASE).counts.usedFallback).toBe(false);
+  });
+
+  it('draws the worst plausible chunk — three floor-depth craters — inside both budgets', () => {
+    const worst = [
+      ...DEEP_CRATER_STROKES,
+      ...offsetStrokes(DEEP_CRATER_STROKES, 6, 6),
+      ...offsetStrokes(DEEP_CRATER_STROKES, -6, 5),
+      ...asDeepPlay(SPIRE_STROKES),
+    ];
+    const { counts } = writeSculpted(worst, SHELF_BASE);
+    expect(counts.usedFallback).toBe(false);
+    // Headroom, not a scrape-in, on BOTH budgets — this is the calibration row.
+    expect(counts.triangleCount).toBeLessThan(CHUNK_TRIANGLE_BUDGET);
+    expect(counts.triangulationWork).toBeLessThan(CHUNK_TRIANGULATION_WORK_BUDGET);
+  });
+});
+
+/**
+ * THE LEGITIMATE-SCULPTING CONTRACT (2026-08-19). One table, every fixture a
+ * player could honestly dig, one assertion: none of them may EVER draw blocky.
+ * A future feature that raises geometry cost — another band, a costlier skirt,
+ * a new border — fails THIS test instead of the owner's eyes; recalibrate the
+ * budgets against the remeasured table when it does (method at
+ * CHUNK_TRIANGLE_BUDGET).
+ */
+describe('the legitimate-sculpting contract', () => {
+  interface Row {
+    name: string;
+    strokes: readonly Stroke[];
+    base: number;
+  }
+  const pitsEvery = (step: number): Stroke[] => {
+    const out: Stroke[] = [];
+    for (let dx = -8; dx <= 8; dx += step) {
+      for (let dy = -8; dy <= 8; dy += step) out.push({ dx, dy, radius: 1, clicks: 3 });
+    }
+    return out;
+  };
+  const spireField = (): Stroke[] =>
+    pitsEvery(2).map((s) => ({ ...s, up: true as const }));
+
+  const LEGITIMATE: readonly Row[] = [
+    { name: 'stamped crater (land)', strokes: CRATER_STROKES, base: 8 * BAND_HEIGHT },
+    { name: 'crater dug into the sea floor', strokes: CRATER_STROKES, base: 0 },
+    {
+      name: 'crater with spires',
+      strokes: [...CRATER_STROKES, ...SPIRE_STROKES],
+      base: 8 * BAND_HEIGHT,
+    },
+    {
+      name: 'three craters and spires in one chunk',
+      strokes: [
+        ...CRATER_STROKES,
+        ...offsetStrokes(CRATER_STROKES, 6, 6),
+        ...offsetStrokes(CRATER_STROKES, -6, 5),
+        ...SPIRE_STROKES,
+      ],
+      base: 8 * BAND_HEIGHT,
+    },
+    { name: 'spire field every 2nd cell', strokes: spireField(), base: 4 * BAND_HEIGHT },
+    { name: 'pits every 4th cell', strokes: pitsEvery(4), base: 8 * BAND_HEIGHT },
+    { name: "the owner's floor pit (hard r4)", strokes: DEEP_PIT_STROKES, base: SHELF_BASE },
+    {
+      name: 'deep pit with spires',
+      strokes: [...DEEP_PIT_STROKES, ...asDeepPlay(SPIRE_STROKES)],
+      base: SHELF_BASE,
+    },
+    { name: 'deep soft crater', strokes: DEEP_CRATER_STROKES, base: SHELF_BASE },
+    {
+      name: 'three floor-depth craters and spires',
+      strokes: [
+        ...DEEP_CRATER_STROKES,
+        ...offsetStrokes(DEEP_CRATER_STROKES, 6, 6),
+        ...offsetStrokes(DEEP_CRATER_STROKES, -6, 5),
+        ...asDeepPlay(SPIRE_STROKES),
+      ],
+      base: SHELF_BASE,
+    },
+  ];
+
+  it('renders every legitimate fixture organically — no exceptions', () => {
+    for (const row of LEGITIMATE) {
+      const { counts } = writeSculpted(row.strokes, row.base);
+      expect(counts.usedFallback, row.name).toBe(false);
+    }
+  });
+
+  it('and the guard still guards: adversarial shapes still fall back', () => {
+    // Both budgets are calibrated between two measured populations; this side
+    // pins the other population so a lazy "raise it until green" can't pass.
+    expect(writeSculpted(pitsEvery(2)).counts.usedFallback).toBe(true);
+    const checker = writeEdge((i, j) => ((i + j) % 2) * BAND_HEIGHT);
+    expect(checker.counts.usedFallback).toBe(true);
   });
 });

@@ -196,26 +196,61 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
  * hit: an ordinary crater plus a few spires needs 5,250, so normal heavy play
  * flipped chunks to blocky and the terrain read as a patchwork.
  *
- * UNDERWATER RISERS COUNT DOUBLE since 2026-08-19: each carries a top-edge
- * border sliver (SEABED_RISER_BORDER_WORLD_HEIGHT), so a segment costs 4
- * skirt triangles below the waterline against 2 on land. The table above was
- * measured on land fixtures and still holds for them; an all-underwater chunk
- * reaches this budget at half the skirt segments, which only moves the
- * blocky threshold for terrain that is BOTH adversarial and fully submerged.
+ * RECALIBRATED 2026-08-19 EVENING (Deep Strata): the owner dug a brush-4 hard
+ * pit from the coastal shelf to the new lava floor and watched it draw blocky
+ * on stack 231.8d78097 — at 10,240 that was arithmetic, not accident. Two
+ * shipped features moved the legitimate worst case: underwater risers COUNT
+ * DOUBLE (each carries a top-edge border sliver, SEABED_RISER_BORDER_WORLD_
+ * HEIGHT, so a submerged segment costs 4 skirt triangles against 2 on land),
+ * and Deep Strata opened 8 more bands below the old floor, so one floor-depth
+ * pit stacks up to ~26 contour levels in a single chunk. Remeasured rows,
+ * same method, submerged fixtures dug with the wire-default anchored brush
+ * (see the DEEP-SEA FIXTURES in test/vertexGrid.test.ts):
+ *
+ *   terrain (2026-08-19 rows)     triangles     work   contour  10,240     now
+ *   crater(land, now bordered)       4,129     123k   3.1 ms       ok      ok
+ *   THE OWNER'S PIT (hard r4)       10,575     229k   2.9 ms   blocky      ok
+ *   deep pit + spires               12,864     240k   3.7 ms   blocky      ok
+ *   deep soft crater                14,830     323k   4.5 ms   blocky      ok
+ *   three deep craters + spires     28,033     777k   9.1 ms   blocky      ok
+ *
+ * (The land crater's own row moved 3,566 → 4,129 for the same reason — it
+ * digs below the waterline, so its submerged risers now carry borders. The
+ * original table's land-only rows above are kept as history of the method.)
+ *
+ * THE GUARD DUTY MOVED. Deep digging made legitimate triangle counts OVERLAP
+ * the adversarial ones — the owner's pit (10.5k) and every deep row sit above
+ * pits-every-2nd-cell (8.7k) — so triangles can no longer tell honest terrain
+ * from adversarial terrain, and this budget stops trying. Discrimination is
+ * now entirely the WORK budget's job (legitimate rows top out at 777k work,
+ * adversarial rows start at 1,695k — clean separation); what THIS budget
+ * bounds is memory and emission time, nothing else.
+ *
+ * 32,768 is 17% above the heaviest legitimate fixture (28,033) — thinner than
+ * the 08-14 margin because the question changed: a margin here no longer
+ * decides which terrain flips (the work guard stands in front of it), only
+ * how much buffer a maximal chunk may ask for, and it is deliberately EXACTLY
+ * the capacity ensureCapacity's doubling lands on, so the budget and the
+ * high-water allocation are the same number.
  *
  * MEMORY. Attributes are 111 bytes per triangle (3 unshared vertices × 9
- * floats, plus one self-lit byte each), and ensureCapacity doubles rather than
- * fits, so the ceiling this
- * budget sets is a 16,384-triangle capacity = 1.77 MB per chunk, against
- * 442 KB at the old 4,096. That is a per-chunk HIGH-WATER MARK reached only by
- * a chunk whose own geometry demanded it, never an allocation every chunk
- * makes: the reported crater settles at 4,096 (442 KB), a crater with spires
- * at 8,192 (885 KB), the three-crater chunk at 16,384 (1.77 MB), a chunk that
- * blew either budget needs only 2,048 (221 KB) for the fallback, and an
- * ordinary chunk still never leaves its starting 1,024 (110 KB). What grew is
- * the worst case for the rare crowded chunk, not the cost of a world.
+ * floats, plus one self-lit byte each), and ensureCapacity doubles rather
+ * than fits, so the ceiling this budget sets is a 32,768-triangle capacity =
+ * 3.64 MB per chunk. That is a per-chunk HIGH-WATER MARK reached only by a
+ * chunk whose own geometry demanded it, never an allocation every chunk
+ * makes: the land crater settles at 8,192 (0.9 MB), the owner's pit at
+ * 16,384 (1.77 MB), only a floor-depth triple-crater chunk at 32,768
+ * (3.64 MB), a chunk that blew either budget needs only 2,048 (221 KB) for
+ * the fallback, and an ordinary chunk still never leaves its starting 1,024
+ * (110 KB).
+ *
+ * COST HONESTY: the worst legitimate row builds in ~9 ms on the dev machine —
+ * a dropped frame per patch while sculpting THAT chunk, paid only at the
+ * bottom of the world, and chosen over drawing the owner's dig as blocks.
+ * The architectural fix that removes the frame cost AND this whole budget
+ * tradeoff class is async/multi-frame meshing — flagged, not built.
  */
-export const CHUNK_TRIANGLE_BUDGET = 10240;
+export const CHUNK_TRIANGLE_BUDGET = 32768;
 
 /**
  * Ear-clipping work one chunk may spend before it is given the blocky fallback.
@@ -238,18 +273,24 @@ export const CHUNK_TRIANGLE_BUDGET = 10240;
  * IS the inner loop's own operation count.
  *
  * 1,000,000 is therefore ~3.3 ms of ear clipping at the worst measured rate,
- * and with the rest of the pipeline (marching, smoothing, ~1 ms of buffer
- * writes at the triangle budget) it holds a chunk build to about 4 ms — a
- * quarter of a 60 fps frame, for an event that lands on ~4% of frames during a
- * held sculpt (see the budget reasoning in render/terrainMeshes.ts: ≈32 chunk
- * patches per second, so ~13% of one core at this ceiling and under 3% at the
- * crater fixture's real 112k). It clears every legitimate fixture with room to
- * spare — the heaviest, three craters in one chunk, needs 337k, and pits every
- * third cell 796k — and catches every adversarial one by 1.7× to 78×.
+ * and with the rest of the pipeline (marching, smoothing, buffer writes) it
+ * holds a chunk build to single-digit milliseconds (see the budget reasoning
+ * in render/terrainMeshes.ts: ≈32 chunk patches per second during a held
+ * sculpt).
  *
- * It cannot blockify anything the old triangle-only budget passed: a chunk
- * needs a polygon of ~1,000 vertices to reach this work, and 1,000 cap vertices
- * drag ~2,000 skirt triangles along with them, which was already over 4,096.
+ * RE-RATIFIED UNCHANGED at the 2026-08-19 Deep Strata recalibration, and
+ * PROMOTED: it is now the ONLY discriminating guard. Deep-sea digging pushed
+ * legitimate triangle counts past the adversarial pit fields', so the
+ * triangle budget above no longer separates honest terrain from hostile
+ * terrain — this metric still does, cleanly. The heaviest legitimate fixture
+ * (three floor-depth craters plus spires) needs 776,705; pits every third
+ * cell 796k; the cheapest ADVERSARIAL row (terraced pseudo-random) 1,695k,
+ * pits every 2nd cell 3,358k, the checkerboards 4,914k and 78,653k. One
+ * million sits 26% above the heaviest legitimate row and 41% under the
+ * cheapest adversarial one — and unlike triangles, the two populations did
+ * not move toward each other when the world got deeper, because depth adds
+ * LEVELS (linear, small polygons each) while adversarial shapes add HOLES
+ * (quadratic in one polygon), and V² only explodes for the latter.
  */
 export const CHUNK_TRIANGULATION_WORK_BUDGET = 1_000_000;
 
@@ -307,6 +348,15 @@ export interface ChunkGeometryCounts {
    * was drawn with axis-aligned per-cell geometry instead.
    */
   usedFallback: boolean;
+  /**
+   * Σ V² over the polygons the contour path triangulated (or was about to) —
+   * the exact metric CHUNK_TRIANGULATION_WORK_BUDGET gates on, reported so the
+   * calibration tests can assert real headroom against the budget instead of
+   * re-deriving the sum. On a chunk that fell back mid-count this is the
+   * PARTIAL sum up to the level that tripped a budget, which is still the
+   * honest answer to "how far did the guard let it get".
+   */
+  triangulationWork: number;
 }
 
 /**
@@ -977,6 +1027,7 @@ export function writeChunkVertexData(
     triangleCapacity: buffers.triangleCapacity,
     capacityGrew,
     usedFallback,
+    triangulationWork,
   };
 }
 
