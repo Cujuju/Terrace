@@ -10,6 +10,7 @@ import { clientPlugin as flora } from '../../../plugins/flora/client/index.ts';
 import { clientPlugin as invite } from '../../../plugins/invite/client/index.ts';
 import { clientPlugin as mana } from '../../../plugins/mana/client/index.ts';
 import { clientPlugin as monsters } from '../../../plugins/monsters/client/index.ts';
+import { clientPlugin as pilgrims } from '../../../plugins/pilgrims/client/index.ts';
 import { clientPlugin as relics } from '../../../plugins/relics/client/index.ts';
 import { clientPlugin as structures } from '../../../plugins/structures/client/index.ts';
 import { clientPlugin as weather } from '../../../plugins/weather/client/index.ts';
@@ -24,5 +25,6 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   flora,
   structures,
   monsters,
+  pilgrims,
   weather,
 ];
