@@ -31,7 +31,10 @@ import {
 } from '../protocol.ts';
 import {
   CA_FIXED_SEED_PATTERNS,
+  CA_STIR_MAX_SPARKS,
+  CA_STIR_PROBABILITY_PER_GENERATION,
   attemptSeed,
+  attemptStir,
   placePatternAt,
   stepGeneration,
   type LiveCellRecord,
@@ -434,6 +437,111 @@ describe('seeding', () => {
     // Any overlap with a live cell rejects the whole pattern.
     const live = boardOf([[11, 11]]);
     expect(placePatternAt(world, live, 10, 10, block)).toBeNull();
+  });
+});
+
+describe('stirring', () => {
+  const BLOCK: ReadonlyArray<readonly [number, number]> = [[10, 10], [11, 10], [10, 11], [11, 11]];
+
+  function isMooreAdjacentToLive(live: ReadonlyMap<number, LiveCellRecord>, x: number, y: number): boolean {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        if (live.has(structureKey(x + dx, y + dy))) return true;
+      }
+    }
+    return false;
+  }
+
+  function setsEqual(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+    if (a.size !== b.size) return false;
+    for (const key of a) if (!b.has(key)) return false;
+    return true;
+  }
+
+  it('an empty board never stirs — seeding owns it', () => {
+    const world = openWorld();
+    const rng = createStructuresRng(1);
+    expect(attemptStir(world, new Map(), rng)).toBeNull();
+  });
+
+  it('sparks land only on dead, buildable cells Moore-adjacent to a live cell', () => {
+    const world = openWorld();
+    const live = boardOf(BLOCK);
+    const rng = createStructuresRng(2);
+    let firedAtLeastOnce = false;
+
+    for (let roll = 0; roll < 30; roll++) {
+      const sparks = attemptStir(world, live, rng);
+      if (sparks === null) continue;
+      firedAtLeastOnce = true;
+      expect(sparks.length).toBeGreaterThanOrEqual(1);
+      expect(sparks.length).toBeLessThanOrEqual(CA_STIR_MAX_SPARKS);
+      for (const spark of sparks) {
+        expect(spark.tier).toBe(0);
+        expect(live.has(structureKey(spark.x, spark.y))).toBe(false);
+        expect(isBuildableCell(world, spark.x, spark.y)).toBe(true);
+        expect(isMooreAdjacentToLive(live, spark.x, spark.y)).toBe(true);
+      }
+    }
+    expect(firedAtLeastOnce).toBe(true);
+  });
+
+  it('never pushes the population past STRUCTURES_CAP, taking fewer sparks rather than none', () => {
+    const world = openWorld();
+    const rng = createStructuresRng(4);
+    // Fill to within 2 of the cap with a single solid rectangle, so plenty of
+    // live cells sit on its edge with dead, buildable ground just outside —
+    // real spark candidates — while the cap still binds to at most 2.
+    const live = new Map<number, LiveCellRecord>();
+    let placed = 0;
+    outer: for (let y = 0; y < OPEN_WORLD_SIZE && placed < STRUCTURES_CAP - 2; y++) {
+      for (let x = 0; x < OPEN_WORLD_SIZE; x++) {
+        if (placed >= STRUCTURES_CAP - 2) break outer;
+        live.set(structureKey(x, y), { age: 0, tier: 0 });
+        placed++;
+      }
+    }
+    for (let roll = 0; roll < 10; roll++) {
+      const sparks = attemptStir(world, live, rng);
+      if (sparks !== null) {
+        expect(live.size + sparks.length).toBeLessThanOrEqual(STRUCTURES_CAP);
+        expect(sparks.length).toBeLessThanOrEqual(2);
+      }
+    }
+  });
+
+  it('is deterministic: the same rng seed and board produce identical sparks', () => {
+    const world = openWorld();
+    const rng1 = createStructuresRng(9);
+    const rng2 = createStructuresRng(9);
+    const sparks1 = attemptStir(world, boardOf(BLOCK), rng1);
+    const sparks2 = attemptStir(world, boardOf(BLOCK), rng2);
+    expect(sparks1).not.toBeNull();
+    expect(sparks1).toEqual(sparks2);
+  });
+
+  it('a lone 2×2 block, stirred at the real simulate() cadence over ~30 generations, ends up different from its original state at least once', () => {
+    const world = openWorld();
+    let live = boardOf(BLOCK);
+    const original = keysOf(live);
+    const rng = createStructuresRng(3);
+
+    let everDiffered = false;
+    for (let gen = 0; gen < 30; gen++) {
+      live = stepGeneration(world, live).nextLive;
+      if (rng.next() < CA_STIR_PROBABILITY_PER_GENERATION) {
+        const sparks = attemptStir(world, live, rng);
+        if (sparks !== null) {
+          for (const spark of sparks) live.set(structureKey(spark.x, spark.y), { age: 0, tier: 0 });
+        }
+      }
+      if (!setsEqual(keysOf(live), original)) {
+        everDiffered = true;
+        break;
+      }
+    }
+    expect(everDiffered).toBe(true);
   });
 });
 

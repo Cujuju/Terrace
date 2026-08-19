@@ -11,7 +11,10 @@
 // THE CA is polled: every CA_GENERATION_INTERVAL_SECONDS the whole board
 // steps (amortised across ticks, life.ts's GenerationSurvey) — every birth,
 // death and tier change in the plugin's steady state happens here, plus an
-// occasional seed pattern to keep a quiet board from staying quiet forever.
+// occasional seed pattern to keep a quiet WORLD from staying quiet forever,
+// and an occasional stir event (owner decision 2026-08-19) to keep an already
+// settled BOARD from freezing into still lifes forever — see life.ts's
+// attemptSeed and attemptStir doc comments respectively.
 //
 // DEMOLITION is reactive: onTerrainChanged carries the full server-side
 // diff, so an edit under a live cell kills it in the same call that applied
@@ -55,8 +58,10 @@ import {
 } from '../protocol.ts';
 import {
   CA_SEED_PROBABILITY_PER_GENERATION,
+  CA_STIR_PROBABILITY_PER_GENERATION,
   GenerationSurvey,
   attemptSeed,
+  attemptStir,
   generationChunksPerTick,
   type LiveCellRecord,
 } from './life.ts';
@@ -219,9 +224,11 @@ function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: nu
  *   1. advance the clock;
  *   2. advance the CA sweep by this tick's share of the board. On the tick
  *      that completes it: swap in the new generation, maybe seed a fresh
- *      pattern onto the RESULT (so a just-placed seed is evaluated by B3/S23
- *      starting next generation, never the one that just ran), and broadcast
- *      everything that changed;
+ *      pattern AND/OR stir a few sparks next to an existing settlement onto
+ *      the RESULT (so a just-placed seed or spark is evaluated by B3/S23
+ *      starting next generation, never the one that just ran — life.ts's
+ *      attemptSeed and attemptStir doc comments), and broadcast everything
+ *      that changed;
  *   3. keepalive, on its own independent cadence.
  */
 function simulate(world: WorldApi, dt: number): void {
@@ -246,7 +253,21 @@ function simulate(world: WorldApi, dt: number): void {
         }
       }
 
-      broadcastChanges(world, [...outcome.born, ...seeded], outcome.upgraded, outcome.died);
+      // Independent roll from seeding, same "AFTER the swap" reasoning: a
+      // spark ignited here is a birth the CA hasn't evaluated yet, so it is
+      // deferred to next generation like a fresh seed is (see attemptStir's
+      // doc comment). Rolled every generation regardless of whether seeding
+      // fired above — the two events are unrelated and independently timed.
+      let stirred: StructureCell[] = [];
+      if (rng.next() < CA_STIR_PROBABILITY_PER_GENERATION) {
+        const sparks = attemptStir(world, live, rng);
+        if (sparks !== null) {
+          for (const cell of sparks) live.set(structureKey(cell.x, cell.y), { age: 0, tier: 0 });
+          stirred = sparks;
+        }
+      }
+
+      broadcastChanges(world, [...outcome.born, ...seeded, ...stirred], outcome.upgraded, outcome.died);
     }
   }
 

@@ -99,6 +99,51 @@ export const CA_SOUP_SIZE = 5;
  */
 export const CA_SOUP_FILL_PROBABILITY = 0.4;
 
+/**
+ * Chance, rolled once per completed generation (independently of the seed
+ * roll above), that a "stir" event ignites a handful of sparks next to an
+ * existing settlement — see the "Stirring" section below for the mechanism
+ * and why it exists at all.
+ *
+ * 0.5 — a quiet, fully-settled board (every live cell a frozen still life)
+ * changes SOMEWHERE roughly every other generation in expectation, i.e. about
+ * every 30 s at CA_GENERATION_INTERVAL_SECONDS = 15: often enough that a
+ * player watching a town does not conclude the world has stopped, rare enough
+ * that a single settlement is not re-ignited on top of itself every glance
+ * and never gets the chance to actually re-settle into something new before
+ * the next spark lands.
+ */
+export const CA_STIR_PROBABILITY_PER_GENERATION = 0.5;
+
+/** Fewest sparks one stir event ignites, drawn from `rng`. */
+export const CA_STIR_MIN_SPARKS = 1;
+
+/**
+ * Most sparks one stir event ignites, drawn from `rng`.
+ *
+ * 3 — enough sparks that the ignited neighbourhood usually has more than one
+ * new birth to interact with (a single spark next to a stable block just
+ * dies again next generation under S23's own rules; two or three adjacent
+ * sparks stand a real chance of perturbing the block into something that
+ * actually evolves), without spending so many that one stir event alone could
+ * seed what amounts to a whole new pattern.
+ */
+export const CA_STIR_MAX_SPARKS = 3;
+
+/**
+ * Bounded walk across live cells looking for one with spare Moore-neighbour
+ * room to spark into.
+ *
+ * 8 — a board where every live cell's whole neighbourhood is already full
+ * (hemmed in by other live cells, walls, or the map edge) simply fails to
+ * stir this generation (returns null, tried again next time the roll fires)
+ * rather than scanning the entire live population every time; 8 anchors is
+ * already several times more than any single settlement's live-cell count
+ * ordinarily reaches, so a real board exhausts real candidates long before
+ * this bound bites.
+ */
+export const CA_STIR_MAX_ANCHOR_ATTEMPTS = 8;
+
 // ── The board ─────────────────────────────────────────────────────────────────
 
 /** What one live cell remembers between generations. */
@@ -459,4 +504,102 @@ export function attemptSeed(
     if (placed !== null) return placed;
   }
   return null;
+}
+
+// ── Stirring: what keeps a SETTLED board from staying frozen (owner decision
+// 2026-08-19) ─────────────────────────────────────────────────────────────
+
+/**
+ * Pure B3/S23 on a bounded board eventually converges into still lifes (a
+ * lone 2×2 block, most often — see this file's header) — accepted and even
+ * thematic when it happens once, but a world with several settlements, each
+ * frozen forever the moment it happens to land on a block, reads as "the
+ * simulation stopped" long before an actual quiet-WORLD problem (seeding's
+ * job) would trigger. A stir event periodically drops a few sparks
+ * immediately next to an EXISTING live settlement, giving the CA's own
+ * B3/S23 rule fresh neighbours to react to — the spark itself does nothing;
+ * it is next generation's ordinary birth/death evaluation that decides
+ * whether the settlement actually changes.
+ *
+ * IGNITE ONLY, NEVER KILL: a stir event only ever BIRTHS dead cells. It never
+ * removes a live cell itself, however the sparks are chosen — killing a live
+ * cell here would erase age/tier that cell earned purely by surviving, for no
+ * player action and no terrain change, which demolition (the reactive path)
+ * and starvation/overcrowding (the CA's own S23 half) are the only two
+ * legitimate ways to lose. Any killing a spark provokes in its neighbours
+ * (e.g. overcrowding a cell that used to have room) is left entirely to the
+ * CA's own S23 rule the very next generation — this function never evaluates
+ * survival itself.
+ *
+ * MECHANICS, deterministic and integer-only, mirroring attemptSeed's shape:
+ *
+ *   * An empty board returns null immediately — seeding, not stirring, owns
+ *     bringing a dead board back to life.
+ *   * One ANCHOR is picked from the live cells: sorted ascending by key (a
+ *     fixed, reproducible order), indexed by one rng draw, then walked
+ *     forward through that same sorted order (wrapping) up to
+ *     CA_STIR_MAX_ANCHOR_ATTEMPTS times looking for an anchor with at least
+ *     one eligible neighbour.
+ *   * CANDIDATES are the anchor's Moore neighbours (MOORE_OFFSETS' fixed
+ *     order — the same neighbourhood B3/S23 itself counts) that are
+ *     currently dead, in-bounds, and buildable — exactly placePatternAt's own
+ *     buildability bar, just per-cell instead of per-pattern.
+ *   * sparkCount is one rng draw in [CA_STIR_MIN_SPARKS, CA_STIR_MAX_SPARKS],
+ *     then that many candidates (or fewer, if there simply aren't that many)
+ *     are drawn WITHOUT replacement, each pick its own rng index.
+ *
+ * THE CAP APPLIES, BUT DIFFERENTLY FROM SEEDING: seeding rejects an entire
+ * pattern that would push the population over STRUCTURES_CAP and tries a
+ * different (possibly smaller) one instead. A stir event has no "smaller
+ * pattern" to fall back to — its sparks are already independent, so instead
+ * of an all-or-nothing rejection, the spark COUNT is simply capped at
+ * whatever room remains (live.size + sparks ≤ STRUCTURES_CAP always holds);
+ * a fully-capped board (no room at all) returns null.
+ */
+export function attemptStir(
+  world: StructuresWorld,
+  live: ReadonlyMap<number, LiveCellRecord>,
+  rng: StructuresRng,
+): StructureCell[] | null {
+  if (live.size === 0) return null; // seeding owns the empty board
+
+  const capRoom = STRUCTURES_CAP - live.size;
+  if (capRoom <= 0) return null; // no room for even one spark
+
+  // Fixed ascending order, so the anchor walk (and therefore the RNG-driven
+  // choice) is reproducible for a given board.
+  const sortedKeys = Array.from(live.keys()).sort((a, b) => a - b);
+  const startIndex = Math.floor(rng.next() * sortedKeys.length);
+
+  let candidates: Array<readonly [number, number]> = [];
+  const anchorAttempts = Math.min(CA_STIR_MAX_ANCHOR_ATTEMPTS, sortedKeys.length);
+  for (let attempt = 0; attempt < anchorAttempts; attempt++) {
+    const anchor = cellOfKey(sortedKeys[(startIndex + attempt) % sortedKeys.length]);
+    candidates = [];
+    for (const [ox, oy] of MOORE_OFFSETS) {
+      const nx = anchor.x + ox;
+      const ny = anchor.y + oy;
+      if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) continue;
+      if (live.has(structureKey(nx, ny))) continue; // ignite only — never overlap a live cell
+      if (!isBuildableCell(world, nx, ny)) continue;
+      candidates.push([nx, ny]);
+    }
+    if (candidates.length > 0) break;
+  }
+  if (candidates.length === 0) return null;
+
+  const sparkRoll = CA_STIR_MIN_SPARKS + Math.floor(rng.next() * (CA_STIR_MAX_SPARKS - CA_STIR_MIN_SPARKS + 1));
+  const sparkCount = Math.min(sparkRoll, candidates.length, capRoom);
+
+  // Partial Fisher-Yates: each pick is its own rng draw over the shrinking
+  // pool, so sparks are chosen without replacement.
+  const pool = candidates.slice();
+  const sparks: StructureCell[] = [];
+  for (let i = 0; i < sparkCount; i++) {
+    const pickIndex = Math.floor(rng.next() * pool.length);
+    const [x, y] = pool[pickIndex];
+    pool.splice(pickIndex, 1);
+    sparks.push({ x, y, tier: 0 });
+  }
+  return sparks;
 }
