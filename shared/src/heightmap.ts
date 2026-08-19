@@ -111,12 +111,15 @@ export type SculptTool = 'stamp' | 'smooth';
  * How the brush distributes its amount ACROSS its footprint.
  *
  * - `soft` — the original linear falloff from the centre (design decision Q2).
- * - `hard` — one flat delta over the whole footprint, edge cells included:
- *            plateaus and clean holes with sheer edges. Paired with the `stamp`
- *            tool it additionally LEVEL-FILLS — it finishes the lowest terrace
- *            band under the brush before starting the next one. See
- *            `applyLevelFillBrush` and the dispatch in `applySculpt`
- *            (decision 2026-08-14).
+ * - `hard` — LEVEL-FILLS, under either tool (decision 2026-08-14; widened
+ *            from stamp-only to the whole profile 2026-08-19 — see
+ *            applySculpt's supersession note): it finishes the lowest terrace
+ *            band under the brush before starting the next one, giving
+ *            plateaus and clean holes with sheer edges. See
+ *            `applyLevelFillBrush` and the dispatch in `applySculpt`. (The
+ *            flat per-cell delta this profile originally meant survives only
+ *            in `brushDelta`, whose arithmetic still prices a hard sculpt —
+ *            see sculptDisplacementUnits.)
  */
 export type SculptProfile = 'soft' | 'hard';
 
@@ -327,9 +330,10 @@ function assertBrushArgs(
  * diff). Throws on invalid center/radius — validation of untrusted input
  * happens in protocol.ts; reaching here with garbage is a programming error.
  *
- * NOT the whole story for `stamp` + `hard`: applySculpt routes that one
- * combination to applyLevelFillBrush instead. This function stays the plain
- * per-cell-delta brush every other combination (and every direct caller) runs.
+ * NOT the whole story for the `hard` profile: applySculpt routes it (under
+ * either tool, since 2026-08-19; stamp-only before that) to
+ * applyLevelFillBrush instead. This function stays the plain per-cell-delta
+ * brush the `soft` combinations (and every direct caller) run.
  */
 export function applyBrush(
   map: Heightmap,
@@ -356,7 +360,9 @@ export function applyBrush(
 }
 
 /**
- * THE LEVEL-FILL BRUSH — what `stamp` + `hard` runs (owner request 2026-08-14:
+ * THE LEVEL-FILL BRUSH — what the `hard` profile runs under either tool
+ * (stamp-only 2026-08-14 → whole profile 2026-08-19, see applySculpt's
+ * supersession note; the original owner request:
  * "I would also like the hard edge brush to only work at one level at a time
  * until it fills out everything at that level. So if I'm at level 2 and I'm
  * trying to fill out all the ground at a level 2, I don't want it to start
@@ -505,7 +511,8 @@ export function applyLevelFillBrush(
  *                  it would price the world's history rather than the player's
  *                  action, and would make an identical intent cost two different
  *                  amounts in two places.
- *   level fill   — `stamp` + `hard` runs applyLevelFillBrush, which skips cells
+ *   level fill   — the `hard` profile runs applyLevelFillBrush (under either
+ *                  tool since 2026-08-19), which skips cells
  *                  already at the level being filled and stops the rest AT it,
  *                  so it moves at most (usually less than) the flat-delta volume
  *                  priced here. DECIDED 2026-08-14: the price does not move.
@@ -790,7 +797,7 @@ export function smooth(
  * Diff order is ascending cell index — deterministic wire order.
  *
  * `options` picks the tool and the edge profile; the two are orthogonal, so
- * hard+smooth (stamp a plateau, let it slump) is a legal, meaningful combination.
+ * hard+smooth (level-fill, then let it slump) is a legal, meaningful combination.
  * The third field, `spill`, bounds how far the smooth tool's relaxation may
  * move terrain outside the footprint (see SculptSpill); it is meaningless for
  * `stamp`, which never touches an outside cell in the first place.
@@ -798,20 +805,31 @@ export function smooth(
  * bit — see LIBRARY_DEFAULT_SCULPT_OPTIONS for why that, and not the new
  * player-facing default, is what an absent argument means.
  *
- * ONE COMBINATION IS DISPATCHED ELSEWHERE: `stamp` + `hard` — the "hard edge
- * brush" a player holds — runs applyLevelFillBrush, which finishes the lowest
- * band under the footprint before starting the next one.
+ * THE `hard` PROFILE ALWAYS LEVEL-FILLS (owner report, 2026-08-19), whatever
+ * the tool: applyLevelFillBrush finishes the lowest band under the footprint
+ * before starting the next one, and never lifts a cell already at or above
+ * the fill target. Under `smooth`, relaxation then runs on the FILL's result
+ * — fill-then-slump — so the brush itself can no longer push an adjacent
+ * higher level's cells up a band ("I'm clicking on level six and it is
+ * adjusting level seven … seven sometimes contracts like it's getting pushed
+ * away. That does not feel natural" — the flat +amount delta was lifting the
+ * band-7 cells inside the footprint to band 8, so band 7's own contour
+ * retreated from the click).
  *
- * WHY THE LEVEL FILL IS NOT PART OF THE `hard` PROFILE ITSELF, i.e. why
- * hard+smooth keeps the plain flat delta:
+ * SUPERSEDED (2026-08-19, by the owner report above) — the level fill used to
+ * be `stamp`+`hard` only, and the reasons hard+smooth kept the plain flat
+ * delta were:
  *   - the `smooth` tool relaxes the footprint the instant the brush lifts, so a
  *     level it had just filled would be sloped again before it was drawn. "Fill
  *     this level flat" is a promise that tool cannot keep;
- *   - hard+smooth's meaning is settled in docs/DESIGN.md as "stamp a plateau,
- *     let it slump", and it stays exactly that;
- *   - the owner's request names the hard EDGE BRUSH: the stamp, which is the
- *     player-facing default tool, and the only combination that leaves the
- *     footprint it edited standing.
+ *   - hard+smooth's meaning was settled in docs/DESIGN.md as "stamp a plateau,
+ *     let it slump";
+ *   - the owner's original request named the hard EDGE BRUSH: the stamp.
+ * The first point is still true and still matters: relaxation may slope a
+ * just-filled level, so "fill this level FLAT and leave it standing" remains
+ * stamp+hard's promise alone. What the supersession changes is narrower and
+ * is the part the flat delta got wrong: `hard` never STARTS the next level
+ * anywhere, under either tool.
  *
  * DETERMINISM: both branches are integer-only over the same fixed iteration
  * order, so server and client predicting with the same options land on the
@@ -836,7 +854,9 @@ export function applySculpt(
   // The one dispatch in the sculpt path. Both branches are integer-only over the
   // same footprint, and both sides of the prediction contract reach them through
   // this one function, so client and server cannot pick different branches.
-  if (tool === 'stamp' && profile === 'hard') {
+  // `hard` dispatches on the PROFILE alone (2026-08-19 supersession above):
+  // the level fill is what "hard" means now, under either tool.
+  if (profile === 'hard') {
     applyLevelFillBrush(map, cx, cy, radius, amount, changed);
   } else {
     applyBrush(map, cx, cy, radius, amount, changed, profile);

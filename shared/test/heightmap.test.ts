@@ -679,7 +679,7 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     expect(map.cells).toEqual(before);
   });
 
-  it('is the ONLY combination affected: soft and smooth are untouched', () => {
+  it('soft is untouched; hard level-fills under BOTH tools (2026-08-19)', () => {
     const bands = [0, 1, 2, 0, 1, 1, 2, 0, 1];
 
     // stamp + soft — still the linear falloff, applied to every footprint cell
@@ -692,19 +692,51 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     applyBrush(softExpected, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, new Set<number>(), 'soft');
     expect(soft.cells).toEqual(softExpected.cells);
 
-    // smooth + hard — still one flat delta over the whole footprint, then the
-    // relaxation pass: "stamp a plateau, let it slump" (docs/DESIGN.md). It is
-    // deliberately NOT level-filled, because relaxation re-slopes the footprint
-    // the instant the brush lifts, so a filled level would not survive it.
+    // smooth + hard — LEVEL-FILL, then the relaxation pass ("fill, then
+    // slump" — the 2026-08-19 supersession in applySculpt's doc). Before
+    // that, this combination ran the flat delta, which lifted the footprint's
+    // HIGHER-band cells up a band and made the neighbouring level's contour
+    // retreat from the click — the owner report the supersession fixed.
+    // Byte-compare against the two primitives composed by hand.
     const slumped = createHeightmap(16);
     const slumpedExpected = createHeightmap(16);
     paintFootprint3x3(slumped, 8, 8, bands);
     paintFootprint3x3(slumpedExpected, 8, 8, bands);
     applySculpt(slumped, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
     const expectedChanged = new Set<number>();
-    applyBrush(slumpedExpected, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, expectedChanged, 'hard');
+    applyLevelFillBrush(slumpedExpected, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, expectedChanged);
     smooth(slumpedExpected, expectedChanged);
     expect(slumped.cells).toEqual(slumpedExpected.cells);
+  });
+
+  it('THE COMPLAINT AS A CONTRACT: a smooth+hard raise beside a higher level never lifts that level (2026-08-19)', () => {
+    // A band-6 plain with a band-7 shelf crossing the right half of the
+    // footprint — the owner's "clicking on level six" scenario. The stroke
+    // must fill band 6 toward 7 and NEVER push any band-7 cell to band 8:
+    // level seven may only ever EXPAND (via cells rising to it), never
+    // contract away from the brush.
+    const map = createHeightmap(32);
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        map.cells[y * 32 + x] = x >= 16 ? 7 * BAND_HEIGHT : 6 * BAND_HEIGHT;
+      }
+    }
+    const sevenBefore = new Set<number>();
+    for (let i = 0; i < map.cells.length; i++) {
+      if (bandOf(map.cells[i]) === 7) sevenBefore.add(i);
+    }
+
+    // Footprint straddles the boundary (centre one cell into band 6, radius 3
+    // reaches into the shelf). Explicit banded spill: the player-facing shape.
+    applySculpt(map, 14, 16, 3, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'smooth',
+      profile: 'hard',
+      spill: 'banded',
+    });
+
+    for (const i of sevenBefore) {
+      expect(bandOf(map.cells[i])).toBeLessThanOrEqual(7);
+    }
   });
 
   it('is deterministic: identical inputs → identical maps and diffs', () => {
@@ -736,7 +768,11 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 });
 
 describe('applySculpt — tools and profiles are orthogonal', () => {
-  it('hard+smooth stamps a plateau and then lets it slump', () => {
+  it('hard+smooth level-fills a plateau and then lets it slump', () => {
+    // On band-aligned flat ground the level fill IS the old flat delta
+    // (DESIGN.md: "On flat ground nothing changed"), so this test's numbers
+    // survive the 2026-08-19 fill-then-slump supersession unchanged — what it
+    // pins is the slump half: same fill, then relaxation pulls the edge out.
     const stamped = createHeightmap(64);
     const slumped = createHeightmap(64);
     applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });

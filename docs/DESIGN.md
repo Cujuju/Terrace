@@ -407,6 +407,15 @@ terrace/
   All four combinations are legal and meaningful (hard+smooth = stamp a plateau,
   let it slump).
 
+  **AMENDED 2026-08-19 (owner report): the `hard` profile level-fills under
+  BOTH tools.** hard+smooth now means "level-fill, then slump" — the flat
+  delta it used to run lifted the *higher* neighbouring level's cells inside
+  the footprint up a band, so clicking beside level 7 made level 7's contour
+  retreat from the brush ("seven sometimes contracts like it's getting pushed
+  away"). The `hard` profile never starts the next level anywhere; "fill this
+  level FLAT and leave it standing" remains stamp+hard's promise alone, since
+  smooth's relaxation still re-slopes the fill the instant the brush lifts.
+
   **AMENDED 2026-08-19 (issue #26, owner-settled): player-facing smooth spill
   is band-contained.** "Today's behaviour verbatim" above now describes the
   LIBRARY path only. A PLAYER's smooth stroke still relaxes terrain outside the
@@ -972,6 +981,11 @@ terrace/
   level flat" is a promise that tool cannot keep. The owner's phrase names the
   hard *edge brush* — the stamp, the player-facing default, and the only
   combination that leaves the footprint it edited standing.
+  *SUPERSEDED 2026-08-19 (owner report — see the amendment under the Phase 2
+  tool/profile decision): `hard` now level-fills under both tools. The
+  paragraph above keeps the surviving half of its own argument: relaxation
+  still re-slopes a just-filled level, so the flat-and-standing promise is
+  still stamp+hard's alone.*
 
   **Raise and lower mirror exactly on band-aligned terrain**, which is all the
   stamp tool produces. Off the band grid — only `smooth`'s relaxation makes such
