@@ -38,12 +38,54 @@ export const SEA_LEVEL = 0;
 
 /**
  * Sculptable height range. Int16 storage allows ±32767; we deliberately cap
- * far below that: 1024 = 16 bands of relief above sea (and the same depth
- * below), which keeps mountains readable and bounds the smoothing cascade
- * (see SMOOTH_PASS_LIMIT). Brush edits clamp to this range.
+ * far below that: 1024 = 16 bands of relief above sea, which keeps mountains
+ * readable and bounds the smoothing cascade (see SMOOTH_PASS_LIMIT). Brush
+ * edits clamp to this range.
+ *
+ * The range is ASYMMETRIC since Deep Strata (2026-08-19, mechanics card 41):
+ * the world goes deeper than it goes high. MIN_HEIGHT is derived from the
+ * strata stack below — never restated as a literal — so the floor and the
+ * strata that define it cannot drift apart.
  */
 export const MAX_HEIGHT = 1024;
-export const MIN_HEIGHT = -1024;
+
+/**
+ * DEEP STRATA (decided 2026-08-19, mechanics card 41: "new bands below the
+ * current floor: basalt, obsidian, a lava glow at the very bottom").
+ *
+ * The world's depth is a stack of named strata, shallowest first:
+ *
+ *   * SEA_COLUMN_BANDS — the ordinary seabed, bands −1..−16: the blue water
+ *     column the 2026-08-19 depth ramp colours, ending in very dark blue.
+ *     16 is the PRE-deep-strata floor (the old MIN_HEIGHT = −1024), kept
+ *     exactly so every world saved before the strata landed is unchanged,
+ *     and so everything anchored to "the sea" (monster depth thresholds,
+ *     the seabed palette) keeps meaning the sea rather than the crust.
+ *   * DEEP_BASALT_BANDS — bands −17..−20: volcanic rock. Four bands, one
+ *     full max-radius brush hold of digging, so breaking through the seabed
+ *     is an act, not an accident.
+ *   * DEEP_OBSIDIAN_BANDS — bands −21..−23: glass-black rock, the darkest
+ *     material in the game.
+ *   * DEEP_LAVA_BANDS — band −24, the absolute floor: molten glow. One band
+ *     because it is a boundary, not a place — the world ends in light.
+ *
+ * These are WORLD-MODEL facts, not render trivia: the client palette derives
+ * its stops from them and the monsters plugin derives "deep for this world"
+ * from SEA_COLUMN_BANDS, so they live here in shared. Hazards (heat, eruption)
+ * are deliberately NOT core — nothing gamey in core; a future plugin reads
+ * these same boundaries.
+ */
+export const SEA_COLUMN_BANDS = 16;
+export const DEEP_BASALT_BANDS = 4;
+export const DEEP_OBSIDIAN_BANDS = 3;
+export const DEEP_LAVA_BANDS = 1;
+
+/** Total crust bands below the sea column. */
+export const DEEP_STRATA_BANDS =
+  DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS;
+
+/** The floor of the world: the bottom of the lava band (−1536). */
+export const MIN_HEIGHT = -(SEA_COLUMN_BANDS + DEEP_STRATA_BANDS) * BAND_HEIGHT;
 
 /**
  * Gradient limit: maximum allowed height difference between 4-neighbors.
@@ -73,7 +115,8 @@ export const MAX_BRUSH_RADIUS = 4;
 /**
  * How far excess can travel from one edit: relaxation stops where the slope
  * everywhere respects MAX_STEP, so the full height range laid out at maximum
- * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 64 cells. Math.floor
+ * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 80 cells (64 before Deep
+ * Strata widened the range; the budget scales with the range). Math.floor
  * guards the value against a future range/step change that stops dividing
  * exactly (today's division is exact).
  */

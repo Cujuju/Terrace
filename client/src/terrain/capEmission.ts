@@ -17,7 +17,12 @@ import {
   CELL_WORLD_SIZE,
   WATER_SURFACE_LIFT,
 } from '../config.ts';
-import { bandPaletteIndex, isSeabedPaletteIndex, type Rgb } from './bandColors.ts';
+import {
+  bandPaletteIndex,
+  isEmissivePaletteIndex,
+  isSeabedPaletteIndex,
+  type Rgb,
+} from './bandColors.ts';
 import type { TerrainMirror } from './mirror.ts';
 import {
   LATTICE_PER_CHUNK,
@@ -353,6 +358,14 @@ interface ContourLevel {
   /** World height of the skirt hanging under it; 0 emits no skirt. */
   skirtDrop: number;
   capColor: Rgb;
+  /**
+   * LIT_BY_SCENE for every cap except the lava floor's, which is SELF_LIT:
+   * lava is a light source, not a lit surface (Deep Strata, 2026-08-19 —
+   * see the amended emitCapTriangle comment and bandColors.ts's
+   * isEmissivePaletteIndex). Decided here in makeLevels for the same reason
+   * skirtSelfLit is: emission sites must not re-derive regime decisions.
+   */
+  capSelfLit: number;
   skirtColor: Rgb;
   /**
    * Colour of the hairline border along the riser's top edge — the NEXT BAND
@@ -432,6 +445,7 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
       capY,
       skirtDrop,
       capColor: palettes.top[paletteIndex],
+      capSelfLit: capSelfLitFor(paletteIndex),
       skirtColor: palettes.cliff[paletteIndex],
       skirtBorderColor: bordered
         ? palettes.top[bandPaletteIndex((k - 1) * BAND_HEIGHT)]
@@ -452,6 +466,7 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
         capY: 0,
         skirtDrop: SEABED_CAP_SINK,
         capColor: palettes.top[shoreIndex],
+        capSelfLit: capSelfLitFor(shoreIndex),
         skirtColor: palettes.cliff[shoreIndex],
         // Dry land: never bordered (and its hairline drop is under the border
         // height anyway).
@@ -480,6 +495,16 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
  */
 function selfLitFor(paletteIndex: number): number {
   return isSeabedPaletteIndex(paletteIndex) ? SELF_LIT : LIT_BY_SCENE;
+}
+
+/**
+ * The cap counterpart: treads are lit surfaces, except the lava floor, which
+ * is a light source (see the emitCapTriangle amendment). One decision point,
+ * mirroring selfLitFor, so the contour path and the blocky fallback cannot
+ * disagree about which cap glows.
+ */
+function capSelfLitFor(paletteIndex: number): number {
+  return isEmissivePaletteIndex(paletteIndex) ? SELF_LIT : LIT_BY_SCENE;
 }
 
 /** Write cursor into the chunk's buffers; module state for the write only. */
@@ -521,6 +546,12 @@ function pushVertex(
  * Caps are never self-lit, seabed ones included: a tread IS a surface, it faces
  * the sky so it already receives the sun on every orientation, and unlighting
  * the seabed floor would flatten the depth ramp the palette exists to show.
+ *
+ * AMENDMENT (Deep Strata, 2026-08-19): "never" gained its one exception — the
+ * lava floor at MIN_HEIGHT. Lava is not a surface catching light, it is the
+ * light; a sun-lit orange tread would just read as wet paint. The exception is
+ * decided by the palette's own predicate (capSelfLitFor / bandColors.ts's
+ * isEmissivePaletteIndex), not here, so "the lava band glows" is stated once.
  */
 function emitCapTriangle(
   a: ContourPoint,
@@ -528,11 +559,11 @@ function emitCapTriangle(
   c: ContourPoint,
   y: number,
   color: Rgb,
+  selfLit: number,
 ): void {
-  const lit = LIT_BY_SCENE;
-  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, 1, 0, color, lit);
-  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, 1, 0, color, lit);
-  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, 1, 0, color, lit);
+  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
+  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
+  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
 }
 
 /**
@@ -645,15 +676,18 @@ function writeBlockyFallback(
     for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
       const height = heightAt(i, j);
       const y = cellCapY(height);
-      const color = palettes.top[bandPaletteIndex(height)];
+      const capIndex = bandPaletteIndex(height);
+      const color = palettes.top[capIndex];
+      // The fallback keeps the lava glow: same predicate as the contour path.
+      const capLit = capSelfLitFor(capIndex);
       const west = { x: loX(i), z: loZ(j), rect: RECT_NONE };
       const east = { x: hiX(i), z: loZ(j), rect: RECT_NONE };
       const southWest = { x: loX(i), z: hiZ(j), rect: RECT_NONE };
       const southEast = { x: hiX(i), z: hiZ(j), rect: RECT_NONE };
       // Counter-clockwise in (x,z) — emitCapTriangle flips the winding to make
       // the tread face the sky.
-      emitCapTriangle(west, east, southEast, y, color);
-      emitCapTriangle(west, southEast, southWest, y, color);
+      emitCapTriangle(west, east, southEast, y, color, capLit);
+      emitCapTriangle(west, southEast, southWest, y, color, capLit);
       caps += 2;
     }
   }
@@ -862,7 +896,7 @@ export function writeChunkVertexData(
       let merged = polygon.outer;
       for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
       earClip(merged, (a, b, c) => {
-        emitCapTriangle(a, b, c, level.capY, level.capColor);
+        emitCapTriangle(a, b, c, level.capY, level.capColor, level.capSelfLit);
         capEmitted++;
       });
     }

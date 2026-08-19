@@ -1,22 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
+  DEEP_STRATA_BANDS,
   MAX_HEIGHT,
   MIN_HEIGHT,
+  SEA_COLUMN_BANDS,
   SEA_LEVEL,
   bandOf,
   isWater,
 } from '@terrace/shared';
 import {
+  BLUE_SEABED_STOPS,
   CLIFF_PALETTE,
+  FIRST_BASALT_STOP,
   FIRST_LAND_PALETTE_INDEX,
   LAST_PALETTE_INDEX,
+  LAVA_PALETTE_INDEX,
   MIN_ADJACENT_LAND_LUMINANCE_GAP,
   SEABED_DEPTH_STOPS,
   SEABED_PALETTE_INDEX,
   TERRAIN_PALETTE,
   bandColorOf,
   bandPaletteIndex,
+  isEmissivePaletteIndex,
   seabedRiserFaceColor,
 } from '../src/terrain/bandColors.ts';
 
@@ -46,10 +52,11 @@ describe('bandPaletteIndex', () => {
   it('steps one seabed stop per band of depth, all the way to MIN_HEIGHT', () => {
     // The flats (h = 0) are stop 0; each band down takes the next stop —
     // mirroring how the dry side steps at band edges. Since the 2026-08-19
-    // full-column ramp, no two depths share a stop: the ladder runs one stop
-    // per band down to band −16, whose floor IS MIN_HEIGHT, so the deepest
-    // stop is reached exactly and the clamp guards nothing in-range (it stays
-    // as a belt against a future MIN_HEIGHT change, not as behaviour).
+    // full-column ramp, no two depths share a stop; since Deep Strata (same
+    // day) the ladder continues past the blue column through basalt and
+    // obsidian to the lava floor at band −24, whose floor IS MIN_HEIGHT, so
+    // the deepest stop is reached exactly and the clamp guards nothing
+    // in-range (a belt against a future MIN_HEIGHT change, not behaviour).
     expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
     expect(bandPaletteIndex(SEA_LEVEL - 1)).toBe(SEABED_PALETTE_INDEX + 1);
     expect(bandPaletteIndex(-BAND_HEIGHT)).toBe(SEABED_PALETTE_INDEX + 1);
@@ -109,10 +116,18 @@ describe('bandPaletteIndex', () => {
   it('keeps underwater riser faces darkening with depth, like the treads they represent', () => {
     // "Roughly the same color as the level" also means the faces inherit the
     // depth ramp: strictly darker at every stop, so the side of a deep
-    // terrace can never outshine the side of a shallow one.
+    // terrace can never outshine the side of a shallow one. Since Deep Strata
+    // the contract holds PER REGIME — within the blue column, and within the
+    // rock below it — because the blue→basalt boundary is a deliberate
+    // brightness break and the lava face glows (see the tread test below).
     const luminance = ([r, g, b]: readonly [number, number, number]): number =>
       r + g + b;
-    for (let stop = 1; stop < SEABED_DEPTH_STOPS; stop++) {
+    for (let stop = 1; stop < BLUE_SEABED_STOPS; stop++) {
+      expect(luminance(CLIFF_PALETTE[stop])).toBeLessThan(
+        luminance(CLIFF_PALETTE[stop - 1]),
+      );
+    }
+    for (let stop = FIRST_BASALT_STOP + 1; stop < LAVA_PALETTE_INDEX; stop++) {
       expect(luminance(CLIFF_PALETTE[stop])).toBeLessThan(
         luminance(CLIFF_PALETTE[stop - 1]),
       );
@@ -121,14 +136,50 @@ describe('bandPaletteIndex', () => {
 
   it('darkens the seabed with depth, so underwater terraces read apart', () => {
     // The owner-reported contrast (2026-08-14): through the water tint the
-    // treads themselves must differ, strictly, at every stop.
+    // treads themselves must differ, strictly, at every stop — within the
+    // blue column. Deep Strata ended the column at band −16; the crust below
+    // gets its own regime, pinned in the next test.
     const luminance = ([r, g, b]: readonly [number, number, number]): number =>
       r + g + b;
-    for (let stop = 1; stop < SEABED_DEPTH_STOPS; stop++) {
+    for (let stop = 1; stop < BLUE_SEABED_STOPS; stop++) {
       expect(luminance(TERRAIN_PALETTE[stop])).toBeLessThan(
         luminance(TERRAIN_PALETTE[stop - 1]),
       );
     }
+  });
+
+  it('breaks regime at the crust, darkens through it, and glows at the floor (Deep Strata)', () => {
+    const luminance = ([r, g, b]: readonly [number, number, number]): number =>
+      r + g + b;
+    // The regime break: the first basalt stop is BRIGHTER than the blue floor
+    // above it — breaking through the seabed must read as a material change,
+    // not as more darkness.
+    expect(luminance(TERRAIN_PALETTE[FIRST_BASALT_STOP])).toBeGreaterThan(
+      luminance(TERRAIN_PALETTE[BLUE_SEABED_STOPS - 1]),
+    );
+    // Within the rock the strict descent resumes: basalt darkens into
+    // obsidian, ending at the darkest material in the game.
+    for (let stop = FIRST_BASALT_STOP + 1; stop < LAVA_PALETTE_INDEX; stop++) {
+      expect(luminance(TERRAIN_PALETTE[stop])).toBeLessThan(
+        luminance(TERRAIN_PALETTE[stop - 1]),
+      );
+    }
+    // The lava floor is the brightest thing under the sea, full stop — it is
+    // the palette's one light source and is rendered self-lit.
+    expect(isEmissivePaletteIndex(LAVA_PALETTE_INDEX)).toBe(true);
+    for (let stop = 0; stop < LAVA_PALETTE_INDEX; stop++) {
+      expect(luminance(TERRAIN_PALETTE[LAVA_PALETTE_INDEX])).toBeGreaterThan(
+        luminance(TERRAIN_PALETTE[stop]),
+      );
+      expect(isEmissivePaletteIndex(stop)).toBe(false);
+    }
+    // The strata boundaries derive from shared's stack — the palette cannot
+    // drift from the world model that defines it.
+    expect(SEABED_DEPTH_STOPS).toBe(BLUE_SEABED_STOPS + DEEP_STRATA_BANDS);
+    expect(bandPaletteIndex(MIN_HEIGHT)).toBe(LAVA_PALETTE_INDEX);
+    expect(bandPaletteIndex(-SEA_COLUMN_BANDS * BAND_HEIGHT - 1)).toBe(
+      FIRST_BASALT_STOP,
+    );
   });
 
   it('treats sea level itself as water, agreeing with shared isWater', () => {

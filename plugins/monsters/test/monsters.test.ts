@@ -56,6 +56,7 @@ import {
   isDeepWaterHeight,
   isLairCell,
   isSnowHeight,
+  reachesIntoHabitat,
   surveyLairs,
 } from '../server/habitat.ts';
 import {
@@ -75,6 +76,7 @@ import {
   MAX_LIVING_MONSTERS,
   MAX_LIVING_MONSTERS_PER_KIND,
   MIN_LAIR_DEEP_CELLS,
+  NATURAL_OCEAN_FLOOR_MIN_DEPTH,
   SUMMON_MEAN_WAIT_SECONDS,
   YETI_AMBLE_SPEED_CELLS_PER_SECOND,
   YETI_FOOTPRINT_CELLS,
@@ -974,6 +976,48 @@ describe('per-kind slots (2026-08-19 — was: the kinds contest one slot)', () =
     setMonsterRandomSource(ALWAYS);
     for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
     expect(livingMonster()).toBeNull();
+  });
+});
+
+describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () => {
+  it('admits the deepest floor worldgen naturally shows — no manual dig', () => {
+    // Genesis ocean floors bottom out at band −8 (−512) and the first
+    // relaxation that reaches their rim shaves up to MAX_STEP/2 = 16 off the
+    // extreme cell, so the deepest floor a live world actually shows is −496.
+    // That exact height must clear the kraken's admission test: the decision
+    // removes the last mandatory dig, so this pin is the decision.
+    expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(496);
+    expect(
+      reachesIntoHabitat(
+        WATER_HABITAT,
+        SEA_LEVEL - NATURAL_OCEAN_FLOOR_MIN_DEPTH,
+        KRAKEN_LAIR_MIN_DEPTH_BANDS,
+      ),
+    ).toBe(true);
+  });
+
+  it('summons a kraken into a natural-floor trench', () => {
+    // The behavioural half of the pin above: a basin no deeper than the
+    // natural floor, big enough for the kraken's area demand, produces a
+    // kraken with no sculpting at all.
+    const world = basinWorld({
+      radius: 40,
+      floorHeight: SEA_LEVEL - NATURAL_OCEAN_FLOOR_MIN_DEPTH,
+    });
+    setMonsterRandomSource(ALWAYS);
+    for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonstersIn(WATER_HABITAT).some((m) => m.kind === 'kraken')).toBe(
+      true,
+    );
+  });
+
+  it('is 7 whole bands, and Deep Strata must not drag it', () => {
+    // Deep Strata deepened MIN_HEIGHT from −1024 to −1536 the same day this
+    // bar was decided. The bar derives from the natural ocean floor, NOT from
+    // the world's height range: if this pin fails after a MIN_HEIGHT retune,
+    // the derivation has regressed to a range-anchored one and the bar moved
+    // without an owner decision.
+    expect(KRAKEN_LAIR_MIN_DEPTH_BANDS).toBe(7);
   });
 });
 

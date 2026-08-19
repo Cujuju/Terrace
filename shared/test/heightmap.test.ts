@@ -9,9 +9,14 @@ import {
   cellX,
   cellY,
   createHeightmap,
+  DEEP_BASALT_BANDS,
+  DEEP_LAVA_BANDS,
+  DEEP_OBSIDIAN_BANDS,
+  DEEP_STRATA_BANDS,
   DEFAULT_SCULPT_AMOUNT,
   forEachFootprintOffset,
   heightAt,
+  isValidHeight,
   isWater,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
   MAX_BRUSH_RADIUS,
@@ -20,9 +25,11 @@ import {
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   quantizeToBand,
+  SEA_COLUMN_BANDS,
   sculptDisplacementUnits,
   smooth,
   SMOOTH_PASS_LIMIT,
+  SMOOTH_SPREAD_CELLS,
   type Heightmap,
   type SculptOptions,
 } from '../src/index.ts';
@@ -107,6 +114,35 @@ describe('water and terracing', () => {
   it('quantizes to the band floor', () => {
     expect(quantizeToBand(BAND_HEIGHT + 5)).toBe(BAND_HEIGHT);
     expect(quantizeToBand(-1)).toBe(-BAND_HEIGHT);
+  });
+});
+
+describe('deep strata constants', () => {
+  it('derives MIN_HEIGHT from the strata stack (Deep Strata, 2026-08-19)', () => {
+    // The floor IS the bottom of the lava band: sea column (the pre-strata
+    // −1024 floor, kept exactly so old snapshots are unchanged), then basalt,
+    // obsidian, lava. Restating −1536 as a literal anywhere would let the
+    // floor and the strata that define it drift apart — this is the pin.
+    expect(SEA_COLUMN_BANDS).toBe(16);
+    expect(DEEP_STRATA_BANDS).toBe(
+      DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS,
+    );
+    expect(MIN_HEIGHT).toBe(-(SEA_COLUMN_BANDS + DEEP_STRATA_BANDS) * BAND_HEIGHT);
+    expect(MIN_HEIGHT).toBe(-1536);
+    // Every pre-strata height remains valid: the old floor sits inside the
+    // new range, so no stored world can have gone out of contract.
+    expect(isValidHeight(-(SEA_COLUMN_BANDS * BAND_HEIGHT))).toBe(true);
+    expect(isValidHeight(MIN_HEIGHT)).toBe(true);
+    expect(isValidHeight(MIN_HEIGHT - 1)).toBe(false);
+  });
+
+  it('scales the smoothing budget with the widened range', () => {
+    // The relaxation travel bound follows the range by derivation; if either
+    // side of this drifts to a literal, the deepest cascades truncate.
+    expect(SMOOTH_SPREAD_CELLS).toBe(
+      Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP),
+    );
+    expect(SMOOTH_SPREAD_CELLS).toBe(80);
   });
 });
 
@@ -1348,7 +1384,9 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
       const size = 48;
       const map = createHeightmap(size);
       for (let i = 0; i < map.cells.length; i++) {
-        map.cells[i] = (next() % 2049) - 1024; // anywhere in [MIN, MAX]
+        // anywhere in [MIN, MAX] — derived, so a range retune (Deep Strata
+        // widened MIN_HEIGHT to −1536) keeps the property covering all of it
+        map.cells[i] = (next() % (MAX_HEIGHT - MIN_HEIGHT + 1)) + MIN_HEIGHT;
       }
       for (let stroke = 0; stroke < 5; stroke++) {
         const cx = next() % size;

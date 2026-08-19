@@ -6,7 +6,16 @@
 // Without that split the renderer would either repeat the selection logic or
 // run an sRGB→linear pow() per vertex per patch.
 
-import { MAX_HEIGHT, bandOf, isWater } from '@terrace/shared';
+import {
+  DEEP_BASALT_BANDS,
+  DEEP_LAVA_BANDS,
+  DEEP_OBSIDIAN_BANDS,
+  DEEP_STRATA_BANDS,
+  MAX_HEIGHT,
+  SEA_COLUMN_BANDS,
+  bandOf,
+  isWater,
+} from '@terrace/shared';
 
 /** Colour components in the 0..1 range. Interpreted as sRGB. */
 export type Rgb = readonly [r: number, g: number, b: number];
@@ -34,13 +43,45 @@ function rgb(hex: number): Rgb {
  * darker as you go down the layers until it ends in a very dark blue"). The
  * four-stop truncation above is superseded: the ramp now runs the FULL water
  * column — seventeen stops, one per band from the h = 0 flats (band 0) down
- * to band −16 at MIN_HEIGHT — so no two depths share a colour and the descent
- * ends in a very dark blue rather than plateauing at the old deep-water stop.
- * The first four stops are unchanged (waterline, shelf, ring, and the old
- * deep stop, which is now simply band −3's own), so worlds that never dig
- * past genesis depth render exactly as before this change.
+ * to band −16, the bottom of the sea column — so no two depths share a colour
+ * and the descent ends in a very dark blue rather than plateauing at the old
+ * deep-water stop. The first four stops are unchanged (waterline, shelf, ring,
+ * and the old deep stop, which is now simply band −3's own), so worlds that
+ * never dig past genesis depth render exactly as before this change.
+ *
+ * DEEP STRATA AMENDMENT (2026-08-19, mechanics card 41): below the sea
+ * column's very-dark-blue floor the world now continues into CRUST — basalt
+ * (bands −17..−20), obsidian (−21..−23), and one lava band at MIN_HEIGHT
+ * (−24). The blue ramp's strict darkening contract deliberately ENDS at the
+ * sea column: the first basalt stop is BRIGHTER than the blue floor, because
+ * the material change is the message — breaking through the seabed must read
+ * as arriving somewhere, not as more of the same darkness. Within the rock
+ * the strict descent resumes (basalt darkens into obsidian), and the lava
+ * stop breaks every darkness rule on purpose: it is the one entry in this
+ * palette that is a light SOURCE (drawn self-lit — see LAVA_PALETTE_INDEX and
+ * capEmission.ts), so the bottom of the deepest dig glows.
  */
-export const SEABED_DEPTH_STOPS = 17;
+
+/** Stops of the blue water column: the flats plus one per sea band. */
+export const BLUE_SEABED_STOPS = SEA_COLUMN_BANDS + 1;
+
+/** All underwater stops: the blue column plus the crust strata under it. */
+export const SEABED_DEPTH_STOPS = BLUE_SEABED_STOPS + DEEP_STRATA_BANDS;
+
+/** First palette index of each crust stratum, derived from the shared stack. */
+export const FIRST_BASALT_STOP = BLUE_SEABED_STOPS;
+export const FIRST_OBSIDIAN_STOP = FIRST_BASALT_STOP + DEEP_BASALT_BANDS;
+export const LAVA_PALETTE_INDEX = FIRST_OBSIDIAN_STOP + DEEP_OBSIDIAN_BANDS;
+
+/**
+ * True only for the lava floor: the palette entry rendered as a light source.
+ * The geometry builder keys cap self-lighting off this (capEmission.ts), the
+ * same way seabed risers key off isSeabedPaletteIndex — one predicate per
+ * regime decision, stated here beside the palette that defines it.
+ */
+export function isEmissivePaletteIndex(index: number): boolean {
+  return index === LAVA_PALETTE_INDEX;
+}
 
 /**
  * Index 0 is the SHALLOWEST seabed (the h = 0 flats — also every cell of a
@@ -91,7 +132,22 @@ export const TERRAIN_PALETTE: readonly Rgb[] = [
   rgb(0x040d1d), // 13 seabed, band −13
   rgb(0x040b19), // 14 seabed, band −14
   rgb(0x030916), // 15 seabed, band −15
-  rgb(0x030813), // 16 seabed, band −16 (MIN_HEIGHT) — the very dark blue
+  rgb(0x030813), // 16 seabed, band −16 — the very dark blue: the sea column's
+  //                 floor (MIN_HEIGHT before Deep Strata; the crust continues
+  //                 below it since 2026-08-19)
+  // Deep Strata (mechanics card 41): the crust. Basalt opens BRIGHTER than
+  // the blue floor above it — the regime break is the message (see the Deep
+  // Strata amendment above) — then darkens strictly into obsidian; the lava
+  // floor is the palette's one light source, rendered self-lit.
+  rgb(0x3a3b41), // 17 basalt, band −17 — dark volcanic gray, hue-neutral
+  //                 against the blue column so the material change reads
+  rgb(0x323338), // 18 basalt, band −18
+  rgb(0x2a2b2f), // 19 basalt, band −19
+  rgb(0x232427), // 20 basalt, band −20
+  rgb(0x1a1820), // 21 obsidian, band −21 — glass-black with a violet cast
+  rgb(0x121017), // 22 obsidian, band −22
+  rgb(0x0b0a10), // 23 obsidian, band −23 — the darkest material in the game
+  rgb(0xf25c1a), // 24 lava, band −24 (MIN_HEIGHT) — molten glow, self-lit
   // Three sand-and-soil stops before any green (owner, 2026-08-14: "multiple
   // layers of sand and soil color near the water. Greener layers should start
   // higher up") — the coast reads as coast for two full terraces before

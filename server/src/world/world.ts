@@ -215,8 +215,9 @@ function heightAtBandsBelowSea(bands: number): number {
 }
 
 /**
- * The open-ocean floor height. Well inside MIN_HEIGHT (-1024 = 16 bands), so
- * the full sculpt range below the floor is still available for deeper trenches.
+ * The open-ocean floor height. Well inside the sea column (16 bands, and the
+ * deep strata run 8 crust bands below that to MIN_HEIGHT = -1536), so the full
+ * sculpt range below the floor is still available for deeper trenches.
  */
 export const FRESH_SEABED_HEIGHT = heightAtBandsBelowSea(FRESH_SEABED_BANDS_BELOW_SEA);
 
@@ -334,8 +335,9 @@ const OUTER_TERRAIN_LATTICE_SPACING_CELLS = CHUNK_SIZE * 4;
 /**
  * Deepest a noise lattice point can push outer terrain, in bands below sea
  * level. -10 bands is dramatic ocean-trench territory while staying well
- * inside MIN_HEIGHT's -16 bands, so the clamp in `clampHeight` is a backstop
- * that should never actually fire rather than a value this range depends on.
+ * inside the sea column's -16 bands (and MIN_HEIGHT is deeper still since
+ * Deep Strata), so the clamp in `clampHeight` is a backstop that should never
+ * actually fire rather than a value this range depends on.
  */
 const OUTER_TERRAIN_MIN_BAND_OFFSET = -10;
 

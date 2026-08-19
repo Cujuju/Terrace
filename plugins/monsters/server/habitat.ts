@@ -186,7 +186,7 @@ export function reachesIntoHabitat(
  * IT IS THE FLOOR, NOT THE WHOLE RULE. This is what "ground a monster can be on"
  * means, and it is what the flood fill, the steering probe and the per-tick
  * habitat check all read. A KIND may demand more of the region it moves INTO —
- * the kraken wants a trench eight bands down (kinds.ts) — but nothing may be
+ * the kraken wants a trench seven bands down (kinds.ts) — but nothing may be
  * anywhere shallower (or lower) than this line.
  */
 export function isHabitatHeight(regime: HabitatRegime, height: number): boolean {

@@ -34,7 +34,7 @@
 // its own corner of the same table.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_STEP, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_STEP, SEA_COLUMN_BANDS, SEA_LEVEL } from '@terrace/shared';
 import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
@@ -212,20 +212,57 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SI
  * level. THE FIELD THAT MAKES A SECOND KIND MEAN SOMETHING: Cthulhu takes any
  * deep water, the kraken wants a trench.
  *
- * DERIVED, not chosen: half of everything the world has below the sea. The map
- * bottoms out at MIN_HEIGHT, which is (SEA_LEVEL - MIN_HEIGHT) / BAND_HEIGHT =
- * 16 bands of water column, so this is "the deeper half of what a world can be"
- * — 8 bands, 512 height units. Stated as a derivation so it follows a retune of
- * MIN_HEIGHT or BAND_HEIGHT instead of quietly becoming a different fraction of
- * the sea; stated as a FRACTION because the honest requirement is relative
- * ("deep for this world"), not an absolute number of metres.
+ * DERIVED from the deepest ocean floor a world NATURALLY shows (owner-decided
+ * 2026-08-19), superseding the original "half the water column" derivation
+ * (which gave 8 bands, −512). That fraction had two failures the owner's
+ * decision removes:
+ *
+ *   * it sat one band below the deepest natural genesis floor, so every world
+ *     demanded one MANDATORY manual dig before its first kraken — friction,
+ *     not gameplay;
+ *   * it was anchored to the whole water column, so Deep Strata (which
+ *     deepened MIN_HEIGHT, shared constants) would have silently dragged the
+ *     bar from 8 to 12 bands — the opposite of the decision. The crust is not
+ *     sea; a deeper world floor says nothing about what "deep water" means.
+ *
+ * THE MECHANISM, so the numbers below are a derivation rather than a ledger:
+ * genesis noise floors bottom out in whole bands (world.ts writes band
+ * multiples; its lattice reaches OUTER_TERRAIN_MIN_BAND_OFFSET = −10 bands,
+ * and band −8 is the deepest an ordinary ocean settles at — the palette's
+ * depth ramp documents the same fact from the render side). A genesis floor
+ * does not STAY a band multiple: the first relaxation that touches its rim
+ * moves the extreme cell by up to half the gradient limit (MAX_STEP / 2 = 16;
+ * see shared's smoothing contract, "higher loses floor(e/2)"), which is
+ * exactly how the live world's deepest natural floor reads −496 rather than
+ * −512. The bar the owner ratified is that RELAXED natural floor, expressed
+ * in the whole bands the admission test (reachesIntoHabitat) counts:
+ * floor((8·64 − 16) / 64) = 7 bands. A natural −496 trench qualifies; no dig
+ * required.
+ *
+ * Worlds whose noise never dipped to band −8 still summon no kraken until
+ * someone digs — unchanged, and correct: the decision removes the mandatory
+ * dig from worlds that HAVE a deep floor, it does not hand every puddle a
+ * kraken.
  *
  * For scale against the other threshold: the deep-water line is 3 bands, so a
- * kraken trench is nearly three times as deep as the shallowest water Cthulhu
- * will take, and a player who wants one has to dig for it.
+ * kraken trench is still well over twice as deep as the shallowest water
+ * Cthulhu will take.
  */
-export const WORLD_WATER_COLUMN_BANDS = (SEA_LEVEL - MIN_HEIGHT) / BAND_HEIGHT;
-export const KRAKEN_LAIR_MIN_DEPTH_BANDS = WORLD_WATER_COLUMN_BANDS / 2;
+export const WORLD_WATER_COLUMN_BANDS = SEA_COLUMN_BANDS;
+
+/** Deepest band an ordinary genesis ocean settles at (see mechanism above). */
+export const DEEPEST_NATURAL_OCEAN_BAND_DEPTH = 8;
+
+/**
+ * That floor after the relaxation shave that inevitably reaches it: the
+ * height the owner's decision names (−496 below sea, as a positive depth).
+ */
+export const NATURAL_OCEAN_FLOOR_MIN_DEPTH =
+  DEEPEST_NATURAL_OCEAN_BAND_DEPTH * BAND_HEIGHT - MAX_STEP / 2;
+
+export const KRAKEN_LAIR_MIN_DEPTH_BANDS = Math.floor(
+  NATURAL_OCEAN_FLOOR_MIN_DEPTH / BAND_HEIGHT,
+);
 
 /**
  * Cells in its own region below which the kraken's trench has COLLAPSED and it
