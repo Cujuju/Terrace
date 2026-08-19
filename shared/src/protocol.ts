@@ -73,6 +73,12 @@ export interface SculptIntent {
 export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   tool: 'stamp',
   profile: 'soft',
+  // Player sculpts are always band-contained (owner decision 2026-08-19,
+  // issue #26): the smooth tool's spill may slope terrain outside the brush
+  // but never create or erase a rendered level there. Not a wire field — the
+  // intent cannot name it (see sculptOptionsOf below), because containment is
+  // a fairness rule, not a brush shape, so it is not the client's to choose.
+  spill: 'banded',
 };
 
 /**
@@ -90,6 +96,11 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
   return {
     tool: intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool,
     profile: intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile,
+    // Deliberately NOT read from the intent: spill containment is fixed
+    // policy for player sculpts (issue #26). Both the server pipeline and
+    // client prediction resolve through this line, so both sides run banded
+    // by construction — the same lockstep argument as the doc above.
+    spill: WIRE_DEFAULT_SCULPT_OPTIONS.spill,
   };
 }
 

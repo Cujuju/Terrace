@@ -289,7 +289,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
   it('the library default is smooth+soft, NOT the wire default', () => {
     // Stated as a value so the compatibility promise is greppable, and so a
     // future edit to it fails here rather than silently re-tuning plugins.
-    expect(LIBRARY_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'smooth', profile: 'soft' });
+    expect(LIBRARY_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'smooth', profile: 'soft', spill: 'free' });
   });
 
   it('the smooth tool reproduces the old brush→smooth→diff composition exactly', () => {
@@ -1010,5 +1010,148 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     expect(passes).toBeGreaterThan(0);
     expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
     expectGradientLimitHolds(map);
+  });
+});
+
+describe('applySculpt — banded spill containment (issue #26)', () => {
+  /**
+   * A terrace ledge like the owner's screenshot: a band-2 plateau (h=128)
+   * stepping down band by band toward the south-east, every step already
+   * respecting MAX_STEP so relaxation starts from a legal map.
+   */
+  function ledgeMap(size: number): Heightmap {
+    const map = createHeightmap(size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const t = x + y;
+        let h: number;
+        if (t < 40) h = 128;
+        else if (t === 40) h = 96;
+        else if (t < 50) h = 64;
+        else if (t === 50) h = 32;
+        else h = 0;
+        map.cells[cellIndex(map, x, y)] = h;
+      }
+    }
+    return map;
+  }
+
+  const BANDED = { tool: 'smooth', profile: 'soft', spill: 'banded' } as const;
+  // Centre one cell inside the plateau edge, radius 2 — the session's repro,
+  // which under free spill pushes 12 outside cells across a band boundary.
+  const CX = 20;
+  const CY = 19;
+  const RADIUS = 2;
+  const STROKES = 6;
+
+  it('never changes the rendered band of a cell outside the footprint (raising)', () => {
+    const map = ledgeMap(64);
+    const before = Int16Array.from(map.cells);
+    const fp = footprintOf(64, CX, CY, RADIUS);
+    for (let s = 0; s < STROKES; s++) {
+      applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
+    }
+    let outsideMoved = 0;
+    for (let i = 0; i < map.cells.length; i++) {
+      if (fp.has(i)) continue;
+      expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+      if (map.cells[i] !== before[i]) outsideMoved++;
+    }
+    // The containment must not degenerate into "no spill at all": the fabric
+    // pull still moved outside terrain, just within its own bands.
+    expect(outsideMoved).toBeGreaterThan(0);
+  });
+
+  it('never changes the rendered band of a cell outside the footprint (lowering)', () => {
+    const map = ledgeMap(64);
+    const before = Int16Array.from(map.cells);
+    const fp = footprintOf(64, CX, CY, RADIUS);
+    for (let s = 0; s < STROKES; s++) {
+      applySculpt(map, CX, CY, RADIUS, -DEFAULT_SCULPT_AMOUNT, BANDED);
+    }
+    for (let i = 0; i < map.cells.length; i++) {
+      if (fp.has(i)) continue;
+      expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
+    }
+  });
+
+  it('free spill on the same stroke DOES cross bands outside — the behaviour being contained', () => {
+    // Sanity check on the fixture: without containment the same strokes leak
+    // a new level outside the brush, so the two tests above are not vacuous.
+    const map = ledgeMap(64);
+    const before = Int16Array.from(map.cells);
+    const fp = footprintOf(64, CX, CY, RADIUS);
+    for (let s = 0; s < STROKES; s++) {
+      applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        ...BANDED,
+        spill: 'free',
+      });
+    }
+    let crossed = 0;
+    for (let i = 0; i < map.cells.length; i++) {
+      if (fp.has(i)) continue;
+      if (bandOf(map.cells[i]) !== bandOf(before[i])) crossed++;
+    }
+    expect(crossed).toBeGreaterThan(0);
+  });
+
+  it('still converges within the pass budget when the cap binds', () => {
+    const map = ledgeMap(64);
+    const changed = new Set<number>();
+    applyBrush(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT * 4, changed, 'hard');
+    const fp = footprintOf(64, CX, CY, RADIUS);
+    const passes = smooth(map, changed, undefined, fp);
+    expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
+  });
+
+  it('a capped ring never bleeds the mound: a raising stroke nets at least the brush volume', () => {
+    // THE EROSION GUARD. If clamping were uncoupled — the free side shedding
+    // its half while the capped side cannot absorb it — every extra pass
+    // would delete terrain at the brush ring and this sum would fall below
+    // the volume the brush itself added. Coupled transfers make every
+    // relaxation move net >= 0 for the map total (free pairs may round +1 on
+    // an odd excess; banded pairs move both sides equally, net 0), so the
+    // stroke's net volume must be at least the brush's own.
+    const map = ledgeMap(64);
+    const brushOnly = ledgeMap(64);
+    const sum = (m: Heightmap) => m.cells.reduce((a, b) => a + b, 0);
+    const before = sum(map);
+    applyBrush(brushOnly, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, new Set(), 'soft');
+    const brushVolume = sum(brushOnly) - before;
+    expect(brushVolume).toBeGreaterThan(0);
+    applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
+    expect(sum(map) - before).toBeGreaterThanOrEqual(brushVolume);
+  });
+
+  it('is deterministic: identical banded strokes give identical maps and diffs', () => {
+    const a = ledgeMap(64);
+    const b = ledgeMap(64);
+    for (let s = 0; s < STROKES; s++) {
+      const da = applySculpt(a, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
+      const db = applySculpt(b, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
+      expect(da).toEqual(db);
+    }
+    expect(a.cells).toEqual(b.cells);
+  });
+
+  it('an explicit free spill is byte-identical to the pre-#26 absent-spill path', () => {
+    // The compatibility contract, extended to the new field: plugins that
+    // pass no options (or no spill) must keep the unbounded relaxation they
+    // were tuned against, bit for bit.
+    const absent = ledgeMap(64);
+    const explicit = ledgeMap(64);
+    for (let s = 0; s < STROKES; s++) {
+      const da = applySculpt(absent, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        tool: 'smooth',
+        profile: 'soft',
+      });
+      const db = applySculpt(explicit, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        tool: 'smooth',
+        profile: 'soft',
+        spill: 'free',
+      });
+      expect(da).toEqual(db);
+    }
+    expect(absent.cells).toEqual(explicit.cells);
   });
 });

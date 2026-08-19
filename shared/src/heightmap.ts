@@ -126,16 +126,41 @@ export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth'];
 /** Every valid profile, in wire/UI order. */
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
 
+/**
+ * How far the `smooth` tool's relaxation may move terrain OUTSIDE the brush
+ * footprint (owner decision 2026-08-19, issue #26).
+ *
+ * - `banded` — the fabric-pull still drags neighbouring terrain, but a cell
+ *              outside the footprint may only move WITHIN the terrace band it
+ *              occupied when the stroke first touched it: the spill can slope
+ *              ground, it can never create or erase a rendered level anywhere
+ *              the player did not aim. This is what every PLAYER sculpt runs
+ *              (see WIRE_DEFAULT_SCULPT_OPTIONS / sculptOptionsOf in
+ *              protocol.ts — the wire never carries the field, because it is
+ *              not the client's to choose).
+ * - `free`   — the original unbounded relaxation, verbatim. The library
+ *              default, for the same compatibility reason the library tool
+ *              default is `smooth` (see LIBRARY_DEFAULT_SCULPT_OPTIONS):
+ *              plugin terraforms were tuned against the unbounded spill.
+ *
+ * NOT a wire field: unlike tool/profile (which change what an edit looks
+ * like), containment is a fairness rule, so it is fixed server-side and
+ * mirrored into prediction through the one shared resolver.
+ */
+export type SculptSpill = 'banded' | 'free';
+
 /** Caller-supplied sculpt options; every field defaults when absent. */
 export interface SculptOptions {
   readonly tool?: SculptTool;
   readonly profile?: SculptProfile;
+  readonly spill?: SculptSpill;
 }
 
 /** Sculpt options with nothing left to default — what the math actually runs. */
 export interface ResolvedSculptOptions {
   readonly tool: SculptTool;
   readonly profile: SculptProfile;
+  readonly spill: SculptSpill;
 }
 
 /**
@@ -152,6 +177,11 @@ export interface ResolvedSculptOptions {
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   tool: 'smooth',
   profile: 'soft',
+  // 'free' for the same reason the tool is 'smooth': an absent options
+  // argument must reproduce the pre-2026-08-14 behaviour bit for bit, and
+  // that behaviour had no spill containment (issue #26 added it for PLAYER
+  // sculpts only — see SculptSpill and WIRE_DEFAULT_SCULPT_OPTIONS).
+  spill: 'free',
 };
 
 /**
@@ -531,28 +561,104 @@ export function sculptDisplacementUnits(
 }
 
 /**
+ * The height interval a spill-contained cell may occupy for the rest of the
+ * stroke: the terrace band it was in when the stroke first touched it
+ * (issue #26). `hi` is the band's last height, `lo * BAND_HEIGHT`-aligned;
+ * bandOf(h) is constant over [lo, hi] by construction.
+ */
+interface SpillBand {
+  readonly lo: number;
+  readonly hi: number;
+}
+
+/**
+ * Band lookup for banded relaxation: null means the cell is FREE (inside the
+ * brush footprint — unrestricted, exactly as before #26); a SpillBand means
+ * the cell is outside the footprint and capped to it. The whole free/banded
+ * dispatch below rides on this being null for the `free` spill mode, which is
+ * what keeps that mode's arithmetic bit-identical to the pre-#26 code.
+ */
+type SpillBoundsOf = (index: number) => SpillBand | null;
+
+/**
+ * Moves the excess `e` (the amount a pair exceeds MAX_STEP by) between the
+ * higher cell `hiIdx` and the lower cell `loIdx`: higher loses `floor(e/2)`,
+ * lower gains the rest, leaving the pair at exactly MAX_STEP — the original
+ * relaxation arithmetic, verbatim, when `boundsOf` is null.
+ *
+ * BANDED CLAMPING (issue #26). When either side is band-capped and its half
+ * of the move does not fit, BOTH sides move by the same reduced amount `t`
+ * (the largest transfer both caps admit) instead: the transfer stays coupled,
+ * so the unrestricted side never keeps shedding height a capped neighbour
+ * cannot absorb — uncoupled clamping would bleed a mound away at the brush
+ * ring, one orphaned half-move per pass. When not even `t = 1` fits, the pair
+ * is left alone and reported UNCHANGED, which is what lets the sweep still
+ * converge (a capped pair that cannot move must not count as progress).
+ *
+ * ACCEPTED RESIDUAL (documented like #12's): where a band cap binds, the pair
+ * can be left exceeding MAX_STEP — a standing over-steep ring at the brush
+ * edge — until a later edit whose footprint covers it relaxes it. That is the
+ * owner's trade (issue #26): a rendered level appearing outside the brush is
+ * worse than a locally over-steep slope at its edge.
+ *
+ * Both indices are added to `changed` whenever the pair is adjusted (even the
+ * side whose own delta rounded to zero — the pre-#26 behaviour, kept so free
+ * mode's changed-set, and therefore the wire diff, is bit-identical).
+ */
+function movePair(
+  cells: Int16Array,
+  hiIdx: number,
+  loIdx: number,
+  e: number,
+  changed: Set<number>,
+  boundsOf: SpillBoundsOf | null,
+): boolean {
+  let drop = e >> 1;
+  let rise = e - drop;
+  if (boundsOf !== null) {
+    const hiBand = boundsOf(hiIdx);
+    const loBand = boundsOf(loIdx);
+    // How much of each half actually fits inside its side's band. A capture
+    // happens before a cell's first move, and every later move stays inside
+    // the captured band, so these can never be negative.
+    const dropCap = hiBand === null ? drop : Math.min(drop, cells[hiIdx] - hiBand.lo);
+    const riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[loIdx]);
+    if (dropCap < drop || riseCap < rise) {
+      const t = Math.min(dropCap, riseCap);
+      drop = t;
+      rise = t;
+    }
+    if (drop === 0 && rise === 0) return false;
+  }
+  cells[hiIdx] -= drop;
+  cells[loIdx] += rise;
+  changed.add(hiIdx);
+  changed.add(loIdx);
+  return true;
+}
+
+/**
  * Relaxes one 4-neighbor pair toward the gradient limit: if `cells[i]` and
  * `cells[j]` differ by more than MAX_STEP, the higher of the two loses
  * `floor(e/2)` (`e` the excess over MAX_STEP) and the lower gains the rest,
- * leaving the pair at exactly MAX_STEP. Both indices are added to `changed`
- * when the pair is adjusted. Returns whether it was, so a sweep can tell
- * whether the pass changed anything.
+ * leaving the pair at exactly MAX_STEP — subject to band caps when `boundsOf`
+ * is non-null (see movePair). Both indices are added to `changed` when the
+ * pair is adjusted. Returns whether it was, so a sweep can tell whether the
+ * pass changed anything.
  */
-function relaxPair(cells: Int16Array, i: number, j: number, changed: Set<number>): boolean {
+function relaxPair(
+  cells: Int16Array,
+  i: number,
+  j: number,
+  changed: Set<number>,
+  boundsOf: SpillBoundsOf | null,
+): boolean {
   const d = cells[i] - cells[j];
   if (d > MAX_STEP) {
-    const e = d - MAX_STEP;
-    cells[i] -= e >> 1;
-    cells[j] += e - (e >> 1);
-    changed.add(i); changed.add(j);
-    return true;
+    return movePair(cells, i, j, d - MAX_STEP, changed, boundsOf);
   }
   if (d < -MAX_STEP) {
-    const e = -d - MAX_STEP;
-    cells[j] -= e >> 1;
-    cells[i] += e - (e >> 1);
-    changed.add(i); changed.add(j);
-    return true;
+    return movePair(cells, j, i, -d - MAX_STEP, changed, boundsOf);
   }
   return false;
 }
@@ -585,16 +691,48 @@ function relaxPair(cells: Int16Array, i: number, j: number, changed: Set<number>
  * applyBrush + smooth leaves no 4-neighbor pair exceeding MAX_STEP.
  * Relaxation moves values strictly toward each other, so it can never leave
  * [MIN_HEIGHT, MAX_HEIGHT] and never needs clamping.
+ *
+ * BANDED SPILL CONTAINMENT (issue #26). When `spillFree` is given, it is the
+ * set of cells (the brush footprint) allowed to move without restriction;
+ * every OTHER cell is capped, on the stroke's first touch of it, to the
+ * terrace band it occupied at that moment — captured lazily because a cell
+ * relaxation never reaches needs no bookkeeping, and a cell it does reach is
+ * still at its pre-stroke height the first time it is looked at (only this
+ * sweep moves cells, and every move goes through the same lookup first). The
+ * MAX_STEP invariant above is then explicitly NOT guaranteed where a cap
+ * binds — see movePair's ACCEPTED RESIDUAL note. Omitting `spillFree` is the
+ * pre-#26 relaxation, bit for bit.
  */
 export function smooth(
   map: Heightmap,
   changed: Set<number>,
   bboxSeed?: ReadonlySet<number>,
+  spillFree?: ReadonlySet<number>,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
 
   const { size, cells } = map;
+
+  let boundsOf: SpillBoundsOf | null = null;
+  if (spillFree !== undefined) {
+    const captured = new Map<number, SpillBand>();
+    boundsOf = (index: number): SpillBand | null => {
+      if (spillFree.has(index)) return null;
+      let band = captured.get(index);
+      if (band === undefined) {
+        // First touch: the cell is at its pre-stroke height (see the doc
+        // above), so this pins the band the player saw before the stroke.
+        // No clamping to [MIN_HEIGHT, MAX_HEIGHT]: relaxation moves cells
+        // strictly toward a neighbour, which is itself in range, so a cap
+        // endpoint outside the range is simply never reached.
+        const lo = bandOf(cells[index]) * BAND_HEIGHT;
+        band = { lo, hi: lo + BAND_HEIGHT - 1 };
+        captured.set(index, band);
+      }
+      return band;
+    };
+  }
 
   // Bounding box of the initial edit.
   let minX = size, minY = size, maxX = -1, maxY = -1;
@@ -624,8 +762,8 @@ export function smooth(
       for (let x = minX; x <= maxX; x++) {
         const i = row + x;
         // Each pair visited once, via its "forward" (right/down) neighbor.
-        if (x < maxX && relaxPair(cells, i, i + 1, changed)) changedThisPass = true;
-        if (y < maxY && relaxPair(cells, i, i + size, changed)) changedThisPass = true;
+        if (x < maxX && relaxPair(cells, i, i + 1, changed, boundsOf)) changedThisPass = true;
+        if (y < maxY && relaxPair(cells, i, i + size, changed, boundsOf)) changedThisPass = true;
       }
     }
 
@@ -643,6 +781,9 @@ export function smooth(
  *
  * `options` picks the tool and the edge profile; the two are orthogonal, so
  * hard+smooth (stamp a plateau, let it slump) is a legal, meaningful combination.
+ * The third field, `spill`, bounds how far the smooth tool's relaxation may
+ * move terrain outside the footprint (see SculptSpill); it is meaningless for
+ * `stamp`, which never touches an outside cell in the first place.
  * OMITTING `options` ENTIRELY reproduces the pre-2026-08-14 behaviour bit for
  * bit — see LIBRARY_DEFAULT_SCULPT_OPTIONS for why that, and not the new
  * player-facing default, is what an absent argument means.
@@ -679,6 +820,7 @@ export function applySculpt(
 ): CellDiff[] {
   const tool = options?.tool ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.tool;
   const profile = options?.profile ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.profile;
+  const spill = options?.spill ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spill;
 
   const changed = new Set<number>();
   // The one dispatch in the sculpt path. Both branches are integer-only over the
@@ -692,24 +834,33 @@ export function applySculpt(
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.
   if (tool === 'smooth') {
-    if (changed.size === 0) {
-      // A fully clamped brush (e.g. stroking a MAX_HEIGHT plateau) changes
-      // nothing itself, which used to make the smooth tool a silent no-op
-      // that left standing cliffs unrelaxed (#12). Seeding the bounding box
-      // from the footprint keeps the stroke's promise — relax the ground
-      // under the brush — while `changed` still records (and the diff still
-      // carries) only cells relaxation actually moved. Strokes whose brush
-      // DID move cells keep the pre-#12 seed bit for bit.
-      const footprint = new Set<number>();
+    // The footprint set serves two masters, from the ONE footprint iterator
+    // (forEachFootprintOffset — see its doc for why agreement is structural):
+    //   - the bounding-box seed of a fully clamped stroke (#12): a brush that
+    //     changed nothing (e.g. stroking a MAX_HEIGHT plateau) used to make
+    //     the smooth tool a silent no-op that left standing cliffs
+    //     unrelaxed; seeding from the footprint keeps the stroke's promise
+    //     while `changed` (and the diff) still carries only cells relaxation
+    //     actually moved;
+    //   - the spill-containment free set (#26): the cells relaxation may move
+    //     without a band cap.
+    // Strokes with spill 'free' whose brush DID move cells keep the pre-#12
+    // call shape (no footprint computed at all) bit for bit.
+    let footprint: Set<number> | undefined;
+    if (changed.size === 0 || spill === 'banded') {
+      footprint = new Set<number>();
       forEachFootprintOffset(radius, (dx, dy) => {
         const x = cx + dx;
         const y = cy + dy;
-        if (inBounds(map, x, y)) footprint.add(cellIndex(map, x, y));
+        if (inBounds(map, x, y)) footprint?.add(cellIndex(map, x, y));
       });
-      smooth(map, changed, footprint);
-    } else {
-      smooth(map, changed);
     }
+    smooth(
+      map,
+      changed,
+      changed.size === 0 ? footprint : undefined,
+      spill === 'banded' ? footprint : undefined,
+    );
   }
 
   const indices = Array.from(changed).sort((a, b) => a - b);

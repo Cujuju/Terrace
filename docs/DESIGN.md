@@ -407,6 +407,20 @@ terrace/
   All four combinations are legal and meaningful (hard+smooth = stamp a plateau,
   let it slump).
 
+  **AMENDED 2026-08-19 (issue #26, owner-settled): player-facing smooth spill
+  is band-contained.** "Today's behaviour verbatim" above now describes the
+  LIBRARY path only. A PLAYER's smooth stroke still relaxes terrain outside the
+  brush, but an outside cell may only move within the terrace band it occupied
+  when the stroke touched it — the spill can slope ground, it can never create
+  or erase a rendered level outside the brush ("area outside of the brush
+  should never be raised or lowered ahead of the structure under the brush").
+  Accepted residual: where the cap binds, the MAX_STEP invariant may stand
+  exceeded at the brush ring until a later edit covers it. Plumbed as a third
+  resolved option, `spill: 'banded' | 'free'` — never carried on the wire
+  (fairness policy, not brush shape); wire default `banded`, library default
+  `free` so plugin terraforms keep the unbounded relaxation they were tuned
+  against, bit for bit. See SculptSpill in shared/src/heightmap.ts.
+
   **This SUPERSEDES the §2 framing of gradient limiting as "the single most
   important element of the feel" — for the DEFAULT brush only.** Relaxation is
   no longer what happens on every edit; it is one of two tools, and the owner's
