@@ -35,7 +35,7 @@
 // refreshUnlockedChunk below.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// THE TWO PATHS.
+// THE THREE PATHS.
 //
 // GROWTH is polled: every FLORA_SURVEY_INTERVAL_SECONDS a survey walks the
 // unlocked world, works out how many trees the stable green area deserves, and
@@ -46,9 +46,24 @@
 // before the terrain diff reaches any client. A player never sees a tree
 // standing in the hole they just dug, not even for one frame.
 //
-// Both paths write to the same two structures and emit the same delta message,
-// so a client applies "the ground moved, four trees fell" and "five trees grew"
-// through one code path.
+// STRUCTURE OCCUPANCY (added 2026-08-19, owner: "if buildings are going to
+// spawn over trees, then the trees need to de-spawn") is BOTH reactive and
+// polled, because no single one of structures' own events names every way a
+// cell can become occupied (see ./structures-event.ts's header). onWorldEvent
+// fells a tree the instant its cell is named `seeded` or `upgraded` in
+// structures' `changes` event; the SAME survey that drives growth above also
+// treats every currently-occupied cell (./structures-bridge.ts) as
+// unplantable, which is what actually guarantees "buildings always win" for
+// the causes the event does not name (an ordinary birth, a stir spark) and
+// for a building that was already standing over a tree before this feature
+// shipped — see forest.ts's OccupancyPredicate and Forest.cull. Structure
+// DEATH does not replant: it simply stops appearing in the occupied set, and
+// flora's own growth recolonizes the cell on its own schedule, same as any
+// other bare patch of stable green ground.
+//
+// All three paths write to the same two structures and emit the same delta
+// message, so a client applies "the ground moved, four trees fell", "a
+// building rose, one tree fell" and "five trees grew" through one code path.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
@@ -66,6 +81,7 @@ import {
   FLORA_FOREST_MESSAGE,
   FLORA_PLUGIN_NAME,
   packTreeCells,
+  treeKey,
   type TreeCell,
 } from '../protocol.ts';
 import {
@@ -74,9 +90,12 @@ import {
   Forest,
   createFloraRng,
   type FloraRng,
+  type OccupancyPredicate,
 } from './forest.ts';
 import { loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
+import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
+import { parseStructuresOccupation } from './structures-event.ts';
 
 /**
  * Simulated seconds between unsolicited full-forest re-broadcasts.
@@ -272,13 +291,33 @@ function chunksPerTick(world: WorldApi, dt: number): number {
 }
 
 /**
+ * The cells a structure occupies RIGHT NOW, as an OccupancyPredicate closure
+ * over a freshly built Set of flora's own tree keys (protocol.ts's treeKey —
+ * NOT structures' STRUCTURES_CELL_KEY_STRIDE, a different plugin's private
+ * encoding this one must never assume matches its own).
+ *
+ * Rebuilt on every call rather than cached: `bridgedStructures()` returns at
+ * most STRUCTURES_CAP (512) cells, so building the Set costs at most 512
+ * inserts — negligible against the survey work it gates — and a fresh read
+ * means a structure founded THIS tick is excluded from the very next chunk
+ * scanned, not from whichever sweep happens to start next.
+ */
+function occupiedCells(): OccupancyPredicate {
+  const occupied = new Set<number>();
+  for (const cell of bridgedStructures()) occupied.add(treeKey(cell.x, cell.y));
+  return (x: number, y: number): boolean => occupied.has(treeKey(x, y));
+}
+
+/**
  * THE SIM STEP. Fixed order, once per host tick:
  *
  *   1. advance the clock — everything else reads simSeconds, nothing reads a
  *      wall clock, so a test advances time by ticking;
  *   2. advance the rolling survey by this tick's share of the world. It returns
  *      a result only on the tick that completes a sweep, which is the tick that
- *      culls and grows (forest.ts);
+ *      culls and grows (forest.ts) — now against the LATEST structure
+ *      occupancy too, so buildings always win even where the world-event
+ *      handler below never fired (see the module header's THREE PATHS note);
  *   3. keepalive, on its own cadence and independent of 2, because the thing it
  *      repairs (a client that missed a delta) has nothing to do with whether
  *      anything grew.
@@ -296,7 +335,14 @@ function simulate(world: WorldApi, dt: number): void {
   const budget = Math.floor(scanCredit);
   if (budget > 0) {
     scanCredit -= budget;
-    const { grown, felled } = forest.advanceSurvey(world, stability, simSeconds, rng, budget);
+    const { grown, felled } = forest.advanceSurvey(
+      world,
+      stability,
+      simSeconds,
+      rng,
+      budget,
+      occupiedCells(),
+    );
     broadcastChanges(world, grown, felled);
   }
 
@@ -338,6 +384,44 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   broadcastChanges(world, [], felled);
 }
 
+/**
+ * THE EVENT-DRIVEN PATH (added 2026-08-19, owner: "if buildings are going to
+ * spawn over trees, then the trees need to de-spawn"). Fired synchronously
+ * from structures' own `world.emitEvent('changes', …)` (WorldApi's
+ * cross-plugin event primitive) the moment a cell is named `seeded` or
+ * `upgraded` — i.e. the two causes structures' own event bothers to name
+ * (see ./structures-event.ts's header for why that is narrower than "every
+ * new building" and why that narrowness is safe). Buildings always win: no
+ * height change is involved, so onTerrainChanged above never sees this, and
+ * without this handler a tree would keep standing inside a settlement for up
+ * to one survey interval.
+ *
+ * Deliberately does nothing with `died`: structure death does not replant.
+ * The cell simply stops appearing in occupiedCells() (server/index.ts's
+ * simulate), and flora's own growth recolonizes it on the ordinary survey
+ * schedule — no special-cased "the building died, plant something" code is
+ * needed or wanted.
+ *
+ * Stability is NOT reset for a felled cell here, unlike reactToTerrain: a
+ * structure's arrival changes no height, so the ground was never disturbed —
+ * only occupied. If the structure later dies, the cell is exactly as stable
+ * as it already was.
+ */
+function onStructuresChanges(world: WorldApi, payload: unknown): void {
+  const occupation = parseStructuresOccupation(payload);
+  if (occupation === null) return;
+
+  const felled: TreeCell[] = [];
+  for (const cell of occupation.seeded) {
+    if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+  }
+  for (const cell of occupation.upgraded) {
+    if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+  }
+
+  broadcastChanges(world, [], felled);
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // The plugin
 // ────────────────────────────────────────────────────────────────────────────
@@ -366,6 +450,13 @@ export const plugin: TerracePlugin = {
     forest.replaceAll(restoredCells);
     restoredCells = [];
 
+    // THE CROSS-PLUGIN DEPENDENCY PATTERN (structures-bridge.ts): started, not
+    // awaited — this hook is synchronous, and the bridge resolves (or degrades
+    // to "no structures") in the background while the rest of this plugin keeps
+    // working. Every occupiedCells() query until then simply sees an empty
+    // occupied set, same as a world with no structures plugin installed at all.
+    void loadStructuresBridge();
+
     // No players are connected at world create, so this is not how anyone gets
     // their first forest (onPlayerJoin is). It is here so that a client which is
     // somehow already listening is not left empty for up to a keepalive.
@@ -378,6 +469,13 @@ export const plugin: TerracePlugin = {
 
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     reactToTerrain(world, diff);
+  },
+
+  onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
+    // By-name subscription (see server/src/plugins/types.ts's emitEvent doc
+    // comment): structures' plugin name is the coupling, exactly like a wire
+    // message namespace — never an import of structures' code.
+    if (event === 'structures:changes') onStructuresChanges(world, payload);
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {

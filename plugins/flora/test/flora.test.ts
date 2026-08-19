@@ -6,7 +6,7 @@
 // cap, felled by any sculpt, survives a restart) and asserts it against the
 // mechanism rather than against a call site.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -23,6 +23,7 @@ import {
   FLORA_PLUGIN_NAME,
   FLORA_TREE_CAP,
   parseTreeCells,
+  type TreeCell,
 } from '../protocol.ts';
 import {
   FLORA_MAX_BAND,
@@ -52,6 +53,12 @@ import {
 } from '../server/index.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from '../server/persistence.ts';
 import { FLORA_STABILITY_SECONDS, StabilityMap } from '../server/stability.ts';
+import {
+  loadStructuresBridge,
+  resetStructuresBridge,
+  setStructuresModuleLoader,
+  structuresBridgeReady,
+} from '../server/structures-bridge.ts';
 import { worldWithTerrain } from './support/world.ts';
 
 /** 64² cells = 4×4 chunks — small enough to survey thousands of times a suite. */
@@ -447,6 +454,140 @@ describe('felling', () => {
       // Everything still standing is still on ground that can hold it.
       expect(isPlantableCell(floraView(harness.world), tree.x, tree.y)).toBe(true);
     }
+  });
+});
+
+describe('structure occupancy — buildings always win', () => {
+  // Structures is never installed in this harness (only floraPlugin is), so
+  // every event below is fed straight through PluginHost.notifyWorldEvent —
+  // exactly the seam chronicle's own suite uses for the same reason (a
+  // plugin builds and tests with every other plugin deleted).
+
+  afterEach(() => {
+    resetStructuresBridge();
+  });
+
+  it('fells a tree the instant its cell is named seeded, and broadcasts it', () => {
+    const harness = boot(() => false);
+    join(harness);
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
+    const victim = standingTrees()[0];
+    expect(victim).toBeDefined();
+    harness.sink.clear();
+
+    harness.host.notifyWorldEvent('structures:changes', {
+      cause: 'generation',
+      seeded: [{ x: victim.x, y: victim.y, tier: 0 }],
+      upgraded: [],
+      died: [],
+    });
+
+    expect(currentForest().has(victim.x, victim.y)).toBe(false);
+    const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
+    expect(changes.length).toBeGreaterThan(0);
+    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
+    expect(felled).toContainEqual({ x: victim.x, y: victim.y });
+  });
+
+  it('fells a tree the instant its cell is named upgraded, and broadcasts it', () => {
+    const harness = boot(() => false);
+    join(harness);
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
+    const victim = standingTrees()[0];
+    expect(victim).toBeDefined();
+    harness.sink.clear();
+
+    harness.host.notifyWorldEvent('structures:changes', {
+      cause: 'generation',
+      seeded: [],
+      upgraded: [{ x: victim.x, y: victim.y, tier: 1 }],
+      died: [],
+    });
+
+    expect(currentForest().has(victim.x, victim.y)).toBe(false);
+    const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
+    expect(changes.length).toBeGreaterThan(0);
+    const felled = parseTreeCells((changes[0].payload as { felled: number[] }).felled) ?? [];
+    expect(felled).toContainEqual({ x: victim.x, y: victim.y });
+  });
+
+  it('does not replant when a structure dies — recolonization is left to ordinary growth', () => {
+    const harness = boot(() => false);
+    join(harness);
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
+    const victim = standingTrees()[0];
+    expect(victim).toBeDefined();
+
+    harness.host.notifyWorldEvent('structures:changes', {
+      cause: 'generation',
+      seeded: [{ x: victim.x, y: victim.y, tier: 0 }],
+      upgraded: [],
+      died: [],
+    });
+    expect(currentForest().has(victim.x, victim.y)).toBe(false);
+    harness.sink.clear();
+
+    // The same cell reported dead. Nothing here should plant a tree back —
+    // there is no code path in onWorldEvent that even reads `died`.
+    harness.host.notifyWorldEvent('structures:changes', {
+      cause: 'generation',
+      died: [{ x: victim.x, y: victim.y }],
+    });
+
+    expect(currentForest().has(victim.x, victim.y)).toBe(false);
+    expect(harness.sink.ofType(CHANGES_WIRE_TYPE)).toHaveLength(0);
+  });
+
+  it('clears a pre-existing overlap on the first completed survey after the structures bridge resolves', async () => {
+    const harness = boot(() => false);
+    advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 10);
+    const victim = standingTrees()[0];
+    expect(victim).toBeDefined();
+
+    // Simulates a building that already stood over this tree before flora
+    // ever checked — boot() started the real (default) loader, which never
+    // resolves inside a synchronous test body; resetStructuresBridge discards
+    // it so this fake loader is the one the next call resolves against.
+    resetStructuresBridge();
+    setStructuresModuleLoader(() =>
+      Promise.resolve({ standingStructures: () => [{ x: victim.x, y: victim.y }] }),
+    );
+    void loadStructuresBridge();
+    await structuresBridgeReady();
+
+    // The cull phase only runs on the tick that completes a sweep — the same
+    // shape as "fells restored trees that no longer stand on green ground"
+    // in the persistence suite.
+    advance(harness, FLORA_SURVEY_INTERVAL_SECONDS + DT);
+    expect(currentForest().has(victim.x, victim.y)).toBe(false);
+  });
+
+  it('is deterministic: the same growth, event and occupancy history produces the same forest twice', () => {
+    function run(): TreeCell[] {
+      const harness = boot(() => false);
+      join(harness);
+      advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 15);
+      const trees = standingTrees();
+      expect(trees.length).toBeGreaterThan(1);
+
+      harness.host.notifyWorldEvent('structures:changes', {
+        cause: 'generation',
+        seeded: [{ x: trees[0].x, y: trees[0].y, tier: 0 }],
+        upgraded: [{ x: trees[1].x, y: trees[1].y, tier: 1 }],
+        died: [],
+      });
+      advance(harness, FLORA_SURVEY_INTERVAL_SECONDS * 10);
+      return [...standingTrees()];
+    }
+
+    // The bridge never resolves inside either synchronous run (see the
+    // reconciliation test's comment above), so both runs see an identical,
+    // permanently-empty occupied set — this asserts the ordinary growth and
+    // event-felling paths are themselves deterministic, the same property
+    // every other terrain-adjacent system in this codebase is held to.
+    const first = run();
+    const second = run();
+    expect(second).toEqual(first);
   });
 });
 

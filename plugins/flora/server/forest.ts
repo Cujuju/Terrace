@@ -225,6 +225,21 @@ export interface SurveyResult {
 const EMPTY_SURVEY: SurveyResult = { grown: [], felled: [] };
 
 /**
+ * A cell a structure currently occupies. Buildings always win (owner,
+ * 2026-08-19: "if buildings are going to spawn over trees, then the trees
+ * need to de-spawn"), so every survey phase below treats an occupied cell
+ * exactly like one that failed isPlantableCell — never counted toward area,
+ * never offered as a candidate, and culled if a tree is already standing
+ * there. The default, used by every caller that passes none, is "nothing is
+ * occupied" — the shape of a world with no structures plugin installed, and
+ * also every existing call site in this suite that predates structures
+ * occupancy (a JS function may always declare fewer parameters than its
+ * caller provides).
+ */
+export type OccupancyPredicate = (x: number, y: number) => boolean;
+const NEVER_OCCUPIED: OccupancyPredicate = () => false;
+
+/**
  * The standing trees, keyed by cell.
  *
  * A Set of packed cell keys rather than a per-cell byte grid: at the cap it
@@ -302,22 +317,29 @@ export class Forest {
   /**
    * Fells every tree whose cell is no longer plantable — sculpted out of the
    * green bands, or (impossible today, since chunks never re-lock) outside
-   * unlocked territory.
+   * unlocked territory — OR is now occupied by a structure.
    *
-   * The reactive path in ./index.ts already fells on any height change, so in a
-   * correct server this sweep finds nothing. It runs anyway, unconditionally,
-   * for the same reason wildlife's habitat sweep does: it makes "no tree ever
-   * stands on ground that could not grow one" true BY CONSTRUCTION rather than
-   * by trusting that every path into the terrain remembered to call the hook.
-   * It costs O(trees) — at most 3000 lookups every 5 s — and the failure it
-   * insures against (a tree standing in mid-air on a cliff someone carved) is
-   * exactly the kind a player screenshots.
+   * The reactive path in ./index.ts already fells on any height change, and the
+   * event-driven path in ./index.ts's onWorldEvent already fells a seeded or
+   * upgraded structure cell the instant that event arrives, so in a correct
+   * server with structures installed this sweep finds little. It runs anyway,
+   * unconditionally, for the same reason wildlife's habitat sweep does: it
+   * makes "no tree ever stands on ground that could not grow one" true BY
+   * CONSTRUCTION rather than by trusting that every path in — including a
+   * structure's ordinary B3/S23 birth or stir spark, which the world event
+   * deliberately does not name (see ../server/structures-event.ts) —
+   * remembered to call a hook. It also closes the one-time case this feature
+   * shipped with: a building already standing over a tree from before this
+   * plugin knew to check. It costs O(trees) — at most 3000 lookups every 5 s —
+   * and the failure it insures against (a tree standing in mid-air on a cliff
+   * someone carved, or inside a longhouse) is exactly the kind a player
+   * screenshots.
    */
-  private cull(world: FloraWorld): TreeCell[] {
+  private cull(world: FloraWorld, isOccupied: OccupancyPredicate): TreeCell[] {
     const felled: TreeCell[] = [];
     for (const key of this.standing) {
       const cell = treeCellOf(key);
-      if (isPlantableCell(world, cell.x, cell.y)) continue;
+      if (isPlantableCell(world, cell.x, cell.y) && !isOccupied(cell.x, cell.y)) continue;
       felled.push(cell);
     }
     for (const cell of felled) this.standing.delete(treeKey(cell.x, cell.y));
@@ -361,6 +383,7 @@ export class Forest {
     rng: FloraRng,
     cx: number,
     cy: number,
+    isOccupied: OccupancyPredicate,
   ): void {
     if (!world.isChunkUnlocked(cx, cy)) return;
 
@@ -372,6 +395,10 @@ export class Forest {
         const x = baseX + dx;
         if (!isGreenBand(world.heightAt(x, y))) continue;
         if (!stability.isStable(x, y, nowSeconds)) continue;
+        // Buildings always win: an occupied cell is ground this survey does
+        // not own, so it counts toward neither area nor candidates — see
+        // OccupancyPredicate's doc comment.
+        if (isOccupied(x, y)) continue;
 
         // Treed cells count toward the area (see treeTargetFor) but are not
         // candidates.
@@ -403,13 +430,16 @@ export class Forest {
    * under it can have been sculpted since — and planting a tree on cells a
    * player is actively digging is precisely the flicker the stability window
    * exists to prevent. Twenty-four re-checks per sweep is nothing against the
-   * cost of getting this wrong.
+   * cost of getting this wrong. A structure founded on a candidate mid-sweep
+   * is the same kind of staleness, so isOccupied is re-checked here too, not
+   * just at the top of scanChunk.
    */
   private grow(
     world: FloraWorld,
     stability: StabilityMap,
     nowSeconds: number,
     rng: FloraRng,
+    isOccupied: OccupancyPredicate,
   ): TreeCell[] {
     const deficit = treeTargetFor(this.sweepArea) - this.standing.size;
     let quota = sproutCount(deficit, rng);
@@ -421,6 +451,7 @@ export class Forest {
       const cell = treeCellOf(key);
       if (!isPlantableCell(world, cell.x, cell.y)) continue;
       if (!stability.isStable(cell.x, cell.y, nowSeconds)) continue;
+      if (isOccupied(cell.x, cell.y)) continue;
       if (this.isCrowded(cell.x, cell.y)) continue;
       if (!this.plant(cell.x, cell.y)) continue;
       grown.push(cell);
@@ -470,6 +501,7 @@ export class Forest {
     nowSeconds: number,
     rng: FloraRng,
     chunkBudget: number,
+    isOccupied: OccupancyPredicate = NEVER_OCCUPIED,
   ): SurveyResult {
     const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
     if (totalChunks <= 0) return EMPTY_SURVEY;
@@ -485,6 +517,7 @@ export class Forest {
         rng,
         this.cursor % world.chunksPerEdge,
         Math.floor(this.cursor / world.chunksPerEdge),
+        isOccupied,
       );
       this.cursor++;
       budget--;
@@ -492,8 +525,8 @@ export class Forest {
 
     if (this.cursor < totalChunks) return EMPTY_SURVEY;
 
-    const felled = this.cull(world);
-    const grown = this.grow(world, stability, nowSeconds, rng);
+    const felled = this.cull(world, isOccupied);
+    const grown = this.grow(world, stability, nowSeconds, rng, isOccupied);
     this.resetSweep();
 
     return grown.length === 0 && felled.length === 0 ? EMPTY_SURVEY : { grown, felled };
@@ -510,6 +543,7 @@ export class Forest {
     stability: StabilityMap,
     nowSeconds: number,
     rng: FloraRng,
+    isOccupied: OccupancyPredicate = NEVER_OCCUPIED,
   ): SurveyResult {
     return this.advanceSurvey(
       world,
@@ -517,6 +551,7 @@ export class Forest {
       nowSeconds,
       rng,
       world.chunksPerEdge * world.chunksPerEdge,
+      isOccupied,
     );
   }
 }
