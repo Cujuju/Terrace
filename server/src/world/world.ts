@@ -734,6 +734,17 @@ export class World {
    * Rebuilds a world from a snapshot. Both buffers are validated against the
    * configured size — a mismatch means the DB was written by a differently
    * configured server, and silently continuing would produce a corrupt world.
+   * (PER-CELL height validity — `isValidHeight`, issue #13 — is already
+   * guaranteed by the time `cells` reaches here: SnapshotStore.loadLatest
+   * throws on a corrupt cell at decode, before any caller of it, `restore`
+   * included, ever sees the array. This function's own checks are narrower
+   * on purpose — they only cover what SnapshotStore cannot know, namely
+   * whether the snapshot fits the world THIS process is configured for.)
+   *
+   * The union mask and every per-token mask are length-checked against this
+   * world's chunk count below (see the `expectedMask`/`tokenMask.length`
+   * checks) — that check belongs here, not in SnapshotStore, because only
+   * `createChunkMask` knows the expected byte length for a given world size.
    *
    * `difficulty` comes from the CURRENT environment, never from the snapshot:
    * it is deployment configuration, so re-rating a world is an env edit plus a

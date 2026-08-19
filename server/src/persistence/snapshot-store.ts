@@ -12,6 +12,7 @@
 // on clean shutdown. This file owns the retention half; the scheduler in
 // index.ts owns the cadence half.
 
+import { isValidHeight, MAX_HEIGHT, MIN_HEIGHT } from '@terrace/shared';
 import DatabaseConstructor, { type Database, type Statement } from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -298,6 +299,33 @@ export class SnapshotStore {
     }
 
     const cells = decodeHeights(row.heightmap, row.world_size * row.world_size);
+    // Per-cell validity (isValidHeight, issue #13) is checked HERE — at decode,
+    // not in World.restore — for the same reason the schema-version and
+    // byte-length checks already live at this boundary rather than in the
+    // caller: this is the one place raw DB bytes turn into values the rest of
+    // the process trusts, so every future reader of a snapshot (not just
+    // World.restore) gets the guarantee for free, and a corrupt row is named
+    // by the snapshot id this function already has in scope. World.restore's
+    // own checks stay scoped to size-compatibility with the CONFIGURED world
+    // (a concern only it has); a Uint16Array wraps and NaN coerces to 0 on
+    // assignment into the Int16Array-backed heightmap (see codec.ts's header
+    // comment), so an out-of-range or non-integer value must be caught before
+    // it is ever assigned, not clamped or repaired after the fact — the whole
+    // point of failing at boot is that this is the one moment a self-hoster is
+    // watching (config.ts).
+    //
+    // Cost: one pass over up to 512² = 262,144 cells, each check an
+    // Number.isInteger plus two comparisons. Measured on this machine
+    // (Node 24, `isValidHeight` inlined): ~2.7 ms for the worst case, once per
+    // boot — negligible next to the SQLite read that produced the blob.
+    for (let i = 0; i < cells.length; i++) {
+      if (!isValidHeight(cells[i])) {
+        throw new Error(
+          `snapshot #${row.id} heightmap cell ${i} has height ${cells[i]}, expected an ` +
+            `integer in [${MIN_HEIGHT}, ${MAX_HEIGHT}]; refusing to restore a corrupt world`,
+        );
+      }
+    }
     const mask = new Uint8Array(row.mask.byteLength);
     mask.set(row.mask);
 

@@ -217,6 +217,35 @@ describe('SnapshotStore', () => {
     store.close();
   });
 
+  // Issue #16: a corrupt heightmap row must fail loudly at boot, not load
+  // silently. The corrupt value here is deliberately IN RANGE for the Int16
+  // storage type ([-32768, 32767]) but OUT of the height contract's range
+  // ([MIN_HEIGHT, MAX_HEIGHT]) — the exact case a length/byte-order check
+  // alone cannot catch, and the one isValidHeight (#13) exists for.
+  it('refuses a snapshot with an in-Int16, out-of-height-range cell', () => {
+    const store = SnapshotStore.open(dbPath);
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const corruptCells = new Int16Array(world.map.cells);
+    const CORRUPT_INDEX = 42;
+    const CORRUPT_VALUE = 5000; // within Int16, outside [-1024, 1024]
+    corruptCells[CORRUPT_INDEX] = CORRUPT_VALUE;
+
+    const id = store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: corruptCells,
+      mask: world.mask,
+      pluginSlices: {},
+    });
+    store.close();
+
+    const reopened = SnapshotStore.open(dbPath);
+    expect(() => reopened.loadLatest()).toThrow(
+      new RegExp(`snapshot #${id}.*cell ${CORRUPT_INDEX}.*${CORRUPT_VALUE}`),
+    );
+    reopened.close();
+  });
+
   it('refuses a snapshot written by an incompatible schema version', () => {
     const store = SnapshotStore.open(dbPath);
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
