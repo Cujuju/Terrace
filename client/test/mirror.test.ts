@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHUNK_SIZE,
   chunkIndex,
@@ -104,15 +104,79 @@ describe('applySnapshot', () => {
     expect([...dirty]).toEqual([chunkIndex(WORLD, 0, 0)]);
   });
 
-  it('rejects a chunk payload of the wrong length', () => {
+  it('drops a chunk payload of the wrong length instead of throwing', () => {
+    // writeChunkHeights still throws a RangeError on a wrong-length payload —
+    // applyChunkPayload's boundary catch is what turns that into a drop, same
+    // policy as an invalid-height payload (see "malformed chunk payloads"
+    // below).
     const mirror = createTerrainMirror(WORLD);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(() =>
       applySnapshot(mirror, {
         type: 'snapshot',
         worldSize: WORLD,
         chunks: [{ cx: 0, cy: 0, heights: [1, 2, 3] }],
       }),
-    ).toThrow(RangeError);
+    ).not.toThrow();
+    expect(hasChunk(mirror, chunkIndex(WORLD, 0, 0))).toBe(false);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+});
+
+describe('malformed chunk payloads', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('drops a chunk with an invalid height instead of throwing out of the handler', () => {
+    const mirror = createTerrainMirror(WORLD);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const badChunk: ChunkPayload = {
+      cx: 0,
+      cy: 0,
+      heights: new Array<number>(CELLS_PER_CHUNK).fill(0),
+    };
+    badChunk.heights[3] = 1.5; // non-integer: invalid height
+
+    let dirty: Set<number> | undefined;
+    expect(() => {
+      dirty = applySnapshot(mirror, {
+        type: 'snapshot',
+        worldSize: WORLD,
+        chunks: [badChunk],
+      });
+    }).not.toThrow();
+
+    // The malformed chunk is dropped, not applied: it is never marked
+    // received, and it contributes nothing to the dirty set.
+    expect(hasChunk(mirror, chunkIndex(WORLD, 0, 0))).toBe(false);
+    expect(dirty?.size).toBe(0);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the other chunks in the same message when one is malformed', () => {
+    const mirror = createTerrainMirror(WORLD);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const badChunk: ChunkPayload = {
+      cx: 0,
+      cy: 0,
+      heights: new Array<number>(CELLS_PER_CHUNK).fill(0),
+    };
+    badChunk.heights[0] = NaN;
+    const goodChunk = chunkPayload(1, 1, 50);
+
+    const dirty = applyChunkUnlock(mirror, {
+      type: 'chunkUnlock',
+      chunks: [badChunk, goodChunk],
+    });
+
+    expect(hasChunk(mirror, chunkIndex(WORLD, 0, 0))).toBe(false);
+    expect(hasChunk(mirror, chunkIndex(WORLD, 1, 1))).toBe(true);
+    expect(heightAt(mirror.map, CHUNK_SIZE, CHUNK_SIZE)).toBe(50);
+    expect(dirty.has(chunkIndex(WORLD, 1, 1))).toBe(true);
   });
 });
 
@@ -230,6 +294,20 @@ describe('applyTerrainDiff', () => {
         { x: 2, y: 2, h: 42 },
       ],
     });
+    expect(heightAt(mirror.map, 2, 2)).toBe(42);
+    expect(dirty.size).toBe(1);
+  });
+
+  it('drops a cell with an invalid height while still applying the good cells in the same diff', () => {
+    const mirror = createTerrainMirror(WORLD);
+    const dirty = applyTerrainDiff(mirror, {
+      type: 'terrainDiff',
+      cells: [
+        { x: 1, y: 1, h: 1.5 }, // invalid: not an integer
+        { x: 2, y: 2, h: 42 }, // valid
+      ],
+    });
+    expect(heightAt(mirror.map, 1, 1)).toBe(0); // untouched, still sea level
     expect(heightAt(mirror.map, 2, 2)).toBe(42);
     expect(dirty.size).toBe(1);
   });

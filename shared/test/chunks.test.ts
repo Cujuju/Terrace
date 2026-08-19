@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHUNK_SIZE,
+  MAX_HEIGHT,
+  MIN_HEIGHT,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
@@ -9,6 +11,7 @@ import {
   extractChunkHeights,
   heightAt,
   isChunkUnlocked,
+  isValidHeight,
   unlockChunk,
   writeChunkHeights,
 } from '../src/index.ts';
@@ -91,5 +94,73 @@ describe('chunk height streaming', () => {
     heights[0] = 42; // local (0,0) of chunk (1,0) → world (16,0)
     writeChunkHeights(map, 1, 0, heights);
     expect(heightAt(map, 16, 0)).toBe(42);
+  });
+
+  it('rejects a non-integer height, naming the offending index and value', () => {
+    const map = createHeightmap(32);
+    const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
+    heights[5] = 1.5;
+    expect(() => writeChunkHeights(map, 0, 0, heights)).toThrow(/cell 5.*1\.5/);
+  });
+
+  it('rejects a NaN height, naming the offending index', () => {
+    const map = createHeightmap(32);
+    const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
+    heights[9] = NaN;
+    expect(() => writeChunkHeights(map, 0, 0, heights)).toThrow(/cell 9/);
+  });
+
+  it('rejects a height outside [MIN_HEIGHT, MAX_HEIGHT], naming the offending index', () => {
+    const map = createHeightmap(32);
+    const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
+    heights[3] = MAX_HEIGHT + 1;
+    expect(() => writeChunkHeights(map, 0, 0, heights)).toThrow(/cell 3/);
+  });
+
+  it('rejects heights that overflow past Int16 magnitude, naming the offending index', () => {
+    const map = createHeightmap(32);
+    const tooHigh = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
+    tooHigh[0] = 40000; // would wrap to -25536 in a raw Int16Array assignment
+    expect(() => writeChunkHeights(map, 0, 0, tooHigh)).toThrow(/cell 0.*40000/);
+
+    const tooLow = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(0);
+    tooLow[1] = -50000;
+    expect(() => writeChunkHeights(map, 0, 0, tooLow)).toThrow(/cell 1.*-50000/);
+  });
+
+  it('leaves the map untouched when a payload is rejected', () => {
+    const map = createHeightmap(32);
+    map.cells[0] = 77; // pre-existing value at chunk (0,0) local (0,0)
+    const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(200);
+    heights[10] = NaN; // invalid entry comes after several valid-looking ones
+    expect(() => writeChunkHeights(map, 0, 0, heights)).toThrow(RangeError);
+    // Not overwritten by any of the valid entries preceding index 10:
+    // validation runs to completion before the write loop starts.
+    expect(map.cells[0]).toBe(77);
+  });
+
+  it('still writes a fully valid payload', () => {
+    const map = createHeightmap(32);
+    const heights = new Array(CHUNK_SIZE * CHUNK_SIZE).fill(MAX_HEIGHT);
+    writeChunkHeights(map, 0, 0, heights);
+    expect(heightAt(map, 0, 0)).toBe(MAX_HEIGHT);
+    expect(heightAt(map, CHUNK_SIZE - 1, CHUNK_SIZE - 1)).toBe(MAX_HEIGHT);
+  });
+});
+
+describe('isValidHeight', () => {
+  it('accepts integers within [MIN_HEIGHT, MAX_HEIGHT], including the boundaries', () => {
+    expect(isValidHeight(MIN_HEIGHT)).toBe(true);
+    expect(isValidHeight(MAX_HEIGHT)).toBe(true);
+    expect(isValidHeight(0)).toBe(true);
+  });
+
+  it('rejects out-of-range, non-integer, NaN, and overflow-magnitude values', () => {
+    expect(isValidHeight(MIN_HEIGHT - 1)).toBe(false);
+    expect(isValidHeight(MAX_HEIGHT + 1)).toBe(false);
+    expect(isValidHeight(1.5)).toBe(false);
+    expect(isValidHeight(NaN)).toBe(false);
+    expect(isValidHeight(40000)).toBe(false);
+    expect(isValidHeight(-50000)).toBe(false);
   });
 });

@@ -6,8 +6,21 @@
 // is in shared/ because the client needs the same chunk geometry to place
 // streamed chunks, and the server needs extraction/writing for snapshots.
 
-import { CHUNK_SIZE } from './constants.ts';
+import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
 import { cellIndex, type Heightmap } from './heightmap.ts';
+
+/**
+ * True for a height that is safe to store: a whole number within
+ * [MIN_HEIGHT, MAX_HEIGHT]. This is the Int16 wire/storage contract — the
+ * heightmap backing store is an `Int16Array` (design doc §3.3), and a plain
+ * `number` assigned into it is silently coerced: non-integers truncate,
+ * out-of-Int16-range values wrap (`40000` -> `-25536`), and `NaN` becomes
+ * `0`. Every height that reaches an `Int16Array` write MUST pass this check
+ * first, or the corruption is silent.
+ */
+export function isValidHeight(h: number): boolean {
+  return Number.isInteger(h) && h >= MIN_HEIGHT && h <= MAX_HEIGHT;
+}
 
 /** Chunks per world edge. World size must divide evenly into chunks. */
 export function chunksPerEdge(worldSize: number): number {
@@ -86,6 +99,17 @@ export function writeChunkHeights(
     throw new RangeError(
       `chunk payload has ${heights.length} cells, expected ${CHUNK_SIZE * CHUNK_SIZE}`,
     );
+  }
+  // Validate every height BEFORE writing any of them. Writing as we go and
+  // throwing on the first bad entry would leave the map holding half of a
+  // rejected payload — worse than the payload never having arrived, and
+  // silent until something reads the wrong half.
+  for (let k = 0; k < heights.length; k++) {
+    if (!isValidHeight(heights[k])) {
+      throw new RangeError(
+        `chunk payload cell ${k} has height ${heights[k]}, expected an integer in [${MIN_HEIGHT}, ${MAX_HEIGHT}]`,
+      );
+    }
   }
   const x0 = cx * CHUNK_SIZE;
   const y0 = cy * CHUNK_SIZE;
