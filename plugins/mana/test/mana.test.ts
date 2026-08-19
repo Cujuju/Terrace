@@ -1126,6 +1126,35 @@ describe('issue #19 — a later interceptor’s deny costs zero mana', () => {
     expect(sculptAt(allowHarness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(true);
     expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - POINT_COST);
   });
+
+  it('a later interceptor’s deny still pushes the authoritative balance to the sender (phantom-debit fix, 2026-08-19)', () => {
+    // THE BUG THIS PINS: the client debits its balance estimate on SEND
+    // (gateLocalSculpt) and relies on an authoritative message to correct it.
+    // When a NON-mana plugin denied while the pool sat at FULL capacity,
+    // nothing ever arrived — mana:denied is only mana's own, and regen skips
+    // full pools so no balance push fires — leaving the phantom debit standing
+    // ("sculpt failed and my mana was not refunded"). The deny-side effect
+    // phase (onIntentDenied) must now push the untouched balance.
+    const harness = bootWithLaterPlugin(laterDenier);
+    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY); // full pool: the regen path can never rescue the client
+    harness.sink.clear();
+
+    expect(sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y).applied).toBe(false);
+
+    // No mana:denied — mana itself allowed; the refusal was someone else's.
+    expect(harness.sink.ofType('mana:denied')).toHaveLength(0);
+    // But exactly the authoritative balance, pushed to the sender, uncharged.
+    const pushes = harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0].target).toBe(PLAYER.id);
+    expect(pushes[0].payload).toMatchObject({ balance: MANA_CAPACITY });
+
+    // And ticking on changes nothing: a full pool stays silent, so the push
+    // above was genuinely the only correction the client will ever get.
+    harness.sink.clear();
+    for (let n = 0; n < 50; n++) harness.host.tick(TICK_DT);
+    expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)).toHaveLength(0);
+  });
 });
 
 describe('gate / server parity — the same intent, the same fee', () => {

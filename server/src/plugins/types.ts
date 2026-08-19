@@ -281,6 +281,34 @@ export interface TerracePlugin {
   ): void;
 
   /**
+   * The DENY-side companion to onIntentApplied (added 2026-08-19, mana
+   * phantom-debit bug). Fires once per intent that passed structural
+   * validation and the mask check but was then refused — an interceptor
+   * denied it, or a plugin's rewrite of it failed re-validation. Never fires
+   * for the pipeline's silent rejections (malformed, locked): those are
+   * unreachable from a well-behaved client and deliberately unanswered.
+   *
+   * WHY IT EXISTS. A client plugin may optimistically mutate its own
+   * replicated state the moment an intent is SENT (mana's local gate debits
+   * its balance estimate). #21 guarantees the sender exactly one answer per
+   * intent, and the terrain prediction reconciles against it — but a plugin
+   * client has no view of core's `sculptDenied`, so its optimistic state
+   * needs a server-side push to reconcile against. This hook is where such a
+   * plugin re-asserts its authoritative state to the sender (mana pushes the
+   * player's untouched balance), so a denied intent leaves EVERY prediction
+   * premised on the send corrected, not just the terrain's.
+   *
+   * `intent` is the intent AS THE CLIENT SENT IT (post-validation), not any
+   * partial rewrite an earlier interceptor produced before the deny — the
+   * hook's purpose is reconciling what the SENDER predicted. Fires for every
+   * plugin, the denier included; like onIntentApplied it must not assume it
+   * was the one that denied. State mutation here must be limited to
+   * client-reconciliation messaging — the intent was refused, so nothing may
+   * be spent or built on its account.
+   */
+  onIntentDenied?(intent: SculptIntent, ctx: IntentCtx): void;
+
+  /**
    * Fired after any applied edit, with the FULL server-side diff. Handed the
    * same WorldApi as onTick/onIntent, so a plugin that reacts to terrain
    * (re-checking a habitat, creeping a player's territory, felling a tree)

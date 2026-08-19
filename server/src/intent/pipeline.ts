@@ -77,6 +77,8 @@ export interface IntentPipelineDeps {
     runIntent(intent: SculptIntent, player: Player): IntentVerdict;
     /** The effect phase — see PluginHost.notifyIntentApplied. */
     notifyIntentApplied(intent: SculptIntent, player: Player, diff: readonly CellDiff[]): void;
+    /** The deny-side effect phase — see PluginHost.notifyIntentDenied. */
+    notifyIntentDenied(intent: SculptIntent, player: Player): void;
   } & TerrainChangeListener;
 }
 
@@ -122,6 +124,14 @@ export function handleSculptIntent(
     if (intent.seq !== undefined) {
       world.sendTo(player.id, { type: 'sculptDenied', seq: intent.seq });
     }
+    // DENY-SIDE EFFECT PHASE (2026-08-19): the intent was refused, but the
+    // SENDER's client plugins may have predicted state on the send (mana's
+    // local debit, chiefly) — give every plugin the chance to push its
+    // authoritative state back so nothing predicted on this intent survives
+    // it. Fired after the nack for the same reason step 7 fires after the
+    // broadcast: the client should retire the terrain prediction and receive
+    // the plugin corrections in one causally-ordered burst.
+    interceptors.notifyIntentDenied(intent, player);
     return { applied: false, reason: 'plugin-denied', detail: verdict.reason };
   }
 
@@ -134,9 +144,15 @@ export function handleSculptIntent(
     // locked terrain (which would defeat the mask by proxy).
     const revalidated = validateSculptIntent(verdict.intent, world.size);
     if (revalidated === null) {
+      // A refusal like any plugin deny from the SENDER's point of view: their
+      // prediction is stranded either way (this path is silent by design),
+      // but plugin-side predictions can still be reconciled — see the deny
+      // branch above.
+      interceptors.notifyIntentDenied(intent, player);
       return { applied: false, reason: 'plugin-modified-invalid' };
     }
     if (!world.isCellUnlocked(revalidated.x, revalidated.y)) {
+      interceptors.notifyIntentDenied(intent, player);
       return { applied: false, reason: 'plugin-modified-invalid', detail: 'centre is locked' };
     }
     effective = revalidated;

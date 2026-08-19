@@ -152,6 +152,22 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener {
   }
 
   /**
+   * Fan-out after a REFUSED intent (interceptor deny, or a plugin rewrite
+   * that failed re-validation) — the deny-side twin of notifyIntentApplied,
+   * so a plugin whose client half predicted something on send can push the
+   * authoritative state back to the sender. See TerracePlugin.onIntentDenied.
+   */
+  notifyIntentDenied(intent: SculptIntent, player: Player): void {
+    for (const { loaded, api } of this.entries) {
+      const { plugin } = loaded;
+      if (!plugin.onIntentDenied) continue;
+      this.safely(plugin, 'onIntentDenied', () =>
+        plugin.onIntentDenied?.(intent, { player, world: api }),
+      );
+    }
+  }
+
+  /**
    * Fan-out after an applied edit, with the full server-side diff. Guarded
    * against runaway re-entrancy (see MAX_TERRAIN_CHANGE_DEPTH).
    *

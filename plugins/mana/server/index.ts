@@ -772,6 +772,24 @@ export const plugin: TerracePlugin = {
   onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
     commitCharge(intent, ctx);
   },
+
+  /**
+   * DENY-SIDE RECONCILIATION (2026-08-19). The client's local gate debits its
+   * balance ESTIMATE the moment an intent is sent (client/state.ts's
+   * gateLocalSculpt); when the intent is then refused — by this plugin OR any
+   * other interceptor (monsters vetoing a raise near its lair, chiefly) —
+   * that estimate is a phantom. Below capacity the next regen push overwrote
+   * it within a tick, but a FULL pool never regenerates and therefore never
+   * pushed, so the phantom debit stood indefinitely: sculpt fails, "mana not
+   * refunded". Pushing the authoritative balance on every refusal closes
+   * that: the wholesale replacement the client already performs on every
+   * mana:balance erases the phantom, whoever denied and whatever the pool
+   * level. (On mana's OWN denial this doubles the balance already carried by
+   * mana:denied — harmless, and cheaper than tracking who denied.)
+   */
+  onIntentDenied(_intent: SculptIntent, ctx: IntentCtx): void {
+    sendBalance(ctx.world, ctx.player.id, poolFor(ctx.player.id));
+  },
 };
 
 /** Test seam: a player's whole-unit balance, or null if they hold no pool. */

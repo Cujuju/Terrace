@@ -439,6 +439,57 @@ describe('PluginHost', () => {
     expect(() => host.notifyIntentApplied(intent, PLAYER, [])).not.toThrow();
   });
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // onIntentDenied — the deny-side effect phase (2026-08-19, mana phantom-
+  // debit fix). Same narrow contract as notifyIntentApplied: a plain fan-out
+  // with a working WorldApi; WHEN it fires (only on interceptor deny or a
+  // failed plugin rewrite) is the pipeline's guarantee, covered there.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it('hands onIntentDenied a working WorldApi and the same player/intent it was given', () => {
+    const seen: Array<{ intent: SculptIntent; playerId: string }> = [];
+    const fixture: TerracePlugin = {
+      name: 'reconciler',
+      onIntentDenied(intent, ctx): void {
+        seen.push({ intent, playerId: ctx.player.id });
+        ctx.world.sendTo(ctx.player.id, 'correction', {});
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    const host = new PluginHost(world, [fixture].map(asLoadedPlugin));
+
+    const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
+    host.notifyIntentDenied(intent, PLAYER);
+
+    expect(seen).toEqual([{ intent, playerId: PLAYER.id }]);
+    expect(sink.ofType('reconciler:correction')).toHaveLength(1);
+  });
+
+  it('runs onIntentDenied for every plugin in load order, and keeps going if one throws', () => {
+    const calls: string[] = [];
+    const broken: TerracePlugin = {
+      name: 'broken',
+      onIntentDenied(): void {
+        throw new Error('boom');
+      },
+    };
+    const first: TerracePlugin = { name: 'a-first', onIntentDenied: () => calls.push('a') };
+    const second: TerracePlugin = { name: 'b-second', onIntentDenied: () => calls.push('b') };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [first, broken, second].map(asLoadedPlugin));
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const intent: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 1, dir: 1 };
+    expect(() => host.notifyIntentDenied(intent, PLAYER)).not.toThrow();
+    errors.mockRestore();
+
+    expect(calls).toEqual(['a', 'b']);
+  });
+
   it('ignores snapshot slices belonging to plugins that are no longer installed', () => {
     const loaded: unknown[] = [];
     const plugin: TerracePlugin = {
