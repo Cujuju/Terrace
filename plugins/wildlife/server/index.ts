@@ -50,6 +50,18 @@
 // recomputes, for the record: 5.2 KB / 210 kbit/s at the old cap of 100, then
 // 7.8 KB / 312 kbit/s, then 8.7 KB / 348 kbit/s when `size` was added.
 //
+// FOG OF WAR (added issue #18, does not change the arithmetic above). "Every
+// broadcast carries the ENTIRE entity list" is now per RECIPIENT, not one
+// shared payload: each connected player's own list is the HABITAT population
+// filtered to chunks they have personally unlocked (WorldApi.broadcastVisible),
+// so the byte cost above is still exactly what it was — same entity count, same
+// per-entity size — just addressed individually instead of broadcast once. The
+// "no join handshake" bullet still holds for the same reason it always did:
+// broadcastVisible re-reads world.players() and each one's own mask on every
+// call, so a just-joined or just-crept player is caught up on the very next
+// cycle (≤ 200 ms) with no extra code. Birds are exempt from this filter — see
+// the cost note beside the broadcastVisible call in simulate() for why.
+//
 // 5 Hz is chosen because the extra 390 kbit/s buys nothing a player can see.
 // The fastest HABITAT species cruises at 3 cells/s, so between two 200 ms
 // updates it covers 0.6 cells — well under one cell, and the client interpolates
@@ -151,9 +163,30 @@ function simulate(world: WorldApi, dt: number): void {
 
   tickCount++;
   if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
-  world.broadcast(WILDLIFE_ENTITIES_MESSAGE, {
-    entities: [...entityStates(), ...birdStates()],
-  });
+
+  // FOG OF WAR (issue #18): each connected player is sent only the HABITAT
+  // population visible over their own unlocked chunks — never skipEmpty
+  // (default false), because this is a FULL-STATE replace message and the
+  // only way a client learns a creature left its view is that the next list
+  // simply omits it (see WorldApi.broadcastVisible's doc comment).
+  //
+  // Birds are the one exemption, and deliberately NOT run through the
+  // positionOf filter: flocks.ts reads neither heights nor the mask, so a
+  // bird's course is terrain-independent exactly like weather's systems are
+  // (../../weather/server/index.ts), AND its position legitimately starts
+  // and ends OFF the map on the spawn ring — handing an off-map coordinate to
+  // isCellVisibleTo would throw (it delegates to shared's chunkIndex, which
+  // bounds-checks and throws by contract, same as isCellUnlocked always has).
+  // Birds are computed once and spliced into every player's own payload
+  // unfiltered, the same "ambient, leaks nothing about locked terrain"
+  // reasoning weather documents for itself.
+  const birds = birdStates();
+  world.broadcastVisible(
+    WILDLIFE_ENTITIES_MESSAGE,
+    entityStates(),
+    (entity) => ({ x: entity.x, y: entity.y }),
+    (visibleHabitat) => ({ entities: [...visibleHabitat, ...birds] }),
+  );
 }
 
 /**
