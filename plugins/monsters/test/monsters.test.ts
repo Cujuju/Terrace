@@ -22,7 +22,11 @@ import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
-import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
+import {
+  RecordingSink,
+  asLoadedPlugin,
+  grantTokenEveryUnlockedChunk,
+} from '../../../server/test/support/harness.ts';
 import {
   MONSTERS_PLUGIN_NAME,
   MONSTERS_STATE_MESSAGE,
@@ -209,6 +213,11 @@ function boot(
   const host = new PluginHost(world, [monstersPlugin].map(asLoadedPlugin));
   host.worldCreate();
   world.addPlayer(PLAYER);
+  // Fog of war (issue #18): grant PLAYER's own token every chunk this
+  // world's union mask already has unlocked, or every broadcast below would
+  // filter down to nothing — this suite's PLAYER stands in for "one player
+  // who can see the whole (unlocked) world", same as it always has.
+  grantTokenEveryUnlockedChunk(world, PLAYER.token);
   host.playerJoined(PLAYER);
 
   return { world, host, sink };
