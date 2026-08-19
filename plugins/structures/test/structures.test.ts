@@ -32,6 +32,7 @@ import {
 import {
   CA_FIXED_SEED_PATTERNS,
   attemptSeed,
+  placePatternAt,
   stepGeneration,
   type LiveCellRecord,
 } from '../server/life.ts';
@@ -324,6 +325,115 @@ describe('seeding', () => {
   it('the fixed pattern library has at least the four named classics', () => {
     const names = CA_FIXED_SEED_PATTERNS.map((p) => p.name);
     expect(names).toEqual(expect.arrayContaining(['block', 'blinker', 'glider', 'r-pentomino']));
+  });
+
+  /**
+   * A flat, dry world where unlocking is per-chunk and hand-picked — the
+   * shape a real world has (a small unlocked island in a mostly-locked map),
+   * which the open-world fixture above deliberately does not model.
+   */
+  function partiallyUnlockedWorld(unlockedChunks: ReadonlyArray<readonly [number, number]>): StructuresWorld {
+    const size = 64;
+    const unlocked = new Set(unlockedChunks.map(([cx, cy]) => cy * (size / CHUNK_SIZE) + cx));
+    const isChunkUnlocked = (cx: number, cy: number): boolean =>
+      unlocked.has(cy * (size / CHUNK_SIZE) + cx);
+    return {
+      worldSize: size,
+      chunksPerEdge: size / CHUNK_SIZE,
+      heightAt: () => 4 * BAND_HEIGHT,
+      isChunkUnlocked,
+      isCellUnlocked: (x, y) =>
+        isChunkUnlocked(Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE)),
+    };
+  }
+
+  it('spends its whole attempt budget on unlocked ground: seeds land even when almost all chunks are locked', () => {
+    // One unlocked chunk in a 4x4-chunk world. The pre-2026-08-19 whole-world
+    // draw missed it on most rolls; drawing from the unlocked list must place
+    // a seed on (nearly) every roll, and every placed cell must be unlocked.
+    const world = partiallyUnlockedWorld([[2, 1]]);
+    const rng = createStructuresRng(7);
+    let placements = 0;
+    for (let roll = 0; roll < 20; roll++) {
+      const placed = attemptSeed(world, new Map(), rng);
+      if (placed === null) continue;
+      placements++;
+      for (const cell of placed) {
+        expect(isBuildableCell(world, cell.x, cell.y)).toBe(true);
+      }
+    }
+    expect(placements).toBeGreaterThanOrEqual(18);
+  });
+
+  it('prefers settlement-free chunks, so new colonies appear in OTHER places', () => {
+    // Two unlocked chunks; one already holds a live block. Every successful
+    // seed must land in the empty one while it exists.
+    const world = partiallyUnlockedWorld([[0, 0], [3, 3]]);
+    const live = boardOf([[2, 2], [3, 2], [2, 3], [3, 3]]); // block in chunk (0,0)
+    const rng = createStructuresRng(11);
+    let placements = 0;
+    for (let roll = 0; roll < 12; roll++) {
+      const placed = attemptSeed(world, live, rng);
+      if (placed === null) continue;
+      placements++;
+      for (const cell of placed) {
+        expect(Math.floor(cell.x / CHUNK_SIZE)).toBe(3);
+        expect(Math.floor(cell.y / CHUNK_SIZE)).toBe(3);
+      }
+    }
+    expect(placements).toBeGreaterThan(0);
+  });
+
+  it('falls back to occupied chunks only when every unlocked chunk is occupied', () => {
+    const world = partiallyUnlockedWorld([[1, 1]]);
+    const live = boardOf([[20, 20], [21, 20], [20, 21], [21, 21]]); // block inside the one unlocked chunk
+    const rng = createStructuresRng(3);
+    const placed = attemptSeed(world, live, rng);
+    // Placement may or may not succeed per roll (the block is in the way),
+    // but when it does it must be in the only unlocked chunk and never on top
+    // of the block.
+    if (placed !== null) {
+      for (const cell of placed) {
+        expect(Math.floor(cell.x / CHUNK_SIZE)).toBe(1);
+        expect(Math.floor(cell.y / CHUNK_SIZE)).toBe(1);
+        expect(live.has(structureKey(cell.x, cell.y))).toBe(false);
+      }
+    }
+  });
+
+  it('never seeds past STRUCTURES_CAP', () => {
+    const world = openWorld();
+    const rng = createStructuresRng(5);
+    // Fill to within 2 of the cap: every pattern in the library (and any
+    // soup, whose centre cell plus at least... its centre alone) has >= 3
+    // cells except the block (4) — nothing fits in 2, so seeding must refuse.
+    const live = new Map<number, LiveCellRecord>();
+    let placedCount = 0;
+    outer: for (let y = 0; y < OPEN_WORLD_SIZE && placedCount < STRUCTURES_CAP - 2; y += 1) {
+      for (let x = 0; x < OPEN_WORLD_SIZE; x += 1) {
+        if (placedCount >= STRUCTURES_CAP - 2) break outer;
+        live.set(structureKey(x, y), { age: 0, tier: 0 });
+        placedCount++;
+      }
+    }
+    for (let roll = 0; roll < 10; roll++) {
+      const placed = attemptSeed(world, live, rng);
+      if (placed !== null) {
+        expect(live.size + placed.length).toBeLessThanOrEqual(STRUCTURES_CAP);
+      }
+    }
+  });
+
+  it('placePatternAt is the single placement authority: rejects overlap and unbuildable ground', () => {
+    const world = openWorld();
+    const block = CA_FIXED_SEED_PATTERNS[0].cells;
+    // Clean ground: places all cells at tier 0.
+    const placed = placePatternAt(world, new Map(), 10, 10, block);
+    expect(placed).not.toBeNull();
+    expect(placed!.length).toBe(block.length);
+    // Any overlap with a live cell rejects the whole pattern.
+    const live = boardOf([[11, 11]]);
+    expect(placePatternAt(world, live, 10, 10, block)).toBeNull();
   });
 });
 

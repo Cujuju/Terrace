@@ -349,22 +349,98 @@ function choosePatternCells(rng: StructuresRng): ReadonlyArray<readonly [number,
 }
 
 /**
- * Tries to place one seed pattern on clear, buildable ground. Every cell the
- * chosen pattern needs must be simultaneously buildable AND currently dead —
- * a pattern is never overlaid onto an existing live cell, which would erase
- * that cell's earned age/tier without any terrain edit having happened. Up
- * to CA_SEED_MAX_PLACEMENT_ATTEMPTS anchor points are tried (a fresh pattern
- * choice and a fresh anchor each attempt, both drawn from `rng`) before
- * giving up for this generation. Returns the placed cells (all tier 0, all
- * age 0) or null.
+ * Validates one pattern at one anchor: every cell the pattern needs must be
+ * simultaneously buildable AND currently dead — a pattern is never overlaid
+ * onto an existing live cell, which would erase that cell's earned age/tier
+ * without any terrain edit having happened. Returns the placed cells (all
+ * tier 0, all age 0) or null.
+ *
+ * EXPORTED as the single placement authority: the CA's own seeding
+ * (attemptSeed) goes through it, and a future player-placed-buildings intent
+ * must go through it too, so "where may a pattern stand" can never mean two
+ * different things depending on who is asking.
+ */
+export function placePatternAt(
+  world: StructuresWorld,
+  live: ReadonlyMap<number, LiveCellRecord>,
+  anchorX: number,
+  anchorY: number,
+  patternCells: ReadonlyArray<readonly [number, number]>,
+): StructureCell[] | null {
+  const placed: StructureCell[] = [];
+  for (const [dx, dy] of patternCells) {
+    const x = anchorX + dx;
+    const y = anchorY + dy;
+    if (live.has(structureKey(x, y)) || !isBuildableCell(world, x, y)) return null;
+    placed.push({ x, y, tier: 0 });
+  }
+  return placed;
+}
+
+/** Row-major chunk index, the same layout every chunk loop in this plugin walks. */
+function chunkIndexOfCell(world: StructuresWorld, x: number, y: number): number {
+  return Math.floor(y / CHUNK_SIZE) * world.chunksPerEdge + Math.floor(x / CHUNK_SIZE);
+}
+
+/**
+ * Tries to place one seed pattern on clear, buildable ground. Up to
+ * CA_SEED_MAX_PLACEMENT_ATTEMPTS anchors are tried (a fresh pattern choice, a
+ * fresh chunk and a fresh in-chunk offset each attempt, all drawn from `rng`)
+ * before giving up for this generation. Returns the placed cells or null.
+ *
+ * WHERE ANCHORS COME FROM (reworked 2026-08-19, owner report: "buildings only
+ * ever appear as one 2×2 block"). The original draw was uniform over the
+ * whole world, but eligibility is confined to UNLOCKED chunks — a small
+ * fraction of a real world — so nearly every attempt landed on locked ground
+ * and missed; the rare seeds that did land decayed to a lone still life. Two
+ * rules replace it:
+ *
+ *   * Anchors are drawn from UNLOCKED chunks only (uniform over that list,
+ *     then uniform within the chunk), so the attempt budget is spent entirely
+ *     on ground a seed could actually take.
+ *   * Chunks that already hold a live cell are avoided while any unlocked,
+ *     settlement-free chunk exists (falling back to all unlocked chunks only
+ *     when every one is occupied): new colonies spring up in OTHER places, so
+ *     separate settlements exist to grow toward each other — true Life
+ *     interactions between patterns, not one cluster forever absorbing every
+ *     seed. Deliberately chunk-granular, not distance-based: cheap, and a
+ *     chunk is already the world's own unit of "somewhere else".
+ *
+ * The anchor is clamped so the pattern stays inside the world, which near the
+ * right/bottom world edge can push it a few cells out of the drawn chunk —
+ * acceptable: the cells still pass the same buildability test wherever they
+ * land.
+ *
+ * THE CAP APPLIES TO SEEDS TOO: a pattern that would push the live population
+ * past STRUCTURES_CAP is not placed (the CA's own births are already gated in
+ * scanChunk; seeding around that gate was an oversight).
  */
 export function attemptSeed(
   world: StructuresWorld,
   live: ReadonlyMap<number, LiveCellRecord>,
   rng: StructuresRng,
 ): StructureCell[] | null {
+  // Fixed row-major scan, so the candidate list (and therefore the RNG-driven
+  // choice) is reproducible for a given world state.
+  const unlocked: number[] = [];
+  for (let cy = 0; cy < world.chunksPerEdge; cy++) {
+    for (let cx = 0; cx < world.chunksPerEdge; cx++) {
+      if (world.isChunkUnlocked(cx, cy)) unlocked.push(cy * world.chunksPerEdge + cx);
+    }
+  }
+  if (unlocked.length === 0) return null;
+
+  const occupied = new Set<number>();
+  for (const key of live.keys()) {
+    const cell = cellOfKey(key);
+    occupied.add(chunkIndexOfCell(world, cell.x, cell.y));
+  }
+  const settlementFree = unlocked.filter((idx) => !occupied.has(idx));
+  const pool = settlementFree.length > 0 ? settlementFree : unlocked;
+
   for (let attempt = 0; attempt < CA_SEED_MAX_PLACEMENT_ATTEMPTS; attempt++) {
     const patternCells = choosePatternCells(rng);
+    if (live.size + patternCells.length > STRUCTURES_CAP) continue; // a smaller pattern may still fit
     let maxDx = 0;
     let maxDy = 0;
     for (const [dx, dy] of patternCells) {
@@ -373,21 +449,14 @@ export function attemptSeed(
     }
     if (world.worldSize <= maxDx || world.worldSize <= maxDy) continue; // pattern too big for this world
 
-    const anchorX = Math.floor(rng.next() * (world.worldSize - maxDx));
-    const anchorY = Math.floor(rng.next() * (world.worldSize - maxDy));
+    const chunkIdx = pool[Math.floor(rng.next() * pool.length)];
+    const baseX = (chunkIdx % world.chunksPerEdge) * CHUNK_SIZE;
+    const baseY = Math.floor(chunkIdx / world.chunksPerEdge) * CHUNK_SIZE;
+    const anchorX = Math.min(baseX + Math.floor(rng.next() * CHUNK_SIZE), world.worldSize - 1 - maxDx);
+    const anchorY = Math.min(baseY + Math.floor(rng.next() * CHUNK_SIZE), world.worldSize - 1 - maxDy);
 
-    const placed: StructureCell[] = [];
-    let clear = true;
-    for (const [dx, dy] of patternCells) {
-      const x = anchorX + dx;
-      const y = anchorY + dy;
-      if (live.has(structureKey(x, y)) || !isBuildableCell(world, x, y)) {
-        clear = false;
-        break;
-      }
-      placed.push({ x, y, tier: 0 });
-    }
-    if (clear) return placed;
+    const placed = placePatternAt(world, live, anchorX, anchorY, patternCells);
+    if (placed !== null) return placed;
   }
   return null;
 }
