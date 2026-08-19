@@ -275,17 +275,22 @@ export interface LairSurvey {
    */
   readonly regions: readonly LairRegion[];
   /**
-   * Cells in the region containing the queried `occupied` cell, or 0 when no
-   * cell was queried / it is not in this habitat. This is what the collapse test
+   * Cells in the region containing each queried `occupied` cell — aligned
+   * index-for-index with the `occupied` list handed to surveyLairs, 0 for a
+   * position that is not in this habitat. This is what the collapse test
    * reads: what matters is the size of the region the monster is ACTUALLY in,
    * not the size of the biggest one on the map.
+   *
+   * A LIST since 2026-08-19 (per-kind slots): one habitat can now hold one
+   * monster of EACH of its kinds, so the collapse test needs one answer per
+   * occupant rather than one per habitat.
    */
-  readonly occupiedRegionCells: number;
+  readonly occupiedRegionCells: readonly number[];
 }
 
 export const EMPTY_LAIR_SURVEY: LairSurvey = {
   regions: [],
-  occupiedRegionCells: 0,
+  occupiedRegionCells: [],
 };
 
 /**
@@ -394,7 +399,8 @@ function floodRegion(
 
 /**
  * Labels every connected region of one habitat and reports all of them, plus the
- * size of the region under `occupied`.
+ * size of the region under each `occupied` position (one habitat can hold one
+ * monster per kind since 2026-08-19, so the occupants come as a list).
  *
  * CONNECTIVITY IS 4-NEIGHBOUR. Two basins joined only at a diagonal pinch are
  * two basins: that is a corner a body 7 cells wide cannot swim through, so
@@ -417,7 +423,7 @@ function floodRegion(
 export function surveyLairs(
   regime: HabitatRegime,
   world: LairWorld,
-  occupied: { readonly x: number; readonly y: number } | null = null,
+  occupied: ReadonlyArray<{ readonly x: number; readonly y: number }> = [],
 ): LairSurvey {
   const size = world.worldSize;
   if (size <= 0) return EMPTY_LAIR_SURVEY;
@@ -449,15 +455,14 @@ export function surveyLairs(
     }
   }
 
-  let occupiedRegionCells = 0;
-  if (occupied !== null) {
-    const x = Math.floor(occupied.x);
-    const y = Math.floor(occupied.y);
-    if (x >= 0 && y >= 0 && x < size && y < size) {
-      const label = scratch.labels[y * size + x];
-      if (label !== UNLABELLED) occupiedRegionCells = regions[label]!.cells;
-    }
-  }
+  // One answer per queried occupant, in the caller's order (see LairSurvey).
+  const occupiedRegionCells = occupied.map((position) => {
+    const x = Math.floor(position.x);
+    const y = Math.floor(position.y);
+    if (x < 0 || y < 0 || x >= size || y >= size) return 0;
+    const label = scratch.labels[y * size + x];
+    return label === UNLABELLED ? 0 : regions[label]!.cells;
+  });
 
   return { regions, occupiedRegionCells };
 }

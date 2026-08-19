@@ -8,21 +8,23 @@
 //
 // It is the wildlife plugin's structure applied to the opposite problem. Where
 // wildlife regulates a POPULATION against a habitat-derived target, this
-// regulates a SINGLETON against an event: there is one slot, and the interesting
-// code is what is allowed to fill it (./summoning.ts).
+// regulates SINGLETONS against events: one slot per kind (per habitat until
+// 2026-08-19), and the interesting code is what is allowed to fill one
+// (./summoning.ts).
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // SYNC: FULL STATE, ONCE A SECOND.
 //
 // Every broadcast carries the entire monster list — at most one entry per
-// habitat, so two today. The same v1 choice wildlife made, with the same three
-// consequences:
+// KIND since 2026-08-19 (was per habitat), so three today. The same v1 choice
+// wildlife made, with the same three consequences:
 //
 //   * self-healing — a dropped or reordered message costs one second of
 //     staleness and nothing else; there is no diff stream to desynchronise;
 //   * no join handshake — a joining client is caught up by the next broadcast,
 //     so this plugin needs no onPlayerJoin snapshot path at all;
-//   * bounded cost — MAX_LIVING_MONSTERS is 2, so the payload is a constant.
+//   * bounded cost — MAX_LIVING_MONSTERS is 3 (one per kind since
+//     2026-08-19; it was 2, one per habitat), so the payload is a constant.
 //
 // FOG OF WAR (added issue #18, does not change the arithmetic below). "Every
 // broadcast carries the entire monster list" is per RECIPIENT, not one shared
@@ -36,10 +38,11 @@
 // BANDWIDTH. One entry is five keys — id, kind, x, y, heading — which msgpack
 // encodes in roughly 60 B including the key strings and the "cthulhu" value
 // (Colyseus re-sends keys on every message; there is no schema here). An empty
-// list is ~20 B, and the worst case (a sea monster AND a yeti) is ~120 B.
+// list is ~20 B, and the worst case (Cthulhu AND the kraken AND the yeti,
+// possible since the 2026-08-19 per-kind slots) is ~180 B.
 //
-//   every tick   (10 Hz): 1 200 B/s ≈ 9.6 kbit/s per client
-//   every 10th tick (1 Hz):  120 B/s ≈ 1.0 kbit/s per client   ← chosen
+//   every tick   (10 Hz): 1 800 B/s ≈ 14.4 kbit/s per client
+//   every 10th tick (1 Hz):  180 B/s ≈  1.4 kbit/s per client   ← chosen
 //
 // Both are rounding error next to wildlife's ~210 kbit/s, so bandwidth is NOT
 // what picks the cadence here — motion is, and it points the same way:
@@ -99,7 +102,7 @@ let tickCount = 0;
 
 /**
  * The broadcast payload's list: every living monster at wire precision, in the
- * fixed habitat order livingMonsters() iterates.
+ * fixed kind order livingMonsters() iterates.
  */
 export function monsterStates(): MonsterState[] {
   return livingMonsters().map((monster) => ({
@@ -188,11 +191,12 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
  * with no monster in it — or one holding only kinds that do not protect their
  * ground — pays one empty loop per sculpt.
  *
- * ASKED OF EVERY LIVING MONSTER, not of "the" monster: there is one per habitat
- * now, and a guard that only consulted the first would be a guard that stopped
- * working the day the list was ordered differently. Only Cthulhu answers yes
- * today, and only one Cthulhu can exist, so at most one of these ever matters —
- * but that is a fact about the table, not a property the loop should assume.
+ * ASKED OF EVERY LIVING MONSTER, not of "the" monster: there is one per KIND
+ * now (per habitat before 2026-08-19), and a guard that only consulted the
+ * first would be a guard that stopped working the day the list was ordered
+ * differently. Only Cthulhu answers yes today, and only one Cthulhu can exist,
+ * so at most one of these ever matters — but that is a fact about the table,
+ * not a property the loop should assume.
  *
  * `deny` and never `modify`: a raise the monster refuses is not a smaller raise
  * somewhere else, and rewriting a player's aim would be a stranger thing to do

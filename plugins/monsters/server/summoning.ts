@@ -27,18 +27,35 @@
 // Everything the world-wide slot bought — you never meet two horrors at once in
 // the place you are standing — is preserved, because the places are different.
 //
+// SUPERSEDED 2026-08-19 — THE SLOT IS NOW PER KIND (owner decision: "allow
+// multiple sea monsters to spawn"). The day foreseen two paragraphs up
+// arrived: the sea was meant to hold both Cthulhu and the kraken, and the
+// per-habitat slot meant the kraken could never once appear (Cthulhu summons
+// first — any deep basin qualifies him, only a trench qualifies the kraken —
+// and he cannot be banished, so the sea slot never re-opened). The invariant
+// stays structural in the same spirit: one nullable slot per KIND, in a total
+// record over MonsterKind, so a SECOND KRAKEN is as unrepresentable as a
+// second sea monster used to be. MAX_LIVING_MONSTERS_PER_KIND (./kinds.ts) is
+// the new grep marker; the per-habitat argument above survives one level
+// down — every KIND is still a singleton, an arrival is still an event, and
+// the cooldown moves per kind too (banishing the kraken says nothing about
+// the yeti, and now also nothing about a future second water kind).
+//
+// The lair SURVEY stays per habitat — it is a fact about the world's terrain,
+// one flood-fill walk per regime, whichever kinds read it.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 // THE FOUR GATES ON ARRIVAL
 //
-// A monster appears in a habitat only when ALL of these hold, checked in this
-// order:
+// A monster appears only when ALL of these hold, checked in this order (gates
+// 1 and 2 read PER-KIND state since the 2026-08-19 amendment above):
 //
-//   1. that habitat's slot is empty            — the singleton;
-//   2. that habitat's cooldown has expired     — minutes of enforced absence
-//                                                after something was driven off
-//                                                THERE. Per habitat, so
-//                                                banishing the yeti cannot
-//                                                suppress the sea;
+//   1. that kind's slot is empty               — the per-kind singleton;
+//   2. that kind's cooldown has expired        — minutes of enforced absence
+//                                                after THAT KIND was driven
+//                                                off. Per kind, so banishing
+//                                                the yeti cannot suppress the
+//                                                sea, nor the kraken Cthulhu;
 //   3. a qualifying lair exists                — one CONNECTED region of that
 //                                                habitat of at least
 //                                                minLairCells that reaches at
@@ -76,7 +93,7 @@
 // the same rule on land: level his snowfield and he leaves.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { MonsterKind } from '../protocol.ts';
+import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
 import {
   EMPTY_LAIR_SURVEY,
   HABITAT_REGIMES,
@@ -91,7 +108,7 @@ import {
   surveyLairs,
 } from './habitat.ts';
 import {
-  MAX_LIVING_MONSTERS_PER_HABITAT,
+  MAX_LIVING_MONSTERS_PER_KIND,
   type MonsterProfile,
   kindsInHabitat,
   profileOf,
@@ -131,35 +148,45 @@ export const LAIR_SURVEY_INTERVAL_SECONDS = 5;
 // Module-level singletons with a reset seam, matching the shape of the wildlife,
 // mana and reveal plugins (one plugin instance per server process).
 
-/** Everything the lifecycle owns about ONE habitat. */
-interface HabitatState {
-  /** THE SLOT. Null means nothing is out there. */
+/** Everything the lifecycle owns about ONE kind (per-kind slots, 2026-08-19). */
+interface KindState {
+  /** THE SLOT. Null means no monster of this kind is out there. */
   living: Monster | null;
   /** Simulated seconds of enforced absence remaining. 0 when not banished. */
   cooldownSeconds: number;
-  /** The most recent survey of this habitat. Drives gate 3 and the collapse. */
-  survey: LairSurvey;
 }
 
-function emptyHabitatState(): HabitatState {
-  return { living: null, cooldownSeconds: 0, survey: EMPTY_LAIR_SURVEY };
+function emptyKindState(): KindState {
+  return { living: null, cooldownSeconds: 0 };
 }
 
 /**
- * One state per habitat. Written out rather than built from HABITAT_REGIMES so
- * the type is a TOTAL Record over HabitatRegimeId: a new regime added to
- * habitat.ts fails to compile here until it is given a slot, where a
- * `Map`-shaped construction would have silently returned undefined for it at
- * runtime.
+ * One slot per KIND. Written out rather than built from MONSTER_KINDS so the
+ * type is a TOTAL Record over MonsterKind: a new kind added to the protocol
+ * fails to compile here until it is given a slot, where a `Map`-shaped
+ * construction would have silently returned undefined for it at runtime —
+ * the same argument the per-habitat record used to make about regimes.
  */
-function emptyStates(): Record<HabitatRegimeId, HabitatState> {
+function emptyKindStates(): Record<MonsterKind, KindState> {
   return {
-    water: emptyHabitatState(),
-    land: emptyHabitatState(),
+    cthulhu: emptyKindState(),
+    kraken: emptyKindState(),
+    yeti: emptyKindState(),
   };
 }
 
-let states: Record<HabitatRegimeId, HabitatState> = emptyStates();
+let kindStates: Record<MonsterKind, KindState> = emptyKindStates();
+
+/**
+ * The most recent survey of each habitat. Still PER HABITAT: a survey is one
+ * flood-fill walk over the world's terrain, a fact every kind living there
+ * reads (gate 3 and the collapse test), not a per-kind possession.
+ */
+function emptySurveys(): Record<HabitatRegimeId, LairSurvey> {
+  return { water: EMPTY_LAIR_SURVEY, land: EMPTY_LAIR_SURVEY };
+}
+
+let surveys: Record<HabitatRegimeId, LairSurvey> = emptySurveys();
 
 /** Accumulated simulated seconds — the only clock this plugin has. */
 let simSeconds = 0;
@@ -176,17 +203,31 @@ let lastSurveySeconds = Number.NEGATIVE_INFINITY;
  */
 let nextMonsterId = 1;
 
-function stateOf(regime: HabitatRegime): HabitatState {
-  return states[regime.id];
+function stateOf(kind: MonsterKind): KindState {
+  return kindStates[kind];
 }
 
-/** The monster living in this habitat, or null. */
-export function livingMonsterIn(regime: HabitatRegime): Monster | null {
-  return stateOf(regime).living;
+/** The monster of this kind, or null. */
+export function livingMonsterOfKind(kind: MonsterKind): Monster | null {
+  return stateOf(kind).living;
 }
 
 /**
- * Every living monster, in HABITAT_REGIMES order.
+ * The monsters living in this habitat, in MONSTER_KINDS order. A LIST since
+ * the 2026-08-19 per-kind slots: the sea can hold both of its kinds at once.
+ */
+export function livingMonstersIn(regime: HabitatRegime): Monster[] {
+  const alive: Monster[] = [];
+  for (const kind of kindsInHabitat(regime)) {
+    const monster = stateOf(kind).living;
+    if (monster !== null) alive.push(monster);
+  }
+  return alive;
+}
+
+/**
+ * Every living monster, in MONSTER_KINDS order (was HABITAT_REGIMES order
+ * before per-kind slots — equally fixed, differently keyed).
  *
  * The order is fixed rather than incidental because this is what the broadcast
  * list is built from: a list whose ORDER wobbled between ticks would be a wire
@@ -194,33 +235,34 @@ export function livingMonsterIn(regime: HabitatRegime): Monster | null {
  */
 export function livingMonsters(): Monster[] {
   const alive: Monster[] = [];
-  for (const regime of HABITAT_REGIMES) {
-    const monster = stateOf(regime).living;
+  for (const kind of MONSTER_KINDS) {
+    const monster = stateOf(kind).living;
     if (monster !== null) alive.push(monster);
   }
   return alive;
 }
 
-/** How many monsters are alive in the world, across all habitats. */
+/** How many monsters are alive in the world, across all kinds. */
 export function livingMonsterCount(): number {
   let count = 0;
-  for (const regime of HABITAT_REGIMES) {
-    if (stateOf(regime).living !== null) count++;
+  for (const kind of MONSTER_KINDS) {
+    if (stateOf(kind).living !== null) count++;
   }
   return count;
 }
 
-/** 0 or 1. The counting form of one habitat's slot, for the cap comparison. */
-export function livingCountIn(regime: HabitatRegime): number {
-  return stateOf(regime).living === null ? 0 : 1;
+/** 0 or 1. The counting form of one kind's slot, for the cap comparison. */
+export function livingCountOfKind(kind: MonsterKind): number {
+  return stateOf(kind).living === null ? 0 : 1;
 }
 
-export function cooldownRemainingSeconds(regime: HabitatRegime): number {
-  return stateOf(regime).cooldownSeconds;
+/** Per KIND since 2026-08-19: banishing the kraken says nothing about the yeti. */
+export function cooldownRemainingSecondsFor(kind: MonsterKind): number {
+  return stateOf(kind).cooldownSeconds;
 }
 
 export function lastLairSurvey(regime: HabitatRegime): LairSurvey {
-  return stateOf(regime).survey;
+  return surveys[regime.id];
 }
 
 export function nextMonsterIdValue(): number {
@@ -234,7 +276,8 @@ export function summoningSimSeconds(): number {
 
 /** Drops all state so a suite (or a fresh world) starts from zero. */
 export function resetSummoning(): void {
-  states = emptyStates();
+  kindStates = emptyKindStates();
+  surveys = emptySurveys();
   simSeconds = 0;
   lastSurveySeconds = Number.NEGATIVE_INFINITY;
   nextMonsterId = 1;
@@ -258,16 +301,16 @@ export function invalidateSurvey(): void {
  * THE ONLY FUNCTION THAT PUTS A MONSTER IN THE WORLD (the snapshot restore
  * below is the other way in, and that is what restoring a saved world means).
  *
- * Refuses outright if the habitat's slot is occupied. That check is redundant
+ * Refuses outright if this KIND's slot is occupied. That check is redundant
  * with every caller's own gate and is kept anyway: it is the last line of the
  * invariant, it costs one comparison per summon, and it means a future caller
- * cannot introduce a second monster by forgetting a precondition.
+ * cannot introduce a second monster of one kind by forgetting a precondition.
  *
  * Returns the monster, or null if it refused.
  */
 function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster | null {
-  const state = stateOf(profile.habitat);
-  if (livingCountIn(profile.habitat) >= MAX_LIVING_MONSTERS_PER_HABITAT) return null;
+  const state = stateOf(profile.kind);
+  if (livingCountOfKind(profile.kind) >= MAX_LIVING_MONSTERS_PER_KIND) return null;
 
   state.living = {
     id: nextMonsterId++,
@@ -283,7 +326,7 @@ function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster 
 }
 
 /**
- * Removes this monster and starts its habitat's cooldown. The one exit — habitat
+ * Removes this monster and starts its KIND's cooldown. The one exit — habitat
  * collapse, the ground moving out from under it, and any future cause all go
  * through here, so "it left" and "it cannot come back for ten minutes" can never
  * come apart.
@@ -294,15 +337,18 @@ function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster 
  * made harmless by the same three lines, and a new caller cannot introduce a
  * way to remove Cthulhu by forgetting to ask whether he can be removed.
  *
- * THE COOLDOWN IS THE HABITAT'S, not the world's: the sea being empty for ten
- * minutes says nothing about the mountain, and a shared cooldown would make
- * levelling a peak a way to keep the kraken out of the water.
+ * THE COOLDOWN IS THE KIND'S (was the habitat's until the 2026-08-19 per-kind
+ * slots), not the world's: the sea being empty of krakens for ten minutes says
+ * nothing about the mountain — and now also nothing about Cthulhu, or any
+ * future second water kind. The original argument ("a shared cooldown would
+ * make levelling a peak a way to keep the kraken out of the water") applies
+ * one level down, unchanged.
  *
  * Returns true if something actually left.
  */
 export function banish(monster: Monster): boolean {
   const profile = profileOf(monster.kind);
-  const state = stateOf(profile.habitat);
+  const state = stateOf(profile.kind);
   if (state.living !== monster) return false;
   const rule = profile.banishment;
   if (rule === null) return false;
@@ -346,7 +392,7 @@ export function enforceHabitat(world: LairWorld): boolean {
  * world pick the same lair.
  */
 function bestLairFor(profile: MonsterProfile): LairRegion | null {
-  const { regions } = stateOf(profile.habitat).survey;
+  const { regions } = surveys[profile.habitat.id];
   let best: LairRegion | null = null;
   for (const region of regions) {
     if (region.cells < profile.minLairCells) continue;
@@ -360,35 +406,35 @@ function bestLairFor(profile: MonsterProfile): LairRegion | null {
 }
 
 /**
- * Gates 2–4 of arrival, for ONE habitat. Called only when its slot is empty.
+ * Gates 2–4 of arrival, for ONE KIND. Called only when its slot is empty.
  *
- * Kinds are considered in SUMMON_ORDER, restricted to the kinds that live here —
- * strictest habitat first, see MONSTER_KINDS — and the first one whose lair
- * qualifies AND whose roll fires takes this habitat's slot.
+ * PER KIND since 2026-08-19: kinds no longer compete for a habitat slot, so
+ * each rolls its own independent Poisson arrival against its own lair
+ * requirements. (Before, kinds in one habitat were tried strictest-first and
+ * the first winner took the slot — which in practice meant the kraken never
+ * arrived: any deep basin qualifies Cthulhu, and once summoned he never
+ * leaves.)
  */
-function trySummon(regime: HabitatRegime, world: LairWorld, dt: number): void {
-  const state = stateOf(regime);
+function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
+  const state = stateOf(kind);
   if (state.cooldownSeconds > 0) return;
 
-  for (const kind of kindsInHabitat(regime)) {
-    const profile = profileOf(kind);
-    const cell = bestLairFor(profile);
-    if (cell === null) continue;
-    if (!rollEvent(summonRatePerSecond(profile), dt)) continue;
+  const profile = profileOf(kind);
+  const cell = bestLairFor(profile);
+  if (cell === null) return;
+  if (!rollEvent(summonRatePerSecond(profile), dt)) return;
 
-    // The survey can be up to LAIR_SURVEY_INTERVAL_SECONDS stale, so the cell it
-    // named is re-checked against the world as it is NOW. Failing here costs the
-    // roll that just fired — a negligible lengthening of the mean wait in the
-    // rare case where a player filled that exact cell within the last five
-    // seconds — and forces a fresh survey rather than trying a stale cell again.
-    if (!isLairCell(regime, world, cell.x, cell.y)) {
-      invalidateSurvey();
-      return;
-    }
-
-    summon(profile, cell.x, cell.y);
+  // The survey can be up to LAIR_SURVEY_INTERVAL_SECONDS stale, so the cell it
+  // named is re-checked against the world as it is NOW. Failing here costs the
+  // roll that just fired — a negligible lengthening of the mean wait in the
+  // rare case where a player filled that exact cell within the last five
+  // seconds — and forces a fresh survey rather than trying a stale cell again.
+  if (!isLairCell(profile.habitat, world, cell.x, cell.y)) {
+    invalidateSurvey();
     return;
   }
+
+  summon(profile, cell.x, cell.y);
 }
 
 /**
@@ -396,16 +442,19 @@ function trySummon(regime: HabitatRegime, world: LairWorld, dt: number): void {
  *
  * Fixed order:
  *   1. clock;
- *   2. cooldown decay, per habitat — a banished monster's absence is measured in
+ *   2. cooldown decay, per KIND — a banished monster's absence is measured in
  *      simulated seconds, so it survives a paused or slow server exactly;
- *   3. survey, on its interval, and the COLLAPSE TEST, both per habitat: if the
- *      region the monster is actually in has shrunk below its kind's collapse
- *      threshold, it leaves. Note this reads occupiedRegionCells, not the
- *      biggest region on the map — taking the habitat away from AROUND it is
- *      what drives it off, and a bigger ocean (or a taller mountain) elsewhere
- *      is no comfort. A kind that cannot be banished has no collapse threshold
+ *   3. survey, on its interval, PER HABITAT (one terrain walk each), and the
+ *      COLLAPSE TEST per OCCUPANT of that habitat: if the region a monster is
+ *      actually in has shrunk below its kind's collapse threshold, it leaves.
+ *      Note this reads its own entry of occupiedRegionCells, not the biggest
+ *      region on the map — taking the habitat away from AROUND it is what
+ *      drives it off, and a bigger ocean (or a taller mountain) elsewhere is
+ *      no comfort. A kind that cannot be banished has no collapse threshold
  *      to compare against and is skipped entirely;
- *   4. the arrival gates, for each habitat whose slot is empty.
+ *   4. the arrival gates, for each KIND whose slot is empty (per-kind slots,
+ *      2026-08-19 — each kind rolls independently, so Cthulhu's presence no
+ *      longer keeps the kraken out of the sea).
  *
  * Steps 1–4 are all driven by `dt`; nothing here reads a wall clock.
  */
@@ -415,26 +464,32 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
   const surveyDue = simSeconds - lastSurveySeconds >= LAIR_SURVEY_INTERVAL_SECONDS;
   if (surveyDue) lastSurveySeconds = simSeconds;
 
-  for (const regime of HABITAT_REGIMES) {
-    const state = stateOf(regime);
-
+  for (const kind of MONSTER_KINDS) {
+    const state = stateOf(kind);
     if (state.cooldownSeconds > 0) state.cooldownSeconds = Math.max(0, state.cooldownSeconds - dt);
+  }
 
-    if (surveyDue) {
-      state.survey = surveyLairs(regime, world, state.living);
+  if (surveyDue) {
+    for (const regime of HABITAT_REGIMES) {
+      // The occupants are surveyed together: one walk per habitat, one
+      // occupiedRegionCells entry per monster, index-aligned (habitat.ts).
+      const occupants = livingMonstersIn(regime);
+      const survey = surveyLairs(regime, world, occupants);
+      surveys[regime.id] = survey;
 
-      const monster = state.living;
-      const banishment = monster === null ? null : profileOf(monster.kind).banishment;
-      if (
-        monster !== null &&
-        banishment !== null &&
-        state.survey.occupiedRegionCells < banishment.lairCollapseCells
-      ) {
-        banish(monster);
+      for (let i = 0; i < occupants.length; i++) {
+        const monster = occupants[i];
+        const banishment = profileOf(monster.kind).banishment;
+        if (banishment === null) continue;
+        if (survey.occupiedRegionCells[i]! < banishment.lairCollapseCells) {
+          banish(monster);
+        }
       }
     }
+  }
 
-    if (state.living === null) trySummon(regime, world, dt);
+  for (const kind of MONSTER_KINDS) {
+    if (stateOf(kind).living === null) trySummon(kind, world, dt);
   }
 }
 
@@ -445,9 +500,10 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
  *
  * This is the ONLY seam through which a monster appears without passing the four
  * gates, which is exactly what restoring a saved world means: the gates already
- * ran, before the shutdown. It takes at most one monster PER HABITAT — a second
- * one for a habitat that already has its slot filled is dropped — so a corrupt
- * or hand-edited snapshot cannot smuggle in a duplicate.
+ * ran, before the shutdown. It takes at most one monster PER KIND (per-kind
+ * slots, 2026-08-19; was per habitat) — a second one for a kind whose slot is
+ * already filled is dropped — so a corrupt or hand-edited snapshot cannot
+ * smuggle in a duplicate.
  *
  * The surveys are deliberately left empty and stale so the first tick re-derives
  * them against the world as restored; a BANISHABLE monster whose habitat was
@@ -459,19 +515,19 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
 export function restoreSummoning(
   monsters: readonly Monster[],
   nextId: number,
-  cooldowns: Partial<Record<HabitatRegimeId, number>>,
+  cooldowns: Partial<Record<MonsterKind, number>>,
 ): void {
   resetSummoning();
 
   for (const monster of monsters) {
-    const state = stateOf(profileOf(monster.kind).habitat);
+    const state = stateOf(monster.kind);
     if (state.living !== null) continue;
     state.living = { ...monster };
   }
 
-  for (const regime of HABITAT_REGIMES) {
-    const cooldown = cooldowns[regime.id];
-    if (cooldown !== undefined) stateOf(regime).cooldownSeconds = cooldown;
+  for (const kind of MONSTER_KINDS) {
+    const cooldown = cooldowns[kind];
+    if (cooldown !== undefined) stateOf(kind).cooldownSeconds = cooldown;
   }
 
   nextMonsterId = nextId;

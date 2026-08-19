@@ -12,11 +12,11 @@
 // banished one gets it back early for free. Persisting the slots AND the
 // cooldowns makes a restart invisible to the singleton.
 
-import { isMonsterKind, type MonsterKind } from '../protocol.ts';
-import { HABITAT_REGIMES, type HabitatRegimeId } from './habitat.ts';
+import { MONSTER_KINDS, isMonsterKind, type MonsterKind } from '../protocol.ts';
+import type { HabitatRegimeId } from './habitat.ts';
 import {
   type Monster,
-  cooldownRemainingSeconds,
+  cooldownRemainingSecondsFor,
   livingMonsters,
   nextMonsterIdValue,
   restoreSummoning,
@@ -39,10 +39,22 @@ import {
  * with no monster in it, which will roll for one" — the same outcome that build
  * already produces for a corrupt slice. Nothing else in the snapshot is
  * affected; this slice is the plugin's own.
+ *
+ * BUMPED 2 → 3 when the slots (and with them the cooldowns) became per KIND
+ * (2026-08-19, "allow multiple sea monsters"). Same reasoning as 1 → 2: the
+ * change is not additive — a per-habitat cooldown key and a per-kind cooldown
+ * key disagree about what the map MEANS, and the honest place to assign a v2
+ * habitat's cooldown to a kind is a migration. That assignment is exact, not
+ * guessed: a cooldown only ever exists for a BANISHABLE kind, and each v2
+ * habitat contains exactly one — water's is the kraken (Cthulhu cannot be
+ * banished and so can never have written a cooldown), land's is the yeti.
  */
-export const MONSTERS_SLICE_VERSION = 2;
+export const MONSTERS_SLICE_VERSION = 3;
 
-/** The version this file can still READ, and migrate forward. */
+/** Per-habitat-cooldown era (the yeti), still readable and migrated forward. */
+export const MONSTERS_SLICE_V2_VERSION = 2;
+
+/** The oldest version this file can still READ, and migrate forward. */
 export const MONSTERS_SLICE_LEGACY_VERSION = 1;
 
 /**
@@ -63,9 +75,17 @@ interface MonstersSlice {
   readonly version: number;
   /** High-water mark of the id counter, so a restore never reuses an id. */
   readonly nextId: number;
-  /** The world's monsters: at most one per habitat. See summoning.ts. */
+  /** The world's monsters: at most one per KIND. See summoning.ts. */
   readonly monsters: readonly PersistedMonster[];
-  /** Simulated seconds of banishment left to serve, per habitat. */
+  /** Simulated seconds of banishment left to serve, per KIND (v3). */
+  readonly cooldownSeconds: Partial<Record<MonsterKind, number>>;
+}
+
+/** The version-2 shape (per-habitat cooldowns), kept for migration. */
+interface V2MonstersSlice {
+  readonly version: number;
+  readonly nextId: number;
+  readonly monsters: readonly PersistedMonster[];
   readonly cooldownSeconds: Partial<Record<HabitatRegimeId, number>>;
 }
 
@@ -78,12 +98,12 @@ interface LegacyMonstersSlice {
 }
 
 export function saveMonsters(): MonstersSlice {
-  const cooldowns: Partial<Record<HabitatRegimeId, number>> = {};
-  for (const regime of HABITAT_REGIMES) {
-    const remaining = cooldownRemainingSeconds(regime);
-    // Only habitats actually serving a banishment are written. A zero is the
+  const cooldowns: Partial<Record<MonsterKind, number>> = {};
+  for (const kind of MONSTER_KINDS) {
+    const remaining = cooldownRemainingSecondsFor(kind);
+    // Only kinds actually serving a banishment are written. A zero is the
     // absence of a cooldown, and writing it would grow the row for nothing.
-    if (remaining > 0) cooldowns[regime.id] = remaining;
+    if (remaining > 0) cooldowns[kind] = remaining;
   }
 
   return {
@@ -131,35 +151,57 @@ function parseCooldown(raw: unknown): number {
   return Math.max(0, raw as number);
 }
 
-/** Reads the per-habitat cooldown map of a version-2 slice. */
-function parseCooldowns(raw: unknown): Partial<Record<HabitatRegimeId, number>> {
-  const cooldowns: Partial<Record<HabitatRegimeId, number>> = {};
+/** Reads the per-KIND cooldown map of a version-3 slice. */
+function parseCooldowns(raw: unknown): Partial<Record<MonsterKind, number>> {
+  const cooldowns: Partial<Record<MonsterKind, number>> = {};
   if (typeof raw !== 'object' || raw === null) return cooldowns;
-  const map = raw as Partial<Record<HabitatRegimeId, unknown>>;
-  for (const regime of HABITAT_REGIMES) {
-    const parsed = parseCooldown(map[regime.id]);
-    if (parsed > 0) cooldowns[regime.id] = parsed;
+  const map = raw as Partial<Record<MonsterKind, unknown>>;
+  for (const kind of MONSTER_KINDS) {
+    const parsed = parseCooldown(map[kind]);
+    if (parsed > 0) cooldowns[kind] = parsed;
   }
+  return cooldowns;
+}
+
+/**
+ * Migrates a version-2 slice's per-HABITAT cooldowns to per-KIND ones.
+ *
+ * EXACT, NOT GUESSED (same standard the v1 migration set): a cooldown is only
+ * ever written after a banishment, and each v2 habitat holds exactly one
+ * banishable kind — the kraken in the water (Cthulhu cannot be banished, so a
+ * water cooldown cannot be his), the yeti on land. The monsters list needs no
+ * migration: it already carried kinds.
+ */
+function migrateV2Cooldowns(
+  raw: Partial<Record<HabitatRegimeId, unknown>> | undefined,
+): Partial<Record<MonsterKind, number>> {
+  const cooldowns: Partial<Record<MonsterKind, number>> = {};
+  if (typeof raw !== 'object' || raw === null) return cooldowns;
+  const water = parseCooldown(raw.water);
+  const land = parseCooldown(raw.land);
+  if (water > 0) cooldowns.kraken = water;
+  if (land > 0) cooldowns.yeti = land;
   return cooldowns;
 }
 
 /**
  * Migrates a version-1 slice: one monster, one world-wide cooldown.
  *
- * THE COOLDOWN'S HABITAT IS EXACT, NOT GUESSED. Version 1 predates the land
+ * THE COOLDOWN'S KIND IS EXACT, NOT GUESSED. Version 1 predates the land
  * habitat entirely — every kind it could name (cthulhu, kraken) lives in the
- * water — so a cooldown it recorded is a WATER cooldown by construction, and a
- * restored v1 world therefore keeps the sea empty for exactly as long as it was
- * going to and has never had anything to say about the mountain.
+ * water — and of those only the kraken can be banished, so a cooldown it
+ * recorded is a KRAKEN cooldown by construction. (Written "water" in the v2
+ * era for the same reason; the per-kind slots of 2026-08-19 just sharpen the
+ * same fact.)
  */
 function migrateLegacySlice(slice: Partial<LegacyMonstersSlice>): {
   monsters: Monster[];
-  cooldowns: Partial<Record<HabitatRegimeId, number>>;
+  cooldowns: Partial<Record<MonsterKind, number>>;
 } {
   const monster = parsePersistedMonster(slice.monster);
   const cooldown = parseCooldown(slice.cooldownSeconds);
-  const cooldowns: Partial<Record<HabitatRegimeId, number>> = {};
-  if (cooldown > 0) cooldowns.water = cooldown;
+  const cooldowns: Partial<Record<MonsterKind, number>> = {};
+  if (cooldown > 0) cooldowns.kraken = cooldown;
   return { monsters: monster === null ? [] : [monster], cooldowns };
 }
 
@@ -182,15 +224,17 @@ function migrateLegacySlice(slice: Partial<LegacyMonstersSlice>): {
  */
 export function loadMonsters(data: unknown): void {
   let monsters: Monster[] = [];
-  let cooldowns: Partial<Record<HabitatRegimeId, number>> = {};
+  let cooldowns: Partial<Record<MonsterKind, number>> = {};
   let nextId = 0;
 
   if (typeof data === 'object' && data !== null) {
     const version = (data as { version?: unknown }).version;
     const known =
-      version === MONSTERS_SLICE_VERSION || version === MONSTERS_SLICE_LEGACY_VERSION;
+      version === MONSTERS_SLICE_VERSION ||
+      version === MONSTERS_SLICE_V2_VERSION ||
+      version === MONSTERS_SLICE_LEGACY_VERSION;
 
-    if (version === MONSTERS_SLICE_VERSION) {
+    if (version === MONSTERS_SLICE_VERSION || version === MONSTERS_SLICE_V2_VERSION) {
       const slice = data as Partial<MonstersSlice>;
       if (Array.isArray(slice.monsters)) {
         for (const raw of slice.monsters) {
@@ -198,7 +242,14 @@ export function loadMonsters(data: unknown): void {
           if (monster !== null) monsters.push(monster);
         }
       }
-      cooldowns = parseCooldowns(slice.cooldownSeconds);
+      cooldowns =
+        version === MONSTERS_SLICE_VERSION
+          ? parseCooldowns(slice.cooldownSeconds)
+          : migrateV2Cooldowns(
+              (data as Partial<V2MonstersSlice>).cooldownSeconds as
+                | Partial<Record<HabitatRegimeId, unknown>>
+                | undefined,
+            );
     } else if (version === MONSTERS_SLICE_LEGACY_VERSION) {
       const migrated = migrateLegacySlice(data as Partial<LegacyMonstersSlice>);
       monsters = migrated.monsters;

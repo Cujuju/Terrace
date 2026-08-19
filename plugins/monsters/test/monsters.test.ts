@@ -73,7 +73,7 @@ import {
   KRAKEN_MIN_LAIR_DEEP_CELLS,
   KRAKEN_RESPAWN_COOLDOWN_SECONDS,
   MAX_LIVING_MONSTERS,
-  MAX_LIVING_MONSTERS_PER_HABITAT,
+  MAX_LIVING_MONSTERS_PER_KIND,
   MIN_LAIR_DEEP_CELLS,
   SUMMON_MEAN_WAIT_SECONDS,
   YETI_AMBLE_SPEED_CELLS_PER_SECOND,
@@ -92,9 +92,11 @@ import {
   LAIR_SURVEY_INTERVAL_SECONDS,
   type Monster,
   advanceSummoning,
-  cooldownRemainingSeconds,
+  cooldownRemainingSecondsFor,
   enforceHabitat,
-  livingMonsterIn,
+  livingCountOfKind,
+  livingMonsterOfKind,
+  livingMonstersIn,
   livingMonsterCount,
   livingMonsters,
 } from '../server/summoning.ts';
@@ -291,15 +293,15 @@ function livingMonster(): Monster | null {
   // A throw rather than an `expect`: this is called from inside loops that run
   // tens of thousands of iterations, and a matcher per iteration is measurably
   // slower than the simulation it is watching.
-  if (alive.length > MAX_LIVING_MONSTERS_PER_HABITAT) {
+  if (alive.length > MAX_LIVING_MONSTERS_PER_KIND) {
     throw new Error(`expected at most one monster, found ${alive.length}`);
   }
   return alive[0] ?? null;
 }
 
 /** The monster in the water / on the snow, or null. */
-const seaMonster = (): Monster | null => livingMonsterIn(WATER_HABITAT);
-const snowMonster = (): Monster | null => livingMonsterIn(LAND_HABITAT);
+const seaMonster = (): Monster | null => livingMonstersIn(WATER_HABITAT)[0] ?? null;
+const snowMonster = (): Monster | null => livingMonstersIn(LAND_HABITAT)[0] ?? null;
 
 beforeEach(() => {
   resetMonstersState();
@@ -386,9 +388,9 @@ describe('habitat regimes', () => {
     expect([...listed].sort()).toEqual([...MONSTER_KINDS].sort());
   });
 
-  it('derives the world cap from the per-habitat one', () => {
-    expect(MAX_LIVING_MONSTERS_PER_HABITAT).toBe(1);
-    expect(MAX_LIVING_MONSTERS).toBe(MAX_LIVING_MONSTERS_PER_HABITAT * HABITAT_REGIMES.length);
+  it('derives the world cap from the per-kind one (per-kind slots, 2026-08-19)', () => {
+    expect(MAX_LIVING_MONSTERS_PER_KIND).toBe(1);
+    expect(MAX_LIVING_MONSTERS).toBe(MAX_LIVING_MONSTERS_PER_KIND * MONSTER_KINDS.length);
   });
 });
 
@@ -437,12 +439,14 @@ describe('lair survey', () => {
     const harness = boot(bowl(GREAT_BASIN_RADIUS));
     const view = lairView(harness.world);
 
-    const inside = surveyLairs(WATER_HABITAT, view, { x: WORLD_CENTER, y: WORLD_CENTER });
-    expect(inside.occupiedRegionCells).toBe(largestRegion(inside)!.cells);
+    const inside = surveyLairs(WATER_HABITAT, view, [{ x: WORLD_CENTER, y: WORLD_CENTER }]);
+    expect(inside.occupiedRegionCells).toEqual([largestRegion(inside)!.cells]);
 
-    // A cell on dry land belongs to no region at all.
-    const outside = surveyLairs(WATER_HABITAT, view, { x: 0, y: 0 });
-    expect(outside.occupiedRegionCells).toBe(0);
+    // A cell on dry land belongs to no region at all — and the answers stay
+    // index-aligned with the queried occupants (per-kind slots, 2026-08-19).
+    const outside = surveyLairs(WATER_HABITAT, view, [{ x: 0, y: 0 }, { x: WORLD_CENTER, y: WORLD_CENTER }]);
+    expect(outside.occupiedRegionCells[0]).toBe(0);
+    expect(outside.occupiedRegionCells[1]).toBe(largestRegion(outside)!.cells);
     expect(largestRegion(outside)!.cells).toBeGreaterThan(0);
   });
 });
@@ -488,7 +492,7 @@ describe('the arrival gates', () => {
     // the spawn path could add a second monster, three thousand chances is where
     // it shows up.
     tick(harness, 3000);
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_HABITAT);
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_KIND);
     expect(livingMonster()!.id).toBe(id);
   });
 
@@ -703,7 +707,7 @@ describe('Cthulhu cannot be banished', () => {
     expect(livingMonster()).not.toBeNull();
     expect(livingMonster()!.id).toBe(id);
     // No banishment means no cooldown either — the two are one decision.
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
   });
 
   it('stays when his basin collapses to a puddle around him', () => {
@@ -724,7 +728,7 @@ describe('Cthulhu cannot be banished', () => {
       advanceSummoning(world, TICK_DT);
     }
     expect(livingMonster()).not.toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
   });
 
   it('holds position and heading once stranded, rather than spinning', () => {
@@ -790,33 +794,46 @@ describe('the kraken can be banished', () => {
 
     setMonsterRandomSource(ALWAYS);
     advanceSummoning(world, TICK_DT);
-    expect(livingMonster()!.kind).toBe('kraken');
+    // A trench qualifies Cthulhu too (per-kind slots, 2026-08-19); this test
+    // follows the KRAKEN through its collapse and ignores his roommate.
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
 
     // Shrink it below the collapse threshold while the monster's own cell stays
     // deep, so the ONLY thing that can banish it is the region test.
     trench.radius = 4;
     expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_LAIR_COLLAPSE_DEEP_CELLS);
-    expect(isLairCell(WATER_HABITAT, world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
+    expect(isLairCell(WATER_HABITAT, world, kraken!.x, kraken!.y)).toBe(true);
 
     // Survey cadence: the collapse is noticed on the next survey, not instantly.
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
-    expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    // The unbanishable roommate is untouched by the kraken's collapse.
+    expect(livingMonsterOfKind('cthulhu')).not.toBeNull();
   });
 
   it('submerges when the ground is raised out from under it', () => {
     const harness = boot(bowl(TRENCH_RADIUS));
     setMonsterRandomSource(ALWAYS);
     tick(harness, 1);
-    expect(livingMonster()!.kind).toBe('kraken');
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
     // Stop the roll: this test is about the departure, and an always-firing roll
     // would re-summon it the moment the cooldown is examined.
     setMonsterRandomSource(NEVER);
 
-    const cellX = Math.floor(livingMonster()!.x);
-    const cellY = Math.floor(livingMonster()!.y);
+    // Cthulhu co-arrives on the same survey cell (per-kind slots, 2026-08-19)
+    // and his ground protection would veto these raises — real behaviour, but
+    // the veto has its own tests. Walk him clear so the drying goes through.
+    const cthulhu = livingMonsterOfKind('cthulhu')!;
+    cthulhu.x = 1.5;
+    cthulhu.y = 1.5;
+
+    const cellX = Math.floor(kraken!.x);
+    const cellY = Math.floor(kraken!.y);
 
     // Raise its own cell out of the deep. No ticks in between, so it cannot swim
     // away — this is specifically the "the world changed under it" case. The
@@ -839,8 +856,8 @@ describe('the kraken can be banished', () => {
 
     expect(isDeepWaterHeight(harness.world.heightAt(cellX, cellY))).toBe(false);
     // The terrain reaction fires inside the sculpt — no tick needed.
-    expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
   });
 
   it('refuses to summon again until the cooldown is served, then summons exactly one', () => {
@@ -849,13 +866,13 @@ describe('the kraken can be banished', () => {
 
     setMonsterRandomSource(ALWAYS);
     advanceSummoning(world, TICK_DT);
-    const firstId = livingMonster()!.id;
+    const firstId = livingMonsterOfKind('kraken')!.id;
 
     trench.radius = 4;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
-    expect(livingMonster()).toBeNull();
+    expect(livingMonsterOfKind('kraken')).toBeNull();
 
     // The trench is back, and a roll that fires on every single tick, for one
     // second short of the cooldown. The gate is the only thing holding it back.
@@ -863,27 +880,68 @@ describe('the kraken can be banished', () => {
     for (let n = 0; n < (KRAKEN_RESPAWN_COOLDOWN_SECONDS - 2) / TICK_DT; n++) {
       advanceSummoning(world, TICK_DT);
     }
-    expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBeGreaterThan(0);
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBeGreaterThan(0);
 
     for (let n = 0; n < 3 / TICK_DT; n++) advanceSummoning(world, TICK_DT);
-    expect(livingMonsterCount()).toBe(1);
+    // Exactly one KRAKEN again (his unbanishable roommate never left).
+    expect(livingCountOfKind('kraken')).toBe(1);
     // A NEW monster, not the old one restored: ids are never reused.
-    expect(livingMonster()!.id).toBeGreaterThan(firstId);
+    expect(livingMonsterOfKind('kraken')!.id).toBeGreaterThan(firstId);
   });
 });
 
-describe('the kinds contest one slot', () => {
-  it('gives a trench world to the kraken — the stricter habitat gets first refusal', () => {
+describe('per-kind slots (2026-08-19 — was: the kinds contest one slot)', () => {
+  it('a trench world comes to hold BOTH sea kinds at once — Cthulhu no longer blocks the kraken', () => {
+    // THE OWNER'S BUG, pinned: a trench qualifies both kinds (any deep basin
+    // admits Cthulhu; the trench additionally admits the kraken), and under
+    // the old per-habitat slot whichever summoned first held the sea forever.
     setMonsterRandomSource(ALWAYS);
     const harness = boot(bowl(TRENCH_RADIUS));
     tick(harness, 1);
 
-    const monster = livingMonster();
-    expect(monster).not.toBeNull();
-    expect(monster!.kind).toBe('kraken');
-    expect(isLairCell(WATER_HABITAT, lairView(harness.world), monster!.x, monster!.y)).toBe(true);
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_HABITAT);
+    expect(livingMonsterCount()).toBe(2);
+    const kraken = livingMonsterOfKind('kraken');
+    const cthulhu = livingMonsterOfKind('cthulhu');
+    expect(kraken).not.toBeNull();
+    expect(cthulhu).not.toBeNull();
+    expect(isLairCell(WATER_HABITAT, lairView(harness.world), kraken!.x, kraken!.y)).toBe(true);
+    expect(isLairCell(WATER_HABITAT, lairView(harness.world), cthulhu!.x, cthulhu!.y)).toBe(true);
+  });
+
+  it('never holds two of the same kind, however many rolls fire', () => {
+    setMonsterRandomSource(ALWAYS);
+    const harness = boot(bowl(TRENCH_RADIUS));
+    // Five simulated minutes of a roll that fires on every tick: the per-kind
+    // slot is the only thing holding duplicates back, so this is its test.
+    for (let n = 0; n < 3000; n++) {
+      tick(harness, 1);
+      const kinds = livingMonsters().map((monster) => monster.kind);
+      if (new Set(kinds).size !== kinds.length) {
+        throw new Error(`duplicate kind alive: ${kinds.join(', ')}`);
+      }
+    }
+    expect(livingMonsterCount()).toBe(2); // both sea kinds, no yeti (no snow)
+  });
+
+  it('cooldowns are per kind: banishing the kraken neither removes Cthulhu nor delays him', () => {
+    setMonsterRandomSource(ALWAYS);
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
+    for (let n = 0; n < 2; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonsterCount()).toBe(2);
+
+    // Shrink the trench below the kraken's collapse threshold: the kraken
+    // leaves and serves its cooldown; Cthulhu (unbanishable) stays put.
+    trench.radius = 4;
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
+    }
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBeGreaterThan(0);
+    expect(livingMonsterOfKind('cthulhu')).not.toBeNull();
+    expect(cooldownRemainingSecondsFor('cthulhu')).toBe(0);
+    expect(cooldownRemainingSecondsFor('yeti')).toBe(0);
   });
 
   it('gives a big SHALLOW basin to Cthulhu, and never to the kraken', () => {
@@ -943,43 +1001,41 @@ describe('persistence', () => {
 
   it('keeps a banished monster banished across a restart', () => {
     // A KRAKEN world: only a banishable kind can test that a banishment
-    // survives a reboot, and Cthulhu is no longer one.
+    // survives a reboot, and Cthulhu is no longer one. Cthulhu co-arrives on
+    // any trench (per-kind slots, 2026-08-19) — and since he protects his
+    // ground and may stand on the same cell, the eviction here goes through
+    // the REGION COLLAPSE (shrinking the trench) rather than raising the
+    // kraken's cell out from under an unbanishable bodyguard.
     setMonsterRandomSource(ALWAYS);
-    const harness = boot(bowl(TRENCH_RADIUS));
-    tick(harness, 1);
-    expect(livingMonster()!.kind).toBe('kraken');
+    const trench = krakenTrench();
+    const world = basinWorld(trench);
+    advanceSummoning(world, TICK_DT);
+    expect(livingMonsterOfKind('kraken')).not.toBeNull();
 
-    const cellX = Math.floor(livingMonster()!.x);
-    const cellY = Math.floor(livingMonster()!.y);
-    for (let n = 0; n < 40 && isDeepWaterHeight(harness.world.heightAt(cellX, cellY)); n++) {
-      handleSculptIntent(
-        { world: harness.world, interceptors: harness.host },
-        PLAYER,
-        {
-          type: 'sculpt',
-          x: cellX,
-          y: cellY,
-          radius: MAX_BRUSH_RADIUS,
-          dir: 1,
-          tool: 'stamp',
-          profile: 'hard',
-        },
-      );
+    trench.radius = 4;
+    for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
+      advanceSummoning(world, TICK_DT);
     }
-    const snapshot = saveMonsters();
-    expect(snapshot.monsters).toEqual([]);
-    expect(snapshot.cooldownSeconds.water).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
-    // The mountain never had anything to do with this and is not written at all.
-    expect(snapshot.cooldownSeconds.land).toBeUndefined();
+    expect(livingMonsterOfKind('kraken')).toBeNull();
 
-    // Reboot onto the same world. Without the persisted cooldown, the very next
-    // tick would roll for a fresh monster — a restart would be a way to skip the
-    // banishment.
-    const rebooted = boot(bowl(TRENCH_RADIUS));
+    const snapshot = saveMonsters();
+    // Cthulhu (unbanishable) is still out there and rides along in the slice.
+    expect(snapshot.monsters.map((entry) => entry.kind)).toEqual(['cthulhu']);
+    expect(snapshot.cooldownSeconds.kraken).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    // No other kind had anything to do with this and none is written at all.
+    expect(snapshot.cooldownSeconds.yeti).toBeUndefined();
+    expect(snapshot.cooldownSeconds.cthulhu).toBeUndefined();
+
+    // Reboot onto the restored (full-size) trench. Without the persisted
+    // cooldown, the very next tick would roll a fresh kraken — a restart
+    // would be a way to skip the banishment.
+    trench.radius = 40;
+    resetMonstersState();
     loadMonsters(JSON.parse(JSON.stringify(snapshot)) as unknown);
-    tick(rebooted, 100);
-    expect(livingMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBeGreaterThan(0);
+    for (let n = 0; n < 100; n++) advanceSummoning(world, TICK_DT);
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBeGreaterThan(0);
+    expect(livingMonsterOfKind('cthulhu')).not.toBeNull();
   });
 
   it('cannot be made to hold two monsters by a restart', () => {
@@ -996,7 +1052,7 @@ describe('persistence', () => {
     loadMonsters(snapshot);
     tick(rebooted, 2000);
 
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_HABITAT);
+    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS_PER_KIND);
     expect(livingMonster()!.id).toBe(id);
   });
 
@@ -1026,8 +1082,8 @@ describe('persistence', () => {
       expect(livingMonsters()).toEqual([]);
       // No invented banishment, in EITHER habitat: a bad byte must not suppress
       // arrivals.
-      for (const regime of HABITAT_REGIMES) {
-        expect(cooldownRemainingSeconds(regime)).toBe(0);
+      for (const kind of MONSTER_KINDS) {
+        expect(cooldownRemainingSecondsFor(kind)).toBe(0);
       }
     }
   });
@@ -1036,14 +1092,14 @@ describe('persistence', () => {
     for (const cooldownSeconds of [-5, Number.NaN, Number.POSITIVE_INFINITY]) {
       resetMonstersState();
       loadMonsters({ version: 2, monsters: [], nextId: 3, cooldownSeconds: { water: cooldownSeconds, land: cooldownSeconds } });
-      for (const regime of HABITAT_REGIMES) {
-        expect(cooldownRemainingSeconds(regime)).toBe(0);
+      for (const kind of MONSTER_KINDS) {
+        expect(cooldownRemainingSecondsFor(kind)).toBe(0);
       }
 
       // ...and in the version-1 shape, where the cooldown was one scalar.
       resetMonstersState();
       loadMonsters({ version: 1, monster: null, nextId: 3, cooldownSeconds });
-      expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+      expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
     }
   });
 
@@ -1069,11 +1125,16 @@ describe('persistence', () => {
     // (0, 0) is dry land in the bowl, so the first tick's habitat check removes
     // it — which is also the "restored onto a changed world" path.
     tick(harness, 1);
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBeGreaterThan(0);
+    expect(cooldownRemainingSecondsFor('kraken')).toBeGreaterThan(0);
 
+    // (Cthulhu also arrives on this trench under the always-firing roll —
+    // per-kind slots — which only sharpens the assertion: EVERY id handed out
+    // after the restore, his included, is past the restored high-water mark.)
     tick(harness, KRAKEN_RESPAWN_COOLDOWN_SECONDS / TICK_DT + 2);
-    expect(livingMonster()).not.toBeNull();
-    expect(livingMonster()!.id).toBeGreaterThan(9);
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
+    expect(kraken!.id).toBeGreaterThan(9);
+    for (const monster of livingMonsters()) expect(monster.id).toBeGreaterThan(9);
   });
 
   it('restores an unbanishable monster onto a drained world and leaves him there', () => {
@@ -1091,13 +1152,14 @@ describe('persistence', () => {
     expect(livingMonster()).not.toBeNull();
     expect(livingMonster()!.id).toBe(9);
     expect(isLairCell(WATER_HABITAT, lairView(harness.world), 0, 0)).toBe(false);
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
   });
 
-  it('migrates a version-1 slice, and its cooldown is the WATER habitat\'s', () => {
+  it('migrates a version-1 slice, and its cooldown is the KRAKEN\'s', () => {
     // Version 1 predates the land habitat entirely — every kind it could name
-    // lives in the sea — so its one world-wide cooldown is a water cooldown by
-    // construction rather than by guess, and the mountain starts free.
+    // lives in the sea — and of those only the kraken is banishable, so its one
+    // world-wide cooldown is a kraken cooldown by construction rather than by
+    // guess, and every other kind starts free.
     resetMonstersState();
     loadMonsters({
       version: 1,
@@ -1108,11 +1170,14 @@ describe('persistence', () => {
 
     expect(seaMonster()).toMatchObject({ id: 11, kind: 'kraken', x: 3.5, y: 4.5 });
     expect(snowMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(42);
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(0);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(42);
+    expect(cooldownRemainingSecondsFor('yeti')).toBe(0);
   });
 
-  it('round-trips one monster per habitat, and drops a smuggled duplicate', () => {
+  it('round-trips one monster per KIND, and drops a smuggled same-kind duplicate', () => {
+    // Since the 2026-08-19 per-kind slots, a v2 snapshot holding BOTH sea kinds
+    // restores both — that is the point of the change — and the duplicate the
+    // slot gates out is a second monster of the SAME kind.
     resetMonstersState();
     loadMonsters({
       version: 2,
@@ -1121,20 +1186,34 @@ describe('persistence', () => {
       monsters: [
         { id: 21, kind: 'cthulhu', x: 1.5, y: 2.5, heading: 0 },
         { id: 22, kind: 'yeti', x: 3.5, y: 4.5, heading: 1 },
-        // A hand-edited second sea monster. The slot is the gate: it is dropped.
         { id: 23, kind: 'kraken', x: 5.5, y: 6.5, heading: 2 },
+        // A hand-edited SECOND cthulhu. The per-kind slot is the gate.
+        { id: 24, kind: 'cthulhu', x: 7.5, y: 8.5, heading: 3 },
       ],
     });
 
-    expect(livingMonsterCount()).toBe(2);
-    expect(seaMonster()!.id).toBe(21);
+    expect(livingMonsterCount()).toBe(3);
+    expect(livingMonsterOfKind('cthulhu')!.id).toBe(21);
+    expect(livingMonsterOfKind('kraken')!.id).toBe(23);
     expect(snowMonster()!.id).toBe(22);
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(7);
+    // The v2 per-habitat land cooldown migrated to the yeti, its only owner.
+    expect(cooldownRemainingSecondsFor('yeti')).toBe(7);
 
-    // ...and the save side agrees, per habitat, in the fixed regime order.
+    // ...and the save side agrees, per kind, in the fixed MONSTER_KINDS order,
+    // at the current (per-kind) slice version.
     const saved = saveMonsters();
-    expect(saved.monsters.map((entry) => entry.kind)).toEqual(['cthulhu', 'yeti']);
-    expect(saved.cooldownSeconds).toEqual({ land: 7 });
+    expect(saved.version).toBe(3);
+    expect(saved.monsters.map((entry) => entry.kind)).toEqual(['kraken', 'cthulhu', 'yeti']);
+    expect(saved.cooldownSeconds).toEqual({ yeti: 7 });
+
+    // And the v3 slice round-trips whole: two living SEA monsters — the shape
+    // the per-kind slots exist to hold — survive a save/load cycle intact.
+    resetMonstersState();
+    loadMonsters(JSON.parse(JSON.stringify(saved)) as unknown);
+    expect(livingMonsterOfKind('cthulhu')!.id).toBe(21);
+    expect(livingMonsterOfKind('kraken')!.id).toBe(23);
+    expect(snowMonster()!.id).toBe(22);
+    expect(cooldownRemainingSecondsFor('yeti')).toBe(7);
   });
 });
 
@@ -1341,10 +1420,20 @@ describe('the ground a monster will not let you raise', () => {
     setMonsterRandomSource(ALWAYS);
     const harness = boot(bowl(TRENCH_RADIUS));
     tick(harness, 1);
-    expect(livingMonster()!.kind).toBe('kraken');
+    const kraken = livingMonsterOfKind('kraken');
+    expect(kraken).not.toBeNull();
     setMonsterRandomSource(NEVER);
 
-    const cell = monsterCell();
+    // Cthulhu co-arrives on any trench (per-kind slots, 2026-08-19) at the
+    // same survey cell, and HIS aura would veto this raise — which is itself
+    // real behaviour now, but not what this test pins. Walk him far away
+    // (positions are live-mutable; the lurk step does the same) so the raise
+    // is answered by the kraken's flag alone.
+    const cthulhu = livingMonsterOfKind('cthulhu')!;
+    cthulhu.x = 1.5;
+    cthulhu.y = 1.5;
+
+    const cell = { x: Math.floor(kraken!.x), y: Math.floor(kraken!.y) };
     expect(profileOf('kraken').protectsGround).toBe(false);
     expect(sculpt(harness, cell.x, cell.y, 1).applied).toBe(true);
   });
@@ -1664,7 +1753,9 @@ describe('the yeti in the high Alps', () => {
 
     expect(seaMonster()!.kind).toBe('cthulhu');
     expect(snowMonster()!.kind).toBe('yeti');
-    expect(livingMonsterCount()).toBe(MAX_LIVING_MONSTERS);
+    // Two, not MAX_LIVING_MONSTERS (3): this world's basin is no trench, so
+    // the kraken's slot — per KIND since 2026-08-19 — rightly stays empty.
+    expect(livingMonsterCount()).toBe(2);
 
     // Five simulated minutes of a roll that fires on EVERY tick: if either slot
     // could take a second occupant, three thousand chances is where it shows up.
@@ -1708,7 +1799,7 @@ describe('the yeti in the high Alps', () => {
       advanceSummoning(world, TICK_DT);
     }
     expect(snowMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(YETI_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSecondsFor('yeti')).toBe(YETI_RESPAWN_COOLDOWN_SECONDS);
   });
 
   it('leaves when a player levels the peak out from under him', () => {
@@ -1747,10 +1838,10 @@ describe('the yeti in the high Alps', () => {
     expect(strokes).toBe(3);
     // The terrain reaction fires inside the sculpt — no tick needed.
     expect(snowMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBe(YETI_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSecondsFor('yeti')).toBe(YETI_RESPAWN_COOLDOWN_SECONDS);
     // ...and the sea is untouched by any of it.
     expect(seaMonster()).not.toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
   });
 
   it('cools down without suppressing the sea, and vice versa', () => {
@@ -1763,20 +1854,22 @@ describe('the yeti in the high Alps', () => {
 
     setMonsterRandomSource(ALWAYS);
     advanceSummoning(world, TICK_DT);
-    expect(seaMonster()!.kind).toBe('kraken');
+    // The trench admits Cthulhu too (per-kind slots) — this test follows the
+    // KRAKEN and the YETI, the two banishable kinds, by name.
+    expect(livingMonsterOfKind('kraken')).not.toBeNull();
     expect(snowMonster()!.kind).toBe('yeti');
-    const krakenId = seaMonster()!.id;
+    const krakenId = livingMonsterOfKind('kraken')!.id;
 
     snow.radius = 3;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
     expect(snowMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBeGreaterThan(0);
+    expect(cooldownRemainingSecondsFor('yeti')).toBeGreaterThan(0);
 
     // The kraken is exactly where it was, on no cooldown at all.
-    expect(seaMonster()!.id).toBe(krakenId);
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(0);
+    expect(livingMonsterOfKind('kraken')!.id).toBe(krakenId);
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(0);
 
     // Now drain the sea instead. The mountain is back and still cooling: each
     // habitat serves its own absence and neither reads the other's.
@@ -1785,10 +1878,10 @@ describe('the yeti in the high Alps', () => {
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
-    expect(seaMonster()).toBeNull();
-    expect(cooldownRemainingSeconds(WATER_HABITAT)).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBeLessThan(YETI_RESPAWN_COOLDOWN_SECONDS);
-    expect(cooldownRemainingSeconds(LAND_HABITAT)).toBeGreaterThan(0);
+    expect(livingMonsterOfKind('kraken')).toBeNull();
+    expect(cooldownRemainingSecondsFor('kraken')).toBe(KRAKEN_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSecondsFor('yeti')).toBeLessThan(YETI_RESPAWN_COOLDOWN_SECONDS);
+    expect(cooldownRemainingSecondsFor('yeti')).toBeGreaterThan(0);
     expect(snowMonster()).toBeNull();
   });
 
