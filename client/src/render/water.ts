@@ -21,7 +21,13 @@ import {
   WATER_SURFACE_LIFT,
 } from '../config.ts';
 
-const WATER_COLOR = 0x2f6f9e;
+/**
+ * Exported so other render modules that want to blend toward "the sea" — the
+ * frontier mist curtain (render/frontierFog.ts) — derive it from this one
+ * definition rather than picking a second water colour that could drift out
+ * of sync.
+ */
+export const WATER_COLOR = 0x2f6f9e;
 /** Translucent enough to show the seabed colour and submerged terraces. */
 const WATER_OPACITY = 0.62;
 /**

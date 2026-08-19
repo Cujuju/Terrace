@@ -38,8 +38,13 @@ import {
   type CameraPose,
 } from './cameraPose.ts';
 
-/** Sky/background, and the hemisphere light's sky colour. */
-const SKY_COLOR = 0x9fc7e8;
+/**
+ * Sky/background, and the hemisphere light's sky colour. Exported so other
+ * render modules that want to blend toward "the sky" — the frontier mist
+ * curtain (render/frontierFog.ts) — derive it from this one definition
+ * rather than picking a second sky colour that could drift out of sync.
+ */
+export const SKY_COLOR = 0x9fc7e8;
 /**
  * Bounce colour from below — keeps shaded terrace faces from going black.
  * Lightened from 0x5b5a4e with the 2026-08-14 rebalance: the old bounce was
