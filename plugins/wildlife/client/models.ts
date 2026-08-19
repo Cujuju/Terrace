@@ -13,8 +13,9 @@
 //     swimmer, and the model faces +X (see index.ts for the heading → rotation.y
 //     mapping).
 //
-// RESIDUAL, stated rather than hidden: each creature is 2–6 Mesh objects, so a
-// full 512² population is roughly 330 draw calls. That sits alongside the
+// RESIDUAL, stated rather than hidden: each creature is 2–7 Mesh objects (the
+// whale, at 7, is the ceiling — head/torso/tail-stock/flukes/dorsal/2
+// pectorals), so a full 512² population is roughly 330 draw calls. That sits alongside the
 // terrain's up-to-1024 chunk meshes, so it is not the bottleneck; if it ever
 // becomes one, merging each species' static parts into a single BufferGeometry
 // (three/addons BufferGeometryUtils) collapses it to ~2 per creature.
@@ -116,6 +117,35 @@ const BIRD_WING_LENGTH = 0.62;
  */
 const BIRD_WING_ROOT_OFFSET = BIRD_WING_LENGTH / 2;
 
+/**
+ * Span of ONE pectoral fin panel, in world units. Mirrors BIRD_WING_LENGTH's
+ * role for the wing: the panel's own length, from which its root offset is
+ * derived below so the two numbers cannot drift apart.
+ */
+const WHALE_PECTORAL_SPAN = 0.9;
+/** Half the pectoral panel's span — see BIRD_WING_ROOT_OFFSET for the same derivation. */
+const WHALE_PECTORAL_ROOT_OFFSET = WHALE_PECTORAL_SPAN / 2;
+/**
+ * Static droop of each pectoral fin about its pivot's local X, in radians.
+ * Real flippers hang down and back; they do not flap, so this is baked into
+ * the rig once at creation rather than driven from `animate`.
+ */
+const WHALE_PECTORAL_DOWNSWEEP_RADIANS = 0.35;
+/** Static backward sweep of each pectoral fin about its pivot's local Y, in radians. */
+const WHALE_PECTORAL_BACKSWEEP_RADIANS = 0.3;
+/**
+ * Height of the dorsal hump cone, in world units. Kept deliberately small — a
+ * rorqual's dorsal is a stubby backward hook, not a shark's tall fin (the
+ * shape this replaces: see git history for the single 0.7-tall cone this used
+ * to be). Sized against SWIM_PROFILES.whale (client/placement.ts), which
+ * guarantees only 0.7 of clearance between the swim origin and the sea
+ * surface: at the hump's x-position (-0.3, embedded at y=0.42) the torso
+ * ellipsoid's own surface sits at y≈0.53, so the hump's crown lands at
+ * y≈0.54 — a 0.16 margin under the 0.7 budget. Confirmed numerically and
+ * against the preview render, not trusted from a single arithmetic pass.
+ */
+const WHALE_DORSAL_HEIGHT = 0.24;
+
 const TWO_PI = Math.PI * 2;
 
 /** One creature's scene object plus its idle animation. */
@@ -179,9 +209,24 @@ export function createWildlifeModels(): WildlifeModels {
   fishTail.rotateZ(Math.PI / 2);
 
   const whaleMaterial = lambert(WHALE_COLOR);
-  const whaleBody = ellipsoid(4.4, 1.1, 1.4);
-  const whaleFin = keepGeometry(new ConeGeometry(0.3, 0.7, CONE_SEGMENTS));
-  const whaleFlukes = keepGeometry(new BoxGeometry(0.7, 0.12, 2.2));
+  // Body: three ellipsoids stacked nose-to-tail rather than one. A single
+  // ellipsoid tapers the same amount at both ends; a whale does not — it is
+  // blunt up front, widest amidships, and draws out into a long tapered
+  // peduncle at the back. Each piece is positioned in createWhale() to
+  // overlap its neighbour, the same seam-hiding trick the flukes already use
+  // against the tail stock.
+  const whaleHead = ellipsoid(1.0, 0.8, 1.0);
+  const whaleTorso = ellipsoid(2.4, 1.15, 1.45);
+  const whaleTailStock = ellipsoid(2.0, 0.6, 0.8);
+  const whaleFlukes = keepGeometry(new BoxGeometry(0.6, 0.12, 2.3));
+  // Apex points +Y already — exactly what a hump sitting on the whale's back
+  // needs, so unlike the fish tail / deepsea jaw this cone needs no rotate.
+  const whaleDorsal = keepGeometry(new ConeGeometry(0.2, WHALE_DORSAL_HEIGHT, CONE_SEGMENTS));
+  // A flat panel, like the flukes: a pectoral fin has no radial symmetry to
+  // exploit (a cone would look like a spike, not a flipper), and a box is
+  // left/right-symmetric for free, so the SAME geometry serves both sides —
+  // see the pivot-per-side mirroring in createWhale().
+  const whalePectoralFin = keepGeometry(new BoxGeometry(0.55, 0.06, WHALE_PECTORAL_SPAN));
 
   const deepseaMaterial = lambert(DEEPSEA_COLOR);
   const deepseaLureMaterial = unlit(DEEPSEA_LURE_COLOR);
@@ -249,9 +294,43 @@ export function createWildlifeModels(): WildlifeModels {
 
   function createWhale(): CreatureModel {
     const { root, rig } = rigged();
-    rig.add(part(whaleBody, whaleMaterial, 0, 0, 0));
-    rig.add(part(whaleFin, whaleMaterial, -0.4, 0.6, 0));
-    const flukes = part(whaleFlukes, whaleMaterial, -2.4, 0, 0);
+    // Nose-to-tail: head, torso, tail stock. Positions overlap their
+    // neighbour by a wide margin (0.2–0.55 world units) so the flat-shaded
+    // facets never show a seam — same tolerance the original body/flukes join
+    // already relied on.
+    rig.add(part(whaleHead, whaleMaterial, 1.55, 0, 0));
+    rig.add(part(whaleTorso, whaleMaterial, 0.15, 0, 0));
+    rig.add(part(whaleTailStock, whaleMaterial, -1.5, 0, 0));
+
+    // A small backward-hooked hump, roughly two-thirds of the way back —
+    // see WHALE_DORSAL_HEIGHT for why it stops well short of the torso's own
+    // crown.
+    rig.add(part(whaleDorsal, whaleMaterial, -0.3, 0.42, 0));
+
+    // Pectoral fins: the same pivot-per-side recipe createBird uses for
+    // wings — a Group at the shoulder with the panel offset outward inside
+    // it, so the pivot's rotation is the hinge and not the panel's own
+    // centre. Unlike the bird's wings this pose is fixed, not animate()-driven
+    // (real flippers droop; they do not flap).
+    function pectoralFin(sign: number): void {
+      const pivot = new Group();
+      pivot.position.set(0.75, -0.05, 0);
+      pivot.add(part(whalePectoralFin, whaleMaterial, 0, 0, sign * WHALE_PECTORAL_ROOT_OFFSET));
+      // Opposite sign on the droop (X) so both tips hang the SAME way — the
+      // bird wing's own rule (see its comment on leftWing/rightWing) applies
+      // unchanged here. Matching sign on the sweep (Y) so both tips trail the
+      // SAME way backward: unlike the droop, the sweep rotation composes with
+      // the panel's already-mirrored Z offset such that a shared sign cancels
+      // out into one consistent world direction — checked against the preview
+      // render, not trusted from the arithmetic alone.
+      pivot.rotation.x = -sign * WHALE_PECTORAL_DOWNSWEEP_RADIANS;
+      pivot.rotation.y = sign * WHALE_PECTORAL_BACKSWEEP_RADIANS;
+      rig.add(pivot);
+    }
+    pectoralFin(1);
+    pectoralFin(-1);
+
+    const flukes = part(whaleFlukes, whaleMaterial, -2.7, 0, 0);
     rig.add(flukes);
     return {
       root,
