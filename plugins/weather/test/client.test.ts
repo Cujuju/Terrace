@@ -433,6 +433,38 @@ describe('the photosensitivity floor', () => {
     expect(governor.requestFlash()).toBe(true);
   });
 
+  it('schedule.reset() goes dark on the spot, so a pooled rig never reopens mid-flash', () => {
+    // A rig is POOLED (client/rig.ts): a storm's LightningSchedule outlives the
+    // storm and is handed to whatever system acquires the rig next. If release()
+    // did not reset it, a schedule freed while still inside FLASH_DURATION_SECONDS
+    // of its last real flash would carry that brightness straight into the new
+    // storm's first frame — a flash the governor never approved. This is the test
+    // for the fix, not just the symptom: it checks brightness() goes to 0 the
+    // INSTANT reset() is called, with no advance() in between to decay it away.
+    const governor = new LightningGovernor();
+    governor.advance(MEAN_FLASH_INTERVAL_SECONDS * 10);
+    const schedule = new LightningSchedule(() => 0);
+
+    const started = schedule.advance(MEAN_FLASH_INTERVAL_SECONDS * 10, true, governor);
+    expect(started).not.toBeNull();
+    // Move partway through the flash's decay — armed false, so this only ages
+    // `sinceFlash` and proposes nothing new, exactly like a rig whose storm has
+    // already dissipated (rig.ts: `if (!lit) return;` stops calling advance() at
+    // all once intensity hits 0, so age freezes rather than resets on its own).
+    schedule.advance(FLASH_ATTACK_SECONDS * 2, false, governor);
+    expect(schedule.brightness()).toBeGreaterThan(0);
+
+    schedule.reset();
+    // No advance() call here — this is the pool handing the rig to a brand-new
+    // storm before a single frame has run.
+    expect(schedule.brightness()).toBe(0);
+
+    // The redrawn wait also respects the photosensitivity floor: the very next
+    // frame cannot propose a flash the governor would have to refuse.
+    const immediate = schedule.advance(1 / 60, true, governor);
+    expect(immediate).toBeNull();
+  });
+
   it('places a bolt from the cloud base down into the haze', () => {
     expect(BOLT_TOP_WORLD_Y).toBe(CLOUD_BASE_WORLD_Y);
     expect(BOLT_BOTTOM_WORLD_Y).toBeGreaterThan(0);

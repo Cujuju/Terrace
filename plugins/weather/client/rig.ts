@@ -378,6 +378,13 @@ export interface WeatherRig {
     reduced: boolean,
     governor: LightningGovernor,
   ): void;
+  /**
+   * Forgets any in-progress lightning flash. Called by the pool before a rig
+   * re-enters the free list, so a storm rig reused by a later system never opens
+   * with a stale flash that the LightningGovernor never approved (sky.ts). A
+   * no-op for kinds with no lightning clock.
+   */
+  reset(): void;
   /** Frees everything this rig OWNS. Shared geometry belongs to the pool. */
   dispose(): void;
 }
@@ -561,6 +568,10 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
       flashLight!.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
     },
 
+    reset(): void {
+      lightning?.reset();
+    },
+
     dispose(): void {
       root.clear();
       precipitation?.dispose();
@@ -612,6 +623,12 @@ export function createWeatherRigs(): WeatherRigs {
     },
 
     release(rig: WeatherRig): void {
+      // A rig re-enters the pool dark: without this, a storm rig freed mid-flash
+      // (or within FLASH_DURATION_SECONDS of one) would hand its stale
+      // LightningSchedule state to whatever system acquires it next, lighting an
+      // ungoverned phantom flash at the OLD storm's bolt position on the very
+      // first frame.
+      rig.reset();
       let waiting = free.get(rig.kind);
       if (waiting === undefined) {
         waiting = [];

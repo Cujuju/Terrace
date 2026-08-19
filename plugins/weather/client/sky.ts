@@ -680,4 +680,17 @@ export class LightningSchedule {
   brightness(): number {
     return flashBrightness(this.sinceFlash);
   }
+
+  /**
+   * Forgets any flash in progress and redraws the wait for the next one, exactly
+   * as the constructor does. Required before a pooled rig is reused: without it,
+   * a schedule returned to the pool mid-flash (or within FLASH_DURATION_SECONDS
+   * of one) would replay that stale brightness the instant a NEW storm acquires
+   * the rig — a flash the governor never approved, lit at the old storm's bolt
+   * position. Call this on release, before the rig re-enters the free list.
+   */
+  reset(): void {
+    this.sinceFlash = Number.POSITIVE_INFINITY;
+    this.untilNext = nextFlashIntervalSeconds(this.random());
+  }
 }
