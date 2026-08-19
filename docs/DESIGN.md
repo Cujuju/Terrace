@@ -172,7 +172,25 @@ chosen over AGPL to maximize adoption; people may build closed-source games on t
 - **SQLite** via better-sqlite3: periodic world snapshots + plugin persistence slices.
   Zero-config for self-hosters; the owner already runs this stack in StockApp.
 - **Docker Compose** as the canonical self-host path: clone → `docker compose up` →
-  your own world. Dockerfile + compose in repo root.
+  your own world. Dockerfile + compose in repo root. Still two containers today
+  (nginx `client` + `server`) — the item below is the first step of the release
+  track toward collapsing that, not the collapse itself.
+- **One process = one playable URL (issue #20, 2026-08-18):** when a `vite build`
+  of the client exists (`CLIENT_DIST_PATH`, default `client/dist` next to
+  `server/`), the game server serves it over its own HTTP port with SPA
+  index-fallback — `http://host:PORT` is then the whole game, no separate static
+  server. Absent a build, the server logs that it is unbuilt and does nothing
+  else; `pnpm --dir client dev` (Vite) remains the dev path, unchanged. Built on
+  Colyseus's `ServerOptions.express` hook rather than a new `express`
+  dependency — `express` is only ever a peer of `@colyseus/core`/`@colyseus/
+  ws-transport`, never a declared dependency of `@terrace/server`, so the hook
+  is used the way Colyseus itself constructs and hands over the app, never via
+  a direct `import express` from this codebase. The client resolves its own
+  WebSocket endpoint the same way: `ws://<page's own host>` when running from a
+  built bundle (any origin, any port), the pre-#20 `ws://<page hostname>:2567`
+  only in Vite's own dev server. `VITE_SERVER_URL`/`PUBLIC_WS_URL` still
+  override this outright, which is what keeps Docker Compose's two-container
+  path (client and server on different ports) working unchanged.
 - **pnpm workspaces** (owner choice) for the monorepo.
 
 ### 3.7 Players & accounts

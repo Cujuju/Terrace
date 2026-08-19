@@ -72,6 +72,9 @@ const MAX_PORT = 65535;
 /** Directory name of the auto-discovered plugin folder (design §3.5). */
 const PLUGINS_DIR_NAME = 'plugins';
 
+/** Sibling-of-`server/` path to a `vite build` of the client (issue #20). */
+const CLIENT_DIST_PATH_SEGMENTS = ['client', 'dist'] as const;
+
 export interface ServerConfig {
   /** Cells per world edge. Must be a positive multiple of CHUNK_SIZE. */
   readonly worldSize: number;
@@ -87,6 +90,15 @@ export interface ServerConfig {
   readonly difficulty: number;
   /** Absolute path to the folder scanned for plugins at boot. */
   readonly pluginsDir: string;
+  /**
+   * Absolute path a `vite build` of the client would be found at (issue #20:
+   * "one process = playable URL"). Resolved the same way as `pluginsDir` —
+   * always an absolute path, whether or not anything actually exists there
+   * yet. Boot decides what to do with that: see index.ts, which serves it
+   * over HTTP when `index.html` is present and logs that Vite remains the dev
+   * path otherwise.
+   */
+  readonly clientDistPath: string;
 }
 
 /** Thrown for any invalid environment value; the boot path prints and exits. */
@@ -175,11 +187,20 @@ function readClampedInteger(
   return value;
 }
 
+/** Absolute path to `<repo>/server`, shared by every sibling-of-server default. */
+function serverDir(): string {
+  // import.meta.url is <repo>/server/src/config.ts → up two levels is <repo>/server.
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..');
+}
+
 /** Default plugins folder: the repo-root `plugins/` sibling of `server/`. */
 function defaultPluginsDir(): string {
-  // import.meta.url is <repo>/server/src/config.ts → up two levels is <repo>/server.
-  const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  return resolve(serverDir, '..', PLUGINS_DIR_NAME);
+  return resolve(serverDir(), '..', PLUGINS_DIR_NAME);
+}
+
+/** Default client build: `client/dist`, sibling of `server/` (issue #20). */
+function defaultClientDistPath(): string {
+  return resolve(serverDir(), '..', ...CLIENT_DIST_PATH_SEGMENTS);
 }
 
 /**
@@ -205,6 +226,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const pluginsDir = env.PLUGINS_DIR?.trim()
     ? resolve(env.PLUGINS_DIR.trim())
     : defaultPluginsDir();
+  const clientDistPath = env.CLIENT_DIST_PATH?.trim()
+    ? resolve(env.CLIENT_DIST_PATH.trim())
+    : defaultClientDistPath();
 
   return {
     worldSize,
@@ -225,5 +249,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       max: MAX_WORLD_DIFFICULTY,
     }),
     pluginsDir,
+    clientDistPath,
   };
 }

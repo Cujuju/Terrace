@@ -11,12 +11,15 @@
 // competing handlers, so there is exactly one shutdown path.
 
 import './quiet-boot.ts'; // must precede any Colyseus import — see that file's comment
-import { Server } from '@colyseus/core';
+import { Server, type ServerOptions } from '@colyseus/core';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { loadConfig, ConfigError, type ServerConfig } from './config.ts';
 import { logError, logInfo } from './log.ts';
 import { SnapshotStore } from './persistence/snapshot-store.ts';
 import { discoverPlugins } from './plugins/discovery.ts';
 import { PluginHost } from './plugins/host.ts';
+import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
 import { ROOM_NAME, TerraceRoom, bindRoomContext } from './net/terrace-room.ts';
 import { World } from './world/world.ts';
@@ -67,6 +70,37 @@ function openWorld(config: ServerConfig, store: SnapshotStore): {
       snapshot.tokenMasks,
     ),
     pluginSlices: snapshot.pluginSlices,
+  };
+}
+
+/**
+ * Wires a built client (issue #20: "one process = playable URL") into the
+ * game server's own HTTP port, via Colyseus's `ServerOptions.express` hook —
+ * see static/serve-client.ts's header comment for why that hook is used
+ * without express ever being a declared dependency of this package. Returns
+ * `undefined` when `config.clientDistPath` has no `index.html`: the common
+ * case in dev, where Vite (`pnpm --dir client dev`) remains the dev path and
+ * nothing about that workflow changes.
+ */
+async function clientStaticExpressHook(
+  config: ServerConfig,
+): Promise<ServerOptions['express'] | undefined> {
+  const indexPath = join(config.clientDistPath, 'index.html');
+  const built = await stat(indexPath)
+    .then((stats) => stats.isFile())
+    .catch(() => false);
+
+  if (!built) {
+    logInfo(
+      `client is unbuilt (no ${indexPath}) — Vite ('pnpm --dir client dev') remains the dev path`,
+    );
+    return undefined;
+  }
+
+  logInfo(`serving built client from ${config.clientDistPath}`);
+  const handleStaticRequest = createStaticFileHandler(config.clientDistPath);
+  return (app) => {
+    app.use(handleStaticRequest);
   };
 }
 
@@ -142,7 +176,12 @@ async function main(): Promise<void> {
   bindRoomContext({ world, host });
   // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
   // (@colyseus/core ServerOptions.greet, default true).
-  const gameServer = new Server({ greet: false });
+  const serverOptions: ServerOptions = { greet: false };
+  const clientExpressHook = await clientStaticExpressHook(config);
+  if (clientExpressHook !== undefined) {
+    serverOptions.express = clientExpressHook;
+  }
+  const gameServer = new Server(serverOptions);
   gameServer.define(ROOM_NAME, TerraceRoom);
 
   gameServer.onBeforeShutdown(() => {

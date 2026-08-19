@@ -18,17 +18,47 @@ const pageHostname =
   typeof location === 'undefined' ? 'localhost' : location.hostname;
 
 /**
- * Default Colyseus endpoint. Derived from the page's own hostname rather than
- * hard-coded `localhost`, so a browser that loaded the client over the LAN
- * (http://192.168.x.x:5173) dials the game server on the machine that served
- * it — a literal `localhost` there would make every LAN visitor dial
- * THEMSELVES. On the dev machine nothing changes: the page host is localhost.
+ * Host (hostname *and* port, when the page has one) the page itself was
+ * served from. Falls back to the dev default port when there is no
+ * `location` (Vitest) — see DEFAULT_SERVER_URL below for why that fallback
+ * specifically matches the Vite-dev branch rather than being port-less.
+ */
+const pageHost =
+  typeof location === 'undefined' ? `${pageHostname}:${DEFAULT_SERVER_PORT}` : location.host;
+
+/**
+ * Default Colyseus endpoint — two different answers depending on how this
+ * bundle got to the browser (issue #20: "one process = playable URL").
+ *
+ * `import.meta.env.DEV` is Vite's own compile-time constant: true only for
+ * the `vite`/`pnpm --dir client dev` dev server, false in every BUILT bundle
+ * (a `vite build` output, wherever it ends up being served from) — verified
+ * against Vite's env docs and by inspecting a built bundle, where `DEV` comes
+ * out as the literal `false`. It, not some runtime guess, is the right
+ * switch:
+ *
+ *   - DEV (Vite's own server, port 5173 by default): the page and the game
+ *     server are two different processes on two different ports, so the
+ *     default must still name the server's own conventional port explicitly
+ *     — this is the pre-#20 behaviour, unchanged, derived from the page's
+ *     hostname so a LAN visitor to the Vite dev server dials the same
+ *     machine's game server rather than themselves.
+ *   - NOT DEV (a built bundle): a build only exists to be served BY
+ *     something, and issue #20 adds exactly one thing that serves it same-
+ *     origin — the game server handing out `client/dist` on its own port.
+ *     `ws://<location.host>` (hostname AND port, whatever they are) is then
+ *     always correct with zero configuration, on any port the self-hoster
+ *     picked via `PORT`. `VITE_SERVER_URL`/`PUBLIC_WS_URL` still overrides
+ *     this outright for the two-container Docker Compose path, where the
+ *     client is served by nginx on a different port than the game server.
  *
  * Verified against @colyseus/sdk 0.17.43 `Client.ts`: the string form of the
  * constructor argument is parsed with `new URL(...)` and treats
  * `wss:`/`https:` as secure, so a `ws://` URL is an accepted endpoint form.
  */
-export const DEFAULT_SERVER_URL = `ws://${pageHostname}:${DEFAULT_SERVER_PORT}`;
+export const DEFAULT_SERVER_URL = import.meta.env.DEV
+  ? `ws://${pageHostname}:${DEFAULT_SERVER_PORT}`
+  : `ws://${pageHost}`;
 
 /**
  * Room name passed to `joinOrCreate`. Core has no lobby — one process is one
