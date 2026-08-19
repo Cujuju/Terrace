@@ -1495,32 +1495,58 @@ function rectangleBorderPoints(count: number, hw: number, hh: number): Array<{ x
 // 3 Hz-ceiling arithmetic above.
 
 /** Neon-pink tube glow; deliberately not the marquee's gold so the figure reads as its own sign element. */
-const DURANDS_DANCER_NEON_COLOR = 0xff5f9e;
-/** Dark tube base — same "dark socket, bright emissive" split the bulbs keep, so the unlit pose actually reads OFF. */
-const DURANDS_DANCER_TUBE_COLOR = 0x33202b;
-const DURANDS_DANCER_EMISSIVE_MIN = 0.04;
+const DURANDS_DANCER_NEON_COLOR = 0xff4f96;
+/**
+ * Dark tube base. REDESIGN 2026-08-19: matched to the board's own colour
+ * (rather than the old maroon 0x33202b) so an OFF tube disappears into the
+ * board instead of standing behind the lit pose as a dark scribble — the
+ * "ghost figure" that made the old two-pose sign read as a muddle.
+ */
+const DURANDS_DANCER_TUBE_COLOR = 0x241016;
+/**
+ * Fully dark, not the bulbs' visible-when-off floor: a bulb that vanishes
+ * looks broken, but an OFF neon LIMB must vanish — the whole two-frame trick
+ * is that only one limb set exists at a time.
+ */
+const DURANDS_DANCER_EMISSIVE_MIN = 0.0;
 /** Slightly under the bulbs' own max: the figure is set dressing, the name sign stays the focal point. */
 const DURANDS_DANCER_EMISSIVE_MAX = 1.0;
 /**
- * Neon-tube radius. Twice the old 0.009 — that tube was a third of a pixel
- * wide at the game's closest orbit, which is the mechanical reason the old
- * figure read as scribble rather than as a drawn line.
+ * The BODY outline never blinks (see DURANDS_DANCER_BODY_STROKES): held a
+ * shade under the limbs' peak so the moving limbs carry the eye.
  */
-const DURANDS_DANCER_TUBE_RADIUS = 0.018;
+const DURANDS_DANCER_BODY_EMISSIVE_INTENSITY = 0.85;
+/**
+ * Neon-tube radius. Raised again from 0.018 in the 2026-08-19 redesign: the
+ * line's weight is what carries the silhouette at game distance, and the
+ * smooth-arc strokes below can afford a heavier line without tangling because
+ * consecutive segments now bend a few degrees at a time instead of cornering.
+ */
+const DURANDS_DANCER_TUBE_RADIUS = 0.021;
 /** Unit length the shared segment cylinder is built at; per-segment matrices scale Y to the real length. */
 const DURANDS_DANCER_SEGMENT_UNIT = 0.1;
 /** The head circle. Every other circle on the figure is this one geometry, scaled per instance. */
 const DURANDS_DANCER_HEAD_RADIUS = 0.055;
-/** The near breast's circle — the bust curve's own apex, the size that makes the silhouette read as female at sign scale. */
-const DURANDS_DANCER_BUST_RADIUS = 0.05;
-/** The far breast, drawn smaller and further back, as a profile sign would suggest the second one. */
-const DURANDS_DANCER_FAR_BUST_RADIUS = 0.036;
+/** The bust circle, nested inside the outline's own bust arc — the emphasis that keeps the silhouette female at any distance. */
+const DURANDS_DANCER_BUST_RADIUS = 0.048;
 /** Circle closing each bend between two tube segments, so a corner never opens a notch. Matches the tube it joins. */
 const DURANDS_DANCER_JOINT_RADIUS = DURANDS_DANCER_TUBE_RADIUS;
 /** The pole itself: a neon tube, lit steadily (it is the stage, not the performer, so it never blinks). */
 const DURANDS_DANCER_POLE_RADIUS = 0.016;
 const DURANDS_DANCER_POLE_COLOR = 0xffd9ec;
 const DURANDS_DANCER_POLE_EMISSIVE_INTENSITY = 0.9;
+/**
+ * The board's own neon border: a steady warm-gold rectangle of tube just
+ * inside the board edge, the marquee's colour family — what turns the black
+ * slab into a lit sign CABINET. Steady on purpose: it is framing, not
+ * animation, so it adds no flash frequency to the 3 Hz arithmetic.
+ */
+const DURANDS_DANCER_FRAME_COLOR = 0xffd98a;
+const DURANDS_DANCER_FRAME_EMISSIVE_INTENSITY = 0.55;
+/** How far the border tube sits in from the board's edge. */
+const DURANDS_DANCER_FRAME_INSET = 0.035;
+/** Border tube: slimmer than the figure's line, so the frame stays quieter than the dancer. */
+const DURANDS_DANCER_FRAME_TUBE_RADIUS = 0.012;
 
 /** A point in the sign board's own 2D frame: `u` across it, `v` up from the figure's feet. */
 type SignPoint = readonly [u: number, v: number];
@@ -1559,80 +1585,150 @@ function dancerCircle(x: number, y: number, z: number, radius: number): Matrix4 
   return new Matrix4().compose(new Vector3(x, y, z), new Quaternion(), new Vector3(scale, scale, depthScale));
 }
 
+// ── The drawing (redesigned from scratch, owner request 2026-08-19:
+// "completely reconsidered") ────────────────────────────────────────────────
+//
+// THREE DECISIONS replace the old two-full-figure design:
+//
+//   1. SMOOTH ARCS, NOT CORNERED POLYLINES. Every stroke is authored as
+//      quadratic arcs and sampled into short runs (neonArc/neonStroke), so a
+//      line bends a few degrees per segment — the "one confident continuous
+//      outline" of a real bent-glass tube. The old hand-placed polylines
+//      cornered hard at every joint, which is what read as scribble.
+//   2. THE BODY NEVER BLINKS; ONLY THE LIMBS SWAP. The torso outline, head,
+//      bust, standing leg — everything that would be IDENTICAL in both frames
+//      — is drawn ONCE on its own steady material, and only the kicking leg,
+//      the two arms and the ponytail alternate with the marquee phases. This
+//      is how real two-frame neon figures are built (shared tubes + two limb
+//      sets), it halves the tube count, and it removes the old design's
+//      biggest legibility fault: a dark ghost of the OTHER pose standing
+//      behind the lit one.
+//   3. A CAN-CAN KICK. The two limb sets are one high kick and one low kick
+//      of the SAME leg, with the free arm counter-swinging and the ponytail
+//      tossing — a single, instantly legible motion, rather than two
+//      unrelated acrobatic poses the eye had to reconcile.
+
 /**
- * ONE POSE OF THE FIGURE, authored as the drawing it is: a set of STROKES
- * (each a polyline of points, drawn as tubes) plus the CIRCLES (head, bust).
- * Everything is in the board's own (u, v) frame — `u` across the board from its
- * centre, `v` up from the figure's feet — so a pose can be read and edited as a
- * drawing rather than as a list of world transforms, and both poses are
- * guaranteed to share one origin.
+ * Arc samples per quadratic. Four runs per arc keeps consecutive tube
+ * headings within ~15° of each other on every curve below — visually a smooth
+ * bend at the tube radius used — without flooding the instancer.
  */
-interface DancerPose {
-  /** Outline and limb polylines. Consecutive points are joined by one tube each. */
-  readonly strokes: ReadonlyArray<readonly SignPoint[]>;
-  /** Centre of the head circle. */
-  readonly head: SignPoint;
-  /** Near breast, then far breast — the bust curve's two circles. */
-  readonly bust: readonly [SignPoint, SignPoint];
+const DANCER_ARC_SAMPLES = 4;
+
+/** One quadratic arc, sampled from `from` to `to` toward `control`. */
+function neonArc(from: SignPoint, control: SignPoint, to: SignPoint): SignPoint[] {
+  const points: SignPoint[] = [];
+  for (let i = 0; i <= DANCER_ARC_SAMPLES; i++) {
+    const t = i / DANCER_ARC_SAMPLES;
+    const s = 1 - t;
+    points.push([
+      s * s * from[0] + 2 * s * t * control[0] + t * t * to[0],
+      s * s * from[1] + 2 * s * t * control[1] + t * t * to[1],
+    ]);
+  }
+  return points;
 }
 
-/**
- * POSE A — standing at the pole, back arched, near hand high on the pole, the
- * outside leg hooked around it. Read the strokes in order: front outline (chin
- * → bust → waist → hip), back outline (nape → arched back → seat), the two
- * legs, the two arms, the hair.
- */
-const DURANDS_DANCER_POSE_A: DancerPose = {
-  strokes: [
-    [[0.02, 0.66], [0.06, 0.60], [0.11, 0.545], [0.09, 0.50], [0.04, 0.45], [0.05, 0.39], [0.08, 0.34]],
-    [[-0.02, 0.66], [-0.05, 0.60], [-0.06, 0.52], [-0.05, 0.45], [-0.09, 0.38], [-0.06, 0.33]],
-    [[0.08, 0.34], [-0.06, 0.33]], // hip line, closing the torso outline
-    [[0.01, 0.34], [0.03, 0.20], [0.02, 0.03], [0.07, 0.0]], // standing leg and foot
-    [[0.03, 0.34], [0.12, 0.28], [0.19, 0.22]], // outside leg, hooked to the pole
-    [[0.0, 0.63], [0.09, 0.70], [0.18, 0.76]], // pole arm, reaching high
-    [[0.0, 0.63], [-0.09, 0.58], [-0.15, 0.63]], // free arm
-    [[-0.02, 0.77], [-0.08, 0.74], [-0.11, 0.67], [-0.10, 0.60]], // hair
-  ],
-  head: [0.02, 0.74],
-  bust: [[0.085, 0.545], [0.05, 0.52]],
-};
+/** Chains arcs into ONE continuous stroke (each arc must start where the previous ended; the duplicate point is dropped). */
+function neonStroke(...arcs: SignPoint[][]): SignPoint[] {
+  const stroke: SignPoint[] = [...arcs[0]];
+  for (let i = 1; i < arcs.length; i++) stroke.push(...arcs[i].slice(1));
+  return stroke;
+}
+
+/** The u the pole stands at — the mark every pole-side hand and toe reaches for. */
+const DURANDS_DANCER_POLE_U = 0.2;
 
 /**
- * POSE B — leaning away from the pole on one hand, the other leg swung high
- * onto it, hair thrown out behind. Same strokes, same order, so the two poses
- * swap as one figure moving rather than as two unrelated drawings.
+ * THE BODY — everything both frames share, drawn once and lit steadily.
+ * Profile facing the pole (+u): chin high, bust arc out front, waist pinched,
+ * seat arc out back, weight on one straight leg with a pointed foot.
  */
-const DURANDS_DANCER_POSE_B: DancerPose = {
-  strokes: [
-    [[-0.06, 0.64], [-0.01, 0.59], [0.05, 0.545], [0.04, 0.49], [0.01, 0.44], [0.04, 0.38], [0.08, 0.34]],
-    [[-0.10, 0.63], [-0.12, 0.56], [-0.11, 0.48], [-0.08, 0.42], [-0.10, 0.35], [-0.07, 0.31]],
-    [[0.08, 0.34], [-0.07, 0.31]], // hip line
-    [[-0.02, 0.33], [-0.03, 0.18], [-0.05, 0.02], [-0.11, 0.0]], // standing leg and foot
-    [[0.03, 0.34], [0.11, 0.44], [0.19, 0.52]], // raised leg, high on the pole
-    [[-0.08, 0.62], [0.02, 0.66], [0.18, 0.70]], // pole arm, holding on
-    [[-0.08, 0.62], [-0.17, 0.55], [-0.22, 0.46]], // trailing arm
-    [[-0.14, 0.75], [-0.21, 0.72], [-0.25, 0.65]], // hair, thrown out
-  ],
-  head: [-0.10, 0.72],
-  bust: [[0.03, 0.55], [0.005, 0.525]],
-};
+const DURANDS_DANCER_BODY_STROKES: ReadonlyArray<readonly SignPoint[]> = [
+  // Front outline: chin → throat → bust (the apex arc) → under-bust → pinched
+  // waist → belly → front of the hip.
+  neonStroke(
+    neonArc([0.05, 0.675], [0.075, 0.63], [0.075, 0.585]),
+    neonArc([0.075, 0.585], [0.125, 0.55], [0.055, 0.505]),
+    neonArc([0.055, 0.505], [0.03, 0.455], [0.075, 0.385]),
+  ),
+  // Back outline: nape → shoulder → arched small of the back → seat → under-seat.
+  neonStroke(
+    neonArc([-0.02, 0.66], [-0.06, 0.6], [-0.055, 0.52]),
+    neonArc([-0.055, 0.52], [-0.125, 0.45], [-0.06, 0.355]),
+  ),
+  // Pelvis + standing leg, one line: front hip across to the under-seat, down
+  // the thigh, a soft knee, the calf, and out through a pointed foot.
+  neonStroke(
+    neonArc([0.075, 0.385], [0.01, 0.345], [-0.06, 0.355]),
+    neonArc([-0.06, 0.355], [-0.005, 0.24], [0.005, 0.19]),
+    neonArc([0.005, 0.19], [0.015, 0.09], [-0.005, 0.025]),
+    neonArc([-0.005, 0.025], [0.02, 0.0], [0.065, 0.005]),
+  ),
+];
+
+/** Centre of the steady head circle. */
+const DURANDS_DANCER_BODY_HEAD: SignPoint = [0.015, 0.725];
+/** Centre of the steady bust circle, nested at the front outline's apex. */
+const DURANDS_DANCER_BODY_BUST: SignPoint = [0.09, 0.552];
 
 /**
- * Turns one pose's drawing into instance matrices, in the building's own
- * space: `originX`/`originY` place the figure's (0, 0) — the centre of its
- * feet — and `z` is the one plane the whole figure is drawn on, just proud of
- * the board behind it. Returns the tube segments and the circles separately
- * because they are two different geometries, and so two different parts.
+ * FRAME A limbs — the HIGH kick: kicking leg swept up toward the pole, pole
+ * hand gripping high, free arm trailing low behind, ponytail streaming back.
  */
-function buildDancerPose(
-  pose: DancerPose,
+const DURANDS_DANCER_LIMBS_A: ReadonlyArray<readonly SignPoint[]> = [
+  // Kicking leg: hip → raised knee → toe pointed at the pole's upper reach.
+  neonStroke(
+    neonArc([0.045, 0.375], [0.15, 0.42], [0.21, 0.47]),
+    neonArc([0.21, 0.47], [0.27, 0.52], [0.305, 0.575]),
+  ),
+  // Pole arm, high grip.
+  neonArc([0.02, 0.615], [0.1, 0.665], [DURANDS_DANCER_POLE_U, 0.675]),
+  // Free arm, swept straight out behind — clear of the back outline, so the
+  // two lines diverge instead of tangling.
+  neonArc([-0.015, 0.61], [-0.1, 0.635], [-0.19, 0.6]),
+  // Ponytail, streaming back off the head, held ABOVE the shoulder line so it
+  // never reads as part of the face.
+  neonArc([-0.045, 0.735], [-0.115, 0.75], [-0.165, 0.715]),
+];
+
+/**
+ * FRAME B limbs — the LOW kick of the same leg, the grip slid down the pole,
+ * the free arm flung up, the ponytail tossed: frame A's mirror beat, so the
+ * two-frame flip reads as one can-can kick.
+ */
+const DURANDS_DANCER_LIMBS_B: ReadonlyArray<readonly SignPoint[]> = [
+  // Kicking leg, extended low.
+  neonStroke(
+    neonArc([0.045, 0.375], [0.13, 0.33], [0.19, 0.3]),
+    neonArc([0.19, 0.3], [0.25, 0.27], [0.295, 0.215]),
+  ),
+  // Pole arm, lower grip.
+  neonArc([0.02, 0.615], [0.09, 0.6], [DURANDS_DANCER_POLE_U, 0.55]),
+  // Free arm, flung up and out.
+  neonArc([-0.01, 0.605], [-0.09, 0.66], [-0.14, 0.7]),
+  // Ponytail, tossed high — above the raised hand, so the two stay distinct.
+  neonArc([-0.045, 0.735], [-0.1, 0.79], [-0.155, 0.78]),
+];
+
+/**
+ * Turns a set of strokes into instance matrices, in the building's own space:
+ * `originX`/`originY` place the figure's (0, 0) — the centre of its feet —
+ * and `z` is the one plane the whole figure is drawn on, just proud of the
+ * board behind it. Returns the tube segments and the joint circles separately
+ * because they are two different geometries, and so two different parts. The
+ * head and bust circles are the BODY's alone, so callers add those
+ * themselves.
+ */
+function buildDancerStrokes(
+  strokes: ReadonlyArray<readonly SignPoint[]>,
   originX: number,
   originY: number,
   z: number,
 ): { segments: Matrix4[]; circles: Matrix4[] } {
   const segments: Matrix4[] = [];
   const circles: Matrix4[] = [];
-  for (const stroke of pose.strokes) {
+  for (const stroke of strokes) {
     for (let i = 0; i + 1 < stroke.length; i++) {
       const [u1, v1] = stroke[i];
       const [u2, v2] = stroke[i + 1];
@@ -1646,18 +1742,6 @@ function buildDancerPose(
       }
     }
   }
-  circles.push(dancerCircle(originX + pose.head[0], originY + pose.head[1], z, DURANDS_DANCER_HEAD_RADIUS));
-  circles.push(
-    dancerCircle(originX + pose.bust[0][0], originY + pose.bust[0][1], z, DURANDS_DANCER_BUST_RADIUS),
-  );
-  circles.push(
-    dancerCircle(
-      originX + pose.bust[1][0],
-      originY + pose.bust[1][1],
-      z - DURANDS_DANCER_BUST_RADIUS / 2, // set back, so the far breast reads as behind the near one
-      DURANDS_DANCER_FAR_BUST_RADIUS,
-    ),
-  );
   return { segments, circles };
 }
 
@@ -1916,12 +2000,13 @@ function buildDurandsParts(): DurandsBuilding {
   };
 
   // ── The rooftop dancer sign ────────────────────────────────────────────
-  // A dark board on two legs above the false front, carrying the pole and the
-  // two poses. Standing it up here — rather than tucking the figure under the
-  // porch, where it began — is what gives the figure room to be sign-sized at
-  // all: the board is taller than the storey below it, and nothing overlaps it
-  // from any angle a player can orbit to.
-  const dancerBoardHalfWidth = 0.3;
+  // A dark cabinet on two legs above the false front: gold neon border, the
+  // steadily-lit pole and body, and the two alternating limb sets. Standing it
+  // up here — rather than tucking the figure under the porch, where it began —
+  // is what gives the figure room to be sign-sized at all: the board is taller
+  // than the storey below it, and nothing overlaps it from any angle a player
+  // can orbit to.
+  const dancerBoardHalfWidth = 0.34; // widened for the kick's reach; still inside the false front's 0.40
   const dancerBoardHalfHeight = 0.45;
   const dancerBoardThickness = 0.03;
   const dancerLegHeight = 0.1;
@@ -1943,14 +2028,40 @@ function buildDurandsParts(): DurandsBuilding {
   };
 
   // The figure's own origin on the board: the centre of its feet, one margin
-  // up from the board's bottom edge. Every pose point above is relative to it.
+  // up from the board's bottom edge. Every drawing point above is relative to it.
   const dancerFigureBaseY = dancerBoardBottomY + 0.05;
   const dancerZ = dancerBoardZ + dancerBoardThickness / 2 + DURANDS_DANCER_TUBE_RADIUS;
 
-  // The pole: one steadily-lit tube running the board's full height. It is the
-  // one element of the sign that never blinks — a chase that took the pole with
-  // it would read as the pole vanishing, not as the dancer moving.
-  const dancerPoleU = 0.19; // the u the poses' hands and feet reach for
+  // The gold border: four tubes and four corner dots just inside the board's
+  // edge, steady, in the marquee's colour family — the cabinet's own trim.
+  const dancerFrameMaterial = new MeshLambertMaterial({
+    color: DURANDS_DANCER_TUBE_COLOR,
+    flatShading: true,
+    emissive: DURANDS_DANCER_FRAME_COLOR,
+    emissiveIntensity: DURANDS_DANCER_FRAME_EMISSIVE_INTENSITY,
+  });
+  const frameU = dancerBoardHalfWidth - DURANDS_DANCER_FRAME_INSET;
+  const frameTop = dancerBoardY + dancerBoardHalfHeight - DURANDS_DANCER_FRAME_INSET;
+  const frameBottom = dancerBoardY - dancerBoardHalfHeight + DURANDS_DANCER_FRAME_INSET;
+  const dancerFrameTubes: StructurePart = {
+    geometry: new CylinderGeometry(
+      DURANDS_DANCER_FRAME_TUBE_RADIUS,
+      DURANDS_DANCER_FRAME_TUBE_RADIUS,
+      DURANDS_DANCER_SEGMENT_UNIT,
+      5,
+    ),
+    material: dancerFrameMaterial,
+    localMatrices: [
+      dancerSegment(-frameU, frameTop, frameU, frameTop, dancerZ),
+      dancerSegment(-frameU, frameBottom, frameU, frameBottom, dancerZ),
+      dancerSegment(-frameU, frameBottom, -frameU, frameTop, dancerZ),
+      dancerSegment(frameU, frameBottom, frameU, frameTop, dancerZ),
+    ],
+  };
+
+  // The pole: one steadily-lit tube running the board's full height. It is
+  // the stage, not the performer, so it never blinks — a chase that took the
+  // pole with it would read as the pole vanishing, not as the dancer moving.
   const dancerPole: StructurePart = {
     geometry: new CylinderGeometry(
       DURANDS_DANCER_POLE_RADIUS,
@@ -1964,20 +2075,39 @@ function buildDurandsParts(): DurandsBuilding {
       emissive: DURANDS_DANCER_POLE_COLOR,
       emissiveIntensity: DURANDS_DANCER_POLE_EMISSIVE_INTENSITY,
     }),
-    localMatrices: [at(dancerPoleU, dancerBoardY, dancerZ)],
+    localMatrices: [at(DURANDS_DANCER_POLE_U, dancerBoardY, dancerZ)],
   };
 
+  // Materials: the BODY holds steady; only the LIMB sets ride the phase clock
+  // (animate() swaps dancerPoseAMaterial/dancerPoseBMaterial exactly as
+  // before — the interface is unchanged, the meaning of the groups is).
+  const dancerBodyMaterial = new MeshLambertMaterial({
+    color: DURANDS_DANCER_TUBE_COLOR,
+    flatShading: true,
+    emissive: DURANDS_DANCER_NEON_COLOR,
+    emissiveIntensity: DURANDS_DANCER_BODY_EMISSIVE_INTENSITY,
+  });
+  // TRANSPARENT + depthWrite off: animate() drives opacity in lockstep with
+  // emissive so the off frame's limbs are truly absent (see its comment), and
+  // a fully-faded limb must not write depth or it would punch invisible holes
+  // in the lit limbs crossing behind it.
   const dancerPoseAMaterial = new MeshLambertMaterial({
     color: DURANDS_DANCER_TUBE_COLOR,
     flatShading: true,
     emissive: DURANDS_DANCER_NEON_COLOR,
     emissiveIntensity: DURANDS_DANCER_EMISSIVE_MAX,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
   });
   const dancerPoseBMaterial = new MeshLambertMaterial({
     color: DURANDS_DANCER_TUBE_COLOR,
     flatShading: true,
     emissive: DURANDS_DANCER_NEON_COLOR,
     emissiveIntensity: DURANDS_DANCER_EMISSIVE_MIN,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
   });
   const dancerSegmentGeometry = new CylinderGeometry(
     DURANDS_DANCER_TUBE_RADIUS,
@@ -1987,27 +2117,55 @@ function buildDurandsParts(): DurandsBuilding {
   );
   const dancerCircleGeometry = new SphereGeometry(DURANDS_DANCER_HEAD_RADIUS, 8, 6);
 
-  const poseA = buildDancerPose(DURANDS_DANCER_POSE_A, 0, dancerFigureBaseY, dancerZ);
-  const poseB = buildDancerPose(DURANDS_DANCER_POSE_B, 0, dancerFigureBaseY, dancerZ);
+  const body = buildDancerStrokes(DURANDS_DANCER_BODY_STROKES, 0, dancerFigureBaseY, dancerZ);
+  // The steady circles ride with the body: the head, and the bust nested at
+  // the front outline's apex — the emphasis the owner asked for by name.
+  body.circles.push(
+    dancerCircle(
+      DURANDS_DANCER_BODY_HEAD[0],
+      dancerFigureBaseY + DURANDS_DANCER_BODY_HEAD[1],
+      dancerZ,
+      DURANDS_DANCER_HEAD_RADIUS,
+    ),
+    dancerCircle(
+      DURANDS_DANCER_BODY_BUST[0],
+      dancerFigureBaseY + DURANDS_DANCER_BODY_BUST[1],
+      dancerZ,
+      DURANDS_DANCER_BUST_RADIUS,
+    ),
+  );
+  const limbsA = buildDancerStrokes(DURANDS_DANCER_LIMBS_A, 0, dancerFigureBaseY, dancerZ);
+  const limbsB = buildDancerStrokes(DURANDS_DANCER_LIMBS_B, 0, dancerFigureBaseY, dancerZ);
+
+  const dancerBodyTubes: StructurePart = {
+    geometry: dancerSegmentGeometry,
+    material: dancerBodyMaterial,
+    localMatrices: body.segments,
+  };
+  const dancerBodyCircles: StructurePart = {
+    geometry: dancerCircleGeometry,
+    material: dancerBodyMaterial,
+    localMatrices: body.circles,
+  };
   const dancerPoseATubes: StructurePart = {
     geometry: dancerSegmentGeometry,
     material: dancerPoseAMaterial,
-    localMatrices: poseA.segments,
+    localMatrices: limbsA.segments,
   };
   const dancerPoseACircles: StructurePart = {
     geometry: dancerCircleGeometry,
     material: dancerPoseAMaterial,
-    localMatrices: poseA.circles,
+    localMatrices: limbsA.circles,
   };
   const dancerPoseBTubes: StructurePart = {
     geometry: dancerSegmentGeometry,
     material: dancerPoseBMaterial,
-    localMatrices: poseB.segments,
+    localMatrices: limbsB.segments,
   };
   const dancerPoseBCircles: StructurePart = {
     geometry: dancerCircleGeometry,
     material: dancerPoseBMaterial,
-    localMatrices: poseB.circles,
+    localMatrices: limbsB.circles,
   };
 
   return {
@@ -2027,7 +2185,10 @@ function buildDurandsParts(): DurandsBuilding {
       marqueeBulbsPhaseB,
       dancerLegs,
       dancerBoard,
+      dancerFrameTubes,
       dancerPole,
+      dancerBodyTubes,
+      dancerBodyCircles,
       dancerPoseATubes,
       dancerPoseACircles,
       dancerPoseBTubes,
@@ -2211,14 +2372,22 @@ export function createStructureModels(): StructureModels {
       durands.marqueePhaseBMaterial.emissiveIntensity =
         DURANDS_MARQUEE_BULB_EMISSIVE_MIN + phaseBT * (DURANDS_MARQUEE_BULB_EMISSIVE_MAX - DURANDS_MARQUEE_BULB_EMISSIVE_MIN);
 
-      // Neon dancer: the two poses swap on the SAME phase clock as the bulbs
-      // (pose A lit with phase A, pose B with phase B) — the two-pose sign
-      // trick. No new frequency is introduced; see the dancer constants'
-      // banner for why this stays inside the marquee's ceiling arithmetic.
+      // Neon dancer: the two LIMB SETS swap on the SAME phase clock as the
+      // bulbs (set A lit with phase A, set B with phase B) — the two-frame
+      // sign trick; the body itself never blinks (2026-08-19 redesign). No
+      // new frequency is introduced; see the dancer constants' banner for why
+      // this stays inside the marquee's ceiling arithmetic.
+      //
+      // OPACITY RIDES THE SAME VALUE AS EMISSIVE: an "off" limb must be GONE,
+      // not merely dark — a dark tube still catches the scene light on its
+      // curved face and reads as a black slash across the lit board (seen in
+      // review renders). Same t, so the fade introduces no second frequency.
       durands.dancerPoseAMaterial.emissiveIntensity =
         DURANDS_DANCER_EMISSIVE_MIN + phaseAT * (DURANDS_DANCER_EMISSIVE_MAX - DURANDS_DANCER_EMISSIVE_MIN);
+      durands.dancerPoseAMaterial.opacity = phaseAT;
       durands.dancerPoseBMaterial.emissiveIntensity =
         DURANDS_DANCER_EMISSIVE_MIN + phaseBT * (DURANDS_DANCER_EMISSIVE_MAX - DURANDS_DANCER_EMISSIVE_MIN);
+      durands.dancerPoseBMaterial.opacity = phaseBT;
     },
 
     dispose(): void {
