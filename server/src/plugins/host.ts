@@ -87,8 +87,10 @@ export class PluginHost implements TerrainChangeListener {
   }
 
   /**
-   * THE INTERCEPTOR CHAIN (design §3.5). Each plugin sees the intent as the
-   * previous plugin left it:
+   * THE VERDICT PHASE of the two-phase intent pipeline (design §3.5; split
+   * from a single side-effecting pass for issue #19 — see onIntent's own doc
+   * comment in types.ts for the full contract this enforces). Each plugin
+   * sees the intent as the previous plugin left it:
    *   - deny   → chain stops immediately, first deny wins;
    *   - modify → the replacement intent flows on to the next plugin;
    *   - allow / no hook / a throw → intent passes through unchanged.
@@ -96,6 +98,13 @@ export class PluginHost implements TerrainChangeListener {
    * A plugin that throws is treated as ALLOW rather than DENY: a buggy
    * extension must not be able to silently make the world unsculptable. The
    * failure is logged loudly instead.
+   *
+   * THIS METHOD ALONE NEVER APPLIES ANYTHING OR NOTIFIES A PLUGIN'S EFFECT
+   * HOOK: the caller (intent/pipeline.ts) only reaches applyServerSculpt, and
+   * therefore only calls notifyIntentApplied below, once every plugin here
+   * has returned allow or modify — never on a deny. That ordering, not
+   * anything inside this method, is what makes onIntentApplied's "effects run
+   * only after unanimous allow" guarantee hold.
    */
   runIntent(intent: SculptIntent, player: Player): IntentVerdict {
     let current = intent;
@@ -117,6 +126,29 @@ export class PluginHost implements TerrainChangeListener {
     }
 
     return modified ? { kind: 'modify', intent: current } : ALLOW;
+  }
+
+  /**
+   * THE EFFECT PHASE of the two-phase intent pipeline (issue #19). The caller
+   * (intent/pipeline.ts) invokes this exactly once per applied player intent,
+   * strictly after runIntent above returned allow/modify for every plugin AND
+   * core actually applied the edit — never on a deny, never on a re-validation
+   * failure. Fan-out only; no verdict to compose, so unlike runIntent every
+   * plugin's onIntentApplied always runs (a throw is logged and skipped, same
+   * as every other hook — see `safely`).
+   *
+   * `intent` is the EFFECTIVE intent (post any `modify`) and `diff` is the
+   * full server-side diff the edit produced — see onIntentApplied's own doc
+   * comment in types.ts for why those are the right things to hand over.
+   */
+  notifyIntentApplied(intent: SculptIntent, player: Player, diff: readonly CellDiff[]): void {
+    for (const { loaded, api } of this.entries) {
+      const { plugin } = loaded;
+      if (!plugin.onIntentApplied) continue;
+      this.safely(plugin, 'onIntentApplied', () =>
+        plugin.onIntentApplied?.(intent, { player, world: api }, diff),
+      );
+    }
   }
 
   /**

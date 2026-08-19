@@ -668,15 +668,20 @@ export const plugin: TerracePlugin = {
    * documented in that module. Visually: about a second of doubled edit at the
    * brush, per stroke, then it settles onto the server's version.
    *
-   * ── LOAD-ORDER CONSEQUENCE, ACCEPTED ──────────────────────────────────────
-   * Discovery sorts directories, so the chain is mana → relics → reveal. mana
-   * has already CHARGED for this intent by the time the brush is widened, and
-   * mana's price is flat per intent rather than per cell (by its own design),
-   * so Titan's Hand is free extra area rather than a more expensive sculpt.
-   * That is the intended reading of a relic — a gift, not a purchase — but it
-   * is a load-order fact rather than a guarantee: an economy that priced by
-   * area would need either to sort after every modifier or to use the
-   * post-apply hook core does not yet have (the same gap mana documents).
+   * ── LOAD-ORDER CONSEQUENCE, UPDATED BY ISSUE #19 ──────────────────────────
+   * Discovery sorts directories, so the verdict-phase chain is still
+   * mana → relics → reveal, and mana's own `onIntent` still only ever sees the
+   * PRE-widened intent (nothing runs before mana to modify it). But mana no
+   * longer charges during that pass — see mana's `checkAffordability` /
+   * `commitCharge` split (server/src/plugins/types.ts documents the
+   * onIntent / onIntentApplied contract this relies on). Charging now happens
+   * in the EFFECT phase, once every interceptor has allowed, against the
+   * EFFECTIVE intent core actually applied — which already includes this
+   * widened radius. So Titan's Hand is NO LONGER free extra area: the wider
+   * footprint is priced like any other radius, because the charge is taken
+   * after the widening rather than before it. This was the "same gap mana
+   * documents" the previous version of this comment named as the fix that
+   * would close it; issue #19 is that fix.
    *
    * THIS IS NOT FIXED CLIENT-SIDE, on purpose. Teaching the client to predict
    * the modification would mean the client knowing this plugin's rules — which

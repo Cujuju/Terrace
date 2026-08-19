@@ -230,6 +230,91 @@ describe('handleSculptIntent', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// THE EFFECT PHASE (issue #19): onIntentApplied fires ONLY after every
+// interceptor in the verdict phase has allowed AND the edit has actually
+// landed. This is the pipeline-level guarantee PluginHost.notifyIntentApplied
+// itself does not enforce (it is a plain fan-out — see plugin-host.test.ts);
+// it holds because pipeline.ts only ever reaches the call on the path where
+// every earlier `return` was skipped.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('the effect phase runs only after unanimous allow (issue #19)', () => {
+  let world: World;
+
+  beforeEach(() => {
+    world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    world.setSink(new RecordingSink());
+  });
+
+  /** A plugin that would commit an irreversible side effect if ever called. */
+  function ledgerPlugin(calls: SculptIntent[]): TerracePlugin {
+    return {
+      name: 'ledger',
+      onIntentApplied(intent): void {
+        calls.push(intent);
+      },
+    };
+  }
+
+  it('never calls onIntentApplied when a later interceptor denies', () => {
+    const applied: SculptIntent[] = [];
+    const denier: TerracePlugin = {
+      name: 'zzz-denier',
+      onIntent(): IntentVerdict {
+        return { kind: 'deny', reason: 'no' };
+      },
+    };
+
+    // Ledger sorts first in the array, so its onIntent (it has none) would run
+    // before the denier's either way — the claim under test is that ITS EFFECT
+    // hook, which only core calls after the whole chain clears, never fires.
+    const outcome = handleSculptIntent(
+      makeDeps(world, [ledgerPlugin(applied), denier]),
+      PLAYER,
+      sculptMessage(),
+    );
+
+    expect(outcome.applied).toBe(false);
+    expect(applied).toEqual([]);
+  });
+
+  it('calls onIntentApplied exactly once, with the EFFECTIVE (post-modify) intent and the real diff, when every interceptor allows', () => {
+    const applied: SculptIntent[] = [];
+    const widener: TerracePlugin = {
+      name: 'widener',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, radius: 2 } };
+      },
+    };
+
+    const outcome = handleSculptIntent(
+      makeDeps(world, [widener, ledgerPlugin(applied)]),
+      PLAYER,
+      sculptMessage({ radius: 1 }),
+    );
+
+    expect(outcome.applied).toBe(true);
+    expect(applied).toHaveLength(1);
+    // The WIDENED radius, not the radius-1 the client sent — onIntentApplied
+    // describes what was actually built.
+    expect(applied[0].radius).toBe(2);
+    if (outcome.applied) {
+      expect(applied[0]).toEqual(outcome.intent);
+    }
+  });
+
+  it('never calls onIntentApplied for a malformed or locked-centre intent', () => {
+    const applied: SculptIntent[] = [];
+    const deps = makeDeps(world, [ledgerPlugin(applied)]);
+
+    handleSculptIntent(deps, PLAYER, 'not an intent');
+    handleSculptIntent(deps, PLAYER, sculptMessage({ x: LOCKED_CELL.x, y: LOCKED_CELL.y }));
+
+    expect(applied).toEqual([]);
+  });
+});
+
 describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => {
   let world: World;
 

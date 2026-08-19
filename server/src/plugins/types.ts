@@ -154,8 +154,67 @@ export interface TerracePlugin {
   /** Fixed-rate sim step. `dt` is the constant tick period in seconds. */
   onTick?(world: WorldApi, dt: number): void;
 
-  /** Interceptor chain: allow / deny / modify. See IntentVerdict. */
+  /**
+   * VERDICT-PHASE interceptor: allow / deny / modify. See IntentVerdict.
+   *
+   * VERDICT ONLY — NO SIDE EFFECTS (issue #19). Every installed plugin's
+   * onIntent runs, in load order, BEFORE core applies anything to the
+   * heightmap or commits any plugin-owned economy: a later plugin in the
+   * chain (monsters denying a raise near a living Cthulhu, say) can still
+   * veto the whole intent, and first-deny-wins means everything this plugin
+   * decided is discarded. A plugin that mutates its own state here — most of
+   * all one that debits a currency or consumes a limited resource — is
+   * exposed to exactly the bug issue #19 was filed for: the mutation survives
+   * a later plugin's deny, so a denied intent still cost something.
+   *
+   * IRREVERSIBLE SIDE EFFECTS BELONG IN `onIntentApplied` INSTEAD (below),
+   * which core calls once, only after every interceptor in the chain has
+   * allowed (directly or via `modify`) AND the edit has actually landed. A
+   * plugin that only READS world/player state here — as every deny/modify
+   * decision in this repo does (mana prices and checks a balance without
+   * touching it; monsters checks a monster's position; relics reads a
+   * player's held skills) — needs no split at all.
+   *
+   * One exception, and it is safe rather than an oversight: a plugin MAY
+   * message the player about ITS OWN decision to deny (`world.sendTo`) here,
+   * because first-deny-wins means that decision is never overturned by a
+   * later interceptor — there is nothing for the message to become stale
+   * against. Mutating state that would need to be undone on a later veto is
+   * what this contract forbids, not telling the client why THIS plugin said
+   * no.
+   */
   onIntent?(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void;
+
+  /**
+   * EFFECT-PHASE companion to onIntent (added for issue #19 — see that hook's
+   * doc comment for the split this exists to enable).
+   *
+   * Fires once per applied player intent, AFTER the edit has been applied and
+   * broadcast, and ONLY when every interceptor in the chain allowed it. Never
+   * fires for a denied or malformed intent, and never fires for a
+   * plugin-initiated edit made through `WorldApi.sculpt` (there is no
+   * player intent to apply — see onTerrainChanged for the hook that covers
+   * every edit, player or plugin, by diff alone).
+   *
+   * `intent` is the EFFECTIVE intent — the one actually applied, after any
+   * `modify` earlier in the chain rewrote it (e.g. relics' Titan's Hand
+   * widening the brush) — not the one this plugin's own onIntent may have
+   * seen. This is a deliberate choice: `onIntentApplied` describes what
+   * HAPPENED, and what happened is the effective intent's edit, matching
+   * `diff`. A plugin that priced or gated the ORIGINAL intent during the
+   * verdict phase and wants to charge for what was actually built should
+   * recompute against this parameter rather than trust a value it cached
+   * from onIntent.
+   *
+   * `ctx` is the same shape onIntent receives (the player and their
+   * per-plugin WorldApi). `diff` is the full, unfiltered server-side diff —
+   * same semantics as onTerrainChanged's.
+   */
+  onIntentApplied?(
+    intent: SculptIntent,
+    ctx: IntentCtx,
+    diff: readonly CellDiff[],
+  ): void;
 
   /**
    * Fired after any applied edit, with the FULL server-side diff. Handed the

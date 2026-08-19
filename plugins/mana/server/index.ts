@@ -5,13 +5,21 @@
 //
 //   reveal : onWorldCreate + onTerrainChanged + persistence, no player identity
 //   mana   : onWorldCreate + onPlayerJoin/Leave + onTick + onIntent (DENY)
-//            + namespaced server → client messages
+//            + onIntentApplied (CHARGE) + namespaced server → client messages
 //
 // The economy itself is deliberately the simplest thing that is still a real
 // veto: every player holds a pool, the pool regenerates on the server's fixed
 // tick, and a sculpt intent that cannot pay is DENIED in the interceptor chain —
 // the sim is never patched, exactly as design §3.5 requires ("a mana plugin
 // vetoes/modifies intents rather than patching the sim").
+//
+// TWO-PHASE INTENT PROCESSING (issue #19, 2026-08-18): checking affordability
+// and charging for it are two different hooks, `onIntent` (verdict) and
+// `onIntentApplied` (effect) — see both functions below and their doc
+// comments in server/src/plugins/types.ts. This is what makes a later
+// interceptor's veto (monsters denying a raise near a living Cthulhu, e.g.)
+// cost the player nothing: mana no longer touches the pool until the whole
+// intent has cleared every interceptor and actually landed.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, sculptOptionsOf } from '@terrace/shared';
 import type { SculptIntent } from '@terrace/shared';
@@ -605,31 +613,37 @@ function poolFor(playerId: string): ManaPool {
 }
 
 /**
- * INTENT VALIDATION PATH — CRITICAL.
+ * VERDICT PHASE — CRITICAL, AND READ-ONLY (issue #19).
  *
- * Runs inside the host's interceptor chain, after core has already established
- * that the intent is structurally valid and that its centre is in an unlocked
- * chunk (server/src/intent/pipeline.ts steps 1–2). Our only job is the economy:
+ * Runs inside the host's interceptor chain (the verdict phase — see onIntent's
+ * doc comment in server/src/plugins/types.ts), after core has already
+ * established that the intent is structurally valid and that its centre is in
+ * an unlocked chunk (server/src/intent/pipeline.ts steps 1–2). Our job here is
+ * ONLY to answer "can this player afford this intent" — never to spend
+ * anything:
  *
  *   balance < cost  → DENY. The first deny in the chain wins and the intent
  *                     never reaches the terrain; core applies nothing.
- *   otherwise       → charge the cost and allow. We deliberately do NOT return
- *                     a `modify` verdict: the intent is fine as written, and a
- *                     rewrite would force core to re-validate it for nothing.
+ *   otherwise       → ALLOW, and NOTHING ELSE. No deduction, no balance push.
+ *                     We deliberately do not return a `modify` verdict either:
+ *                     the intent is fine as written, and a rewrite would force
+ *                     core to re-validate it for nothing.
  *
- * KNOWN RESIDUAL FAILURE MODE (documented rather than papered over): the charge
- * is applied here, before the edit is known to have landed. The current API has
- * no post-apply hook carrying the player, so there is no point at which a
- * charge could be committed or refunded. An intent charged here still fails to
- * apply if (a) a plugin ordered AFTER mana denies it, or (b) a plugin rewrites
- * it into something that fails core's re-validation (pipeline step 4). Neither
- * can happen with the plugins that ship in this repo — load order is
- * alphabetical, `mana` sorts before `reveal`, and reveal does not implement
- * onIntent at all — but a third-party plugin sorting after `mana` would expose
- * it. The fix belongs in core (an `onIntentApplied(intent, ctx, diff)` hook),
- * not in a workaround here; it is written up in the Phase 2 report.
+ * The deny-side `world.sendTo` is safe to fire from here even though this is
+ * the no-side-effects phase: it announces THIS plugin's OWN decision to deny,
+ * which first-deny-wins guarantees can never be overturned by a later
+ * interceptor — there is nothing for the message to become stale against (see
+ * onIntent's doc comment for the general rule this is the one exception to).
+ *
+ * FIXES ISSUE #19: this function used to also charge the pool on the allow
+ * path, which meant a later interceptor's deny (monsters vetoing a raise near
+ * a living Cthulhu, say) still cost the player mana — the veto happened after
+ * the charge, and nothing existed to refund it. The charge now happens in
+ * `commitCharge`, called from the NEW effect phase (`onIntentApplied`), which
+ * core reaches only once every interceptor — mana included — has allowed and
+ * the edit has actually landed.
  */
-function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
+function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
   // The price of THIS intent for THIS player: the volume its brush displaces at
@@ -658,9 +672,39 @@ function chargeForSculpt(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
     return { kind: 'deny', reason: INSUFFICIENT_MANA_REASON };
   }
 
+  return { kind: 'allow' };
+}
+
+/**
+ * EFFECT PHASE — where the pool actually moves (issue #19).
+ *
+ * Called from `onIntentApplied`, which core fires exactly once per intent,
+ * strictly after every interceptor (mana's own `checkAffordability` included)
+ * allowed AND the edit landed. `intent` is the EFFECTIVE intent — after any
+ * later plugin's `modify` — so the price charged here is the price of what was
+ * actually built, not of whatever mana glimpsed during the verdict phase. (A
+ * NAMED CONSEQUENCE: relics' Titan's Hand widens the brush AFTER mana's own
+ * onIntent runs — mana sorts first alphabetically — so before this change that
+ * extra area was free; now it is priced like any other radius, because the
+ * charge happens after the widening rather than before it. See relics'
+ * onIntent doc comment.)
+ *
+ * Recomputing the cost here rather than caching what `checkAffordability` saw
+ * is deliberate, not laziness: caching would require a pending-charge slot
+ * keyed by player, which is exactly the kind of cross-call state this economy
+ * has otherwise avoided, and `manaCostFor` is a pure, cheap function of
+ * (player, intent) — recomputing it is simpler than keeping two numbers in
+ * sync and just as correct, since nothing between the two calls can change
+ * this player's perk or this intent's shape (the pipeline runs both phases of
+ * one intent synchronously, with no other intent able to interleave).
+ */
+function commitCharge(intent: SculptIntent, ctx: IntentCtx): void {
+  const { world } = ctx;
+  const pool = poolFor(ctx.player.id);
+  const cost = manaCostFor(ctx.player.id, intent);
+
   pool.balance -= cost;
   sendBalance(world, ctx.player.id, pool);
-  return { kind: 'allow' };
 }
 
 /**
@@ -722,7 +766,11 @@ export const plugin: TerracePlugin = {
   },
 
   onIntent(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
-    return chargeForSculpt(intent, ctx);
+    return checkAffordability(intent, ctx);
+  },
+
+  onIntentApplied(intent: SculptIntent, ctx: IntentCtx): void {
+    commitCharge(intent, ctx);
   },
 };
 
