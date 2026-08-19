@@ -66,6 +66,25 @@ def main() -> int:
             # setdefault: an override exported in the shell beats CONFIG.
             env.setdefault(name, str(value))
 
+    # Boot details up front (owner request 2026-08-19): one block naming every
+    # port and URL this launch uses, before the two processes start talking.
+    resolved = {name: env.get(name, "(server default)") for name in CONFIG}
+    port = resolved["PORT"]
+    print("[run_server] -- boot details ------------------------------")
+    print(f"[run_server] world    : {resolved['WORLD_SIZE']}^2 x difficulty {resolved['WORLD_DIFFICULTY']}"
+          f" | tick {resolved['TICK_HZ']}Hz | snapshot {resolved['SNAPSHOT_INTERVAL_S']}s")
+    print(f"[run_server] database : {resolved['DB_PATH']} (relative to server/)")
+    print(f"[run_server] server   : ws://localhost:{port} (game protocol endpoint)")
+    if CLIENT_MODE == "dev":
+        print("[run_server] client   : http://localhost:5173  <- PLAY HERE (Vite dev)")
+    elif CLIENT_MODE == "static":
+        print(f"[run_server] client   : http://localhost:{port}  <- PLAY HERE (served by the game server)")
+    else:
+        print('[run_server] client   : none (CLIENT_MODE = "none")')
+    # flush: when stdout is a pipe (nohup, a wrapper script) python
+    # block-buffers and the details would otherwise sit invisible until exit.
+    print("[run_server] ---------------------------------------------", flush=True)
+
     children = []  # (name, Popen) - every child gets its own process group
 
     def reap(proc, sig):
