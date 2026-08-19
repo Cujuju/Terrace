@@ -69,6 +69,7 @@ import { isDurandsCell } from './durands.ts';
 
 const Z_AXIS = new Vector3(0, 0, 1);
 const Y_AXIS = new Vector3(0, 1, 0);
+const X_AXIS = new Vector3(1, 0, 0);
 
 function lambert(color: number, options: { emissive?: number } = {}): MeshLambertMaterial {
   return new MeshLambertMaterial({ color, flatShading: true, emissive: options.emissive ?? 0x000000 });
@@ -191,6 +192,138 @@ function gableSlopeLength(halfSpan: number, ridgeRise: number): number {
   return Math.hypot(halfSpan, ridgeRise);
 }
 
+// ── Remodel-pass helpers ─────────────────────────────────────────────────────
+//
+// Added for the owner's per-tier remodel notes (teepee camp, thatched hut,
+// log-course timber walls, a longer longhouse, coursed-stone cottage and
+// tower, a recentred sign). Same discipline as the fidelity pass above: every
+// addition is still just another (geometry, material, local transforms) entry
+// on a tier's fixed list, and every transform below is a FIXED literal, never
+// a per-cell hash roll.
+
+/**
+ * A tube segment BETWEEN two arbitrary 3D points: midpoint, length and
+ * orientation are all derived from the endpoints, so a building is authored
+ * as a joint skeleton rather than as hand-placed matrices — the same
+ * "endpoints, not eyeballed transforms" trick dancerSegment (below, in the
+ * Durand's section) already uses, generalised from dancerSegment's fixed-Z
+ * 2D plane to full 3D: the teepee's lodge-poles and the timber-house's log
+ * courses both need segments that leave that one plane, which is exactly
+ * what dancerSegment was written not to need. `unitLength` is the shared
+ * segment geometry's own built length; the returned matrix's Y-scale
+ * stretches it to the endpoints' actual distance.
+ */
+function segmentMatrix(from: Vector3, to: Vector3, unitLength: number): Matrix4 {
+  const direction = new Vector3().subVectors(to, from);
+  const length = direction.length();
+  const midpoint = new Vector3().addVectors(from, to).multiplyScalar(0.5);
+  const rotation = new Quaternion().setFromUnitVectors(Y_AXIS, direction.normalize());
+  return new Matrix4().compose(midpoint, rotation, new Vector3(1, length / unitLength, 1));
+}
+
+/**
+ * The coursed-stone impression shared by the stone-cottage's flat walls and
+ * the watchtower's round one (owner: "consistent shades, so cottage and
+ * tower read as the same masonry era"): three grey-tan shades, cycling by a
+ * FIXED (course + position) pattern so the mix of shades is the same on
+ * every building of either tier — the same "one fixed layout, shared by
+ * every building" rule every ring above already keeps, just for colour
+ * instead of position. Both tiers build their own fresh MeshLambertMaterial
+ * per shade (see stoneMaterial below) rather than sharing one material
+ * object across tiers, matching windowMaterial's own "every tier gets its
+ * own instance" convention — dispose() only has to walk one flat list either
+ * way, and nothing here risks a double-dispose of a shared object.
+ */
+const STONE_SHADE_COLORS: readonly [number, number, number] = [0x9c968c, 0x8b8b86, 0x76736c];
+
+/** A fresh material for one of the three shared stone shades — see STONE_SHADE_COLORS. */
+function stoneMaterial(shadeIndex: number): MeshLambertMaterial {
+  return lambert(STONE_SHADE_COLORS[shadeIndex]);
+}
+
+/** One instance of a coursed-stone block: its local matrix plus which of the three shared shades it belongs to. */
+interface StoneBlock {
+  readonly matrix: Matrix4;
+  readonly shadeIndex: number;
+}
+
+/**
+ * A grid of small, slightly proud stone blocks tiling one FLAT rectangular
+ * wall face — the stone-cottage's four walls. `faceHalfWidth` is the face's
+ * own half-span along whichever axis it runs; `fixedAxis`/`fixedValue` place
+ * the face's plane (the wall's `x = ±wallHalfWidth` faces use fixedAxis 'x',
+ * its `z = ±wallDepth/2` faces use 'z'). Column count is the closest whole
+ * divisor of the face's width to `STONE_BLOCK_TARGET_WIDTH` — the same
+ * "target spacing, actual count is the nearest divisor" trick
+ * DURANDS_MARQUEE_BULB_TARGET_SPACING already uses for the marquee bulb
+ * ring — so blocks tile edge-to-edge with no fractional remainder, whatever
+ * the face's own width happens to be. Alternate courses shift by a half
+ * block-slot (a running-bond stagger, one interior column short of the full
+ * row) for the "staggered joints" look coursed masonry has; any resulting
+ * edge irregularity is exactly where the tier's own quoins already stand
+ * proud of the corner, so the two details cover for each other rather than
+ * fighting for the same pixels.
+ */
+function stoneBlocksForFace(
+  faceHalfWidth: number,
+  wallHeight: number,
+  courseCount: number,
+  fixedAxis: 'x' | 'z',
+  fixedValue: number,
+  targetBlockWidth: number,
+  blockGapFraction: number,
+): { blocks: StoneBlock[]; blockWidth: number; blockHeight: number } {
+  const faceWidth = faceHalfWidth * 2;
+  const columnCount = Math.max(2, Math.round(faceWidth / targetBlockWidth));
+  const slotWidth = faceWidth / columnCount;
+  const blockWidth = slotWidth * blockGapFraction;
+  const rowHeight = wallHeight / courseCount;
+  const blockHeight = rowHeight * blockGapFraction;
+  // Rotate the block geometry (authored flat against a 'z'-normal face, its
+  // own local X spanning the face's width) a quarter turn for an 'x'-normal
+  // face, so its width axis becomes Z instead of X.
+  const rotation = new Quaternion().setFromAxisAngle(Y_AXIS, fixedAxis === 'x' ? Math.PI / 2 : 0);
+
+  const blocks: StoneBlock[] = [];
+  for (let course = 0; course < courseCount; course++) {
+    const staggered = course % 2 === 1;
+    const columnsThisCourse = staggered ? columnCount - 1 : columnCount;
+    const rowStartOffset = staggered ? slotWidth : slotWidth / 2;
+    const y = rowHeight * (course + 0.5);
+    for (let column = 0; column < columnsThisCourse; column++) {
+      const across = -faceHalfWidth + rowStartOffset + slotWidth * column;
+      const position =
+        fixedAxis === 'z' ? new Vector3(across, y, fixedValue) : new Vector3(fixedValue, y, across);
+      blocks.push({
+        matrix: new Matrix4().compose(position, rotation, new Vector3(1, 1, 1)),
+        shadeIndex: (course + column) % STONE_SHADE_COLORS.length,
+      });
+    }
+  }
+  return { blocks, blockWidth, blockHeight };
+}
+
+/** Smallest angle between two directions, both in radians — wraparound-aware (the gap between 350° and 10° is 20°, not 340°). */
+function angularDistance(a: number, b: number): number {
+  const wrapped = ((a - b + Math.PI) % FULL_TURN_RADIANS + FULL_TURN_RADIANS) % FULL_TURN_RADIANS;
+  return Math.abs(wrapped - Math.PI);
+}
+
+/**
+ * Splits a flat list of StoneBlocks into one StructurePart per shared shade
+ * (see STONE_SHADE_COLORS) — the instancing rule every ring in this file
+ * keeps: one geometry, one material, many local transforms PER PART, so a
+ * multi-shade field is exactly `STONE_SHADE_COLORS.length` parts, never one
+ * part per block.
+ */
+function stonePartsByShade(blocks: readonly StoneBlock[], geometry: BufferGeometry): StructurePart[] {
+  return STONE_SHADE_COLORS.map((_, shadeIndex) => ({
+    geometry,
+    material: stoneMaterial(shadeIndex),
+    localMatrices: blocks.filter((block) => block.shadeIndex === shadeIndex).map((block) => block.matrix),
+  }));
+}
+
 // ── One building tier: a fixed list of (geometry, material, local transforms) ─
 
 interface StructurePart {
@@ -203,18 +336,96 @@ interface StructurePart {
 function buildTierParts(): StructurePart[][] {
   const tiers: StructurePart[][] = [];
 
-  // ── Tier 0: camp — a low canvas tent beside a campfire's ember glow. The
-  // shortest, roundest-toned silhouette in the progression: nothing here
-  // stands taller than half a cell.
+  // ── Tier 0: camp — a teepee: a conical hide tent beside a campfire's ember
+  // glow. The shortest, roundest-toned silhouette in the progression: nothing
+  // here stands taller than half a cell.
+  //
+  // REMODEL (owner: "make it read as a teepee") — the cone primitive was
+  // already there; what was missing was everything that actually reads as
+  // "teepee" rather than "cone": an 8-sided (round, not 4-sided/pyramidal)
+  // profile, crossed lodge-poles poking out the smoke hole at the top, and a
+  // dark triangular door opening at the base. The old 45°-yaw on the tent
+  // existed only to align a flat face of the 4-sided cone forward; an 8-sided
+  // cone has no single "flat face" worth aligning, so that yaw is dropped —
+  // the tent now sits at yaw 0, which is also what makes the door's own
+  // placement math below (computed on the +Z meridian) line up with what the
+  // tent geometry actually shows there.
   {
+    const TENT_RADIUS = 0.42;
     const tentHeight = 0.55;
+    const tentX = -0.16; // off-centre so the hearth cluster below has room on the tent's +X side
     const tent: StructurePart = {
-      geometry: new ConeGeometry(0.42, tentHeight, 4),
+      geometry: new ConeGeometry(TENT_RADIUS, tentHeight, 8),
       material: lambert(0xcbb994),
+      localMatrices: [at(tentX, tentHeight / 2, 0)],
+    };
+
+    // Dark triangular door opening, set into the tent's own +Z meridian near
+    // its base. Built from a 3-radial-segment ConeGeometry laid on its side:
+    // with radialSegments = 3, a cone's "circle" cross-section IS a
+    // triangle (vertices at 0°, 120°, 240°), and rotating the whole cone -90°
+    // about X swaps its axis (originally the height axis, Y) for Z, so the
+    // triangular cross-section — which used to be perpendicular to the
+    // ground — now lies flat, facing +Z, with `TEEPEE_DOOR_DEPTH` as its
+    // (barely-there) protruding apex. One geometry, no new primitive kind.
+    const TEEPEE_DOOR_RADIUS = 0.11; // the door "triangle's" half-span, expressed as the underlying cone's own radius param
+    const TEEPEE_DOOR_DEPTH = 0.02; // just enough extrusion for flat shading to read this as a face, not a zero-thickness plane
+    const TEEPEE_DOOR_PROUD_MARGIN = 0.02; // clears the tent's own sloped surface — see doorZ below
+    // The -90°-about-X rotation puts the triangle's two base corners at
+    // local y = -0.5 * radius and its apex at local y = +radius (derived,
+    // not eyeballed, from CylinderGeometry's own vertex layout: the
+    // radialSegments = 3 base circle's first vertex sits at (x=0, z=radius)
+    // before the rotation, which maps to (y=+radius) after it). Translating
+    // up by 0.5 * radius puts the two base corners on the ground.
+    const teepeeDoorBottomY = TEEPEE_DOOR_RADIUS * 0.5;
+    const teepeeDoorTopY = teepeeDoorBottomY + TEEPEE_DOOR_RADIUS;
+    // The tent is a CONE, not a cylinder: its radius shrinks with height, so
+    // a flat door needs its z-offset sized to the SMALLEST radius it spans
+    // (its own top) or its lower half would clip inside the sloped hide.
+    // That leaves a small gap between the door's bottom edge and the tent's
+    // surface, which at this scale reads as shadow, not as a visible seam —
+    // the safe direction to be wrong in is "floating slightly proud",
+    // never "buried in the wall".
+    const teepeeDoorTopRadius = TENT_RADIUS * (1 - teepeeDoorTopY / tentHeight);
+    const doorZ = teepeeDoorTopRadius + TEEPEE_DOOR_PROUD_MARGIN;
+    const teepeeDoor: StructurePart = {
+      geometry: new ConeGeometry(TEEPEE_DOOR_RADIUS, TEEPEE_DOOR_DEPTH, 3),
+      material: lambert(0x241708),
       localMatrices: [
-        new Matrix4()
-          .makeRotationY(Math.PI / 4)
-          .premultiply(at(-0.16, tentHeight / 2, 0)),
+        new Matrix4().compose(
+          new Vector3(tentX, teepeeDoorBottomY, doorZ),
+          new Quaternion().setFromAxisAngle(X_AXIS, -Math.PI / 2),
+          new Vector3(1, 1, 1),
+        ),
+      ],
+    };
+
+    // Crossed lodge-poles: two poles standing in for the ends a real
+    // teepee's lodge-pole frame pokes out through the smoke hole, crossing
+    // near the tent's own apex and past it on both sides — the single
+    // clearest "teepee, not just a cone" cue a smooth cone alone cannot
+    // give. Each pole's two endpoints are computed independently (see
+    // segmentMatrix above) rather than one mirrored off the other, the same
+    // reasoning gableRoofPanelMatrices gives for its own two independently-
+    // placed panels: a bug in one is not silently "the same bug, mirrored"
+    // in the other.
+    const TEEPEE_POLE_RADIUS = 0.012;
+    const TEEPEE_POLE_UNIT_LENGTH = 0.1;
+    const TEEPEE_POLE_ABOVE_APEX = 0.16; // how far each pole pokes out past the tent's own roofline
+    const lodgepoles: StructurePart = {
+      geometry: new CylinderGeometry(TEEPEE_POLE_RADIUS, TEEPEE_POLE_RADIUS, TEEPEE_POLE_UNIT_LENGTH, 5),
+      material: lambert(0x4a3420),
+      localMatrices: [
+        segmentMatrix(
+          new Vector3(tentX + 0.22, tentHeight * 0.55, 0.16),
+          new Vector3(tentX - 0.16, tentHeight + TEEPEE_POLE_ABOVE_APEX, -0.12),
+          TEEPEE_POLE_UNIT_LENGTH,
+        ),
+        segmentMatrix(
+          new Vector3(tentX - 0.22, tentHeight * 0.55, 0.13),
+          new Vector3(tentX + 0.17, tentHeight + TEEPEE_POLE_ABOVE_APEX, -0.14),
+          TEEPEE_POLE_UNIT_LENGTH,
+        ),
       ],
     };
     const fireHeight = 0.16;
@@ -260,11 +471,21 @@ function buildTierParts(): StructurePart[][] {
       ],
     };
 
-    tiers.push([tent, fire, firepitStones, woodpile]);
+    tiers.push([tent, fire, firepitStones, woodpile, teepeeDoor, lodgepoles]);
   }
 
-  // ── Tier 1: hut — a round wattle-and-daub wall under a conical thatch
-  // roof. First solid drum shape; still no hard edges anywhere on it.
+  // ── Tier 1: hut (the settler hut) — a round wattle-and-daub wall under a
+  // conical THATCH roof. First solid drum shape; still no hard edges
+  // anywhere on it.
+  //
+  // REMODEL (owner: "the roof must read as STRAW/THATCH... texture the
+  // silhouette") — two changes, both from the brief's own examples: (1) a
+  // warm straw palette on the roof, distinct from the old roof colour, and
+  // (2) the roof built as TWO stacked, slightly offset cones (a wide, short
+  // "skirt" layer under a narrower, taller cap) rather than one clean cone —
+  // the "two or three stacked, slightly offset roof slabs" reading — plus a
+  // fringe ring of small angled boxes at the eave in place of the old smooth
+  // disc, so the eave's own edge is ragged rather than a lathe-turned rim.
   {
     const wallHeight = 0.5;
     const wall: StructurePart = {
@@ -272,11 +493,33 @@ function buildTierParts(): StructurePart[][] {
       material: lambert(0x9c7a52),
       localMatrices: [at(0, wallHeight / 2, 0)],
     };
-    const roofHeight = 0.42;
-    const roof: StructurePart = {
-      geometry: new ConeGeometry(0.52, roofHeight, 8),
-      material: lambert(0xcaa645),
-      localMatrices: [at(0, wallHeight + roofHeight / 2, 0)],
+
+    // Straw palette: the skirt (lower, wider layer) a shade darker than the
+    // cap (upper, narrower layer) so the seam between them reads as a
+    // texture break even under flat shading, not just a silhouette step.
+    const THATCH_CAP_COLOR = 0xdcb95a;
+    const THATCH_SKIRT_COLOR = 0xc3a047;
+
+    // Skirt: the wider, shorter lower roof layer — "oversized" relative to
+    // the wall it sits on, per the brief, and wider than the cap above it so
+    // its own edge is what the fringe ring (below) sits on.
+    const skirtHeight = 0.16;
+    const skirtRadius = 0.62;
+    const roofSkirt: StructurePart = {
+      geometry: new ConeGeometry(skirtRadius, skirtHeight, 8),
+      material: lambert(THATCH_SKIRT_COLOR),
+      localMatrices: [at(0, wallHeight + skirtHeight / 2, 0)],
+    };
+
+    // Cap: the narrower, taller upper roof layer, stacked directly on the
+    // skirt's own apex — the second of the "two or three stacked, slightly
+    // offset slabs" the brief asks for.
+    const capHeight = 0.4;
+    const capRadius = 0.5;
+    const roofCap: StructurePart = {
+      geometry: new ConeGeometry(capRadius, capHeight, 8),
+      material: lambert(THATCH_CAP_COLOR),
+      localMatrices: [at(0, wallHeight + skirtHeight + capHeight / 2, 0)],
     };
 
     // Door: a dark plank set into the drum's +Z face, low and narrow — a
@@ -291,41 +534,113 @@ function buildTierParts(): StructurePart[][] {
       localMatrices: [at(0, doorHeight / 2, 0.45)],
     };
 
-    // Eave ring: a shallow, slightly wider disc at the wall/roof seam — the
-    // thatch's own overhang past the wall face, the same "overhang past the
-    // wall" idea the box-roofed tiers get from their gableRoofPanelMatrices
-    // eave, expressed for a cone roof instead.
-    const eaveHeight = 0.04;
-    const eaveRing: StructurePart = {
-      geometry: new CylinderGeometry(0.5, 0.5, eaveHeight, 8),
+    // Thatch fringe: a ring of small boxes standing in for straw bundles
+    // hanging past the skirt's own eave — replaces the old single smooth
+    // disc (a lathe-turned rim reads as timber, not straw) with many small
+    // faceted blocks, each tilted slightly outward-and-down, so the eave's
+    // own silhouette is ragged rather than a clean circle. Count is the
+    // closest whole divisor of the skirt's own circumference to the target
+    // spacing below — the same "target spacing, nearest divisor" trick
+    // DURANDS_MARQUEE_BULB_TARGET_SPACING already uses for the marquee bulb
+    // ring, reused here for the same reason: an even ring with no leftover
+    // gap, whatever the skirt's own radius happens to be.
+    const FRINGE_TARGET_SPACING = 0.1;
+    const fringeCount = Math.round((FULL_TURN_RADIANS * skirtRadius) / FRINGE_TARGET_SPACING);
+    const fringeTiltRadians = Math.PI / 7; // hangs the bundle's outer end down past the eave line, rather than standing it straight out
+    const fringeGeometry = new BoxGeometry(0.05, 0.1, 0.02);
+    const fringe: StructurePart = {
+      geometry: fringeGeometry,
       material: lambert(0xb8944a),
-      localMatrices: [at(0, wallHeight, 0)],
+      localMatrices: circleRingMatrices(fringeCount, skirtRadius, wallHeight, true).map((ring) =>
+        ring.multiply(new Matrix4().makeRotationX(fringeTiltRadians)),
+      ),
     };
 
-    // Smoke vent: a dark cap at the cone's own apex, standing in for a
+    // Smoke vent: a dark cap at the roof's own apex, standing in for a
     // chimney a hut this primitive would not have — a hole in the thatch,
     // not a masonry stack.
     const smokeVentHeight = 0.05;
     const smokeVent: StructurePart = {
       geometry: new CylinderGeometry(0.05, 0.05, smokeVentHeight, 6),
       material: lambert(0x2a1c10),
-      localMatrices: [at(0, wallHeight + roofHeight - smokeVentHeight / 2, 0)],
+      localMatrices: [at(0, wallHeight + skirtHeight + capHeight - smokeVentHeight / 2, 0)],
     };
 
-    tiers.push([wall, roof, door, eaveRing, smokeVent]);
+    tiers.push([wall, roofSkirt, roofCap, door, fringe, smokeVent]);
   }
 
-  // ── Tier 2: timber-house — a squared log box under a peaked (gable) roof:
-  // the first tier with hard edges anywhere on it.
+  // ── Tier 2: timber-house — walls built of stacked LOG COURSES under a
+  // peaked (gable) roof: the first tier with hard edges anywhere on it.
+  //
+  // REMODEL (owner: "walls made of LOGS — replace flat walls with stacked
+  // horizontal log courses"). All four walls become one `logCourses` part:
+  // one unit-length cylinder geometry, stretched and placed per course via
+  // segmentMatrix (see the Remodel-pass helpers above) — the same
+  // instancing shape every other multi-instance part in this file already
+  // has, just with segmentMatrix doing the per-course placement work
+  // gableRoofPanelMatrices does for roof panels. Every course on every wall
+  // OVERHANGS its own corner by LOG_END_OVERHANG, so the cylinder's own flat
+  // end-cap (CylinderGeometry is capped by default) is what shows as the
+  // "log-end caps visible on the front corners" the brief asks for — no
+  // separate cap part needed, the overhanging log ends already have caps by
+  // construction. The old square corner battens (timberPosts) are dropped:
+  // they stood in for half-timbered post-and-beam framing, which is a
+  // different wall technique than a log-cabin's rounded, interlocking
+  // corners — keeping both would put a square post through the same corner
+  // the round log ends now occupy.
   {
     const wallHeight = 0.55;
     const wallHalfWidth = 0.45;
     const wallDepth = 0.7;
-    const wall: StructurePart = {
-      geometry: new BoxGeometry(wallHalfWidth * 2, wallHeight, wallDepth),
-      material: lambert(0x6b4a30),
-      localMatrices: [at(0, wallHeight / 2, 0)],
+
+    const LOG_COURSE_COUNT = 5; // within the brief's "4-6 courses"
+    const logDiameter = wallHeight / LOG_COURSE_COUNT;
+    const logRadius = logDiameter / 2;
+    const LOG_END_OVERHANG = 0.05; // how far each course pokes out past the corner it meets — see the tier's own banner comment
+    const LOG_UNIT_LENGTH = 0.1;
+    const logGeometry = new CylinderGeometry(logRadius, logRadius, LOG_UNIT_LENGTH, 8);
+
+    const logMatrices: Matrix4[] = [];
+    for (let course = 0; course < LOG_COURSE_COUNT; course++) {
+      const y = logRadius + course * logDiameter;
+      const frontZ = wallDepth / 2;
+      const backZ = -wallDepth / 2;
+      const rightX = wallHalfWidth;
+      const leftX = -wallHalfWidth;
+      // Front and back walls run along X; left and right walls run along Z.
+      // Every course overhangs both its own ends by LOG_END_OVERHANG, which
+      // is what makes the perpendicular wall's log ends poke past this
+      // wall's own face at every corner (and vice versa) — the interlocking
+      // corner joint a real log cabin shows.
+      logMatrices.push(
+        segmentMatrix(
+          new Vector3(-wallHalfWidth - LOG_END_OVERHANG, y, frontZ),
+          new Vector3(wallHalfWidth + LOG_END_OVERHANG, y, frontZ),
+          LOG_UNIT_LENGTH,
+        ),
+        segmentMatrix(
+          new Vector3(-wallHalfWidth - LOG_END_OVERHANG, y, backZ),
+          new Vector3(wallHalfWidth + LOG_END_OVERHANG, y, backZ),
+          LOG_UNIT_LENGTH,
+        ),
+        segmentMatrix(
+          new Vector3(leftX, y, -wallDepth / 2 - LOG_END_OVERHANG),
+          new Vector3(leftX, y, wallDepth / 2 + LOG_END_OVERHANG),
+          LOG_UNIT_LENGTH,
+        ),
+        segmentMatrix(
+          new Vector3(rightX, y, -wallDepth / 2 - LOG_END_OVERHANG),
+          new Vector3(rightX, y, wallDepth / 2 + LOG_END_OVERHANG),
+          LOG_UNIT_LENGTH,
+        ),
+      );
+    }
+    const logCourses: StructurePart = {
+      geometry: logGeometry,
+      material: lambert(0x7a5232),
+      localMatrices: logMatrices,
     };
+
     const ridgeRise = 0.35;
     const eave = 0.08;
     const halfSpan = wallHalfWidth + eave;
@@ -336,12 +651,14 @@ function buildTierParts(): StructurePart[][] {
     };
 
     // Door, centred on the +Z wall face (see the shared "+Z is the front"
-    // convention above every box-walled tier follows).
+    // convention above every box-walled tier follows). z is now set past the
+    // logs' own overhanging radius, not a flat box face.
+    const doorZ = wallDepth / 2 + logRadius + 0.02;
     const doorHeight = 0.34;
     const door: StructurePart = {
       geometry: new BoxGeometry(0.16, doorHeight, 0.03),
       material: lambert(0x2e1c10),
-      localMatrices: [at(0, doorHeight / 2, wallDepth / 2 + 0.01)],
+      localMatrices: [at(0, doorHeight / 2, doorZ)],
     };
 
     // Windows, one either side of the door — first tier with actual glass to
@@ -349,23 +666,7 @@ function buildTierParts(): StructurePart[][] {
     const windows: StructurePart = {
       geometry: new BoxGeometry(0.1, 0.12, 0.02),
       material: windowMaterial(),
-      localMatrices: [
-        at(0.22, 0.32, wallDepth / 2 + 0.01),
-        at(-0.22, 0.32, wallDepth / 2 + 0.01),
-      ],
-    };
-
-    // Timber corner posts: proud vertical battens at the wall's two front
-    // corners — the first tier with hard edges gets its first visible
-    // structural framing, standing in for the exposed post-and-beam a real
-    // half-timbered wall shows at its corners.
-    const timberPosts: StructurePart = {
-      geometry: new BoxGeometry(0.05, wallHeight, 0.05),
-      material: lambert(0x3f2a18),
-      localMatrices: [
-        at(wallHalfWidth - 0.02, wallHeight / 2, wallDepth / 2 - 0.02),
-        at(-(wallHalfWidth - 0.02), wallHeight / 2, wallDepth / 2 - 0.02),
-      ],
+      localMatrices: [at(0.22, 0.32, doorZ), at(-0.22, 0.32, doorZ)],
     };
 
     // Ridge cap: a thin cap tile over the seam where the two roof panels
@@ -378,15 +679,25 @@ function buildTierParts(): StructurePart[][] {
       localMatrices: [at(0, wallHeight + ridgeRise - ridgeCapThickness / 2, 0)],
     };
 
-    tiers.push([wall, roof, door, windows, timberPosts, ridgeCap]);
+    tiers.push([logCourses, roof, door, windows, ridgeCap]);
   }
 
   // ── Tier 3: longhouse — longer and lower than the timber house (a
   // workshop's footprint, not its height), with a smoking chimney: the
   // widest silhouette in the whole progression.
+  //
+  // REMODEL (owner: "physically LONGER — it should read as the settlement's
+  // big hall"). wallHalfWidth was already this file's own name for the
+  // tier's defining measure (the file banner calls this tier out as the
+  // "widest footprint" in the whole progression), so it is the axis this
+  // pass stretches: 0.68 → 1.05, roughly half again as wide, keeping
+  // wallDepth fixed so the building reads as ELONGATED rather than merely
+  // bigger. Everything downstream of wallHalfWidth (the roof span, the
+  // chimney's own x offset) is already expressed as a function of it, so it
+  // rescales for free.
   {
     const wallHeight = 0.48;
-    const wallHalfWidth = 0.68;
+    const wallHalfWidth = 1.05;
     const wallDepth = 0.6;
     const wall: StructurePart = {
       geometry: new BoxGeometry(wallHalfWidth * 2, wallHeight, wallDepth),
@@ -439,19 +750,20 @@ function buildTierParts(): StructurePart[][] {
       ],
     };
 
-    // Porch posts: two support posts flanking the entrance, standing in the
-    // shade of the roof's own eave overhang — a workshop's porch, not
-    // ornament.
-    const porchPosts: StructurePart = {
-      geometry: new CylinderGeometry(0.03, 0.03, wallHeight, 6),
-      material: lambert(0x6b5a42),
-      localMatrices: [
-        at(0.34, wallHeight / 2, wallDepth / 2 + 0.06),
-        at(-0.34, wallHeight / 2, wallDepth / 2 + 0.06),
-      ],
-    };
+    // REMODEL (owner: porch posts "look wrong" — remove or relocate to
+    // flank the gable-end door): the door already sits at the gable end (the
+    // roof ridge above runs along Z per gableRoofPanelMatrices, so the
+    // triangular gable faces are the ±Z walls — the same wall the door is
+    // already on), so "relocate to flank the door" would land the posts
+    // right back where they used to be. The actual defect is that these
+    // posts stood free with no porch roof over them (unlike Durand's own
+    // porchPosts, which carry an actual porchRoof slab) — two bare cylinders
+    // beside a door read as an unfinished detail, not a porch. Removing them
+    // is the direct fix; building a real porch (a header beam and roof slab)
+    // is new scope this note did not ask for, so it is a deliberate cut, not
+    // an oversight.
 
-    tiers.push([wall, roof, chimney, chimneyPot, door, windows, porchPosts]);
+    tiers.push([wall, roof, chimney, chimneyPot, door, windows]);
   }
 
   // ── Tier 4: stone-cottage — a STONE wall (first material break in the
@@ -461,6 +773,12 @@ function buildTierParts(): StructurePart[][] {
     const wallHeight = 0.6;
     const wallHalfWidth = 0.5;
     const wallDepth = 0.75;
+    // How far the stone-block veneer (below) stands proud of the flat wall
+    // beneath it. Declared up here, ahead of the veneer itself, because the
+    // door and windows need it too: they must clear the veneer's own outer
+    // face, not just the bare wall, or they end up interpenetrating whatever
+    // stone blocks the grid places over their opening.
+    const STONE_BLOCK_DEPTH = 0.025;
     const wall: StructurePart = {
       geometry: new BoxGeometry(wallHalfWidth * 2, wallHeight, wallDepth),
       material: lambert(0x8b8b86),
@@ -492,22 +810,22 @@ function buildTierParts(): StructurePart[][] {
       localMatrices: [at(chimneyX, chimneyY + chimneyHeight / 2 + potHeight / 2, 0)],
     };
 
-    // Door, centred on the +Z wall face.
+    // Door, centred on the +Z wall face. z clears the stone veneer's own
+    // outer face (STONE_BLOCK_DEPTH, declared above) plus the usual small
+    // proud gap, not just the bare wall beneath it.
     const doorHeight = 0.36;
+    const cottageOpeningZ = wallDepth / 2 + STONE_BLOCK_DEPTH + 0.01;
     const door: StructurePart = {
       geometry: new BoxGeometry(0.16, doorHeight, 0.03),
       material: lambert(0x3a2416),
-      localMatrices: [at(0, doorHeight / 2, wallDepth / 2 + 0.01)],
+      localMatrices: [at(0, doorHeight / 2, cottageOpeningZ)],
     };
 
-    // Windows flanking the door.
+    // Windows flanking the door, same z as the door for the same reason.
     const windows: StructurePart = {
       geometry: new BoxGeometry(0.11, 0.13, 0.02),
       material: windowMaterial(),
-      localMatrices: [
-        at(0.26, 0.34, wallDepth / 2 + 0.01),
-        at(-0.26, 0.34, wallDepth / 2 + 0.01),
-      ],
+      localMatrices: [at(0.26, 0.34, cottageOpeningZ), at(-0.26, 0.34, cottageOpeningZ)],
     };
 
     // Stone quoins: the tier's own doc comment calls out "the first material
@@ -533,7 +851,49 @@ function buildTierParts(): StructurePart[][] {
       localMatrices: quoinMatrices,
     };
 
-    tiers.push([wall, roof, chimney, chimneyPot, door, windows, quoins]);
+    // REMODEL (owner: "walls must read as STONE — a grid of slightly proud
+    // stone blocks in 2-3 shades"). One shared block geometry tiled across
+    // all four wall faces via stoneBlocksForFace (see the Remodel-pass
+    // helpers above), split into STONE_SHADE_COLORS.length StructureParts by
+    // stonePartsByShade — the wall box itself stays as the solid substrate
+    // underneath, so this is a veneer layer, not a wall replacement (unlike
+    // the timber-house's log courses, which fully replace their wall: a
+    // stone wall's coursing sits ON a solid wall, a log wall's courses ARE
+    // the wall).
+    const STONE_BLOCK_TARGET_WIDTH = 0.11;
+    const STONE_COURSE_COUNT = 6;
+    const STONE_BLOCK_FILL_FRACTION = 0.82; // fraction of each course/column slot a block actually fills — the rest reads as the mortar joint
+    const stoneBlockGeometry = new BoxGeometry(1, 1, STONE_BLOCK_DEPTH); // unit width/height; each face scales its own blocks below
+    const stoneBlocks: StoneBlock[] = [];
+    for (const face of [
+      { half: wallHalfWidth, axis: 'z' as const, value: wallDepth / 2 + STONE_BLOCK_DEPTH / 2 },
+      { half: wallHalfWidth, axis: 'z' as const, value: -(wallDepth / 2 + STONE_BLOCK_DEPTH / 2) },
+      { half: wallDepth / 2, axis: 'x' as const, value: wallHalfWidth + STONE_BLOCK_DEPTH / 2 },
+      { half: wallDepth / 2, axis: 'x' as const, value: -(wallHalfWidth + STONE_BLOCK_DEPTH / 2) },
+    ]) {
+      const { blocks, blockWidth, blockHeight } = stoneBlocksForFace(
+        face.half,
+        wallHeight,
+        STONE_COURSE_COUNT,
+        face.axis,
+        face.value,
+        STONE_BLOCK_TARGET_WIDTH,
+        STONE_BLOCK_FILL_FRACTION,
+      );
+      // stoneBlocksForFace's matrices carry each block's real position and
+      // facing but assume a UNIT-sized geometry (see stoneBlockGeometry
+      // above); scale each block by ITS OWN face's (width, height) here —
+      // the front/back faces (wallHalfWidth-wide) and the left/right faces
+      // (wallDepth-wide) tile to different column counts, so they land on
+      // different block widths, and applying one global scale to every face
+      // would size the narrower faces' blocks wrong.
+      const faceScale = new Matrix4().makeScale(blockWidth, blockHeight, 1);
+      for (const block of blocks) block.matrix.multiply(faceScale);
+      stoneBlocks.push(...blocks);
+    }
+    const stoneWalls = stonePartsByShade(stoneBlocks, stoneBlockGeometry);
+
+    tiers.push([wall, roof, chimney, chimneyPot, door, windows, quoins, ...stoneWalls]);
   }
 
   // ── Tier 5: watchtower — a tall narrow stone tower with a parapet ring and
@@ -542,6 +902,11 @@ function buildTierParts(): StructurePart[][] {
   {
     const towerHeight = 1.55;
     const towerRadius = 0.3;
+    // How far the stone-block ring (below) stands proud of the tower's own
+    // tapered surface, declared up here because the door needs to clear its
+    // outer face too — see doorZ below and the ring's own comment further
+    // down for why the ring itself is sized off the tower's WIDEST radius.
+    const STONE_TOWER_BLOCK_DEPTH = 0.03;
     const tower: StructurePart = {
       geometry: new CylinderGeometry(towerRadius, towerRadius * 1.08, towerHeight, 8),
       material: lambert(0x8b8b86),
@@ -562,12 +927,16 @@ function buildTierParts(): StructurePart[][] {
 
     // Door at the tower's base, on the +Z face of the drum — the one tier
     // whose wall is round rather than boxed, so the door sits directly on
-    // the tower's own radius instead of a flat wall face.
+    // the tower's own radius instead of a flat wall face. z clears the
+    // stone ring's own outer face (STONE_TOWER_BLOCK_DEPTH, declared above),
+    // not just the bare tapered wall beneath it, for the same reason the
+    // stone-cottage's door was moved off the bare wall face above.
     const doorHeight = 0.3;
+    const towerDoorZ = towerRadius * 1.08 + STONE_TOWER_BLOCK_DEPTH + 0.01;
     const door: StructurePart = {
       geometry: new BoxGeometry(0.14, doorHeight, 0.04),
       material: lambert(0x2a2018),
-      localMatrices: [at(0, doorHeight / 2, towerRadius * 1.08)],
+      localMatrices: [at(0, doorHeight / 2, towerDoorZ)],
     };
 
     // Arrow slits: tall thin glows up the shaft, evenly ringed rather than
@@ -609,7 +978,74 @@ function buildTierParts(): StructurePart[][] {
       localMatrices: [at(0, plinthHeight / 2, 0)],
     };
 
-    tiers.push([tower, parapet, roof, door, arrowSlits, merlons, plinth]);
+    // REMODEL (owner: "same stone-wall treatment as the cottage, consistent
+    // shades, so cottage and tower read as the same masonry era"). The
+    // tower's wall is a CYLINDER, not a box, so stoneBlocksForFace's flat-
+    // face grid does not apply directly; this builds the equivalent for a
+    // round wall — courses of small boxes ringed around the shaft via
+    // circleRingMatrices (faceOutward: true, exactly like the arrow slits
+    // and merlons above), reading the SAME STONE_SHADE_COLORS in the SAME
+    // fixed (course + position) cycle stoneBlocksForFace uses, so the two
+    // tiers' masonry is drawn from one shared palette rather than two
+    // similar-but-different ones. The tower TAPERS (towerRadius at the top,
+    // towerRadius * 1.08 at the base — see `tower` above), so a stone ring
+    // built at one fixed radius would clip into the wider base if that
+    // radius were sized to the narrower top; using the tower's own WIDEST
+    // radius (the base) for every course keeps every ring proud of the
+    // actual surface everywhere, at the cost of standing slightly further
+    // proud than strictly necessary near the top — the same "proud
+    // everywhere, buried nowhere" trade the teepee's door makes above.
+    const STONE_TOWER_COURSE_COUNT = 5;
+    const STONE_TOWER_TARGET_SPACING = 0.1;
+    const STONE_TOWER_BLOCK_FILL_FRACTION = 0.82;
+    const towerStoneRadius = towerRadius * 1.08 + STONE_TOWER_BLOCK_DEPTH / 2;
+    const towerStoneBand = towerHeight * 0.85; // stays clear of the plinth (below) and the parapet (above)
+    // Nearest whole divisor of the ring's own circumference, same
+    // "target spacing" trick stoneBlocksForFace and the marquee bulbs both
+    // use — computed once, since it does not depend on which course.
+    const towerStoneRingCount = Math.round((FULL_TURN_RADIANS * towerStoneRadius) / STONE_TOWER_TARGET_SPACING);
+    const towerStoneSlotWidth = (FULL_TURN_RADIANS * towerStoneRadius) / towerStoneRingCount;
+    const towerStoneHalfSlotAngle = Math.PI / towerStoneRingCount; // half of one slot's own angular width (FULL_TURN_RADIANS / ringCount), halved again
+    // The brief says "keep... slits" — a stone block landing in front of one
+    // (at any course; ARROW_SLIT_COUNT = 3 divides evenly into most sensible
+    // ring counts, so without this every EVEN course would otherwise land a
+    // block on exactly every slit) would defeat that. Rather than reasoning
+    // about which specific courses vertically overlap the slit band, this
+    // carves a full-height angular seam at each slit's own angle — no stone
+    // block within ARROW_SLIT_ANGLE_CLEARANCE of a slit's angle, at ANY
+    // course — the masonry equivalent of a real tower's slits being built
+    // INTO the coursing (framed by stone on either side) rather than one
+    // course happening to leave a gap there by chance.
+    const ARROW_SLIT_ANGLES = Array.from(
+      { length: ARROW_SLIT_COUNT },
+      (_, i) => (FULL_TURN_RADIANS * i) / ARROW_SLIT_COUNT,
+    );
+    const ARROW_SLIT_ANGLE_CLEARANCE = towerStoneHalfSlotAngle * 2; // one full slot's width, centred on the slit
+    const towerStoneBlocks: StoneBlock[] = [];
+    for (let course = 0; course < STONE_TOWER_COURSE_COUNT; course++) {
+      const y = (towerStoneBand / STONE_TOWER_COURSE_COUNT) * (course + 0.5);
+      const startAngle = course % 2 === 1 ? towerStoneHalfSlotAngle : 0; // running-bond stagger, ring case
+      const ring = circleRingMatrices(towerStoneRingCount, towerStoneRadius, y, true, startAngle);
+      for (let i = 0; i < ring.length; i++) {
+        // Same angle formula circleRingMatrices used internally to place
+        // ring[i] — recomputed here (cheaply) only to test it against the
+        // slit seam, not to rebuild the matrix itself.
+        const angle = startAngle + (FULL_TURN_RADIANS * i) / towerStoneRingCount;
+        const nearSlit = ARROW_SLIT_ANGLES.some(
+          (slitAngle) => angularDistance(angle, slitAngle) < ARROW_SLIT_ANGLE_CLEARANCE,
+        );
+        if (nearSlit) continue;
+        towerStoneBlocks.push({ matrix: ring[i], shadeIndex: (course + i) % STONE_SHADE_COLORS.length });
+      }
+    }
+    const towerStoneBlockWidth = towerStoneSlotWidth * STONE_TOWER_BLOCK_FILL_FRACTION;
+    const towerStoneBlockHeight = (towerStoneBand / STONE_TOWER_COURSE_COUNT) * STONE_TOWER_BLOCK_FILL_FRACTION;
+    const towerStoneScale = new Matrix4().makeScale(towerStoneBlockWidth, towerStoneBlockHeight, 1);
+    for (const block of towerStoneBlocks) block.matrix.multiply(towerStoneScale);
+    const towerStoneGeometry = new BoxGeometry(1, 1, STONE_TOWER_BLOCK_DEPTH);
+    const towerStoneWalls = stonePartsByShade(towerStoneBlocks, towerStoneGeometry);
+
+    tiers.push([tower, parapet, roof, door, arrowSlits, merlons, plinth, ...towerStoneWalls]);
   }
 
   return tiers;
@@ -966,10 +1402,12 @@ function buildDurandsParts(): DurandsBuilding {
   const signHalfHeight = 0.08;
   const signThickness = 0.02;
   const signGap = 0.01;
-  // Owner call (2026-08-19): the sign hangs on the RIGHT side of the false
-  // front, flush with its right edge, not centred — the marquee frame below
-  // derives from the sign's own centre, so it rides along automatically.
-  const signX = secondHalfWidth - signHalfWidth;
+  // Owner call (2026-08-18): recentred. The prior flush-right placement
+  // (secondHalfWidth - signHalfWidth) read as off-centre against the false
+  // front; the sign now sits on the false front's own centreline. The
+  // marquee frame below still derives from the sign's own centre, so it
+  // rides along with this unchanged.
+  const signX = 0;
   const signY = groundFloorHeight + secondFloorHeight + falseFrontHeight * 0.5;
   const signZ = falseFrontZ + falseFrontDepth / 2 + signThickness / 2 + signGap;
   const signMaterial = new MeshLambertMaterial({
