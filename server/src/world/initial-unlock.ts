@@ -15,12 +15,18 @@ import type { World } from './world.ts';
 
 /**
  * Edge length, in chunks, of the square unlocked at the centre of a fresh
- * world. 8 chunks = 128×128 cells — exactly a full Populous map, which is the
- * proven-playable starting area (design §2), and ~128 KB of Int16 on a join
- * snapshot. On a 128² world (8×8 chunks) this unlocks everything, which is the
- * intended behaviour for the small-VPS configuration.
+ * world. Owner decision 2026-08-19: 5 chunks = 80×80 cells, ~39% of the old
+ * full-Populous-map start. Deliberately small: the static genesis profile
+ * inside it stops mattering once most of the world is earned by sculpting
+ * (per-player creep, #17). Five, not four, because it is the smallest span
+ * whose genesis geometry stays clean: shelf 1 chunk (span/4, floored),
+ * remainder 4 splits symmetrically, and the 16-cell slope ring sits strictly
+ * inside with a uniform one-chunk deep frame around it. Span 4 leaves an
+ * off-centre shelf and a ring touching the square's edge. Known consequence:
+ * the deep frame (4 096 cells) is below a whale's 5 000-cell habitat need, so
+ * whales first appear once territory creeps outward, not on day one.
  */
-export const INITIAL_UNLOCK_CHUNK_SPAN = 8;
+export const INITIAL_UNLOCK_CHUNK_SPAN = 5;
 
 /** The centred square of chunks a fresh world starts with unlocked. */
 export interface InitialUnlockFootprint {

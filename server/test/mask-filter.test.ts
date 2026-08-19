@@ -109,7 +109,9 @@ describe('join snapshot chunk collection', () => {
     const size = 512;
     const world = World.createFresh(size);
     const edge = chunksPerEdge(size);
-    const start = (edge - INITIAL_UNLOCK_CHUNK_SPAN) / 2;
+    // Centred by flooring — the same rule initialUnlockFootprint applies, so
+    // this stays correct for odd spans (5 since 2026-08-19) and even ones.
+    const start = Math.floor((edge - INITIAL_UNLOCK_CHUNK_SPAN) / 2);
 
     const payloads = collectUnlockedChunkPayloads(world);
 
@@ -119,10 +121,14 @@ describe('join snapshot chunk collection', () => {
     expect(world.isChunkUnlocked(start + INITIAL_UNLOCK_CHUNK_SPAN, start)).toBe(false);
   });
 
-  it('a fresh 128² world (small-VPS config) unlocks entirely', () => {
+  it('a fresh 128² world (small-VPS config) starts with the same small square', () => {
+    // Before 2026-08-19 the 8-chunk span unlocked a 128² world entirely; the
+    // owner shrank the starter square (see INITIAL_UNLOCK_CHUNK_SPAN), so the
+    // small-VPS world now begins with the same centred 5×5 as any other size
+    // and earns the rest by sculpting.
     const world = World.createFresh(128);
     expect(collectUnlockedChunkPayloads(world)).toHaveLength(
-      chunksPerEdge(128) * chunksPerEdge(128),
+      INITIAL_UNLOCK_CHUNK_SPAN * INITIAL_UNLOCK_CHUNK_SPAN,
     );
   });
 });

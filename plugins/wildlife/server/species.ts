@@ -166,12 +166,18 @@ export interface SpeciesProfile {
    * (a) A FRESH world — since 2026-08-14 an ocean with a coast: a shallow shelf
    *     and slope ring at the centre, open sea beyond (server/src/world/
    *     world.ts). The census only counts UNLOCKED cells, so day one is bounded
-   *     by the starter square — INITIAL_UNLOCK_CHUNK_SPAN² chunks = 128×128 =
-   *     16 384 cells, the same on every world size — split by that genesis
-   *     profile into 4 096 shallow and 12 288 deep:
+   *     by the starter square — INITIAL_UNLOCK_CHUNK_SPAN² chunks, shrunk
+   *     2026-08-19 by owner decision to 80×80 = 6 400 cells, the same on every
+   *     world size — split by that genesis profile into 2 304 shallow and
+   *     4 096 deep:
    *
-   *       fish     4 096 /   400 = 10      deepsea  12 288 / 1 500 = 8
-   *       whale   12 288 / 5 000 =  2      grazer            — = 0
+   *       fish     2 304 /   400 = 5       deepsea   4 096 / 1 500 = 2
+   *       whale    4 096 / 5 000 = 0       grazer            — = 0
+   *
+   *     Whales no longer fit on day one (4 096 < their 5 000-cell need) — they
+   *     arrive once players creep territory outward and the census grows. An
+   *     accepted consequence of the smaller starter square, superseding the
+   *     2026-08-14 "2–3 whales immediately" tuning goal.
    *
    *     Grazers alone have nothing on day one: there is no land until a player
    *     raises an island, and that is the intended shape of a world that starts
@@ -240,26 +246,22 @@ export interface SpeciesProfile {
  * than one of them: one blob of fish on an otherwise empty shelf is just "the
  * fish", and at the old density the shelf's whole fish budget was 4 — less than
  * one full group of `groupSize` (5), so a fresh world could not contain a
- * complete school at all, let alone two. Two is the smallest number that makes
- * "school" a category rather than a singular noun.
+ * complete school at all.
  *
  * The arithmetic, against the genesis geometry (server/src/world/world.ts): the
- * starter square is 128×128 = 16 384 cells of which 4 096 are shelf, so a
- * density of D gives floor(4 096 / D) fish, and
- *
- *     FISH_SCHOOLS_ON_FRESH_SHELF × groupSize = 2 × 5 = 10 fish
- *     4 096 / 10 = 409.6  →  D = 400  (floor(4 096/400) = 10, exactly two schools)
- *
- * 400 rather than 409 because it is a round number with the same outcome and
- * a little headroom: at 409 a one-cell change in the shelf geometry would drop
- * the tenth fish and leave a truncated second school.
+ * starter square (shrunk 2026-08-19) is 80×80 = 6 400 cells of which 2 304 are
+ * shallow, so the 400 density gives floor(2 304 / 400) = 5 fish — exactly ONE
+ * complete school of `groupSize` (5). One, down from two on the old 128×128
+ * square: the density (a world-wide tuning) stayed at 400, and a single whole
+ * school still reads as a school; the second returns as soon as territory
+ * creeps a little and the shallow census grows.
  *
  * The plugin cannot import the genesis constants (core owns them and must not be
  * imported by a plugin's tuning table), so this relation is PINNED BY TEST in
  * plugins/wildlife/test/wildlife.test.ts against a real World.createFresh census
  * rather than restated here as a magic 4 096.
  */
-export const FISH_SCHOOLS_ON_FRESH_SHELF = 2;
+export const FISH_SCHOOLS_ON_FRESH_SHELF = 1;
 
 /**
  * Speeds are set relative to each other, not measured against anything: the

@@ -317,19 +317,22 @@ describe('a fresh world as habitat', () => {
 
     expect(census.cellsByHabitat.shallow).toBe(shallowEdgeCells * shallowEdgeCells);
     expect(census.cellsByHabitat.deep).toBe(starterCells - census.cellsByHabitat.shallow);
-    // Sanity on the numbers those formulas produce today: 4 096 / 12 288.
-    expect(census.cellsByHabitat.shallow).toBe(4096);
-    expect(census.cellsByHabitat.deep).toBe(12288);
+    // Sanity on the numbers those formulas produce today (5-chunk starter
+    // square since 2026-08-19): 2 304 / 4 096.
+    expect(census.cellsByHabitat.shallow).toBe(2304);
+    expect(census.cellsByHabitat.deep).toBe(4096);
   });
 
-  it('spawns fish, deep-sea creatures and whales on a fresh world — but no grazers', () => {
+  it('spawns fish and deep-sea creatures on a fresh world — no whales or grazers', () => {
     const harness = bootOn(World.createFresh(WORLD_SIZE));
     tick(harness, ticksFor(SETTLE_SECONDS));
 
     const counts = countsBySpecies();
     expect(counts.fish).toBeGreaterThanOrEqual(1);
-    expect(counts.whale).toBeGreaterThanOrEqual(1);
-    expect(counts.deepsea).toBeGreaterThanOrEqual(4);
+    expect(counts.deepsea).toBeGreaterThanOrEqual(1);
+    // The shrunk 5-chunk starter square (2026-08-19) holds 4 096 deep cells —
+    // below a whale's 5 000-cell need. Whales arrive with territory creep.
+    expect(counts.whale).toBe(0);
     // No land exists yet, so this one cannot be anywhere.
     expect(counts.grazer).toBe(0);
 
@@ -401,12 +404,12 @@ describe('population targets', () => {
     // is not recognisable as a school and the old density could not even hold
     // one whole group.
     expect(targets.fish).toBe(FISH_SCHOOLS_ON_FRESH_SHELF * profileOf('fish').groupSize);
-    expect(targets.fish).toBe(10);
-    expect(targets.deepsea).toBeGreaterThanOrEqual(5);
-    // "2–3 whales immediately" (owner, 2026-08-14) — the single hardest
-    // constraint on FRESH_SHELF_SPAN_DIVISOR, since a bigger shelf eats the open
-    // sea a whale needs.
-    expect(targets.whale).toBeGreaterThanOrEqual(2);
+    expect(targets.fish).toBe(5);
+    expect(targets.deepsea).toBeGreaterThanOrEqual(2);
+    // The 2026-08-14 "2–3 whales immediately" goal was superseded 2026-08-19
+    // by the smaller starter square: 4 096 deep cells cannot host a 5 000-cell
+    // whale, so day one has none — they appear as the territory creeps.
+    expect(targets.whale).toBe(0);
     // Grazers have no habitat until someone raises an island. Honest
     // consequence of a world that starts as an ocean.
     expect(targets.grazer).toBe(0);
