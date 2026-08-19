@@ -14,6 +14,8 @@ import { PluginLoadError, discoverPlugins } from '../src/plugins/discovery.ts';
 import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost } from '../src/plugins/host.ts';
 import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { namespacedMessageType } from '../src/plugins/world-api.ts';
+import type { Player } from '../src/player.ts';
+import type { World } from '../src/world/world.ts';
 import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -390,5 +392,214 @@ describe('PluginHost', () => {
     ).not.toThrow();
     expect(loaded).toEqual([{ n: 5 }]);
     expect(host.collectPersistence()).toEqual({ kept: { n: 1 } });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// FOG OF WAR (issue #18): CONTRACT tests against a fixture plugin with
+// positioned entities, exercised entirely through the real WorldApi/
+// PluginHost path — no stub for the fan-out itself. Each migrated real
+// plugin (wildlife, monsters, flora, structures) gets its own suite proving
+// it calls through this same contract; this file proves the contract itself.
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('WorldApi.broadcastVisible (issue #18)', () => {
+  const PLAYER_A: Player = { id: 'session-a', token: 'token-a', name: 'A' };
+  const PLAYER_B: Player = { id: 'session-b', token: 'token-b', name: 'B' };
+
+  interface PositionedItem {
+    readonly id: number;
+    readonly x: number;
+    readonly y: number;
+  }
+
+  function positionOf(item: PositionedItem): { x: number; y: number } {
+    return { x: item.x, y: item.y };
+  }
+
+  /** Boots a fixture plugin (no positioned behaviour of its own) and hands back its WorldApi. */
+  function bootFixture(): { world: World; sink: RecordingSink; api: WorldApi } {
+    let api: WorldApi | undefined;
+    const fixture: TerracePlugin = {
+      name: 'positioned-fixture',
+      onWorldCreate(world): void {
+        api = world;
+      },
+    };
+
+    // Nothing pre-unlocked: this suite unlocks exactly the chunks it needs,
+    // per token, through the real primitive under test.
+    const world = worldWithUnlockedChunks(WORLD_SIZE, []);
+    const sink = new RecordingSink();
+    world.setSink(sink);
+    world.addPlayer(PLAYER_A);
+    world.addPlayer(PLAYER_B);
+    new PluginHost(world, [fixture].map(asLoadedPlugin)).worldCreate();
+
+    if (api === undefined) throw new Error('onWorldCreate was never called');
+    return { world, sink, api };
+  }
+
+  it('sends each connected player only the items visible to their own token', () => {
+    const { sink, api } = bootFixture();
+
+    // Chunk (0,0) is cells [0,16)×[0,16) — A earns it, B earns nothing.
+    expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
+
+    const item: PositionedItem = { id: 1, x: 4, y: 4 };
+    api.broadcastVisible('positions', [item], positionOf, (visible) => ({ items: visible }));
+
+    const messages = sink.ofType('positioned-fixture:positions');
+    const forA = messages.find((m) => m.target === PLAYER_A.id);
+    const forB = messages.find((m) => m.target === PLAYER_B.id);
+
+    // FULL-STATE semantics (skipEmpty defaults false): BOTH connected
+    // players are sent a message, even B, whose subset is empty — that
+    // empty send is the disappearance mechanism (see the doc comment on
+    // WorldApi.broadcastVisible).
+    expect(forA).toBeDefined();
+    expect(forB).toBeDefined();
+    expect((forA!.payload as { items: PositionedItem[] }).items).toEqual([item]);
+    expect((forB!.payload as { items: PositionedItem[] }).items).toEqual([]);
+  });
+
+  it('sends the item to a player the instant they creep into its chunk', () => {
+    const { sink, api } = bootFixture();
+    expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
+
+    const item: PositionedItem = { id: 1, x: 4, y: 4 };
+    api.broadcastVisible('positions', [item], positionOf, (visible) => ({ items: visible }));
+    expect(
+      (sink.ofType('positioned-fixture:positions').find((m) => m.target === PLAYER_B.id)!
+        .payload as { items: PositionedItem[] }).items,
+    ).toEqual([]);
+
+    // B creeps into the SAME chunk. "On the next cycle" is simply calling
+    // broadcastVisible again — it re-reads every player's own mask live, so
+    // no separate join-style snapshot path is needed for this to work.
+    sink.clear();
+    expect(api.unlockChunkForToken(PLAYER_B.token, 0, 0)).toBe(true);
+    api.broadcastVisible('positions', [item], positionOf, (visible) => ({ items: visible }));
+
+    const forBAfterCreep = sink
+      .ofType('positioned-fixture:positions')
+      .find((m) => m.target === PLAYER_B.id);
+    expect(forBAfterCreep).toBeDefined();
+    expect((forBAfterCreep!.payload as { items: PositionedItem[] }).items).toEqual([item]);
+  });
+
+  it('makes an item disappear from a player once it moves out of their visible chunk', () => {
+    const { sink, api } = bootFixture();
+    expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
+
+    const inside: PositionedItem = { id: 1, x: 4, y: 4 };
+    api.broadcastVisible('positions', [inside], positionOf, (visible) => ({ items: visible }));
+    expect(
+      (sink.ofType('positioned-fixture:positions').find((m) => m.target === PLAYER_A.id)!
+        .payload as { items: PositionedItem[] }).items,
+    ).toEqual([inside]);
+
+    // The SAME entity moves into chunk (1,0) — cells [16,32)×[0,16) — which
+    // A has never unlocked for their own token.
+    sink.clear();
+    const moved: PositionedItem = { ...inside, x: 20 };
+    api.broadcastVisible('positions', [moved], positionOf, (visible) => ({ items: visible }));
+
+    const forAAfterMove = sink
+      .ofType('positioned-fixture:positions')
+      .find((m) => m.target === PLAYER_A.id);
+    // Still sent (full-state, skipEmpty false) — just empty. THIS is the
+    // disappearance: a client that replaces its whole list on every message
+    // sees the entity vanish because the next list simply omits it.
+    expect(forAAfterMove).toBeDefined();
+    expect((forAAfterMove!.payload as { items: PositionedItem[] }).items).toEqual([]);
+  });
+
+  it('skips a recipient with nothing to say when skipEmpty is set, for a delta-shaped message', () => {
+    const { sink, api } = bootFixture();
+    expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
+    // PLAYER_B earns nothing.
+
+    const item: PositionedItem = { id: 1, x: 4, y: 4 };
+    api.broadcastVisible('delta', [item], positionOf, (visible) => ({ items: visible }), {
+      skipEmpty: true,
+    });
+
+    const messages = sink.ofType('positioned-fixture:delta');
+    expect(messages.find((m) => m.target === PLAYER_A.id)).toBeDefined();
+    // B's subset is empty and skipEmpty is set: no message at all, not an
+    // empty one — the documented, safe choice for additive content.
+    expect(messages.find((m) => m.target === PLAYER_B.id)).toBeUndefined();
+  });
+
+  it('restricts the fan-out to one player when onlyPlayerId is given', () => {
+    const { sink, api } = bootFixture();
+    expect(api.unlockChunkForToken(PLAYER_A.token, 0, 0)).toBe(true);
+    expect(api.unlockChunkForToken(PLAYER_B.token, 0, 0)).toBe(true);
+
+    const item: PositionedItem = { id: 1, x: 4, y: 4 };
+    api.broadcastVisible('snapshot', [item], positionOf, (visible) => ({ items: visible }), {
+      onlyPlayerId: PLAYER_A.id,
+    });
+
+    const messages = sink.ofType('positioned-fixture:snapshot');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].target).toBe(PLAYER_A.id);
+  });
+});
+
+describe('TerracePlugin.onChunkUnlockedForToken (issue #18)', () => {
+  it('fires once per real per-token unlock, with the token and chunk coordinates', () => {
+    const seen: Array<{ token: string; cx: number; cy: number }> = [];
+    const fixture: TerracePlugin = {
+      name: 'unlock-watcher',
+      onChunkUnlockedForToken(_world, token, cx, cy): void {
+        seen.push({ token, cx, cy });
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, []);
+    world.addPlayer(PLAYER);
+    let api: WorldApi | undefined;
+    const capture: TerracePlugin = {
+      name: 'capture',
+      onWorldCreate(w): void {
+        api = w;
+      },
+    };
+    const host = new PluginHost(world, [fixture, capture].map(asLoadedPlugin));
+    host.worldCreate();
+    if (api === undefined) throw new Error('onWorldCreate was never called');
+
+    expect(api.unlockChunkForToken(PLAYER.token, 2, 3)).toBe(true);
+    // A repeat unlock of the SAME chunk for the SAME token is a no-op at the
+    // World layer (idempotent), and must not re-fire the hook.
+    expect(api.unlockChunkForToken(PLAYER.token, 2, 3)).toBe(false);
+
+    expect(seen).toEqual([{ token: PLAYER.token, cx: 2, cy: 3 }]);
+  });
+
+  it('does not fire for the world-wide unlockChunk, only the per-token primitive', () => {
+    const seen: unknown[] = [];
+    const fixture: TerracePlugin = {
+      name: 'unlock-watcher',
+      onChunkUnlockedForToken(): void {
+        seen.push(true);
+      },
+    };
+
+    const world = worldWithUnlockedChunks(WORLD_SIZE, []);
+    let api: WorldApi | undefined;
+    const capture: TerracePlugin = {
+      name: 'capture',
+      onWorldCreate(w): void {
+        api = w;
+      },
+    };
+    new PluginHost(world, [fixture, capture].map(asLoadedPlugin)).worldCreate();
+    if (api === undefined) throw new Error('onWorldCreate was never called');
+
+    expect(api.unlockChunk(1, 1)).toBe(true);
+    expect(seen).toEqual([]);
   });
 });

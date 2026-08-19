@@ -21,7 +21,7 @@ import {
   type TerracePlugin,
   type WorldApi,
 } from './types.ts';
-import { createWorldApi, namespacedMessageType } from './world-api.ts';
+import { type ChunkUnlockListener, createWorldApi, namespacedMessageType } from './world-api.ts';
 
 /**
  * How deep onTerrainChanged → plugin sculpt → onTerrainChanged is allowed to
@@ -37,7 +37,7 @@ interface PluginEntry {
   readonly api: WorldApi;
 }
 
-export class PluginHost implements TerrainChangeListener {
+export class PluginHost implements TerrainChangeListener, ChunkUnlockListener {
   private readonly entries: readonly PluginEntry[];
   private terrainChangeDepth = 0;
 
@@ -147,6 +147,22 @@ export class PluginHost implements TerrainChangeListener {
       }
     } finally {
       this.terrainChangeDepth--;
+    }
+  }
+
+  /**
+   * Fan-out for the targeted-refresh hook (issue #18). Called by world-api.ts
+   * only after a REAL per-token unlock (never a no-op re-unlock), so a
+   * throwing or slow plugin here costs at most one unlock event, not a
+   * steady-state tax.
+   */
+  notifyChunkUnlockedForToken(token: string, cx: number, cy: number): void {
+    for (const { loaded, api } of this.entries) {
+      const { plugin } = loaded;
+      if (!plugin.onChunkUnlockedForToken) continue;
+      this.safely(plugin, 'onChunkUnlockedForToken', () =>
+        plugin.onChunkUnlockedForToken?.(api, token, cx, cy),
+      );
     }
   }
 
