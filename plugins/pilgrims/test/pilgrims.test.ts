@@ -4,7 +4,7 @@
 // deliberately testable without a server (see pilgrimage.ts's header).
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SEA_LEVEL, BAND_HEIGHT } from '@terrace/shared';
+import { LAND_WALKER_MAX_GRADIENT_PER_CELL, SEA_LEVEL, BAND_HEIGHT } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
   WALKERS_WIRE_CAP,
@@ -19,12 +19,14 @@ import {
   PILGRIMAGE_CATCHMENT_CELLS,
   PILGRIMAGE_ONSET_SECONDS,
   PILGRIM_LINGER_SECONDS,
+  PILGRIM_WALKER_PROFILE,
   Pilgrimage,
   SettlednessTracker,
   VIEWPOINT_RING_CELLS,
   WalkerIdAllocator,
   isWalkableCell,
   pickViewpoint,
+  planRoute,
   type PilgrimWorld,
 } from '../server/pilgrimage.ts';
 import {
@@ -215,6 +217,81 @@ describe('terrain predicates', () => {
   it('returns null when the whole ring is at sea — an offshore beast draws no crowd', () => {
     const world: PilgrimWorld = { worldSize: 128, heightAt: () => SEA_LEVEL - BAND_HEIGHT };
     expect(pickViewpoint(world, 64, 64)).toBeNull();
+  });
+});
+
+describe('the gradient contract (2026-08-19, "go around, not over or through")', () => {
+  it('shares wildlife grazer\'s land-walk limit rather than testing ground alone', () => {
+    // THE REGRESSION PIN for the reported bug: this file's isWalkableCell
+    // used to test only `heightAt > SEA_LEVEL` (this suite's own former
+    // comment said so verbatim: "wildlife's grazer rule: above the sea" —
+    // stated as if that WAS the whole rule, when wildlife had already moved
+    // past it). If PILGRIM_WALKER_PROFILE ever drifts back to an unconstrained
+    // gradient, this is the one assertion that catches it.
+    expect(PILGRIM_WALKER_PROFILE.maxGradientPerCell).toBe(LAND_WALKER_MAX_GRADIENT_PER_CELL);
+    expect(Number.isFinite(PILGRIM_WALKER_PROFILE.maxGradientPerCell)).toBe(true);
+  });
+
+  it('never plans a route across a face steeper than the limit, even when the straight line is shorter', () => {
+    // A riser at x=20, taller than the limit, spanning y=10..39 — open above
+    // and below that span. The straight line from (10,25) to (30,25) crosses
+    // it directly; a legal route must dip around one end instead.
+    const RISE = LAND_WALKER_MAX_GRADIENT_PER_CELL + 1;
+    const plateau = SEA_LEVEL + BAND_HEIGHT;
+    const world: PilgrimWorld = {
+      worldSize: 60,
+      heightAt: (x, y) => (x === 20 && y >= 10 && y < 40 ? plateau + RISE : plateau),
+    };
+    const route = planRoute(world, 10, 25, 30, 25);
+    expect(route).not.toBeNull();
+    for (const cell of route!) {
+      expect(cell.x === 20 && cell.y >= 10 && cell.y < 40).toBe(false);
+    }
+  });
+
+  it('a full journey never steps across a face steeper than the limit', () => {
+    // End-to-end regression through the actual sim (not just planRoute in
+    // isolation): a settled monster whose only walkable viewpoint sits
+    // beyond a too-steep riser from every catchment settlement. The
+    // pilgrim's whole outbound leg is sampled tick by tick; no consecutive
+    // pair of cells it occupies may differ in height by more than the limit.
+    const RISE = LAND_WALKER_MAX_GRADIENT_PER_CELL + 1;
+    const plateau = SEA_LEVEL + BAND_HEIGHT;
+    const size = 128;
+    // A riser wall between the home settlement (x≈24) and the monster/
+    // viewpoint area (x≈64), spanning a stretch of y centred on both — the
+    // direct line is blocked, but the gap (y<54 or y>=74) sits well within
+    // the route search margin (shared/src/pathing.ts's ROUTE_SEARCH_MARGIN_
+    // CELLS) of both endpoints, so the trip is genuinely makeable by detour.
+    const world: PilgrimWorld = {
+      worldSize: size,
+      heightAt: (x, y) => {
+        if (x < 2 || y < 2 || x >= size - 2 || y >= size - 2) return SEA_LEVEL - BAND_HEIGHT; // moat
+        if (x === 44 && y >= 54 && y < 74) return plateau + RISE; // the riser wall
+        return plateau;
+      },
+    };
+    const MONSTER = { id: 1, x: 64, y: 64 };
+    const HOME = { x: 24, y: 64 };
+
+    const sim = new Pilgrimage();
+    const TICK = 0.1;
+    const previousCellHeightById = new Map<number, number>();
+    let samples = 0;
+    const ticks = Math.round((PILGRIMAGE_ONSET_SECONDS + 200) / TICK);
+    for (let i = 0; i < ticks; i++) {
+      sim.advance(world, [MONSTER], [HOME], TICK);
+      for (const p of sim.states()) {
+        const height = world.heightAt(Math.floor(p.x), Math.floor(p.y));
+        const previous = previousCellHeightById.get(p.id);
+        if (previous !== undefined) {
+          expect(Math.abs(height - previous)).toBeLessThanOrEqual(LAND_WALKER_MAX_GRADIENT_PER_CELL);
+          samples++;
+        }
+        previousCellHeightById.set(p.id, height);
+      }
+    }
+    expect(samples).toBeGreaterThan(0); // sanity: the journey actually ran and was sampled
   });
 });
 

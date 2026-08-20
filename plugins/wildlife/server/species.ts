@@ -13,7 +13,13 @@
 //      into a no-man's-land and be despawned by the habitat-loss rule for having
 //      done nothing but swim in a straight line.
 
-import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import {
+  DEEP_WATER_BANDS_BELOW_SEA,
+  DEEP_WATER_MAX_HEIGHT,
+  LAND_WALKER_MAX_GRADIENT_PER_CELL,
+  UNCONSTRAINED_GRADIENT_PER_CELL,
+  groundOf,
+} from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
   WILDLIFE_SIZE_CLASSES,
@@ -24,31 +30,68 @@ import {
 /** Where a creature can live. Derived from cell height alone (see rule 2). */
 export type Habitat = 'land' | 'shallow' | 'deep';
 
-/**
- * Depth, in terrace bands below sea level, at which water stops being coastal
- * shallows and becomes open sea.
- *
- * Three bands. The gradient limit is MAX_STEP = BAND_HEIGHT/2, so terrain can
- * fall at most half a band per cell: a cell this deep is at least six cells from
- * the nearest shoreline. That is what makes the threshold meaningful rather than
- * arbitrary — "deep" is water a whale can be IN, not a puddle it would be
- * beached in the middle of. It is also three world units of water column
- * (HEIGHT_WORLD_SCALE maps one band to one world unit), enough to hold the
- * 5-cell-long whale model clear of both the seabed and the surface.
- */
-export const DEEP_WATER_BANDS_BELOW_SEA = 3;
-
-/** Heights at or below this are deep water; above it, up to SEA_LEVEL, shallow. */
-export const DEEP_WATER_MAX_HEIGHT = SEA_LEVEL - DEEP_WATER_BANDS_BELOW_SEA * BAND_HEIGHT;
+// DEEP_WATER_BANDS_BELOW_SEA / DEEP_WATER_MAX_HEIGHT moved to
+// shared/src/traversal.ts (2026-08-19, the pilgrims/wildlife pathing
+// contract) — the reasoning ("deep is water a whale can be IN, not a puddle
+// it would be beached in the middle of") is unchanged; re-exported here so
+// nothing that already imports these two names from THIS module has to move.
+export { DEEP_WATER_BANDS_BELOW_SEA, DEEP_WATER_MAX_HEIGHT };
 
 /**
- * Classifies one cell height. Mirrors shared's `isWater` (h <= SEA_LEVEL is
- * water) and then splits the water range once.
+ * Classifies one cell height. A thin wrapper over shared's `groundOf`: this
+ * plugin's `Habitat` union predates and reads better in wildlife code than
+ * shared's `TerrainGround` (`land` vs. `dry`), so the two stay distinct types
+ * that happen to share every value but one, rather than importing shared's
+ * naming into every wildlife call site.
  */
 export function habitatOf(height: number): Habitat {
-  if (height > SEA_LEVEL) return 'land';
-  return height <= DEEP_WATER_MAX_HEIGHT ? 'deep' : 'shallow';
+  const ground = groundOf(height);
+  return ground === 'dry' ? 'land' : ground;
 }
+
+// ── Gradient limits ──────────────────────────────────────────────────────────
+//
+// Owner, 2026-08-19: "the animals/wildlife on the terrestrial side are
+// traveling across the map with no regard for separate levels … a four-legged
+// thing walk[s] across the slope of ten-plus terrace layers like it's
+// nothing." Habitat classification (habitatOf, above) only asks WHAT a cell
+// is, never how the ground gets there — so a sheer terrace riser and a flat
+// lawn were indistinguishable to a land creature as long as both were "land".
+// This section is the missing term: how much height change per cell of
+// travel a species will accept, checked by census.ts's canTraverse.
+
+/**
+ * Aquatic species' gradient limit: unconstrained. Water has no risers — a
+ * fish or whale is never blocked by the STEEPNESS of the seabed beneath it,
+ * only by habitat class (still water vs. not) and unlock state, which
+ * isValidCellFor already covers. Infinity rather than a species-specific
+ * branch downstream: canTraverse treats "no limit" as "skip the sampling
+ * loop entirely" via Number.isFinite, so every species answers the same
+ * maxGradientPerCell question and nothing needs a "does this species care
+ * about slope" flag.
+ *
+ * MOVED to shared/src/traversal.ts (2026-08-19, the pilgrims/wildlife pathing
+ * contract) as UNCONSTRAINED_GRADIENT_PER_CELL — "water has no risers" is
+ * terrain math, not a wildlife fact, and pilgrims' own aquatic-adjacent
+ * profiles (none today, but the contract is shared regardless) get it for
+ * free. Re-exported under this name so this plugin's own call sites and
+ * tests don't have to rename.
+ */
+export const AQUATIC_MAX_GRADIENT_PER_CELL = UNCONSTRAINED_GRADIENT_PER_CELL;
+
+/**
+ * Grazer's gradient limit: the most height a grazer will climb or descend in
+ * ONE CELL of travel, before it turns along the level instead of crossing.
+ *
+ * MOVED to shared/src/traversal.ts as LAND_WALKER_MAX_GRADIENT_PER_CELL
+ * (2026-08-19) — the full derivation (half of MAX_STEP, the terrain's own
+ * gradient cap) lives there now, generalised past "grazer": pilgrims' and
+ * wanderers' land-walk profile uses the exact same number for the exact same
+ * reason, and before this move each plugin re-derived (or, for pilgrims,
+ * simply never derived) it independently. This re-export keeps the
+ * grazer-specific name for this plugin's own call sites and tests.
+ */
+export const GRAZER_MAX_GRADIENT_PER_CELL = LAND_WALKER_MAX_GRADIENT_PER_CELL;
 
 // ── Size classes ─────────────────────────────────────────────────────────────
 //
@@ -236,6 +279,16 @@ export interface SpeciesProfile {
 
   /** Size-class mix at spawn. See FISH_SIZE_WEIGHTS / SINGLE_SIZE_WEIGHTS. */
   readonly sizeWeights: SizeWeights;
+
+  /**
+   * Maximum |height difference| this species will cross in ONE CELL of
+   * travel, checked ALONG THE PATH by census.ts's canTraverse — never just
+   * the two endpoints (see that function's doc for why endpoint-only would
+   * miss a canyon between two similarly-high rims). AQUATIC_MAX_GRADIENT_
+   * PER_CELL (Infinity) for every water species; GRAZER_MAX_GRADIENT_PER_CELL
+   * for the one land species today. See those constants for the reasoning.
+   */
+  readonly maxGradientPerCell: number;
 }
 
 /**
@@ -283,6 +336,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: 400,
     groupSize: 5,
     sizeWeights: FISH_SIZE_WEIGHTS,
+    maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
   },
   whale: {
     species: 'whale',
@@ -298,6 +352,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: 5000,
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
+    maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
   },
   deepsea: {
     species: 'deepsea',
@@ -311,6 +366,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: 1500,
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
+    maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
   },
   grazer: {
     species: 'grazer',
@@ -322,6 +378,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: 2700,
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
+    maxGradientPerCell: GRAZER_MAX_GRADIENT_PER_CELL,
   },
 };
 

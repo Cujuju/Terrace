@@ -15,20 +15,23 @@
 // the destination. Two servers fed the same settlement stream and the same dt
 // stream produce byte-identical road traffic.
 //
-// Movement is the pilgrims' own stepWalker — one rule for every little person
-// on the road, so a wanderer and a pilgrim meeting the same bay detour
+// Movement is the pilgrims' own advanceWalker/stepWalker — one rule for every
+// little person on the road, so a wanderer and a pilgrim meeting the same bay
+// detour (or following a planned route around one, since 2026-08-19)
 // identically. Monsters are invisible to wanderers ON PURPOSE: protection
 // auras veto SCULPTS, not walking, and no shipped monster reacts to walkers,
 // so "no monster interaction" is true by construction rather than by a rule
 // this file would have to maintain.
 
+import type { RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import {
   ARRIVAL_RADIUS_CELLS,
   PILGRIM_STUCK_SECONDS,
   WalkerIdAllocator,
+  advanceWalker,
   isWalkableCell,
-  stepWalker,
+  planRoute,
   type PilgrimWorld,
 } from './pilgrimage.ts';
 import type { SettlerRace } from '../protocol.ts';
@@ -129,6 +132,9 @@ interface Wanderer {
   goalY: number;
   visitSeconds: number;
   stuckSeconds: number;
+  /** See pilgrimage.ts's Pilgrim.route — same contract, same fallback. */
+  route: RouteCell[] | null;
+  routeIndex: number;
 }
 
 interface SettlementCell {
@@ -179,6 +185,8 @@ export class Wandering {
           wanderer.goalX = wanderer.homeX + 0.5;
           wanderer.goalY = wanderer.homeY + 0.5;
           wanderer.stuckSeconds = 0;
+          wanderer.route = planRoute(world, wanderer.x, wanderer.y, wanderer.goalX, wanderer.goalY);
+          wanderer.routeIndex = 0;
         }
         continue;
       }
@@ -186,7 +194,7 @@ export class Wandering {
       const beforeDx = wanderer.goalX - wanderer.x;
       const beforeDy = wanderer.goalY - wanderer.y;
       const before = beforeDx * beforeDx + beforeDy * beforeDy;
-      stepWalker(world, wanderer, dt);
+      advanceWalker(world, wanderer, dt);
       const afterDx = wanderer.goalX - wanderer.x;
       const afterDy = wanderer.goalY - wanderer.y;
       const after = afterDx * afterDx + afterDy * afterDy;
@@ -210,6 +218,8 @@ export class Wandering {
           wanderer.goalX = wanderer.homeX + 0.5;
           wanderer.goalY = wanderer.homeY + 0.5;
           wanderer.stuckSeconds = 0;
+          wanderer.route = planRoute(world, wanderer.x, wanderer.y, wanderer.goalX, wanderer.goalY);
+          wanderer.routeIndex = 0;
         } else {
           // Stuck going home: despawn rather than wander forever — the
           // pilgrims' own honesty rule, and nothing here to un-bless.
@@ -271,20 +281,39 @@ export class Wandering {
       if (candidates.length === 0) continue;
 
       const destination = candidates[(roll >>> 8) % candidates.length].other;
+      const homeX = cell.x + 0.5;
+      const homeY = cell.y + 0.5;
+      const goalX = destination.x + 0.5;
+      const goalY = destination.y + 0.5;
+
+      // NEVER DISPATCH A WANDERER TO A TRIP IT CANNOT WALK — pilgrims' own
+      // rule (pilgrimage.ts's dispatch loop). Unlike pilgrims, there is no
+      // next-nearest candidate to fall back to here: the roll already picked
+      // ONE destination deterministically, and re-scanning for a reachable
+      // one would need its own tie-break to stay deterministic for no real
+      // gain — wandering is "occasionally", by contract (WANDER_DISPATCH_
+      // MODULUS's own comment), so a town simply not strolling this epoch
+      // because its rolled destination has no route is well within that
+      // contract, not a bug to work around.
+      const route = planRoute(world, homeX, homeY, goalX, goalY);
+      if (route === null) continue;
+
       const id = this.ids.allocate();
       this.wanderers.set(id, {
         id,
         race: settlementRace(cell.x, cell.y),
         homeX: cell.x,
         homeY: cell.y,
-        x: cell.x + 0.5,
-        y: cell.y + 0.5,
-        heading: Math.atan2(destination.y - cell.y, destination.x - cell.x),
+        x: homeX,
+        y: homeY,
+        heading: Math.atan2(goalY - homeY, goalX - homeX),
         leg: 'outbound',
-        goalX: destination.x + 0.5,
-        goalY: destination.y + 0.5,
+        goalX,
+        goalY,
         visitSeconds: 0,
         stuckSeconds: 0,
+        route,
+        routeIndex: 0,
       });
     }
   }
@@ -314,6 +343,17 @@ export class Wandering {
 
   populationCount(): number {
     return this.wanderers.size;
+  }
+
+  /** See pilgrimage.ts's Pilgrimage.routes() — same contract, same reason. */
+  routes(): ReadonlyArray<{ readonly homeX: number; readonly homeY: number; readonly cells: RouteCell[] }> {
+    const rows: Array<{ homeX: number; homeY: number; cells: RouteCell[] }> = [];
+    for (const wanderer of this.wanderers.values()) {
+      if (wanderer.route !== null) {
+        rows.push({ homeX: wanderer.homeX, homeY: wanderer.homeY, cells: wanderer.route });
+      }
+    }
+    return rows;
   }
 
   clear(): void {

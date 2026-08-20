@@ -5,9 +5,30 @@
 // plugin state, no side effects — which is what lets the tests assert the
 // population maths directly against a hand-built world.
 
-import { CHUNK_SIZE } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  canTraverseSegment,
+  isWalkableCell as sharedIsWalkableCell,
+  type WalkerProfile,
+} from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type Habitat, habitatOf, profileOf } from './species.ts';
+
+/**
+ * Adapts one species' SpeciesProfile onto the shared WalkerProfile shape
+ * (shared/src/traversal.ts). `habitatOf`'s three-value `Habitat` union
+ * ('land'/'shallow'/'deep') differs from shared's `TerrainGround`
+ * ('dry'/'shallow'/'deep') by one name only — see species.ts's habitatOf doc
+ * — so the one 'land' → 'dry' translation lives here, at the single seam
+ * where a wildlife species profile crosses into the shared contract.
+ */
+function walkerProfileOf(species: WildlifeHabitatSpecies): WalkerProfile {
+  const profile = profileOf(species);
+  return {
+    ground: profile.habitat === 'land' ? 'dry' : profile.habitat,
+    maxGradientPerCell: profile.maxGradientPerCell,
+  };
+}
 
 /** The slice of the server's WorldApi this plugin actually reads. */
 export interface HabitatWorld {
@@ -74,9 +95,47 @@ export function isValidCellFor(
 ): boolean {
   const x = Math.floor(cellX);
   const y = Math.floor(cellY);
+  // Bounds MUST be checked before isCellUnlocked: that call has no bounds
+  // guard of its own and throws on an out-of-range chunk. sharedIsWalkableCell
+  // repeats this same bounds test as part of its own bounds+ground check
+  // below — harmless duplication, and the price of not having to expose a
+  // bounds-only helper from shared for one caller.
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
+  // Unlock state is server/world-specific, not terrain math, so it stays
+  // here rather than in the shared predicate — shared has no concept of a
+  // mask.
   if (!world.isCellUnlocked(x, y)) return false;
-  return habitatOf(world.heightAt(x, y)) === profileOf(species).habitat;
+  return sharedIsWalkableCell(world, walkerProfileOf(species), x, y);
+}
+
+/**
+ * Can `species` walk in a straight line from (fromX, fromY) to (toX, toY)
+ * without crossing a slope steeper than its own SpeciesProfile.
+ * maxGradientPerCell (species.ts)?
+ *
+ * Separate from isValidCellFor ABOVE, on purpose: that predicate has no
+ * "from" cell to compare against (spawning and the habitat-loss sweep pick
+ * or lose a cell with nowhere to have walked from), so a gradient term
+ * cannot live there without forcing a fake "from" on callers that have none.
+ * This predicate is the "from" one: for the two callers that DO have a
+ * previous position — the movement look-ahead probe and the per-tick
+ * destination re-check, both in movement.ts — call both predicates.
+ *
+ * A THIN SPECIES → WALKER-PROFILE ADAPTER over shared's `canTraverseSegment`
+ * (shared/src/traversal.ts) — the segment-sampled gradient math itself moved
+ * there 2026-08-19 so pilgrims' land walkers can share it byte-for-byte
+ * instead of carrying their own copy. See that function's own doc for the
+ * "why sample the whole segment, not just the endpoints" argument.
+ */
+export function canTraverse(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): boolean {
+  return canTraverseSegment(world, walkerProfileOf(species), fromX, fromY, toX, toY);
 }
 
 export interface Census {

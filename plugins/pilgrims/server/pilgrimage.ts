@@ -16,7 +16,14 @@
 // that settlement's cell is BLESSED (structures' route-blessing contract —
 // tier prosperity, never CA survival).
 
-import { SEA_LEVEL } from '@terrace/shared';
+import {
+  LAND_WALKER_MAX_GRADIENT_PER_CELL,
+  canTraverseSegment,
+  findRoute,
+  isWalkableCell as sharedIsWalkableCell,
+  type RouteCell,
+  type WalkerProfile,
+} from '@terrace/shared';
 import { PILGRIMS_CAP, settlementRace, type PilgrimEntityState, type SettlerRace } from '../protocol.ts';
 
 /** The slice of the world the sim reads. Matches WorldApi's members 1:1. */
@@ -194,12 +201,33 @@ export class SettlednessTracker {
 // Terrain predicates
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Land a pilgrim will stand on — wildlife's grazer rule: above the sea. */
+/**
+ * Pilgrims and wanderers are land walkers exactly like wildlife's grazer —
+ * reuse the shared land-walker gradient limit (LAND_WALKER_MAX_GRADIENT_PER_CELL,
+ * shared/src/traversal.ts) rather than re-deriving it.
+ *
+ * THIS IS THE ROOT-CAUSE FIX for the reported bug. `isWalkableCell` below used
+ * to test only `heightAt > SEA_LEVEL` — wildlife's OWN pre-fix rule, by this
+ * file's former doc comment's own admission ("wildlife's grazer rule: above
+ * the sea"). Ground alone says nothing about how steep the ground GETS
+ * between two points, so a pilgrim's local step and a planned route could
+ * both cross a terrace riser this profile now refuses — see
+ * `canTraverseSegment` (stepWalker, below) and `planRoute`.
+ */
+export const PILGRIM_WALKER_PROFILE: WalkerProfile = {
+  ground: 'dry',
+  maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL,
+};
+
+/**
+ * Land a walker will stand on: a thin adapter over shared's bounds+ground
+ * predicate (shared/src/traversal.ts). No gradient term here — a standalone
+ * cell query (a settlement, a viewpoint candidate) has no "from" cell to
+ * measure a slope against; `stepWalker` and `planRoute` below are the two
+ * callers that DO have one.
+ */
 export function isWalkableCell(world: PilgrimWorld, x: number, y: number): boolean {
-  const cx = Math.floor(x);
-  const cy = Math.floor(y);
-  if (cx < 0 || cy < 0 || cx >= world.worldSize || cy >= world.worldSize) return false;
-  return world.heightAt(cx, cy) > SEA_LEVEL;
+  return sharedIsWalkableCell(world, PILGRIM_WALKER_PROFILE, x, y);
 }
 
 /**
@@ -228,6 +256,26 @@ export function pickViewpoint(
     }
   }
   return best;
+}
+
+/**
+ * Plans a walking route from (fromX, fromY) to (toX, toY) over shared's A*
+ * (shared/src/pathing.ts) using PILGRIM_WALKER_PROFILE — go AROUND ground too
+ * steep to climb, preferring gentle slopes even where a steeper way would
+ * still be legal (owner, 2026-08-19: "attempts to go around obstacles
+ * instead of over or through them"). Returns null when no route exists
+ * within shared's search bounds/budget (ROUTE_SEARCH_MARGIN_CELLS /
+ * ROUTE_NODE_BUDGET) — see `advanceWalker` for what a walker does about that.
+ */
+export function planRoute(
+  world: PilgrimWorld,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): RouteCell[] | null {
+  const plan = findRoute(world, PILGRIM_WALKER_PROFILE, { x: fromX, y: fromY }, { x: toX, y: toY });
+  return plan === null ? null : [...plan.cells];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,6 +317,12 @@ export interface Pilgrim {
   goalY: number;
   lingerSeconds: number;
   stuckSeconds: number;
+  /** The planned route to `goalX`/`goalY` (see `advanceWalker`), or null when
+   *  none exists / none has been planned — the walker then falls back to
+   *  stepWalker's direct local avoidance for this leg. Never on the wire. */
+  route: RouteCell[] | null;
+  /** Index of the next unreached waypoint in `route`. */
+  routeIndex: number;
 }
 
 /** The moving slice of a walker — what stepWalker needs, and nothing more.
@@ -281,13 +335,37 @@ export interface MovingWalker {
   goalY: number;
 }
 
-/** One walking step with water avoidance — wildlife's veto-the-step shape.
- *  EXPORTED since the wanderers (card 26) landed: one movement rule for every
- *  little person on the road, so a pilgrim and a wanderer meeting the same
- *  bay detour identically. */
-export function stepWalker(world: PilgrimWorld, pilgrim: MovingWalker, dt: number): void {
-  const toGoalX = pilgrim.goalX - pilgrim.x;
-  const toGoalY = pilgrim.goalY - pilgrim.y;
+/** A MovingWalker that also carries a planned route — what `advanceWalker`
+ *  needs. Both `Pilgrim` and wandering.ts's `Wanderer` satisfy this. */
+export interface RoutedWalker extends MovingWalker {
+  route: RouteCell[] | null;
+  routeIndex: number;
+}
+
+/**
+ * One walking step with water/slope avoidance toward (targetX, targetY) —
+ * wildlife's veto-the-step shape, extended 2026-08-19 to also refuse a step
+ * that crosses a slope steeper than PILGRIM_WALKER_PROFILE allows (the same
+ * root-cause fix as `isWalkableCell`, above: this used to probe ground at the
+ * look-ahead cell ALONE, nothing in between). `targetX`/`targetY` default to
+ * `pilgrim.goalX`/`goalY` — the walker's ultimate destination — which is the
+ * ONLY behaviour every existing caller before routing landed ever used; a
+ * caller following a planned route (`advanceWalker`) passes the current
+ * route waypoint instead, so the local avoidance sweep steers leg by leg
+ * rather than beelining the whole journey.
+ *
+ * EXPORTED since the wanderers (card 26) landed: one movement rule for every
+ * little person on the road, so a pilgrim and a wanderer meeting the same
+ * bay detour identically. */
+export function stepWalker(
+  world: PilgrimWorld,
+  pilgrim: MovingWalker,
+  dt: number,
+  targetX: number = pilgrim.goalX,
+  targetY: number = pilgrim.goalY,
+): void {
+  const toGoalX = targetX - pilgrim.x;
+  const toGoalY = targetY - pilgrim.y;
   const desired = Math.atan2(toGoalY, toGoalX);
 
   const distance = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
@@ -302,6 +380,7 @@ export function stepWalker(world: PilgrimWorld, pilgrim: MovingWalker, dt: numbe
     const aheadX = pilgrim.x + Math.cos(heading) * lookahead;
     const aheadY = pilgrim.y + Math.sin(heading) * lookahead;
     if (!isWalkableCell(world, aheadX, aheadY)) continue;
+    if (!canTraverseSegment(world, PILGRIM_WALKER_PROFILE, pilgrim.x, pilgrim.y, aheadX, aheadY)) continue;
 
     pilgrim.heading = heading;
     pilgrim.x += Math.cos(heading) * distance;
@@ -309,6 +388,72 @@ export function stepWalker(world: PilgrimWorld, pilgrim: MovingWalker, dt: numbe
     return;
   }
   // Boxed in: hold position this tick; the stuck timer decides what is next.
+}
+
+/**
+ * Advances one walker toward its ultimate goal (`walker.goalX`/`goalY`) for
+ * one tick, following a planned route leg by leg when one exists, and
+ * falling back to `stepWalker`'s direct local avoidance when it doesn't.
+ *
+ * ROUTE FOLLOWING: steers toward the CURRENT waypoint (`route[routeIndex]`,
+ * cell-centred) via `stepWalker`; advances `routeIndex` once the walker is
+ * within ARRIVAL_RADIUS_CELLS of it. The final waypoint is the same cell as
+ * `goalX`/`goalY`, so ordinary arrival detection (in Pilgrimage/Wandering's
+ * own advance loop) is untouched by routing.
+ *
+ * RE-PLANNING, bounded: before committing to the step toward the current
+ * waypoint, the ONE edge about to be crossed (walker's current position to
+ * that waypoint) is re-checked with `canTraverseSegment` — O(1), cheap
+ * enough to run every tick. A single sculpt can cut a route out from under a
+ * walker already abroad; catching that here, rather than only when the
+ * walker physically reaches the now-illegal edge, is what stops it from
+ * walking right up to a cliff that did not exist when the route was
+ * planned. On a miss, the WHOLE remaining route is discarded and exactly one
+ * replan is attempted from the walker's CURRENT position — bounded by
+ * ROUTE_NODE_BUDGET, same as any other planning call, so a re-plan storm
+ * cannot occur (at most one extra findRoute call per walker per tick, only
+ * on the tick a route actually breaks).
+ *
+ * FAILURE DEGRADES, never freezes: if there is no route at all (planning
+ * failed at dispatch — see Pilgrimage/Wandering's dispatch code, which never
+ * mints a walker for a trip with no route in the first place — or a replan
+ * above also failed), this function falls back to `stepWalker`'s direct
+ * local avoidance straight at `goalX`/`goalY`. That is strictly worse than a
+ * planned route (it can oscillate at a real obstacle) but it is never worse
+ * than what pilgrims did before routing existed, and the existing stuck-timer
+ * give-up (PILGRIM_STUCK_SECONDS, in Pilgrimage/Wandering's own advance loop)
+ * remains the ultimate backstop: a walker that is truly going nowhere turns
+ * for home or despawns, exactly as it always did.
+ */
+export function advanceWalker(world: PilgrimWorld, walker: RoutedWalker, dt: number): void {
+  if (walker.route === null || walker.routeIndex >= walker.route.length) {
+    stepWalker(world, walker, dt);
+    return;
+  }
+
+  let waypoint = walker.route[walker.routeIndex];
+  let targetX = waypoint.x + 0.5;
+  let targetY = waypoint.y + 0.5;
+
+  if (!canTraverseSegment(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, targetX, targetY)) {
+    walker.route = planRoute(world, walker.x, walker.y, walker.goalX, walker.goalY);
+    walker.routeIndex = 0;
+    if (walker.route === null) {
+      stepWalker(world, walker, dt); // degrade: direct local avoidance.
+      return;
+    }
+    waypoint = walker.route[0];
+    targetX = waypoint.x + 0.5;
+    targetY = waypoint.y + 0.5;
+  }
+
+  stepWalker(world, walker, dt, targetX, targetY);
+
+  const dx = walker.x - targetX;
+  const dy = walker.y - targetY;
+  if (dx * dx + dy * dy <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
+    walker.routeIndex++;
+  }
 }
 
 /** Squared distance to the current goal. */
@@ -353,6 +498,8 @@ export class Pilgrimage {
       pilgrim.goalX = pilgrim.homeX + 0.5;
       pilgrim.goalY = pilgrim.homeY + 0.5;
       pilgrim.stuckSeconds = 0;
+      pilgrim.route = planRoute(world, pilgrim.x, pilgrim.y, pilgrim.goalX, pilgrim.goalY);
+      pilgrim.routeIndex = 0;
     }
 
     // ── Dispatch: one pilgrim per (settled monster, catchment settlement). ──
@@ -382,6 +529,17 @@ export class Pilgrimage {
         if (!isWalkableCell(world, cell.x, cell.y)) continue;
         if (this.hasPilgrimFrom(cell.x, cell.y, monster.monsterId)) continue;
 
+        // NEVER DISPATCH A PILGRIM TO A TRIP IT CANNOT WALK: plan the route
+        // before minting a walker, not after. A settlement with no legal
+        // route to the viewpoint (walled in, an island, budget-exhausted —
+        // see shared/src/pathing.ts) sends no pilgrim this tick rather than
+        // one doomed to the stuck-timeout give-up. Try the next-nearest
+        // candidate instead of the whole monster's dispatch failing.
+        const homeX = cell.x + 0.5;
+        const homeY = cell.y + 0.5;
+        const route = planRoute(world, homeX, homeY, viewpoint.x, viewpoint.y);
+        if (route === null) continue;
+
         const id = this.ids.allocate();
         this.pilgrims.set(id, {
           id,
@@ -389,14 +547,16 @@ export class Pilgrimage {
           homeX: cell.x,
           homeY: cell.y,
           monsterId: monster.monsterId,
-          x: cell.x + 0.5,
-          y: cell.y + 0.5,
-          heading: Math.atan2(viewpoint.y - cell.y - 0.5, viewpoint.x - cell.x - 0.5),
+          x: homeX,
+          y: homeY,
+          heading: Math.atan2(viewpoint.y - homeY, viewpoint.x - homeX),
           leg: 'outbound',
           goalX: viewpoint.x,
           goalY: viewpoint.y,
           lingerSeconds: 0,
           stuckSeconds: 0,
+          route,
+          routeIndex: 0,
         });
       }
     }
@@ -415,12 +575,14 @@ export class Pilgrimage {
           pilgrim.goalX = pilgrim.homeX + 0.5;
           pilgrim.goalY = pilgrim.homeY + 0.5;
           pilgrim.stuckSeconds = 0;
+          pilgrim.route = planRoute(world, pilgrim.x, pilgrim.y, pilgrim.goalX, pilgrim.goalY);
+          pilgrim.routeIndex = 0;
         }
         continue;
       }
 
       const before = goalDistanceSq(pilgrim);
-      stepWalker(world, pilgrim, dt);
+      advanceWalker(world, pilgrim, dt);
       const after = goalDistanceSq(pilgrim);
 
       // Net progress resets the stuck clock; anything else runs it.
@@ -443,6 +605,8 @@ export class Pilgrimage {
           pilgrim.goalX = pilgrim.homeX + 0.5;
           pilgrim.goalY = pilgrim.homeY + 0.5;
           pilgrim.stuckSeconds = 0;
+          pilgrim.route = planRoute(world, pilgrim.x, pilgrim.y, pilgrim.goalX, pilgrim.goalY);
+          pilgrim.routeIndex = 0;
         } else {
           // Stuck going home: despawn rather than wander forever. The town's
           // blessing ends with its pilgrim — the road failed, honestly.
@@ -493,6 +657,25 @@ export class Pilgrimage {
 
   populationCount(): number {
     return this.pilgrims.size;
+  }
+
+  /**
+   * Every pilgrim currently following a planned route, as an ordered cell
+   * list — EXPOSED so a future roads feature (mechanics card 29: "long-lived
+   * neighbouring settlements wear footpaths between themselves along walkable
+   * routes") can read what ground a route actually crosses without this file
+   * knowing roads exist. A pilgrim currently degraded to direct local
+   * avoidance (no route — see `advanceWalker`) contributes nothing; that is
+   * not a route to wear a footpath along.
+   */
+  routes(): ReadonlyArray<{ readonly homeX: number; readonly homeY: number; readonly cells: RouteCell[] }> {
+    const rows: Array<{ homeX: number; homeY: number; cells: RouteCell[] }> = [];
+    for (const pilgrim of this.pilgrims.values()) {
+      if (pilgrim.route !== null) {
+        rows.push({ homeX: pilgrim.homeX, homeY: pilgrim.homeY, cells: pilgrim.route });
+      }
+    }
+    return rows;
   }
 
   clear(): void {

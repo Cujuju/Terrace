@@ -1,14 +1,16 @@
 // Movement: ambient wander, habitat-aware steering, and the reactive flee.
 //
 // The steering contract, in one sentence: a creature only ever commits to a step
-// whose DESTINATION LOOK-AHEAD is inside its own habitat and inside unlocked
-// territory, so locked chunks and the wrong terrain are impassable walls rather
-// than places it can be pushed out of afterwards.
+// whose DESTINATION LOOK-AHEAD is inside its own habitat, inside unlocked
+// territory, and reachable along a slope its species can climb (census.ts's
+// canTraverse), so locked chunks, the wrong terrain, and a terrace riser too
+// steep to walk are all impassable walls rather than places it can be pushed
+// out of afterwards.
 //
 // Everything is scaled by the host's `dt`. There is no wall clock in this file.
 
 import { WILDLIFE_SIZE_MODEL_SCALE } from '../protocol.ts';
-import { type HabitatWorld, isValidCellFor } from './census.ts';
+import { type HabitatWorld, canTraverse, isValidCellFor } from './census.ts';
 import { type WildlifeEntity, livingEntities } from './population.ts';
 import { randomSigned } from './rng.ts';
 import { SCHOOL_LOOSENESS_BY_SIZE, profileOf } from './species.ts';
@@ -37,6 +39,26 @@ export const LOOKAHEAD_SECONDS = 0.6;
  */
 export const AVOID_TURN_ATTEMPTS = 8;
 export const AVOID_TURN_STEP_RADIANS = Math.PI / 4;
+
+/**
+ * Divides the ordinary look-ahead distance for the CONTOUR-FOLLOWING retry
+ * `steerToValidHeading` runs when the primary sweep finds nothing (see
+ * `advanceEntity`'s two-stage steer).
+ *
+ * Owner, 2026-08-19: "anything traveling across the map … attempts to go
+ * around obstacles instead of over or through them." The primary sweep tries
+ * all eight AVOID_TURN_ATTEMPTS compass headings at the FULL look-ahead
+ * distance; when every one of those fails the creature is genuinely boxed in
+ * at that distance, but may still have room to slide along whatever it is
+ * pressed against at a shorter one — the same reasoning a person hugging a
+ * wall uses short glances, not a long sightline, to keep finding the wall.
+ * 2 is the smallest divisor that meaningfully shortens the probe (half
+ * distance) while staying well above one tick's own travel (bodyLengthCellsOf
+ * already floors the ordinary look-ahead above that), so the retry still
+ * senses which way the obstacle runs rather than only re-confirming the
+ * creature's own current cell.
+ */
+export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = 2;
 
 /**
  * Multiplier on cruise speed while fleeing, and how long the panic lasts.
@@ -364,9 +386,18 @@ export function steerWithSchool(
 }
 
 /**
- * Picks a heading whose look-ahead cell is valid habitat, preferring `desired`
- * and then the smallest deviation from it. Returns null when the creature is
- * boxed in on all eight candidates — the caller then holds position.
+ * Picks a heading whose look-ahead cell is valid habitat AND reachable from
+ * where the creature stands right now without crossing a slope steeper than
+ * its species can climb (canTraverse, census.ts — sampled along the whole
+ * probe segment, not just its far end), preferring `desired` and then the
+ * smallest deviation from it. Returns null when the creature is boxed in on
+ * all eight candidates — the caller then holds position.
+ *
+ * This runs for a FLEEING creature too (advanceEntity calls it with the
+ * panic heading as `desired`): a startled grazer looks up to
+ * FLEE_SPEED_MULTIPLIER further ahead, but the gradient veto below still
+ * applies to every candidate, so panic can make it run further, never make
+ * it run up a cliff it could not otherwise climb.
  */
 export function steerToValidHeading(
   world: HabitatWorld,
@@ -380,7 +411,12 @@ export function steerToValidHeading(
     const heading = desired + (attempt % 2 === 1 ? step : -step);
     const probeX = entity.x + Math.cos(heading) * lookahead;
     const probeY = entity.y + Math.sin(heading) * lookahead;
-    if (isValidCellFor(world, entity.species, probeX, probeY)) return normalizeAngle(heading);
+    if (
+      isValidCellFor(world, entity.species, probeX, probeY) &&
+      canTraverse(world, entity.species, entity.x, entity.y, probeX, probeY)
+    ) {
+      return normalizeAngle(heading);
+    }
   }
   return null;
 }
@@ -399,8 +435,9 @@ export function steerToValidHeading(
  *      territory beat everything above, always;
  *   5. the position moves, and is re-checked.
  *
- * A creature that cannot find any valid heading keeps its position and reverses,
- * which un-wedges it on the next tick without ever placing it illegally.
+ * A creature that cannot find any valid heading holds its position for this
+ * tick, facing whichever way it already was (see the two-stage steer below) —
+ * un-wedging happens by trying again next tick, never by placing it illegally.
  *
  * `school` is the summary of the creature's own school as it stood at the START
  * of the tick (see summarizeSchools); omitting it steers with wander alone,
@@ -427,28 +464,67 @@ export function advanceEntity(
       ? wander
       : steerWithSchool(entity, school, SCHOOL_LOOSENESS_BY_SIZE[entity.size], wander, dt);
   const lookahead = lookaheadCellsFor(entity);
-  const steered = steerToValidHeading(world, entity, desired, lookahead);
+  // Shorter probe used by the contour-following fallback below, both when
+  // the primary sweep is fully boxed in and when the belt-and-suspenders
+  // re-check catches a miss the primary sweep didn't see.
+  const contourLookahead = lookahead / CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR;
+  let steered = steerToValidHeading(world, entity, desired, lookahead);
 
   if (steered === null) {
-    entity.heading = normalizeAngle(entity.heading + Math.PI);
+    // BOXED IN AT THE LOOK-AHEAD HORIZON. Owner, 2026-08-19: obstacles should
+    // deflect a traveller ALONG themselves, not bounce it backward — the
+    // previous rule here (`heading += PI`) read as a twitch, and doubly so
+    // here since the ±180° candidate is already one of the eight the primary
+    // sweep just tried and failed. Retry the SAME compass sweep, but from the
+    // creature's CURRENT heading (not `desired`) and at the much shorter
+    // contourLookahead: it may still have room to slide along whatever it is
+    // pressed against at that distance, which is exactly what "go around"
+    // means at the scale of one tick.
+    steered = steerToValidHeading(world, entity, entity.heading, contourLookahead);
+  }
+
+  if (steered === null) {
+    // Enclosed even at the short probe: nothing to turn toward this tick.
+    // Hold position and keep facing as-is — inventing a heading with no
+    // matching movement is the twitch this replaces.
     return;
   }
 
   entity.heading = steered;
   const distance = speedOf(entity) * dt;
-  const nextX = entity.x + Math.cos(steered) * distance;
-  const nextY = entity.y + Math.sin(steered) * distance;
+  let nextX = entity.x + Math.cos(steered) * distance;
+  let nextY = entity.y + Math.sin(steered) * distance;
 
-  // BELT AND SUSPENDERS. The look-ahead validated the cell `lookahead` cells
-  // away, which is much further than one tick's travel; that covers the ordinary
-  // case but says nothing about the cells in between, so a narrow tongue of the
-  // wrong habitat crossing the path could still be stepped into. Re-checking the
-  // actual destination makes the invariant "no creature is ever outside its
-  // habitat" true by construction rather than by trusting the probe distance.
-  // A creature that would step somewhere invalid holds position and turns back.
-  if (!isValidCellFor(world, entity.species, nextX, nextY)) {
-    entity.heading = normalizeAngle(entity.heading + Math.PI);
-    return;
+  // BELT AND SUSPENDERS. The look-ahead validated a cell further out than
+  // one tick's travel; that covers the ordinary case but says nothing about
+  // the cells in between, so a narrow tongue of the wrong habitat — or a
+  // riser steeper than this species can climb — crossing the path could
+  // still be stepped into. Re-checking the actual destination, against both
+  // isValidCellFor and canTraverse, makes the invariant "no creature is ever
+  // outside its habitat, and no creature ever crosses a slope it can't
+  // climb" true by construction rather than by trusting the probe distance.
+  if (
+    !isValidCellFor(world, entity.species, nextX, nextY) ||
+    !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
+  ) {
+    // Same contour-following idea as above, one more time: the coarse sweep
+    // said `steered` was fine at `lookahead`, but the actual one-tick step
+    // lands somewhere it isn't — a thin obstacle or a corner the sweep
+    // stepped past. Re-sweep from the current heading at the short distance
+    // before giving up to holding position this tick.
+    const retry = steerToValidHeading(world, entity, entity.heading, contourLookahead);
+    if (retry === null) return; // hold position, keep facing as-is.
+
+    entity.heading = retry;
+    const retryDistance = speedOf(entity) * dt;
+    nextX = entity.x + Math.cos(retry) * retryDistance;
+    nextY = entity.y + Math.sin(retry) * retryDistance;
+    if (
+      !isValidCellFor(world, entity.species, nextX, nextY) ||
+      !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
+    ) {
+      return; // still nowhere to go this tick; hold position.
+    }
   }
 
   entity.x = nextX;
