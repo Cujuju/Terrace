@@ -300,6 +300,33 @@ body {
   overflow-y: auto;
 }
 
+/* The connection button (owner, 2026-08-19: the link status moved out of the
+   top-left panel into this column). Same 40px square as the gear and the
+   chart — it is one of three peers, not a decoration hung off them — but its
+   face is the status dot rather than a glyph, so it needs the dot grown from
+   the 9px an in-panel row wants to something that reads at arm's length in a
+   40px button. 14px is a third of the button, matching the optical weight of
+   the 19px gear glyph without becoming a traffic light. */
+.hud-connection-button .status-dot {
+  width: 14px;
+  height: 14px;
+  /* The dot is the whole face; never let flex squeeze it. */
+  flex: none;
+}
+
+/* The status colours already carry the meaning, so the button's own border
+   must not fight them: it keeps the muted chrome of its peers and only the
+   dot changes colour. `.open`/`:hover` accent still applies (above), which is
+   what says "this is a button" on a device with no hover at all. */
+.hud-connection-popup {
+  /* One status word and one sentence — narrower than the bindings editor,
+     and with nothing scrollable in it. */
+  min-width: 0;
+  max-width: min(260px, calc(100vw - 24px));
+  max-height: none;
+  overflow-y: visible;
+}
+
 .controls-row {
   gap: 6px;
 }

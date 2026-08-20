@@ -2,14 +2,26 @@
 // the imperative renderer (design doc §3.1).
 //
 // LAYOUT (owner redesign, 2026-08-19): three sections in three corners —
-//   * TOP LEFT      the info panel: connection status, the control hint text
-//                    and 'panel'-placed plugin panels. Collapsible to a tab,
-//                    as the old all-in-one panel was.
+//   * TOP LEFT      the info panel: 'panel'-placed plugin panels (relics'
+//                    skills, the invite link) and the control hint text.
+//                    Collapsible to a tab, as the old all-in-one panel was.
 //   * BOTTOM LEFT   the brush panel: radius, tool, edge, mode — the things a
 //                    sculpting hand actually reaches for, always visible.
-//   * BOTTOM RIGHT  a settings gear that pops up the control-bindings
-//                    editor (ControlsPanel) — hidden until asked for.
+//   * BOTTOM RIGHT  a column of equal-sized icon buttons, each opening one
+//                    thing: connection status, the Cartographer, and the
+//                    control-bindings editor.
 // Top CENTRE stays what it was: world header + top-center plugin stack.
+//
+// WHERE THE CONNECTION LIVES (owner, 2026-08-19, superseding the above): the
+// link status moved OUT of the top-left panel and into the bottom-right button
+// column, as a button the same size as the gear and the chart. Two reasons it
+// belongs there and not where it was. First, the top-left panel is a stack of
+// PLUGIN panels; a core readout sitting at the top of it made every plugin
+// panel below read as part of the connection, which is what put the relic
+// skills under a "Connected" heading they had nothing to do with. Second, the
+// status is a one-glance fact with one sentence of detail behind it — exactly
+// the shape of the two buttons it now sits with, and unlike them it needs no
+// room at all until it is asked for.
 //
 // THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): brush panel,
 // bottom-center instruments (mana gauge) and the gear live in one grid row —
@@ -27,7 +39,7 @@
 // the dot on whatever the status happened to be at mount. There are no such
 // consts in this file, by construction.
 
-import { For, Show, onCleanup, type JSX } from 'solid-js';
+import { For, Show, createSignal, onCleanup, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import { VersionWatermark } from './VersionWatermark.tsx';
@@ -170,28 +182,52 @@ export function Hud(props: {
   /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
   chartSource: () => ChartSource | null;
 }): JSX.Element {
-  // The settings popup's container, for the click-outside dismissal below. A
+  // The button column's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
   let settingsRoot: HTMLDivElement | undefined;
 
-  // DISMISSAL: Escape and click-outside both close the settings popup — a
+  // The connection popup's open state. Component-local rather than in
+  // hudState.ts — unlike showControls (persisted, because a player who opened
+  // the bindings editor should find it open next session), a status readout
+  // answers a question asked in the moment and should never be waiting on the
+  // screen after a reload.
+  const [showConnection, setShowConnection] = createSignal(false);
+
+  // ONE POPUP AT A TIME. Both popups grow upward from the same point at the
+  // top of the button column (hud.css), so two open at once would overlap.
+  // Rather than give them separate anchors and a narrower column, opening
+  // either closes the other — which is also what a player expects from a row
+  // of buttons where each opens one thing.
+  const openConnection = (open: boolean): void => {
+    setShowConnection(open);
+    if (open) setShowControls(false);
+  };
+  const openControls = (open: boolean): void => {
+    setShowControls(open);
+    if (open) setShowConnection(false);
+  };
+
+  // DISMISSAL: Escape and click-outside both close whichever popup is open — a
   // popup that only its own button can close feels stuck. Registered once (the
-  // component body runs once) on window, reading showControls() at EVENT time
-  // rather than tracking it. Neither handler claims the event: a click that
+  // component body runs once) on window, reading the accessors at EVENT time
+  // rather than tracking them. Neither handler claims the event: a click that
   // dismisses the popup still reaches whatever it landed on (canvas included),
   // matching how every native popover behaves.
   const onWindowKeyDown = (event: KeyboardEvent): void => {
     // The chart overlay owns Escape while it is open (Cartographer.tsx has its
     // own listener); one press must close one layer, not both.
     if (chartOpen()) return;
-    if (event.key === 'Escape' && showControls()) setShowControls(false);
+    if (event.key !== 'Escape') return;
+    if (showControls()) setShowControls(false);
+    if (showConnection()) setShowConnection(false);
   };
   const onWindowPointerDown = (event: PointerEvent): void => {
-    if (!showControls()) return;
+    if (!showControls() && !showConnection()) return;
     if (settingsRoot !== undefined && event.target instanceof Node && settingsRoot.contains(event.target)) {
       return;
     }
     setShowControls(false);
+    setShowConnection(false);
   };
   window.addEventListener('keydown', onWindowKeyDown);
   window.addEventListener('pointerdown', onWindowPointerDown);
@@ -324,12 +360,13 @@ export function Hud(props: {
           </For>
         </div>
 
-        {/* BOTTOM RIGHT — the SETTINGS section: the gear, and the
-            control-bindings editor as a popup above it when asked for. The
-            popup and the button share one container so the click-outside
-            dismissal (top of the component) can treat them as one region.
-            Icon-only (owner, 2026-08-19); the aria-label and title carry the
-            words the face no longer does. */}
+        {/* BOTTOM RIGHT — the BUTTON COLUMN: three equal icon buttons, each
+            opening exactly one thing, and the popups that grow upward from
+            the top of the column so no button ever moves under the pointer.
+            Everything shares one container so the click-outside dismissal
+            (top of the component) can treat it as one region. Icon-only
+            (owner, 2026-08-19); the aria-label and title carry the words the
+            faces no longer do. */}
         <div class="hud-settings hud-anchor-bottom-right" ref={settingsRoot}>
           <Show when={showControls()}>
             <div
@@ -340,6 +377,48 @@ export function Hud(props: {
               <ControlsPanel />
             </div>
           </Show>
+
+          {/* The connection popup: the same status row that used to head the
+              top-left panel, plus the sentence that was only ever a hover
+              title. Stating it in the popup is the point — a touch device has
+              no hover, so on a phone that sentence was previously unreachable
+              text. */}
+          <Show when={showConnection()}>
+            <div
+              class="hud-panel hud-settings-popup hud-connection-popup"
+              role="dialog"
+              aria-label="Connection"
+            >
+              <div class="hud-row">
+                <span
+                  class="status-dot"
+                  classList={{ [`status-${connectionStatus()}`]: true }}
+                />
+                <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
+              </div>
+              <p class="hud-hint">{STATUS_TITLE[connectionStatus()]}</p>
+            </div>
+          </Show>
+
+          {/* The connection button. Its face is the status dot and nothing
+              else, so the link stays glanceable at all times without the
+              popup — including its pulse while connecting or reconnecting
+              (hud.css animates the dot by status class). */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button hud-connection-button"
+            classList={{ open: showConnection() }}
+            aria-expanded={showConnection()}
+            aria-haspopup="dialog"
+            aria-label={`Connection: ${STATUS_LABEL[connectionStatus()]}`}
+            title={STATUS_TITLE[connectionStatus()]}
+            onClick={() => openConnection(!showConnection())}
+          >
+            <span
+              class="status-dot"
+              classList={{ [`status-${connectionStatus()}`]: true }}
+            />
+          </button>
           {/* The Cartographer's door: stacked ABOVE the gear so the bottom
               strip gains no width — the phone-width flow (file header) is
               untouched. Icon-only like the gear; an inline stroke SVG rather
@@ -367,18 +446,19 @@ export function Hud(props: {
             aria-haspopup="dialog"
             aria-label="Control settings"
             title="Show or hide the mouse, touch and scroll settings."
-            onClick={() => setShowControls(!showControls())}
+            onClick={() => openControls(!showControls())}
           >
             ⚙
           </button>
         </div>
       </div>
 
-      {/* TOP LEFT — the INFO panel: status, plugin 'panel' panels, and the
-          control descriptions. Collapses to a tab exactly as the old
-          all-in-one panel did (owner, 2026-08-14: on a phone the open panel
-          hides half the world); the status dot lives on BOTH faces, so the
-          connection stays glanceable while collapsed. */}
+      {/* TOP LEFT — the INFO panel: plugin 'panel' panels and the control
+          descriptions. Collapses to a tab exactly as the old all-in-one panel
+          did (owner, 2026-08-14: on a phone the open panel hides half the
+          world). The connection no longer rides on either face — it is its own
+          button in the bottom-right column now (see this file's header), which
+          is what stops the plugin panels below from reading as part of it. */}
       <Show
         when={panelOpen()}
         fallback={
@@ -386,36 +466,24 @@ export function Hud(props: {
             type="button"
             class="hud-panel hud-anchor-top-left hud-panel-tab"
             aria-expanded={false}
-            title="Open the status and help panel."
+            title="Open the help panel."
             onClick={() => setPanelOpen(true)}
           >
-            <span
-              class="status-dot"
-              classList={{ [`status-${connectionStatus()}`]: true }}
-            />
             Info ▸
           </button>
         }
       >
         <div class="hud-panel hud-anchor-top-left">
-          {/* The status row doubles as the collapse control — it is the
-              panel's first row on every device, so open and closed toggle in
-              the same place. Its title stays the STATUS meaning (the row is a
-              readout first); the chevron and aria-expanded carry the collapse
-              affordance. */}
+          {/* The header row IS the collapse control — the panel's first row on
+              every device, so open and closed toggle in the same place. */}
           <button
             type="button"
-            class="hud-row hud-status panel-header"
+            class="hud-row panel-header"
             aria-expanded={true}
-            title={STATUS_TITLE[connectionStatus()]}
+            title="Collapse this panel."
             onClick={() => setPanelOpen(false)}
           >
-            {/* classList keeps the reactive read inline rather than in a const. */}
-            <span
-              class="status-dot"
-              classList={{ [`status-${connectionStatus()}`]: true }}
-            />
-            <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
+            <span class="status-label">Info</span>
             <span class="panel-chevron">▴</span>
           </button>
 
