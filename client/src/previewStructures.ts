@@ -223,6 +223,11 @@ function main(): void {
     scale: 1,
     yaw: 0,
     race,
+    // 'inland' — this preview has no terrain at all (a neutral backdrop, see
+    // the file banner), so there is no water to survey; the coastal harbor
+    // variant (card 33, models.ts's SITE_TOP_TIER_VARIANTS) is out of this
+    // throwaway tool's scope, unlike the Durand's variant it already drives.
+    site: 'inland',
   };
   models.apply([placement]);
 

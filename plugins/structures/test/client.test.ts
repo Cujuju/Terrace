@@ -25,8 +25,18 @@ import {
   structureVariation,
   type StructureCell,
 } from '../protocol.ts';
-import { placementsFor } from '../client/placement.ts';
+import { placementsFor, type GroundLookup } from '../client/placement.ts';
 import { DURANDS_SHARE_OF_256, isDurandsCell } from '../client/durands.ts';
+import {
+  COASTAL_MIN_WATER_CELLS,
+  COASTAL_SEARCH_RADIUS_CELLS,
+  surveySite,
+} from '../client/site.ts';
+import {
+  SKIFF_MAX_PER_SETTLEMENT,
+  SKIFF_MIN_TIER,
+  skiffsForSettlement,
+} from '../client/skiffs.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -151,6 +161,10 @@ describe('placement', () => {
     expect(placements).toHaveLength(1);
 
     const variation = structureVariation(3, 4);
+    // Every neighbour of (3, 4) within the coastal search disc is unknown to
+    // this sparse fixture, so the site survey defaults to 'inland' — see
+    // site.ts's surveySite for the conservative-default contract this
+    // exercises (its own describe block below tests the surveying itself).
     expect(placements[0]).toEqual({
       x: 3,
       z: 4,
@@ -159,6 +173,7 @@ describe('placement', () => {
       scale: variation.scale,
       yaw: variation.yaw,
       race: settlementRace(3, 4),
+      site: 'inland',
     });
   });
 
@@ -169,6 +184,142 @@ describe('placement', () => {
     );
     expect(placements).toHaveLength(1);
     expect(pendingGround).toBe(2);
+  });
+
+  it('reports a coastal placement, seeded with skiffs, when its neighbourhood is confirmed water', () => {
+    // A tier-2 settlement at (100, 100) with COASTAL_MIN_WATER_CELLS confirmed
+    // water cells nearby (band <= -1) and everything else known and dry.
+    const ground = new Map<string, number>([['100,100', 3]]);
+    const water: Array<[number, number]> = [
+      [101, 100],
+      [100, 101],
+    ];
+    for (const [wx, wy] of water) ground.set(`${wx},${wy}`, -1);
+    const dryGroundAt: GroundLookup = (x, y) => {
+      if (ground.has(`${x},${y}`)) return ground.get(`${x},${y}`)!;
+      // Every other cell in the search disc is KNOWN and dry, so the survey
+      // resolves definitively instead of coming back pending.
+      const dx = x - 100;
+      const dy = y - 100;
+      if (dx * dx + dy * dy < COASTAL_SEARCH_RADIUS_CELLS * (COASTAL_SEARCH_RADIUS_CELLS - 1)) return 4;
+      return null;
+    };
+
+    const { placements, skiffs, pendingSite } = placementsFor(cells([100, 100, 2]), dryGroundAt);
+    expect(pendingSite).toBe(0);
+    expect(placements).toHaveLength(1);
+    expect(placements[0].site).toBe('coastal');
+    expect(skiffs.length).toBeGreaterThan(0);
+    expect(skiffs.length).toBeLessThanOrEqual(SKIFF_MAX_PER_SETTLEMENT);
+    for (const skiff of skiffs) {
+      // Every skiff anchors on a cell this fixture actually marked as water.
+      expect(water).toContainEqual([skiff.x, skiff.z]);
+    }
+  });
+});
+
+describe('site survey (card 33, coastal classification)', () => {
+  const CENTER = { x: 200, y: 200 };
+
+  /** A GroundLookup where every cell in `waterAt` reads as confirmed water (-1) and everything else is dry (4), fully known. */
+  function worldWithWater(waterAt: ReadonlyArray<readonly [number, number]>): GroundLookup {
+    const water = new Set(waterAt.map(([x, y]) => `${x},${y}`));
+    return (x, y) => (water.has(`${x},${y}`) ? -1 : 4);
+  }
+
+  it('classifies a shore site coastal: enough confirmed water nearby', () => {
+    const waterCells: Array<[number, number]> = [];
+    for (let i = 0; i < COASTAL_MIN_WATER_CELLS; i++) waterCells.push([CENTER.x + 1, CENTER.y + i]);
+    const survey = surveySite(worldWithWater(waterCells), CENTER.x, CENTER.y);
+    expect(survey.kind).toBe('coastal');
+    expect(survey.pending).toBe(false);
+    expect(survey.waterCells.length).toBe(COASTAL_MIN_WATER_CELLS);
+  });
+
+  it('classifies a fully dry, fully known neighbourhood inland — never pending', () => {
+    const survey = surveySite(worldWithWater([]), CENTER.x, CENTER.y);
+    expect(survey.kind).toBe('inland');
+    expect(survey.pending).toBe(false);
+    expect(survey.waterCells).toEqual([]);
+  });
+
+  it('a single stray deep cell (a borrow pit, not a coastline) does not qualify', () => {
+    // Below COASTAL_MIN_WATER_CELLS by construction.
+    const survey = surveySite(worldWithWater([[CENTER.x + 1, CENTER.y]]), CENTER.x, CENTER.y);
+    expect(survey.kind).toBe('inland');
+    expect(survey.waterCells).toEqual([]);
+  });
+
+  it('never counts a band-0 cell (world Y = 0) as water — the ambiguous case', () => {
+    // Height 0 renders identically to shallow dry land under band
+    // quantisation (see site.ts's file banner); a lookup that always
+    // returns 0 must never read as coastal however many such cells surround
+    // the site.
+    const groundAt: GroundLookup = () => 0;
+    const survey = surveySite(groundAt, CENTER.x, CENTER.y);
+    expect(survey.kind).toBe('inland');
+    expect(survey.pending).toBe(false);
+  });
+
+  it('the "lake" edge case: one confirmed-water cell plus unresolved neighbours stays pending, not falsely inland or coastal', () => {
+    // One short of COASTAL_MIN_WATER_CELLS confirmed, but with enough
+    // still-unknown neighbours that the verdict could still flip once they
+    // resolve — the caller (placement.ts) is expected to retry, not to
+    // trust this 'inland' as final.
+    const groundAt: GroundLookup = (x, y) => (x === CENTER.x + 1 && y === CENTER.y ? -1 : null);
+    const survey = surveySite(groundAt, CENTER.x, CENTER.y);
+    expect(survey.kind).toBe('inland'); // conservative default while undecided
+    expect(survey.pending).toBe(true);
+  });
+
+  it('waterCells is sorted nearest first', () => {
+    const far: [number, number] = [CENTER.x + 3, CENTER.y];
+    const near: [number, number] = [CENTER.x + 1, CENTER.y];
+    const survey = surveySite(worldWithWater([far, near]), CENTER.x, CENTER.y);
+    expect(survey.kind).toBe('coastal');
+    expect(survey.waterCells[0]).toEqual({ x: near[0], y: near[1] });
+    expect(survey.waterCells[1]).toEqual({ x: far[0], y: far[1] });
+  });
+
+  it('is a pure function of its ground lookup, so every client surveys the same cell identically', () => {
+    const groundAt = worldWithWater([[CENTER.x + 1, CENTER.y], [CENTER.x + 1, CENTER.y + 1]]);
+    expect(surveySite(groundAt, CENTER.x, CENTER.y)).toEqual(surveySite(groundAt, CENTER.x, CENTER.y));
+  });
+});
+
+describe('skiffs (card 33)', () => {
+  const waterCells = [
+    { x: 10, y: 20 },
+    { x: 11, y: 20 },
+    { x: 12, y: 20 },
+    { x: 13, y: 20 },
+  ];
+
+  it('a tier-0 camp has not grown a boat yet', () => {
+    expect(skiffsForSettlement(0, waterCells)).toEqual([]);
+    expect(SKIFF_MIN_TIER).toBeGreaterThan(0);
+  });
+
+  it('skiff count scales with tier, capped at SKIFF_MAX_PER_SETTLEMENT', () => {
+    expect(skiffsForSettlement(1, waterCells)).toHaveLength(1);
+    expect(skiffsForSettlement(2, waterCells)).toHaveLength(2);
+    expect(skiffsForSettlement(5, waterCells)).toHaveLength(SKIFF_MAX_PER_SETTLEMENT);
+  });
+
+  it('never asks for more skiffs than confirmed water cells exist', () => {
+    expect(skiffsForSettlement(5, waterCells.slice(0, 1))).toHaveLength(1);
+    expect(skiffsForSettlement(5, [])).toEqual([]);
+  });
+
+  it('anchors every skiff on one of the water cells handed in', () => {
+    const placements = skiffsForSettlement(3, waterCells);
+    for (const placement of placements) {
+      expect(waterCells).toContainEqual({ x: placement.x, y: placement.z });
+    }
+  });
+
+  it('is deterministic: the same water cells produce the same skiff parameters', () => {
+    expect(skiffsForSettlement(3, waterCells)).toEqual(skiffsForSettlement(3, waterCells));
   });
 });
 

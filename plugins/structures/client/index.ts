@@ -5,6 +5,14 @@
 // exactly flora's client half, extended with one more delta kind
 // (`upgraded`, alongside `founded`/`demolished`) because a standing structure
 // can change without being added or removed.
+//
+// CARD 33 ("Fishing Villages") ADDS TWO PURELY LOCAL LAYERS on top of the
+// wire cells above, neither of which the server knows exists: site.ts
+// classifies each structure's SITE (coastal or inland) from terrain this
+// client already has, and skiffs.ts/skiffModels.ts float a small fleet near
+// each mature coastal settlement. Both are computed fresh every rebuild()
+// alongside the ordinary building placements — see placement.ts's
+// PlacementResult for the combined shape.
 
 import type {
   ClientPluginCtx,
@@ -21,6 +29,7 @@ import {
 } from '../protocol.ts';
 import { createStructureModels, type StructureModels } from './models.ts';
 import { placementsFor } from './placement.ts';
+import { createSkiffModels, type SkiffModels } from './skiffModels.ts';
 
 /**
  * Seconds between retries while some structure's ground is still unknown.
@@ -35,6 +44,8 @@ export const STRUCTURES_GROUND_RETRY_SECONDS = 0.5;
  * client host constructs one instance, and attach/dispose bracket its life.
  */
 let models: StructureModels | null = null;
+/** Card 33 ("Fishing Villages"): the boats coastal settlements float — see skiffs.ts/skiffModels.ts. */
+let skiffModels: SkiffModels | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 
@@ -42,13 +53,17 @@ let unsubscribeFrames: (() => void) | null = null;
 const buildings = new Map<number, StructureCell>();
 
 let pendingGround = 0;
+/** Placed structures whose SITE survey (site.ts) was indeterminate — see placement.ts's PlacementResult.pendingSite. */
+let pendingSite = 0;
 let sinceRetrySeconds = 0;
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
   const result = placementsFor(buildings.values(), (x, y) => ctx.terrainHeightAt(x, y));
   models.apply(result.placements);
+  skiffModels?.apply(result.skiffs);
   pendingGround = result.pendingGround;
+  pendingSite = result.pendingSite;
   sinceRetrySeconds = 0;
 }
 
@@ -80,10 +95,13 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     buildings.clear();
     pendingGround = 0;
+    pendingSite = 0;
     sinceRetrySeconds = 0;
 
     models = createStructureModels();
     ctx.layer.add(models.root);
+    skiffModels = createSkiffModels();
+    ctx.layer.add(skiffModels.root);
 
     unsubscribeMessages = [
       ctx.onMessage(STRUCTURES_ALL_MESSAGE, (payload) => {
@@ -104,13 +122,14 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
-      // The Durand's sign flash runs every frame regardless of pendingGround
-      // — it is not gated on the ground-retry condition below, which exists
-      // for a completely different reason (a chunk that has not streamed in
-      // yet).
+      // The Durand's sign flash and every skiff's bob/orbit run every frame
+      // regardless of pendingGround/pendingSite — neither is gated on the
+      // retry condition below, which exists for a completely different
+      // reason (a chunk that has not streamed in yet).
       models?.animate(dt);
+      skiffModels?.animate(dt);
 
-      if (pendingGround === 0) return;
+      if (pendingGround === 0 && pendingSite === 0) return;
       sinceRetrySeconds += dt;
       if (sinceRetrySeconds < STRUCTURES_GROUND_RETRY_SECONDS) return;
       rebuild(ctx);
@@ -125,9 +144,12 @@ export const clientPlugin: TerraceClientPlugin = {
 
     buildings.clear();
     pendingGround = 0;
+    pendingSite = 0;
     sinceRetrySeconds = 0;
 
     models?.dispose();
     models = null;
+    skiffModels?.dispose();
+    skiffModels = null;
   },
 };
