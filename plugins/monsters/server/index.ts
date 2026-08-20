@@ -77,6 +77,7 @@ import type {
 import {
   MONSTERS_PLUGIN_NAME,
   MONSTERS_STATE_MESSAGE,
+  isMonsterKind,
   type MonsterState,
   roundBroadcastPosition,
 } from '../protocol.ts';
@@ -85,9 +86,11 @@ import { loadMonsters, saveMonsters } from './persistence.ts';
 import { RAISE_BLOCKED_REASON, reachesProtectedGround } from './protection.ts';
 import {
   advanceSummoning,
+  banish,
   drainMonsterTransitions,
   enforceHabitat,
   invalidateSurvey,
+  livingMonsterOfKind,
   livingMonsters,
   resetSummoning,
 } from './summoning.ts';
@@ -149,11 +152,42 @@ function emitTransitions(world: WorldApi): void {
   }
 }
 
+/**
+ * THE BOATS PLUGIN'S EYES (2026-08-20, issue #43): where every living monster
+ * is, RIGHT NOW, as a server-side world event.
+ *
+ * The pre-existing `arrived`/`departed` events announce that a monster exists,
+ * which is all a chronicle needs; a plugin that FIGHTS one needs to know where
+ * it is every tick. Emitted per tick rather than on the broadcast cadence
+ * because a fight resolves in whole seconds (plugins/boats/protocol.ts's
+ * KRAKEN_ROUT_WOUNDS arithmetic) and a 1 Hz fix would quantise it visibly.
+ *
+ * SKIPPED ENTIRELY WHEN NOTHING IS ALIVE, which is the common case: a world
+ * with no monster in it pays one array-length check per tick, not a fan-out to
+ * every installed plugin.
+ *
+ * NOT A BROADCAST. This is the server-side event bus (WorldApi.emitEvent);
+ * nothing here touches the wire, and the fog-of-war filtering that governs
+ * what CLIENTS learn is unchanged and still lives in the broadcast below.
+ */
+function emitPositions(world: WorldApi): void {
+  const living = livingMonsters();
+  if (living.length === 0) return;
+  world.emitEvent('positions', {
+    monsters: living.map((monster) => ({
+      kind: monster.kind,
+      x: monster.x,
+      y: monster.y,
+    })),
+  });
+}
+
 function simulate(world: WorldApi, dt: number): void {
   advanceSummoning(world, dt);
   advanceLurking(world, dt);
   enforceHabitat(world);
   emitTransitions(world);
+  emitPositions(world);
 
   tickCount++;
   if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
@@ -250,6 +284,34 @@ export const plugin: TerracePlugin = {
 
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     reactToTerrain(world, diff);
+  },
+
+  /**
+   * THE ONLY WAY ANOTHER PLUGIN CAN REMOVE A MONSTER (issue #43).
+   *
+   * A fleet that wins says so (`boats:defeated`); this decides what that
+   * means, because departure is this plugin's business and nobody else's — it
+   * owns the per-kind cooldown, and `banish` is the one exit every cause has
+   * always gone through, so a routed kraken gets exactly the ten-minute
+   * absence a drained basin would have given it.
+   *
+   * VALIDATED STRUCTURALLY, like any other event: the emitter may be a
+   * different version or absent entirely. An unknown or malformed kind is
+   * ignored rather than guessed at — there is no safe default for "which
+   * monster did you mean".
+   *
+   * Transitions are drained in the same call so the departure reaches the
+   * chronicle now rather than on the next tick.
+   */
+  onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
+    if (event !== 'boats:defeated') return;
+    if (typeof payload !== 'object' || payload === null) return;
+    const { kind } = payload as { kind?: unknown };
+    if (typeof kind !== 'string') return;
+    if (!isMonsterKind(kind)) return;
+    const monster = livingMonsterOfKind(kind);
+    if (monster === null) return;
+    if (banish(monster)) emitTransitions(world);
   },
 
   persistence,

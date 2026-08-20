@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Same reason as every other plugin's: tsc 7.0.2 does not auto-discover a
+    // nested workspace package's pnpm-linked node_modules/@types.
+    "types": ["node"]
+  },
+  "include": ["server", "test"]
+}
