@@ -1,12 +1,24 @@
 // flora — trees grow on green ground that has been left alone (owner,
 // 2026-08-14: "I would like to see trees spawn in the green layers when they've
-// been stable for a short period of time").
+// been stable for a short period of time"), and (card 28, 2026-08-19,
+// "Terrace Farming") crops grow on flat ground next to water.
 //
 // Core knows nothing about vegetation. This half owns the whole mechanic —
 // what counts as green (./bands.ts), what counts as left alone (./stability.ts),
-// how fast a meadow fills in (./forest.ts), and what survives a restart
-// (./persistence.ts) — and publishes it on two namespaced messages; the client
-// half under ../client draws it.
+// how fast a meadow fills in (./forest.ts), what counts as farmland
+// (@terrace/shared's farmland.ts — the predicate is shared terrain math, not
+// this plugin's) and where crops currently stand (./crops.ts), and what
+// survives a restart (./persistence.ts — crops themselves do not; see
+// crops.ts's header) — and publishes it on FOUR namespaced messages (two
+// per population); the client half under ../client draws both.
+//
+// TREES AND CROPS ARE TWO INDEPENDENT POPULATIONS, not two views of one
+// mechanism: different eligibility predicate, different cap, different
+// growth model (stochastic-with-a-hazard for trees, purely deterministic for
+// crops — see crops.ts), different wire messages. Everywhere below that
+// forest.ts's machinery is mirrored for crops.ts, it is mirrored
+// DELIBERATELY — the two are meant to read as the same house pattern applied
+// twice, not as one shared abstraction.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT THIS PLUGIN IS, NEXT TO THE OTHER TWO THAT DRAW THINGS IN THE WORLD.
@@ -78,10 +90,14 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import {
   FLORA_CHANGES_MESSAGE,
+  FLORA_CROPS_MESSAGE,
+  FLORA_CROP_CHANGES_MESSAGE,
   FLORA_FOREST_MESSAGE,
   FLORA_PLUGIN_NAME,
+  packCropCells,
   packTreeCells,
   treeKey,
+  type CropCell,
   type TreeCell,
 } from '../protocol.ts';
 import {
@@ -92,6 +108,7 @@ import {
   type FloraRng,
   type OccupancyPredicate,
 } from './forest.ts';
+import { CropField, cropSurveyChunksPerTick } from './crops.ts';
 import { loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
 import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
@@ -119,6 +136,13 @@ export const FLORA_KEEPALIVE_SECONDS = 60;
 const forest = new Forest();
 
 /**
+ * The crop field (card 28, "Terrace Farming"). A SEPARATE object from
+ * `forest`, not a second list inside it: crops have their own cap, their own
+ * survey cadence and no stochastic growth at all — see crops.ts's header.
+ */
+const cropField = new CropField();
+
+/**
  * Null until onWorldCreate: the record is sized from the world edge, which is
  * not known before then. Every path that touches it therefore checks — which
  * doubles as the guard for "a hook fired before the world existed".
@@ -142,6 +166,15 @@ let lastKeepaliveSeconds = 0;
  * chunksPerTick for why this is not just "N chunks per tick".
  */
 let scanCredit = 0;
+
+/**
+ * Fractional chunks owed to the crop survey, carried between ticks —
+ * crops.ts's own rolling sweep, independent of the tree survey's
+ * `scanCredit` above (two unrelated mechanisms, two unrelated budgets, the
+ * same "restated, not shared" rule the two survey intervals themselves
+ * keep — see crops.ts's CROP_SURVEY_INTERVAL_SECONDS comment).
+ */
+let cropScanCredit = 0;
 
 /**
  * Trees restored from a snapshot, held until onWorldCreate.
@@ -222,6 +255,79 @@ function broadcastChanges(
     }),
     FLORA_SKIP_EMPTY,
   );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Crops wire (card 28) — Forest's own wire functions above, restated for the
+// crop field. Same fog-of-war rule, same skipEmpty justification (a crop
+// never moves once it stands, so an invisible crop was equally invisible at
+// every earlier moment it could have been announced — FLORA_SKIP_EMPTY's own
+// doc comment, unchanged by having a second population to apply it to).
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A crop's own cell — what `WorldApi.broadcastVisible` gates visibility by. */
+function cropPosition(cell: CropCell): { x: number; y: number } {
+  return { x: cell.x, y: cell.y };
+}
+
+function broadcastCrops(world: WorldApi): void {
+  world.broadcastVisible(
+    FLORA_CROPS_MESSAGE,
+    cropField.cells(),
+    cropPosition,
+    (visible) => ({ crops: packCropCells(visible) }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/** One cell tagged with which half of a `flora:cropChanges` delta it belongs to. */
+interface TaggedCropChange {
+  readonly kind: 'sprouted' | 'withered';
+  readonly cell: CropCell;
+}
+
+function broadcastCropChanges(
+  world: WorldApi,
+  sprouted: readonly CropCell[],
+  withered: readonly CropCell[],
+): void {
+  if (sprouted.length === 0 && withered.length === 0) return;
+
+  const tagged: TaggedCropChange[] = [
+    ...sprouted.map((cell): TaggedCropChange => ({ kind: 'sprouted', cell })),
+    ...withered.map((cell): TaggedCropChange => ({ kind: 'withered', cell })),
+  ];
+  world.broadcastVisible(
+    FLORA_CROP_CHANGES_MESSAGE,
+    tagged,
+    (change) => cropPosition(change.cell),
+    (visible) => ({
+      sprouted: packCropCells(visible.filter((c) => c.kind === 'sprouted').map((c) => c.cell)),
+      withered: packCropCells(visible.filter((c) => c.kind === 'withered').map((c) => c.cell)),
+    }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/**
+ * THE TARGETED-REFRESH PATH for crops, mirroring refreshUnlockedChunk below
+ * exactly (issue #18's mechanism, applied to the second static population).
+ */
+function refreshUnlockedChunkCrops(world: WorldApi, token: string, cx: number, cy: number): void {
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const inChunk: CropCell[] = [];
+  for (const crop of cropField.cells()) {
+    if (crop.x >= x0 && crop.x < x0 + CHUNK_SIZE && crop.y >= y0 && crop.y < y0 + CHUNK_SIZE) {
+      inChunk.push(crop);
+    }
+  }
+  if (inChunk.length === 0) return;
+
+  const payload = { sprouted: packCropCells(inChunk), withered: [] };
+  for (const player of world.players()) {
+    if (player.token === token) world.sendTo(player.id, FLORA_CROP_CHANGES_MESSAGE, payload);
+  }
 }
 
 /**
@@ -346,7 +452,25 @@ function simulate(world: WorldApi, dt: number): void {
     broadcastChanges(world, grown, felled);
   }
 
-  if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) broadcastForest(world);
+  // The crop survey (card 28) — its OWN independent budget/cursor
+  // (cropScanCredit), because it is a different sweep on a different
+  // interval (crops.ts's CROP_SURVEY_INTERVAL_SECONDS) over a different
+  // predicate. Reuses the SAME occupiedCells() closure forest's own survey
+  // just built above: "buildings always win" applies identically to crops
+  // (crops.ts's scanChunk), so a structure founded this tick is excluded
+  // from both surveys' very next chunk, not just the tree survey's.
+  cropScanCredit = Math.min(cropScanCredit + cropSurveyChunksPerTick(world, dt), totalChunks);
+  const cropBudget = Math.floor(cropScanCredit);
+  if (cropBudget > 0) {
+    cropScanCredit -= cropBudget;
+    const outcome = cropField.advance(world, occupiedCells(), cropBudget);
+    if (outcome !== null) broadcastCropChanges(world, outcome.sprouted, outcome.withered);
+  }
+
+  if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) {
+    broadcastForest(world);
+    broadcastCrops(world);
+  }
 }
 
 /**
@@ -376,12 +500,22 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (stability === null || diff.length === 0) return;
 
   const felled: TreeCell[] = [];
+  const withered: CropCell[] = [];
   for (const cell of diff) {
     stability.markChanged(cell.x, cell.y, simSeconds);
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+    // Card 28's own instant-reaction half: a crop standing on the EDITED
+    // cell withers immediately, mirroring the tree rule directly above.
+    // farmland.ts's flatness/water-adjacency test also depends on a cell's
+    // NEIGHBOURS, which this diff-driven pass does not re-check — see
+    // crops.ts's CropField.reactToEdit doc comment for why that lag is a
+    // named, accepted residual rather than a gap.
+    const witheredCell = cropField.reactToEdit(cell.x, cell.y);
+    if (witheredCell !== null) withered.push(witheredCell);
   }
 
   broadcastChanges(world, [], felled);
+  broadcastCropChanges(world, [], withered);
 }
 
 /**
@@ -412,14 +546,20 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   if (occupation === null) return;
 
   const felled: TreeCell[] = [];
+  const withered: CropCell[] = [];
   for (const cell of occupation.seeded) {
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+    const witheredCell = cropField.reactToEdit(cell.x, cell.y);
+    if (witheredCell !== null) withered.push(witheredCell);
   }
   for (const cell of occupation.upgraded) {
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+    const witheredCell = cropField.reactToEdit(cell.x, cell.y);
+    if (witheredCell !== null) withered.push(witheredCell);
   }
 
   broadcastChanges(world, [], felled);
+  broadcastCropChanges(world, [], withered);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -461,6 +601,12 @@ export const plugin: TerracePlugin = {
     // their first forest (onPlayerJoin is). It is here so that a client which is
     // somehow already listening is not left empty for up to a keepalive.
     broadcastForest(world);
+    // The crop field itself starts empty here (crops.ts's header: nothing is
+    // persisted, the first survey — up to CROP_SURVEY_INTERVAL_SECONDS away —
+    // populates it fresh from this world's own heightmap), so this call is
+    // inert at boot; kept for symmetry with broadcastForest and to cover a
+    // future restart-without-reconnect path cleanly.
+    broadcastCrops(world);
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -498,10 +644,22 @@ export const plugin: TerracePlugin = {
       (visible) => ({ trees: packTreeCells(visible) }),
       { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
     );
+
+    // Card 28's crops, same join-time treatment as the forest immediately
+    // above — a joining player must see standing crops without waiting out
+    // a keepalive either.
+    world.broadcastVisible(
+      FLORA_CROPS_MESSAGE,
+      cropField.cells(),
+      cropPosition,
+      (visible) => ({ crops: packCropCells(visible) }),
+      { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
+    );
   },
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
     refreshUnlockedChunk(world, token, cx, cy);
+    refreshUnlockedChunkCrops(world, token, cx, cy);
   },
 
   persistence,
@@ -526,13 +684,25 @@ export function currentStability(): StabilityMap | null {
   return stability;
 }
 
+/** The standing crops (card 28), in no particular order. */
+export function standingCrops(): readonly CropCell[] {
+  return cropField.cells();
+}
+
+/** The live crop field, for suites that need to assert on its own maths. */
+export function currentCropField(): CropField {
+  return cropField;
+}
+
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetFloraState(): void {
   stability = null;
   forest.replaceAll([]);
+  cropField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
   scanCredit = 0;
+  cropScanCredit = 0;
   restoredCells = [];
 }

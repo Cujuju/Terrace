@@ -19,10 +19,15 @@ import {
 } from '../../../server/test/support/harness.ts';
 import {
   FLORA_CHANGES_MESSAGE,
+  FLORA_CROPS_MESSAGE,
+  FLORA_CROP_CAP,
+  FLORA_CROP_CHANGES_MESSAGE,
   FLORA_FOREST_MESSAGE,
   FLORA_PLUGIN_NAME,
   FLORA_TREE_CAP,
+  parseCropCells,
   parseTreeCells,
+  type CropCell,
   type TreeCell,
 } from '../protocol.ts';
 import {
@@ -32,6 +37,8 @@ import {
   isPlantableCell,
   type FloraWorld,
 } from '../server/bands.ts';
+import { CROP_SURVEY_INTERVAL_SECONDS, CropField } from '../server/crops.ts';
+import { isFarmlandCell, type FarmlandWorld } from '@terrace/shared';
 import {
   FLORA_CELLS_PER_TREE,
   FLORA_MAX_SPROUTS_PER_SURVEY,
@@ -46,9 +53,11 @@ import {
 } from '../server/forest.ts';
 import {
   FLORA_KEEPALIVE_SECONDS,
+  currentCropField,
   currentForest,
   plugin as floraPlugin,
   resetFloraState,
+  standingCrops,
   standingTrees,
 } from '../server/index.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from '../server/persistence.ts';
@@ -72,6 +81,8 @@ const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 /** Namespaced message types, as they appear on the RecordingSink. */
 const FOREST_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_FOREST_MESSAGE}`;
 const CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CHANGES_MESSAGE}`;
+const CROPS_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROPS_MESSAGE}`;
+const CROP_CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROP_CHANGES_MESSAGE}`;
 
 /**
  * Bands laid out in vertical stripes, one band per 8-column stripe, cycling 0…7.
@@ -821,5 +832,227 @@ describe('persistence', () => {
       { x: 40, y: 41 },
     ]);
     expect(restored.rngState).toBe(rng.state());
+  });
+});
+
+// Card 28, "Terrace Farming". The farmland PREDICATE itself is tested at its
+// contract layer in shared/test/farmland.test.ts — it lives in @terrace/shared
+// (one implementation, two consumers), so the cross-plugin fixture that used to
+// sit here pinning two independent copies to agree no longer has two copies to
+// pin. What remains below is flora's OWN half: the crop survey built on it.
+
+describe('crops (card 28) — the CropField survey', () => {
+  const CROP_LAND_BAND = 3;
+  const CROP_DEEP = SEA_LEVEL - BAND_HEIGHT;
+
+  /** A single coastline: column 0 is deep water, every other column is flat dry land. Column 1 alone touches it. */
+  function coastalHeight(x: number, _y: number): number {
+    return x === 0 ? CROP_DEEP : CROP_LAND_BAND * BAND_HEIGHT;
+  }
+
+  function coastalWorld(): World {
+    return worldWithTerrain(WORLD_SIZE, coastalHeight);
+  }
+
+  /** Ground truth: every farmland cell in the world, via the SAME predicate the survey itself calls. */
+  function expectedFarmland(world: FarmlandWorld, size: number): Set<string> {
+    const expected = new Set<string>();
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (isFarmlandCell(world, x, y)) expected.add(`${x},${y}`);
+      }
+    }
+    return expected;
+  }
+
+  const NEVER_OCCUPIED = (): boolean => false;
+
+  it('finds exactly the cells isFarmlandCell says are farmland — column 1 of the coastal world, minus its two off-map-neighbour edge rows', () => {
+    const world = coastalWorld();
+    const view = floraView(world);
+    const expected = expectedFarmland(view, WORLD_SIZE);
+    expect(expected.size).toBe(WORLD_SIZE - 2); // every row except y=0 and y=WORLD_SIZE-1
+
+    const field = new CropField();
+    const result = field.survey(view, NEVER_OCCUPIED);
+    const found = new Set(field.cells().map((c) => `${c.x},${c.y}`));
+    expect(found).toEqual(expected);
+    expect(result.sprouted).toHaveLength(expected.size);
+    expect(result.withered).toHaveLength(0);
+  });
+
+  it('an amortised sweep spread over many partial-budget calls finds the identical set a single full survey() does', () => {
+    const world = coastalWorld();
+    const view = floraView(world);
+
+    const oneShot = new CropField();
+    oneShot.survey(view, NEVER_OCCUPIED);
+    const expected = new Set(oneShot.cells().map((c) => `${c.x},${c.y}`));
+
+    const amortised = new CropField();
+    const totalChunks = view.chunksPerEdge * view.chunksPerEdge;
+    let outcome = null;
+    // One chunk at a time — the most fragmented budget this API allows.
+    for (let i = 0; i < totalChunks && outcome === null; i++) {
+      outcome = amortised.advance(view, NEVER_OCCUPIED, 1);
+    }
+    expect(outcome).not.toBeNull();
+    const found = new Set(amortised.cells().map((c) => `${c.x},${c.y}`));
+    expect(found).toEqual(expected);
+  });
+
+  it('is deterministic: two independent surveys of the same terrain produce byte-identical crop sets', () => {
+    // The whole justification for persisting nothing (crops.ts's header): a
+    // restart re-derives the SAME set from the SAME heightmap.
+    const view = floraView(coastalWorld());
+    const first = new CropField();
+    first.survey(view, NEVER_OCCUPIED);
+    const second = new CropField();
+    second.survey(view, NEVER_OCCUPIED);
+    expect(second.cells()).toEqual(first.cells());
+  });
+
+  it('buildings always win: an occupied farmland cell never shows a crop', () => {
+    const view = floraView(coastalWorld());
+    const occupied = (x: number, y: number): boolean => x === 1 && y === 5;
+    const field = new CropField();
+    field.survey(view, occupied);
+    expect(field.has(1, 5)).toBe(false);
+    expect(field.has(1, 6)).toBe(true); // an ordinary, unoccupied farmland neighbour still shows one
+  });
+
+  it('reactToEdit withers the crop on its own edited cell immediately, and reports null for a cell with none', () => {
+    const view = floraView(coastalWorld());
+    const field = new CropField();
+    field.survey(view, NEVER_OCCUPIED);
+    expect(field.has(1, 5)).toBe(true);
+
+    expect(field.reactToEdit(1, 5)).toEqual({ x: 1, y: 5 });
+    expect(field.has(1, 5)).toBe(false);
+    expect(field.reactToEdit(1, 5)).toBeNull(); // already gone
+  });
+
+  it('never exceeds FLORA_CROP_CAP, even when far more farmland exists', () => {
+    // Alternating water/land ROWS: every land row's cells touch water both
+    // north and south and are flat among their (same-row) dry neighbours —
+    // a coastline every two rows, producing far more farmland than one
+    // simple shoreline. On a 128x128 world that is roughly 64 rows x 126
+    // columns ≈ 8064 candidate cells, comfortably over FLORA_CROP_CAP (2048).
+    const combSize = 128;
+    function combHeight(x: number, y: number): number {
+      if (y % 2 === 0) return CROP_DEEP; // even rows: water
+      return CROP_LAND_BAND * BAND_HEIGHT; // odd rows: flat land
+    }
+    const view = floraView(worldWithTerrain(combSize, combHeight));
+    const field = new CropField();
+    field.survey(view, NEVER_OCCUPIED);
+    expect(field.count).toBe(FLORA_CROP_CAP);
+  });
+});
+
+describe('crops through the real host (card 28)', () => {
+  const CROP_LAND_BAND = 3;
+  const CROP_DEEP = SEA_LEVEL - BAND_HEIGHT;
+
+  function coastalHeight(x: number, _y: number): number {
+    return x === 0 ? CROP_DEEP : CROP_LAND_BAND * BAND_HEIGHT;
+  }
+
+  function bootCoastal(): Harness {
+    return bootOn(worldWithTerrain(WORLD_SIZE, coastalHeight, () => false));
+  }
+
+  it('sprouts on its own survey cadence and broadcasts the sprouts as a delta', () => {
+    const harness = bootCoastal();
+    join(harness);
+    advance(harness, CROP_SURVEY_INTERVAL_SECONDS + DT);
+
+    expect(standingCrops().length).toBeGreaterThan(0);
+    const changes = harness.sink.ofType(CROP_CHANGES_WIRE_TYPE);
+    expect(changes.length).toBeGreaterThan(0);
+    const sprouted =
+      parseCropCells((changes[0].payload as { sprouted: number[] }).sprouted) ?? [];
+    expect(sprouted.length).toBeGreaterThan(0);
+  });
+
+  it('withers a crop the instant its OWN cell is sculpted', () => {
+    const harness = bootCoastal();
+    advance(harness, CROP_SURVEY_INTERVAL_SECONDS + DT);
+    const victim = standingCrops()[0];
+    expect(victim).toBeDefined();
+
+    handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { type: 'sculpt', x: victim.x, y: victim.y, radius: 1, dir: 1 },
+    );
+
+    expect(currentCropField().has(victim.x, victim.y)).toBe(false);
+  });
+
+  it('a NEIGHBOUR-only edit (filling in the water that made a cell farmland) is caught by the next periodic survey, not instantly — the named, accepted residual', () => {
+    const harness = bootCoastal();
+    advance(harness, CROP_SURVEY_INTERVAL_SECONDS + DT);
+    const victim = standingCrops().find((c) => c.x === 1) as CropCell;
+    expect(victim).toBeDefined();
+
+    // Raise the water column (x=0) up to the land band — victim no longer
+    // touches water, so it should stop being farmland, but NOT this tick.
+    handleSculptIntent(
+      { world: harness.world, interceptors: harness.host },
+      PLAYER,
+      { type: 'sculpt', x: 0, y: victim.y, radius: 1, dir: 1, tool: 'stamp' },
+    );
+    // Still standing immediately after the neighbour-only edit.
+    expect(currentCropField().has(victim.x, victim.y)).toBe(true);
+  });
+
+  it('withers instantly when a structure seeds or upgrades on its cell (buildings always win)', () => {
+    const harness = bootCoastal();
+    advance(harness, CROP_SURVEY_INTERVAL_SECONDS + DT);
+    const victim = standingCrops()[0];
+    expect(victim).toBeDefined();
+
+    harness.host.notifyWorldEvent('structures:changes', {
+      cause: 'generation',
+      seeded: [{ x: victim.x, y: victim.y, tier: 0 }],
+      upgraded: [],
+      died: [],
+    });
+
+    expect(currentCropField().has(victim.x, victim.y)).toBe(false);
+  });
+
+  it('sends the whole crop field to a joining player, filtered to their own unlocked view', () => {
+    const locked = (cx: number, cy: number): boolean => cy >= WORLD_SIZE / CHUNK_SIZE / 2;
+    const harness = bootOn(worldWithTerrain(WORLD_SIZE, coastalHeight, locked));
+    advance(harness, CROP_SURVEY_INTERVAL_SECONDS + DT);
+    expect(standingCrops().length).toBeGreaterThan(0);
+
+    join(harness);
+    const snapshots = harness.sink.ofType(CROPS_WIRE_TYPE).filter((m) => m.target === PLAYER.id);
+    expect(snapshots.length).toBeGreaterThan(0);
+    const cells = parseCropCells((snapshots[0].payload as { crops: number[] }).crops) ?? [];
+    for (const cell of cells) expect(cell.y).toBeLessThan(WORLD_SIZE / 2);
+  });
+
+  it('is NOT persisted: a restart with no restore payload recomputes the identical crop set from terrain alone', () => {
+    const first = bootCoastal();
+    advance(first, CROP_SURVEY_INTERVAL_SECONDS + DT);
+    const before = new Set(standingCrops().map((c) => `${c.x},${c.y}`));
+    expect(before.size).toBeGreaterThan(0);
+
+    const slice = first.host.collectPersistence()[FLORA_PLUGIN_NAME];
+    // The slice this plugin actually persists carries no crop data at all —
+    // the explicit contract crops.ts's header states.
+    expect(slice).not.toHaveProperty('crops');
+
+    // A fresh boot of the SAME terrain, restoring that (crop-free) slice —
+    // crops must repopulate from the survey alone, not from persistence.
+    const second = bootOn(worldWithTerrain(WORLD_SIZE, coastalHeight, () => false), slice);
+    expect(standingCrops()).toHaveLength(0); // nothing yet — no survey has run
+    advance(second, CROP_SURVEY_INTERVAL_SECONDS + DT);
+    const after = new Set(standingCrops().map((c) => `${c.x},${c.y}`));
+    expect(after).toEqual(before);
   });
 });

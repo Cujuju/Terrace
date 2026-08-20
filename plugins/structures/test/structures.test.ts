@@ -51,6 +51,8 @@ import {
   setBlessedStructureCells,
 } from '../server/blessings.ts';
 import { isBuildableCell, isFlatEnough, type StructuresWorld } from '../server/suitability.ts';
+import { hasNearbyFarmland } from '../server/farmland.ts';
+import { isFarmlandCell } from '@terrace/shared';
 import {
   currentGeneration,
   currentLive,
@@ -1018,5 +1020,242 @@ describe('world events (structures:changes)', () => {
     expect(payload.cause).toBe('sculpt');
     expect(payload.died).toHaveLength(4);
     expect(payload.died).toContainEqual({ x: 40, y: 40 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Card 28, "Terrace Farming". Two halves: the farmland predicate itself
+// (farmland.ts), and its one consumer — the CA's relaxed birth rule
+// (life.ts's scanChunk). A shared worked example ((10,10)'s cluster, (20,20)'s,
+// (30,30)'s, (40,40)'s and (50,50)'s below) is DUPLICATED, by design, in
+// flora/test/flora.test.ts's own farmland describe block — see
+// structures/server/farmland.ts's header on why the two copies are pinned to
+// agree by testing the same facts rather than by sharing code.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('farmland predicate (card 28)', () => {
+  const FARMLAND_BAND = 2;
+  /** Deep background "open sea" — far enough below FARMLAND_BAND that it is never mistaken for a same-band neighbour. */
+  const DEEP = SEA_LEVEL - 10 * BAND_HEIGHT;
+
+  /**
+   * A background of flat, dry FARMLAND_BAND land, with five independent,
+   * widely-spaced clusters carved into it exercising one fact each. Widely
+   * spaced (10 cells apart) so no cluster's carve is ever a neighbour of
+   * another's cells.
+   */
+  function farmlandTerrain(x: number, y: number): number {
+    // Cluster A (10,10): a textbook terrace — flat among its dry neighbours,
+    // edged by ordinary deep water to its east. FARMLAND.
+    if (x === 11 && y === 10) return DEEP;
+
+    // Cluster B (20,20): flat, fully landlocked — no water neighbour anywhere.
+    // NOT farmland (fails "adjacent to water").
+    // (no carve needed; pure background suffices)
+
+    // Cluster C (30,30): "sloped" — its west neighbour is DRY but on a
+    // DIFFERENT band, and it also touches water (north). NOT farmland
+    // (fails flatness among its dry neighbours), even though it does touch
+    // water — proving the two conditions are independently enforced.
+    if (x === 29 && y === 30) return (FARMLAND_BAND + 1) * BAND_HEIGHT;
+    if (x === 30 && y === 29) return DEEP;
+
+    // Cluster D (40,40): the sea-level boundary case. The cell itself sits
+    // at height 5 (band 0, dry); its east neighbour sits at height exactly
+    // SEA_LEVEL (0) — water by isWater, but band 0 same as the cell's own.
+    // FARMLAND: the water branch must fire (touchesWater=true) before any
+    // band-equality reasoning would (wrongly) treat this as "flat", which
+    // would accidentally pass for the wrong reason if the water check were
+    // ever removed or reordered.
+    if (x === 40 && y === 40) return 5;
+    if (x === 39 && y === 40) return 10;
+    if (x === 41 && y === 40) return SEA_LEVEL;
+    if (x === 40 && y === 39) return 20;
+    if (x === 40 && y === 41) return 15;
+
+    // Cluster E (50,50): the cell itself IS water (height exactly SEA_LEVEL),
+    // surrounded by dry band-0 land on all four sides. NOT farmland — dry
+    // land grows crops, water does not, whatever the neighbourhood says.
+    if (x === 50 && y === 50) return SEA_LEVEL;
+    if (x === 49 && y === 50) return 5;
+    if (x === 51 && y === 50) return 5;
+    if (x === 50 && y === 49) return 5;
+    if (x === 50 && y === 51) return 5;
+
+    return FARMLAND_BAND * BAND_HEIGHT;
+  }
+
+  const FARMLAND_WORLD_SIZE = 64;
+
+  function farmlandWorld(isChunkLocked?: (cx: number, cy: number) => boolean): StructuresWorld {
+    const w = worldWithTerrain(FARMLAND_WORLD_SIZE, farmlandTerrain, isChunkLocked);
+    return {
+      worldSize: w.size,
+      chunksPerEdge: w.chunksPerEdge,
+      heightAt: (x, y) => w.heightAt(x, y),
+      isChunkUnlocked: (cx, cy) => w.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (x, y) => w.isCellUnlocked(x, y),
+    };
+  }
+
+  it('accepts a flat terrace edged by ordinary (deep) water', () => {
+    const world = farmlandWorld();
+    expect(isFarmlandCell(world, 10, 10)).toBe(true);
+  });
+
+  it('proves the deliberate divergence from isFlatEnough: the SAME cell fails suitability\'s buildability test', () => {
+    // This is the load-bearing claim in farmland.ts's header: reusing
+    // isFlatEnough here would make farmland vacuous. (10, 10) is farmland,
+    // but it can never itself hold a BUILDING, because its water neighbour
+    // sits on a different band.
+    const world = farmlandWorld();
+    expect(isFarmlandCell(world, 10, 10)).toBe(true);
+    expect(isFlatEnough(world, 10, 10)).toBe(false);
+    expect(isBuildableCell(world, 10, 10)).toBe(false);
+  });
+
+  it('rejects flat, dry ground with no water neighbour anywhere', () => {
+    const world = farmlandWorld();
+    expect(isFarmlandCell(world, 20, 20)).toBe(false);
+  });
+
+  it('rejects a cell that touches water but is not flat among its dry neighbours ("sloped")', () => {
+    const world = farmlandWorld();
+    expect(isFarmlandCell(world, 30, 30)).toBe(false);
+  });
+
+  it('handles the sea-level (band 0) boundary: water at height exactly 0 still counts as water, even though it shares band 0 with the dry cell beside it', () => {
+    const world = farmlandWorld();
+    expect(isFarmlandCell(world, 40, 40)).toBe(true);
+  });
+
+  it('rejects a cell that is itself water, however farmland-like its neighbours look', () => {
+    const world = farmlandWorld();
+    expect(isFarmlandCell(world, 50, 50)).toBe(false);
+  });
+
+  it('rejects a cell that runs off the world edge', () => {
+    const world = farmlandWorld();
+    // (0, 0)'s north/west neighbours are off-map.
+    expect(isFarmlandCell(world, 0, 0)).toBe(false);
+  });
+
+  it('requires the cell itself to be unlocked (never leaks a verdict about locked ground)', () => {
+    const isLocked = (cx: number, cy: number): boolean => cx === 0 && cy === 0; // covers (10,10)'s chunk
+    const world = farmlandWorld(isLocked);
+    expect(isFarmlandCell(world, 10, 10)).toBe(false);
+  });
+
+  it('hasNearbyFarmland is true for farmland itself and for its Moore neighbours, false beyond them', () => {
+    const world = farmlandWorld();
+    expect(hasNearbyFarmland(world, 10, 10)).toBe(true); // the farmland cell itself
+    expect(hasNearbyFarmland(world, 9, 9)).toBe(true); // Moore-adjacent to it
+    expect(hasNearbyFarmland(world, 8, 8)).toBe(false); // two cells away — outside the Moore neighbourhood
+    expect(hasNearbyFarmland(world, 20, 20)).toBe(false); // landlocked cluster: never farmland, never near it
+  });
+});
+
+describe('birth rate near fed towns (card 28) — bounded to exactly one extra neighbour class', () => {
+  const FARMLAND_BAND = 2;
+  const DEEP = SEA_LEVEL - 10 * BAND_HEIGHT;
+  const WORLD_SIZE = 64;
+
+  /**
+   * All background FARMLAND_BAND land, with ONE water cell at (22, 21) —
+   * chosen so it is a neighbour of (21, 21) but NOT of (20, 20), the birth
+   * candidate every test below uses. That keeps the candidate itself
+   * comfortably BUILDABLE (all four of ITS OWN orthogonal neighbours stay
+   * on FARMLAND_BAND) while (21, 21) — the candidate's Moore (diagonal)
+   * neighbour — becomes farmland. This is the realistic shape the card
+   * describes: a farm plot beside a founding settlement, not a building
+   * standing in the farm itself (which the CA's own wall test already
+   * forbids — see the previous describe block's "deliberate divergence"
+   * test).
+   */
+  function terrainWithFarmlandBeside(x: number, y: number): number {
+    if (x === 22 && y === 21) return DEEP;
+    return FARMLAND_BAND * BAND_HEIGHT;
+  }
+
+  function boostWorld(carveFarmland: boolean): StructuresWorld {
+    const heightOf = carveFarmland ? terrainWithFarmlandBeside : () => FARMLAND_BAND * BAND_HEIGHT;
+    const w = worldWithTerrain(WORLD_SIZE, heightOf);
+    return {
+      worldSize: w.size,
+      chunksPerEdge: w.chunksPerEdge,
+      heightAt: (cx, cy) => w.heightAt(cx, cy),
+      isChunkUnlocked: (cx, cy) => w.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (cx, cy) => w.isCellUnlocked(cx, cy),
+    };
+  }
+
+  it('sets up the fixture correctly: the candidate is buildable and its Moore neighbour is farmland, only when carved', () => {
+    const with_ = boostWorld(true);
+    expect(isBuildableCell(with_, 20, 20)).toBe(true);
+    expect(isFarmlandCell(with_, 21, 21)).toBe(true);
+    expect(hasNearbyFarmland(with_, 20, 20)).toBe(true);
+
+    const without = boostWorld(false);
+    expect(isBuildableCell(without, 20, 20)).toBe(true);
+    expect(isFarmlandCell(without, 21, 21)).toBe(false);
+    expect(hasNearbyFarmland(without, 20, 20)).toBe(false);
+  });
+
+  it('a dead cell with exactly 2 live neighbours is born when near farmland (the whole "birth rate rises" mechanic)', () => {
+    const world = boostWorld(true);
+    const live = boardOf([[19, 19], [19, 21]]); // both Moore-adjacent to (20,20); neighbourCount = 2
+    const outcome = stepGeneration(world, live);
+    expect(outcome.nextLive.has(structureKey(20, 20))).toBe(true);
+    expect(outcome.born).toContainEqual({ x: 20, y: 20, tier: 0 });
+  });
+
+  it('the identical board with exactly 2 live neighbours does NOT birth without farmland nearby — the boost, isolated', () => {
+    const world = boostWorld(false);
+    const live = boardOf([[19, 19], [19, 21]]);
+    const outcome = stepGeneration(world, live);
+    expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
+  });
+
+  it('CEILING: farmland never admits a birth at 1 live neighbour', () => {
+    const world = boostWorld(true);
+    const live = boardOf([[19, 19]]); // neighbourCount = 1
+    const outcome = stepGeneration(world, live);
+    expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
+  });
+
+  it('CEILING: farmland never admits a birth at 4 live neighbours (nor does ordinary B3/S23)', () => {
+    const world = boostWorld(true);
+    const live = boardOf([[19, 19], [19, 20], [19, 21], [20, 19]]); // neighbourCount = 4
+    const outcome = stepGeneration(world, live);
+    expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
+  });
+
+  it('ordinary B3 birth (3 neighbours) is unaffected by farmland — same outcome with or without it', () => {
+    const live = boardOf([[19, 19], [19, 21], [21, 19]]); // neighbourCount = 3, none of which is (21,21)
+    const withFarmland = stepGeneration(boostWorld(true), live);
+    const without = stepGeneration(boostWorld(false), live);
+    expect(withFarmland.nextLive.has(structureKey(20, 20))).toBe(true);
+    expect(without.nextLive.has(structureKey(20, 20))).toBe(true);
+  });
+
+  it('REGRESSION: an entirely unfarmed world (openWorld — no water anywhere) grows exactly as it always did', () => {
+    // openWorld() is used, unmodified, by every pre-existing B3/S23 test in
+    // this file (the "B3/S23 correctness on open ground" describe block
+    // above) — those 5 tests already re-ran unchanged against this same
+    // code path and passed, which is the regression proof in the large.
+    // This test adds the direct, targeted claim: farmland can never be
+    // found on that world, so the boost provably never fires there.
+    const world = openWorld();
+    for (let y = 5; y < 15; y++) {
+      for (let x = 5; x < 15; x++) {
+        expect(hasNearbyFarmland(world, x, y)).toBe(false);
+      }
+    }
+    // And the concrete case the boost exists for: a dead cell with exactly
+    // 2 live neighbours, which the boost WOULD birth if any farmland were
+    // reachable, stays dead — identical to pre-card-28 behaviour.
+    const live = boardOf([[9, 9], [9, 11]]);
+    const outcome = stepGeneration(world, live);
+    expect(outcome.nextLive.has(structureKey(10, 10))).toBe(false);
   });
 });

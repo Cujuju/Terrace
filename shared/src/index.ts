@@ -7,4 +7,5 @@ export * from './chunks.ts';
 export * from './protocol.ts';
 export * from './rivers.ts';
 export * from './traversal.ts';
+export * from './farmland.ts';
 export * from './pathing.ts';

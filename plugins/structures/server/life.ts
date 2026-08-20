@@ -17,7 +17,13 @@
 //     can itself be alive.
 //   * Otherwise, standard B3/S23: a dead buildable cell with exactly 3 live
 //     neighbours is born; a live cell with 2 or 3 live neighbours survives;
-//     anything else dies (under- or over-population).
+//     anything else dies (under- or over-population). ONE EXCEPTION — card
+//     28, "Terrace Farming" (farmland.ts): a dead buildable cell NEAR
+//     FARMLAND (itself or a Moore neighbour flat and adjacent to water) is
+//     also born with exactly 2 live neighbours. This is the whole "birth
+//     rate rises near fed towns" mechanic; see farmland.ts's own header for
+//     why it is scoped to birth only, why 2 (not some new, unbounded
+//     threshold), and the measured cost of checking it.
 //   * All eight Moore neighbours, all updates SIMULTANEOUS — every cell's
 //     next state is a function of the CURRENT generation only, never of
 //     another cell's next state. This module never mutates the board it is
@@ -46,6 +52,7 @@ import { STRUCTURES_CAP, cellOfKey, structureKey, type StructureCell } from '../
 import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
+import { hasNearbyFarmland } from './farmland.ts';
 import type { StructuresRng } from './rng.ts';
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
@@ -231,7 +238,19 @@ export class GenerationSurvey {
         const current = live.get(key);
         const neighborCount = countLiveNeighbors(live, world, x, y);
         const survives = current !== undefined && (neighborCount === 2 || neighborCount === 3);
-        const birthed = current === undefined && neighborCount === 3;
+        // Card 28 ("Terrace Farming"): a dead cell with exactly 2 live
+        // neighbours — one short of ordinary B3 — is ALSO born if it is near
+        // farmland. Checked only for this one neighbour count: 3 already
+        // births unconditionally (fedBirth would be redundant), and no other
+        // count ever births regardless of farmland — see farmland.ts's
+        // header for why this is the ceiling ("births on farmland need
+        // exactly what survival already needs, never less, never a new
+        // threshold beyond that"). hasNearbyFarmland is therefore evaluated
+        // AT MOST once per dead cell, and only for the subset that already
+        // has 2 live neighbours — see farmland.ts's own cost note.
+        const fedBirth =
+          current === undefined && neighborCount === 2 && hasNearbyFarmland(world, x, y);
+        const birthed = current === undefined && (neighborCount === 3 || fedBirth);
         if (!survives && !birthed) continue;
 
         if (current !== undefined) {

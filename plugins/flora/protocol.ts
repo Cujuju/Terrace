@@ -201,6 +201,149 @@ export function parseChangesPayload(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CROPS (card 28, "Terrace Farming") — a second, independent static-object
+// list on the SAME wire shape trees already use: deltas plus a snapshot on
+// join, for the identical reason (a crop does not move; its life is one
+// event — it sprouts or withers — separated from the next by a whole survey
+// interval at least, so a full-state push at any cadence would spend its
+// budget re-announcing a fact that has not changed). Deliberately its own
+// message pair rather than folded into `flora:forest`/`flora:changes`: a
+// tree and a crop are different populations with different caps and
+// different growth mechanisms (crops.ts has no RNG, no stochastic sprouting
+// and nothing persisted, unlike Forest — see that module's header), and
+// merging their wire shapes would force one cap and one message cadence on
+// two mechanisms that do not share either.
+//
+// THE ARITHMETIC, at FLORA_CROP_CAP on a 512² world, following protocol.ts's
+// own tree arithmetic above exactly (6 B per cell in msgpack, coordinates up
+// to 511):
+//
+//   full snapshot   2048 × 6 B                     = 12 KB, ONCE, at join
+//   keepalive       12 KB / 60 s                    = 200 B/s ≈ 1.6 kbit/s
+//
+// Delta cost is not separately budgeted: crops.ts's survey interval (5s) and
+// the terrain-edit reactive path both emit deltas only on an actual
+// sprout/wither, which — like Forest's own growth deltas — is rare against
+// the keepalive's steady cost. A crop survey CAN in principle report up to
+// FLORA_CROP_CAP sprouts in one delta (a huge shoreline just unlocked at
+// once); that is bounded by the same cap the snapshot is, so the worst-case
+// single delta costs no more than one keepalive already does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Server → client, the WHOLE crop list (`flora:crops`). Sent to a joining
+ * player, at world create, and on the keepalive cadence. Replaces the
+ * receiver's entire crop list.
+ */
+export const FLORA_CROPS_MESSAGE = 'crops';
+
+/**
+ * Server → client, what changed since the last message (`flora:cropChanges`).
+ * Applied on top of whatever the receiver already has.
+ */
+export const FLORA_CROP_CHANGES_MESSAGE = 'cropChanges';
+
+/**
+ * Hard ceiling on visible crop cells, whatever the terrain asks for.
+ *
+ * 2048 — half FLORA_TREE_CAP, deliberately: farmland (@terrace/shared's
+ * farmland.ts) is the INTERSECTION of two conditions (flat AND touching
+ * water) where a tree only needs one (a green band), so a materially
+ * smaller population is the expected shape, not an arbitrary cut. At
+ * 2048 × 6 B a full snapshot is 12 KB — under trees' own 18 KB ceiling —
+ * and the client sizes one InstancedMesh's instance buffer from this
+ * number (client/cropModels.ts), 2048 × 16 floats × 4 B ≈ 128 KB, a small
+ * fraction of the 576 KB trees already spend across three meshes.
+ *
+ * It BINDS only on a world whose revealed coastline/riverbank is unusually
+ * long relative to its area (a maze of inlets, not a simple shore) — past
+ * that, crops simply stop appearing on the newest farmland found, which
+ * reads as a field that has already reached the edge of what one farmstead
+ * tends rather than as a bug.
+ */
+export const FLORA_CROP_CAP = 2048;
+
+/**
+ * A cell showing one crop. There is at most one crop per cell by
+ * construction — the cell IS the crop's identity, exactly TreeCell's own
+ * reasoning restated for a different population.
+ */
+export interface CropCell {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Cell → integer key, and its inverse. Reuses FLORA_CELL_KEY_STRIDE — trees
+ * and crops are keyed into SEPARATE Sets (Forest.standing vs
+ * CropField.standing), so sharing the stride costs nothing and keeps every
+ * packed-key convention in this plugin identical.
+ */
+export function cropKey(x: number, y: number): number {
+  return y * FLORA_CELL_KEY_STRIDE + x;
+}
+
+export function cropCellOf(key: number): CropCell {
+  return { x: key % FLORA_CELL_KEY_STRIDE, y: Math.floor(key / FLORA_CELL_KEY_STRIDE) };
+}
+
+/** Cells → the flat `[x0, y0, x1, y1, …]` wire form — packTreeCells' shape, restated for crops. */
+export function packCropCells(cells: Iterable<CropCell>): number[] {
+  const packed: number[] = [];
+  for (const cell of cells) packed.push(cell.x, cell.y);
+  return packed;
+}
+
+/**
+ * Defensive parse of a flat coordinate list, capped at FLORA_CROP_CAP rather
+ * than FLORA_TREE_CAP — the one reason this is not a call to
+ * parseTreeCells: reusing that function would cap crops at the WRONG
+ * ceiling and let a hostile or broken payload allocate past this plugin's
+ * own crop instance buffer. Otherwise identical to parseTreeCells,
+ * including its malformed-pair and whole-payload failure handling.
+ */
+export function parseCropCells(value: unknown): CropCell[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const cells: CropCell[] = [];
+  for (let i = 0; i + 1 < value.length; i += 2) {
+    if (cells.length >= FLORA_CROP_CAP) break;
+    const x = value[i];
+    const y = value[i + 1];
+    if (!isCellCoordinate(x) || !isCellCoordinate(y)) continue;
+    cells.push({ x, y });
+  }
+  return cells;
+}
+
+/** `flora:crops` — the receiver's whole crop list. */
+export interface FloraCropsPayload {
+  readonly crops: readonly number[];
+}
+
+/** `flora:cropChanges` — what to add and what to remove. */
+export interface FloraCropChangesPayload {
+  readonly sprouted: readonly number[];
+  readonly withered: readonly number[];
+}
+
+export function parseCropsPayload(payload: unknown): CropCell[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  return parseCropCells((payload as { crops?: unknown }).crops);
+}
+
+export function parseCropChangesPayload(
+  payload: unknown,
+): { sprouted: CropCell[]; withered: CropCell[] } | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const message = payload as { sprouted?: unknown; withered?: unknown };
+  const sprouted = parseCropCells(message.sprouted ?? []);
+  const withered = parseCropCells(message.withered ?? []);
+  if (sprouted === null || withered === null) return null;
+  return { sprouted, withered };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Per-tree variation
 //
 // A forest of three thousand identical cones is a texture, not a forest. The
@@ -286,6 +429,33 @@ export function treeVariation(x: number, y: number): FloraTreeVariation {
     kind: kindRoll < FLORA_CONIFER_SHARE_OF_256 ? 'conifer' : 'broadleaf',
     scale:
       FLORA_TREE_SCALE_MIN + (scaleRoll / 0xff) * (FLORA_TREE_SCALE_MAX - FLORA_TREE_SCALE_MIN),
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-crop variation (card 28, "Terrace Farming") — yaw and scale only, no
+// "kind" (unlike trees' conifer/broadleaf split): the card asks for visible
+// crops, not a second silhouette taxonomy, and one style of patch keeps a
+// field reading as one field rather than a mixed planting. Reuses hashCell
+// rather than a second hash function, and the same bit-slicing discipline
+// treeVariation uses, restated for a smaller set of properties.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CROP_SCALE_MIN = 0.85;
+export const CROP_SCALE_MAX = 1.15;
+
+export interface CropVariation {
+  readonly scale: number;
+  readonly yaw: number;
+}
+
+export function cropVariation(x: number, y: number): CropVariation {
+  const hash = hashCell(x, y);
+  const scaleRoll = hash & 0xff;
+  const yawRoll = (hash >>> 8) & (YAW_DIVISOR - 1);
+  return {
+    scale: CROP_SCALE_MIN + (scaleRoll / 0xff) * (CROP_SCALE_MAX - CROP_SCALE_MIN),
     yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
   };
 }
