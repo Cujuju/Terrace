@@ -10,6 +10,7 @@ import {
   MIN_HEIGHT,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  type SculptOptions,
   type SculptProfile,
   sculptDisplacementUnits,
   sculptOptionsOf,
@@ -23,8 +24,10 @@ import {
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import { ALLOW, type IntentVerdict, type TerracePlugin } from '../../../server/src/plugins/types.ts';
+import { createWorldApi } from '../../../server/src/plugins/world-api.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
+import { RIVER_RECOMPUTE_INTERVAL_MS } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
   asLoadedPlugin,
@@ -50,6 +53,8 @@ import {
   MAX_MANA_REGEN_PER_SECOND,
   MIN_MANA_REGEN_PER_SECOND,
   NEUTRAL_MANA_MULTIPLIER,
+  WATERFALL_AURA_MAX_COUNTED,
+  WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL,
   clearManaPerk,
   manaBalanceOf,
   manaCostFor,
@@ -550,6 +555,7 @@ describe('mana regen configuration', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     if (originalEnv === undefined) delete process.env[MANA_REGEN_ENV];
     else process.env[MANA_REGEN_ENV] = originalEnv;
   });
@@ -631,8 +637,12 @@ describe('mana regen configuration', () => {
 
     const harness = boot();
     setManaPerk(PLAYER.id, { regenMultiplier: 2 });
-    expect(manaRegenFor(PLAYER.id)).toBe(configured * 2);
-    expect(manaRegenFor('never-seen')).toBe(configured); // no perk: world rate
+    // A fresh unlocked chunk here is flat (no relief at all), so it seeds no
+    // spring and the waterfall aura's multiplier is neutral — see
+    // waterfallAuraMultiplierFor's own test coverage for the non-neutral case.
+    const api = createWorldApi(harness.world, harness.host, 'mana');
+    expect(manaRegenFor(api, PLAYER.id)).toBe(configured * 2);
+    expect(manaRegenFor(api, 'never-seen')).toBe(configured); // no perk: world rate
 
     // The push a spend triggers carries this player's own rate, not the world's.
     harness.sink.clear();
@@ -640,6 +650,54 @@ describe('mana regen configuration', () => {
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
       regenPerSecond: configured * 2,
     });
+  });
+
+  it('grants the waterfall aura only once the player can see the waterfall', () => {
+    const configured = 8;
+    process.env[MANA_REGEN_ENV] = String(configured);
+    const harness = boot();
+    const api = createWorldApi(harness.world, harness.host, 'mana');
+
+    // World.riverNetwork() throttles its own recompute to at most once per
+    // RIVER_RECOMPUTE_INTERVAL_MS of REAL time (server/src/world/world.ts —
+    // deliberately wall-clock, not tick-driven; see that constant's doc
+    // comment). boot()'s own player-join balance push already reads it once
+    // (against the still-flat world), so the cache must be allowed to age
+    // past the throttle window before the sculpts below can be reflected —
+    // fake timers make that deterministic instead of a real sleep.
+    vi.useFakeTimers();
+
+    // Carve a peak inside HOME_CHUNK (cells 16..31, default-flat everywhere
+    // else in it) through the SAME authoritative path a player's stroke would
+    // use — a radius-1 stamp touches exactly its one cell with no falloff, so
+    // each call sets that cell's absolute height (every cell starts at 0) and
+    // — unlike poking `map.cells` directly — correctly marks the river cache
+    // stale, exactly as every real sculpt does. (20,20) at band 4, its three
+    // "outward" neighbours at band 3 (high enough to keep it a strict local
+    // max, low enough that the actual descent still prefers the fourth side),
+    // and (21,20) at band 2 — a clean two-band drop, i.e. one waterfall on the
+    // very first step. The river then continues into the chunk's default-flat
+    // (sea-level) ground beyond, which may cross another band edge of its own
+    // — deliberately not hand-traced here (that exact arithmetic is
+    // rivers.test.ts's job); this test only needs AT LEAST ONE waterfall to
+    // land in the player's own territory.
+    const STAMP: SculptOptions = { tool: 'stamp' };
+    harness.world.applySculpt(20, 20, 1, 4 * BAND_HEIGHT, STAMP); // the spring
+    harness.world.applySculpt(20, 19, 1, 3 * BAND_HEIGHT, STAMP); // north
+    harness.world.applySculpt(20, 21, 1, 3 * BAND_HEIGHT, STAMP); // south
+    harness.world.applySculpt(19, 20, 1, 3 * BAND_HEIGHT, STAMP); // west
+    harness.world.applySculpt(21, 20, 1, 2 * BAND_HEIGHT, STAMP); // east — the plunge pool
+    // Union-unlocked already (HOME_CHUNK), but the aura reads PER-PLAYER
+    // visibility (issue #17) — grant it to this player's own token too, so the
+    // assertion does not depend on what reveal's onPlayerJoin happens to do.
+    harness.world.unlockChunkForToken(PLAYER.token, ...HOME_CHUNK);
+    vi.advanceTimersByTime(RIVER_RECOMPUTE_INTERVAL_MS);
+
+    const regen = manaRegenFor(api, PLAYER.id);
+    expect(regen).toBeGreaterThan(configured); // the aura fired at all
+    expect(regen).toBeLessThanOrEqual(
+      configured * (NEUTRAL_MANA_MULTIPLIER + WATERFALL_AURA_MAX_COUNTED * WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL),
+    ); // and stayed inside its cap
   });
 });
 

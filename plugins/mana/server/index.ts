@@ -381,13 +381,88 @@ export function manaRegenPerSecond(): number {
   return regenPerSecond;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// THE WATERFALL AURA (mechanics card 40: "a small mana-regen aura at the
+// plunge pool"). Waterfalls are core terrain fact, derived and cached on
+// World (see World.riverNetwork and WorldApi.riverNetwork's doc comments) —
+// nothing "gamey" lives there. This is the one place that fact becomes a
+// mechanic, in the same "core publishes a neutral read, mana decides what it
+// means" shape WorldApi.difficulty already established for regen above, and
+// it needs no new seam beyond a read mana already has access to — see the
+// PERK API section below for the seam that exists for OTHER plugins; this is
+// mana reading one more fact about its OWN world, not a second plugin.
+//
+// NO PLAYER AVATARS EXIST IN THIS GAME (design §3.1 — players are gods
+// sculpting a world, never embodied in it), so "standing at the plunge pool"
+// cannot mean spatial proximity the way it would for a walking character. The
+// aura is instead read against each player's own REVEALED TERRITORY
+// (WorldApi.isCellVisibleTo, the same per-player fog-of-war primitive issue
+// #17 built) — a waterfall a player has personally unlocked is "theirs" in
+// exactly the sense a shrine on your own land is, and a waterfall still
+// hidden behind fog grants nothing, which is what keeps this from being a
+// free, world-wide buff the instant anyone anywhere sculpts one.
+// ────────────────────────────────────────────────────────────────────────────
+
 /**
- * What THIS player's pool actually earns per second, perk included — the number
- * the balance push carries so the client gauge can animate at the true rate
- * instead of guessing at a constant it has no business knowing.
+ * Regen bonus granted per waterfall inside a player's own revealed territory,
+ * as a fraction of their base rate. "A SMALL... aura" (the card's own words)
+ * is why this is a percentage add-on rather than a new anchor on the scale
+ * WORLD_DIFFICULTY already owns (MANA_REGEN_AT_DIFFICULTY_1/100 span a 10×
+ * range; this must read as a bonus on top of that, never as a second economy).
+ * 0.15 keeps even a fully-stacked aura (see the cap below) inside a third of
+ * the base rate — noticeable to a player who went and built one, never
+ * capable of swallowing the difficulty dial's own effect.
  */
-export function manaRegenFor(playerId: string): number {
-  return regenPerSecond * manaPerkOf(playerId).regenMultiplier;
+export const WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL = 0.15;
+
+/**
+ * How many waterfalls in a player's territory count toward their aura bonus.
+ * Without a cap, a player who reveals a very jagged stretch of coastline (see
+ * rivers.ts — a single river's course can in principle cross many band edges)
+ * could stack an unbounded multiplier from terrain shape alone, which is the
+ * same "a mechanic must not depend on how the terrain happens to be carved"
+ * argument sculptDisplacementUnits makes about NOT pricing the level-fill
+ * profile's real volume (shared/src/heightmap.ts). 3 keeps the aura reading
+ * as "you built a handful of dramatic waterfalls", not as a stat to farm.
+ */
+export const WATERFALL_AURA_MAX_COUNTED = 3;
+
+/**
+ * This player's waterfall-aura multiplier: 1 (neutral) with none in view,
+ * rising by WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL per waterfall inside
+ * their own revealed territory, capped at WATERFALL_AURA_MAX_COUNTED.
+ *
+ * COST. `world.riverNetwork()` is itself cached and throttled server-side
+ * (World.riverNetwork's doc comment) — calling it here every tick, for every
+ * player, is free. Flattening its rivers' waterfall lists is bounded by the
+ * same MAX_SPRINGS_PER_NETWORK × per-river trace-budget argument
+ * shared/src/rivers.ts already makes for why a full recompute is cheap; this
+ * only re-walks that already-small list, per player, per tick — negligible
+ * next to the regen loop's own per-player work.
+ */
+function waterfallAuraMultiplierFor(world: WorldApi, playerId: string): number {
+  let counted = 0;
+  for (const river of world.riverNetwork().rivers) {
+    for (const waterfall of river.waterfalls) {
+      if (!world.isCellVisibleTo(playerId, waterfall.x, waterfall.y)) continue;
+      counted++;
+      if (counted >= WATERFALL_AURA_MAX_COUNTED) break;
+    }
+    if (counted >= WATERFALL_AURA_MAX_COUNTED) break;
+  }
+  return NEUTRAL_MANA_MULTIPLIER + counted * WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL;
+}
+
+/**
+ * What THIS player's pool actually earns per second, perk AND waterfall aura
+ * included — the number the balance push carries so the client gauge can
+ * animate at the true rate instead of guessing at a constant it has no
+ * business knowing.
+ */
+export function manaRegenFor(world: WorldApi, playerId: string): number {
+  return (
+    regenPerSecond * manaPerkOf(playerId).regenMultiplier * waterfallAuraMultiplierFor(world, playerId)
+  );
 }
 
 /**
@@ -594,7 +669,7 @@ function sendBalance(world: WorldApi, playerId: string, pool: ManaPool): void {
     // The perk-adjusted rate this pool refills at. Display-only on the client
     // (it animates the gauge between pushes); the authoritative arithmetic
     // stays here.
-    regenPerSecond: manaRegenFor(playerId),
+    regenPerSecond: manaRegenFor(world, playerId),
   });
 }
 
@@ -748,13 +823,16 @@ function regenerate(world: WorldApi, dt: number): void {
 
   for (const [playerId, pool] of poolsByPlayer) {
     if (pool.balance >= MANA_CAPACITY) continue;
-    // Per-player, because regen is perk-scaled: a Spring of Aether holder earns
-    // faster than everyone else in the same tick. Capacity is deliberately NOT
-    // scaled — a perk changes the rate you fill at, never how much you can hold,
-    // so a burst of sculpts stays worth the same to every player.
+    // Per-player, because regen is perk- AND waterfall-aura-scaled: a Spring
+    // of Aether holder, or a player standing on their own revealed waterfall,
+    // earns faster than everyone else in the same tick. Capacity is
+    // deliberately NOT scaled by either — both change the rate you fill at,
+    // never how much you can hold, so a burst of sculpts stays worth the same
+    // to every player.
     pool.balance = Math.min(
       MANA_CAPACITY,
-      pool.balance + baseGain * manaPerkOf(playerId).regenMultiplier,
+      pool.balance +
+        baseGain * manaPerkOf(playerId).regenMultiplier * waterfallAuraMultiplierFor(world, playerId),
     );
     if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(world, playerId, pool);
   }
