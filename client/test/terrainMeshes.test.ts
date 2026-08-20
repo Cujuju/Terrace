@@ -18,7 +18,10 @@ import {
   applyTerrainDiff,
   createTerrainMirror,
 } from '../src/terrain/mirror.ts';
-import { createTerrainMeshes } from '../src/render/terrainMeshes.ts';
+import {
+  CHUNK_BUILD_FRAME_BUDGET_MS,
+  createTerrainMeshes,
+} from '../src/render/terrainMeshes.ts';
 import {
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   VERTICES_PER_TRIANGLE,
@@ -385,5 +388,176 @@ describe('createTerrainMeshes', () => {
     meshes.clear();
     expect(group.children).toHaveLength(0);
     expect(meshes.pickables()).toHaveLength(0);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// MULTI-FRAME MESHING (issue #47). The tests above all run the no-scheduler
+// path, which drains inside `update` — that is the documented behaviour when
+// there is no frame loop to defer to, and it is what keeps them meaningful as
+// tests of the BUILDER. These drive the other path: a fake frame hook and a
+// fake clock, so "how much did this frame do" is asserted rather than raced.
+// -----------------------------------------------------------------------------
+
+/**
+ * A frame loop under the test's control, plus the clock the drain budget is
+ * measured against.
+ *
+ * `costPerBuildMs` is how far the clock jumps each time the builder reads it.
+ * `now` is read twice per build (once before the first, once after each), so a
+ * cost at or above the budget makes every build the frame's last — which is how
+ * a "this chunk is heavier than the whole budget" frame is simulated without
+ * needing terrain that actually takes that long.
+ */
+function fakeScheduler(costPerBuildMs: number) {
+  const handlers = new Set<(dt: number) => void>();
+  let clockMs = 0;
+  return {
+    scheduling: {
+      onFrame(handler: (dt: number) => void): () => void {
+        handlers.add(handler);
+        return () => handlers.delete(handler);
+      },
+      now: (): number => {
+        const read = clockMs;
+        clockMs += costPerBuildMs;
+        return read;
+      },
+    },
+    frame(): void {
+      for (const handler of handlers) handler(1 / 60);
+    },
+    handlerCount: (): number => handlers.size,
+  };
+}
+
+function scheduledSetup(chunks: ChunkPayload[], costPerBuildMs: number) {
+  const mirror = createTerrainMirror(WORLD);
+  const group = new Group();
+  const clock = fakeScheduler(costPerBuildMs);
+  const meshes = createTerrainMeshes(group, mirror, clock.scheduling);
+  const dirty = applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks });
+  meshes.update(dirty);
+  return { mirror, group, meshes, clock };
+}
+
+describe('multi-frame chunk meshing', () => {
+  const FOUR_CHUNKS = [
+    chunkPayload(0, 0, 100),
+    chunkPayload(1, 0, 100),
+    chunkPayload(0, 1, 100),
+    chunkPayload(1, 1, 100),
+  ];
+
+  it('builds nothing until a frame runs', () => {
+    const { group, meshes } = scheduledSetup(FOUR_CHUNKS, 0);
+    expect(meshes.pendingCount()).toBe(4);
+    expect(group.children).toHaveLength(0);
+  });
+
+  it('drains the whole queue in one frame when the work fits the budget', () => {
+    const { group, meshes, clock } = scheduledSetup(FOUR_CHUNKS, 0);
+    clock.frame();
+    expect(group.children).toHaveLength(4);
+    expect(meshes.pendingCount()).toBe(0);
+  });
+
+  it('spreads the queue across frames when it does not', () => {
+    // Every build costs the whole budget, so each frame gets exactly one.
+    const { group, meshes, clock } = scheduledSetup(
+      FOUR_CHUNKS,
+      CHUNK_BUILD_FRAME_BUDGET_MS,
+    );
+    for (let built = 1; built <= 4; built++) {
+      clock.frame();
+      expect(group.children).toHaveLength(built);
+      expect(meshes.pendingCount()).toBe(4 - built);
+    }
+    // And it stops once there is nothing left rather than spinning.
+    clock.frame();
+    expect(group.children).toHaveLength(4);
+  });
+
+  it('always builds at least one chunk per frame, however over budget it is', () => {
+    // FORWARD PROGRESS. A chunk costing many times the budget must still be
+    // built, or the queue stalls on it forever and the terrain freezes behind
+    // it. Ten times the budget per build, and a frame still makes progress.
+    const { group, clock } = scheduledSetup(FOUR_CHUNKS, CHUNK_BUILD_FRAME_BUDGET_MS * 10);
+    clock.frame();
+    expect(group.children).toHaveLength(1);
+  });
+
+  it('keeps drawing the previous mesh while a rebuild is queued', () => {
+    // The whole reason deferral is invisible: a chunk waiting its turn is
+    // STALE, never absent. If it vanished for a frame the queue would read as
+    // a flicker and the tradeoff would not be worth making.
+    const { meshes, mirror, group, clock } = scheduledSetup(
+      [chunkPayload(0, 0, 0)],
+      CHUNK_BUILD_FRAME_BUDGET_MS,
+    );
+    clock.frame();
+    const mesh = meshes.pickables()[0];
+    const rangeBefore = mesh.geometry.drawRange.count;
+
+    const cells = [];
+    for (let y = 0; y < CHUNK_SIZE; y++) {
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        cells.push({ x, y, h: Math.round(360 - 3 * ((x - 8) ** 2 + (y - 8) ** 2)) });
+      }
+    }
+    meshes.update(applyTerrainDiff(mirror, { type: 'terrainDiff', cells }));
+
+    // Queued, not built: same mesh, still in the scene, still drawing the old
+    // flat geometry.
+    expect(meshes.pendingCount()).toBe(1);
+    expect(group.children).toHaveLength(1);
+    expect(meshes.pickables()[0]).toBe(mesh);
+    expect(mesh.geometry.drawRange.count).toBe(rangeBefore);
+
+    clock.frame();
+    expect(mesh.geometry.drawRange.count).toBeGreaterThan(rangeBefore);
+  });
+
+  it('builds a chunk once however many times it was dirtied first', () => {
+    // A held stroke re-dirties the same chunk ~8 times a second; the queue must
+    // collapse that to one build against the newest heights.
+    const { meshes, mirror, clock } = scheduledSetup([chunkPayload(0, 0, 0)], 0);
+    clock.frame();
+
+    for (let repeat = 0; repeat < 8; repeat++) {
+      meshes.update(
+        applyTerrainDiff(mirror, {
+          type: 'terrainDiff',
+          cells: [{ x: 4, y: 4, h: 100 + repeat }],
+        }),
+      );
+    }
+    expect(meshes.pendingCount()).toBe(1);
+  });
+
+  it('drops the queue when the world is replaced', () => {
+    // Indices name chunks of the world being thrown away; draining them
+    // against its replacement would build geometry nobody asked for.
+    const { meshes } = scheduledSetup(FOUR_CHUNKS, 0);
+    expect(meshes.pendingCount()).toBe(4);
+    meshes.clear();
+    expect(meshes.pendingCount()).toBe(0);
+  });
+
+  it('unsubscribes its frame handler on dispose', () => {
+    // resetWorld disposes the old meshes and creates new ones on every rejoin,
+    // so a handler that outlived its owner would accumulate one dead drain per
+    // reconnect, each holding a whole world's meshes alive.
+    const { meshes, clock } = scheduledSetup(FOUR_CHUNKS, 0);
+    expect(clock.handlerCount()).toBe(1);
+    meshes.dispose();
+    expect(clock.handlerCount()).toBe(0);
+  });
+
+  it('flush builds everything regardless of budget', () => {
+    const { group, meshes } = scheduledSetup(FOUR_CHUNKS, CHUNK_BUILD_FRAME_BUDGET_MS * 10);
+    meshes.flush();
+    expect(group.children).toHaveLength(4);
+    expect(meshes.pendingCount()).toBe(0);
   });
 });

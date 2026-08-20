@@ -68,6 +68,40 @@
 // what gives flat shading a hard crease at every cap/skirt boundary, and an
 // index buffer that never shares a vertex is pure overhead.
 //
+// MULTI-FRAME MESHING (issue #47, 2026-08-20). `update` does not build
+// anything. It marks chunks dirty in a queue, and a frame hook drains that
+// queue under a wall-clock budget (CHUNK_BUILD_FRAME_BUDGET_MS), rebuilding as
+// many as fit and leaving the rest for the next frame. A chunk still waiting
+// its turn keeps DRAWING ITS PREVIOUS MESH — stale by a frame or two, never
+// absent — which is what makes deferral invisible rather than a flicker.
+//
+// WHY IT COSTS NO LATENCY. Frame callbacks run before `renderer.render`
+// (render/scene.ts's renderFrame), so a sculpt that lands between two frames is
+// queued, drained and drawn on the very next frame — exactly the frame it would
+// have appeared on when `update` built it inline. What changes is only what
+// happens when the queue holds MORE work than a frame can afford.
+//
+// WHAT IT FIXES. A radius-4 brush straddles up to four chunks and every one of
+// them was rebuilt inside a single `update` call, so their costs ADDED: four
+// floor-depth chunks at the measured worst case (~9 ms each — see
+// terrain/capEmission.ts's budget table) was a ~36 ms frame, two and a half
+// vsync intervals. Spread across frames the same work costs one chunk's worth
+// per frame and the compounding is gone.
+//
+// WHAT IT DOES NOT FIX, STATED PLAINLY: the cost of ONE chunk. The drain always
+// builds at least one chunk per frame — it must, or a chunk costing more than
+// the whole budget would sit in the queue forever — so a single 9 ms chunk is
+// still a 9 ms frame. Removing THAT requires suspending a build partway through
+// its own level walk, which is a change to the builder rather than to the
+// scheduler; capEmission.ts's two budgets are what stand in for it meanwhile.
+//
+// NO FRAME HOOK, NO DEFERRAL. `createTerrainMeshes` takes the scheduler as an
+// option and falls back to draining inside `update` when it is absent. That is
+// not a test affordance: deferring work to a later frame is meaningless without
+// a frame loop to defer to, and a caller that has none (the headless suite, and
+// anything that wants the world complete before it looks at it) should get the
+// synchronous behaviour rather than a queue nobody pumps.
+//
 // DRAW-CALL TRADEOFF, known and accepted for v1: one mesh per 16×16 chunk
 // means a fully revealed 512² world would be 1024 draw calls. That is a lot,
 // but (a) worlds start with a handful of unlocked chunks and grow slowly by
@@ -99,6 +133,29 @@ import {
   type ChunkPalettes,
 } from '../terrain/vertexGrid.ts';
 import { spliceShader } from './shaderSplice.ts';
+
+/**
+ * Wall-clock milliseconds one frame may spend rebuilding chunk geometry.
+ *
+ * FOUR, and it is a share of the frame rather than a measured cost. A 60 fps
+ * frame is 16.67 ms and meshing is not what the frame is FOR: the renderer's
+ * own draw submission, the controls' damping update and every plugin's frame
+ * hook come out of the same interval. A quarter of it is the largest slice
+ * that leaves the other three quarters recognisably intact.
+ *
+ * It is also comfortably more than the common case needs, which is the number
+ * that actually matters for feel: an ordinary chunk patch is ~1 ms (see the
+ * measured table at terrain/capEmission.ts's CHUNK_TRIANGLE_BUDGET), so all
+ * four chunks a radius-4 brush can straddle still land in the SAME frame and
+ * held sculpting is byte-for-byte as immediate as it was before the queue.
+ * Only genuinely heavy chunks — deep pits at the bottom of the world — spill
+ * into the next frame, which is exactly the population this exists for.
+ *
+ * DELIBERATELY SMALLER THAN THE WORST LEGITIMATE CHUNK (~9 ms). A budget that
+ * fitted one would have to fit four to be worth anything, and four is the
+ * 36 ms frame this change exists to break up.
+ */
+export const CHUNK_BUILD_FRAME_BUDGET_MS = 4;
 
 /** Terrain is dielectric; a little roughness variation is not worth a map. */
 const TERRAIN_ROUGHNESS = 0.95;
@@ -207,13 +264,42 @@ interface ChunkMesh {
   selfLitAttribute: BufferAttribute;
 }
 
+/**
+ * How the builder gets its frames. Absent means "there are none" — see the
+ * module header's NO FRAME HOOK note for why that is a real mode and not a
+ * test-only one.
+ */
+export interface MeshScheduling {
+  /** Registers a per-frame handler and returns its unsubscribe. */
+  onFrame: (handler: (dt: number) => void) => () => void;
+  /**
+   * Monotonic millisecond clock the drain budget is measured against.
+   * Injectable so a test can advance time by a known amount instead of racing
+   * a real one; defaults to `performance.now`.
+   */
+  now?: () => number;
+}
+
 export interface TerrainMeshes {
   /**
-   * Creates any missing meshes and re-patches the given chunks. Indices for
-   * chunks the mirror has not received are ignored — that is the mechanism by
-   * which locked terrain stays invisible.
+   * Marks the given chunks for rebuild. Indices for chunks the mirror has not
+   * received are ignored — that is the mechanism by which locked terrain stays
+   * invisible.
+   *
+   * Builds nothing itself when a frame hook was supplied; the queue is drained
+   * on frames, under a budget (see the module header). Without a frame hook
+   * this drains inline and the call is exactly what it always was.
+   *
+   * A chunk marked twice before it is built is built ONCE, from the mirror's
+   * state at drain time — so a held stroke that re-dirties the same chunk eight
+   * times a second costs one rebuild per frame, not eight, and always draws the
+   * newest heights rather than a backlog of stale ones.
    */
   update(dirty: Iterable<number>): void;
+  /** Builds every queued chunk now, whatever the budget says. */
+  flush(): void;
+  /** Chunks still waiting to be built. */
+  pendingCount(): number;
   /** Drops every mesh — used when a fresh join replaces the world. */
   clear(): void;
   /** Meshes the raycaster should test. */
@@ -224,6 +310,7 @@ export interface TerrainMeshes {
 export function createTerrainMeshes(
   group: Group,
   mirror: TerrainMirror,
+  scheduling?: MeshScheduling,
 ): TerrainMeshes {
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
@@ -349,28 +436,93 @@ export function createTerrainMeshes(
     entry.mesh.geometry.dispose();
   };
 
+  /**
+   * Chunks marked dirty and not yet rebuilt, in the order they were marked.
+   *
+   * A SET, so a chunk re-dirtied while it waits is still built once, and built
+   * from the mirror's state at drain time rather than from the state it had
+   * when it was marked. Insertion order is the drain order, which makes the
+   * queue deterministic — the same sequence of updates always builds in the
+   * same sequence, whatever the frame budget happens to allow on the day.
+   */
+  const pending = new Set<number>();
+
+  /** Builds one queued chunk, creating its mesh if this is its first build. */
+  const buildChunk = (chunkIdx: number): void => {
+    // Re-checked at DRAIN time, not at queue time: a chunk can be dropped from
+    // `received` between the two (a rejoin replaces the world), and building
+    // one the mirror no longer holds would read heights that are not there.
+    if (!mirror.received.has(chunkIdx)) return;
+    const existing = meshes.get(chunkIdx);
+    if (existing === undefined) {
+      meshes.set(chunkIdx, createChunkMesh(chunkIdx));
+    } else {
+      writeChunk(chunkIdx, existing);
+    }
+  };
+
+  const now = scheduling?.now ?? (() => performance.now());
+
+  /**
+   * Builds queued chunks until `budgetMs` of wall clock is gone, or the queue
+   * empties.
+   *
+   * ALWAYS BUILDS AT LEAST ONE, and that is not a rounding convenience: a chunk
+   * whose own build costs more than the entire budget would otherwise never be
+   * built, and the queue would stall permanently on the first heavy chunk with
+   * the terrain frozen behind it. Checking the clock AFTER a build rather than
+   * before is what expresses that — the first build of a frame is unconditional
+   * and every one after it has to fit.
+   */
+  const drain = (budgetMs: number): void => {
+    if (pending.size === 0) return;
+    const startedMs = now();
+    for (const chunkIdx of pending) {
+      pending.delete(chunkIdx);
+      buildChunk(chunkIdx);
+      if (now() - startedMs >= budgetMs) break;
+    }
+  };
+
+  const flush = (): void => {
+    for (const chunkIdx of pending) {
+      pending.delete(chunkIdx);
+      buildChunk(chunkIdx);
+    }
+  };
+
+  const stopDraining = scheduling?.onFrame(() => drain(CHUNK_BUILD_FRAME_BUDGET_MS));
+
   const clear = (): void => {
     for (const entry of meshes.values()) disposeEntry(entry);
     meshes.clear();
+    // The queue holds indices into the world being dropped. Draining them
+    // against the replacement would build chunks nobody asked for, at best;
+    // this is why clear() and not just dispose() empties it.
+    pending.clear();
   };
 
   return {
     update(dirty: Iterable<number>): void {
       for (const chunkIdx of dirty) {
         if (!mirror.received.has(chunkIdx)) continue;
-        const existing = meshes.get(chunkIdx);
-        if (existing === undefined) {
-          meshes.set(chunkIdx, createChunkMesh(chunkIdx));
-        } else {
-          writeChunk(chunkIdx, existing);
-        }
+        pending.add(chunkIdx);
       }
+      // No frames to defer to — see the module header. The queue still exists
+      // (so both paths dedupe and drop unreceived chunks identically); it is
+      // simply emptied before the call returns.
+      if (stopDraining === undefined) flush();
+    },
+    flush,
+    pendingCount(): number {
+      return pending.size;
     },
     clear,
     pickables(): Mesh[] {
       return Array.from(meshes.values(), (entry) => entry.mesh);
     },
     dispose(): void {
+      stopDraining?.();
       clear();
       material.dispose();
     },

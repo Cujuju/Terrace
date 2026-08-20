@@ -177,7 +177,14 @@ export function createWorld(viewport: Viewport): World {
   } => {
     meshes?.dispose();
     const nextMirror = createTerrainMirror(worldSize);
-    const nextMeshes = createTerrainMeshes(viewport.terrainGroup, nextMirror);
+    // The frame hook is what turns chunk meshing into a multi-frame job
+    // (render/terrainMeshes.ts, issue #47): heavy chunks queue instead of
+    // rebuilding a whole brush footprint inside one `update` call. Wrapped
+    // rather than passed by reference so the viewport keeps ownership of how
+    // its frame callbacks are registered.
+    const nextMeshes = createTerrainMeshes(viewport.terrainGroup, nextMirror, {
+      onFrame: (handler) => viewport.onFrame(handler),
+    });
     // A new session's snapshot is the authoritative starting state, so any
     // prediction still outstanding against the OLD session is meaningless: the
     // store is replaced along with the mirror it shadows, which drops them.
