@@ -64,6 +64,7 @@ import {
   habitatReachHeightUnits,
   isDeepWaterHeight,
   isLairCell,
+  isLairPose,
   isSnowHeight,
   reachesIntoHabitat,
   surveyLairs,
@@ -92,6 +93,7 @@ import {
   YETI_LAIR_COLLAPSE_SNOW_CELLS,
   YETI_MIN_LAIR_SNOW_CELLS,
   YETI_RESPAWN_COOLDOWN_SECONDS,
+  bodyRadiusCells,
   groundProtectionRadiusCells,
   kindsInHabitat,
   profileOf,
@@ -2571,5 +2573,127 @@ describe('world events (monsters:arrived / monsters:departed)', () => {
 
     expect(livingMonsterOfKind('kraken')).not.toBeNull();
     expect(events.filter((heard) => heard.event === 'monsters:arrived')).toHaveLength(0);
+  });
+});
+
+/**
+ * THE BODY IS NOT A POINT (issue #45's "arm-crowns unprobed laterally", fixed
+ * 2026-08-20).
+ *
+ * These are CONTRACT tests on `isLairPose` and on the invariant it buys, not
+ * callsite wiring tests: the bug was never that one probe forgot to check its
+ * flanks, it was that the only predicate on offer answered for a CELL while
+ * every steering caller owned a BODY several cells wide. So what is pinned
+ * here is the predicate's own behaviour and the movement invariant that falls
+ * out of it — a third caller added tomorrow gets both for free.
+ */
+describe('body-aware habitat poses', () => {
+  /**
+   * A straight east-west CHANNEL of deep water, `halfWidth` cells either side
+   * of the world's centre row, with neutral dry ground above and below it.
+   *
+   * A channel rather than the round basin the rest of this file uses because
+   * the defect is about LATERAL clearance specifically: a channel has two
+   * shores at a known, exact distance from the centre line, so "the body fits"
+   * and "the body does not" are arithmetic rather than geometry.
+   */
+  function channelWorld(halfWidth: number): LairWorld {
+    return {
+      worldSize: WORLD_SIZE,
+      heightAt: (_x, y) =>
+        Math.abs(y - WORLD_CENTER) <= halfWidth
+          ? DEEP_WATER_MAX_HEIGHT
+          : NEUTRAL_GROUND_HEIGHT,
+      isCellUnlocked: () => true,
+    };
+  }
+
+  function krakenAt(x: number, y: number, heading: number): Monster {
+    return { id: 1, kind: 'kraken', x, y, heading, idle: false };
+  }
+
+  it('degenerates to the cell test at radius zero', () => {
+    const world = channelWorld(1);
+    for (const y of [WORLD_CENTER, WORLD_CENTER + 5]) {
+      expect(isLairPose(WATER_HABITAT, world, WORLD_CENTER, y, 0)).toBe(
+        isLairCell(WATER_HABITAT, world, WORLD_CENTER, y),
+      );
+    }
+  });
+
+  it('rejects a pose whose centre is habitat but whose rim is not', () => {
+    // Half-width 2 → a 5-cell channel. A 7-cell body cannot fit in it, but its
+    // CENTRE cell is deep water, which is exactly the pose the old centre-point
+    // predicate accepted.
+    const world = channelWorld(2);
+    const radius = bodyRadiusCells(profileOf('kraken'));
+
+    expect(isLairCell(WATER_HABITAT, world, WORLD_CENTER, WORLD_CENTER)).toBe(true);
+    expect(isLairPose(WATER_HABITAT, world, WORLD_CENTER, WORLD_CENTER, radius)).toBe(false);
+  });
+
+  it('accepts the same pose once the channel is wider than the body', () => {
+    const radius = bodyRadiusCells(profileOf('kraken'));
+    const world = channelWorld(Math.ceil(radius) + 1);
+    expect(isLairPose(WATER_HABITAT, world, WORLD_CENTER, WORLD_CENTER, radius)).toBe(true);
+  });
+
+  it('is yaw-independent — the rim is a ring, not a pair of flanks', () => {
+    // The same centre, probed at every 45° of body rotation, must give the same
+    // answer: the sea kinds are radial crowns animated by yaw only, so a
+    // heading-relative clearance test would make legality flicker as they turn.
+    const world = channelWorld(2);
+    const radius = bodyRadiusCells(profileOf('kraken'));
+    const answers = new Set<boolean>();
+    for (let turn = 0; turn < 8; turn++) {
+      const heading = (turn * Math.PI) / 4;
+      answers.add(
+        isLairPose(
+          WATER_HABITAT,
+          world,
+          WORLD_CENTER + Math.cos(heading) * 1e-9,
+          WORLD_CENTER + Math.sin(heading) * 1e-9,
+          radius,
+        ),
+      );
+    }
+    expect(answers.size).toBe(1);
+  });
+
+  it('never lets a wide monster lay its body over the shore', () => {
+    // THE REGRESSION. Before the fix the kraken wandered until its CENTRE
+    // reached the channel's last deep row, putting three and a half cells of
+    // arm crown on dry land; the centre-point probe was happy throughout.
+    setMonsterRandomSource(seededRandom(20260820));
+    const radius = bodyRadiusCells(profileOf('kraken'));
+    const world = channelWorld(Math.ceil(radius) + 2);
+    const monster = krakenAt(WORLD_CENTER, WORLD_CENTER, 0);
+
+    expect(isLairPose(WATER_HABITAT, world, monster.x, monster.y, radius)).toBe(true);
+    for (let tick = 0; tick < 4000; tick++) {
+      advanceMonster(world, monster, TICK_DT);
+      expect(isLairPose(WATER_HABITAT, world, monster.x, monster.y, radius)).toBe(true);
+    }
+  });
+
+  it('lets an already-pinched body swim out instead of freezing', () => {
+    // The escape hatch. A monster can be pose-invalid without ever having moved
+    // there illegally — summoned into a crescent, or hemmed in by a sculpt just
+    // outside its protected ground. Applying the strict test unconditionally
+    // there would fail every candidate heading and spin it like a weathervane,
+    // so a pinched body falls back to the centre question for that tick.
+    setMonsterRandomSource(seededRandom(20260820));
+    const radius = bodyRadiusCells(profileOf('kraken'));
+    const world = channelWorld(2); // narrower than the body: pinched from birth
+    const monster = krakenAt(WORLD_CENTER, WORLD_CENTER, 0);
+
+    expect(isLairPose(WATER_HABITAT, world, monster.x, monster.y, radius)).toBe(false);
+
+    const startX = monster.x;
+    for (let tick = 0; tick < 200; tick++) advanceMonster(world, monster, TICK_DT);
+
+    // It moved (did not freeze) and it stayed in its habitat while doing so.
+    expect(monster.x).not.toBe(startX);
+    expect(isLairCell(WATER_HABITAT, world, monster.x, monster.y)).toBe(true);
   });
 });

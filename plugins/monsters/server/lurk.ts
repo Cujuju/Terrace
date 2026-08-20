@@ -16,8 +16,8 @@
 //
 // Everything is scaled by the host's `dt`. There is no wall clock in this file.
 
-import { type LairWorld, isLairCell } from './habitat.ts';
-import { profileOf, type MonsterProfile } from './kinds.ts';
+import { type LairWorld, isLairCell, isLairPose } from './habitat.ts';
+import { bodyRadiusCells, profileOf, type MonsterProfile } from './kinds.ts';
 import { monsterRandom, rollEvent } from './rng.ts';
 import { type Monster, livingMonsters } from './summoning.ts';
 
@@ -55,27 +55,42 @@ export function normalizeAngle(radians: number): number {
 }
 
 /**
- * How far ahead this monster probes, in cells. Never less than HALF ITS OWN
- * FOOTPRINT: the probe has to clear the widest part of the body, or the model's
- * wing tips intersect a cliff the centre point cleared happily.
+ * How far ahead this monster probes, in cells. Never less than its own body
+ * radius, so the probe point is always outside the body rather than inside it.
+ *
+ * THIS IS A DISTANCE, NOT A CLEARANCE, and that distinction is the 2026-08-20
+ * correction. This comment used to claim the floor was what stopped "the
+ * model's wing tips intersecting a cliff the centre point cleared happily" — it
+ * never did, and could not: pushing a single probe POINT further along the
+ * heading says nothing about what is beside the animal. Forward reach and
+ * lateral clearance are different questions, and a monster can be perfectly
+ * clear ahead while three cells of its flank are buried in a headland. The
+ * lateral half is now `isLairPose`'s job (habitat.ts); this floor keeps its
+ * original, narrower value — do not probe a point inside your own body.
  */
 export function lookaheadCellsFor(profile: MonsterProfile): number {
   return Math.max(
-    profile.footprintCells / 2,
+    bodyRadiusCells(profile),
     profile.lurkSpeedCellsPerSecond * LOOKAHEAD_SECONDS,
   );
 }
 
 /**
- * Picks a heading whose look-ahead cell is unlocked ground of this monster's own
- * habitat, preferring `desired` and then the smallest deviation from it. Null
- * when it is boxed in on all eight candidates — the caller then holds position.
+ * Picks a heading whose look-ahead POSE — the whole body, not the centre point —
+ * is unlocked ground of this monster's own habitat, preferring `desired` and
+ * then the smallest deviation from it. Null when it is boxed in on all eight
+ * candidates — the caller then holds position.
+ *
+ * `clearanceCells` is the body radius the pose must keep clear, and passing 0
+ * asks the old centre-point question (see `advanceMonster` for when, and why,
+ * it does exactly that).
  */
 export function steerToValidHeading(
   world: LairWorld,
   monster: Monster,
   desired: number,
   lookahead: number,
+  clearanceCells: number,
 ): number | null {
   const regime = profileOf(monster.kind).habitat;
   for (let attempt = 0; attempt < AVOID_TURN_ATTEMPTS; attempt++) {
@@ -84,7 +99,7 @@ export function steerToValidHeading(
     const heading = desired + (attempt % 2 === 1 ? step : -step);
     const probeX = monster.x + Math.cos(heading) * lookahead;
     const probeY = monster.y + Math.sin(heading) * lookahead;
-    if (isLairCell(regime, world, probeX, probeY)) return normalizeAngle(heading);
+    if (isLairPose(regime, world, probeX, probeY, clearanceCells)) return normalizeAngle(heading);
   }
   return null;
 }
@@ -109,6 +124,14 @@ export function advanceIdleState(monster: Monster, profile: MonsterProfile, dt: 
  * one is removed by enforceHabitat in the same tick this becomes true, so it
  * never gets a second step. For Cthulhu, whose sea a player has just drained,
  * this is the normal state of the rest of his life.
+ *
+ * DELIBERATELY THE CENTRE TEST, not `isLairPose`, even though steering became
+ * body-aware in 2026-08-20. "Stranded" means the ANIMAL is out of its element
+ * and its answer is to stop moving entirely; an arm tip lapping a shoal is not
+ * that, and promoting it to strandedness would freeze a kraken solid every time
+ * a player raised a sandbar within 3.5 cells of it. A pinched body is a thing
+ * to swim OUT of, which is `advanceMonster`'s escape below — a beached body is
+ * a thing to hold still in, which is this.
  */
 export function isStranded(world: LairWorld, monster: Monster): boolean {
   return !isLairCell(profileOf(monster.kind).habitat, world, monster.x, monster.y);
@@ -147,8 +170,29 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
     return;
   }
 
+  // ONE CLEARANCE DECISION PER TICK, and both probes below use it.
+  //
+  // Normally the body radius: the monster may only commit to a pose that keeps
+  // its whole footprint in its habitat, which is what stops a 7-cell kraken
+  // laying its arm crown across a headland its centre point cleared.
+  //
+  // ZERO WHEN THE BODY IS ALREADY PINCHED, which is the escape hatch and is not
+  // optional. A monster can find itself pose-invalid without ever having moved
+  // there illegally — summoned onto a region's deepest cell that happens to sit
+  // in a crescent, or left there by a player raising ground just outside
+  // `groundProtectionRadiusCells`. If the strict test were applied
+  // unconditionally in that state, EVERY candidate heading would fail and the
+  // blocked-path answer would reverse the heading ten times a second: the
+  // weathervane the stranded case above exists to prevent, re-introduced by the
+  // fix. So a pinched body falls back to the centre question for this tick and
+  // simply swims out; the strict test resumes the moment its rim is clear.
+  const bodyRadius = bodyRadiusCells(profile);
+  const clearance = isLairPose(profile.habitat, world, monster.x, monster.y, bodyRadius)
+    ? bodyRadius
+    : 0;
+
   const lookahead = lookaheadCellsFor(profile);
-  const steered = steerToValidHeading(world, monster, desired, lookahead);
+  const steered = steerToValidHeading(world, monster, desired, lookahead, clearance);
 
   if (steered === null) {
     // Boxed in on every candidate. Reverse: it is un-wedged next tick without
@@ -164,13 +208,18 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
   const nextX = monster.x + Math.cos(steered) * distance;
   const nextY = monster.y + Math.sin(steered) * distance;
 
-  // BELT AND SUSPENDERS. The look-ahead validated a cell several cells away,
+  // BELT AND SUSPENDERS. The look-ahead validated a pose several cells away,
   // which is much further than one tick's travel; that covers the ordinary case
   // but says nothing about the cells in between, so a narrow tongue of shallows
   // (or of bare rock) crossing the path could still be stepped into. Re-checking
   // the actual destination makes the invariant "the monster is always inside its
   // habitat" true by construction rather than by trusting the probe distance.
-  if (!isLairCell(profile.habitat, world, nextX, nextY)) {
+  //
+  // The SAME `clearance` the steering used, deliberately: a heading chosen by
+  // the pinched-body fallback must not then be vetoed here by the strict test,
+  // or the escape would be granted and immediately revoked — which is the
+  // weathervane again, one line further down.
+  if (!isLairPose(profile.habitat, world, nextX, nextY, clearance)) {
     monster.heading = normalizeAngle(monster.heading + Math.PI);
     return;
   }

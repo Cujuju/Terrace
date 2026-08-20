@@ -818,6 +818,22 @@ export const MONSTER_GROUND_STANDOFF_CELLS = DEFAULT_SCULPT_AMOUNT / MAX_STEP - 
  * live (fractional) position. Half the body plus the standoff above — 4.5 cells
  * for both of today's 7-cell kinds.
  */
+/**
+ * Radius, in cells, of the monster's own BODY — half its footprint, and nothing
+ * else. 3.5 cells for both of today's 7-cell sea kinds.
+ *
+ * DISTINCT FROM `groundProtectionRadiusCells`, which is this plus the sculpt
+ * standoff, and the two must not be confused: the standoff answers "what may a
+ * player AIM at", which has to allow for gradient relaxation reaching a cell
+ * past the brush, whereas this answers "where IS the animal", which is a fact
+ * about the model and owes nothing to how sculpting spreads. Steering (lurk.ts)
+ * wants this one — holding a monster a standoff away from its own shoreline
+ * would keep it a cell offshore of water it can legitimately occupy.
+ */
+export function bodyRadiusCells(profile: MonsterProfile): number {
+  return profile.footprintCells / 2;
+}
+
 export function groundProtectionRadiusCells(profile: MonsterProfile): number {
   return profile.footprintCells / 2 + MONSTER_GROUND_STANDOFF_CELLS;
 }

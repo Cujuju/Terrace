@@ -246,6 +246,81 @@ export function isLairCell(
 }
 
 /**
+ * How many points of a BODY'S RIM `isLairPose` samples, and the fixed unit-circle
+ * offsets it samples them at.
+ *
+ * EIGHT, and it is a resolution choice with a stated cost. The widest gap
+ * between two adjacent probes is the chord `2·r·sin(π/8)` ≈ `0.765·r`, which at
+ * today's widest body (7 cells across, so r = 3.5) is about 2.7 cells. So this
+ * ring detects any shore, wall or shoal thicker than that, and a narrower
+ * tongue of it can still pass between two probes unseen. Eight is chosen to
+ * match the 45° granularity `AVOID_TURN_ATTEMPTS` already steers at (lurk.ts) —
+ * a finer probe ring than the steering can act on buys nothing.
+ *
+ * RADIAL, NOT PERPENDICULAR TO THE HEADING. The sea kinds' bodies are a radial
+ * crown of arms (plugins/monsters/client/kraken-anatomy.ts) and the server
+ * animates them by YAW only, so the swept footprint is a disc and the predicate
+ * must be yaw-independent — a heading-relative probe would let the same pose be
+ * legal or illegal depending on which way the animal happened to be looking,
+ * which is a rule that disagrees with itself as the model turns.
+ *
+ * RESIDUAL, STATED RATHER THAN PAPERED OVER: the rim and the centre are
+ * sampled, the INTERIOR between them is not. An isolated pillar of rock that
+ * rises inside the body's disc without touching its rim or its centre passes
+ * this test. Filling the disc is O(r²) samples per candidate heading per tick
+ * for a case the terrain generator does not produce (the flood fill that
+ * defines a lair already excludes non-habitat cells, so an interior pillar can
+ * only arrive by a player sculpting one — and `protection.ts` refuses exactly
+ * that raise inside `groundProtectionRadiusCells`).
+ */
+export const BODY_RIM_PROBE_COUNT = 8;
+
+const BODY_RIM_PROBE_OFFSETS: readonly (readonly [number, number])[] = Array.from(
+  { length: BODY_RIM_PROBE_COUNT },
+  (_unused, index) => {
+    const angle = (index * 2 * Math.PI) / BODY_RIM_PROBE_COUNT;
+    return [Math.cos(angle), Math.sin(angle)] as const;
+  },
+);
+
+/**
+ * Is a BODY of this radius, centred here, entirely inside this habitat?
+ *
+ * THE POINT OF THIS FUNCTION, in one sentence: `isLairCell` answers for a CELL,
+ * every caller that steers a monster owns a body several cells wide, and until
+ * 2026-08-20 those callers all asked the cell question and got the wrong answer
+ * at every shoreline.
+ *
+ * The asymmetry it removes was visible in one diff: `protection.ts` has always
+ * treated a monster as a DISC of `groundProtectionRadiusCells` — a player may
+ * not raise ground within 4.5 cells of the kraken — while `lurk.ts` treated the
+ * same animal as a POINT, so the kraken was free to swim its own 3.5-cell arm
+ * crown into ground that already existed. The server forbade the world from
+ * moving into the monster's body and permitted the monster to move its body
+ * into the world.
+ *
+ * `radiusCells` of 0 degenerates to exactly `isLairCell`, which is what makes
+ * this a safe single predicate for callers that sometimes want the point test
+ * (see lurk.ts's pinched-body escape).
+ */
+export function isLairPose(
+  regime: HabitatRegime,
+  world: LairWorld,
+  centreX: number,
+  centreY: number,
+  radiusCells: number,
+): boolean {
+  if (!isLairCell(regime, world, centreX, centreY)) return false;
+  if (radiusCells <= 0) return true;
+  for (const [ux, uy] of BODY_RIM_PROBE_OFFSETS) {
+    if (!isLairCell(regime, world, centreX + ux * radiusCells, centreY + uy * radiusCells)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * One connected region of habitat, as the survey measured it.
  *
  * The EXTREME cell — the deepest cell of a basin, the highest cell of a massif —
