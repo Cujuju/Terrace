@@ -98,6 +98,7 @@ import {
   type ChunkGeometryBuffers,
   type ChunkPalettes,
 } from '../terrain/vertexGrid.ts';
+import { spliceShader } from './shaderSplice.ts';
 
 /** Terrain is dielectric; a little roughness variation is not worth a map. */
 const TERRAIN_ROUGHNESS = 0.95;
@@ -161,41 +162,24 @@ function makeSelfLitAware(material: MeshStandardMaterial): void {
         shader.vertexShader,
         '#include <common>',
         `#include <common>\nattribute float ${SELF_LIT_ATTRIBUTE};\nvarying float vSelfLit;`,
+        'terrain',
       ),
       '#include <begin_vertex>',
       `vSelfLit = ${SELF_LIT_ATTRIBUTE};\n#include <begin_vertex>`,
+      'terrain',
     );
     shader.fragmentShader = spliceShader(
       spliceShader(
         shader.fragmentShader,
         '#include <common>',
         '#include <common>\nvarying float vSelfLit;',
+        'terrain',
       ),
       '#include <opaque_fragment>',
       'outgoingLight = mix( outgoingLight, diffuseColor.rgb, vSelfLit );\n#include <opaque_fragment>',
+      'terrain',
     );
   };
-}
-
-/**
- * String substitution into a stock three shader that REFUSES to no-op.
- *
- * A plain `.replace` on a missing needle returns the source untouched, and the
- * only symptom would be underwater outlines quietly going dark again on some
- * future three upgrade — the exact bug this whole path exists to close, back
- * in a form no test would notice. Every anchor used here is a shader include
- * that three has carried for many major versions, so this can only fire when
- * an upgrade genuinely moves the ground under the patch: it throws on the
- * first frame, on the developer's machine, naming the anchor that moved.
- */
-function spliceShader(source: string, anchor: string, replacement: string): string {
-  if (!source.includes(anchor)) {
-    throw new Error(
-      `terrain shader patch failed: three no longer emits "${anchor}". ` +
-        'Re-anchor the self-lit injection in render/terrainMeshes.ts.',
-    );
-  }
-  return source.replace(anchor, replacement);
 }
 
 /**

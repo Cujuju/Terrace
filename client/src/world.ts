@@ -42,6 +42,7 @@ import {
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
+import { createRiverRig, type RiverRig } from './render/riverRig.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, type Water } from './render/water.ts';
@@ -92,6 +93,12 @@ export function createWorld(viewport: Viewport): World {
   // synced (added/disposed) against whatever mirror currently exists rather
   // than being torn down and recreated on every rejoin.
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
+  // Rivers, pools and waterfalls (mechanics cards 27 & 40) — a third derived
+  // layer alongside water and fog, same lifetime, same "one instance for the
+  // whole session" shape. Its own refresh() is throttled internally, so
+  // calling it from applyDirty below (the one place terrain changes) is free
+  // on every call that lands inside the throttle window.
+  const rivers: RiverRig = createRiverRig(viewport.scene, viewport.onFrame);
 
   let mirror: TerrainMirror | null = null;
   let meshes: TerrainMeshes | null = null;
@@ -123,16 +130,21 @@ export function createWorld(viewport: Viewport): World {
    */
   /**
    * The one door every HEIGHT change goes through on its way to the screen:
-   * patches the dirty chunks' terrain meshes AND rewrites the frontier-fog
-   * segments standing on them, so the mist bank (which hugs the ground —
-   * render/frontierFog.ts) can never be left floating over a sculpt at the
-   * boundary. Events that change `received` (snapshot, chunkUnlock) call
-   * fog.sync afterwards as well; that is about WHICH segments exist, not
-   * their heights.
+   * patches the dirty chunks' terrain meshes, rewrites the frontier-fog
+   * segments standing on them, rewrites the sea's depth-alpha texels over
+   * them (render/water.ts — a sculpt that breaks the surface or digs deeper
+   * must be visible through the water the same frame it lands, not only
+   * after the next rejoin), and refreshes rivers. Events that change
+   * `received` (snapshot, chunkUnlock) call fog.sync afterwards as well;
+   * that is about WHICH segments exist, not their heights.
    */
   const applyDirty = (dirty: Set<number>): void => {
     meshes?.update(dirty);
-    if (mirror !== null) fog.refresh(mirror, dirty);
+    if (mirror !== null) {
+      fog.refresh(mirror, dirty);
+      water.refresh(mirror, dirty);
+      rivers.refresh(mirror);
+    }
   };
 
   const armExpiryTimer = (): void => {
@@ -220,17 +232,30 @@ export function createWorld(viewport: Viewport): World {
       // Through the prediction store like every authoritative message, so the
       // store's authoritative copy is seeded from the snapshot rather than from
       // the empty map the mirror was allocated with.
-      fresh.meshes.update(
-        fresh.predictions.applyAuthoritative(
-          (m) => applySnapshot(m, msg),
-          nowMs(),
-        ),
+      const snapshotDirty = fresh.predictions.applyAuthoritative(
+        (m) => applySnapshot(m, msg),
+        nowMs(),
       );
+      fresh.meshes.update(snapshotDirty);
       // The frontier is a fact about `received`, which the snapshot just
       // changed — sync unconditionally, whether this is a first join (empty
       // -> starter footprint) or a rejoin (old world's segments dropped, this
       // session's rebuilt).
       fog.sync(fresh.mirror);
+      // The depth-alpha texture water.setWorldSize just reallocated (inside
+      // resetWorld) is baseline-filled but otherwise empty — this is what
+      // actually paints in every texel the newly-unlocked chunks need, same
+      // dirty set the meshes above were just built from.
+      water.refresh(fresh.mirror, snapshotDirty);
+      // Same reasoning as fog.sync above, and forceRefresh rather than
+      // refresh for the same reason `meshes`/`mirror` are replaced wholesale
+      // on every snapshot rather than patched: a rejoin's mirror belongs to a
+      // possibly brand-new world, and rivers.refresh's own throttle (tuned
+      // for coalescing a HELD STROKE's terrainDiff bursts — see riverRig.ts)
+      // would otherwise leave the PREVIOUS session's tiles on screen for up
+      // to RIVER_RECOMPUTE_INTERVAL_MS after a rejoin that happens to land
+      // inside its window.
+      rivers.forceRefresh(fresh.mirror);
     },
 
     onChunkUnlock(msg: ChunkUnlockMessage): void {
@@ -253,12 +278,26 @@ export function createWorld(viewport: Viewport): World {
       // go. Dropping loses one reveal; guessing would render the world at the
       // wrong scale.
       if (meshes === null || predictions === null || mirror === null) return;
-      meshes.update(
-        predictions.applyAuthoritative((m) => applyChunkUnlock(m, msg), nowMs()),
+      const unlockDirty = predictions.applyAuthoritative(
+        (m) => applyChunkUnlock(m, msg),
+        nowMs(),
       );
+      meshes.update(unlockDirty);
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);
+      // Newly-unlocked chunks need their depth-alpha texels painted in too —
+      // the texture only holds WATER_DEPTH_ALPHA_DEFAULT_BYTE for a chunk
+      // until something writes real depths into it, same as the snapshot
+      // path above.
+      water.refresh(mirror, unlockDirty);
+      // Newly unlocked ground can carry its own springs/rivers that were
+      // never active before (rivers.ts's isActive bound follows `received`
+      // exactly like this — see riverRig.ts). The ordinary throttle is right
+      // here (unlike the snapshot path below): this is the SAME session's
+      // world growing, not a different one replacing it, so there is no
+      // stale "previous world" tile to worry about outliving.
+      rivers.refresh(mirror);
       armExpiryTimer();
     },
 
@@ -341,6 +380,7 @@ export function createWorld(viewport: Viewport): World {
       predictions = null;
       water.dispose();
       fog.dispose();
+      rivers.dispose();
     },
   };
 }

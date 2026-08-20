@@ -110,10 +110,13 @@ const FOG_BASE_DROP = BAND_HEIGHT / 2;
 
 /**
  * Peak alpha (the base and knee rows), before the breathing modulation below
- * scales it. Deliberately far below the water plane's WATER_OPACITY (0.62,
- * render/water.ts): the owner's acceptance for issue #22 is "opacity low
- * enough to read as haze" — the terrain edge should remain guessable through
- * it, softened rather than hidden behind a wall.
+ * scales it. Deliberately below the water plane's alpha CEILING
+ * (WATER_MAX_ALPHA, 0.55 — terrain/waterDepth.ts; the water plane no longer
+ * has one constant opacity, see render/water.ts's 2026-08-19 header, and
+ * 0.55 is now the most opaque ANY cell of it ever gets): the owner's
+ * acceptance for issue #22 is "opacity low enough to read as haze" — the
+ * terrain edge should remain guessable through it, softened rather than
+ * hidden behind a wall.
  */
 const FOG_PLATEAU_ALPHA = 0.3;
 
