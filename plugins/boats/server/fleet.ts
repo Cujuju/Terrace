@@ -22,6 +22,7 @@ import {
   KRAKEN_SINKS_BOAT_EVERY_SECONDS,
   KRAKEN_WOUND_HEAL_PER_SECOND,
   VILLAGE_PATROL_RANGE_CELLS,
+  roundBroadcastPosition,
   type BoatState,
 } from '../protocol.ts';
 
@@ -357,9 +358,11 @@ export function advanceFleet(
 export function boatStates(): BoatState[] {
   return boats.map((boat) => ({
     id: boat.id,
-    x: boat.x,
-    y: boat.y,
-    heading: boat.heading,
+    // Rounded on the way OUT only: the sim keeps full precision, and the wire
+    // carries the hundredth of a cell a camera can actually resolve.
+    x: roundBroadcastPosition(boat.x),
+    y: roundBroadcastPosition(boat.y),
+    heading: roundBroadcastPosition(boat.heading),
     fighting: boat.fighting,
   }));
 }

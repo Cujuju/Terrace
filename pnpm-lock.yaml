@@ -44,10 +44,16 @@ importers:
       '@terrace/shared':
         specifier: workspace:*
         version: link:../../shared
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
     devDependencies:
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
       typescript:
         specifier: 7.0.2
         version: 7.0.2

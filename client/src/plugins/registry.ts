@@ -6,6 +6,7 @@
 // server half and is imported here BY the client bundle; the plugin's name
 // must match its server half or its messages route nowhere.
 
+import { clientPlugin as boats } from '../../../plugins/boats/client/index.ts';
 import { clientPlugin as chronicle } from '../../../plugins/chronicle/client/index.ts';
 import { clientPlugin as daynight } from '../../../plugins/daynight/client/index.ts';
 import { clientPlugin as flora } from '../../../plugins/flora/client/index.ts';
@@ -27,6 +28,7 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   flora,
   structures,
   monsters,
+  boats,
   pilgrims,
   daynight,
   weather,

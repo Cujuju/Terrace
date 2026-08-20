@@ -8,11 +8,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@terrace/shared": "workspace:*"
+    "@terrace/shared": "workspace:*",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "@types/three": "^0.185.4"
   }
 }

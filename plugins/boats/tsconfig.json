@@ -5,5 +5,5 @@
     // nested workspace package's pnpm-linked node_modules/@types.
     "types": ["node"]
   },
-  "include": ["server", "test"]
+  "include": ["server", "client", "test"]
 }

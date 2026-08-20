@@ -202,3 +202,66 @@ export const KRAKEN_WOUND_HEAL_PER_SECOND = 2;
  * arrive one boat at a time.
  */
 export const VILLAGE_PATROL_RANGE_CELLS = 64;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wire encoding and validation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Decimal places kept on broadcast cell coordinates. Same value and same
+ * reasoning as monsters' and wildlife's MONSTER_POSITION_DECIMALS: 1/100 of a
+ * cell is far below what any camera distance resolves, and it makes the
+ * payload's encoded size bounded.
+ */
+export const BOAT_POSITION_DECIMALS = 2;
+
+const POSITION_QUANTUM = 10 ** BOAT_POSITION_DECIMALS;
+
+/** Rounds a cell-space coordinate to the broadcast precision. */
+export function roundBroadcastPosition(value: number): number {
+  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
+}
+
+/**
+ * Defensive bound on the broadcast list.
+ *
+ * A world's boats are bounded by its coastal villages, which the structures
+ * plugin caps at STRUCTURES_CAP (512) live cells — so 512 × BOATS_PER_VILLAGE
+ * is the true ceiling. Restated as a literal rather than imported (plugin
+ * independence, as everywhere else here) and rounded up: past this a payload
+ * is malformed, not a bigger world.
+ */
+export const BOATS_PAYLOAD_CAP = 2048;
+
+export interface BoatsStatePayload {
+  readonly boats: readonly BoatState[];
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * Validates a `boats:state` payload, returning null for anything malformed.
+ *
+ * WHOLE-PAYLOAD REJECTION, like every other plugin's: a half-read list would
+ * render a fleet that is missing boats the server believes are there. An EMPTY
+ * list is not malformed — it is how a client learns the boats it could see have
+ * left its view, or sunk.
+ */
+export function parseBoatsPayload(payload: unknown): BoatState[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const { boats } = payload as { boats?: unknown };
+  if (!Array.isArray(boats) || boats.length > BOATS_PAYLOAD_CAP) return null;
+
+  const parsed: BoatState[] = [];
+  for (const item of boats) {
+    if (typeof item !== 'object' || item === null) return null;
+    const { id, x, y, heading, fighting } = item as Record<string, unknown>;
+    if (!Number.isInteger(id) || (id as number) < 0) return null;
+    if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(heading)) return null;
+    if (typeof fighting !== 'boolean') return null;
+    parsed.push({ id: id as number, x, y, heading, fighting });
+  }
+  return parsed;
+}
