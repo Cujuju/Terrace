@@ -5,7 +5,7 @@
 // is indistinguishable from a player edit as far as sync and anti-cheat are
 // concerned — that is the point.
 
-import type { CellDiff } from '@terrace/shared';
+import type { CellDiff, RiverNetwork } from '@terrace/shared';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import { applyServerSculpt } from '../world/sculpt-service.ts';
@@ -70,6 +70,9 @@ export function createWorldApi(
     },
     isChunkUnlocked(cx: number, cy: number): boolean {
       return world.isChunkUnlocked(cx, cy);
+    },
+    riverNetwork(): RiverNetwork {
+      return world.riverNetwork();
     },
     isChunkVisibleTo(playerId: string, cx: number, cy: number): boolean {
       return world.isChunkVisibleTo(playerId, cx, cy);

@@ -14,6 +14,7 @@ import {
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
+  computeRiverNetwork,
   createChunkMask,
   createHeightmap,
   heightAt,
@@ -26,6 +27,7 @@ import {
   type CellDiff,
   type ChunkPayload,
   type Heightmap,
+  type RiverNetwork,
   type SculptOptions,
   type ServerMessage,
 } from '@terrace/shared';
@@ -219,6 +221,40 @@ function normalizeDifficulty(value: number): number {
   if (rounded > MAX_WORLD_DIFFICULTY) return MAX_WORLD_DIFFICULTY;
   return rounded;
 }
+
+/**
+ * Minimum real time between full river-network recomputes, in milliseconds
+ * (mechanics card 27 — Rivers & Springs — see docs/DESIGN.md's "Decisions
+ * made 2026-08-19" entry for the full cost argument this constant closes).
+ *
+ * `computeRiverNetwork` is a full spring scan plus a bounded retrace of every
+ * spring it finds — cheap ONCE (single-digit milliseconds even on a fully
+ * revealed 512² world, per the arithmetic in DESIGN.md) but NOT cheap enough
+ * to re-run inside every single sculpt intent's validate→apply→broadcast
+ * path: a held brush emits an intent every ~120 ms (SCULPT_REPEAT_INTERVAL_MS,
+ * client/src/config.ts) PER PLAYER, so a naive per-intent recompute would
+ * scale the server's CPU with (players × sculpt rate), not with a fixed
+ * budget — exactly the "will not fit" failure mode a full-world pass risks.
+ *
+ * Throttling to a fixed wall-clock cadence instead decouples the cost from
+ * both player count and sculpt rate: however many players are sculpting,
+ * however fast, the world pays for at most one recompute every
+ * RIVER_RECOMPUTE_INTERVAL_MS. 250 ms (4 Hz) is chosen so a held stroke still
+ * sees its river update roughly every other click — responsive enough for
+ * "sculpting a river's course" to read as immediate — while remaining a full
+ * order of magnitude cheaper than a per-intent recompute at the ~8/s a held
+ * brush can reach.
+ *
+ * WALL-CLOCK, NOT TICK-DRIVEN, AND DELIBERATELY SO: unlike terrain math
+ * itself, this is a performance cache with no gameplay or determinism stake
+ * — the authoritative heightmap is unaffected by when a consumer last asked
+ * for its derived river network, and the client recomputes independently, on
+ * its own cadence, from its own copy of the terrain (see
+ * client/src/render/riverRig.ts). `Date.now()` is therefore the right clock,
+ * not the fixed simulated tick `dt` (tick.ts) that terrain SIMULATION uses to
+ * stay reproducible.
+ */
+export const RIVER_RECOMPUTE_INTERVAL_MS = 250;
 
 /** Band depth → height. Genesis heights are exact band floors by construction. */
 function heightAtBandsBelowSea(bands: number): number {
@@ -1081,6 +1117,19 @@ export class World {
    */
   private changedSinceSnapshot = false;
 
+  /**
+   * The last computed river network, and when it was computed — the cache
+   * `riverNetwork()` serves from, refreshed at most every
+   * RIVER_RECOMPUTE_INTERVAL_MS (see that constant's doc comment for the
+   * cost argument). `null` cache with `Number.NEGATIVE_INFINITY` staleness
+   * means "never computed" — a fresh world's or a just-restored world's
+   * first read always recomputes rather than serving a stale empty network.
+   */
+  private riverNetworkCache: RiverNetwork | null = null;
+  private riverNetworkComputedAtMs = Number.NEGATIVE_INFINITY;
+  /** Set on every terrain-changing sculpt; cleared once a recompute runs. */
+  private riverNetworkStale = true;
+
   private constructor(
     map: Heightmap,
     mask: Uint8Array,
@@ -1558,8 +1607,49 @@ export class World {
     options?: SculptOptions,
   ): CellDiff[] {
     const diff = applySculpt(this.map, x, y, radius, amount, options);
-    if (diff.length > 0) this.changedSinceSnapshot = true;
+    if (diff.length > 0) {
+      this.changedSinceSnapshot = true;
+      this.riverNetworkStale = true;
+    }
     return diff;
+  }
+
+  /**
+   * This world's current river network (mechanics card 27 — springs, rivers,
+   * pooling basins — and card 40 — the waterfalls riding on top of them),
+   * derived fresh from `this.map` and cached behind RIVER_RECOMPUTE_INTERVAL_
+   * MS (see that constant's doc comment for why a throttle exists at all).
+   *
+   * SCOPED TO THE UNLOCKED (union-mask) AREA, exactly like the wildlife
+   * plugin's habitat census (plugins/wildlife/server/census.ts): nobody can
+   * see a river over land nobody has revealed, and bounding the scan to it is
+   * what keeps a fully-locked fresh world's recompute nearly free and a
+   * mostly-locked large world's recompute proportional to what is actually
+   * visible rather than to the full (possibly 512²) allocation.
+   *
+   * A CACHE, NOT AUTHORITATIVE STATE: nothing here is persisted, nothing
+   * here is on the wire (see the plugin surface in world-api.ts and
+   * docs/DESIGN.md's "what is on the wire" note) — it is a pure function of
+   * `this.map` recomputed on demand, exactly like `client/src/world.ts`
+   * recomputes its own copy from the client's mirror. Two calls with no
+   * intervening sculpt, whether or not the throttle window has passed,
+   * return the SAME object (not merely an equal one) — plugins that read it
+   * more than once per tick (mana's `regenerate`, `manaRegenFor`) never pay
+   * for a second computation or see it change mid-tick.
+   */
+  riverNetwork(): RiverNetwork {
+    const now = Date.now();
+    if (
+      this.riverNetworkCache === null ||
+      (this.riverNetworkStale && now - this.riverNetworkComputedAtMs >= RIVER_RECOMPUTE_INTERVAL_MS)
+    ) {
+      this.riverNetworkCache = computeRiverNetwork(this.map, {
+        isActive: (x, y) => this.isCellUnlocked(x, y),
+      });
+      this.riverNetworkComputedAtMs = now;
+      this.riverNetworkStale = false;
+    }
+    return this.riverNetworkCache;
   }
 
   addPlayer(player: Player): void {

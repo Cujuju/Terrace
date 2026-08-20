@@ -7,7 +7,7 @@
 // rewrites intents instead of patching the sim) and why plugins get namespaced
 // messages plus their own persistence slice.
 
-import type { CellDiff, SculptIntent } from '@terrace/shared';
+import type { CellDiff, RiverNetwork, SculptIntent } from '@terrace/shared';
 import type { Player } from '../player.ts';
 
 export type { Player };
@@ -53,6 +53,19 @@ export interface WorldApi {
   heightAt(x: number, y: number): number;
   isCellUnlocked(x: number, y: number): boolean;
   isChunkUnlocked(cx: number, cy: number): boolean;
+
+  /**
+   * This world's current rivers, springs, pools and waterfalls (mechanics
+   * cards 27 and 40) — a READ, exactly like `heightAt`: rivers are derived
+   * terrain fact, not gameplay, so exposing them here puts nothing "gamey"
+   * in core. Scoped to unlocked territory and cached behind a short throttle
+   * server-side (see World.riverNetwork's doc comment); calling this more
+   * than once in the same tick is free. The mana plugin is the first (and,
+   * as of this writing, only) reader — its waterfall regen aura — following
+   * the same "core publishes a neutral fact, a plugin decides what it means"
+   * shape WorldApi.difficulty already established.
+   */
+  riverNetwork(): RiverNetwork;
 
   /**
    * Whether the CONNECTED PLAYER `playerId` has personally unlocked the
