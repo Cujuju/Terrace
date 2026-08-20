@@ -1899,6 +1899,214 @@ anatomy (`dreadSpecOf`), with Cthulhu's spec reproducing the authored values
 exactly. On the kraken — eyes 0.30 above water — the bank is by construction
 a low film on the sea, never over the lamps.
 
+### Decisions made 2026-08-19 (Rivers & Springs — mechanics card 27; Waterfalls — card 40)
+
+**Card 27** — "Springs on high ground send water stepping down band edges to
+the sea, pooling in basins. Deterministic flow from the heightmap alone —
+sculpting a river's course becomes the game's most satisfying puzzle."
+**Card 40** — "Where a river (card 27) crosses a band edge it falls — mist,
+sound, and a small mana-regen aura at the plunge pool." Card 40 depends on
+card 27 and was built on top of it in the same pass, owner-approved.
+
+**Water is derived, never simulated — extended, not amended.** Q3 already
+settled this for the sea (`height ≤ SEA_LEVEL` is water, computed identically
+on both sides, nothing synced). A river is the same fact one level up: a
+PURE FUNCTION of the heightmap — `computeRiverNetwork(map, options)` in the
+new `shared/src/rivers.ts` — with no per-tick simulation and no river state
+anywhere, ever, including in memory: server and client each hold only a
+CACHE of the last computed answer, rebuilt from scratch whenever they choose
+to recompute, and two rebuilds against the same heightmap are byte-identical
+(pinned by `shared/test/rivers.test.ts`'s determinism test). **Nothing about
+a river or a waterfall is on the wire.** Springs, courses, pools and
+waterfalls are recomputed independently by the server (from its authoritative
+`Heightmap`) and by every client (from its own `TerrainMirror`) and agree by
+construction, the same way two clients' sea renders agree without either
+being told where the coastline is.
+
+**Where springs come from, and why it needs no seed.** A cell is a spring
+when it is a STRICT local maximum among its in-bounds, active 4-neighbours
+(no tie — a flat plateau seeds no spring) and sits at least
+`SPRING_MIN_HEIGHT_ABOVE_SEA` (one terrace band, 64) above `SEA_LEVEL`. This
+is a purely LOCAL, purely geometric test — no RNG, and deliberately no world
+seed either, unlike fresh-world genesis noise. Two reasons, not one:
+
+  1. **Stability under sculpting is the whole point of the card.** A spring
+     must appear or vanish exactly when the terrain that makes it a peak
+     appears or vanishes — that is what makes "sculpting a river's course"
+     the puzzle the card asks for. A seed-anchored placement would have
+     springs the player cannot move by sculpting, or springs that drift for
+     reasons unrelated to what they just built.
+  2. **The genesis seed is explicitly outside shared/'s determinism
+     contract** (see the fresh-world entry above: "world genesis, seed draw
+     included, is not part of it... the client never generates terrain").
+     Reading it from `shared/` would need threading a server-only value into
+     client-side prediction math for no benefit — the heightmap the player
+     can see already carries every bit this mechanic needs.
+
+**The flow algorithm: bounded steepest descent, then a bounded basin fill.**
+From each spring, `traceRiver` walks to the strictly-lowest of its four
+neighbours (fixed N, E, S, W scan order — part of the determinism contract,
+exactly like `forEachFootprintOffset`'s fixed scan order in heightmap.ts),
+recording a **waterfall** at any step whose two ends cross a `bandOf()`
+boundary (this IS the "crosses a band edge" test card 40 asks for — no
+separate detection pass). Reaching `SEA_LEVEL` ends the river. Reaching a
+cell with **no** strictly-lower active neighbour is a closed basin, handled
+by `fillBasin`: a textbook priority-flood (min-heap over the rim, `level`
+rising to the highest cell absorbed so far), restricted to ONE basin rather
+than run over the whole map, stopping the instant it finds a rim neighbour
+BELOW the current water level — that cell is the spillway, and the pool's
+surface height is `level` at that moment. **Every pooled point carries that
+one flat `poolHeight`** (not each submerged cell's own, lower, ground
+height), which is what lets a renderer draw a flat lake instead of a lumpy
+wet patch — added to `RiverPoint` specifically for that reason. This is the
+"classic answer" the pooling requirement asked for: a lake at the basin's
+true spill height, not merely "stop and don't loop" — see the punt below for
+where it is intentionally cheaper than a full watershed solve.
+
+**Recompute strategy — the cost argument, in full.** A naive full recompute
+on every terrain diff does not fit: `computeRiverNetwork` scans every active
+cell for local maxima (O(active cells)) and then traces every spring found —
+MEASURED on a 512² world with adversarially rough terrain (every cell a
+pseudo-random height, the worst realistic case for "how many local maxima
+exist"): **~15 ms**; on terrain shaped like actual sculpting (40 stamped
+peaks on an otherwise flat 512² world): **~1.9 ms** (`shared/perf_rivers.ts`,
+run ad hoc — not committed, the numbers are recorded here). A held brush
+emits an intent every `SCULPT_REPEAT_INTERVAL_MS` (120 ms, client/src/
+config.ts) ≈ 8.3/s, **per player** — recomputing inside every applied intent
+would scale server CPU with `players × 8.3/s`, not with a fixed budget, and
+at ~10 concurrent players sculpting at once that is 80+ recomputes/s ×
+15 ms worst case ≈ 1.2 s of CPU per second of wall clock. That is the "will
+not fit" failure mode named in the task brief, confirmed rather than assumed.
+
+The fix, matching `plugins/wildlife/server/census.ts`'s own
+`HABITAT_CENSUS_INTERVAL_SECONDS` precedent ("too expensive per tick, so it
+runs on an interval"), with two refinements of its own:
+
+  - **Chunk/mask-scoped, not whole-world.** Both the scan and every trace are
+    bounded by an `isActive(x, y)` predicate — the server passes
+    `isCellUnlocked` (nobody can see a river over land nobody has revealed,
+    exactly the wildlife census's own "unlocked chunks only" scoping); the
+    client's `TerrainMirror` is naturally bounded to received chunks (an
+    unreceived cell reads flat at `SEA_LEVEL`, which can never be a spring or
+    a mid-course cell above it), so it passes no predicate at all. Cost is
+    therefore proportional to the REVEALED area, not to `WORLD_SIZE²` — cheap
+    for the overwhelming majority of a game's lifetime, when most of a 512²
+    allocation is still locked.
+  - **A real-time throttle, decoupled from both player count and edit rate.**
+    `World.riverNetwork()` (server/src/world/world.ts) caches its last
+    answer and recomputes at most once every `RIVER_RECOMPUTE_INTERVAL_MS`
+    (250 ms — 4 Hz), driven by a dirty flag `World.applySculpt` sets on every
+    non-empty diff. Worst case, at the measured 15 ms adversarial figure:
+    `15 ms × 4/s = 60 ms/s` — 6% of one core, REGARDLESS of how many players
+    are sculpting or how fast, because the cost is now a function of the
+    THROTTLE, not of the edit stream. 250 ms (not "once per tick") is
+    deliberately independent of `TICK_HZ`, which an operator may configure up
+    to `MAX_TICK_HZ` (60): "once per tick" at 60 Hz would let the same
+    adversarial case cost `15 ms × 60/s = 900 ms/s`, i.e. potentially over
+    budget — a wall-clock cap avoids that regardless of tick configuration.
+    The client keeps its OWN, independent 500 ms (2 Hz) throttle in
+    `client/src/render/riverRig.ts` — half the server's rate, argued there:
+    it is one screen's redraw cost, not a shared multi-player CPU budget, so
+    it is tuned for feel (a river visibly settles a beat after the last click
+    of a held stroke) rather than for worst-case aggregate cost. Determinism
+    does not require the two throttles to agree, or to fire at the same
+    moment — only that a given heightmap always produces the same network,
+    which both sides' pure `computeRiverNetwork` guarantees regardless of
+    when either side chooses to call it.
+  - **A bounded downstream re-trace.** Within one recompute, every spring's
+    trace (flowing steps AND the cells a basin fill absorbs, SHARING one
+    budget) is capped at `RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER ×
+    worldSize` cells (2×, i.e. 1024 cells on a 512-edge world) — a river or a
+    pool larger than that stops where its budget ran out (`truncated: true`,
+    observable, tested) rather than ever running unbounded. Springs
+    themselves are capped at `MAX_SPRINGS_PER_NETWORK` (24, the highest peaks
+    kept — sorted by height descending before the cap is applied), which
+    bounds the number of traces a rough revealed area can trigger. Together
+    these turn "cost could scale with terrain roughness" into "cost is capped
+    by two named constants, independent of terrain" — the same shape
+    `SMOOTH_PASS_LIMIT` gives the relaxation pass in heightmap.ts.
+
+**What is on the wire: nothing.** No river message, no waterfall message, no
+spring list — re-stated because it is the one thing this whole design would
+be wrong to get subtly incomplete. `WorldApi.riverNetwork()` is a new READ
+primitive (server/src/plugins/types.ts), exactly the same shape as
+`WorldApi.heightAt` or `WorldApi.difficulty`: a plugin queries core's own
+derived cache; core publishes a neutral fact and knows nothing about what any
+plugin does with it.
+
+**The waterfall mana-regen aura is `plugins/mana`'s concern, not core's**
+(constraint from the task brief, matching "nothing gamey in core"). It reads
+`WorldApi.riverNetwork()` directly inside its own `regenerate()`/
+`manaRegenFor()` — the SAME multiplier-composition shape mana already uses
+for perks (`manaPerkOf(playerId).regenMultiplier`, see the PERK API section
+of `plugins/mana/server/index.ts`) rather than a new cross-plugin seam: this
+is mana reading one more fact about ITS OWN world, not a second plugin
+touching mana the way relics touches it through `setManaPerk`. Because there
+are no player avatars in this game (players are gods sculpting a world, never
+embodied in it — design §3.1), "standing at the plunge pool" is read against
+a player's own REVEALED TERRITORY (`WorldApi.isCellVisibleTo`, the existing
+per-player fog-of-war primitive from issue #17) rather than spatial
+proximity: a waterfall the player has personally unlocked grants
+`WATERFALL_AURA_REGEN_BONUS_PER_WATERFALL` (0.15 — a SMALL bonus, the card's
+own word, capped at `WATERFALL_AURA_MAX_COUNTED` = 3 waterfalls so the effect
+cannot be farmed by revealing a jagged coastline) on top of the
+difficulty-derived rate. Tested end-to-end through the real plugin host in
+`plugins/mana/test/mana.test.ts`.
+
+**Render: two derived-geometry layers plus a mist puff, no headless GL rig**
+(design §8: client rendering is verified manually; this project ships none).
+`client/src/render/riverRig.ts` follows the house rig pattern
+(`plugins/weather/client/rig.ts`'s own header): geometry/materials built once
+and mutated in place on each throttled recompute (never inside the frame
+loop), one owner frees what it made, and the only animated element — the
+mist's gentle vertical bob — freezes under `prefers-reduced-motion`, matching
+weather's "the whole sky holds still" rule (there is no flashing-light
+concern here at all; this is done purely for consistency with the house
+standard). Every river point becomes a small flat translucent tile at its
+cell's rendered (band-quantised) height — narrower for flowing channel,
+full-cell-width and flat-at-`poolHeight` for a pool, so adjacent pooled tiles
+join into one continuous lake surface. Each waterfall gets a small ring of
+mist particles at its plunge point. Wired into `client/src/world.ts`
+alongside `water`/`fog` — same lifetime, same "one instance for the session"
+shape — refreshed from every path that changes the mirror's terrain
+(`applyDirty`, `onChunkUnlock`) and FORCE-refreshed (bypassing the throttle)
+on `onSnapshot`, so a rejoin to a different world never shows the previous
+session's rivers for up to the throttle window.
+
+**Punts, named:**
+
+  - **Sound.** Card 40 says "mist, sound, and a small mana-regen aura". This
+    project has no audio system anywhere in the client — confirmed by reading
+    the whole client tree — and this change does not add one. Deferred in
+    full; the mist and the mana aura ship, the sound does not.
+  - **Basins are filled to their true spill height, but a basin larger than
+    the shared trace budget is not.** `fillBasin`'s priority-flood is the
+    textbook-correct algorithm — no approximation in the ALGORITHM — but it
+    shares its per-river cell budget with ordinary flowing steps
+    (`RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER × worldSize`, 1024 cells on a
+    512-edge world). A basin larger than that stops where the budget ran out,
+    `truncated: true`, drawn as a pool at whatever level it reached rather
+    than at the true spill height. Accepted because a player-scale basin is
+    bounded by the brush footprint that dug it (≤ 37 cells at
+    `MAX_BRUSH_RADIUS`) unless many strokes compound into one huge pit, which
+    is a rare, deliberate act rather than an ordinary outcome.
+  - **A single spring's course, in the adversarial worst case, can be cut off
+    by the SAME shared budget** before it reaches the sea (`truncated: true`,
+    observable, tested in `rivers.test.ts`'s truncation coverage via the
+    budget-exhaustion path in `fillBasin`). Not observed on any
+    player-constructed terrain during this change's own testing; named as a
+    residual the same way `SMOOTH_PASS_LIMIT`'s truncation is.
+  - **No headless visual verification.** The render layer (`riverRig.ts`) was
+    NOT run in a browser or screenshotted as part of this change — there was
+    no running client/server pair available to drive it against. Its
+    correctness rests on: (a) the underlying math being unit-tested
+    end-to-end in `shared/test/rivers.test.ts`, (b) `pnpm typecheck` passing
+    for the client package, and (c) manual code review against the house
+    rendering rules (`plugins/weather/client/rig.ts`'s header). Visual
+    correctness — tile placement, mist legibility, colour/opacity balance —
+    is UNVERIFIED and should be checked against a running client before this
+    is considered feel-tuned.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
