@@ -72,7 +72,7 @@ const sculptInput = createSculptInput({
 // The brush outline follows the hover pick each frame. hoverTarget is cached
 // per pointer position, so a still mouse costs nothing; brushRadius is read
 // live so the outline resizes the moment the HUD changes it.
-const brushPreview = createBrushPreview(viewport.scene);
+const brushPreview = createBrushPreview(viewport.scene, canvas);
 viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadius()));
 
 render(() => <Hud chartSource={() => world.chartSource()} />, hudRoot);

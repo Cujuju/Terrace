@@ -32,6 +32,16 @@ body {
   touch-action: none;
 }
 
+/* While the brush outline is drawn it IS the pointer, so the OS arrow goes
+   away (owner, 2026-08-19). render/brushPreview.ts owns the class and sets it
+   only while an outline is actually on screen — over sky or off-world the
+   arrow comes back rather than leaving the player with no pointer at all.
+   HUD panels are separate elements and inherit their cursor from the document,
+   so a control is never left without one. */
+#viewport.brush-outline-shown {
+  cursor: none;
+}
+
 /* The HUD floats over the canvas; only its own controls take pointer events,
    so drags anywhere else reach the sculpt/orbit handlers underneath. */
 .hud {

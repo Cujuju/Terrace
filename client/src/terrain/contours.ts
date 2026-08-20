@@ -166,6 +166,32 @@ export function loadSamples(mirror: TerrainMirror, originX: number, originZ: num
   }
 }
 
+/**
+ * Loads the lattice from an arbitrary field rather than the terrain mirror, so
+ * a caller with something other than a chunk to contour can use this same
+ * marching-squares pipeline instead of writing a second one.
+ *
+ * Its one client today is the brush-outline preview
+ * (render/brushPreview.ts), which marches the brush footprint as a binary
+ * in/out field: the outline the player sees is then built by the code that
+ * builds the terrain, which is the only way the two can be guaranteed to speak
+ * one shape language.
+ *
+ * PRECONDITION, shared with `loadSamples`: the lattice and the edge tables
+ * below are module scratch, reused per level and per chunk. A caller must run
+ * loadSampleField → marchLevel → assembleLoops to completion before anyone
+ * else touches them. That holds today because everything here is synchronous
+ * and the preview builds its geometries once, at startup, before the first
+ * chunk mesh exists.
+ */
+export function loadSampleField(fill: (i: number, j: number) => number): void {
+  for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
+    for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
+      samples[j * LATTICE_PER_CHUNK + i] = fill(i, j);
+    }
+  }
+}
+
 const horizontalEdgeKey = (i: number, j: number): number => j * CHUNK_SIZE + i;
 const verticalEdgeKey = (i: number, j: number): number =>
   H_EDGE_COUNT + j * LATTICE_PER_CHUNK + i;
