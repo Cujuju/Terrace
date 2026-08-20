@@ -111,18 +111,63 @@ export const HEIGHT_WORLD_SCALE = BAND_WORLD_HEIGHT / BAND_HEIGHT;
 export const WATER_SURFACE_LIFT = BAND_WORLD_HEIGHT / 32;
 
 /**
- * Milliseconds between repeated sculpt intents while the pointer is held down.
+ * THE FLOOR of the hold-repeat ramp: the shortest interval between repeated
+ * sculpt intents, reached only after a hold has been sustained (see
+ * SCULPT_REPEAT_DELAY_MS and SCULPT_REPEAT_RAMP_FACTOR — input/sculptInput.ts
+ * owns the schedule).
  *
  * Chosen at 120 ms — deliberately just above the server's 100 ms tick period
  * (TICK_HZ 10, design doc §3.2) — so a held brush can never queue more than
  * one intent per tick. That bounds both the wire rate and the size of the
  * per-tick diff the server has to broadcast, which is exactly the budget the
- * design doc's server performance target asks for.
+ * design doc's server performance target asks for. Because it is the FLOOR,
+ * no ramped interval is ever shorter than it, so that bound holds for the
+ * whole ramp — which is also what keeps terrain/prediction.ts's in-flight cap
+ * (derived from this constant) a true upper bound rather than an estimate.
  *
- * PROVISIONAL / feel-tuning: at one BAND_HEIGHT per intent this raises roughly
- * eight terrace bands per second held. Re-tune in Phase 2 against real input.
+ * PROVISIONAL / feel-tuning: at one BAND_HEIGHT per intent a fully ramped hold
+ * raises roughly eight terrace bands per second. Re-tune in Phase 2.
  */
 export const SCULPT_REPEAT_INTERVAL_MS = 120;
+
+/**
+ * Milliseconds from a stroke's FIRST intent to its second — the top of the
+ * hold-repeat ramp.
+ *
+ * Owner report, 2026-08-19: "a single click is raising land too fast; it
+ * should start slow and progressively speed up." The old schedule was a flat
+ * setInterval at SCULPT_REPEAT_INTERVAL_MS, so a press held for the ~150 ms a
+ * deliberate click actually lasts landed TWO bands, not one — the brush had
+ * no notion of a click being different from a hold.
+ *
+ * 400 ms is sized against human click duration, not picked for feel: a
+ * deliberate mouse click is press-to-release in roughly 80–150 ms, and a slow
+ * or heavy-handed one still lands under 300 ms. At 400 ms every click that is
+ * meant as a click ends before the second intent is due, so ONE click is ONE
+ * band by construction. It is also comfortably under the ~500 ms an OS
+ * keyboard typematic delay uses, which is the closest thing to a learned
+ * expectation a player brings to "press and hold".
+ */
+export const SCULPT_REPEAT_DELAY_MS = 400;
+
+/**
+ * Multiplier applied to the repeat interval after each repeat, until it
+ * reaches SCULPT_REPEAT_INTERVAL_MS and stays there. This is the "and
+ * progressively speed up" half of the owner's report.
+ *
+ * 0.75 gives the ramp 400 → 300 → 225 → 169 → 127 → 120 ms: five accelerating
+ * repeats over the first ~1.2 s of a hold, then the flat floor. That shape is
+ * the point — the early repeats are far enough apart to be counted (a player
+ * can stop at exactly three bands), and a sustained hold still reaches full
+ * sculpting speed inside the time it takes to decide you want a mountain.
+ *
+ * Rejected alternatives: a linear step-down needs two numbers (a step size AND
+ * a floor) that must be kept consistent with the delay, and a step-per-repeat
+ * count makes the ramp's DURATION depend on the floor. One multiplier makes
+ * "how fast does it speed up" a single dial, and the geometric shape means the
+ * big changes happen early, which is where the player is still deciding.
+ */
+export const SCULPT_REPEAT_RAMP_FACTOR = 0.75;
 
 /**
  * Milliseconds a one-finger touch stroke waits before its first sculpt

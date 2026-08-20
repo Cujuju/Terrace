@@ -13,6 +13,10 @@
 //   one-finger touch drag      sculpt in the HUD's sticky raise/lower mode
 //   two-finger touch           pinch zoom + pan or orbit (configurable)
 //
+// A press fires ONE intent immediately and then repeats on an ACCELERATING
+// schedule (repeatDelayMs, below): slow enough at the top that a click is a
+// click, ramping to full sculpting speed over the first second or so of a hold.
+//
 // Which action owns a press is decided by the shared resolver in
 // state/controlPrefs.ts — the same one the camera consults — so the brush and
 // OrbitControls can never both claim a drag.
@@ -25,7 +29,9 @@
 import { Raycaster, Vector2, type Camera, type Mesh } from 'three';
 import {
   CELL_WORLD_SIZE,
+  SCULPT_REPEAT_DELAY_MS,
   SCULPT_REPEAT_INTERVAL_MS,
+  SCULPT_REPEAT_RAMP_FACTOR,
   TOUCH_STROKE_GRACE_MS,
 } from '../config.ts';
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
@@ -68,6 +74,26 @@ export interface SculptInput {
   dispose(): void;
 }
 
+/**
+ * THE HOLD-REPEAT RAMP: milliseconds to wait before repeat number
+ * `repeatIndex`, where 0 is the first repeat — the second intent of the
+ * stroke. The first intent itself is never delayed (a click is a click).
+ *
+ * Geometric decay from SCULPT_REPEAT_DELAY_MS by SCULPT_REPEAT_RAMP_FACTOR,
+ * floored at SCULPT_REPEAT_INTERVAL_MS: 400, 300, 225, 169, 127, then 120 ms
+ * forever. Owner, 2026-08-19: a single click was raising land too fast, because
+ * the old flat interval made a 150 ms click indistinguishable from a hold and
+ * landed two bands for one press.
+ *
+ * The floor is what keeps the wire-rate bound honest — see
+ * SCULPT_REPEAT_INTERVAL_MS. Pure and exported so the schedule can be pinned by
+ * test without a DOM or a fake clock; `createSculptInput` is the only caller.
+ */
+export function repeatDelayMs(repeatIndex: number): number {
+  const ramped = SCULPT_REPEAT_DELAY_MS * SCULPT_REPEAT_RAMP_FACTOR ** repeatIndex;
+  return Math.max(SCULPT_REPEAT_INTERVAL_MS, ramped);
+}
+
 export function createSculptInput(options: SculptInputOptions): SculptInput {
   const { canvas, camera, pickables, worldSize, send } = options;
 
@@ -101,7 +127,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    */
   const activeTouchIds = new Set<number>();
 
-  let repeatTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * The NEXT repeat's pending timeout. A self-rescheduling chain rather than a
+   * setInterval, because the gap between repeats is not constant — see
+   * repeatDelayMs.
+   */
+  let repeatTimer: ReturnType<typeof setTimeout> | null = null;
   /** Pending touch-stroke arming delay (TOUCH_STROKE_GRACE_MS). */
   let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -214,7 +245,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokePointerId = null;
     strokeIsTouch = false;
     if (repeatTimer !== null) {
-      clearInterval(repeatTimer);
+      clearTimeout(repeatTimer);
       repeatTimer = null;
     }
     if (graceTimer !== null) {
@@ -223,13 +254,31 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
   };
 
-  /** First intent now, then hold-repeat. Each repeat reads the shared hover
-   * pick rather than reusing the pressed cell, so a DRAG still re-targets
-   * wherever the cursor is now — but a stationary hold keeps its cell even as
-   * the terrain rises (see emitIntent's issue-#25 comment). */
+  /**
+   * Schedules repeat number `repeatIndex` (0 = the first repeat, i.e. the
+   * SECOND intent of the stroke) and, when it fires, the one after it.
+   *
+   * A chain of timeouts rather than one interval: the gap grows shorter as the
+   * hold is sustained (repeatDelayMs), and an interval has exactly one period.
+   * `repeatTimer` is nulled before the body runs because a timeout that has
+   * fired is no longer pending — stopRepeat must never clear a spent handle
+   * and believe it cancelled something.
+   */
+  const scheduleRepeat = (repeatIndex: number): void => {
+    repeatTimer = setTimeout(() => {
+      repeatTimer = null;
+      emitIntent();
+      scheduleRepeat(repeatIndex + 1);
+    }, repeatDelayMs(repeatIndex));
+  };
+
+  /** First intent now, then the accelerating hold-repeat. Each repeat reads the
+   * shared hover pick rather than reusing the pressed cell, so a DRAG still
+   * re-targets wherever the cursor is now — but a stationary hold keeps its
+   * cell even as the terrain rises (see emitIntent's issue-#25 comment). */
   const armStroke = (): void => {
     emitIntent();
-    repeatTimer = setInterval(emitIntent, SCULPT_REPEAT_INTERVAL_MS);
+    scheduleRepeat(0);
   };
 
   const startStroke = (event: PointerEvent, action: SculptAction): void => {
