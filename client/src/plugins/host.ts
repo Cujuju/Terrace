@@ -13,6 +13,7 @@ import type { Component } from 'solid-js';
 import { CELL_WORLD_SIZE } from '../config.ts';
 import type { Connection } from '../net/connection.ts';
 import type { Viewport } from '../render/scene.ts';
+import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
@@ -67,6 +68,24 @@ export function createClientPluginHost(
    */
   const pressHandlers: ((event: PointerEvent) => boolean)[] = [];
   const localIntentHandlers: ((intent: SculptIntent) => boolean)[] = [];
+
+  /**
+   * Name of the plugin that has claimed setSkyRig, or null while the sky is
+   * still core's static boot-time look. Set on the FIRST call to setSkyRig
+   * from ANY plugin (not at registration time — there is nothing to claim
+   * until a plugin actually has a value to push), which is why this is a
+   * single host-scoped variable rather than per-plugin state: two plugins
+   * racing to be first is exactly the case the warning below exists for.
+   */
+  let skyRigClaimant: string | null = null;
+
+  /**
+   * Plugins already told they lost the sky-rig claim. This capability is
+   * driven from a frame loop, so the refusal has to be idempotent per plugin
+   * or the console fills at frame rate — see setSkyRig below.
+   */
+  const skyRigRefusals = new Set<string>();
+
   const onCanvasPointerDown = (event: PointerEvent): void => {
     for (const handler of pressHandlers) {
       let claimed = false;
@@ -163,6 +182,26 @@ export function createClientPluginHost(
           if (i !== -1) localIntentHandlers.splice(i, 1);
         };
       },
+      setSkyRig(state: SkyRigState) {
+        if (skyRigClaimant === null) skyRigClaimant = plugin.name;
+        if (skyRigClaimant !== plugin.name) {
+          // ONCE PER LOSING PLUGIN, not once per call. Unlike every other
+          // single-claimant hook here, this one is called from a FRAME loop —
+          // a second claimant driving its own cycle would warn 60 times a
+          // second and bury whatever else the console was trying to say. The
+          // warning is a configuration diagnostic; it says everything it has
+          // to say the first time.
+          if (!skyRigRefusals.has(plugin.name)) {
+            skyRigRefusals.add(plugin.name);
+            console.warn(
+              `sky rig already claimed by "${skyRigClaimant}"; ` +
+                `ignoring updates from "${plugin.name}"`,
+            );
+          }
+          return;
+        }
+        applySkyRig(viewport, state);
+      },
     };
 
     // A plugin that throws in attach loses its own features, not the app:
@@ -217,6 +256,7 @@ export function createClientPluginHost(
       pressHandlers.length = 0;
       localIntentHandlers.length = 0;
       handlers.clear();
+      skyRigClaimant = null;
     },
   };
 }

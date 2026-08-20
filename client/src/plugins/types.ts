@@ -14,6 +14,58 @@ import type { SculptIntent } from '@terrace/shared';
 import type { Group } from 'three';
 import type { Component } from 'solid-js';
 
+/**
+ * The declarative sky/lighting state a plugin may drive core's rig with — see
+ * ClientPluginCtx.setSkyRig below for the capability this backs and its
+ * single-claimant rule, and client/src/render/skyRig.ts for applySkyRig, the
+ * one function that turns this into real Three.js light mutations.
+ *
+ * DEFINED HERE, NOT IN render/skyRig.ts, DELIBERATELY. skyRig.ts also needs
+ * Viewport (client/src/render/scene.ts) to do its job, and scene.ts imports
+ * client/src/config.ts, which reads import.meta.env — fine for the real
+ * browser build, but fatal to a PLUGIN's standalone `tsc`/`vitest` run the
+ * moment any of its files pull that chain in, even through a type-only
+ * import (tsc still has to resolve and diagnose every file reachable in the
+ * program, type-only or not). This file already has zero such imports (every
+ * plugin's client half type-only-imports ClientPluginCtx from here), so the
+ * shared TYPE lives on this side of the boundary and skyRig.ts imports it
+ * back, instead of the other way around — the same reason plugins/weather/
+ * client/sky.ts restates numeric constants rather than importing scene.ts
+ * directly (see that file's WORLD_UNITS_PER_BAND comment), just applied to a
+ * TYPE instead of a value.
+ *
+ * Every colour is a 0xRRGGBB int (matching every other colour constant in
+ * this codebase — see render/scene.ts's SKY_COLOR); every intensity is in
+ * the same unitless scale DirectionalLight/HemisphereLight/AmbientLight
+ * already use.
+ */
+export interface SkyRigState {
+  /**
+   * Unit-ish direction the sun shines FROM, in the same convention
+   * DirectionalLight.position already uses (core places the light at this
+   * direction, scaled out to SUN_DISTANCE_CELLS, and its target defaults to
+   * the origin) — not the direction the light TRAVELS in.
+   */
+  readonly sunDirection: { readonly x: number; readonly y: number; readonly z: number };
+  readonly sunColor: number;
+  readonly sunIntensity: number;
+  /** HemisphereLight's sky-side colour, and (by default) the background too. */
+  readonly hemisphereSkyColor: number;
+  /** HemisphereLight's ground-side (bounce) colour. */
+  readonly hemisphereGroundColor: number;
+  readonly hemisphereIntensity: number;
+  /** AmbientLight's colour and intensity — the orientation-independent floor. */
+  readonly ambientColor: number;
+  readonly ambientIntensity: number;
+  /**
+   * scene.background. Independently settable from hemisphereSkyColor even
+   * though core's boot-time values for the two happen to be equal (both
+   * SKY_COLOR) — nothing forces a claimant to keep them equal, and core has
+   * no opinion either way.
+   */
+  readonly backgroundColor: number;
+}
+
 export interface ClientPluginCtx {
   /**
    * Plugin-owned Three.js layer, already parented into the scene. Everything
@@ -107,6 +159,30 @@ export interface ClientPluginCtx {
    * first veto wins. Returns an unregister function.
    */
   onLocalIntent(handler: (intent: SculptIntent) => boolean): () => void;
+
+  /**
+   * Drives the scene's sky/lighting rig — the sun's direction, colour and
+   * intensity; the hemisphere and ambient fill lights; and the background
+   * colour (render/scene.ts's SkyLightingRig; the full declarative shape is
+   * SkyRigState, above). ONE claimant per client — the FIRST
+   * plugin to call this in a given frame owns the rig for the rest of the
+   * session; every later call, from any OTHER plugin, is ignored with a
+   * console.warn instead of fighting the first claimant's writes silently.
+   * There is no unclaim: like registerWorldHeaderAction this is a boot-time
+   * configuration decision, not a runtime handoff.
+   *
+   * UNCLAIMED, THE SKY IS EXACTLY WHAT core SET IT TO AT BOOT — today's
+   * static noon look — because core never calls this itself; it only builds
+   * the rig and exposes this one seam onto it. A plugin that wants a static
+   * sky simply never calls it, same as a plugin that skips
+   * registerWorldHeaderAction leaves the banner an inert title card.
+   *
+   * Call this as often as the plugin's own state changes — typically every
+   * frame, from inside its own onFrame handler, the same way weather redraws
+   * its rigs every frame from the interpolated system list rather than only
+   * on each server broadcast.
+   */
+  setSkyRig(state: SkyRigState): void;
 }
 
 export interface TerraceClientPlugin {
