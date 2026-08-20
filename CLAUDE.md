@@ -25,3 +25,22 @@ GitHub Issues on `Cujuju/Terrace`. Arcs are `arc/<slug>` labels, buckets are
   Node 24 can run it directly via type stripping.
 - Clients send intents, never heights. The server is authoritative.
 - Nothing "gamey" in core — mana, followers, reveal timing are plugins.
+
+
+# TypeScript
+- TypeScript strict mode throughout — no `any` without a comment explaining why
+- Prefer named exports over default exports for components
+
+# SolidJS / React
+- Co-locate types with the code that uses them; shared types go in `client/src/types/index.ts`
+- Keep components focused — if a file grows past ~300 lines, consider splitting
+- A `.tsx` exports only components (+ types — erased, exempt). A runtime const/fn stays **unexported-local** if used once; promote to a sibling `.ts` only when **shared by ≥2 modules**. Never `export` a non-component value from a `.tsx`.
+
+# Documentation
+
+# Naming
+- React components: `PascalCase`
+- Hooks: `useCamelCase`
+- Utilities/services: `camelCase`
+- CSS tokens: `--kebab-case`
+- localStorage keys: `appNameHere:camelCase`
