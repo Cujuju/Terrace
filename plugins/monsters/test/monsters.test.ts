@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  DEFAULT_WORLD_SPAN,
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
@@ -18,7 +19,9 @@ import {
   MIN_HEIGHT,
   SEA_LEVEL,
   WORLD_UNIT_CELLS,
+  type SculptProfile,
   cellsAcross,
+  cellsOverArea,
   forEachFootprintOffset,
   isWater,
 } from '@terrace/shared';
@@ -42,6 +45,7 @@ import {
 import {
   MANA_CAPACITY,
   MANA_COST_PER_MIN_RADIUS_SCULPT,
+  POINT_BRUSH_RADIUS_CELLS,
   manaBalanceOf,
   plugin as manaPlugin,
   resetManaState,
@@ -152,10 +156,18 @@ const TICK_DT = 0.1;
  * 5 s default. It measured ~7 s on this machine under ordinary load, so it
  * failed whenever the machine was busy and passed when it was not — a flake
  * that looked like whichever commit happened to be in the tree at the time.
- * The two seeded trials measure ~7 s and ~13 s here, so 30 s is roughly a 2×
- * margin on the slower of them.
+ *
+ * RE-MEASURED THE SAME DAY, AFTER THE RE-SAMPLE, which is why the value is
+ * 480 s and not the 30 s those measurements justified: the mean-wait trial
+ * goes from ~5 s to ~81 s. The growth is the survey's and nothing else's — a
+ * survey walks every cell of the world, WORLD_SIZE is a fixed 128 world units
+ * (the shipped minimum), and a quarter-cell world samples that same ground
+ * with sixteen times the cells. Neither the trial count nor the simulated
+ * duration moved, so nothing either trial checks is weaker; the same work
+ * simply costs sixteen times as much. 480 s keeps the 6× margin the pre-
+ * re-sample value was chosen with.
  */
-const SEEDED_TRIAL_TIMEOUT_MS = 30_000;
+const SEEDED_TRIAL_TIMEOUT_MS = 480_000;
 
 /**
  * A conical bowl centred on the map: height rises linearly with distance from
@@ -764,6 +776,30 @@ function krakenTrench(): BasinState {
   };
 }
 
+/**
+ * The radius of the disc a kraken can actually surface in, inside a given basin.
+ *
+ * WHY A TEST NEEDS THIS AT ALL. Since the 2026-08-19 spread decision the summon
+ * cell is uniform among the region's QUALIFYING cells (summoning.ts's
+ * `summonCellIn`) — NOT the basin's deepest cell — so "the kraken is somewhere in
+ * the pocket" is all a fixture may assume. Any test that then reshapes the world
+ * around the monster has to reshape it around the whole pocket, or it is a test
+ * of one hash draw. (It was exactly that until 2026-08-21: a literal puddle
+ * radius happened to cover the cell the draw picked, and the re-sample moved the
+ * draw.)
+ *
+ * DERIVED FROM THE BASIN'S OWN RAMP, not measured off the monster: the basin
+ * runs linearly from `floorHeight` at the centre to the deep-water line at the
+ * rim, so the qualifying cells are the disc where that ramp is still at or below
+ * the kraken's admission depth. Scale-free by construction — every term is a
+ * height except the radius it multiplies.
+ */
+function krakenPocketRadiusCells(state: BasinState): number {
+  const admissionHeight = SEA_LEVEL - KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT;
+  const ramp = (admissionHeight - state.floorHeight) / (DEEP_WATER_MAX_HEIGHT - state.floorHeight);
+  return Math.ceil(ramp * state.radius);
+}
+
 describe('Cthulhu cannot be banished', () => {
   it('stays where he is when the water is taken away, and starts no cooldown', () => {
     const basin = cthulhuBasin();
@@ -1010,12 +1046,18 @@ describe('the kraken is not evicted by terrain (owner ruling, 2026-08-19)', () =
     const kraken = livingMonsterOfKind('kraken');
     expect(kraken).not.toBeNull();
 
-    // The old collapse threshold was 2 chunks (512 cells). This pool is an
-    // order of magnitude under it, and under the kraken's own arrival bar, with
-    // the monster's own cell still deep water — which is precisely the state
-    // that used to banish it and now must not.
-    trench.radius = cellsAcross(4);
-    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_MIN_LAIR_DEEP_CELLS);
+    // The old collapse threshold was 2 chunks. This pool is an order of
+    // magnitude under the kraken's own arrival bar, with the monster's own cell
+    // still deep water — which is precisely the state that used to banish it and
+    // now must not.
+    //
+    // THE PUDDLE IS THE SUMMON POCKET, not a literal radius: the kraken may have
+    // surfaced anywhere in it (see krakenPocketRadiusCells), so this is the
+    // smallest pool that is guaranteed to still be under whichever cell the draw
+    // chose. The assertion below is what keeps it a puddle — it is a real pool
+    // an order of magnitude short of the arrival bar, not a pool sized to pass.
+    trench.radius = krakenPocketRadiusCells(trench) + 1;
+    expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_MIN_LAIR_DEEP_CELLS / 10);
     expect(isLairCell(WATER_HABITAT, world, kraken!.x, kraken!.y)).toBe(true);
 
     // Well past the survey cadence: if a region test were still running, this
@@ -1258,10 +1300,19 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     // unchanged at 512 units; only the relaxation margin moved, because
     // MAX_STEP is now BAND_HEIGHT rather than half of it. The DEPTH the owner
     // ruled on did not move — the relaxation simply shaves less off it.
+    //
+    // 510 since the 2026-08-21 re-sample, and for the third time the REFERENCE
+    // FLOOR IS STILL 512: MAX_STEP is the most the world may fall between two
+    // ADJACENT CELLS, cells are now a quarter of a world unit apart, so the one
+    // relaxation that reaches the extreme cell shaves a quarter of what it did.
+    // The slope is identical (one band per world unit either side of the
+    // re-sample) — a finer grid simply measures the shave more finely. The first
+    // assertion is the contract and the literal is documentation of it; if only
+    // the literal ever fails, the margin moved and the depth did not.
     expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(
       GENESIS_DEEP_OCEAN_REFERENCE_DEPTH - MAX_STEP / 2,
     );
-    expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(504);
+    expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(510);
     expect(
       reachesIntoHabitat(
         WATER_HABITAT,
@@ -1356,15 +1407,29 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
   // player's territory reaches it — that is progression, it is unchanged, and
   // it is why these tests survey with unlock answered "yes" everywhere.
 
-  /** Both sizes the 2026-08-19 review measured: smallest shipped, and default. */
-  const GENESIS_PROBE_SIZES = [128, 512];
+  /**
+   * Both sizes the 2026-08-19 review measured: smallest shipped, and default.
+   *
+   * IN CELLS, CONVERTED FROM WORLD UNITS (2026-08-21). The two numbers are the
+   * spans DEFAULT_WORLD_SPAN documents — 128 world units, "the Populous-proven
+   * playable minimum", and the 512 default — and they are facts about how much
+   * LAND the guarantee is checked over, so the re-sample had to convert them.
+   * Left as literal cells they became a 32-world-unit map and a 128-world-unit
+   * one, and the smaller of those has fewer cells IN TOTAL (16 384) than the
+   * kraken's own area bar (KRAKEN_MIN_LAIR_DEEP_CELLS = 36 864) demands, so all
+   * 48 seeds failed a guarantee that no world of that size could ever meet.
+   */
+  const GENESIS_PROBE_SIZES = [GENESIS_PROBE_SIZE, cellsAcross(DEFAULT_WORLD_SPAN)];
 
   /**
-   * A 512²-per-seed sweep, twice over, is a real amount of work: two full world
-   * generations and two full habitat surveys per seed. Measured at ~4 s on this
-   * machine, so this is a 5× margin.
+   * A full-size-per-seed sweep, twice over, is a real amount of work: two full
+   * world generations and two full habitat surveys per seed.
+   *
+   * RE-MEASURED AFTER THE 2026-08-21 RE-SAMPLE at ~15 s per test, from ~4 s: the
+   * default world is 2048² cells rather than 512², and both halves of the sweep
+   * walk every one of them. Held at the same 5× margin.
    */
-  const GENESIS_SWEEP_TIMEOUT_MS = 20_000;
+  const GENESIS_SWEEP_TIMEOUT_MS = 75_000;
 
   /**
    * Does this heightmap contain a basin the kraken would take? Asked through
@@ -2023,11 +2088,18 @@ describe('issue #19 — Cthulhu’s veto costs zero mana', () => {
     y: number,
     dir: 1 | -1,
     radius = MAX_BRUSH_RADIUS,
+    // 'hard' is this block's default because the veto tests are about a raise
+    // reaching Cthulhu, and a hard stamp moves the whole footprint. The price
+    // test below overrides it: MANA_COST_PER_MIN_RADIUS_SCULPT is the SOFT point
+    // brush, and the two profiles stopped agreeing when the point brush stopped
+    // being one cell (2026-08-21) — a falloff needs more than one cell to fall
+    // off over.
+    profile: SculptProfile = 'hard',
   ): ReturnType<typeof handleSculptIntent> {
     return handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      { type: 'sculpt', x, y, radius, dir, tool: 'stamp', profile: 'hard' },
+      { type: 'sculpt', x, y, radius, dir, tool: 'stamp', profile },
     );
   }
 
@@ -2064,14 +2136,28 @@ describe('issue #19 — Cthulhu’s veto costs zero mana', () => {
     const before = manaBalanceOf(PLAYER.id);
 
     // Well clear of his protected disc: the same clearance the "draws the
-    // line" test above uses, plus a margin, on the opposite axis so a radius-1
-    // brush's own footprint cannot reach him either.
+    // line" test above uses, plus a margin, on the opposite axis so the brush's
+    // own footprint cannot reach him either.
+    //
+    // THE BRUSH IS THE POINT BRUSH, not MIN_BRUSH_RADIUS (2026-08-21). The price
+    // this test names, mana's MANA_COST_PER_MIN_RADIUS_SCULPT, is derived from
+    // POINT_BRUSH_RADIUS_CELLS — one world unit of ground — and since the
+    // re-sample that is no longer the same brush as the protocol's one-cell
+    // floor. Sculpting at the floor and charging the point-brush price is a
+    // sixteenth of the footprint against the full fee.
     const monster = livingMonster()!;
-    const reach = MIN_BRUSH_RADIUS + groundProtectionRadiusCells(profileOf('cthulhu'));
+    const reach = POINT_BRUSH_RADIUS_CELLS + groundProtectionRadiusCells(profileOf('cthulhu'));
     const clearX = Math.floor(monster.x + reach + 5);
     const clearY = Math.floor(monster.y);
 
-    const outcome = sculptWithMana(harness, clearX, clearY, 1, MIN_BRUSH_RADIUS);
+    const outcome = sculptWithMana(
+      harness,
+      clearX,
+      clearY,
+      1,
+      POINT_BRUSH_RADIUS_CELLS,
+      'soft',
+    );
 
     expect(outcome.applied).toBe(true);
     expect(manaBalanceOf(PLAYER.id)).toBe((before ?? 0) - MANA_COST_PER_MIN_RADIUS_SCULPT);
@@ -2268,8 +2354,8 @@ describe('the yeti in the high Alps', () => {
   it('never arrives on a snowfield too small to be a lair', () => {
     setMonsterRandomSource(ALWAYS);
     // Deep enough into the snow, far too little of it: height alone is not a
-    // lair, which is the half of the rule the area threshold carries. Radius 6
-    // → ~113 cells, under the 170-cell demand.
+    // lair, which is the half of the rule the area threshold carries. A radius
+    // of 6 world units is ~113 square world units, under the demand of 170.
     const tinyRadius = cellsAcross(6);
     const world = massifWorld({
       radius: tinyRadius,
@@ -2281,16 +2367,27 @@ describe('the yeti in the high Alps', () => {
     expect(livingMonsters()).toEqual([]);
   });
 
-  it('arrives on a snowfield too small for the pre-amendment 512-cell bar', () => {
-    // Owner decision, 2026-08-19: the bar dropped from 512 cells to a third of
-    // that (170). Radius 8 → ~197 cells — past the CURRENT demand and short of
-    // the OLD one — so this world pins the actual behaviour change: it summons
-    // a yeti now and would have summoned nothing before the amendment.
-    expect(Math.PI * 8 * 8).toBeGreaterThan(YETI_MIN_LAIR_SNOW_CELLS);
-    expect(Math.PI * 8 * 8).toBeLessThan(512);
+  it('arrives on a snowfield too small for the pre-amendment bar', () => {
+    // Owner decision, 2026-08-19: the bar dropped to a third of what it was.
+    // A radius-8 snowfield is past the CURRENT demand and short of the OLD one,
+    // so this world pins the actual behaviour change: it summons a yeti now and
+    // would have summoned nothing before the amendment.
+    //
+    // BOTH SIDES IN WORLD UNITS, converted (2026-08-21). The amendment was about
+    // how much GROUND a yeti needs, so the pre-amendment bar is 512 square world
+    // units and the fixture is a radius of 8 world units — the same snowfield
+    // this test always described, now sampled by sixteen times the cells.
+    const snowfieldRadius = cellsAcross(8);
+    const preAmendmentBarCells = cellsOverArea(512);
+    const snowfieldCells = Math.PI * snowfieldRadius * snowfieldRadius;
+    expect(snowfieldCells).toBeGreaterThan(YETI_MIN_LAIR_SNOW_CELLS);
+    expect(snowfieldCells).toBeLessThan(preAmendmentBarCells);
 
     setMonsterRandomSource(ALWAYS);
-    const world = massifWorld({ radius: 8, peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT });
+    const world = massifWorld({
+      radius: snowfieldRadius,
+      peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT,
+    });
     advanceSummoning(world, TICK_DT);
     expect(snowMonster()!.kind).toBe('yeti');
   });
