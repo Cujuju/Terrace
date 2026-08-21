@@ -22,6 +22,8 @@ import {
   UNCONSTRAINED_GRADIENT_PER_CELL,
   normalizeAngle as sharedNormalizeAngle,
   steerAvoiding,
+  withoutSelf,
+  type Occupant,
   type TraversalProfile,
 } from '@terrace/shared';
 import { type LairWorld, isLairCell, isLairPose } from './habitat.ts';
@@ -121,22 +123,46 @@ export function steerToValidHeading(
   lookahead: number,
   clearanceCells: number,
   stepCells: number,
+  occupants: readonly Occupant[] = [],
 ): number | null {
   const profile = profileOf(monster.kind);
   const regime = profile.habitat;
   return steerAvoiding(world, steeringProfileOf(profile), monster, desired, lookahead, {
-    // Stated even though this plugin passes no `occupants` and therefore does
-    // no separation (2026-08-21). shared's `SteerOptions.stepCells` is
-    // required precisely so that the day monsters DO keep clear of each other
-    // — the residual named in the 2026-08-20 design record — it is a one-line
-    // change here rather than a silent no-op, which is what an optional field
-    // defaulting to the look-ahead distance would have given.
     stepCells,
+    occupants,
+    // A monster's personal space is the radius its own POSE already occupies
+    // (kinds.ts's bodyRadiusCells — half the footprint), not a separate figure:
+    // two bodies that may not overlap the shoreline may not overlap each other
+    // either, and inventing a second number would let the two rules drift.
+    selfRadiusCells: bodyRadiusCells(profile),
     // The whole-body habitat test stays this plugin's own — see
     // `steeringProfileOf` on why it is a `permits` hook rather than something
     // shared could express.
     permits: (x, y) => isLairPose(regime, world, x, y, clearanceCells),
   });
+}
+
+/**
+ * The living monsters as shared's `Occupant` rows, in `livingMonsters` order.
+ *
+ * WHY THIS IS NOT DEAD CODE FOR A WORLD OF SINGLETONS. Each KIND has one slot,
+ * but a habitat may hold more than one kind since the 2026-08-19 per-kind
+ * slots — the sea carries the kraken and Cthulhu at once, both on
+ * OPEN_WATER_PROFILE, both free to occupy the same water. That pair is the
+ * whole subject: two seven-cell bodies converging on the same deep basin used
+ * to interpenetrate, because this plugin supplied no occupant list at all.
+ *
+ * The residual shared's `steerAvoiding` names does not bite here: a monster
+ * ambles at most 0.6 cells/second, so one tick is 0.06 cells against body radii
+ * measured in whole cells — the separation floor is positive by two orders of
+ * magnitude, unlike the fast, small movers wildlife steers.
+ */
+export function monsterOccupants(monsters: readonly Monster[]): Occupant[] {
+  return monsters.map((monster) => ({
+    x: monster.x,
+    y: monster.y,
+    radiusCells: bodyRadiusCells(profileOf(monster.kind)),
+  }));
 }
 
 /**
@@ -193,7 +219,12 @@ export function isStranded(world: LairWorld, monster: Monster): boolean {
  * habitat lookup per tick, and if the water ever comes back the probe succeeds
  * again on that tick and he simply swims off.
  */
-export function advanceMonster(world: LairWorld, monster: Monster, dt: number): void {
+export function advanceMonster(
+  world: LairWorld,
+  monster: Monster,
+  dt: number,
+  occupants: readonly Occupant[] = [],
+): void {
   const profile = profileOf(monster.kind);
   advanceIdleState(monster, profile, dt);
 
@@ -232,7 +263,15 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
   // step it WOULD take, which is the honest answer to "how far along this
   // heading would I be", and costs nothing while no occupants are supplied.
   const stepCells = profile.lurkSpeedCellsPerSecond * dt;
-  const steered = steerToValidHeading(world, monster, desired, lookahead, clearance, stepCells);
+  const steered = steerToValidHeading(
+    world,
+    monster,
+    desired,
+    lookahead,
+    clearance,
+    stepCells,
+    occupants,
+  );
 
   if (steered === null) {
     // Boxed in on every candidate. Reverse: it is un-wedged next tick without
@@ -275,5 +314,13 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
  * order every tick — which is what keeps a seeded test reproducible.
  */
 export function advanceLurking(world: LairWorld, dt: number): void {
-  for (const monster of livingMonsters()) advanceMonster(world, monster, dt);
+  const alive = livingMonsters();
+  // Built ONCE, from positions as they stood at the top of the tick, and the
+  // self row filtered out by identity per monster — the same snapshot
+  // discipline every other mover keeps (shared/src/steering.ts's determinism
+  // note), so a monster's step never depends on where it sits in this list.
+  const occupants = monsterOccupants(alive);
+  for (let index = 0; index < alive.length; index++) {
+    advanceMonster(world, alive[index], dt, withoutSelf(occupants, occupants[index]));
+  }
 }

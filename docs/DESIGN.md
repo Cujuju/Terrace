@@ -2310,9 +2310,15 @@ Separation still measurably shapes where they swim, which is what it is for
 here; the only cure for the crossing case is sub-stepping the movement, a
 simulation-cost decision nobody has made.
 
-**Monsters still have no separation** (they pass no occupants). Low impact —
-every shipped kind is a singleton — and it is now a one-line change rather than
-a contract one.
+**Monsters now separate too, and it was never as low-impact as "kinds are
+singletons" suggested.** Each KIND has one slot, but a HABITAT may hold more
+than one kind since the 2026-08-19 per-kind slots: the sea carries the kraken
+and Cthulhu at once, both on `OPEN_WATER_PROFILE`, both free to occupy the same
+basin — and two seven-cell bodies were swimming straight through one another. A
+monster's personal space is `bodyRadiusCells` (half its footprint), the radius
+`isLairPose` already uses, rather than a second figure the two rules could
+drift apart on. The residual does not bite here: a monster ambles at most 0.6
+cells/second, so one tick is 0.06 cells against radii measured in whole cells.
 
 ### Decisions made 2026-08-20 (boats fight the kraken; the mechanic settled)
 

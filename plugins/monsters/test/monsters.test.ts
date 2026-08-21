@@ -98,7 +98,7 @@ import {
   kindsInHabitat,
   profileOf,
 } from '../server/kinds.ts';
-import { advanceMonster, isStranded } from '../server/lurk.ts';
+import { advanceLurking, advanceMonster, isStranded } from '../server/lurk.ts';
 import { loadMonsters, saveMonsters } from '../server/persistence.ts';
 import { setMonsterRandomSource } from '../server/rng.ts';
 import {
@@ -2695,5 +2695,118 @@ describe('body-aware habitat poses', () => {
     // It moved (did not freeze) and it stayed in its habitat while doing so.
     expect(monster.x).not.toBe(startX);
     expect(isLairCell(WATER_HABITAT, world, monster.x, monster.y)).toBe(true);
+  });
+});
+
+describe('the sea holds two monsters, not one on top of the other (2026-08-21)', () => {
+  /**
+   * A habitat may carry MORE THAN ONE KIND since the 2026-08-19 per-kind slots:
+   * the kraken and Cthulhu share the water, both on OPEN_WATER_PROFILE, both
+   * free to occupy the same basin. Until now this plugin passed shared's
+   * `steerAvoiding` no occupant list at all, so the two seven-cell bodies had
+   * no idea the other existed and swam straight through one another.
+   *
+   * Nothing but open deep water, so the ONLY thing that can turn either of them
+   * is the other one — no shoreline, no locked chunk, no snow line.
+   */
+  function openSea(): LairWorld {
+    return {
+      worldSize: WORLD_SIZE,
+      heightAt: () => DEEP_WATER_MAX_HEIGHT,
+      isCellUnlocked: () => true,
+    };
+  }
+
+  /**
+   * A random source that stills the sim completely: 0.5 is far above every
+   * idle rate's per-tick probability, so no monster ever flips its idle beat,
+   * and it re-centres to exactly zero turn noise ((0.5 × 2 − 1) = 0). Both
+   * monsters therefore hold whatever heading they were given until something
+   * in the world takes it off them, which is exactly the experiment.
+   */
+  const NO_NOISE = (): number => 0.5;
+
+  /** Combined personal space: each body's own half-footprint. */
+  const COMBINED_RADII_CELLS =
+    bodyRadiusCells(profileOf('kraken')) + bodyRadiusCells(profileOf('cthulhu'));
+
+  /**
+   * How far the pair can close INSIDE that gap in one tick, and therefore the
+   * slack the assertion allows: separation is chosen against start-of-tick
+   * positions, so two movers closing head-on each shave their own step off it
+   * (shared/src/steering.ts's `steerAvoiding` names this residual). Both steps
+   * are ~0.06 cells against a 7-cell gap.
+   */
+  const COMBINED_STEP_CELLS =
+    (profileOf('kraken').lurkSpeedCellsPerSecond + profileOf('cthulhu').lurkSpeedCellsPerSecond) *
+    TICK_DT;
+
+  /** Head-on, outside the gap, aimed straight at each other. */
+  const START_SEPARATION_CELLS = COMBINED_RADII_CELLS + 1;
+  const APPROACH_TICKS = 400;
+
+  function installPair(): void {
+    resetMonstersState();
+    setMonsterRandomSource(NO_NOISE);
+    loadMonsters({
+      version: 2,
+      nextId: 3,
+      monsters: [
+        {
+          id: 1,
+          kind: 'kraken',
+          x: WORLD_CENTER - START_SEPARATION_CELLS / 2,
+          y: WORLD_CENTER,
+          heading: 0, // due east, straight at Cthulhu
+        },
+        {
+          id: 2,
+          kind: 'cthulhu',
+          x: WORLD_CENTER + START_SEPARATION_CELLS / 2,
+          y: WORLD_CENTER,
+          heading: Math.PI, // due west, straight at the kraken
+        },
+      ],
+    });
+  }
+
+  function gap(): number {
+    const kraken = livingMonsterOfKind('kraken')!;
+    const cthulhu = livingMonsterOfKind('cthulhu')!;
+    return Math.hypot(kraken.x - cthulhu.x, kraken.y - cthulhu.y);
+  }
+
+  it('holds two sea kinds off each other on a collision course', () => {
+    const world = openSea();
+    installPair();
+    expect(gap()).toBeCloseTo(START_SEPARATION_CELLS, 9);
+
+    let closest = Infinity;
+    for (let tick = 0; tick < APPROACH_TICKS; tick++) {
+      advanceLurking(world, TICK_DT);
+      closest = Math.min(closest, gap());
+    }
+
+    expect(closest).toBeGreaterThanOrEqual(COMBINED_RADII_CELLS - COMBINED_STEP_CELLS);
+  });
+
+  it('is the occupant list that does it: without one they swim through each other', () => {
+    // THE CONTROL, and the state this plugin shipped in. Same pair, same
+    // headings, same world — `advanceMonster` called directly, which is the
+    // pre-2026-08-21 call with no occupants, so neither can see the other.
+    const world = openSea();
+    installPair();
+
+    let closest = Infinity;
+    for (let tick = 0; tick < APPROACH_TICKS; tick++) {
+      for (const monster of livingMonsters()) advanceMonster(world, monster, TICK_DT);
+      closest = Math.min(closest, gap());
+    }
+
+    // They met. (They cannot pass THROUGH each other and separate again: with
+    // no noise both hold their heading, so they close until they are coincident
+    // and then keep going — either way the gap collapses to nothing like the
+    // seven cells the bodies claim.)
+    expect(closest).toBeLessThan(1);
   });
 });
