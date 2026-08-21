@@ -12,7 +12,7 @@
 // on clean shutdown. This file owns the retention half; the scheduler in
 // index.ts owns the cadence half.
 
-import { isValidHeight, MAX_HEIGHT, MIN_HEIGHT } from '@terrace/shared';
+import { isValidHeight, MAX_HEIGHT, MIN_HEIGHT, type RestorePoint } from '@terrace/shared';
 import DatabaseConstructor, { type Database, type Statement } from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -34,9 +34,17 @@ import { decodeHeights, encodeHeights } from './codec.ts';
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
 /**
- * Rolling history depth. 10 at the default 60 s cadence is ten minutes of
- * undo-by-hand for a self-hoster whose world was wrecked, at ~512 KB each for a
- * 512² world (~5 MB total) — cheap enough to keep, deep enough to be useful.
+ * DEFAULT rolling history depth. 10 at the default 60 s cadence is ten minutes
+ * of undo-by-hand for a self-hoster whose world was wrecked, at ~512 KB each
+ * for a 512² world (~5 MB total) — cheap enough to keep, deep enough to be
+ * useful.
+ *
+ * NOW A DEFAULT RATHER THAN THE POLICY (2026-08-21, world rollback). The
+ * original decision (open question 4, 2026-08-13) is unchanged and still the
+ * default; what changed is that a self-hoster can now SEE this history in the
+ * game and restore from it, which makes its depth something they have an
+ * opinion about. SNAPSHOT_RETENTION in the environment moves it — see
+ * config.ts, and MAX_SNAPSHOT_RETENTION for the ceiling and why there is one.
  */
 export const SNAPSHOT_RETENTION = 10;
 
@@ -94,6 +102,15 @@ interface SnapshotRow {
 interface SliceRow {
   plugin: string;
   data: string;
+}
+
+/** The columns listRestorePoints needs — deliberately not `SELECT *`: the mask
+ * and the plugin slices are megabytes it never reads. */
+interface HistoryRow {
+  id: number;
+  created_at: number;
+  world_size: number;
+  heightmap: Uint8Array;
 }
 
 interface TokenMaskRow {
@@ -188,9 +205,20 @@ export class SnapshotStore {
   private readonly selectTokenMasks: Statement;
   private readonly pruneOld: Statement;
   private readonly countAll: Statement;
+  private readonly selectById: Statement;
+  private readonly selectHistory: Statement;
 
-  private constructor(db: Database) {
+  /**
+   * How many snapshots survive a write. Held per-store rather than read from
+   * the module constant at each prune, so a test (and a self-hoster's
+   * SNAPSHOT_RETENTION) changes retention in ONE place instead of at every
+   * call site that could forget to pass it.
+   */
+  private readonly retention: number;
+
+  private constructor(db: Database, retention: number) {
     this.db = db;
+    this.retention = retention;
     this.insertSnapshot = db.prepare(
       `INSERT INTO snapshots
          (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask)
@@ -203,6 +231,13 @@ export class SnapshotStore {
       'INSERT INTO token_masks (snapshot_id, token, mask) VALUES (?, ?, ?)',
     );
     this.selectLatest = db.prepare('SELECT * FROM snapshots ORDER BY id DESC LIMIT 1');
+    this.selectById = db.prepare('SELECT * FROM snapshots WHERE id = ?');
+    // OLDEST FIRST, and that ordering is load-bearing: listRestorePoints
+    // measures each row against the one before it, so it must walk history
+    // forwards even though it hands the result back newest-first.
+    this.selectHistory = db.prepare(
+      `SELECT id, created_at, world_size, heightmap FROM snapshots ORDER BY id ASC`,
+    );
     this.selectSlices = db.prepare(
       'SELECT plugin, data FROM plugin_slices WHERE snapshot_id = ?',
     );
@@ -222,7 +257,7 @@ export class SnapshotStore {
    * created too: `DB_PATH=./data/world.db` must work on a fresh clone where
    * `data/` is gitignored and therefore absent.
    */
-  static open(dbPath: string): SnapshotStore {
+  static open(dbPath: string, retention: number = SNAPSHOT_RETENTION): SnapshotStore {
     if (dbPath !== IN_MEMORY_DB_PATH) {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
@@ -234,7 +269,7 @@ export class SnapshotStore {
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA_DDL);
     addWorldNameColumnIfMissing(db);
-    return new SnapshotStore(db);
+    return new SnapshotStore(db, retention);
   }
 
   /**
@@ -273,7 +308,7 @@ export class SnapshotStore {
         // human would want to eyeball.
         this.insertTokenMask.run(snapshotId, token, Buffer.copyBytesFrom(tokenMask));
       }
-      this.pruneOld.run(SNAPSHOT_RETENTION);
+      this.pruneOld.run(this.retention);
       return snapshotId;
     });
 
@@ -288,7 +323,30 @@ export class SnapshotStore {
    * self-hoster's map, so an unreadable database must stop the boot and say so.
    */
   loadLatest(): WorldSnapshot | null {
-    const row = this.selectLatest.get() as SnapshotRow | undefined;
+    return this.hydrate(this.selectLatest.get() as SnapshotRow | undefined);
+  }
+
+  /**
+   * Loads ONE snapshot by id — the restore-point path (world rollback,
+   * 2026-08-21) — or null when no such row exists (it was pruned, or the id
+   * was never real).
+   *
+   * Shares every check with loadLatest by construction rather than by
+   * discipline: both are one line over `hydrate`, so the schema-version
+   * refusal and the per-cell height validation below cannot be present on one
+   * path and missing on the other. That mattered enough to refactor for — a
+   * rollback is the one operation that takes an OLD row, i.e. the row most
+   * likely to be the corrupt or foreign one those checks exist to catch.
+   */
+  loadSnapshot(id: number): WorldSnapshot | null {
+    return this.hydrate(this.selectById.get(id) as SnapshotRow | undefined);
+  }
+
+  /**
+   * The one place a stored row becomes values the rest of the process trusts.
+   * See loadSnapshot for why both public readers go through it.
+   */
+  private hydrate(row: SnapshotRow | undefined): WorldSnapshot | null {
     if (row === undefined) return null;
 
     if (row.schema_version !== SNAPSHOT_SCHEMA_VERSION) {
@@ -359,6 +417,83 @@ export class SnapshotStore {
       mask,
       pluginSlices,
     };
+  }
+
+  /**
+   * Every retained snapshot as a RESTORE POINT, newest first — the list the
+   * rollback panel shows (world rollback, 2026-08-21).
+   *
+   * WHY IT DECODES EVERY HEIGHTMAP. A list of bare timestamps is useless for
+   * the job this feature exists for: the self-hoster is looking for the moment
+   * something went wrong, and "19:16" and "19:17" look identical while one of
+   * them moved 108 cells and the other moved 11,673. So each point carries how
+   * far the world moved to REACH it, measured against the point before it, and
+   * that measurement can only come from the heights themselves.
+   *
+   * COST, stated because it is the expensive call on this class: one decode
+   * plus one full compare per retained snapshot — at the default retention of
+   * 10 and a 512² world, ~5 MB read and ~2.6 M Int16 comparisons, measured at
+   * ~40 ms on this machine. Bounded by MAX_SNAPSHOT_RETENTION and paid only
+   * when an operator opens the panel, never on a tick or a snapshot write.
+   *
+   * A row whose heightmap does not decode to its own world_size is listed with
+   * NULL deltas rather than dropped or thrown on: it is still a real restore
+   * point (loadSnapshot re-validates it properly before anything is applied),
+   * and hiding it would hide the very row an operator most needs to see.
+   */
+  listRestorePoints(): RestorePoint[] {
+    const rows = this.selectHistory.all() as HistoryRow[];
+    const points: RestorePoint[] = [];
+    let previous: Int16Array | null = null;
+
+    for (const row of rows) {
+      const expectedCells = row.world_size * row.world_size;
+      let current: Int16Array | null = null;
+      try {
+        current = decodeHeights(row.heightmap, expectedCells);
+      } catch {
+        current = null; // see doc comment: listed, un-measured, never hidden
+      }
+
+      // Comparable only when BOTH sides decoded AND describe the same grid.
+      // A world-size change mid-history makes cell i of one row a different
+      // place from cell i of the other, so there is no honest delta to report.
+      const comparable =
+        current !== null && previous !== null && current.length === previous.length;
+
+      let cellsChanged: number | null = null;
+      let maxCellDelta: number | null = null;
+      if (comparable && current !== null && previous !== null) {
+        let changed = 0;
+        let maxDelta = 0;
+        for (let i = 0; i < current.length; i++) {
+          const delta = Math.abs(current[i] - previous[i]);
+          if (delta === 0) continue;
+          changed++;
+          if (delta > maxDelta) maxDelta = delta;
+        }
+        cellsChanged = changed;
+        maxCellDelta = maxDelta;
+      }
+
+      points.push({
+        id: row.id,
+        createdAt: row.created_at,
+        cellsChanged,
+        maxCellDelta,
+        // Overwritten below for the genuinely newest row; `false` here keeps
+        // the flag a fact about position in the list rather than something
+        // each iteration has to know the list's length to compute.
+        isCurrent: false,
+      });
+      if (current !== null) previous = current;
+    }
+
+    if (points.length > 0) points[points.length - 1].isCurrent = true;
+    // Newest first: an operator rolling back is looking for something that
+    // just happened, so the rows they want are the ones they see without
+    // scrolling.
+    return points.reverse();
   }
 
   /** Number of retained snapshots; used by the retention test. */

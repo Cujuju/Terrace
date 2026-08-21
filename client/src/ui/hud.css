@@ -745,3 +745,140 @@ button.world-header {
   color: rgb(255 255 255 / 55%);
   font-variant-numeric: tabular-nums;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESTORE POINTS (world rollback, 2026-08-21). A scrim overlay like the
+   chart's — an open document covers the instruments — reusing .chart-button so
+   the two panels' controls are one vocabulary rather than two lookalikes.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.restore-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  background: rgba(8, 10, 14, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.restore-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(560px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: var(--hud-bg);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+.restore-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.restore-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.restore-key-input {
+  flex: 1 1 12ch;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font: inherit;
+}
+
+.restore-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.restore-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* The one row an operator is most likely looking for gets a border, not a
+   different button: the flag is a hint about the data, never a change in what
+   the control does. */
+.restore-row.flagged {
+  border-color: rgba(220, 140, 60, 0.65);
+}
+
+.restore-when {
+  display: flex;
+  flex-direction: column;
+  min-width: 9ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.restore-age,
+.restore-delta {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.restore-delta {
+  flex: 1 1 16ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.restore-flag {
+  color: rgb(230, 160, 80);
+  opacity: 1;
+}
+
+.restore-confirm {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The commit half of the two-step. Coloured because it is the one control here
+   that discards live world state. */
+.chart-button.danger {
+  border-color: rgba(200, 80, 70, 0.8);
+  color: rgb(240, 170, 160);
+}
+
+.restore-refusal {
+  margin: 0;
+  color: rgb(240, 170, 160);
+}
+
+.restore-done {
+  margin: 0;
+  color: rgb(150, 210, 160);
+}
+
+/* .hud-hint is sized for the 220px-wide corner panels it was written for; in
+   the restore sheet it is a full-width paragraph, so the cap is lifted here
+   rather than removed there — every other user of the class still wants it. */
+.restore-sheet .hud-hint {
+  max-width: none;
+}

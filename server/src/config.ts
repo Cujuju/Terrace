@@ -4,6 +4,7 @@
 // than corrupting a world hours later.
 
 import { CHUNK_SIZE, DEFAULT_WORLD_SIZE } from '@terrace/shared';
+import { SNAPSHOT_RETENTION } from './persistence/snapshot-store.ts';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { logWarn } from './log.ts';
@@ -35,6 +36,38 @@ export const MAX_TICK_HZ = 60;
  */
 export const MIN_SNAPSHOT_INTERVAL_S = 1;
 export const MAX_SNAPSHOT_INTERVAL_S = 3600;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD ROLLBACK (2026-08-21). See shared/src/protocol.ts's WORLD ROLLBACK
+// section for the feature, and world/rollback.ts for what a rollback does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How many restore points to keep. The floor of 1 is "only ever the newest",
+ * which is what the server did before restore points were listable.
+ *
+ * The CEILING is set by the listing, not by the disk: opening the rollback
+ * panel decodes and compares every retained heightmap (see
+ * SnapshotStore.listRestorePoints), so retention is also how much work that
+ * one request is. 100 restore points is ~100 minutes of history at the default
+ * cadence, ~51 MB for a 512² world, and ~400 ms to list — the point past which
+ * a self-hoster would be waiting on their own safety net.
+ */
+export const MIN_SNAPSHOT_RETENTION = 1;
+export const MAX_SNAPSHOT_RETENTION = 100;
+
+/**
+ * Shortest ROLLBACK_KEY the server will start with.
+ *
+ * Rolling the world back is the most destructive thing this server can be
+ * asked to do and v1 has no accounts (§3.7), so this key is the ONLY thing
+ * standing between a bad actor with the invite link and everyone's world. Eight
+ * characters is not a strong secret, but it is past the length a person will
+ * guess by hand or reach by typing at the panel, and refusing at boot is the
+ * one moment the self-hoster is watching. Leaving ROLLBACK_KEY unset is always
+ * allowed and simply turns the feature off.
+ */
+export const MIN_ROLLBACK_KEY_LENGTH = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WORLD DIFFICULTY (decided 2026-08-14 with the owner — see docs/DESIGN.md)
@@ -99,6 +132,19 @@ export interface ServerConfig {
    * path otherwise.
    */
   readonly clientDistPath: string;
+
+  /** How many restore points the database keeps; see MAX_SNAPSHOT_RETENTION. */
+  readonly snapshotRetention: number;
+
+  /**
+   * The operator key that gates world rollback, or null when ROLLBACK_KEY is
+   * unset — which is the DEFAULT, and means the feature is off: with no key
+   * configured, no request to list or apply a restore point is ever honoured.
+   *
+   * NEVER LOGGED. The boot line says whether rollback is enabled, never what
+   * the key is.
+   */
+  readonly rollbackKey: string | null;
 }
 
 /** Thrown for any invalid environment value; the boot path prints and exits. */
@@ -187,6 +233,31 @@ function readClampedInteger(
   return value;
 }
 
+/**
+ * Reads ROLLBACK_KEY. Absent or blank → null (feature off, the default);
+ * present but too short → fatal, per MIN_ROLLBACK_KEY_LENGTH.
+ *
+ * The key is trimmed, and that is a deliberate exception to the "a secret is
+ * matched verbatim" rule applied on the wire (protocol.ts's
+ * validateRollbackKey does NOT trim). The two sit on opposite sides of the
+ * same comparison on purpose: here the value came from a `.env` file a human
+ * edited, where a trailing space is a typo that would otherwise lock them out
+ * of their own rollback with no diagnosable symptom; there it came from a
+ * network peer, where accepting a padded variant would widen the secret.
+ */
+function readRollbackKey(env: NodeJS.ProcessEnv): string | null {
+  const raw = env.ROLLBACK_KEY?.trim() ?? '';
+  if (raw === '') return null;
+  if (raw.length < MIN_ROLLBACK_KEY_LENGTH) {
+    // The message states the length rule and NOT the key.
+    throw new ConfigError(
+      `ROLLBACK_KEY must be at least ${MIN_ROLLBACK_KEY_LENGTH} characters ` +
+        `(got ${raw.length}); unset it entirely to disable world rollback`,
+    );
+  }
+  return raw;
+}
+
 /** Absolute path to `<repo>/server`, shared by every sibling-of-server default. */
 function serverDir(): string {
   // import.meta.url is <repo>/server/src/config.ts → up two levels is <repo>/server.
@@ -250,5 +321,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     }),
     pluginsDir,
     clientDistPath,
+    snapshotRetention: readInteger(env, 'SNAPSHOT_RETENTION', SNAPSHOT_RETENTION, {
+      min: MIN_SNAPSHOT_RETENTION,
+      max: MAX_SNAPSHOT_RETENTION,
+    }),
+    rollbackKey: readRollbackKey(env),
   };
 }

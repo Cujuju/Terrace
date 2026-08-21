@@ -35,6 +35,8 @@ import { Client, type Room } from '@colyseus/sdk';
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  RestorePointListMessage,
+  RollbackResultMessage,
   SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
@@ -44,6 +46,10 @@ import { ROOM_NAME, SERVER_URL } from '../config.ts';
 import { getOrCreatePlayerToken } from '../state/playerToken.ts';
 import {
   MSG_CHUNK_UNLOCK,
+  MSG_RESTORE_POINT_LIST,
+  MSG_RESTORE_POINTS,
+  MSG_ROLLBACK,
+  MSG_ROLLBACK_RESULT,
   MSG_SCULPT,
   MSG_SCULPT_APPLIED,
   MSG_SCULPT_DENIED,
@@ -93,8 +99,21 @@ export interface TerrainSink {
   onSculptApplied(msg: SculptAppliedMessage): void;
 }
 
+/**
+ * Where the two operator answers go (world rollback). Separate from
+ * TerrainSink because these are not terrain: a restore-point list changes
+ * nothing in the world, and the rollback that DOES change it arrives as an
+ * ordinary `snapshot` on the terrain sink instead.
+ */
+export interface OperatorSink {
+  onRestorePointList(msg: RestorePointListMessage): void;
+  onRollbackResult(msg: RollbackResultMessage): void;
+}
+
 export interface ConnectionOptions {
   sink: TerrainSink;
+  /** Optional: a client with no rollback panel needs no operator routing. */
+  operator?: OperatorSink;
   onStatus: (status: ConnectionStatus) => void;
   /**
    * Receives every namespaced plugin message (`<plugin>:<type>`, identified
@@ -127,6 +146,18 @@ export interface Connection {
    * plugin itself goes through its ctx, which owns the namespacing.
    */
   sendPlugin(type: string, payload: unknown): void;
+  /**
+   * Asks the server for its restore points (world rollback). No-op while
+   * offline, like every other send here — there is nothing to list.
+   *
+   * The key is passed through on every request rather than exchanged once for
+   * a session token: the server holds no per-connection authorisation state
+   * beyond a failed-attempt count, which is what keeps the whole gate one
+   * comparison in one place (server/src/world/rollback.ts).
+   */
+  requestRestorePoints(key: string): void;
+  /** Asks the server to roll the world back to `toId`. No-op while offline. */
+  requestRollback(key: string, toId: number): void;
   /** Leaves the room and stops retrying. */
   dispose(): void;
 }
@@ -183,6 +214,17 @@ export function connect(options: ConnectionOptions): Connection {
     });
     joined.onMessage<SculptAppliedMessage>(MSG_SCULPT_APPLIED, (msg) => {
       options.sink.onSculptApplied(msg);
+    });
+
+    // Operator routing (world rollback). Registered unconditionally so the
+    // handler set does not depend on which options were passed; with no
+    // operator sink the answers are simply dropped, which is the right
+    // outcome for a client that never asked.
+    joined.onMessage<RestorePointListMessage>(MSG_RESTORE_POINT_LIST, (msg) => {
+      options.operator?.onRestorePointList(msg);
+    });
+    joined.onMessage<RollbackResultMessage>(MSG_ROLLBACK_RESULT, (msg) => {
+      options.operator?.onRollbackResult(msg);
     });
 
     // Plugin routing. Plugin messages are namespaced `<plugin>:<type>` by the
@@ -262,6 +304,12 @@ export function connect(options: ConnectionOptions): Connection {
       if (room === null) return false;
       room.send(MSG_SCULPT, intent);
       return true;
+    },
+    requestRestorePoints(key: string): void {
+      room?.send(MSG_RESTORE_POINTS, { type: MSG_RESTORE_POINTS, key });
+    },
+    requestRollback(key: string, toId: number): void {
+      room?.send(MSG_ROLLBACK, { type: MSG_ROLLBACK, key, toId });
     },
     sendPlugin(type: string, payload: unknown): void {
       // Dropping while offline mirrors sendSculpt: plugin messages are

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_ROLLBACK_KEY_LENGTH,
   sculptOptionsOf,
+  validateRestorePointsRequest,
+  validateRollbackRequest,
   validateSculptIntent,
   WIRE_DEFAULT_SCULPT_OPTIONS,
 } from '../src/index.ts';
@@ -143,5 +146,69 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD ROLLBACK validators (2026-08-21). These guard the two messages that
+// can destroy a world, so the bar is the same as validateSculptIntent's: a
+// malformed field rejects the WHOLE message rather than being defaulted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('validateRestorePointsRequest', () => {
+  it('accepts a well-formed request', () => {
+    expect(validateRestorePointsRequest({ type: 'restorePoints', key: 'a-real-key' })).toEqual({
+      type: 'restorePoints',
+      key: 'a-real-key',
+    });
+  });
+
+  it('rejects a missing, empty, non-string or over-long key', () => {
+    expect(validateRestorePointsRequest({ type: 'restorePoints' })).toBeNull();
+    expect(validateRestorePointsRequest({ type: 'restorePoints', key: '' })).toBeNull();
+    expect(validateRestorePointsRequest({ type: 'restorePoints', key: 42 })).toBeNull();
+    expect(
+      validateRestorePointsRequest({
+        type: 'restorePoints',
+        key: 'x'.repeat(MAX_ROLLBACK_KEY_LENGTH + 1),
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects anything that is not this message', () => {
+    expect(validateRestorePointsRequest(null)).toBeNull();
+    expect(validateRestorePointsRequest('restorePoints')).toBeNull();
+    expect(validateRestorePointsRequest({ type: 'sculpt', key: 'a-real-key' })).toBeNull();
+  });
+
+  it('does not trim the key', () => {
+    // A padded key must stay padded, so it fails the server's comparison
+    // instead of silently widening the secret to its whitespace variants.
+    expect(validateRestorePointsRequest({ type: 'restorePoints', key: ' key ' })?.key).toBe(
+      ' key ',
+    );
+  });
+});
+
+describe('validateRollbackRequest', () => {
+  it('accepts a well-formed request', () => {
+    expect(validateRollbackRequest({ type: 'rollback', key: 'a-real-key', toId: 7 })).toEqual({
+      type: 'rollback',
+      key: 'a-real-key',
+      toId: 7,
+    });
+  });
+
+  it('rejects a toId that cannot name a row', () => {
+    // Snapshot ids are positive AUTOINCREMENT integers. Each of these would
+    // reach the query as a value that matches nothing, which is a silent
+    // "restore point not found" for a message that was malformed.
+    for (const toId of [0, -1, 1.5, Number.NaN, '3', null, undefined]) {
+      expect(validateRollbackRequest({ type: 'rollback', key: 'a-real-key', toId })).toBeNull();
+    }
+  });
+
+  it('rejects a bad key even when the id is fine', () => {
+    expect(validateRollbackRequest({ type: 'rollback', key: '', toId: 7 })).toBeNull();
   });
 });

@@ -51,6 +51,8 @@ import { For, Show, createSignal, onCleanup, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import { VersionWatermark } from './VersionWatermark.tsx';
+import { RestorePoints, type RollbackActions } from './RestorePoints.tsx';
+import { restorePanelOpen, setRestorePanelOpen } from '../state/rollbackState.ts';
 import {
   BRUSH_PROFILES,
   BRUSH_RADII,
@@ -189,6 +191,12 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 export function Hud(props: {
   /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
   chartSource: () => ChartSource | null;
+  /**
+   * What the restore-points panel may ask the server to do (world rollback).
+   * Passed in rather than imported so the HUD holds no reference to the
+   * connection — the same arrangement as chartSource above.
+   */
+  rollback: RollbackActions;
 }): JSX.Element {
   // The button column's container, for the click-outside dismissal below. A
   // plain let-ref (Solid idiom); assigned once when the section renders.
@@ -452,6 +460,29 @@ export function Hud(props: {
               <path d="M9 4v14M15 6v14" />
             </svg>
           </button>
+          {/* Restore points: the door to world rollback. It sits in the same
+              column as the chart and the gear because it is the same shape of
+              control — one icon, one thing behind it — and it is an OPERATOR
+              tool, so it deliberately gets no more prominence than that. The
+              clock-with-an-arrow is the conventional "history" glyph, drawn as
+              an inline stroke SVG so it takes the HUD's muted colour like its
+              neighbours rather than an emoji's own. */}
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
+            classList={{ open: restorePanelOpen() }}
+            aria-expanded={restorePanelOpen()}
+            aria-haspopup="dialog"
+            aria-label="Restore points"
+            title="Restore points: put the world back to an earlier moment."
+            onClick={() => setRestorePanelOpen(!restorePanelOpen())}
+          >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7" />
+              <path d="M3 4v5h5" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+          </button>
           <button
             type="button"
             class="hud-panel hud-settings-button"
@@ -530,6 +561,13 @@ export function Hud(props: {
           draw (its onMount charts the world of that moment). */}
       <Show when={chartOpen()}>
         <Cartographer source={props.chartSource} />
+      </Show>
+
+      {/* The restore-points overlay, mounted only while open — the panel asks
+          the server for nothing until the operator types a key and presses
+          List, so mounting it costs one empty sheet. */}
+      <Show when={restorePanelOpen()}>
+        <RestorePoints actions={props.rollback} />
       </Show>
 
     </div>

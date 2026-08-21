@@ -10,10 +10,13 @@ import {
   DEFAULT_SNAPSHOT_INTERVAL_S,
   DEFAULT_TICK_HZ,
   DEFAULT_WORLD_DIFFICULTY,
+  MAX_SNAPSHOT_RETENTION,
   MAX_WORLD_DIFFICULTY,
+  MIN_ROLLBACK_KEY_LENGTH,
   MIN_WORLD_DIFFICULTY,
   loadConfig,
 } from '../src/config.ts';
+import { SNAPSHOT_RETENTION } from '../src/persistence/snapshot-store.ts';
 
 describe('loadConfig', () => {
   it('applies the documented defaults when the environment is empty', () => {
@@ -150,5 +153,49 @@ describe('loadConfig — WORLD_DIFFICULTY', () => {
     expect(() => loadConfig({ WORLD_DIFFICULTY: 'hard' })).toThrow(ConfigError);
     expect(() => loadConfig({ WORLD_DIFFICULTY: '50.5' })).toThrow(/must be an integer/);
     expect(() => loadConfig({ WORLD_DIFFICULTY: '50abc' })).toThrow(/must be an integer/);
+  });
+});
+
+describe('ROLLBACK_KEY and SNAPSHOT_RETENTION (world rollback)', () => {
+  it('defaults to rollback disabled', () => {
+    // The DEFAULT deployment cannot be rolled back by anyone, which is the
+    // whole safety argument for a shared secret in a game with no accounts.
+    expect(loadConfig({}).rollbackKey).toBeNull();
+  });
+
+  it('treats a blank key as unset rather than as an empty secret', () => {
+    expect(loadConfig({ ROLLBACK_KEY: '   ' }).rollbackKey).toBeNull();
+  });
+
+  it('trims a key from the environment', () => {
+    // A trailing space in a .env file is a typo, not part of the secret — see
+    // readRollbackKey on why this side trims and the wire side does not.
+    expect(loadConfig({ ROLLBACK_KEY: '  a-real-key  ' }).rollbackKey).toBe('a-real-key');
+  });
+
+  it('refuses to boot with a key shorter than the minimum', () => {
+    expect(() => loadConfig({ ROLLBACK_KEY: 'short' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ROLLBACK_KEY: 'short' })).toThrow(
+      new RegExp(`at least ${MIN_ROLLBACK_KEY_LENGTH} characters`),
+    );
+  });
+
+  it('never puts the key in the error message', () => {
+    // The one place a bad key is reported is the one place it must not be
+    // printed: boot logs get pasted into issues.
+    const secret = 'oops';
+    expect(() => loadConfig({ ROLLBACK_KEY: secret })).not.toThrow(new RegExp(secret));
+  });
+
+  it('defaults retention to the store default and honours the bounds', () => {
+    expect(loadConfig({}).snapshotRetention).toBe(SNAPSHOT_RETENTION);
+    expect(loadConfig({ SNAPSHOT_RETENTION: '50' }).snapshotRetention).toBe(50);
+    // Out of range is FATAL, not clamped: retention is not a scale — it is how
+    // much history exists, and silently keeping 100 when the operator asked
+    // for 5000 would misreport the safety net they think they have.
+    expect(() => loadConfig({ SNAPSHOT_RETENTION: '0' })).toThrow(ConfigError);
+    expect(() =>
+      loadConfig({ SNAPSHOT_RETENTION: String(MAX_SNAPSHOT_RETENTION + 1) }),
+    ).toThrow(ConfigError);
   });
 });

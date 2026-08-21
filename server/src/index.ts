@@ -22,6 +22,7 @@ import { PluginHost } from './plugins/host.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
 import { ROOM_NAME, TerraceRoom, bindRoomContext } from './net/terrace-room.ts';
+import { RollbackService } from './world/rollback.ts';
 import { World } from './world/world.ts';
 
 const MILLISECONDS_PER_SECOND = 1000;
@@ -131,7 +132,7 @@ async function main(): Promise<void> {
   // Plugins load before the world so a load failure costs nothing but a boot.
   const plugins = await discoverPlugins(config.pluginsDir);
 
-  const store = SnapshotStore.open(config.dbPath);
+  const store = SnapshotStore.open(config.dbPath, config.snapshotRetention);
   const { world, pluginSlices } = openWorld(config, store);
   // The name is how a self-hoster tells one of their worlds from another in a
   // log; it is fixed for the life of the world, so it is stated once at boot.
@@ -172,8 +173,28 @@ async function main(): Promise<void> {
     }
   }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
 
+  // WORLD ROLLBACK (2026-08-21). Constructed here, at the one place that holds
+  // the world, the plugin host and the store together — the three things a
+  // rewind has to move in step (see world/rollback.ts).
+  const rollback = new RollbackService({
+    world,
+    host,
+    store,
+    key: config.rollbackKey,
+    retention: config.snapshotRetention,
+    intervalS: config.snapshotIntervalS,
+  });
+  // States WHETHER rollback is available, never the key itself. A self-hoster
+  // who set ROLLBACK_KEY needs to see that it took effect; nobody needs to see
+  // the secret in a log file.
+  logInfo(
+    rollback.enabled
+      ? `world rollback is enabled (${config.snapshotRetention} restore points kept)`
+      : 'world rollback is disabled (set ROLLBACK_KEY to enable it)',
+  );
+
   // Bind before define(): a room can be created as soon as the server listens.
-  bindRoomContext({ world, host });
+  bindRoomContext({ world, host, rollback });
   // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
   // (@colyseus/core ServerOptions.greet, default true).
   const serverOptions: ServerOptions = { greet: false };

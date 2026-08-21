@@ -13,25 +13,38 @@
 //    plain protocol objects and never serialize by hand.
 
 import { Room, type Client } from '@colyseus/core';
-import type {
-  ChunkUnlockMessage,
-  JoinSnapshotMessage,
-  TerrainDiffMessage,
+import {
+  validateRestorePointsRequest,
+  validateRollbackRequest,
+  type ChunkUnlockMessage,
+  type JoinSnapshotMessage,
+  type RestorePointListMessage,
+  type RollbackResultMessage,
+  type TerrainDiffMessage,
 } from '@terrace/shared';
 import { logInfo } from '../log.ts';
 import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
 import type { PluginHost } from '../plugins/host.ts';
 import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
+import type { RollbackService } from '../world/rollback.ts';
 import type { World } from '../world/world.ts';
+import { buildJoinSnapshot } from './join-snapshot.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
-import { SERVER_VERSION } from '../version.ts';
 
 /** The matchmaking name clients join. Agreed with the Phase 1 client agent. */
 export const ROOM_NAME = 'world';
 
-/** Wire name of the one client → server core message. */
+/** Wire name of the one client → server core GAMEPLAY message. */
 export const SCULPT_MESSAGE_TYPE = 'sculpt';
+
+/**
+ * Wire names of the two client → server core OPERATOR messages (world
+ * rollback, 2026-08-21). Both carry the operator key and are answered to their
+ * sender alone; neither touches the intent pipeline.
+ */
+export const RESTORE_POINTS_MESSAGE_TYPE = 'restorePoints';
+export const ROLLBACK_MESSAGE_TYPE = 'rollback';
 
 /**
  * Server → client message map. The Colyseus message name is the payload's own
@@ -43,6 +56,8 @@ export interface TerraceServerMessages {
   snapshot: JoinSnapshotMessage;
   terrainDiff: TerrainDiffMessage;
   chunkUnlock: ChunkUnlockMessage;
+  restorePointList: RestorePointListMessage;
+  rollbackResult: RollbackResultMessage;
   [pluginMessage: string]: unknown;
 }
 
@@ -55,6 +70,8 @@ export type TerraceClient = Client<{
 export interface RoomContext {
   readonly world: World;
   readonly host: PluginHost;
+  /** Owns the operator gate and the rewind itself; see world/rollback.ts. */
+  readonly rollback: RollbackService;
 }
 
 /**
@@ -106,6 +123,39 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       );
       // Rejections are intentionally silent — see the pipeline's comment on why
       // telling a client *why* an intent failed leaks the unlock mask.
+    });
+
+    // OPERATOR MESSAGES (world rollback). Deliberately NOT routed through the
+    // intent pipeline: they are not intents, they carry no player attribution
+    // beyond the connection they arrived on, and — unlike a sculpt — they are
+    // always answered, because the operator needs to be told why a refusal
+    // happened (see RollbackService.listRestorePoints).
+    //
+    // A player object is not required for either: the gate is the key, not the
+    // identity, and demanding a joined player would only add a way for the
+    // panel to fail silently. The CONNECTION id is what the failed-attempt
+    // throttle is keyed by, and that exists from the moment the socket does.
+    this.onMessage(RESTORE_POINTS_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+      const request = validateRestorePointsRequest(message);
+      if (request === null) return; // malformed: dropped, like every bad message
+      client.send(
+        'restorePointList',
+        this.context.rollback.listRestorePoints(client.sessionId, request.key),
+      );
+    });
+
+    this.onMessage(ROLLBACK_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+      const request = validateRollbackRequest(message);
+      if (request === null) return;
+      const result = this.context.rollback.rollback(
+        client.sessionId,
+        request.key,
+        request.toId,
+      );
+      // The receipt goes to the operator; every OTHER client learns about a
+      // successful rollback from the fresh snapshot the service already sent
+      // them (RollbackService step 7).
+      client.send('rollbackResult', result);
     });
 
     // Namespaced plugin handlers. Registered once at create; the plugin set is
@@ -169,17 +219,10 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // World IDENTITY rides along with the geometry: the name and the difficulty
     // rating are both constant for the life of the world, so the join snapshot
     // is the only message that ever needs to carry them (design 2026-08-14).
-    const snapshot: JoinSnapshotMessage = {
-      type: 'snapshot',
-      worldSize: this.context.world.size,
-      worldName: this.context.world.name,
-      difficulty: this.context.world.difficulty,
-      // Build identity rides the same message as world identity: constant for
-      // the life of the process, needed exactly once per join (the client's
-      // skew watermark — see shared/protocol.ts on the field).
-      serverVersion: SERVER_VERSION,
-      chunks: this.context.world.chunkPayloadsForToken(player.token),
-    };
+    // Built by the shared builder, not inline: a rollback hands every client
+    // this same message, and two hand-rolled copies of "which chunks may this
+    // token see" is how a server starts leaking terrain (net/join-snapshot.ts).
+    const snapshot = buildJoinSnapshot(this.context.world, player.token);
     client.send('snapshot', snapshot);
 
     // Only AFTER the snapshot: a plugin's onPlayerJoin may broadcast or unlock
@@ -189,6 +232,9 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
   }
 
   override onLeave(client: TerraceClient): void {
+    // The failed-attempt record is keyed by connection id, so it is dropped
+    // with the connection — see RollbackService.forgetClient.
+    this.context.rollback.forgetClient(client.sessionId);
     const player = this.context.world.removePlayer(client.sessionId);
     if (player) {
       this.context.host.playerLeft(player);

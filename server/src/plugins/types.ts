@@ -256,6 +256,17 @@ export type PluginMessageHandler = (
  * `save()` must return a JSON-serializable value (it is stored as JSON text
  * next to the heightmap blob); `load()` receives back exactly what `save()`
  * produced, or is never called if this plugin had no slice in that snapshot.
+ *
+ * RE-RUNNABLE, NOT ONCE-PER-PROCESS (world rollback, 2026-08-21). `load()`
+ * followed by `onWorldCreate()` may run again on a LIVE world, when an
+ * operator rolls the world back to an earlier restore point. Both must
+ * therefore REPLACE this plugin's state rather than add to it: a load that
+ * appends to a list, resumes a counter, or spawns a second copy of something
+ * would double it on every rollback. Every plugin in this repo already
+ * satisfies this — each `onWorldCreate` assigns fresh state or zeroes its
+ * counters — and a rollback replays exactly the boot pair, in the boot order,
+ * so "what a fresh boot from this snapshot would produce" is the whole
+ * contract to hold to. See server/src/world/rollback.ts.
  */
 export interface PersistenceSlice {
   save(): unknown;

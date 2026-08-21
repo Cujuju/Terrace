@@ -231,13 +231,21 @@ export interface JoinSnapshotMessage {
  * older client stays valid; `sculptOptionsOf` states what an omitted field
  * means, once, for every reader.
  */
-export type ClientMessage = SculptIntent;
+export type ClientMessage =
+  | SculptIntent
+  // Operator traffic, not gameplay: the two rollback requests carry a shared
+  // secret and are answered to their sender alone (see the WORLD ROLLBACK
+  // section at the foot of this file).
+  | RestorePointsRequestMessage
+  | RollbackRequestMessage;
 export type ServerMessage =
   | TerrainDiffMessage
   | ChunkUnlockMessage
   | JoinSnapshotMessage
   | SculptAppliedMessage
-  | SculptDeniedMessage;
+  | SculptDeniedMessage
+  | RestorePointListMessage
+  | RollbackResultMessage;
 
 /**
  * Validates an untrusted inbound sculpt intent. Returns the typed intent, or
@@ -299,4 +307,176 @@ export function validateSculptIntent(
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD ROLLBACK (2026-08-21). Restore points — "put the world back the way it
+// was at 19:16" — after a bad edit or a misbehaving plugin terraform.
+//
+// CORE, NOT A PLUGIN, and that is the same call §3.6 already made for
+// snapshots: a restore point IS a snapshot, the thing core already writes
+// every SNAPSHOT_INTERVAL_S, so listing and re-applying one is persistence
+// housekeeping rather than a game mechanic. Nothing here attaches a rule, a
+// cost or a reward to rolling back (design §3.5, "nothing gamey in core").
+//
+// OPERATOR-GATED, NOT PLAYER-GATED. v1 has no accounts (§3.7), so the server
+// cannot tell the self-hoster from anyone holding the invite link, and
+// rolling the world back is the single most destructive thing it can be asked
+// to do. The gate is therefore a shared secret the self-hoster puts in their
+// environment (ROLLBACK_KEY) and types into the panel — the same trust model
+// as SHARE_URL, and deliberately NOT a new identity system. With no key
+// configured the feature is OFF, so a default deployment cannot be rolled
+// back by anyone at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Upper bound on an inbound operator key, in UTF-16 code units. Exists only so
+ * a hostile client cannot make the server hold a megabyte string per message;
+ * it is not a policy on how long a real key should be.
+ */
+export const MAX_ROLLBACK_KEY_LENGTH = 256;
+
+/**
+ * One restore point a world can be returned to: a snapshot core already wrote,
+ * plus the two numbers that let a human RECOGNISE it in a list.
+ *
+ * `cellsChanged`/`maxCellDelta` are the whole point of the list, not
+ * decoration. An ordinary player stroke moves tens of cells; the incident this
+ * feature was built for (a relic that terraformed 11,673 cells at once) is
+ * obvious at a glance against that baseline and invisible from timestamps
+ * alone. Both are measured against the PREVIOUS retained restore point, and
+ * both are null for the oldest one — it has no predecessor in the database to
+ * be compared with, and inventing a zero there would read as "nothing
+ * happened" rather than "not known".
+ */
+export interface RestorePoint {
+  /** Snapshot id; what a rollback request names. */
+  id: number;
+  /** When it was written, epoch milliseconds. */
+  createdAt: number;
+  /** Cells whose height differs from the previous restore point, or null. */
+  cellsChanged: number | null;
+  /** Largest single-cell height difference from the previous point, or null. */
+  maxCellDelta: number | null;
+  /** True for the newest point — the state the live world was last saved at. */
+  isCurrent: boolean;
+}
+
+/** Client → server: "list the restore points". Answered to the sender only. */
+export interface RestorePointsRequestMessage {
+  type: 'restorePoints';
+  /** The operator key; see MAX_ROLLBACK_KEY_LENGTH and the section comment. */
+  key: string;
+}
+
+/**
+ * Why a rollback request was refused. A CLOSED SET, so the panel can say
+ * something useful without the server ever composing player-facing prose.
+ *
+ * `disabled` and `badKey` are deliberately distinguishable: a self-hoster who
+ * has not set ROLLBACK_KEY needs to be told THAT, or they will retype a key
+ * that was never going to work. This leaks nothing a self-hoster does not
+ * already know about their own deployment, and — unlike the sculpt mask
+ * rejections, which stay silent on purpose — a restore point is not terrain,
+ * so there is no hidden world state for the answer to be an oracle for.
+ */
+export type RollbackRefusal =
+  /** No ROLLBACK_KEY is configured, so the feature is off entirely. */
+  | 'disabled'
+  /** A key was configured and this is not it. */
+  | 'badKey'
+  /** Too many wrong keys from this connection; it is being slowed down. */
+  | 'throttled'
+  /** The named snapshot is not in the database (pruned, or never existed). */
+  | 'unknownRestorePoint'
+  /** The snapshot belongs to a differently-sized world. */
+  | 'sizeMismatch'
+  /** The restore was attempted and threw; the world is unchanged. */
+  | 'failed';
+
+/** Server → the requesting client only: the restore points, newest first. */
+export interface RestorePointListMessage {
+  type: 'restorePointList';
+  /** Newest first. Empty only on a world that has never been snapshotted. */
+  points: RestorePoint[];
+  /**
+   * How many restore points this server retains, and how often it writes one.
+   * Carried so the panel can state the real depth of the safety net ("about
+   * 10 minutes") instead of the client guessing from two timestamps.
+   */
+  retention: number;
+  intervalS: number;
+  /** Present INSTEAD of a useful list when the request was refused. */
+  refused?: RollbackRefusal;
+}
+
+/** Client → server: "put the world back to this restore point". */
+export interface RollbackRequestMessage {
+  type: 'rollback';
+  key: string;
+  /** The RestorePoint.id to return to. */
+  toId: number;
+}
+
+/**
+ * Server → the requesting client only: what happened.
+ *
+ * A SUCCESSFUL rollback is also announced to EVERY connected client, but not
+ * with this message — they each receive a fresh `snapshot`, which is the
+ * message that actually replaces the world they are looking at (the client's
+ * rejoin path already handles it). This one is the operator's receipt.
+ */
+export interface RollbackResultMessage {
+  type: 'rollbackResult';
+  ok: boolean;
+  /** The restore point the world is now at, when `ok`. */
+  toId?: number;
+  /**
+   * Where the pre-rollback world was saved, when `ok`. A rollback is itself
+   * undoable: the state being rolled AWAY from is written as a restore point
+   * first, so a mis-aimed rollback costs one more click, not the world.
+   */
+  undoId?: number;
+  /** Why it did not happen, when `!ok`. */
+  refused?: RollbackRefusal;
+}
+
+/**
+ * Validates an untrusted operator key. Returns the key, or null when it is
+ * missing, not a string, or longer than MAX_ROLLBACK_KEY_LENGTH.
+ *
+ * Deliberately does NOT trim: a key is a secret, and silently accepting
+ * " secret " for "secret" would widen it for no benefit.
+ */
+function validateRollbackKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > MAX_ROLLBACK_KEY_LENGTH) return null;
+  return value;
+}
+
+/** Validates an inbound restore-point list request; null if malformed. */
+export function validateRestorePointsRequest(
+  msg: unknown,
+): RestorePointsRequestMessage | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (m.type !== 'restorePoints') return null;
+  const key = validateRollbackKey(m.key);
+  if (key === null) return null;
+  return { type: 'restorePoints', key };
+}
+
+/** Validates an inbound rollback request; null if malformed. */
+export function validateRollbackRequest(msg: unknown): RollbackRequestMessage | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  if (m.type !== 'rollback') return null;
+  const key = validateRollbackKey(m.key);
+  if (key === null) return null;
+  // Snapshot ids are SQLite AUTOINCREMENT rowids: positive integers. A float
+  // or a negative cannot name a row, so it is rejected with the whole message
+  // rather than reaching the query as a value that silently matches nothing.
+  const { toId } = m;
+  if (!Number.isSafeInteger(toId) || (toId as number) <= 0) return null;
+  return { type: 'rollback', key, toId: toId as number };
 }

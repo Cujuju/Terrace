@@ -1435,6 +1435,85 @@ export class World {
     this.changedSinceSnapshot = false;
   }
 
+  /**
+   * Replaces this LIVE world's terrain and territory with a stored snapshot's
+   * — the world-rollback path (2026-08-21). `restore` builds a new World at
+   * boot; this one rewinds the World every plugin, the room and the tick loop
+   * are already holding a reference to, which is why it mutates in place
+   * instead of returning a replacement.
+   *
+   * WHAT IT DOES NOT DO, and both omissions are deliberate:
+   *
+   *  - It does not touch `name` or `difficulty`. Every snapshot in one
+   *    database is one world; a rollback moves that world back in time, it
+   *    does not swap it for another, so its identity is not in play. (Were a
+   *    stored name ever to differ, the LIVE name is the honest one — see the
+   *    field's doc comment on why the name is fixed for a world's life.)
+   *  - It does not notify anybody. The caller owns the ordering of "write the
+   *    safety snapshot, rewind, restore plugin state, re-announce to clients",
+   *    and that sequence is stated once, in world/rollback.ts. A world that
+   *    broadcast from in here would broadcast BEFORE the plugins holding the
+   *    other half of the world's state had been rewound.
+   *
+   * Throws (leaving the world untouched) if the snapshot describes a
+   * differently-sized world: every stored index would shift, exactly as at
+   * boot. Both length checks run BEFORE the first write for that reason — a
+   * half-applied rewind is the one outcome with no way back.
+   */
+  rewindTo(
+    cells: Int16Array,
+    mask: Uint8Array,
+    tokenMasks: ReadonlyMap<string, Uint8Array> = new Map(),
+  ): void {
+    if (cells.length !== this.map.cells.length) {
+      throw new RangeError(
+        `restore point holds ${cells.length} cells, this ${this.size}² world needs ` +
+          `${this.map.cells.length}`,
+      );
+    }
+    if (mask.length !== this.mask.length) {
+      throw new RangeError(
+        `restore point holds a ${mask.length}-byte mask, this ${this.size}² world needs ` +
+          `${this.mask.length}`,
+      );
+    }
+
+    this.map.cells.set(cells);
+    this.mask.set(mask);
+
+    // Per-token masks are REPLACED, not merged. A merge would keep territory
+    // that was only ever unlocked after the restore point — i.e. it would
+    // leave a player standing on ground this world no longer says they have,
+    // which is precisely the inconsistency the rollback is undoing. A row
+    // sized for another world is dropped rather than thrown on, the same
+    // degrade-don't-brick rule `restore` applies and for the same reason.
+    this.masksByToken.clear();
+    for (const [token, tokenMask] of tokenMasks) {
+      if (tokenMask.length !== this.mask.length) continue;
+      const copy = createChunkMask(this.size);
+      copy.set(tokenMask);
+      this.masksByToken.set(token, copy);
+    }
+
+    // Every derived cache now describes terrain that no longer exists.
+    // Invalidated by hand here rather than by calling the sculpt path's
+    // invalidation, because a rewind is not a sculpt: there is no diff to
+    // report and no throttle window worth honouring — the next reader must
+    // recompute, immediately, however recently the last recompute ran. Hence
+    // NEGATIVE_INFINITY rather than merely setting the stale flag.
+    this.riverNetworkCache = null;
+    this.riverNetworkComputedAtMs = Number.NEGATIVE_INFINITY;
+    this.riverNetworkStale = true;
+    this.freshwaterCache = null;
+    this.freshwaterCacheNetwork = null;
+
+    // The world in memory now differs from whatever was last written, and the
+    // caller is about to write it — but marking it here keeps the invariant
+    // true even if that write fails, so the scheduler retries instead of
+    // leaving a rewound world with nothing on disk that matches it.
+    this.changedSinceSnapshot = true;
+  }
+
   /** Installs the network sink (room create) or removes it (room dispose). */
   setSink(sink: MessageSink): void {
     this.sink = sink;

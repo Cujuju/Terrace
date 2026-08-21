@@ -14,6 +14,10 @@
 import type {
   ChunkUnlockMessage,
   JoinSnapshotMessage,
+  RestorePointListMessage,
+  RestorePointsRequestMessage,
+  RollbackRequestMessage,
+  RollbackResultMessage,
   SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
@@ -41,3 +45,23 @@ export const MSG_SCULPT_DENIED: SculptDeniedMessage['type'] = 'sculptDenied';
  * answer contract above — see SculptAppliedMessage in shared/src/protocol.ts.
  */
 export const MSG_SCULPT_APPLIED: SculptAppliedMessage['type'] = 'sculptApplied';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD ROLLBACK (2026-08-21). Operator traffic, not gameplay — see the WORLD
+// ROLLBACK section in shared/src/protocol.ts. A successful rollback is NOT
+// announced with a message of its own: the server re-sends every client a
+// plain `snapshot`, which the client already treats as "the world you have has
+// been replaced" (the rejoin path in client/src/world.ts).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Client → server: "list the restore points", carrying the operator key. */
+export const MSG_RESTORE_POINTS: RestorePointsRequestMessage['type'] = 'restorePoints';
+
+/** Server → the requesting client: the restore points, or why it was refused. */
+export const MSG_RESTORE_POINT_LIST: RestorePointListMessage['type'] = 'restorePointList';
+
+/** Client → server: "put the world back to this restore point". */
+export const MSG_ROLLBACK: RollbackRequestMessage['type'] = 'rollback';
+
+/** Server → the requesting client: the operator's receipt. */
+export const MSG_ROLLBACK_RESULT: RollbackResultMessage['type'] = 'rollbackResult';

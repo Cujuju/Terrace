@@ -14,6 +14,7 @@ import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { createWorld } from './world.ts';
 import { brushRadius, setConnectionStatus } from './state/hudState.ts';
+import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
@@ -42,6 +43,13 @@ const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
 
 const connection = connect({
   sink: world,
+  // Operator answers (world rollback) go straight to the panel's state, the
+  // same documented "imperative layer writes the signals" pattern the terrain
+  // sink uses for world identity.
+  operator: {
+    onRestorePointList: (msg) => applyRestorePointList(msg),
+    onRollbackResult: (msg) => applyRollbackResult(msg),
+  },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
 });
@@ -84,7 +92,18 @@ viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadiu
 // other viewport frame hooks, because the viewport is what it measures.
 startFrameRateMeter(viewport.onFrame);
 
-render(() => <Hud chartSource={() => world.chartSource()} />, hudRoot);
+render(
+  () => (
+    <Hud
+      chartSource={() => world.chartSource()}
+      rollback={{
+        list: (key) => connection.requestRestorePoints(key),
+        apply: (key, toId) => connection.requestRollback(key, toId),
+      }}
+    />
+  ),
+  hudRoot,
+);
 
 // Dev-only handle for headless smoke automation: lets a driver read the real
 // camera matrices and world state instead of guessing them. import.meta.env.DEV
