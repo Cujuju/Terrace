@@ -192,6 +192,33 @@ export const KRAKEN_ROUT_WOUNDS = 54;
 export const KRAKEN_WOUND_HEAL_PER_SECOND = 2;
 
 /**
+ * How far from a settlement water is looked for before it counts as COASTAL,
+ * and how much of it there must be.
+ *
+ * A DELIBERATE RESTATEMENT of plugins/structures/client/site.ts's
+ * COASTAL_SEARCH_RADIUS_CELLS and COASTAL_MIN_WATER_CELLS — the same tight
+ * disc (`dx² + dy² < r·(r−1)`, 36 cells at radius 4) and the same two-cell
+ * minimum that plugin uses to decide a settlement is a fishing village, give
+ * it a harbour and anchor its skiffs. Restated and not imported for the usual
+ * reason (plugins are independently installable), but the semantics MUST
+ * match: the settlements that visibly float skiffs are the settlements that
+ * send boats, and a player looking at a harbour has every right to expect a
+ * fleet to come out of it.
+ *
+ * THIS REPLACES A WET 4-NEIGHBOUR TEST, which is why the numbers are stated
+ * here rather than left implicit in the launch code. That test — "a settlement
+ * with no adjacent water cell is inland" — sounded like a definition of
+ * coastal and was really a definition of *waterfront*. Measured against the
+ * owner's live world it called all seven tier-1 settlements inland, including
+ * one the structures plugin had already given a harbour and skiffs to, whose
+ * water was three cells away. No boat was ever built. Settlements sit on
+ * BUILDABLE ground (suitability.ts), which the shoreline itself rarely is, so
+ * "coastal" essentially never means "adjacent".
+ */
+export const COASTAL_SEARCH_RADIUS_CELLS = 4;
+export const COASTAL_MIN_WATER_CELLS = 2;
+
+/**
  * Furthest a village will send boats, in cells.
  *
  * 64 — four chunks, the same order as monsters' own minimum lair (nine chunks

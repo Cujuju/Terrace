@@ -18,6 +18,8 @@ import {
   BOAT_REBUILD_SECONDS,
   BOAT_SPEED_CELLS_PER_SECOND,
   BOAT_WOUNDS_PER_SECOND,
+  COASTAL_MIN_WATER_CELLS,
+  COASTAL_SEARCH_RADIUS_CELLS,
   KRAKEN_ROUT_WOUNDS,
   KRAKEN_SINKS_BOAT_EVERY_SECONDS,
   KRAKEN_WOUND_HEAL_PER_SECOND,
@@ -144,24 +146,52 @@ export function isSailable(world: BoatWorld, cellX: number, cellY: number): bool
 }
 
 /**
- * The water cell a village launches from: the nearest sailable 4-neighbour of
- * the settlement itself.
+ * Offsets of the coastal search disc, excluding the centre — built once at
+ * module load. The TIGHT disc `dx² + dy² < r·(r−1)`, which is the shape
+ * structures' own site survey uses and the shape shared's brush footprint
+ * uses; matching it is what keeps "has a harbour" and "sends boats" the same
+ * set of settlements.
+ */
+const COASTAL_DISC: ReadonlyArray<readonly [number, number]> = (() => {
+  const threshold = COASTAL_SEARCH_RADIUS_CELLS * (COASTAL_SEARCH_RADIUS_CELLS - 1);
+  const offsets: Array<readonly [number, number]> = [];
+  for (let dy = -COASTAL_SEARCH_RADIUS_CELLS; dy <= COASTAL_SEARCH_RADIUS_CELLS; dy++) {
+    for (let dx = -COASTAL_SEARCH_RADIUS_CELLS; dx <= COASTAL_SEARCH_RADIUS_CELLS; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      if (dx * dx + dy * dy < threshold) offsets.push([dx, dy]);
+    }
+  }
+  // NEAREST FIRST, so the launch cell below is the closest water without a
+  // second pass — and so a village's boats always put out from the same side
+  // of it, which is what makes a fleet look like it belongs to that harbour.
+  offsets.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
+  return offsets;
+})();
+
+/**
+ * The water cell a village launches from, or null if it is INLAND.
  *
- * A settlement stands on land, so its own cell is never sailable; a village
- * with no wet neighbour is INLAND and keeps no boats at all, which is how
- * "coastal" is decided without a second event from structures or a notion of
- * coastline this plugin would have to maintain. Null means inland.
+ * Coastal means what structures means by it: at least COASTAL_MIN_WATER_CELLS
+ * sailable cells inside the COASTAL_SEARCH_RADIUS_CELLS disc — see that
+ * constant's comment for why this is not an adjacency test, and what happened
+ * when it was. The launch cell is the nearest of them.
+ *
+ * A settlement stands on buildable ground, so its own cell is never sailable
+ * and the centre is not in the disc.
  */
 export function launchCell(world: BoatWorld, village: Village): KrakenTarget | null {
-  for (const [dx, dy] of [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ]) {
-    const x = village.x + dx!;
-    const y = village.y + dy!;
-    if (isSailable(world, x, y)) return { x, y };
+  let nearest: KrakenTarget | null = null;
+  let found = 0;
+  for (const [dx, dy] of COASTAL_DISC) {
+    const x = village.x + dx;
+    const y = village.y + dy;
+    if (!isSailable(world, x, y)) continue;
+    found++;
+    // COASTAL_DISC is sorted nearest-first, so the first hit is the closest.
+    if (nearest === null) nearest = { x, y };
+    // Stop as soon as the bar is met: the remaining cells cannot change the
+    // answer, and this runs per village per tick.
+    if (found >= COASTAL_MIN_WATER_CELLS) return nearest;
   }
   return null;
 }

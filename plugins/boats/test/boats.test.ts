@@ -14,6 +14,7 @@ import {
   BOAT_ENGAGEMENT_RANGE_CELLS,
   BOAT_REBUILD_SECONDS,
   BOAT_WOUNDS_PER_SECOND,
+  COASTAL_SEARCH_RADIUS_CELLS,
   KRAKEN_ROUT_WOUNDS,
   KRAKEN_SINKS_BOAT_EVERY_SECONDS,
   KRAKEN_WOUND_HEAL_PER_SECOND,
@@ -26,6 +27,7 @@ import {
   fleetSnapshot,
   forgetVillage,
   isSailable,
+  launchCell,
   livingBoats,
   rememberVillage,
   resetFleet,
@@ -204,18 +206,61 @@ describe('villages and their shipyards', () => {
   });
 
   it('an inland village keeps no boats at all', () => {
-    // How "coastal" is decided without structures emitting anything new: a
-    // settlement with no wet 4-neighbour has nowhere to launch from.
-    const world = seaWorld([
-      [VILLAGE_X, VILLAGE_Y],
-      [VILLAGE_X + 1, VILLAGE_Y],
-      [VILLAGE_X - 1, VILLAGE_Y],
-      [VILLAGE_X, VILLAGE_Y + 1],
-      [VILLAGE_X, VILLAGE_Y - 1],
-    ]);
+    // Genuinely inland: dry ground across the WHOLE coastal search disc, not
+    // merely at the settlement's own four neighbours. That weaker fixture is
+    // what let the adjacency bug below ship green.
+    const land: Array<readonly [number, number]> = [];
+    const reach = COASTAL_SEARCH_RADIUS_CELLS;
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) land.push([VILLAGE_X + dx, VILLAGE_Y + dy]);
+    }
+    const world = seaWorld(land);
     rememberVillage(VILLAGE_X, VILLAGE_Y);
     for (let n = 0; n < 2000; n++) advanceFleet(world, null, TICK_DT);
     expect(livingBoats()).toHaveLength(0);
+  });
+
+  it('sends boats from a village whose water is several cells away', () => {
+    // THE REGRESSION (owner, 2026-08-20: "How come I don't see any boats
+    // spawning"). launchCell used to require a wet 4-NEIGHBOUR. Settlements sit
+    // on buildable ground, which the shoreline itself rarely is, so measured
+    // against the live world that test called all seven tier-1 settlements
+    // inland — including one the structures plugin had already given a harbour
+    // and skiffs to, whose water was three cells south. Not one boat was ever
+    // built.
+    //
+    // This fixture is that settlement: dry ground for two cells in every
+    // direction, open sea beyond, so the nearest water is three cells off and
+    // NO 4-neighbour is wet.
+    const land: Array<readonly [number, number]> = [];
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) land.push([VILLAGE_X + dx, VILLAGE_Y + dy]);
+    }
+    const world = seaWorld(land);
+
+    expect(isSailable(world, VILLAGE_X + 1, VILLAGE_Y)).toBe(false);
+    expect(launchCell(world, { x: VILLAGE_X, y: VILLAGE_Y, rebuildSeconds: 0 })).not.toBeNull();
+
+    rememberVillage(VILLAGE_X, VILLAGE_Y);
+    const ticks = Math.ceil((BOAT_REBUILD_SECONDS + 1) / TICK_DT);
+    for (let n = 0; n < ticks; n++) advanceFleet(world, null, TICK_DT);
+    expect(livingBoats()).toHaveLength(1);
+  });
+
+  it('needs more than a single puddle to count as coastal', () => {
+    // COASTAL_MIN_WATER_CELLS, restated from structures: one stray wet cell in
+    // the disc is a pond, not a coastline.
+    const land: Array<readonly [number, number]> = [];
+    const reach = COASTAL_SEARCH_RADIUS_CELLS;
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        // One cell left wet, everything else in the disc dry.
+        if (dx === 2 && dy === 0) continue;
+        land.push([VILLAGE_X + dx, VILLAGE_Y + dy]);
+      }
+    }
+    const world = seaWorld(land);
+    expect(launchCell(world, { x: VILLAGE_X, y: VILLAGE_Y, rebuildSeconds: 0 })).toBeNull();
   });
 
   it('scuttles the boats of a village that is demolished', () => {
