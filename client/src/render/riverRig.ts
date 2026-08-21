@@ -100,19 +100,26 @@ const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 // ── Channel & lake geometry ──────────────────────────────────────────────────
 
 /**
- * Half-width, in cells, of a FLOWING channel — DERIVED from how wide the
- * terrain actually draws a one-cell channel, not chosen.
+ * Half-width, in cells, of a FLOWING channel: half a cell, so the water is one
+ * full cell wide — as wide as the cells the course actually runs through.
  *
- * The terrain's band outline sits CONTOUR_SAMPLE_CLEARANCE's documented
- * quarter of a cell INSIDE the higher of the two cells it separates
- * (terrain/contours.ts). So a channel one cell wide, cut one band below its
- * banks, is rendered as a groove only half a cell across — and the 0.6-cell
- * ribbon this started as had a sixth of its width tucked under the bank caps
- * on each side, which is what made a river look like it stopped and restarted
- * wherever the groove narrowed or turned. Matching the groove is the honest
- * width: the water fills the channel the player can see, exactly.
+ * WAS DERIVED, NOW CHOSEN, and the reason the derivation was dropped is the
+ * same one that governs the lake outline (`appendPoolSurface`). It used to be
+ * `0.5 − CONTOUR_SAMPLE_CLEARANCE / BAND_HEIGHT / 2` — a quarter of a cell —
+ * on the argument that the terrain draws a one-cell channel as a groove only
+ * half a cell across, so anything wider is tucked under the bank caps. True,
+ * and harmless: the bank is opaque and drawn over the water, so the tucked
+ * part is simply not seen. What the narrow width DID cost is that a quarter-
+ * cell ribbon at the bottom of a groove is a few pixels at orbit distance, and
+ * every pinch or step in it reads as a break in the river — measured in the
+ * `stairpools` fixture, where the water is continuous in geometry (proved with
+ * the terrain hidden) and read as a dashed line with it shown.
+ *
+ * A cell wide is the honest maximum: the course occupies those cells, so water
+ * cannot be claiming ground the river does not run through, and wherever the
+ * channel is narrower than that the terrain trims it back for free.
  */
-const FLOW_HALF_WIDTH_CELLS = 0.5 - CONTOUR_SAMPLE_CLEARANCE / BAND_HEIGHT / 2;
+const FLOW_HALF_WIDTH_CELLS = 0.5;
 
 /**
  * Chaikin corner-cutting passes applied to a course's centre-line before it
@@ -628,15 +635,47 @@ const MAX_FALLS_PER_SEGMENT = 64;
  * that still read as "the river stops and restarts" once the height rule and
  * the curtain were right.
  *
- * Reproducing that loop per vertex would mean re-running marching squares for
- * the water (tried as a separable approximation, and it was worse than useless
- * — see `renderedBandAt`). Narrowing through the fall instead is honest about
- * what the terrain shows AND is what water does at a lip: it necks in as it
- * goes over. Half a cell is the distance the pinch actually lasts; 0.45 is the
- * narrowest that still reads as a river rather than a thread.
+ * SUPERSEDED 2026-08-21 (owner: a chain of pools "should join smoothly").
+ * FALL_TAPER_MIN_SCALE is 1 — no pinch at all — because the premise changed
+ * twice under it. The lip is now placed on the terrain's own drawn contour
+ * (`makeLipLocator`), so the water no longer overshoots into the hillside by
+ * the amount this was compensating for; and where it does still overlap, the
+ * terrain is opaque and drawn over it, which is the same argument that lets a
+ * lake run under its bank (`appendPoolSurface`). What the pinch actually cost
+ * was legibility: with a lip every few cells the ribbon spent more of its
+ * length necked to 45% than at full width, and a stream of lens-shaped
+ * segments is exactly what the owner was reporting as gaps. The constants stay
+ * because the geometry that reads them is unchanged and a future pinch, if one
+ * is ever wanted, belongs here.
  */
 const FALL_TAPER_CELLS = 0.5;
-const FALL_TAPER_MIN_SCALE = 0.45;
+const FALL_TAPER_MIN_SCALE = 1;
+
+/**
+ * How far downstream, in CELLS, a fall's water takes to get from the lip to
+ * the foot — the horizontal run of the chute.
+ *
+ * WHY A CHUTE AND NOT A WALL (2026-08-21, owner: these "should join smoothly…
+ * especially in those last couple of images"). A fall used to be drawn as a
+ * strictly vertical curtain: two cross-sections at the same XZ, one at each
+ * band. That geometry is correct and it is invisible — a vertical surface seen
+ * from anywhere above projects to a line, so a river down a staircase read as
+ * a row of disconnected treads however many curtains it had (17 of them, in
+ * the `stairpools` fixture, every one of them present in the mesh and none of
+ * them visible). Sloping the drop over a short run gives the sheet a
+ * horizontal footprint, so from above the water covers the riser instead of
+ * ending at it, and from the side it reads as water sliding down the face
+ * rather than a pane of glass bolted to it.
+ *
+ * A THIRD OF A CELL, and centred on the lip so half the run is spent above the
+ * riser and half below. Wide enough to read as continuous at orbit distance —
+ * a riser is a quarter of a cell of ground, so the chute covers it with room
+ * to spare — and short enough that the water still visibly DROPS at the step
+ * rather than ramping gently down a slope that is not there. Where the sheet
+ * passes inside the terrain it is simply hidden: depth testing is on, and the
+ * ground is opaque and drawn first.
+ */
+const FALL_CHUTE_CELLS = 1 / 3;
 
 /**
  * Extrudes one smoothed centre-line into a ribbon, appending its triangles
@@ -778,9 +817,34 @@ function buildRibbon(
       // The lip keeps the width it arrived with; everything past it restarts
       // the taper, which is what necks the water through the pinch below.
       const arrivingWidth = widthAfterFall(sinceLip + spanLength * lipAt);
-      sections.push(sectionAt(lipX, lipZ, tangentX[i]!, tangentZ[i]!, cursorBand, arrivingWidth));
+      // The chute: the lip half a run short of the crossing, the foot half a
+      // run past it, so the sheet slopes across the riser rather than hanging
+      // vertically in front of it. Both ends are clamped inside the segment —
+      // a chute longer than the gap between two samples would otherwise walk
+      // past the next sample and fold the strip back on itself.
+      const chute = (FALL_CHUTE_CELLS * CELL_WORLD_SIZE) / 2;
+      const chuteFraction = spanLength === 0 ? 0 : Math.min(chute / spanLength, lipAt, 1 - lipAt);
+      const topAt = lipAt - chuteFraction;
+      const footAt = lipAt + chuteFraction;
       sections.push(
-        sectionAt(lipX, lipZ, tangentX[i]!, tangentZ[i]!, landedBand, widthAfterFall(0)),
+        sectionAt(
+          cx + spanX * topAt,
+          cz + spanZ * topAt,
+          tangentX[i]!,
+          tangentZ[i]!,
+          cursorBand,
+          arrivingWidth,
+        ),
+      );
+      sections.push(
+        sectionAt(
+          cx + spanX * footAt,
+          cz + spanZ * footAt,
+          tangentX[i]!,
+          tangentZ[i]!,
+          landedBand,
+          widthAfterFall(0),
+        ),
       );
       sinceLip = -spanLength * (1 - lipAt);
       cursorAt = hi;

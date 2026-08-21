@@ -2,7 +2,7 @@
 // previewBoats.ts. Not part of the shipped app: reached only through
 // preview-rivers.html.
 //
-//   ?scene=<fork|meander|terrace|basin>  — which fixture to build; defaults to "fork"
+//   ?scene=<fork|meander|terrace|basin|stairpools>  — fixture; defaults to "fork"
 //   ?view=<iso|side|top>           — camera angle; defaults to "iso"
 //   ?zoom=<number>                 — camera distance multiplier; defaults to 1
 //
@@ -96,7 +96,7 @@ const DESCENT_PER_CELL = (() => {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : BAND_HEIGHT / 4;
 })();
 
-type SceneName = 'fork' | 'meander' | 'terrace' | 'basin';
+type SceneName = 'fork' | 'meander' | 'terrace' | 'basin' | 'stairpools';
 
 /**
  * Lowers a spring cell's four neighbours to just under it.
@@ -308,11 +308,82 @@ function buildBasin(mirror: TerrainMirror): void {
   openSpring(mirror, channelX, 1);
 }
 
+/**
+ * STAIRPOOLS — a channel down a hillside that drops into a small basin every
+ * few cells, fills it, spills over its lip and does it again.
+ *
+ * This is the shape the owner photographed (2026-08-21, a chain of pools down
+ * a slope with bare terrace between them) and the one that exercises EVERY
+ * join the water has: flowing → pool, pool → flowing, and both across a
+ * terrace step. `basin` has one lake and tests the outline; this tests the
+ * seams, four times in one shot, which is what a single-lake fixture cannot
+ * do.
+ */
+function buildStairPools(mirror: TerrainMirror): void {
+  const map = mirror.map;
+  /** Cells of ordinary channel between one basin and the next. */
+  const CELLS_BETWEEN_POOLS = 5;
+  /** Half-width of a basin, in cells — 2 gives a 5-cell-wide bowl, wide
+   *  enough that its outline is a shape rather than a dot. */
+  const POOL_HALF_WIDTH_CELLS = 2;
+  /** How far a basin's floor sits under the channel that feeds it, in bands.
+   *  Over one, so the drop into the pool is always a real terrace step and
+   *  never a same-band slide — the join under test. */
+  const POOL_DEPTH_BANDS = 2;
+  /** How many basins the chain holds. Four fits the per-river trace budget
+   *  (2 × world size) alongside the channel that connects them. */
+  const POOL_COUNT = 4;
+
+  // The banks fall at the CHANNEL's rate, not the plain DESCENT_PER_CELL the
+  // other fixtures use. The channel here descends DESCENT_PER_CELL + 2 per row
+  // (see channelAtRow), so a hillside falling any slower pulls away from it a
+  // couple of units every row and the channel is a canyon fifty units deep by
+  // the bottom of the shot — which hides the very stream this fixture exists
+  // to look at behind its own near wall.
+  fillHillside(mirror, DESCENT_PER_CELL + 2);
+  const set = (x: number, y: number, h: number): void => {
+    map.cells[cellIndex(map, x, y)] = h;
+  };
+
+  const channelX = Math.floor(PREVIEW_WORLD_SIZE / 2);
+  /**
+   * The channel's height at a row, measured DOWN FROM THE SPRING rather than
+   * from the hillside beside it (buildTerrace's rule, and for its reason): a
+   * hillside that starts RIDGE_CLEARANCE_BANDS above the summit is higher than
+   * the spring for the first rows, so a channel cut relative to it runs uphill
+   * and the very first cell pools instead of flowing. The extra 2 per row is
+   * what keeps the channel falling inside a terrace tread, so it only pools
+   * where a basin was actually carved.
+   */
+  const channelAtRow = (row: number): number =>
+    SUMMIT_HEIGHT - (DESCENT_PER_CELL + 2) * (row - 1);
+
+  set(channelX, 1, SUMMIT_HEIGHT);
+  for (let y = 2; y < PREVIEW_WORLD_SIZE; y++) set(channelX, y, channelAtRow(y));
+
+  for (let pool = 0; pool < POOL_COUNT; pool++) {
+    const centreY = 4 + (pool + 1) * CELLS_BETWEEN_POOLS + pool * (2 * POOL_HALF_WIDTH_CELLS + 1);
+    const floor = channelAtRow(centreY) - POOL_DEPTH_BANDS * BAND_HEIGHT;
+    for (let dy = -POOL_HALF_WIDTH_CELLS; dy <= POOL_HALF_WIDTH_CELLS; dy++) {
+      for (let dx = -POOL_HALF_WIDTH_CELLS; dx <= POOL_HALF_WIDTH_CELLS; dx++) {
+        // A rounded bowl, so the outline has curves to get right.
+        if (Math.hypot(dx, dy) > POOL_HALF_WIDTH_CELLS + 0.5) continue;
+        const x = channelX + dx;
+        const y = centreY + dy;
+        if (y < 2 || y >= PREVIEW_WORLD_SIZE - 1) continue;
+        set(x, y, floor);
+      }
+    }
+  }
+  openSpring(mirror, channelX, 1);
+}
+
 const SCENE_BUILDERS: Record<SceneName, (mirror: TerrainMirror) => void> = {
   fork: buildFork,
   meander: buildMeander,
   terrace: buildTerrace,
   basin: buildBasin,
+  stairpools: buildStairPools,
 };
 
 const CAMERA_VIEWS = {
@@ -328,7 +399,7 @@ function query<T extends string>(name: string, allowed: readonly T[], fallback: 
   return allowed.includes(raw as T) ? (raw as T) : fallback;
 }
 
-const sceneName = query('scene', ['fork', 'meander', 'terrace', 'basin'] as const, 'fork');
+const sceneName = query('scene', ['fork', 'meander', 'terrace', 'basin', 'stairpools'] as const, 'fork');
 const view = query('view', ['iso', 'side', 'top'] as const, 'iso');
 const zoom = Number(new URLSearchParams(window.location.search).get('zoom') ?? '1') || 1;
 
@@ -459,6 +530,51 @@ function animate(): void {
         Math.floor(cellYCoord / CHUNK_SIZE),
         threshold,
       );
+    // How much of the drawn water the CAMERA can actually see: cast a ray from
+    // the camera at each sample of every course and ask what it hits first.
+    // "The water is continuous" and "the player can see that it is continuous"
+    // are different claims, and only this one answers the second.
+    (window as unknown as { __previewVisibility?: unknown }).__previewVisibility = (): {
+      samples: number;
+      visible: number;
+      hiddenRuns: number[][];
+    } => {
+      const water = scene.children.filter((child) => child !== terrainGroup);
+      const ray = new Raycaster();
+      let samples = 0;
+      let visible = 0;
+      const hiddenRuns: number[][] = [];
+      let run: number[] | null = null;
+      for (const river of network.rivers) {
+        for (const course of river.courses) {
+          for (const point of course.points) {
+            const target = new Vector3(
+              point.x * CELL_WORLD_SIZE,
+              (point.pooled
+                ? (point.poolHeight ?? 0)
+                : mirror.map.cells[cellIndex(mirror.map, point.x, point.y)]!) * HEIGHT_WORLD_SCALE,
+              point.y * CELL_WORLD_SIZE,
+            );
+            const direction = target.clone().sub(camera.position).normalize();
+            ray.set(camera.position, direction);
+            const ground = ray.intersectObject(terrainGroup, true)[0];
+            const wet = ray.intersectObjects(water, true)[0];
+            samples++;
+            const seen = wet !== undefined && (ground === undefined || wet.distance <= ground.distance + 1e-4);
+            if (seen) {
+              visible++;
+              run = null;
+            } else {
+              if (run === null) {
+                run = [point.x, point.y];
+                hiddenRuns.push(run);
+              }
+            }
+          }
+        }
+      }
+      return { samples, visible, hiddenRuns };
+    };
     (window as unknown as { __previewInfo?: unknown }).__previewInfo = {
       scene: sceneName,
       rivers: network.rivers.length,
