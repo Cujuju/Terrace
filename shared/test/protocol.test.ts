@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_BRUSH_RADIUS,
   sculptOptionsOf,
   validateSculptIntent,
   WIRE_DEFAULT_SCULPT_OPTIONS,
@@ -44,7 +45,9 @@ describe('validateSculptIntent', () => {
   it('rejects invalid radius and direction', () => {
     const base = { type: 'sculpt', x: 1, y: 1 };
     expect(validateSculptIntent({ ...base, radius: 0, dir: 1 }, WORLD)).toBeNull();
-    expect(validateSculptIntent({ ...base, radius: 5, dir: 1 }, WORLD)).toBeNull();
+    expect(
+      validateSculptIntent({ ...base, radius: MAX_BRUSH_RADIUS + 1, dir: 1 }, WORLD),
+    ).toBeNull();
     expect(validateSculptIntent({ ...base, radius: 2.5, dir: 1 }, WORLD)).toBeNull();
     expect(validateSculptIntent({ ...base, radius: 1, dir: 0 }, WORLD)).toBeNull();
     expect(validateSculptIntent({ ...base, radius: 1, dir: 2 }, WORLD)).toBeNull();

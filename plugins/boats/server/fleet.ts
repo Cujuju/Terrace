@@ -25,6 +25,8 @@
 
 import {
   OPEN_WATER_PROFILE,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
   isWalkableCell as sharedIsWalkableCell,
   normalizeAngle,
   steerAvoiding,
@@ -82,19 +84,21 @@ export interface KrakenTarget {
 }
 
 /**
- * A boat's personal space, in cells.
+ * A boat's personal space, in cells — half a WORLD UNIT, converted.
  *
- * 0.5 — the hull's own half-length. HULL_LENGTH is 0.9 cells
+ * 0.5 — the hull's own half-length. HULL_LENGTH is 0.9 world units
  * (plugins/boats/client/models.ts) and the oars reach a little wider than the
  * beam, so half of 0.9 rounded up is the radius that circumscribes the rowed
- * silhouette. Two boats therefore keep 1.0 cell between centres: hulls clear,
+ * silhouette. It is a HULL measurement, which is why it is stated against the
+ * world unit the hull is modelled in rather than against the sampling grid.
+ * Two boats therefore keep 1.0 world unit between centres: hulls clear,
  * oars clear, and a fleet at station reads as a line of boats rather than one
  * boat drawn several times. MEASURED HERE rather than imported for the reason
  * this plugin measures the kraken's footprint here too — a server sim does not
  * reach into a client model file, and the failure mode of drift is boats
  * sitting a little closer than intended, never a crash.
  */
-export const BOAT_PERSONAL_SPACE_CELLS = 0.5;
+export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
 
 /**
  * How far ahead a boat checks, in cells. One second of its own travel — far

@@ -23,6 +23,10 @@
 // so "no monster interaction" is true by construction rather than by a rule
 // this file would have to maintain.
 
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 import type { Occupant, RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import {
@@ -93,22 +97,22 @@ export const WANDER_EPOCH_SECONDS = 60;
 export const WANDER_DISPATCH_MODULUS = 4;
 
 /**
- * Minimum stroll distance, in cells. 8 — half a race district (structures'
- * 16-cell SETTLER_DISTRICT_CELLS, restated by value): a settlement is a BLOB
+ * Minimum stroll distance, in cells. 8 WORLD UNITS — half a race district
+ * (structures' 16-world-unit SETTLER_DISTRICT_CELLS, restated by value): a settlement is a BLOB
  * of adjacent live cells, and without this floor "the nearest settlement" is
  * the cell next door — a fourteen-second hop nobody would ever see. A stroll
  * must leave its own block to read as a journey.
  */
-export const WANDER_MIN_DISTANCE_CELLS = 8;
+export const WANDER_MIN_DISTANCE_CELLS = cellsAcross(8);
 
 /**
- * How far away a stroll's destination town may be, in cells. 48 — three
- * chunks, deliberately UNDER the pilgrims' 64-cell catchment: a pilgrimage
+ * How far away a stroll's destination town may be, in cells. 48 WORLD UNITS —
+ * three chunks, deliberately UNDER the pilgrims' 64-world-unit catchment: a pilgrimage
  * is a journey to a wonder, a stroll is neighbourly. At walk speed that is
  * a ≤96 s leg, so a wanderer's whole outing fits inside a play session's
  * attention span.
  */
-export const WANDER_RANGE_CELLS = 48;
+export const WANDER_RANGE_CELLS = cellsAcross(48);
 
 /**
  * Seconds spent visiting the destination town. 10 — long enough to read as

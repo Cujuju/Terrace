@@ -3,8 +3,9 @@
 // carrying a tier instead of a tree kind.
 //
 // Pure arithmetic: no three, no DOM, so it runs in the same node environment
-// as the server tests. HORIZONTAL placement needs no code (CELL_WORLD_SIZE is
-// 1 — a cell IS its world X/Z). VERTICAL placement is one terrain lookup: a
+// as the server tests. HORIZONTAL placement is one multiply by CELL_WORLD_SIZE
+// (it was a no-op while a cell was a world unit, up to the 2026-08-21
+// re-sample). VERTICAL placement is one terrain lookup: a
 // structure stands ON the rendered surface and never moves, because any
 // height change under it demolishes it server-side.
 //
@@ -16,6 +17,7 @@
 // SAME neighbourhood survey site.ts already did to answer the site question
 // — one scan of the search disc, not two.
 
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { settlementRace, structureVariation, type StructureCell } from '../protocol.ts';
 import type { StructurePlacement } from './models.ts';
 import { surveySite } from './site.ts';
@@ -69,8 +71,8 @@ export function placementsFor(cells: Iterable<StructureCell>, groundAt: GroundLo
 
     const variation = structureVariation(cell.x, cell.y);
     placements.push({
-      x: cell.x,
-      z: cell.y,
+      x: cell.x * CELL_WORLD_SIZE,
+      z: cell.y * CELL_WORLD_SIZE,
       groundY,
       tier: cell.tier,
       scale: variation.scale,

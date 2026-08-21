@@ -20,6 +20,7 @@
 // scene, the rendered terrain height, the message channel, and the frame clock.
 
 import { Group } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -163,15 +164,17 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     if (view === undefined) continue;
 
     const root = view.model.root;
-    // CELL_WORLD_SIZE is 1, so cell coordinates ARE world X/Z (see placement.ts).
+    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE — 1 until the
+    // 2026-08-21 re-sample, which is why this used to be a bare assignment
+    // (see placement.ts).
     // The VERTICAL rule is the KIND's: the two sea horrors hang from the surface
     // at very different depths — which is most of what tells them apart from a
     // distance — and the yeti stands on the snow. placement.ts owns which is
     // which and how many terrain samples each needs.
     root.position.set(
-      monster.x,
+      monster.x * CELL_WORLD_SIZE,
       monsterOriginY(monster.kind, (cx, cy) => ctx.terrainHeightAt(cx, cy), monster.x, monster.y),
-      monster.y,
+      monster.y * CELL_WORLD_SIZE,
     );
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and
     // the monster travels toward (cos heading, 0, sin heading) — hence the
@@ -191,7 +194,11 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // must not jump to its end and the lightning clock must not be handed a
     // minute of accumulated waiting.
     if (view.dread !== null) {
-      view.dread.root.position.set(monster.x, SEA_SURFACE_WORLD_Y, monster.y);
+      view.dread.root.position.set(
+        monster.x * CELL_WORLD_SIZE,
+        SEA_SURFACE_WORLD_Y,
+        monster.y * CELL_WORLD_SIZE,
+      );
       view.dread.update(animationSeconds, step, true);
     }
   }

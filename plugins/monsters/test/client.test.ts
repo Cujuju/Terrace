@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { CatmullRomCurve3, Vector3 } from 'three';
-import { BAND_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, MIN_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import { parseMonstersPayload, type MonsterState } from '../protocol.ts';
 import {
   CTHULHU_BODY_WRINKLE_DEPTH,
@@ -437,7 +437,10 @@ describe('silhouette', () => {
     // the body never swims into a cliff the centre point cleared. The server
     // half must not import the client half (it runs where three does not
     // exist), so the two numbers are pinned to each other HERE.
-    expect(CTHULHU_WIDTH_CELLS).toBe(CTHULHU_FOOTPRINT_CELLS);
+    // THROUGH THE CONVERSION since the 2026-08-21 re-sample: the client models
+    // in WORLD UNITS and the server steers in CELLS, and the two were the same
+    // number only while a cell was a world unit.
+    expect(cellsAcross(CTHULHU_WIDTH_CELLS)).toBe(CTHULHU_FOOTPRINT_CELLS);
   });
 
   it('is taller than it is wide — the hunch, not a raft', () => {
@@ -528,7 +531,7 @@ describe('the kraken silhouette', () => {
     // Same arrangement as Cthulhu's: the server steers by its own copy of this
     // number, the client half must not be imported by the server, so the two are
     // pinned to each other here.
-    expect(KRAKEN_WIDTH_CELLS).toBe(KRAKEN_FOOTPRINT_CELLS);
+    expect(cellsAcross(KRAKEN_WIDTH_CELLS)).toBe(KRAKEN_FOOTPRINT_CELLS);
     // ...and both kinds share the box on purpose — the second kind was fitted to
     // the first one's footprint rather than widening the steering probe and the
     // atmosphere's lightning clearance that were derived from it.
@@ -736,7 +739,7 @@ describe('the yeti silhouette', () => {
     // Same arrangement as the other two kinds': the server steers by its own
     // copy of this number, the client half must not be imported by the server,
     // so the two are pinned to each other here.
-    expect(YETI_WIDTH_CELLS).toBe(YETI_FOOTPRINT_CELLS);
+    expect(cellsAcross(YETI_WIDTH_CELLS)).toBe(YETI_FOOTPRINT_CELLS);
     // ...and he is NARROWER than the sea horrors, on purpose: he is an animal,
     // and his minimum snowfield is derived from this number.
     expect(YETI_FOOTPRINT_CELLS).toBeLessThan(CTHULHU_FOOTPRINT_CELLS);
@@ -818,8 +821,14 @@ describe('the yeti gait', () => {
     // fast the thing travels. The client half restates the server's speed rather
     // than importing it (the bundle must not pull the server in); this is the
     // test that says the two are meant to be the same number.
-    expect(YETI_MODEL_AMBLE_SPEED).toBe(YETI_AMBLE_SPEED_CELLS_PER_SECOND);
-    expect(YETI_AMBLE_HZ * YETI_STRIDE_CELLS).toBeCloseTo(YETI_AMBLE_SPEED_CELLS_PER_SECOND, 10);
+    // Through the conversion: the model's speed is world units per second and
+    // the server's is cells per second (2026-08-21 — they were the same number
+    // while a cell was a world unit).
+    expect(cellsAcross(YETI_MODEL_AMBLE_SPEED)).toBe(YETI_AMBLE_SPEED_CELLS_PER_SECOND);
+    expect(cellsAcross(YETI_AMBLE_HZ * YETI_STRIDE_CELLS)).toBeCloseTo(
+      YETI_AMBLE_SPEED_CELLS_PER_SECOND,
+      10,
+    );
   });
 
   it('takes a short step, and derives the swing angle from it', () => {

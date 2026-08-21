@@ -17,6 +17,8 @@ import {
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   SEA_LEVEL,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
   forEachFootprintOffset,
   isWater,
 } from '@terrace/shared';
@@ -120,7 +122,11 @@ import {
 import { seededRandom, worldWithTerrain } from './support/world.ts';
 
 /** 128² cells = 8×8 chunks — room for a basin far larger than the minimum lair. */
-const WORLD_SIZE = 128;
+// 128 WORLD UNITS. The lair thresholds, snow-line distances and summon
+// scatter this suite asserts on are all ground-sized, so the world has to be
+// too: 128 CELLS after the 2026-08-21 re-sample is 32 world units, smaller
+// than the minimum lair a kraken will take.
+const WORLD_SIZE = cellsAcross(128);
 const WORLD_CENTER = WORLD_SIZE / 2;
 
 /** Default server tick period (TICK_HZ = 10). */
@@ -149,7 +155,11 @@ const SEEDED_TRIAL_TIMEOUT_MS = 30_000;
  * The DEEP disc is therefore a circle of radius `radius - 24`, since 24 cells of
  * slope is exactly the three bands (192 units) of the deep-water threshold.
  */
-const BOWL_SLOPE_PER_CELL = 8;
+// A SLOPE — height units per WORLD UNIT of run, which is why it is divided
+// into cells here. Left at 8 per CELL through the 2026-08-21 re-sample every
+// bowl in this file would have been four times as steep, and every deep disc
+// four times as wide as the radius it is named for.
+const BOWL_SLOPE_PER_CELL = 8 / WORLD_UNIT_CELLS;
 
 function bowl(radius: number): (x: number, y: number) => number {
   return (x, y) => {
@@ -168,7 +178,7 @@ function bowl(radius: number): (x: number, y: number) => number {
  * the sea. A world where the two habitats overlapped would make every sea test
  * quietly a mountain test as well.
  */
-const MASSIF_CENTER = 24;
+const MASSIF_CENTER = cellsAcross(24);
 
 /**
  * A SHEER MESA raised out of the bowl's dry land: the yeti's country.
@@ -186,7 +196,7 @@ const MASSIF_CENTER = 24;
  * map.
  */
 const ALPINE_PEAK_HEIGHT = (SNOW_LINE_BANDS_ABOVE_SEA + 2) * BAND_HEIGHT;
-const ALPINE_PLATEAU_RADIUS = 14;
+const ALPINE_PLATEAU_RADIUS = cellsAcross(14);
 
 /**
  * The bowl, with the mesa standing in the dry land north-west of it.
@@ -205,7 +215,7 @@ function alpine(seaRadius: number): (x: number, y: number) => number {
 }
 
 /** Deep disc radius 26 → ~2 120 cells, comfortably over MIN_LAIR_DEEP_CELLS. */
-const GREAT_BASIN_RADIUS = 50;
+const GREAT_BASIN_RADIUS = cellsAcross(50);
 /**
  * A KRAKEN TRENCH. Deep disc radius 46 → ~6 600 cells (over the kraken's 2 304)
  * and 560 height units at the floor — 8.75 bands, past its 8-band demand.
@@ -214,11 +224,11 @@ const GREAT_BASIN_RADIUS = 50;
  * bands), which is what keeps every Cthulhu test in this file summoning a
  * Cthulhu even though the kraken is considered first.
  */
-const TRENCH_RADIUS = 70;
+const TRENCH_RADIUS = cellsAcross(70);
 /** Deep disc radius 16 → ~800 cells: real deep water, but not a lair. */
-const SMALL_POOL_RADIUS = 40;
+const SMALL_POOL_RADIUS = cellsAcross(40);
 /** No cell anywhere reaches the deep threshold. */
-const NO_DEEP_WATER_RADIUS = 20;
+const NO_DEEP_WATER_RADIUS = cellsAcross(20);
 
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
@@ -392,20 +402,22 @@ describe('the snow line', () => {
     }
   });
 
-  it('is at least thirty-six cells from any shoreline, by the gradient limit', () => {
-    // MAX_STEP is BAND_HEIGHT, so terrain climbs at most a full band per cell,
-    // and the snow line is thirty-six cells of slope at the steepest legal
-    // grade. That is what makes the threshold mean "the high country" rather
-    // than "a colour someone picked" — three times the twelve cells the
-    // deep-water line buys, the same ratio it always had.
+  it('is at least thirty-six world units from any shoreline, by the gradient limit', () => {
+    // Terrain climbs at most a full band per WORLD UNIT, and the snow line is
+    // thirty-six world units of slope at the steepest legal grade. That is what
+    // makes the threshold mean "the high country" rather than "a colour someone
+    // picked" — three times the twelve units the deep-water line buys, the same
+    // ratio it always had.
     //
     // BOTH DISTANCES DOUBLED on 2026-08-20 (18 -> 36, 6 -> 12) and neither
     // threshold moved: MAX_STEP went from half a band to a whole one, so the
     // world's maximum slope halved and the same depths now sit twice as far
     // out. That is the re-terrace working as intended — the coast got gentler,
-    // not the mountains lower.
-    expect(MAX_STEP).toBe(BAND_HEIGHT);
-    expect(SNOW_LINE_MIN_HEIGHT / MAX_STEP).toBe(36);
+    // not the mountains lower. The 2026-08-21 re-sample moved neither again:
+    // MAX_STEP is a slope per world unit now, so this ratio is stated against
+    // the world unit and reads exactly as it did.
+    expect(MAX_STEP).toBe(BAND_HEIGHT / WORLD_UNIT_CELLS);
+    expect(SNOW_LINE_MIN_HEIGHT / (MAX_STEP * WORLD_UNIT_CELLS)).toBe(36);
   });
 });
 
@@ -707,12 +719,12 @@ function alpineStubWorld(sea: BasinState, snow: MassifState): LairWorld {
  * MASSIF_CENTER.
  */
 function yetiMassif(): MassifState {
-  return { radius: 14, peakHeight: SNOW_LINE_MIN_HEIGHT + 2 * BAND_HEIGHT };
+  return { radius: cellsAcross(14), peakHeight: SNOW_LINE_MIN_HEIGHT + 2 * BAND_HEIGHT };
 }
 
 /** A basin Cthulhu qualifies for and the kraken does not: big, but not a trench. */
 function cthulhuBasin(): BasinState {
-  return { radius: 30, floorHeight: DEEP_WATER_MAX_HEIGHT - 30 };
+  return { radius: cellsAcross(30), floorHeight: DEEP_WATER_MAX_HEIGHT - 30 };
 }
 
 /**
@@ -731,7 +743,7 @@ const KRAKEN_TRENCH_DEPTH_MARGIN = 64;
 /** A trench the kraken qualifies for: past its depth demand and its area. */
 function krakenTrench(): BasinState {
   return {
-    radius: 40,
+    radius: cellsAcross(40),
     floorHeight:
       SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT + KRAKEN_TRENCH_DEPTH_MARGIN),
   };
@@ -782,7 +794,7 @@ describe('Cthulhu cannot be banished', () => {
 
     // A pool far below the basin that admitted him, with his own cell still
     // deep — the exact scenario that used to banish him.
-    basin.radius = 4;
+    basin.radius = cellsAcross(4);
     expect(Math.PI * basin.radius * basin.radius).toBeLessThan(MIN_LAIR_DEEP_CELLS);
     expect(isLairCell(WATER_HABITAT, world, livingMonster()!.x, livingMonster()!.y)).toBe(true);
 
@@ -841,7 +853,7 @@ describe('Cthulhu cannot be banished', () => {
     const stranded = { x: monster.x, y: monster.y };
 
     // Reflooded. Nothing else changes: no re-summon, no new id, he simply moves.
-    basin.radius = 30;
+    basin.radius = cellsAcross(30);
     for (let n = 0; n < 100; n++) advanceMonster(world, monster, TICK_DT);
 
     expect(Math.hypot(monster.x - stranded.x, monster.y - stranded.y)).toBeGreaterThan(0);
@@ -987,7 +999,7 @@ describe('the kraken is not evicted by terrain (owner ruling, 2026-08-19)', () =
     // order of magnitude under it, and under the kraken's own arrival bar, with
     // the monster's own cell still deep water — which is precisely the state
     // that used to banish it and now must not.
-    trench.radius = 4;
+    trench.radius = cellsAcross(4);
     expect(Math.PI * trench.radius * trench.radius).toBeLessThan(KRAKEN_MIN_LAIR_DEEP_CELLS);
     expect(isLairCell(WATER_HABITAT, world, kraken!.x, kraken!.y)).toBe(true);
 
@@ -1115,7 +1127,7 @@ describe('the kraken is not evicted by terrain (owner ruling, 2026-08-19)', () =
 
     // The trench is back, and a roll that fires on every single tick, for one
     // second short of the cooldown. The gate is the only thing holding it back.
-    trench.radius = 40;
+    trench.radius = cellsAcross(40);
     for (let n = 0; n < (KRAKEN_RESPAWN_COOLDOWN_SECONDS - 2) / TICK_DT; n++) {
       advanceSummoning(world, TICK_DT);
     }
@@ -1207,11 +1219,12 @@ describe('per-kind slots (2026-08-19 — was: the kinds contest one slot)', () =
   it('summons nobody into a trench that is deep but tiny', () => {
     // Deep enough for the kraken, far too small for either kind. Depth alone is
     // not a lair, which is the half of the rule the area threshold carries.
+    const tinyRadius = cellsAcross(10);
     const world = basinWorld({
-      radius: 10,
+      radius: tinyRadius,
       floorHeight: SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS + 1) * BAND_HEIGHT,
     });
-    expect(Math.PI * 10 * 10).toBeLessThan(MIN_LAIR_DEEP_CELLS);
+    expect(Math.PI * tinyRadius * tinyRadius).toBeLessThan(MIN_LAIR_DEEP_CELLS);
 
     setMonsterRandomSource(ALWAYS);
     for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
@@ -1248,7 +1261,7 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     // natural floor, big enough for the kraken's area demand, produces a
     // kraken with no sculpting at all.
     const world = basinWorld({
-      radius: 40,
+      radius: cellsAcross(40),
       floorHeight: SEA_LEVEL - NATURAL_OCEAN_FLOOR_MIN_DEPTH,
     });
     setMonsterRandomSource(ALWAYS);
@@ -1269,7 +1282,7 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
 
   /** A fixed seed list: genesis is a pure function of it, so this is stable. */
   const GENESIS_PROBE_SEEDS = Array.from({ length: 48 }, (_, i) => (i * 2654435761) >>> 0);
-  const GENESIS_PROBE_SIZE = 128;
+  const GENESIS_PROBE_SIZE = cellsAcross(128);
 
   /** Deepest genesis cell of one world, whole-world and inside the unlock box. */
   function genesisFloors(seed: number): { world: number; unlocked: number } {
@@ -1532,7 +1545,7 @@ describe('persistence', () => {
     // Reboot onto the restored (full-size) trench. Without the persisted
     // cooldown, the very next tick would roll a fresh kraken — a restart
     // would be a way to skip the banishment.
-    trench.radius = 40;
+    trench.radius = cellsAcross(40);
     resetMonstersState();
     loadMonsters(JSON.parse(JSON.stringify(snapshot)) as unknown);
     for (let n = 0; n < 100; n++) advanceSummoning(world, TICK_DT);
@@ -2087,7 +2100,9 @@ describe('lurking', () => {
     // The wildlife whale cruises at 0.8 cells/s (plugins/wildlife/server/
     // species.ts) and is the slowest creature there. Cross-referenced, not
     // imported: plugins must not depend on each other for a number.
-    const WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND = 0.8;
+    // In WORLD UNITS per second, converted — every speed in the game is stated
+    // that way since the 2026-08-21 re-sample.
+    const WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND = cellsAcross(0.8);
     expect(CTHULHU_LURK_SPEED_CELLS_PER_SECOND).toBeLessThan(
       WILDLIFE_WHALE_CRUISE_CELLS_PER_SECOND,
     );
@@ -2240,8 +2255,12 @@ describe('the yeti in the high Alps', () => {
     // Deep enough into the snow, far too little of it: height alone is not a
     // lair, which is the half of the rule the area threshold carries. Radius 6
     // → ~113 cells, under the 170-cell demand.
-    const world = massifWorld({ radius: 6, peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT });
-    expect(Math.PI * 6 * 6).toBeLessThan(YETI_MIN_LAIR_SNOW_CELLS);
+    const tinyRadius = cellsAcross(6);
+    const world = massifWorld({
+      radius: tinyRadius,
+      peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT,
+    });
+    expect(Math.PI * tinyRadius * tinyRadius).toBeLessThan(YETI_MIN_LAIR_SNOW_CELLS);
 
     for (let n = 0; n < 600; n++) advanceSummoning(world, TICK_DT);
     expect(livingMonsters()).toEqual([]);
@@ -2497,7 +2516,7 @@ describe('the yeti in the high Alps', () => {
     // species.ts). Cross-referenced, not imported — plugins must not depend on
     // each other for a number. A monster that moved like livestock would undo
     // every silhouette decision in the model.
-    const WILDLIFE_GRAZER_CRUISE_CELLS_PER_SECOND = 1.6;
+    const WILDLIFE_GRAZER_CRUISE_CELLS_PER_SECOND = cellsAcross(1.6);
     expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeGreaterThan(
       CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
     );

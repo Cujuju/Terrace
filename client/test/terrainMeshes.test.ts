@@ -12,7 +12,13 @@ import {
   type Material,
   type MeshStandardMaterial,
 } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE, chunkIndex, type ChunkPayload } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  NEIGHBOURHOOD_CELLS,
+  chunkIndex,
+  type ChunkPayload,
+} from '@terrace/shared';
 import {
   applySnapshot,
   applyTerrainDiff,
@@ -26,9 +32,13 @@ import {
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   VERTICES_PER_TRIANGLE,
 } from '../src/terrain/vertexGrid.ts';
-import { BAND_WORLD_HEIGHT } from '../src/config.ts';
+import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../src/config.ts';
 
-const WORLD = 64;
+// Four NEIGHBOURHOODS to a side — 64 world units, the ground this suite has
+// always covered. Counted that way rather than in chunks because its subject
+// is a distance in the WORLD, and the 2026-08-21 re-sample shrank a chunk to a
+// quarter of the neighbourhood it used to be (shared's CHUNK_SPAN).
+const WORLD = NEIGHBOURHOOD_CELLS * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 /**
  * A chunk with one band and no contour is two triangles: its whole domain, at
@@ -235,11 +245,17 @@ describe('createTerrainMeshes', () => {
     // The unused tail is collapsed onto a vertex inside the chunk precisely so
     // that computeBoundingSphere — which ignores the draw range — cannot be
     // dragged back toward the world origin by dead vertices.
-    const { meshes } = setup([chunkPayload(3, 3, 0)]);
+    const lastChunk = WORLD / CHUNK_SIZE - 1;
+    const { meshes } = setup([chunkPayload(lastChunk, lastChunk, 0)]);
     const sphere = meshes.pickables()[0].geometry.boundingSphere;
-    // A 16×16 flat chunk: half-diagonal of a 16-cell square is ~11.3.
-    expect(sphere?.radius ?? 0).toBeLessThan(CHUNK_SIZE);
-    expect(sphere?.center.x ?? 0).toBeGreaterThan(WORLD - CHUNK_SIZE - 1);
+    // A flat chunk's half-diagonal is CHUNK_SIZE·√2/2 of a cell, and the sphere
+    // is measured in WORLD units — the conversion the 2026-08-21 re-sample made
+    // real (CELL_WORLD_SIZE was 1 before it).
+    const chunkWorldSpan = CHUNK_SIZE * CELL_WORLD_SIZE;
+    expect(sphere?.radius ?? 0).toBeLessThan(chunkWorldSpan);
+    expect(sphere?.center.x ?? 0).toBeGreaterThan(
+      (WORLD - CHUNK_SIZE - 1) * CELL_WORLD_SIZE,
+    );
   });
 
   it('adds a mesh when a chunk is unlocked later', () => {

@@ -10,7 +10,12 @@
 // coordinates), never from Math.random(), and every scan and BFS below runs in
 // a fixed order.
 
-import { bandOf, isWater } from '@terrace/shared';
+import {
+  WORLD_UNIT_CELLS,
+  bandOf,
+  cellsAcross,
+  isWater,
+} from '@terrace/shared';
 
 /**
  * What the chart needs to know about the world — a deliberately narrow window
@@ -32,18 +37,23 @@ export const CHART_LAND = 2;
 
 /**
  * How far the burn gradient bleeds from the frontier into unknown territory,
- * in cells. Five cells at the chart's scale reads as a singed edge rather
- * than a glow (wider washes out into "shaded region", narrower reads as a
- * hairline); it is a purely visual reach, so it is not derived from anything.
+ * in cells — five WORLD UNITS, converted. Five units of ground at the chart's
+ * scale reads as a singed edge rather than a glow (wider washes out into
+ * "shaded region", narrower reads as a hairline).
+ *
+ * It is a reach across the CHARTED WORLD, not a count of samples: the chart is
+ * drawn from the revealed bounding box in cells and scaled to the sheet, so
+ * left at five cells the 2026-08-21 re-sample would have thinned the singe to a
+ * quarter of the width it was tuned at on every sheet.
  */
-export const SINGE_RANGE_CELLS = 5;
+export const SINGE_RANGE_CELLS = cellsAcross(5);
 
 /**
  * Minimum distance (cells) from all revealed territory for the "here be
  * krakens" flourish. Past the singe range with room to spare, so the words
  * always sit in clean deep parchment, never on the burnt edge itself.
  */
-export const KRAKEN_MIN_DEPTH_CELLS = SINGE_RANGE_CELLS + 3;
+export const KRAKEN_MIN_DEPTH_CELLS = SINGE_RANGE_CELLS + cellsAcross(3);
 
 /** Inclusive bounding box of the revealed cells. */
 export interface ChartBounds {

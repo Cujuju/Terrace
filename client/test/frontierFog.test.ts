@@ -7,7 +7,10 @@ import { CHUNK_SIZE, type ChunkPayload } from '@terrace/shared';
 import { applySnapshot, applyChunkUnlock, createTerrainMirror } from '../src/terrain/mirror.ts';
 import { createFrontierFog } from '../src/render/frontierFog.ts';
 
-const WORLD = 64; // 4x4 chunks
+// Four chunks to a side, whatever a chunk is sampled at — the 2026-08-21
+// re-sample moved the cell figure and left the geometry this suite asserts on
+// exactly where it was.
+const WORLD = CHUNK_SIZE * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
 function chunkPayload(cx: number, cy: number, fill = 0): ChunkPayload {

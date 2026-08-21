@@ -1,7 +1,7 @@
 // The intent pipeline is the anti-cheat surface: every test here is a rule a
 // hostile or buggy client (or plugin) must not be able to break.
 
-import { DEFAULT_SCULPT_AMOUNT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
+import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_HEIGHT, type SculptIntent } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipeline.ts';
 import { PluginHost } from '../src/plugins/host.ts';
@@ -9,14 +9,14 @@ import type { IntentVerdict, TerracePlugin } from '../src/plugins/types.ts';
 import type { World } from '../src/world/world.ts';
 import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
 
-/** 4×4 chunks of 16 cells: chunk (0,0) covers cells [0..15]². */
-const WORLD_SIZE = 64;
+/** 4×4 chunks: chunk (0,0) covers cells [0..CHUNK_SIZE-1]². */
+const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /** A cell well inside the single unlocked chunk. */
 const UNLOCKED_CELL = { x: 4, y: 4 };
-/** A cell inside a locked chunk. */
-const LOCKED_CELL = { x: 40, y: 40 };
+/** A cell inside a locked chunk — chunk (2,2), whatever a chunk is sized at. */
+const LOCKED_CELL = { x: CHUNK_SIZE * 2 + 8, y: CHUNK_SIZE * 2 + 8 };
 
 function makeDeps(world: World, plugins: TerracePlugin[]): IntentPipelineDeps {
   const host = new PluginHost(world, plugins.map(asLoadedPlugin));

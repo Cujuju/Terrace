@@ -32,6 +32,10 @@
 // than of the world), and no wall clock or RNG anywhere. Two servers fed the
 // same movers in the same order steer them identically.
 
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from './constants.ts';
 import { findRoute, type RouteCell } from './pathing.ts';
 import { canTraverseSegment, isWalkableCell, type TerrainSampler, type TraversalProfile } from './traversal.ts';
 
@@ -278,16 +282,19 @@ export interface RoutedMover extends Mover {
 /**
  * How far ahead of `routeIndex` a re-sync will look for the mover's own cell.
  *
- * 2 — a mover cannot cross more than one cell boundary per tick at any
- * shipped speed (the fastest is boats' 1.5 cells/s against a 10 Hz tick =
- * 0.15 cells), so one is all that is ever needed and two is the margin that
- * lets a mover nudged off its line by the separation term (steerAvoiding,
- * above) re-find the route instead of insisting on a cell it has already
- * passed. Deliberately SMALL: a large window would let a mover "arrive" at a
- * far-ahead waypoint it never walked to, which is precisely the defect this
- * function replaces.
+ * TWO WORLD UNITS of route ahead. A mover cannot cross more than one cell
+ * boundary per tick at any shipped speed (the fastest is boats' 1.5 world
+ * units/s = 6 cells/s against a 10 Hz tick = 0.6 cells), so one cell is all
+ * that is ever strictly needed; the rest is the margin that lets a mover
+ * nudged off its line by the separation term (steerAvoiding, above) re-find
+ * the route instead of insisting on a cell it has already passed. That margin
+ * is a distance across the ground, so it is stated in world units: left at 2
+ * CELLS through the 2026-08-21 re-sample it would have shrunk to half a world
+ * unit and stopped covering the nudge it exists for. Deliberately SMALL: a
+ * large window would let a mover "arrive" at a far-ahead waypoint it never
+ * walked to, which is precisely the defect this function replaces.
  */
-const ROUTE_RESYNC_WINDOW_CELLS = 2;
+const ROUTE_RESYNC_WINDOW_CELLS = cellsAcross(2);
 
 /** The centre of a route cell — where a follower actually aims. */
 function cellCentre(cell: RouteCell): { x: number; y: number } {

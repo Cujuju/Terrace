@@ -18,6 +18,8 @@
 
 import {
   LAND_WALKER_PROFILE,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
   findRoute,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
@@ -60,13 +62,18 @@ export interface PilgrimWorld {
  * Radius, in cells, of the circle a monster must keep to before it counts as
  * settled — and the anchor-reset threshold while it wanders.
  *
- * 16 — one chunk edge, the game's neighbourhood unit. Against the shipped
- * monster speeds this is what makes "settled" mean something: the fastest
- * kind (kraken, 0.6 cells/s) drifts out of a 16-cell circle in under half a
- * minute of ordinary wandering, so only a monster genuinely lingering ever
- * survives the onset timer below.
+ * 16 WORLD UNITS — one chunk edge, the game's neighbourhood unit. Against the
+ * shipped monster speeds this is what makes "settled" mean something: the
+ * fastest kind (kraken, 0.6 world units/s) drifts out of the circle in under
+ * half a minute of ordinary wandering, so only a monster genuinely lingering
+ * ever survives the onset timer below.
+ *
+ * EVERY DISTANCE AND SPEED IN THIS FILE is stated in world units and converted
+ * with WORLD_UNIT_CELLS, because each is a fact about the ground rather than
+ * about the grid the ground is sampled on (see @terrace/shared's
+ * WORLD_UNIT_CELLS, and the 2026-08-21 re-sample it records).
  */
-export const MONSTER_SETTLED_RADIUS_CELLS = 16;
+export const MONSTER_SETTLED_RADIUS_CELLS = cellsAcross(16);
 
 /**
  * Continuous seconds inside the settled circle before pilgrimages begin.
@@ -89,27 +96,27 @@ export const PILGRIMAGE_ONSET_SECONDS = 120;
  * as the onset the monster already proved it would sit through. Farther
  * towns would routinely arrive after the beast has moved on.
  */
-export const PILGRIMAGE_CATCHMENT_CELLS = 64;
+export const PILGRIMAGE_CATCHMENT_CELLS = cellsAcross(64);
 
 /**
  * Radius of the viewpoint ring around the settled anchor, in cells.
  *
  * SETTLED radius + 8: the monster can be anywhere inside its settled circle,
- * and the largest shipped ground-protection aura reaches 4.5 cells beyond a
+ * and the largest shipped ground-protection aura reaches 4.5 world units beyond a
  * body (measured against monsters @ 2026-08-19: footprint 7 / 2 + standoff
  * 1); 8 covers that with margin. MEASURED, NOT IMPORTED — the bridge rule
  * forbids reading monsters' constants, and the failure mode of drift is only
  * a viewpoint a little too close, never a crash.
  */
-export const VIEWPOINT_RING_CELLS = MONSTER_SETTLED_RADIUS_CELLS + 8;
+export const VIEWPOINT_RING_CELLS = MONSTER_SETTLED_RADIUS_CELLS + cellsAcross(8);
 
 /**
  * Candidate directions sampled on the viewpoint ring.
  *
  * 16 — every 22.5°. The pick is "highest walkable land on the ring"; at ring
- * radius 24 adjacent samples are ~9 cells apart, finer than any terrace
- * feature a player sculpts at brush radius ≤ 4, so more samples would
- * re-find the same ledges.
+ * radius 24 adjacent samples are ~9 world units apart, finer than any terrace
+ * feature a player sculpts at the widest brush, so more samples would re-find
+ * the same ledges.
  */
 export const VIEWPOINT_RING_SAMPLES = 16;
 
@@ -118,10 +125,11 @@ export const VIEWPOINT_RING_SAMPLES = 16;
  *
  * 0.5 — set against the shipped gaits it will be seen next to: a shade
  * faster than the yeti's wary amble (0.45), slower than a cruising kraken
- * (0.6). A purposeful little walk that still reads as a journey across a
- * 64-cell catchment rather than a teleport.
+ * (0.6) — all three in world units per second. A purposeful little walk that
+ * still reads as a journey across a 64-world-unit catchment rather than a
+ * teleport.
  */
-export const PILGRIM_WALK_SPEED_CELLS_PER_SECOND = 0.5;
+export const PILGRIM_WALK_SPEED_CELLS_PER_SECOND = cellsAcross(0.5);
 
 /**
  * Seconds spent watching at the viewpoint. 30 — two CA generations: long
@@ -153,14 +161,15 @@ export const LOOKAHEAD_SECONDS = 0.6;
  *
  * SCOPE NARROWED 2026-08-20, and the narrowing is the bug fix. This radius
  * used to double as the route-following waypoint test, where it was wrong:
- * orthogonal waypoints are 1.0 cell apart, so a walker sitting ON one
- * waypoint was already inside 0.75 of the NEXT and skipped it without ever
+ * orthogonal waypoints are one CELL apart — a quarter of this radius since the
+ * 2026-08-21 re-sample, and they were the same length as it before — so a
+ * walker sitting ON one waypoint was already inside 0.75 of the NEXT and skipped it without ever
  * walking there — the first half of the freeze traced on the live world (see
  * shared/src/steering.ts's `followRoute`). Route progress is now decided by
  * cell containment, in shared, and this constant answers only the question it
  * was derived for.
  */
-export const ARRIVAL_RADIUS_CELLS = 0.75;
+export const ARRIVAL_RADIUS_CELLS = cellsAcross(0.75);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Settledness — one anchor tracker per living monster id.
@@ -382,7 +391,7 @@ export interface RoutedWalker extends MovingWalker, RoutedMover {}
  * shared/src/steering.ts's header — and this constant is only this plugin's
  * body size, the one part of it that is genuinely local.
  */
-export const WALKER_PERSONAL_SPACE_CELLS = 0.2;
+export const WALKER_PERSONAL_SPACE_CELLS = cellsAcross(0.2);
 
 /**
  * The moving population a walker must keep clear of, as shared's `Occupant`

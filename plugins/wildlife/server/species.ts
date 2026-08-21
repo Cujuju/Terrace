@@ -18,6 +18,9 @@ import {
   DEEP_WATER_MAX_HEIGHT,
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
   UNCONSTRAINED_GRADIENT_PER_CELL,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+  cellsOverArea,
   groundOf,
 } from '@terrace/shared';
 import {
@@ -179,7 +182,12 @@ export interface SpeciesProfile {
   readonly species: WildlifeHabitatSpecies;
   readonly habitat: Habitat;
 
-  /** Ordinary wander speed, cells per second. */
+  /**
+   * Ordinary wander speed, cells per second. Every entry in the table below
+   * states it in WORLD UNITS per second and multiplies by WORLD_UNIT_CELLS: a
+   * creature's speed is a distance across the ground, and the 2026-08-21
+   * re-sample changed only how finely that ground is sampled.
+   */
   readonly cruiseSpeedCellsPerSecond: number;
 
   /**
@@ -189,7 +197,8 @@ export interface SpeciesProfile {
   readonly turnNoiseRadiansPerSecond: number;
 
   /**
-   * Nose-to-tail length in cells (CELL_WORLD_SIZE is 1, so also world units).
+   * Nose-to-tail length in cells — stated in WORLD UNITS below and converted,
+   * because it is the size of the animal the client draws.
    * Doubles as the minimum look-ahead distance — a creature must never commit to
    * a step that puts its own body outside its habitat.
    */
@@ -264,6 +273,11 @@ export interface SpeciesProfile {
    * moved, and the cap is what stops it from costing bandwidth on big worlds.
    */
   readonly habitatCellsPerIndividual: number;
+  // AN AREA, so it scales as the SQUARE of the sampling density: each entry
+  // below states square world units per individual and multiplies by
+  // WORLD_UNIT_CELLS twice. Scaled as a length — or not at all — the
+  // 2026-08-21 re-sample would have multiplied every population in the world
+  // by four or sixteen.
 
   /**
    * How many spawn at once, and therefore the size of a school.
@@ -319,21 +333,22 @@ export const FISH_SCHOOLS_ON_FRESH_SHELF = 1;
 /**
  * Speeds are set relative to each other, not measured against anything: the
  * design brief is "whales slow and stately, fish quicker, terrestrial moderate".
- * A fish crosses one chunk (16 cells) in ~5 s; a whale takes ~20 s. At the
- * broadcast cadence (5 Hz) the fastest of them moves 0.6 cells between updates,
+ * A fish crosses one chunk (16 world units) in ~5 s; a whale takes ~20 s. At
+ * the broadcast cadence (5 Hz) the fastest of them moves 0.6 world units
+ * between updates,
  * which is what makes 5 Hz + interpolation indistinguishable from 10 Hz.
  */
 export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesProfile>> = {
   fish: {
     species: 'fish',
     habitat: 'shallow',
-    cruiseSpeedCellsPerSecond: 3,
+    cruiseSpeedCellsPerSecond: cellsAcross(3),
     turnNoiseRadiansPerSecond: 1.4,
-    bodyLengthCells: 0.7,
+    bodyLengthCells: cellsAcross(0.7),
     // 1 000 → 400. See FISH_SCHOOLS_ON_FRESH_SHELF: a school is only a school if
     // you can see it is one, and at 1 000 the day-one shelf could hold FOUR fish
     // in total — one truncated group, indistinguishable from four singletons.
-    habitatCellsPerIndividual: 400,
+    habitatCellsPerIndividual: cellsOverArea(400),
     groupSize: 5,
     sizeWeights: FISH_SIZE_WEIGHTS,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -341,15 +356,15 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   whale: {
     species: 'whale',
     habitat: 'deep',
-    cruiseSpeedCellsPerSecond: 0.8,
+    cruiseSpeedCellsPerSecond: cellsAcross(0.8),
     turnNoiseRadiansPerSecond: 0.25,
-    bodyLengthCells: 5,
+    bodyLengthCells: cellsAcross(5),
     // 20 000 → 5 000. The binding requirement: a fresh world's 12 288 cells of
     // open sea inside the starter square must hold whales on day one, and
     // 12 288/5 000 = 2 does. The old figure asked for 0 there — the owner's "I
     // don't see any deep sea creatures" was, for whales, arithmetically
     // guaranteed.
-    habitatCellsPerIndividual: 5000,
+    habitatCellsPerIndividual: cellsOverArea(5000),
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -357,13 +372,13 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   deepsea: {
     species: 'deepsea',
     habitat: 'deep',
-    cruiseSpeedCellsPerSecond: 1.2,
+    cruiseSpeedCellsPerSecond: cellsAcross(1.2),
     turnNoiseRadiansPerSecond: 0.9,
-    bodyLengthCells: 1.2,
+    bodyLengthCells: cellsAcross(1.2),
     // 6 000 → 1 500. Deep water is three quarters of a fresh world's starter
     // region, so it needs the density of a populated habitat rather than of a
     // rarity: 8 on day one, ~46 on a capped full 512².
-    habitatCellsPerIndividual: 1500,
+    habitatCellsPerIndividual: cellsOverArea(1500),
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -371,11 +386,11 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
   grazer: {
     species: 'grazer',
     habitat: 'land',
-    cruiseSpeedCellsPerSecond: 1.6,
+    cruiseSpeedCellsPerSecond: cellsAcross(1.6),
     turnNoiseRadiansPerSecond: 1.1,
-    bodyLengthCells: 1.1,
+    bodyLengthCells: cellsAcross(1.1),
     // 4 000 → 2 700: half again as many grazers per hillside, matching fish.
-    habitatCellsPerIndividual: 2700,
+    habitatCellsPerIndividual: cellsOverArea(2700),
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
     maxGradientPerCell: GRAZER_MAX_GRADIENT_PER_CELL,

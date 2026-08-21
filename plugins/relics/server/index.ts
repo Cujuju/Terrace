@@ -45,7 +45,13 @@
 //    to change, and skills gain a persistence slice.
 // ────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, MAX_BRUSH_RADIUS, type SculptIntent } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  MAX_BRUSH_RADIUS,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+  type SculptIntent,
+} from '@terrace/shared';
 // Type-only import of the plugin contract (erased at runtime), reaching into
 // server/src exactly as mana and reveal do — core publishes no plugin-API entry
 // point yet.
@@ -140,11 +146,17 @@ export const RELIC_SPAWN_RETRY_S = 5;
 /**
  * Extra brush radius Titan's Hand grants, before clamping to MAX_BRUSH_RADIUS.
  *
- * One. The brush range is [1, 4], so +1 is a quarter of the whole range at the
- * top end and a doubling of area at the bottom — a passive that is felt at
- * every brush size without any of them becoming the obvious choice.
+ * ONE WORLD UNIT of extra reach, converted. The brush range is [1 cell, 4
+ * world units], so this is a quarter of the whole range at the top end and a
+ * multiplying of area at the bottom — a passive that is felt at every brush
+ * size without any of them becoming the obvious choice.
+ *
+ * Stated in world units because a brush's reach is a distance across the
+ * ground: left at one CELL through the 2026-08-21 re-sample, the game's one
+ * reach passive would have granted a quarter of the ground it used to and read
+ * as doing nothing at the top end.
  */
-export const TITANS_HAND_RADIUS_BONUS = 1;
+export const TITANS_HAND_RADIUS_BONUS = cellsAcross(1);
 
 /**
  * Seconds of cooldown an active skill earns per terrace band it moves at its

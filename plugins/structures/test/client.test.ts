@@ -399,14 +399,22 @@ describe('settler races', () => {
     // the point: race placement is a WORLD fact players will name on maps,
     // so it must never drift silently between builds (or between this
     // function and any other plugin's documented copy of it).
-    for (const [x, y, race] of [
+    // STATED IN DISTRICTS SINCE 2026-08-21, not in cells. The vectors pin the
+    // HASH — the thing that must not drift between copies — and a district is
+    // sixteen world units of ground, which the re-sample made 64 cells rather
+    // than 16. Written as cells they pinned the district SIZE as well, and
+    // every one of them named a different district after the change.
+    for (const [districtX, districtY, race] of [
       [0, 0, 'rudy'],
-      [8, 12, 'rudy'],
-      [16, 16, 'uno'],
-      [100, 100, 'uno'],
-      [255, 17, 'uno'],
-      [511, 511, 'rudy'],
+      [1, 1, 'uno'],
+      [6, 6, 'uno'],
+      [15, 1, 'uno'],
+      [31, 31, 'rudy'],
     ] as const) {
+      // Any cell inside the district; the rule is district-wide by
+      // construction (the "every cell of one district" test pins that).
+      const x = districtX * SETTLER_DISTRICT_CELLS + 3;
+      const y = districtY * SETTLER_DISTRICT_CELLS + 3;
       expect(settlementRace(x, y)).toBe(race);
     }
   });

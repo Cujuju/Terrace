@@ -8,6 +8,7 @@
 // HINT, and every way it can be wrong resolves to null — meaning "frame the
 // world from scratch" — rather than to a camera pointed at nothing.
 
+import { CHUNK_SIZE, NEIGHBOURHOOD_CELLS } from '@terrace/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CAMERA_POSE_FORMAT_VERSION,
@@ -25,7 +26,11 @@ import {
   CELL_WORLD_SIZE,
 } from '../src/config.ts';
 
-const WORLD = 64;
+// Four NEIGHBOURHOODS to a side — 64 world units, the ground this suite has
+// always covered. Counted that way rather than in chunks because its subject
+// is a distance in the WORLD, and the 2026-08-21 re-sample shrank a chunk to a
+// quarter of the neighbourhood it used to be (shared's CHUNK_SPAN).
+const WORLD = NEIGHBOURHOOD_CELLS * 4;
 /** Highest cell coordinate in a WORLD-cell world, in world units. */
 const WORLD_MAX_COORD = (WORLD - 1) * CELL_WORLD_SIZE;
 const CENTRE = WORLD_MAX_COORD / 2;

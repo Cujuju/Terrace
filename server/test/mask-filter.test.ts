@@ -2,7 +2,12 @@
 // against is silent: the server would work perfectly while leaking the shape of
 // terrain a player has not unlocked.
 
-import { CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, chunksPerEdge } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  DEFAULT_SCULPT_AMOUNT,
+  NEIGHBOURHOOD_CELLS,
+  chunksPerEdge,
+} from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleSculptIntent } from '../src/intent/pipeline.ts';
 import { PluginHost } from '../src/plugins/host.ts';
@@ -15,7 +20,11 @@ import { applyServerSculpt } from '../src/world/sculpt-service.ts';
 import { World } from '../src/world/world.ts';
 import { RecordingSink, worldWithUnlockedChunks } from './support/harness.ts';
 
-const WORLD_SIZE = 64;
+// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
+// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
+// four-chunk world is smaller ground than it was — which is fine here: every
+// assertion in this suite is about chunk mechanics, not about distances.)
+const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /** Last cell of chunk (0,0) — a sculpt here provably spills into neighbours. */
@@ -78,9 +87,13 @@ describe('outgoing diff filtering', () => {
     // reveal, say). The edit must happen, and clients must hear nothing at all
     // about it — not even an empty message that would confirm activity.
     const host = new PluginHost(world, []);
-    applyServerSculpt(world, host, 40, 40, 1, DEFAULT_SCULPT_AMOUNT);
+    // Deep inside chunk (2,2) — a locked chunk at any sampling density, and
+    // far enough from its edges that the relaxation spill cannot reach the
+    // unlocked chunk (0,0).
+    const locked = CHUNK_SIZE * 2 + CHUNK_SIZE / 2;
+    applyServerSculpt(world, host, locked, locked, 1, DEFAULT_SCULPT_AMOUNT);
 
-    expect(world.heightAt(40, 40)).not.toBe(0);
+    expect(world.heightAt(locked, locked)).not.toBe(0);
     expect(sink.messages).toHaveLength(0);
   });
 });
@@ -121,12 +134,14 @@ describe('join snapshot chunk collection', () => {
     expect(world.isChunkUnlocked(start + INITIAL_UNLOCK_CHUNK_SPAN, start)).toBe(false);
   });
 
-  it('a fresh 128² world (small-VPS config) starts with the same small square', () => {
-    // Before 2026-08-19 the 8-chunk span unlocked a 128² world entirely; the
-    // owner shrank the starter square (see INITIAL_UNLOCK_CHUNK_SPAN), so the
-    // small-VPS world now begins with the same centred 5×5 as any other size
-    // and earns the rest by sculpting.
-    const world = World.createFresh(128);
+  it('the smallest supported world (small-VPS config) starts with the same small square', () => {
+    // Before 2026-08-19 the 8-chunk span unlocked the smallest world entirely;
+    // the owner shrank the starter square (see INITIAL_UNLOCK_CHUNK_SPAN), so
+    // the small-VPS world now begins with the same centred 5×5 as any other
+    // size and earns the rest by sculpting. Eight chunks a side is the world
+    // the design record calls 128²; it is 512² in cells since the 2026-08-21
+    // re-sample and the same patch of ground either way.
+    const world = World.createFresh(NEIGHBOURHOOD_CELLS * 8);
     expect(collectUnlockedChunkPayloads(world)).toHaveLength(
       INITIAL_UNLOCK_CHUNK_SPAN * INITIAL_UNLOCK_CHUNK_SPAN,
     );

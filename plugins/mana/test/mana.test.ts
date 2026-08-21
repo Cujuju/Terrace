@@ -7,6 +7,7 @@ import {
   BAND_HEIGHT,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
+  WORLD_UNIT_CELLS,
   MIN_HEIGHT,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
@@ -42,6 +43,8 @@ import {
   MANA_CAPACITY,
   MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
   MANA_COST_PER_MIN_RADIUS_SCULPT,
+  MANA_PER_BAND_WORLD_UNIT_SQUARED,
+  POINT_BRUSH_RADIUS_CELLS,
   MANA_DENIED_MESSAGE,
   MANA_PER_BAND_CELL,
   MANA_PERK_MAX_MULTIPLIER,
@@ -102,32 +105,45 @@ const SUITE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 /**
- * The cheapest sculpt there is: the radius-1 point brush, one band over one
- * cell. Most of this suite drains a pool one of these at a time, so its price is
- * named once here and never spelled as a literal.
+ * The cheapest sculpt a PLAYER can make: the point brush — one world unit of
+ * ground, moved one band. Most of this suite drains a pool one of these at a
+ * time, so its price is named once here and never spelled as a literal.
+ *
+ * NOT shared's MIN_BRUSH_RADIUS since the 2026-08-21 re-sample: that is the
+ * protocol's one-CELL floor, which no UI offers and which prices as rounding
+ * (see the server's MANA_COST_PER_MIN_RADIUS_SCULPT).
  */
 const POINT_INTENT: SculptIntent = {
   type: 'sculpt',
   x: INTERIOR_CELL.x,
   y: INTERIOR_CELL.y,
-  radius: MIN_BRUSH_RADIUS,
+  radius: POINT_BRUSH_RADIUS_CELLS,
   dir: 1,
 };
 
 /** Price of POINT_INTENT at the standard (unperked) rate. */
 const POINT_COST = MANA_COST_PER_MIN_RADIUS_SCULPT;
 
-/** How many point stamps a full, unperked pool buys. */
-const POINT_STAMPS_PER_POOL = MANA_CAPACITY / POINT_COST;
+/**
+ * How many point stamps a full, unperked pool buys — FLOORED since the
+ * 2026-08-21 re-sample. The pool is three of the widest hard stamps and the
+ * point stamp is a different brush entirely; the two divided evenly by
+ * coincidence before (666 / 6) and do not now (843 / 7), so the suite takes
+ * the whole stamps a pool actually affords.
+ */
+const POINT_STAMPS_PER_POOL = Math.floor(MANA_CAPACITY / POINT_COST);
 
 /**
- * Cells in a radius-4 footprint (45). A HARD stamp moves a full band over every
- * one of them, so this is also the ratio between the most and least expensive
- * sculpt — geometry, not tuning, which is why it is derived here rather than
- * written down.
+ * Cells in the widest footprint (749 since the 2026-08-21 re-sample, 37 before
+ * it). A HARD stamp moves a full band over every one of them — geometry, not
+ * tuning, which is why it is derived here rather than written down.
  */
 const MAX_RADIUS_HARD_FOOTPRINT_CELLS =
   sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard') / BAND_HEIGHT;
+
+/** The same footprint as GROUND: square world units, the unit prices are in. */
+const MAX_RADIUS_HARD_FOOTPRINT_WORLD_UNITS =
+  MAX_RADIUS_HARD_FOOTPRINT_CELLS / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS);
 
 interface Harness {
   readonly world: World;
@@ -187,7 +203,7 @@ function sculptAt(
   harness: Harness,
   x: number,
   y: number,
-  radius = MIN_BRUSH_RADIUS,
+  radius = POINT_BRUSH_RADIUS_CELLS,
   profile?: SculptProfile,
 ) {
   return handleSculptIntent(
@@ -223,7 +239,7 @@ describe('mana plugin', () => {
 
   it('charges every applied sculpt and denies once the pool cannot pay', () => {
     const affordable = POINT_STAMPS_PER_POOL;
-    expect(Number.isInteger(affordable)).toBe(true);
+    expect(affordable).toBeGreaterThan(0);
 
     for (let n = 1; n <= affordable; n++) {
       const outcome = sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
@@ -231,7 +247,11 @@ describe('mana plugin', () => {
       expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - n * POINT_COST);
     }
 
-    expect(manaBalanceOf(PLAYER.id)).toBe(0);
+    // Not exactly zero since the 2026-08-21 re-sample: the pool is three of
+    // the widest hard stamps and no longer an exact multiple of a point stamp,
+    // so what is left over is less than one more stamp — which is what "cannot
+    // pay" means.
+    expect(manaBalanceOf(PLAYER.id)).toBeLessThan(POINT_COST);
 
     const denied = sculptAt(harness, INTERIOR_CELL.x, INTERIOR_CELL.y);
     expect(denied).toEqual({
@@ -269,7 +289,12 @@ describe('mana plugin', () => {
     expect(refusals).toHaveLength(1);
     expect(refusals[0].target).toBe(PLAYER.id);
     // The refusal names THE REFUSED INTENT'S price, not the rate.
-    expect(refusals[0].payload).toEqual({ balance: 0, cost: POINT_COST });
+    // The balance is what the pool could not spend, not necessarily zero (the
+    // pool stopped being an exact multiple of a point stamp on 2026-08-21).
+    expect(refusals[0].payload).toEqual({
+      balance: MANA_CAPACITY - POINT_STAMPS_PER_POOL * POINT_COST,
+      cost: POINT_COST,
+    });
   });
 
   it('regenerates on the tick and never past capacity', () => {
@@ -349,7 +374,13 @@ describe('mana perks', () => {
       player,
       // Alternating direction — see helperDir(): a drain loop must never
       // saturate the cell into free (zero-effect) strokes.
-      { type: 'sculpt', x: INTERIOR_CELL.x, y: INTERIOR_CELL.y, radius: 1, dir: helperDir() },
+      {
+        type: 'sculpt',
+        x: INTERIOR_CELL.x,
+        y: INTERIOR_CELL.y,
+        radius: POINT_BRUSH_RADIUS_CELLS,
+        dir: helperDir(),
+      },
     );
   }
 
@@ -404,6 +435,8 @@ describe('mana perks', () => {
     let plain = 0;
     while (sculptAs(OTHER_PLAYER).applied) plain++;
 
+    // Whole stamps a full pool affords — see POINT_STAMPS_PER_POOL on why the
+    // division no longer comes out even.
     expect(plain).toBe(POINT_STAMPS_PER_POOL);
     expect(perked).toBeGreaterThan(plain);
   });
@@ -990,29 +1023,41 @@ describe('client local intent gate', () => {
 
 describe('the price of a sculpt', () => {
   it('pins the tuning constants and the constraints they were derived from', () => {
-    // The rate IS the price of a point stamp, because a radius-1 brush moves
-    // exactly one band over exactly one cell. Owner's constraint: ≈5–8 mana.
-    expect(MANA_PER_BAND_CELL).toBe(6);
-    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(MANA_PER_BAND_CELL);
-    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBeGreaterThanOrEqual(5);
-    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBeLessThanOrEqual(8);
+    // THE RATE IS PER SQUARE WORLD UNIT since the 2026-08-21 re-sample, and
+    // that is what keeps every price below where the owner tuned it: the same
+    // disc of ground is sixteen times the cells now, so a rate per CELL would
+    // have multiplied every stroke's price by sixteen. The owner's ≈5–8
+    // constraint was stated on the point stamp of the day, which was one world
+    // unit of ground; the finest brush the PROTOCOL allows is a sixteenth of
+    // that and prices accordingly (0.375, ceil'd to 1 by sculptManaCost).
+    expect(MANA_PER_BAND_WORLD_UNIT_SQUARED).toBe(6);
+    expect(MANA_PER_BAND_CELL).toBe(
+      MANA_PER_BAND_WORLD_UNIT_SQUARED / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS),
+    );
+    expect(MANA_COST_PER_MIN_RADIUS_SCULPT).toBe(7);
 
-    // The most expensive brush: 37 band-cells since the 2026-08-19 tight-disc
-    // footprint (45 before), 37× the point stamp. The pool is
-    // three of those, the low end of the owner's "≈3–4" — see the derivation on
+    // What a PLAYER's smallest brush costs — the ladder's first rung, one world
+    // unit of ground — is still the number the owner's constraint named.
+    const playerPointStamp = MANA_COST_PER_MIN_RADIUS_SCULPT;
+    expect(playerPointStamp).toBeGreaterThanOrEqual(5);
+    expect(playerPointStamp).toBeLessThanOrEqual(8);
+
+    // The most expensive brush: four world units of ground moved a whole band,
+    // unchanged in price by construction. The pool is three of those, the low
+    // end of the owner's "≈3–4" — see the derivation on
     // FULL_POOL_MAX_RADIUS_HARD_STAMPS for why the other constraint ("≈100
     // point stamps") cannot be met at the same time.
-    expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(222);
+    expect(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT).toBe(281);
     expect(FULL_POOL_MAX_RADIUS_HARD_STAMPS).toBe(3);
-    expect(MANA_CAPACITY).toBe(666);
+    expect(MANA_CAPACITY).toBe(843);
     expect(MANA_CAPACITY).toBe(
       FULL_POOL_MAX_RADIUS_HARD_STAMPS * MANA_COST_PER_MAX_RADIUS_HARD_SCULPT,
     );
-    expect(POINT_STAMPS_PER_POOL).toBe(111);
+    expect(POINT_STAMPS_PER_POOL).toBe(120);
 
-    // Radius-4 soft lands proportionally between the two, by volume alone.
+    // The widest SOFT brush lands proportionally between the two, by volume
+    // alone.
     const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft');
-    expect(softPlateau).toBe(108);
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
@@ -1069,8 +1114,8 @@ describe('charging per intent, through the real pipeline', () => {
     );
   }
 
-  it('charges a radius-4 hard stamp far more than a point stamp', () => {
-    expect(sculptWith(MIN_BRUSH_RADIUS, 'soft').applied).toBe(true);
+  it('charges the widest hard stamp far more than a point stamp', () => {
+    expect(sculptWith(POINT_BRUSH_RADIUS_CELLS, 'soft').applied).toBe(true);
     const pointFee = MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0);
 
     const before = manaBalanceOf(PLAYER.id) ?? 0;
@@ -1079,12 +1124,26 @@ describe('charging per intent, through the real pipeline', () => {
 
     expect(pointFee).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(plateauFee).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
-    // 45 cells of a full band versus one: the ratio is geometry, not tuning.
-    expect(plateauFee).toBe(pointFee * MAX_RADIUS_HARD_FOOTPRINT_CELLS);
+    // The ratio is geometry, not tuning: the widest hard stamp moves a full
+    // band over its whole footprint, the point stamp over a soft disc one world
+    // unit across. Both footprints are counted in square WORLD UNITS, which is
+    // what the rate is denominated in — and the widest one is 46.8 of them
+    // since the re-sample, where the coarser grid rounded the same disc down to
+    // 37. Stated as a bound rather than an equality because the point stamp's
+    // own soft falloff is not a whole band everywhere.
+    expect(plateauFee / pointFee).toBeGreaterThan(
+      MAX_RADIUS_HARD_FOOTPRINT_WORLD_UNITS / 2,
+    );
   });
 
   it('charges hard more than soft at the same radius', () => {
-    for (let radius = MIN_BRUSH_RADIUS + 1; radius <= MAX_BRUSH_RADIUS; radius++) {
+    // Every rung of the player's ladder above the first — hard and soft are the
+    // same stroke on a single cell, so the smallest brush has nothing to say.
+    for (
+      let radius = 2 * POINT_BRUSH_RADIUS_CELLS;
+      radius <= MAX_BRUSH_RADIUS;
+      radius += POINT_BRUSH_RADIUS_CELLS
+    ) {
       const beforeSoft = manaBalanceOf(PLAYER.id) ?? 0;
       expect(sculptWith(radius, 'soft').applied).toBe(true);
       const softFee = beforeSoft - (manaBalanceOf(PLAYER.id) ?? 0);
@@ -1201,7 +1260,7 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
         type: 'sculpt',
         x: INTERIOR_CELL.x,
         y: INTERIOR_CELL.y,
-        radius: MIN_BRUSH_RADIUS,
+        radius: POINT_BRUSH_RADIUS_CELLS,
         dir: 1,
         tool: 'stamp',
         profile: 'soft',

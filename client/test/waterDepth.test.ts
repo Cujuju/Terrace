@@ -20,7 +20,10 @@ import {
 } from '../src/terrain/waterDepth.ts';
 
 /** 64 cells = 4×4 chunks: matches test/mirror.test.ts's own convention. */
-const WORLD = 64;
+// Four chunks to a side, whatever a chunk is sampled at — the 2026-08-21
+// re-sample moved the cell figure and left the geometry this suite asserts on
+// exactly where it was.
+const WORLD = CHUNK_SIZE * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
 function chunkPayload(cx: number, cy: number, fill: number): ChunkPayload {

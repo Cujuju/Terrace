@@ -280,6 +280,14 @@ export function structureVariation(x: number, y: number): StructureVariation {
 // evenly between the two.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The one import this dependency-free module allows itself: a district's size
+// is a fact about the ground, and @terrace/shared owns how many cells the
+// ground is sampled at.
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
+
 /** The two settler races. Order is meaningful: index = the race hash bit. */
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 
@@ -288,7 +296,8 @@ export type SettlerRace = (typeof SETTLER_RACES)[number];
 /**
  * Edge, in cells, of the square district that shares one race.
  *
- * 16 — one chunk (shared's CHUNK_SIZE), restated here as its own constant
+ * 16 WORLD UNITS — one NEIGHBOURHOOD (shared's NEIGHBOURHOOD_CELLS), restated
+ * here as its own constant
  * because this protocol module stays dependency-free (see the header). The
  * chunk is already the game's neighbourhood unit (unlock creep, the CA sweep,
  * targeted refreshes all move in chunks), so "a town that grows up inside one
@@ -296,7 +305,7 @@ export type SettlerRace = (typeof SETTLER_RACES)[number];
  * apart would not be a bug — districts never touch chunk logic — merely a
  * missed rhyme.
  */
-export const SETTLER_DISTRICT_CELLS = 16;
+export const SETTLER_DISTRICT_CELLS = cellsAcross(16);
 
 /**
  * The race of the settlement standing at cell (x, y).

@@ -42,7 +42,12 @@
 // rather than tidy.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  SEA_LEVEL,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 import {
   WEATHER_KINDS,
   type WeatherKind,
@@ -126,27 +131,31 @@ export const SYSTEM_MEAN_LIFETIME_SECONDS = 240;
 export const SYSTEM_FADE_SECONDS = 30;
 
 /**
- * The radius band a system is drawn from, in cells. "On the order of tens of
- * cells", per the brief.
+ * The radius band a system is drawn from, in cells — stated in WORLD UNITS and
+ * converted, because a weather system's size is measured against the camera and
+ * the world's width, neither of which the 2026-08-21 re-sample moved.
  *
- * The floor is 24 — with the camera orbiting at 80 cells (client/src/config.ts,
- * CAMERA_INITIAL_DISTANCE) a 48-cell-wide mass fills a good part of the view, so
- * anything smaller reads as a local effect rather than as weather. The ceiling
- * is 56, a 112-cell body: most of a 128² world's width and about a fifth of a
- * 512² one, which is as large as a system can get and still have an outside
- * that a player can stand in and look at.
+ * The floor is 24 — with the camera orbiting at 80 world units
+ * (client/src/config.ts, CAMERA_INITIAL_DISTANCE) a 48-unit-wide mass fills a
+ * good part of the view, so anything smaller reads as a local effect rather
+ * than as weather. The ceiling is 56, a 112-unit body: most of a 128-unit
+ * world's width and about a fifth of a 512-unit one, which is as large as a
+ * system can get and still have an outside that a player can stand in and look
+ * at.
  */
-export const SYSTEM_MIN_RADIUS_CELLS = 24;
-export const SYSTEM_MAX_RADIUS_CELLS = 56;
+export const SYSTEM_MIN_RADIUS_CELLS = cellsAcross(24);
+export const SYSTEM_MAX_RADIUS_CELLS = cellsAcross(56);
 
 /**
  * Ceiling on a system's radius as a fraction of the world edge.
  *
- * WORLD_SIZE is a self-hoster's setting and 128² is explicitly supported
- * (docs/DESIGN.md §3.4), where a 56-cell radius would blanket the entire map and
- * "clear weather" would stop existing. 0.35 keeps the largest system's diameter
- * at 70% of the world edge, so there is always somewhere else to stand. On the
- * nominal 512² world this never binds (0.35 × 512 = 179 ≫ 56).
+ * WORLD_SIZE is a self-hoster's setting and a 128-unit world is explicitly
+ * supported (docs/DESIGN.md §3.4), where a 56-unit radius would blanket the
+ * entire map and "clear weather" would stop existing. 0.35 keeps the largest
+ * system's diameter at 70% of the world edge, so there is always somewhere else
+ * to stand. It is a FRACTION, so it needs no conversion and binds identically
+ * at any sampling density; on the nominal world it never binds (0.35 × 512 =
+ * 179 ≫ 56).
  */
 export const SYSTEM_MAX_RADIUS_WORLD_FRACTION = 0.35;
 
@@ -164,18 +173,19 @@ export const SYSTEM_MAX_PEAK_INTENSITY = 1;
 // ── The wind ─────────────────────────────────────────────────────────────────
 
 /**
- * The speed band the single shared wind wanders within, in cells per second.
+ * The speed band the single shared wind wanders within, in cells per second —
+ * stated in world units per second and converted, like every distance here.
  *
  * The ceiling is the interesting one and it is set by the broadcast, not by
- * meteorology: at the 1 Hz cadence 2 cells/s moves a system 2 cells between
- * messages, which is 8% of the SMALLEST system's radius — comfortably inside
- * what the client's interpolation renders as a continuous glide. The floor of
- * 0.6 is the slowest a front can move and still visibly be moving: it crosses a
- * 24-cell radius in 40 s, so a player standing still sees the edge of the rain
+ * meteorology: at the 1 Hz cadence 2 world units/s moves a system 2 units
+ * between messages, which is 8% of the SMALLEST system's radius — comfortably
+ * inside what the client's interpolation renders as a continuous glide. The
+ * floor of 0.6 is the slowest a front can move and still visibly be moving: it
+ * crosses a 24-unit radius in 40 s, so a player standing still sees the edge of the rain
  * reach them within a look-around.
  */
-export const WIND_MIN_SPEED_CELLS_PER_SECOND = 0.6;
-export const WIND_MAX_SPEED_CELLS_PER_SECOND = 2;
+export const WIND_MIN_SPEED_CELLS_PER_SECOND = cellsAcross(0.6);
+export const WIND_MAX_SPEED_CELLS_PER_SECOND = cellsAcross(2);
 
 /**
  * Maximum magnitude of the wind's random heading change, in radians per second.
@@ -197,14 +207,14 @@ export const WIND_VEER_RADIANS_PER_SECOND = 0.01;
  * Maximum magnitude of the wind's random speed change, in cells per second per
  * second.
  *
- * 0.05 traverses the whole 1.4-cells/s speed band in ~28 s of one-sided drift,
+ * 0.05 traverses the whole 1.4-units/s speed band in ~28 s of one-sided drift,
  * which never happens (the walk is symmetric), so in practice the speed breathes
  * within the band over minutes. The band's ends are hard clamps rather than
  * reflections: a clamp holds the wind at the limit for a moment, which is what a
  * calm or a steady blow looks like, where a reflection would make the wind
  * bounce off its own ceiling.
  */
-export const WIND_SPEED_DRIFT_CELLS_PER_SECOND_SQUARED = 0.05;
+export const WIND_SPEED_DRIFT_CELLS_PER_SECOND_SQUARED = cellsAcross(0.05);
 
 // ── Where a system is born, and where it stops existing ──────────────────────
 

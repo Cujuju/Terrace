@@ -27,7 +27,7 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
-import { SEA_LEVEL } from '@terrace/shared';
+import { CELL_WORLD_SIZE, SEA_LEVEL } from '@terrace/shared';
 import { STRUCTURES_CAP } from '../protocol.ts';
 import { SKIFF_MAX_PER_SETTLEMENT, SKIFF_ORBIT_PERIOD_SECONDS, type SkiffPlacement } from './skiffs.ts';
 
@@ -142,8 +142,11 @@ export function createSkiffModels(): SkiffModels {
         const t = elapsedSeconds + skiff.phaseSeconds;
         const dirSign = skiff.orbitClockwise ? 1 : -1;
         const angle = (t / SKIFF_ORBIT_PERIOD_SECONDS) * FULL_TURN_RADIANS * dirSign;
-        const worldX = skiff.x + Math.sin(angle) * skiff.orbitRadius;
-        const worldZ = skiff.z + Math.cos(angle) * skiff.orbitRadius;
+        // The anchor is a CELL; the orbit radius is already in world units
+        // (skiffs.ts). Converting the anchor here is what keeps the two in the
+        // same space — a no-op until the 2026-08-21 re-sample.
+        const worldX = skiff.x * CELL_WORLD_SIZE + Math.sin(angle) * skiff.orbitRadius;
+        const worldZ = skiff.z * CELL_WORLD_SIZE + Math.cos(angle) * skiff.orbitRadius;
         const bob = Math.sin((t / SKIFF_BOB_PERIOD_SECONDS) * FULL_TURN_RADIANS) * SKIFF_BOB_AMPLITUDE_WORLD_UNITS;
         position.set(worldX, SKIFF_FLOAT_WORLD_Y + bob, worldZ);
 

@@ -5,7 +5,7 @@
 // (CHUNK_SIZE, BAND_HEIGHT, SEA_LEVEL, brush radius bounds…) live in
 // @terrace/shared and are never re-declared here.
 
-import { BAND_HEIGHT, MAX_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT } from '@terrace/shared';
 
 /** 2567 is the Colyseus convention and the server's `PORT` default (§8). */
 export const DEFAULT_SERVER_PORT = 2567;
@@ -72,21 +72,36 @@ export const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? DEFAULT_SERVER_URL;
 export const ROOM_NAME = import.meta.env.VITE_ROOM_NAME ?? DEFAULT_ROOM_NAME;
 
 /**
- * World units per cell edge. Fixed at 1 so that world-space X/Z coordinates
- * ARE cell coordinates: pointer picking is then a floor(), with no scale
- * factor to get wrong in either direction. Camera distances below are
- * therefore expressed in cells.
+ * World units per cell edge — re-exported from @terrace/shared, which owns it
+ * so that plugins can reach the same number (see its comment there).
+ *
+ * It was fixed at 1 until 2026-08-21, so world-space X/Z coordinates WERE cell
+ * coordinates and picking was a bare floor(). It is a quarter of that now
+ * (WORLD_UNIT_CELLS = 4): scene coordinates are still world units — the camera
+ * distances below, the water margin, the sun, every size in the render code —
+ * and a cell is simply four times smaller than one, so cell↔world conversions
+ * are a real multiply in both directions and picking divides before it floors.
+ *
+ * NOTHING IN THE SCENE CHANGES SIZE BECAUSE OF THIS. A 512-world-unit world is
+ * 2048 cells across and still 512 units wide; what moved is only how many
+ * samples the terrain is drawn from.
  */
-export const CELL_WORLD_SIZE = 1;
+export { CELL_WORLD_SIZE };
 
 /**
- * How tall the world's full above-sea range stands, in cells. THE relief fact:
- * a MAX_HEIGHT mountain rises this many cell-edges over the sea, so this alone
+ * How tall the world's full above-sea range stands, in WORLD UNITS. THE relief
+ * fact: a MAX_HEIGHT mountain rises this far over the sea, so this alone
  * decides how mountainous the world looks.
  *
- * 16 cells is exactly the relief the world had before the 2026-08-20
- * re-terrace and is kept there deliberately: that change was about how FINELY
- * the world steps, never about how high it stands.
+ * 16 is exactly the relief the world had before the 2026-08-20 re-terrace and
+ * the 2026-08-21 re-sample, and is kept there deliberately through both: those
+ * changes were about how finely the world steps and how finely it is sampled,
+ * never about how high it stands.
+ *
+ * IN WORLD UNITS SINCE 2026-08-21, having been "in cells" while a cell WAS a
+ * world unit. Left in cells it would have shrunk the world's relief to a
+ * quarter the moment the cell did — the same trap the derivation note below
+ * records on the vertical axis.
  *
  * THE DERIVATION USED TO RUN THE OTHER WAY (2026-08-20). BAND_WORLD_HEIGHT was
  * primary at one cell per band and this scale fell out of it, which made the
@@ -94,10 +109,10 @@ export const CELL_WORLD_SIZE = 1;
  * 64 → 16 would then have quadrupled every mountain in the game. Relief is the
  * physical fact and the band is the quantum, so the band is what derives.
  */
-export const MAX_RELIEF_WORLD_CELLS = 16;
+export const MAX_RELIEF_WORLD_UNITS = 16;
 
 /** Height units → world units. Derived; never write this ratio by hand. */
-export const HEIGHT_WORLD_SCALE = (MAX_RELIEF_WORLD_CELLS * CELL_WORLD_SIZE) / MAX_HEIGHT;
+export const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 
 /**
  * World units a single terrace band rises — how tall one step LOOKS.
@@ -105,21 +120,30 @@ export const HEIGHT_WORLD_SCALE = (MAX_RELIEF_WORLD_CELLS * CELL_WORLD_SIZE) / M
  * Historically forced to equal CELL_WORLD_SIZE by the old vertex-per-cell grid
  * (whose steepest face was 45°); since the 2026-08-14 cliff renderer, risers
  * are true vertical walls (terrain/vertexGrid.ts emits duplicated per-face
- * vertices), so it was free of that constraint. It is now DERIVED from the
- * relief above rather than chosen: a quarter of a cell at BAND_HEIGHT 16,
- * which is the whole visible point of the re-terrace — the same hills, stepped
- * four times as finely.
+ * vertices), so it was free of that constraint. It is DERIVED from the relief
+ * above rather than chosen: a quarter of a world unit at BAND_HEIGHT 16, which
+ * is the whole visible point of the re-terrace — the same hills, stepped four
+ * times as finely.
+ *
+ * It is exactly one CELL tall again since the 2026-08-21 re-sample, and that
+ * is a coincidence of two independent quarterings rather than a constraint
+ * returning: a riser is still a true vertical wall and would keep this height
+ * at any sampling density.
  */
 export const BAND_WORLD_HEIGHT = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 
 /**
- * Height units per cell edge — the conversion for anything whose size is a
- * WORLD-space fact but which is computed in height units (the frontier fog's
+ * Height units per WORLD UNIT — the conversion for anything whose size is a
+ * world-space fact but which is computed in height units (the frontier fog's
  * bank profile, for one). Stating such a thing as a multiple of BAND_HEIGHT
  * instead is the bug this arc keeps finding: it silently rescales the moment
  * the world is re-terraced.
+ *
+ * PER WORLD UNIT, NOT PER CELL (2026-08-21). This was CELL_HEIGHT_UNITS while
+ * a cell was a world unit; every caller wanted the world-space meaning, so
+ * re-sampling the world would have shrunk each of them to a quarter.
  */
-export const CELL_HEIGHT_UNITS = CELL_WORLD_SIZE / HEIGHT_WORLD_SCALE;
+export const WORLD_UNIT_HEIGHT_UNITS = 1 / HEIGHT_WORLD_SCALE;
 
 /**
  * How far above SEA_LEVEL the water surface is drawn, in world units.
@@ -130,12 +154,13 @@ export const CELL_HEIGHT_UNITS = CELL_WORLD_SIZE / HEIGHT_WORLD_SCALE;
  * at 0) and every shoreline flat thereafter, so a coplanar sea would z-fight
  * across the most-looked-at part of the map.
  *
- * A thirty-second of a CELL is the compromise: far above the depth-buffer
+ * A thirty-second of a WORLD UNIT is the compromise: far above the depth-buffer
  * resolution at these camera distances, so the ordering is decided and stable,
  * yet a small enough step that a band-0 flat still reads as sitting AT the
  * waterline rather than floating above or sunk below it.
  *
- * MEASURED AGAINST THE CELL, NOT THE BAND (2026-08-20). Depth-buffer
+ * MEASURED AGAINST THE WORLD UNIT, NOT THE BAND (2026-08-20, restated in world
+ * units 2026-08-21 when the cell stopped being one). Depth-buffer
  * resolution is a fact about world space and the camera, and nothing about
  * re-terracing the world changed either — written as a fraction of a band it
  * would have quietly shrunk to a quarter of the separation it was tuned for.
@@ -144,7 +169,7 @@ export const CELL_HEIGHT_UNITS = CELL_WORLD_SIZE / HEIGHT_WORLD_SCALE;
  * and a band is four times finer, which is the re-terrace working as intended
  * and still leaves "raising land out of water" legible (MVP criterion 4).
  */
-export const WATER_SURFACE_LIFT = CELL_WORLD_SIZE / 32;
+export const WATER_SURFACE_LIFT = 1 / 32;
 
 /**
  * THE FLOOR of the hold-repeat ramp: the shortest interval between repeated

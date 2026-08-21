@@ -58,9 +58,12 @@ import {
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   MAX_STEP,
+  NEIGHBOURHOOD_CELLS,
   OPEN_WATER_PROFILE,
   SEA_COLUMN_BANDS,
   SEA_LEVEL,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
   type TraversalProfile,
 } from '@terrace/shared';
 import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
@@ -169,10 +172,14 @@ export const SUMMON_MEAN_WAIT_SECONDS = 240;
  * wants one.
  */
 export const LAIR_MIN_AREA_CHUNKS = 4;
-export const MIN_LAIR_DEEP_CELLS = LAIR_MIN_AREA_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+export const MIN_LAIR_DEEP_CELLS =
+  LAIR_MIN_AREA_CHUNKS * NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS;
 
 /**
- * Lurking speed, cells per second.
+ * Lurking speed, cells per second — a quarter of a WORLD UNIT per second,
+ * converted (see WORLD_UNIT_CELLS: every speed and body size in this file is a
+ * fact about the world, stated in world units and multiplied into the sampling
+ * grid, so the 2026-08-21 re-sample could not shrink the bestiary).
  *
  * 0.25 — under a third of the wildlife plugin's whale (0.8 cells/s), which is
  * the slowest thing otherwise in the water, and it crosses one chunk in just
@@ -180,7 +187,7 @@ export const MIN_LAIR_DEEP_CELLS = LAIR_MIN_AREA_CHUNKS * CHUNK_SIZE * CHUNK_SIZ
  * width per second, which at any watchable camera distance is the difference
  * between "swimming" and "the horizon is moving".
  */
-export const CTHULHU_LURK_SPEED_CELLS_PER_SECOND = 0.25;
+export const CTHULHU_LURK_SPEED_CELLS_PER_SECOND = cellsAcross(0.25);
 
 /**
  * Maximum random heading change, radians per second. 0.1 rad/s is ~6°/s: over a
@@ -206,8 +213,9 @@ export const CTHULHU_IDLE_ONSET_PER_SECOND = 0.05;
 export const CTHULHU_IDLE_END_PER_SECOND = 0.12;
 
 /**
- * Horizontal extent of the modelled body, in cells (CELL_WORLD_SIZE is 1, so
- * also world units). Wing tip to wing tip on the client model — see
+ * Horizontal extent of the modelled body, in cells — seven WORLD UNITS,
+ * converted, which is the unit the client model is built in. Wing tip to wing
+ * tip on the client model — see
  * client/anatomy.ts, which is where the silhouette's numbers live.
  *
  * The server needs it for two things: steering (a monster must never commit to
@@ -215,7 +223,7 @@ export const CTHULHU_IDLE_END_PER_SECOND = 0.12;
  * is never shorter than half of this) and, for a kind that protects its ground,
  * the radius of the terrain it forbids raising (./protection.ts).
  */
-export const CTHULHU_FOOTPRINT_CELLS = 7;
+export const CTHULHU_FOOTPRINT_CELLS = cellsAcross(7);
 
 // ── Kraken ───────────────────────────────────────────────────────────────────
 
@@ -233,7 +241,8 @@ export const CTHULHU_FOOTPRINT_CELLS = 7;
  * between the turns.
  */
 export const KRAKEN_LAIR_MIN_AREA_CHUNKS = 9;
-export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+export const KRAKEN_MIN_LAIR_DEEP_CELLS =
+  KRAKEN_LAIR_MIN_AREA_CHUNKS * NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS;
 
 /**
  * How deep the deepest cell of the kraken's lair must be, in bands below sea
@@ -415,7 +424,7 @@ export const KRAKEN_RESPAWN_COOLDOWN_SECONDS = 600;
  * 0.6 cells/s it covers most of a body-width every ten seconds, which is a
  * speed you can watch it make progress at without it ever looking like a boat.
  */
-export const KRAKEN_LURK_SPEED_CELLS_PER_SECOND = 0.6;
+export const KRAKEN_LURK_SPEED_CELLS_PER_SECOND = cellsAcross(0.6);
 
 /**
  * Maximum random heading change, radians per second. 0.18 rad/s is ~10°/s —
@@ -451,7 +460,7 @@ export const KRAKEN_IDLE_END_PER_SECOND = 0.2;
  * different SHAPE in the same box, which is where a silhouette should differ
  * anyway. A test pins the model's reach against it.
  */
-export const KRAKEN_FOOTPRINT_CELLS = 7;
+export const KRAKEN_FOOTPRINT_CELLS = cellsAcross(7);
 
 // ── Yeti ─────────────────────────────────────────────────────────────────────
 //
@@ -462,7 +471,7 @@ export const KRAKEN_FOOTPRINT_CELLS = 7;
 // lifecycle knows which habitat it is reading.
 
 /**
- * Horizontal extent of the modelled body, in cells: shoulder to shoulder,
+ * Horizontal extent of the modelled body, in world units: shoulder to shoulder,
  * including the arms that hang either side of them (client/yeti-anatomy.ts).
  *
  * FIVE, against the sea kinds' seven, and the difference is the point rather
@@ -473,7 +482,7 @@ export const KRAKEN_FOOTPRINT_CELLS = 7;
  * is derived from this number, and a seven-cell yeti would have demanded half
  * again as much snow for the same room to move.
  */
-export const YETI_FOOTPRINT_CELLS = 5;
+export const YETI_FOOTPRINT_CELLS = cellsAcross(5);
 
 /**
  * Cells in the smallest snowfield the yeti will accept as a lair, as a multiple
@@ -504,7 +513,9 @@ export const YETI_FOOTPRINT_CELLS = 5;
  * over one connected, flood-filled region, of any shape — never a chunk grid
  * cell, never a bounding box.
  */
-export const YETI_MIN_LAIR_SNOW_CELLS = Math.floor((2 * CHUNK_SIZE * CHUNK_SIZE) / 3);
+export const YETI_MIN_LAIR_SNOW_CELLS = Math.floor(
+  (2 * NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS) / 3,
+);
 
 /**
  * How high the highest cell of the yeti's lair must be, in bands above sea.
@@ -589,7 +600,7 @@ export const YETI_RESPAWN_COOLDOWN_SECONDS = 600;
  * moves like one. At 0.45 cells/s he covers his own five-cell width in eleven
  * seconds — a walk you can watch make progress, and never a stride.
  */
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = 0.45;
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(0.45);
 
 /**
  * Maximum random heading change, radians per second. 0.35 rad/s is ~20°/s —

@@ -25,7 +25,7 @@ import { Color } from 'three';
 // config.ts's import.meta.env, which a plugin's standalone node test must
 // never be forced to resolve just to name the shape it hands to setSkyRig.
 import type { SkyRigState } from '../plugins/types.ts';
-import { SUN_DISTANCE_CELLS, type Viewport } from './scene.ts';
+import { SUN_DISTANCE_WORLD_UNITS, type Viewport } from './scene.ts';
 
 export type { SkyRigState };
 
@@ -42,7 +42,7 @@ export function applySkyRig(viewport: Viewport, state: SkyRigState): void {
   sun.position
     .set(state.sunDirection.x, state.sunDirection.y, state.sunDirection.z)
     .normalize()
-    .multiplyScalar(SUN_DISTANCE_CELLS);
+    .multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
   sun.color.setHex(state.sunColor);
   sun.intensity = state.sunIntensity;
 

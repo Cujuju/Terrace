@@ -12,6 +12,7 @@ import {
   BAND_HEIGHT,
   buildFreshwaterMap,
   CHUNK_SIZE,
+  NEIGHBOURHOOD_CELLS,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
@@ -206,15 +207,16 @@ export const FRESH_SLOPE_DEPTH_BELOW_SEA = (FRESH_SEABED_DEPTH_BELOW_SEA * 2) / 
 export const FRESH_SLOPE_BANDS_BELOW_SEA = FRESH_SLOPE_DEPTH_BELOW_SEA / BAND_HEIGHT;
 
 /**
- * Width of the slope ring, in cells. One chunk — the smallest unit of terrain
- * that streams as a whole, so the ring is never a sliver split across a chunk
- * boundary, and at 16 cells it is wide enough to be a place rather than a line.
+ * Width of the slope ring, in cells. ONE NEIGHBOURHOOD — 16 world units, wide
+ * enough to be a place rather than a line, and a whole number of chunks so the
+ * ring is never a sliver split across a chunk boundary. It was written as one
+ * CHUNK while a chunk was that much ground (see shared's NEIGHBOURHOOD_CELLS).
  */
-export const FRESH_SLOPE_WIDTH_CELLS = CHUNK_SIZE;
+export const FRESH_SLOPE_WIDTH_CELLS = NEIGHBOURHOOD_CELLS;
 
 /**
  * How much smaller the shelf is than the starter unlock square, as a divisor of
- * its span in chunks.
+ * its span in NEIGHBOURHOODS (see freshGenesisProfile for why not in chunks).
  *
  * Four, and this number is load-bearing rather than aesthetic. The census that
  * drives wildlife only counts UNLOCKED cells, so the starter square's ~16 384
@@ -313,16 +315,33 @@ export interface FreshGenesisProfile {
  * than from a restatement of its geometry (initialUnlockFootprint is the one
  * definition of that square — see initial-unlock.ts).
  *
- * The shelf is a centred square of `spanChunks / FRESH_SHELF_SPAN_DIVISOR`
- * chunks, never smaller than one chunk, centred INSIDE the unlock square by the
- * same floor-the-remainder rule the unlock square itself uses. Pure integer
- * arithmetic on chunk counts and never touches the seed — this geometry is the
- * one part of genesis every fresh world of a given size shares, on purpose
- * (see the file-header comment on why).
+ * The shelf is a centred square of `span / FRESH_SHELF_SPAN_DIVISOR`
+ * NEIGHBOURHOODS, never smaller than one, centred INSIDE the unlock square by
+ * the same floor-the-remainder rule the unlock square itself uses. Pure integer
+ * arithmetic and never touches the seed — this geometry is the one part of
+ * genesis every fresh world of a given size shares, on purpose (see the
+ * file-header comment on why).
+ *
+ * COUNTED IN NEIGHBOURHOODS SINCE 2026-08-21, having been counted in chunks
+ * while a chunk WAS one. The count is what makes the square symmetric: five
+ * neighbourhoods across, one of shelf, leaves four to split evenly either side.
+ * Left dividing the CHUNK span after the re-sample it would have taken five
+ * chunks out of twenty and left fifteen — an odd remainder, so the shelf would
+ * sit one chunk off centre and the concentric-shelf invariant (asserted in
+ * server/test/fresh-world.test.ts) would simply be false.
  */
 export function freshGenesisProfile(size: number): FreshGenesisProfile {
   const { startChunk, spanChunks } = initialUnlockFootprint(size);
-  const shelfSpanChunks = Math.max(1, Math.floor(spanChunks / FRESH_SHELF_SPAN_DIVISOR));
+  const chunksPerNeighbourhood = NEIGHBOURHOOD_CELLS / CHUNK_SIZE;
+  const spanNeighbourhoods = spanChunks / chunksPerNeighbourhood;
+  const shelfNeighbourhoods = Math.max(
+    1,
+    Math.floor(spanNeighbourhoods / FRESH_SHELF_SPAN_DIVISOR),
+  );
+  const shelfSpanChunks = Math.min(
+    spanChunks,
+    shelfNeighbourhoods * chunksPerNeighbourhood,
+  );
   const shelfStartChunk = startChunk + Math.floor((spanChunks - shelfSpanChunks) / 2);
 
   const shelfMinCell = shelfStartChunk * CHUNK_SIZE;
@@ -403,7 +422,7 @@ function mulberry32Rng(seed: number): () => number {
  * square (144², the first multiple-of-16 size bigger than the 128² starter
  * square) still spans more than one lattice cell.
  */
-const OUTER_TERRAIN_LATTICE_SPACING_CELLS = CHUNK_SIZE * 4;
+const OUTER_TERRAIN_LATTICE_SPACING_CELLS = NEIGHBOURHOOD_CELLS * 4;
 
 /**
  * Deepest a noise lattice point can push outer terrain, in bands below sea
@@ -678,7 +697,7 @@ export const GENESIS_TRENCH_MIN_BASIN_CHUNKS = 9;
 
 /** That area in cells: 2304, a 48×48 basin if it were square. */
 export const GENESIS_TRENCH_MIN_BASIN_CELLS =
-  GENESIS_TRENCH_MIN_BASIN_CHUNKS * CHUNK_SIZE * CHUNK_SIZE;
+  GENESIS_TRENCH_MIN_BASIN_CHUNKS * NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS;
 
 /**
  * How deep the trench's own floor is cut, in bands below sea level.

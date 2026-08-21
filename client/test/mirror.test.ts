@@ -17,7 +17,10 @@ import {
 } from '../src/terrain/mirror.ts';
 
 /** 64 cells = 4×4 chunks: small enough to reason about, big enough for corners. */
-const WORLD = 64;
+// Four chunks to a side, whatever a chunk is sampled at — the 2026-08-21
+// re-sample moved the cell figure and left the geometry this suite asserts on
+// exactly where it was.
+const WORLD = CHUNK_SIZE * 4;
 const CHUNKS_PER_EDGE = WORLD / CHUNK_SIZE;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 

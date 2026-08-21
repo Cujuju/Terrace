@@ -21,7 +21,7 @@ import {
   type ChronicleEntry,
 } from '../protocol.ts';
 import { placeName } from '../server/names.ts';
-import { settlementRace } from '../server/races.ts';
+import { SETTLER_DISTRICT_CELLS, settlementRace } from '../server/races.ts';
 import {
   CHRONICLE_CALAMITY_MIN_HOMES,
   STRUCTURE_TIER_NAMES,
@@ -309,14 +309,20 @@ describe('determinism', () => {
   });
 
   it('the race copy matches structures’ derivation on the shared golden vectors', () => {
-    // The same six cells plugins/structures/test pins (pilgrims contract,
-    // 2026-08-19). If either copy drifts, one of the two suites fails.
-    expect(settlementRace(0, 0)).toBe('rudy');
-    expect(settlementRace(8, 12)).toBe('rudy');
-    expect(settlementRace(16, 16)).toBe('uno');
-    expect(settlementRace(100, 100)).toBe('uno');
-    expect(settlementRace(255, 17)).toBe('uno');
-    expect(settlementRace(511, 511)).toBe('rudy');
+    // The same districts plugins/structures/test pins (pilgrims contract,
+    // 2026-08-19; restated in DISTRICTS rather than cells on 2026-08-21 — see
+    // that suite for why). If either copy drifts, one of the two suites fails.
+    for (const [districtX, districtY, race] of [
+      [0, 0, 'rudy'],
+      [1, 1, 'uno'],
+      [6, 6, 'uno'],
+      [15, 1, 'uno'],
+      [31, 31, 'rudy'],
+    ] as const) {
+      const x = districtX * SETTLER_DISTRICT_CELLS + 3;
+      const y = districtY * SETTLER_DISTRICT_CELLS + 3;
+      expect(settlementRace(x, y)).toBe(race);
+    }
   });
 
   it('parsers refuse the shapes the saga must never act on', () => {

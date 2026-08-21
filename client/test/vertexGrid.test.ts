@@ -11,8 +11,11 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
+  MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
+  NEIGHBOURHOOD_CELLS,
   SEA_LEVEL,
+  WORLD_UNIT_CELLS,
   applySculpt,
   createHeightmap,
   heightAt,
@@ -61,7 +64,12 @@ import {
   WATER_SURFACE_LIFT,
 } from '../src/config.ts';
 
-const WORLD = 64;
+// Four NEIGHBOURHOODS to a side — 64 world units, the ground this suite has
+// always covered. Counted in neighbourhoods rather than chunks because the
+// sculpted fixtures below are dug in world units and must fit: the 2026-08-21
+// re-sample left a chunk at 16 CELLS and shrank it to 4 world units, so a
+// four-CHUNK world would be a sixteenth of the land these strokes need.
+const WORLD = NEIGHBOURHOOD_CELLS * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
 /**
@@ -78,8 +86,12 @@ const EDGE_ORIGIN = EDGE_CHUNK * CHUNK_SIZE;
  * neighbours are all present in the fixture world. The edge-chunk trick is
  * wrong for them — a brush overhanging the world border would be clipped, and
  * the fixtures are about what a stroke costs, not about the rim.
+ *
+ * One NEIGHBOURHOOD in from the corner, which is what "chunk 1" meant before
+ * the 2026-08-21 re-sample: the strokes reach eight world units out, and they
+ * must all land inside the map.
  */
-const FIXTURE_CHUNK = 1;
+const FIXTURE_CHUNK = NEIGHBOURHOOD_CELLS / CHUNK_SIZE;
 const FIXTURE_ORIGIN = FIXTURE_CHUNK * CHUNK_SIZE;
 
 /** sRGB palettes — the builder does not care which space it is handed. */
@@ -243,7 +255,16 @@ function coversXZ(t: Triangle, x: number, z: number): boolean {
  * The surface a player would see (and click) at a point: the highest cap
  * covering it. This is the function the honesty invariant is stated against.
  */
-function topmostCapY(triangles: Triangle[], x: number, z: number): number | null {
+/**
+ * Every probe in this suite names a point in CELL space — the space the
+ * heightmap and every fixture below are written in — and the geometry it
+ * probes is in WORLD space. The conversion lives here, once, rather than at
+ * ~forty call sites: it was the identity while a cell was a world unit, and is
+ * a multiply by CELL_WORLD_SIZE since the 2026-08-21 re-sample.
+ */
+function topmostCapY(triangles: Triangle[], cellX: number, cellZ: number): number | null {
+  const x = cellX * CELL_WORLD_SIZE;
+  const z = cellZ * CELL_WORLD_SIZE;
   let best: number | null = null;
   for (const cap of capsOf(triangles)) {
     if (!coversXZ(cap, x, z)) continue;
@@ -284,7 +305,11 @@ function writeEdge(height: (i: number, j: number) => number) {
 // them. They are what the measured table at CHUNK_TRIANGLE_BUDGET reports.
 // ---------------------------------------------------------------------------
 
-/** One held-brush click: a centre offset, a radius, a repeat count. */
+/**
+ * One held-brush click: a centre offset, a radius, a repeat count. The offset
+ * and radius are in WORLD UNITS (sculptedWorld converts); the click count is a
+ * count of bands and needs no conversion.
+ */
 interface Stroke {
   dx: number;
   dy: number;
@@ -346,6 +371,43 @@ const SPIRE_STROKES: readonly Stroke[] = [
 /** The same crater dug again, offset — two bowls on one diagonal. */
 const offsetStrokes = (strokes: readonly Stroke[], dx: number, dy: number): Stroke[] =>
   strokes.map((s) => ({ ...s, dx: s.dx + dx, dy: s.dy + dy }));
+
+/**
+ * A field of pits on a fixed CELL pitch — the hostile shape the work guards
+ * exist for, and the one a malicious client can actually send: the finest
+ * brush the protocol accepts is MIN_BRUSH_RADIUS, one CELL, and it may be
+ * aimed at any cell. Expressed in cells and converted to the Stroke type's
+ * world units here, because "every second cell" is a statement about the
+ * SAMPLING GRID; the legitimate fixtures around it are stated in world units
+ * because they are statements about ground a player shapes.
+ */
+const pitsEveryCells = (stepCells: number, radiusCells = MIN_BRUSH_RADIUS): Stroke[] => {
+  const out: Stroke[] = [];
+  const step = stepCells / WORLD_UNIT_CELLS;
+  const radius = radiusCells / WORLD_UNIT_CELLS;
+  for (let dx = -8; dx <= 8; dx += step) {
+    for (let dy = -8; dy <= 8; dy += step) out.push({ dx, dy, radius, clicks: 3 });
+  }
+  return out;
+};
+
+/**
+ * The finest brush a PLAYER holds: the HUD ladder's first rung, one world
+ * unit (client/src/state/hudState.ts's BRUSH_RADII). The legitimate rows are
+ * dug with it and the adversarial ones with MIN_BRUSH_RADIUS, the protocol's
+ * one-cell floor — which is exactly the difference between the two
+ * populations since the 2026-08-21 re-sample: a hostile client can aim a
+ * cell-wide brush at every second cell, and no shipped UI can.
+ */
+const PLAYER_FINEST_BRUSH_CELLS = WORLD_UNIT_CELLS;
+
+/** The same pitch, raised instead of dug: separate loops, never bridged. */
+const spireField = (): Stroke[] =>
+  pitsEveryCells(2 * WORLD_UNIT_CELLS, PLAYER_FINEST_BRUSH_CELLS).map((s) => ({
+    ...s,
+    up: true as const,
+  }));
+
 
 // ---------------------------------------------------------------------------
 // DEEP-SEA FIXTURES (2026-08-19, Deep Strata). The world floor moved from
@@ -438,11 +500,16 @@ function sculptedWorld(strokes: readonly Stroke[], base: number): ChunkPayload[]
   map.cells.fill(base);
   for (const stroke of strokes) {
     for (let click = 0; click < stroke.clicks; click++) {
+      // A stroke's dx/dy/radius are WORLD UNITS — where the player put the
+      // brush and how much ground it covered — and applySculpt works in cells.
+      // The conversion was the identity until the 2026-08-21 re-sample; doing
+      // it here is what keeps every fixture below the same physical dig it was
+      // measured as, rather than one four times smaller.
       applySculpt(
         map,
-        SCULPT_CENTRE + stroke.dx,
-        SCULPT_CENTRE + stroke.dy,
-        stroke.radius,
+        SCULPT_CENTRE + stroke.dx * WORLD_UNIT_CELLS,
+        SCULPT_CENTRE + stroke.dy * WORLD_UNIT_CELLS,
+        stroke.radius * WORLD_UNIT_CELLS,
         stroke.up ? DEFAULT_SCULPT_AMOUNT : -DEFAULT_SCULPT_AMOUNT,
         {
           tool: 'stamp',
@@ -468,6 +535,45 @@ function sculptedWorld(strokes: readonly Stroke[], base: number): ChunkPayload[]
 function writeSculpted(strokes: readonly Stroke[], base = 8 * BAND_HEIGHT) {
   const mirror = mirrorWith(sculptedWorld(strokes, base));
   return write(mirror, FIXTURE_CHUNK, FIXTURE_CHUNK);
+}
+
+/**
+ * The most expensive CHUNK anywhere in a fixture world, and whether ANY chunk
+ * in it fell back.
+ *
+ * THE CALIBRATION READS THIS, NOT writeSculpted (2026-08-21). The budgets are
+ * per chunk, and until the re-sample a chunk was 16 world units — big enough
+ * that a crater dug at its centre lay inside it, so measuring the one fixture
+ * chunk measured the dig. A chunk is four world units now (shared's
+ * CHUNK_SPAN), so the same dig spans a dozen of them and its costliest chunk is
+ * a wall, not the centre: measuring the centre chunk alone would have quietly
+ * calibrated the budgets against two triangles of flat floor.
+ *
+ * Worst by TRIANGULATION WORK, with the other two maxima reported alongside,
+ * because the three do not peak in the same chunk and each budget wants its
+ * own worst case.
+ */
+function worstSculptedChunk(strokes: readonly Stroke[], base = 8 * BAND_HEIGHT) {
+  const mirror = mirrorWith(sculptedWorld(strokes, base));
+  const perEdge = WORLD / CHUNK_SIZE;
+  let anyFallback = false;
+  let maxTriangles = 0;
+  let maxWork = 0;
+  let maxPolygon = 0;
+  let skirtTriangles = 0;
+  let capTriangles = 0;
+  for (let cy = 0; cy < perEdge; cy++) {
+    for (let cx = 0; cx < perEdge; cx++) {
+      const { counts } = write(mirror, cx, cy);
+      if (counts.usedFallback) anyFallback = true;
+      if (counts.triangleCount > maxTriangles) maxTriangles = counts.triangleCount;
+      if (counts.triangulationWork > maxWork) maxWork = counts.triangulationWork;
+      if (counts.maxPolygonWork > maxPolygon) maxPolygon = counts.maxPolygonWork;
+      skirtTriangles += counts.skirtTriangleCount;
+      capTriangles += counts.capTriangleCount;
+    }
+  }
+  return { anyFallback, maxTriangles, maxWork, maxPolygon, skirtTriangles, capTriangles };
 }
 
 describe('flat terrain', () => {
@@ -943,15 +1049,11 @@ describe('the blocky fallback', () => {
       // The case that proves the triangle budget alone cannot be the guard:
       // this costs MORE triangles than the pit field below and a fraction of
       // the time, because separate outer loops never get bridged together.
-      const field: Stroke[] = [];
-      for (let dx = -8; dx <= 8; dx += 2) {
-        for (let dy = -8; dy <= 8; dy += 2) {
-          field.push({ dx, dy, radius: 1, clicks: 3, up: true });
-        }
-      }
-      const { counts } = writeSculpted(field, 4 * BAND_HEIGHT);
-      expect(counts.usedFallback).toBe(false);
-      expect(counts.triangleCount).toBeGreaterThan(4096);
+      // Both fields are on the same CELL pitch, which is the pitch the guards
+      // are about — see pitsEveryCells.
+      const worst = worstSculptedChunk(pitsEveryCells(2).map((s) => ({ ...s, up: true as const })), 4 * BAND_HEIGHT);
+      expect(worst.anyFallback).toBe(false);
+      expect(worst.maxTriangles).toBeGreaterThan(4096);
     });
   });
 
@@ -962,22 +1064,14 @@ describe('the blocky fallback', () => {
    * triangle budget and must still be caught.
    */
   it('takes over on terrain that is cheap in triangles but not in work', () => {
-    const pits: Stroke[] = [];
-    for (let dx = -8; dx <= 8; dx += 2) {
-      for (let dy = -8; dy <= 8; dy += 2) pits.push({ dx, dy, radius: 1, clicks: 3 });
-    }
-    const { counts } = writeSculpted(pits);
-    expect(counts.usedFallback).toBe(true);
-    expect(counts.triangleCount).toBeLessThanOrEqual(FALLBACK_MAX_TRIANGLES);
+    expect(worstSculptedChunk(pitsEveryCells(2)).anyFallback).toBe(true);
 
-    // Pits every FOURTH cell are the same shape an order of magnitude cheaper,
-    // and must come through organically — the gate has to discriminate, not
-    // just reject holes.
-    const sparse: Stroke[] = [];
-    for (let dx = -8; dx <= 8; dx += 4) {
-      for (let dy = -8; dy <= 8; dy += 4) sparse.push({ dx, dy, radius: 1, clicks: 3 });
-    }
-    expect(writeSculpted(sparse).counts.usedFallback).toBe(false);
+    // The same shape a PLAYER can make — the finest brush a UI offers, on a
+    // pitch that brush can resolve — is an order of magnitude cheaper and must
+    // come through organically: the gate has to discriminate, not just reject
+    // holes.
+    const sparse = pitsEveryCells(4 * WORLD_UNIT_CELLS, PLAYER_FINEST_BRUSH_CELLS);
+    expect(worstSculptedChunk(sparse).anyFallback).toBe(false);
   });
 
   it('keeps both budgets above the fallback they fall back TO', () => {
@@ -1024,8 +1118,12 @@ describe('the blocky fallback', () => {
   it('curtains its border so a fallback chunk can never be seen through', () => {
     const { triangles, counts } = writeEdge(checkerboard);
     expect(counts.usedFallback).toBe(true);
+    // Triangle coordinates are WORLD space and EDGE_ORIGIN is a cell index —
+    // the same conversion topmostCapY documents, spelled out here because this
+    // filter compares them directly.
+    const borderWorldX = EDGE_ORIGIN * CELL_WORLD_SIZE;
     const onWestBorder = skirtsOf(triangles).filter(
-      (t) => Math.abs(t.a.x - EDGE_ORIGIN) < 0.01 && Math.abs(t.b.x - EDGE_ORIGIN) < 0.01,
+      (t) => Math.abs(t.a.x - borderWorldX) < 0.01 && Math.abs(t.b.x - borderWorldX) < 0.01,
     );
     expect(onWestBorder.length).toBeGreaterThan(0);
   });
@@ -1185,8 +1283,10 @@ describe('skirt picking', () => {
       expect(Math.abs((cell as { x: number }).x - pit.x)).toBeLessThanOrEqual(1);
       expect(Math.abs((cell as { y: number }).y - pit.y)).toBeLessThanOrEqual(1);
 
-      const x = (riser.a.x + riser.b.x + riser.c.x) / 3;
-      const z = (riser.a.z + riser.b.z + riser.c.z) / 3;
+      // Centroid in CELL space: the triangle is in world units and `pit` is a
+      // cell, and the 0.25-cell tolerance below is a fraction of a CELL.
+      const x = (riser.a.x + riser.b.x + riser.c.x) / 3 / CELL_WORLD_SIZE;
+      const z = (riser.a.z + riser.b.z + riser.c.z) / 3 / CELL_WORLD_SIZE;
       const offAxis = Math.min(Math.abs(x - pit.x), Math.abs(z - pit.y));
       if (offAxis > 0.25) continue; // the rounded corner, exempt above
       straight++;
@@ -1584,15 +1684,18 @@ describe('deep strata sculpting (2026-08-19) — the digs that recalibrated the 
   });
 
   it("draws the owner's hard-dug floor pit organically (the 2026-08-19 report)", () => {
-    const { counts } = writeSculpted(DEEP_PIT_STROKES, SHELF_BASE);
-    expect(counts.usedFallback).toBe(false);
+    // Measured over the WHOLE dig rather than one chunk of it: a chunk is four
+    // world units since the 2026-08-21 re-sample, so the pit spans a dozen of
+    // them and the fixture chunk holds only its floor.
+    const worst = worstSculptedChunk(DEEP_PIT_STROKES, SHELF_BASE);
+    expect(worst.anyFallback).toBe(false);
     // Real deep geometry: the bordered underwater skirts dominate.
-    expect(counts.skirtTriangleCount).toBeGreaterThan(counts.capTriangleCount);
+    expect(worst.skirtTriangles).toBeGreaterThan(worst.capTriangles);
   });
 
   it('draws a soft floor-depth crater, remnant spires and all, organically', () => {
     const withSpires = [...DEEP_CRATER_STROKES, ...asDeepPlay(SPIRE_STROKES)];
-    expect(writeSculpted(withSpires, SHELF_BASE).counts.usedFallback).toBe(false);
+    expect(worstSculptedChunk(withSpires, SHELF_BASE).anyFallback).toBe(false);
   });
 
   it('draws the worst plausible chunk — three floor-depth craters — inside both budgets', () => {
@@ -1636,15 +1739,7 @@ describe('the legitimate-sculpting contract', () => {
     strokes: readonly Stroke[];
     base: number;
   }
-  const pitsEvery = (step: number): Stroke[] => {
-    const out: Stroke[] = [];
-    for (let dx = -8; dx <= 8; dx += step) {
-      for (let dy = -8; dy <= 8; dy += step) out.push({ dx, dy, radius: 1, clicks: 3 });
-    }
-    return out;
-  };
-  const spireField = (): Stroke[] =>
-    pitsEvery(2).map((s) => ({ ...s, up: true as const }));
+
 
   const LEGITIMATE: readonly Row[] = [
     { name: 'stamped crater (land)', strokes: CRATER_STROKES, base: 8 * BAND_HEIGHT },
@@ -1664,8 +1759,12 @@ describe('the legitimate-sculpting contract', () => {
       ],
       base: 8 * BAND_HEIGHT,
     },
-    { name: 'spire field every 2nd cell', strokes: spireField(), base: 4 * BAND_HEIGHT },
-    { name: 'pits every 4th cell', strokes: pitsEvery(4), base: 8 * BAND_HEIGHT },
+    { name: 'spire field every 2 world units', strokes: spireField(), base: 4 * BAND_HEIGHT },
+    {
+      name: 'pits every 4th world unit',
+      strokes: pitsEveryCells(4 * WORLD_UNIT_CELLS, PLAYER_FINEST_BRUSH_CELLS),
+      base: 8 * BAND_HEIGHT,
+    },
     { name: "the owner's floor pit (hard r4)", strokes: DEEP_PIT_STROKES, base: SHELF_BASE },
     {
       name: 'deep pit with spires',
@@ -1688,10 +1787,12 @@ describe('the legitimate-sculpting contract', () => {
   it(
     'renders every legitimate fixture organically — no exceptions',
     () => {
+      const failed: string[] = [];
       for (const row of LEGITIMATE) {
-        const { counts } = writeSculpted(row.strokes, row.base);
-        expect(counts.usedFallback, row.name).toBe(false);
+        const worst = worstSculptedChunk(row.strokes, row.base);
+        if (worst.anyFallback) failed.push(row.name);
       }
+      expect(failed).toEqual([]);
     },
     CALIBRATION_FIXTURE_TIMEOUT_MS,
   );
@@ -1699,7 +1800,7 @@ describe('the legitimate-sculpting contract', () => {
   it('and the guard still guards: adversarial shapes still fall back', () => {
     // Both budgets are calibrated between two measured populations; this side
     // pins the other population so a lazy "raise it until green" can't pass.
-    expect(writeSculpted(pitsEvery(2)).counts.usedFallback).toBe(true);
+    expect(worstSculptedChunk(pitsEveryCells(2)).anyFallback).toBe(true);
     const checker = writeEdge((i, j) => ((i + j) % 2) * BAND_HEIGHT);
     expect(checker.counts.usedFallback).toBe(true);
   });
@@ -1716,22 +1817,28 @@ describe('the legitimate-sculpting contract', () => {
     // pits-every-2nd field's, which never moved. The MAXIMUM single polygon
     // did not converge, because depth adds polygons while hostile shapes
     // enlarge one — and that is the quantity earClip is quadratic in.
-    const legitimate = LEGITIMATE.map((row) => writeSculpted(row.strokes, row.base).counts);
-    const worstLegitimate = Math.max(...legitimate.map((c) => c.maxPolygonWork));
-    const pits = writeSculpted(pitsEvery(2)).counts;
+    //
+    // RE-MEASURED 2026-08-21 over every chunk of each fixture world (see
+    // worstSculptedChunk) rather than one chunk of it, and the claim survived
+    // the re-sample intact: worst honest polygon 53,824 units of work, the
+    // cheapest hostile one 265,225 — the same populations, four to five times
+    // apart, either side of an unchanged 512-vertex cap.
+    const legitimate = LEGITIMATE.map((row) => worstSculptedChunk(row.strokes, row.base));
+    const worstLegitimate = Math.max(...legitimate.map((c) => c.maxPolygon));
+    const pits = worstSculptedChunk(pitsEveryCells(2));
     const checker = writeEdge((i, j) => ((i + j) % 2) * BAND_HEIGHT).counts;
 
     // Every honest fixture stays under the cap, with room to spare...
     expect(worstLegitimate).toBeLessThan(CHUNK_POLYGON_WORK_BUDGET);
     // ...and the hostile ones are over it by a clear multiple, not a hair.
-    expect(pits.maxPolygonWork).toBeGreaterThan(2 * CHUNK_POLYGON_WORK_BUDGET);
+    expect(pits.maxPolygon).toBeGreaterThan(4 * CHUNK_POLYGON_WORK_BUDGET);
     expect(checker.maxPolygonWork).toBeGreaterThan(4 * CHUNK_POLYGON_WORK_BUDGET);
 
     // And the separation is on the RIGHT metric: the pit field's SUMMED work
     // sits below the budget that bounds time, so the total-work guard alone
     // would now wave it through. This is the assertion that stops anyone
     // deleting the polygon guard as redundant.
-      expect(pits.triangulationWork).toBeLessThan(CHUNK_TRIANGULATION_WORK_BUDGET);
+      expect(pits.maxWork).toBeLessThan(CHUNK_TRIANGULATION_WORK_BUDGET);
     },
     CALIBRATION_FIXTURE_TIMEOUT_MS,
   );

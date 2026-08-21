@@ -88,14 +88,14 @@ const RIVER_RECOMPUTE_INTERVAL_MS = 500;
  * wide, narrower than the 1-cell terrain grid so a stream reads as a channel
  * cut into the land rather than as a flooded row of whole cells.
  */
-const FLOW_TILE_HALF_WIDTH_CELLS = 0.3;
+const FLOW_TILE_HALF_WIDTH_WORLD_UNITS = 0.3;
 
 /**
  * Half-width of a POOLED (lake) tile. 0.5 → a full 1×1 cell, so adjacent
  * pooled cells tile edge-to-edge into one continuous flat lake surface with
  * no gaps between them.
  */
-const POOL_TILE_HALF_WIDTH_CELLS = 0.5;
+const POOL_TILE_HALF_WIDTH_WORLD_UNITS = 0.5;
 
 /**
  * How far above the terrain a flowing tile is lifted, in world units — the
@@ -105,7 +105,7 @@ const POOL_TILE_HALF_WIDTH_CELLS = 0.5;
  * river tile is small and always drawn a beat after the terrain it follows,
  * so it needs less clearance than the sea's single world-spanning plane.
  */
-const RIVER_SURFACE_LIFT_WORLD_UNITS = CELL_WORLD_SIZE / 64;
+const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
 
 /** Translucency for the flowing channel — a shade more opaque than the sea. */
 const FLOW_OPACITY = 0.72;
@@ -180,12 +180,12 @@ function buildMergedTiles(
  */
 const MIST_PARTICLES_PER_WATERFALL = 8;
 /** How far the mist puff spreads horizontally from the plunge point, in cells. */
-const MIST_SPREAD_CELLS = 0.4;
+const MIST_SPREAD_WORLD_UNITS = 0.4;
 /** How tall the puff stands above the plunge pool, in world units. */
-const MIST_HEIGHT_WORLD_UNITS = CELL_WORLD_SIZE * 0.6;
+const MIST_HEIGHT_WORLD_UNITS = 0.6;
 const MIST_COLOR = 0xf4fbff;
 const MIST_OPACITY = 0.55;
-const MIST_SPRITE_SIZE = CELL_WORLD_SIZE * 0.5;
+const MIST_SPRITE_SIZE = 0.5;
 
 /**
  * The bob's period, in seconds, and how far it moves — gentle enough to read
@@ -193,7 +193,7 @@ const MIST_SPRITE_SIZE = CELL_WORLD_SIZE * 0.5;
  * concern (weather's own bar is 3 Hz; this is 1/6 Hz).
  */
 const MIST_BOB_PERIOD_SECONDS = 6;
-const MIST_BOB_HEIGHT_WORLD_UNITS = CELL_WORLD_SIZE * 0.15;
+const MIST_BOB_HEIGHT_WORLD_UNITS = 0.15;
 
 const TWO_PI = Math.PI * 2;
 
@@ -203,8 +203,8 @@ const TWO_PI = Math.PI * 2;
 // waterfall in the network:
 //
 //   1. RIPPLE RINGS — SPRING_RING_COUNT flat concentric annuli per waterfall,
-//      each cycling from SPRING_RING_MIN_RADIUS_CELLS out to
-//      SPRING_RING_MAX_RADIUS_CELLS. A ring's band width follows
+//      each cycling from SPRING_RING_MIN_RADIUS_WORLD_UNITS out to
+//      SPRING_RING_MAX_RADIUS_WORLD_UNITS. A ring's band width follows
 //      sin(π · progress): zero at birth, widest mid-life, zero again as it
 //      dies at full radius — so rings appear and dissolve with no popping and
 //      WITHOUT animating material opacity (one shared material serves every
@@ -246,24 +246,24 @@ const SPRING_RING_SEGMENTS = 12;
 
 /**
  * A ring is born at this centre-line radius, in cells — just outside the foam
- * dome's edge (SPRING_DOME_RADIUS_CELLS), so ripples visibly emanate FROM the
+ * dome's edge (SPRING_DOME_RADIUS_WORLD_UNITS), so ripples visibly emanate FROM the
  * upwelling rather than materialising over it.
  */
-const SPRING_RING_MIN_RADIUS_CELLS = 0.18;
+const SPRING_RING_MIN_RADIUS_WORLD_UNITS = 0.18;
 
 /**
  * ...and dies at this radius. 0.45 keeps the ripple train inside the plunge
  * cell (half a cell is 0.5): it may lap the channel edge — read as spray
  * wetting the bank — but never marches across neighbouring cells.
  */
-const SPRING_RING_MAX_RADIUS_CELLS = 0.45;
+const SPRING_RING_MAX_RADIUS_WORLD_UNITS = 0.45;
 
 /**
  * A ring's radial band width at mid-life (its widest), in cells. Wide enough
  * to survive at orbit distance; narrower than the ring spacing so consecutive
  * rings never merge into a solid disc.
  */
-const SPRING_RING_MAX_WIDTH_CELLS = 0.1;
+const SPRING_RING_MAX_WIDTH_WORLD_UNITS = 0.1;
 
 /**
  * One ring's full birth-to-death cycle, in seconds. With SPRING_RING_COUNT
@@ -289,14 +289,14 @@ const SPRING_RING_OPACITY = 0.5;
 
 /** Radius of the upwelling foam dome, in cells — comfortably inside the
  * 0.6-cell-wide flowing channel tile so the dome sits ON the water. */
-const SPRING_DOME_RADIUS_CELLS = 0.16;
+const SPRING_DOME_RADIUS_WORLD_UNITS = 0.16;
 
 /**
  * The dome's rest height above the plunge-pool surface, in world units. A low
  * mound — water welling up — not a hemisphere boulder; kept well under one
- * band (BAND_WORLD_HEIGHT = CELL_WORLD_SIZE) so it never reads as terrain.
+ * band (BAND_WORLD_HEIGHT) so it never reads as terrain.
  */
-const SPRING_DOME_HEIGHT_WORLD_UNITS = CELL_WORLD_SIZE * 0.12;
+const SPRING_DOME_HEIGHT_WORLD_UNITS = 0.12;
 
 /**
  * Radial segments of the dome. 8 gives the faceted low-poly silhouette the
@@ -417,8 +417,8 @@ export function createRiverRig(
   parent: Object3D,
   onFrame: (handler: (dt: number) => void) => () => void,
 ): RiverRig {
-  const flowUnit = buildTileGeometry(FLOW_TILE_HALF_WIDTH_CELLS);
-  const poolUnit = buildTileGeometry(POOL_TILE_HALF_WIDTH_CELLS);
+  const flowUnit = buildTileGeometry(FLOW_TILE_HALF_WIDTH_WORLD_UNITS);
+  const poolUnit = buildTileGeometry(POOL_TILE_HALF_WIDTH_WORLD_UNITS);
 
   const flowMaterial = new MeshStandardMaterial({
     color: WATER_COLOR,
@@ -590,14 +590,14 @@ export function createRiverRig(
         const baseV = domeBase + s;
         const midV = domeBase + SPRING_DOME_SEGMENTS + s;
         // Base ring: on the surface, full radius.
-        domePositions[baseV * 3] = centreX + dirX * SPRING_DOME_RADIUS_CELLS * CELL_WORLD_SIZE;
-        domePositions[baseV * 3 + 2] = centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * CELL_WORLD_SIZE;
+        domePositions[baseV * 3] = centreX + dirX * SPRING_DOME_RADIUS_WORLD_UNITS;
+        domePositions[baseV * 3 + 2] = centreZ + dirZ * SPRING_DOME_RADIUS_WORLD_UNITS;
         domeRestOffsetY[baseV] = 0;
         // Mid ring: 45° up the dome profile.
         domePositions[midV * 3] =
-          centreX + dirX * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * CELL_WORLD_SIZE;
+          centreX + dirX * SPRING_DOME_RADIUS_WORLD_UNITS * SPRING_DOME_MID_PROFILE;
         domePositions[midV * 3 + 2] =
-          centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * CELL_WORLD_SIZE;
+          centreZ + dirZ * SPRING_DOME_RADIUS_WORLD_UNITS * SPRING_DOME_MID_PROFILE;
         domeRestOffsetY[midV] = SPRING_DOME_HEIGHT_WORLD_UNITS * SPRING_DOME_MID_PROFILE;
 
         const sn = (s + 1) % SPRING_DOME_SEGMENTS;
@@ -719,14 +719,14 @@ export function createRiverRig(
     const ringAttribute = spring.ringGeometry.getAttribute('position') as BufferAttribute;
     const ringArray = ringAttribute.array as Float32Array;
     const ringCycle = seconds / SPRING_RIPPLE_PERIOD_SECONDS;
-    const radiusSpanCells = SPRING_RING_MAX_RADIUS_CELLS - SPRING_RING_MIN_RADIUS_CELLS;
+    const radiusSpan = SPRING_RING_MAX_RADIUS_WORLD_UNITS - SPRING_RING_MIN_RADIUS_WORLD_UNITS;
     for (let i = 0; i < spring.ringEdge.length; i++) {
       const progress = (ringCycle + spring.ringCycleOffset[i]!) % 1;
-      const centreLineRadiusCells = SPRING_RING_MIN_RADIUS_CELLS + radiusSpanCells * progress;
-      const halfWidthCells = (SPRING_RING_MAX_WIDTH_CELLS * Math.sin(Math.PI * progress)) / 2;
+      const centreLineRadius = SPRING_RING_MIN_RADIUS_WORLD_UNITS + radiusSpan * progress;
+      const halfWidth = (SPRING_RING_MAX_WIDTH_WORLD_UNITS * Math.sin(Math.PI * progress)) / 2;
       // edge 0 → inner (−halfWidth), edge 1 → outer (+halfWidth).
       const radiusWorld =
-        (centreLineRadiusCells + (spring.ringEdge[i]! * 2 - 1) * halfWidthCells) * CELL_WORLD_SIZE;
+        centreLineRadius + (spring.ringEdge[i]! * 2 - 1) * halfWidth;
       ringArray[i * 3] = spring.ringCentreX[i]! + spring.ringDirX[i]! * radiusWorld;
       ringArray[i * 3 + 2] = spring.ringCentreZ[i]! + spring.ringDirZ[i]! * radiusWorld;
     }
