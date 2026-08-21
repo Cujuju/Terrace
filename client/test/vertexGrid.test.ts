@@ -25,6 +25,7 @@ import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
   CHAIKIN_ITERATIONS,
   CHUNK_TRIANGLE_BUDGET,
+  CHUNK_POLYGON_WORK_BUDGET,
   CHUNK_TRIANGULATION_WORK_BUDGET,
   CONTOUR_CELL_CENTRE_GUARD,
   CONTOUR_SAMPLE_CLEARANCE,
@@ -346,6 +347,28 @@ const scaledStrokes = (strokes: readonly Stroke[], factor: number): Stroke[] =>
 const asDeepPlay = (strokes: readonly Stroke[]): Stroke[] =>
   strokes.map((s) => ({ ...s, anchor: 'clicked' as const }));
 
+/** Band-clicks between the coastal shelf and the world floor, as built. */
+const SHELF_TO_FLOOR_BANDS = (SHELF_BASE - MIN_HEIGHT) / BAND_HEIGHT;
+
+/** The same distance when the deep fixtures' click counts were authored. */
+const AUTHORED_SHELF_TO_FLOOR_BANDS = 22;
+
+/**
+ * How much harder the deep fixtures must be played to still bottom out.
+ *
+ * The anchored brush moves at most ONE BAND per click, so a fixture's click
+ * counts ARE its depth in bands — which made them a silent function of
+ * BAND_HEIGHT. Authored against a 22-band shelf-to-floor drop, they bottomed
+ * out at -544 instead of MIN_HEIGHT once the world re-terraced to 94 bands of
+ * the same physical depth, and the budget calibration below would have been
+ * measured against a third of the world players actually dig.
+ *
+ * Rounded UP, so the fixtures overshoot the floor and clamp there rather than
+ * stopping a band short of it — bottoming out is the property the calibration
+ * needs, and arriving early costs nothing.
+ */
+const DEEP_DIG_SCALE = Math.ceil(SHELF_TO_FLOOR_BANDS / AUTHORED_SHELF_TO_FLOOR_BANDS);
+
 /**
  * THE OWNER'S PIT (2026-08-19 screenshot): brush 4, HARD edge, lower, held at
  * one spot with small wanders until the dig bottoms out on the world floor —
@@ -353,24 +376,34 @@ const asDeepPlay = (strokes: readonly Stroke[]): Stroke[] =>
  * anchored hard brush moves one band per click, so the click counts walk the
  * shelf (band −2) down 22 more bands with a ragged rim left by the wander.
  */
-const DEEP_PIT_STROKES: readonly Stroke[] = asDeepPlay([
-  { dx: 0, dy: 0, radius: 4, clicks: 10, profile: 'hard' },
-  { dx: 1, dy: 1, radius: 4, clicks: 8, profile: 'hard' },
-  { dx: -1, dy: 0, radius: 4, clicks: 8, profile: 'hard' },
-  { dx: 0, dy: -2, radius: 3, clicks: 6, profile: 'hard' },
-  { dx: 2, dy: 2, radius: 3, clicks: 4, profile: 'hard' },
-]);
+const DEEP_PIT_STROKES: readonly Stroke[] = asDeepPlay(
+  scaledStrokes(
+    [
+      { dx: 0, dy: 0, radius: 4, clicks: 10, profile: 'hard' },
+      { dx: 1, dy: 1, radius: 4, clicks: 8, profile: 'hard' },
+      { dx: -1, dy: 0, radius: 4, clicks: 8, profile: 'hard' },
+      { dx: 0, dy: -2, radius: 3, clicks: 6, profile: 'hard' },
+      { dx: 2, dy: 2, radius: 3, clicks: 4, profile: 'hard' },
+    ],
+    DEEP_DIG_SCALE,
+  ),
+);
 
 /**
  * A SOFT deep crater: the original ragged crater played 3× as long under the
  * anchored brush (which moves at most a band per click, so depth ≈ clicks),
  * remnant columns and all — the soft-brush version of reaching the floor.
  */
-const DEEP_CRATER_STROKES: readonly Stroke[] = asDeepPlay([
-  ...scaledStrokes(CRATER_STROKES, 3),
-  { dx: 0, dy: 0, radius: 3, clicks: 10 },
-  { dx: 1, dy: -1, radius: 2, clicks: 8 },
-]);
+const DEEP_CRATER_STROKES: readonly Stroke[] = asDeepPlay(
+  scaledStrokes(
+    [
+      ...scaledStrokes(CRATER_STROKES, 3),
+      { dx: 0, dy: 0, radius: 3, clicks: 10 },
+      { dx: 1, dy: -1, radius: 2, clicks: 8 },
+    ],
+    DEEP_DIG_SCALE,
+  ),
+);
 
 /**
  * Applies strokes to a world that starts flat at `base`, and returns every
@@ -417,8 +450,9 @@ function writeSculpted(strokes: readonly Stroke[], base = 8 * BAND_HEIGHT) {
 describe('flat terrain', () => {
   it('draws a whole-chunk cap for the one band present, and nothing else', () => {
     // Every sample is band 1, so there is exactly one level and it covers the
-    // chunk's whole domain: two triangles, no contour, no riser.
-    const { counts, triangles } = writeEdge(() => 100);
+    // chunk's whole domain: two triangles, no contour, no riser. (The height
+    // was the literal 100, which is band 1 only while a band is 64 units.)
+    const { counts, triangles } = writeEdge(() => BAND_HEIGHT);
     expect(counts.skirtTriangleCount).toBe(0);
     expect(counts.capTriangleCount).toBe(2);
     for (const cap of capsOf(triangles)) {
@@ -432,7 +466,7 @@ describe('flat terrain', () => {
     // The domain is [x0, x0+16] — the lattice of cell centres — so a chunk is
     // responsible for everything from its own first centre up to (and
     // including) its neighbour's, and no further.
-    const { triangles } = writeEdge(() => 100);
+    const { triangles } = writeEdge(() => BAND_HEIGHT);
     expect(topmostCapY(triangles, EDGE_ORIGIN, EDGE_ORIGIN)).toBeCloseTo(
       BAND_WORLD_HEIGHT,
     );
@@ -469,7 +503,9 @@ describe('the waterline', () => {
   it('keeps DRY band-0 land at exactly y = 0, so the sea cannot z-fight it', () => {
     // WATER_SURFACE_LIFT's reasoning in config.ts depends on this: a band-0
     // flat renders at world y = 0 and the sea floats just above it.
-    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 63)]), 0, 0);
+    // BAND_HEIGHT - 1 is the top of band 0 and dry — the literal 63 meant that
+    // only while a band was 64 units tall.
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, BAND_HEIGHT - 1)]), 0, 0);
     const shore = capsOf(triangles).filter((t) => t.a.y === 0);
     expect(shore.length).toBeGreaterThan(0);
     expectColor(shore[0].color, TERRAIN_PALETTE[bandPaletteIndex(SEA_LEVEL + 1)]);
@@ -478,7 +514,9 @@ describe('the waterline', () => {
   it('sinks the SEABED cap under the dry one rather than z-fighting it', () => {
     // Band 0 carries two colours at one height; the submerged half is the one
     // that moves, and only far enough to decide the depth test.
-    const { triangles } = write(mirrorWith([chunkPayload(0, 0, 63)]), 0, 0);
+    // BAND_HEIGHT - 1 is the top of band 0 and dry — the literal 63 meant that
+    // only while a band was 64 units tall.
+    const { triangles } = write(mirrorWith([chunkPayload(0, 0, BAND_HEIGHT - 1)]), 0, 0);
     const seabed = capsOf(triangles).filter((t) => t.a.y < 0);
     expect(seabed.length).toBeGreaterThan(0);
     for (const cap of seabed) expect(cap.a.y).toBeCloseTo(-SEABED_CAP_SINK);
@@ -525,9 +563,10 @@ describe('organic outlines', () => {
   });
 
   it('stacks a multi-band drop as a staircase of contours, not one wall', () => {
-    // Heights 0 and 256 across one cell boundary: four band boundaries fall
+    // Four bands of drop across one cell boundary: four band boundaries fall
     // between the two samples, and each lands at its own interpolated place.
-    const mirror = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 256))]);
+    // (It was the literal 256, which is four bands only at BAND_HEIGHT 64.)
+    const mirror = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 4 * BAND_HEIGHT))]);
     const positions: number[] = [];
     for (let k = 1; k <= 4; k++) {
       const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, k * BAND_HEIGHT);
@@ -1550,6 +1589,18 @@ describe('deep strata sculpting (2026-08-19) — the digs that recalibrated the 
  * budgets against the remeasured table when it does (method at
  * CHUNK_TRIANGLE_BUDGET).
  */
+/**
+ * Wall-clock these two fixtures need, well above Vitest's 5 s default.
+ *
+ * Not a slow ASSERTION — a slow FIXTURE. Each row replays its strokes over the
+ * whole world, and the deep rows are five times the clicks they were (see
+ * DEEP_DIG_SCALE) because the floor is now 94 bands down rather than 22. Both
+ * tests then build every row. Raised rather than trimmed: the rows ARE the
+ * calibration, and dropping any of them is how a budget quietly stops being
+ * measured.
+ */
+const CALIBRATION_FIXTURE_TIMEOUT_MS = 60_000;
+
 describe('the legitimate-sculpting contract', () => {
   interface Row {
     name: string;
@@ -1605,12 +1656,16 @@ describe('the legitimate-sculpting contract', () => {
     },
   ];
 
-  it('renders every legitimate fixture organically — no exceptions', () => {
-    for (const row of LEGITIMATE) {
-      const { counts } = writeSculpted(row.strokes, row.base);
-      expect(counts.usedFallback, row.name).toBe(false);
-    }
-  });
+  it(
+    'renders every legitimate fixture organically — no exceptions',
+    () => {
+      for (const row of LEGITIMATE) {
+        const { counts } = writeSculpted(row.strokes, row.base);
+        expect(counts.usedFallback, row.name).toBe(false);
+      }
+    },
+    CALIBRATION_FIXTURE_TIMEOUT_MS,
+  );
 
   it('and the guard still guards: adversarial shapes still fall back', () => {
     // Both budgets are calibrated between two measured populations; this side
@@ -1619,4 +1674,36 @@ describe('the legitimate-sculpting contract', () => {
     const checker = writeEdge((i, j) => ((i + j) % 2) * BAND_HEIGHT);
     expect(checker.counts.usedFallback).toBe(true);
   });
+
+  it(
+    'discriminates on the WORST POLYGON, which is what re-terracing does not move',
+    () => {
+    // The 2026-08-20 calibration's load-bearing claim, pinned as a property
+    // rather than as two budget numbers.
+    //
+    // Total work stopped separating the populations when the world was
+    // re-terraced: a legitimate floor-deep dig crosses 94 band levels where it
+    // used to cross 22, so its summed V² climbed to within 1.2% of the
+    // pits-every-2nd field's, which never moved. The MAXIMUM single polygon
+    // did not converge, because depth adds polygons while hostile shapes
+    // enlarge one — and that is the quantity earClip is quadratic in.
+    const legitimate = LEGITIMATE.map((row) => writeSculpted(row.strokes, row.base).counts);
+    const worstLegitimate = Math.max(...legitimate.map((c) => c.maxPolygonWork));
+    const pits = writeSculpted(pitsEvery(2)).counts;
+    const checker = writeEdge((i, j) => ((i + j) % 2) * BAND_HEIGHT).counts;
+
+    // Every honest fixture stays under the cap, with room to spare...
+    expect(worstLegitimate).toBeLessThan(CHUNK_POLYGON_WORK_BUDGET);
+    // ...and the hostile ones are over it by a clear multiple, not a hair.
+    expect(pits.maxPolygonWork).toBeGreaterThan(2 * CHUNK_POLYGON_WORK_BUDGET);
+    expect(checker.maxPolygonWork).toBeGreaterThan(4 * CHUNK_POLYGON_WORK_BUDGET);
+
+    // And the separation is on the RIGHT metric: the pit field's SUMMED work
+    // sits below the budget that bounds time, so the total-work guard alone
+    // would now wave it through. This is the assertion that stops anyone
+    // deleting the polygon guard as redundant.
+      expect(pits.triangulationWork).toBeLessThan(CHUNK_TRIANGULATION_WORK_BUDGET);
+    },
+    CALIBRATION_FIXTURE_TIMEOUT_MS,
+  );
 });

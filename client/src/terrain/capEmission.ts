@@ -250,7 +250,39 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
  * The architectural fix that removes the frame cost AND this whole budget
  * tradeoff class is async/multi-frame meshing — flagged, not built.
  */
-export const CHUNK_TRIANGLE_BUDGET = 32768;
+/*
+ * RECALIBRATED 2026-08-20 for BAND_HEIGHT 16 (was 32,768 at BAND_HEIGHT 64).
+ *
+ * Re-terracing the world quadrupled the number of band LEVELS a deep dig
+ * crosses — the shelf-to-floor drop is 94 bands where it was 22 — and every
+ * level contributes its own contour, cap and riser. The heaviest legitimate
+ * fixture went 28,033 -> 117,384 triangles, so the old budget would have drawn
+ * the owner's floor-deep dig as blocks: exactly the 2026-08-19 bug this table
+ * was built to close.
+ *
+ *   fixture (2026-08-20 rows)          triangles       work   max polygon
+ *   stamped crater (land)                  4,144    124k          23,104
+ *   three craters and spires               9,902    354k          53,361
+ *   the owner's floor pit (hard r4)       45,708    996k          14,641
+ *   deep soft crater                      65,750  1,471k          23,716
+ *   three floor-depth craters + spires   117,384  3,318k          58,564
+ *   ── adversarial ───────────────────────────────────────────────────────
+ *   pits every 3rd cell                    4,247    796k         265,225
+ *   pits every 2nd cell                    8,738  3,358k       1,119,364
+ *   checkerboard                          10,984  4,264k       4,235,364
+ *
+ * 131,072 is the next capacity ensureCapacity's doubling lands on above the
+ * heaviest legitimate row, keeping this budget and the high-water allocation
+ * the same number as before.
+ *
+ * MEMORY, AND THE BILL THIS RUNS UP. At the unchanged 111 bytes per triangle a
+ * 131,072-triangle capacity is 14.5 MB for one chunk — four times the old
+ * ceiling, reached only by a chunk that digs three craters to the world floor.
+ * That is the honest cost of a four-times-finer world and it is what makes the
+ * vertex-format compression (111 -> ~48 bytes/triangle) load-bearing rather
+ * than an optimisation.
+ */
+export const CHUNK_TRIANGLE_BUDGET = 131072;
 
 /**
  * Ear-clipping work one chunk may spend before it is given the blocky fallback.
@@ -292,7 +324,53 @@ export const CHUNK_TRIANGLE_BUDGET = 32768;
  * LEVELS (linear, small polygons each) while adversarial shapes add HOLES
  * (quadratic in one polygon), and V² only explodes for the latter.
  */
-export const CHUNK_TRIANGULATION_WORK_BUDGET = 1_000_000;
+/*
+ * RAISED 2026-08-20, AND STRIPPED OF ITS GUARD DUTY (was 1,000,000).
+ *
+ * The claim above — that depth adds LEVELS while adversarial shapes add HOLES,
+ * so the two populations cannot converge — held only while a deep dig crossed
+ * 22 bands. At BAND_HEIGHT 16 it crosses 94, and the linear term won: the
+ * heaviest legitimate fixture climbed 777k -> 3,318k while pits-every-2nd sat
+ * still at 3,358k, because ITS cost is a function of band levels too and it
+ * only ever had three. The gap closed from 2.2x to 1.2%, which is not a budget.
+ *
+ * So this constant keeps only the job it can still do — bounding the TIME one
+ * chunk may spend, ~14 ms of ear clipping at the worst measured rate — and
+ * discrimination moves to CHUNK_POLYGON_WORK_BUDGET below, which measures the
+ * thing that actually blows up. 4,194,304 sits 26% above the heaviest
+ * legitimate row, the same margin this budget carried before.
+ */
+export const CHUNK_TRIANGULATION_WORK_BUDGET = 4_194_304;
+
+/**
+ * Vertices the single largest merged polygon in a chunk may reach before the
+ * chunk is given the blocky fallback.
+ *
+ * THE DISCRIMINATING GUARD since 2026-08-20, and the one metric in this file
+ * that does not move when the world is re-terraced. earClip is O(V²) in the
+ * vertices V of ONE polygon, so a stall comes from a single polygon that has
+ * had many holes bridged into it — never from many small polygons stacked up
+ * a deep column. Summing V² over a chunk conflates those two; taking the
+ * MAXIMUM separates them, and keeps separating them at any BAND_HEIGHT,
+ * because adding levels adds polygons rather than enlarging one.
+ *
+ * Measured against the same two populations (√work, i.e. vertices in the
+ * worst polygon): every legitimate fixture tops out at 242 — the three
+ * floor-depth craters and the shallow pits-every-4th tie there — while the
+ * adversarial rows start at 515 (pits every 3rd cell), then 1,058 (pits every
+ * 2nd) and 2,058 (checkerboard). 512 is double the heaviest legitimate
+ * polygon, rounded up to a power of two.
+ *
+ * RESIDUAL, NAMED: pits-every-3rd-cell sits at 515, three vertices over the
+ * cap, and is the nearest neighbour on the hostile side. It is in neither
+ * fixture list — it was already in that no-man's land at the 2026-08-19
+ * calibration (796k against a 777k legitimate ceiling) — so it falls back
+ * today. Anything that promotes it to legitimate must re-measure this cap, not
+ * nudge it.
+ */
+export const MAX_MERGED_POLYGON_VERTICES = 512;
+export const CHUNK_POLYGON_WORK_BUDGET =
+  MAX_MERGED_POLYGON_VERTICES * MAX_MERGED_POLYGON_VERTICES;
 
 const COMPONENTS_PER_POSITION = 3;
 const COMPONENTS_PER_NORMAL = 3;
@@ -357,6 +435,12 @@ export interface ChunkGeometryCounts {
    * honest answer to "how far did the guard let it get".
    */
   triangulationWork: number;
+  /**
+   * V² of the LARGEST single polygon the chunk triangulated — the metric
+   * CHUNK_POLYGON_WORK_BUDGET gates on. Reported so the calibration fixtures
+   * can measure the two populations rather than infer them.
+   */
+  maxPolygonWork: number;
 }
 
 /**
@@ -877,6 +961,8 @@ export function writeChunkVertexData(
   let skirtTriangles = 0;
   /** Σ V² over the polygons to be triangulated — see the work budget. */
   let triangulationWork = 0;
+  /** Largest single polygon's V² — the adversarial-shape discriminator. */
+  let maxPolygonWork = 0;
   let overBudget = false;
   const polygonsPerLevel: CapPolygon[][] = [];
   for (const level of levels) {
@@ -901,7 +987,9 @@ export function writeChunkVertexData(
       // verification below depends on.
       const merged = vertices + 2 * polygon.holes.length;
       capTriangles += merged - 2;
-      triangulationWork += merged * merged;
+      const polygonWork = merged * merged;
+      triangulationWork += polygonWork;
+      if (polygonWork > maxPolygonWork) maxPolygonWork = polygonWork;
     }
     if (level.skirtDrop > 0) {
       // A bordered (underwater) riser is two stacked quads per segment — the
@@ -922,7 +1010,8 @@ export function writeChunkVertexData(
     // it. Both are checked here, before any of the super-linear work runs.
     if (
       capTriangles + skirtTriangles > CHUNK_TRIANGLE_BUDGET ||
-      triangulationWork > CHUNK_TRIANGULATION_WORK_BUDGET
+      triangulationWork > CHUNK_TRIANGULATION_WORK_BUDGET ||
+      maxPolygonWork > CHUNK_POLYGON_WORK_BUDGET
     ) {
       overBudget = true;
       break;
@@ -1028,6 +1117,7 @@ export function writeChunkVertexData(
     capacityGrew,
     usedFallback,
     triangulationWork,
+    maxPolygonWork,
   };
 }
 

@@ -278,14 +278,24 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1)).toBe(0);
   });
 
-  it('predicts the smooth tool as the old fabric pull', () => {
+  it('predicts the smooth tool as one crisp terrace, exactly like the server', () => {
+    // SUPERSEDES "predicts the smooth tool as the old fabric pull". The client
+    // predicts by running shared's own applySculpt, so this test tracks the
+    // feel change rather than arguing with it: since DEFAULT_SCULPT_AMOUNT and
+    // MAX_STEP are both BAND_HEIGHT, one click lands exactly ON the gradient
+    // limit and relaxation has no excess to push outward (owner, 2026-08-20 —
+    // godus, not populous; the contract itself is pinned in shared's
+    // heightmap.test.ts).
+    //
+    // What matters HERE is that prediction and server agree: a client that
+    // still slumped would reconcile against an authoritative diff that did
+    // not, and every stroke would snap.
     const { mirror, store } = createClient();
 
     store.predict({ ...raise(CENTRE.x, CENTRE.y, 1), tool: 'smooth' }, 0);
 
-    // 64 > MAX_STEP, so relaxation must have pushed height outward.
-    expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBeGreaterThan(0);
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBeLessThan(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
   });
 
   it('does not predict an intent whose tool or profile it does not recognise', () => {

@@ -12,7 +12,7 @@ import {
   type Material,
   type MeshStandardMaterial,
 } from 'three';
-import { CHUNK_SIZE, chunkIndex, type ChunkPayload } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, chunkIndex, type ChunkPayload } from '@terrace/shared';
 import {
   applySnapshot,
   applyTerrainDiff,
@@ -198,7 +198,9 @@ describe('createTerrainMeshes', () => {
     meshes.update(
       applyTerrainDiff(mirror, {
         type: 'terrainDiff',
-        cells: [{ x: 2, y: 3, h: 256 }],
+        // Four bands up — the assertion below reads this as a band count, so it
+        // must be stated as one (it was the literal 256, four bands only at 64).
+        cells: [{ x: 2, y: 3, h: 4 * BAND_HEIGHT }],
       }),
     );
 
