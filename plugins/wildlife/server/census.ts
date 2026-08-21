@@ -11,6 +11,7 @@ import {
   canTraverseSegment,
   isWalkableCell as sharedIsWalkableCell,
   waterBandProfile,
+  type FreshwaterMap,
   type TraversalProfile,
 } from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
@@ -51,6 +52,22 @@ export interface HabitatWorld {
   heightAt(x: number, y: number): number;
   isChunkUnlocked(cx: number, cy: number): boolean;
   isCellUnlocked(x: number, y: number): boolean;
+  /**
+   * Where the rivers and lakes are, per cell — supplied by core's WorldApi and
+   * consumed by `shared/`'s traversal predicates, which read it off whatever
+   * `TerrainSampler` they are handed.
+   *
+   * DECLARED HERE EVEN THOUGH `TerrainSampler.freshwater` IS OPTIONAL. Leaving
+   * it out would still compile and would still work in the running server —
+   * the concrete object passed in is the WorldApi, which has the property
+   * regardless of what this interface says — but it would work by accident:
+   * the rule would be live in production and silently absent from every test
+   * that builds a stand-in world, which is the one place a rivers-vs-lakes
+   * regression would otherwise be caught. Naming it makes the dependency
+   * checked rather than incidental. Optional so a test may still omit it and
+   * mean "this world has no fresh water".
+   */
+  readonly freshwater?: FreshwaterMap;
 }
 
 /**

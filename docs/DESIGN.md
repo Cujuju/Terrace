@@ -2228,6 +2228,37 @@ a full round trip (the rest give up honestly on a world that is 1.7% land and
 heavily fragmented); 0 frozen; 0 on band-0 ground; minimum observed separation
 0.415 cells against a 0.4 target. Before: 0 of 16 completed anything, ever.
 
+**Follow-up 2026-08-21 — the freshwater axis was inert; core now supplies it.**
+The axis above shipped as a profile field and a `TerrainSampler.freshwater`
+that nothing ever populated: its absent-default is `NO_FRESHWATER`, so every
+mover in the running game was answering "no fresh water anywhere". "Terrestrial
+monsters may cross the rivers but not the lakes", and land walkers going round
+a lake at all, were expressible and not in effect.
+
+Supplied at the CORE layer, not per plugin: `World.freshwaterMap()` transposes
+`riverNetwork()` once per network recompute, and `WorldApi` exposes it as a
+`freshwater` PROPERTY named to match `TerrainSampler` — so a plugin's own world
+interface is still handed straight to `isWalkableCell` with no adapter, the
+same structural-typing trick `worldSize` and `heightAt` already use. Rejected:
+each plugin building its own map from `riverNetwork()` (four copies of a
+transpose, which is the duplication this whole contract exists to end), and
+passing a `RiverNetwork` into traversal directly (freshwater.ts's header has
+the cost argument — a linear scan per `isWalkableCell`, eight times per A*
+expansion against a 4096-node budget).
+
+Cache invalidation is by IDENTITY, not a second staleness flag:
+`riverNetwork()` already promises the same object between recomputes, so
+`cachedFor === riverNetwork()` is the whole test, and there is no copy of the
+recompute condition to drift. The map inherits the network's scoping — unlocked
+territory only — so a cell nobody has revealed reads `none`, which is the same
+answer it gave before rivers existed.
+
+The three plugin world interfaces (`PilgrimWorld`, `LairWorld`,
+`HabitatWorld`) now DECLARE `freshwater` even though the field is optional.
+Omitting it would still work in the running server and silently not work in
+every test that builds a stand-in world — the one place a rivers-vs-lakes
+regression would be caught.
+
 ### Decisions made 2026-08-20 (boats fight the kraken; the mechanic settled)
 
 **The arc parked on 2026-08-19 now has its fiction.** That entry withdrew the
