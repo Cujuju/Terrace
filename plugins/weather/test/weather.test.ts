@@ -16,7 +16,7 @@
 // here is a flaky statistical assertion where a deterministic one would do.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import { World } from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
@@ -71,8 +71,15 @@ import { worldWithTerrain } from './support/world.ts';
 /** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md §8). */
 const TICK_SECONDS = 0.1;
 
-/** 512² is the nominal world; large enough that the radius fraction never binds. */
-const WORLD_SIZE = 512;
+/**
+ * The nominal world — 512 WORLD UNITS square, in cells.
+ *
+ * STATED AS LAND (2026-08-21). A bare 512 was the nominal world only while a
+ * cell was a world unit; afterwards it is a 128-unit world, the smallest one
+ * shipped, where the radius fraction binds instead of never binding — the
+ * exact opposite of what this constant is here to provide.
+ */
+const WORLD_SIZE = cellsAcross(512);
 
 /** A world with no land at all — a fresh Terrace world's shape. */
 function flatSeaWorld(): World {
@@ -256,12 +263,20 @@ describe('spawn and decay', () => {
   });
 
   it('caps the radius against the WORLD on a small world, not only the band', () => {
-    // 128² is explicitly supported (docs/DESIGN.md §3.4) and is where the
-    // fraction binds: 0.35 × 128 = 44.8 < SYSTEM_MAX_RADIUS_CELLS.
-    expect(maxRadiusFor(128)).toBeCloseTo(128 * SYSTEM_MAX_RADIUS_WORLD_FRACTION, 12);
-    expect(maxRadiusFor(128)).toBeLessThan(SYSTEM_MAX_RADIUS_CELLS);
+    // A 128-unit world is explicitly supported (docs/DESIGN.md §3.4) and is
+    // where the fraction binds: 0.35 of its edge is under SYSTEM_MAX_RADIUS.
+    // maxRadiusFor takes a size IN CELLS — it multiplies a fraction by it and
+    // compares the result against cell radii — so every world here is a span
+    // in world units, converted.
+    const SMALL_WORLD = cellsAcross(128);
+    const TINY_WORLD = cellsAcross(32);
+    expect(maxRadiusFor(SMALL_WORLD)).toBeCloseTo(
+      SMALL_WORLD * SYSTEM_MAX_RADIUS_WORLD_FRACTION,
+      12,
+    );
+    expect(maxRadiusFor(SMALL_WORLD)).toBeLessThan(SYSTEM_MAX_RADIUS_CELLS);
     // …and never below the floor, however small the world.
-    expect(maxRadiusFor(32)).toBe(SYSTEM_MIN_RADIUS_CELLS);
+    expect(maxRadiusFor(TINY_WORLD)).toBe(SYSTEM_MIN_RADIUS_CELLS);
     // On the nominal world the band binds instead.
     expect(maxRadiusFor(WORLD_SIZE)).toBe(SYSTEM_MAX_RADIUS_CELLS);
   });

@@ -4,6 +4,7 @@
 // headless GL rig). Mirrors flora/test/client.test.ts's shape.
 
 import { describe, expect, it } from 'vitest';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   MAX_STRUCTURE_TIER,
   SETTLER_DISTRICT_CELLS,
@@ -141,6 +142,46 @@ describe('per-building variation', () => {
   });
 });
 
+/**
+ * The `count` cells of a site's coastal search disc that are nearest to it,
+ * nearest first — a patch of water that is guaranteed to be inside the disc
+ * and to be exactly as big as the caller asked for.
+ *
+ * DERIVED FROM THE DISC ITSELF (2026-08-21). The fixtures below used to write
+ * a couple of literal neighbours, or a straight column, because
+ * COASTAL_MIN_WATER_CELLS was two and the disc's radius four. Both moved with
+ * the re-sample, and they moved DIFFERENTLY — the bar is an AREA (32 cells now)
+ * and the radius a LENGTH (16) — so a column of the bar's length no longer fits
+ * inside the disc. Enumerating the disc is the only statement of "enough water,
+ * near enough" that cannot go stale again.
+ *
+ * The ordering is total (distance, then y, then x), so it is the same list on
+ * every run and the "nearest first" test can compare against it.
+ */
+function nearestWaterCells(
+  centreX: number,
+  centreY: number,
+  count: number,
+): Array<[number, number]> {
+  const radius = COASTAL_SEARCH_RADIUS_CELLS;
+  const threshold = radius * (radius - 1);
+  const offsets: Array<[number, number]> = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx === 0 && dy === 0) continue; // the site's own cell is dry by construction
+      if (dx * dx + dy * dy < threshold) offsets.push([dx, dy]);
+    }
+  }
+  offsets.sort(
+    (a, b) =>
+      a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]) || a[1] - b[1] || a[0] - b[0],
+  );
+  if (offsets.length < count) {
+    throw new Error(`search disc holds ${offsets.length} cells, asked for ${count}`);
+  }
+  return offsets.slice(0, count).map(([dx, dy]) => [centreX + dx, centreY + dy]);
+}
+
 describe('tier table', () => {
   it('has at least four and at most six tiers, as the brief asks for', () => {
     expect(STRUCTURE_TIER_COUNT).toBeGreaterThanOrEqual(4);
@@ -165,9 +206,13 @@ describe('placement', () => {
     // this sparse fixture, so the site survey defaults to 'inland' — see
     // site.ts's surveySite for the conservative-default contract this
     // exercises (its own describe block below tests the surveying itself).
+    // X/Z ARE WORLD UNITS, not the cell (placement.ts multiplies by
+    // CELL_WORLD_SIZE): the renderer places a mesh in the scene, and the scene
+    // is world space. They read as the bare cell only while a cell was a world
+    // unit. groundY is already a world Y and never was a cell.
     expect(placements[0]).toEqual({
-      x: 3,
-      z: 4,
+      x: 3 * CELL_WORLD_SIZE,
+      z: 4 * CELL_WORLD_SIZE,
       groundY: 5,
       tier: 2,
       scale: variation.scale,
@@ -190,10 +235,7 @@ describe('placement', () => {
     // A tier-2 settlement at (100, 100) with COASTAL_MIN_WATER_CELLS confirmed
     // water cells nearby (band <= -1) and everything else known and dry.
     const ground = new Map<string, number>([['100,100', 3]]);
-    const water: Array<[number, number]> = [
-      [101, 100],
-      [100, 101],
-    ];
+    const water = nearestWaterCells(100, 100, COASTAL_MIN_WATER_CELLS);
     for (const [wx, wy] of water) ground.set(`${wx},${wy}`, -1);
     const dryGroundAt: GroundLookup = (x, y) => {
       if (ground.has(`${x},${y}`)) return ground.get(`${x},${y}`)!;
@@ -228,8 +270,11 @@ describe('site survey (card 33, coastal classification)', () => {
   }
 
   it('classifies a shore site coastal: enough confirmed water nearby', () => {
-    const waterCells: Array<[number, number]> = [];
-    for (let i = 0; i < COASTAL_MIN_WATER_CELLS; i++) waterCells.push([CENTER.x + 1, CENTER.y + i]);
+    // Exactly the bar, and every one of them INSIDE the search disc. A single
+    // column of COASTAL_MIN_WATER_CELLS cells was inside it only while the bar
+    // was smaller than the disc's radius; the bar is an area and the radius a
+    // length, so they stopped fitting that way at the 2026-08-21 re-sample.
+    const waterCells = nearestWaterCells(CENTER.x, CENTER.y, COASTAL_MIN_WATER_CELLS);
     const survey = surveySite(worldWithWater(waterCells), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
@@ -273,12 +318,24 @@ describe('site survey (card 33, coastal classification)', () => {
   });
 
   it('waterCells is sorted nearest first', () => {
-    const far: [number, number] = [CENTER.x + 3, CENTER.y];
-    const near: [number, number] = [CENTER.x + 1, CENTER.y];
-    const survey = surveySite(worldWithWater([far, near]), CENTER.x, CENTER.y);
+    // The site has to clear COASTAL_MIN_WATER_CELLS before it reports any water
+    // at all, so the ordering is asserted over a qualifying patch rather than a
+    // bare pair: the nearest cells of the disc, handed in FURTHEST first, must
+    // come back nearest first.
+    const nearestFirst = nearestWaterCells(CENTER.x, CENTER.y, COASTAL_MIN_WATER_CELLS);
+    const shuffled = [...nearestFirst].reverse();
+    const survey = surveySite(worldWithWater(shuffled), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
-    expect(survey.waterCells[0]).toEqual({ x: near[0], y: near[1] });
-    expect(survey.waterCells[1]).toEqual({ x: far[0], y: far[1] });
+
+    const distanceOf = (cell: { x: number; y: number }): number =>
+      (cell.x - CENTER.x) ** 2 + (cell.y - CENTER.y) ** 2;
+    expect(survey.waterCells.length).toBe(COASTAL_MIN_WATER_CELLS);
+    for (let i = 1; i < survey.waterCells.length; i++) {
+      expect(distanceOf(survey.waterCells[i]!)).toBeGreaterThanOrEqual(
+        distanceOf(survey.waterCells[i - 1]!),
+      );
+    }
+    expect(survey.waterCells[0]).toEqual({ x: nearestFirst[0]![0], y: nearestFirst[0]![1] });
   });
 
   it('is a pure function of its ground lookup, so every client surveys the same cell identically', () => {
@@ -420,10 +477,17 @@ describe('settler races', () => {
   });
 
   it('gives every cell of one district the same race', () => {
+    // District ORIGINS, not arbitrary points: a district is
+    // SETTLER_DISTRICT_CELLS across, and the probes below step to its far
+    // corner, so a base that is not on the grid straddles two districts and
+    // the test asks the wrong question. The literals [0,0], [16,16], [240,240]
+    // were origins only while a district was 16 CELLS; it is 16 WORLD UNITS
+    // (64 cells) since the 2026-08-21 re-sample.
+    const D = SETTLER_DISTRICT_CELLS;
     for (const [baseX, baseY] of [
       [0, 0],
-      [16, 16],
-      [240, 240],
+      [D, D],
+      [15 * D, 15 * D],
     ] as const) {
       const district = settlementRace(baseX, baseY);
       for (const [dx, dy] of [
@@ -440,7 +504,9 @@ describe('settler races', () => {
 
   it('splits a full world of districts roughly evenly between the peoples', () => {
     const counts: Record<SettlerRace, number> = { rudy: 0, uno: 0 };
-    const districtsPerEdge = 32; // a 512-cell world edge
+    // A 512-WORLD-UNIT world edge — the nominal one — divided by a district's
+    // 16 world units. Unchanged by the re-sample, which moved neither.
+    const districtsPerEdge = 32;
     for (let dy = 0; dy < districtsPerEdge; dy++) {
       for (let dx = 0; dx < districtsPerEdge; dx++) {
         counts[settlementRace(dx * SETTLER_DISTRICT_CELLS, dy * SETTLER_DISTRICT_CELLS)]++;
@@ -455,7 +521,16 @@ describe('settler races', () => {
   });
 
   it('flows into placements so the renderer tints without re-deriving', () => {
-    const result = placementsFor(cells([0, 0, 0], [16, 16, 2]), () => 5);
-    expect(result.placements.map((p) => p.race)).toEqual(['rudy', 'uno']);
+    // Two cells in DIFFERENT districts, so the assertion is about the race
+    // travelling with each placement rather than about one constant. [16,16]
+    // was a second district only while a district was 16 cells.
+    const other: readonly [number, number] = [SETTLER_DISTRICT_CELLS, SETTLER_DISTRICT_CELLS];
+    expect(settlementRace(0, 0)).not.toBe(settlementRace(other[0], other[1]));
+
+    const result = placementsFor(cells([0, 0, 0], [other[0], other[1], 2]), () => 5);
+    expect(result.placements.map((p) => p.race)).toEqual([
+      settlementRace(0, 0),
+      settlementRace(other[0], other[1]),
+    ]);
   });
 });

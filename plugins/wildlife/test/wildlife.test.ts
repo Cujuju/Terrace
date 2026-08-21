@@ -9,6 +9,8 @@ import {
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   SEA_LEVEL,
+  cellsAcross,
+  cellsOverArea,
   isWater,
   type CellDiff,
 } from '@terrace/shared';
@@ -125,8 +127,32 @@ import {
 } from '../server/species.ts';
 import { worldWithTerrain } from './support/world.ts';
 
-/** 256² cells = 16×16 chunks — big enough that all four habitats are populated. */
-const WORLD_SIZE = 256;
+/**
+ * 256 WORLD UNITS square, in cells — big enough that all four habitats are
+ * populated.
+ *
+ * STATED AS LAND (2026-08-21). A bare 256 was 256 world units only while a cell
+ * was one; afterwards it is 64 world units, which is SMALLER than the 80-unit
+ * starter square, so the whole world unlocks at once and genesis has no room to
+ * lay a shelf, a slope ring and open sea inside it. Every habitat count and
+ * population target in this file is a fact about that geometry.
+ */
+const WORLD_SIZE = cellsAcross(256);
+
+/**
+ * Wall-clock budget, in milliseconds, for the tests that cycle a whole
+ * population.
+ *
+ * Vitest's default is 5 s and these three blew it after the 2026-08-21
+ * re-sample: they drive the plugin's own onTick over a 256-world-unit world,
+ * every pass of which walks the census and the spawn/despawn bookkeeping across
+ * sixteen times the cells for the same ground. Measured at 14.8 s, 9.6 s and
+ * 14.0 s on this machine — up from under five — so this is a 6x margin for a
+ * slower one. Raised rather than trimmed: the simulated duration is what makes
+ * "the population turns over" and "all three sizes appear" mean anything, and
+ * shortening the window would weaken both.
+ */
+const POPULATION_CYCLE_TIMEOUT_MS = 90_000;
 
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
@@ -329,10 +355,13 @@ describe('a fresh world as habitat', () => {
 
     expect(census.cellsByHabitat.shallow).toBe(shallowEdgeCells * shallowEdgeCells);
     expect(census.cellsByHabitat.deep).toBe(starterCells - census.cellsByHabitat.shallow);
-    // Sanity on the numbers those formulas produce today (5-chunk starter
-    // square since 2026-08-19): 2 304 / 4 096.
-    expect(census.cellsByHabitat.shallow).toBe(2304);
-    expect(census.cellsByHabitat.deep).toBe(4096);
+    // Sanity on the numbers those formulas produce today. The starter square is
+    // 80 world units either side of 2026-08-21 (initial-unlock.ts derives its
+    // chunk count so the re-sample could not shrink it), so these are the SAME
+    // ground the 2 304 / 4 096 of the previous line-up described — sixteen times
+    // the cells over it.
+    expect(census.cellsByHabitat.shallow).toBe(36864);
+    expect(census.cellsByHabitat.deep).toBe(65536);
   });
 
   it('spawns fish and deep-sea creatures on a fresh world — no whales or grazers', () => {
@@ -377,7 +406,17 @@ describe('population targets', () => {
 
   it('holds a full 512² world near, and never above, the cap', () => {
     // Nominal half-land / half-water 512², water split 40/60 shallow/deep.
-    const targets = targetsFor({ land: 131072, shallow: 52429, deep: 78643 });
+    //
+    // THE THREE AREAS ARE SQUARE WORLD UNITS, CONVERTED (2026-08-21). They were
+    // written as cell counts of a 512-cell world, which was 512 world units of
+    // land; the densities they are divided by are themselves cellsOverArea, so
+    // converting both sides leaves the whole table below unchanged — which is
+    // the point, because none of this ecosystem is about sampling density.
+    const targets = targetsFor({
+      land: cellsOverArea(131072),
+      shallow: cellsOverArea(52429),
+      deep: cellsOverArea(78643),
+    });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
     // The documented ecosystem after the 2026-08-14 retunes: 246 asked for
@@ -501,7 +540,7 @@ describe('wildlife plugin', () => {
     expect(after.length).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
     expect(after.some((entity) => !idsBefore.has(entity.id))).toBe(true);
     expect(settled).toBeGreaterThan(0);
-  });
+  }, POPULATION_CYCLE_TIMEOUT_MS);
 
   it('spawns nothing outside its habitat or outside unlocked territory', () => {
     fillPopulation(harness);
@@ -682,7 +721,7 @@ describe('wildlife plugin', () => {
       }
     }
     expect(newFishSeen.size).toBeGreaterThan(0);
-  });
+  }, POPULATION_CYCLE_TIMEOUT_MS);
 });
 
 describe('credit removal after a spawn honours ripeness, not recency', () => {
@@ -997,10 +1036,17 @@ const SCHOOL_UNDER_TEST_MEMBERS = profileOf('fish').groupSize;
 
 /**
  * Half-width of the jitter a hand-built school is created with, in cells —
- * GROUP_SCATTER_BODY_LENGTHS (2) × a fish's 0.7-cell body, i.e. exactly the
- * scatter population.ts gives a real spawn group.
+ * exactly the scatter population.ts gives a real spawn group.
+ *
+ * DERIVED FROM THE SPECIES TABLE rather than restated (2026-08-21). It was the
+ * literal 1.4 that GROUP_SCATTER_BODY_LENGTHS × a fish's 0.7 body came to; both
+ * of those are now stated in world units and converted, so a literal would have
+ * quietly given this fixture a quarter of a real spawn's scatter and made every
+ * cohesion measurement below an easier test than the one it claims to be.
  */
-const SCHOOL_BIRTH_SCATTER_CELLS = 1.4;
+const SCHOOL_BIRTH_SCATTER_BODY_LENGTHS = 2;
+const SCHOOL_BIRTH_SCATTER_CELLS =
+  profileOf('fish').bodyLengthCells * SCHOOL_BIRTH_SCATTER_BODY_LENGTHS;
 
 /** Simulated seconds a school is watched for. Five minutes — "over minutes". */
 const SCHOOL_OBSERVATION_SECONDS = 300;
@@ -1009,12 +1055,18 @@ const SCHOOL_OBSERVATION_SECONDS = 300;
  * Ceiling on a school's TIME-AVERAGED radius (the mean, over every tick, of the
  * greatest distance from a member to the school's centroid).
  *
- * Measured over 60 × 300 s trials of a small school: median 1.49 cells, worst
- * 2.64. 5 cells is nearly double the worst measurement, and still a tenth of
- * what the same five fish reach in ONE minute without cohesion, so it cannot
- * pass by accident.
+ * Measured over 60 × 300 s trials of a small school: median 1.49, worst 2.64.
+ * 5 is nearly double the worst measurement, and still a tenth of what the same
+ * five fish reach in ONE minute without cohesion, so it cannot pass by accident.
+ *
+ * IN WORLD UNITS, CONVERTED (2026-08-21). Every number in this block is a
+ * distance a school spans on the ground, measured against a sim whose own
+ * lengths — body length, cruise speed, group scatter — the re-sample restated
+ * in world units too. Left in cells the bounds would have tightened fourfold
+ * against behaviour that did not change, which is what they did: the mean
+ * radius measured 12.1 cells, or 3.0 world units, comfortably inside this.
  */
-const SCHOOL_MEAN_RADIUS_CEILING_CELLS = 5;
+const SCHOOL_MEAN_RADIUS_CEILING_CELLS = cellsAcross(5);
 
 /**
  * Ceiling on the school's radius at ANY instant. Measured worst case over the
@@ -1023,7 +1075,7 @@ const SCHOOL_MEAN_RADIUS_CEILING_CELLS = 5;
  * rail rather than a statement about how a school looks; the mean above is the
  * one that describes the picture.
  */
-const SCHOOL_PEAK_RADIUS_CEILING_CELLS = 12;
+const SCHOOL_PEAK_RADIUS_CEILING_CELLS = cellsAcross(12);
 
 /**
  * Radius past which a group of fish is no longer any kind of group. Five fish
@@ -1031,7 +1083,7 @@ const SCHOOL_PEAK_RADIUS_CEILING_CELLS = 12;
  * (measured, 200 trials); 15 is far above anything a real school does and far
  * below anything unschooled fish do, so it separates the two cleanly.
  */
-const DISPERSED_RADIUS_CELLS = 15;
+const DISPERSED_RADIUS_CELLS = cellsAcross(15);
 
 /**
  * How far a startled school must have spread by the end of its panic, and how
@@ -1044,9 +1096,9 @@ const DISPERSED_RADIUS_CELLS = 15;
  * prove that panic OVERRIDES cohesion, not to police how far five fish get in
  * 2.5 seconds.
  */
-const FLEE_SCATTER_FLOOR_CELLS = 8;
+const FLEE_SCATTER_FLOOR_CELLS = cellsAcross(8);
 const REFORM_SECONDS = 60;
-const REFORMED_RADIUS_CEILING_CELLS = 8;
+const REFORMED_RADIUS_CEILING_CELLS = cellsAcross(8);
 
 /**
  * Cells a school must have travelled in REFORM_SECONDS to count as drifting
@@ -1054,7 +1106,7 @@ const REFORMED_RADIUS_CEILING_CELLS = 8;
  * alignment makes a school hold a heading. 10 is an order of magnitude below
  * that — this is the "it went somewhere" floor, not a speed measurement.
  */
-const SCHOOL_DRIFT_FLOOR_CELLS = 10;
+const SCHOOL_DRIFT_FLOOR_CELLS = cellsAcross(10);
 
 /**
  * Cells of PATH a lone fish must cover in REFORM_SECONDS to count as still
@@ -1298,16 +1350,28 @@ describe('creatures keep out of each other (the 2026-08-21 migration)', () => {
   /**
    * The median worst-case gap separation must beat, in cells.
    *
-   * 0.15 — measured. Over 100 trials of this exact scenario the median worst
-   * gap is 0.033 cells WITHOUT separation and 0.290 WITH it; 0.15 sits between
-   * the two with room on both sides, so this fails if separation stops working
-   * and cannot pass by accident. It is deliberately NOT the 0.42-cell body gap
-   * itself: a small fish steps 0.3 cells a tick against a 0.42-cell gap, so
-   * that gap is not guaranteeable at all (shared/src/steering.ts's
-   * `steerAvoiding` names the arithmetic) — what is claimed here is that
-   * separation demonstrably shapes where they swim, which is what it is for.
+   * 0.15 WORLD UNITS, converted — measured. It was the same 0.15 as a cell
+   * count before the 2026-08-21 re-sample, and it is a gap between two fish
+   * whose own body lengths are stated in world units, so the ground it names
+   * is what has to stay fixed.
+   *
+   * RE-MEASURED AFTER THE CONVERSION, four runs of the pair: the median worst
+   * gap is 0.24–0.43 cells WITHOUT separation and 1.29–1.36 WITH it, against
+   * this bound of 0.6 cells. The "with" side reproduces the original 0.290
+   * world units almost exactly (0.32–0.34); the "without" side does NOT
+   * reproduce the 0.033 that was recorded here — it runs 2–3× higher — so the
+   * comfortable margin that note claimed on the lower side is stated here as
+   * what it actually is: about 1.4×, against 2.2× above. The bound still
+   * separates the two populations cleanly and still cannot pass by accident,
+   * which is the claim; it is simply not the 4× cushion it was written as.
+   *
+   * It is deliberately NOT the body gap itself: a small fish steps further in
+   * one tick than the gap it is asked to hold, so that gap is not guaranteeable
+   * at all (shared/src/steering.ts's `steerAvoiding` names the arithmetic) —
+   * what is claimed here is that separation demonstrably shapes where they
+   * swim, which is what it is for.
    */
-  const SEPARATED_MEDIAN_GAP_CELLS = 0.15;
+  const SEPARATED_MEDIAN_GAP_CELLS = cellsAcross(0.15);
 
   it('holds a school of fish off each other', () => {
     const worsts = worstGapOverTrials(SEPARATION_TRIALS, SEPARATION_SECONDS, (dt) =>
