@@ -12,6 +12,7 @@ import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
+import { worldPointToCell } from './terrain/picking.ts';
 import { createWorld } from './world.ts';
 import { brushRadius, setConnectionStatus } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
@@ -28,6 +29,18 @@ if (canvas === null || hudRoot === null) {
 
 const viewport = createViewport(canvas);
 const world = createWorld(viewport);
+// The camera's ground floor (render/cameraClearance.ts). Wired here because
+// this is the only place that holds both halves: the viewport owns the camera
+// and knows nothing of terrain, the world owns the height field and knows
+// nothing of the camera. Reads the world on every call rather than capturing a
+// height field, so a rejoin's replacement mirror is picked up for free.
+viewport.setGroundHeightSampler((worldX, worldZ) => {
+  const size = world.worldSize();
+  if (size === 0) return null; // no snapshot yet: no ground to be under
+  const cell = worldPointToCell(worldX, worldZ, size);
+  if (cell === null) return null; // camera is off the world
+  return world.terrainHeightAt(cell.x, cell.y);
+});
 viewport.start();
 bindCameraControls(canvas, viewport.controls);
 

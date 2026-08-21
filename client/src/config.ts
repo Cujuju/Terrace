@@ -353,6 +353,24 @@ export const CAMERA_MIN_DISTANCE =
   CAMERA_CLOSEST_VIEW_CELLS /
   (2 * Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
 export const CAMERA_MAX_DISTANCE = 900;
+/**
+ * How far above the RENDERED terrain surface the camera is held, in cells
+ * (render/cameraClearance.ts applies it every frame). This is the constant
+ * that actually answers "how close can I get to the landscape" — unlike
+ * CAMERA_MIN_DISTANCE, which is measured to the orbit target and so says
+ * nothing about the ground (see its own note).
+ *
+ * TWO HARD LOWER BOUNDS, and the value sits clear of both:
+ *   - CAMERA_NEAR (0.1 cells). Below it the cap under the camera crosses the
+ *     near plane and the terrain opens up in front of the view.
+ *   - BAND_WORLD_HEIGHT (a quarter cell). A sculpt raises the ground under
+ *     the camera a band at a time; less than one band of headroom and a
+ *     single raise-stroke could swallow the camera between two frames.
+ * One cell — the terrain's own XZ quantum, four band steps — clears both with
+ * room to spare, and keeps the cell under the camera fully in frame.
+ */
+export const CAMERA_GROUND_CLEARANCE_CELLS = 1;
+
 /** Clamp the orbit above the horizon so the camera never goes under the sea. */
 export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
 

@@ -36,6 +36,10 @@ import {
   saveCameraPose,
   type CameraPose,
 } from './cameraPose.ts';
+import {
+  applyGroundClearance,
+  type GroundHeightSampler,
+} from './cameraClearance.ts';
 
 /**
  * Sky/background, and the hemisphere light's sky colour. Exported so other
@@ -170,6 +174,16 @@ export interface Viewport {
    * function. This is how plugin layers animate without owning a loop.
    */
   onFrame(handler: (dt: number) => void): () => void;
+  /**
+   * Supplies the ground the camera is held above (render/cameraClearance.ts).
+   * Null — the state at boot — disables the floor entirely, which is correct
+   * before a world exists: there is no ground to be under yet.
+   *
+   * Core cannot build this itself. The height field belongs to the world
+   * (world.ts owns the mirror), and the viewport deliberately knows nothing
+   * about terrain data; main.tsx is where the two meet.
+   */
+  setGroundHeightSampler(sampler: GroundHeightSampler | null): void;
   start(): void;
   dispose(): void;
 }
@@ -256,6 +270,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
 
   const frameCallbacks = new Set<(dt: number) => void>();
 
+  // Null until the world can answer where the ground is (main.tsx wires it),
+  // and null again for any point with no ground — see GroundHeightSampler.
+  let groundHeightSampler: GroundHeightSampler | null = null;
+
   let frameHandle = 0;
   let lastFrameMs = 0;
   const renderFrame = (): void => {
@@ -271,6 +289,12 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     // Damping needs a per-frame update; it is also what applies any pending
     // camera input.
     controls.update();
+    // AFTER the update, never before: the update is what writes the camera
+    // position, so a floor applied ahead of it is simply overwritten. See
+    // ./cameraClearance.ts for why the orbit's own minDistance cannot do this.
+    if (groundHeightSampler !== null) {
+      applyGroundClearance(camera.position, groundHeightSampler);
+    }
     renderer.render(scene, camera);
   };
 
@@ -373,6 +397,9 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     onFrame(handler: (dt: number) => void): () => void {
       frameCallbacks.add(handler);
       return () => frameCallbacks.delete(handler);
+    },
+    setGroundHeightSampler(sampler: GroundHeightSampler | null): void {
+      groundHeightSampler = sampler;
     },
     start(): void {
       if (frameHandle === 0) renderFrame();
