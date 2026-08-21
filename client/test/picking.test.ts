@@ -53,31 +53,40 @@ describe('pointerToNdc', () => {
 describe('worldPointToCell', () => {
   const WORLD = 128;
 
+  /**
+   * The world-space point at cell-space coordinate `cells` — the conversion
+   * worldPointToCell has to undo. Every case below is stated in CELL space,
+   * because that is what the function's contract is about; passing the cell
+   * number straight in would have silently tested a quarter of the world since
+   * the 2026-08-21 re-sample, when a cell stopped being a world unit.
+   */
+  const at = (cells: number): number => cells * CELL_WORLD_SIZE;
+
   it('rounds to the nearest cell, because a vertex is a cell', () => {
-    expect(worldPointToCell(10.4, 20.4, WORLD)).toEqual({ x: 10, y: 20 });
-    expect(worldPointToCell(10.6, 20.6, WORLD)).toEqual({ x: 11, y: 21 });
+    expect(worldPointToCell(at(10.4), at(20.4), WORLD)).toEqual({ x: 10, y: 20 });
+    expect(worldPointToCell(at(10.6), at(20.6), WORLD)).toEqual({ x: 11, y: 21 });
   });
 
   it('maps world X to cell x and world Z to cell y', () => {
-    expect(worldPointToCell(3, 7, WORLD)).toEqual({ x: 3, y: 7 });
+    expect(worldPointToCell(at(3), at(7), WORLD)).toEqual({ x: 3, y: 7 });
   });
 
   it('accepts the half-cell margin at each edge and clamps into the world', () => {
     // Also pins the -0 normalisation: rounding -0.4 gives -0, and a cell index
     // of -0 must never escape (toEqual would distinguish it from 0).
-    expect(worldPointToCell(-0.4, -0.4, WORLD)).toEqual({ x: 0, y: 0 });
+    expect(worldPointToCell(at(-0.4), at(-0.4), WORLD)).toEqual({ x: 0, y: 0 });
 
-    expect(worldPointToCell(WORLD - 1 + 0.4, WORLD - 1 + 0.4, WORLD)).toEqual({
+    expect(worldPointToCell(at(WORLD - 1 + 0.4), at(WORLD - 1 + 0.4), WORLD)).toEqual({
       x: WORLD - 1,
       y: WORLD - 1,
     });
   });
 
   it('rejects points beyond the terrain extent', () => {
-    expect(worldPointToCell(-1, 0, WORLD)).toBeNull();
-    expect(worldPointToCell(0, -1, WORLD)).toBeNull();
-    expect(worldPointToCell(WORLD, 0, WORLD)).toBeNull();
-    expect(worldPointToCell(0, WORLD, WORLD)).toBeNull();
+    expect(worldPointToCell(at(-1), at(0), WORLD)).toBeNull();
+    expect(worldPointToCell(at(0), at(-1), WORLD)).toBeNull();
+    expect(worldPointToCell(at(WORLD), at(0), WORLD)).toBeNull();
+    expect(worldPointToCell(at(0), at(WORLD), WORLD)).toBeNull();
   });
 
   it('rejects non-finite coordinates rather than emitting NaN cells', () => {
@@ -87,7 +96,7 @@ describe('worldPointToCell', () => {
 
   it('never returns a cell outside the map', () => {
     for (let i = 0; i < WORLD * 2; i++) {
-      const p = i / 2;
+      const p = at(i / 2);
       const cell = worldPointToCell(p, p, WORLD);
       if (cell === null) continue;
       expect(cell.x).toBeGreaterThanOrEqual(0);
@@ -195,17 +204,30 @@ describe('pickTerrainCellByRay', () => {
   });
 
   it('walks over a lower plateau to land on the higher ground behind it', () => {
+    const NEAR_TOP_Y = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+    const FAR_TOP_Y = BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE;
     const mirror = world((x) => (x >= 40 ? BAND_HEIGHT * 8 : BAND_HEIGHT));
-    // Aimed down and east from y=8, shallow enough to stay clear of the near
-    // low ground (y = 0.25) for all 30 cells of it, and low enough to strike
-    // the far wall (y = 2) the moment it arrives.
+
+    // Aimed down and east, shallow enough to stay clear of the near low ground
+    // for all 30 cells of it and low enough to strike the far wall the moment
+    // it arrives. THE SLOPE IS DERIVED, not written down (2026-08-21): a ray's
+    // descent is world units of drop per world unit of RUN, and 30 cells of
+    // run stopped being 30 world units at the re-sample. A literal -0.25 left
+    // the ray a quarter of the way down and sailing over the far wall.
+    const startX = 10 * CELL_WORLD_SIZE;
+    const wallX = 40 * CELL_WORLD_SIZE;
+    // Arrive halfway up the far face: unambiguously above the near tread the
+    // whole way, unambiguously into the far one.
+    const arriveY = (NEAR_TOP_Y + FAR_TOP_Y) / 2;
+    const startY = FAR_TOP_Y * 2;
+
     const hit = pickTerrainCellByRay(
       mirror,
-      { x: 10 * CELL_WORLD_SIZE, y: 8, z: 30 * CELL_WORLD_SIZE },
-      { x: 1, y: -0.25, z: 0 },
+      { x: startX, y: startY, z: 30 * CELL_WORLD_SIZE },
+      { x: wallX - startX, y: arriveY - startY, z: 0 },
     );
     expect(hit!.x).toBeGreaterThanOrEqual(40);
-    expect(hit!.surfaceY).toBe(BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE);
+    expect(hit!.surfaceY).toBe(FAR_TOP_Y);
   });
 
   it('passes THROUGH unrevealed chunks instead of picking them', () => {
@@ -224,8 +246,28 @@ describe('pickTerrainCellByRay', () => {
     // this a test of the skip rather than of the geometry.
     const heightOf = (x: number): number =>
       x >= 32 ? BAND_HEIGHT * 4 : x >= 16 ? BAND_HEIGHT * 8 : 0;
-    const origin: Vec3 = { x: 2 * CELL_WORLD_SIZE, y: 3, z: 4 * CELL_WORLD_SIZE };
-    const direction: Vec3 = { x: 1, y: -0.05, z: 0 };
+    const HIGH_Y = BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE;
+
+    // THE RAY IS DERIVED FROM THE TWO PLATEAUX, not written down (2026-08-21).
+    // A direction's Y is a drop per world unit of RUN, and sixteen cells of run
+    // stopped being sixteen world units at the re-sample — a literal slope here
+    // described a completely different shot. Stating it as a drop PER CELL, and
+    // the run as one cell of X, keeps the geometry this test needs whatever a
+    // cell is worth.
+    const START_CELL = 2;
+    const GAP_CELL = CHUNK_SIZE;
+    /** Six cells into the plateau: clear of its lip, well short of its far edge. */
+    const STRIKE_CELL = CHUNK_SIZE + 6;
+    /** Half the plateau's own height of clearance as the ray reaches its edge. */
+    const CLEARANCE_AT_GAP = HIGH_Y * 1.5;
+    const DROP_PER_CELL = (CLEARANCE_AT_GAP - HIGH_Y) / (STRIKE_CELL - GAP_CELL);
+
+    const origin: Vec3 = {
+      x: START_CELL * CELL_WORLD_SIZE,
+      y: CLEARANCE_AT_GAP + DROP_PER_CELL * (GAP_CELL - START_CELL),
+      z: 4 * CELL_WORLD_SIZE,
+    };
+    const direction: Vec3 = { x: CELL_WORLD_SIZE, y: -DROP_PER_CELL, z: 0 };
 
     const dark = pickTerrainCellByRay(world(heightOf, [[0, 0], [2, 0]]), origin, direction);
     expect(dark).not.toBeNull();

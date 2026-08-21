@@ -11,6 +11,7 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
+  DEFAULT_WORLD_SIZE,
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   NEIGHBOURHOOD_CELLS,
@@ -1240,7 +1241,10 @@ describe('skirt picking', () => {
   function cellUnder(riser: Triangle): { x: number; y: number } | null {
     const x = (riser.a.x + riser.b.x + riser.c.x) / 3;
     const z = (riser.a.z + riser.b.z + riser.c.z) / 3;
-    return worldPointToCell(x / CELL_WORLD_SIZE, z / CELL_WORLD_SIZE, WORLD);
+    // The centroid is already in WORLD units and worldPointToCell takes world
+    // units — it does the divide itself since the 2026-08-21 re-sample, so
+    // dividing here as well would report a quarter of the coordinate.
+    return worldPointToCell(x, z, WORLD);
   }
 
   function cellsUnderSkirts(triangles: Triangle[]): (string | null)[] {
@@ -1309,8 +1313,8 @@ describe('skirt picking', () => {
       // (the domain runs half a cell past the last cell centre at the world
       // rim, which picking legitimately reports as off-map).
       const cell = worldPointToCell(
-        skirt.a.x / CELL_WORLD_SIZE,
-        EDGE_ORIGIN + 4,
+        skirt.a.x,
+        (EDGE_ORIGIN + 4) * CELL_WORLD_SIZE,
         WORLD,
       );
       expect(cell?.x).toBe(EDGE_ORIGIN + 8);
@@ -1320,9 +1324,12 @@ describe('skirt picking', () => {
     // A negative power of two: exact in binary, identical on every platform.
     expect(Number.isInteger(Math.log2(SKIRT_PICK_INSET))).toBe(true);
     // And it must survive Float32 storage at the far corner of the largest
-    // supported world (512 cells), or it would round back into a tie.
-    expect(Math.round(Math.fround(511.5 + SKIRT_PICK_INSET))).toBe(512);
-    expect(Math.round(Math.fround(511.5 - SKIRT_PICK_INSET))).toBe(511);
+    // world, or it would round back into a tie. THE FAR CORNER MOVED with the
+    // 2026-08-21 re-sample — a default world is 2048 cells now, not 512 — and
+    // Float32's spacing there is coarser, which is exactly what this guards.
+    const farCell = DEFAULT_WORLD_SIZE - 1 + 0.5;
+    expect(Math.round(Math.fround(farCell + SKIRT_PICK_INSET))).toBe(DEFAULT_WORLD_SIZE);
+    expect(Math.round(Math.fround(farCell - SKIRT_PICK_INSET))).toBe(DEFAULT_WORLD_SIZE - 1);
   });
 });
 

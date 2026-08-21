@@ -63,8 +63,13 @@ export function pointerToNdc(
 /**
  * World-space hit point → the cell to sculpt.
  *
- * World layout is one cell per world unit with cell (x,y) at world
- * (x, height, y) — see config.CELL_WORLD_SIZE — so this is pure rounding.
+ * Cell (x, y) is centred on world (x·CELL_WORLD_SIZE, height, y·CELL_WORLD_SIZE)
+ * — see config.CELL_WORLD_SIZE — so this divides into cell space and rounds.
+ *
+ * THE DIVIDE IS NOT DECORATION (2026-08-21). CELL_WORLD_SIZE was 1 until the
+ * re-sample, so world X/Z WERE cell coordinates and this was pure rounding;
+ * a cell is a quarter of a world unit now, and without the divide every pick
+ * lands four times too close to the origin.
  *
  * ROUNDING, not flooring: a vertex IS a cell, and sculpting raises vertices,
  * so the cell the user means is the nearest vertex to the point they clicked,
@@ -81,18 +86,20 @@ export function worldPointToCell(
   worldSize: number,
 ): CellPick | null {
   const max = worldSize - 1;
+  const cellX = worldX / CELL_WORLD_SIZE;
+  const cellZ = worldZ / CELL_WORLD_SIZE;
   // Half a cell of tolerance on each side matches the rounding below, so the
   // outermost half-cell of the mesh still picks the edge cell instead of
   // failing.
   const lowerBound = -0.5;
   const upperBound = max + 0.5;
   if (
-    !Number.isFinite(worldX) ||
-    !Number.isFinite(worldZ) ||
-    worldX < lowerBound ||
-    worldZ < lowerBound ||
-    worldX > upperBound ||
-    worldZ > upperBound
+    !Number.isFinite(cellX) ||
+    !Number.isFinite(cellZ) ||
+    cellX < lowerBound ||
+    cellZ < lowerBound ||
+    cellX > upperBound ||
+    cellZ > upperBound
   ) {
     return null;
   }
@@ -100,7 +107,7 @@ export function worldPointToCell(
   // `<= 0` rather than `< 0`: rounding a small negative gives -0, which is not
   // less than 0 and would otherwise leak a negative zero out as a cell index.
   const clamp = (v: number): number => (v <= 0 ? 0 : v > max ? max : v);
-  return { x: clamp(Math.round(worldX)), y: clamp(Math.round(worldZ)) };
+  return { x: clamp(Math.round(cellX)), y: clamp(Math.round(cellZ)) };
 }
 
 // ---------------------------------------------------------------------------
