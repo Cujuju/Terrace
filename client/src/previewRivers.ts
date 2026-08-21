@@ -31,6 +31,7 @@ import {
   Group,
   HemisphereLight,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SRGBColorSpace,
   Vector3,
@@ -332,6 +333,21 @@ function animate(): void {
   frames++;
   if (frames === SETTLE_FRAME_COUNT) {
     (window as unknown as { __previewReady?: boolean }).__previewReady = true;
+    (window as unknown as { __previewScene?: unknown }).__previewScene = scene;
+    // Debug probe: the height the terrain ACTUALLY renders at a world XZ,
+    // found by raycasting the built mesh — the ground truth a ribbon's own
+    // height rule has to agree with.
+    (window as unknown as { __previewPickY?: unknown }).__previewPickY = (
+      worldX: number,
+      worldZ: number,
+    ): number | null => {
+      const ray = new Raycaster(
+        new Vector3(worldX, 10_000, worldZ),
+        new Vector3(0, -1, 0),
+      );
+      const hits = ray.intersectObject(terrainGroup, true);
+      return hits.length > 0 ? hits[0]!.point.y : null;
+    };
     (window as unknown as { __previewInfo?: unknown }).__previewInfo = {
       scene: sceneName,
       rivers: network.rivers.length,

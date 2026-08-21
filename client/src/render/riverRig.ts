@@ -51,6 +51,8 @@ import {
   type Object3D,
 } from 'three';
 import {
+  BAND_HEIGHT,
+  bandOf,
   chunkIndexOfCell,
   computeRiverNetwork,
   quantizeToBand,
@@ -58,6 +60,7 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { CONTOUR_SAMPLE_CLEARANCE } from '../terrain/contours.ts';
 import { WATER_COLOR } from './water.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
@@ -84,11 +87,19 @@ const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 // ── Channel & lake geometry ──────────────────────────────────────────────────
 
 /**
- * Half-width, in cells, of a FLOWING channel. 0.3 → a channel 0.6 cells wide,
- * narrower than the 1-cell terrain grid so a stream reads as a channel cut
- * into the land rather than as a flooded row of whole cells.
+ * Half-width, in cells, of a FLOWING channel — DERIVED from how wide the
+ * terrain actually draws a one-cell channel, not chosen.
+ *
+ * The terrain's band outline sits CONTOUR_SAMPLE_CLEARANCE's documented
+ * quarter of a cell INSIDE the higher of the two cells it separates
+ * (terrain/contours.ts). So a channel one cell wide, cut one band below its
+ * banks, is rendered as a groove only half a cell across — and the 0.6-cell
+ * ribbon this started as had a sixth of its width tucked under the bank caps
+ * on each side, which is what made a river look like it stopped and restarted
+ * wherever the groove narrowed or turned. Matching the groove is the honest
+ * width: the water fills the channel the player can see, exactly.
  */
-const FLOW_HALF_WIDTH_CELLS = 0.3;
+const FLOW_HALF_WIDTH_CELLS = 0.5 - CONTOUR_SAMPLE_CLEARANCE / BAND_HEIGHT / 2;
 
 /**
  * Chaikin corner-cutting passes applied to a course's centre-line before it
@@ -111,6 +122,21 @@ const FLOW_HALF_WIDTH_CELLS = 0.3;
  * RIVER_RECOMPUTE_INTERVAL_MS — never per frame.
  */
 const RIVER_SMOOTHING_PASSES = 2;
+
+/**
+ * How far, in CELLS, a smoothed sample may sit from the cell walk it came
+ * from.
+ *
+ * Chaikin converges on a quadratic B-spline, whose corner sits a quarter of a
+ * segment inside the corner it rounds — a quarter of a cell here. That is
+ * exactly the half-width of the groove the terrain draws for a one-cell
+ * channel (see FLOW_HALF_WIDTH_CELLS), so an unbounded corner cut walks the
+ * whole ribbon out of the channel and under the bank on the inside of every
+ * turn. Bounding the cut keeps the curve — the rounding is still visible —
+ * while keeping the water in the channel a player can see. 0.15 leaves a
+ * tenth of a cell of clearance inside that groove for the ribbon's own edge.
+ */
+const MAX_SMOOTHING_DEVIATION_CELLS = 0.15;
 
 /**
  * Half-width of a POOLED (lake) tile. 0.5 → a full 1×1 cell, so adjacent
@@ -167,8 +193,19 @@ function pushQuad(cx: number, y: number, cz: number, halfWidthWorld: number, out
   out.push(x0, y, z0, x1, y, z1, x0, y, z1);
 }
 
-/** One sample of a ribbon's centre-line, in world units on the XZ plane. */
-type CentreSample = readonly [x: number, z: number];
+/**
+ * One sample of a ribbon's centre-line: its world XZ, plus `t` — where it sits
+ * along the ORIGINAL cell walk, as a fractional index into that walk.
+ *
+ * `t` is carried through the smoothing rather than recovered afterwards
+ * because the ribbon's HEIGHT is a question about the COURSE, not about the
+ * plane. A river runs cell centre to cell centre, so it travels along lattice
+ * edges — the one-dimensional case the terrain's contour rule is actually
+ * defined on (see `renderedBandAt`). Chaikin is an affine combination, so
+ * smoothing `t` alongside x and z leaves it monotonically increasing: a valid
+ * parameterisation of the smoothed curve.
+ */
+type CentreSample = readonly [x: number, z: number, t: number];
 
 /**
  * Chaikin corner-cutting, `passes` times, with the two ENDPOINTS PINNED.
@@ -187,20 +224,138 @@ type CentreSample = readonly [x: number, z: number];
  * their lips.
  */
 function smoothPolyline(points: readonly CentreSample[], passes: number): CentreSample[] {
+  /** The unsmoothed walk's own position at parameter `t` — a plain lerp. */
+  const originalAt = (t: number): readonly [number, number] => {
+    const last = points.length - 1;
+    const i = Math.min(Math.max(Math.floor(t), 0), Math.max(last - 1, 0));
+    const f = Math.min(Math.max(t - i, 0), 1);
+    const [ax, az] = points[i]!;
+    const [bx, bz] = points[Math.min(i + 1, last)]!;
+    return [ax + (bx - ax) * f, az + (bz - az) * f];
+  };
+
   let current = points as CentreSample[];
   for (let pass = 0; pass < passes && current.length >= 3; pass++) {
     const next: CentreSample[] = [current[0]!];
     for (let i = 0; i < current.length - 1; i++) {
-      const [ax, az] = current[i]!;
-      const [bx, bz] = current[i + 1]!;
-      next.push([ax * 0.75 + bx * 0.25, az * 0.75 + bz * 0.25]);
-      next.push([ax * 0.25 + bx * 0.75, az * 0.25 + bz * 0.75]);
+      const [ax, az, at] = current[i]!;
+      const [bx, bz, bt] = current[i + 1]!;
+      next.push([ax * 0.75 + bx * 0.25, az * 0.75 + bz * 0.25, at * 0.75 + bt * 0.25]);
+      next.push([ax * 0.25 + bx * 0.75, az * 0.25 + bz * 0.75, at * 0.25 + bt * 0.75]);
     }
     next.push(current[current.length - 1]!);
     current = next;
   }
-  return current;
+
+  // Pull anything that wandered too far off the walk back toward it. Done once
+  // at the end rather than per pass: the bound is on the FINAL shape, and
+  // clamping between passes would just be re-smoothed away.
+  const maxDeviation = MAX_SMOOTHING_DEVIATION_CELLS * CELL_WORLD_SIZE;
+  return current.map(([x, z, t]) => {
+    const [ox, oz] = originalAt(t);
+    const dx = x - ox;
+    const dz = z - oz;
+    const deviation = Math.hypot(dx, dz);
+    if (deviation <= maxDeviation) return [x, z, t] as CentreSample;
+    const scale = maxDeviation / deviation;
+    return [ox + dx * scale, oz + dz * scale, t] as CentreSample;
+  });
 }
+
+/**
+ * Which terrace band the TERRAIN RENDERS at parameter `t` along a course's
+ * cell walk, given that walk's per-cell heights.
+ *
+ * THIS IS THE RULE THE FIRST RIBBON GOT WRONG (2026-08-21, owner: the water is
+ * "not painting" at the steps). The terrain is not a field of per-cell blocks
+ * — it is marching squares over the cell lattice (terrain/contours.ts), and a
+ * band boundary crosses the edge between two cell centres at
+ * `crossingFraction`, which pushes each sample CONTOUR_SAMPLE_CLEARANCE clear
+ * of the threshold before interpolating. For a one-band step that puts the
+ * riser A QUARTER OF A CELL inside the higher cell, not at the half-way mark.
+ * A ribbon that stepped down at the half-way mark spent a quarter cell below
+ * the cap it was still crossing, was drawn under it, and reappeared on the far
+ * side — the square-cut gap at every terrace.
+ *
+ * So this reproduces the terrain's rule rather than approximating it: along a
+ * lattice edge the effective field is a straight line from (lower − clearance)
+ * to (higher + clearance), which is algebraically the line `crossingFraction`
+ * inverts. Verified against the drawn mesh by raycasting it under the finished
+ * ribbon: the water sits exactly its own lift above the ground at every
+ * sample. Importing the terrain's constant rather than restating it is
+ * deliberate — the two must agree by construction, and a copy is a second
+ * place to forget.
+ *
+ * A 2-D (x, z) form of this was tried and REJECTED: the clearance is defined
+ * per lattice edge, so a separable extension applies it twice on the diagonal
+ * and lands a whole band out at a cell corner, which put the water under the
+ * terrain in exactly the places this exists to fix. The one-dimensional rule
+ * along the course is the case that is actually exact.
+ */
+function renderedBandAt(heights: readonly number[], t: number): number {
+  const last = heights.length - 1;
+  if (last <= 0) return bandOf(heights[0] ?? 0);
+  const i = Math.min(Math.max(Math.floor(t), 0), last - 1);
+  const f = Math.min(Math.max(t - i, 0), 1);
+  const a = heights[i]!;
+  const b = heights[i + 1]!;
+  if (a === b) return bandOf(a);
+  const low = Math.min(a, b);
+  const high = Math.max(a, b);
+  // Measured from the LOW end, the direction crossingFraction's
+  // "outside → inside" runs in.
+  const fromLow = a < b ? f : 1 - f;
+  const height =
+    low - CONTOUR_SAMPLE_CLEARANCE + fromLow * (high - low + 2 * CONTOUR_SAMPLE_CLEARANCE);
+  // The clearance deliberately pushes the field past both real samples; the
+  // terrain classifies a sample itself by a plain comparison, so the band may
+  // never leave the pair being interpolated.
+  return Math.min(Math.max(bandOf(height), bandOf(low)), bandOf(high));
+}
+
+/**
+ * Bisection steps used to locate a band boundary between two ribbon samples.
+ *
+ * `renderedBandAt` is a step function, so there is nothing to solve
+ * analytically once smoothing has moved the samples off the lattice edge —
+ * but it IS monotonic in `t` within a segment, which is all bisection needs.
+ * 24 halvings resolve the boundary to about a millionth of a cell, far under
+ * any visible error, and cost 24 cheap evaluations per fall.
+ */
+const FALL_BISECTION_STEPS = 24;
+
+/**
+ * Falls resolved between one pair of ribbon samples before the search gives
+ * up. A single cliff can span many bands (a stamped spire drops dozens), and
+ * each band is its own skirt in the terrain, so each gets its own curtain —
+ * but the loop must terminate even if `renderedBandAt` is handed something
+ * pathological. 64 is the whole band range of a MAX_HEIGHT world.
+ */
+const MAX_FALLS_PER_SEGMENT = 64;
+
+/**
+ * How far downstream of a lip the ribbon stays narrowed, in CELLS, and how far
+ * it narrows to.
+ *
+ * WHY A RIVER PINCHES AT A FALL, and why this is a shape decision rather than
+ * a fudge. The terrain's band outline is a smoothed 2-D loop, and where a
+ * course steps down inside a carved channel that loop does not cross the
+ * channel square-on: it lags at the banks, so for roughly half a cell past the
+ * lip the LOWER terrace exists only along the middle of the channel and the
+ * upper terrace's cap still covers the sides. A full-width ribbon there is
+ * drawn, but two thirds of it is inside the hillside — which is the last thing
+ * that still read as "the river stops and restarts" once the height rule and
+ * the curtain were right.
+ *
+ * Reproducing that loop per vertex would mean re-running marching squares for
+ * the water (tried as a separable approximation, and it was worse than useless
+ * — see `renderedBandAt`). Narrowing through the fall instead is honest about
+ * what the terrain shows AND is what water does at a lip: it necks in as it
+ * goes over. Half a cell is the distance the pinch actually lasts; 0.45 is the
+ * narrowest that still reads as a river rather than a thread.
+ */
+const FALL_TAPER_CELLS = 0.5;
+const FALL_TAPER_MIN_SCALE = 0.45;
 
 /**
  * Extrudes one smoothed centre-line into a ribbon, appending its triangles
@@ -208,31 +363,29 @@ function smoothPolyline(points: readonly CentreSample[], passes: number): Centre
  *
  * Each sample's cross-section is `halfWidthWorld` either side of the
  * centre-line along the perpendicular of its LOCAL TANGENT — the central
- * difference of its neighbours, so the seam between two segments is one
- * shared cross-section and the strip has no gap or overlap at the joint. Ends
- * use the one segment they have. Vertex normals are left to
- * `computeVertexNormals` on the merged geometry, exactly as the pool tiles do.
+ * difference of its neighbours, so the seam between two segments is one shared
+ * cross-section and the strip has no gap or overlap at the joint. Ends use the
+ * one segment they have. Vertex normals are left to `computeVertexNormals` on
+ * the merged geometry, exactly as the pool tiles do.
  *
- * Y comes from `sampleY`, called per sample, so the ribbon follows the
- * band-quantised ground it is drawn over.
- *
- * A BAND EDGE GETS AN EXPLICIT VERTICAL CURTAIN (2026-08-21, from the first
- * screenshots of this ribbon). Where two consecutive samples sit in different
- * bands, simply joining them left a strip that was near-vertical and, at
- * ~0.1 cell long, essentially coincident with the terrain riser it crossed —
- * so it was hidden inside the terrace face and every course rendered as a
- * DASHED line, one dash per tread, which is the very "square blocks" the
- * ribbon exists to abolish. The fall is now built as three pieces: the tread
- * carried to the lip, a full-width vertical curtain, and the tread resuming
- * below. The curtain is nudged `RIVER_FALL_CLEARANCE_WORLD_UNITS` downstream
- * so it stands in front of the terrace face rather than inside it — the same
- * argument RIVER_SURFACE_LIFT_WORLD_UNITS makes vertically, applied
- * horizontally.
+ * THE WATER PAINTS DOWN EVERY TERRACE FACE IT CROSSES (2026-08-21, owner:
+ * "I would like it to also paint down the side of the layer"). Height comes
+ * from `bandAt`, the band the TERRAIN renders at that point of the course
+ * (`renderedBandAt`); wherever that changes between two samples the exact
+ * crossing is bisected and the ribbon is built through it as three pieces —
+ * the tread carried to the lip, a full-width vertical curtain down the face,
+ * and the tread resuming at its foot. A cliff spanning several bands becomes
+ * several curtains, one per band, because the terrain draws it as several
+ * stacked skirts. The curtain is nudged RIVER_FALL_CLEARANCE_WORLD_UNITS
+ * downstream so it stands in front of the face rather than inside it — the
+ * same argument RIVER_SURFACE_LIFT_WORLD_UNITS makes vertically. Through the
+ * fall the strip necks in; see FALL_TAPER_CELLS.
  */
 function buildRibbon(
   centre: readonly CentreSample[],
   halfWidthWorld: number,
-  sampleY: (x: number, z: number) => number,
+  bandAt: (t: number) => number,
+  bandWorldY: (band: number) => number,
   out: number[],
 ): void {
   if (centre.length < 2) return;
@@ -246,13 +399,33 @@ function buildRibbon(
     readonly y: number;
   }
 
-  // Per-sample cross-sections first; the falls are spliced in afterwards so
-  // that a fall's own two sections inherit the tangent of the segment they
-  // interrupt.
-  const sections: Section[] = [];
-  const sampleSections: Section[] = [];
+  const taperWorld = FALL_TAPER_CELLS * CELL_WORLD_SIZE;
+  /** Full width once `travelled` world units past the last lip. */
+  const widthAfterFall = (travelled: number): number => {
+    if (travelled >= taperWorld) return halfWidthWorld;
+    const eased = FALL_TAPER_MIN_SCALE + (1 - FALL_TAPER_MIN_SCALE) * (travelled / taperWorld);
+    return halfWidthWorld * eased;
+  };
+
+  const sectionAt = (
+    cx: number,
+    cz: number,
+    tx: number,
+    tz: number,
+    band: number,
+    halfWidth: number,
+  ): Section => ({
+    leftX: cx + tz * halfWidth,
+    leftZ: cz - tx * halfWidth,
+    rightX: cx - tz * halfWidth,
+    rightZ: cz + tx * halfWidth,
+    y: bandWorldY(band),
+  });
+
+  // Unit tangents per sample, by central difference.
+  const tangentX = new Float64Array(centre.length);
+  const tangentZ = new Float64Array(centre.length);
   for (let i = 0; i < centre.length; i++) {
-    const [cx, cz] = centre[i]!;
     const [px, pz] = centre[i === 0 ? 0 : i - 1]!;
     const [nx, nz] = centre[i === centre.length - 1 ? i : i + 1]!;
     let tx = nx - px;
@@ -269,37 +442,62 @@ function buildRibbon(
       tx /= length;
       tz /= length;
     }
-    sampleSections.push({
-      leftX: cx + tz * halfWidthWorld,
-      leftZ: cz - tx * halfWidthWorld,
-      rightX: cx - tz * halfWidthWorld,
-      rightZ: cz + tx * halfWidthWorld,
-      y: sampleY(cx, cz),
-    });
+    tangentX[i] = tx;
+    tangentZ[i] = tz;
   }
 
-  for (let i = 0; i < sampleSections.length; i++) {
-    const here = sampleSections[i]!;
-    sections.push(here);
-    const next = sampleSections[i + 1];
-    if (next === undefined || next.y === here.y) continue;
+  const sections: Section[] = [];
+  /** World distance since the last lip, for the taper. Starts wide open. */
+  let sinceLip = Number.POSITIVE_INFINITY;
 
-    // The band edge lies between these two samples; put the curtain at their
-    // midpoint, carried `RIVER_FALL_CLEARANCE_WORLD_UNITS` toward the lower
-    // sample so it clears the terrace face.
-    const stepX = next.leftX - here.leftX;
-    const stepZ = next.leftZ - here.leftZ;
-    const stepLength = Math.hypot(stepX, stepZ);
-    const shift =
-      stepLength === 0 ? 0 : Math.min(RIVER_FALL_CLEARANCE_WORLD_UNITS / stepLength, 0.5);
-    const at = 0.5 + shift;
-    const lipX = here.leftX + stepX * at;
-    const lipZ = here.leftZ + stepZ * at;
-    const lipRightX = here.rightX + (next.rightX - here.rightX) * at;
-    const lipRightZ = here.rightZ + (next.rightZ - here.rightZ) * at;
-    const lip = { leftX: lipX, leftZ: lipZ, rightX: lipRightX, rightZ: lipRightZ };
-    sections.push({ ...lip, y: here.y }); // the lip
-    sections.push({ ...lip, y: next.y }); // the plunge, straight down
+  for (let i = 0; i < centre.length; i++) {
+    const [cx, cz, t] = centre[i]!;
+    if (i > 0) {
+      const [px, pz] = centre[i - 1]!;
+      sinceLip += Math.hypot(cx - px, cz - pz);
+    }
+    const band = bandAt(t);
+    sections.push(sectionAt(cx, cz, tangentX[i]!, tangentZ[i]!, band, widthAfterFall(sinceLip)));
+
+    const nextSample = centre[i + 1];
+    if (nextSample === undefined) continue;
+    const [nx, nz, nextT] = nextSample;
+    if (bandAt(nextT) === band) continue;
+
+    const spanX = nx - cx;
+    const spanZ = nz - cz;
+    const spanLength = Math.hypot(spanX, spanZ);
+    const clearance =
+      spanLength === 0 ? 0 : Math.min(RIVER_FALL_CLEARANCE_WORLD_UNITS / spanLength, 0.25);
+
+    // Walk the band changes across this segment, one curtain each.
+    let cursorAt = 0;
+    let cursorBand = band;
+    for (let fall = 0; fall < MAX_FALLS_PER_SEGMENT && cursorBand !== bandAt(nextT); fall++) {
+      // Bisect for the first point past the cursor whose band differs.
+      let lo = cursorAt;
+      let hi = 1;
+      for (let step = 0; step < FALL_BISECTION_STEPS; step++) {
+        const mid = (lo + hi) / 2;
+        if (bandAt(t + (nextT - t) * mid) === cursorBand) lo = mid;
+        else hi = mid;
+      }
+      const landedBand = bandAt(t + (nextT - t) * hi);
+      const lipAt = Math.min(hi + clearance, 1);
+      const lipX = cx + spanX * lipAt;
+      const lipZ = cz + spanZ * lipAt;
+      // The lip keeps the width it arrived with; everything past it restarts
+      // the taper, which is what necks the water through the pinch below.
+      const arrivingWidth = widthAfterFall(sinceLip + spanLength * lipAt);
+      sections.push(sectionAt(lipX, lipZ, tangentX[i]!, tangentZ[i]!, cursorBand, arrivingWidth));
+      sections.push(
+        sectionAt(lipX, lipZ, tangentX[i]!, tangentZ[i]!, landedBand, widthAfterFall(0)),
+      );
+      sinceLip = -spanLength * (1 - lipAt);
+      cursorAt = hi;
+      cursorBand = landedBand;
+      if (hi >= 1) break;
+    }
   }
 
   for (let i = 0; i < sections.length - 1; i++) {
@@ -832,17 +1030,10 @@ export function createRiverRig(
     const poolTriangles: number[] = [];
     const flowHalfWidthWorld = FLOW_HALF_WIDTH_CELLS * CELL_WORLD_SIZE;
 
-    // The ribbon's height at an arbitrary point of a smoothed centre-line:
-    // the rendered height of the cell that point lies in. Nearest-cell, not
-    // interpolated, because the terrain it must sit on is itself a field of
-    // flat band-quantised cells — interpolating would float the water above
-    // the middle of a terrace and bury it at the lip.
-    const sampleRibbonY = (worldX: number, worldZ: number): number =>
-      quantizeToBandWorldY(
-        mirror,
-        Math.round(worldX / CELL_WORLD_SIZE),
-        Math.round(worldZ / CELL_WORLD_SIZE),
-      ) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+    /** World Y of a rendered terrace band, water lift included. */
+    const bandWorldY = (band: number): number =>
+      band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
+
 
     for (const river of network.rivers) {
       // ONE RIBBON PER COURSE, and a river has as many courses as the water
@@ -853,19 +1044,31 @@ export function createRiverRig(
         // unbroken FLOWING run is one ribbon, and every pooled point is a
         // lake tile at its basin's one flat surface height.
         let run: CentreSample[] = [];
+        // The run's per-cell heights, indexed the way its samples' `t` is —
+        // what `renderedBandAt` interpolates between.
+        let runHeights: number[] = [];
         const flushRun = (): void => {
           if (run.length === 1) {
             const [soloX, soloZ] = run[0]!;
-            pushQuad(soloX, sampleRibbonY(soloX, soloZ), soloZ, flowHalfWidthWorld, flowTriangles);
+            pushQuad(
+              soloX,
+              bandWorldY(bandOf(runHeights[0]!)),
+              soloZ,
+              flowHalfWidthWorld,
+              flowTriangles,
+            );
           } else if (run.length > 1) {
+            const heights = runHeights;
             buildRibbon(
               smoothPolyline(run, RIVER_SMOOTHING_PASSES),
               flowHalfWidthWorld,
-              sampleRibbonY,
+              (t) => renderedBandAt(heights, t),
+              bandWorldY,
               flowTriangles,
             );
           }
           run = [];
+          runHeights = [];
         };
 
         for (const point of course.points) {
@@ -883,7 +1086,8 @@ export function createRiverRig(
               poolTriangles,
             );
           } else {
-            run.push([worldX, worldZ]);
+            run.push([worldX, worldZ, run.length]);
+            runHeights.push(sampleHeight(mirror, point.x, point.y));
           }
         }
         flushRun();

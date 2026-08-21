@@ -2520,6 +2520,55 @@ which is exactly what the junction-point repeat above is for.
   - **Overlapping translucent water still double-blends at a junction**, where
     two courses' ribbons cross the same cell. Pre-existing (two springs whose
     courses merged already did this) and unchanged by this work.
+**Second round, after the owner looked (2026-08-21).** The dashed courses
+above were only the first layer of the same defect, and the owner's report —
+"disjointed sections where the river is not painting… I would like it to also
+paint down the side of the layer" — sent the investigation to the bottom of
+it. What was measured, in order, by raycasting the DRAWN terrain mesh under
+the finished ribbon (a debug hook in the preview harness) rather than by
+looking:
+
+  1. **The ribbon's geometry was already unbroken.** Rendering the water with
+     the terrain hidden showed one continuous strip end to end. Every "gap"
+     was therefore terrain drawn OVER the water, not water missing.
+  2. **The height rule was wrong, and by a whole band.** The ribbon took its
+     height from `quantizeToBand(nearest cell)` — a per-cell block field. The
+     terrain is nothing of the sort: it is marching squares over the cell
+     lattice, and `crossingFraction` puts a band boundary a QUARTER of a cell
+     inside the higher cell, not at the half-way mark. So for a quarter cell
+     past every lip the water was a band below the cap it was still crossing,
+     drawn inside the hillside. `renderedBandAt` now reproduces the terrain's
+     own interpolation — importing `CONTOUR_SAMPLE_CLEARANCE` rather than
+     restating it — and the raycast confirms the water sits exactly its own
+     lift above the ground at every sample of the course.
+  3. **A 2-D form of that rule was tried and rejected.** The clearance is
+     defined per lattice edge; a separable (x, then z) extension applies it
+     twice on the diagonal and lands a whole band out near a cell corner,
+     which put the water UNDER the terrain in exactly the places it was meant
+     to fix. A river runs cell centre to cell centre — along lattice edges —
+     so the one-dimensional rule along the course is the case that is
+     genuinely exact, and the ribbon carries a course parameter through the
+     smoothing to use it.
+  4. **The ribbon was wider than the channel the terrain draws.** That same
+     quarter-cell offset means a one-cell channel renders as a groove only
+     HALF a cell across, so a 0.6-cell ribbon had a sixth of its width buried
+     under the banks. `FLOW_HALF_WIDTH_CELLS` is now derived from the terrain
+     constant instead of chosen.
+  5. **What is left is a genuine pinch.** Where a course steps down inside a
+     carved channel, the terrain's band outline does not cross the channel
+     square-on — it lags at the banks, so for about half a cell past the lip
+     the lower terrace exists only along the middle of the channel. The
+     ribbon necks in through that stretch (`FALL_TAPER_CELLS`) rather than
+     being drawn inside the hillside, and the smoothing's corner cut is
+     bounded (`MAX_SMOOTHING_DEVIATION_CELLS`) so a turn cannot walk the
+     whole strip out of the channel. **Named residual:** in a one-cell-wide
+     slot that turns ninety degrees every few cells — the adversarial
+     `meander` fixture, not terrain a player is likely to build — the uphill
+     edge is still under the bank for roughly a cell after each fall.
+     Reproducing that outline per vertex means re-running marching squares
+     for the water; that is the price of removing this last case, and it was
+     not paid.
+
 **Visually verified, and what it took.** Unlike the 2026-08-19 entry, this
 one was checked with eyes on a running client — twice, and the second look is
 what found the dashed-line defect above.
