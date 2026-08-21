@@ -18,6 +18,10 @@
 //     edit" allowance render/water.ts already documents for its own resize.
 //   * NO PER-FRAME ALLOCATIONS in the animation path: the mist's gentle bob
 //     rewrites an existing Float32Array's Y values; it never creates one.
+//     — AMENDED 2026-08-20: the mist puffs are gone (see the dated block over
+//     the legacy MIST_* constants below) but the rule stands unchanged for
+//     their replacement: the spring rings/dome animation rewrites existing
+//     Float32Arrays' values in place, never allocating in the frame handler.
 //   * ONE OWNER: everything this module creates is freed by its own
 //     dispose().
 //   * PHOTOSENSITIVITY: the mist bob is the only animated element here and it
@@ -26,6 +30,12 @@
 //     here anywhere near that rule's actual concern (flashing light); this is
 //     satisfied out of consistency with the house standard, not because a
 //     pulsing mist puff was ever a flash risk.
+//     — AMENDED 2026-08-20: still true of the spring effect that replaced the
+//     mist. Its fastest element is one ripple ring birth every
+//     SPRING_RIPPLE_PERIOD_SECONDS / SPRING_RING_COUNT seconds (~0.67 Hz),
+//     continuous motion rather than flashing, far under weather's 3 Hz bar;
+//     the shared animation clock freezing under prefers-reduced-motion
+//     freezes every part of it at once.
 //   * SOUND: card 40 says "mist, sound". This project has no audio system at
 //     all (confirmed against the whole client tree) and this change does not
 //     add one — the card's audio half is DEFERRED, named here rather than
@@ -38,8 +48,6 @@ import {
   DynamicDrawUsage,
   Mesh,
   MeshStandardMaterial,
-  Points,
-  PointsMaterial,
   type Object3D,
 } from 'three';
 import {
@@ -151,7 +159,17 @@ function buildMergedTiles(
   return geometry;
 }
 
-// ── Waterfall mist ───────────────────────────────────────────────────────────
+// ── Waterfall mist (SUPERSEDED) ──────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// SUPERSEDED 2026-08-20 (owner report): the eight point sprites per waterfall
+// below rendered, at orbit distance, as "white cubes" — a square un-rotated
+// sprite has no silhouette that reads as water. Replaced by the plunge-pool
+// treatment in the "Spring / plunge-pool effect" section that follows:
+// concentric ripple rings expanding from the plunge point plus a faceted
+// upwelling foam dome. The MIST_* constants remain below, unreferenced, as
+// the record of the treatment this replaces — the same convention
+// terrain/bandColors.ts keeps for seabedRimColor.
+// ---------------------------------------------------------------------------
 
 /**
  * Particles per waterfall's mist puff. A small, fixed column rather than
@@ -179,12 +197,168 @@ const MIST_BOB_HEIGHT_WORLD_UNITS = CELL_WORLD_SIZE * 0.15;
 
 const TWO_PI = Math.PI * 2;
 
-interface MistState {
-  readonly object: Points;
-  readonly geometry: BufferGeometry;
-  /** Each particle's rest Y and a phase offset, so puffs don't bob in lockstep. */
-  readonly baseY: Float32Array;
-  readonly phase: Float32Array;
+// ── Spring / plunge-pool effect ──────────────────────────────────────────────
+// The waterfall marker that replaced the mist puffs (2026-08-20, owner
+// directive: springs must LOOK like springs). Two merged meshes cover every
+// waterfall in the network:
+//
+//   1. RIPPLE RINGS — SPRING_RING_COUNT flat concentric annuli per waterfall,
+//      each cycling from SPRING_RING_MIN_RADIUS_CELLS out to
+//      SPRING_RING_MAX_RADIUS_CELLS. A ring's band width follows
+//      sin(π · progress): zero at birth, widest mid-life, zero again as it
+//      dies at full radius — so rings appear and dissolve with no popping and
+//      WITHOUT animating material opacity (one shared material serves every
+//      waterfall; per-ring opacity would need per-vertex alpha machinery for
+//      no extra legibility at orbit distance).
+//   2. FOAM DOME — a faceted low-poly dome over the plunge point that swells
+//      and settles like water welling up, in the flat-shaded style of the
+//      rest of the world.
+//
+// Both geometries are built once per throttled recompute and their position
+// buffers are MUTATED IN PLACE per frame (house rule #1/#2 in the module
+// header). Per-waterfall cost is fixed and small — see the budget note under
+// SPRING_RING_SEGMENTS.
+
+/**
+ * Concurrent ripple rings per waterfall. Three staggered thirds of a cycle
+ * apart read as a continuous "welling" train; two leaves a visible dead gap
+ * between ripples, four adds cost with no legibility gain at orbit distance.
+ */
+const SPRING_RING_COUNT = 3;
+
+/**
+ * Straight segments per ripple ring. 12 is the coarsest count whose polygon
+ * still reads as a CIRCLE rather than a hexagon-ish blob at orbit distance,
+ * and its faceting matches the world's flat-shaded style anyway.
+ *
+ * BUDGET, per waterfall: rings are SPRING_RING_COUNT × (2 ×
+ * SPRING_RING_SEGMENTS) = 72 vertices / 72 triangles; the dome is
+ * 2 × SPRING_DOME_SEGMENTS + 1 = 17 vertices / 24 triangles. Total 89
+ * vertices / 96 triangles per waterfall. Network-wide: at most
+ * MAX_SPRINGS_PER_NETWORK = 24 rivers (shared/src/rivers.ts), each dropping
+ * one waterfall PER BAND CROSSED — a typical mountain course is a handful,
+ * so a network is a few thousand triangles, far below one terrain chunk.
+ * (The index buffers are Uint32 rather than Uint16 because that per-river
+ * multiplier is unbounded by a constant — a pathological all-cliff world
+ * could pass 65 535 ring vertices.)
+ */
+const SPRING_RING_SEGMENTS = 12;
+
+/**
+ * A ring is born at this centre-line radius, in cells — just outside the foam
+ * dome's edge (SPRING_DOME_RADIUS_CELLS), so ripples visibly emanate FROM the
+ * upwelling rather than materialising over it.
+ */
+const SPRING_RING_MIN_RADIUS_CELLS = 0.18;
+
+/**
+ * ...and dies at this radius. 0.45 keeps the ripple train inside the plunge
+ * cell (half a cell is 0.5): it may lap the channel edge — read as spray
+ * wetting the bank — but never marches across neighbouring cells.
+ */
+const SPRING_RING_MAX_RADIUS_CELLS = 0.45;
+
+/**
+ * A ring's radial band width at mid-life (its widest), in cells. Wide enough
+ * to survive at orbit distance; narrower than the ring spacing so consecutive
+ * rings never merge into a solid disc.
+ */
+const SPRING_RING_MAX_WIDTH_CELLS = 0.1;
+
+/**
+ * One ring's full birth-to-death cycle, in seconds. With SPRING_RING_COUNT
+ * rings staggered evenly, a new ripple is born every 4.5 / 3 = 1.5 s
+ * (~0.67 Hz) — an unhurried welling pace, far under the 3 Hz photosensitivity
+ * ceiling weather documents, and continuous motion rather than flashing
+ * besides.
+ */
+const SPRING_RIPPLE_PERIOD_SECONDS = 4.5;
+
+/**
+ * Foam near-white — the same value the superseded mist used (MIST_COLOR): it
+ * was the right COLOUR for aerated water; the failure was sprite shape, not
+ * palette.
+ */
+const SPRING_FOAM_COLOR = 0xf4fbff;
+
+/**
+ * Rings are see-through foam wash: translucent enough that the river tile's
+ * blue reads through them, opaque enough to register against it.
+ */
+const SPRING_RING_OPACITY = 0.5;
+
+/** Radius of the upwelling foam dome, in cells — comfortably inside the
+ * 0.6-cell-wide flowing channel tile so the dome sits ON the water. */
+const SPRING_DOME_RADIUS_CELLS = 0.16;
+
+/**
+ * The dome's rest height above the plunge-pool surface, in world units. A low
+ * mound — water welling up — not a hemisphere boulder; kept well under one
+ * band (BAND_WORLD_HEIGHT = CELL_WORLD_SIZE) so it never reads as terrain.
+ */
+const SPRING_DOME_HEIGHT_WORLD_UNITS = CELL_WORLD_SIZE * 0.12;
+
+/**
+ * Radial segments of the dome. 8 gives the faceted low-poly silhouette the
+ * rest of the world uses (trees, boulders); the budget arithmetic under
+ * SPRING_RING_SEGMENTS assumes this value.
+ */
+const SPRING_DOME_SEGMENTS = 8;
+
+/**
+ * The dome's mid ring sits at 45° up the profile: cos 45° of the radius,
+ * sin 45° of the height (≈ 0.7071 each) — one named constant since the two
+ * are the same number by construction.
+ */
+const SPRING_DOME_MID_PROFILE = Math.SQRT1_2;
+
+/** The dome is denser foam than the rings — nearly solid. */
+const SPRING_DOME_OPACITY = 0.85;
+
+/**
+ * How far the dome swells above/below its rest height, as a fraction of that
+ * height, and how long one swell takes. 1/6 Hz — the exact period the
+ * superseded mist bob used, kept because it already read as "gently alive"
+ * and sits far under the photosensitivity bar.
+ */
+const SPRING_DOME_SWELL_FRACTION = 0.15;
+const SPRING_DOME_SWELL_PERIOD_SECONDS = 6;
+
+/**
+ * Rings float this far above the river tile under them (which itself sits
+ * RIVER_SURFACE_LIFT_WORLD_UNITS above terrain). Double the tile's own lift:
+ * the same z-fighting argument, applied one layer up — the rings must clear
+ * the tile by at least as much as the tile clears the ground.
+ */
+const SPRING_EFFECT_LIFT_WORLD_UNITS = RIVER_SURFACE_LIFT_WORLD_UNITS * 2;
+
+/**
+ * Everything the frame handler needs to animate the spring meshes without
+ * allocating: flat per-vertex arrays captured at rebuild time. All arrays are
+ * indexed by vertex (rings) or by vertex/dome as commented.
+ */
+interface SpringState {
+  readonly ringMesh: Mesh;
+  readonly ringGeometry: BufferGeometry;
+  /** Per ring-vertex plunge-point centre, world X/Z. */
+  readonly ringCentreX: Float32Array;
+  readonly ringCentreZ: Float32Array;
+  /** Per ring-vertex unit direction out from the centre. */
+  readonly ringDirX: Float32Array;
+  readonly ringDirZ: Float32Array;
+  /** Per ring-vertex: 0 = inner edge of the band, 1 = outer edge. */
+  readonly ringEdge: Float32Array;
+  /** Per ring-vertex cycle offset in [0, 1), staggering the rings. */
+  readonly ringCycleOffset: Float32Array;
+
+  readonly domeMesh: Mesh;
+  readonly domeGeometry: BufferGeometry;
+  /** Per dome-vertex rest height above the plunge surface (0 for the base ring). */
+  readonly domeRestOffsetY: Float32Array;
+  /** Per dome-vertex plunge surface world Y (constant within one dome). */
+  readonly domeSurfaceY: Float32Array;
+  /** Per dome-vertex swell phase (constant within one dome, staggered across domes). */
+  readonly domePhase: Float32Array;
 }
 
 // ── The rig ──────────────────────────────────────────────────────────────────
@@ -270,15 +444,29 @@ export function createRiverRig(
   parent.add(flowMesh);
   parent.add(poolMesh);
 
-  const mistMaterial = new PointsMaterial({
-    color: MIST_COLOR,
-    size: MIST_SPRITE_SIZE,
-    sizeAttenuation: true,
+  // Spring materials — one shared instance each across every waterfall in
+  // the network (the rings/dome geometries are merged, so one draw call per
+  // mesh). depthWrite stays false like the water tiles': the effect layers
+  // over translucent water and must not punch holes in what renders behind.
+  const springRingMaterial = new MeshStandardMaterial({
+    color: SPRING_FOAM_COLOR,
     transparent: true,
-    opacity: MIST_OPACITY,
+    opacity: SPRING_RING_OPACITY,
+    roughness: RIVER_ROUGHNESS,
+    metalness: RIVER_METALNESS,
     depthWrite: false,
+    side: DoubleSide, // rings are flat annuli; visible from below a terrace lip too
   });
-  let mist: MistState | null = null;
+  const springDomeMaterial = new MeshStandardMaterial({
+    color: SPRING_FOAM_COLOR,
+    transparent: true,
+    opacity: SPRING_DOME_OPACITY,
+    roughness: RIVER_ROUGHNESS,
+    metalness: RIVER_METALNESS,
+    depthWrite: false,
+    flatShading: true, // faceted low-poly dome, in the world's house style
+  });
+  let spring: SpringState | null = null;
 
   let lastRebuildMs = Number.NEGATIVE_INFINITY;
 
@@ -287,51 +475,195 @@ export function createRiverRig(
     quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
 
   /**
-   * Rebuilds the mist puffs from scratch — one small ring of particles per
-   * waterfall, spread evenly around its plunge point (`angle`) and staggered
-   * in height (`p % 4`) so the puff reads as a volume rather than a flat
-   * disc. `phase` is assigned by the particle's position in the WHOLE mist
-   * buffer (not per-puff) purely so no two puffs bob in visible lockstep.
+   * Rebuilds the spring effect from scratch, one ripple-ring set and one foam
+   * dome per waterfall, merged into two indexed geometries (one draw call
+   * each). Vertex POSITIONS here are only placeholders for the animated
+   * components — the frame handler below overwrites ring X/Z and dome Y every
+   * frame from the flat per-vertex arrays captured in SpringState — but the
+   * static components (ring Y, dome X/Z) and both index buffers are final.
+   *
+   * Cycle offsets are staggered per ring AND per waterfall (`w /
+   * waterfalls.length`) for the same reason the superseded mist staggered its
+   * bob phases across the whole buffer: no two springs pulsing in visible
+   * lockstep.
    */
-  const rebuildMist = (mirror: TerrainMirror, network: RiverNetwork): void => {
-    if (mist !== null) {
-      parent.remove(mist.object);
-      mist.geometry.dispose();
-      mist = null;
+  const rebuildSprings = (mirror: TerrainMirror, network: RiverNetwork): void => {
+    if (spring !== null) {
+      parent.remove(spring.ringMesh);
+      parent.remove(spring.domeMesh);
+      spring.ringGeometry.dispose();
+      spring.domeGeometry.dispose();
+      spring = null;
     }
 
     const waterfalls = network.rivers.flatMap((river) => river.waterfalls);
     if (waterfalls.length === 0) return;
 
-    const count = waterfalls.length * MIST_PARTICLES_PER_WATERFALL;
-    const positions = new Float32Array(count * 3);
-    const baseY = new Float32Array(count);
-    const phase = new Float32Array(count);
+    // ── Ripple rings ──
+    const ringVertsPerRing = SPRING_RING_SEGMENTS * 2; // inner edge + outer edge
+    const ringVertsPerWaterfall = SPRING_RING_COUNT * ringVertsPerRing;
+    const ringVertexCount = waterfalls.length * ringVertsPerWaterfall;
+    const ringPositions = new Float32Array(ringVertexCount * 3);
+    const ringNormals = new Float32Array(ringVertexCount * 3);
+    const ringCentreX = new Float32Array(ringVertexCount);
+    const ringCentreZ = new Float32Array(ringVertexCount);
+    const ringDirX = new Float32Array(ringVertexCount);
+    const ringDirZ = new Float32Array(ringVertexCount);
+    const ringEdge = new Float32Array(ringVertexCount);
+    const ringCycleOffset = new Float32Array(ringVertexCount);
+    // Two triangles per segment per ring. Uint32: see the budget note under
+    // SPRING_RING_SEGMENTS for why Uint16 cannot be assumed safe here.
+    const ringIndices = new Uint32Array(
+      waterfalls.length * SPRING_RING_COUNT * SPRING_RING_SEGMENTS * 2 * 3,
+    );
 
-    let write = 0;
-    let particle = 0;
-    for (const waterfall of waterfalls) {
-      const plungeY =
-        quantizeToBandWorldY(mirror, waterfall.x, waterfall.y) + RIVER_SURFACE_LIFT_WORLD_UNITS;
-      for (let p = 0; p < MIST_PARTICLES_PER_WATERFALL; p++) {
-        const angle = (p / MIST_PARTICLES_PER_WATERFALL) * TWO_PI;
-        const y = plungeY + MIST_HEIGHT_WORLD_UNITS * ((p % 4) / 4);
-        positions[write++] = waterfall.x * CELL_WORLD_SIZE + Math.cos(angle) * MIST_SPREAD_CELLS;
-        positions[write++] = y;
-        positions[write++] = waterfall.y * CELL_WORLD_SIZE + Math.sin(angle) * MIST_SPREAD_CELLS;
-        baseY[particle] = y;
-        phase[particle] = (particle / count) * TWO_PI;
-        particle++;
+    // ── Foam domes ──
+    // Base octagon + mid octagon + apex point.
+    const domeVertsPerDome = SPRING_DOME_SEGMENTS * 2 + 1;
+    const domeVertexCount = waterfalls.length * domeVertsPerDome;
+    const domePositions = new Float32Array(domeVertexCount * 3);
+    const domeRestOffsetY = new Float32Array(domeVertexCount);
+    const domeSurfaceY = new Float32Array(domeVertexCount);
+    const domePhase = new Float32Array(domeVertexCount);
+    // Base→mid band is 2 triangles per segment; mid→apex fan is 1. Uint32 for
+    // the same reason as the ring indices.
+    const domeIndices = new Uint32Array(waterfalls.length * SPRING_DOME_SEGMENTS * 3 * 3);
+
+    let ringIndexWrite = 0;
+    let domeIndexWrite = 0;
+    for (let w = 0; w < waterfalls.length; w++) {
+      const waterfall = waterfalls[w]!;
+      const centreX = waterfall.x * CELL_WORLD_SIZE;
+      const centreZ = waterfall.y * CELL_WORLD_SIZE;
+      // The effect's resting surface: the river tile's height at the plunge
+      // cell, plus its own anti-z-fight lift over that tile.
+      const surfaceY =
+        quantizeToBandWorldY(mirror, waterfall.x, waterfall.y) +
+        RIVER_SURFACE_LIFT_WORLD_UNITS +
+        SPRING_EFFECT_LIFT_WORLD_UNITS;
+      const waterfallStagger = w / waterfalls.length;
+
+      // Rings: static per-vertex data. X/Z are animated, so positions get a
+      // throwaway 0 there; Y is FINAL here and never rewritten.
+      for (let r = 0; r < SPRING_RING_COUNT; r++) {
+        const ringBase = w * ringVertsPerWaterfall + r * ringVertsPerRing;
+        const cycleOffset = (r / SPRING_RING_COUNT + waterfallStagger) % 1;
+        for (let s = 0; s < SPRING_RING_SEGMENTS; s++) {
+          const angle = (s / SPRING_RING_SEGMENTS) * TWO_PI;
+          const dirX = Math.cos(angle);
+          const dirZ = Math.sin(angle);
+          for (let edge = 0; edge < 2; edge++) {
+            const v = ringBase + s + edge * SPRING_RING_SEGMENTS;
+            ringCentreX[v] = centreX;
+            ringCentreZ[v] = centreZ;
+            ringDirX[v] = dirX;
+            ringDirZ[v] = dirZ;
+            ringEdge[v] = edge;
+            ringCycleOffset[v] = cycleOffset;
+            ringPositions[v * 3 + 1] = surfaceY;
+            ringNormals[v * 3 + 1] = 1; // flat annulus: straight up, forever
+          }
+          // Segment s spans to its wrapped neighbour sn.
+          const sn = (s + 1) % SPRING_RING_SEGMENTS;
+          const innerS = ringBase + s;
+          const innerSn = ringBase + sn;
+          const outerS = ringBase + SPRING_RING_SEGMENTS + s;
+          const outerSn = ringBase + SPRING_RING_SEGMENTS + sn;
+          ringIndices[ringIndexWrite++] = innerS;
+          ringIndices[ringIndexWrite++] = outerS;
+          ringIndices[ringIndexWrite++] = innerSn;
+          ringIndices[ringIndexWrite++] = innerSn;
+          ringIndices[ringIndexWrite++] = outerS;
+          ringIndices[ringIndexWrite++] = outerSn;
+        }
+      }
+
+      // Dome: X/Z are FINAL here; Y is animated (the swell), so the frame
+      // handler recomputes it from surfaceY + restOffsetY.
+      const domeBase = w * domeVertsPerDome;
+      const apex = domeBase + SPRING_DOME_SEGMENTS * 2;
+      const domeSwellPhase = waterfallStagger * TWO_PI;
+      for (let s = 0; s < SPRING_DOME_SEGMENTS; s++) {
+        const angle = (s / SPRING_DOME_SEGMENTS) * TWO_PI;
+        const dirX = Math.cos(angle);
+        const dirZ = Math.sin(angle);
+        const baseV = domeBase + s;
+        const midV = domeBase + SPRING_DOME_SEGMENTS + s;
+        // Base ring: on the surface, full radius.
+        domePositions[baseV * 3] = centreX + dirX * SPRING_DOME_RADIUS_CELLS * CELL_WORLD_SIZE;
+        domePositions[baseV * 3 + 2] = centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * CELL_WORLD_SIZE;
+        domeRestOffsetY[baseV] = 0;
+        // Mid ring: 45° up the dome profile.
+        domePositions[midV * 3] =
+          centreX + dirX * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * CELL_WORLD_SIZE;
+        domePositions[midV * 3 + 2] =
+          centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * CELL_WORLD_SIZE;
+        domeRestOffsetY[midV] = SPRING_DOME_HEIGHT_WORLD_UNITS * SPRING_DOME_MID_PROFILE;
+
+        const sn = (s + 1) % SPRING_DOME_SEGMENTS;
+        const baseVn = domeBase + sn;
+        const midVn = domeBase + SPRING_DOME_SEGMENTS + sn;
+        // Base→mid band.
+        domeIndices[domeIndexWrite++] = baseV;
+        domeIndices[domeIndexWrite++] = midV;
+        domeIndices[domeIndexWrite++] = baseVn;
+        domeIndices[domeIndexWrite++] = baseVn;
+        domeIndices[domeIndexWrite++] = midV;
+        domeIndices[domeIndexWrite++] = midVn;
+        // Mid→apex fan.
+        domeIndices[domeIndexWrite++] = midV;
+        domeIndices[domeIndexWrite++] = apex;
+        domeIndices[domeIndexWrite++] = midVn;
+      }
+      domePositions[apex * 3] = centreX;
+      domePositions[apex * 3 + 2] = centreZ;
+      domeRestOffsetY[apex] = SPRING_DOME_HEIGHT_WORLD_UNITS;
+      for (let v = domeBase; v < domeBase + domeVertsPerDome; v++) {
+        domeSurfaceY[v] = surfaceY;
+        domePhase[v] = domeSwellPhase;
+        domePositions[v * 3 + 1] = surfaceY + domeRestOffsetY[v]!;
       }
     }
 
-    const geometry = new BufferGeometry();
-    const attribute = new BufferAttribute(positions, 3);
-    attribute.setUsage(DynamicDrawUsage);
-    geometry.setAttribute('position', attribute);
-    const object = new Points(geometry, mistMaterial);
-    parent.add(object);
-    mist = { object, geometry, baseY, phase };
+    const ringGeometry = new BufferGeometry();
+    const ringPositionAttribute = new BufferAttribute(ringPositions, 3);
+    ringPositionAttribute.setUsage(DynamicDrawUsage);
+    ringGeometry.setAttribute('position', ringPositionAttribute);
+    ringGeometry.setAttribute('normal', new BufferAttribute(ringNormals, 3));
+    ringGeometry.setIndex(new BufferAttribute(ringIndices, 1));
+    const ringMesh = new Mesh(ringGeometry, springRingMaterial);
+    // The rings' animated radius means their static bounding sphere (computed
+    // from birth-radius placeholder positions) would be wrong; the whole
+    // effect is small and cheap enough that skipping culling is the honest
+    // fix, and the dome mesh matches for consistency.
+    ringMesh.frustumCulled = false;
+    parent.add(ringMesh);
+
+    const domeGeometry = new BufferGeometry();
+    const domePositionAttribute = new BufferAttribute(domePositions, 3);
+    domePositionAttribute.setUsage(DynamicDrawUsage);
+    domeGeometry.setAttribute('position', domePositionAttribute);
+    domeGeometry.setIndex(new BufferAttribute(domeIndices, 1));
+    domeGeometry.computeVertexNormals();
+    const domeMesh = new Mesh(domeGeometry, springDomeMaterial);
+    domeMesh.frustumCulled = false;
+    parent.add(domeMesh);
+
+    spring = {
+      ringMesh,
+      ringGeometry,
+      ringCentreX,
+      ringCentreZ,
+      ringDirX,
+      ringDirZ,
+      ringEdge,
+      ringCycleOffset,
+      domeMesh,
+      domeGeometry,
+      domeRestOffsetY,
+      domeSurfaceY,
+      domePhase,
+    };
   };
 
   const rebuild = (mirror: TerrainMirror): void => {
@@ -363,25 +695,63 @@ export function createRiverRig(
     poolMesh.geometry.dispose();
     poolMesh.geometry = nextPool;
 
-    rebuildMist(mirror, network);
+    rebuildSprings(mirror, network);
+    // A rebuild leaves the rings' animated X/Z as placeholders — pose them
+    // immediately so the effect is correct even if the frame handler never
+    // runs again (prefers-reduced-motion: the spring holds THIS still frame,
+    // exactly as the superseded mist held its rest pose).
+    applySpringPose(elapsedSeconds);
+  };
+
+  /**
+   * Writes one animation instant into the spring meshes' position buffers, in
+   * place (house rule: no allocation here — every value comes from
+   * SpringState's flat arrays).
+   *
+   * Rings: progress ∈ [0, 1) sweeps a ring's centre-line from birth to death
+   * radius; the band's half-width follows sin(π·progress) so it is zero at
+   * both ends (see the section comment). Only X/Z move — Y was final at
+   * rebuild. Domes: only Y moves, scaled by the swell factor.
+   */
+  const applySpringPose = (seconds: number): void => {
+    if (spring === null) return;
+
+    const ringAttribute = spring.ringGeometry.getAttribute('position') as BufferAttribute;
+    const ringArray = ringAttribute.array as Float32Array;
+    const ringCycle = seconds / SPRING_RIPPLE_PERIOD_SECONDS;
+    const radiusSpanCells = SPRING_RING_MAX_RADIUS_CELLS - SPRING_RING_MIN_RADIUS_CELLS;
+    for (let i = 0; i < spring.ringEdge.length; i++) {
+      const progress = (ringCycle + spring.ringCycleOffset[i]!) % 1;
+      const centreLineRadiusCells = SPRING_RING_MIN_RADIUS_CELLS + radiusSpanCells * progress;
+      const halfWidthCells = (SPRING_RING_MAX_WIDTH_CELLS * Math.sin(Math.PI * progress)) / 2;
+      // edge 0 → inner (−halfWidth), edge 1 → outer (+halfWidth).
+      const radiusWorld =
+        (centreLineRadiusCells + (spring.ringEdge[i]! * 2 - 1) * halfWidthCells) * CELL_WORLD_SIZE;
+      ringArray[i * 3] = spring.ringCentreX[i]! + spring.ringDirX[i]! * radiusWorld;
+      ringArray[i * 3 + 2] = spring.ringCentreZ[i]! + spring.ringDirZ[i]! * radiusWorld;
+    }
+    ringAttribute.needsUpdate = true;
+
+    const domeAttribute = spring.domeGeometry.getAttribute('position') as BufferAttribute;
+    const domeArray = domeAttribute.array as Float32Array;
+    const swellAngle = (seconds / SPRING_DOME_SWELL_PERIOD_SECONDS) * TWO_PI;
+    for (let i = 0; i < spring.domeRestOffsetY.length; i++) {
+      const swell = 1 + SPRING_DOME_SWELL_FRACTION * Math.sin(swellAngle + spring.domePhase[i]!);
+      domeArray[i * 3 + 1] = spring.domeSurfaceY[i]! + spring.domeRestOffsetY[i]! * swell;
+    }
+    domeAttribute.needsUpdate = true;
   };
 
   // The animation clock STOPS ADVANCING under prefers-reduced-motion (the
   // same pattern plugins/weather/client/index.ts documents on its own
-  // `animationSeconds`), which is what lets the bob below skip its own
-  // reduced-motion branch: a frozen clock is a frozen `sin(...)`.
+  // `animationSeconds`), which is what lets the pose update below skip its
+  // own reduced-motion branch: a frozen clock is a frozen `sin(...)`.
   const reducedMotion = watchReducedMotion();
   let elapsedSeconds = 0;
   const unregisterFrame = onFrame((dt: number) => {
     if (!reducedMotion.matches()) elapsedSeconds += dt;
-    if (mist === null || reducedMotion.matches()) return;
-    const attribute = mist.geometry.getAttribute('position') as BufferAttribute;
-    const bobHz = 1 / MIST_BOB_PERIOD_SECONDS;
-    for (let i = 0; i < mist.baseY.length; i++) {
-      const bob = Math.sin(elapsedSeconds * bobHz * TWO_PI + mist.phase[i]!) * MIST_BOB_HEIGHT_WORLD_UNITS;
-      attribute.setY(i, mist.baseY[i]! + bob);
-    }
-    attribute.needsUpdate = true;
+    if (spring === null || reducedMotion.matches()) return;
+    applySpringPose(elapsedSeconds);
   });
 
   return {
@@ -408,10 +778,13 @@ export function createRiverRig(
       poolUnit.dispose();
       flowMaterial.dispose();
       poolMaterial.dispose();
-      mistMaterial.dispose();
-      if (mist !== null) {
-        parent.remove(mist.object);
-        mist.geometry.dispose();
+      springRingMaterial.dispose();
+      springDomeMaterial.dispose();
+      if (spring !== null) {
+        parent.remove(spring.ringMesh);
+        parent.remove(spring.domeMesh);
+        spring.ringGeometry.dispose();
+        spring.domeGeometry.dispose();
       }
     },
   };
