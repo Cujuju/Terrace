@@ -47,6 +47,11 @@ import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, type Water } from './render/water.ts';
 import type { ChartSource } from './terrain/chart.ts';
+import {
+  pickTerrainCellByRay,
+  type TerrainRayPick,
+  type Vec3,
+} from './terrain/picking.ts';
 
 export interface World extends TerrainSink {
   /**
@@ -58,6 +63,17 @@ export interface World extends TerrainSink {
   /** 0 until the first snapshot arrives. */
   worldSize(): number;
   pickables(): Mesh[];
+  /**
+   * The first terrain cell a world-space ray meets, or null. THE pick: both
+   * the sculpt brush (input/sculptInput.ts) and plugin clicks
+   * (plugins/host.ts) go through here, so there is one answer to "which cell
+   * is under this ray" rather than one per caller.
+   *
+   * Marched over the height mirror, not raycast against the meshes — see
+   * terrain/picking.ts's pickTerrainCellByRay for why. Null before the first
+   * snapshot, and for a ray that meets no revealed terrain.
+   */
+  pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
@@ -352,6 +368,11 @@ export function createWorld(viewport: Viewport): World {
     terrainHeightAt(x: number, y: number): number | null {
       if (mirror === null) return null;
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
+    },
+
+    pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
+      if (mirror === null) return null;
+      return pickTerrainCellByRay(mirror, origin, direction);
     },
 
     chartSource(): ChartSource | null {

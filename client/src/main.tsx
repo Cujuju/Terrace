@@ -51,7 +51,7 @@ const sculptInput = createSculptInput({
   camera: viewport.camera,
   // Accessors, not snapshots: both the mesh list and the world size change
   // when chunks stream in or a new session starts.
-  pickables: () => world.pickables(),
+  pickCell: (origin, direction) => world.pickCell(origin, direction),
   worldSize: () => world.worldSize(),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
@@ -71,8 +71,12 @@ const sculptInput = createSculptInput({
 });
 
 // The brush outline follows the hover pick each frame. hoverTarget is cached
-// per pointer position, so a still mouse costs nothing; brushRadius is read
-// live so the outline resizes the moment the HUD changes it.
+// on the pointer position AND the camera pose, so a still mouse over a still
+// camera costs nothing — but a PAN re-picks every frame, deliberately (the
+// outline has to track the cursor while the world moves under it). That is
+// affordable because the pick marches the height field rather than raycasting
+// the meshes; brushRadius is read live so the outline resizes the moment the
+// HUD changes it.
 const brushPreview = createBrushPreview(viewport.scene, canvas);
 viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadius()));
 

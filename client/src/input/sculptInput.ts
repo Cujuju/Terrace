@@ -21,20 +21,26 @@
 // state/controlPrefs.ts — the same one the camera consults — so the brush and
 // OrbitControls can never both claim a drag.
 //
-// Only terrain meshes are raycast, never the water plane. That gives
-// locked-chunk rejection for free on the client: a chunk we were never sent
-// has no mesh, so the ray passes through and no intent is produced. (The
+// Only terrain is picked, never the water plane. That gives locked-chunk
+// rejection for free on the client: the pick skips cells in chunks we were
+// never sent, so the ray passes through and no intent is produced. (The
 // server rejects such intents anyway — this just avoids sending them.)
+// It used to fall out of "a chunk we were never sent has no mesh"; since the
+// pick marches the height mirror instead of the meshes, terrain/picking.ts
+// enforces it against `mirror.received` directly.
 
-import { Raycaster, Vector2, type Camera, type Mesh } from 'three';
+import { Raycaster, Vector2, type Camera } from 'three';
 import {
-  CELL_WORLD_SIZE,
   SCULPT_REPEAT_DELAY_MS,
   SCULPT_REPEAT_INTERVAL_MS,
   SCULPT_REPEAT_RAMP_FACTOR,
   TOUCH_STROKE_GRACE_MS,
 } from '../config.ts';
-import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
+import {
+  pointerToNdc,
+  type TerrainRayPick,
+  type Vec3,
+} from '../terrain/picking.ts';
 import {
   brushRadius,
   brushProfile,
@@ -55,8 +61,11 @@ import type { SculptIntent } from '@terrace/shared';
 export interface SculptInputOptions {
   canvas: HTMLCanvasElement;
   camera: Camera;
-  /** Re-read per pick: the mesh set grows as chunks stream in. */
-  pickables: () => Mesh[];
+  /**
+   * The world's ray pick (World.pickCell) — one shared implementation, so the
+   * brush and plugin clicks can never disagree about which cell a ray means.
+   */
+  pickCell: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   send: (intent: SculptIntent) => void;
@@ -66,11 +75,12 @@ export interface SculptInput {
   /**
    * The cell under the cursor right now, with the picked surface height —
    * what the brush-outline preview (render/brushPreview.ts) follows. Cached
-   * per pointer position: the underlying raycast re-runs only when the
-   * pointer has actually moved (or the world changed size), so calling this
-   * every frame costs nothing while the mouse is still.
+   * on the pointer position AND the camera pose (see hoverKey), because both
+   * move the ray; a pan therefore re-picks every frame by design. That is
+   * affordable only because the pick is a height-field march — when it was a
+   * mesh raycast the same per-frame re-pick cost 29.5 ms a frame.
    */
-  hoverTarget(): { x: number; y: number; surfaceY: number } | null;
+  hoverTarget(): TerrainRayPick | null;
   dispose(): void;
 }
 
@@ -95,7 +105,7 @@ export function repeatDelayMs(repeatIndex: number): number {
 }
 
 export function createSculptInput(options: SculptInputOptions): SculptInput {
-  const { canvas, camera, pickables, worldSize, send } = options;
+  const { canvas, camera, pickCell: pickCellByRay, worldSize, send } = options;
 
   const raycaster = new Raycaster();
   const ndc = new Vector2();
@@ -141,7 +151,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * cell under it, or null if the ray missed (empty sea, locked territory, or
    * off-screen).
    */
-  const pickCell = (): { x: number; y: number; surfaceY: number } | null => {
+  const pickCell = (): TerrainRayPick | null => {
     const size = worldSize();
     if (size <= 0 || !havePointer) return null;
 
@@ -149,17 +159,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const device = pointerToNdc(pointerClientX, pointerClientY, rect);
     if (device === null) return null;
 
+    // Three is used for the ONE step that needs the camera — unprojecting the
+    // pointer into a world-space ray. The ray then goes to the height-field
+    // march, which never touches the scene graph.
     ndc.set(device.x, device.y);
     raycaster.setFromCamera(ndc, camera);
-
-    // Non-recursive: pickables() is already the flat list of chunk meshes.
-    const hits = raycaster.intersectObjects(pickables(), false);
-    if (hits.length === 0) return null;
-
-    const point = hits[0].point;
-    const cell = worldPointToCell(point.x / CELL_WORLD_SIZE, point.z / CELL_WORLD_SIZE, size);
     // surfaceY rides along for the hover preview; intents ignore it.
-    return cell === null ? null : { ...cell, surfaceY: point.y };
+    return pickCellByRay(raycaster.ray.origin, raycaster.ray.direction);
   };
 
   /**
@@ -172,8 +178,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * sub-visible tail settles into a bucket instead of re-picking every frame.
    */
   let hoverKey = '';
-  let hoverCache: { x: number; y: number; surfaceY: number } | null = null;
-  const hoverTarget = (): { x: number; y: number; surfaceY: number } | null => {
+  let hoverCache: TerrainRayPick | null = null;
+  const hoverTarget = (): TerrainRayPick | null => {
     const p = camera.position;
     const q = camera.quaternion;
     const key = havePointer

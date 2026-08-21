@@ -10,11 +10,10 @@
 import type { SculptIntent } from '@terrace/shared';
 import { Group, Raycaster, Vector2 } from 'three';
 import type { Component } from 'solid-js';
-import { CELL_WORLD_SIZE } from '../config.ts';
 import type { Connection } from '../net/connection.ts';
 import type { Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
-import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
+import { pointerToNdc } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
 import type { ClientPluginCtx, TerraceClientPlugin } from './types.ts';
@@ -107,6 +106,12 @@ export function createClientPluginHost(
    * Click → terrain cell for plugins. Allocates its own raycaster per call —
    * clicks are rare; the sculpt brush keeps its own allocation-free variant
    * for the held-stroke hot path (input/sculptInput.ts).
+   *
+   * The raycaster is only used to unproject the pointer into a world ray. The
+   * cell itself comes from World.pickCell, the SAME pick the sculpt brush
+   * uses, so a plugin click and a brush click can never resolve to different
+   * cells — they used to be two independent mesh raycasts that merely happened
+   * to agree.
    */
   const pickTerrainCell = (
     clientX: number,
@@ -118,10 +123,8 @@ export function createClientPluginHost(
     if (device === null) return null;
     const raycaster = new Raycaster();
     raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
-    const hits = raycaster.intersectObjects(world.pickables(), false);
-    if (hits.length === 0) return null;
-    const point = hits[0].point;
-    return worldPointToCell(point.x / CELL_WORLD_SIZE, point.z / CELL_WORLD_SIZE, size);
+    const hit = world.pickCell(raycaster.ray.origin, raycaster.ray.direction);
+    return hit === null ? null : { x: hit.x, y: hit.y };
   };
 
   for (const plugin of plugins) {
