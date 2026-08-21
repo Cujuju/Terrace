@@ -14,8 +14,8 @@ import './quiet-boot.ts'; // must precede any Colyseus import — see that file'
 import { Server, type ServerOptions } from '@colyseus/core';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadConfig, ConfigError, type ServerConfig } from './config.ts';
-import { logError, logInfo } from './log.ts';
+import { loadConfig, ConfigError, DEFAULT_ROLLBACK_KEY, type ServerConfig } from './config.ts';
+import { logError, logInfo, logWarn } from './log.ts';
 import { SnapshotStore } from './persistence/snapshot-store.ts';
 import { discoverPlugins } from './plugins/discovery.ts';
 import { PluginHost } from './plugins/host.ts';
@@ -184,14 +184,27 @@ async function main(): Promise<void> {
     retention: config.snapshotRetention,
     intervalS: config.snapshotIntervalS,
   });
-  // States WHETHER rollback is available, never the key itself. A self-hoster
-  // who set ROLLBACK_KEY needs to see that it took effect; nobody needs to see
-  // the secret in a log file.
-  logInfo(
-    rollback.enabled
-      ? `world rollback is enabled (${config.snapshotRetention} restore points kept)`
-      : 'world rollback is disabled (set ROLLBACK_KEY to enable it)',
-  );
+  // States WHETHER rollback is available, and — only for the built-in default
+  // — WHICH key is live. A key the self-hoster chose is never printed; the
+  // default is, because it is public knowledge already and the whole purpose
+  // of the line is to make sure nobody is running on it by accident.
+  if (!rollback.enabled) {
+    logInfo('world rollback is disabled (ROLLBACK_KEY is set to nothing)');
+  } else if (config.rollbackKey === DEFAULT_ROLLBACK_KEY) {
+    logInfo(`world rollback is enabled (${config.snapshotRetention} restore points kept)`);
+    // WARN, not info: on a server anyone else can reach, this is a standing
+    // invitation to roll the world back, and the operator has not chosen it —
+    // it is simply what an unconfigured deployment does.
+    logWarn(
+      `world rollback is using the built-in key "${DEFAULT_ROLLBACK_KEY}", which is public. ` +
+        'Anyone who can reach this server can roll the world back. Set ROLLBACK_KEY to your ' +
+        'own value, or ROLLBACK_KEY= (empty) to turn rollback off.',
+    );
+  } else {
+    logInfo(
+      `world rollback is enabled with your own key (${config.snapshotRetention} restore points kept)`,
+    );
+  }
 
   // Bind before define(): a room can be created as soon as the server listens.
   bindRoomContext({ world, host, rollback });

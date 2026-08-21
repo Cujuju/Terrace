@@ -57,15 +57,32 @@ export const MIN_SNAPSHOT_RETENTION = 1;
 export const MAX_SNAPSHOT_RETENTION = 100;
 
 /**
- * Shortest ROLLBACK_KEY the server will start with.
+ * The key world rollback accepts when ROLLBACK_KEY is not set (owner decision,
+ * 2026-08-21).
  *
- * Rolling the world back is the most destructive thing this server can be
- * asked to do and v1 has no accounts (§3.7), so this key is the ONLY thing
- * standing between a bad actor with the invite link and everyone's world. Eight
- * characters is not a strong secret, but it is past the length a person will
- * guess by hand or reach by typing at the panel, and refusing at boot is the
- * one moment the self-hoster is watching. Leaving ROLLBACK_KEY unset is always
- * allowed and simply turns the feature off.
+ * NOT A SECRET, AND NOT TREATED AS ONE. It is in this file, so it is in the
+ * repository, so it is known to anyone who can read it — which means the
+ * out-of-the-box deployment is one where anybody able to reach the server can
+ * roll the world back. That is a deliberate reversal of the original "off
+ * unless configured" decision (docs/DESIGN.md, world rollback decision 2),
+ * traded for a self-hoster being able to use their own safety net without
+ * first editing an environment file. The boot log says so out loud every time
+ * the default is in use.
+ *
+ * ROLLBACK_KEY overrides it; `ROLLBACK_KEY=` (explicitly empty) turns rollback
+ * off entirely. See readRollbackKey.
+ */
+export const DEFAULT_ROLLBACK_KEY = 'terrace';
+
+/**
+ * Shortest ROLLBACK_KEY a self-hoster may CHOOSE.
+ *
+ * Applies to a key set in the environment, and deliberately NOT to
+ * DEFAULT_ROLLBACK_KEY above — which is shorter than this and is allowed to
+ * be, because the two are different kinds of thing. The default announces
+ * itself as public and warns on every boot; a key someone types into their own
+ * `.env` is meant to be a secret, and a three-character secret is a mistake
+ * worth refusing to boot over, at the one moment they are watching.
  */
 export const MIN_ROLLBACK_KEY_LENGTH = 8;
 
@@ -137,12 +154,15 @@ export interface ServerConfig {
   readonly snapshotRetention: number;
 
   /**
-   * The operator key that gates world rollback, or null when ROLLBACK_KEY is
-   * unset — which is the DEFAULT, and means the feature is off: with no key
-   * configured, no request to list or apply a restore point is ever honoured.
+   * The operator key that gates world rollback.
    *
-   * NEVER LOGGED. The boot line says whether rollback is enabled, never what
-   * the key is.
+   * DEFAULT_ROLLBACK_KEY when ROLLBACK_KEY is unset, so rollback works out of
+   * the box; null only when it is set to nothing at all, which turns the
+   * feature off. See readRollbackKey for all three cases.
+   *
+   * NEVER LOGGED when it is a key the self-hoster chose. The built-in default
+   * IS named in the boot warning, because it is not a secret and telling them
+   * which key is live is the point of that line.
    */
   readonly rollbackKey: string | null;
 }
@@ -234,10 +254,24 @@ function readClampedInteger(
 }
 
 /**
- * Reads ROLLBACK_KEY. Absent or blank → null (feature off, the default);
- * present but too short → fatal, per MIN_ROLLBACK_KEY_LENGTH.
+ * Reads ROLLBACK_KEY. Three cases, and the distinction between the first two
+ * is the whole of it:
  *
- * The key is trimmed, and that is a deliberate exception to the "a secret is
+ *  - UNSET (the variable is absent)   → DEFAULT_ROLLBACK_KEY. Rollback works
+ *    out of the box, with a key that is public knowledge.
+ *  - SET BUT EMPTY (`ROLLBACK_KEY=`)  → null. Rollback is off entirely; no
+ *    request to list or apply a restore point is ever honoured.
+ *  - SET to a value                   → that value, subject to
+ *    MIN_ROLLBACK_KEY_LENGTH.
+ *
+ * "Absent" and "present but empty" mean OPPOSITE things here, which is unusual
+ * enough to be worth stating: `ROLLBACK_KEY=` in a `.env` file is how a
+ * self-hoster says "I do not want this feature", and it is the only spelling
+ * that could mean that once an unset variable has a working default. A
+ * whitespace-only value is treated as empty, because nobody types spaces to
+ * mean a key.
+ *
+ * A key is trimmed, and that is a deliberate exception to the "a secret is
  * matched verbatim" rule applied on the wire (protocol.ts's
  * validateRollbackKey does NOT trim). The two sit on opposite sides of the
  * same comparison on purpose: here the value came from a `.env` file a human
@@ -246,13 +280,17 @@ function readClampedInteger(
  * network peer, where accepting a padded variant would widen the secret.
  */
 function readRollbackKey(env: NodeJS.ProcessEnv): string | null {
-  const raw = env.ROLLBACK_KEY?.trim() ?? '';
-  if (raw === '') return null;
+  const configured = env.ROLLBACK_KEY;
+  if (configured === undefined) return DEFAULT_ROLLBACK_KEY;
+
+  const raw = configured.trim();
+  if (raw === '') return null; // explicitly disabled — see the doc comment
   if (raw.length < MIN_ROLLBACK_KEY_LENGTH) {
     // The message states the length rule and NOT the key.
     throw new ConfigError(
       `ROLLBACK_KEY must be at least ${MIN_ROLLBACK_KEY_LENGTH} characters ` +
-        `(got ${raw.length}); unset it entirely to disable world rollback`,
+        `(got ${raw.length}); set it to nothing at all (ROLLBACK_KEY=) to ` +
+        'disable world rollback',
     );
   }
   return raw;

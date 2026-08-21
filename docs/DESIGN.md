@@ -2858,16 +2858,29 @@ feature closes — not the relic bug itself, which is separate.
    snapshot store, the world's private masks and the plugin host's own restore
    path, i.e. everything the plugin boundary exists to withhold.
 
-2. **The gate is a shared secret in the environment (`ROLLBACK_KEY`), and the
-   feature is OFF by default.** v1 has no accounts (§3.7), so the server cannot
-   distinguish the self-hoster from anyone holding the invite link, and rolling
-   the world back is the most destructive thing it can be asked to do. An unset
-   key means no request is ever honoured. Minimum 8 characters, refused at boot
-   below that; never logged; compared in constant time; five wrong keys locks
-   that connection out for a minute.
-   *Rejected:* letting any connected player do it (one griefer erases everyone's
-   world). *Rejected:* loopback-only (breaks LAN play and every Docker
-   deployment, which is the canonical self-host path).
+2. **The gate is a shared secret in the environment (`ROLLBACK_KEY`).** v1 has
+   no accounts (§3.7), so the server cannot distinguish the self-hoster from
+   anyone holding the invite link, and rolling the world back is the most
+   destructive thing it can be asked to do. A chosen key must be at least 8
+   characters, is refused at boot below that, is never logged, is compared in
+   constant time, and five wrong keys locks that connection out for a minute.
+
+   **AMENDED the same day (owner decision): the feature is ON by default.** An
+   unset `ROLLBACK_KEY` now means the built-in `DEFAULT_ROLLBACK_KEY`
+   (`terrace`), so a self-hoster can use their own safety net without first
+   editing an environment file — which was the point of building it. The cost
+   is stated plainly rather than hidden: that key is in the repository, so an
+   unconfigured deployment can be rolled back by anyone who can reach it, and
+   the server logs a WARNING naming the key on every such boot. `ROLLBACK_KEY=`
+   (present but empty) is now the spelling that turns rollback off — absent and
+   empty deliberately mean opposite things. The 8-character floor deliberately
+   does NOT apply to the built-in default, which is shorter than it: a public
+   default that announces itself and a secret someone chose are different kinds
+   of thing, and a test pins that inequality so the exemption cannot rot.
+   *Rejected:* letting any connected player do it with no key at all (one
+   griefer erases everyone's world, and there would be nothing to raise the bar
+   with on a server that IS exposed). *Rejected:* loopback-only (breaks LAN
+   play and every Docker deployment, which is the canonical self-host path).
 
 3. **A rollback saves the world it is rolling away from, first and
    unconditionally.** A mis-aimed rollback therefore costs a click, not a

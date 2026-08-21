@@ -10,6 +10,7 @@ import {
   DEFAULT_SNAPSHOT_INTERVAL_S,
   DEFAULT_TICK_HZ,
   DEFAULT_WORLD_DIFFICULTY,
+  DEFAULT_ROLLBACK_KEY,
   MAX_SNAPSHOT_RETENTION,
   MAX_WORLD_DIFFICULTY,
   MIN_ROLLBACK_KEY_LENGTH,
@@ -157,14 +158,31 @@ describe('loadConfig — WORLD_DIFFICULTY', () => {
 });
 
 describe('ROLLBACK_KEY and SNAPSHOT_RETENTION (world rollback)', () => {
-  it('defaults to rollback disabled', () => {
-    // The DEFAULT deployment cannot be rolled back by anyone, which is the
-    // whole safety argument for a shared secret in a game with no accounts.
-    expect(loadConfig({}).rollbackKey).toBeNull();
+  it('defaults to the built-in key, so rollback works out of the box', () => {
+    // Owner decision 2026-08-21, reversing "off unless configured": an
+    // unconfigured deployment IS rollable, with a key that is in the repo.
+    expect(loadConfig({}).rollbackKey).toBe(DEFAULT_ROLLBACK_KEY);
   });
 
-  it('treats a blank key as unset rather than as an empty secret', () => {
+  it('is disabled only by setting the variable to nothing', () => {
+    // The one spelling that can mean "I do not want this feature" now that an
+    // unset variable has a working default. Absent and present-but-empty mean
+    // OPPOSITE things here, which is exactly what these two cases pin.
+    expect(loadConfig({ ROLLBACK_KEY: '' }).rollbackKey).toBeNull();
     expect(loadConfig({ ROLLBACK_KEY: '   ' }).rollbackKey).toBeNull();
+  });
+
+  it('lets a chosen key override the default', () => {
+    expect(loadConfig({ ROLLBACK_KEY: 'my-own-key' }).rollbackKey).toBe('my-own-key');
+  });
+
+  it('holds the default itself below the floor a chosen key must clear', () => {
+    // Not an accident to be silently fixed by lengthening one of them: the
+    // default is public and warns on every boot, a chosen key is a secret.
+    // If this ever fails, the exemption in readRollbackKey has stopped being
+    // needed — or the default has quietly become something else.
+    expect(DEFAULT_ROLLBACK_KEY.length).toBeLessThan(MIN_ROLLBACK_KEY_LENGTH);
+    expect(() => loadConfig({ ROLLBACK_KEY: DEFAULT_ROLLBACK_KEY })).toThrow(ConfigError);
   });
 
   it('trims a key from the environment', () => {
@@ -178,6 +196,9 @@ describe('ROLLBACK_KEY and SNAPSHOT_RETENTION (world rollback)', () => {
     expect(() => loadConfig({ ROLLBACK_KEY: 'short' })).toThrow(
       new RegExp(`at least ${MIN_ROLLBACK_KEY_LENGTH} characters`),
     );
+    // ...and it points at the spelling that actually disables the feature,
+    // not at "unset it", which no longer disables anything.
+    expect(() => loadConfig({ ROLLBACK_KEY: 'short' })).toThrow(/ROLLBACK_KEY=/);
   });
 
   it('never puts the key in the error message', () => {
