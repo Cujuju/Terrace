@@ -280,3 +280,18 @@ export const CAMERA_MIN_DISTANCE = 20;
 export const CAMERA_MAX_DISTANCE = 900;
 /** Clamp the orbit above the horizon so the camera never goes under the sea. */
 export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
+
+/**
+ * Length of one frame-rate sampling window, in milliseconds (render/
+ * frameRate.ts averages over it; ui/VersionWatermark.tsx prints the result).
+ *
+ * 500 ms is the compromise between the two ways a frame counter goes wrong.
+ * Shorter windows chase every hitch — at 100 ms a single dropped frame moves
+ * the reading by 10 fps, so the number flickers and stops being readable —
+ * while longer ones average away the very thing the meter exists to expose:
+ * the chunk-rebuild spikes a held brush causes (render/terrainMeshes.ts's
+ * CHUNK_BUILD_FRAME_BUDGET_MS) last a few hundred milliseconds, and a 2 s
+ * window would smear them into an innocent-looking mean. Two updates a second
+ * is also about as fast as a reading of this kind can be usefully read.
+ */
+export const FPS_SAMPLE_INTERVAL_MS = 500;

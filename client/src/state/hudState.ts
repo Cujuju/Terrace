@@ -101,6 +101,24 @@ export function setServerVersion(version: string | null | undefined): void {
   setServerVersionSignal(trimmed === '' ? null : trimmed);
 }
 
+/**
+ * Measured frames per second, published by render/frameRate.ts once per
+ * sampling window (never per frame — a signal written 60 times a second would
+ * re-render the HUD 60 times a second to display a number that cannot be read
+ * that fast).
+ *
+ * Null until the first window closes: the meter must show nothing rather than
+ * a made-up figure, the same absent-means-unknown contract the server version
+ * above and the world header's fields keep. Not persisted, for the same reason
+ * as the server stamp — it is a fact about THIS session's rendering, and a
+ * cached one could only ever be a stale lie about the machine's health.
+ */
+const [frameRate, setFrameRateSignal] = createSignal<number | null>(null);
+
+export function setFrameRate(fps: number): void {
+  setFrameRateSignal(fps);
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 //
@@ -378,6 +396,7 @@ export {
   setConnectionStatus,
   worldIdentity,
   serverVersion,
+  frameRate,
   brushRadius,
   brushTool,
   brushProfile,

@@ -728,3 +728,12 @@ button.world-header {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+
+/* The frame-rate readout (owner, 2026-08-20), last line of the same column.
+   It keeps its OWN colour rather than inheriting the block's, so a version
+   skew — which turns .hud-version red — cannot read as a frame-rate alarm:
+   the two diagnostics share a corner, not a meaning. */
+.hud-version__fps {
+  color: rgb(255 255 255 / 55%);
+  font-variant-numeric: tabular-nums;
+}

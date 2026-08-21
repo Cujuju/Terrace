@@ -15,6 +15,7 @@ import { createViewport } from './render/scene.ts';
 import { createWorld } from './world.ts';
 import { brushRadius, setConnectionStatus } from './state/hudState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
+import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
 import './ui/hud.css';
 
@@ -74,6 +75,10 @@ const sculptInput = createSculptInput({
 // live so the outline resizes the moment the HUD changes it.
 const brushPreview = createBrushPreview(viewport.scene, canvas);
 viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadius()));
+
+// The frame-rate readout in the top-right watermark. Started here, beside the
+// other viewport frame hooks, because the viewport is what it measures.
+startFrameRateMeter(viewport.onFrame);
 
 render(() => <Hud chartSource={() => world.chartSource()} />, hudRoot);
 
