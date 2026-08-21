@@ -225,6 +225,23 @@ function makeSelfLitAware(material: MeshStandardMaterial): void {
       `vSelfLit = ${SELF_LIT_ATTRIBUTE};\n#include <begin_vertex>`,
       'terrain',
     );
+    // The colour attribute arrives as sRGB bytes (see ChunkGeometryBuffers'
+    // colors), and three assumes a vertex colour is already in its linear
+    // working space. Decode it here, once per vertex, immediately after
+    // <color_vertex> has loaded vColor from the attribute — the exact sRGB
+    // EOTF, not the 2.2-gamma approximation, because the deep end of the ramp
+    // lives in the toe where the two disagree most.
+    shader.vertexShader = spliceShader(
+      shader.vertexShader,
+      '#include <color_vertex>',
+      `#include <color_vertex>
+      vColor.rgb = mix(
+        vColor.rgb / 12.92,
+        pow( ( vColor.rgb + 0.055 ) / 1.055, vec3( 2.4 ) ),
+        step( vec3( 0.04045 ), vColor.rgb )
+      );`,
+      'terrain',
+    );
     shader.fragmentShader = spliceShader(
       spliceShader(
         shader.fragmentShader,
@@ -240,12 +257,17 @@ function makeSelfLitAware(material: MeshStandardMaterial): void {
 }
 
 /**
- * Three's working colour space is linear; the palettes in bandColors.ts are
- * sRGB (that is how the hex values were chosen). Converting the nine palette
- * entries ONCE here, rather than per vertex per patch, is the whole reason
- * bandColors separates "which entry" from "the entry". The cliff ramp goes
- * through the same door: it is derived from the top ramp in sRGB (where the
- * darken factor was judged by eye) and converted here, never per face.
+ * SUPERSEDED 2026-08-20, kept as the record of what this file used to do.
+ *
+ * Three's working colour space is linear and the palettes in bandColors.ts are
+ * sRGB, so converting the palette entries ONCE here — rather than per vertex
+ * per patch — was the whole reason bandColors separates "which entry" from
+ * "the entry". Vertex-format compression ended that: the colour buffer is
+ * bytes now, and the deep half of the ramp does not survive being quantised in
+ * LINEAR (28 of the blue column's 64 adjacent stops collapse into ties, against
+ * zero in sRGB — measured). So the sRGB values go to the GPU untouched and
+ * <color_vertex> decodes them there, which costs one transfer per vertex on
+ * hardware built to do exactly that and buys back the ramp.
  */
 function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   const scratch = new Color();
@@ -315,8 +337,8 @@ export function createTerrainMeshes(
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
   const palettes: ChunkPalettes = {
-    top: toLinearPalette(TERRAIN_PALETTE),
-    cliff: toLinearPalette(CLIFF_PALETTE),
+    top: TERRAIN_PALETTE,
+    cliff: CLIFF_PALETTE,
   };
 
   const material = new MeshStandardMaterial({
@@ -342,8 +364,11 @@ export function createTerrainMeshes(
    */
   const bindGeometry = (entry: ChunkMesh): void => {
     const positionAttribute = new BufferAttribute(entry.buffers.positions, 3);
-    const normalAttribute = new BufferAttribute(entry.buffers.normals, 3);
-    const colorAttribute = new BufferAttribute(entry.buffers.colors, 3);
+    // `true` = NORMALIZED: the GPU reads these byte attributes back as
+    // value/127 (signed) and value/255 (unsigned). Omitting the flag would feed
+    // the shader raw integers up to 255 and blow out both lighting and colour.
+    const normalAttribute = new BufferAttribute(entry.buffers.normals, 3, true);
+    const colorAttribute = new BufferAttribute(entry.buffers.colors, 3, true);
     // NORMALISED, so the shader reads the flag's 0/255 bytes as 0.0/1.0 and the
     // injected mix() needs no conversion of its own.
     const selfLitAttribute = new BufferAttribute(entry.buffers.selfLit, 1, true);

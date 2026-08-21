@@ -136,6 +136,20 @@ function vertexAt(buffers: ChunkGeometryBuffers, index: number): Vertex {
   };
 }
 
+/**
+ * Undoes the vertex-format quantisation, so every assertion below keeps
+ * reading unit normals and 0..1 colours (2026-08-20).
+ *
+ * The buffers hold normalized integer attributes now — signed bytes over 127
+ * for normals, unsigned over 255 for sRGB colours — which is exactly what the
+ * GPU reads back through the `normalized` flag on their BufferAttributes. This
+ * is the ONE place the tests undo it, so the dequantisation is stated once
+ * rather than at ninety assertion sites, and a change to the format breaks
+ * here rather than everywhere.
+ */
+const SIGNED_BYTE_SCALE = 127;
+const UNSIGNED_BYTE_SCALE = 255;
+
 function trianglesOf(
   buffers: ChunkGeometryBuffers,
   counts: ChunkGeometryCounts,
@@ -148,14 +162,14 @@ function trianglesOf(
       b: vertexAt(buffers, base + 1),
       c: vertexAt(buffers, base + 2),
       normal: {
-        x: buffers.normals[base * 3],
-        y: buffers.normals[base * 3 + 1],
-        z: buffers.normals[base * 3 + 2],
+        x: buffers.normals[base * 3] / SIGNED_BYTE_SCALE,
+        y: buffers.normals[base * 3 + 1] / SIGNED_BYTE_SCALE,
+        z: buffers.normals[base * 3 + 2] / SIGNED_BYTE_SCALE,
       },
       color: [
-        buffers.colors[base * 3],
-        buffers.colors[base * 3 + 1],
-        buffers.colors[base * 3 + 2],
+        buffers.colors[base * 3] / UNSIGNED_BYTE_SCALE,
+        buffers.colors[base * 3 + 1] / UNSIGNED_BYTE_SCALE,
+        buffers.colors[base * 3 + 2] / UNSIGNED_BYTE_SCALE,
       ],
       selfLit: selfLitOf(buffers, base),
     });
@@ -186,11 +200,20 @@ const capsOf = (triangles: Triangle[]): Triangle[] =>
 const skirtsOf = (triangles: Triangle[]): Triangle[] =>
   triangles.filter((t) => t.normal.y === 0);
 
-/** Colours round-trip through Float32, so compare them at that precision. */
+/**
+ * A palette colour as the bytes the buffer actually stores.
+ *
+ * Colours round-trip through an 8-bit sRGB attribute since 2026-08-20, so a
+ * 1e-6 comparison against the float palette is no longer the right question —
+ * it asks for precision the format deliberately does not carry. Comparing the
+ * QUANTISED values is both the honest check and a stricter one: it demands the
+ * exact byte, not a neighbourhood.
+ */
+const asStoredBytes = (rgb: readonly number[]): number[] =>
+  [0, 1, 2].map((ch) => Math.round(rgb[ch] * UNSIGNED_BYTE_SCALE));
+
 function expectColor(actual: readonly number[], expected: Rgb): void {
-  expect(actual[0]).toBeCloseTo(expected[0], 6);
-  expect(actual[1]).toBeCloseTo(expected[1], 6);
-  expect(actual[2]).toBeCloseTo(expected[2], 6);
+  expect(asStoredBytes(actual)).toEqual(asStoredBytes(expected));
 }
 
 /**
@@ -1319,13 +1342,19 @@ describe('self-lit seabed rims', () => {
    * painted as the next band down's tread and rides the same self-lit flag as
    * the face it caps.
    */
-  const isSeabedColored = (t: Triangle): boolean =>
-    [
+  const isSeabedColored = (t: Triangle): boolean => {
+    // Matched on the STORED bytes, for the reason asStoredBytes gives: the
+    // face's colour has been through an 8-bit attribute and the palette entry
+    // has not, so only the quantised forms are comparable.
+    const [r, g] = asStoredBytes(t.color);
+    return [
       ...CLIFF_PALETTE.slice(0, FIRST_LAND_PALETTE_INDEX),
       ...TERRAIN_PALETTE.slice(0, FIRST_LAND_PALETTE_INDEX),
-    ].some(
-      (c) => Math.abs(t.color[0] - c[0]) < 1e-6 && Math.abs(t.color[1] - c[1]) < 1e-6,
-    );
+    ].some((c) => {
+      const [cr, cg] = asStoredBytes(c);
+      return cr === r && cg === g;
+    });
+  };
 
   it('flags every underwater skirt and nothing else', () => {
     const { triangles } = writeEdge(coast);

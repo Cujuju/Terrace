@@ -22,6 +22,7 @@ import {
   SEABED_PALETTE_INDEX,
   TERRAIN_PALETTE,
   bandColorOf,
+  type Rgb,
   bandPaletteIndex,
   isEmissivePaletteIndex,
   seabedRiserFaceColor,
@@ -283,6 +284,61 @@ describe('bandPaletteIndex', () => {
   it('puts the waterline colour change exactly at shared SEA_LEVEL', () => {
     expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
     expect(bandPaletteIndex(SEA_LEVEL + 1)).not.toBe(SEABED_PALETTE_INDEX);
+  });
+});
+
+describe('the 8-bit vertex format the ramp is stored in (2026-08-20)', () => {
+  // The terrain colour attribute is a byte per channel now, which is only safe
+  // because the ramp is stored in the sRGB values it was AUTHORED in. These
+  // tests are the reason that choice is not arbitrary — and the guard against
+  // anyone "simplifying" it back to linear.
+  const toByte = (channel: number): number => Math.round(channel * 255);
+  const linear = (channel: number): number =>
+    channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+  const bytes = (entry: Rgb, encode: (c: number) => number): number[] =>
+    [0, 1, 2].map((ch) => toByte(encode(entry[ch])));
+  const sum = (v: number[]): number => v[0] + v[1] + v[2];
+
+  it('keeps the depth ramp strictly darkening after sRGB quantisation', () => {
+    // THE CONTRACT THE FORMAT MUST NOT COST US. Every adjacent pair in the blue
+    // column, and within the rock, must still fall once stored as bytes — the
+    // float-level version of this is pinned above, and it would be worth
+    // nothing if the buffer could not carry it.
+    for (let stop = 1; stop < BLUE_SEABED_STOPS; stop++) {
+      expect(sum(bytes(TERRAIN_PALETTE[stop], (c) => c))).toBeLessThan(
+        sum(bytes(TERRAIN_PALETTE[stop - 1], (c) => c)),
+      );
+    }
+    for (let stop = FIRST_BASALT_STOP + 1; stop < FIRST_LAVA_STOP; stop++) {
+      expect(sum(bytes(TERRAIN_PALETTE[stop], (c) => c))).toBeLessThan(
+        sum(bytes(TERRAIN_PALETTE[stop - 1], (c) => c)),
+      );
+    }
+  });
+
+  it('would LOSE that ramp if the bytes were linear instead — which is why they are not', () => {
+    // The measurement that decided the format, kept executable rather than
+    // written in a comment. Storing the linear values (the obvious move, since
+    // that is the space three works in) ties a large share of the deep column
+    // into repeated colours: the abyssal tail steps by as little as 1/255 in
+    // sRGB, and linear encoding crushes exactly that end toward zero.
+    let linearTies = 0;
+    for (let stop = 1; stop < BLUE_SEABED_STOPS; stop++) {
+      const here = bytes(TERRAIN_PALETTE[stop], linear);
+      const above = bytes(TERRAIN_PALETTE[stop - 1], linear);
+      if (here.every((v, ch) => v === above[ch])) linearTies++;
+    }
+    // Not pinned to an exact count — the point is that it is a large fraction,
+    // and that the sRGB path above has none at all.
+    expect(linearTies).toBeGreaterThan(BLUE_SEABED_STOPS / 4);
+  });
+
+  it('gives every land stop its own byte triple too', () => {
+    for (let i = FIRST_LAND_PALETTE_INDEX + 1; i <= LAST_PALETTE_INDEX; i++) {
+      expect(bytes(TERRAIN_PALETTE[i], (c) => c)).not.toEqual(
+        bytes(TERRAIN_PALETTE[i - 1], (c) => c),
+      );
+    }
   });
 });
 

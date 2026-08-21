@@ -233,8 +233,10 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
  * the capacity ensureCapacity's doubling lands on, so the budget and the
  * high-water allocation are the same number.
  *
- * MEMORY. Attributes are 111 bytes per triangle (3 unshared vertices × 9
- * floats, plus one self-lit byte each), and ensureCapacity doubles rather
+ * MEMORY. Attributes were 111 bytes per triangle when this paragraph was
+ * written (3 unshared vertices × 9 floats, plus one self-lit byte each) and are
+ * 57 since the 2026-08-20 vertex-format compression — every figure below is
+ * the pre-compression one; see the amendment under the budget. ensureCapacity doubles rather
  * than fits, so the ceiling this budget sets is a 32,768-triangle capacity =
  * 3.64 MB per chunk. That is a per-chunk HIGH-WATER MARK reached only by a
  * chunk whose own geometry demanded it, never an allocation every chunk
@@ -275,12 +277,24 @@ export const INITIAL_CHUNK_TRIANGLE_CAPACITY = 1024;
  * heaviest legitimate row, keeping this budget and the high-water allocation
  * the same number as before.
  *
- * MEMORY, AND THE BILL THIS RUNS UP. At the unchanged 111 bytes per triangle a
- * 131,072-triangle capacity is 14.5 MB for one chunk — four times the old
+ * MEMORY, AND THE BILL THIS RUNS UP. At 111 bytes per triangle a
+ * 131,072-triangle capacity was 14.5 MB for one chunk — four times the old
  * ceiling, reached only by a chunk that digs three craters to the world floor.
- * That is the honest cost of a four-times-finer world and it is what makes the
- * vertex-format compression (111 -> ~48 bytes/triangle) load-bearing rather
- * than an optimisation.
+ * That was the honest cost of a four-times-finer world, and it is what made the
+ * vertex-format compression load-bearing rather than an optimisation.
+ *
+ * PAID, SAME DAY. The format is now 57 bytes per triangle (positions stay
+ * float — they are world coordinates — while normals became signed bytes and
+ * colours unsigned sRGB bytes; see ChunkGeometryBuffers). A vertex went 37
+ * bytes to 19, so every terrain buffer in the game scales by the same 51%:
+ * this budget's worst chunk falls from 14.5 MB to 7.12, and the measured
+ * fully-explored 512² world from 673 MB to ~346.
+ *
+ * That is still ~24% above where the buffers sat BEFORE the re-terrace
+ * (279 MB) — stated rather than rounded away, because the world now carries
+ * 2.4× the triangles and the compression pays for most, not all, of them.
+ * The triangle budget above is unchanged: it bounds geometry and emission
+ * time, and neither moved.
  */
 export const CHUNK_TRIANGLE_BUDGET = 131072;
 
@@ -452,18 +466,45 @@ export interface ChunkGeometryCounts {
  */
 export interface ChunkGeometryBuffers {
   positions: Float32Array;
-  normals: Float32Array;
-  colors: Float32Array;
+  /**
+   * Unit normals as SIGNED BYTES, read as normalized attributes (value/127).
+   *
+   * A normal is a direction on the unit sphere and every normal this builder
+   * emits is an axis or a horizontal unit vector, so a byte's ~1/127 of angular
+   * resolution is far finer than a flat-shaded terrace can show — where a
+   * position needs full float range because it is a world coordinate.
+   */
+  normals: Int8Array;
+  /**
+   * Colours as sRGB BYTES, decoded to linear on the GPU.
+   *
+   * sRGB, NOT LINEAR, and that is the whole correctness of this compression.
+   * The palette's abyssal tail steps by as little as 1/255 per band, so it
+   * only just fits in eight bits — and it fits in the sRGB eighth-bits it was
+   * authored in, not in linear ones. Measured across the 65-stop blue column:
+   * quantising the sRGB values ties ZERO adjacent stops, while quantising the
+   * linear values ties 28 of 64, collapsing over a third of the deep ramp into
+   * repeated colours and destroying the strict depth-darkening contract the
+   * palette exists to carry. The renderer therefore stops pre-converting the
+   * palette and the shader decodes per fragment instead (render/terrainMeshes.ts).
+   */
+  colors: Uint8Array;
   /** One byte per vertex, LIT_BY_SCENE or SELF_LIT — see those constants. */
   selfLit: Uint8Array;
   triangleCapacity: number;
 }
 
 /**
- * Cap and skirt colour ramps, injected rather than imported so the renderer can
- * pass palettes already converted to Three's linear working colour space while
- * tests pass the plain sRGB ones — same selection logic either way. Both are
- * indexed by `bandPaletteIndex`.
+ * Cap and skirt colour ramps, injected rather than imported. Both are indexed
+ * by `bandPaletteIndex`.
+ *
+ * ALWAYS sRGB SINCE 2026-08-20. The renderer used to pass palettes it had
+ * pre-converted to Three's linear working colour space, converting nine entries
+ * once instead of per vertex. That door closed when the buffers went to bytes:
+ * a linear byte cannot hold the deep ramp (see ChunkGeometryBuffers.colors), so
+ * the values written are the sRGB ones the palette was authored in and the
+ * conversion moved to the GPU, where it is free. Renderer and tests now pass
+ * the same thing, which is one fewer way for the two to disagree.
  */
 export interface ChunkPalettes {
   top: readonly Rgb[];
@@ -476,8 +517,8 @@ export function createChunkGeometryBuffers(
   const vertices = triangleCapacity * VERTICES_PER_TRIANGLE;
   return {
     positions: new Float32Array(vertices * COMPONENTS_PER_POSITION),
-    normals: new Float32Array(vertices * COMPONENTS_PER_NORMAL),
-    colors: new Float32Array(vertices * COMPONENTS_PER_COLOR),
+    normals: new Int8Array(vertices * COMPONENTS_PER_NORMAL),
+    colors: new Uint8Array(vertices * COMPONENTS_PER_COLOR),
     selfLit: new Uint8Array(vertices),
     triangleCapacity,
   };
@@ -641,6 +682,29 @@ function capSelfLitFor(paletteIndex: number): number {
   return isEmissivePaletteIndex(paletteIndex) ? SELF_LIT : LIT_BY_SCENE;
 }
 
+/**
+ * Largest magnitude a signed normalized byte attribute can carry.
+ *
+ * 127, not 128: WebGL's normalized signed conversion is value/127 clamped to
+ * [-1, 1] (the GL 4.2+ / ES 3.0 rule), so scaling by 128 would make a unit axis
+ * read as 1.008 and every lit tread very slightly over-bright.
+ */
+const SIGNED_BYTE_SCALE = 127;
+
+/** Largest value an unsigned normalized byte attribute can carry. */
+const UNSIGNED_BYTE_SCALE = 255;
+
+/** A unit-vector component as a signed normalized byte. */
+function quantizeNormal(component: number): number {
+  return Math.round(component * SIGNED_BYTE_SCALE);
+}
+
+/** An sRGB channel in 0..1 as an unsigned normalized byte. */
+function quantizeChannel(channel: number): number {
+  const scaled = Math.round(channel * UNSIGNED_BYTE_SCALE);
+  return scaled < 0 ? 0 : scaled > UNSIGNED_BYTE_SCALE ? UNSIGNED_BYTE_SCALE : scaled;
+}
+
 /** Write cursor into the chunk's buffers; module state for the write only. */
 let outBuffers: ChunkGeometryBuffers | null = null;
 let outVertex = 0;
@@ -662,13 +726,13 @@ function pushVertex(
   buffers.positions[p++] = y;
   buffers.positions[p] = z;
   let n = outVertex * COMPONENTS_PER_NORMAL;
-  buffers.normals[n++] = nx;
-  buffers.normals[n++] = ny;
-  buffers.normals[n] = nz;
+  buffers.normals[n++] = quantizeNormal(nx);
+  buffers.normals[n++] = quantizeNormal(ny);
+  buffers.normals[n] = quantizeNormal(nz);
   let c = outVertex * COMPONENTS_PER_COLOR;
-  buffers.colors[c++] = color[0];
-  buffers.colors[c++] = color[1];
-  buffers.colors[c] = color[2];
+  buffers.colors[c++] = quantizeChannel(color[0]);
+  buffers.colors[c++] = quantizeChannel(color[1]);
+  buffers.colors[c] = quantizeChannel(color[2]);
   outVertex++;
 }
 
