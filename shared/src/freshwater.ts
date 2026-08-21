@@ -22,7 +22,7 @@
 // test on an integer key. Two builds over the same network produce the same
 // answers; nothing here reads a clock, an RNG, or Map iteration order.
 
-import type { RiverNetwork } from './rivers.ts';
+import { riverPoints, type RiverNetwork } from './rivers.ts';
 
 /**
  * What fresh water, if any, occupies a cell.
@@ -79,7 +79,7 @@ export function buildFreshwaterMap(network: RiverNetwork, worldSize: number): Fr
   const pools = new Set<number>();
 
   for (const river of network.rivers) {
-    for (const point of river.points) {
+    for (const point of riverPoints(river)) {
       const key = point.y * worldSize + point.x;
       if (point.pooled) pools.add(key);
       else channels.add(key);

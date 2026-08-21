@@ -61,9 +61,11 @@ export const MAX_SPRINGS_PER_NETWORK = 24;
  * The four flow-check directions, in FIXED scan order: north, east, south,
  * west. This order is part of the determinism contract (like the footprint
  * scan order in heightmap.ts): `traceRiver` only ever replaces its current
- * best downhill neighbor on a STRICTLY lower height, so a tie between two
- * neighbors always resolves to whichever of them appears first in this list,
- * on both server and client, every time.
+ * best downhill neighbor on a STRICTLY lower height, so neighbors tied for
+ * lowest accumulate in this list's order — the first continues the course it
+ * is on and the rest fork off it, in this order, on both server and client,
+ * every time. (A tie no longer DISCARDS the later neighbors; see
+ * `traceRiver`'s split rule.)
  */
 const FLOW_DIRECTIONS: readonly (readonly [number, number])[] = [
   [0, -1], // north
@@ -191,8 +193,33 @@ export interface Waterfall {
   readonly dropBands: number;
 }
 
-export interface River {
+/**
+ * ONE unbroken run of a river, in flow order: a polyline a renderer can draw
+ * as a ribbon without lifting the pen (client/src/render/riverRig.ts does
+ * exactly that).
+ *
+ * A river has more than one course whenever its descent SPLITS — see
+ * `traceRiver`'s distributary rule. The first course in `River.courses` is
+ * always the trunk (the one that starts at the spring); every later one
+ * begins at the junction that spawned it.
+ *
+ * COURSES OVERLAP AT THEIR JUNCTIONS, DELIBERATELY. A branch course repeats
+ * the junction cell as its own first point, and a course that flows back into
+ * a cell this river already owns repeats that confluence cell as its own last
+ * point. Both repeats exist so the drawn ribbons MEET rather than leaving a
+ * half-cell gap at every fork; consumers that ask per-cell questions
+ * (freshwater.ts) are set-based and unaffected by the duplication.
+ */
+export interface RiverCourse {
   readonly points: readonly RiverPoint[];
+}
+
+export interface River {
+  /**
+   * Every run of this river, trunk first. Not a flat point list: see
+   * `riverPoints` for that view.
+   */
+  readonly courses: readonly RiverCourse[];
   readonly waterfalls: readonly Waterfall[];
   /** The river's course reached SEA_LEVEL and terminated in the sea. */
   readonly reachedSea: boolean;
@@ -210,6 +237,21 @@ export interface River {
 
 export interface RiverNetwork {
   readonly rivers: readonly River[];
+}
+
+/**
+ * Every point of every course of one river, trunk first, in course order.
+ *
+ * THE FLAT VIEW, DERIVED — not a second stored copy. Callers that ask a
+ * per-cell question (buildFreshwaterMap, the world tests) want this; callers
+ * that draw want `River.courses`. May contain the same cell twice where two
+ * courses meet at a junction (see `RiverCourse`), so this is safe to feed a
+ * set or a `Map`, and never a running total.
+ */
+export function riverPoints(river: River): RiverPoint[] {
+  const points: RiverPoint[] = [];
+  for (const course of river.courses) points.push(...course.points);
+  return points;
 }
 
 /**
@@ -305,8 +347,17 @@ interface BasinResult {
   readonly cells: number[];
   /** The pool's surface height — the highest rim cell absorbed. */
   readonly poolHeight: number;
-  /** The first cell downhill of the pool's spillway, or null. */
-  readonly spillIndex: number | null;
+  /**
+   * EVERY cell downhill of the pool's spillway, in ascending cell index —
+   * empty when the basin is closed (or the budget ran out first).
+   *
+   * More than one when the basin's rim has two or more saddles at EXACTLY the
+   * same height: a pool that brims over in two places genuinely drains in two
+   * places, so the caller starts a distributary course down each of them (see
+   * `traceRiver`). Bounded by the rim, and in practice by the four-neighbour
+   * fan-out of the cells at that height.
+   */
+  readonly spillIndices: number[];
   /** True when the shared per-river budget ran out before an outlet was found. */
   readonly budgetExhausted: boolean;
   /** Cells consumed from the shared per-river budget. */
@@ -372,12 +423,25 @@ function fillBasin(
     if (popped === null) {
       // Heap exhausted with no escape found: a genuinely closed basin (walled
       // by the world border or the edge of the active area on every side).
-      return { cells, poolHeight: level, spillIndex: null, budgetExhausted: false, spent };
+      return { cells, poolHeight: level, spillIndices: [], budgetExhausted: false, spent };
     }
     if (filled.has(popped.index)) continue; // stale entry (pushed before a later fill)
     if (popped.height < level) {
-      // Below the current pool surface: this is the spillway.
-      return { cells, poolHeight: level, spillIndex: popped.index, budgetExhausted: false, spent };
+      // Below the current pool surface: this is the spillway. Every FURTHER
+      // rim cell at exactly this height is an equally-low saddle — the heap
+      // pops in (height asc, index asc) order, so they are precisely the
+      // entries that follow before the first strictly-higher one. Draining
+      // through all of them is what makes a brimming pool fork.
+      const spillIndices = [popped.index];
+      const seen = new Set<number>([popped.index]);
+      for (;;) {
+        const next = heap.pop();
+        if (next === null || next.height !== popped.height) break;
+        if (filled.has(next.index) || seen.has(next.index)) continue;
+        seen.add(next.index);
+        spillIndices.push(next.index);
+      }
+      return { cells, poolHeight: level, spillIndices, budgetExhausted: false, spent };
     }
     filled.add(popped.index);
     cells.push(popped.index);
@@ -385,100 +449,216 @@ function fillBasin(
     if (popped.height > level) level = popped.height;
     pushNeighbors(popped.index);
   }
-  return { cells, poolHeight: level, spillIndex: null, budgetExhausted: true, spent };
+  return { cells, poolHeight: level, spillIndices: [], budgetExhausted: true, spent };
+}
+
+/**
+ * One not-yet-traced branch of a river, waiting its turn in `traceRiver`'s
+ * queue.
+ */
+interface CourseSeed {
+  /** The cell this course starts its own descent from. */
+  readonly index: number;
+  /**
+   * The junction point to repeat as this course's first point, so the drawn
+   * ribbon starts ON its parent's centre-line instead of half a cell away.
+   * Null for the trunk (which starts at the spring itself) and for a course
+   * leaving a pool (which starts on the lake surface already drawn there).
+   */
+  readonly junction: RiverPoint | null;
 }
 
 /**
  * Traces one river from a spring to the sea, a permanent closed basin, or the
- * edge of its work budget — whichever comes first.
+ * edge of its work budget — whichever comes first, DOWN EVERY PATH THE WATER
+ * ACTUALLY HAS.
  *
- * Each flowing step moves to the strictly-lowest active 4-neighbor (ties
- * broken by FLOW_DIRECTIONS' fixed scan order); reaching a cell with no such
- * neighbor hands off to `fillBasin`. A waterfall is recorded at the LOWER
- * side of any step (flowing or the pool's own spillway) whose two ends sit in
- * different terrace bands — see `bandOf`.
+ * SPLITS (2026-08-21, owner: "anywhere a river has multiple paths, it should
+ * follow those multiple paths"). A flowing step moves to the lowest active
+ * 4-neighbour strictly below the current cell — and when two or more
+ * neighbours TIE for that lowest height, the water goes down all of them: the
+ * first becomes this course's continuation and each of the others is queued
+ * as a new course forking from this cell. The same rule applies to a pool
+ * that brims over at two equally-low saddles (`fillBasin`'s `spillIndices`).
+ * This REPLACES the old tie-break "whichever neighbour FLOW_DIRECTIONS lists
+ * first wins, the rest are dropped", which silently threw away half of a
+ * symmetric slope's drainage — the very thing a player's radially-symmetric
+ * brush stroke produces.
+ *
+ * EXACT TIES ONLY, deliberately. Heights are integers, so "equally downhill"
+ * is an exact, order-free test that gives server and client byte-identical
+ * forks; a tolerance ("within N units") would be a tuning knob whose value
+ * decides how braided the world looks, and a wrong one turns every gentle
+ * slope into a delta. FLOW_DIRECTIONS' fixed scan order still fixes WHICH
+ * branch continues the current course and in what order the rest are queued,
+ * so the output is fully determined.
+ *
+ * MERGES fall out of the same walk: a branch that flows into a cell this
+ * river has already visited stops there, repeating that cell as its last
+ * point so the ribbons meet, rather than re-tracing (and re-charging) a
+ * course that is already drawn.
+ *
+ * Branches are traced breadth-first in the order they were queued — a fixed
+ * order, and the one that spends the shared budget on the widest reach rather
+ * than on the first branch's full descent.
+ *
+ * COST IS UNCHANGED BY BRANCHING. A junction can fan out to at most the four
+ * cells FLOW_DIRECTIONS names, and — the part that actually bounds the work —
+ * every cell a river reaches down any branch is claimed, pushed and charged
+ * exactly once against the SAME per-river budget the single-path trace used
+ * (RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER × worldSize). Branching therefore
+ * spends that budget across more courses; it never spends more of it.
+ *
+ * A waterfall is recorded at the LOWER side of any step (flowing or a pool's
+ * spillway) whose two ends sit in different terrace bands — see `bandOf`.
+ * With branching, two courses can plunge into the SAME cell; a plunge point
+ * is a place rather than an event, so waterfalls are deduplicated by cell,
+ * keeping the largest drop seen there.
  */
 function traceRiver(map: Heightmap, springIndex: number, isActive: (x: number, y: number) => boolean): River {
   const budget = map.size * RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER;
-  const points: RiverPoint[] = [];
-  const waterfalls: Waterfall[] = [];
+  const courses: RiverCourse[] = [];
+  /** Plunge cell index → the largest band drop recorded there. Insertion-ordered. */
+  const waterfallDrops = new Map<number, number>();
 
-  const pushPoint = (index: number, pooled: boolean, poolHeight?: number): void => {
-    points.push({
-      x: cellX(map.size, index),
-      y: cellY(map.size, index),
-      pooled,
-      ...(poolHeight !== undefined ? { poolHeight } : {}),
-    });
-  };
+  const pointAt = (index: number, pooled: boolean, poolHeight?: number): RiverPoint => ({
+    x: cellX(map.size, index),
+    y: cellY(map.size, index),
+    pooled,
+    ...(poolHeight !== undefined ? { poolHeight } : {}),
+  });
   const maybeWaterfall = (fromHeight: number, toIndex: number): void => {
     const toHeight = map.cells[toIndex]!;
     const drop = bandOf(fromHeight) - bandOf(toHeight);
-    if (drop > 0) {
-      waterfalls.push({ x: cellX(map.size, toIndex), y: cellY(map.size, toIndex), dropBands: drop });
-    }
+    if (drop <= 0) return;
+    const existing = waterfallDrops.get(toIndex);
+    if (existing === undefined || drop > existing) waterfallDrops.set(toIndex, drop);
   };
 
-  // INVARIANT: every cell visited is pushed as a point, and charged against
-  // `spent`, EXACTLY ONCE — at the point in the loop where its role (flowing
-  // vs. the floor of a pool) is actually decided. This is why the sea/budget
-  // termination checks and both branches below each do their own single
-  // `pushPoint` for `current`, rather than pushing eagerly on assignment: a
-  // cell handed to `fillBasin` has NOT been pushed yet when this function
-  // calls it, so fillBasin's own `cells` (the rim it absorbed) never needs to
-  // special-case or duplicate the minimum cell it started from.
-  let current = springIndex;
+  // INVARIANT (unchanged by branching): every cell this river reaches is
+  // pushed as a point, and charged against `spent`, EXACTLY ONCE — at the
+  // point in the loop where its role (flowing vs. the floor of a pool) is
+  // actually decided. `visited` is what extends that invariant across
+  // branches: a cell is added to it the moment it is CLAIMED (queued as a
+  // branch head, stepped onto, or absorbed into a pool), so no two courses
+  // can ever both charge it. The junction/confluence points repeated for
+  // geometric continuity are copies of a point some course already owns —
+  // they are never charged, and never claim anything.
+  const visited = new Set<number>([springIndex]);
+  const queue: CourseSeed[] = [{ index: springIndex, junction: null }];
   let spent = 0;
+  let reachedSea = false;
+  let truncated = false;
 
-  for (;;) {
-    const h = map.cells[current]!;
-    if (h <= SEA_LEVEL) {
-      pushPoint(current, false);
-      return { points, waterfalls, reachedSea: true, truncated: false };
+  /**
+   * Records the waterfall into each candidate, claims the ones no course of
+   * this river owns yet, and returns the first of those for the CURRENT
+   * course to continue onto — queueing the rest as new courses. Null when
+   * every candidate is already claimed, which is how a merging course learns
+   * it has nothing left to trace.
+   */
+  const claimBranches = (
+    candidates: readonly number[],
+    junction: RiverPoint | null,
+    fromHeight: number,
+  ): number | null => {
+    let continueWith: number | null = null;
+    for (const candidate of candidates) {
+      maybeWaterfall(fromHeight, candidate);
+      if (visited.has(candidate)) continue;
+      visited.add(candidate);
+      if (continueWith === null) continueWith = candidate;
+      else queue.push({ index: candidate, junction });
     }
-    if (spent >= budget) {
-      pushPoint(current, false);
-      return { points, waterfalls, reachedSea: false, truncated: true };
-    }
+    return continueWith;
+  };
 
-    const x = cellX(map.size, current);
-    const y = cellY(map.size, current);
-    let bestIndex = -1;
-    let bestHeight = h;
-    for (const [dx, dy] of FLOW_DIRECTIONS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (!isTraceable(map, nx, ny, isActive)) continue;
-      const ni = cellIndex(map, nx, ny);
-      const nh = map.cells[ni]!;
-      if (nh < bestHeight) {
-        bestHeight = nh;
-        bestIndex = ni;
+  while (queue.length > 0) {
+    const seed = queue.shift()!;
+    const points: RiverPoint[] = [];
+    if (seed.junction !== null) points.push(seed.junction);
+    let current = seed.index;
+
+    for (;;) {
+      const h = map.cells[current]!;
+      if (h <= SEA_LEVEL) {
+        points.push(pointAt(current, false));
+        reachedSea = true;
+        break;
       }
+      if (spent >= budget) {
+        points.push(pointAt(current, false));
+        truncated = true;
+        break;
+      }
+
+      // Every active neighbour tied for the lowest height strictly below this
+      // cell. `lowest` starts at `h`, so the `=== lowest` arm can only fire
+      // once a strictly-lower neighbour has already been found.
+      const x = cellX(map.size, current);
+      const y = cellY(map.size, current);
+      const downhill: number[] = [];
+      let lowest = h;
+      for (const [dx, dy] of FLOW_DIRECTIONS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!isTraceable(map, nx, ny, isActive)) continue;
+        const ni = cellIndex(map, nx, ny);
+        const nh = map.cells[ni]!;
+        if (nh < lowest) {
+          lowest = nh;
+          downhill.length = 0;
+          downhill.push(ni);
+        } else if (nh === lowest && lowest < h) {
+          downhill.push(ni);
+        }
+      }
+
+      if (downhill.length > 0) {
+        const point = pointAt(current, false);
+        points.push(point);
+        spent++;
+        const next = claimBranches(downhill, point, h);
+        if (next === null) {
+          // Every way down already belongs to this river: this course ends at
+          // the confluence. Repeat the cell it joins so the ribbons meet.
+          points.push(pointAt(downhill[0]!, false));
+          break;
+        }
+        current = next;
+        continue;
+      }
+
+      // Local minimum: pool and look for a spillway. Reserve one unit of the
+      // remaining budget for `current`/minIndex itself (fillBasin's own budget
+      // counts only the rim it absorbs beyond it — see its doc comment), so the
+      // total this call can spend never exceeds what is left.
+      const basin = fillBasin(map, current, isActive, budget - spent - 1);
+      spent += basin.spent + 1;
+      points.push(pointAt(current, true, basin.poolHeight));
+      for (const cell of basin.cells) {
+        visited.add(cell);
+        points.push(pointAt(cell, true, basin.poolHeight));
+      }
+      if (basin.spillIndices.length === 0) {
+        truncated = truncated || basin.budgetExhausted;
+        break;
+      }
+      // A course leaving a pool starts AT the spillway: the lake tile it
+      // drains from is already drawn under it, so it needs no junction point.
+      const next = claimBranches(basin.spillIndices, null, basin.poolHeight);
+      if (next === null) break;
+      current = next;
     }
 
-    if (bestIndex !== -1) {
-      pushPoint(current, false);
-      spent++;
-      maybeWaterfall(h, bestIndex);
-      current = bestIndex;
-      continue;
-    }
-
-    // Local minimum: pool and look for a spillway. Reserve one unit of the
-    // remaining budget for `current`/minIndex itself (fillBasin's own budget
-    // counts only the rim it absorbs beyond it — see its doc comment), so the
-    // total this call can spend never exceeds what is left.
-    const basin = fillBasin(map, current, isActive, budget - spent - 1);
-    spent += basin.spent + 1;
-    pushPoint(current, true, basin.poolHeight);
-    for (const cell of basin.cells) pushPoint(cell, true, basin.poolHeight);
-    if (basin.spillIndex === null) {
-      return { points, waterfalls, reachedSea: false, truncated: basin.budgetExhausted };
-    }
-    maybeWaterfall(basin.poolHeight, basin.spillIndex);
-    current = basin.spillIndex;
+    courses.push({ points });
   }
+
+  const waterfalls: Waterfall[] = [];
+  for (const [index, dropBands] of waterfallDrops) {
+    waterfalls.push({ x: cellX(map.size, index), y: cellY(map.size, index), dropBands });
+  }
+  return { courses, waterfalls, reachedSea, truncated };
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   BAND_HEIGHT,
   LAND_WALKER_PROFILE,
   isWalkableCell,
+  riverPoints,
   type SculptOptions,
 } from '@terrace/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -63,7 +64,7 @@ describe('World.freshwaterMap', () => {
     const freshwater = world.freshwaterMap();
 
     // The fixture is only useful if it actually made a river.
-    const points = network.rivers.flatMap((river) => river.points);
+    const points = network.rivers.flatMap((river) => riverPoints(river));
     expect(points.length).toBeGreaterThan(0);
 
     for (const point of points) {
@@ -146,7 +147,7 @@ describe('WorldApi.freshwater', () => {
 
     const wet = world
       .riverNetwork()
-      .rivers.flatMap((river) => river.points)
+      .rivers.flatMap((river) => riverPoints(river))
       .find((point) => world.heightAt(point.x, point.y) >= BAND_HEIGHT);
     expect(wet).toBeDefined();
     expect(api.freshwater.at(wet!.x, wet!.y)).not.toBe('none');
@@ -168,7 +169,7 @@ describe('WorldApi.freshwater', () => {
     // not LAND_WALKER_MIN_GROUND_HEIGHT.
     const wet = world
       .riverNetwork()
-      .rivers.flatMap((river) => river.points)
+      .rivers.flatMap((river) => riverPoints(river))
       .find((point) => world.heightAt(point.x, point.y) >= BAND_HEIGHT);
     expect(wet).toBeDefined();
 

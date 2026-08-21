@@ -81,31 +81,63 @@ import { WATER_COLOR } from './water.ts';
  */
 const RIVER_RECOMPUTE_INTERVAL_MS = 500;
 
-// ── Tile geometry ────────────────────────────────────────────────────────────
+// ── Channel & lake geometry ──────────────────────────────────────────────────
 
 /**
- * Half-width, in cells, of a FLOWING channel tile. 0.3 → a tile 0.6 cells
- * wide, narrower than the 1-cell terrain grid so a stream reads as a channel
- * cut into the land rather than as a flooded row of whole cells.
+ * Half-width, in cells, of a FLOWING channel. 0.3 → a channel 0.6 cells wide,
+ * narrower than the 1-cell terrain grid so a stream reads as a channel cut
+ * into the land rather than as a flooded row of whole cells.
  */
-const FLOW_TILE_HALF_WIDTH_CELLS = 0.3;
+const FLOW_HALF_WIDTH_CELLS = 0.3;
+
+/**
+ * Chaikin corner-cutting passes applied to a course's centre-line before it
+ * is extruded into a ribbon (see `smoothPolyline`).
+ *
+ * WHY A RIBBON AT ALL (2026-08-21, owner: rivers "render as square blocks…
+ * we need them path smoothed so that they render like polylines"). A course
+ * is a 4-connected cell walk, so every turn in it is a hard 90°; drawing one
+ * axis-aligned quad per cell made a staircase of separate squares rather than
+ * a stream. The centre-line is the honest primitive — the cell walk IS a
+ * polyline — so it is smoothed once and extruded into one continuous strip.
+ *
+ * TWO PASSES. Each pass replaces every interior vertex with two points at the
+ * quarter and three-quarter marks of its segments, so it quadruples the
+ * sample count and rounds each 90° corner into a 4-sample arc: enough to read
+ * as a curve at orbit distance, where a third pass (16× the samples) is
+ * invisible. Cost is bounded by the same per-river cell budget the course
+ * itself is (RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER, shared/src/rivers.ts)
+ * times 2^RIVER_SMOOTHING_PASSES, and is paid at most once per
+ * RIVER_RECOMPUTE_INTERVAL_MS — never per frame.
+ */
+const RIVER_SMOOTHING_PASSES = 2;
 
 /**
  * Half-width of a POOLED (lake) tile. 0.5 → a full 1×1 cell, so adjacent
  * pooled cells tile edge-to-edge into one continuous flat lake surface with
- * no gaps between them.
+ * no gaps between them. A lake stays a tile field — see `pushQuad`.
  */
-const POOL_TILE_HALF_WIDTH_CELLS = 0.5;
+const POOL_HALF_WIDTH_CELLS = 0.5;
 
 /**
- * How far above the terrain a flowing tile is lifted, in world units — the
- * same role WATER_SURFACE_LIFT plays for the sea (render/water.ts): without
- * it a tile sitting exactly at the band-quantised ground height z-fights the
+ * How far above the terrain river water is lifted, in world units — the same
+ * role WATER_SURFACE_LIFT plays for the sea (render/water.ts): without it a
+ * surface sitting exactly at the band-quantised ground height z-fights the
  * terrain mesh it is drawn over. Half of WATER_SURFACE_LIFT's own margin: a
- * river tile is small and always drawn a beat after the terrain it follows,
- * so it needs less clearance than the sea's single world-spanning plane.
+ * river surface is narrow and always drawn a beat after the terrain it
+ * follows, so it needs less clearance than the sea's single world-spanning
+ * plane.
  */
 const RIVER_SURFACE_LIFT_WORLD_UNITS = CELL_WORLD_SIZE / 64;
+
+/**
+ * How far downstream a terrace fall's vertical curtain is carried off the
+ * terrace face it drops over, in world units — the horizontal twin of
+ * RIVER_SURFACE_LIFT_WORLD_UNITS, and the same size for the same reason: it
+ * is the smallest offset that reliably keeps two coplanar surfaces from
+ * fighting, and anything larger would visibly detach the water from the lip.
+ */
+const RIVER_FALL_CLEARANCE_WORLD_UNITS = RIVER_SURFACE_LIFT_WORLD_UNITS;
 
 /** Translucency for the flowing channel — a shade more opaque than the sea. */
 const FLOW_OPACITY = 0.72;
@@ -115,46 +147,174 @@ const POOL_OPACITY = 0.8;
 const RIVER_ROUGHNESS = 0.85;
 const RIVER_METALNESS = 0;
 
-/** Builds one XZ-plane quad centred at the origin, `halfWidth` cells to a side. */
-function buildTileGeometry(halfWidth: number): BufferGeometry {
-  const positions = new Float32Array([
-    -halfWidth, 0, -halfWidth,
-    halfWidth, 0, -halfWidth,
-    halfWidth, 0, halfWidth,
-    -halfWidth, 0, -halfWidth,
-    halfWidth, 0, halfWidth,
-    -halfWidth, 0, halfWidth,
-  ]);
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  return geometry;
+/**
+ * Appends one flat XZ quad, centred at (`cx`, `y`, `cz`) and `halfWidthWorld`
+ * to a side, to a triangle-soup position list.
+ *
+ * The ONLY primitive that is still a square, and deliberately so: a lake is a
+ * field of full-cell tiles that must meet edge to edge with no seam
+ * (POOL_HALF_WIDTH_CELLS = 0.5), which a ribbon cannot express. It also
+ * covers the degenerate flowing run of a SINGLE cell — one point has no
+ * direction to extrude a ribbon along, so the cell is drawn as the small
+ * square it geometrically is.
+ */
+function pushQuad(cx: number, y: number, cz: number, halfWidthWorld: number, out: number[]): void {
+  const x0 = cx - halfWidthWorld;
+  const x1 = cx + halfWidthWorld;
+  const z0 = cz - halfWidthWorld;
+  const z1 = cz + halfWidthWorld;
+  out.push(x0, y, z0, x1, y, z0, x1, y, z1);
+  out.push(x0, y, z0, x1, y, z1, x0, y, z1);
+}
+
+/** One sample of a ribbon's centre-line, in world units on the XZ plane. */
+type CentreSample = readonly [x: number, z: number];
+
+/**
+ * Chaikin corner-cutting, `passes` times, with the two ENDPOINTS PINNED.
+ *
+ * Each pass replaces the interior of every segment with points a quarter and
+ * three quarters along it, which rounds corners without introducing the
+ * overshoot an interpolating spline (Catmull-Rom) would: an overshooting
+ * river bulges outside the cells it actually flows through, which would put
+ * water on land that is not wet as far as freshwater.ts is concerned. Pinning
+ * the endpoints keeps a course anchored to its spring and to the sea, and
+ * keeps a branch's first point exactly on its parent's centre-line.
+ *
+ * XZ ONLY. Height is deliberately NOT smoothed — it is resampled from the
+ * band-quantised terrain at each resulting sample (see `buildRibbon`), so the
+ * ribbon steps down the terraces it crosses instead of tunnelling through
+ * their lips.
+ */
+function smoothPolyline(points: readonly CentreSample[], passes: number): CentreSample[] {
+  let current = points as CentreSample[];
+  for (let pass = 0; pass < passes && current.length >= 3; pass++) {
+    const next: CentreSample[] = [current[0]!];
+    for (let i = 0; i < current.length - 1; i++) {
+      const [ax, az] = current[i]!;
+      const [bx, bz] = current[i + 1]!;
+      next.push([ax * 0.75 + bx * 0.25, az * 0.75 + bz * 0.25]);
+      next.push([ax * 0.25 + bx * 0.75, az * 0.25 + bz * 0.75]);
+    }
+    next.push(current[current.length - 1]!);
+    current = next;
+  }
+  return current;
 }
 
 /**
- * Builds ONE merged, non-indexed geometry from a set of tile centres — every
- * tile is `unitGeometry`'s six vertices translated to its own (x, y, z).
- * Rebuilt wholesale on every recompute (see the module header on why that is
- * an acceptable cost here) rather than patched in place: unlike terrain,
- * river tiles are not identified by a stable index a diff can address — the
- * whole SET can change shape (a new spring, a rerouted course) on any edit.
+ * Extrudes one smoothed centre-line into a ribbon, appending its triangles
+ * (non-indexed, two per segment) to `out`.
+ *
+ * Each sample's cross-section is `halfWidthWorld` either side of the
+ * centre-line along the perpendicular of its LOCAL TANGENT — the central
+ * difference of its neighbours, so the seam between two segments is one
+ * shared cross-section and the strip has no gap or overlap at the joint. Ends
+ * use the one segment they have. Vertex normals are left to
+ * `computeVertexNormals` on the merged geometry, exactly as the pool tiles do.
+ *
+ * Y comes from `sampleY`, called per sample, so the ribbon follows the
+ * band-quantised ground it is drawn over.
+ *
+ * A BAND EDGE GETS AN EXPLICIT VERTICAL CURTAIN (2026-08-21, from the first
+ * screenshots of this ribbon). Where two consecutive samples sit in different
+ * bands, simply joining them left a strip that was near-vertical and, at
+ * ~0.1 cell long, essentially coincident with the terrain riser it crossed —
+ * so it was hidden inside the terrace face and every course rendered as a
+ * DASHED line, one dash per tread, which is the very "square blocks" the
+ * ribbon exists to abolish. The fall is now built as three pieces: the tread
+ * carried to the lip, a full-width vertical curtain, and the tread resuming
+ * below. The curtain is nudged `RIVER_FALL_CLEARANCE_WORLD_UNITS` downstream
+ * so it stands in front of the terrace face rather than inside it — the same
+ * argument RIVER_SURFACE_LIFT_WORLD_UNITS makes vertically, applied
+ * horizontally.
  */
-function buildMergedTiles(
-  unitGeometry: BufferGeometry,
-  centres: ReadonlyArray<readonly [x: number, y: number, z: number]>,
-): BufferGeometry {
-  const unit = unitGeometry.getAttribute('position') as BufferAttribute;
-  const verticesPerTile = unit.count;
-  const positions = new Float32Array(centres.length * verticesPerTile * 3);
-  let write = 0;
-  for (const [cx, cy, cz] of centres) {
-    for (let v = 0; v < verticesPerTile; v++) {
-      positions[write++] = unit.getX(v) + cx;
-      positions[write++] = unit.getY(v) + cy;
-      positions[write++] = unit.getZ(v) + cz;
-    }
+function buildRibbon(
+  centre: readonly CentreSample[],
+  halfWidthWorld: number,
+  sampleY: (x: number, z: number) => number,
+  out: number[],
+): void {
+  if (centre.length < 2) return;
+
+  /** One full-width cross-section of the ribbon, ready to stitch to the next. */
+  interface Section {
+    readonly leftX: number;
+    readonly leftZ: number;
+    readonly rightX: number;
+    readonly rightZ: number;
+    readonly y: number;
   }
+
+  // Per-sample cross-sections first; the falls are spliced in afterwards so
+  // that a fall's own two sections inherit the tangent of the segment they
+  // interrupt.
+  const sections: Section[] = [];
+  const sampleSections: Section[] = [];
+  for (let i = 0; i < centre.length; i++) {
+    const [cx, cz] = centre[i]!;
+    const [px, pz] = centre[i === 0 ? 0 : i - 1]!;
+    const [nx, nz] = centre[i === centre.length - 1 ? i : i + 1]!;
+    let tx = nx - px;
+    let tz = nz - pz;
+    const length = Math.hypot(tx, tz);
+    // A zero-length tangent means two coincident samples (a course whose
+    // junction point repeats its parent's cell). Fall back to +X so the
+    // cross-section is still well defined; the degenerate quad it produces is
+    // invisible either way.
+    if (length === 0) {
+      tx = 1;
+      tz = 0;
+    } else {
+      tx /= length;
+      tz /= length;
+    }
+    sampleSections.push({
+      leftX: cx + tz * halfWidthWorld,
+      leftZ: cz - tx * halfWidthWorld,
+      rightX: cx - tz * halfWidthWorld,
+      rightZ: cz + tx * halfWidthWorld,
+      y: sampleY(cx, cz),
+    });
+  }
+
+  for (let i = 0; i < sampleSections.length; i++) {
+    const here = sampleSections[i]!;
+    sections.push(here);
+    const next = sampleSections[i + 1];
+    if (next === undefined || next.y === here.y) continue;
+
+    // The band edge lies between these two samples; put the curtain at their
+    // midpoint, carried `RIVER_FALL_CLEARANCE_WORLD_UNITS` toward the lower
+    // sample so it clears the terrace face.
+    const stepX = next.leftX - here.leftX;
+    const stepZ = next.leftZ - here.leftZ;
+    const stepLength = Math.hypot(stepX, stepZ);
+    const shift =
+      stepLength === 0 ? 0 : Math.min(RIVER_FALL_CLEARANCE_WORLD_UNITS / stepLength, 0.5);
+    const at = 0.5 + shift;
+    const lipX = here.leftX + stepX * at;
+    const lipZ = here.leftZ + stepZ * at;
+    const lipRightX = here.rightX + (next.rightX - here.rightX) * at;
+    const lipRightZ = here.rightZ + (next.rightZ - here.rightZ) * at;
+    const lip = { leftX: lipX, leftZ: lipZ, rightX: lipRightX, rightZ: lipRightZ };
+    sections.push({ ...lip, y: here.y }); // the lip
+    sections.push({ ...lip, y: next.y }); // the plunge, straight down
+  }
+
+  for (let i = 0; i < sections.length - 1; i++) {
+    const a = sections[i]!;
+    const b = sections[i + 1]!;
+    // Two triangles: (La, Ra, Lb) and (Lb, Ra, Rb).
+    out.push(a.leftX, a.y, a.leftZ, a.rightX, a.y, a.rightZ, b.leftX, b.y, b.leftZ);
+    out.push(b.leftX, b.y, b.leftZ, a.rightX, a.y, a.rightZ, b.rightX, b.y, b.rightZ);
+  }
+}
+
+/** Wraps a finished triangle-soup position list as a geometry. */
+function geometryFromTriangles(positions: readonly number[]): BufferGeometry {
   const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setAttribute('position', new BufferAttribute(Float32Array.from(positions), 3));
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -282,13 +442,13 @@ const SPRING_RIPPLE_PERIOD_SECONDS = 4.5;
 const SPRING_FOAM_COLOR = 0xf4fbff;
 
 /**
- * Rings are see-through foam wash: translucent enough that the river tile's
+ * Rings are see-through foam wash: translucent enough that the river's own
  * blue reads through them, opaque enough to register against it.
  */
 const SPRING_RING_OPACITY = 0.5;
 
 /** Radius of the upwelling foam dome, in cells — comfortably inside the
- * 0.6-cell-wide flowing channel tile so the dome sits ON the water. */
+ * 0.6-cell-wide flowing channel ribbon so the dome sits ON the water. */
 const SPRING_DOME_RADIUS_CELLS = 0.16;
 
 /**
@@ -325,10 +485,10 @@ const SPRING_DOME_SWELL_FRACTION = 0.15;
 const SPRING_DOME_SWELL_PERIOD_SECONDS = 6;
 
 /**
- * Rings float this far above the river tile under them (which itself sits
- * RIVER_SURFACE_LIFT_WORLD_UNITS above terrain). Double the tile's own lift:
- * the same z-fighting argument, applied one layer up — the rings must clear
- * the tile by at least as much as the tile clears the ground.
+ * Rings float this far above the river surface under them (which itself sits
+ * RIVER_SURFACE_LIFT_WORLD_UNITS above terrain). Double that lift: the same
+ * z-fighting argument, applied one layer up — the rings must clear the water
+ * by at least as much as the water clears the ground.
  */
 const SPRING_EFFECT_LIFT_WORLD_UNITS = RIVER_SURFACE_LIFT_WORLD_UNITS * 2;
 
@@ -366,7 +526,7 @@ interface SpringState {
 export interface RiverRig {
   /**
    * Recomputes the river network from the mirror's CURRENT terrain and
-   * rebuilds every tile/mist puff — throttled internally to
+   * rebuilds every ribbon, lake tile and spring effect — throttled internally to
    * RIVER_RECOMPUTE_INTERVAL_MS, so calling this from every terrainDiff (as
    * client/src/world.ts does, alongside the terrain mesh patch) costs nothing
    * extra: most calls are a no-op elapsed-time check.
@@ -417,9 +577,6 @@ export function createRiverRig(
   parent: Object3D,
   onFrame: (handler: (dt: number) => void) => () => void,
 ): RiverRig {
-  const flowUnit = buildTileGeometry(FLOW_TILE_HALF_WIDTH_CELLS);
-  const poolUnit = buildTileGeometry(POOL_TILE_HALF_WIDTH_CELLS);
-
   const flowMaterial = new MeshStandardMaterial({
     color: WATER_COLOR,
     transparent: true,
@@ -535,8 +692,8 @@ export function createRiverRig(
       const waterfall = waterfalls[w]!;
       const centreX = waterfall.x * CELL_WORLD_SIZE;
       const centreZ = waterfall.y * CELL_WORLD_SIZE;
-      // The effect's resting surface: the river tile's height at the plunge
-      // cell, plus its own anti-z-fight lift over that tile.
+      // The effect's resting surface: the river's height at the plunge cell,
+      // plus its own anti-z-fight lift over that water.
       const surfaceY =
         quantizeToBandWorldY(mirror, waterfall.x, waterfall.y) +
         RIVER_SURFACE_LIFT_WORLD_UNITS +
@@ -671,29 +828,73 @@ export function createRiverRig(
       isActive: (x, y) => mirror.received.has(chunkIndexOfCell(mirror.map.size, x, y)),
     });
 
-    const flowCentres: Array<readonly [number, number, number]> = [];
-    const poolCentres: Array<readonly [number, number, number]> = [];
+    const flowTriangles: number[] = [];
+    const poolTriangles: number[] = [];
+    const flowHalfWidthWorld = FLOW_HALF_WIDTH_CELLS * CELL_WORLD_SIZE;
+
+    // The ribbon's height at an arbitrary point of a smoothed centre-line:
+    // the rendered height of the cell that point lies in. Nearest-cell, not
+    // interpolated, because the terrain it must sit on is itself a field of
+    // flat band-quantised cells — interpolating would float the water above
+    // the middle of a terrace and bury it at the lip.
+    const sampleRibbonY = (worldX: number, worldZ: number): number =>
+      quantizeToBandWorldY(
+        mirror,
+        Math.round(worldX / CELL_WORLD_SIZE),
+        Math.round(worldZ / CELL_WORLD_SIZE),
+      ) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+
     for (const river of network.rivers) {
-      for (const point of river.points) {
-        const worldX = point.x * CELL_WORLD_SIZE;
-        const worldZ = point.y * CELL_WORLD_SIZE;
-        if (point.pooled) {
-          const surfaceY = (point.poolHeight ?? 0) * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
-          poolCentres.push([worldX, surfaceY, worldZ]);
-        } else {
-          const groundY = quantizeToBandWorldY(mirror, point.x, point.y) + RIVER_SURFACE_LIFT_WORLD_UNITS;
-          flowCentres.push([worldX, groundY, worldZ]);
+      // ONE RIBBON PER COURSE, and a river has as many courses as the water
+      // has paths (shared/src/rivers.ts's split rule) — so a fork is drawn as
+      // two strips that meet, not as one strip that had to pick a side.
+      for (const course of river.courses) {
+        // A course is flowing points interrupted by pooled ones; each
+        // unbroken FLOWING run is one ribbon, and every pooled point is a
+        // lake tile at its basin's one flat surface height.
+        let run: CentreSample[] = [];
+        const flushRun = (): void => {
+          if (run.length === 1) {
+            const [soloX, soloZ] = run[0]!;
+            pushQuad(soloX, sampleRibbonY(soloX, soloZ), soloZ, flowHalfWidthWorld, flowTriangles);
+          } else if (run.length > 1) {
+            buildRibbon(
+              smoothPolyline(run, RIVER_SMOOTHING_PASSES),
+              flowHalfWidthWorld,
+              sampleRibbonY,
+              flowTriangles,
+            );
+          }
+          run = [];
+        };
+
+        for (const point of course.points) {
+          const worldX = point.x * CELL_WORLD_SIZE;
+          const worldZ = point.y * CELL_WORLD_SIZE;
+          if (point.pooled) {
+            flushRun();
+            const surfaceY =
+              (point.poolHeight ?? 0) * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
+            pushQuad(
+              worldX,
+              surfaceY,
+              worldZ,
+              POOL_HALF_WIDTH_CELLS * CELL_WORLD_SIZE,
+              poolTriangles,
+            );
+          } else {
+            run.push([worldX, worldZ]);
+          }
         }
+        flushRun();
       }
     }
 
-    const nextFlow = buildMergedTiles(flowUnit, flowCentres);
     flowMesh.geometry.dispose();
-    flowMesh.geometry = nextFlow;
+    flowMesh.geometry = geometryFromTriangles(flowTriangles);
 
-    const nextPool = buildMergedTiles(poolUnit, poolCentres);
     poolMesh.geometry.dispose();
-    poolMesh.geometry = nextPool;
+    poolMesh.geometry = geometryFromTriangles(poolTriangles);
 
     rebuildSprings(mirror, network);
     // A rebuild leaves the rings' animated X/Z as placeholders — pose them
@@ -774,8 +975,6 @@ export function createRiverRig(
       parent.remove(poolMesh);
       flowMesh.geometry.dispose();
       poolMesh.geometry.dispose();
-      flowUnit.dispose();
-      poolUnit.dispose();
       flowMaterial.dispose();
       poolMaterial.dispose();
       springRingMaterial.dispose();

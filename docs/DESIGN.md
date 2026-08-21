@@ -2010,6 +2010,9 @@ seed either, unlike fresh-world genesis noise. Two reasons, not one:
      can see already carries every bit this mechanic needs.
 
 **The flow algorithm: bounded steepest descent, then a bounded basin fill.**
+(AMENDED 2026-08-21 — a tie between neighbours no longer picks one and drops
+the rest; it SPLITS the river. See "rivers split, and are drawn as polylines"
+below; everything else in this paragraph stands.)
 From each spring, `traceRiver` walks to the strictly-lowest of its four
 neighbours (fixed N, E, S, W scan order — part of the determinism contract,
 exactly like `forEachFootprintOffset`'s fixed scan order in heightmap.ts),
@@ -2128,7 +2131,10 @@ loop), one owner frees what it made, and the only animated element — the
 mist's gentle vertical bob — freezes under `prefers-reduced-motion`, matching
 weather's "the whole sky holds still" rule (there is no flashing-light
 concern here at all; this is done purely for consistency with the house
-standard). Every river point becomes a small flat translucent tile at its
+standard). (AMENDED 2026-08-21: flowing water is no longer a tile per cell
+but one smoothed ribbon per course — see "rivers split, and are drawn as
+polylines" below. Pools are still tiles, as described here.) Every river point
+becomes a small flat translucent tile at its
 cell's rendered (band-quantised) height — narrower for flowing channel,
 full-cell-width and flat-at-`poolHeight` for a pool, so adjacent pooled tiles
 join into one continuous lake surface. Each waterfall gets a small ring of
@@ -2432,6 +2438,118 @@ body and permitted the monster to move its body into the world. Fixed at the
 predicate (`isLairPose`), not at the three callsites, because the callsites all
 asked the only question on offer. Filed under #44 as a render-only graphics
 item; it was neither.
+
+### Decisions made 2026-08-21 (rivers split, and are drawn as polylines)
+
+Owner report: rivers "render as square blocks, but we need them path smoothed
+so that they render like polylines, and anywhere that a river has multiple
+paths, it should follow those multiple paths as well — like a split in the
+river." Two defects, one in the math and one in the presentation, fixed
+separately because they are separate.
+
+**The math: a river is a set of courses, not a single path.** `traceRiver`
+used to move to "the strictly-lowest neighbour, ties broken by
+FLOW_DIRECTIONS' scan order" — so on a symmetric slope (exactly what a
+player's radially-symmetric brush stroke makes) half the drainage was silently
+discarded. It now takes EVERY active 4-neighbour tied for the lowest height
+strictly below the current cell: the first continues the course it is on, the
+rest are queued as new courses forking from that cell. `fillBasin` does the
+same at a pool's rim — it returns every saddle at the spillway height, so a
+brimming lake that overflows in two places drains in two places.
+`River.points` is therefore replaced by `River.courses`, each an unbroken
+polyline in flow order (with `riverPoints(river)` as the flat, derived view
+the per-cell consumers — `buildFreshwaterMap`, the world tests — want).
+
+  - **Exact ties only.** Heights are integers, so "equally downhill" is an
+    exact, order-free test and both sides fork identically. A tolerance
+    ("within N units") would be a tuning knob deciding how braided the whole
+    world looks; rejected.
+  - **Merges fall out of the same walk.** A branch that flows into a cell this
+    river already owns stops there rather than re-tracing it, repeating that
+    cell as its last point so the drawn ribbons meet. A branch course likewise
+    repeats its junction cell as its FIRST point. Both repeats are geometry,
+    not extra water: every per-cell consumer is set-based.
+  - **Cost is unchanged.** A junction fans out to at most the four cells
+    FLOW_DIRECTIONS names, and every cell a river reaches down any branch is
+    claimed, pushed and charged exactly once against the SAME per-river budget
+    (`RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER × worldSize`). Branching spends
+    that budget across more courses; it never spends more of it. Branches are
+    traced breadth-first in queue order — fixed, and it spends the budget on
+    reach rather than on the first branch's full descent.
+  - **Waterfalls are deduplicated by cell** (largest drop wins), because two
+    courses can now plunge into the same cell and a plunge point is a place,
+    not an event. Without this the mana waterfall aura would double-count a
+    confluence.
+
+**The presentation: one ribbon per course.** `riverRig.ts` drew one
+axis-aligned quad per flowing cell; since a course is a 4-connected cell walk,
+every turn was a hard 90° and the result read as a staircase of separate
+squares. Each unbroken run of flowing points in a course is now smoothed
+(Chaikin corner-cutting, `RIVER_SMOOTHING_PASSES = 2`, endpoints pinned) and
+extruded into ONE continuous triangle strip, `FLOW_HALF_WIDTH_CELLS` either
+side of the local tangent. A fork is two ribbons that meet at the junction —
+which is exactly what the junction-point repeat above is for.
+
+  - **Chaikin, not Catmull-Rom.** An interpolating spline overshoots, putting
+    water outside the cells that `freshwater.ts` calls wet. Chaikin's
+    approximating cut cannot leave the walk's convex hull.
+  - **XZ is smoothed; Y is not.** Height is resampled per sample from the
+    band-quantised terrain, so the ribbon steps down the terraces it crosses
+    instead of tunnelling through their lips.
+  - **Lakes stay a field of full-cell quads.** A pool must tile edge to edge
+    with no seam, which a ribbon cannot express; `pushQuad` is the one square
+    primitive left, and it also covers the degenerate flowing run of a single
+    cell (one point has no direction to extrude along).
+
+**Punts, named:**
+
+  - **A terrace fall gets an explicit vertical curtain** (added the same day,
+    after the first screenshots). Joining two samples in different bands
+    directly produced a strip that was near-vertical and about a tenth of a
+    cell long — effectively coincident with the terrace face it crossed, so it
+    vanished inside the terrain and every course rendered as a DASHED line,
+    one dash per tread, which is the very "square blocks" this work exists to
+    abolish. A fall is now three pieces: the tread carried to the lip, a
+    full-width vertical curtain, and the tread resuming below, with the
+    curtain nudged `RIVER_FALL_CLEARANCE_WORLD_UNITS` downstream so it stands
+    in front of the terrace face rather than inside it — the horizontal twin
+    of `RIVER_SURFACE_LIFT_WORLD_UNITS`. Residual, named: seen from straight
+    overhead a curtain is still edge-on, so a river down a very steep face
+    still reads as treads. Every oblique angle — which is where the camera
+    actually sits — shows a connected river.
+  - **Overlapping translucent water still double-blends at a junction**, where
+    two courses' ribbons cross the same cell. Pre-existing (two springs whose
+    courses merged already did this) and unchanged by this work.
+**Visually verified, and what it took.** Unlike the 2026-08-19 entry, this
+one was checked with eyes on a running client — twice, and the second look is
+what found the dashed-line defect above.
+
+  - **In the live world**, driven over CDP (see the headless-screenshot
+    recipe): rivers draw as continuous ribbons following their courses, and a
+    probe of the flow mesh confirmed the smoothing is real rather than assumed
+    — 89% of its vertices sit off the per-cell quad grid, at sub-cell sample
+    spacing.
+  - **`client/preview-rivers.html` + `previewRivers.ts`** is new, in the
+    established throwaway-harness pattern (`preview-boats.html` and friends).
+    It drives the REAL `createTerrainMeshes` and `createRiverRig` over a
+    hand-built heightmap. It exists because the live world cannot show these
+    two things on demand: its shape is whatever players sculpted, rivers only
+    exist where somebody built a hill, and the daynight plugin rewrites the
+    lighting rig ten times a second — which a screenshot driver on a ~1 fps
+    software-GL page can never outvote, so half the captures came back at
+    night. Three fixtures: `fork` (a square cone whose summit ties four ways —
+    four courses radiate down four faces, which is the split, drawn),
+    `meander` (a channel of hard 90° corners carved into a hillside — draws as
+    one continuous ribbon with rounded corners, which is the smoothing,
+    drawn), and `terrace` (a staircase, for the fall curtain).
+  - **Fixture lessons worth keeping**, since each cost a round trip: a channel
+    walled in with one tall constant is a canyon, not a river on a hill (bank
+    the channel with a hillside that slopes the same way); a cone that is
+    still above SEA_LEVEL at the map border makes its whole outer ring one
+    enormous flat basin, which swallows every course; a spring needs its four
+    neighbours strictly below it, which walls and ramps both break; and a
+    fixture that drops a whole band per cell puts a plunge-pool effect on
+    every cell, hiding the very water it is meant to show.
 
 ### Version facts recorded at scaffold time (2026-08-13)
 

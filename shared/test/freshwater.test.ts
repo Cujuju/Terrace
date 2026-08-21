@@ -11,10 +11,14 @@ describe('buildFreshwaterMap', () => {
     const network: RiverNetwork = {
       rivers: [
         {
-          points: [
-            { x: 1, y: 1, pooled: false },
-            { x: 2, y: 1, pooled: false },
-            { x: 3, y: 1, pooled: true, poolHeight: 40 },
+          courses: [
+            {
+              points: [
+                { x: 1, y: 1, pooled: false },
+                { x: 2, y: 1, pooled: false },
+                { x: 3, y: 1, pooled: true, poolHeight: 40 },
+              ],
+            },
           ],
           waterfalls: [],
           reachedSea: true,
@@ -36,9 +40,8 @@ describe('buildFreshwaterMap', () => {
     const spillwayFirstAsChannel: RiverNetwork = {
       rivers: [
         {
-          points: [
-            { x: 4, y: 4, pooled: false },
-            { x: 4, y: 4, pooled: true, poolHeight: 12 },
+          courses: [
+            { points: [{ x: 4, y: 4, pooled: false }, { x: 4, y: 4, pooled: true, poolHeight: 12 }] },
           ],
           waterfalls: [],
           reachedSea: false,
@@ -49,9 +52,8 @@ describe('buildFreshwaterMap', () => {
     const spillwayFirstAsPool: RiverNetwork = {
       rivers: [
         {
-          points: [
-            { x: 4, y: 4, pooled: true, poolHeight: 12 },
-            { x: 4, y: 4, pooled: false },
+          courses: [
+            { points: [{ x: 4, y: 4, pooled: true, poolHeight: 12 }, { x: 4, y: 4, pooled: false }] },
           ],
           waterfalls: [],
           reachedSea: false,
@@ -65,7 +67,14 @@ describe('buildFreshwaterMap', () => {
 
   it('floors fractional positions to their containing cell', () => {
     const network: RiverNetwork = {
-      rivers: [{ points: [{ x: 7, y: 2, pooled: false }], waterfalls: [], reachedSea: true, truncated: false }],
+      rivers: [
+        {
+          courses: [{ points: [{ x: 7, y: 2, pooled: false }] }],
+          waterfalls: [],
+          reachedSea: true,
+          truncated: false,
+        },
+      ],
     };
     const map = buildFreshwaterMap(network, WORLD_SIZE);
     expect(map.at(7.9, 2.1)).toBe('channel');

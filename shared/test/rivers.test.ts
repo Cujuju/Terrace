@@ -5,6 +5,7 @@ import {
   cellIndex,
   computeRiverNetwork,
   createHeightmap,
+  riverPoints,
   SEA_LEVEL,
   SPRING_MIN_HEIGHT_ABOVE_SEA,
   type Heightmap,
@@ -62,13 +63,91 @@ describe('computeRiverNetwork — a spring on a slope reaches the sea', () => {
     const river = network.rivers[0]!;
     expect(river.reachedSea).toBe(true);
     expect(river.truncated).toBe(false);
-    // Centre (8,8) straight north to (8,0): 9 points, none pooled.
-    expect(river.points).toHaveLength(9);
-    expect(river.points.every((p) => !p.pooled)).toBe(true);
-    expect(river.points[0]).toMatchObject({ x: 8, y: 8 });
-    expect(river.points[river.points.length - 1]).toMatchObject({ x: 8, y: 0 });
+    // The summit's four neighbours all tie for lowest, so the water takes all
+    // four — one course per compass direction, in FLOW_DIRECTIONS' order.
+    expect(river.courses).toHaveLength(4);
+    expect(riverPoints(river).every((p) => !p.pooled)).toBe(true);
+
+    // The trunk: centre (8,8) straight north to (8,0), 9 points.
+    const trunk = river.courses[0]!;
+    expect(trunk.points).toHaveLength(9);
+    expect(trunk.points[0]).toMatchObject({ x: 8, y: 8 });
+    expect(trunk.points[trunk.points.length - 1]).toMatchObject({ x: 8, y: 0 });
     const lastHeight = map.cells[cellIndex(map, 8, 0)]!;
     expect(lastHeight).toBeLessThanOrEqual(SEA_LEVEL);
+
+    // Every branch REPEATS the summit as its own first point (so the drawn
+    // ribbons meet there) and runs the same 8 cells to its own edge.
+    for (const course of river.courses.slice(1)) {
+      expect(course.points[0]).toMatchObject({ x: 8, y: 8 });
+      expect(course.points).toHaveLength(9);
+    }
+    expect(river.courses.map((c) => c.points[c.points.length - 1])).toMatchObject([
+      { x: 8, y: 0 }, // north
+      { x: 16, y: 8 }, // east
+      { x: 8, y: 16 }, // south
+      { x: 0, y: 8 }, // west
+    ]);
+  });
+});
+
+/**
+ * A ridge whose spring drops into TWO mirror-image channels, tied rung for
+ * rung: the minimal shape that has more than one way down, and the shape a
+ * player's own radially-symmetric brush stroke naturally makes.
+ */
+function forkedRidge(): Heightmap {
+  const size = 7;
+  const map = createHeightmap(size);
+  /** Comfortably above the whole course, so it can never be descended into. */
+  const WALL = 40 * BAND_HEIGHT;
+  for (let i = 0; i < map.cells.length; i++) map.cells[i] = WALL;
+  const CREST = 12 * BAND_HEIGHT;
+  /** One rung of either channel — three bands, so each step also falls. */
+  const RUNG_DROP = 3 * BAND_HEIGHT;
+  setHeight(map, 3, 0, CREST); // the spring
+  // The crest's own southern neighbour: BELOW the spring (so the spring is a
+  // local maximum at all) but ABOVE either channel (so it is never the way
+  // down, and the east/west tie is what the descent actually sees).
+  setHeight(map, 3, 1, CREST - 1);
+  for (let y = 0; y < 6; y++) {
+    // Deep enough by the last rung to end in the sea rather than in a pool.
+    setHeight(map, 2, y, CREST - (y + 1) * RUNG_DROP);
+    setHeight(map, 4, y, CREST - (y + 1) * RUNG_DROP);
+  }
+  return map;
+}
+
+describe('computeRiverNetwork — a course splits where two ways down tie', () => {
+  it('forks into two courses, and each fork keeps its own descent', () => {
+    const map = forkedRidge();
+    const network = computeRiverNetwork(map);
+    expect(network.rivers).toHaveLength(1);
+    const river = network.rivers[0]!;
+
+    // The spring's east and west neighbours tie: two courses, not one.
+    expect(river.courses).toHaveLength(2);
+    const [trunk, fork] = river.courses;
+    expect(trunk!.points[0]).toMatchObject({ x: 3, y: 0 });
+    expect(trunk!.points[1]).toMatchObject({ x: 4, y: 0 }); // east, first in scan order
+    // The fork repeats the junction, then takes the way the trunk did not.
+    expect(fork!.points[0]).toMatchObject({ x: 3, y: 0 });
+    expect(fork!.points[1]).toMatchObject({ x: 2, y: 0 });
+
+    // Both channels are actually followed all the way down, not just entered:
+    // rung 3 is the first at or below SEA_LEVEL, so it is where both end.
+    expect(river.reachedSea).toBe(true);
+    const visited = new Set(riverPoints(river).map((p) => `${p.x},${p.y}`));
+    for (let y = 0; y <= 3; y++) {
+      expect(visited.has(`2,${y}`)).toBe(true);
+      expect(visited.has(`4,${y}`)).toBe(true);
+    }
+    expect(map.cells[cellIndex(map, 2, 3)]!).toBeLessThanOrEqual(SEA_LEVEL);
+  });
+
+  it('is byte-identical across two calls on a splitting map', () => {
+    const map = forkedRidge();
+    expect(computeRiverNetwork(map)).toEqual(computeRiverNetwork(map));
   });
 });
 
@@ -161,11 +240,11 @@ describe('computeRiverNetwork — closed basins pool instead of looping forever'
     // genuinely closed basin, not a truncated one.
     expect(river.reachedSea).toBe(false);
     expect(river.truncated).toBe(false);
-    expect(river.points.some((p) => p.pooled)).toBe(true);
+    expect(riverPoints(river).some((p) => p.pooled)).toBe(true);
     // Every pooled point carries the SAME flat surface height (a renderer's
     // lake is one flat plane, not the lumpy floor underneath it) — 512, this
     // fixture's own maximum, since the fill absorbed the whole active window.
-    for (const p of river.points.filter((p) => p.pooled)) expect(p.poolHeight).toBe(512);
+    for (const p of riverPoints(river).filter((p) => p.pooled)) expect(p.poolHeight).toBe(512);
   });
 });
 
@@ -181,7 +260,7 @@ describe('computeRiverNetwork — sculpting reroutes a river', () => {
     const baseline = computeRiverNetwork(before);
     expect(baseline.rivers).toHaveLength(1);
     // East (1,0)=900 beats south (0,1)=990 under steepest descent.
-    expect(baseline.rivers[0]!.points[1]).toMatchObject({ x: 1, y: 0 });
+    expect(baseline.rivers[0]!.courses[0]!.points[1]).toMatchObject({ x: 1, y: 0 });
 
     // Raise the cell the river used to step into — literally "sculpting
     // across its course" — just enough (995, still below the spring's own
@@ -194,8 +273,10 @@ describe('computeRiverNetwork — sculpting reroutes a river', () => {
     const rerouted = computeRiverNetwork(after);
     expect(rerouted.rivers).toHaveLength(1);
     // Only the south neighbour (0,1)=990 is left strictly below the spring.
-    expect(rerouted.rivers[0]!.points[1]).toMatchObject({ x: 0, y: 1 });
-    expect(rerouted.rivers[0]!.points[1]).not.toEqual(baseline.rivers[0]!.points[1]);
+    expect(rerouted.rivers[0]!.courses[0]!.points[1]).toMatchObject({ x: 0, y: 1 });
+    expect(rerouted.rivers[0]!.courses[0]!.points[1]).not.toEqual(
+      baseline.rivers[0]!.courses[0]!.points[1],
+    );
   });
 });
 
