@@ -7,14 +7,21 @@
 // what has to hold is what the player sees:
 //
 //   1. The water covers every cell the basin flooded.
-//   2. It covers no cell that the basin did not — the honesty guard the
-//      terrain's own contours keep (CONTOUR_CELL_CENTRE_GUARD): whatever the
-//      outline does between two cell centres, a cell centre itself is only
-//      ever inside the region it belongs to.
-//   3. It is one flat plane at the height it was asked for.
-//   4. It PARTITIONS its own area: every point is covered once, never twice —
+//   2. It never runs away from the lake: past the one-cell ring the field is
+//      read over, no cell is covered, however much ground sits at the lake's
+//      own level.
+//   3. It does not OVERHANG where the ground falls away — the defect that made
+//      a lake hang half a cell past its rim in mid-air over the spillway. The
+//      edge there is the terrain's own cap contour, and this pins it.
+//   4. It is one flat plane at the height it was asked for.
+//   5. It PARTITIONS its own area: every point is covered once, never twice —
 //      which is what proves the chunk-sized marching tiles meet exactly, with
 //      neither a seam of missing water nor a double-drawn overlap.
+//
+// What is deliberately NOT asserted: that the water stops at the bank. It does
+// not — where the ground rises it continues underneath, and the terrain, which
+// is opaque and drawn higher, covers it. That is the point of the design: an
+// edge that nothing has to line up cannot fail to line up.
 //
 // No WebGLRenderer and no DOM: appendPoolSurface writes a plain triangle soup.
 
@@ -116,18 +123,61 @@ function coverCount(
 const worldOfCell = (cell: number): number => cell * CELL_WORLD_SIZE;
 
 describe('lake surface', () => {
-  it('covers every flooded cell and no dry one', () => {
+  it('covers every flooded cell', () => {
     const cells = rectangleLake(4, 4, 10, 9);
     const triangles: number[] = [];
     appendPoolSurface(mirrorWithFloor(cells), lakeOf(cells), SURFACE_Y, triangles);
 
-    for (let y = 3; y <= 10; y++) {
-      for (let x = 3; x <= 11; x++) {
-        const flooded = x >= 4 && x <= 10 && y >= 4 && y <= 9;
-        const covered = coverCount(triangles, worldOfCell(x), worldOfCell(y)) > 0;
-        expect(covered, `cell (${x},${y}) flooded=${flooded}`).toBe(flooded);
+    for (let y = 4; y <= 9; y++) {
+      for (let x = 4; x <= 10; x++) {
+        expect(
+          coverCount(triangles, worldOfCell(x), worldOfCell(y)),
+          `flooded cell (${x},${y}) has no water on it`,
+        ).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('never runs away past the ring of cells beside the lake', () => {
+    const cells = rectangleLake(4, 4, 10, 9);
+    const triangles: number[] = [];
+    appendPoolSurface(mirrorWithFloor(cells), lakeOf(cells), SURFACE_Y, triangles);
+
+    // Two cells clear of the lake on every side: whatever the bank does, the
+    // water's own field is not even read out here.
+    for (let y = 2; y <= 11; y++) {
+      for (let x = 2; x <= 12; x++) {
+        const nearLake = x >= 3 && x <= 11 && y >= 3 && y <= 10;
+        if (nearLake) continue;
+        expect(
+          coverCount(triangles, worldOfCell(x), worldOfCell(y)),
+          `water reached (${x},${y}), two cells clear of the lake`,
+        ).toBe(0);
+      }
+    }
+  });
+
+  it('does not overhang the lip where the ground falls away', () => {
+    // A lake with a cliff on its east side: the neighbour is at sea level,
+    // several bands under the water. The terrain's cap for the lake's band
+    // ends a quarter of a cell inside the lake's own rim cell there
+    // (crossingFraction with CONTOUR_SAMPLE_CLEARANCE), and the water may not
+    // be drawn past it — it would be hanging in the air.
+    const cells = rectangleLake(4, 4, 8, 8);
+    const mirror = mirrorWithFloor(cells);
+    for (let y = 3; y <= 9; y++) mirror.map.cells[cellIndex(layout, 9, y)] = 0;
+    const triangles: number[] = [];
+    appendPoolSurface(mirror, lakeOf(cells), SURFACE_Y, triangles);
+
+    const rim = worldOfCell(8);
+    expect(
+      coverCount(triangles, rim, worldOfCell(6)),
+      'the rim cell itself must be under water',
+    ).toBeGreaterThan(0);
+    expect(
+      coverCount(triangles, rim + 0.5 * CELL_WORLD_SIZE, worldOfCell(6)),
+      'water is drawn out over the cliff edge',
+    ).toBe(0);
   });
 
   it('is one flat plane at the height it was given', () => {
@@ -139,17 +189,17 @@ describe('lake surface', () => {
     for (let i = 1; i < triangles.length; i += 3) expect(triangles[i]).toBe(SURFACE_Y);
   });
 
-  it('leaves a dry island inside it uncovered', () => {
-    // A hole, so the triangulator's bridging path is exercised by the shape a
-    // lake with an island in it actually makes.
+  it('runs under an island rather than stopping short of it', () => {
+    // An unflooded cell inside the lake stands ABOVE the water (it is bank
+    // height), so the terrain draws it over the surface. The water carries on
+    // underneath: that is what leaves no seam around it to get wrong.
     const cells = rectangleLake(4, 4, 12, 12);
-    const island = cellIndex(layout, 8, 8);
-    cells.delete(island);
+    cells.delete(cellIndex(layout, 8, 8));
     const triangles: number[] = [];
     appendPoolSurface(mirrorWithFloor(cells), lakeOf(cells), SURFACE_Y, triangles);
 
-    expect(coverCount(triangles, worldOfCell(8), worldOfCell(8))).toBe(0);
-    expect(coverCount(triangles, worldOfCell(6), worldOfCell(8))).toBe(1);
+    expect(coverCount(triangles, worldOfCell(8), worldOfCell(8))).toBeGreaterThan(0);
+    expect(coverCount(triangles, worldOfCell(6), worldOfCell(8))).toBeGreaterThan(0);
   });
 
   it('meets exactly across a marching-tile border', () => {
