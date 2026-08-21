@@ -10,7 +10,7 @@
 // target)`), never by raycasting geometry. So the zoom clamp measures distance
 // to a flat base plane, and the distance to the LANDSCAPE — the thing a player
 // is actually approaching — was unbounded in both directions: over a
-// maximum-relief peak (MAX_RELIEF_WORLD_CELLS = 16 cells) the closest zoom put
+// maximum-relief peak (MAX_RELIEF_WORLD_UNITS = 16) the closest zoom put
 // the camera underneath the summit, inside the mountain.
 //
 // This module is the missing half: a per-frame floor under the camera's Y,
@@ -33,7 +33,7 @@
 // Fixing the first would need a swept test along the camera-to-target segment;
 // it is a different feature (occlusion), not this floor.
 
-import { CAMERA_GROUND_CLEARANCE_CELLS, CELL_WORLD_SIZE } from '../config.ts';
+import { CAMERA_GROUND_CLEARANCE_WORLD_UNITS } from '../config.ts';
 
 /**
  * World-space Y of the rendered terrain surface under a world-space (x, z),
@@ -47,7 +47,7 @@ export type GroundHeightSampler = (
 ) => number | null;
 
 /** The clearance in world units. Cells are the world unit, so this is a rename. */
-const CLEARANCE_WORLD_UNITS = CAMERA_GROUND_CLEARANCE_CELLS * CELL_WORLD_SIZE;
+const CLEARANCE_WORLD_UNITS = CAMERA_GROUND_CLEARANCE_WORLD_UNITS;
 
 /**
  * The camera's Y, raised if it sits below its clearance over the ground.

@@ -11,16 +11,15 @@ import {
   type GroundHeightSampler,
 } from '../src/render/cameraClearance.ts';
 import {
-  CAMERA_GROUND_CLEARANCE_CELLS,
+  CAMERA_GROUND_CLEARANCE_WORLD_UNITS,
   CAMERA_MIN_DISTANCE,
   CAMERA_NEAR,
-  CELL_WORLD_SIZE,
   HEIGHT_WORLD_SCALE,
-  MAX_RELIEF_WORLD_CELLS,
+  MAX_RELIEF_WORLD_UNITS,
 } from '../src/config.ts';
 import { BAND_HEIGHT } from '@terrace/shared';
 
-const CLEARANCE = CAMERA_GROUND_CLEARANCE_CELLS * CELL_WORLD_SIZE;
+const CLEARANCE = CAMERA_GROUND_CLEARANCE_WORLD_UNITS;
 
 describe('clearedCameraY', () => {
   it('lifts a camera that is under the ground', () => {
@@ -103,7 +102,13 @@ describe('the clearance value itself', () => {
     // target on the base plane, so at maximum relief it permits a camera
     // BELOW the summit. The floor is what stops that, and it is the reason
     // CAMERA_MIN_DISTANCE is free to be smaller than the world's relief.
-    const maxSummitY = MAX_RELIEF_WORLD_CELLS * CELL_WORLD_SIZE;
+    // MAX_RELIEF_WORLD_UNITS is already a world-space height — the multiply by
+    // CELL_WORLD_SIZE that stood here was correct only while relief was stated
+    // in CELLS and a cell was a world unit, and on the re-sampled grid it
+    // shrank the world's tallest possible summit to a quarter of itself, which
+    // is below CAMERA_MIN_DISTANCE and so made the first assertion below fail
+    // for the opposite of the reason it is testing.
+    const maxSummitY = MAX_RELIEF_WORLD_UNITS;
     expect(CAMERA_MIN_DISTANCE).toBeLessThan(maxSummitY);
     expect(clearedCameraY(CAMERA_MIN_DISTANCE, maxSummitY)).toBeGreaterThan(
       maxSummitY,

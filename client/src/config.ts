@@ -391,22 +391,32 @@ export const CAMERA_MIN_DISTANCE =
   (2 * Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
 export const CAMERA_MAX_DISTANCE = 900;
 /**
- * How far above the RENDERED terrain surface the camera is held, in cells
- * (render/cameraClearance.ts applies it every frame). This is the constant
- * that actually answers "how close can I get to the landscape" — unlike
- * CAMERA_MIN_DISTANCE, which is measured to the orbit target and so says
- * nothing about the ground (see its own note).
+ * How far above the RENDERED terrain surface the camera is held, in WORLD
+ * UNITS (render/cameraClearance.ts applies it every frame). This is the
+ * constant that actually answers "how close can I get to the landscape" —
+ * unlike CAMERA_MIN_DISTANCE, which is measured to the orbit target and so
+ * says nothing about the ground (see its own note).
  *
  * TWO HARD LOWER BOUNDS, and the value sits clear of both:
- *   - CAMERA_NEAR (0.1 cells). Below it the cap under the camera crosses the
- *     near plane and the terrain opens up in front of the view.
- *   - BAND_WORLD_HEIGHT (a quarter cell). A sculpt raises the ground under
- *     the camera a band at a time; less than one band of headroom and a
- *     single raise-stroke could swallow the camera between two frames.
- * One cell — the terrain's own XZ quantum, four band steps — clears both with
- * room to spare, and keeps the cell under the camera fully in frame.
+ *   - CAMERA_NEAR (0.1). Below it the cap under the camera crosses the near
+ *     plane and the terrain opens up in front of the view.
+ *   - BAND_WORLD_HEIGHT (a quarter of a world unit). A sculpt raises the
+ *     ground under the camera a band at a time; less than one band of
+ *     headroom and a single raise-stroke could swallow the camera between two
+ *     frames.
+ * One world unit — one terrace tread, four band steps — clears both with room
+ * to spare, and keeps the ground under the camera fully in frame.
+ *
+ * IN WORLD UNITS, NOT CELLS (2026-08-21), and this is a correction rather than
+ * a conversion of taste: the reasoning above was written when a cell WAS a
+ * world unit, where "one cell" and "four band steps" were the same statement.
+ * Carried onto the re-sampled grid as one CELL it would be a quarter of a
+ * world unit — EXACTLY one band, not four — so a single raise-stroke would
+ * consume the entire clearance in one frame, which is the failure mode the
+ * second bound exists to prevent. The value here is the one that was reasoned
+ * for; only the unit it is stated in has been made explicit.
  */
-export const CAMERA_GROUND_CLEARANCE_CELLS = 1;
+export const CAMERA_GROUND_CLEARANCE_WORLD_UNITS = 1;
 
 /** Clamp the orbit above the horizon so the camera never goes under the sea. */
 export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
