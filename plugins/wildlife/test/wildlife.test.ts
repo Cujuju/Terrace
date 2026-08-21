@@ -1701,6 +1701,24 @@ describe('school-level natural turnover', () => {
 const SIZE_SAMPLE_SECONDS = 450;
 
 /**
+ * Wall-clock budget for the size-class sample, in milliseconds.
+ *
+ * SIZE_SAMPLE_SECONDS above is 450 simulated seconds at TICK_DT = 0.1, i.e.
+ * 4,500 host ticks, each one stepping every living fish and re-counting every
+ * school — measured at ~5 s here, right on Vitest's default and therefore over
+ * it whenever the machine is busy.
+ *
+ * Raised rather than shortening the sample: the assertions are about which
+ * size classes appear and in what proportion, and those are only meaningful
+ * over enough turnover to cycle the population several times.
+ *
+ * 2026-08-21: added after this failed on a loaded machine and passed on an
+ * idle one. See the note in the commit — four tests across four packages had
+ * the same shape.
+ */
+const SIZE_SAMPLE_TIMEOUT_MS = 30_000;
+
+/**
  * How many times more common small fish must be than large ones in the sample.
  *
  * FISH_SIZE_WEIGHTS asks for 6 : 1, and over a sample this size the measured
@@ -1781,7 +1799,7 @@ describe('fish size classes drive schooling', () => {
       membersPerSchool(large) * SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR,
     );
     expect(membersPerSchool(large)).toBeLessThan(SCHOOL_UNDER_TEST_MEMBERS);
-  });
+  }, SIZE_SAMPLE_TIMEOUT_MS);
 
   it('carries school and size through a snapshot unchanged', () => {
     // Without this the whole behaviour is undone by a restart: school membership

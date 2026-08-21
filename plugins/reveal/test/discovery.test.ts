@@ -13,6 +13,26 @@ import { discoverPlugins } from '../../../server/src/plugins/discovery.ts';
 /** …/plugins/reveal/test → …/plugins */
 const PLUGINS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/**
+ * Wall-clock budget for a test that calls `discoverPlugins`, in milliseconds.
+ *
+ * Vitest's default is 5 s, and this is the one suite that pays the REAL cost
+ * of the boot loader: `discoverPlugins` dynamically imports the server half of
+ * every shipped plugin — thirteen of them — which on the owner's WSL2 checkout
+ * (`/mnt/e`, a drvfs mount) is module resolution and type-stripping across a
+ * Windows filesystem. Measured at ~5 s here for the FIRST call, which is what
+ * matters: the second test in this file calls the same function and returns
+ * almost instantly, because the module graph is already in the loader's cache.
+ *
+ * Raised rather than mocked. What this file is for is that the shipped folder
+ * really loads the way the server loads it at boot, so stubbing the import
+ * would delete the test's whole subject.
+ *
+ * 2026-08-21: added after this test failed on a busy machine and passed on an
+ * idle one — a flake that reads as "whichever commit is in the tree broke it".
+ */
+const PLUGIN_DISCOVERY_TIMEOUT_MS = 30_000;
+
 describe('shipped example plugins', () => {
   it('are discovered from plugins/ in alphabetical directory order', async () => {
     const loaded = await discoverPlugins(PLUGINS_DIR);
@@ -29,7 +49,7 @@ describe('shipped example plugins', () => {
     for (const entry of loaded) {
       expect(entry.plugin.name).toBe(entry.directory);
     }
-  });
+  }, PLUGIN_DISCOVERY_TIMEOUT_MS);
 
   it('implement the hooks each one advertises', async () => {
     const byName = new Map(
@@ -47,5 +67,8 @@ describe('shipped example plugins', () => {
     const reveal = byName.get('reveal');
     expect(reveal?.onTerrainChanged).toBeTypeOf('function');
     expect(reveal?.persistence).toBeUndefined();
-  });
+    // Same budget as above. Usually fast (the loader's cache is warm by now),
+    // but it is the same call and must not become the flake if it ever runs
+    // first — vitest gives no ordering guarantee worth relying on here.
+  }, PLUGIN_DISCOVERY_TIMEOUT_MS);
 });

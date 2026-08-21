@@ -55,12 +55,25 @@ const VALID_SIZES = [64, 80, 128, 144, 256, 512, 1024, 4096];
 const SEEDS = Array.from({ length: 20 }, (_, i) => i * 104729 + 1); // 104729 is prime; just decorrelates the sequence
 
 /**
- * Wall-clock budget for the trench sweeps, in milliseconds. Each one generates
- * whole 512² worlds and re-evaluates the genesis field cell by cell beside
- * them; measured at ~3 s on this machine, so this is a 5× margin rather than a
- * reason to shrink the seed sample the assertions rest on.
+ * Wall-clock budget for the tests in this file that GENERATE WHOLE WORLDS, in
+ * milliseconds.
+ *
+ * Named for what earns the budget — world generation, not one subject — so
+ * every such test reaches for the same one. The trench sweeps generate whole
+ * 512² worlds across the seed sample and re-evaluate the genesis field cell by
+ * cell beside them (~3 s here); the valid-size smoke test builds one world at
+ * every shipped size up to 4096², which is a 16 M-cell generation on its own
+ * (~5 s here, and the slowest single line in the file).
+ *
+ * Raised rather than shrinking either sample: the seed count is what the
+ * trench assertions rest on, and dropping 4096 from VALID_SIZES would stop the
+ * size test covering the documented range.
+ *
+ * 2026-08-21: the valid-size test was omitting this and running on Vitest's
+ * 5 s default, so it failed whenever the machine was busy and passed when it
+ * was not — a flake that looked like whichever commit was in the tree.
  */
-const TRENCH_SWEEP_TIMEOUT_MS = 15_000;
+const WORLD_GENERATION_TIMEOUT_MS = 15_000;
 
 describe('the fresh-world genesis profile', () => {
   it('is three descending terraces, all water, inside the sculpt range', () => {
@@ -248,7 +261,8 @@ describe('the fresh-world genesis profile', () => {
       expect(size % CHUNK_SIZE).toBe(0);
       expect(() => World.createFresh(size, undefined, undefined, 7)).not.toThrow();
     }
-  });
+    // 4096² alone is a 16 M-cell generation — see the constant.
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('still guarantees deep water on a world too small for the slope ring to fit at all', () => {
     // config.ts enforces no minimum WORLD_SIZE beyond "a positive multiple of
@@ -431,7 +445,7 @@ describe('the kraken trench pass', () => {
         expect(deepened > 0).toBe(planned !== null);
       }
     }
-  }, TRENCH_SWEEP_TIMEOUT_MS);
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('leaves an already-qualifying world byte-identical to what the noise drew', () => {
     // The no-op claim stated as an equality over the whole heightmap rather
@@ -457,7 +471,7 @@ describe('the kraken trench pass', () => {
       }
     }
     expect(checked).toBeGreaterThan(0);
-  }, TRENCH_SWEEP_TIMEOUT_MS);
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('is deterministic: the same seed plans the same trench, twice', () => {
     // Genesis is a pure function of (size, seed) and the trench pass must not

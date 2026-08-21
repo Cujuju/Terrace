@@ -127,14 +127,27 @@ const WORLD_CENTER = WORLD_SIZE / 2;
 const TICK_DT = 0.1;
 
 /**
- * Wall-clock budget for the statistical trials, in milliseconds.
+ * Wall-clock budget for the long seeded simulation runs, in milliseconds.
  *
- * Vitest's default is 5 s, and the seeded mean-wait trial deliberately simulates
- * about ninety minutes of world time across two dozen worlds — one full habitat
- * survey per five simulated seconds PER HABITAT, which is where the time goes.
- * Raised rather than trimmed because the trial count is what makes the assertion
- * about the mean meaningful, and trimming it would loosen the bound it checks.
- * Measured at ~5 s on this machine, so this is a 6× margin for a slower one.
+ * APPLIES TO EVERY TEST IN THIS FILE THAT SIMULATES MINUTES OF WORLD TIME, and
+ * that is the whole point of it being a named constant rather than a number
+ * typed at one call site. Vitest's default is 5 s; these runs deliberately
+ * simulate tens of minutes of world time — one full habitat survey per five
+ * simulated seconds PER HABITAT, which is where the time goes — so they are
+ * seconds of wall clock even on a fast machine, and the default is not a
+ * budget any of them were ever going to fit.
+ *
+ * Raised rather than trimmed because the length of the run is what makes the
+ * assertion meaningful: the mean-wait trial's bound comes from its trial
+ * count, and the single-arrival trial's "exactly once" comes from running far
+ * past the mean wait. Shortening either would loosen what it checks.
+ *
+ * 2026-08-21: the single-arrival trial was omitting this and running on the
+ * 5 s default. It measured ~7 s on this machine under ordinary load, so it
+ * failed whenever the machine was busy and passed when it was not — a flake
+ * that looked like whichever commit happened to be in the tree at the time.
+ * The two seeded trials measure ~7 s and ~13 s here, so 30 s is roughly a 2×
+ * margin on the slower of them.
  */
 const SEEDED_TRIAL_TIMEOUT_MS = 30_000;
 
@@ -572,7 +585,9 @@ describe('the summon roll', () => {
     // arrival on the order of the configured mean — not one seed's exact draw.
     expect(arrivalSeconds).toBeGreaterThan(TICK_DT);
     expect(arrivalSeconds).toBeLessThan(SUMMON_MEAN_WAIT_SECONDS * 10);
-  });
+    // Same budget as its sibling below, for the same reason: 24,000 ticks is
+    // 40 simulated minutes, which is seconds of wall clock. See the constant.
+  }, SEEDED_TRIAL_TIMEOUT_MS);
 
   it('waits about the configured mean across many seeded worlds', () => {
     // The rate is derived from SUMMON_MEAN_WAIT_SECONDS through the
