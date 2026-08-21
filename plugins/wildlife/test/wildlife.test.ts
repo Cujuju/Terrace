@@ -139,21 +139,6 @@ import { worldWithTerrain } from './support/world.ts';
  */
 const WORLD_SIZE = cellsAcross(256);
 
-/**
- * Wall-clock budget, in milliseconds, for the tests that cycle a whole
- * population.
- *
- * Vitest's default is 5 s and these three blew it after the 2026-08-21
- * re-sample: they drive the plugin's own onTick over a 256-world-unit world,
- * every pass of which walks the census and the spawn/despawn bookkeeping across
- * sixteen times the cells for the same ground. Measured at 14.8 s, 9.6 s and
- * 14.0 s on this machine — up from under five — so this is a 6x margin for a
- * slower one. Raised rather than trimmed: the simulated duration is what makes
- * "the population turns over" and "all three sizes appear" mean anything, and
- * shortening the window would weaken both.
- */
-const POPULATION_CYCLE_TIMEOUT_MS = 90_000;
-
 /** Default server tick period (TICK_HZ = 10). */
 const TICK_DT = 0.1;
 
@@ -540,7 +525,7 @@ describe('wildlife plugin', () => {
     expect(after.length).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
     expect(after.some((entity) => !idsBefore.has(entity.id))).toBe(true);
     expect(settled).toBeGreaterThan(0);
-  }, POPULATION_CYCLE_TIMEOUT_MS);
+  });
 
   it('spawns nothing outside its habitat or outside unlocked territory', () => {
     fillPopulation(harness);
@@ -721,7 +706,7 @@ describe('wildlife plugin', () => {
       }
     }
     expect(newFishSeen.size).toBeGreaterThan(0);
-  }, POPULATION_CYCLE_TIMEOUT_MS);
+  });
 });
 
 describe('credit removal after a spawn honours ripeness, not recency', () => {

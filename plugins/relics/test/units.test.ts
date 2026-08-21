@@ -11,8 +11,11 @@ import {
   createHeightmap,
   forEachFootprintOffset,
   MAX_BRUSH_RADIUS,
+  MAX_STEP,
   MIN_BRUSH_RADIUS,
   SEA_LEVEL,
+  cellsAcross,
+  cellsOverArea,
   type CellDiff,
 } from '@terrace/shared';
 import { PLUGIN_SCULPT_OPTIONS } from '../../../server/src/plugins/world-api.ts';
@@ -258,7 +261,32 @@ describe('terraform shapes', () => {
     // on two fixtures: one reproducing the live failure mode (over-steep
     // legacy terrain), one pinning the honest footprint on gradient-legal
     // ground.
-    const size = 64;
+    // BOTH SLOPES ARE STATED AGAINST MAX_STEP, not written down (2026-08-21).
+    // The literals 24 and 12 were "over-steep" and "legal" against a MAX_STEP
+    // of 16 per CELL; the re-sample made MAX_STEP one band per WORLD UNIT, so
+    // 12 stopped being legal and fixture 2 stopped testing gradient-legal
+    // ground at all — it regraded 7 253 cells, which is the failure mode
+    // fixture 1 exists to catch, asserted against fixture 2's tight budget.
+    const OVER_STEEP_SLOPE = Math.ceil(MAX_STEP * 1.5);
+    const LEGAL_SLOPE = Math.floor(MAX_STEP * 0.75);
+
+    /**
+     * Cells one cast may touch on gradient-legal ground.
+     *
+     * AN AREA, so it converts as the SQUARE of the sampling density: the old
+     * 600 covered five radius-4 brushes and a skirt, and both halves of that
+     * grew — the brushes because MAX_BRUSH_RADIUS is stated in world units,
+     * the skirt because a deposit spreading at MAX_STEP now travels four times
+     * as many cells to shed the same height. Headroom for shape retuning is
+     * preserved by converting rather than re-picking; the old free-spill path
+     * blows past any such bound.
+     *
+     * Measured after the conversion: a quake cast touches 3 894 cells and a
+     * genesis cast 5 094, against this budget of 9 600 — the same proportion of
+     * headroom the 600 was chosen with.
+     */
+    const CAST_CELL_BUDGET = cellsOverArea(600);
+    const size = cellsAcross(64);
     const cx = size / 2;
     const cy = size / 2;
     const mkMap = (slope: number) => {
@@ -285,7 +313,7 @@ describe('terraform shapes', () => {
       // such terrain, but may move any outside-footprint cell at most one
       // terrace band, however far the cascade travels.
       {
-        const map = mkMap(24); // slope 24 > today's MAX_STEP 16
+        const map = mkMap(OVER_STEEP_SLOPE);
         const world = mkWorld(map);
 
         // The exact union of the cast's brush footprints, so containment is
@@ -314,14 +342,14 @@ describe('terraform shapes', () => {
       }
 
       // ── 2. GRADIENT-LEGAL TERRAIN — the honest footprint budget. With no
-      // legacy over-steepness to regrade, a cast's reach is bounded by its
-      // own deposit spreading at MAX_STEP: five radius-4 brushes (~180 cells)
-      // plus a modest skirt. 600 gives headroom for shape retuning; the old
-      // free-spill path blows past any such bound.
+      // legacy over-steepness to regrade, a cast's reach is bounded by its own
+      // deposit spreading at MAX_STEP: five brushes of MAX_BRUSH_RADIUS plus a
+      // modest skirt. See CAST_CELL_BUDGET for why that is an area and why it
+      // is stated as one.
       {
-        const map = mkMap(12); // slope 12 < MAX_STEP 16
+        const map = mkMap(LEGAL_SLOPE);
         const world = mkWorld(map);
-        expect(applyTerraform(world, cx, cy, steps)).toBeLessThanOrEqual(600);
+        expect(applyTerraform(world, cx, cy, steps)).toBeLessThanOrEqual(CAST_CELL_BUDGET);
       }
 
       // Both active skills must pass; name the key so the entry is used.
