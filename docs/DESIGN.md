@@ -40,6 +40,15 @@ chosen over AGPL to maximize adoption; people may build closed-source games on t
      — PARTLY SUPERSEDED 2026-08-14: still true of the `smooth` tool, but
      relaxation is no longer what the DEFAULT brush does. See the Phase 2
      decision "Sculpting gains brush TOOLS and edge PROFILES" below.
+     — **SUPERSEDED OUTRIGHT 2026-08-20** (owner: "I don't want populace
+     anymore. I want godus"). The Populous signature is retired as the feel of
+     this game. `DEFAULT_SCULPT_AMOUNT` and `MAX_STEP` are both `BAND_HEIGHT`
+     now, so a click lands exactly ON the gradient limit and there is no excess
+     to push outward: **one click, one crisp terrace, no outward slump.**
+     Relaxation still exists and still does its job — it is what keeps the
+     invariant when terrain that ALREADY violates it is disturbed, and what the
+     `smooth` tool is for — but it is no longer the signature. See "The world
+     re-terraced" below.
   3. **Sea level** — height ≤ 0 is water; flat land above water is buildable.
 - The signature relaxation loop, roughly:
 
@@ -345,11 +354,63 @@ terrace/
 7. **Colyseus schema vs manual binary messages** for terrain diffs (schema is easier;
    binary is leaner — measure before optimizing).
 
+### The world re-terraced, and the Populous slump retired (2026-08-20)
+
+Two owner decisions, taken together because the second falls out of the first.
+
+**`BAND_HEIGHT` 64 → 16.** The world was too blocky: a band was drawn one full
+cell tall, so every riser was a cube-sized step and the land read as stacked
+blocks rather than as terraces. The client now draws a band at a QUARTER of a
+cell and there are four times as many of them in the same height range, so the
+world keeps exactly its relief while every step in it is four times finer.
+`MAX_STEP` moved with it, from `BAND_HEIGHT/2` to `BAND_HEIGHT` — one cell of
+run per band, the finest tread that still reads as a terrace. Hills therefore
+spread twice as wide as they used to; a full-height mountain's foot moves from
+32 cells out to 64.
+
+**No more outward flow.** Because a click and the gradient limit are now the
+same number, one click on flat ground satisfies the invariant at its own edge
+and nothing spills. That is the Godus look the owner asked for, and it retires
+the Populous signature recorded at the top of this document.
+
+**The contract this bought, and why it is the real deliverable.** A band is a
+RENDER quantum. Re-terracing the world must not move anything the world is
+made OF. Every constant that meant a physical fact but was written as a band
+count had to be restated in HEIGHT UNITS with its band count derived — the
+strata stack, deep water, the snow line, genesis's coastal staircase and
+trench, the noise field's amplitude, the client's own vertical scale. They
+interlock, so getting one wrong was not cosmetic: left as "3 bands", a fresh
+world's abyss would have been 48 units deep against a 192-unit deep-water line,
+and no fresh world would have had deep water anywhere — or any sea monsters.
+
+The same rule settled two rendering questions. The terrain palette became a
+ramp GENERATED from height anchors instead of one hex literal per band (it
+indexed off its end otherwise), and the owner chose to interpolate between the
+anchors, so each of the four bands now standing where one stood gets its own
+shade. And the chunk geometry guard had to change kind, not just size: a deep
+dig crosses 94 band levels where it crossed 22, which pushed legitimate
+triangulation work up into the adversarial population's range and closed a 2.2×
+separation to 1.2%. Discrimination moved to the largest single merged polygon —
+the quantity ear-clipping is actually quadratic in, and the one metric here that
+does not move when the world is re-terraced.
+
+**Costs, measured and accepted.** A fully explored 512² world goes from 1.69 M
+triangles to 4.09 M and terrain vertex buffers from 279 MB to 673 MB. Reaching a
+given height takes four times the clicks (digging to the world floor is ~96 held
+clicks, about 12 s on the hold-repeat ramp, against ~24 before). The per-chunk
+triangle ceiling quadrupled to 14.5 MB at the current 111 bytes per triangle,
+which promotes vertex-format compression from an optimisation to load-bearing
+work.
+
 ### Decisions made 2026-08-13 (Phase 0 kickoff, settled with owner)
 
 - **Q1 — DECIDED:** `BAND_HEIGHT = 64` height units per terrace band, as a named,
   tunable config constant (~16 bands over the 1024-unit sculpt range). Provisional;
   feel-tune in Phase 2 with real rendering.
+  — **RETUNED 2026-08-20 to `BAND_HEIGHT = 16`** (owner: "the world is too
+  blocky and it's causing a lot of problems"). This is the Phase 2 feel-tune the
+  decision reserved. Four times the terrace resolution, 64 bands of relief above
+  sea level instead of 16. See "The world re-terraced" below.
 - **Q2 — DECIDED:** radius brush, radius 1–4 cells, linear falloff from center;
   radius 1 degenerates to the Populous point brush.
 - **Q3 — DECIDED:** static sea level (`height ≤ 0` is water); water is a derived
@@ -589,8 +650,11 @@ terrace/
   leave no coast for fish" — the starter square just got smaller out from under
   it, an accepted consequence named in full in the entry below.
 
-  **Residual, named.** A one-band step is `BAND_HEIGHT` (64) against a gradient
-  limit of `MAX_STEP` (32), so the shelf/slope/noise boundaries do not satisfy
+  **Residual, named** (and worse since the 2026-08-20 re-terrace: a coastal
+  step is 64 height units against a `MAX_STEP` of 16, so it overshoots the
+  invariant by four times rather than two — the step did not grow, the limit
+  shrank with the band). A coastal step is 64 height units against a gradient
+  limit of `MAX_STEP`, so the shelf/slope/noise boundaries do not satisfy
   the relaxation invariant at genesis. Nothing enforces it at rest — the stamp
   tool violates it deliberately on every spire — but a `smooth` sculpt whose
   relaxation reaches a boundary will slump it once, with a larger-than-usual
@@ -1073,7 +1137,9 @@ terrace/
   **The snow line is 9 bands, restated rather than imported.** The client's
   palette draws band 9+ as snow (`client/src/terrain/bandColors.ts`) — that is
   where a mountain turns white on screen, and the server may not import the
-  client. It is also a good threshold on its own: `MAX_STEP` is `BAND_HEIGHT/2`,
+  client. It is also a good threshold on its own: `MAX_STEP` is `BAND_HEIGHT`
+  since 2026-08-20 (it was `BAND_HEIGHT/2`, which doubled every cell-distance
+  quoted below when the world's maximum slope halved),
   so a snow cell is at least **18 cells** from the nearest shoreline (three
   times what the deep-water line buys) and 9 of the 16 bands `MAX_HEIGHT`
   allows.
