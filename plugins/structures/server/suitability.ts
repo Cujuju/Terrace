@@ -26,7 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bandOf, cellsAcross, isWater } from '@terrace/shared';
-import { STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS } from '../protocol';
+import { STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS } from '../protocol.ts';
 
 /**
  * The four orthogonal neighbours a plot's flatness is checked against.
