@@ -307,12 +307,50 @@ export const CAMERA_NEAR = 0.1;
 /** Far plane must clear the diagonal of the largest supported world (512²). */
 export const CAMERA_FAR = 4000;
 /**
- * Initial orbit distance and the zoom bounds, in cells. The minimum keeps the
- * camera above a maximum-height mountain (16 bands ≈ 16 world units); the
- * maximum lets a 512² world fit on screen.
+ * Initial orbit distance and the zoom bounds, in cells. The maximum lets a
+ * 512² world fit on screen; the minimum is derived just below.
  */
 export const CAMERA_INITIAL_DISTANCE = 80;
-export const CAMERA_MIN_DISTANCE = 20;
+
+/**
+ * How much of the world the closest zoom frames, measured in cell-edges of
+ * frame HEIGHT. This is the design decision the minimum orbit distance
+ * encodes: at the closest zoom a player is inspecting a handful of individual
+ * cells — a single structure's footprint, one terrace step, the lip of a
+ * river bank — not a region. Four cells is that view.
+ *
+ * Raise it to pull the closest zoom back out, lower it to get closer still.
+ */
+export const CAMERA_CLOSEST_VIEW_CELLS = 4;
+
+/**
+ * Closest orbit distance, in cells. DERIVED from the framing decision above
+ * and the lens, never written by hand: a perspective camera of vertical field
+ * CAMERA_FOV_DEGREES sees `2 * d * tan(fov / 2)` of world height at distance
+ * d, so the distance that frames exactly CAMERA_CLOSEST_VIEW_CELLS cells is
+ * that solved for d. Change the FOV and the closest zoom keeps framing the
+ * same amount of world.
+ *
+ * WAS 20 CELLS, loosened 2026-08-21 on owner request ("zoom in further").
+ * That value was one hand-written number justified as clearing a
+ * maximum-height mountain (MAX_RELIEF_WORLD_CELLS = 16 world units) — but
+ * that clearance only ever held looking straight down: orbit distance is
+ * measured to the target on the ground, so at the steepest allowed orbit
+ * (CAMERA_MAX_POLAR_ANGLE_DEGREES = 85°) even the old 20 put the camera
+ * 20·cos 85° ≈ 1.7 cells above its target, well under a 16-cell peak. The
+ * guarantee was already not there to lose.
+ *
+ * RESIDUAL FAILURE MODE, unchanged in kind but easier to reach: with no
+ * terrain-aware clamp on the camera anywhere in the client, orbiting to a
+ * shallow angle next to tall terrain can put the near plane inside a
+ * hillside, which renders as the world opening up in front of the camera. The
+ * fix for that is a ground-clearance clamp that lifts the camera to stay above
+ * the height field under it — it is not this constant's job, and it does not
+ * exist yet.
+ */
+export const CAMERA_MIN_DISTANCE =
+  CAMERA_CLOSEST_VIEW_CELLS /
+  (2 * Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
 export const CAMERA_MAX_DISTANCE = 900;
 /** Clamp the orbit above the horizon so the camera never goes under the sea. */
 export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
