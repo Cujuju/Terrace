@@ -10,7 +10,7 @@
 // throughout; every neighbor scan runs in the one fixed order documented next
 // to FLOW_DIRECTIONS below.
 
-import { BAND_HEIGHT, SEA_LEVEL } from './constants.ts';
+import { SEA_LEVEL } from './constants.ts';
 import { bandOf, cellIndex, cellX, cellY, heightAt, type Heightmap } from './heightmap.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18,16 +18,24 @@ import { bandOf, cellIndex, cellX, cellY, heightAt, type Heightmap } from './hei
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * How far above sea level a cell must sit to qualify as a spring — one full
- * terrace band (64). "Springs on high ground" (card 27) is the only guidance
- * the card gives; a bare local maximum at, say, height 1 would put a spring on
- * the very first ripple above the coast, which reads as noise rather than
- * high ground. One band is the smallest rise a player's stamp brush can make
- * in a single click (DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT), so this is exactly
- * "raise the coast once and you may have earned a spring" — the shallowest
- * threshold that still means something.
+ * How far above sea level a cell must sit to qualify as a spring, in HEIGHT
+ * UNITS. "Springs on high ground" (card 27) is the only guidance the card
+ * gives; a bare local maximum at, say, height 1 would put a spring on the very
+ * first ripple above the coast, which reads as noise rather than high ground.
+ *
+ * A HEIGHT, NOT A CLICK (2026-08-20). This used to be spelled BAND_HEIGHT and
+ * justified as "the smallest rise a player's stamp brush can make in a single
+ * click" — true then, and it happened to equal 64. When the world was
+ * re-terraced a click became four times finer, and following it down would
+ * have put the threshold at a quarter of its old rise: the very first ripple
+ * above the coast, which is precisely what the paragraph above rules out. The
+ * threshold is a statement about the LAND, so it keeps the land value (64, or
+ * four terrace bands at today's resolution) and lets the click move without
+ * it. What it costs is the tidy "raise the coast once and you may have earned
+ * a spring"; that reading is now "raise the coast four times", and the
+ * spring's position in the world is unchanged, which is the half that matters.
  */
-export const SPRING_MIN_HEIGHT_ABOVE_SEA = BAND_HEIGHT;
+export const SPRING_MIN_HEIGHT_ABOVE_SEA = 64;
 
 /**
  * Ceiling on how many springs one recompute traces.

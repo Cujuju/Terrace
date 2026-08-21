@@ -22,12 +22,35 @@ export const DEFAULT_WORLD_SIZE = 512;
 export const CHUNK_SIZE = 16;
 
 /**
- * Height units per terrace band. Decided 2026-08-13 (open question 1),
- * PROVISIONAL feel-tuning value: with the ±1024 sculpt range this gives 16
- * bands above sea level — chunky enough to read as Godus-style terraces.
- * Tune in Phase 2 with real rendering; nothing structural depends on it.
+ * Height units per terrace band — how thick one terrace is.
+ *
+ * Decided 2026-08-13 (open question 1) at 64, flagged PROVISIONAL for Phase 2
+ * feel-tuning. THIS IS THAT TUNING (owner, 2026-08-20: "the world is too
+ * blocky and it's causing a lot of problems"): 64 → 16, four times the terrace
+ * resolution, 64 bands of relief above sea level instead of 16.
+ *
+ * WHAT "TOO BLOCKY" WAS. A band was drawn one full cell tall (client
+ * config.ts's BAND_WORLD_HEIGHT = CELL_WORLD_SIZE), so every riser in the
+ * world was a cube-sized step and the land read as stacked blocks rather than
+ * as terraces. The client now draws a band at a QUARTER of a cell, and this
+ * constant puts four times as many of them in the same height range, so the
+ * world keeps exactly its relief (HEIGHT_WORLD_SCALE is unchanged — see
+ * config.ts) while every step in it is four times finer.
+ *
+ * WHAT MOVED WITH IT, and why nothing else had to: MAX_STEP below is now tied
+ * to this constant rather than stated against it, and every physical depth in
+ * the world (the strata stack, deep water, the snow line, genesis's floors) is
+ * stated in HEIGHT UNITS with its band count derived. That is the contract
+ * this change bought: a band is a RENDER quantum, and re-terracing the world
+ * must not move anything the world is actually made of.
+ *
+ * COST, measured 2026-08-20 on a realistic island world (dome + two octaves of
+ * relief, relaxed by smooth(), five dug craters), every chunk meshed: a fully
+ * explored 512² world goes from 1.69 M triangles to 4.09 M, and the terrain's
+ * vertex buffers from 279 MB to 673 MB. Both are consequences of MAX_STEP's
+ * value, not this one — see the measured table there.
  */
-export const BAND_HEIGHT = 64;
+export const BAND_HEIGHT = 16;
 
 /**
  * Heights at or below this are water (static sea — decided 2026-08-13, open
@@ -37,10 +60,17 @@ export const BAND_HEIGHT = 64;
 export const SEA_LEVEL = 0;
 
 /**
- * Sculptable height range. Int16 storage allows ±32767; we deliberately cap
- * far below that: 1024 = 16 bands of relief above sea, which keeps mountains
- * readable and bounds the smoothing cascade (see SMOOTH_PASS_LIMIT). Brush
- * edits clamp to this range.
+ * Sculptable height range, in HEIGHT UNITS. Int16 storage allows ±32767; we
+ * deliberately cap far below that: 1024 units of relief above sea keeps
+ * mountains readable and bounds the smoothing cascade (see SMOOTH_PASS_LIMIT).
+ * Brush edits clamp to this range.
+ *
+ * DELIBERATELY NOT A BAND COUNT. It was described as "16 bands" while
+ * BAND_HEIGHT was 64; that was the same conflation the strata stack below
+ * suffered from, and re-terracing the world (2026-08-20) would have changed
+ * the height of the sky. The ceiling is a physical fact of the world and the
+ * number of terraces under it is derived: MAX_HEIGHT / BAND_HEIGHT, 64 bands
+ * at today's resolution.
  *
  * The range is ASYMMETRIC since Deep Strata (2026-08-19, mechanics card 41):
  * the world goes deeper than it goes high. MIN_HEIGHT is derived from the
@@ -55,52 +85,111 @@ export const MAX_HEIGHT = 1024;
  *
  * The world's depth is a stack of named strata, shallowest first:
  *
- *   * SEA_COLUMN_BANDS — the ordinary seabed, bands −1..−16: the blue water
- *     column the 2026-08-19 depth ramp colours, ending in very dark blue.
- *     16 is the PRE-deep-strata floor (the old MIN_HEIGHT = −1024), kept
- *     exactly so every world saved before the strata landed is unchanged,
- *     and so everything anchored to "the sea" (monster depth thresholds,
- *     the seabed palette) keeps meaning the sea rather than the crust.
- *   * DEEP_BASALT_BANDS — bands −17..−20: volcanic rock. Four bands, one
- *     full max-radius brush hold of digging, so breaking through the seabed
- *     is an act, not an accident.
- *   * DEEP_OBSIDIAN_BANDS — bands −21..−23: glass-black rock, the darkest
- *     material in the game.
- *   * DEEP_LAVA_BANDS — band −24, the absolute floor: molten glow. One band
- *     because it is a boundary, not a place — the world ends in light.
+ *   * the SEA COLUMN — the ordinary seabed: the blue water column the
+ *     2026-08-19 depth ramp colours, ending in very dark blue. It is exactly
+ *     as deep as the sky is high, which is the PRE-deep-strata floor (the old
+ *     MIN_HEIGHT = −MAX_HEIGHT), kept exactly so every world saved before the
+ *     strata landed is unchanged, and so everything anchored to "the sea"
+ *     (monster depth thresholds, the seabed palette) keeps meaning the sea
+ *     rather than the crust.
+ *   * DEEP BASALT — volcanic rock, half the crust. Deep enough that breaking
+ *     through the seabed is an act, not an accident.
+ *   * DEEP OBSIDIAN — glass-black rock, the darkest material in the game.
+ *   * DEEP LAVA — the absolute floor: molten glow, and the thinnest stratum
+ *     of the three, because it is a boundary rather than a place — the world
+ *     ends in light.
+ *
+ * STATED IN HEIGHT UNITS, COUNTED IN BANDS (2026-08-20). These depths were
+ * originally written as band counts (16 / 4 / 3 / 1), which silently made the
+ * world four times shallower the moment BAND_HEIGHT was re-tuned: a band is a
+ * render quantum, and the seabed is not. The DEPTH of each stratum is
+ * therefore the primary fact and its band count is derived, so re-terracing
+ * the world can never move its floor. The 4 : 3 : 1 proportion between the
+ * crust strata is preserved exactly from the original band counts, and the
+ * crust is half as deep as the sky is high — 1024 of sea over 512 of rock,
+ * the same −1536 floor as before.
  *
  * These are WORLD-MODEL facts, not render trivia: the client palette derives
  * its stops from them and the monsters plugin derives "deep for this world"
- * from SEA_COLUMN_BANDS, so they live here in shared. Hazards (heat, eruption)
+ * from the sea column, so they live here in shared. Hazards (heat, eruption)
  * are deliberately NOT core — nothing gamey in core; a future plugin reads
  * these same boundaries.
  */
-export const SEA_COLUMN_BANDS = 16;
-export const DEEP_BASALT_BANDS = 4;
-export const DEEP_OBSIDIAN_BANDS = 3;
-export const DEEP_LAVA_BANDS = 1;
+export const SEA_COLUMN_DEPTH = MAX_HEIGHT;
+export const DEEP_STRATA_DEPTH = MAX_HEIGHT / 2;
+export const DEEP_BASALT_DEPTH = DEEP_STRATA_DEPTH / 2;
+export const DEEP_OBSIDIAN_DEPTH = (DEEP_STRATA_DEPTH * 3) / 8;
+export const DEEP_LAVA_DEPTH = DEEP_STRATA_DEPTH / 8;
+
+/**
+ * The same stack counted in terrace bands — DERIVED, so a BAND_HEIGHT change
+ * re-terraces the strata instead of moving them. Every one of these divisions
+ * is exact today; a future BAND_HEIGHT that does not divide the stack evenly
+ * would leave a stratum boundary off a band edge, which the strata test in
+ * test/constants.test.ts is what catches.
+ */
+export const SEA_COLUMN_BANDS = SEA_COLUMN_DEPTH / BAND_HEIGHT;
+export const DEEP_BASALT_BANDS = DEEP_BASALT_DEPTH / BAND_HEIGHT;
+export const DEEP_OBSIDIAN_BANDS = DEEP_OBSIDIAN_DEPTH / BAND_HEIGHT;
+export const DEEP_LAVA_BANDS = DEEP_LAVA_DEPTH / BAND_HEIGHT;
 
 /** Total crust bands below the sea column. */
 export const DEEP_STRATA_BANDS =
   DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS;
 
-/** The floor of the world: the bottom of the lava band (−1536). */
-export const MIN_HEIGHT = -(SEA_COLUMN_BANDS + DEEP_STRATA_BANDS) * BAND_HEIGHT;
+/** The floor of the world: the bottom of the lava stratum (−1536). */
+export const MIN_HEIGHT = -(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH);
 
 /**
  * Gradient limit: maximum allowed height difference between 4-neighbors.
  * THE feel-critical number — this is what makes edits "flow" outward
- * (Populous's signature). BAND_HEIGHT/2 means one terrace band spans at least
- * two cells of slope, so cliffs are never single-cell walls, and a full
- * MAX_HEIGHT mountain has a footprint radius of 1024/32 = 32 cells — fits
- * comfortably even in a 128² world. PROVISIONAL: feel-tune in Phase 2.
+ * (Populous's signature).
+ *
+ * DERIVED FROM BAND_HEIGHT, NOT STATED AGAINST IT (2026-08-20). It was the
+ * literal 32 next to a BAND_HEIGHT of 64, with the ratio explained only in
+ * this comment; the ratio is the whole meaning of the number, so it is now
+ * the code. One BAND_HEIGHT per cell of run means a terrace tread is one cell
+ * wide at the steepest the world may be, which is the finest terrace that can
+ * still be seen as a terrace: at a tread narrower than the cell grid the
+ * contours of neighbouring bands crowd inside a single cell and the staircase
+ * dissolves into a ramp.
+ *
+ * WHY ONE CELL AND NOT TWO (the old ratio), measured on the island fixture,
+ * fully explored 512² world, at BAND_HEIGHT 16:
+ *
+ *   MAX_STEP  tread    max mountain    world triangles   vertex buffers
+ *   ────────────────────────────────────────────────────────────────────
+ *      8      2 cells  128-cell radius     1.81 M           297 MB
+ *     16      1 cell    64-cell radius     4.09 M           673 MB
+ *     32      ½ cell    32-cell radius     8.50 M         1,431 MB
+ *
+ * Two cells per band (MAX_STEP 8) is the cheapest and keeps the old tread
+ * width, but it halves the slope again: every hill would sprawl four times
+ * wider than today's for the same height, which is a different world, not a
+ * finer one. Half a cell (32) keeps today's hills exactly but puts two band
+ * contours inside every cell of a steep face — the mush described above, at
+ * double the geometry. One cell is the middle the owner chose (2026-08-20):
+ * hills spread twice as wide as they used to, and a full MAX_HEIGHT mountain's
+ * foot moves from 32 to 64 cells out, still comfortable in a 512² world and
+ * reachable in a 128² one.
  */
-export const MAX_STEP = 32;
+export const MAX_STEP = BAND_HEIGHT;
 
 /**
  * Height units applied at the brush center by one sculpt intent: exactly one
  * terrace band per click, so each sculpt visibly pops a terrace — the core
  * interaction. Server config may override; plugins may modify per-intent.
+ *
+ * A CLICK GOT FOUR TIMES FINER on 2026-08-20, for free, because it is stated
+ * against BAND_HEIGHT rather than in units: one click moves 16 units where it
+ * used to move 64. That is the owner's ask ("the click would go by layer, so
+ * we would want a finer click as well") and it is the same rule as before —
+ * one click, one terrace — but it does mean reaching a given height takes four
+ * times the clicks. Digging from sea level to the world floor is now ~96 held
+ * clicks (≈12 s on the hold-repeat ramp) against ~24 before. The knob if that
+ * proves tedious is this constant or client config.ts's ramp, NOT the strata
+ * depths: making the world shallower to shorten the dig would trade a fact of
+ * the world for a fact about the input device.
  */
 export const DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT;
 
@@ -115,10 +204,17 @@ export const MAX_BRUSH_RADIUS = 4;
 /**
  * How far excess can travel from one edit: relaxation stops where the slope
  * everywhere respects MAX_STEP, so the full height range laid out at maximum
- * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 80 cells (64 before Deep
- * Strata widened the range; the budget scales with the range). Math.floor
- * guards the value against a future range/step change that stops dividing
- * exactly (today's division is exact).
+ * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 160 cells (80 before the
+ * 2026-08-20 re-terrace halved MAX_STEP, 64 before Deep Strata widened the
+ * range; the budget scales with both). Math.floor guards the value against a
+ * future range/step change that stops dividing exactly (today's division is
+ * exact).
+ *
+ * WHAT THE DOUBLING DOES AND DOES NOT COST. This is the worst case — a single
+ * stroke laid against the full 2560-unit range — not the common one. A PLAYER
+ * click got cheaper, not dearer: DEFAULT_SCULPT_AMOUNT and MAX_STEP are both
+ * BAND_HEIGHT now, so one click's excess spills exactly one cell, where the
+ * old 64-against-32 pair spilled two.
  */
 export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP);
 

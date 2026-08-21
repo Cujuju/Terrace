@@ -10,9 +10,13 @@ import {
   cellY,
   createHeightmap,
   DEEP_BASALT_BANDS,
+  DEEP_BASALT_DEPTH,
   DEEP_LAVA_BANDS,
+  DEEP_LAVA_DEPTH,
   DEEP_OBSIDIAN_BANDS,
+  DEEP_OBSIDIAN_DEPTH,
   DEEP_STRATA_BANDS,
+  DEEP_STRATA_DEPTH,
   DEFAULT_SCULPT_AMOUNT,
   forEachFootprintOffset,
   heightAt,
@@ -26,6 +30,7 @@ import {
   MIN_HEIGHT,
   quantizeToBand,
   SEA_COLUMN_BANDS,
+  SEA_COLUMN_DEPTH,
   sculptDisplacementUnits,
   smooth,
   SMOOTH_PASS_LIMIT,
@@ -119,30 +124,61 @@ describe('water and terracing', () => {
 
 describe('deep strata constants', () => {
   it('derives MIN_HEIGHT from the strata stack (Deep Strata, 2026-08-19)', () => {
-    // The floor IS the bottom of the lava band: sea column (the pre-strata
+    // The floor IS the bottom of the lava stratum: sea column (the pre-strata
     // −1024 floor, kept exactly so old snapshots are unchanged), then basalt,
     // obsidian, lava. Restating −1536 as a literal anywhere would let the
     // floor and the strata that define it drift apart — this is the pin.
-    expect(SEA_COLUMN_BANDS).toBe(16);
-    expect(DEEP_STRATA_BANDS).toBe(
-      DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS,
+    expect(SEA_COLUMN_DEPTH).toBe(MAX_HEIGHT);
+    expect(DEEP_STRATA_DEPTH).toBe(
+      DEEP_BASALT_DEPTH + DEEP_OBSIDIAN_DEPTH + DEEP_LAVA_DEPTH,
     );
-    expect(MIN_HEIGHT).toBe(-(SEA_COLUMN_BANDS + DEEP_STRATA_BANDS) * BAND_HEIGHT);
+    expect(MIN_HEIGHT).toBe(-(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH));
     expect(MIN_HEIGHT).toBe(-1536);
     // Every pre-strata height remains valid: the old floor sits inside the
     // new range, so no stored world can have gone out of contract.
-    expect(isValidHeight(-(SEA_COLUMN_BANDS * BAND_HEIGHT))).toBe(true);
+    expect(isValidHeight(-SEA_COLUMN_DEPTH)).toBe(true);
     expect(isValidHeight(MIN_HEIGHT)).toBe(true);
     expect(isValidHeight(MIN_HEIGHT - 1)).toBe(false);
   });
 
-  it('scales the smoothing budget with the widened range', () => {
-    // The relaxation travel bound follows the range by derivation; if either
-    // side of this drifts to a literal, the deepest cascades truncate.
+  it('keeps the strata DEPTHS fixed while their band counts follow BAND_HEIGHT', () => {
+    // THE 2026-08-20 CONTRACT, and the reason the four-times-finer terracing
+    // could not move the seabed: a stratum's depth is the world-model fact and
+    // its band count is a render consequence. Written the other way round — as
+    // the band counts it used to be — re-terracing the world would have made
+    // it four times shallower without a single test noticing.
+    expect(SEA_COLUMN_BANDS).toBe(SEA_COLUMN_DEPTH / BAND_HEIGHT);
+    expect(DEEP_BASALT_BANDS).toBe(DEEP_BASALT_DEPTH / BAND_HEIGHT);
+    expect(DEEP_OBSIDIAN_BANDS).toBe(DEEP_OBSIDIAN_DEPTH / BAND_HEIGHT);
+    expect(DEEP_LAVA_BANDS).toBe(DEEP_LAVA_DEPTH / BAND_HEIGHT);
+    expect(DEEP_STRATA_BANDS).toBe(
+      DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS,
+    );
+    // Every boundary lands ON a band edge. A BAND_HEIGHT that did not divide
+    // the stack evenly would put a material change part-way through a terrace,
+    // where the palette has no stop to give it and the cap it colours is a
+    // band — so this is the guard on any future re-terrace, not decoration.
+    for (const bands of [
+      SEA_COLUMN_BANDS,
+      DEEP_BASALT_BANDS,
+      DEEP_OBSIDIAN_BANDS,
+      DEEP_LAVA_BANDS,
+    ]) {
+      expect(Number.isInteger(bands)).toBe(true);
+    }
+    // The crust keeps the 4 : 3 : 1 proportion the original band counts set.
+    expect(DEEP_BASALT_DEPTH / DEEP_LAVA_DEPTH).toBe(4);
+    expect(DEEP_OBSIDIAN_DEPTH / DEEP_LAVA_DEPTH).toBe(3);
+  });
+
+  it('scales the smoothing budget with the range AND the gradient limit', () => {
+    // The relaxation travel bound follows both by derivation; if either side
+    // of this drifts to a literal, the deepest cascades truncate. It doubled
+    // on 2026-08-20 because MAX_STEP halved, not because the range moved.
     expect(SMOOTH_SPREAD_CELLS).toBe(
       Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP),
     );
-    expect(SMOOTH_SPREAD_CELLS).toBe(80);
+    expect(SMOOTH_SPREAD_CELLS).toBe(160);
   });
 });
 
