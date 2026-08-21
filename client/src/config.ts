@@ -317,11 +317,12 @@ export const CAMERA_INITIAL_DISTANCE = 80;
  * frame HEIGHT. This is the design decision the minimum orbit distance
  * encodes: at the closest zoom a player is inspecting a handful of individual
  * cells — a single structure's footprint, one terrace step, the lip of a
- * river bank — not a region. Four cells is that view.
+ * river bank — not a region. Ten cells is where the owner set it (2026-08-21,
+ * trying values; four was the first attempt).
  *
  * Raise it to pull the closest zoom back out, lower it to get closer still.
  */
-export const CAMERA_CLOSEST_VIEW_CELLS = 4;
+export const CAMERA_CLOSEST_VIEW_CELLS = 10;
 
 /**
  * Closest orbit distance, in cells. DERIVED from the framing decision above
