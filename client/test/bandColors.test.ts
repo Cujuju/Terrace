@@ -15,8 +15,9 @@ import {
   FIRST_BASALT_STOP,
   FIRST_LAND_PALETTE_INDEX,
   LAST_PALETTE_INDEX,
-  LAVA_PALETTE_INDEX,
-  MIN_ADJACENT_LAND_LUMINANCE_GAP,
+  FIRST_LAVA_STOP,
+  LAND_RAMP_ANCHORS,
+  MIN_LAND_ANCHOR_LUMINANCE_GAP,
   SEABED_DEPTH_STOPS,
   SEABED_PALETTE_INDEX,
   TERRAIN_PALETTE,
@@ -65,6 +66,10 @@ describe('bandPaletteIndex', () => {
     expect(bandPaletteIndex(-3 * BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 4);
     expect(bandPaletteIndex(-15 * BAND_HEIGHT - 1)).toBe(SEABED_PALETTE_INDEX + 16);
     expect(bandPaletteIndex(MIN_HEIGHT)).toBe(SEABED_DEPTH_STOPS - 1);
+    // The floor is the BOTTOM lava stop. Lava is a stratum DEPTH, so at a
+    // finer BAND_HEIGHT it spans several stops and the world's floor is the
+    // last of them, not the first.
+    expect(SEABED_DEPTH_STOPS - 1).toBeGreaterThanOrEqual(FIRST_LAVA_STOP);
   });
 
   it('keeps every seabed stop below the land ramp', () => {
@@ -73,17 +78,44 @@ describe('bandPaletteIndex', () => {
     }
   });
 
-  it('keeps adjacent land stops a visible luminance gap apart', () => {
+  it('keeps adjacent land MATERIALS a visible luminance gap apart', () => {
     // The above-ground half of the same owner-reported contrast: every land
-    // band must differ from its neighbour by at least the named gap, in
+    // material must differ from its neighbour by at least the named gap, in
     // EITHER direction — the ramp's shape (bright sand, darkening grass,
     // rock climbing to snow) is not the contract; the gap is.
+    //
+    // AN ANCHOR CONTRACT SINCE 2026-08-20 (owner chose the interpolated ramp):
+    // it used to be pinned stop-to-stop, which only worked while one stop WAS
+    // one material. With four times the bands, adjacent stops are a quarter of
+    // a material apart and the gap lives between the anchors instead.
     const luminance = ([r, g, b]: readonly [number, number, number]): number =>
       r + g + b;
-    for (let i = FIRST_LAND_PALETTE_INDEX + 1; i <= LAST_PALETTE_INDEX; i++) {
+    for (let i = 1; i < LAND_RAMP_ANCHORS.length; i++) {
       expect(
-        Math.abs(luminance(TERRAIN_PALETTE[i]) - luminance(TERRAIN_PALETTE[i - 1])),
-      ).toBeGreaterThanOrEqual(MIN_ADJACENT_LAND_LUMINANCE_GAP);
+        Math.abs(
+          luminance(LAND_RAMP_ANCHORS[i][1]) - luminance(LAND_RAMP_ANCHORS[i - 1][1]),
+        ),
+      ).toBeGreaterThanOrEqual(MIN_LAND_ANCHOR_LUMINANCE_GAP);
+    }
+  });
+
+  it('interpolates between land materials instead of holding them flat', () => {
+    // The other half of the same decision: no two adjacent land stops may be
+    // identical, or the finer terracing would buy geometry without colour and
+    // a mountainside would band into visible plateaus again.
+    for (let i = FIRST_LAND_PALETTE_INDEX + 1; i <= LAST_PALETTE_INDEX; i++) {
+      expect(TERRAIN_PALETTE[i]).not.toEqual(TERRAIN_PALETTE[i - 1]);
+    }
+  });
+
+  it('lands every material anchor exactly on a band floor', () => {
+    // The anchors are stated in HEIGHT UNITS; the stops are sampled at band
+    // floors. If an anchor fell between two floors its colour would never
+    // actually be rendered — the material would be a colour the world cannot
+    // show. Exact today for every stratum; this is the guard for a future
+    // BAND_HEIGHT that stops dividing the stack evenly.
+    for (const [height] of LAND_RAMP_ANCHORS) {
+      expect(height % BAND_HEIGHT).toBe(0);
     }
   });
 
@@ -127,7 +159,7 @@ describe('bandPaletteIndex', () => {
         luminance(CLIFF_PALETTE[stop - 1]),
       );
     }
-    for (let stop = FIRST_BASALT_STOP + 1; stop < LAVA_PALETTE_INDEX; stop++) {
+    for (let stop = FIRST_BASALT_STOP + 1; stop < FIRST_LAVA_STOP; stop++) {
       expect(luminance(CLIFF_PALETTE[stop])).toBeLessThan(
         luminance(CLIFF_PALETTE[stop - 1]),
       );
@@ -159,24 +191,31 @@ describe('bandPaletteIndex', () => {
     );
     // Within the rock the strict descent resumes: basalt darkens into
     // obsidian, ending at the darkest material in the game.
-    for (let stop = FIRST_BASALT_STOP + 1; stop < LAVA_PALETTE_INDEX; stop++) {
+    for (let stop = FIRST_BASALT_STOP + 1; stop < FIRST_LAVA_STOP; stop++) {
       expect(luminance(TERRAIN_PALETTE[stop])).toBeLessThan(
         luminance(TERRAIN_PALETTE[stop - 1]),
       );
     }
     // The lava floor is the brightest thing under the sea, full stop — it is
     // the palette's one light source and is rendered self-lit.
-    expect(isEmissivePaletteIndex(LAVA_PALETTE_INDEX)).toBe(true);
-    for (let stop = 0; stop < LAVA_PALETTE_INDEX; stop++) {
-      expect(luminance(TERRAIN_PALETTE[LAVA_PALETTE_INDEX])).toBeGreaterThan(
+    for (let stop = FIRST_LAVA_STOP; stop < SEABED_DEPTH_STOPS; stop++) {
+      expect(isEmissivePaletteIndex(stop)).toBe(true);
+      // Every lava stop is the same glow: the floor is a light, not a ramp.
+      expect(TERRAIN_PALETTE[stop]).toEqual(TERRAIN_PALETTE[FIRST_LAVA_STOP]);
+    }
+    for (let stop = 0; stop < FIRST_LAVA_STOP; stop++) {
+      expect(luminance(TERRAIN_PALETTE[FIRST_LAVA_STOP])).toBeGreaterThan(
         luminance(TERRAIN_PALETTE[stop]),
       );
       expect(isEmissivePaletteIndex(stop)).toBe(false);
     }
+    // Land is lit by the scene, never self-lit — the glow is the floor's alone.
+    expect(isEmissivePaletteIndex(FIRST_LAND_PALETTE_INDEX)).toBe(false);
+    expect(isEmissivePaletteIndex(LAST_PALETTE_INDEX)).toBe(false);
     // The strata boundaries derive from shared's stack — the palette cannot
     // drift from the world model that defines it.
     expect(SEABED_DEPTH_STOPS).toBe(BLUE_SEABED_STOPS + DEEP_STRATA_BANDS);
-    expect(bandPaletteIndex(MIN_HEIGHT)).toBe(LAVA_PALETTE_INDEX);
+    expect(bandPaletteIndex(MIN_HEIGHT)).toBe(SEABED_DEPTH_STOPS - 1);
     expect(bandPaletteIndex(-SEA_COLUMN_BANDS * BAND_HEIGHT - 1)).toBe(
       FIRST_BASALT_STOP,
     );

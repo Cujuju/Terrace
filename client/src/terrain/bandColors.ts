@@ -7,12 +7,18 @@
 // run an sRGB→linear pow() per vertex per patch.
 
 import {
+  BAND_HEIGHT,
   DEEP_BASALT_BANDS,
+  DEEP_BASALT_DEPTH,
   DEEP_LAVA_BANDS,
+  DEEP_LAVA_DEPTH,
   DEEP_OBSIDIAN_BANDS,
+  DEEP_OBSIDIAN_DEPTH,
   DEEP_STRATA_BANDS,
   MAX_HEIGHT,
   SEA_COLUMN_BANDS,
+  SEA_COLUMN_DEPTH,
+  SEA_LEVEL,
   bandOf,
   isWater,
 } from '@terrace/shared';
@@ -71,16 +77,23 @@ export const SEABED_DEPTH_STOPS = BLUE_SEABED_STOPS + DEEP_STRATA_BANDS;
 /** First palette index of each crust stratum, derived from the shared stack. */
 export const FIRST_BASALT_STOP = BLUE_SEABED_STOPS;
 export const FIRST_OBSIDIAN_STOP = FIRST_BASALT_STOP + DEEP_BASALT_BANDS;
-export const LAVA_PALETTE_INDEX = FIRST_OBSIDIAN_STOP + DEEP_OBSIDIAN_BANDS;
+export const FIRST_LAVA_STOP = FIRST_OBSIDIAN_STOP + DEEP_OBSIDIAN_BANDS;
 
 /**
- * True only for the lava floor: the palette entry rendered as a light source.
- * The geometry builder keys cap self-lighting off this (capEmission.ts), the
- * same way seabed risers key off isSeabedPaletteIndex — one predicate per
- * regime decision, stated here beside the palette that defines it.
+ * True for the lava floor's stops: the palette entries rendered as a light
+ * source. The geometry builder keys cap self-lighting off this
+ * (capEmission.ts), the same way seabed risers key off isSeabedPaletteIndex —
+ * one predicate per regime decision, stated here beside the palette that
+ * defines it.
+ *
+ * A RANGE since the 2026-08-20 re-terrace, not the single index it was: lava
+ * is a stratum DEPTH (DEEP_LAVA_DEPTH), and at a finer BAND_HEIGHT that same
+ * depth is several bands. The old `index === LAVA_PALETTE_INDEX` was the band
+ * -count conflation this whole change exists to remove — it would have lit
+ * only the topmost lava band and left the world's actual floor dark.
  */
 export function isEmissivePaletteIndex(index: number): boolean {
-  return index === LAVA_PALETTE_INDEX;
+  return index >= FIRST_LAVA_STOP && index < SEABED_DEPTH_STOPS;
 }
 
 /**
@@ -91,91 +104,244 @@ export function isEmissivePaletteIndex(index: number): boolean {
 export const SEABED_PALETTE_INDEX = 0;
 export const FIRST_LAND_PALETTE_INDEX = SEABED_DEPTH_STOPS;
 
+// ---------------------------------------------------------------------------
+// The ramp is GENERATED, not authored (2026-08-20).
+//
+// It used to be a hand-written list of one hex literal per band. That made the
+// palette a function of BAND_HEIGHT — the render quantum — so re-terracing the
+// world (BAND_HEIGHT 64 → 16) indexed straight off the end of it. Same
+// conflation the strata stack had, same fix: the colours are anchored to the
+// HEIGHTS the world is actually made of, and the per-band stops are derived by
+// sampling those anchors. A future BAND_HEIGHT change now re-samples the ramp
+// instead of breaking it.
+//
+// WHAT CHANGED VISUALLY, and what deliberately did not. Every anchor colour
+// below is the exact colour the old ramp used, placed at the exact height the
+// old ramp put it at, so the world's materials sit where they always sat: sand
+// still gives way to soil at 128 units, grass to rock at 384, snow still caps
+// at SNOW_LINE_HEIGHT, the seabed still ends in very dark blue at the sea
+// column's floor. What is new is what happens BETWEEN two anchors: the stops
+// interpolate (owner, 2026-08-20), so each of the four bands that now stand
+// where one band used to stand gets its own shade rather than repeating its
+// neighbour's. Above water that turns the old ten-step staircase into a
+// gradation under crisp terrace geometry; below water it is not a choice at
+// all — the depth-contrast contract demands a STRICTLY darker colour at every
+// stop, which no held-flat ramp can satisfy.
+// ---------------------------------------------------------------------------
+
 /**
- * The ramp: four seabed depth stops, then ten land stops — sand and soil at
- * the shoreline, grass from band 3, rock, then snowcap. Bands at or above the
- * last stop all render as snow — a band-9 peak is already 576 height units of
- * relief, unambiguously a mountain top, so there is nothing above it that
- * needs its own colour.
- *
- * The shallow seabed stops keep the established muddy-green family (the old
- * single seabed sat between today's 0 and 1) and step ~20% darker and bluer
- * per band, sized so the difference still reads through the translucent
- * water tint that compresses whatever contrast the treads have. Below the
- * genesis strata the descent continues to MIN_HEIGHT with two properties,
- * both judged through the water plane rather than on the raw swatches:
- *
- *   * luminance falls STRICTLY at every stop (the depth-contrast contract,
- *     pinned by test), front-loaded — bigger steps through the bands a
- *     worldgen ocean actually shows (−4..−8, the deepest genesis floor is
- *     ~band −8), smaller steps in the abyssal tail a player has to dig for,
- *     because equal dark-end steps read as nothing through the tint;
- *   * the hue crosses from the shallow muddy-teal to BLUE-dominant (b > g
- *     from band −3 down), ending at 0x030813 — the requested very dark blue,
- *     kept a hair above black so the self-lit silt rims still have a tread
- *     to outline rather than a void.
+ * One named colour and the world HEIGHT it belongs to. Heights are signed
+ * (positive above sea, negative below) and an anchor list runs top-down.
  */
-export const TERRAIN_PALETTE: readonly Rgb[] = [
-  rgb(0x6a7f68), // 0 seabed, waterline flats (h = 0)
-  rgb(0x50705d), // 1 seabed, band −1 — the shelf
-  rgb(0x3a5b52), // 2 seabed, band −2 — the ring
-  rgb(0x274347), // 3 seabed, band −3 — deep water begins, monster country
-  rgb(0x1f3a44), // 4 seabed, band −4
-  rgb(0x183243), // 5 seabed, band −5
-  rgb(0x122a40), // 6 seabed, band −6
-  rgb(0x0d233c), // 7 seabed, band −7
-  rgb(0x0a1d37), // 8 seabed, band −8 — the deepest a genesis ocean reaches
-  rgb(0x081931), // 9 seabed, band −9
-  rgb(0x07152b), // 10 seabed, band −10
-  rgb(0x061226), // 11 seabed, band −11
-  rgb(0x050f21), // 12 seabed, band −12
-  rgb(0x040d1d), // 13 seabed, band −13
-  rgb(0x040b19), // 14 seabed, band −14
-  rgb(0x030916), // 15 seabed, band −15
-  rgb(0x030813), // 16 seabed, band −16 — the very dark blue: the sea column's
-  //                 floor (MIN_HEIGHT before Deep Strata; the crust continues
-  //                 below it since 2026-08-19)
-  // Deep Strata (mechanics card 41): the crust. Basalt opens BRIGHTER than
-  // the blue floor above it — the regime break is the message (see the Deep
-  // Strata amendment above) — then darkens strictly into obsidian; the lava
-  // floor is the palette's one light source, rendered self-lit.
-  rgb(0x3a3b41), // 17 basalt, band −17 — dark volcanic gray, hue-neutral
-  //                 against the blue column so the material change reads
-  rgb(0x323338), // 18 basalt, band −18
-  rgb(0x2a2b2f), // 19 basalt, band −19
-  rgb(0x232427), // 20 basalt, band −20
-  rgb(0x1a1820), // 21 obsidian, band −21 — glass-black with a violet cast
-  rgb(0x121017), // 22 obsidian, band −22
-  rgb(0x0b0a10), // 23 obsidian, band −23 — the darkest material in the game
-  rgb(0xf25c1a), // 24 lava, band −24 (MIN_HEIGHT) — molten glow, self-lit
-  // Three sand-and-soil stops before any green (owner, 2026-08-14: "multiple
-  // layers of sand and soil color near the water. Greener layers should start
-  // higher up") — the coast reads as coast for two full terraces before
-  // vegetation takes over at band 3.
-  rgb(0xd9c89a), // 17 band 0 — wet beach sand at the waterline
-  rgb(0xc0a468), // 18 band 1 — dry sand
-  rgb(0x96774a), // 19 band 2 — bare soil
-  rgb(0x8fc25a), // 20 band 3 — bright lowland grass
-  rgb(0x69a244), // 21 band 4 — grass
-  rgb(0x467a33), // 22 band 5 — dark highland grass
-  rgb(0x736f61), // 23 band 6 — dark exposed rock
-  rgb(0x908c80), // 24 band 7 — rock
-  rgb(0xb3aea2), // 25 band 8 — pale high rock
-  rgb(0xf2f4f6), // 26 band 9+ — snow
+type ColorAnchor = readonly [height: number, color: Rgb];
+
+/**
+ * Spread named colours evenly down a height span, HIGHEST HEIGHT FIRST. The
+ * even spacing IS the statement: these colours were authored as a sequence of
+ * equal steps through a material, and the span they cross is the material's
+ * own depth.
+ *
+ * Every anchor list in this file is stored top-down, so one sampler serves the
+ * whole palette; a ramp whose colours read naturally bottom-up (the land ramp)
+ * reverses its colours at the call site rather than teaching the sampler a
+ * second order.
+ */
+function evenlySpaced(
+  topHeight: number,
+  bottomHeight: number,
+  colors: readonly Rgb[],
+): readonly ColorAnchor[] {
+  // A one-colour material (lava) has no span to spread across — it is a flat
+  // fill, and dividing by its zero gaps would produce NaN heights.
+  if (colors.length === 1) return [[topHeight, colors[0]]];
+  const gaps = colors.length - 1;
+  return colors.map((color, i) => [
+    topHeight + ((bottomHeight - topHeight) * i) / gaps,
+    color,
+  ]);
+}
+
+/**
+ * Piecewise-linear sample of a top-down anchor list at one height. Heights
+ * outside the anchored span clamp to the end anchors, which is what makes a
+ * stratum's first stop take its top colour even when the stratum boundary
+ * falls between two band floors.
+ */
+function sampleAnchors(anchors: readonly ColorAnchor[], height: number): Rgb {
+  const last = anchors.length - 1;
+  if (height >= anchors[0][0]) return anchors[0][1];
+  if (height <= anchors[last][0]) return anchors[last][1];
+  let upper = 0;
+  while (anchors[upper + 1][0] > height) upper++;
+  const [topHeight, topColor] = anchors[upper];
+  const [bottomHeight, bottomColor] = anchors[upper + 1];
+  const t = (topHeight - height) / (topHeight - bottomHeight);
+  return [
+    topColor[0] + (bottomColor[0] - topColor[0]) * t,
+    topColor[1] + (bottomColor[1] - topColor[1]) * t,
+    topColor[2] + (bottomColor[2] - topColor[2]) * t,
+  ];
+}
+
+/**
+ * The blue water column, waterline to sea floor — the seventeen colours the
+ * seabed history above describes, now anchored to the depths they were
+ * authored for rather than to band indices, and evenly spaced down
+ * SEA_COLUMN_DEPTH.
+ *
+ * The two properties that history states — luminance falling STRICTLY with
+ * depth (front-loaded, so the abyssal tail steps small), and the hue crossing
+ * to blue-dominant on the way to 0x030813 — survive interpolation for free:
+ * a sum of linearly interpolated channels is itself linear, so every stop
+ * sampled between two strictly-darkening anchors is strictly darker than the
+ * stop above it.
+ */
+const BLUE_COLUMN_ANCHORS = evenlySpaced(SEA_LEVEL, -SEA_COLUMN_DEPTH, [
+  rgb(0x6a7f68), // the waterline flats (h = 0)
+  rgb(0x50705d), // the genesis shelf
+  rgb(0x3a5b52), // the genesis ring
+  rgb(0x274347), // deep water begins — monster country
+  rgb(0x1f3a44),
+  rgb(0x183243),
+  rgb(0x122a40),
+  rgb(0x0d233c),
+  rgb(0x0a1d37), // about as deep as a genesis ocean reaches
+  rgb(0x081931),
+  rgb(0x07152b),
+  rgb(0x061226),
+  rgb(0x050f21),
+  rgb(0x040d1d),
+  rgb(0x040b19),
+  rgb(0x030916),
+  rgb(0x030813), // the very dark blue: the sea column's floor
+]);
+
+// The crust, per the Deep Strata amendment above. Each stratum's span comes
+// straight from shared's stack, so the colours cannot drift off the material
+// boundaries they are meant to mark.
+
+const CRUST_TOP = -SEA_COLUMN_DEPTH;
+const BASALT_FLOOR = CRUST_TOP - DEEP_BASALT_DEPTH;
+const OBSIDIAN_FLOOR = BASALT_FLOOR - DEEP_OBSIDIAN_DEPTH;
+const LAVA_FLOOR = OBSIDIAN_FLOOR - DEEP_LAVA_DEPTH;
+
+/** Dark volcanic gray, hue-neutral against the blue column above it. */
+const BASALT_ANCHORS = evenlySpaced(CRUST_TOP, BASALT_FLOOR, [
+  rgb(0x3a3b41),
+  rgb(0x323338),
+  rgb(0x2a2b2f),
+  rgb(0x232427),
+]);
+
+/** Glass-black with a violet cast, ending in the darkest material in the game. */
+const OBSIDIAN_ANCHORS = evenlySpaced(BASALT_FLOOR, OBSIDIAN_FLOOR, [
+  rgb(0x1a1820),
+  rgb(0x121017),
+  rgb(0x0b0a10),
+]);
+
+/** Molten glow — one colour, because the floor is a light, not a gradient. */
+const LAVA_ANCHORS = evenlySpaced(OBSIDIAN_FLOOR, LAVA_FLOOR, [rgb(0xf25c1a)]);
+
+/**
+ * Height at which the land ramp reaches snow; bands at or above it all render
+ * as snowcap.
+ *
+ * 576 units is nine of the pre-2026-08-20 terrace bands, which is where the
+ * hand-authored ramp put its snow stop, and it is kept EXACTLY there so
+ * re-terracing the world does not move the treeline: a peak that wore snow
+ * before the change wears snow after it. It is also plainly a mountain top —
+ * 576 units of relief above the sea — so nothing above it needs a colour of
+ * its own.
+ */
+export const SNOW_LINE_HEIGHT = 576;
+
+/** Bands the land ramp colours explicitly, before snow clamping kicks in. */
+export const LAND_RAMP_BANDS = SNOW_LINE_HEIGHT / BAND_HEIGHT;
+
+/**
+ * The land ramp: sand and soil at the shoreline, grass, rock, then snowcap.
+ *
+ * Three sand-and-soil anchors before any green (owner, 2026-08-14: "multiple
+ * layers of sand and soil color near the water. Greener layers should start
+ * higher up") — the coast reads as coast for two full materials before
+ * vegetation takes over. The ramp is deliberately NOT monotonic in luminance
+ * (sand is brighter than the grass above it; rock climbs back toward snow):
+ * the CONTRAST between neighbouring materials is the contract, and direction
+ * is the palette's own business.
+ */
+const LAND_RAMP_SHORELINE_UP: readonly Rgb[] = [
+  rgb(0xd9c89a), // wet beach sand at the waterline
+  rgb(0xc0a468), // dry sand
+  rgb(0x96774a), // bare soil
+  rgb(0x8fc25a), // bright lowland grass
+  rgb(0x69a244), // grass
+  rgb(0x467a33), // dark highland grass
+  rgb(0x736f61), // dark exposed rock
+  rgb(0x908c80), // rock
+  rgb(0xb3aea2), // pale high rock
+  rgb(0xf2f4f6), // snow
+];
+
+/** The same ramp as anchors, stored top-down like every other list here. */
+export const LAND_RAMP_ANCHORS = evenlySpaced(SNOW_LINE_HEIGHT, SEA_LEVEL, [
+  ...LAND_RAMP_SHORELINE_UP,
+].reverse());
+
+/**
+ * A contiguous run of underwater stops and the anchors that colour it. One
+ * entry per material, so the regime break at each boundary is structural: two
+ * neighbouring stops in different regimes sample different anchor lists and
+ * therefore step, where two stops inside one regime interpolate.
+ */
+const SEABED_REGIMES: readonly { stops: number; anchors: readonly ColorAnchor[] }[] = [
+  { stops: BLUE_SEABED_STOPS, anchors: BLUE_COLUMN_ANCHORS },
+  { stops: DEEP_BASALT_BANDS, anchors: BASALT_ANCHORS },
+  { stops: DEEP_OBSIDIAN_BANDS, anchors: OBSIDIAN_ANCHORS },
+  { stops: DEEP_LAVA_BANDS, anchors: LAVA_ANCHORS },
 ];
 
 /**
- * Smallest summed-RGB luminance gap between ADJACENT land stops (owner,
+ * The stops, sampled once at module load: every underwater regime top-down,
+ * then the land ramp bottom-up. A stop stands for one terrace band and is
+ * sampled at that band's FLOOR — the height at which the band's tread is
+ * drawn — so the colour a player sees on a tread is the colour the ramp
+ * names at the height that tread sits.
+ */
+function buildPalette(): Rgb[] {
+  const stops: Rgb[] = [];
+  for (const regime of SEABED_REGIMES) {
+    for (let i = 0; i < regime.stops; i++) {
+      stops.push(sampleAnchors(regime.anchors, -stops.length * BAND_HEIGHT));
+    }
+  }
+  for (let band = 0; band <= LAND_RAMP_BANDS; band++) {
+    stops.push(sampleAnchors(LAND_RAMP_ANCHORS, band * BAND_HEIGHT));
+  }
+  return stops;
+}
+
+export const TERRAIN_PALETTE: readonly Rgb[] = buildPalette();
+
+/**
+ * Smallest summed-RGB luminance gap between ADJACENT land ANCHORS (owner,
  * 2026-08-14: "more contrast on the layers above ground as well" — the first
  * ramp's neighbours sat ~0.2 apart and adjacent terraces blurred together at
  * play distance). 0.3 is ~10% of the 0..3 scale: comfortably visible on a lit
  * tread, and holdable across the whole ramp without breaking the sand → grass
- * → rock → snow story. The land ramp is deliberately NOT monotonic (sand is
- * brighter than the grass above it; rock climbs back toward snow), so the gap
- * is the contract — direction is the palette's own business. Enforced by
- * test, so a future recolour cannot quietly blur two bands back together.
+ * → rock → snow story.
+ *
+ * AN ANCHOR-TO-ANCHOR CONTRACT SINCE 2026-08-20, where it used to be a
+ * stop-to-stop one. With the ramp interpolating, adjacent STOPS are a quarter
+ * of a material apart and cannot be a tenth of the scale apart as well — the
+ * gap between two anchors is now spent gradually across the bands between
+ * them. The owner's ask survives intact because it was always about
+ * MATERIALS reading apart, and the anchors are the materials; what is gone is
+ * the guarantee that two neighbouring terraces differ by colour alone, which
+ * the interpolated ramp trades for a smooth mountainside. Enforced by test,
+ * so a future recolour cannot quietly blur two materials back together.
  */
-export const MIN_ADJACENT_LAND_LUMINANCE_GAP = 0.3;
+export const MIN_LAND_ANCHOR_LUMINANCE_GAP = 0.3;
 
 /** Highest valid index; bands beyond the ramp clamp here. */
 export const LAST_PALETTE_INDEX = TERRAIN_PALETTE.length - 1;
