@@ -52,6 +52,23 @@ export default defineConfig({
     // (amd.local today, whatever the machine is renamed to tomorrow) while
     // still refusing arbitrary public domains pointed at this address.
     allowedHosts: ['.local'],
+    watch: {
+      // POLLING IS MANDATORY ON THIS CHECKOUT, not a preference. The repo
+      // lives on /mnt/e — a WSL2 drvfs mount that delivers NO inotify events
+      // at all, not even for writes made from inside Linux (measured
+      // 2026-08-21: `fs.watch('shared/src', {recursive:true})` saw zero
+      // events for an append AND a rewrite over 8 s). Chokidar's native
+      // backend therefore sees nothing, which is why every edit used to
+      // require a full Vite restart before it was visible.
+      usePolling: true,
+      // How often each watched file is stat()ed, in milliseconds. 300 ms is
+      // under the threshold where a save feels like it did not take, and the
+      // watched set here is the module graph of one app (hundreds of files,
+      // not the whole tree), so the stat storm is small. Lower values buy
+      // nothing a human can perceive and multiply drvfs stat cost, which is
+      // an order slower than a native mount.
+      interval: 300,
+    },
   },
   test: {
     // Every client test is pure logic (see test/ — picking math, terrain mirror
