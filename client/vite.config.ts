@@ -33,6 +33,17 @@ function buildVersion(): string {
   return 'unversioned';
 }
 
+/**
+ * Whether this dev server should watch files, set by the launcher's --watch
+ * flag (see run_server.py, which owns the flag for both halves of the stack).
+ * Any non-empty value other than "0" counts as on, so `TERRACE_WATCH=1 pnpm dev`
+ * works for a hand-started Vite too.
+ */
+function watchEnabled(): boolean {
+  const raw = process.env['TERRACE_WATCH'];
+  return raw !== undefined && raw.trim() !== '' && raw.trim() !== '0';
+}
+
 export default defineConfig({
   plugins: [solid()],
   define: {
@@ -52,23 +63,30 @@ export default defineConfig({
     // (amd.local today, whatever the machine is renamed to tomorrow) while
     // still refusing arbitrary public domains pointed at this address.
     allowedHosts: ['.local'],
-    watch: {
-      // POLLING IS MANDATORY ON THIS CHECKOUT, not a preference. The repo
-      // lives on /mnt/e — a WSL2 drvfs mount that delivers NO inotify events
-      // at all, not even for writes made from inside Linux (measured
-      // 2026-08-21: `fs.watch('shared/src', {recursive:true})` saw zero
-      // events for an append AND a rewrite over 8 s). Chokidar's native
-      // backend therefore sees nothing, which is why every edit used to
-      // require a full Vite restart before it was visible.
-      usePolling: true,
-      // How often each watched file is stat()ed, in milliseconds. 300 ms is
-      // under the threshold where a save feels like it did not take, and the
-      // watched set here is the module graph of one app (hundreds of files,
-      // not the whole tree), so the stat storm is small. Lower values buy
-      // nothing a human can perceive and multiply drvfs stat cost, which is
-      // an order slower than a native mount.
-      interval: 300,
-    },
+    // File watching is opt-in per launch, driven by the launcher's --watch
+    // flag (run_server.py sets TERRACE_WATCH=1 for the Vite it spawns). Left
+    // unset, Vite serves the modules it loaded at startup and a restart is
+    // what picks up an edit — the behaviour this checkout had before watching
+    // existed.
+    watch: watchEnabled()
+      ? {
+          // POLLING IS MANDATORY ON THIS CHECKOUT, not a preference. The repo
+          // lives on /mnt/e — a WSL2 drvfs mount that delivers NO inotify
+          // events at all, not even for writes made from inside Linux
+          // (measured 2026-08-21: `fs.watch('shared/src', {recursive:true})`
+          // saw zero events for an append AND a rewrite over 8 s). Chokidar's
+          // native backend therefore sees nothing, which is why an edit
+          // otherwise requires a full Vite restart before it is visible.
+          usePolling: true,
+          // How often each watched file is stat()ed, in milliseconds. 300 ms
+          // is under the threshold where a save feels like it did not take,
+          // and the watched set here is the module graph of one app (hundreds
+          // of files, not the whole tree), so the stat storm is small. Lower
+          // values buy nothing a human can perceive and multiply drvfs stat
+          // cost, which is an order slower than a native mount.
+          interval: 300,
+        }
+      : null,
   },
   test: {
     // Every client test is pure logic (see test/ — picking math, terrain mirror

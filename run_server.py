@@ -8,10 +8,15 @@ back to the server's built-in default. A variable already set in the shell
 wins over CONFIG, so one-off overrides still work:
     PORT=2599 python3 run_server.py
 
+Pass --watch to run the stack with file watching on: the server restarts when
+its own sources change, and the Vite dev server polls the client's sources for
+changes instead of serving whatever it loaded at startup. Off by default.
+
 The server serves client/dist itself (issue #20) and prints
 "play at http://localhost:<PORT>" - that is the URL to open in a browser.
 ws://<PORT> in the log is the game protocol endpoint, not a page.
 """
+import argparse
 import os
 import signal as signal_module
 import subprocess
@@ -40,17 +45,29 @@ CONFIG = {
 #   "none"   - server only.
 CLIENT_MODE = "dev"
 
-# Restart the game server whenever its own sources change (2026-08-21, owner
-# request: "turn on the watcher for the server and the client"). The client
-# half of that lives in client/vite.config.ts's `server.watch`.
+# Source watching is OFF by default and turned on per launch with --watch
+# (2026-08-21, owner request: "add an option to the run server script to turn
+# on the watcher for the server and the client"). One flag drives BOTH halves:
+# this script restarts the game server on its own source changes, and it
+# exports TERRACE_WATCH to Vite, whose config turns file polling on only when
+# it is set (client/vite.config.ts). They are deliberately not separable -
+# the dev-ops rule is that server and client are never refreshed alone, since
+# a shared/ change that reaches one half and not the other desyncs client
+# prediction from server authority.
 #
 # POLLING, NOT inotify, AND NOT `node --watch`. This repo sits on /mnt/e, a
 # WSL2 drvfs mount that delivers no inotify events whatsoever - measured
 # 2026-08-21, `fs.watch(..., {recursive: true})` saw zero events for a write
 # made from inside Linux. `node --watch` is built on exactly that, so it would
 # start, print nothing, and silently never fire. Stat polling is the only
-# mechanism this mount supports.
-WATCH = True
+# mechanism this mount supports, and it is not free on drvfs - which is why it
+# is opt-in rather than always on.
+WATCH_DEFAULT = False
+
+# Environment variable the client half reads. Set to "1" for a watched launch
+# and left unset otherwise; client/vite.config.ts enables `server.watch.usePolling`
+# on exactly this signal.
+WATCH_ENV_VAR = "TERRACE_WATCH"
 
 # Seconds between passes over the watched tree. One second is well under the
 # time it takes to alt-tab to the browser, and the watched set is a few hundred
@@ -132,8 +149,14 @@ def spawn_server(env) -> subprocess.Popen:
                             start_new_session=True)
 
 
-def main() -> int:
+def main(watch: bool) -> int:
     env = os.environ.copy()
+    # Both halves see the same flag: the server watcher below reads `watch`,
+    # and Vite reads this variable out of the environment it inherits.
+    if watch:
+        env[WATCH_ENV_VAR] = "1"
+    else:
+        env.pop(WATCH_ENV_VAR, None)
     for name, value in CONFIG.items():
         if value is not None:
             # setdefault: an override exported in the shell beats CONFIG.
@@ -154,6 +177,7 @@ def main() -> int:
         print(f"[run_server] client   : http://localhost:{port}  <- PLAY HERE (served by the game server)")
     else:
         print('[run_server] client   : none (CLIENT_MODE = "none")')
+    print(f"[run_server] watch    : {'on (--watch)' if watch else 'off (pass --watch to enable)'}")
     # flush: when stdout is a pipe (nohup, a wrapper script) python
     # block-buffers and the details would otherwise sit invisible until exit.
     print("[run_server] ---------------------------------------------", flush=True)
@@ -174,13 +198,14 @@ def main() -> int:
         if CLIENT_MODE == "static" and not prepare_static_client():
             return 1
         if CLIENT_MODE == "dev":
-            vite = subprocess.Popen(["pnpm", "dev"], cwd=CLIENT_DIR, start_new_session=True)
+            vite = subprocess.Popen(["pnpm", "dev"], cwd=CLIENT_DIR, env=env,
+                                    start_new_session=True)
             children.append(vite)
             print("[run_server] client dev server starting - "
                   "play at http://localhost:5173 once Vite is ready")
         server = spawn_server(env)
         children.append(server)
-        if not WATCH:
+        if not watch:
             return server.wait()
 
         print(f"[run_server] watching {', '.join(WATCH_ROOTS)} "
@@ -227,6 +252,20 @@ def main() -> int:
             reap(proc, signal_module.SIGINT)
 
 
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # A matching --no-watch exists so a launch can state its intent explicitly
+    # even while the default is off, and keeps working if the default flips.
+    watching = parser.add_mutually_exclusive_group()
+    watching.add_argument("--watch", dest="watch", action="store_true",
+                          help="restart the server on server/shared/plugin source "
+                               "changes and make Vite poll the client's sources")
+    watching.add_argument("--no-watch", dest="watch", action="store_false",
+                          help="run without any file watching")
+    parser.set_defaults(watch=WATCH_DEFAULT)
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    return_code = main()
+    return_code = main(parse_args().watch)
     sys.exit(return_code)
