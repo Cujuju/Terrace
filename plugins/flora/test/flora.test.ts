@@ -7,7 +7,14 @@
 // mechanism rather than against a call site.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, MIN_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  MAX_BRUSH_RADIUS,
+  MIN_HEIGHT,
+  SEA_LEVEL,
+  cellsAcross,
+} from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -70,8 +77,14 @@ import {
 } from '../server/structures-bridge.ts';
 import { worldWithTerrain } from './support/world.ts';
 
-/** 64² cells = 4×4 chunks — small enough to survey thousands of times a suite. */
-const WORLD_SIZE = 64;
+/**
+ * 64² WORLD UNITS — small enough to survey thousands of times a suite, and big
+ * enough to hold a forest at the shipped density. Counted in world units rather
+ * than cells because that density is: FLORA_CELLS_PER_TREE is a tree per twelve
+ * square world units, so a 64-CELL world after the 2026-08-21 re-sample would
+ * be sixteen world units of ground and hold almost no trees at all.
+ */
+const WORLD_SIZE = cellsAcross(64);
 
 /** Host tick period, matching the shipped TICK_HZ of 10. */
 const DT = 0.1;
@@ -89,7 +102,7 @@ const CROP_CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROP_CHANGES_MESSAG
  * Every band this plugin cares about is present, and each is a solid block big
  * enough to hold a stand of trees.
  */
-const STRIPE_WIDTH = 8;
+const STRIPE_WIDTH = cellsAcross(8);
 const STRIPE_BANDS = 8;
 
 function stripedHeight(x: number, _y: number): number {

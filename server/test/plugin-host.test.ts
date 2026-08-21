@@ -4,6 +4,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CHUNK_SIZE } from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -20,7 +21,11 @@ import type { World } from '../src/world/world.ts';
 import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
-const WORLD_SIZE = 64;
+// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
+// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
+// four-chunk world is smaller ground than it was — which is fine here: every
+// assertion in this suite is about chunk mechanics, not about distances.)
+const WORLD_SIZE = CHUNK_SIZE * 4;
 const PLAYER = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 describe('discoverPlugins', () => {
@@ -169,7 +174,8 @@ describe('PluginHost', () => {
 
     expect(api.worldSize).toBe(WORLD_SIZE);
     expect(api.isCellUnlocked(0, 0)).toBe(true);
-    expect(api.isCellUnlocked(40, 40)).toBe(false);
+    // A cell in chunk (2,2), locked at any sampling density.
+    expect(api.isCellUnlocked(CHUNK_SIZE * 2, CHUNK_SIZE * 2)).toBe(false);
 
     api.sculpt(4, 4, 1, 64);
     expect(world.heightAt(4, 4)).toBeGreaterThan(0);
@@ -218,7 +224,7 @@ describe('PluginHost', () => {
     expect(api.unlockChunkForToken(PLAYER.token, 2, 2)).toBe(false); // idempotent per token
 
     expect(api.isChunkVisibleTo(PLAYER.id, 2, 2)).toBe(true);
-    expect(api.isCellVisibleTo(PLAYER.id, 2 * 16 + 1, 2 * 16 + 1)).toBe(true);
+    expect(api.isCellVisibleTo(PLAYER.id, 2 * CHUNK_SIZE + 1, 2 * CHUNK_SIZE + 1)).toBe(true);
     // Nobody connected under this id — the safe default is false, not a throw.
     expect(api.isChunkVisibleTo('no-such-player', 2, 2)).toBe(false);
 
@@ -615,10 +621,10 @@ describe('WorldApi.broadcastVisible (issue #18)', () => {
         .payload as { items: PositionedItem[] }).items,
     ).toEqual([inside]);
 
-    // The SAME entity moves into chunk (1,0) — cells [16,32)×[0,16) — which
-    // A has never unlocked for their own token.
+    // The SAME entity moves into chunk (1,0) — the next chunk east, whatever
+    // a chunk is sampled at — which A has never unlocked for their own token.
     sink.clear();
-    const moved: PositionedItem = { ...inside, x: 20 };
+    const moved: PositionedItem = { ...inside, x: CHUNK_SIZE + 4 };
     api.broadcastVisible('positions', [moved], positionOf, (visible) => ({ items: visible }));
 
     const forAAfterMove = sink

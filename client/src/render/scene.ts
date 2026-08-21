@@ -117,7 +117,7 @@ export const SUN_DIRECTION_NOON: readonly [number, number, number] = [0.7, 0.45,
  * exported so applySkyRig (./skyRig.ts) can place a plugin-driven sun the
  * same way core places its own, without a second unjustified number.
  */
-export const SUN_DISTANCE_CELLS = 200;
+export const SUN_DISTANCE_WORLD_UNITS = 200;
 
 /** Pixel-ratio cap: beyond 2x the fill cost buys nothing visible. */
 const MAX_PIXEL_RATIO = 2;
@@ -233,7 +233,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   scene.add(ambient);
 
   const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
-  sun.position.set(...SUN_DIRECTION_NOON).normalize().multiplyScalar(SUN_DISTANCE_CELLS);
+  sun.position.set(...SUN_DIRECTION_NOON).normalize().multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
   // No shadow map in Phase 1: a directional shadow covering a 512-cell world
   // needs a large cascade to avoid acne, and the terraced silhouette already
   // reads without it. Revisit with the Phase 2 look pass.

@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CHUNK_SIZE } from '@terrace/shared';
 import { decodeHeights, encodeHeights } from '../src/persistence/codec.ts';
 import {
   SNAPSHOT_RETENTION,
@@ -18,7 +19,11 @@ import type { TerracePlugin } from '../src/plugins/types.ts';
 import { World } from '../src/world/world.ts';
 import { asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
 
-const WORLD_SIZE = 64;
+// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
+// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
+// four-chunk world is smaller ground than it was — which is fine here: every
+// assertion in this suite is about chunk mechanics, not about distances.)
+const WORLD_SIZE = CHUNK_SIZE * 4;
 
 /** A plugin whose whole state is a counter, so a slice round-trip is visible. */
 function counterPlugin(initial: number): TerracePlugin & { value: number } {

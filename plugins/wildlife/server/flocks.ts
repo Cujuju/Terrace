@@ -44,7 +44,11 @@
 // CLOCK: `dt` from the host, exactly like every other file here. No wall clock.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { CHUNK_SIZE } from '@terrace/shared';
+import {
+  NEIGHBOURHOOD_CELLS,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS_INDEX,
   type WildlifeEntityState,
@@ -76,10 +80,10 @@ const BIRD_SPECIES: WildlifeFlockSpecies = 'bird';
  *
  * That it is also 2.7× a fish and 5× a grazer is the point: birds are the
  * fastest thing in the world, they cross rather than mill, and at this speed a
- * flock is in a player's ~100-cell view for a good ten seconds — long enough to
+ * flock is in a player's ~100-world-unit view for a good ten seconds — long enough to
  * look up at, short enough to be an event.
  */
-export const BIRD_CRUISE_SPEED_CELLS_PER_SECOND = 8;
+export const BIRD_CRUISE_SPEED_CELLS_PER_SECOND = cellsAcross(8);
 
 /**
  * Maximum random heading change, radians per second — the same dial as a
@@ -202,18 +206,20 @@ export const FLOCK_MEAN_SPAWN_INTERVAL_SECONDS = 60;
  * furthest cell any player can be looking at, so flocks are never seen popping
  * into or out of existence — they fly in from off the map and off it again.
  */
-export const FLOCK_RING_MARGIN_CELLS = CHUNK_SIZE;
+export const FLOCK_RING_MARGIN_CELLS = NEIGHBOURHOOD_CELLS;
 
 /**
- * Scatter of a newborn flock around its entry point, in cells.
+ * Scatter of a newborn flock around its entry point, in cells — four WORLD
+ * UNITS, converted, because it is sized against the flock's own dimensions.
  *
  * Sized on the steering it is handed to: BIRD_FLOCK_LOOSENESS × the shared
- * SCHOOL_COMFORT_RADIUS_CELLS is 5, so a ±4-cell scatter puts every bird inside
+ * SCHOOL_COMFORT_RADIUS_CELLS is 5 world units, so a ±4-unit scatter puts every
+ * bird inside
  * the radius at which cohesion is silent. A flock therefore forms up gradually
  * out of a loose scatter instead of visibly clenching in its first second — the
  * same argument the fish groups' GROUP_SCATTER_BODY_LENGTHS makes.
  */
-export const FLOCK_SPAWN_SCATTER_CELLS = 4;
+export const FLOCK_SPAWN_SCATTER_CELLS = cellsAcross(4);
 
 /**
  * Half-extent, as a fraction of the world edge, of the square around the world's

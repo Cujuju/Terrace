@@ -49,6 +49,7 @@ import {
   type Material,
   type Object3D,
 } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type { WeatherKind } from '../protocol.ts';
 import type { InterpolatedSystem } from './interpolation.ts';
 import {
@@ -506,7 +507,13 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
     root,
 
     update(system, elapsed, dt, reduced, governor): void {
-      root.position.set(system.x, 0, system.y);
+      // The wire carries a system's position, radius and velocity in CELLS —
+      // the server sims the weather on the same grid as everything else — and
+      // everything below draws in WORLD UNITS. One conversion at the top, so no
+      // line further down has to remember which space it is in. It was a no-op
+      // until the 2026-08-21 re-sample made a cell a quarter of a world unit.
+      const worldRadius = system.radius * CELL_WORLD_SIZE;
+      root.position.set(system.x * CELL_WORLD_SIZE, 0, system.y * CELL_WORLD_SIZE);
 
       const intensity = system.intensity;
       // Nothing to draw at zero, and a transparent draw call that contributes
@@ -518,14 +525,19 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
 
       if (precipitation !== null && profile !== null) {
         precipitation.material.opacity = profile.opacity * intensity;
-        precipitation.advance(elapsed, system.radius, system.vx, system.vy);
+        precipitation.advance(
+          elapsed,
+          worldRadius,
+          system.vx * CELL_WORLD_SIZE,
+          system.vy * CELL_WORLD_SIZE,
+        );
       }
 
       for (let index = 0; index < fogSheets.length; index++) {
         const layer = FOG_LAYERS[index]!;
         const sheet = fogSheets[index]!;
         fogMaterials[index]!.opacity = layer.opacity * hazeScale * intensity;
-        sheet.scale.setScalar(system.radius * layer.radiusScale);
+        sheet.scale.setScalar(worldRadius * layer.radiusScale);
         // `elapsed` is frozen under reduced motion, so this is the rest pose
         // re-asserted every frame — no state machine, and a preference turned on
         // mid-session becalms the bank on the next frame.
@@ -542,7 +554,7 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
       // has to remember. The governor then has the last word (sky.ts).
       const flash = lightning.advance(dt, !reduced, governor);
       if (flash !== null) {
-        const distance = flash.reach * system.radius;
+        const distance = flash.reach * worldRadius;
         const x = Math.cos(flash.bearing) * distance;
         const z = Math.sin(flash.bearing) * distance;
         boltPivot!.position.set(x, 0, z);
@@ -562,7 +574,7 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
         glowMaterial!.opacity = brightness * FLASH_GLOW_OPACITY;
         // The glow rides the widest sheet, so the whole bank lights rather than
         // a disc in its middle.
-        glowSheet!.scale.setScalar(system.radius * FOG_LAYERS[0]!.radiusScale);
+        glowSheet!.scale.setScalar(worldRadius * FOG_LAYERS[0]!.radiusScale);
         glowSheet!.position.y = FOG_LAYERS[0]!.height;
       }
       flashLight!.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;

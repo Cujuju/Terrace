@@ -23,15 +23,30 @@ import {
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
+  WORLD_UNIT_CELLS,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
 import type { ConnectionStatus } from '../net/connection.ts';
 
-/** Selectable radii, derived from shared's bounds — never hard-coded. */
+/**
+ * The brush ladder the player picks from, in cells: one, two, three and four
+ * WORLD UNITS of ground, the same four sizes offered since 2026-08-13.
+ *
+ * THE LADDER IS IN WORLD UNITS AND THE BOUNDS ARE NOT (2026-08-21). It used to
+ * be every integer radius from shared's MIN_BRUSH_RADIUS to MAX_BRUSH_RADIUS,
+ * which was the same four sizes back when a cell was a world unit. After the
+ * re-sample that range is thirteen rungs, twelve of them a quarter of a world
+ * unit apart — brushes a player cannot tell apart — and its first rung is the
+ * one-CELL brush, which cannot raise a terrace at all (see MIN_BRUSH_RADIUS,
+ * where the floor's job is spelled out). So the ladder states the sizes it
+ * always meant, and the ceiling is still shared's: `expect`ed to be the top
+ * rung by hudState's own test, so widening the wire bound without revisiting
+ * this list fails loudly.
+ */
 export const BRUSH_RADII: readonly number[] = Array.from(
-  { length: MAX_BRUSH_RADIUS - MIN_BRUSH_RADIUS + 1 },
-  (_, i) => MIN_BRUSH_RADIUS + i,
+  { length: MAX_BRUSH_RADIUS / WORLD_UNIT_CELLS },
+  (_, i) => (i + 1) * WORLD_UNIT_CELLS,
 );
 
 /** Selectable brush tools / edge profiles, straight from shared's own sets. */
@@ -138,8 +153,13 @@ export function setFrameRate(fps: number): void {
 
 const STORAGE_KEY = 'terrace.hudState.v1';
 
-/** Radius 1 is the Populous point brush — the least surprising default. */
-export const DEFAULT_BRUSH_RADIUS = MIN_BRUSH_RADIUS;
+/**
+ * The ladder's first rung — one world unit of ground, the Populous point brush
+ * — is the least surprising default. NOT shared's MIN_BRUSH_RADIUS since the
+ * 2026-08-21 re-sample: that is the grid's floor, four times finer, and a
+ * player who has picked nothing should get the brush the game is tuned around.
+ */
+export const DEFAULT_BRUSH_RADIUS = BRUSH_RADII[0]!;
 
 /**
  * Brush tool and edge profile default to the WIRE defaults rather than to

@@ -34,7 +34,11 @@ import {
   UnsignedByteType,
   type Object3D,
 } from 'three';
-import { SEA_LEVEL } from '@terrace/shared';
+import {
+  SEA_LEVEL,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 import {
   CELL_WORLD_SIZE,
   HEIGHT_WORLD_SCALE,
@@ -75,8 +79,14 @@ const WATER_METALNESS = 0;
  * Cells of open ocean drawn beyond the world's edge. Purely cosmetic: it stops
  * the sea ending in a visible straight edge when the camera looks outward past
  * a small revealed area.
+ *
+ * 256 WORLD UNITS of ocean — half a default world's edge, which is what makes
+ * it read as open sea rather than as a rim — counted in cells because that is
+ * what the span arithmetic below works in. Stated in world units so the
+ * 2026-08-21 re-sample could not quietly pull the horizon in to a quarter of
+ * the distance it was drawn at.
  */
-const WATER_MARGIN_CELLS = 256;
+const WATER_MARGIN_CELLS = cellsAcross(256);
 
 /** Quarter turn: PlaneGeometry is built in XY, and the sea lies in XZ. */
 const PLANE_TO_GROUND_ROTATION_X = -Math.PI / 2;
@@ -173,6 +183,16 @@ function createDepthTexture(
  * the terrain shows through. Verified against the same three 0.185
  * meshphysical fragment chunk render/terrainMeshes.ts's own splice cites.
  */
+/**
+ * Formats a JS number as a GLSL float literal. GLSL ES forbids mixing int and
+ * float in an expression, so a spliced-in constant that happens to be integral
+ * (`4`) would fail to compile where `4.0` is fine; `toFixed` guarantees the
+ * decimal point that makes the literal a float whatever the value is.
+ */
+function glslFloat(value: number): string {
+  return value.toFixed(6);
+}
+
 function makeDepthAware(
   material: MeshStandardMaterial,
   depthAlphaTexture: DataTexture,
@@ -193,9 +213,11 @@ function makeDepthAware(
       '#include <begin_vertex>',
       // World-space, not local: the plane is rotated and re-centred per
       // setWorldSize, and cell (0,0) must land on texel (0,0) regardless.
-      // CELL_WORLD_SIZE is fixed at 1 (config.ts), so world XZ IS cell
-      // coordinates with no scale factor to apply here.
-      '#include <begin_vertex>\nvWaterCellXZ = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;',
+      // The scale factor is CELL_WORLD_SIZE (config.ts) and it is spliced in
+      // as a literal rather than passed as a uniform because it is a
+      // compile-time constant of the build — it was 1 until the 2026-08-21
+      // re-sample, which is why this line used to have no factor at all.
+      `#include <begin_vertex>\nvWaterCellXZ = ( modelMatrix * vec4( transformed, 1.0 ) ).xz / ${glslFloat(CELL_WORLD_SIZE)};`,
       'water',
     );
     shader.fragmentShader = spliceShader(

@@ -23,6 +23,15 @@
 // as a future issue".
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The one import this file allows itself, and the reason is the same one that
+// keeps it dependency-free otherwise: every distance below is a fact about the
+// WORLD, and @terrace/shared owns how many cells the world is sampled at.
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+  cellsOverArea,
+} from '@terrace/shared';
+
 /** Plugin name on both sides. Also the message namespace. */
 export const BOATS_PLUGIN_NAME = 'boats';
 
@@ -103,26 +112,33 @@ export const BOATS_PER_VILLAGE = 3;
 export const BOAT_REBUILD_SECONDS = 20;
 
 /**
- * Boat speed, cells per second.
+ * Boat speed, cells per second — 1.5 WORLD UNITS per second, converted.
+ *
+ * A speed is a distance across the ground per second, so it is stated in world
+ * units and multiplied by WORLD_UNIT_CELLS like every other distance in this
+ * file. Left as a literal 1.5 through the 2026-08-21 re-sample every boat in
+ * the game would have slowed to a quarter of the speed it was tuned at, and
+ * the ratio the next paragraph rests on would still have held — which is
+ * exactly why nothing would have failed.
  *
  * 1.5, and it is a RATIO rather than a feel number: the kraken lurks at 0.6
- * cells/s (plugins/monsters/server/kinds.ts), so a boat closes at 2.5× its
+ * world units/s (plugins/monsters/server/kinds.ts), so a boat closes at 2.5× its
  * quarry. Anything at or under the kraken's own speed would let it simply
  * out-swim the fleet forever and the mechanic would never resolve; 2.5× closes
  * a full engagement range in under four seconds while still reading as a
  * working boat rather than a torpedo.
  */
-export const BOAT_SPEED_CELLS_PER_SECOND = 1.5;
+export const BOAT_SPEED_CELLS_PER_SECOND = cellsAcross(1.5);
 
 /**
- * How close a boat must get to fight, in cells.
+ * How close a boat must get to fight, in cells — five WORLD UNITS, converted.
  *
- * 5 — just outside the kraken's own 7-cell footprint (half-width 3.5, see
+ * 5 — just outside the kraken's own 7-world-unit footprint (half-width 3.5, see
  * monsters' KRAKEN_FOOTPRINT_CELLS, restated). A boat fights at arm's length
  * from the arm crown: close enough that the two read as engaged, far enough
  * that the hull is never drawn inside the animal.
  */
-export const BOAT_ENGAGEMENT_RANGE_CELLS = 5;
+export const BOAT_ENGAGEMENT_RANGE_CELLS = cellsAcross(5);
 
 /**
  * Wounds one engaged boat inflicts per second. ONE, by definition — it is the
@@ -211,24 +227,33 @@ export const KRAKEN_WOUND_HEAL_PER_SECOND = 2;
  * coastal and was really a definition of *waterfront*. Measured against the
  * owner's live world it called all seven tier-1 settlements inland, including
  * one the structures plugin had already given a harbour and skiffs to, whose
- * water was three cells away. No boat was ever built. Settlements sit on
+ * water was three world units away. No boat was ever built. Settlements sit on
  * BUILDABLE ground (suitability.ts), which the shoreline itself rarely is, so
  * "coastal" essentially never means "adjacent".
  */
-export const COASTAL_SEARCH_RADIUS_CELLS = 4;
-export const COASTAL_MIN_WATER_CELLS = 2;
+export const COASTAL_SEARCH_RADIUS_CELLS = cellsAcross(4);
+/**
+ * How much water inside that disc makes a settlement coastal — an AREA, not a
+ * distance, so it scales as the SQUARE of the sampling density: two world
+ * units' worth of sea is 32 cells of it since the 2026-08-21 re-sample. Scaled
+ * with the wrong power this would be the one constant in the file that still
+ * looked right and behaved differently — a two-CELL threshold inside a disc
+ * sixteen times denser calls a settlement with a puddle coastal.
+ */
+export const COASTAL_MIN_WATER_CELLS = cellsOverArea(2);
 
 /**
  * Furthest a village will send boats, in cells.
  *
- * 64 — four chunks, the same order as monsters' own minimum lair (nine chunks
- * across for the kraken), so a village defends the water it can plausibly be
- * said to fish rather than the whole ocean. Without a bound, one tier-1
- * settlement on a 512² world would answer a kraken 500 cells away, which is
+ * 64 WORLD UNITS — four chunks, the same order as monsters' own minimum lair
+ * (nine chunks across for the kraken), so a village defends the water it can
+ * plausibly be said to fish rather than the whole ocean. Without a bound, one
+ * tier-1 settlement on a default world would answer a kraken 500 world units
+ * away, which is
  * neither legible nor winnable: the fleet would spend minutes in transit and
  * arrive one boat at a time.
  */
-export const VILLAGE_PATROL_RANGE_CELLS = 64;
+export const VILLAGE_PATROL_RANGE_CELLS = cellsAcross(64);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wire encoding and validation.

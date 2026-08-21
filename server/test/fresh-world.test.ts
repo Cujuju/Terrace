@@ -17,7 +17,15 @@
 // things: bounds, band-alignment, determinism from a seed, variation across
 // seeds, and the hard deep-water guarantee.
 
-import { BAND_HEIGHT, CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL, isWater } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  MAX_HEIGHT,
+  MIN_HEIGHT,
+  NEIGHBOURHOOD_CELLS,
+  SEA_LEVEL,
+  isWater,
+} from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import { INITIAL_UNLOCK_CHUNK_SPAN, initialUnlockFootprint } from '../src/world/initial-unlock.ts';
 import {
@@ -37,19 +45,39 @@ import {
 } from '../src/world/world.ts';
 import { worldWithUnlockedChunks } from './support/harness.ts';
 
-/** Big enough that shelf, slope and open sea all exist and none is clamped. */
-const WORLD_SIZE = 256;
+/**
+ * Big enough that shelf, slope and open sea all exist and none is clamped.
+ * SIXTEEN CHUNKS a side — the world's size is counted in chunks throughout this
+ * suite, so the 2026-08-21 re-sample moved the cell figures and left every
+ * assertion about the SHAPE of a fresh world exactly where it was.
+ */
+const WORLD_SIZE = NEIGHBOURHOOD_CELLS * 16;
 
 /**
- * A size with room outside the starter unlock square (128² at
- * INITIAL_UNLOCK_CHUNK_SPAN = 8, CHUNK_SIZE = 16), so tests that need
- * genuinely seed-varied outer terrain — as opposed to the starter square's
- * fixed, deep-clamped remainder — have somewhere to look.
+ * A size with room outside the starter unlock square (which is
+ * INITIAL_UNLOCK_CHUNK_SPAN chunks a side), so tests that need genuinely
+ * seed-varied outer terrain — as opposed to the starter square's fixed,
+ * deep-clamped remainder — have somewhere to look.
  */
-const WORLD_SIZE_WITH_OUTER_TERRAIN = 512;
+const WORLD_SIZE_WITH_OUTER_TERRAIN = NEIGHBOURHOOD_CELLS * 32;
 
-/** Every valid world size the project ships: multiples of CHUNK_SIZE, 64..4096. */
-const VALID_SIZES = [64, 80, 128, 144, 256, 512, 1024, 4096];
+/**
+ * Every valid world size the project ships, in CHUNKS: a world is any positive
+ * multiple of CHUNK_SIZE, and these are the spans the suite exercises — the
+ * smallest that has an inside and an outside, an odd one, and on up to the
+ * largest this suite is willing to generate. Stated in chunks so the re-sample
+ * could not silently drop the small end below one chunk.
+ *
+ * THE TOP END IS A QUARTER OF WHAT IT WAS, in world units, and deliberately:
+ * the old list topped out at 4096 CELLS, which was 4096 world units of ground
+ * and 16.7 M cells. The same ground is 268 M cells since the 2026-08-21
+ * re-sample — half a gigabyte of Int16 and minutes of genesis per seed — so the
+ * sweep stops at 32 chunks — 512 world units, the DEFAULT world, and already
+ * 4.2 M cells to generate per seed. Nothing in the code caps a world there; this
+ * is the suite declining to generate one, and the same arithmetic is what a
+ * self-hoster should read before setting WORLD_SIZE.
+ */
+const VALID_SIZES = [4, 5, 8, 9, 16, 32].map((span) => span * NEIGHBOURHOOD_CELLS);
 
 /** Small, fixed seeds so a failing assertion is easy to reproduce by hand. */
 const SEEDS = Array.from({ length: 20 }, (_, i) => i * 104729 + 1); // 104729 is prime; just decorrelates the sequence
@@ -60,20 +88,28 @@ const SEEDS = Array.from({ length: 20 }, (_, i) => i * 104729 + 1); // 104729 is
  *
  * Named for what earns the budget — world generation, not one subject — so
  * every such test reaches for the same one. The trench sweeps generate whole
- * 512² worlds across the seed sample and re-evaluate the genesis field cell by
- * cell beside them (~3 s here); the valid-size smoke test builds one world at
- * every shipped size up to 4096², which is a 16 M-cell generation on its own
- * (~5 s here, and the slowest single line in the file).
+ * worlds across the seed sample and re-evaluate the genesis field cell by cell
+ * beside them; the valid-size smoke test builds one world at every shipped
+ * size, the largest of which is a generation big enough to be the slowest
+ * single line in the file.
  *
  * Raised rather than shrinking either sample: the seed count is what the
- * trench assertions rest on, and dropping 4096 from VALID_SIZES would stop the
- * size test covering the documented range.
+ * trench assertions rest on, and dropping the largest entry from VALID_SIZES
+ * would stop the size test covering the documented range.
  *
  * 2026-08-21: the valid-size test was omitting this and running on Vitest's
  * 5 s default, so it failed whenever the machine was busy and passed when it
  * was not — a flake that looked like whichever commit was in the tree.
+ *
+ * RE-MEASURED THE SAME DAY, AFTER THE RE-SAMPLE, which is why the value is
+ * 240 s and not the 15 s those measurements justified. Both subjects are
+ * whole-world scans and the re-sample put sixteen times the cells inside the
+ * same ground, so both grew by that order: ~3 s of trench sweep and ~5 s of
+ * size smoke test are now minutes between them. Neither sample shrank, so
+ * neither assertion is weaker — the same work simply costs sixteen times as
+ * much.
  */
-const WORLD_GENERATION_TIMEOUT_MS = 15_000;
+const WORLD_GENERATION_TIMEOUT_MS = 240_000;
 
 describe('the fresh-world genesis profile', () => {
   it('is three descending terraces, all water, inside the sculpt range', () => {
@@ -156,7 +192,7 @@ describe('the fresh-world genesis profile', () => {
     const a = World.createFresh(WORLD_SIZE_WITH_OUTER_TERRAIN, undefined, undefined, 42);
     const b = World.createFresh(WORLD_SIZE_WITH_OUTER_TERRAIN, undefined, undefined, 42);
     expect(Array.from(a.map.cells)).toEqual(Array.from(b.map.cells));
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('varies with the seed: two fresh worlds from different seeds differ', () => {
     // A size with outer terrain to draw on: two arbitrary seeds are all but
@@ -165,10 +201,10 @@ describe('the fresh-world genesis profile', () => {
     const a = World.createFresh(WORLD_SIZE_WITH_OUTER_TERRAIN, undefined, undefined, 1);
     const b = World.createFresh(WORLD_SIZE_WITH_OUTER_TERRAIN, undefined, undefined, 2);
     expect(Array.from(a.map.cells)).not.toEqual(Array.from(b.map.cells));
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('varies with the seed even at the smallest shipped size — but only probabilistically', () => {
-    // A 128² world IS the starter square, so its only seed-driven texture is
+    // An 8-chunk world IS the starter square, so its only seed-driven texture is
     // the deep-water clamp's "how much deeper than FRESH_SEABED_HEIGHT" — and
     // that clamp is a one-way ratchet (never shallower, see
     // freshGenesisHeightAt): whenever a seed's outer-terrain noise never dips
@@ -182,11 +218,11 @@ describe('the fresh-world genesis profile', () => {
     // several seeds, not just a pair — for at least one difference, the same
     // "don't trust a single roll" shape as the default-seed test above.
     const worlds = SEEDS.slice(0, 6).map((seed) =>
-      Array.from(World.createFresh(128, undefined, undefined, seed).map.cells),
+      Array.from(World.createFresh(NEIGHBOURHOOD_CELLS * 8, undefined, undefined, seed).map.cells),
     );
     const allIdenticalToFirst = worlds.every((cells) => cells.every((h, i) => h === worlds[0][i]));
     expect(allIdenticalToFirst).toBe(false);
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('draws a fresh, non-reproducible seed when none is supplied', () => {
     // World.createFresh's default seed comes from Math.random via
@@ -205,7 +241,7 @@ describe('the fresh-world genesis profile', () => {
       cells.every((h, i) => h === worlds[0][i]),
     );
     expect(allIdenticalToFirst).toBe(false);
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('guarantees water at least as deep as FRESH_SEABED_HEIGHT, at every valid size, across many seeds', () => {
     // THE hard invariant this change must not regress: every generated world
@@ -213,7 +249,7 @@ describe('the fresh-world genesis profile', () => {
     // in World.createFresh (the starter-square clamp) and re-checked there at
     // runtime (throws if ever violated) — this test is the empirical half of
     // that guarantee, swept across sizes and seeds rather than trusted once.
-    for (const size of [64, 80, 128, 256]) {
+    for (const size of [4, 5, 8, 16].map((span) => span * NEIGHBOURHOOD_CELLS)) {
       for (const seed of SEEDS) {
         const world = World.createFresh(size, undefined, undefined, seed);
         let deepest = MAX_HEIGHT;
@@ -221,7 +257,7 @@ describe('the fresh-world genesis profile', () => {
         expect(deepest).toBeLessThanOrEqual(FRESH_SEABED_HEIGHT);
       }
     }
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('keeps every height an integer, band-aligned, and inside [MIN_HEIGHT, MAX_HEIGHT]', () => {
     // A plain loop with one `expect` per world, not per cell: vitest's matcher
@@ -229,7 +265,7 @@ describe('the fresh-world genesis profile', () => {
     // calls, so this scans in raw JS and only asserts a summary — the same
     // "keep the loop cheap, keep the assertion at the boundary" shape as the
     // deep-water sweep below.
-    for (const size of [64, 144, 256]) {
+    for (const size of [4, 9, 16].map((span) => span * NEIGHBOURHOOD_CELLS)) {
       for (const seed of SEEDS.slice(0, 5)) {
         const world = World.createFresh(size, undefined, undefined, seed);
         let allValid = true;
@@ -251,17 +287,18 @@ describe('the fresh-world genesis profile', () => {
         expect(allValid).toBe(true);
       }
     }
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('accepts every valid world size without throwing', () => {
-    // multiples of CHUNK_SIZE from 64 to 4096 — the documented valid range.
-    // 4096 only at one seed; it is a 16M-cell sweep and this is a smoke test,
-    // not the deep-water sweep above.
+    // Every span in VALID_SIZES (see its comment for where the top end sits
+    // and why), one seed each: this is a smoke test, not the deep-water sweep
+    // above, and its largest world alone is a 16 M-cell generate.
     for (const size of VALID_SIZES) {
       expect(size % CHUNK_SIZE).toBe(0);
       expect(() => World.createFresh(size, undefined, undefined, 7)).not.toThrow();
     }
-    // 4096² alone is a 16 M-cell generation — see the constant.
+    // The largest shipped size alone is a multi-million-cell generation — see
+    // the constant.
   }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('still guarantees deep water on a world too small for the slope ring to fit at all', () => {
@@ -280,12 +317,12 @@ describe('the fresh-world genesis profile', () => {
   });
 
   it('degrades to a one-chunk shelf on a world too small to divide', () => {
-    // 128² is the smallest shipped configuration: 8×8 chunks, so the unlock
+    // Eight chunks a side is the smallest shipped configuration, so the unlock
     // square is the whole world and the shelf is 8/FRESH_SHELF_SPAN_DIVISOR
     // chunks. The clamp only matters below that, and it must never produce a
     // zero-width shelf.
-    const tiny = World.createFresh(CHUNK_SIZE * 2, undefined, undefined, 1);
-    const { shelfMinCell, shelfMaxCell } = freshGenesisProfile(CHUNK_SIZE * 2);
+    const tiny = World.createFresh(NEIGHBOURHOOD_CELLS * 2, undefined, undefined, 1);
+    const { shelfMinCell, shelfMaxCell } = freshGenesisProfile(NEIGHBOURHOOD_CELLS * 2);
     expect(shelfMaxCell - shelfMinCell + 1).toBeGreaterThanOrEqual(CHUNK_SIZE);
     expect(tiny.heightAt(shelfMinCell, shelfMinCell)).toBe(FRESH_SHELF_HEIGHT);
   });
@@ -342,7 +379,7 @@ describe('the fresh-world genesis profile', () => {
         expect(floor % BAND_HEIGHT === 0).toBe(true);
       }
     }
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('keeps the starter unlock square unchanged', () => {
     // Genesis reads the unlock footprint; it must not move it. INITIAL_UNLOCK_
@@ -381,7 +418,7 @@ describe('the fresh-world genesis profile', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the kraken trench pass', () => {
   /** Smallest shipped world, and the default. */
-  const TRENCH_SIZES = [128, WORLD_SIZE_WITH_OUTER_TERRAIN];
+  const TRENCH_SIZES = [NEIGHBOURHOOD_CELLS * 8, WORLD_SIZE_WITH_OUTER_TERRAIN];
 
   /**
    * The genesis field with the trench pass nulled out. By construction this IS
@@ -402,7 +439,7 @@ describe('the kraken trench pass', () => {
       expect(planned.some((trench) => trench !== null)).toBe(true);
       expect(planned.some((trench) => trench === null)).toBe(true);
     }
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('only ever deepens cells that were already open ocean, and moves none otherwise', () => {
     // The whole structural contract in one sweep, counted in raw JS with the
@@ -484,7 +521,7 @@ describe('the kraken trench pass', () => {
         );
       }
     }
-  });
+  }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('does not disturb genesis for a snapshot-restored world', () => {
     // The pass runs inside buildFreshGenesisTerrain, which World.restore never

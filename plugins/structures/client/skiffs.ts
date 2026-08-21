@@ -62,22 +62,28 @@ export const SKIFF_MAX_PER_SETTLEMENT = 3;
 export const SKIFF_ORBIT_PERIOD_SECONDS = 14;
 
 /**
- * Bounds on a skiff's idle-orbit radius around its anchor cell, in world
- * units (== cells; CELL_WORLD_SIZE = 1, client/src/config.ts).
+ * Bounds on a skiff's idle-orbit radius around its anchor cell, in WORLD UNITS.
  *
- * Both comfortably under 0.5: a skiff orbits WITHIN the one cell site.ts
- * confirmed is water — an orbit reaching a neighbouring cell would spend
- * that guarantee on ground nobody checked, which is exactly the "skiffs
- * must respect the water" failure this bound exists to rule out. 0.12 as
- * the floor keeps even the smallest roll visibly moving rather than sitting
- * still; 0.28 as the ceiling leaves margin against the cell edge for the
- * hull's own half-length (skiffModels.ts's hull geometry).
+ * The values are unchanged by the 2026-08-21 re-sample and deliberately so: a
+ * skiff's orbit is as wide a patch of sea as it ever was, and 0.12 as the floor
+ * still keeps even the smallest roll visibly moving rather than sitting still.
+ *
+ * WHAT THE RE-SAMPLE DID TAKE, STATED RATHER THAN QUIETLY LOST: these bounds
+ * were both under half a CELL back when a cell was a world unit, which made the
+ * orbit provably contained by the one cell site.ts confirmed is water. A cell
+ * is a quarter of a world unit now, so a 0.28 orbit spans about two of them and
+ * the containment no longer follows from the number — nor could it, since the
+ * hull itself (0.9 world units, skiffModels.ts) is wider than a cell. In
+ * practice the survey's water cell sits in open sea and its neighbours are
+ * water too; the guarantee is now empirical rather than structural. RESIDUAL,
+ * named and not fixed here: restoring it means having site.ts confirm a water
+ * DISC the orbit fits inside, which is a change to the survey, not to a bound.
  */
 export const SKIFF_ORBIT_RADIUS_MIN_WORLD_UNITS = 0.12;
 export const SKIFF_ORBIT_RADIUS_MAX_WORLD_UNITS = 0.28;
 
 export interface SkiffPlacement {
-  /** Anchor water cell — world X/Z, since CELL_WORLD_SIZE = 1. */
+  /** Anchor water cell, in CELLS. skiffModels.ts converts it to world X/Z. */
   readonly x: number;
   readonly z: number;
   readonly orbitRadius: number;

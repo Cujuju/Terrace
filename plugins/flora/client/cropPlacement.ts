@@ -1,11 +1,12 @@
 // Turning "there is a crop at cell (x, y)" into "draw a crop cluster at this
 // world transform" — placement.ts's own logic, restated for crops (card 28).
 // See that file's header for the reasoning this one shares verbatim: pure
-// arithmetic (no three, no DOM), horizontal placement needs no code because
-// CELL_WORLD_SIZE is 1, and vertical placement is one ground lookup with no
+// arithmetic (no three, no DOM), horizontal placement is one multiply by
+// CELL_WORLD_SIZE, and vertical placement is one ground lookup with no
 // per-frame re-sampling because ANY height change under a crop withers it
 // server-side (server/index.ts's reactToTerrain).
 
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { cropVariation, type CropCell } from '../protocol.ts';
 import type { CropPlacement } from './cropModels.ts';
 
@@ -40,8 +41,8 @@ export function cropPlacementsFor(
 
     const variation = cropVariation(cell.x, cell.y);
     placements.push({
-      x: cell.x,
-      z: cell.y,
+      x: cell.x * CELL_WORLD_SIZE,
+      z: cell.y * CELL_WORLD_SIZE,
       groundY,
       scale: variation.scale,
       yaw: variation.yaw,

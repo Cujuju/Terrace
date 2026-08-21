@@ -8,7 +8,16 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRoot } from 'solid-js';
-import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from '@terrace/shared';
+import { MAX_BRUSH_RADIUS, WORLD_UNIT_CELLS } from '@terrace/shared';
+
+/**
+ * The brush the HUD starts on — the ladder's first rung, one world unit of
+ * ground (client/src/state/hudState.ts's BRUSH_RADII). NOT shared's
+ * MIN_BRUSH_RADIUS since the 2026-08-21 re-sample: that is the protocol's
+ * one-CELL floor, which no picker offers, so a gauge test driven by it would
+ * be reading a brush no player can select.
+ */
+const POINT_BRUSH_RADIUS = 1 * WORLD_UNIT_CELLS;
 import {
   setBrushProfile,
   setBrushRadius,
@@ -126,10 +135,10 @@ describe('fill level', () => {
 
 describe('pulse period — the rate readout', () => {
   it('is one CURRENT-BRUSH sculpt worth of regen, in seconds', () => {
-    // The point brush at 20/s: 6 mana at 20/s = 0.3 s per grain.
+    // The point brush at 20/s: 7 mana at 20/s = 0.35 s per grain.
     expect(
       pulsePeriodSeconds(MANA_COST_PER_MIN_RADIUS_SCULPT, EXAMPLE_REGEN_PER_SECOND),
-    ).toBeCloseTo(0.3, 10);
+    ).toBeCloseTo(MANA_COST_PER_MIN_RADIUS_SCULPT / EXAMPLE_REGEN_PER_SECOND, 10);
     expect(pulsePeriodSeconds(25, 5)).toBe(5);
   });
 
@@ -210,7 +219,7 @@ describe('current-brush cost', () => {
   afterEach(() => {
     // Module-scope signals: leave the HUD as this suite found it.
     setManaPool(null);
-    setBrushRadius(MIN_BRUSH_RADIUS);
+    setBrushRadius(POINT_BRUSH_RADIUS);
     setBrushProfile('soft');
   });
 
@@ -222,7 +231,7 @@ describe('current-brush cost', () => {
   it('re-derives when the player changes brush, without a new push', () => {
     createRoot((dispose) => {
       setManaPool(POOL);
-      setBrushRadius(MIN_BRUSH_RADIUS);
+      setBrushRadius(POINT_BRUSH_RADIUS);
       setBrushProfile('soft');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
 
@@ -239,8 +248,12 @@ describe('current-brush cost', () => {
         sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft'),
       );
 
-      // And back down again: nothing here is sticky.
-      setBrushRadius(MIN_BRUSH_RADIUS);
+      // And back down again: nothing here is sticky. BOTH dials have to go
+      // back — the point brush covers a world unit of ground since the
+      // 2026-08-21 re-sample, so soft and hard are no longer the same stroke on
+      // it the way they were on a single cell.
+      setBrushRadius(POINT_BRUSH_RADIUS);
+      setBrushProfile('soft');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MIN_RADIUS_SCULPT);
       dispose();
     });
@@ -249,7 +262,7 @@ describe('current-brush cost', () => {
   it('re-times the grain cue with the brush', () => {
     createRoot((dispose) => {
       setManaPool(POOL);
-      setBrushRadius(MIN_BRUSH_RADIUS);
+      setBrushRadius(POINT_BRUSH_RADIUS);
       setBrushProfile('soft');
       const pointPeriod = pulsePeriodSeconds(currentBrushCost(), POOL.regenPerSecond);
 
@@ -283,8 +296,8 @@ describe('current-brush cost', () => {
 
 describe('brush price readout', () => {
   it('prints the price as a per-use debit', () => {
-    expect(formatSculptCost(MANA_COST_PER_MIN_RADIUS_SCULPT)).toBe('−6/use');
-    expect(formatSculptCost(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT)).toBe('−222/use');
+    expect(formatSculptCost(MANA_COST_PER_MIN_RADIUS_SCULPT)).toBe('−7/use');
+    expect(formatSculptCost(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT)).toBe('−281/use');
   });
 
   it('shows a dash rather than claiming sculpting is free', () => {

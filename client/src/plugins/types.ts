@@ -43,7 +43,7 @@ export interface SkyRigState {
   /**
    * Unit-ish direction the sun shines FROM, in the same convention
    * DirectionalLight.position already uses (core places the light at this
-   * direction, scaled out to SUN_DISTANCE_CELLS, and its target defaults to
+   * direction, scaled out to SUN_DISTANCE_WORLD_UNITS, and its target defaults to
    * the origin) — not the direction the light TRAVELS in.
    */
   readonly sunDirection: { readonly x: number; readonly y: number; readonly z: number };

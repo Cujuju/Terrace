@@ -10,7 +10,10 @@ import {
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   MAX_HEIGHT,
+  MIN_BRUSH_RADIUS,
+  WORLD_UNIT_CELLS,
   applySculpt,
+  bandOf,
   chunkIndex,
   createHeightmap,
   heightAt,
@@ -34,7 +37,10 @@ import {
 } from '../src/terrain/prediction.ts';
 
 /** 64 cells = 4×4 chunks — same fixture size as the mirror tests. */
-const WORLD = 64;
+// Four chunks to a side, whatever a chunk is sampled at — the 2026-08-21
+// re-sample moved the cell figure and left the geometry this suite asserts on
+// exactly where it was.
+const WORLD = CHUNK_SIZE * 4;
 const CELLS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 /** Cell well inside chunk (1,1), so a radius-4 brush stays off the world edge. */
 const CENTRE = { x: 24, y: 24 };
@@ -271,7 +277,7 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
   it('predicts a stamp as a spire: the neighbours never move', () => {
     const { mirror, store } = createClient();
 
-    store.predict({ ...raise(CENTRE.x, CENTRE.y, 1), tool: 'stamp' }, 0);
+    store.predict({ ...raise(CENTRE.x, CENTRE.y, MIN_BRUSH_RADIUS), tool: 'stamp' }, 0);
 
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
     expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
@@ -281,21 +287,25 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
   it('predicts the smooth tool as one crisp terrace, exactly like the server', () => {
     // SUPERSEDES "predicts the smooth tool as the old fabric pull". The client
     // predicts by running shared's own applySculpt, so this test tracks the
-    // feel change rather than arguing with it: since DEFAULT_SCULPT_AMOUNT and
-    // MAX_STEP are both BAND_HEIGHT, one click lands exactly ON the gradient
-    // limit and relaxation has no excess to push outward (owner, 2026-08-20 —
-    // godus, not populous; the contract itself is pinned in shared's
-    // heightmap.test.ts).
+    // feel change rather than arguing with it: a click is one band and the
+    // gradient limit is one band per WORLD UNIT, so a click with the smallest
+    // brush a player holds lands exactly ON the limit and relaxation has no
+    // excess to push outward (owner, 2026-08-20 — godus, not populous; the
+    // contract itself is pinned in shared's heightmap.test.ts, on the RENDERED
+    // band, which is what a player sees).
     //
     // What matters HERE is that prediction and server agree: a client that
     // still slumped would reconcile against an authoritative diff that did
     // not, and every stroke would snap.
     const { mirror, store } = createClient();
 
-    store.predict({ ...raise(CENTRE.x, CENTRE.y, 1), tool: 'smooth' }, 0);
+    // The ladder's first rung — one world unit (client/src/state/hudState.ts's
+    // BRUSH_RADII), not shared's one-CELL protocol floor.
+    const pointBrush = WORLD_UNIT_CELLS;
+    store.predict({ ...raise(CENTRE.x, CENTRE.y, pointBrush), tool: 'smooth' }, 0);
 
     expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
+    expect(bandOf(heightAt(mirror.map, CENTRE.x + pointBrush + 1, CENTRE.y))).toBe(0);
   });
 
   it('does not predict an intent whose tool or profile it does not recognise', () => {

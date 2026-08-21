@@ -25,19 +25,19 @@ const TWO_PI = Math.PI * 2;
 // ── The vertical layout of the sky ───────────────────────────────────────────
 
 /**
- * Cells of world height the full above-sea range stands — the client's
- * MAX_RELIEF_WORLD_CELLS (client/src/config.ts), restated here for the same
+ * World units of height the full above-sea range stands — the client's
+ * MAX_RELIEF_WORLD_UNITS (client/src/config.ts), restated here for the same
  * import reason as everything else in this block. THE relief fact: it alone
  * decides how mountainous the world looks, and since 2026-08-20 it is what the
  * client's whole vertical scale derives from.
  */
-const MAX_RELIEF_WORLD_CELLS = 16;
+const MAX_RELIEF_WORLD_UNITS = 16;
 
 /**
- * Height units per cell edge — the client's CELL_HEIGHT_UNITS (config.ts),
- * restated for the same import reason as the constants around it.
+ * Height units per world unit — the client's WORLD_UNIT_HEIGHT_UNITS
+ * (config.ts), restated for the same import reason as the constants around it.
  */
-const CELL_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_CELLS;
+const WORLD_UNIT_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_UNITS;
 
 /**
  * World units one terrace band rises.
@@ -51,11 +51,11 @@ const CELL_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_CELLS;
  *
  * THAT RESIDUAL CAME TRUE ON 2026-08-20 and this constant moved with it: the
  * client derives BAND_WORLD_HEIGHT from the world's relief now
- * (config.ts's MAX_RELIEF_WORLD_CELLS), so a band draws a QUARTER of a cell at
+ * (config.ts's MAX_RELIEF_WORLD_UNITS), so a band draws a QUARTER of a cell at
  * BAND_HEIGHT 16. Restated as the same derivation rather than as 0.25, so the
  * two files agree by construction and not by coincidence.
  */
-export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_CELLS / (MAX_HEIGHT / BAND_HEIGHT);
+export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
 
 /**
  * World-space Y of the highest terrain this game can contain.
@@ -109,7 +109,7 @@ export const CLOUD_BASE_WORLD_Y = MAX_TERRAIN_WORLD_Y + CLOUD_HEADROOM_WORLD_UNI
  */
 const FRESH_SEABED_DEPTH_BELOW_SEA = 192;
 /** Clearance under that floor: a quarter cell, enough to read as "past it". */
-const PRECIPITATION_FLOOR_CLEARANCE = CELL_HEIGHT_UNITS / 4;
+const PRECIPITATION_FLOOR_CLEARANCE = WORLD_UNIT_HEIGHT_UNITS / 4;
 export const PRECIPITATION_FLOOR_BANDS_BELOW_SEA =
   (FRESH_SEABED_DEPTH_BELOW_SEA + PRECIPITATION_FLOOR_CLEARANCE) / BAND_HEIGHT;
 

@@ -12,9 +12,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BRUSH_RADIUS,
-  MIN_BRUSH_RADIUS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
+  WORLD_UNIT_CELLS,
 } from '@terrace/shared';
+
+/**
+ * The brush ladder's first rung — one WORLD UNIT of ground, which is what the
+ * HUD defaults to. NOT shared's DEFAULT_RADIUS since the 2026-08-21
+ * re-sample: that is the grid's own floor and is four times finer than any
+ * brush the picker offers (see hudState's BRUSH_RADII).
+ */
+const DEFAULT_RADIUS = WORLD_UNIT_CELLS;
+
+/** Every rung of that ladder, in cells. */
+const LADDER = [1, 2, 3, 4].map((worldUnits) => worldUnits * WORLD_UNIT_CELLS);
 
 type HudState = typeof import('../src/state/hudState.ts');
 
@@ -67,7 +78,7 @@ beforeEach(() => {
 describe('defaults', () => {
   it('starts on the wire defaults with nothing stored', async () => {
     const { hud, storage } = await freshHud();
-    expect(hud.brushRadius()).toBe(MIN_BRUSH_RADIUS);
+    expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
     expect(hud.brushTool()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.tool);
     expect(hud.brushProfile()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.profile);
     expect(hud.sculptMode()).toBe('raise');
@@ -80,7 +91,7 @@ describe('defaults', () => {
   it('exposes the same defaults it falls back to', async () => {
     const { hud } = await freshHud();
     expect(hud.DEFAULT_HUD_STATE).toEqual({
-      brushRadius: MIN_BRUSH_RADIUS,
+      brushRadius: DEFAULT_RADIUS,
       brushTool: WIRE_DEFAULT_SCULPT_OPTIONS.tool,
       brushProfile: WIRE_DEFAULT_SCULPT_OPTIONS.profile,
       sculptMode: 'raise',
@@ -109,7 +120,7 @@ describe('round-trip through storage', () => {
   });
 
   it('round-trips every selectable radius', async () => {
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of LADDER) {
       const first = await freshHud();
       first.hud.setBrushRadius(radius);
       const second = await reload(first.storage);
@@ -206,7 +217,7 @@ describe('write-through', () => {
     };
 
     hud.setSculptMode('raise'); // already 'raise'
-    hud.setBrushRadius(MIN_BRUSH_RADIUS); // already the default
+    hud.setBrushRadius(DEFAULT_RADIUS); // already the default
     hud.setShowControls(false);
     expect(writes).toBe(0);
 
@@ -221,7 +232,7 @@ describe('fallback on corrupt storage', () => {
   it('falls back to all defaults on junk JSON or a non-object', async () => {
     for (const bad of ['not json', '42', 'null', '"stamp"', '[]']) {
       const { hud } = await freshHud({ [HUD_KEY]: bad });
-      expect(hud.brushRadius()).toBe(MIN_BRUSH_RADIUS);
+      expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
       expect(hud.brushTool()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.tool);
       expect(hud.brushProfile()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.profile);
       expect(hud.sculptMode()).toBe('raise');
@@ -240,7 +251,7 @@ describe('fallback on corrupt storage', () => {
           showControls: true,
         }),
       });
-      expect(hud.brushRadius()).toBe(MIN_BRUSH_RADIUS);
+      expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
       // Per-field fallback: one bad field costs exactly itself.
       expect(hud.brushTool()).toBe('smooth');
       expect(hud.brushProfile()).toBe('hard');
@@ -331,7 +342,7 @@ describe('storage that throws', () => {
     (globalThis as { localStorage?: Storage }).localStorage = hostile;
 
     const hud: HudState = await import('../src/state/hudState.ts');
-    expect(hud.brushRadius()).toBe(MIN_BRUSH_RADIUS);
+    expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
     // A quota-exceeded write must not break the live HUD.
     hud.setBrushRadius(MAX_BRUSH_RADIUS);
     expect(hud.brushRadius()).toBe(MAX_BRUSH_RADIUS);
@@ -343,7 +354,7 @@ describe('no localStorage at all', () => {
     vi.resetModules();
     // beforeEach already deleted the stub; import with nothing installed.
     const hud: HudState = await import('../src/state/hudState.ts');
-    expect(hud.brushRadius()).toBe(MIN_BRUSH_RADIUS);
+    expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
     expect(hud.sculptMode()).toBe('raise');
     expect(hud.showControls()).toBe(false);
     // Setting anything with no storage at all must not throw.

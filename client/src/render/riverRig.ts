@@ -118,6 +118,20 @@ const RIVER_RECOMPUTE_INTERVAL_MS = 500;
  * A cell wide is the honest maximum: the course occupies those cells, so water
  * cannot be claiming ground the river does not run through, and wherever the
  * channel is narrower than that the terrain trims it back for free.
+ *
+ * IN CELLS THROUGH THE 2026-08-21 RE-SAMPLE, deliberately, and this is the one
+ * river constant that is a fact about the GRID rather than about the ground.
+ * A course is a 4-connected CELL walk (shared/src/rivers.ts, untouched by the
+ * re-sample), so "as wide as the cells the course runs through" is a width in
+ * cells whatever a cell is worth — and the sentence above, that the water
+ * cannot claim ground the river does not run through, is only true if it stays
+ * one. The visible consequence is real and follows from the same fact: a river
+ * is now a quarter of a world unit across rather than one, because the cells it
+ * runs through are. Everything sized against the channel below — the fall
+ * taper, the plunge-pool ripples, the spring dome — stays in cells for the same
+ * reason, so the whole rig scales together and nothing overflows its own
+ * groove. If rivers want their old ground width back, the honest lever is the
+ * course tracer's own width in shared/src/rivers.ts, not this constant.
  */
 const FLOW_HALF_WIDTH_CELLS = 0.5;
 
@@ -168,8 +182,16 @@ const MAX_SMOOTHING_DEVIATION_CELLS = 0.15;
  * river surface is narrow and always drawn a beat after the terrain it
  * follows, so it needs less clearance than the sea's single world-spanning
  * plane.
+ *
+ * IN WORLD UNITS, NOT CELLS (2026-08-21 re-sample), for exactly the reason
+ * config.ts's WATER_SURFACE_LIFT gives for itself: depth-buffer resolution is a
+ * fact about world space and the camera, and neither of those learned anything
+ * about how finely the world is sampled. Left as a fraction of a CELL it would
+ * have quietly shrunk to a quarter of the separation it was tuned for, and the
+ * stated relation to WATER_SURFACE_LIFT (1/32) — half of it — would have
+ * silently stopped holding.
  */
-const RIVER_SURFACE_LIFT_WORLD_UNITS = CELL_WORLD_SIZE / 64;
+const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
 
 /**
  * How far downstream a terrace fall's vertical curtain is carried off the

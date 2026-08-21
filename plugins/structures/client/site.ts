@@ -39,6 +39,11 @@
 // confirms: better to occasionally miss a paper-thin waterline cell than to
 // ever float a boat on grass.
 
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+  cellsOverArea,
+} from '@terrace/shared';
 import type { GroundLookup } from './placement.ts';
 
 /**
@@ -53,7 +58,9 @@ import type { GroundLookup } from './placement.ts';
 export type SiteKind = 'inland' | 'coastal';
 
 /**
- * How far out a structure looks for open water, in cells.
+ * How far out a structure looks for open water, in cells — four WORLD UNITS,
+ * converted, because it is "a short walk from the doorstep" and a walk is
+ * measured across the ground.
  *
  * 4 — reusing the project's own "tight integer disc" footprint convention
  * (docs/DESIGN.md's sculpt-brush disc, `dx² + dy² < r·(r-1)`) rather than
@@ -62,23 +69,25 @@ export type SiteKind = 'inland' | 'coastal';
  * same count the brush-footprint table documents for radius 4), so a
  * structure looks a short, fixed walk from its own doorstep: comfortably
  * past isFlatEnough's single-cell orthogonal check (suitability.ts),
- * nowhere near SETTLER_DISTRICT_CELLS (16, protocol.ts) — which would make
+ * nowhere near SETTLER_DISTRICT_CELLS (16 world units, protocol.ts) — which would make
  * an entire chunk's worth of inland cells read as coastal just for sharing a
  * district with a shoreline.
  */
-export const COASTAL_SEARCH_RADIUS_CELLS = 4;
+export const COASTAL_SEARCH_RADIUS_CELLS = cellsAcross(4);
 
 /**
  * Minimum CONFIRMED-water cells (see the file banner) within the search disc
  * before a site counts as coastal.
  *
- * 2 — enough to rule out a single stray deep cell (a one-cell borrow pit a
- * player dug, or a lone sculpted trench) reading as "the sea", while staying
+ * 2 SQUARE WORLD UNITS of it — an AREA, so it scales as the square of the
+ * sampling density (32 cells since the 2026-08-21 re-sample). Enough to rule
+ * out a stray patch of deep (a small borrow pit a player dug, or a lone
+ * sculpted trench) reading as "the sea", while staying
  * low because the confirmed-water test already under-counts real water by
  * construction (see the file banner): demanding a large count on top of an
  * already-conservative signal would miss genuine coastline too.
  */
-export const COASTAL_MIN_WATER_CELLS = 2;
+export const COASTAL_MIN_WATER_CELLS = cellsOverArea(2);
 
 /**
  * The highest rendered band that is unambiguously water — see the file

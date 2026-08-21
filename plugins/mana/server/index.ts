@@ -21,7 +21,13 @@
 // cost the player nothing: mana no longer touches the pool until the whole
 // intent has cleared every interceptor and actually landed.
 
-import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, sculptOptionsOf } from '@terrace/shared';
+import {
+  MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+  sculptOptionsOf,
+} from '@terrace/shared';
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
 // The difficulty band core publishes (WorldApi.difficulty lives inside it). A
@@ -66,39 +72,69 @@ import type {
  * balance push carries it perk-adjusted, so the client can price any intent).
  *
  * DERIVED FROM THE OWNER'S TUNING CONSTRAINT "a radius-1 stamp stays cheap,
- * ≈5–8 mana". A radius-1 brush is the Populous point brush: one cell, moved by
- * exactly DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT, i.e. exactly ONE band-cell. Its
- * price is therefore the rate itself, so the constraint is literally a
- * constraint on this constant, and 6 is the middle of the band.
+ * ≈5–8 mana". A radius-1 brush was the Populous point brush at ONE CELL of
+ * ground, moved by exactly DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT, i.e. exactly
+ * one band-cell, so its price was the rate itself and the constraint was
+ * literally a constraint on this constant: 6, the middle of the band.
  *
- * A pleasant property of 6 that is an OBSERVATION, not a law: every shipped
- * radius × profile displaces a multiple of 32 height units, so at rate 6 every
- * base price comes out an exact integer (6, 30/54, 69/150, 120/270 — see the
- * literal table in the tests) and the `ceil` in sculptManaCost only ever rounds
- * a PERK-adjusted price. Change the rate and that stays correct, just less tidy.
+ * PRICED BY GROUND, NOT BY SAMPLE (2026-08-21). The cost model is "proportional
+ * to the terrain VOLUME the brush nominally displaces", and a volume is
+ * height × ground area — so the rate is denominated per band over one SQUARE
+ * WORLD UNIT and divided into band-cells here. Left at 6 per band-CELL, the
+ * 2026-08-21 re-sample would have multiplied the price of reshaping any given
+ * piece of ground by sixteen: the widest hard stamp goes from 37 band-cells to
+ * ~590 for the same disc of terrain, so a full pool would have bought a fifth
+ * of a stamp and the regen anchors below — absolute mana per second, owner-set
+ * — would have meant something entirely different. Everything measured against
+ * the ground is therefore unchanged: the widest stamp still costs 222, the pool
+ * is still three of them, and a warm world still refills in ~4 s.
+ *
+ * WHAT DID MOVE, AND IT IS THE OWNER'S ANCHOR ABOVE: the radius-1 brush is now
+ * the finest the GRID can express rather than a world unit of ground, so it
+ * displaces a sixteenth of what it used to and prices at 0.375, which
+ * sculptManaCost's ceil renders as 1 mana. The constraint it was tuned against
+ * ("stays cheap") holds a fortiori; the number does not. Re-anchoring the
+ * cheapest stamp back to 5–8 mana would mean charging sixteen times the going
+ * rate for the finest brush, which is a decision about the economy rather than
+ * about the grid — flagged rather than taken here.
+ *
+ * The tidy-integer property the old rate had (every base price an exact
+ * integer, so `ceil` only ever rounded a PERK-adjusted price) is gone with it,
+ * for the same reason and by the same sixteenth.
  */
-export const MANA_PER_BAND_CELL = 6;
+export const MANA_PER_BAND_WORLD_UNIT_SQUARED = 6;
+export const MANA_PER_BAND_CELL =
+  MANA_PER_BAND_WORLD_UNIT_SQUARED / (WORLD_UNIT_CELLS * WORLD_UNIT_CELLS);
 
 /**
- * The price of the cheapest sculpt that exists: the radius-1 point brush, one
- * band over one cell. Derived rather than written down, so it cannot drift from
- * the rate. Equal to MANA_PER_BAND_CELL by construction — it is spelled out
- * because the regen band below is derived from "one more sculpt", and "one more
- * sculpt" means this one, the cheapest.
+ * The price of the cheapest sculpt a PLAYER can make: the point brush — one
+ * world unit of ground, moved one band. Derived rather than written down, so it
+ * cannot drift from the rate. It is spelled out because the regen band below is
+ * derived from "one more sculpt", and "one more sculpt" means this one.
  *
- * Profile is irrelevant at radius 1 (soft and hard are the same single cell);
- * 'soft' is named because it is the wire default.
+ * NOT shared's MIN_BRUSH_RADIUS since the 2026-08-21 re-sample. That is the
+ * PROTOCOL's floor — one CELL, a sixteenth of this footprint, offered by no UI
+ * (see client/src/state/hudState.ts's BRUSH_RADII) — and pricing it comes to
+ * 0.375, which sculptManaCost's ceil renders as 1. Anchoring an economy on a
+ * brush nobody holds, at a price that is mostly rounding, would have made every
+ * number derived from it (the regen floor, the HUD's grain cue) meaningless.
+ *
+ * Profile is irrelevant at this radius on flat ground; 'soft' is named because
+ * it is the wire default.
  */
+export const POINT_BRUSH_RADIUS_CELLS = cellsAcross(1);
 export const MANA_COST_PER_MIN_RADIUS_SCULPT = sculptManaCost(
   MANA_PER_BAND_CELL,
-  MIN_BRUSH_RADIUS,
+  POINT_BRUSH_RADIUS_CELLS,
   'soft',
 );
 
 /**
- * The most expensive sculpt that exists: a radius-4 HARD stamp, which moves a
- * full band across every cell of its footprint — 37 band-cells since the
- * 2026-08-19 tight-disc footprint (45 on the old square), 37× the point
+ * The most expensive sculpt that exists: the widest HARD stamp, which moves a
+ * full band across every cell of its footprint — 749 band-cells since the
+ * 2026-08-21 re-sample (37 before it, on a grid four times coarser; the tight
+ * disc is a rounder circle at this density, so the same four world units of
+ * reach cover 46.8 square world units rather than 37), ~47× the point
  * brush. DERIVED, so it re-tuned itself when the footprint changed. The pool
  * is sized against this (see MANA_CAPACITY).
  */

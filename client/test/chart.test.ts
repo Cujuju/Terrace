@@ -3,7 +3,7 @@
 // The canvas painting is not under test — everything it consumes is.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, bandOf } from '@terrace/shared';
+import { BAND_HEIGHT, WORLD_UNIT_CELLS, bandOf } from '@terrace/shared';
 import {
   CHART_LAND,
   CHART_UNKNOWN,
@@ -81,22 +81,28 @@ describe('buildChartModel — classification', () => {
 });
 
 describe('buildChartModel — the singed frontier', () => {
-  // A 24×24 world with a revealed 8×8 block in the top-left corner.
-  const size = 24;
-  const revealed = (x: number, y: number): boolean => x < 8 && y < 8;
+  // A 24×24 WORLD-UNIT world with a revealed 8×8 block in the top-left corner
+  // — the same map this suite has always drawn, counted in cells. Stated in
+  // world units because SINGE_RANGE_CELLS is: the singe reaches five world
+  // units into the unknown, which is twenty cells since the 2026-08-21
+  // re-sample, and a 24-CELL world would no longer have room for it.
+  const size = 24 * WORLD_UNIT_CELLS;
+  const revealedSpan = 8 * WORLD_UNIT_CELLS;
+  const revealed = (x: number, y: number): boolean => x < revealedSpan && y < revealedSpan;
   const model = buildChartModel(sourceOf(size, () => 1, revealed));
 
   it('is zero on revealed cells', () => {
     expect(model.singe[0]).toBe(0);
-    expect(model.singe[7 * size + 7]).toBe(0);
+    expect(model.singe[(revealedSpan - 1) * size + revealedSpan - 1]).toBe(0);
   });
 
   it('steps 1, 2, … away from the frontier and stops at SINGE_RANGE_CELLS', () => {
-    // Walking east from the revealed block along y = 0: x = 8 touches it.
+    // Walking east from the revealed block along y = 0: the first unrevealed
+    // cell touches it.
     for (let step = 1; step <= SINGE_RANGE_CELLS; step++) {
-      expect(model.singe[7 + step]).toBe(step);
+      expect(model.singe[revealedSpan - 1 + step]).toBe(step);
     }
-    expect(model.singe[7 + SINGE_RANGE_CELLS + 1]).toBe(0); // past the singe
+    expect(model.singe[revealedSpan + SINGE_RANGE_CELLS]).toBe(0); // past the singe
   });
 
   it('anchors the kraken at the deepest unknown cell, deterministically', () => {
@@ -106,10 +112,12 @@ describe('buildChartModel — the singed frontier', () => {
 
   it('withholds the kraken when no unknown cell is deep enough', () => {
     // Reveal all but a 2-cell fringe: max depth 2 < KRAKEN_MIN_DEPTH_CELLS.
+    const fringeSize = 24 * WORLD_UNIT_CELLS;
+    const fringeDepth = 2;
     const fringe = buildChartModel(
-      sourceOf(24, () => 1, (x, y) => x < 22 && y < 24),
+      sourceOf(fringeSize, () => 1, (x, y) => x < fringeSize - fringeDepth && y < fringeSize),
     );
-    expect(KRAKEN_MIN_DEPTH_CELLS).toBeGreaterThan(2);
+    expect(KRAKEN_MIN_DEPTH_CELLS).toBeGreaterThan(fringeDepth);
     expect(fringe.krakenCell).toBe(-1);
   });
 

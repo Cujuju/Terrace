@@ -4,13 +4,19 @@
 // deliberately testable without a server (see pilgrimage.ts's header).
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LAND_WALKER_MAX_GRADIENT_PER_CELL, SEA_LEVEL, BAND_HEIGHT } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  LAND_WALKER_MAX_GRADIENT_PER_CELL,
+  SEA_LEVEL,
+  cellsAcross,
+} from '@terrace/shared';
 import {
   PILGRIMS_CAP,
   WALKERS_WIRE_CAP,
   WANDERERS_CAP,
   parseEntitiesPayload,
   roundBroadcastPosition,
+  SETTLER_DISTRICT_CELLS,
   settlementRace,
 } from '../protocol.ts';
 import {
@@ -57,7 +63,13 @@ import {
 } from '../server/monsters-bridge.ts';
 
 /** A flat, dry island world: land above sea everywhere except a border moat. */
-function islandWorld(size = 128, landHeight = 2 * BAND_HEIGHT): PilgrimWorld {
+/**
+ * Sizes below are WORLD UNITS converted to cells. This suite's distances — a
+ * catchment, a viewpoint ring, a stroll — are all world-space facts, so its
+ * worlds have to be ground-sized: 128 CELLS after the 2026-08-21 re-sample is
+ * 32 world units, far smaller than a single pilgrimage.
+ */
+function islandWorld(size = cellsAcross(128), landHeight = 2 * BAND_HEIGHT): PilgrimWorld {
   return {
     worldSize: size,
     heightAt: (x, y) =>
@@ -85,14 +97,22 @@ describe('the race copy', () => {
     // The SAME vectors structures/test/client.test.ts pins. If either side's
     // derivation moves, one of the two suites fails — that agreement is the
     // whole cross-plugin contract (see protocol.ts).
-    for (const [x, y, race] of [
+    // STATED IN DISTRICTS SINCE 2026-08-21, not in cells. The vectors pin the
+    // HASH — the thing that must not drift between copies — and a district is
+    // sixteen world units of ground, which the re-sample made 64 cells rather
+    // than 16. Written as cells they pinned the district SIZE as well, and
+    // every one of them named a different district after the change.
+    for (const [districtX, districtY, race] of [
       [0, 0, 'rudy'],
-      [8, 12, 'rudy'],
-      [16, 16, 'uno'],
-      [100, 100, 'uno'],
-      [255, 17, 'uno'],
-      [511, 511, 'rudy'],
+      [1, 1, 'uno'],
+      [6, 6, 'uno'],
+      [15, 1, 'uno'],
+      [31, 31, 'rudy'],
     ] as const) {
+      // Any cell inside the district; the rule is district-wide by
+      // construction (the "every cell of one district" test pins that).
+      const x = districtX * SETTLER_DISTRICT_CELLS + 3;
+      const y = districtY * SETTLER_DISTRICT_CELLS + 3;
       expect(settlementRace(x, y)).toBe(race);
     }
   });
@@ -208,7 +228,7 @@ describe('terrain predicates', () => {
   });
 
   it('picks the highest walkable ring cell as the viewpoint, deterministically', () => {
-    const size = 128;
+    const size = cellsAcross(128);
     const ridgeX = 64 + VIEWPOINT_RING_CELLS; // the angle-0 sample cell
     const world: PilgrimWorld = {
       worldSize: size,
@@ -260,7 +280,7 @@ describe('the gradient contract (2026-08-19, "go around, not over or through")',
     // pair of cells it occupies may differ in height by more than the limit.
     const RISE = LAND_WALKER_MAX_GRADIENT_PER_CELL + 1;
     const plateau = SEA_LEVEL + BAND_HEIGHT;
-    const size = 128;
+    const size = cellsAcross(128);
     // A riser wall between the home settlement (x≈24) and the monster/
     // viewpoint area (x≈64), spanning a stretch of y centred on both — the
     // direct line is blocked, but the gap (y<54 or y>=74) sits well within
@@ -397,8 +417,15 @@ describe('the wandering', () => {
     for (let i = 0; i < ticks; i++) sim.advance(world, settlements, TICK);
   }
 
-  const TOWN = { x: 40, y: 60, age: WANDERER_MIN_AGE_GENERATIONS };
-  const NEIGHBOUR = { x: 52, y: 60, age: WANDERER_MIN_AGE_GENERATIONS }; // 12 cells away
+  // Two towns twelve WORLD UNITS apart — inside WANDER_RANGE_CELLS and beyond
+  // WANDER_MIN_DISTANCE_CELLS, which is the whole point of the pair. In cells
+  // since the 2026-08-21 re-sample, because both of those bounds are.
+  const TOWN = { x: cellsAcross(40), y: cellsAcross(60), age: WANDERER_MIN_AGE_GENERATIONS };
+  const NEIGHBOUR = {
+    x: cellsAcross(52),
+    y: cellsAcross(60),
+    age: WANDERER_MIN_AGE_GENERATIONS,
+  };
 
   it('dispatches from an established town to a neighbour, visits, and walks home', () => {
     const world = islandWorld();
@@ -626,10 +653,12 @@ describe('the bridges', () => {
  * goal for most of the journey (which is what the old goal-distance stuck timer
  * could not tell apart from being stuck).
  */
-function riddledWorld(size = 64): PilgrimWorld {
+function riddledWorld(size = cellsAcross(64)): PilgrimWorld {
   const land = 4 * BAND_HEIGHT;
   const ridge = land + LAND_WALKER_MAX_GRADIENT_PER_CELL * 4;
-  const GAP_Y = 4;
+  // Four WORLD UNITS in from the shore — the gap has to be somewhere a route
+  // can actually aim at, which is a distance across the ground.
+  const GAP_Y = cellsAcross(4);
   return {
     worldSize: size,
     heightAt: (x, y) => {
@@ -647,9 +676,11 @@ describe('walkers finish their journeys (the 2026-08-20 freeze)', () => {
     const world = riddledWorld();
     const mid = Math.floor(world.worldSize / 2);
     const wandering = new Wandering(new WalkerIdAllocator(), 1);
+    // Ten world units either side of the ridge: far enough apart to qualify as
+    // a stroll (WANDER_MIN_DISTANCE_CELLS), close enough to be one.
     const settlements = [
-      { x: mid - 10, y: 20, age: 100 },
-      { x: mid + 10, y: 20, age: 100 },
+      { x: mid - cellsAcross(10), y: cellsAcross(20), age: 100 },
+      { x: mid + cellsAcross(10), y: cellsAcross(20), age: 100 },
     ];
 
     // Long enough for a there-and-back with the whole detour twice over, and
@@ -673,9 +704,11 @@ describe('walkers finish their journeys (the 2026-08-20 freeze)', () => {
     const world = riddledWorld();
     const mid = Math.floor(world.worldSize / 2);
     const wandering = new Wandering(new WalkerIdAllocator(), 1);
+    // Ten world units either side of the ridge: far enough apart to qualify as
+    // a stroll (WANDER_MIN_DISTANCE_CELLS), close enough to be one.
     const settlements = [
-      { x: mid - 10, y: 20, age: 100 },
-      { x: mid + 10, y: 20, age: 100 },
+      { x: mid - cellsAcross(10), y: cellsAcross(20), age: 100 },
+      { x: mid + cellsAcross(10), y: cellsAcross(20), age: 100 },
     ];
 
     const stillFor = new Map<number, { x: number; y: number; ticks: number }>();
@@ -705,10 +738,13 @@ describe('walkers keep out of each other (the 2026-08-20 crowding)', () => {
     const wandering = new Wandering(new WalkerIdAllocator(), 1);
     // Two towns side by side sending walkers the same way, so the two routes
     // are the same cells and the two bodies would otherwise merge.
+    // In WORLD UNITS: two towns one unit apart (so their walkers set off along
+    // the same route, without starting inside each other's personal space) and
+    // a third thirty units away for them to walk to.
     const settlements = [
-      { x: 40, y: 40, age: 100 },
-      { x: 40, y: 41, age: 100 },
-      { x: 70, y: 40, age: 100 },
+      { x: cellsAcross(40), y: cellsAcross(40), age: 100 },
+      { x: cellsAcross(40), y: cellsAcross(41), age: 100 },
+      { x: cellsAcross(70), y: cellsAcross(40), age: 100 },
     ];
 
     let closest = Infinity;

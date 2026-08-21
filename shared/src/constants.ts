@@ -7,19 +7,161 @@
 // operations (Math.sqrt) immediately floored to an integer.
 
 /**
- * Default cells per world edge. 512² Int16 = 512 KB, allocated up front, never
- * resized. Server config (`WORLD_SIZE`) may override; 128 is the
- * Populous-proven playable minimum for small self-hosted boxes.
+ * Cells per WORLD UNIT — the horizontal sampling quantum, and the exact
+ * counterpart of BAND_HEIGHT below.
+ *
+ * A cell is how finely the world is SAMPLED across the ground; it is not a
+ * size anything in the world HAS. The world unit is the physical horizontal
+ * fact: a hill's footprint, a boat's speed, how far a village patrols. Before
+ * 2026-08-21 the two were the same number (one cell = one world unit) and the
+ * distinction cost nothing, so every world-space distance in the codebase was
+ * written in cells — which is exactly the conflation the 2026-08-20 re-terrace
+ * found between height units and bands, one axis over.
+ *
+ * FOUR (owner, 2026-08-21: "I want the cell size to be one quarter of the size
+ * that it is now"). The re-terrace made the world step four times as finely in
+ * the vertical; this does the same across the ground, so a terrace tread is
+ * sampled at four points where it used to be sampled at one and a contour
+ * follows the land rather than the grid. Nothing about the world's SIZE moves
+ * with it: every physical distance is stated in world units and multiplied by
+ * this constant to reach cells, so re-sampling the world can never resize it.
+ *
+ * COST, and it is not small: sixteen times the cells. See DEFAULT_WORLD_SIZE
+ * for the storage, CHUNK_SIZE for the per-chunk mesh, MAX_STEP for the
+ * geometry, and SMOOTH_PASS_LIMIT for the relaxation worst case.
  */
-export const DEFAULT_WORLD_SIZE = 512;
+export const WORLD_UNIT_CELLS = 4;
 
 /**
- * Cells per chunk edge (chunks are square). Decided 2026-08-13 (design doc
- * open question 5): 16×16 = 512 B of Int16 per chunk — fine-grained reveal at
- * both 128² (64 chunks) and 512² (1024 chunks) world sizes. WORLD_SIZE must be
- * a multiple of this.
+ * The same ratio the other way: world units per cell edge, i.e. the factor
+ * that turns a cell coordinate into a render-space X/Z.
+ *
+ * IN SHARED RATHER THAN IN THE CLIENT'S CONFIG, where it lived until
+ * 2026-08-21, because the client is not the only thing that renders the world
+ * in world units: every plugin that draws an entity at a cell position needs
+ * this exact number, and plugins cannot import client/src/config.ts without
+ * dragging `import.meta.env` into their node test runs (see plugins/mana/
+ * client/env.d.ts). They restated "CELL_WORLD_SIZE is 1" instead — a dozen
+ * copies of an assumption that the re-sample broke all at once, each of which
+ * would have silently placed its entity four times too far out. One exported
+ * ratio is the fix; client/src/config.ts re-exports this very constant so the
+ * client keeps its single import site.
  */
-export const CHUNK_SIZE = 16;
+export const CELL_WORLD_SIZE = 1 / WORLD_UNIT_CELLS;
+
+/**
+ * Default world edge in WORLD UNITS — how big the land IS. Unchanged since
+ * 2026-08-13 and deliberately untouched by the 2026-08-21 re-sample: that
+ * change was about how finely the world is sampled, never about how much of it
+ * there is. 128 world units is the Populous-proven playable minimum for small
+ * self-hosted boxes.
+ */
+export const DEFAULT_WORLD_SPAN = 512;
+
+/**
+ * Default cells per world edge — DERIVED, never stated. 2048² Int16 = 8 MB,
+ * allocated up front, never resized (512 KB before the re-sample). Server
+ * config (`WORLD_SIZE`) may override, and that override is in CELLS because
+ * cells are what the heightmap is indexed by.
+ */
+export const DEFAULT_WORLD_SIZE = DEFAULT_WORLD_SPAN * WORLD_UNIT_CELLS;
+
+/**
+ * Chunk edge in WORLD UNITS — how much land one chunk covers.
+ *
+ * FOUR, DOWN FROM SIXTEEN (2026-08-21), and this is the one place the
+ * re-sample was allowed to change a physical size. A chunk is three things at
+ * once — the sync payload, the reveal quantum, and the MESH quantum — and the
+ * third one has a hard cost curve the other two do not: the mesher ear-clips
+ * each band contour inside a chunk, which is O(V²) in that contour's vertices,
+ * so a chunk's build cost grows as the SQUARE of the sampling density. Held at
+ * 16 world units through the re-sample, the worst legitimate chunk (three
+ * floor-depth craters, measured — see client/src/terrain/capEmission.ts) went
+ * from 3.3 M units of triangulation work to 55.7 M: a 90–180 ms freeze in a
+ * single build, on ordinary deep digging, where it used to be ~9 ms.
+ *
+ * Keeping 16 CELLS per chunk instead holds that cost exactly where it was
+ * calibrated, because a chunk then samples a sixteenth of the ground it used
+ * to. What it costs is chunk COUNT: sixteen times as many, so a default world
+ * is 16 384 chunks rather than 1 024, and a fully revealed one is that many
+ * draw calls. That is the tradeoff taken, and it is taken in this direction
+ * because the draw-call bill is paid only by a world explored end to end and
+ * has a known fix already named in render/terrainMeshes.ts (merge chunks into
+ * super-meshes, keeping the same patch path), while the meshing bill is paid
+ * by every player who digs a hole and has no fix short of suspending a build
+ * mid-walk.
+ *
+ * WHAT THIS BREAKS, and where it went instead: "one chunk" was the game's
+ * neighbourhood unit — the size half the world's distances rhyme with (a
+ * settler district, a route search margin, the outer-terrain lattice, a
+ * monster's minimum lair). Those are facts about the GROUND and none of them
+ * moved; they now rhyme with NEIGHBOURHOOD_CELLS below, which is the 16 world
+ * units they always meant, rather than with a chunk that no longer is one.
+ */
+export const CHUNK_SPAN = 4;
+
+/**
+ * Cells per chunk edge (chunks are square) — DERIVED from the span above, and
+ * SIXTEEN either side of the 2026-08-21 re-sample, which is the point: the
+ * mesher's per-chunk budgets (client/src/terrain/capEmission.ts) and the 512 B
+ * Int16 payload are both facts about this number, and neither had to move.
+ * WORLD_SIZE must be a multiple of it.
+ */
+export const CHUNK_SIZE = CHUNK_SPAN * WORLD_UNIT_CELLS;
+
+/**
+ * THE NEIGHBOURHOOD, in cells: sixteen world units of ground.
+ *
+ * This is what "one chunk" meant everywhere it was used as a DISTANCE rather
+ * than as a unit of storage — a settler district, the route search margin, the
+ * outer-terrain noise lattice, the smallest lair a monster will take, the
+ * margin a flock is born outside. Every one of those is a fact about the
+ * ground, and they all read `CHUNK_SIZE` because a chunk happened to be that
+ * much ground until 2026-08-21, when the chunk shrank to keep the mesher's
+ * costs where they were calibrated (see CHUNK_SPAN).
+ *
+ * Naming it separately is the fix rather than a patch: the two ideas were
+ * always distinct and only ever coincided, and a codebase that says
+ * NEIGHBOURHOOD_CELLS where it means "about a village across" cannot be
+ * re-tuned into nonsense by a later change to how the world is stored.
+ */
+export const NEIGHBOURHOOD_CELLS = 16 * WORLD_UNIT_CELLS;
+
+/**
+ * World units → cells: THE conversion, and the one every physical distance in
+ * this codebase should be written through.
+ *
+ * `cellsAcross(4)` says "four world units of ground" and reads as such;
+ * `4 * WORLD_UNIT_CELLS` says the same thing and reads as arithmetic. The
+ * difference matters because of its sibling below.
+ */
+export function cellsAcross(worldUnits: number): number {
+  return worldUnits * WORLD_UNIT_CELLS;
+}
+
+/**
+ * Square world units → cells, for anything that is an AREA: a population
+ * density, a minimum lair, how much water makes a settlement coastal.
+ *
+ * IT EXISTS BECAUSE THE WRONG POWER IS SILENT. An area scales as the SQUARE of
+ * the sampling density, and a density scaled as a length is not a crash, a
+ * type error or a failed test in any obvious place — it is four times the
+ * whales, or a settlement that calls a puddle the sea. The 2026-08-21
+ * re-sample had to find every one of these by hand; naming the operation is
+ * what stops the next change having to.
+ */
+export function cellsOverArea(squareWorldUnits: number): number {
+  return squareWorldUnits * WORLD_UNIT_CELLS * WORLD_UNIT_CELLS;
+}
+
+/**
+ * Cells → world units, the inverse of cellsAcross — for turning a cell
+ * coordinate or a cell count into a size in the world (an entity's position,
+ * a camera distance).
+ */
+export function worldUnitsAcross(cells: number): number {
+  return cells * CELL_WORLD_SIZE;
+}
 
 /**
  * Height units per terrace band — how thick one terrace is.
@@ -148,11 +290,21 @@ export const MIN_HEIGHT = -(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH);
  * DERIVED FROM BAND_HEIGHT, NOT STATED AGAINST IT (2026-08-20). It was the
  * literal 32 next to a BAND_HEIGHT of 64, with the ratio explained only in
  * this comment; the ratio is the whole meaning of the number, so it is now
- * the code. One BAND_HEIGHT per cell of run means a terrace tread is one cell
- * wide at the steepest the world may be, which is the finest terrace that can
- * still be seen as a terrace: at a tread narrower than the cell grid the
- * contours of neighbouring bands crowd inside a single cell and the staircase
- * dissolves into a ramp.
+ * the code. One BAND_HEIGHT per WORLD UNIT of run means a terrace tread is one
+ * world unit wide at the steepest the world may be, which is the finest
+ * terrace that can still be seen as a terrace: at a narrower tread the
+ * contours of neighbouring bands crowd together and the staircase dissolves
+ * into a ramp.
+ *
+ * PER WORLD UNIT, NOT PER CELL (2026-08-21). The steepest slope the world may
+ * hold is a physical fact — rise over RUN, both measured in the world — and
+ * the cell grid is only what samples it. Left as one band per CELL through the
+ * re-sample it would have quadrupled every gradient in the game: a full-height
+ * mountain's foot would have come in from 64 world units to 16, which is a
+ * different world, not a more finely sampled one. Stated per world unit, the
+ * tread stays exactly one world unit wide and is now sampled by four cells
+ * instead of one — the whole visible point of the re-sample, and the reason
+ * the mush described above cannot happen at any sampling density.
  *
  * WHY ONE CELL AND NOT TWO (the old ratio), measured on the island fixture,
  * fully explored 512² world, at BAND_HEIGHT 16:
@@ -172,8 +324,16 @@ export const MIN_HEIGHT = -(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH);
  * hills spread twice as wide as they used to, and a full MAX_HEIGHT mountain's
  * foot moves from 32 to 64 cells out, still comfortable in a 512² world and
  * reachable in a 128² one.
+ *
+ * READING THAT TABLE AFTER THE 2026-08-21 RE-SAMPLE: its rows were measured
+ * when a cell WAS a world unit, so read every "cell" in it as a world unit and
+ * the choice it records is unchanged — one band per world unit, a 64-world-
+ * unit mountain foot. The triangle and memory columns are the ones the
+ * re-sample moves (a band contour is four times as long in cells), and they
+ * are re-measured where they are enforced rather than restated here: see
+ * client/src/terrain/capEmission.ts's CHUNK_TRIANGLE_BUDGET table.
  */
-export const MAX_STEP = BAND_HEIGHT;
+export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
 
 /**
  * Height units applied at the brush center by one sculpt intent: exactly one
@@ -194,12 +354,39 @@ export const MAX_STEP = BAND_HEIGHT;
 export const DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT;
 
 /**
- * Brush radius bounds (cells). Decided 2026-08-13 (open question 2): radius
- * brush with linear falloff; radius 1 is the Populous point brush. 4 caps the
- * blast area (~45 cells) so a single intent's diff stays small on the wire.
+ * Brush radius bounds, in cells. Decided 2026-08-13 (open question 2): radius
+ * brush with linear falloff, from the point brush up to a widest brush that
+ * caps the blast area so a single intent's diff stays small on the wire.
+ *
+ * THE TWO BOUNDS ANSWER DIFFERENT QUESTIONS (2026-08-21), which is why only
+ * one of them moved with the re-sample:
+ *
+ *   * the FLOOR is a fact about the GRID — one cell is the smallest footprint
+ *   that can be expressed at all, whatever a cell is worth — so it stays a
+ *   literal 1 and simply got four times finer. It is no longer the "Populous
+ *   point brush" of the original decision, though: that brush is a WORLD-space
+ *   idea (one unit of ground) and now lives in the player-facing ladder, at
+ *   client/src/state/hudState.ts's BRUSH_RADII. Everything from this floor up
+ *   to that ladder's first rung is a legal, finer tool that no shipped UI
+ *   offers, and a sub-world-unit one behaves accordingly: a click is
+ *   DEFAULT_SCULPT_AMOUNT = one band, the world may not fall faster than one
+ *   band per world unit (MAX_STEP), so relaxation immediately spreads a
+ *   one-cell peak's excess and the cell settles inside band 0 — a polish, not
+ *   a terrace. That is the world being consistent, not the brush being broken.
+ *   * the CEILING is a fact about the GROUND — "this much land per stroke" —
+ *   so it is stated in world units and converted. Left at 4 CELLS the widest
+ *   brush would have shrunk to a single world unit and quietly become the old
+ *   medium one.
+ *
+ * WHAT THE CEILING COSTS ON THE WIRE, stated because it was originally chosen
+ * for exactly this reason: the same disc of ground is now sampled by ~720
+ * cells rather than ~45. At the intent floor of one per server tick that is a
+ * few KB per tick for a player holding the widest brush — still bounded and
+ * still per-player, but sixteen times what open question 2 sized. The knob if
+ * it bites is this ceiling, not the sampling density.
  */
 export const MIN_BRUSH_RADIUS = 1;
-export const MAX_BRUSH_RADIUS = 4;
+export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
 
 /**
  * How far excess can travel from one edit: relaxation stops where the slope
@@ -215,6 +402,20 @@ export const MAX_BRUSH_RADIUS = 4;
  * click got cheaper, not dearer: DEFAULT_SCULPT_AMOUNT and MAX_STEP are both
  * BAND_HEIGHT now, so one click's excess spills exactly one cell, where the
  * old 64-against-32 pair spilled two.
+ *
+ * FOUR TIMES THE CELLS, THE SAME DISTANCE (2026-08-21). MAX_STEP is a slope
+ * per world unit, so spread went 160 to 640 CELLS while staying 160 world
+ * units: excess travels exactly as far across the ground as it did, and it is
+ * only counted more finely. One click still spills one world unit — four cells
+ * now — because DEFAULT_SCULPT_AMOUNT is a band and a band is MAX_STEP per
+ * world unit.
+ *
+ * THE WORST CASE IS THE ONE TO WATCH. smooth() expands its window one ring per
+ * pass and the pass budget below scales with this number, so the ceiling on a
+ * single pathological stroke goes as the cube of the sampling density: ~64×
+ * the old bound. It is a BOUND, not a cost — the loop exits the pass it stops
+ * changing anything, and every ordinary stroke exits in a handful of passes —
+ * but a server that ever reaches it now spends far longer there.
  */
 export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP);
 

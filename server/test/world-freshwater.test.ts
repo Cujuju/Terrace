@@ -20,11 +20,16 @@ import {
   type SculptOptions,
 } from '@terrace/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CHUNK_SIZE } from '@terrace/shared';
 import { createWorldApi } from '../src/plugins/world-api.ts';
 import { RIVER_RECOMPUTE_INTERVAL_MS } from '../src/world/world.ts';
 import { worldWithUnlockedChunks } from './support/harness.ts';
 
-const WORLD_SIZE = 64;
+// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
+// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
+// four-chunk world is smaller ground than it was — which is fine here: every
+// assertion in this suite is about chunk mechanics, not about distances.)
+const WORLD_SIZE = CHUNK_SIZE * 4;
 /** Every chunk of a 64-cell world (CHUNK_SIZE 16 → 4×4), so nothing is scoped out. */
 const ALL_CHUNKS = [0, 1, 2, 3].flatMap((cy) => [0, 1, 2, 3].map((cx) => [cx, cy] as const));
 

@@ -9,14 +9,25 @@
 // THE PEOPLE (owner decision 2026-08-19): RUDYS are little dog people, UNOS
 // are cat people. Naming in prose: a Rudy / an Uno; plural Rudys / Unos.
 // Race is DERIVED from where a settlement stands — bit 24 of the district
-// hash, one 16×16-cell district = one people — never stored, never synced.
+// hash, one district (a chunk of ground square) = one people — never stored,
+// never synced.
+
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 
 export type SettlerRace = (typeof SETTLER_RACES)[number];
 
-/** Edge of the square district that shares one race (structures' constant). */
-export const SETTLER_DISTRICT_CELLS = 16;
+/**
+ * Edge of the square district that shares one race (structures' constant):
+ * sixteen WORLD UNITS, i.e. one neighbourhood of ground, converted. Stated in
+ * world units so the 2026-08-21 re-sample could not shrink a district — see
+ * structures' protocol.ts.
+ */
+export const SETTLER_DISTRICT_CELLS = cellsAcross(16);
 
 /**
  * 32-bit integer hash — the same function structures (and before it, flora)

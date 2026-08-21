@@ -11,6 +11,7 @@
 // That is why this plugin has no placement.ts: there is no rule to own.
 
 import { Group } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -24,7 +25,7 @@ import { BOAT_WATERLINE_LIFT, createBoatModels, type BoatModel, type BoatModels 
  *
  * SEA_LEVEL is 0 by definition in @terrace/shared ("water is every height at or
  * below zero") and the renderer draws the sea at SEA_LEVEL * HEIGHT_WORLD_SCALE
- * plus a thirty-second of a cell of lift, so this is 0 to well within a hull's
+ * plus a thirty-second of a world unit of lift, so this is 0 to well within a hull's
  * thickness. Restated as a literal rather than imported from the client's own
  * render layer, which a plugin has no business reaching into.
  */
@@ -103,8 +104,15 @@ function renderFrame(dt: number): void {
     const view = views.get(id);
     if (view === undefined) continue;
 
-    // CELL_WORLD_SIZE is 1, so cell coordinates ARE world X/Z.
-    view.model.root.position.set(boat.x, SEA_SURFACE_WORLD_Y + BOAT_WATERLINE_LIFT, boat.y);
+    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE. It was 1 until
+    // the 2026-08-21 re-sample and this line carried no factor; a boat's pose
+    // is in cells because the server steers it in cells, and the hull it is
+    // attached to is modelled in world units.
+    view.model.root.position.set(
+      boat.x * CELL_WORLD_SIZE,
+      SEA_SURFACE_WORLD_Y + BOAT_WATERLINE_LIFT,
+      boat.y * CELL_WORLD_SIZE,
+    );
     view.model.animate(animationSeconds, view.phase, boat.fighting);
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, −sin θ) and
     // the boat travels toward (cos heading, 0, sin heading) — hence the

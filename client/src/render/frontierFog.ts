@@ -15,7 +15,7 @@
 //
 // GEOMETRY (issue #22 — this REPLACES the original full-height curtain, which
 // spanned MIN_HEIGHT..MAX_HEIGHT and read as a towering white wall). One quad
-// strip per frontier edge (a whole 16-cell chunk side), FOG_COLUMNS columns
+// strip per frontier edge (a whole chunk side), FOG_COLUMNS columns
 // wide so it can follow the ground, three rows tall:
 //
 //   top    — a bank's height above the LOCAL ground, fully transparent;
@@ -65,7 +65,7 @@ import {
   type Object3D,
 } from 'three';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
-import { CELL_HEIGHT_UNITS, CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WORLD_UNIT_HEIGHT_UNITS } from '../config.ts';
 import {
   frontierEdgeKey,
   frontierEdges,
@@ -80,22 +80,23 @@ import { WATER_COLOR } from './water.ts';
 // ---------------------------------------------------------------------------
 
 /**
- * How far the bank rises above the local ground, in height units. A cell and a
- * quarter: tall enough that the flat cap ending at the boundary is veiled with
- * margin even where the ground sample under a column sits a little below the
- * cap's own band floor, low enough to read as a bank of mist lying on the
+ * How far the bank rises above the local ground, in height units. A world unit
+ * and a quarter: tall enough that the flat cap ending at the boundary is veiled
+ * with margin even where the ground sample under a column sits a little below
+ * the cap's own band floor, low enough to read as a bank of mist lying on the
  * ground rather than a wall standing on it.
  *
- * A CELL AND A QUARTER, NOT A BAND AND A QUARTER (2026-08-20). Both readings
- * named the same 80 height units while a band WAS a cell, and the sentence
- * above is the tell for which one is the real constraint: "reads as mist lying
+ * A WORLD UNIT AND A QUARTER, NOT A BAND AND A QUARTER (2026-08-20; restated
+ * in world units 2026-08-21, when the cell stopped being one). Both readings
+ * named the same 80 height units while a band WAS a world unit, and the
+ * sentence above is the tell for which one is the real constraint: "reads as mist lying
  * on the ground rather than a wall" is a statement about the world, not about
  * the render quantum. Left band-relative, the re-terrace would have thinned
  * the mist to a quarter of the height it was tuned at. The veiling margin the
  * first clause asks for is a band-scale quantity and so it only got easier to
  * clear, never harder.
  */
-const FOG_BANK_RISE = CELL_HEIGHT_UNITS * 1.25;
+const FOG_BANK_RISE = WORLD_UNIT_HEIGHT_UNITS * 1.25;
 
 /**
  * Fraction of FOG_BANK_RISE the bank stays fully opaque above the ground
@@ -115,11 +116,12 @@ const FOG_BANK_KNEE = 0.45;
  * no camera angle can peek under the bank, while everything deeper stays the
  * water plane's own business.
  *
- * Half a CELL since 2026-08-20, for the same reason FOG_BANK_RISE is measured
- * in cells: "no camera angle can peek under the bank" is a world-space fact
- * about the hem, and the two ends of one profile must not rescale differently.
+ * Half a WORLD UNIT since 2026-08-20, for the same reason FOG_BANK_RISE is
+ * measured that way: "no camera angle can peek under the bank" is a world-space
+ * fact about the hem, and the two ends of one profile must not rescale
+ * differently.
  */
-const FOG_BASE_DROP = CELL_HEIGHT_UNITS / 2;
+const FOG_BASE_DROP = WORLD_UNIT_HEIGHT_UNITS / 2;
 
 /**
  * Peak alpha (the base and knee rows), before the breathing modulation below
@@ -143,9 +145,11 @@ const FOG_ROW_COUNT = 3;
 const FOG_ROW_ALPHA: readonly number[] = [1, 1, 0];
 
 /**
- * Columns across a segment: one per lattice point of the 16-cell chunk side,
- * so the bank's top can follow the same per-cell ground the terrain mesh
- * renders.
+ * Columns across a segment: one per lattice point of the chunk side, so the
+ * bank's top can follow the same per-cell ground the terrain mesh renders.
+ * CHUNK_SIZE cells since the 2026-08-21 re-sample means 65 columns where it
+ * meant 17 — the bank is sampled as finely as the terrain beside it, which is
+ * the only way its top edge can keep following that terrain exactly.
  */
 const FOG_COLUMNS = CHUNK_SIZE + 1;
 

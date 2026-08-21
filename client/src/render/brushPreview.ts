@@ -68,6 +68,7 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../config.ts';
 import {
+  MAX_LATTICE_SPAN,
   assembleLoops,
   loadSampleField,
   marchLevel,
@@ -144,6 +145,26 @@ const FOOTPRINT_INSIDE = 1;
 const FOOTPRINT_EDGE_CROSSING = 0.5;
 
 /**
+ * Cells of clear lattice the footprint needs beyond its own reach: one for the
+ * outside samples that make the boundary crossings exist at all.
+ */
+const FOOTPRINT_LATTICE_MARGIN_CELLS = 1;
+
+/**
+ * Cells across the scratch lattice the footprint is marched on.
+ *
+ * ITS OWN SIZE SINCE 2026-08-21, having borrowed the CHUNK's until then. The
+ * two were the same square while a brush was small next to a chunk; the
+ * re-sample left the widest brush at four world units (MAX_BRUSH_RADIUS cells)
+ * and made a chunk four world units in TOTAL, so the footprint stopped fitting
+ * — and it was never a fact about chunks in the first place. Wide enough for
+ * the largest footprint plus its clear margin on both sides, and even so it is
+ * the marcher's scratch bound (contours.ts's MAX_LATTICE_SPAN) that the guard
+ * below checks against.
+ */
+const FOOTPRINT_LATTICE_SPAN = 2 * (MAX_BRUSH_RADIUS + FOOTPRINT_LATTICE_MARGIN_CELLS);
+
+/**
  * Lattice index the brush's centre cell is loaded at.
  *
  * marchLevel works over the chunk-sized lattice; a footprint is far smaller,
@@ -153,13 +174,7 @@ const FOOTPRINT_EDGE_CROSSING = 0.5;
  * the outline with unsmoothed straight runs, and assembleLoops would close the
  * shape along the border rather than around the brush.
  */
-const FOOTPRINT_LATTICE_CENTRE = CHUNK_SIZE / 2;
-
-/**
- * Cells of clear lattice the footprint needs beyond its own reach: one for the
- * outside samples that make the boundary crossings exist at all.
- */
-const FOOTPRINT_LATTICE_MARGIN_CELLS = 1;
+const FOOTPRINT_LATTICE_CENTRE = FOOTPRINT_LATTICE_SPAN / 2;
 
 /**
  * How far the largest footprint reaches from its centre cell, in cells —
@@ -175,10 +190,11 @@ const MAX_FOOTPRINT_REACH_CELLS = MAX_BRUSH_RADIUS - 1;
 if (
   MAX_FOOTPRINT_REACH_CELLS + FOOTPRINT_LATTICE_MARGIN_CELLS > FOOTPRINT_LATTICE_CENTRE ||
   FOOTPRINT_LATTICE_CENTRE + MAX_FOOTPRINT_REACH_CELLS + FOOTPRINT_LATTICE_MARGIN_CELLS >
-    CHUNK_SIZE
+    FOOTPRINT_LATTICE_SPAN ||
+  FOOTPRINT_LATTICE_SPAN > MAX_LATTICE_SPAN
 ) {
   throw new RangeError(
-    `brush radius ${MAX_BRUSH_RADIUS} does not fit the ${CHUNK_SIZE}-cell contour lattice`,
+    `brush radius ${MAX_BRUSH_RADIUS} does not fit a ${FOOTPRINT_LATTICE_SPAN}-cell contour lattice`,
   );
 }
 
@@ -195,10 +211,12 @@ function footprintOutline(radius: number): ContourLoop {
   const inFootprint = new Set<string>();
   forEachFootprintOffset(radius, (dx, dy) => inFootprint.add(`${dx},${dy}`));
 
-  loadSampleField((i, j) =>
-    inFootprint.has(`${i - FOOTPRINT_LATTICE_CENTRE},${j - FOOTPRINT_LATTICE_CENTRE}`)
-      ? FOOTPRINT_INSIDE
-      : FOOTPRINT_OUTSIDE,
+  loadSampleField(
+    (i, j) =>
+      inFootprint.has(`${i - FOOTPRINT_LATTICE_CENTRE},${j - FOOTPRINT_LATTICE_CENTRE}`)
+        ? FOOTPRINT_INSIDE
+        : FOOTPRINT_OUTSIDE,
+    FOOTPRINT_LATTICE_SPAN,
   );
 
   // Origin chosen so lattice index FOOTPRINT_LATTICE_CENTRE lands on cell 0.

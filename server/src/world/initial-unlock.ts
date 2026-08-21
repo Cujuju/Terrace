@@ -10,23 +10,30 @@
 // In Phase 2 the reveal plugin owns unlock policy. When it does, this stays only
 // as the "no plugins installed" fallback; it must never grow progression rules.
 
-import { chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, NEIGHBOURHOOD_CELLS, chunksPerEdge } from '@terrace/shared';
 import type { World } from './world.ts';
 
 /**
  * Edge length, in chunks, of the square unlocked at the centre of a fresh
- * world. Owner decision 2026-08-19: 5 chunks = 80×80 cells, ~39% of the old
+ * world. Owner decision 2026-08-19: 80×80 WORLD UNITS, ~39% of the old
  * full-Populous-map start. Deliberately small: the static genesis profile
  * inside it stops mattering once most of the world is earned by sculpting
- * (per-player creep, #17). Five, not four, because it is the smallest span
- * whose genesis geometry stays clean: shelf 1 chunk (span/4, floored),
- * remainder 4 splits symmetrically, and the 16-cell slope ring sits strictly
- * inside with a uniform one-chunk deep frame around it. Span 4 leaves an
- * off-centre shelf and a ring touching the square's edge. Known consequence:
- * the deep frame (4 096 cells) is below a whale's 5 000-cell habitat need, so
- * whales first appear once territory creeps outward, not on day one.
+ * (per-player creep, #17). Eighty, not sixty-four, because five neighbourhoods
+ * is the smallest span whose genesis geometry stays clean: shelf one
+ * neighbourhood (span/4, floored), remainder 4 splits symmetrically, and the
+ * slope ring sits strictly inside with a uniform one-neighbourhood deep frame
+ * around it. Four neighbourhoods leaves an off-centre shelf and a ring
+ * touching the square's edge. Known consequence: the deep frame is below a
+ * whale's habitat need, so whales first appear once territory creeps outward,
+ * not on day one.
+ *
+ * COUNTED IN CHUNKS AND DERIVED SINCE 2026-08-21, because the unlock square is
+ * a size on the GROUND and a chunk stopped being one: the re-sample took a
+ * chunk from 16 world units to 4 (see shared's CHUNK_SPAN), so five chunks
+ * would have started a player on a twentieth of the land the owner chose.
  */
-export const INITIAL_UNLOCK_CHUNK_SPAN = 5;
+export const INITIAL_UNLOCK_CHUNK_SPAN =
+  (5 * NEIGHBOURHOOD_CELLS) / CHUNK_SIZE;
 
 /** The centred square of chunks a fresh world starts with unlocked. */
 export interface InitialUnlockFootprint {

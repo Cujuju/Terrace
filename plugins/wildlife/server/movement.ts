@@ -22,6 +22,8 @@
 import {
   AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
   AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
   normalizeAngle as sharedNormalizeAngle,
   steerAvoiding,
   withoutSelf,
@@ -129,27 +131,28 @@ export const FLEE_DURATION_SECONDS = 2.5;
  * the radius itself, because members inside it are steered by nothing but their
  * own wander.
  *
- * It also comfortably contains the ±1.4-cell scatter a group is born with
- * (GROUP_SCATTER_BODY_LENGTHS × a fish's 0.7-cell body), so a newborn school
+ * Stated in WORLD UNITS and converted, like every distance a creature is
+ * measured against. It also comfortably contains the ±1.4-unit scatter a group
+ * is born with (GROUP_SCATTER_BODY_LENGTHS × a fish's 0.7-unit body), so a newborn school
  * does not clench inward the moment it appears.
  *
  * Scaled per size class by SCHOOL_LOOSENESS_BY_SIZE: this is the SMALL-fish
  * figure, and larger classes hold proportionally more space.
  */
-export const SCHOOL_COMFORT_RADIUS_CELLS = 2.5;
+export const SCHOOL_COMFORT_RADIUS_CELLS = cellsAcross(2.5);
 
 /**
  * Distance at which the pull reaches SCHOOL_MAX_PULL_RADIANS_PER_SECOND; it
  * ramps linearly from zero at the comfort radius to full here, and stays there
  * beyond.
  *
- * 5 cells is a little under two seconds of cruise swimming (3 cells/s) away from
+ * 5 world units is a little under two seconds of cruise swimming (3 units/s) away from
  * the school — the point past which a member is not "at the edge of the group"
  * but "leaving", and should be turning as hard as it can. A ramp rather than a
  * step because a step produces a visible flinch as a fish crosses the boundary;
  * the linear region is what makes the edge of a school look soft.
  */
-export const SCHOOL_FULL_PULL_RADIUS_CELLS = 5;
+export const SCHOOL_FULL_PULL_RADIUS_CELLS = cellsAcross(5);
 
 /**
  * Maximum cohesion turn rate, radians per second, at or beyond the full-pull

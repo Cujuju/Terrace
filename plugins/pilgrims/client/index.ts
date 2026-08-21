@@ -4,6 +4,7 @@
 // only cosmetics, so a client that misses messages looks stiller, never wrong.
 
 import { Group } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -79,7 +80,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       continue;
     }
     view.model.root.visible = true;
-    view.model.root.position.set(pilgrim.x, terrainY, pilgrim.y);
+    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE; the model itself
+    // is built in world units and is unaffected by the sampling density.
+    view.model.root.position.set(
+      pilgrim.x * CELL_WORLD_SIZE,
+      terrainY,
+      pilgrim.y * CELL_WORLD_SIZE,
+    );
     // Models face +X; travel is toward (cos heading, sin heading) — the same
     // negation every mover in this repo applies.
     view.model.root.rotation.y = -pilgrim.heading;

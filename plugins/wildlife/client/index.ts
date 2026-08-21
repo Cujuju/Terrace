@@ -10,6 +10,7 @@
 // scene, the rendered terrain height, the message channel, and the frame clock.
 
 import { Group } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -122,8 +123,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
           ? walkerGroundY((cx, cy) => ctx.terrainHeightAt(cx, cy), entity.x, entity.y)
           : ctx.terrainHeightAt(Math.floor(entity.x), Math.floor(entity.y));
     const root = view.model.root;
-    // CELL_WORLD_SIZE is 1, so cell coordinates ARE world X/Z (see placement.ts).
-    root.position.set(entity.x, creatureWorldY(entity.species, terrainY), entity.y);
+    // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
+    // whose named residual this multiply is).
+    root.position.set(
+      entity.x * CELL_WORLD_SIZE,
+      creatureWorldY(entity.species, terrainY),
+      entity.y * CELL_WORLD_SIZE,
+    );
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and the
     // creature travels toward (cos heading, 0, sin heading) — hence the negation.
     root.rotation.y = -entity.heading;

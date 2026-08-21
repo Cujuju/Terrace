@@ -20,7 +20,11 @@
 // byte-identical route, not merely "a shortest route", every time.
 
 import { type TerrainSampler, type TraversalProfile, isWalkableCell } from './traversal.ts';
-import { CHUNK_SIZE } from './constants.ts';
+import {
+  NEIGHBOURHOOD_CELLS,
+  WORLD_UNIT_CELLS,
+  cellsOverArea,
+} from './constants.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cost model
@@ -54,19 +58,27 @@ export const DIAGONAL_STEP_COST = 14;
  * its base move cost — the term that makes a route prefer the gentle way
  * round even when the steep way is shorter and still legal.
  *
- * 1 — chosen against MAX_STEP-scale climbs, not against the base move costs
- * directly: LAND_WALKER_MAX_GRADIENT_PER_CELL (traversal.ts) is 16, so the
- * steepest legal single-cell climb for a land walker costs +16 on top of its
- * base 10 (orthogonal) or 14 (diagonal) — roughly 2.6×–2.7× the flat rate.
- * That is enough that a 2-cell flat detour (20) already beats a single
- * max-gradient climb (26), and a short flat detour beats a short steep one by
- * a wide, visible margin, without so overwhelming the base cost that gentle
- * rolling terrain (small height differences) gets penalised into looking
- * like a wall. Skipped entirely for a water-ground profile
- * (maxGradientPerCell = Infinity, traversal.ts): water has no risers, so
- * there is nothing to penalise.
+ * Chosen against MAX_STEP-scale climbs, not against the base move costs
+ * directly. The ratio that decides route shape is the penalty for climbing one
+ * WORLD UNIT at the steepest legal land grade against what it costs to walk
+ * one world unit on the flat, and it is 1.6: before the 2026-08-21 re-sample
+ * that was +16 (LAND_WALKER_MAX_GRADIENT_PER_CELL over one cell) on a base 10,
+ * and it is the same 1.6 now, spread over the four cells a world unit is
+ * sampled by. That is enough that two world units of flat detour already beat
+ * one world unit of max-gradient climb, and a short flat detour beats a short
+ * steep one by a wide, visible margin, without so overwhelming the base cost
+ * that gentle rolling terrain (small height differences) gets penalised into
+ * looking like a wall.
+ *
+ * WHY IT IS DERIVED (2026-08-21). Height units did not get finer and steps
+ * did: leaving this at a literal 1 would have quartered the slope term's
+ * weight against distance, which is a different pathfinder — walkers taking
+ * the steep way because the gentle way now counts four times the steps.
+ *
+ * Skipped entirely for a water-ground profile (maxGradientPerCell = Infinity,
+ * traversal.ts): water has no risers, so there is nothing to penalise.
  */
-export const SLOPE_COST_PER_HEIGHT_UNIT = 1;
+export const SLOPE_COST_PER_HEIGHT_UNIT = WORLD_UNIT_CELLS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Search bounds
@@ -76,10 +88,11 @@ export const SLOPE_COST_PER_HEIGHT_UNIT = 1;
  * How far a route may swing from the straight line between start and goal,
  * in cells, on either axis.
  *
- * 2×CHUNK_SIZE (32) — a fixed, generous multiple of the game's own
- * neighbourhood unit (CHUNK_SIZE = 16), enough room to clear an obstacle
- * several chunks wide without letting the search box grow unboundedly with
- * trip length. ASSUMPTION, named because it is not measured: no telemetry
+ * Two NEIGHBOURHOODS — a fixed, generous multiple of the game's own
+ * neighbourhood unit (16 world units of ground: 128 cells since the 2026-08-21
+ * re-sample, 32 before it, the same swing across the ground either way) —
+ * enough room to clear an obstacle several neighbourhoods wide without letting
+ * the search box grow unboundedly with trip length. ASSUMPTION, named because it is not measured: no telemetry
  * exists yet on how wide a player-built obstacle typically gets between two
  * points a walker plugin routes between (tens of cells, per pilgrims'
  * PILGRIMAGE_CATCHMENT_CELLS / wanderers' WANDER_RANGE_CELLS). If a shipped
@@ -92,7 +105,7 @@ export const SLOPE_COST_PER_HEIGHT_UNIT = 1;
  * is a short local journey (a viewpoint, a neighbouring town), never a
  * cross-continent trek.
  */
-export const ROUTE_SEARCH_MARGIN_CELLS = CHUNK_SIZE * 2;
+export const ROUTE_SEARCH_MARGIN_CELLS = NEIGHBOURHOOD_CELLS * 2;
 
 /**
  * Hard cap on nodes EXPANDED (popped off the open set) by one `findRoute`
@@ -125,9 +138,28 @@ export const ROUTE_SEARCH_MARGIN_CELLS = CHUNK_SIZE * 2;
  *
  * A TEST SEAM: findRoute takes this as an optional last argument so a suite
  * can force budget exhaustion on a small, fast search rather than construct
- * a 4096-node maze.
+ * a full-budget maze.
+ *
+ * SCALED WITH THE SAMPLING DENSITY (2026-08-21). What the budget really buys
+ * is a REACHABLE AREA — the ground A* may explore before giving up — and a
+ * given patch of ground is now sixteen cells where it was one. Left at 4096
+ * the walkers would have kept the number and lost the range: every trip's
+ * reachable radius would have quartered, and "obviously reachable by walking a
+ * bit further out" would start failing at a quarter of the distance. The
+ * budget is therefore stated as expansions per unit of ground and multiplied
+ * by WORLD_UNIT_CELLS², holding the area constant at 65 536 expansions.
+ *
+ * THE COST IS REAL AND IS THE PRICE OF THE RANGE: the cost model above puts
+ * one exhausted search at ~24 ms rather than ~1.5, so the burst case it
+ * bounds — every capped walker replanning on one tick — no longer fits in a
+ * 100 ms tick. It is reachable only by a search that fails, which is why it is
+ * accepted here rather than paid for with range; the fix if a shipped world
+ * hits it is to spread replans across ticks (a scheduling change in the walker
+ * plugins), not to shrink the area a walker can see.
  */
-export const ROUTE_NODE_BUDGET = 4096;
+const ROUTE_NODE_BUDGET_PER_WORLD_UNIT_SQUARED = 4096;
+export const ROUTE_NODE_BUDGET =
+  cellsOverArea(ROUTE_NODE_BUDGET_PER_WORLD_UNIT_SQUARED);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The route

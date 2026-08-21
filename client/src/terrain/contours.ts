@@ -5,7 +5,7 @@
 // contracts S1–S5, which this code implements — nothing here may change
 // independently of that record.
 
-import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS } from '@terrace/shared';
 import { sampleRenderHeight, type TerrainMirror } from './mirror.ts';
 
 // ---------------------------------------------------------------------------
@@ -118,16 +118,54 @@ export type ContourLoop = ContourPoint[];
 // are still reused, because they are the ones touched per LEVEL rather than per
 // chunk.
 
-export const SAMPLE_COUNT = LATTICE_PER_CHUNK * LATTICE_PER_CHUNK;
-export const samples = new Int32Array(SAMPLE_COUNT);
+/**
+ * Cells across the largest lattice this module ever marches.
+ *
+ * A CHUNK is one client; the brush-outline preview (render/brushPreview.ts) is
+ * the other, and since the 2026-08-21 re-sample its square is the bigger of
+ * the two: the widest brush reaches MAX_BRUSH_RADIUS cells, which is four
+ * world units of ground sampled four times as finely, while a chunk is now
+ * four world units TOTAL (shared's CHUNK_SPAN). The scratch below is sized for
+ * whichever is larger, and every pass marches `activeSpan` — the span the
+ * current load set — so a chunk pass never reads a sample the preview left
+ * behind.
+ *
+ * The preview's square is a footprint disc of diameter 2·MAX_BRUSH_RADIUS,
+ * centred with one cell of clear lattice on each side (brushPreview.ts's
+ * FOOTPRINT_LATTICE_MARGIN_CELLS), hence the +2.
+ */
+export const MAX_LATTICE_SPAN = Math.max(CHUNK_SIZE, 2 * MAX_BRUSH_RADIUS + 2);
+const MAX_LATTICE_PER_SPAN = MAX_LATTICE_SPAN + 1;
 
-/** Horizontal lattice edge (i,j)→(i+1,j): i ∈ [0,15], j ∈ [0,16]. */
-const H_EDGE_COUNT = CHUNK_SIZE * LATTICE_PER_CHUNK;
-/** Vertical lattice edge (i,j)→(i,j+1): i ∈ [0,16], j ∈ [0,15]. */
-const V_EDGE_COUNT = LATTICE_PER_CHUNK * CHUNK_SIZE;
+/**
+ * The span every marching pass below uses, in cells — set by `loadSamples`
+ * (a chunk) or `loadSampleField` (whatever the caller is contouring), and read
+ * by everything downstream. It is module state for the same reason the sample
+ * lattice is: this pipeline is one synchronous load → march → assemble run at
+ * a time, and its precondition is documented on both loaders.
+ */
+let activeSpan = CHUNK_SIZE;
+let activeLattice = LATTICE_PER_CHUNK;
+
+/**
+ * Samples one CHUNK's lattice holds — what a chunk-marching caller iterates.
+ *
+ * Deliberately NOT the array's length: the scratch is allocated for the
+ * largest span this module can be asked to march (see MAX_LATTICE_SPAN), and a
+ * caller that walked the whole allocation would read whatever the last, wider
+ * pass left behind. capEmission.ts scans exactly this many.
+ */
+export const SAMPLE_COUNT = LATTICE_PER_CHUNK * LATTICE_PER_CHUNK;
+const SAMPLE_CAPACITY = MAX_LATTICE_PER_SPAN * MAX_LATTICE_PER_SPAN;
+export const samples = new Int32Array(SAMPLE_CAPACITY);
+
+/** Horizontal lattice edge (i,j)→(i+1,j): i ∈ [0,span−1], j ∈ [0,span]. */
+const H_EDGE_COUNT = MAX_LATTICE_SPAN * MAX_LATTICE_PER_SPAN;
+/** Vertical lattice edge (i,j)→(i,j+1): i ∈ [0,span], j ∈ [0,span−1]. */
+const V_EDGE_COUNT = MAX_LATTICE_PER_SPAN * MAX_LATTICE_SPAN;
 const EDGE_COUNT = H_EDGE_COUNT + V_EDGE_COUNT;
 /** Two segments per dual square is the marching-squares maximum (saddles). */
-const MAX_SEGMENTS = 2 * CHUNK_SIZE * CHUNK_SIZE;
+const MAX_SEGMENTS = 2 * MAX_LATTICE_SPAN * MAX_LATTICE_SPAN;
 
 const edgeCrossed = new Uint8Array(EDGE_COUNT);
 const edgeX = new Float64Array(EDGE_COUNT);
@@ -155,9 +193,11 @@ const edgeHasEntry = new Uint8Array(EDGE_COUNT);
  * S1/S3 hold unchanged between received chunks.
  */
 export function loadSamples(mirror: TerrainMirror, originX: number, originZ: number): void {
-  for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
-    for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
-      samples[j * LATTICE_PER_CHUNK + i] = sampleRenderHeight(
+  activeSpan = CHUNK_SIZE;
+  activeLattice = LATTICE_PER_CHUNK;
+  for (let j = 0; j < activeLattice; j++) {
+    for (let i = 0; i < activeLattice; i++) {
+      samples[j * activeLattice + i] = sampleRenderHeight(
         mirror,
         originX + i,
         originZ + j,
@@ -184,17 +224,25 @@ export function loadSamples(mirror: TerrainMirror, originX: number, originZ: num
  * and the preview builds its geometries once, at startup, before the first
  * chunk mesh exists.
  */
-export function loadSampleField(fill: (i: number, j: number) => number): void {
-  for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
-    for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
-      samples[j * LATTICE_PER_CHUNK + i] = fill(i, j);
+export function loadSampleField(
+  fill: (i: number, j: number) => number,
+  span: number = CHUNK_SIZE,
+): void {
+  if (span < 1 || span > MAX_LATTICE_SPAN) {
+    throw new RangeError(`lattice span ${span} outside [1, ${MAX_LATTICE_SPAN}]`);
+  }
+  activeSpan = span;
+  activeLattice = span + 1;
+  for (let j = 0; j < activeLattice; j++) {
+    for (let i = 0; i < activeLattice; i++) {
+      samples[j * activeLattice + i] = fill(i, j);
     }
   }
 }
 
-const horizontalEdgeKey = (i: number, j: number): number => j * CHUNK_SIZE + i;
+const horizontalEdgeKey = (i: number, j: number): number => j * MAX_LATTICE_SPAN + i;
 const verticalEdgeKey = (i: number, j: number): number =>
-  H_EDGE_COUNT + j * LATTICE_PER_CHUNK + i;
+  H_EDGE_COUNT + j * MAX_LATTICE_PER_SPAN + i;
 
 /** Edge slots of one dual square, in the order the case table names them. */
 const SQUARE_EDGE_BOTTOM = 0;
@@ -291,14 +339,14 @@ export function marchLevel(
   edgeCrossed.fill(0);
 
   const inside = (i: number, j: number): boolean =>
-    samples[j * LATTICE_PER_CHUNK + i] >= threshold;
+    samples[j * activeLattice + i] >= threshold;
   const heightAt = (i: number, j: number): number =>
-    samples[j * LATTICE_PER_CHUNK + i];
+    samples[j * activeLattice + i];
 
   // Crossings, one pass over every lattice edge. Each edge has at most one
   // crossing for a given threshold (the field is linear along it).
-  for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
-    for (let i = 0; i < CHUNK_SIZE; i++) {
+  for (let j = 0; j < activeLattice; j++) {
+    for (let i = 0; i < activeSpan; i++) {
       const left = inside(i, j);
       const right = inside(i + 1, j);
       if (left === right) continue;
@@ -311,8 +359,8 @@ export function marchLevel(
       edgeZ[key] = originZ + j;
     }
   }
-  for (let j = 0; j < CHUNK_SIZE; j++) {
-    for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
+  for (let j = 0; j < activeSpan; j++) {
+    for (let i = 0; i < activeLattice; i++) {
       const near = inside(i, j);
       const far = inside(i, j + 1);
       if (near === far) continue;
@@ -328,8 +376,8 @@ export function marchLevel(
 
   // Segments, one pass over every dual square the chunk owns.
   let count = 0;
-  for (let j = 0; j < CHUNK_SIZE; j++) {
-    for (let i = 0; i < CHUNK_SIZE; i++) {
+  for (let j = 0; j < activeSpan; j++) {
+    for (let i = 0; i < activeSpan; i++) {
       const a = inside(i, j) ? 1 : 0;
       const b = inside(i + 1, j) ? 2 : 0;
       const c = inside(i + 1, j + 1) ? 4 : 0;
@@ -388,9 +436,9 @@ function squareEdgeKey(i: number, j: number, slot: number): number {
 function rectMaskOf(x: number, z: number, x0: number, z0: number): number {
   let mask = RECT_NONE;
   if (x === x0) mask |= RECT_WEST;
-  if (x === x0 + CHUNK_SIZE) mask |= RECT_EAST;
+  if (x === x0 + activeSpan) mask |= RECT_EAST;
   if (z === z0) mask |= RECT_NORTH;
-  if (z === z0 + CHUNK_SIZE) mask |= RECT_SOUTH;
+  if (z === z0 + activeSpan) mask |= RECT_SOUTH;
   return mask;
 }
 
@@ -402,7 +450,7 @@ function rectMaskOf(x: number, z: number, x0: number, z0: number): number {
  * which is the same handedness as "inside on the left".
  */
 function perimeterOf(p: ContourPoint, x0: number, z0: number): number {
-  const s = CHUNK_SIZE;
+  const s = activeSpan;
   if ((p.rect & RECT_NORTH) !== 0 && (p.rect & RECT_EAST) === 0) return p.x - x0;
   if ((p.rect & RECT_EAST) !== 0 && (p.rect & RECT_SOUTH) === 0) return s + (p.z - z0);
   if ((p.rect & RECT_SOUTH) !== 0 && (p.rect & RECT_WEST) === 0) {
@@ -413,7 +461,7 @@ function perimeterOf(p: ContourPoint, x0: number, z0: number): number {
 
 /** The four domain corners, in the same counter-clockwise order. */
 function rectCorners(x0: number, z0: number): ContourPoint[] {
-  const s = CHUNK_SIZE;
+  const s = activeSpan;
   return [
     { x: x0, z: z0, rect: RECT_WEST | RECT_NORTH },
     { x: x0 + s, z: z0, rect: RECT_EAST | RECT_NORTH },
@@ -507,7 +555,7 @@ export function assembleLoops(
 
   // --- close the open chains along the domain border ---------------------
   const corners = rectCorners(x0, z0);
-  const cornerPerimeter = corners.map((c, index) => index * CHUNK_SIZE);
+  const cornerPerimeter = corners.map((c, index) => index * activeSpan);
   const byStart = chains.map((_, index) => index);
   byStart.sort((a, b) => chains[a].startPerimeter - chains[b].startPerimeter);
 
@@ -558,7 +606,7 @@ export function assembleLoops(
 
 /** Forward distance from `from` to `to` around the domain border. */
 function cyclicGap(from: number, to: number): number {
-  const perimeter = 4 * CHUNK_SIZE;
+  const perimeter = 4 * activeSpan;
   const gap = to - from;
   return gap > 0 ? gap : gap + perimeter;
 }

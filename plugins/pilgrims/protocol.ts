@@ -76,13 +76,29 @@ export const WALKERS_WIRE_CAP = PILGRIMS_CAP + WANDERERS_CAP;
 // loudly on whichever side moved.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The one import this module allows itself: a district's size is a fact about
+// the ground, and @terrace/shared owns how many cells the ground is sampled at.
+import {
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
+
 /** The two settler races. Order is meaningful: index = the race hash bit. */
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 
 export type SettlerRace = (typeof SETTLER_RACES)[number];
 
-/** Edge, in cells, of the square district that shares one race. */
-export const SETTLER_DISTRICT_CELLS = 16;
+/**
+ * Edge, in cells, of the square district that shares one race — sixteen WORLD
+ * UNITS, i.e. one neighbourhood of ground, converted.
+ *
+ * The rhyme with the game's neighbourhood unit is the whole justification (see
+ * structures' protocol.ts), and it survives the 2026-08-21 re-sample only by
+ * being stated in world units: left at a literal 16 cells a district would have
+ * shrunk to a quarter of what it means, and one town could have been four
+ * peoples at once.
+ */
+export const SETTLER_DISTRICT_CELLS = cellsAcross(16);
 
 /** 32-bit integer hash of a cell — the same function every plugin carries. */
 export function hashCell(x: number, y: number): number {
@@ -129,7 +145,7 @@ export interface PilgrimEntityState {
    *  staff, wanderers don't) and nothing else. */
   readonly kind: WalkerKind;
   readonly race: SettlerRace;
-  /** Cell-space position (fractional). World X/Z, since CELL_WORLD_SIZE is 1. */
+  /** Cell-space position (fractional); the client scales it by CELL_WORLD_SIZE. */
   readonly x: number;
   readonly y: number;
   /** Radians; the walker walks toward (cos heading, sin heading). */

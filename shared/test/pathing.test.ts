@@ -4,6 +4,7 @@ import {
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
   LAND_WALKER_PROFILE,
   ORTHOGONAL_STEP_COST,
+  SLOPE_COST_PER_HEIGHT_UNIT,
   SEA_LEVEL,
   UNCONSTRAINED_GRADIENT_PER_CELL,
   findRoute,
@@ -140,9 +141,13 @@ describe('findRoute — slope cost', () => {
     // (every step is exactly at the gradient limit, never over it) and is
     // the natural minimal-length way through — so its hand-computed cost is
     // a fair "what crossing costs" figure to beat. 20 orthogonal steps, 4 of
-    // which (8→9, 9→10, 12→13, 13→14) each carry one extra RISE of slope
-    // cost on top of their base 10.
-    const straightThroughCost = 20 * ORTHOGONAL_STEP_COST + 4 * RISE;
+    // which (8→9, 9→10, 12→13, 13→14) each carry one extra RISE of height,
+    // charged at SLOPE_COST_PER_HEIGHT_UNIT apiece, on top of their base 10.
+    // The rate is spelled out rather than assumed to be 1: it is
+    // WORLD_UNIT_CELLS since the 2026-08-21 re-sample, so that a climb costs
+    // the same against a world unit of flat walking as it always did.
+    const straightThroughCost =
+      20 * ORTHOGONAL_STEP_COST + 4 * RISE * SLOPE_COST_PER_HEIGHT_UNIT;
     expect(plan!.cost).toBeLessThan(straightThroughCost);
   });
 });

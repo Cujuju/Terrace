@@ -4,13 +4,17 @@
 // covers the primitive itself: per-token mutation, the union side-effect,
 // per-player streaming/visibility reads, and persistence across a restart.
 
-import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, NEIGHBOURHOOD_CELLS, chunksPerEdge } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import { applyInitialUnlockForToken, initialUnlockFootprint } from '../src/world/initial-unlock.ts';
 import { World } from '../src/world/world.ts';
 import { RecordingSink, worldWithUnlockedChunks } from './support/harness.ts';
 
-const WORLD_SIZE = 64;
+// Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
+// re-sample kept CHUNK_SIZE at 16 cells and shrank what a chunk covers, so a
+// four-chunk world is smaller ground than it was — which is fine here: every
+// assertion in this suite is about chunk mechanics, not about distances.)
+const WORLD_SIZE = CHUNK_SIZE * 4;
 const TOKEN_A = 'token-a';
 const TOKEN_B = 'token-b';
 const CHUNK: readonly [number, number] = [2, 2];
@@ -170,7 +174,7 @@ describe('applyInitialUnlockForToken', () => {
     // SPAN chunks) does NOT cover the whole map — at WORLD_SIZE (64, 4×4
     // chunks) the span clamps to the entire world and there would be no
     // "outside the starter square" chunk left to test against.
-    const LARGE_WORLD_SIZE = 256;
+    const LARGE_WORLD_SIZE = NEIGHBOURHOOD_CELLS * 16;
     const world = World.createFresh(LARGE_WORLD_SIZE, undefined, undefined, 1);
     const { startChunk, spanChunks } = initialUnlockFootprint(LARGE_WORLD_SIZE);
     const outsideStarter: readonly [number, number] = [startChunk + spanChunks, startChunk]; // just past the starter square's east edge

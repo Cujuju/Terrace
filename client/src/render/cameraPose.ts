@@ -15,7 +15,7 @@
 // falls back to the default framing: a corrupt entry must never be able to
 // leave the player staring at a black screen with no way back.
 
-import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT } from '@terrace/shared';
+import { MAX_HEIGHT, MIN_HEIGHT, NEIGHBOURHOOD_CELLS } from '@terrace/shared';
 import {
   CAMERA_MAX_DISTANCE,
   CAMERA_MIN_DISTANCE,
@@ -69,7 +69,7 @@ export const CAMERA_POSE_SAVE_DEBOUNCE_MS = 400;
  * terrain; one chunk of slack allows that while still rejecting the
  * wildly-out-of-range coordinates that corruption produces.
  */
-const CAMERA_POSE_TARGET_MARGIN = CHUNK_SIZE * CELL_WORLD_SIZE;
+const CAMERA_POSE_TARGET_MARGIN = NEIGHBOURHOOD_CELLS * CELL_WORLD_SIZE;
 
 /**
  * Slack, in world units, on the orbit-distance band check. The distance we

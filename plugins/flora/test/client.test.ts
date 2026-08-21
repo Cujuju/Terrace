@@ -3,6 +3,7 @@
 // ("no headless GL rig"), so nothing here imports three — which is also what
 // lets it run in the same node environment as the server tests.
 
+import { worldUnitsAcross } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import {
   FLORA_CONIFER_SHARE_OF_256,
@@ -148,9 +149,10 @@ describe('placement', () => {
 
     const variation = treeVariation(3, 4);
     expect(placements[0]).toEqual({
-      // Cell coordinates ARE world X/Z: CELL_WORLD_SIZE is 1.
-      x: 3,
-      z: 4,
+      // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (2026-08-21:
+      // it was 1, and this assertion read as an identity).
+      x: worldUnitsAcross(3),
+      z: worldUnitsAcross(4),
       groundY: 5,
       kind: variation.kind,
       scale: variation.scale,

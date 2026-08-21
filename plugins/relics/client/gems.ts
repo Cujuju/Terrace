@@ -6,23 +6,29 @@
 // it is tested). client/index.ts is the thin imperative shell that calls into
 // this.
 
+import {
+  CELL_WORLD_SIZE,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+} from '@terrace/shared';
 import type { RelicView, SkillId, SkillKind } from '../protocol.ts';
 import { skillInfo } from '../protocol.ts';
 
 /**
- * World units per cell edge.
+ * World units per cell edge — re-exported from @terrace/shared so this file's
+ * callers keep their import site.
  *
- * KNOWN API GAP (reported alongside this plugin, in the same spirit as mana's
- * and reveal's notes): ClientPluginCtx hands a plugin CELL coordinates for
- * positions and a WORLD-space Y from terrainHeightAt, but exposes no cell → world
- * scale, so a plugin that renders anything in the world has to state it. This
- * must stay equal to CELL_WORLD_SIZE in client/src/config.ts, which fixes it at
- * 1 precisely so that "world-space X/Z coordinates ARE cell coordinates"; it
- * cannot be imported from there because that module reads `import.meta.env` and
- * would drag Vite's ambient types into this package's compile. The right fix is
- * a `cellToWorld` on the ctx, next to `terrainHeightAt`.
+ * THE API GAP THIS RESTATEMENT NAMED IS CLOSED, and not the way it proposed
+ * (2026-08-21). It used to be a local `= 1`, correct only because a cell
+ * happened to be a world unit, with a note that a `cellToWorld` on the ctx was
+ * the right fix. The re-sample made every such restatement wrong at once, so
+ * the ratio moved into shared instead — which every plugin can already import,
+ * unlike client/src/config.ts (that module reads `import.meta.env` and would
+ * drag Vite's ambient types into this package's compile). A ctx method would
+ * have solved it for plugins that render through the ctx and left this plugin's
+ * pure-arithmetic modules, which have no ctx, exactly where they were.
  */
-export const CELL_WORLD_SIZE = 1;
+export { CELL_WORLD_SIZE };
 
 /**
  * Emissive colour per skill category. Category, not skill: a player learns
@@ -53,19 +59,20 @@ export function cssColor(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
 }
 
-/** Gem half-height, in cells. Under half a cell so two adjacent gems never touch. */
+/** Gem half-height, in WORLD UNITS. Under half a unit so two adjacent gems never touch. */
 export const GEM_RADIUS_CELLS = 0.45;
 
 /**
- * How far above the rendered surface a gem floats, in cells (= world units).
- * One and a bit cells: clear of a single terrace riser (BAND_WORLD_HEIGHT is
- * one cell, client/src/config.ts) so a gem on a step is never half-buried in
- * the step above it, and low enough to still read as "on" that cell.
+ * How far above the rendered surface a gem floats, in WORLD UNITS — a vertical
+ * offset, so it never touched the horizontal re-sample. One and a bit units:
+ * clear of a single terrace riser (BAND_WORLD_HEIGHT is a quarter of a world
+ * unit, client/src/config.ts) so a gem on a step is never half-buried in the
+ * step above it, and low enough to still read as "on" that cell.
  */
 export const GEM_HOVER_CELLS = 1.2;
 
-/** Peak-to-centre bob, in cells. A quarter cell: motion you notice, not motion
- * that moves the gem off the cell it marks. */
+/** Peak-to-centre bob, in WORLD UNITS. A quarter unit: motion you notice, not
+ * motion that moves the gem off the cell it marks. */
 export const GEM_BOB_AMPLITUDE_CELLS = 0.25;
 
 /** Seconds per bob cycle. Slow — this is idle ambience, not an alert. */
@@ -98,7 +105,7 @@ export function gemPhaseFor(id: string): number {
   return ((hash >>> 0) / 0x100000000) * GEM_BOB_PERIOD_S;
 }
 
-/** Vertical bob offset in cells at a given elapsed time. */
+/** Vertical bob offset in world units at a given elapsed time. */
 export function gemBobOffset(elapsedS: number, phaseS: number): number {
   return Math.sin(((elapsedS + phaseS) / GEM_BOB_PERIOD_S) * TAU) * GEM_BOB_AMPLITUDE_CELLS;
 }
@@ -118,11 +125,14 @@ export function gemSpinAngle(elapsedS: number, phaseS: number): number {
  * DOES expose is pickTerrainCell, the app's own click → ground ray. So a click
  * is resolved to a ground cell and a relic near that cell is claimed.
  *
- * 4 cells (owner, 2026-08-14: "make the hitbox for relics two times larger" —
- * doubled from the original 2). The floor of the sizing is parallax: a gem
- * floats GEM_HOVER_CELLS above the surface, so the ray that visually passes
- * through it lands on the ground a little beyond it — at the default 55°
- * polar orbit that offset is on the order of one cell. Everything above the
+ * 4 WORLD UNITS, converted (owner, 2026-08-14: "make the hitbox for relics two
+ * times larger" — doubled from the original 2). It is a distance on the ground
+ * measured against a gem the player is aiming at, so it is stated in the units
+ * the gem is modelled in rather than in samples of the terrain. The floor of
+ * the sizing is parallax: a gem floats GEM_HOVER_CELLS above the surface, so
+ * the ray that visually passes through it lands on the ground a little beyond
+ * it — at the default 55° polar orbit that offset is on the order of one world
+ * unit. Everything above the
  * floor is deliberate generosity: a relic is a pickup, pickups should be
  * forgiving to click (doubly so on touch, where the finger hides the gem),
  * and the server validates the CLAIM, not the aim (see the identity notes in
@@ -131,9 +141,10 @@ export function gemSpinAngle(elapsedS: number, phaseS: number): number {
  * even overlapping tolerances still claim the gem actually clicked.
  *
  * Cross-referenced in the report as the second half of the same API gap as
- * CELL_WORLD_SIZE above; a `pickPluginObject` on the ctx would replace this.
+ * CELL_WORLD_SIZE above (whose half is now closed — see its comment); a
+ * `pickPluginObject` on the ctx would replace this one.
  */
-export const RELIC_PICK_RADIUS_CELLS = 4;
+export const RELIC_PICK_RADIUS_CELLS = cellsAcross(4);
 
 /**
  * The relic a click on `cell` should claim: the nearest one within the

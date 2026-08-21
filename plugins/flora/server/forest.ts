@@ -34,7 +34,12 @@
 // CLOCK: simulated seconds only, accumulated from the host's `dt`. No Date.now
 // anywhere, so a server at any TICK_HZ behaves identically per simulated second.
 
-import { CHUNK_SIZE } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  WORLD_UNIT_CELLS,
+  cellsAcross,
+  cellsOverArea,
+} from '@terrace/shared';
 import { FLORA_TREE_CAP, treeCellOf, treeKey, type TreeCell } from '../protocol.ts';
 import { isGreenBand, isPlantableCell, type FloraWorld } from './bands.ts';
 import type { StabilityMap } from './stability.ts';
@@ -69,29 +74,36 @@ export const FLORA_SURVEY_INTERVAL_SECONDS = 5;
  *     cells the canopy starts hiding the band edges and the Godus silhouette
  *     that the whole renderer exists to produce goes with it.
  *   * Sparser than ~1 in 20 and a chunk of grass holds twelve trees spread over
- *     256 cells, which reads as litter rather than as woodland.
+ *     256 square world units, which reads as litter rather than as woodland.
  *
- * At 12, a 16×16 chunk of pure grass settles at 21 trees — a copse you can walk
+ * At 12, a chunk of pure grass settles at 21 trees — a copse you can walk
  * around, on ground you can still read. It also sits comfortably above the
  * densest packing the spacing rule allows (1 in 4), so the two constants shape
  * the pattern together instead of fighting: see FLORA_MIN_TREE_SPACING_CELLS.
+ *
+ * IT IS A DENSITY OVER GROUND, so it is stated in SQUARE WORLD UNITS per tree
+ * and multiplied by WORLD_UNIT_CELLS twice. Left as a flat count of cells, the
+ * 2026-08-21 re-sample would have put sixteen times as many trees on every
+ * hillside — the same forest counted in a finer grid, not a denser one.
  */
-export const FLORA_CELLS_PER_TREE = 12;
+export const FLORA_CELLS_PER_TREE = cellsOverArea(12);
 
 /**
- * Minimum Chebyshev distance between two trees, in cells. 2 → the eight cells
- * around a tree stay empty.
+ * Minimum Chebyshev distance between two trees — two WORLD UNITS, converted,
+ * so the ground around a tree stays clear of other trees.
  *
  * This is a MODEL constraint, not an ecological one: a tree's crown is about
- * 0.8 cells across and its scale varies up to ×1.25, so two trees on adjacent
- * cells visibly interpenetrate and read as one shapeless mass. One clear cell
- * between them is the least that keeps them separate.
+ * 0.8 world units across and its scale varies up to ×1.25, so two trees a unit
+ * apart visibly interpenetrate and read as one shapeless mass. One clear world
+ * unit between them is the least that keeps them separate — which is why it is
+ * measured against the crown rather than against the sampling grid.
  *
- * It caps local density at 1 tree per 4 cells, which is denser than the 1-in-12
+ * It caps local density at 1 tree per 4 square world units, which is denser
+ * than the 1-in-12
  * the target asks for — deliberately, so the spacing rule never becomes the thing
  * that decides how many trees a world has. It only decides where they are not.
  */
-export const FLORA_MIN_TREE_SPACING_CELLS = 2;
+export const FLORA_MIN_TREE_SPACING_CELLS = cellsAcross(2);
 
 /**
  * Mean simulated seconds one missing tree waits before it sprouts.

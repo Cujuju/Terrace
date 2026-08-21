@@ -23,6 +23,7 @@ import {
   isValidHeight,
   isWater,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
+  CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
@@ -35,6 +36,7 @@ import {
   smooth,
   SMOOTH_PASS_LIMIT,
   SMOOTH_SPREAD_CELLS,
+  WORLD_UNIT_CELLS,
   type Heightmap,
   type SculptOptions,
 } from '../src/index.ts';
@@ -183,11 +185,13 @@ describe('deep strata constants', () => {
   it('scales the smoothing budget with the range AND the gradient limit', () => {
     // The relaxation travel bound follows both by derivation; if either side
     // of this drifts to a literal, the deepest cascades truncate. It doubled
-    // on 2026-08-20 because MAX_STEP halved, not because the range moved.
+    // on 2026-08-20 because MAX_STEP halved, not because the range moved, and
+    // quadrupled again on 2026-08-21 because MAX_STEP is now a slope per WORLD
+    // UNIT — the same 160 world units of travel, sampled four times as finely.
     expect(SMOOTH_SPREAD_CELLS).toBe(
       Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP),
     );
-    expect(SMOOTH_SPREAD_CELLS).toBe(160);
+    expect(SMOOTH_SPREAD_CELLS).toBe(160 * WORLD_UNIT_CELLS);
   });
 });
 
@@ -245,7 +249,7 @@ describe('applyBrush', () => {
     const map = createHeightmap(16);
     expect(() => applyBrush(map, -1, 0, 1, 64, new Set())).toThrow(RangeError);
     expect(() => applyBrush(map, 8, 8, 0, 64, new Set())).toThrow(RangeError);
-    expect(() => applyBrush(map, 8, 8, 5, 64, new Set())).toThrow(RangeError);
+    expect(() => applyBrush(map, 8, 8, MAX_BRUSH_RADIUS + 1, 64, new Set())).toThrow(RangeError);
     expect(() => applyBrush(map, 8, 8, 2, 1.5, new Set())).toThrow(RangeError);
   });
 });
@@ -347,18 +351,36 @@ describe('applySculpt (the full server/prediction operation)', () => {
     // The old test asserted the Populous signature: DEFAULT_SCULPT_AMOUNT was
     // 64 against a MAX_STEP of 32, so a single click ALWAYS violated the
     // gradient limit and relaxation had to push the excess outward, skirting
-    // every click with a slope. Both are now BAND_HEIGHT, so one click lands
-    // exactly ON the limit and there is no excess to spill. That is the whole
-    // feel change, and it is a property of the two constants' relationship —
-    // not of this callsite — so it is pinned as one here.
-    expect(DEFAULT_SCULPT_AMOUNT).toBe(MAX_STEP);
-    const map = createHeightmap(32);
-    applySculpt(map, 16, 16, 1, DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, 16, 16)).toBe(DEFAULT_SCULPT_AMOUNT);
-    const neighbors =
-      heightAt(map, 15, 16) + heightAt(map, 17, 16) +
-      heightAt(map, 16, 15) + heightAt(map, 16, 17);
-    expect(neighbors).toBe(0);
+    // every click with a slope. A click is a band and the limit is a band per
+    // WORLD UNIT, so one click lands exactly ON the limit — that is the whole
+    // feel change, and it is a property of the two constants' relationship,
+    // not of this callsite, so it is pinned as one here.
+    expect(DEFAULT_SCULPT_AMOUNT).toBe(MAX_STEP * WORLD_UNIT_CELLS);
+
+    // ASSERTED ON THE RENDERED BAND SINCE 2026-08-21, and that is the contract
+    // rather than a weakening of it. "One crisp layer, no outward slump" is a
+    // statement about what the player SEES, and what they see is bandOf(). The
+    // re-sample put four cells inside a world unit, so the band a click lands
+    // now descends to sea level over the four cells that make up the one world
+    // unit of run the limit allows — 12, 8, 4, 0 — every one of which quantises
+    // to band 0 and therefore draws at exactly the height an untouched cell
+    // draws at. Asserting raw neighbour heights would pin the sampling density
+    // instead of the feel.
+    // THE POINT BRUSH, which is one WORLD UNIT of ground — the ladder's first
+    // rung (client hudState's BRUSH_RADII), not shared's MIN_BRUSH_RADIUS. The
+    // floor is the grid's own and is four times finer since the re-sample;
+    // this promise was made about the brush a player actually holds.
+    const map = createHeightmap(CHUNK_SIZE * 2);
+    const centre = CHUNK_SIZE;
+    const pointBrush = WORLD_UNIT_CELLS;
+    applySculpt(map, centre, centre, pointBrush, DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(map, centre, centre)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(bandOf(heightAt(map, centre, centre))).toBe(1);
+    for (let ring = pointBrush; ring <= pointBrush + WORLD_UNIT_CELLS; ring++) {
+      for (const [dx, dy] of [[-ring, 0], [ring, 0], [0, -ring], [0, ring]] as const) {
+        expect(bandOf(heightAt(map, centre + dx, centre + dy))).toBe(0);
+      }
+    }
     expectGradientLimitHolds(map);
   });
 });
@@ -1140,9 +1162,14 @@ describe('sculptDisplacementUnits', () => {
       profile: 'hard',
     });
 
-    // A one-cell edit, charged as 37 cells of flat delta. That is the trade.
+    // A one-cell edit, charged as the widest brush's whole footprint of flat
+    // delta. That is the trade. The footprint is 749 cells since the
+    // 2026-08-21 re-sample (37 before it — the same four world units of
+    // ground, sampled sixteen times as densely), and mana's own rate moved by
+    // the same square so the PRICE of that stroke is unchanged: see
+    // plugins/mana/server/index.ts's MANA_PER_BAND_WORLD_UNIT_SQUARED.
     expect(diff).toHaveLength(1);
-    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(592);
+    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(749 * BAND_HEIGHT);
   });
 });
 
@@ -1397,7 +1424,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
 
-  it('pins the standing residual of the #12 plateau scenario: 978 units of excess', () => {
+  it('pins the standing residual of the #12 plateau scenario: 993 units of excess', () => {
     // The STANDING RESIDUAL made concrete (see movePair's doc): a plateau one
     // band short of the ceiling, smoothed with one banded stroke, leaves the
     // ring exceeding MAX_STEP by exactly this much — and banded relaxation can
@@ -1409,10 +1436,18 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     // CEILING, so a finer band makes it 1008 units tall where it used to reach
     // 960, and the limit it is measured against halved with MAX_STEP. Taller
     // wall, tighter limit, larger standing excess.
+    //
+    // RE-MEASURED AGAIN 2026-08-21, 978 → 993, and the re-sample is again the
+    // deliberate change — this time entirely through MAX_STEP, which is now a
+    // slope per WORLD UNIT and so a quarter of what it was per cell. The wall
+    // is the same height; the limit subtracted from it is 12 units lower, and
+    // the residual is 15 units larger. Note the stroke is radius 4 CELLS here,
+    // a quarter of a world unit: these scenarios pin the containment maths at
+    // the grid's own scale, not a brush a player holds.
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(978);
+    expect(maxExcess(map)).toBe(993);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
@@ -1459,7 +1494,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     }
   });
 
-  it('#12 cascade, banded: converges under the pass cap on the worst plateau (2 passes)', () => {
+  it('#12 cascade, banded: converges under the pass cap on the worst plateau (10 passes)', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     const changed = new Set<number>();
@@ -1473,8 +1508,11 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     // rounded the plateau's corners off; 2 since the 2026-08-20 re-terrace —
     // re-measured each time, never derived. It FELL because a band cap is now
     // a quarter as tall, so the banded relaxation runs out of room to move
-    // anything after almost no work at all.)
-    expect(passes).toBe(2);
+    // anything after almost no work at all. 10 since the 2026-08-21 re-sample:
+    // MAX_STEP is a slope per WORLD UNIT now, so a legal step is a quarter of
+    // what it was and the same excess has to be walked out over four times the
+    // cells before the band caps stop it.)
+    expect(passes).toBe(10);
   });
 
   it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {
