@@ -2657,9 +2657,10 @@ the water rather than to the span between two unrelated puddles.
 **A second, worse bug found on the way: the surface floated.** A pool was
 drawn at its raw spill height (`poolHeight × HEIGHT_WORLD_SCALE`) while the
 terrain under it is band-quantised like all the rest of the world. Measured in
-the `basin` fixture by raycasting the drawn mesh: the floor rendered at
-**y = 1.5** and the water sat at **y = 2.55** — a full two-thirds of a band
-above the ground it was supposed to be resting on. The surface is now
+the `basin` fixture by raycasting the drawn mesh: the floor of a pool at spill
+height 109 rendered at **y = 1.5** (band 6's cap, 96 height units) while the
+water sat at 109 × HEIGHT_WORLD_SCALE = **y = 1.703** — 0.203 world units, or
+**four fifths of a band**, above the ground it was supposed to be resting on. The surface is now
 quantised to the band the terrain draws the pool in, which is the same
 correction the flowing ribbon already carried (`renderedBandAt`) and the same
 plane the outline's threshold is derived from.
@@ -2695,6 +2696,58 @@ water's own band renders at the same band floor — coplanar with the lake, and
 not covered by it. That is honest (it is dry land, and the terrain draws it
 flat there), but it means a terraced shore gives no relief cue at the
 waterline; only the colour change marks where the lake ends.
+
+### Decisions made 2026-08-21 (a fall's curtain is placed on the drawn face, issue #63)
+
+Owner report: "there are also still some step sections that are missing the
+water drawing on the vertical edge face". They were not missing. Rendering the
+water with the terrain hidden showed one unbroken ribbon, curtains and all —
+the third time in this arc that "the water is not drawn" turned out to be "the
+water is drawn inside the hill", and the reason the issue's own method note
+says to hide the ground before judging anything.
+
+**Root cause: the ribbon located a terrace face with a rule the terrain does
+not draw it by.** `renderedBandAt` inverts `crossingFraction` along the
+course's lattice edges and is exact about where the band boundary CROSSES —
+but the mesh marches the whole 2-D lattice and then runs `smoothLoop` over the
+result, which slides the face along the channel. Measured in the `meander`
+fixture at the fall between cells (8,4) and (9,4): the unsmoothed crossing is
+at **x = 8.40**, the drawn outline crosses the course at **x = 8.51**, and the
+curtain — nudged `RIVER_FALL_CLEARANCE_WORLD_UNITS` (a 64th of a cell) past
+8.40 — stood a tenth of a cell inside the hillside, behind the very cap it
+falls from.
+
+**Decision: read the lip off the outline the mesh builds its skirt from.**
+`makeLipLocator` intersects the segment between two ribbon samples with
+`chunkContourLoops(mirror, chunk, band floor)` — the same marched-and-smoothed
+loops `capEmission.ts` emits caps and skirts from — and takes the crossing
+nearest the bisected estimate. Whatever the smoothing did to that face, the
+curtain goes with it, for any angle of course against face. The bisected
+crossing survives as the FALLBACK when a segment does not cross the outline
+inside the chunks it touches, so the geometry is never worse than it was.
+Loops are cached per (chunk, threshold) for the life of one rebuild and thrown
+away with it, so no cache can outlive the terrain it was read from.
+
+**Rejected: enlarging `RIVER_FALL_CLEARANCE_WORLD_UNITS`** until the curtain
+cleared the face. The displacement is whatever Chaikin did to that particular
+loop — it is data, not a constant — so any value large enough for the worst
+case detaches the water from the lip everywhere else.
+
+**Verified by measurement, not by looking.** Walking the whole `meander`
+course at 1/20-cell steps and raycasting the drawn meshes at each: **1280
+samples, 0 with the water below the ground, 0 with no water at all.** Before
+the change the same walk found the water a band low through every fall's first
+tenth of a cell. The preview harness grew the probes that make this possible —
+`__previewPickWaterY` (the water's drawn height, the twin of `__previewPickY`)
+and `__previewContour` (the terrain's own smoothed band outline).
+
+**Named punt: no unit test for the locator.** A test could only assert that
+the lip lands on `chunkContourLoops`' output, which is what the locator reads
+— tautological. The honest test is the one that catches the class of bug: a
+headless "the ribbon agrees with the mesh" check in the spirit of
+`pickAgreesWithMesh.test.ts`, comparing every ribbon vertex against the cap
+triangles `chunkCapTriangles` emits. Not written; the in-world measurement
+above is what stands behind this change today.
 
 ### Version facts recorded at scaffold time (2026-08-13)
 

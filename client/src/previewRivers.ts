@@ -51,6 +51,7 @@ import {
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
+import { chunkContourLoops } from './terrain/vertexGrid.ts';
 import { createRiverRig } from './render/riverRig.ts';
 
 // ── Lighting rig, copied from previewBoats.ts / render/scene.ts ──────────────
@@ -418,12 +419,46 @@ function animate(): void {
       return hits.length > 0 ? hits[0]!.point.y : null;
     };
     // Debug probes for MEASURING rather than eyeballing: the derived network
-    // itself, and the fixture's raw heightmap.
+    // itself, the fixture's raw heightmap, and the terrain group — hiding the
+    // ground is how "the water is missing" is told apart from "the water is
+    // drawn inside the hill", which the first two rounds of the terrace-face
+    // bug were both misdiagnosed without.
     (window as unknown as { __previewNetwork?: unknown }).__previewNetwork = network;
+    (window as unknown as { __previewTerrain?: unknown }).__previewTerrain = terrainGroup;
     (window as unknown as { __previewHeightAt?: unknown }).__previewHeightAt = (
       x: number,
       y: number,
     ): number => mirror.map.cells[cellIndex(mirror.map, x, y)]!;
+    // The WATER's own drawn height at a world XZ — the twin of
+    // __previewPickY, so "where is the ribbon" and "where is the ground" are
+    // measured the same way, off the same drawn meshes, instead of one being
+    // measured and the other assumed.
+    (window as unknown as { __previewPickWaterY?: unknown }).__previewPickWaterY = (
+      worldX: number,
+      worldZ: number,
+    ): number | null => {
+      const ray = new Raycaster(new Vector3(worldX, 10_000, worldZ), new Vector3(0, -1, 0));
+      const hits = ray.intersectObjects(
+        scene.children.filter((child) => child !== terrainGroup),
+        true,
+      );
+      return hits.length > 0 ? hits[0]!.point.y : null;
+    };
+    // The terrain's OWN smoothed band outline, for the chunk holding a cell —
+    // the line the mesh actually draws a terrace face along. Comparing a
+    // water rule against this is how "the curtain is missing" is told apart
+    // from "the curtain is a tenth of a cell behind the face".
+    (window as unknown as { __previewContour?: unknown }).__previewContour = (
+      cellXCoord: number,
+      cellYCoord: number,
+      threshold: number,
+    ): { x: number; z: number; onBorder: boolean }[][] =>
+      chunkContourLoops(
+        mirror,
+        Math.floor(cellXCoord / CHUNK_SIZE),
+        Math.floor(cellYCoord / CHUNK_SIZE),
+        threshold,
+      );
     (window as unknown as { __previewInfo?: unknown }).__previewInfo = {
       scene: sceneName,
       rivers: network.rivers.length,

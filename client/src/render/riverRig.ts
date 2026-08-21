@@ -71,6 +71,7 @@ import {
   samples,
 } from '../terrain/contours.ts';
 import { smoothLoop } from '../terrain/contourSmoothing.ts';
+import { chunkContourLoops } from '../terrain/vertexGrid.ts';
 import { bridgeHole, earClip, groupLoops } from '../terrain/triangulation.ts';
 import { WATER_COLOR } from './water.ts';
 
@@ -467,6 +468,118 @@ function renderedBandAt(heights: readonly number[], t: number): number {
 }
 
 /**
+ * Where a fall's LIP actually is: a fraction along the segment between two
+ * ribbon samples, found on the terrain's own drawn band outline.
+ *
+ * WHY THIS EXISTS (2026-08-21, owner: "there are also still some step sections
+ * that are missing the water drawing on the vertical edge face", issue #63).
+ * `renderedBandAt` says WHEN the band under the course changes, and it is
+ * exact about that — along a lattice edge it inverts the terrain's own
+ * `crossingFraction`. But the terrain does not draw a terrace face at that
+ * crossing: it marches the whole 2-D lattice and then SMOOTHS the resulting
+ * loop (`smoothLoop`), which slides the face along the channel by up to a
+ * fraction of a cell. Measured in the `meander` fixture at the fall between
+ * cells (8,4) and (9,4): the un-smoothed crossing is at x = 8.40, the drawn
+ * outline crosses the course at x = 8.51, and the curtain — nudged only
+ * RIVER_FALL_CLEARANCE_WORLD_UNITS past 8.40 — therefore stood a tenth of a
+ * cell INSIDE the hillside and was drawn behind the cap it was meant to fall
+ * from. That is the whole of "some faces have no water on them": the water was
+ * never missing, it was buried.
+ *
+ * So the lip is no longer estimated — it is READ OFF the same outline the mesh
+ * builds its skirt from, `chunkContourLoops` at the band boundary being
+ * crossed. Whatever the smoothing did to that face, the curtain went with it,
+ * by construction and for any orientation of course against face.
+ *
+ * Returns the fraction along (`fromX`,`fromZ`) → (`toX`,`toZ`) of the outline
+ * crossing NEAREST the caller's own estimate, or null when the segment does not
+ * cross the outline at all inside the chunks it touches — in which case the
+ * caller keeps its estimate, which is never worse than what it had before.
+ */
+function makeLipLocator(mirror: TerrainMirror): (
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  threshold: number,
+  estimateAt: number,
+) => number | null {
+  // Marching a chunk is not free, and one course crosses the same chunk at the
+  // same band many times over (every sample of a fall's bisection is inside
+  // one segment, and a terrace face is crossed by many segments). Cached for
+  // the life of ONE rebuild, keyed by chunk and threshold; the rig throws the
+  // locator away with the rebuild, so no cache can outlive the terrain it was
+  // read from.
+  const cache = new Map<string, readonly (readonly { x: number; z: number }[])[]>();
+  const loopsFor = (
+    chunkX: number,
+    chunkZ: number,
+    threshold: number,
+  ): readonly (readonly { x: number; z: number }[])[] => {
+    const key = `${chunkX},${chunkZ},${threshold}`;
+    let loops = cache.get(key);
+    if (loops === undefined) {
+      loops = chunkContourLoops(mirror, chunkX, chunkZ, threshold);
+      cache.set(key, loops);
+    }
+    return loops;
+  };
+
+  return (fromX, fromZ, toX, toZ, threshold, estimateAt) => {
+    const chunksPerSide = chunksPerEdge(mirror.map.size);
+    const inWorld = (value: number): number =>
+      Math.min(Math.max(value, 0), chunksPerSide - 1);
+    // Both ends' chunks: a segment is at most a cell long, so it spans two at
+    // most, but a face right on a chunk border belongs to whichever of them
+    // marched it.
+    const chunkOf = (worldX: number, worldZ: number): readonly [number, number] => [
+      inWorld(Math.floor(worldX / CELL_WORLD_SIZE / CHUNK_SIZE)),
+      inWorld(Math.floor(worldZ / CELL_WORLD_SIZE / CHUNK_SIZE)),
+    ];
+    const [fromChunkX, fromChunkZ] = chunkOf(fromX, fromZ);
+    const [toChunkX, toChunkZ] = chunkOf(toX, toZ);
+    const chunks: (readonly [number, number])[] =
+      fromChunkX === toChunkX && fromChunkZ === toChunkZ
+        ? [[fromChunkX, fromChunkZ]]
+        : [
+            [fromChunkX, fromChunkZ],
+            [toChunkX, toChunkZ],
+          ];
+
+    const segX = toX - fromX;
+    const segZ = toZ - fromZ;
+    let best: number | null = null;
+    let bestDistance = Infinity;
+    for (const [chunkX, chunkZ] of chunks) {
+      for (const loop of loopsFor(chunkX, chunkZ, threshold)) {
+        for (let i = 0; i < loop.length; i++) {
+          const a = loop[i]!;
+          const b = loop[(i + 1) % loop.length]!;
+          const edgeX = (b.x - a.x) * CELL_WORLD_SIZE;
+          const edgeZ = (b.z - a.z) * CELL_WORLD_SIZE;
+          // Standard segment/segment intersection: solve for the pair of
+          // parameters, keep it only when both land inside their own segment.
+          const denominator = segX * edgeZ - segZ * edgeX;
+          if (denominator === 0) continue; // parallel, including both degenerate
+          const offsetX = a.x * CELL_WORLD_SIZE - fromX;
+          const offsetZ = a.z * CELL_WORLD_SIZE - fromZ;
+          const alongSegment = (offsetX * edgeZ - offsetZ * edgeX) / denominator;
+          const alongEdge = (offsetX * segZ - offsetZ * segX) / denominator;
+          if (alongSegment < 0 || alongSegment > 1) continue;
+          if (alongEdge < 0 || alongEdge > 1) continue;
+          const distance = Math.abs(alongSegment - estimateAt);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = alongSegment;
+          }
+        }
+      }
+    }
+    return best;
+  };
+}
+
+/**
  * Bisection steps used to locate a band boundary between two ribbon samples.
  *
  * `renderedBandAt` is a step function, so there is nothing to solve
@@ -529,16 +642,20 @@ const FALL_TAPER_MIN_SCALE = 0.45;
  * the tread carried to the lip, a full-width vertical curtain down the face,
  * and the tread resuming at its foot. A cliff spanning several bands becomes
  * several curtains, one per band, because the terrain draws it as several
- * stacked skirts. The curtain is nudged RIVER_FALL_CLEARANCE_WORLD_UNITS
- * downstream so it stands in front of the face rather than inside it — the
- * same argument RIVER_SURFACE_LIFT_WORLD_UNITS makes vertically. Through the
- * fall the strip necks in; see FALL_TAPER_CELLS.
+ * stacked skirts. WHERE the face is comes from the terrain's own drawn outline
+ * (`locateLip`, see makeLipLocator) rather than from the bisected crossing,
+ * which is only where the UNSMOOTHED contour would have been; the curtain is
+ * then nudged RIVER_FALL_CLEARANCE_WORLD_UNITS downstream so it stands in
+ * front of the face rather than inside it — the same argument
+ * RIVER_SURFACE_LIFT_WORLD_UNITS makes vertically. Through the fall the strip
+ * necks in; see FALL_TAPER_CELLS.
  */
 function buildRibbon(
   centre: readonly CentreSample[],
   halfWidthWorld: number,
   bandAt: (t: number) => number,
   bandWorldY: (band: number) => number,
+  locateLip: ReturnType<typeof makeLipLocator>,
   out: number[],
 ): void {
   if (centre.length < 2) return;
@@ -636,7 +753,11 @@ function buildRibbon(
         else hi = mid;
       }
       const landedBand = bandAt(t + (nextT - t) * hi);
-      const lipAt = Math.min(hi + clearance, 1);
+      // The boundary being crossed is the floor of the HIGHER of the two
+      // bands — the one whose cap ends at this face.
+      const faceThreshold = Math.max(cursorBand, landedBand) * BAND_HEIGHT;
+      const drawnAt = locateLip(cx, cz, nx, nz, faceThreshold, hi);
+      const lipAt = Math.min((drawnAt ?? hi) + clearance, 1);
       const lipX = cx + spanX * lipAt;
       const lipZ = cz + spanZ * lipAt;
       // The lip keeps the width it arrived with; everything past it restarts
@@ -1181,6 +1302,9 @@ export function createRiverRig(
 
     const flowTriangles: number[] = [];
     const poolTriangles: number[] = [];
+    // One locator per rebuild: it caches the terrain outlines it reads, and
+    // those are only valid for the terrain this rebuild is looking at.
+    const locateLip = makeLipLocator(mirror);
     const flowHalfWidthWorld = FLOW_HALF_WIDTH_CELLS * CELL_WORLD_SIZE;
 
     /** World Y of a rendered terrace band, water lift included. */
@@ -1243,6 +1367,7 @@ export function createRiverRig(
               flowHalfWidthWorld,
               (t) => renderedBandAt(heights, t),
               bandWorldY,
+              locateLip,
               flowTriangles,
             );
           }
