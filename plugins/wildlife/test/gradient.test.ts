@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { type HabitatWorld, canTraverse } from '../server/census.ts';
-import { advanceEntity, lookaheadCellsFor, steerToValidHeading } from '../server/movement.ts';
+import { advanceEntity, lookaheadCellsFor, speedOf, steerToValidHeading } from '../server/movement.ts';
 import type { WildlifeEntity } from '../server/population.ts';
 import { AQUATIC_MAX_GRADIENT_PER_CELL, GRAZER_MAX_GRADIENT_PER_CELL } from '../server/species.ts';
 
@@ -91,12 +91,30 @@ describe('gradient-limited traversal (canTraverse)', () => {
   });
 });
 
+/**
+ * One tick, matching the host's TICK_HZ of 10 — the `dt` every steering call
+ * below is asked about.
+ *
+ * `stepCells` is required by shared's `SteerOptions` and these cases supply no
+ * occupants, so it changes none of their answers: separation is the only thing
+ * that reads it, and separation is off. It is still stated truthfully rather
+ * than as a placeholder, so the test cannot be read as claiming the field is
+ * decorative.
+ */
+const TICK_DT = 0.1;
+
 describe('gradient veto in steering (steerToValidHeading)', () => {
   it('turns a grazer along the terrace instead of crossing a riser (case a)', () => {
     const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL + 1);
     const entity = grazer(9.5, 20);
     const lookahead = 2; // comfortably reaches across the riser at x=10.
-    const heading = steerToValidHeading(world, entity, 0 /* due east, into the riser */, lookahead);
+    const heading = steerToValidHeading(
+      world,
+      entity,
+      0 /* due east, into the riser */,
+      lookahead,
+      speedOf(entity) * TICK_DT,
+    );
 
     expect(heading).not.toBeNull();
     // The only headings that survive on a riser with no y-variation are the
@@ -108,7 +126,7 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
   it('lets a grazer cross a gentle ramp under the limit (case b)', () => {
     const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL - 1);
     const entity = grazer(9.5, 20);
-    const heading = steerToValidHeading(world, entity, 0, 2);
+    const heading = steerToValidHeading(world, entity, 0, 2, speedOf(entity) * TICK_DT);
 
     expect(heading).not.toBeNull();
     // Nothing blocks the desired heading, so the very first candidate (0°,
@@ -131,7 +149,7 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
       heading: 0,
       fleeSecondsRemaining: 0,
     };
-    const heading = steerToValidHeading(world, entity, 0, 2);
+    const heading = steerToValidHeading(world, entity, 0, 2, speedOf(entity) * TICK_DT);
     expect(heading).toBeCloseTo(0, 9);
   });
 });

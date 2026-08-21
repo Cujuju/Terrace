@@ -86,6 +86,28 @@ export interface Occupant {
 
 export interface SteerOptions {
   /**
+   * Cells this mover will actually travel along the chosen heading THIS TICK
+   * — its speed × dt.
+   *
+   * REQUIRED, and it is the distance the SEPARATION test is taken at (terrain
+   * is still probed at `lookaheadCells`, which is a different question — see
+   * `steerAvoiding`). Required rather than optional-with-a-default because the
+   * default that would have to exist is the look-ahead distance, and that
+   * default is precisely the defect this field was added to remove
+   * (2026-08-21): separation used to be tested at the terrain probe point, so
+   * whether it did anything at all depended on the accident of a mover's
+   * look-ahead being comparable to its body. Pilgrims got that by luck (a
+   * 0.3-cell probe against a 0.4-cell gap, so the test read as "is anyone
+   * near me"); wildlife did not (a 1.8-cell probe against a 0.42-cell gap, so
+   * it only ever fired on a creature almost exactly 1.8 cells dead ahead —
+   * measured minimum separation inside a school of five: 0.04 cells against a
+   * 0.42 target, i.e. nothing). A caller that does not separate still has to
+   * state its step, which costs it one expression it already has in hand and
+   * means no future caller can supply occupants and silently get no
+   * separation.
+   */
+  readonly stepCells: number;
+  /**
    * Everyone else, in a FIXED order (see this module's determinism note). A
    * mover must not appear in its own list — comparing a mover against itself
    * would veto every heading at zero distance. Callers that pass one shared
@@ -132,9 +154,21 @@ function isClearOfOccupants(
 /**
  * Picks the heading closest to `desired` whose look-ahead point is somewhere
  * this profile may be, is reachable without crossing a slope it refuses, is
- * permitted by the caller's own extra rule, and is clear of everybody else.
- * Returns null only when EVERY candidate fails all of that — the caller then
- * decides what "boxed in" means for it (hold, reverse, give up).
+ * permitted by the caller's own extra rule, and whose STEP point is clear of
+ * everybody else. Returns null only when EVERY candidate fails all of that —
+ * the caller then decides what "boxed in" means for it (hold, reverse, give
+ * up).
+ *
+ * TWO DISTANCES, DELIBERATELY, and conflating them was a real bug
+ * (2026-08-21). Terrain is judged at `lookaheadCells`, because a mover has to
+ * see a cliff or a shoreline coming while there is still room to turn; the
+ * right distance for that is "as far as I travel in the time it takes me to
+ * complete a turn", which is many steps. Bodies are judged at
+ * `options.stepCells`, because the only question separation asks is "if I
+ * commit to this heading, will I be standing in somebody?" — and the answer
+ * depends on where the mover will BE, not on how far it can see. Testing both
+ * at the look-ahead distance made separation an accident of the ratio between
+ * the two; see `SteerOptions.stepCells` for the measurements.
  *
  * TWO PASSES, and the second one is load-bearing. Separation is applied on
  * the first pass only; if every candidate is rejected, the sweep runs again
@@ -151,12 +185,22 @@ function isClearOfOccupants(
  * first — see this module's determinism note), so two movers walking toward
  * each other each choose a heading that clears the OTHER'S OLD position and
  * can end the tick up to their combined step closer than their combined radii.
- * The observable floor is therefore `selfRadius + theirRadius − 2 × stepCells`
- * — at the shipped walker's 0.05 cells/tick, a tenth of a cell of slack on a
- * 0.4-cell gap. Closing it entirely would need a resolution pass over the whole
- * population after everyone has chosen, which buys a tenth of a cell at the
- * price of a second phase and an order-dependent tie-break; not worth it, and
- * the slack is invisible at the scale bodies are drawn.
+ * The observable floor is therefore `selfRadius + theirRadius − 2 × stepCells`.
+ * Closing it entirely would need a resolution pass over the whole population
+ * after everyone has chosen, which costs a second phase and an order-dependent
+ * tie-break.
+ *
+ * THAT FLOOR GOES NEGATIVE FOR A MOVER WHOSE STEP EXCEEDS ITS OWN RADIUS, and
+ * for those there is no guarantee at all — only a tendency. A pilgrim steps
+ * 0.05 cells against a 0.4-cell gap, so its floor is 0.3 and bodies genuinely
+ * never merge. A small fish steps 0.3 cells against a 0.42-cell gap, so two
+ * fish closing head-on can pass through each other inside one tick no matter
+ * what heading either picks: at that speed the body is smaller than the
+ * distance it teleports. Separation still shapes where they choose to swim —
+ * measurably, and that is what it is for here — but the only cure for the
+ * crossing case is sub-stepping the movement itself, which is a decision about
+ * simulation cost that nobody has made. Named rather than hidden, because the
+ * arithmetic is the same for any future fast, small mover.
  */
 export function steerAvoiding(
   world: TerrainSampler,
@@ -164,7 +208,7 @@ export function steerAvoiding(
   mover: Mover,
   desired: number,
   lookaheadCells: number,
-  options: SteerOptions = {},
+  options: SteerOptions,
 ): number | null {
   const attempts = options.attempts ?? AVOID_TURN_ATTEMPTS;
   const stepRadians = options.stepRadians ?? AVOID_TURN_STEP_RADIANS;
@@ -186,7 +230,14 @@ export function steerAvoiding(
       if (!isWalkableCell(world, profile, aheadX, aheadY)) continue;
       if (!canTraverseSegment(world, profile, mover.x, mover.y, aheadX, aheadY)) continue;
       if (options.permits !== undefined && !options.permits(aheadX, aheadY)) continue;
-      if (honourSeparation && !isClearOfOccupants(aheadX, aheadY, occupants, selfRadius)) continue;
+      if (honourSeparation) {
+        // Where this mover would STAND, not where it can see — see the two-
+        // distances note above. Computed inside the branch so a caller with no
+        // occupants pays nothing for it.
+        const stepX = mover.x + Math.cos(heading) * options.stepCells;
+        const stepY = mover.y + Math.sin(heading) * options.stepCells;
+        if (!isClearOfOccupants(stepX, stepY, occupants, selfRadius)) continue;
+      }
 
       return normalizeAngle(heading);
     }
@@ -244,8 +295,10 @@ function cellCentre(cell: RouteCell): { x: number; y: number } {
 }
 
 export interface FollowRouteOptions extends SteerOptions {
-  /** Cells of travel this tick. The caller's speed × dt. */
-  readonly stepCells: number;
+  // `stepCells` is inherited from SteerOptions (2026-08-21). It used to be
+  // declared here as well, which was the same number written twice — this file
+  // moved the mover by it, and the sweep needed it for separation and did not
+  // have it. One field, one meaning: cells of travel this tick.
   /** How far ahead the steering sweep probes. */
   readonly lookaheadCells: number;
   /**

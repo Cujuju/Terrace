@@ -2259,6 +2259,61 @@ Omitting it would still work in the running server and silently not work in
 every test that builds a stand-in world — the one place a rivers-vs-lakes
 regression would be caught.
 
+**Follow-up 2026-08-21 — wildlife is on the contract, and separation was
+measured at the wrong distance.** Wildlife was the fourth copy of the sweep and
+the one the other three cited when they wrote their own; it is now a thin
+adapter over `steerAvoiding`, keeping only what is genuinely its own (the
+species → archetype resolution, the unlocked-habitat veto as a `permits` hook,
+body size, the school terms, the two-stage contour retry). Personal space is
+HALF THE BODY LENGTH as the client draws it, a derived half-extent rather than
+a dial, because a small fish is 0.42 cells long and a whale is 5 and one
+constant would either let whales overlap or hold fish a whale's length apart.
+
+Migrating it exposed a real defect in the shared contract. `steerAvoiding`
+tested separation at the TERRAIN look-ahead point, so whether separation did
+anything at all was an accident of the ratio between a mover's look-ahead and
+its body. Pilgrims got that by luck — a 0.3-cell probe against a 0.4-cell gap,
+so the probe never left the exclusion circle and the test read as "is anyone
+near me". Wildlife did not: a 1.8-cell probe against a 0.42-cell gap only ever
+fired on a creature almost exactly 1.8 cells dead ahead. Measured worst-case gap
+inside a school of five small fish, 100 trials: **0.033 cells, i.e. nothing.**
+
+The fix is a required `stepCells` on `SteerOptions`, and separation is now
+judged where the mover will BE rather than where it can SEE. Terrain keeps the
+look-ahead, which is a different question with a different right answer — a
+mover must see a cliff while there is still room to turn. Same measurement after
+the fix: **0.290 cells.** Required rather than optional-with-a-default because
+the only available default is the look-ahead distance, which is the defect
+itself; `followRoute` already carried the field, so pilgrims' routed walkers got
+it for nothing, and monsters state their step even though they supply no
+occupants (the day they do, it is one line, not a silent no-op).
+
+**Boats do NOT separate while sailing, and that is a division of labour.** With
+the contract fixed, boats' sail-phase separation began bending the radius they
+were closing on: measured at 5.03 cells against a 5.00-cell station, past
+`BOAT_ENGAGEMENT_RANGE_CELLS`, and the fleet stopped routing the kraken at the
+predicted time. `makeRoom` is this fleet's one anti-crowding rule and its whole
+design is that it moves TANGENTIALLY, preserving range exactly, for precisely
+that reason. Sailing is the radial motion; a crowd term inside it can only
+express itself by bending the radius. So closing on a station ignores other
+boats and holding one ignores everything else. Named cost: two boats converging
+from different villages may pass through one another on the way, resolved by
+`makeRoom` the moment either arrives.
+
+**A residual the arithmetic cannot remove.** The observable separation floor is
+`selfRadius + theirRadius − 2 × stepCells`, which goes NEGATIVE for a mover
+whose step exceeds its own radius. A pilgrim steps 0.05 against a 0.4-cell gap
+(floor 0.3 — bodies genuinely never merge). A small fish steps 0.3 against 0.42,
+so two fish closing head-on can pass through each other inside one tick whatever
+either picks: at that speed the body is smaller than the distance it teleports.
+Separation still measurably shapes where they swim, which is what it is for
+here; the only cure for the crossing case is sub-stepping the movement, a
+simulation-cost decision nobody has made.
+
+**Monsters still have no separation** (they pass no occupants). Low impact —
+every shipped kind is a singleton — and it is now a one-line change rather than
+a contract one.
+
 ### Decisions made 2026-08-20 (boats fight the kraken; the mechanic settled)
 
 **The arc parked on 2026-08-19 now has its fiction.** That entry withdrew the

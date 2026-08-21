@@ -38,8 +38,13 @@ import { type Habitat, habitatOf, profileOf } from './species.ts';
  * through a river is the intended reading of "a legged animal on dry ground".
  * If a future species genuinely wades, it earns its own archetype in
  * traversal.ts rather than a literal here.
+ *
+ * EXPORTED (2026-08-21) for movement.ts's steering probe, which hands the same
+ * archetype to shared's `steerAvoiding`. One resolution of species → archetype,
+ * read by both the census predicates here and the steering there, so the cell a
+ * creature may STAND on and the cell it may STEER toward cannot come apart.
  */
-function walkerProfileOf(species: WildlifeHabitatSpecies): TraversalProfile {
+export function walkerProfileOf(species: WildlifeHabitatSpecies): TraversalProfile {
   const profile = profileOf(species);
   if (profile.habitat === 'land') return LAND_WALKER_PROFILE;
   return waterBandProfile(profile.habitat);

@@ -120,10 +120,18 @@ export function steerToValidHeading(
   desired: number,
   lookahead: number,
   clearanceCells: number,
+  stepCells: number,
 ): number | null {
   const profile = profileOf(monster.kind);
   const regime = profile.habitat;
   return steerAvoiding(world, steeringProfileOf(profile), monster, desired, lookahead, {
+    // Stated even though this plugin passes no `occupants` and therefore does
+    // no separation (2026-08-21). shared's `SteerOptions.stepCells` is
+    // required precisely so that the day monsters DO keep clear of each other
+    // — the residual named in the 2026-08-20 design record — it is a one-line
+    // change here rather than a silent no-op, which is what an optional field
+    // defaulting to the look-ahead distance would have given.
+    stepCells,
     // The whole-body habitat test stays this plugin's own — see
     // `steeringProfileOf` on why it is a `permits` hook rather than something
     // shared could express.
@@ -219,7 +227,12 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
     : 0;
 
   const lookahead = lookaheadCellsFor(profile);
-  const steered = steerToValidHeading(world, monster, desired, lookahead, clearance);
+  // One tick's travel — the same number the move below uses. An idling monster
+  // still steers (it drifts its gaze) but does not translate; it states the
+  // step it WOULD take, which is the honest answer to "how far along this
+  // heading would I be", and costs nothing while no occupants are supplied.
+  const stepCells = profile.lurkSpeedCellsPerSecond * dt;
+  const steered = steerToValidHeading(world, monster, desired, lookahead, clearance, stepCells);
 
   if (steered === null) {
     // Boxed in on every candidate. Reverse: it is un-wedged next tick without
@@ -231,9 +244,8 @@ export function advanceMonster(world: LairWorld, monster: Monster, dt: number): 
   monster.heading = steered;
   if (monster.idle) return;
 
-  const distance = profile.lurkSpeedCellsPerSecond * dt;
-  const nextX = monster.x + Math.cos(steered) * distance;
-  const nextY = monster.y + Math.sin(steered) * distance;
+  const nextX = monster.x + Math.cos(steered) * stepCells;
+  const nextY = monster.y + Math.sin(steered) * stepCells;
 
   // BELT AND SUSPENDERS. The look-ahead validated a pose several cells away,
   // which is much further than one tick's travel; that covers the ordinary case

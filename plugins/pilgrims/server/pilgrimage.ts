@@ -448,7 +448,13 @@ export function stepWalker(
   occupants: readonly Occupant[] = [],
 ): void {
   const desired = Math.atan2(targetY - pilgrim.y, targetX - pilgrim.x);
+  // One tick's travel: the distance the walker moves, and the distance the
+  // separation test is taken at (shared's `SteerOptions.stepCells`). One
+  // expression, so the sweep cannot reason about a step the walker does not
+  // then take.
+  const stepCells = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
   const heading = steerAvoiding(world, PILGRIM_WALKER_PROFILE, pilgrim, desired, lookaheadCells(), {
+    stepCells,
     occupants,
     selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS,
   });
@@ -456,9 +462,8 @@ export function stepWalker(
   if (heading === null) return;
 
   pilgrim.heading = heading;
-  const distance = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
-  pilgrim.x += Math.cos(heading) * distance;
-  pilgrim.y += Math.sin(heading) * distance;
+  pilgrim.x += Math.cos(heading) * stepCells;
+  pilgrim.y += Math.sin(heading) * stepCells;
 }
 
 /**

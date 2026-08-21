@@ -208,74 +208,140 @@ describe('followRoute — progress reporting', () => {
   });
 });
 
+/** Personal space used throughout the separation tests, and the gap two of
+ *  them must hold: the shipped walker's own figure
+ *  (pilgrims' WALKER_PERSONAL_SPACE_CELLS), stated here because `shared/` may
+ *  not import a plugin's constant. */
+const BODY_RADIUS_CELLS = 0.2;
+const BODY_GAP_CELLS = BODY_RADIUS_CELLS * 2;
+
 describe('steerAvoiding — separation', () => {
   it('refuses a heading that would put the mover inside somebody else', () => {
     const terrain = world(16);
     const walker = { x: 5.5, y: 5.5, heading: 0 };
-    const blocker: Occupant = { x: 5.5 + WALK_LOOKAHEAD_CELLS, y: 5.5, radiusCells: 0.2 };
+    // Just inside the gap once the step is taken: stepping due east lands
+    // BODY_GAP_CELLS − 0.05 from the blocker, which is a body overlap.
+    const blocker: Occupant = {
+      x: walker.x + WALK_STEP_CELLS + BODY_GAP_CELLS - 0.05,
+      y: walker.y,
+      radiusCells: BODY_RADIUS_CELLS,
+    };
     const desired = 0; // due east, straight at the blocker
     const heading = steerAvoiding(terrain, LAND_WALKER_PROFILE, walker, desired, WALK_LOOKAHEAD_CELLS, {
+      stepCells: WALK_STEP_CELLS,
       occupants: [blocker],
-      selfRadiusCells: 0.2,
+      selfRadiusCells: BODY_RADIUS_CELLS,
     });
     expect(heading).not.toBeNull();
     expect(heading).not.toBe(0);
-    // Whatever it picked keeps the two bodies apart.
-    const aheadX = walker.x + Math.cos(heading!) * WALK_LOOKAHEAD_CELLS;
-    const aheadY = walker.y + Math.sin(heading!) * WALK_LOOKAHEAD_CELLS;
-    expect(Math.hypot(aheadX - blocker.x, aheadY - blocker.y)).toBeGreaterThanOrEqual(0.4);
+    // Whatever it picked keeps the two bodies apart WHERE THE WALKER WILL BE.
+    const stepX = walker.x + Math.cos(heading!) * WALK_STEP_CELLS;
+    const stepY = walker.y + Math.sin(heading!) * WALK_STEP_CELLS;
+    expect(Math.hypot(stepX - blocker.x, stepY - blocker.y)).toBeGreaterThanOrEqual(BODY_GAP_CELLS);
+  });
+
+  it('judges bodies at the STEP, not at the look-ahead — the 2026-08-21 defect', () => {
+    // THE BUG, pinned. Separation used to be tested at the TERRAIN probe point,
+    // which made it an accident of the ratio between a mover's look-ahead and
+    // its body. It happened to work for the walker above (a 0.3-cell probe
+    // against a 0.4-cell gap, so the probe point never left the exclusion
+    // circle and the test read as "is anyone near me"). It was worth nothing at
+    // all to a fast, small mover, whose probe point flies clean past every
+    // neighbour: measured separation inside a school of five small fish was
+    // 0.033 cells against a 0.42-cell gap — i.e. nothing — and 0.290 after this
+    // fix, on the same 100-trial harness.
+    //
+    // The numbers below are that mover, the shipped small fish, restated here
+    // because `shared/` may not import a plugin's constants: 3 cells/s at the
+    // 10 Hz tick is a 0.3-cell step; its probe is max(body, speed × 0.6 s) =
+    // 1.8 cells; its body is 0.7 cells scaled by the small class's 0.6, so its
+    // half-extent is 0.21 and two of them hold 0.42. LAND_WALKER_PROFILE stands
+    // in for its traversal rule — the question here is geometry, and flat
+    // ground is flat ground.
+    const FISH_STEP_CELLS = 0.3;
+    const FISH_LOOKAHEAD_CELLS = 1.8;
+    const FISH_RADIUS_CELLS = 0.21;
+    const FISH_GAP_CELLS = FISH_RADIUS_CELLS * 2;
+
+    const terrain = world(16);
+    const fish = { x: 5.5, y: 5.5, heading: 0 };
+    const eastOf = (gap: number): Occupant => ({
+      x: fish.x + gap,
+      y: fish.y,
+      radiusCells: FISH_RADIUS_CELLS,
+    });
+    const steer = (occupant: Occupant) =>
+      steerAvoiding(terrain, LAND_WALKER_PROFILE, fish, 0, FISH_LOOKAHEAD_CELLS, {
+        stepCells: FISH_STEP_CELLS,
+        occupants: [occupant],
+        selfRadiusCells: FISH_RADIUS_CELLS,
+      });
+
+    // (a) A body a full look-ahead away is 1.5 cells from where this mover will
+    //     actually be — four gaps clear. It must not veto the heading. The old
+    //     contract vetoed it outright: the probe point landed ON it.
+    expect(steer(eastOf(FISH_LOOKAHEAD_CELLS))).toBe(0);
+
+    // (b) A body 0.6 cells ahead IS in the way: one step east closes to 0.3,
+    //     inside the 0.42 gap. The old contract waved it through, because the
+    //     probe point sailed 1.2 cells past it. Turning aside clears it — the
+    //     first 45° candidate steps to 0.442 away — so this is a genuine
+    //     deflection, not the crowded second pass giving up on separation.
+    const IN_THE_WAY_CELLS = 0.6;
+    expect(IN_THE_WAY_CELLS - FISH_STEP_CELLS).toBeLessThan(FISH_GAP_CELLS); // it is a real overlap
+    expect(steer(eastOf(IN_THE_WAY_CELLS))).not.toBe(0);
   });
 
   it('takes the desired heading when nobody is in the way', () => {
     const terrain = world(16);
     const walker = { x: 5.5, y: 5.5, heading: 0 };
-    const far: Occupant = { x: 12, y: 12, radiusCells: 0.2 };
+    const far: Occupant = { x: 12, y: 12, radiusCells: BODY_RADIUS_CELLS };
     expect(
       steerAvoiding(terrain, LAND_WALKER_PROFILE, walker, 0, WALK_LOOKAHEAD_CELLS, {
+        stepCells: WALK_STEP_CELLS,
         occupants: [far],
-        selfRadiusCells: 0.2,
+        selfRadiusCells: BODY_RADIUS_CELLS,
       }),
     ).toBe(0);
   });
 
   it('NEVER freezes a mover that is completely surrounded — crowding yields, terrain does not', () => {
-    // Eight bodies ringing the walker at exactly the look-ahead distance: every
-    // candidate heading is crowded. The mover must still move (a deadlocked
-    // knot of walkers would be the very bug this file fixes, wearing a hat).
+    // Eight bodies ringing the walker one STEP out — close enough that every
+    // candidate step point lands inside somebody, so every candidate is
+    // crowded. The mover must still move: a deadlocked knot of walkers would be
+    // the very bug this file fixes, wearing a hat.
     const terrain = world(16);
     const walker = { x: 8.5, y: 8.5, heading: 0 };
-    const ring: Occupant[] = Array.from({ length: 8 }, (_, i) => {
-      const angle = (i / 8) * Math.PI * 2;
-      return {
-        x: walker.x + Math.cos(angle) * WALK_LOOKAHEAD_CELLS,
-        y: walker.y + Math.sin(angle) * WALK_LOOKAHEAD_CELLS,
-        radiusCells: 0.2,
-      };
-    });
+    const ringAt = (radiusCells: number): Occupant[] =>
+      Array.from({ length: 8 }, (_, i) => {
+        const angle = (i / 8) * Math.PI * 2;
+        return {
+          x: walker.x + Math.cos(angle) * radiusCells,
+          y: walker.y + Math.sin(angle) * radiusCells,
+          radiusCells: BODY_RADIUS_CELLS,
+        };
+      });
     expect(
       steerAvoiding(terrain, LAND_WALKER_PROFILE, walker, 0, WALK_LOOKAHEAD_CELLS, {
-        occupants: ring,
-        selfRadiusCells: 0.2,
+        stepCells: WALK_STEP_CELLS,
+        occupants: ringAt(WALK_STEP_CELLS),
+        selfRadiusCells: BODY_RADIUS_CELLS,
       }),
     ).not.toBeNull();
 
     // Terrain is NOT relaxed on that second pass: a walker on a one-cell island
-    // surrounded by bodies still refuses to walk into the sea. Probed at 0.6
-    // cells so the sweep can actually see past its own cell — see the
-    // "held still by terrain" test above on why 0.3 cannot.
+    // surrounded by bodies still refuses to walk into the sea. Probed at 1 cell
+    // so the sweep can actually see past its own cell — see the "held still by
+    // terrain" test above on why 0.3 cannot — while the ring stays at the step
+    // distance, which is where separation is now judged, so the first pass
+    // genuinely fails on CROWDING and the second one genuinely fails on
+    // TERRAIN. Two different reasons, which is the whole point of the case.
     const island = world(16, (x, y) => (Math.floor(x) === 8 && Math.floor(y) === 8 ? FLAT : SEA));
-    const islandRing: Occupant[] = Array.from({ length: 8 }, (_, i) => {
-      const angle = (i / 8) * Math.PI * 2;
-      return {
-        x: walker.x + Math.cos(angle) * PROBE_PAST_CELL_CELLS,
-        y: walker.y + Math.sin(angle) * PROBE_PAST_CELL_CELLS,
-        radiusCells: 0.2,
-      };
-    });
     expect(
       steerAvoiding(island, LAND_WALKER_PROFILE, walker, 0, PROBE_PAST_CELL_CELLS, {
-        occupants: islandRing,
-        selfRadiusCells: 0.2,
+        stepCells: WALK_STEP_CELLS,
+        occupants: ringAt(WALK_STEP_CELLS),
+        selfRadiusCells: BODY_RADIUS_CELLS,
       }),
     ).toBeNull();
   });
@@ -286,6 +352,7 @@ describe('steerAvoiding — separation', () => {
     // "Only eastward of here is permitted" — the shape boats' unlocked-territory
     // rule and monsters' whole-body pose check both take.
     const heading = steerAvoiding(terrain, LAND_WALKER_PROFILE, walker, Math.PI, WALK_LOOKAHEAD_CELLS, {
+      stepCells: WALK_STEP_CELLS,
       permits: (x) => x > walker.x,
     });
     expect(heading).not.toBeNull();
@@ -315,17 +382,19 @@ describe('steering — determinism', () => {
     const terrain = world(16);
     const self = { x: 5.5, y: 5.5, heading: 0 };
     const crowd: Occupant[] = [
-      { x: 5.6, y: 5.5, radiusCells: 0.2 },
-      { x: 5.5, y: 5.6, radiusCells: 0.2 },
-      { x: 5.4, y: 5.5, radiusCells: 0.2 },
+      { x: 5.6, y: 5.5, radiusCells: BODY_RADIUS_CELLS },
+      { x: 5.5, y: 5.6, radiusCells: BODY_RADIUS_CELLS },
+      { x: 5.4, y: 5.5, radiusCells: BODY_RADIUS_CELLS },
     ];
     const forward = steerAvoiding(terrain, LAND_WALKER_PROFILE, self, 0, WALK_LOOKAHEAD_CELLS, {
+      stepCells: WALK_STEP_CELLS,
       occupants: crowd,
-      selfRadiusCells: 0.2,
+      selfRadiusCells: BODY_RADIUS_CELLS,
     });
     const reversed = steerAvoiding(terrain, LAND_WALKER_PROFILE, self, 0, WALK_LOOKAHEAD_CELLS, {
+      stepCells: WALK_STEP_CELLS,
       occupants: [...crowd].reverse(),
-      selfRadiusCells: 0.2,
+      selfRadiusCells: BODY_RADIUS_CELLS,
     });
     expect(forward).toBe(reversed);
   });
