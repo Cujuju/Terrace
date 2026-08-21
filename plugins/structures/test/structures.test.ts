@@ -1201,6 +1201,17 @@ describe('farmland predicate (card 28)', () => {
    * spaced (10 cells apart) so no cluster's carve is ever a neighbour of
    * another's cells.
    */
+  /**
+   * A DRY height strictly inside band 0, `fifth` fifths of the way up it —
+   * the same helper shared's own farmland fixture uses, and for the same
+   * reason: cluster D needs four DISTINCT dry heights that nonetheless all
+   * share band 0 with the waterline. As the literals 5/10/15/20 they sat
+   * inside band 0 only while a band was 64 units tall, and re-terracing the
+   * world to 16 pushed 20 into band 1 — which made the cell "sloped" and the
+   * case stopped testing the boundary it names.
+   */
+  const dryInBand0 = (fifth: number): number => Math.floor((BAND_HEIGHT * fifth) / 5);
+
   function farmlandTerrain(x: number, y: number): number {
     // Cluster A (10,10): a textbook terrace — flat among its dry neighbours,
     // edged by ordinary deep water to its east. FARMLAND.
@@ -1218,26 +1229,26 @@ describe('farmland predicate (card 28)', () => {
     if (x === 30 && y === 29) return DEEP;
 
     // Cluster D (40,40): the sea-level boundary case. The cell itself sits
-    // at height 5 (band 0, dry); its east neighbour sits at height exactly
+    // just above the sea (band 0, dry); its east neighbour sits at height exactly
     // SEA_LEVEL (0) — water by isWater, but band 0 same as the cell's own.
     // FARMLAND: the water branch must fire (touchesWater=true) before any
     // band-equality reasoning would (wrongly) treat this as "flat", which
     // would accidentally pass for the wrong reason if the water check were
     // ever removed or reordered.
-    if (x === 40 && y === 40) return 5;
-    if (x === 39 && y === 40) return 10;
+    if (x === 40 && y === 40) return dryInBand0(1);
+    if (x === 39 && y === 40) return dryInBand0(2);
     if (x === 41 && y === 40) return SEA_LEVEL;
-    if (x === 40 && y === 39) return 20;
-    if (x === 40 && y === 41) return 15;
+    if (x === 40 && y === 39) return dryInBand0(4);
+    if (x === 40 && y === 41) return dryInBand0(3);
 
     // Cluster E (50,50): the cell itself IS water (height exactly SEA_LEVEL),
     // surrounded by dry band-0 land on all four sides. NOT farmland — dry
     // land grows crops, water does not, whatever the neighbourhood says.
     if (x === 50 && y === 50) return SEA_LEVEL;
-    if (x === 49 && y === 50) return 5;
-    if (x === 51 && y === 50) return 5;
-    if (x === 50 && y === 49) return 5;
-    if (x === 50 && y === 51) return 5;
+    if (x === 49 && y === 50) return dryInBand0(1);
+    if (x === 51 && y === 50) return dryInBand0(1);
+    if (x === 50 && y === 49) return dryInBand0(1);
+    if (x === 50 && y === 51) return dryInBand0(1);
 
     return FARMLAND_BAND * BAND_HEIGHT;
   }

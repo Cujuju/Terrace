@@ -319,7 +319,12 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS = KRAKEN_LAIR_MIN_AREA_CHUNKS * CHUNK_SI
  * guarantee removed is the coin toss on the middle condition, not the other
  * two.
  *
- * For scale against the other threshold: the deep-water line is 3 bands, so a
+ * STATED IN HEIGHT UNITS SINCE 2026-08-20, band count derived, matching the
+ * core-side restatement in server/src/world/world.ts. As "band 8" the whole
+ * kraken bar was a function of the render quantum and would have moved to a
+ * quarter of its depth on a re-terraced world.
+ *
+ * For scale against the other threshold: the deep-water line is 192 units, so a
  * kraken trench is still well over twice as deep as the shallowest water
  * Cthulhu will take.
  */
@@ -341,7 +346,9 @@ export const WORLD_WATER_COLUMN_BANDS = SEA_COLUMN_BANDS;
  * all but the literal depth of the ocean floor. Core restates the number rather
  * than importing it; the two are pinned equal in test/monsters.test.ts.
  */
-export const GENESIS_DEEP_OCEAN_REFERENCE_BAND = 8;
+export const GENESIS_DEEP_OCEAN_REFERENCE_DEPTH = 512;
+export const GENESIS_DEEP_OCEAN_REFERENCE_BAND =
+  GENESIS_DEEP_OCEAN_REFERENCE_DEPTH / BAND_HEIGHT;
 
 /**
  * That reference floor with one band of relaxation margin taken off it: the
@@ -349,7 +356,7 @@ export const GENESIS_DEEP_OCEAN_REFERENCE_BAND = 8;
  * See the mechanism above for why the margin is a margin and not a bound.
  */
 export const NATURAL_OCEAN_FLOOR_MIN_DEPTH =
-  GENESIS_DEEP_OCEAN_REFERENCE_BAND * BAND_HEIGHT - MAX_STEP / 2;
+  GENESIS_DEEP_OCEAN_REFERENCE_DEPTH - MAX_STEP / 2;
 
 export const KRAKEN_LAIR_MIN_DEPTH_BANDS = Math.floor(
   NATURAL_OCEAN_FLOOR_MIN_DEPTH / BAND_HEIGHT,

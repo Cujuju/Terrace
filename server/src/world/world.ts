@@ -112,8 +112,13 @@ import { generateWorldName } from './world-name.ts';
 // the house style, and every height in it is a floor the terraced renderer
 // draws exactly.
 //
-// RESIDUAL, NAMED. A one-band step is BAND_HEIGHT (64) against a gradient limit
-// of MAX_STEP (32), so shelf/slope/noise boundaries do NOT generally satisfy
+// RESIDUAL, NAMED, AND WORSE SINCE 2026-08-20. A coastal step is 64 height
+// units against a gradient limit of MAX_STEP (16) — it was 64 against 32, so
+// it now overshoots the invariant by four times rather than two. The step did
+// not grow; the limit shrank with the band. Nothing below changes, but the
+// slump a `smooth` sculpt triggers at such a boundary moves correspondingly
+// more terrain, still bounded by SMOOTH_PASS_LIMIT.
+// So shelf/slope/noise boundaries do NOT generally satisfy
 // the relaxation invariant at genesis. Nothing enforces that invariant at
 // rest — the stamp tool violates it on purpose every time it builds a spire —
 // but a `smooth` sculpt whose relaxation reaches a boundary WILL slump it
@@ -152,11 +157,19 @@ import { generateWorldName } from './world-name.ts';
  * (plugins/wildlife/test/wildlife.test.ts). If either number moves, that test
  * fails rather than the ocean silently going shallow again.
  *
- * Three is also the SHALLOWEST depth that satisfies the relation, which is what
- * we want: every extra band is one more sculpt a player must spend to raise
- * land out there.
+ * It is also the SHALLOWEST depth that satisfies the relation, which is what
+ * we want: every extra unit of depth is more sculpting a player must spend to
+ * raise land out there.
+ *
+ * STATED IN HEIGHT UNITS SINCE 2026-08-20, band count derived. As the literal
+ * "3 bands" the fresh abyss was a function of the render quantum, and
+ * re-terracing the world 64 -> 16 would have made it 48 units deep against a
+ * deep-water threshold of 192 — a fresh world with NO deep water anywhere, and
+ * therefore no sea monsters, which is precisely the relation the paragraph
+ * above exists to protect.
  */
-export const FRESH_SEABED_BANDS_BELOW_SEA = 3;
+export const FRESH_SEABED_DEPTH_BELOW_SEA = 192;
+export const FRESH_SEABED_BANDS_BELOW_SEA = FRESH_SEABED_DEPTH_BELOW_SEA / BAND_HEIGHT;
 
 /**
  * Depth of the coastal shelf at the very centre of a fresh world.
@@ -165,19 +178,30 @@ export const FRESH_SEABED_BANDS_BELOW_SEA = 3;
  * both are the reason it is 1 rather than 2:
  *   * it is SHALLOW habitat (above the deep threshold), so coastal species have
  *     somewhere to be on day one;
- *   * it is a single band below the surface, so a player's first island costs
- *     two sculpts at DEFAULT_SCULPT_AMOUNT (one band per intent) — early
- *     land-raising stays as cheap as it was before the ocean existed, as long
- *     as it is done where the game starts you.
+ *   * it is the shallowest STEP of the coastal staircase, so a player's first
+ *     island is the cheapest land in the world to raise, as long as it is done
+ *     where the game starts you.
+ *
+ * A THIRD OF THE SEABED'S DEPTH, in height units (2026-08-20). The three coastal
+ * depths were 1 : 2 : 3 bands — evenly spaced steps down to the abyss — and that
+ * proportion is the thing worth keeping, not the band counts, which made the
+ * whole coast a function of the render quantum. Stated this way the staircase
+ * lands in exactly the same water as before and simply has four times as many
+ * terraces in it, which is the re-terrace doing its job. The click cost moved
+ * with everything else: the first island is five sculpts rather than two,
+ * because a sculpt is a band and a band is four times finer.
  */
-export const FRESH_SHELF_BANDS_BELOW_SEA = 1;
+export const FRESH_SHELF_DEPTH_BELOW_SEA = FRESH_SEABED_DEPTH_BELOW_SEA / 3;
+export const FRESH_SHELF_BANDS_BELOW_SEA = FRESH_SHELF_DEPTH_BELOW_SEA / BAND_HEIGHT;
 
 /**
- * Depth of the ring between shelf and open sea. Exactly one band of each, so
- * the coast reads as a descending staircase rather than a single cliff into the
- * abyss. Still shallow habitat: the deep threshold is three bands down.
+ * Depth of the ring between shelf and open sea. The middle step of the evenly
+ * spaced coastal staircase (see FRESH_SHELF_DEPTH_BELOW_SEA), so the coast
+ * reads as a descent rather than a single cliff into the abyss. Still shallow
+ * habitat: the deep threshold is the seabed's own depth.
  */
-export const FRESH_SLOPE_BANDS_BELOW_SEA = 2;
+export const FRESH_SLOPE_DEPTH_BELOW_SEA = (FRESH_SEABED_DEPTH_BELOW_SEA * 2) / 3;
+export const FRESH_SLOPE_BANDS_BELOW_SEA = FRESH_SLOPE_DEPTH_BELOW_SEA / BAND_HEIGHT;
 
 /**
  * Width of the slope ring, in cells. One chunk — the smallest unit of terrain
@@ -386,16 +410,26 @@ const OUTER_TERRAIN_LATTICE_SPACING_CELLS = CHUNK_SIZE * 4;
  * Deep Strata), so the clamp in `clampHeight` is a backstop that should never
  * actually fire rather than a value this range depends on.
  */
-const OUTER_TERRAIN_MIN_BAND_OFFSET = -10;
+const OUTER_TERRAIN_MIN_DEPTH_BELOW_SEA = 640;
+const OUTER_TERRAIN_MIN_BAND_OFFSET = -(OUTER_TERRAIN_MIN_DEPTH_BELOW_SEA / BAND_HEIGHT);
 
 /**
  * Highest a noise lattice point can push outer terrain, in bands above sea
- * level. +4 bands buys hills and small islands without turning every fresh
- * world into a mountain range — deliberately modest against MAX_HEIGHT's +16
- * bands of headroom, because genesis is meant to be a starting point, not the
- * most dramatic terrain a world will ever have.
+ * level. 256 height units buys hills and small islands without turning every
+ * fresh world into a mountain range — deliberately modest against MAX_HEIGHT's
+ * 1024 units of headroom, because genesis is meant to be a starting point, not
+ * the most dramatic terrain a world will ever have.
+ *
+ * BOTH OFFSETS ARE STATED IN HEIGHT UNITS SINCE 2026-08-20, band counts
+ * derived. They are the AMPLITUDE of the genesis noise field — how deep its
+ * troughs and how high its peaks stand — which is a fact about the world's
+ * shape, not about how finely it is drawn. Left as band counts, re-terracing
+ * 64 -> 16 would have flattened every fresh world to a quarter of its relief
+ * and, worse, left the noise unable to reach the depth the trench pass tests
+ * for, so every world would have needed a cut trench.
  */
-const OUTER_TERRAIN_MAX_BAND_OFFSET = 4;
+const OUTER_TERRAIN_MAX_HEIGHT_ABOVE_SEA = 256;
+const OUTER_TERRAIN_MAX_BAND_OFFSET = OUTER_TERRAIN_MAX_HEIGHT_ABOVE_SEA / BAND_HEIGHT;
 
 /**
  * A fresh world's noise field: enough to answer "what band offset does outer
@@ -650,11 +684,19 @@ export const GENESIS_TRENCH_MIN_BASIN_CELLS =
  * The same DELIBERATE RESTATEMENT arrangement as the area above: this is the
  * monsters plugin's GENESIS_DEEP_OCEAN_REFERENCE_BAND — "the band a world WITH
  * a deep ocean is taken to bottom out at", the reference its kraken bar is
- * derived from. Cutting to exactly that band is the point: the trench is not a
+ * derived from. Cutting to exactly that depth is the point: the trench is not a
  * special deeper thing the generator can make, it is the deep ocean floor the
  * bar was written against, placed where the noise failed to put one.
+ *
+ * STATED IN HEIGHT UNITS SINCE 2026-08-20, band count derived — and the plugin
+ * side made the same move, so the restatement still restates the same fact.
+ * Left as "8 bands" the trench would have been cut to 128 units on a
+ * re-terraced world, three quarters shallower than the ocean floor the kraken
+ * bar is written against.
  */
-export const GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA = 8;
+export const GENESIS_TRENCH_FLOOR_DEPTH_BELOW_SEA = 512;
+export const GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA =
+  GENESIS_TRENCH_FLOOR_DEPTH_BELOW_SEA / BAND_HEIGHT;
 
 /**
  * The depth a basin must already reach for the pass to leave the world alone,

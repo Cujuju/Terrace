@@ -340,7 +340,12 @@ describe('birds fly overhead', () => {
     // MAX_HEIGHT is the sculpt ceiling; MAX_TERRAIN_WORLD_Y is that in world
     // units. The requirement is "well above", not "above", so the headroom is
     // asserted as a share of the mountain rather than as a bare inequality.
-    expect(MAX_TERRAIN_WORLD_Y).toBe(MAX_HEIGHT / BAND_HEIGHT);
+    // RESTATED, not derived: MAX_HEIGHT / BAND_HEIGHT is the ceiling in BANDS,
+    // which equalled world units only while a band drew one of them. Since
+    // 2026-08-20 the client derives its vertical scale from the world's relief
+    // instead, so this pins that relief — 16 cells — and a change to the
+    // client's MAX_RELIEF_WORLD_CELLS must be followed here deliberately.
+    expect(MAX_TERRAIN_WORLD_Y).toBe(16);
     expect(BIRD_FLIGHT_WORLD_Y).toBe(MAX_TERRAIN_WORLD_Y + BIRD_ALTITUDE_HEADROOM_WORLD_UNITS);
     expect(BIRD_ALTITUDE_HEADROOM_WORLD_UNITS).toBeGreaterThanOrEqual(MAX_TERRAIN_WORLD_Y / 2);
   });

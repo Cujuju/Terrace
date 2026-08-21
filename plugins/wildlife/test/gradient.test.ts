@@ -11,7 +11,7 @@
 // call it is an implementation detail these tests do not depend on.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, DEEP_WATER_MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { type HabitatWorld, canTraverse } from '../server/census.ts';
 import { advanceEntity, lookaheadCellsFor, steerToValidHeading } from '../server/movement.ts';
 import type { WildlifeEntity } from '../server/population.ts';
@@ -168,11 +168,16 @@ describe('contour-following instead of reversal (2026-08-19, "go around, not ove
     // than 0.707, so BOTH the primary sweep (at 1.8) and the contour retry
     // (at 0.9) land in deep water in every direction: genuinely nowhere to
     // go this tick, not merely boxed in at the longer probe.
-    const world = fakeWorld(() => SEA_LEVEL - 4 * BAND_HEIGHT); // deep water everywhere by default
+    // The wall of the pocket is stated as the DEEP-WATER THRESHOLD ITSELF, not
+    // as a band count: it was `SEA_LEVEL - 4 * BAND_HEIGHT`, which cleared the
+    // threshold only while a band was 64 units, and at 16 it is -64 against a
+    // -192 line — shallow, so the fish simply swam out and the test stopped
+    // describing a boxed-in creature at all.
+    const DEEP = DEEP_WATER_MAX_HEIGHT;
+    const world = fakeWorld(() => DEEP); // deep water everywhere by default
     const pocketWorld: HabitatWorld = {
       ...world,
-      heightAt: (x, y) =>
-        Math.floor(x) === 5 && Math.floor(y) === 5 ? SEA_LEVEL : SEA_LEVEL - 4 * BAND_HEIGHT,
+      heightAt: (x, y) => (Math.floor(x) === 5 && Math.floor(y) === 5 ? SEA_LEVEL : DEEP),
     };
     const entity: WildlifeEntity = {
       id: 9,

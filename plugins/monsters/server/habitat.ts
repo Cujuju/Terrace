@@ -88,8 +88,23 @@ export interface HabitatRegime {
  *
  * If wildlife's number ever moves, this one is a considered decision to follow
  * it, not an automatic one.
+ *
+ * STATED IN HEIGHT UNITS SINCE 2026-08-20, band count derived. It was the
+ * literal 3 bands, which made "deep water" a function of the render quantum:
+ * re-terracing the world 64 -> 16 would have moved the open sea to a quarter of
+ * its depth, and every monster that lives in it with it. The DEPTH is the fact.
+ *
+ * Two clauses above went stale with the re-terrace and are corrected here
+ * rather than left to mislead: MAX_STEP is now BAND_HEIGHT, not BAND_HEIGHT/2,
+ * so terrain falls at most a FULL band per cell — but since this threshold is
+ * pinned to a depth rather than a band count, the distance it buys from the
+ * shoreline went UP, not down: 192 units at 16 per cell is at least twelve
+ * cells of shallows, where it used to be six. And it is three world units of
+ * water column exactly as before, because HEIGHT_WORLD_SCALE did not move
+ * (client/src/config.ts now derives it from relief rather than from the band).
  */
-export const DEEP_WATER_BANDS_BELOW_SEA = 3;
+export const DEEP_WATER_DEPTH_BELOW_SEA = 192;
+export const DEEP_WATER_BANDS_BELOW_SEA = DEEP_WATER_DEPTH_BELOW_SEA / BAND_HEIGHT;
 
 /**
  * Height, in terrace bands ABOVE sea level, at which ground stops being rock and
@@ -122,8 +137,24 @@ export const DEEP_WATER_BANDS_BELOW_SEA = 3;
  * raises a mountain nine bands out of the sea. That is intended — the sea
  * monsters are what a new world has, and the yeti is something a player builds
  * the country for.
+ *
+ * STATED IN HEIGHT UNITS SINCE 2026-08-20, band count derived — for exactly the
+ * reason the restatement note above gives. The palette's snow stop did not
+ * move when the world was re-terraced (client/src/terrain/bandColors.ts pins
+ * SNOW_LINE_HEIGHT at the same 576 units and generates its band from it), so
+ * neither does this: "band 9" was the old spelling of 576, and spelling it the
+ * old way would have dropped the snow line to 144 units while the mountains
+ * stayed white above 576.
+ *
+ * The arithmetic in the second bullet moved with it and is restated: MAX_STEP
+ * is now BAND_HEIGHT, so terrain climbs at most a full band per cell, and 576
+ * units at 16 per cell puts a snow cell at least THIRTY-SIX cells from the
+ * shoreline — twice the eighteen it used to buy, because the world's slope
+ * halved. It remains the upper half of everything a world can be: 576 of the
+ * 1024 units MAX_HEIGHT allows.
  */
-export const SNOW_LINE_BANDS_ABOVE_SEA = 9;
+export const SNOW_LINE_HEIGHT_ABOVE_SEA = 576;
+export const SNOW_LINE_BANDS_ABOVE_SEA = SNOW_LINE_HEIGHT_ABOVE_SEA / BAND_HEIGHT;
 
 /** Deep water: the sea from three bands down. */
 export const WATER_HABITAT: HabitatRegime = {

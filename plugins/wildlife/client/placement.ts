@@ -67,6 +67,15 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
 // ── Flight ───────────────────────────────────────────────────────────────────
 
 /**
+ * Cells of world height the full above-sea range stands — the client's
+ * MAX_RELIEF_WORLD_CELLS (client/src/config.ts), restated here for the same
+ * import reason as everything else in this block. THE relief fact: it alone
+ * decides how mountainous the world looks, and since 2026-08-20 it is what the
+ * client's whole vertical scale derives from.
+ */
+const MAX_RELIEF_WORLD_CELLS = 16;
+
+/**
  * World-space Y of the highest terrain this game can contain.
  *
  * MAX_HEIGHT (@terrace/shared) is the sculpt ceiling in HEIGHT UNITS; the
@@ -82,9 +91,20 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
  * inputs. RESIDUAL, named: if BAND_WORLD_HEIGHT ever stops equalling
  * CELL_WORLD_SIZE, this figure is wrong by that ratio and nothing fails loudly —
  * exactly the CELL_WORLD_SIZE residual already recorded at the top of this file,
- * on the vertical axis.
+ * on the vertical axis. *
+ * THE NAMED RESIDUAL CAME TRUE (2026-08-20). BAND_WORLD_HEIGHT stopped
+ * equalling CELL_WORLD_SIZE: the client now derives it from the world's RELIEF
+ * (config.ts's MAX_RELIEF_WORLD_CELLS) rather than the reverse, so a band is a
+ * quarter of a cell at BAND_HEIGHT 16 and MAX_HEIGHT / BAND_HEIGHT is no longer
+ * the ceiling in world units — it is 64 where the ceiling is still 16. The
+ * quotient was only ever accidentally right.
+ *
+ * So the relief is restated directly, the same way this file already restates
+ * everything else it cannot import. It is the ONE number the client's vertical
+ * scale is built from now, which makes it a better thing to restate than a
+ * ratio that happened to equal it.
  */
-export const MAX_TERRAIN_WORLD_Y = MAX_HEIGHT / BAND_HEIGHT;
+export const MAX_TERRAIN_WORLD_Y = MAX_RELIEF_WORLD_CELLS;
 
 /**
  * Clearance between the highest possible mountain and the birds, in world units.

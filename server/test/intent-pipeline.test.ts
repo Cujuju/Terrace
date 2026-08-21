@@ -345,7 +345,25 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
     if (outcome.applied) expect(outcome.diff).toHaveLength(1);
   });
 
+  /**
+   * Raises the test cell to a sheer edge that EXCEEDS the gradient limit, so a
+   * smooth stroke has something to relax.
+   *
+   * Needed since the 2026-08-20 re-terrace: DEFAULT_SCULPT_AMOUNT and MAX_STEP
+   * are both BAND_HEIGHT now, so one stamp on flat ground leaves an edge
+   * sitting exactly ON the limit and smooth correctly does nothing — the crisp
+   * -layer contract (pinned in shared's heightmap.test.ts). Two stamps put the
+   * edge a full band over it, which is what these two tests are about.
+   */
+  function stampAnOverLimitEdge(): void {
+    for (let stroke = 0; stroke < 2; stroke++) {
+      handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ tool: 'stamp' }));
+    }
+  }
+
   it('a smooth intent still relaxes the neighbours', () => {
+    stampAnOverLimitEdge();
+
     handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ tool: 'smooth' }));
 
     expect(
@@ -401,6 +419,8 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
         return { kind: 'modify', intent: { ...intent, tool: 'smooth' } };
       },
     };
+
+    stampAnOverLimitEdge();
 
     handleSculptIntent(makeDeps(world, [smoother]), PLAYER, sculptMessage({ tool: 'stamp' }));
 

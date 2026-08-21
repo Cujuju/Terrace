@@ -25,6 +25,21 @@ const TWO_PI = Math.PI * 2;
 // ── The vertical layout of the sky ───────────────────────────────────────────
 
 /**
+ * Cells of world height the full above-sea range stands — the client's
+ * MAX_RELIEF_WORLD_CELLS (client/src/config.ts), restated here for the same
+ * import reason as everything else in this block. THE relief fact: it alone
+ * decides how mountainous the world looks, and since 2026-08-20 it is what the
+ * client's whole vertical scale derives from.
+ */
+const MAX_RELIEF_WORLD_CELLS = 16;
+
+/**
+ * Height units per cell edge — the client's CELL_HEIGHT_UNITS (config.ts),
+ * restated for the same import reason as the constants around it.
+ */
+const CELL_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_CELLS;
+
+/**
  * World units one terrace band rises.
  *
  * ONE, restated rather than imported: this plugin cannot import
@@ -33,16 +48,24 @@ const TWO_PI = Math.PI * 2;
  * plugins/wildlife/client/placement.ts works around the same way). RESIDUAL,
  * named: if BAND_WORLD_HEIGHT ever stops equalling CELL_WORLD_SIZE, every height
  * in this file is wrong by that ratio and nothing fails loudly.
+ *
+ * THAT RESIDUAL CAME TRUE ON 2026-08-20 and this constant moved with it: the
+ * client derives BAND_WORLD_HEIGHT from the world's relief now
+ * (config.ts's MAX_RELIEF_WORLD_CELLS), so a band draws a QUARTER of a cell at
+ * BAND_HEIGHT 16. Restated as the same derivation rather than as 0.25, so the
+ * two files agree by construction and not by coincidence.
  */
-export const WORLD_UNITS_PER_BAND = 1;
+export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_CELLS / (MAX_HEIGHT / BAND_HEIGHT);
 
 /**
  * World-space Y of the highest terrain this game can contain.
  *
  * MAX_HEIGHT (@terrace/shared) is the sculpt ceiling in HEIGHT UNITS and
  * BAND_HEIGHT is height units per band, so the quotient is the ceiling in bands
- * — and therefore in world units. 16 today. Derived from the two shared
- * constants rather than written as 16, so it stays correct if either moves.
+ * — and therefore in BANDS, which is world units only while a band draws one
+ * world unit. It does not any more (see WORLD_UNITS_PER_BAND above), so the
+ * relief is restated directly instead: it is the one number the client's
+ * vertical scale is now built from.
  */
 export const MAX_TERRAIN_WORLD_Y = (MAX_HEIGHT / BAND_HEIGHT) * WORLD_UNITS_PER_BAND;
 
@@ -67,15 +90,28 @@ export const CLOUD_BASE_WORLD_Y = MAX_TERRAIN_WORLD_Y + CLOUD_HEADROOM_WORLD_UNI
  * How far below sea level precipitation keeps falling before it is recycled, in
  * bands.
  *
- * FOUR, one band below a fresh world's open-sea floor (three bands down —
- * docs/DESIGN.md). Precipitation is depth-TESTED, so the terrain and the sea
- * surface hide everything under them; the column has to reach past the deepest
- * ordinary ground so that rain visibly meets the floor everywhere instead of
- * stopping in mid-air over a trench. It does not reach MIN_HEIGHT (16 bands
- * down): a player-dug abyss that deep would show rain ending above its floor,
- * which is a cheaper failure than making every column 44 units tall.
+ * A QUARTER OF A CELL below a fresh world's open-sea floor. Precipitation is
+ * depth-TESTED, so the terrain and the sea surface hide everything under them;
+ * the column has to reach past the deepest ordinary ground so that rain visibly
+ * meets the floor everywhere instead of stopping in mid-air over a trench. It
+ * does not reach MIN_HEIGHT: a player-dug abyss that deep would show rain
+ * ending above its floor, which is a cheaper failure than making every column
+ * that tall.
+ *
+ * STATED IN HEIGHT UNITS SINCE 2026-08-20, band count derived. It was "4
+ * bands", one band under the open-sea floor's "3 bands" — a relation between
+ * two band counts that only held while a band was 64 units. Both sides are
+ * depths now (the sea floor is 192 units, core's
+ * FRESH_SEABED_DEPTH_BELOW_SEA), so the clearance is stated as a depth too and
+ * the column keeps reaching past the seabed at any terracing. Restated rather
+ * than imported for this file's usual reason — a client plugin cannot pull in
+ * the server's world module.
  */
-export const PRECIPITATION_FLOOR_BANDS_BELOW_SEA = 4;
+const FRESH_SEABED_DEPTH_BELOW_SEA = 192;
+/** Clearance under that floor: a quarter cell, enough to read as "past it". */
+const PRECIPITATION_FLOOR_CLEARANCE = CELL_HEIGHT_UNITS / 4;
+export const PRECIPITATION_FLOOR_BANDS_BELOW_SEA =
+  (FRESH_SEABED_DEPTH_BELOW_SEA + PRECIPITATION_FLOOR_CLEARANCE) / BAND_HEIGHT;
 
 /** World-space Y at which a drop is recycled to the cloud base. −4 today. */
 export const PRECIPITATION_FLOOR_WORLD_Y =

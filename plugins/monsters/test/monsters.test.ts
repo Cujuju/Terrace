@@ -52,10 +52,12 @@ import {
 } from '../protocol.ts';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
+  DEEP_WATER_DEPTH_BELOW_SEA,
   DEEP_WATER_MAX_HEIGHT,
   HABITAT_REGIMES,
   LAND_HABITAT,
   SNOW_LINE_BANDS_ABOVE_SEA,
+  SNOW_LINE_HEIGHT_ABOVE_SEA,
   SNOW_LINE_MIN_HEIGHT,
   WATER_HABITAT,
   type LairRegion,
@@ -79,6 +81,7 @@ import {
   CTHULHU_FOOTPRINT_CELLS,
   CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
   GENESIS_DEEP_OCEAN_REFERENCE_BAND,
+  GENESIS_DEEP_OCEAN_REFERENCE_DEPTH,
   KRAKEN_LAIR_MIN_DEPTH_BANDS,
   KRAKEN_LURK_SPEED_CELLS_PER_SECOND,
   KRAKEN_MIN_LAIR_DEEP_CELLS,
@@ -324,8 +327,12 @@ beforeEach(() => {
 
 describe('deep water', () => {
   it('is three bands below sea level, restating wildlife\'s threshold', () => {
-    expect(DEEP_WATER_BANDS_BELOW_SEA).toBe(3);
-    expect(DEEP_WATER_MAX_HEIGHT).toBe(SEA_LEVEL - 3 * BAND_HEIGHT);
+    // A DEPTH, not a band count (2026-08-20). "Three bands" was the old
+    // spelling of 192 units; pinned as bands it would have followed the render
+    // quantum down to 48 and moved the coastline of every world.
+    expect(DEEP_WATER_DEPTH_BELOW_SEA).toBe(192);
+    expect(DEEP_WATER_MAX_HEIGHT).toBe(SEA_LEVEL - DEEP_WATER_DEPTH_BELOW_SEA);
+    expect(DEEP_WATER_BANDS_BELOW_SEA).toBe(DEEP_WATER_DEPTH_BELOW_SEA / BAND_HEIGHT);
     // Whole bands: the threshold has to survive a BAND_HEIGHT retune as a
     // statement about terraces, not as a raw height. (`%` yields -0 for an exact
     // negative multiple, so compare with ===.)
@@ -360,8 +367,12 @@ describe('the snow line', () => {
     // The client draws band 9 and above as snow (client/src/terrain/
     // bandColors.ts). Restated here rather than imported, so this is the test
     // that says the two are meant to agree.
-    expect(SNOW_LINE_BANDS_ABOVE_SEA).toBe(9);
-    expect(SNOW_LINE_MIN_HEIGHT).toBe(SEA_LEVEL + 9 * BAND_HEIGHT);
+    // A HEIGHT, not a band count (2026-08-20): "band 9" was the old spelling
+    // of 576 units, and keeping the band would have dropped the server's snow
+    // line to 144 while the palette kept the mountains white above 576.
+    expect(SNOW_LINE_HEIGHT_ABOVE_SEA).toBe(576);
+    expect(SNOW_LINE_MIN_HEIGHT).toBe(SEA_LEVEL + SNOW_LINE_HEIGHT_ABOVE_SEA);
+    expect(SNOW_LINE_BANDS_ABOVE_SEA).toBe(SNOW_LINE_HEIGHT_ABOVE_SEA / BAND_HEIGHT);
     // Whole bands, for the reason the deep-water line is: the threshold has to
     // survive a BAND_HEIGHT retune as a statement about terraces.
     expect(SNOW_LINE_MIN_HEIGHT % BAND_HEIGHT === 0).toBe(true);
@@ -381,13 +392,20 @@ describe('the snow line', () => {
     }
   });
 
-  it('is at least eighteen cells from any shoreline, by the gradient limit', () => {
-    // MAX_STEP is BAND_HEIGHT/2, so terrain climbs at most half a band per cell:
-    // nine bands up is eighteen cells of slope at the steepest legal grade. That
-    // is what makes the threshold mean "the high country" rather than "a colour
-    // someone picked" — three times the six cells the deep-water line buys.
-    expect(MAX_STEP).toBe(BAND_HEIGHT / 2);
-    expect(SNOW_LINE_MIN_HEIGHT / MAX_STEP).toBe(18);
+  it('is at least thirty-six cells from any shoreline, by the gradient limit', () => {
+    // MAX_STEP is BAND_HEIGHT, so terrain climbs at most a full band per cell,
+    // and the snow line is thirty-six cells of slope at the steepest legal
+    // grade. That is what makes the threshold mean "the high country" rather
+    // than "a colour someone picked" — three times the twelve cells the
+    // deep-water line buys, the same ratio it always had.
+    //
+    // BOTH DISTANCES DOUBLED on 2026-08-20 (18 -> 36, 6 -> 12) and neither
+    // threshold moved: MAX_STEP went from half a band to a whole one, so the
+    // world's maximum slope halved and the same depths now sit twice as far
+    // out. That is the re-terrace working as intended — the coast got gentler,
+    // not the mountains lower.
+    expect(MAX_STEP).toBe(BAND_HEIGHT);
+    expect(SNOW_LINE_MIN_HEIGHT / MAX_STEP).toBe(36);
   });
 });
 
@@ -697,11 +715,25 @@ function cthulhuBasin(): BasinState {
   return { radius: 30, floorHeight: DEEP_WATER_MAX_HEIGHT - 30 };
 }
 
+/**
+ * Extra depth this fixture's trench carries BELOW the kraken's demand, so its
+ * qualifying floor is a pocket with area rather than a single cell.
+ *
+ * A DEPTH, not "one more band" (2026-08-20). The basin ramps linearly from its
+ * floor to the deep-water line at the rim, so the margin is what decides how
+ * WIDE the qualifying pocket is; expressed as a band it shrank to a quarter
+ * when the world was re-terraced and the pocket collapsed to about five cells,
+ * which is not enough distinct cells for the summon-spread test below to mean
+ * anything. 64 units is what "one band" bought when it was written.
+ */
+const KRAKEN_TRENCH_DEPTH_MARGIN = 64;
+
 /** A trench the kraken qualifies for: past its depth demand and its area. */
 function krakenTrench(): BasinState {
   return {
     radius: 40,
-    floorHeight: SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS + 1) * BAND_HEIGHT,
+    floorHeight:
+      SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT + KRAKEN_TRENCH_DEPTH_MARGIN),
   };
 }
 
@@ -1194,7 +1226,14 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     // extreme cell, so the deepest floor a live world actually shows is −496.
     // That exact height must clear the kraken's admission test: the decision
     // removes the last mandatory dig, so this pin is the decision.
-    expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(496);
+    // 504 since the 2026-08-20 re-terrace, from 496. The reference floor is
+    // unchanged at 512 units; only the relaxation margin moved, because
+    // MAX_STEP is now BAND_HEIGHT rather than half of it. The DEPTH the owner
+    // ruled on did not move — the relaxation simply shaves less off it.
+    expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(
+      GENESIS_DEEP_OCEAN_REFERENCE_DEPTH - MAX_STEP / 2,
+    );
+    expect(NATURAL_OCEAN_FLOOR_MIN_DEPTH).toBe(504);
     expect(
       reachesIntoHabitat(
         WATER_HABITAT,
@@ -1404,13 +1443,19 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
     ).toBe(true);
   });
 
-  it('is 7 whole bands, and Deep Strata must not drag it', () => {
+  it('is 31 whole bands, and Deep Strata must not drag it', () => {
     // Deep Strata deepened MIN_HEIGHT from −1024 to −1536 the same day this
     // bar was decided. The bar derives from the natural ocean floor, NOT from
     // the world's height range: if this pin fails after a MIN_HEIGHT retune,
     // the derivation has regressed to a range-anchored one and the bar moved
     // without an owner decision.
-    expect(KRAKEN_LAIR_MIN_DEPTH_BANDS).toBe(7);
+    // 31 bands since the 2026-08-20 re-terrace, and that is the POINT of the
+    // conversion rather than a regression: the bar is 504 height units either
+    // way, and only the number of terraces that fit in it changed.
+    expect(KRAKEN_LAIR_MIN_DEPTH_BANDS).toBe(31);
+    expect(KRAKEN_LAIR_MIN_DEPTH_BANDS).toBe(
+      Math.floor(NATURAL_OCEAN_FLOOR_MIN_DEPTH / BAND_HEIGHT),
+    );
   });
 
   it('is the same bar the generator plans its trench against', () => {

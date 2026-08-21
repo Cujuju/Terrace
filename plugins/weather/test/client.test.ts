@@ -34,6 +34,7 @@ import {
   LightningSchedule,
   MAX_FLASH_INTERVAL_SECONDS,
   MAX_TERRAIN_WORLD_Y,
+  WORLD_UNITS_PER_BAND,
   MEAN_FLASH_INTERVAL_SECONDS,
   MIN_FLASH_INTERVAL_SECONDS,
   PRECIPITATION_COLUMN_WORLD_UNITS,
@@ -210,7 +211,10 @@ describe('WeatherInterpolator', () => {
 
 describe('the falling column', () => {
   it('derives the cloud base from the shared height constants', () => {
-    expect(MAX_TERRAIN_WORLD_Y).toBe(MAX_HEIGHT / BAND_HEIGHT);
+    // The ceiling in BANDS times what a band draws — the quotient alone was
+    // world units only while a band drew one world unit, which stopped being
+    // true on 2026-08-20 (see WORLD_UNITS_PER_BAND).
+    expect(MAX_TERRAIN_WORLD_Y).toBe((MAX_HEIGHT / BAND_HEIGHT) * WORLD_UNITS_PER_BAND);
     // Clear sky above the tallest possible mountain, at the worst case.
     expect(CLOUD_BASE_WORLD_Y).toBeGreaterThan(MAX_TERRAIN_WORLD_Y);
     // The column reaches past a fresh world's open-sea floor (three bands down)
