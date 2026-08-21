@@ -70,6 +70,15 @@ function texturedMap(size: number): Heightmap {
 }
 
 /** Asserts the gradient invariant over the whole map. */
+/**
+ * Bands from the sea to the ceiling — the number of level-fill strokes that
+ * takes a plateau to MAX_HEIGHT. The #12 fixtures wanted "at the ceiling" and
+ * "one band short of it" and said the literals 16 and 15, which meant that
+ * only while a band was 64 units tall; re-terraced to 16 those plateaus stood
+ * a quarter as high and stopped exercising the clamp they were built for.
+ */
+const CEILING_BANDS = MAX_HEIGHT / BAND_HEIGHT;
+
 function expectGradientLimitHolds(map: Heightmap): void {
   const { size, cells } = map;
   for (let y = 0; y < size; y++) {
@@ -313,9 +322,15 @@ describe('applySculpt (the full server/prediction operation)', () => {
     expect(a.cells).toEqual(b.cells);
   });
 
-  it('survives 100 stacked sculpts: clamped, invariant intact', () => {
+  it('survives a ceiling-burying stack of sculpts: clamped, invariant intact', () => {
+    // Six full ceilings of raw input, far more than the map can hold — which
+    // is the point. STATED IN HEIGHT UNITS, not as a click count (it was the
+    // literal 100): a click is one band, so at BAND_HEIGHT 16 a hundred clicks
+    // deliver a quarter of the stress they used to and the mountain never got
+    // built.
+    const STACKED_CLICKS = (MAX_HEIGHT * 6) / DEFAULT_SCULPT_AMOUNT;
     const map = createHeightmap(64);
-    for (let k = 0; k < 100; k++) {
+    for (let k = 0; k < STACKED_CLICKS; k++) {
       applySculpt(map, 32, 32, 2, DEFAULT_SCULPT_AMOUNT);
     }
     expect(heightAt(map, 32, 32)).toBeLessThanOrEqual(MAX_HEIGHT);
@@ -324,16 +339,27 @@ describe('applySculpt (the full server/prediction operation)', () => {
     expect(heightAt(map, 32, 32)).toBeGreaterThan(MAX_HEIGHT / 2);
   });
 
-  it('one band-click on flat ground spreads to neighbors (the "flow" feel)', () => {
+  it('one band-click on flat ground raises ONE crisp terrace and nothing else (the Godus contract)', () => {
+    // SUPERSEDES "one band-click on flat ground spreads to neighbors (the
+    // 'flow' feel)" (owner, 2026-08-20: "I don't want populace anymore. I want
+    // godus" — one click, one crisp layer, no outward slump).
+    //
+    // The old test asserted the Populous signature: DEFAULT_SCULPT_AMOUNT was
+    // 64 against a MAX_STEP of 32, so a single click ALWAYS violated the
+    // gradient limit and relaxation had to push the excess outward, skirting
+    // every click with a slope. Both are now BAND_HEIGHT, so one click lands
+    // exactly ON the limit and there is no excess to spill. That is the whole
+    // feel change, and it is a property of the two constants' relationship —
+    // not of this callsite — so it is pinned as one here.
+    expect(DEFAULT_SCULPT_AMOUNT).toBe(MAX_STEP);
     const map = createHeightmap(32);
     applySculpt(map, 16, 16, 1, DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, 16, 16)).toBeGreaterThan(0);
-    // 64 > MAX_STEP, so relaxation must have pushed height outward.
+    expect(heightAt(map, 16, 16)).toBe(DEFAULT_SCULPT_AMOUNT);
     const neighbors =
       heightAt(map, 15, 16) + heightAt(map, 17, 16) +
       heightAt(map, 16, 15) + heightAt(map, 16, 17);
-    expect(neighbors).toBeGreaterThan(0);
-    expect(heightAt(map, 16, 16)).toBeGreaterThan(heightAt(map, 17, 16));
+    expect(neighbors).toBe(0);
+    expectGradientLimitHolds(map);
   });
 });
 
@@ -494,11 +520,13 @@ describe('applySculpt — edge profiles', () => {
   it('soft is unchanged: full amount at the centre, linear falloff outward', () => {
     const map = createHeightmap(48);
     applySculpt(map, 24, 24, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
-    // trunc(64 * (4 - d) / 4) for d = 0..3 — exactly the pre-change values.
-    expect(heightAt(map, 24, 24)).toBe(64);
-    expect(heightAt(map, 25, 24)).toBe(48);
-    expect(heightAt(map, 26, 24)).toBe(32);
-    expect(heightAt(map, 27, 24)).toBe(16);
+    // trunc(DEFAULT_SCULPT_AMOUNT * (4 - d) / 4) for d = 0..3 — the profile is
+    // a SHAPE, so it is pinned as quarters of the click rather than as the
+    // 64/48/32/16 the click used to be worth.
+    expect(heightAt(map, 24, 24)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(map, 25, 24)).toBe((DEFAULT_SCULPT_AMOUNT * 3) / 4);
+    expect(heightAt(map, 26, 24)).toBe((DEFAULT_SCULPT_AMOUNT * 2) / 4);
+    expect(heightAt(map, 27, 24)).toBe((DEFAULT_SCULPT_AMOUNT * 1) / 4);
     expect(heightAt(map, 28, 24)).toBe(0);
   });
 
@@ -770,14 +798,21 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   });
 
   it('lowering an off-grid cell drops it a RENDERED band, not to its own floor', () => {
-    // 70 renders on band 1 (bandOf floors), so one level down must leave it
-    // rendering on band 0. A perfect negation mirror of the raise would instead
-    // drop it to 64 — still band 1, a stroke with no visible effect. The
-    // half-open band convention is the asymmetry, and it is the right one.
+    // A height OFF a band floor — one band up plus a few units — renders on
+    // band 1, so one level down must leave it rendering on band 0. A perfect
+    // negation mirror of the raise would instead drop it to the band-1 floor —
+    // still band 1, a stroke with no visible effect. The half-open band
+    // convention is the asymmetry, and it is the right one.
+    //
+    // The fixture height was the literal 70, which is BAND_HEIGHT + 6 only
+    // while a band is 64 units; written that way it keeps meaning "just off
+    // the band-1 floor" at any terracing, and the expected values below are
+    // unchanged from when they were written.
+    const OFF_BAND_FLOOR = 6;
     const map = createHeightmap(16);
-    map.cells[cellIndex(map, 8, 8)] = 70;
+    map.cells[cellIndex(map, 8, 8)] = BAND_HEIGHT + OFF_BAND_FLOOR;
     applySculpt(map, 8, 8, 1, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(map, 8, 8)).toBe(6);
+    expect(heightAt(map, 8, 8)).toBe(OFF_BAND_FLOOR);
     expect(bandOf(heightAt(map, 8, 8))).toBe(0);
   });
 
@@ -882,13 +917,22 @@ describe('applySculpt — tools and profiles are orthogonal', () => {
     // (DESIGN.md: "On flat ground nothing changed"), so this test's numbers
     // survive the 2026-08-19 fill-then-slump supersession unchanged — what it
     // pins is the slump half: same fill, then relaxation pulls the edge out.
+    // TWO strokes, not one (2026-08-20). DEFAULT_SCULPT_AMOUNT is now exactly
+    // MAX_STEP, so a single stroke on flat ground leaves an edge sitting ON
+    // the gradient limit and relaxation correctly has nothing to pull out —
+    // the crisp-layer contract, pinned in the Godus test above. The SLUMP this
+    // test is about needs an edge that actually EXCEEDS the limit, which is
+    // what the second band gives it.
     const stamped = createHeightmap(64);
     const slumped = createHeightmap(64);
-    applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
+    const STAMP_HARD_OPTS = { tool: 'stamp', profile: 'hard' } as const;
+    applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
+    applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
+    applySculpt(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
 
     // Same brush, so the plateau's edge is sheer before relaxation...
-    expect(heightAt(stamped, 35, 32)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(stamped, 35, 32)).toBe(2 * DEFAULT_SCULPT_AMOUNT);
     expect(heightAt(stamped, 36, 32)).toBe(0);
     // ...and the smooth tool pulled that cliff outward instead.
     expect(heightAt(slumped, 36, 32)).toBeGreaterThan(0);
@@ -975,27 +1019,36 @@ describe('sculptDisplacementUnits', () => {
    * THE LITERAL TABLE. Deliberately hand-written numbers, not a formula: this is
    * the wall that stops a "harmless" refactor of the brush from silently
    * re-pricing the whole economy. Every value is height-units × cells, at
-   * DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT = 64.
+   * DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT = 16.
+   *
+   * RE-MEASURED 2026-08-20 for BAND_HEIGHT 16 (the previous BAND_HEIGHT 64
+   * column is kept beside each value). The economy is priced in HEIGHT UNITS
+   * and a click is now worth a quarter of what it was, so every price falls —
+   * but NOT by a clean quarter everywhere: the soft profile truncates its
+   * falloff per cell, and at a smaller amount those truncations bite harder
+   * (radius 3 soft is 156, where a quarter of 652 would be 163). That is
+   * exactly the kind of drift this table exists to catch, so the numbers are
+   * measured rather than divided.
    *
    * Recomputed 2026-08-19 for the tight-disc footprint (the pre-disc square
    * numbers were 9/25/45 cells → soft 320/736/1280, hard 576/1600/2880):
    *
-   *   radius  cells   soft (band-cells)    hard (band-cells)
-   *      1      1        64  ( 1    )        64  ( 1 )
-   *      2      5       192  ( 3    )       320  ( 5 )
-   *      3     21       652  (10.19 )      1344  (21 )
-   *      4     37      1152  (18    )      2368  (37 )
+   *   radius  cells   soft (was, @64)     hard (was, @64)
+   *      1      1        16  (  64)          16  (  64)
+   *      2      5        48  ( 192)          80  ( 320)
+   *      3     21       156  ( 652)         336  (1344)
+   *      4     37       288  (1152)         592  (2368)
    */
   it('matches the published table of displacement volumes', () => {
-    expect(sculptDisplacementUnits(1, 'soft')).toBe(64);
-    expect(sculptDisplacementUnits(2, 'soft')).toBe(192);
-    expect(sculptDisplacementUnits(3, 'soft')).toBe(652);
-    expect(sculptDisplacementUnits(4, 'soft')).toBe(1152);
+    expect(sculptDisplacementUnits(1, 'soft')).toBe(16);
+    expect(sculptDisplacementUnits(2, 'soft')).toBe(48);
+    expect(sculptDisplacementUnits(3, 'soft')).toBe(156);
+    expect(sculptDisplacementUnits(4, 'soft')).toBe(288);
 
-    expect(sculptDisplacementUnits(1, 'hard')).toBe(64);
-    expect(sculptDisplacementUnits(2, 'hard')).toBe(320);
-    expect(sculptDisplacementUnits(3, 'hard')).toBe(1344);
-    expect(sculptDisplacementUnits(4, 'hard')).toBe(2368);
+    expect(sculptDisplacementUnits(1, 'hard')).toBe(16);
+    expect(sculptDisplacementUnits(2, 'hard')).toBe(80);
+    expect(sculptDisplacementUnits(3, 'hard')).toBe(336);
+    expect(sculptDisplacementUnits(4, 'hard')).toBe(592);
   });
 
   it('is one band-cell at the point brush, where the two profiles coincide', () => {
@@ -1043,14 +1096,20 @@ describe('sculptDisplacementUnits', () => {
     // argument at all, so both tools cost the volume of the brush and nothing
     // else, exactly as the flat per-sculpt price it replaced also ignored the
     // spill. What follows is the evidence that there IS a spill being waived.
+    // The ground starts one band ABOVE the footprint's own level so the stroke
+    // below drives the edge past MAX_STEP and there is a spill to observe at
+    // all; with DEFAULT_SCULPT_AMOUNT === MAX_STEP a stroke on flat ground
+    // lands exactly on the limit and relaxation is correctly a no-op.
     const size = 64;
     const stampedCells = new Set<number>();
     const stamped = createHeightmap(size);
-    stamped.cells.fill(128);
+    stamped.cells.fill(8 * BAND_HEIGHT);
+    applyBrush(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, stampedCells, 'hard');
     applyBrush(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, stampedCells, 'hard');
 
     const slumped = createHeightmap(size);
-    slumped.cells.fill(128);
+    slumped.cells.fill(8 * BAND_HEIGHT);
+    applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
     const slumpedDiff = applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, {
       tool: 'smooth',
       profile: 'hard',
@@ -1060,7 +1119,7 @@ describe('sculptDisplacementUnits', () => {
     // relaxation touched strictly more of the world than that.
     expect(slumpedDiff.length).toBeGreaterThan(stampedCells.size);
     // And the price is the brush's volume either way — one number, no tool.
-    expect(sculptDisplacementUnits(4, 'hard')).toBe(2368);
+    expect(sculptDisplacementUnits(4, 'hard')).toBe(592);
   });
 
   it('prices a LEVEL FILL at the flat-delta volume, deliberately', () => {
@@ -1083,7 +1142,7 @@ describe('sculptDisplacementUnits', () => {
 
     // A one-cell edit, charged as 37 cells of flat delta. That is the trade.
     expect(diff).toHaveLength(1);
-    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(2368);
+    expect(sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard')).toBe(592);
   });
 });
 
@@ -1118,7 +1177,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     // cells (changed is non-empty) and the cascade must converge inside
     // SMOOTH_PASS_LIMIT — the case the old 64-pass cap truncated.
     const map = createHeightmap(SIZE);
-    stampPlateau(map, C, C, 15);
+    stampPlateau(map, C, C, CEILING_BANDS - 1);
     applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
     expectGradientLimitHolds(map);
   });
@@ -1128,7 +1187,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     // fully clamped (changed stays empty) — the old code early-returned and
     // left a 1024-unit cliff standing.
     const map = createHeightmap(SIZE);
-    stampPlateau(map, C, C, 16);
+    stampPlateau(map, C, C, CEILING_BANDS);
     expect(heightAt(map, C, C)).toBe(MAX_HEIGHT);
     applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
     expectGradientLimitHolds(map);
@@ -1139,7 +1198,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     // relief within one brush's reach. Pins that SMOOTH_PASS_LIMIT's budget
     // (SMOOTH_PASSES_PER_SPREAD_CELL per cell of spread) covers the extreme.
     const map = createHeightmap(SIZE);
-    stampPlateau(map, C, C, 16);
+    stampPlateau(map, C, C, CEILING_BANDS);
     for (let s = 0; s < 16; s++) {
       applySculpt(map, C + 8, C, 4, -DEFAULT_SCULPT_AMOUNT, STAMP);
     }
@@ -1151,7 +1210,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     // smooth returns the number of adjusting passes; < SMOOTH_PASS_LIMIT
     // proves a clean pass ran. Drive the worst repro through the raw API.
     const map = createHeightmap(SIZE);
-    stampPlateau(map, C, C, 15);
+    stampPlateau(map, C, C, CEILING_BANDS - 1);
     const changed = new Set<number>();
     applyBrush(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, changed, 'hard');
     const passes = smooth(map, changed);
@@ -1338,21 +1397,27 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
 
-  it('pins the standing residual of the #12 plateau scenario: 871 units of excess', () => {
-    // The STANDING RESIDUAL made concrete (see movePair's doc): a 15-band
-    // stamped plateau smoothed with one banded stroke leaves the ring
-    // exceeding MAX_STEP by exactly this much — 871 = 27× MAX_STEP — and
-    // banded relaxation can never lower it (next test). A change to this
-    // number is a change to the containment maths and must be deliberate.
+  it('pins the standing residual of the #12 plateau scenario: 978 units of excess', () => {
+    // The STANDING RESIDUAL made concrete (see movePair's doc): a plateau one
+    // band short of the ceiling, smoothed with one banded stroke, leaves the
+    // ring exceeding MAX_STEP by exactly this much — and banded relaxation can
+    // never lower it (next test). A change to this number is a change to the
+    // containment maths and must be deliberate.
+    //
+    // RE-MEASURED 2026-08-20, 871 → 978, and the re-terrace is the deliberate
+    // change: the plateau is built from band-height strokes to a fixed
+    // CEILING, so a finer band makes it 1008 units tall where it used to reach
+    // 960, and the limit it is measured against halved with MAX_STEP. Taller
+    // wall, tighter limit, larger standing excess.
     const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, 15);
+    stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(871);
+    expect(maxExcess(map)).toBe(978);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
     const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, 15);
+    stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
     const standing = maxExcess(map);
     for (let s = 0; s < 20; s++) {
@@ -1370,7 +1435,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
   // because the caps stop the excess from travelling — see SMOOTH_PASS_LIMIT).
   it('#12 cascade, banded: one smooth stroke on a 15-band plateau', () => {
     const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, 15);
+    stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     const before = Int16Array.from(map.cells);
     const fp = footprintOf(128, 64, 64, 4);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
@@ -1381,7 +1446,7 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   it('#12 cascade, banded: a fully clamped smooth stroke still relaxes under the brush', () => {
     const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, 16);
+    stampPlateau(map, 64, 64, CEILING_BANDS);
     expect(heightAt(map, 64, 64)).toBe(MAX_HEIGHT);
     const before = Int16Array.from(map.cells);
     const fp = footprintOf(128, 64, 64, 4);
@@ -1394,9 +1459,9 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     }
   });
 
-  it('#12 cascade, banded: converges under the pass cap on the worst plateau (8 passes)', () => {
+  it('#12 cascade, banded: converges under the pass cap on the worst plateau (2 passes)', () => {
     const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, 15);
+    stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     const changed = new Set<number>();
     applyBrush(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, changed, 'hard');
     const passes = smooth(map, changed, undefined, footprintOf(128, 64, 64, 4));
@@ -1404,9 +1469,12 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
     // Pinned: the caps stop the excess from travelling, so banded converges in
     // single-digit passes where the free path needed dozens on this scenario.
-    // (9 on the pre-disc square footprint; 8 since the 2026-08-19 tight disc
-    // rounded the plateau's corners off — re-measured, not derived.)
-    expect(passes).toBe(8);
+    // (9 on the pre-disc square footprint; 8 after the 2026-08-19 tight disc
+    // rounded the plateau's corners off; 2 since the 2026-08-20 re-terrace —
+    // re-measured each time, never derived. It FELL because a band cap is now
+    // a quarter as tall, so the banded relaxation runs out of room to move
+    // anything after almost no work at all.)
+    expect(passes).toBe(2);
   });
 
   it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {
@@ -1502,19 +1570,33 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
    * (band 6) ⇒ a raise targets 7·64 = 448 and nothing under the brush may
    * cross it.
    */
+  /**
+   * Within-band offsets for the ledge fixture: a quarter of the way up the
+   * band, an eighth, and just off its floor.
+   *
+   * FRACTIONS OF THE BAND, not the literals 16/10/2 they used to be. Those
+   * sat strictly inside a band only while a band was 64 units tall; re-terraced
+   * to 16, the first one equalled a WHOLE band and the fixture's "band 6"
+   * ground silently became band 7, which is precisely the distinction every
+   * assertion below turns on.
+   */
+  const LEDGE_MID_OFFSET = Math.floor(BAND_HEIGHT / 4);
+  const LEDGE_LOW_OFFSET = Math.floor(BAND_HEIGHT / 8);
+  const LEDGE_FLOOR_OFFSET = 1;
+
   function unevenLedge(): { map: Heightmap; lower: number[]; higher: number[] } {
     const map = createHeightmap(32);
-    map.cells.fill(6 * BAND_HEIGHT + 16); // band 6 (400)
+    map.cells.fill(6 * BAND_HEIGHT + LEDGE_MID_OFFSET); // band 6
     const lower: number[] = [];
     const higher: number[] = [];
     forEachFootprintOffset(3, (dx, dy) => {
       if (dy < -1) {
         const i = cellIndex(map, 16 + dx, 16 + dy);
-        map.cells[i] = 5 * BAND_HEIGHT + 10; // band 5 (330)
+        map.cells[i] = 5 * BAND_HEIGHT + LEDGE_LOW_OFFSET; // band 5
         lower.push(i);
       } else if (dy > 1) {
         const i = cellIndex(map, 16 + dx, 16 + dy);
-        map.cells[i] = 7 * BAND_HEIGHT + 2; // band 7 (450)
+        map.cells[i] = 7 * BAND_HEIGHT + LEDGE_FLOOR_OFFSET; // band 7
         higher.push(i);
       }
     });
@@ -1568,9 +1650,9 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
       if (map.cells[i] !== before[i]) expect(map.cells[i]).toBeGreaterThanOrEqual(floor);
       expect(map.cells[i]).toBeGreaterThanOrEqual(Math.min(before[i], floor));
     }
-    // The band-5 cells (330 > floor 320) may descend to the floor but the
-    // ones already AT or below it would be untouched; here they move by at
-    // most 10 units — never below 320.
+    // The band-5 cells sit LEDGE_LOW_OFFSET above their floor, so they may
+    // descend to it but the ones already at or below it would be untouched;
+    // here they move by at most that offset — never below the band-5 floor.
     for (const i of lower) expect(map.cells[i]).toBeGreaterThanOrEqual(floor);
   });
 
@@ -1584,7 +1666,8 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     // Band-5 holes rise by the full amount toward the CLICKED level — they do
     // not hold the fill back the way the surveyed ('free') fill has it.
     for (const i of lower) expect(map.cells[i]).toBe(before[i] + DEFAULT_SCULPT_AMOUNT);
-    // Band-6 ground reaches the target exactly (400 + 64 caps at 448).
+    // Band-6 ground reaches the target exactly: a click from the band-6 ledge
+    // caps at the clicked level rather than overshooting it.
     expect(heightAt(map, 16, 16)).toBe(target);
     // Band-7 ground under the brush is byte-untouched.
     for (const i of higher) expect(map.cells[i]).toBe(before[i]);

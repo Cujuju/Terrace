@@ -19,6 +19,18 @@ const FARMLAND_BAND = 2;
 const DEEP = SEA_LEVEL - 10 * BAND_HEIGHT;
 
 /**
+ * A DRY height strictly inside band 0, `fifth` fifths of the way up it.
+ *
+ * The (40,40) case needs four DISTINCT dry heights that nonetheless all share
+ * band 0 with the waterline — that sharing is the whole point of the case. They
+ * were the literals 5/10/15/20, which sat inside band 0 only while a band was
+ * 64 units tall; re-terracing the world to 16 pushed 20 into band 1 and the
+ * fixture stopped testing what it claimed to. Fifths of a band say the actual
+ * requirement, and stay distinct for any BAND_HEIGHT the world can have.
+ */
+const dryInBand0 = (fifth: number): number => Math.floor((BAND_HEIGHT * fifth) / 5);
+
+/**
  * One worked example carrying every case, so each assertion names a cell
  * rather than rebuilding a world:
  *
@@ -26,7 +38,7 @@ const DEEP = SEA_LEVEL - 10 * BAND_HEIGHT;
  *   (20,20) flat and dry with no water anywhere near it.
  *   (30,30) touches water at (30,29) but its dry neighbour (29,30) is one
  *           band higher — flat-among-its-land fails.
- *   (40,40) the band-0 boundary: dry at height 5, with water at EXACTLY
+ *   (40,40) the band-0 boundary: dry just above the sea, with water at EXACTLY
  *           SEA_LEVEL beside it. Both are band 0, so a band-match test alone
  *           would call that neighbour land; isWater must still win.
  *   (50,50) is itself water, ringed by otherwise-perfect dry neighbours.
@@ -40,17 +52,17 @@ function terrainAt(x: number, y: number): number {
   if (x === 29 && y === 30) return (FARMLAND_BAND + 1) * BAND_HEIGHT;
   if (x === 30 && y === 29) return DEEP;
 
-  if (x === 40 && y === 40) return 5;
-  if (x === 39 && y === 40) return 10;
+  if (x === 40 && y === 40) return dryInBand0(1);
+  if (x === 39 && y === 40) return dryInBand0(2);
   if (x === 41 && y === 40) return SEA_LEVEL;
-  if (x === 40 && y === 39) return 20;
-  if (x === 40 && y === 41) return 15;
+  if (x === 40 && y === 39) return dryInBand0(4);
+  if (x === 40 && y === 41) return dryInBand0(3);
 
   if (x === 50 && y === 50) return SEA_LEVEL;
-  if (x === 49 && y === 50) return 5;
-  if (x === 51 && y === 50) return 5;
-  if (x === 50 && y === 49) return 5;
-  if (x === 50 && y === 51) return 5;
+  if (x === 49 && y === 50) return dryInBand0(1);
+  if (x === 51 && y === 50) return dryInBand0(1);
+  if (x === 50 && y === 49) return dryInBand0(1);
+  if (x === 50 && y === 51) return dryInBand0(1);
 
   return FARMLAND_BAND * BAND_HEIGHT;
 }

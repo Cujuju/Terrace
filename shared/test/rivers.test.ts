@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BAND_HEIGHT,
   bandOf,
   cellIndex,
   computeRiverNetwork,
   createHeightmap,
   SEA_LEVEL,
+  SPRING_MIN_HEIGHT_ABOVE_SEA,
   type Heightmap,
 } from '../src/index.ts';
 
@@ -12,14 +14,23 @@ function setHeight(map: Heightmap, x: number, y: number, h: number): void {
   map.cells[cellIndex(map, x, y)] = h;
 }
 
+/** Rings from the pyramid's centre to the sea — one terrace band each. */
+const PYRAMID_RINGS = 8;
+
 /**
- * A clean square pyramid: height decreases by exactly BAND_HEIGHT (64) per
- * cell of Chebyshev distance from the centre, reaching SEA_LEVEL exactly at
- * distance 8. Every same-ring cell ties (a genuine feature of a radial
+ * A clean square pyramid: height decreases by exactly BAND_HEIGHT per cell of
+ * Chebyshev distance from the centre, reaching SEA_LEVEL exactly at
+ * PYRAMID_RINGS. Every same-ring cell ties (a genuine feature of a radial
  * pyramid), so the fixed N,E,S,W scan order always sends the descent due
  * north from the centre — a single, easily-verified straight path that also
  * crosses a full terrace band on every step, which is what makes this map
  * double as the waterfall fixture below.
+ *
+ * BAND-RELATIVE SINCE 2026-08-20: it was `512 - distance * 64`, which dropped
+ * one band per ring only while a band was 64 units. Re-terraced to 16 those
+ * literals drop FOUR bands a ring, so the map would still have been a pyramid
+ * but no longer the one-band-per-step staircase every assertion below reads it
+ * as.
  */
 function pyramid(size: number): Heightmap {
   const map = createHeightmap(size);
@@ -27,7 +38,7 @@ function pyramid(size: number): Heightmap {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const distance = Math.max(Math.abs(x - centre), Math.abs(y - centre));
-      setHeight(map, x, y, 512 - distance * 64);
+      setHeight(map, x, y, (PYRAMID_RINGS - distance) * BAND_HEIGHT);
     }
   }
   return map;
@@ -63,29 +74,55 @@ describe('computeRiverNetwork — a spring on a slope reaches the sea', () => {
 
 describe('computeRiverNetwork — waterfalls at band edges', () => {
   it('fires only where a step crosses a terrace band, with the right drop', () => {
-    // Everything defaults to a 900 "wall" so only the intended row can ever be
-    // chosen by steepest descent, whatever the scan order does elsewhere.
+    // Everything defaults to a wall far above the course so only the intended
+    // row can ever be chosen by steepest descent, whatever the scan order does
+    // elsewhere.
+    //
+    // EVERY HEIGHT IS BAND-RELATIVE (2026-08-20). These were the literals
+    // 250/220/200/150/100/-10, which encoded "band 3, band 3, band 2, band 1"
+    // only while a band was 64 units tall; re-terracing to 16 scattered them
+    // across four different bands and the fixture stopped describing the
+    // staircase it asserts about. What the test needs is a named band and a
+    // position inside it, which is what it now says.
     const size = 5;
     const map = createHeightmap(size);
-    for (let i = 0; i < map.cells.length; i++) map.cells[i] = 900;
-    setHeight(map, 0, 0, 250); // band 3 — the spring
-    setHeight(map, 0, 1, 220); // qualifies (0,0) as a local max without ever
-    // being the steepest neighbor (220 > the 200 to its east)
-    setHeight(map, 1, 0, 200); // band 3 — same band as (0,0): no waterfall
-    setHeight(map, 2, 0, 150); // band 2 — one band down from (1,0)
-    setHeight(map, 3, 0, 100); // band 1 — one band down from (2,0)
-    setHeight(map, 4, 0, -10); // band -1 — two bands down from (3,0), and the sea
+    /** Comfortably above the whole course, so it can never be descended into. */
+    const WALL = 20 * BAND_HEIGHT;
+    /**
+     * The band the spring and its first neighbour share — the first band that
+     * clears SPRING_MIN_HEIGHT_ABOVE_SEA, plus one for headroom. DERIVED from
+     * that threshold rather than picked: at BAND_HEIGHT 16 the old literal 3
+     * put the spring at height 51, under the 64-unit minimum, and no river
+     * formed at all.
+     */
+    const SPRING_BAND = bandOf(SEA_LEVEL + SPRING_MIN_HEIGHT_ABOVE_SEA) + 1;
+    /** The band the course plunges into: below the sea, so the trace ends. */
+    const SEA_BAND = -1;
+    for (let i = 0; i < map.cells.length; i++) map.cells[i] = WALL;
+    setHeight(map, 0, 0, SPRING_BAND * BAND_HEIGHT + 3); // the spring
+    setHeight(map, 0, 1, SPRING_BAND * BAND_HEIGHT + 2); // qualifies (0,0) as a
+    // local max while still sitting ABOVE the cell to (0,0)'s east, so steepest
+    // descent runs along the row rather than turning north
+    setHeight(map, 1, 0, SPRING_BAND * BAND_HEIGHT + 1); // same band: no waterfall
+    setHeight(map, 2, 0, (SPRING_BAND - 1) * BAND_HEIGHT + 1); // one band down
+    setHeight(map, 3, 0, (SPRING_BAND - 2) * BAND_HEIGHT + 1); // one band down
+    setHeight(map, 4, 0, SEA_BAND * BAND_HEIGHT + 1); // the plunge into the sea
 
     const network = computeRiverNetwork(map);
     expect(network.rivers).toHaveLength(1);
     const river = network.rivers[0]!;
     expect(river.reachedSea).toBe(true);
 
-    expect(bandOf(200) === bandOf(250)).toBe(true); // sanity on the fixture
+    // Sanity on the fixture: the first step shares a band, so it must not fire.
+    expect(bandOf(SPRING_BAND * BAND_HEIGHT + 1)).toBe(
+      bandOf(SPRING_BAND * BAND_HEIGHT + 3),
+    );
     expect(river.waterfalls).toEqual([
       { x: 2, y: 0, dropBands: 1 },
       { x: 3, y: 0, dropBands: 1 },
-      { x: 4, y: 0, dropBands: 2 },
+      // The final plunge spans whatever separates the last dry band from the
+      // sea — a fixture fact, not a constant, so it is stated as one.
+      { x: 4, y: 0, dropBands: SPRING_BAND - 2 - SEA_BAND },
     ]);
   });
 });
