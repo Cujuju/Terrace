@@ -233,6 +233,32 @@ const TWO_PI = Math.PI * 2;
 export const STRUCTURE_SCALE_MIN = 0.9;
 export const STRUCTURE_SCALE_MAX = 1.1;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FOOTPRINT CONTRACT, STATED ONCE (2026-08-21).
+//
+// How wide, in WORLD UNITS, the widest building the game can roll may be on
+// the ground. This is a size on the GROUND — a terrace tread is one world
+// unit across (MAX_STEP = BAND_HEIGHT per world unit), and buildings reading
+// as roughly one tread wide is the tuned look — so it is stated in world
+// units here and DERIVED on both sides, never restated:
+//
+//   * client/models.ts bounds every tier's unscaled model reach by half of
+//     it (divided by STRUCTURE_SCALE_MAX, since variation scale multiplies
+//     reach);
+//   * server/suitability.ts derives the checked neighbourhood from it via
+//     cellsAcross(), so hasClearFootprint always surveys every cell the
+//     model could stand on, whatever the sampling density.
+//
+// Before the 2026-08-21 re-sample the two sides agreed only by accident: the
+// client said "half a world unit" while the server checked a hard-coded 3×3
+// CELL Moore ring, and one cell happened to be one world unit. At four cells
+// per world unit that ring covers 0.75 world units of ground under a 1.0
+// world-unit building — ground nobody checked, i.e. the "buildings straddle
+// terrace edges" defect live again. Deriving both from this one number is
+// what makes that class of drift impossible rather than merely fixed.
+// ─────────────────────────────────────────────────────────────────────────────
+export const STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS = 1;
+
 export interface StructureVariation {
   /** Yaw about Y, in radians, in [0, 2π) — which way the building faces. */
   readonly yaw: number;

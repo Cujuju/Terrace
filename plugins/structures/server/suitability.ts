@@ -25,7 +25,8 @@
 // this predicate from needing a special case at the border.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { bandOf, isWater } from '@terrace/shared';
+import { bandOf, cellsAcross, isWater } from '@terrace/shared';
+import { STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS } from '../protocol';
 
 /**
  * The four orthogonal neighbours a plot's flatness is checked against.
@@ -68,17 +69,54 @@ export function isFlatEnough(world: StructuresWorld, x: number, y: number): bool
   return true;
 }
 
+// ── The footprint check's radius, DERIVED from the shared ground size ───────
+//
+// STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS (protocol.ts) is how wide, on the
+// GROUND, the widest building the game can roll may be. The server's job is
+// to survey every CELL that model could stand on. Two quantities make that
+// up, both derived so a change to either the building's size or the sampling
+// density moves this check with them:
+//
+//   * MODEL_REACH_CELLS — the unscaled model reaches half the span in any
+//     direction; converted straight through cellsAcross(). Two at today's
+//     sampling (0.5 world units × 4 cells/world unit).
+//
+// That single number IS the Chebyshev radius to survey, with no extra
+// half-cell term: a neighbouring ring k cells out can only be touched if
+// k·CELL_WORLD_SIZE − CELL_WORLD_SIZE < reach (the sample sits anywhere in
+// its own cell, so it can be up to half a cell closer to that ring), which
+// rearranges to k ≤ MODEL_REACH_CELLS exactly — the half-cell slack in the
+// inequality is precisely the half-cell extent of the standing cell. At
+// today's constants that is a 5×5 patch = 1.25 world units of surveyed
+// ground under a 1.0-world-unit building. Before the 2026-08-21
+// re-sample this list was a hard-coded +/-1 Moore ring: correct only while
+// one cell was one world unit, and silently three-quarters of the needed
+// coverage afterwards — the "buildings straddle terrace edges" defect, live
+// again. Offsets are generated in fixed row-major order so the survey's
+// iteration order stays deterministic (the terrain-math contract).
+const MODEL_REACH_CELLS = Math.ceil(
+  cellsAcross(STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2),
+);
+export const FOOTPRINT_CHECK_RADIUS_CELLS = MODEL_REACH_CELLS;
+
 /**
- * All eight neighbours a structure's FOOTPRINT is checked against — see
- * hasClearFootprint's own doc comment for why a structure needs the full
- * Moore neighbourhood surveyed, not just the four orthogonal ones
+ * Every cell within FOOTPRINT_CHECK_RADIUS_CELLS of a plot, excluding the
+ * plot's own cell (the caller checks that separately) — see
+ * hasClearFootprint's own doc comment for why a structure needs this whole
+ * square surveyed, not just the four orthogonal ones
  * FLATNESS_NEIGHBOR_OFFSETS covers for isFlatEnough.
  */
-export const FOOTPRINT_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [-1, -1], [0, -1], [1, -1],
-  [-1, 0],           [1, 0],
-  [-1, 1],  [0, 1],  [1, 1],
-];
+export const FOOTPRINT_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> =
+  (() => {
+    const offsets: Array<readonly [number, number]> = [];
+    for (let dy = -FOOTPRINT_CHECK_RADIUS_CELLS; dy <= FOOTPRINT_CHECK_RADIUS_CELLS; dy++) {
+      for (let dx = -FOOTPRINT_CHECK_RADIUS_CELLS; dx <= FOOTPRINT_CHECK_RADIUS_CELLS; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        offsets.push([dx, dy] as const);
+      }
+    }
+    return offsets;
+  })();
 
 /**
  * FOOTPRINT-FIT VALIDATION (owner directive 2026-08-20: fishing-village
@@ -94,14 +132,16 @@ export const FOOTPRINT_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]
  * holes explicitly: "It says NOTHING about the diagonals, and nothing at all
  * about ground more than one cell away." That constant is also this
  * function's justification for HOW FAR to look: every tier's model is bound
- * to reach at most STRUCTURE_FOOTPRINT_RADIUS (0.5 / STRUCTURE_SCALE_MAX,
- * unscaled) from its own origin, and the per-building scale roll never
- * exceeds STRUCTURE_SCALE_MAX — so the worst case is exactly half a cell in
- * X or Z, in EVERY direction including the diagonals: a model can touch, but
- * never cross, its own cell's true edge. The true requirement is therefore
- * not "my four orthogonal neighbours match", it is "every cell my model
- * could touch is ground I could stand on" — the full eight-cell Moore
- * neighbourhood, exactly the ring the model's footprint radius can reach.
+ * to reach at most STRUCTURE_FOOTPRINT_RADIUS (= half of protocol.ts's
+ * STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS, divided by STRUCTURE_SCALE_MAX)
+ * from its own origin, and the per-building scale roll never exceeds
+ * STRUCTURE_SCALE_MAX — so the worst case is exactly the footprint SPAN
+ * wide, in EVERY direction including the diagonals. The true requirement is
+ * therefore not "my four orthogonal neighbours match", it is "every cell my
+ * model could touch is ground I could stand on" — FOOTPRINT_NEIGHBOR_OFFSETS
+ * above, the square of cells the shared span converts to via cellsAcross(),
+ * exactly the ground the widest legal model covers whatever the sampling
+ * density.
  *
  * WHY BAND EQUALITY ALONE IS NOT ENOUGH — THE ACTUAL SHORELINE BUG. bandOf
  * floors by BAND_HEIGHT, so band 0 covers raw heights [0, BAND_HEIGHT): both
@@ -113,17 +153,20 @@ export const FOOTPRINT_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]
  * band match. Every neighbour therefore gets its own explicit isWater check,
  * not just a band comparison.
  *
- * WHY MOORE-8 + DRYNESS IS ENOUGH, WITH NO SEPARATE MARGIN CONSTANT NEEDED.
+ * WHY A FULL SQUARE OF NEIGHBOURS + DRYNESS IS ENOUGH, WITH NO SEPARATE
+ * MARGIN CONSTANT NEEDED.
  * Two dry cells sharing a band render at the identical flat terraced Y, and
  * the terraced renderer only ever draws a step or a shoreline curve where two
  * SAMPLES actually differ in band or wet/dry state (client/src/terrain/
- * contours.ts). A structure whose entire Moore neighbourhood is dry and
+ * contours.ts). A structure whose entire checked square is dry and
  * same-band as its own cell therefore has NO boundary anywhere within its
- * maximum reach to overhang — the model can touch its own cell's true edge
- * and still be standing on continuous, unbroken ground on the other side of
- * it. One ring of Moore neighbours is also provably sufficient: the model's
- * own worst-case reach never exceeds half a cell (see above), so it can never
- * touch a boundary two cells away regardless of what stands there.
+ * maximum reach to overhang — the model can touch the far edge of the
+ * ground it was sized against and still be standing on continuous, unbroken
+ * ground on the other side of it. The square above is also provably
+ * sufficient: the model's own worst-case reach never exceeds
+ * FOOTPRINT_CHECK_RADIUS_CELLS (see the derivation above the offset list),
+ * so it can never touch a boundary outside the surveyed
+ * square regardless of what stands beyond it.
  *
  * VALIDATED AT SPAWN ONLY, NOT RE-CHECKED PER TIER GROWTH. Every tier shares
  * the exact same STRUCTURE_FOOTPRINT_RADIUS bound (models.ts: "EVERY TIER
@@ -157,11 +200,11 @@ export function hasClearFootprint(world: StructuresWorld, x: number, y: number):
  * required: inside the world, inside UNLOCKED territory (the same anti-leak
  * rule flora's isPlantableCell keeps — an unfiltered broadcast must never
  * mention locked land), dry, flat against its four orthogonal neighbours
- * (isFlatEnough), and FOOTPRINT-CLEAR against its full eight-cell Moore
+ * (isFlatEnough), and FOOTPRINT-CLEAR against its full footprint square
  * neighbourhood (hasClearFootprint) — the model's own maximum reach, so a
  * structure standing here can never render overhanging a terrace edge or the
  * waterline (owner directive 2026-08-20; see hasClearFootprint's own doc
- * comment for the full reasoning). hasClearFootprint's Moore-8 check is a
+ * comment for the full reasoning). hasClearFootprint's full-square check is a
  * strict superset of isFlatEnough's orthogonal-4 one, so isFlatEnough never
  * changes this function's own answer — it is still called, and stays
  * exported and independently tested, because farmland.ts's "deliberate

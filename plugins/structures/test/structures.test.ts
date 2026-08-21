@@ -50,7 +50,13 @@ import {
   resetBlessings,
   setBlessedStructureCells,
 } from '../server/blessings.ts';
-import { hasClearFootprint, isBuildableCell, isFlatEnough, type StructuresWorld } from '../server/suitability.ts';
+import {
+  FOOTPRINT_CHECK_RADIUS_CELLS,
+  hasClearFootprint,
+  isBuildableCell,
+  isFlatEnough,
+  type StructuresWorld,
+} from '../server/suitability.ts';
 import { hasNearbyFarmland } from '../server/farmland.ts';
 import { isFarmlandCell } from '@terrace/shared';
 import {
@@ -127,7 +133,13 @@ describe('suitability (terrain as walls)', () => {
     const world = view(worldWithTerrain(160, plateauHeight));
     expect(isFlatEnough(world, PLATEAU_MIN, 79)).toBe(false);
     expect(isBuildableCell(world, PLATEAU_MIN, 79)).toBe(false);
-    expect(isBuildableCell(world, PLATEAU_MIN + 1, 79)).toBe(true);
+    // The first cell IN from the edge that has a full footprint square of
+    // checked ground between it and the cliff: the 2026-08-21 re-sample
+    // widened the footprint check to cover the whole one-world-unit model
+    // (FOOTPRINT_CHECK_RADIUS_CELLS), so a cell one cell in from the drop
+    // now stands on ground the check surveys and correctly refuses. The
+    // flatness half of this test still pins the edge cell itself.
+    expect(isBuildableCell(world, PLATEAU_MIN + FOOTPRINT_CHECK_RADIUS_CELLS, 79)).toBe(true);
   });
 
   it('refuses cells outside the world and inside locked chunks', () => {
@@ -341,27 +353,30 @@ describe('terrain as walls', () => {
       };
     })();
 
-    // A block straddling the boundary: land is x < 32, so (30, y) is land
-    // with both its x-neighbours also on land (flat, buildable), while
-    // (31, y) is land whose neighbour at x = 32 is water — not flat, and
-    // therefore a WALL despite being dry ground itself.
-    const live = boardOf([[30, 10], [31, 10], [30, 11], [31, 11]]);
+    // A block near the boundary: land is x < 32, so (29, y) is land whose
+    // whole footprint square (x ∈ [27, 31]) stays on dry, flat ground and
+    // is therefore BUILDABLE, while (30, y) is land whose square reaches
+    // the water column at x = 32 (exactly FOOTPRINT_CHECK_RADIUS_CELLS = 2
+    // cells out) — dry and flat in itself, but a WALL since the widened
+    // 2026-08-21 footprint check, because the one-world-unit model it
+    // stands would overhang the shore.
+    const live = boardOf([[29, 10], [30, 10], [29, 11], [30, 11]]);
     const outcome = stepGeneration(world, live);
 
     // The two wall cells can never be alive, whatever their neighbour count.
-    expect(outcome.nextLive.has(structureKey(31, 10))).toBe(false);
-    expect(outcome.nextLive.has(structureKey(31, 11))).toBe(false);
-    // Nothing at or beyond the water line is ever born.
+    expect(outcome.nextLive.has(structureKey(30, 10))).toBe(false);
+    expect(outcome.nextLive.has(structureKey(30, 11))).toBe(false);
+    // Nothing at or beyond the last fully-checked row is ever born.
     for (const key of outcome.nextLive.keys()) {
-      expect(cellOfKey(key).x).toBeLessThan(31);
+      expect(cellOfKey(key).x).toBeLessThan(30);
     }
-    // The two buildable cells (30, y) each still had 3 live Moore neighbours
+    // The two buildable cells (29, y) each still had 3 live Moore neighbours
     // in the ORIGINAL board (the other three block cells, walls included —
     // a wall still counts as a live neighbour if it WAS alive at the start
     // of this step; only whether IT can end up alive is gated), so both
     // survive under the ordinary S23 rule.
-    expect(outcome.nextLive.has(structureKey(30, 10))).toBe(true);
-    expect(outcome.nextLive.has(structureKey(30, 11))).toBe(true);
+    expect(outcome.nextLive.has(structureKey(29, 10))).toBe(true);
+    expect(outcome.nextLive.has(structureKey(29, 11))).toBe(true);
   });
 
   it('a live cell on now-locked ground can never be part of a birth', () => {
@@ -742,6 +757,18 @@ function advance(harness: Harness, seconds: number): void {
   for (let elapsed = 0; elapsed < seconds; elapsed += DT) harness.host.tick(DT);
 }
 
+/**
+ * Explicit vitest timeout for the host-level tests below, which each run 600
+ * simulated ticks over a full board's CA sweep. The 2026-08-21 footprint
+ * widening roughly doubled isBuildableCell's per-cell cost (the footprint
+ * square surveys 24 neighbours where the old Moore ring surveyed 8), and
+ * these tests already sat close to vitest's 5 s default before that. Same
+ * precedent — and same reasoning — as this file's 20 s advance() test in the
+ * tier-progression block: real synchronous CPU work whose budget must move
+ * with the check's cost, not papering over a hang.
+ */
+const HOST_TEST_TIMEOUT_MS = 20_000;
+
 describe('the CA through the real host', () => {
   it('an empty world eventually seeds something, on its own cadence', () => {
     const harness = boot();
@@ -750,7 +777,7 @@ describe('the CA through the real host', () => {
     advance(harness, 15 * 40);
     expect(standingStructures().length).toBeGreaterThan(0);
     expect(currentGeneration()).toBeGreaterThan(0);
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 
   it(
     'every standing structure is on buildable ground and a valid tier',
@@ -776,9 +803,12 @@ describe('the CA through the real host', () => {
     // file — over a full 160x160 board's worth of scanChunk calls) already
     // sat close to the default under load, and isBuildableCell's footprint
     // check (suitability.ts's hasClearFootprint, added 2026-08-20) surveys
-    // eight neighbours instead of isFlatEnough's four for every candidate
-    // cell, every generation. Real synchronous CPU work, not a hung promise —
-    // widening the budget is correct here, not papering over a hang.
+    // every cell within FOOTPRINT_CHECK_RADIUS_CELLS (24 at today's
+    // constants, up from eight before the 2026-08-21 re-sample widened it to
+    // cover the full one-world-unit model span) instead of isFlatEnough's
+    // four, for every candidate cell, every generation. Real synchronous CPU
+    // work, not a hung promise — widening the budget is correct here, not
+    // papering over a hang.
     20_000,
   );
 });
@@ -843,7 +873,7 @@ describe('broadcast model', () => {
     expect(snapshots[0].target).toBe(PLAYER.id);
     const cells = parseStructureCells((snapshots[0].payload as { structures: number[] }).structures) ?? [];
     expect(cells).toHaveLength(standingStructures().length);
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 
   // ──────────────────────────────────────────────────────────────────────────
   // FOG OF WAR (issue #18): the migrated-plugin proof. Two players get
@@ -868,7 +898,7 @@ describe('broadcast model', () => {
     // with no unlocked territory of their own, none of it.
     const forOutsider = harness.sink.ofType(ALL_WIRE_TYPE).filter((m) => m.target === outsider.id);
     expect(forOutsider).toHaveLength(0);
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 
   it('pushes a targeted refresh when a player creeps into a chunk that already has a structure', () => {
     const harness = boot();
@@ -896,7 +926,7 @@ describe('broadcast model', () => {
     const founded =
       parseStructureCells((changes[0].payload as { founded: number[] }).founded) ?? [];
     expect(founded).toContainEqual({ x: victim!.x, y: victim!.y, tier: victim!.tier });
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 });
 
 describe('persistence', () => {
@@ -915,7 +945,7 @@ describe('persistence', () => {
     expect(standingStructures()).toEqual(before);
     expect(currentGeneration()).toBe(generationBefore);
     expect(currentLive()).toEqual(liveBefore);
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 
   it('survives a truncated, foreign or hand-edited slice', () => {
     for (const junk of [
@@ -982,7 +1012,7 @@ describe('persistence', () => {
 
     advance(drowned, 15 + DT); // one generation — nothing left to step, stays empty
     expect(standingStructures()).toHaveLength(0);
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 
   it('a structure restored onto ground that still fits survives load untouched', () => {
     const first = boot();
@@ -997,7 +1027,7 @@ describe('persistence', () => {
     // merely "some structures".
     bootOn(worldWithTerrain(WORLD_SIZE, flatOpenTerrain), slice);
     expect(standingStructures().length).toBe(before.length);
-  });
+  }, HOST_TEST_TIMEOUT_MS);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1331,14 +1361,21 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
   /**
    * All background FARMLAND_BAND land, with ONE water cell at (22, 21) —
    * chosen so it is a neighbour of (21, 21) but NOT of (20, 20), the birth
-   * candidate every test below uses. That keeps the candidate itself
-   * comfortably BUILDABLE (all four of ITS OWN orthogonal neighbours stay
-   * on FARMLAND_BAND) while (21, 21) — the candidate's Moore (diagonal)
-   * neighbour — becomes farmland. This is the realistic shape the card
-   * describes: a farm plot beside a founding settlement, not a building
-   * standing in the farm itself (which the CA's own wall test already
-   * forbids — see the previous describe block's "deliberate divergence"
-   * test).
+   * candidate every test below uses. That makes (21, 21) — the candidate's
+   * Moore (diagonal) neighbour — farmland.
+   *
+   * THE COLLISION THE 2026-08-21 FOOTPRINT WIDENING CREATES, PINNED HERE
+   * RATHER THAN HIDDEN: farmland is by definition water-adjacent, so the
+   * water that feeds the farm stands at Chebyshev ≤ 2 from ANY cell whose
+   * Moore neighbourhood contains that farm — exactly the widened footprint
+   * square. A buildable birth candidate can therefore never have farmland
+   * in its Moore neighbourhood, and life.ts's card-28 fed birth is
+   * UNREACHABLE as written (the candidate is refused by isBuildableCell
+   * before the farmland lookup ever matters). The tests below pin that
+   * collision rather than weaken the mechanic's assertions around it;
+   * un-implanting the boost (e.g. keying it on farms within some larger
+   * radius) is a design change to card 28, not a fixture tweak, and is
+   * flagged in the footprint-widening report for an owner decision.
    */
   function terrainWithFarmlandBeside(x: number, y: number): number {
     if (x === 22 && y === 21) return DEEP;
@@ -1357,11 +1394,14 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
     };
   }
 
-  it('sets up the fixture correctly: the candidate is buildable and its Moore neighbour is farmland, only when carved', () => {
+  it('sets up the fixture correctly: the farmland carve works, and the candidate beside it is NO LONGER buildable — the widened footprint square reaches the water that feeds the farm', () => {
     const with_ = boostWorld(true);
-    expect(isBuildableCell(with_, 20, 20)).toBe(true);
     expect(isFarmlandCell(with_, 21, 21)).toBe(true);
     expect(hasNearbyFarmland(with_, 20, 20)).toBe(true);
+    // The collision: (20, 20) is dry and flat in itself, but its footprint
+    // square (Chebyshev ≤ 2) includes the water cell at (22, 21) — a
+    // one-world-unit model standing here would overhang the pool.
+    expect(isBuildableCell(with_, 20, 20)).toBe(false);
 
     const without = boostWorld(false);
     expect(isBuildableCell(without, 20, 20)).toBe(true);
@@ -1369,12 +1409,18 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
     expect(hasNearbyFarmland(without, 20, 20)).toBe(false);
   });
 
-  it('a dead cell with exactly 2 live neighbours is born when near farmland (the whole "birth rate rises" mechanic)', () => {
+  it('a dead cell with exactly 2 live neighbours near farmland is NOT born — the fed birth is unreachable because the ground beside farmland never passes the footprint check', () => {
     const world = boostWorld(true);
     const live = boardOf([[19, 19], [19, 21]]); // both Moore-adjacent to (20,20); neighbourCount = 2
+    // hasNearbyFarmland would say yes (see the fixture test above); the
+    // birth is gated out by isBuildableCell's widened footprint check
+    // before the farmland rule can fire. Pinned so a future change that
+    // silently re-enables water-adjacent births — or silently disables the
+    // farmland lookup itself — shows up here.
+    expect(hasNearbyFarmland(world, 20, 20)).toBe(true);
     const outcome = stepGeneration(world, live);
-    expect(outcome.nextLive.has(structureKey(20, 20))).toBe(true);
-    expect(outcome.born).toContainEqual({ x: 20, y: 20, tier: 0 });
+    expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
+    expect(outcome.born).toHaveLength(0);
   });
 
   it('the identical board with exactly 2 live neighbours does NOT birth without farmland nearby — the boost, isolated', () => {
@@ -1398,11 +1444,15 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
   });
 
-  it('ordinary B3 birth (3 neighbours) is unaffected by farmland — same outcome with or without it', () => {
+  it('ordinary B3 birth (3 neighbours) is unaffected by the farmland carve — same outcome on carved and uncarved ground, because neither can use the fed-birth path', () => {
     const live = boardOf([[19, 19], [19, 21], [21, 19]]); // neighbourCount = 3, none of which is (21,21)
     const withFarmland = stepGeneration(boostWorld(true), live);
     const without = stepGeneration(boostWorld(false), live);
-    expect(withFarmland.nextLive.has(structureKey(20, 20))).toBe(true);
+    // On carved ground the birth is blocked by the footprint check (water
+    // in the square), NOT by the neighbour count — ordinary B3 would have
+    // birthed it. On uncarved ground it births normally, proving the carve
+    // itself is what changed the outcome.
+    expect(withFarmland.nextLive.has(structureKey(20, 20))).toBe(false);
     expect(without.nextLive.has(structureKey(20, 20))).toBe(true);
   });
 

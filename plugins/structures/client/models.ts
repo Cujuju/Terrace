@@ -97,6 +97,7 @@ import {
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
+  STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_TIER_COUNT,
   type SettlerRace,
@@ -128,15 +129,23 @@ const X_AXIS = new Vector3(1, 0, 0);
  * bound every tier is measured against (test/models.test.ts asserts it), not a
  * hand-shrunk longhouse.
  *
- * WHY THIS VALUE. A cell is CELL_WORLD_SIZE = 1 world unit across (see
- * client/src/config.ts — world X/Z coordinates ARE cell coordinates), so half a
- * cell is the largest reach that keeps a model strictly over its own cell. Each
- * building is then drawn at a per-cell variation scale of up to
- * STRUCTURE_SCALE_MAX (protocol.ts), which multiplies that reach, so the bound
- * on the UNSCALED model has to be divided by it: 0.5 / 1.1 ≈ 0.4545. The
- * biggest building the game can roll is then exactly one cell wide.
+ * WHY THIS VALUE — DERIVED, NOT STATED (2026-08-21). The ground a building
+ * may need is STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS wide (protocol.ts): one
+ * world unit, one terrace tread at the steepest legal slope — the tuned look.
+ * Half of that is the largest reach that keeps a model strictly over its own
+ * tread. Each building is then drawn at a per-cell variation scale of up to
+ * STRUCTURE_SCALE_MAX (protocol.ts), which multiplies that reach, so the
+ * bound on the UNSCALED model has to be divided by it:
+ * 0.5 / 1.1 ≈ 0.4545 world units. The biggest building the game can roll is
+ * then exactly one world unit wide. The server's suitability check derives
+ * ITS neighbourhood from this same span via cellsAcross(), so the two sides
+ * cannot drift apart however finely the world is sampled — before the
+ * 2026-08-21 re-sample they agreed only because a cell happened to be one
+ * world unit, which is what let the server end up checking less ground than
+ * the widest model covers.
  */
-export const STRUCTURE_FOOTPRINT_RADIUS = 0.5 / STRUCTURE_SCALE_MAX;
+export const STRUCTURE_FOOTPRINT_RADIUS =
+  STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2 / STRUCTURE_SCALE_MAX;
 
 function lambert(color: number, options: { emissive?: number } = {}): MeshLambertMaterial {
   return new MeshLambertMaterial({ color, flatShading: true, emissive: options.emissive ?? 0x000000 });
