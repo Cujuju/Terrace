@@ -2,7 +2,7 @@
 // previewBoats.ts. Not part of the shipped app: reached only through
 // preview-rivers.html.
 //
-//   ?scene=<fork|meander|terrace>  — which fixture to build; defaults to "fork"
+//   ?scene=<fork|meander|terrace|basin>  — which fixture to build; defaults to "fork"
 //   ?view=<iso|side|top>           — camera angle; defaults to "iso"
 //   ?zoom=<number>                 — camera distance multiplier; defaults to 1
 //
@@ -95,7 +95,7 @@ const DESCENT_PER_CELL = (() => {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : BAND_HEIGHT / 4;
 })();
 
-type SceneName = 'fork' | 'meander' | 'terrace';
+type SceneName = 'fork' | 'meander' | 'terrace' | 'basin';
 
 /**
  * Lowers a spring cell's four neighbours to just under it.
@@ -239,10 +239,79 @@ function buildTerrace(mirror: TerrainMirror): void {
   openSpring(mirror, x, 1);
 }
 
+/**
+ * BASIN: a straight channel that runs into a walled bowl, fills it, and spills
+ * out of the one gap in its rim — the fixture for LAKE geometry.
+ *
+ * The other three fixtures never pool: every one of their courses always has a
+ * strictly lower neighbour, so `fillBasin` is never reached and the pool mesh
+ * stays empty. A lake needs a closed depression, and its outline is only worth
+ * looking at if that depression is not a rectangle — so the bowl is a disc
+ * (which the cell lattice can only approximate, which is the whole point) with
+ * one lobe pushed out of its east side, giving the outline both convex arcs and
+ * a concave neck to round.
+ */
+function buildBasin(mirror: TerrainMirror): void {
+  const map = mirror.map;
+  /**
+   * Radius of the bowl, in cells.
+   *
+   * BOUNDED BY THE TRACE BUDGET, not by taste: one river may spend
+   * `map.size * RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER` cells in total
+   * (shared/src/rivers.ts), the channel above the bowl spends about half the
+   * fixture's edge getting here, and `fillBasin` stops dead when the rest runs
+   * out — leaving a lake with a straight, budget-shaped cut across it that
+   * says nothing about the outline this fixture exists to show. A disc of this
+   * radius plus its lobe is roughly 76 cells against the ~96 left, which
+   * leaves the whole shape inside the budget with room to spare.
+   */
+  const BOWL_RADIUS_CELLS = PREVIEW_WORLD_SIZE / 14;
+  /** Radius of the lobe budding off the bowl's east side. */
+  const LOBE_RADIUS_CELLS = BOWL_RADIUS_CELLS / 2;
+  /** How deep the bowl's floor sits under the rim it fills to, in bands. Two,
+   *  so the lake surface is unambiguously above the floor's own band and the
+   *  shot cannot be read as "the water is just the ground's colour". */
+  const BOWL_DEPTH_BANDS = 2;
+
+  // A straight channel advances one row per cell, as in TERRACE.
+  const hillsideAtRow = fillHillside(mirror, DESCENT_PER_CELL);
+  const set = (x: number, y: number, h: number): void => {
+    map.cells[cellIndex(map, x, y)] = h;
+  };
+
+  const channelX = Math.floor(PREVIEW_WORLD_SIZE / 2);
+  const bowlCentreY = Math.floor(PREVIEW_WORLD_SIZE / 2);
+  const bowlRimHeight = hillsideAtRow(bowlCentreY + BOWL_RADIUS_CELLS);
+  const bowlFloorHeight = bowlRimHeight - BOWL_DEPTH_BANDS * BAND_HEIGHT;
+
+  set(channelX, 1, SUMMIT_HEIGHT);
+  for (let y = 2; y < PREVIEW_WORLD_SIZE; y++) {
+    // The same "must fall within the tread" rule buildTerrace explains: the
+    // channel descends 2 units per row over the tread drop so no cell of it
+    // ever ties with its successor.
+    set(channelX, y, SUMMIT_HEIGHT - DESCENT_PER_CELL * (y - 1) - 2 * (y - 1));
+  }
+
+  // The bowl is stamped AFTER the channel, so the channel's own cells inside it
+  // are flooded flat rather than left as a groove through the lake floor.
+  for (let y = 0; y < PREVIEW_WORLD_SIZE; y++) {
+    for (let x = 0; x < PREVIEW_WORLD_SIZE; x++) {
+      const dx = x - channelX;
+      const dy = y - bowlCentreY;
+      const inBowl = Math.hypot(dx, dy) <= BOWL_RADIUS_CELLS;
+      const inLobe =
+        Math.hypot(dx - BOWL_RADIUS_CELLS, dy) <= LOBE_RADIUS_CELLS;
+      if (inBowl || inLobe) set(x, y, bowlFloorHeight);
+    }
+  }
+  openSpring(mirror, channelX, 1);
+}
+
 const SCENE_BUILDERS: Record<SceneName, (mirror: TerrainMirror) => void> = {
   fork: buildFork,
   meander: buildMeander,
   terrace: buildTerrace,
+  basin: buildBasin,
 };
 
 const CAMERA_VIEWS = {
@@ -258,7 +327,7 @@ function query<T extends string>(name: string, allowed: readonly T[], fallback: 
   return allowed.includes(raw as T) ? (raw as T) : fallback;
 }
 
-const sceneName = query('scene', ['fork', 'meander', 'terrace'] as const, 'fork');
+const sceneName = query('scene', ['fork', 'meander', 'terrace', 'basin'] as const, 'fork');
 const view = query('view', ['iso', 'side', 'top'] as const, 'iso');
 const zoom = Number(new URLSearchParams(window.location.search).get('zoom') ?? '1') || 1;
 
@@ -348,6 +417,13 @@ function animate(): void {
       const hits = ray.intersectObject(terrainGroup, true);
       return hits.length > 0 ? hits[0]!.point.y : null;
     };
+    // Debug probes for MEASURING rather than eyeballing: the derived network
+    // itself, and the fixture's raw heightmap.
+    (window as unknown as { __previewNetwork?: unknown }).__previewNetwork = network;
+    (window as unknown as { __previewHeightAt?: unknown }).__previewHeightAt = (
+      x: number,
+      y: number,
+    ): number => mirror.map.cells[cellIndex(mirror.map, x, y)]!;
     (window as unknown as { __previewInfo?: unknown }).__previewInfo = {
       scene: sceneName,
       rivers: network.rivers.length,

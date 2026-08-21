@@ -2500,6 +2500,10 @@ which is exactly what the junction-point repeat above is for.
     with no seam, which a ribbon cannot express; `pushQuad` is the one square
     primitive left, and it also covers the degenerate flowing run of a single
     cell (one point has no direction to extrude along).
+    **SUPERSEDED the same day** (issue #62, see "a lake is drawn with the
+    terrain's own outline" below): a lake is now marched and smoothed by the
+    terrain's own pipeline. `pushQuad` survives only for the single-cell
+    flowing run.
 
 **Punts, named:**
 
@@ -2599,6 +2603,98 @@ what found the dashed-line defect above.
     neighbours strictly below it, which walls and ramps both break; and a
     fixture that drops a whole band per cell puts a plunge-pool effect on
     every cell, hiding the very water it is meant to show.
+
+### Decisions made 2026-08-21 (a lake is drawn with the terrain's own outline, issue #62)
+
+Owner report, after the ribbon work above: "the lakes and other areas still
+need the edge smoothing". A pool was still a field of full-cell quads — the
+one thing the rivers entry above explicitly left as a square — so a lake's
+edge was the polyomino boundary of the flooded cells, hard 90° corners and
+all, sitting inside a bank the terrain draws as a smooth rounded contour. The
+two could never be reconciled by tuning a half-width, because they were not
+the same kind of shape.
+
+**Decision: march the lake with the code that marches the ground.**
+`appendPoolSurface` (client/src/render/riverRig.ts) runs the exact sequence
+`terrain/capEmission.ts` runs per band — `loadSampleField` → `marchLevel` →
+`assembleLoops` → `smoothLoop` → `groupLoops`/`bridgeHole`/`earClip` — over
+the lake instead of over a chunk. It is the same borrowing
+`render/brushPreview.ts` already does for the brush outline, and for the same
+reason: one marching-squares implementation, one saddle rule, one Chaikin
+pass, so the water and the bank cannot speak different shape languages.
+
+**The field it marches, which is where the shape decision lives:**
+
+  - **The threshold is the floor of the band ABOVE the pool's surface** — the
+    height at which the terrain starts drawing ground that stands above this
+    water. Everything in the surface's own band is drawn AT that band's floor,
+    at or under the waterline, so it belongs to the lake. Marching the real
+    heights at a real band boundary means the lake's edge and the foot of the
+    riser it meets are the same contour, solved by the same
+    `crossingFraction`; they cannot disagree.
+  - **Heights are negated**, because a lake is the region BELOW a threshold
+    and `marchLevel` traces the region at or above one. This is exact, not an
+    approximation: `crossingFraction` pushes both ends
+    `CONTOUR_SAMPLE_CLEARANCE` clear of the threshold symmetrically, so the
+    crossing solved on the negated pair is algebraically the same point on the
+    same lattice edge.
+  - **Membership is the flood's, not the heightmap's.** A cell outside
+    `fillBasin`'s flooded set is lifted to the threshold plus
+    `DRY_CELL_CLEARANCE_HEIGHT_UNITS` however low it really is — the ground
+    below the spillway is lower than the lake and is not part of it. One
+    height unit, so a cell genuinely at the waterline (the spillway is exactly
+    that) is pushed only far enough to be excluded, and the outline still runs
+    almost to its centre instead of stopping a cell short of the outflow.
+
+**Tiled in chunk-sized steps.** The marching lattice is a chunk's 17×17 and a
+lake is not bounded by one. Tiles share their border samples exactly as
+neighbouring chunks do (seam contracts S1–S3) and `smoothLoop` pins border
+points (S4), so two tiles' halves of one lake meet with neither gap nor
+overlap — the same reason the terrain's caps tile seamlessly. Only tiles whose
+lattice actually holds a flooded cell are marched, so cost is proportional to
+the water rather than to the span between two unrelated puddles.
+
+**A second, worse bug found on the way: the surface floated.** A pool was
+drawn at its raw spill height (`poolHeight × HEIGHT_WORLD_SCALE`) while the
+terrain under it is band-quantised like all the rest of the world. Measured in
+the `basin` fixture by raycasting the drawn mesh: the floor rendered at
+**y = 1.5** and the water sat at **y = 2.55** — a full two-thirds of a band
+above the ground it was supposed to be resting on. The surface is now
+quantised to the band the terrain draws the pool in, which is the same
+correction the flowing ribbon already carried (`renderedBandAt`) and the same
+plane the outline's threshold is derived from.
+
+**Rejected alternatives:**
+
+  - **A binary in/out field** (the brush preview's rule: membership is
+    yes/no, crossing forced to the cell edge). Tried first and visibly wrong —
+    it places the waterline half a cell out from every flooded cell regardless
+    of where the terrain's riser actually is, so the lake sat inside a ragged
+    margin of dry ground instead of meeting its bank. Marching the real
+    heights is what makes the two outlines the same curve.
+  - **Rounding each pool quad** (keep the tile field, soften its corners).
+    Cannot express a shared boundary: adjacent tiles either overlap or leave
+    holes, and the outline still would not know where the bank is.
+  - **Flooding every cell below the pool surface** rather than only the
+    basin's. That is the whole hillside below the spillway; membership has to
+    come from `fillBasin`.
+
+**Verified, both ways.** Eyes-on in the `basin` fixture (new — a channel into
+a walled bowl with a lobe off its side, so the outline has convex arcs and a
+concave neck; its size is bounded by the per-river trace budget, or
+`fillBasin` stops mid-lake and leaves a straight budget-shaped cut). And as a
+contract test rather than a wiring test — `client/test/poolSurface.test.ts`
+asserts the surface covers every flooded cell centre, no dry one (the honesty
+guard `CONTOUR_CELL_CENTRE_GUARD` gives), is one flat plane at the height it
+was handed, leaves an island uncovered, and PARTITIONS its area across a tile
+seam: every sampled point covered at least once and no point strictly inside
+two triangles.
+
+**Named residual.** Dry ground whose height is above the water but inside the
+water's own band renders at the same band floor — coplanar with the lake, and
+not covered by it. That is honest (it is dry land, and the terrain draws it
+flat there), but it means a terraced shore gives no relief cue at the
+waterline; only the colour change marks where the lake ends.
 
 ### Version facts recorded at scaffold time (2026-08-13)
 

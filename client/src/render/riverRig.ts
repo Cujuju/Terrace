@@ -52,15 +52,26 @@ import {
 } from 'three';
 import {
   BAND_HEIGHT,
+  CHUNK_SIZE,
   bandOf,
+  cellIndex,
   chunkIndexOfCell,
+  chunksPerEdge,
   computeRiverNetwork,
   quantizeToBand,
   type RiverNetwork,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
-import { CONTOUR_SAMPLE_CLEARANCE } from '../terrain/contours.ts';
+import {
+  CONTOUR_SAMPLE_CLEARANCE,
+  assembleLoops,
+  loadSampleField,
+  marchLevel,
+  samples,
+} from '../terrain/contours.ts';
+import { smoothLoop } from '../terrain/contourSmoothing.ts';
+import { bridgeHole, earClip, groupLoops } from '../terrain/triangulation.ts';
 import { WATER_COLOR } from './water.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
@@ -139,11 +150,20 @@ const RIVER_SMOOTHING_PASSES = 2;
 const MAX_SMOOTHING_DEVIATION_CELLS = 0.15;
 
 /**
- * Half-width of a POOLED (lake) tile. 0.5 → a full 1×1 cell, so adjacent
- * pooled cells tile edge-to-edge into one continuous flat lake surface with
- * no gaps between them. A lake stays a tile field — see `pushQuad`.
+ * How far, in HEIGHT units, a cell that is NOT part of a lake is held above
+ * that lake's waterline when the lake's outline is marched.
+ *
+ * A lake is not "everywhere the ground is under the water level" — the ground
+ * below the spillway is lower still, and so is the next basin down the hill.
+ * Membership is `fillBasin`'s flooded set and nothing else, so every other
+ * cell is forced strictly above the threshold before the outline is marched
+ * (see `appendPoolSurface`). ONE height unit: the smallest value that puts a
+ * cell on the dry side of a `>=` test, so a cell that is genuinely at the
+ * waterline — the spillway is exactly that — is pushed only far enough to be
+ * excluded, and the outline still runs almost to its centre rather than
+ * stopping a cell short and leaving a gap where the outflow starts.
  */
-const POOL_HALF_WIDTH_CELLS = 0.5;
+const DRY_CELL_CLEARANCE_HEIGHT_UNITS = 1;
 
 /**
  * How far above the terrain river water is lifted, in world units — the same
@@ -177,12 +197,12 @@ const RIVER_METALNESS = 0;
  * Appends one flat XZ quad, centred at (`cx`, `y`, `cz`) and `halfWidthWorld`
  * to a side, to a triangle-soup position list.
  *
- * The ONLY primitive that is still a square, and deliberately so: a lake is a
- * field of full-cell tiles that must meet edge to edge with no seam
- * (POOL_HALF_WIDTH_CELLS = 0.5), which a ribbon cannot express. It also
- * covers the degenerate flowing run of a SINGLE cell — one point has no
- * direction to extrude a ribbon along, so the cell is drawn as the small
- * square it geometrically is.
+ * The ONE primitive that is still a square, and now for ONE reason: the
+ * degenerate flowing run of a SINGLE cell. One point has no direction to
+ * extrude a ribbon along, so the cell is drawn as the small square it
+ * geometrically is. (Lakes used to be its other client — a field of full-cell
+ * tiles — until they were given the terrain's own smoothed outline; see
+ * `appendPoolSurface`.)
  */
 function pushQuad(cx: number, y: number, cz: number, halfWidthWorld: number, out: number[]): void {
   const x0 = cx - halfWidthWorld;
@@ -191,6 +211,139 @@ function pushQuad(cx: number, y: number, cz: number, halfWidthWorld: number, out
   const z1 = cz + halfWidthWorld;
   out.push(x0, y, z0, x1, y, z0, x1, y, z1);
   out.push(x0, y, z0, x1, y, z1, x0, y, z1);
+}
+
+/**
+ * The cell offsets whose tiles hold a given cell in their marching lattice: the
+ * cell's own tile, plus the west, north and north-west neighbours' — a tile's
+ * lattice covers cells [origin, origin + CHUNK_SIZE] INCLUSIVE, so a cell on a
+ * tile's first row or column is also the last sample of the tile before it.
+ */
+const TILE_LATTICE_OFFSETS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [-1, 0],
+  [0, -1],
+  [-1, -1],
+];
+
+/**
+ * One lake: the cells `fillBasin` flooded, the surface they are flooded to,
+ * and the bounding box of the cells (in cells, inclusive) so the outline is
+ * marched over the lake rather than over the world.
+ */
+export interface Lake {
+  /** Cell indices (`cellIndex`) of every flooded cell. */
+  readonly cells: Set<number>;
+  /** The pool's surface, in HEIGHT units — `fillBasin`'s spill level. */
+  readonly surfaceHeight: number;
+  /**
+   * Origins of the marching tiles this lake reaches, as `tileKey` values.
+   *
+   * Collected from the flooded cells rather than swept over their bounding
+   * box: two lakes that happen to brim to the SAME height are one `Lake` (they
+   * are indistinguishable to the outline, which only asks "is this cell under
+   * this water"), and if they sit at opposite ends of the world their shared
+   * bounding box is mostly empty. Marching only the tiles that hold a flooded
+   * cell makes the cost proportional to the water, not to the span between two
+   * unrelated puddles.
+   */
+  readonly tiles: Set<number>;
+}
+
+/**
+ * Appends one lake's SURFACE — smoothed outline, triangulated — to a triangle
+ * soup, at world height `surfaceY`.
+ *
+ * WHY THIS IS THE TERRAIN'S OWN PIPELINE AND NOT A TILE FIELD (2026-08-21,
+ * owner: "the lakes and other areas still need the edge smoothing"). A lake
+ * used to be a field of full-cell quads, so its edge was the polyomino
+ * boundary of the flooded cells: axis-aligned, hard 90° corners, against a
+ * bank the terrain draws as a smooth rounded contour. The two could not be
+ * reconciled by tuning a half-width, because they were not the same kind of
+ * shape. So the outline is now marched, smoothed and triangulated by the code
+ * that marches, smooths and triangulates the ground — loadSampleField →
+ * marchLevel → assembleLoops → smoothLoop → groupLoops/bridgeHole/earClip, the
+ * sequence terrain/capEmission.ts runs per band, and the same one
+ * render/brushPreview.ts already borrows for the brush outline.
+ *
+ * THE FIELD IT MARCHES, which is where the shape decision actually lives:
+ *
+ *   * The threshold is the floor of the band ABOVE the one the surface sits
+ *     in. That is the height at which the TERRAIN starts
+ *     drawing ground above this water: everything in the surface's own band is
+ *     drawn at that band's floor, at or under the waterline, and so belongs to
+ *     the lake. Marching the terrain's own heights at a terrain band boundary
+ *     means the water's edge and the foot of the riser it meets are the SAME
+ *     contour, computed by the same `crossingFraction` — they cannot disagree.
+ *
+ *   * Heights are NEGATED, because a lake is the region BELOW a threshold and
+ *     `marchLevel` traces the region at or above one. Negating both the field
+ *     and the threshold is exact rather than approximate: `crossingFraction`
+ *     pushes each end CONTOUR_SAMPLE_CLEARANCE clear of the threshold before
+ *     interpolating, symmetrically, so the crossing it solves for on the
+ *     negated pair is algebraically the same point on the same lattice edge.
+ *
+ *   * Cells outside `lake.cells` are lifted to the threshold plus
+ *     DRY_CELL_CLEARANCE_HEIGHT_UNITS, whatever their real height. Membership
+ *     is the flood's, not the heightmap's — see that constant.
+ *
+ * TILED IN CHUNK-SIZED STEPS, because the marching lattice is a chunk's
+ * (17×17) and a lake is not bounded by one. The tiles share their border
+ * samples exactly as neighbouring chunks do (contours.ts seam contract
+ * S1–S3), and `smoothLoop` pins border points (S4), so two tiles' halves of
+ * one lake meet along the border with no gap and no overlap — the same reason
+ * the terrain's own caps tile seamlessly. Only tiles that actually hold a
+ * flooded cell are marched: a crossing can only exist on a lattice edge with a
+ * flooded cell at one end, and every such edge lies in the domain of a tile
+ * whose lattice holds that cell.
+ *
+ * SCRATCH DISCIPLINE: `loadSampleField`/`marchLevel`/`assembleLoops` share
+ * module-level scratch and must run to completion uninterrupted (see
+ * loadSampleField's precondition). This runs inside the rig's synchronous
+ * rebuild, so nothing can interleave with it.
+ */
+export function appendPoolSurface(
+  mirror: TerrainMirror,
+  lake: Lake,
+  surfaceY: number,
+  out: number[],
+): void {
+  const threshold = (bandOf(lake.surfaceHeight) + 1) * BAND_HEIGHT;
+  const dryHeight = threshold + DRY_CELL_CLEARANCE_HEIGHT_UNITS;
+  const negatedThreshold = -threshold;
+
+  /**
+   * The negated field. A flooded cell contributes its real height, and so does
+   * a dry cell that genuinely stands above the waterline — which is what makes
+   * the lake's edge and the terrain's riser the same contour. A dry cell BELOW
+   * the waterline is lifted to `dryHeight`: it is not this lake's, however low
+   * it is (see DRY_CELL_CLEARANCE_HEIGHT_UNITS).
+   */
+  const fieldAt = (x: number, y: number): number => {
+    const height = sampleHeight(mirror, x, y);
+    if (lake.cells.has(cellIndex(mirror.map, x, y))) return -height;
+    return -Math.max(height, dryHeight);
+  };
+
+  const tilesPerEdge = chunksPerEdge(mirror.map.size);
+  for (const tile of lake.tiles) {
+    const tileX = (tile % tilesPerEdge) * CHUNK_SIZE;
+    const tileZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE;
+    loadSampleField((i, j) => fieldAt(tileX + i, tileZ + j));
+    const segmentCount = marchLevel(negatedThreshold, tileX, tileZ, null);
+    const loops = assembleLoops(segmentCount, tileX, tileZ, samples[0]! >= negatedThreshold)
+      .map(smoothLoop)
+      .filter((loop) => loop.length >= 3);
+    for (const polygon of groupLoops(loops)) {
+      let merged = polygon.outer;
+      for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
+      earClip(merged, (a, b, c) => {
+        out.push(a.x * CELL_WORLD_SIZE, surfaceY, a.z * CELL_WORLD_SIZE);
+        out.push(b.x * CELL_WORLD_SIZE, surfaceY, b.z * CELL_WORLD_SIZE);
+        out.push(c.x * CELL_WORLD_SIZE, surfaceY, c.z * CELL_WORLD_SIZE);
+      });
+    }
+  }
 }
 
 /**
@@ -1034,6 +1187,32 @@ export function createRiverRig(
     const bandWorldY = (band: number): number =>
       band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
+    // Lakes are gathered across the WHOLE network before any of them is drawn,
+    // keyed by their surface height: a basin's pooled cells arrive spread over
+    // one or more courses (a fork rejoining the same pool contributes cells
+    // from each arm), and an outline can only be marched once every cell that
+    // is under that water is known.
+    const lakes = new Map<number, Lake>();
+    const addToLake = (x: number, y: number, surfaceHeight: number): void => {
+      let lake = lakes.get(surfaceHeight);
+      if (lake === undefined) {
+        lake = { cells: new Set<number>(), surfaceHeight, tiles: new Set<number>() };
+        lakes.set(surfaceHeight, lake);
+      }
+      lake.cells.add(cellIndex(mirror.map, x, y));
+      // Every marching tile whose 17×17 lattice HOLDS this cell — its own and,
+      // when it sits on a tile's first row or column, the neighbours whose
+      // lattice ends on it. Those are exactly the tiles that can carry a
+      // crossing on an edge of this cell, and a tile missed here would leave a
+      // notch of unbuilt water at a tile border.
+      for (const [dx, dy] of TILE_LATTICE_OFFSETS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= mirror.map.size || ny >= mirror.map.size) continue;
+        lake.tiles.add(chunkIndexOfCell(mirror.map.size, nx, ny));
+      }
+    };
+
 
     for (const river of network.rivers) {
       // ONE RIBBON PER COURSE, and a river has as many courses as the water
@@ -1076,15 +1255,7 @@ export function createRiverRig(
           const worldZ = point.y * CELL_WORLD_SIZE;
           if (point.pooled) {
             flushRun();
-            const surfaceY =
-              (point.poolHeight ?? 0) * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
-            pushQuad(
-              worldX,
-              surfaceY,
-              worldZ,
-              POOL_HALF_WIDTH_CELLS * CELL_WORLD_SIZE,
-              poolTriangles,
-            );
+            addToLake(point.x, point.y, point.poolHeight ?? 0);
           } else {
             run.push([worldX, worldZ, run.length]);
             runHeights.push(sampleHeight(mirror, point.x, point.y));
@@ -1092,6 +1263,19 @@ export function createRiverRig(
         }
         flushRun();
       }
+    }
+
+    // AT THE BAND THE TERRAIN DRAWS THE POOL IN, not at the pool's raw spill
+    // height — the same correction the flowing ribbon carries (see
+    // `renderedBandAt`), and the same bug it had. The ground under a lake is
+    // terraced like all the rest of it, so a surface drawn at the true spill
+    // level floats up to a whole band above the floor it is supposed to be
+    // resting on, and the shore it meets is drawn at the band floor, not at
+    // the spill height. Quantising puts the surface exactly on the terrace the
+    // basin renders as, which is also the plane `appendPoolSurface`'s
+    // threshold is derived from.
+    for (const lake of lakes.values()) {
+      appendPoolSurface(mirror, lake, bandWorldY(bandOf(lake.surfaceHeight)), poolTriangles);
     }
 
     flowMesh.geometry.dispose();
