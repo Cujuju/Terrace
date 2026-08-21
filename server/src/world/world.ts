@@ -10,6 +10,7 @@
 import {
   applySculpt,
   BAND_HEIGHT,
+  buildFreshwaterMap,
   CHUNK_SIZE,
   chunkIndex,
   chunkIndexOfCell,
@@ -26,6 +27,7 @@ import {
   unlockChunk,
   type CellDiff,
   type ChunkPayload,
+  type FreshwaterMap,
   type Heightmap,
   type RiverNetwork,
   type SculptOptions,
@@ -1172,6 +1174,23 @@ export class World {
   /** Set on every terrain-changing sculpt; cleared once a recompute runs. */
   private riverNetworkStale = true;
 
+  /**
+   * The per-cell freshwater transpose of `riverNetworkCache`, and the exact
+   * network object it was built from.
+   *
+   * INVALIDATED BY IDENTITY, NOT BY A SECOND STALENESS FLAG. `riverNetwork()`
+   * already guarantees that two calls with no intervening recompute return the
+   * SAME object (its doc comment), so "is my transpose current?" is answerable
+   * as `cachedFor === riverNetwork()` — one reference compare. A parallel
+   * `freshwaterStale` boolean would be a second copy of the recompute
+   * condition (sculpt flag + throttle window), and the two copies are exactly
+   * the kind of pair that drifts: any future change to when the network
+   * refreshes would silently leave the transpose behind. This way the
+   * transpose cannot outlive the network it describes.
+   */
+  private freshwaterCache: FreshwaterMap | null = null;
+  private freshwaterCacheNetwork: RiverNetwork | null = null;
+
   private constructor(
     map: Heightmap,
     mask: Uint8Array,
@@ -1692,6 +1711,45 @@ export class World {
       this.riverNetworkStale = false;
     }
     return this.riverNetworkCache;
+  }
+
+  /**
+   * This world's rivers and lakes as a PER-CELL lookup — the freshwater axis
+   * of `shared/`'s traversal profiles (shared/src/traversal.ts), which is what
+   * makes "terrestrial monsters may cross the rivers but not the lakes"
+   * (owner, 2026-08-20) an actual rule in the running game rather than one the
+   * profile type is merely able to express.
+   *
+   * DERIVED FROM `riverNetwork()`, NEVER FROM `this.map` DIRECTLY, so there is
+   * exactly one place in the process that decides where the rivers are. It
+   * inherits that method's scoping (unlocked territory only) and its throttle
+   * for free: a mover asks about a cell no one has revealed and gets `none`,
+   * which is the same answer it would have got before rivers existed.
+   *
+   * COST. The build is one pass over the network's emitted points — the same
+   * order `computeRiverNetwork` produced them in, so it is as deterministic as
+   * the network is — and it happens at most once per network recompute, not
+   * once per query. That ratio is the whole reason the transpose exists;
+   * freshwater.ts's header has the arithmetic (`isWalkableCell` runs up to
+   * eight times per A* expansion against a 4096-node budget).
+   *
+   * A METHOD, matching its sibling `riverNetwork()`, and NOT named to match
+   * `TerrainSampler.freshwater` — because a `World` is not a `TerrainSampler`
+   * and cannot become one by accident: it publishes `size`, where the
+   * interface asks for `worldSize`, so the compiler refuses the assignment
+   * outright. `WorldApi` is the sampler-shaped view (it renames `size` to
+   * `worldSize` along with everything else), and its `freshwater` getter is
+   * therefore the ONLY route by which this map reaches `shared/`'s
+   * predicates — which is what makes that one getter the thing to check when
+   * asking whether the axis is live.
+   */
+  freshwaterMap(): FreshwaterMap {
+    const network = this.riverNetwork();
+    if (this.freshwaterCache === null || this.freshwaterCacheNetwork !== network) {
+      this.freshwaterCache = buildFreshwaterMap(network, this.size);
+      this.freshwaterCacheNetwork = network;
+    }
+    return this.freshwaterCache;
   }
 
   addPlayer(player: Player): void {

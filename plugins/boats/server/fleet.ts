@@ -226,27 +226,44 @@ export function launchCell(world: BoatWorld, village: Village): KrakenTarget | n
 }
 
 /**
- * Picks a heading whose look-ahead cell is open water, is not somebody else's
- * berth, and is inside unlocked territory — preferring `desired` and then the
- * smallest deviation from it. Null when boxed in on every candidate, and the
- * caller then holds position.
+ * Picks a heading whose look-ahead cell is open water and inside unlocked
+ * territory — preferring `desired` and then the smallest deviation from it.
+ * Null when boxed in on every candidate, and the caller then holds position.
  *
  * A THIN ADAPTER over shared's `steerAvoiding` (shared/src/steering.ts), which
  * owns the sweep. The one thing this plugin still says for itself is the
  * unlocked-territory rule, passed as the `permits` hook: a boat only ever
  * exists in territory clients can already see, which is a fog-of-war fact
  * rather than a terrain one and has no business in `shared/`.
+ *
+ * NO SEPARATION HERE, DELIBERATELY, AND IT IS A DIVISION OF LABOUR RATHER THAN
+ * AN OMISSION (2026-08-21). This fleet keeps clear of itself in exactly one
+ * place — `makeRoom` — and that function's whole design is that it moves a
+ * boat TANGENTIALLY, rotating about the goal so the range to it is preserved
+ * exactly (see its doc comment: a radial nudge pushes a boat out of
+ * BOAT_ENGAGEMENT_RANGE_CELLS, and protocol.ts's rout arithmetic counts whole
+ * seconds of engagement). Sailing is the opposite motion: it is the RADIAL
+ * one, the closing of range, and a crowd-avoidance term inside it can only
+ * express itself by bending that radius — which is the very thing makeRoom
+ * exists to avoid. Measured when the two were briefly both live: boats settled
+ * at 5.03 cells against a 5.00 station and stopped counting as engaged, and
+ * the fleet no longer routed the kraken at the predicted time.
+ *
+ * So: closing on a station is this function's job and it ignores other boats;
+ * holding one is makeRoom's job and it ignores everything else. The named cost
+ * is that two boats converging on the same kraken from different villages may
+ * pass through one another on the way — a second or two of overlap on open sea,
+ * resolved by makeRoom the moment either arrives.
  */
 export function steerToWater(
   world: BoatWorld,
   boat: Boat,
   desired: number,
   lookahead: number,
-  occupants: readonly Occupant[] = [],
+  stepCells: number,
 ): number | null {
   return steerAvoiding(world, OPEN_WATER_PROFILE, boat, desired, lookahead, {
-    occupants,
-    selfRadiusCells: BOAT_PERSONAL_SPACE_CELLS,
+    stepCells,
     permits: (x, y) => world.isCellUnlocked(Math.floor(x), Math.floor(y)),
   });
 }
@@ -511,19 +528,23 @@ export function advanceFleet(
     }
 
     const desired = Math.atan2(goalY - boat.y, goalX - boat.x);
+    // Never overshoot the goal: a boat one tick's travel from its station
+    // stops on it rather than sailing past and turning back forever. Hoisted
+    // ABOVE the steer (2026-08-21) because it is also the distance separation
+    // is tested at (shared's `SteerOptions.stepCells`) — a boat easing onto
+    // its station must be judged against the short step it is really taking,
+    // not against a full tick of travel it is not.
+    const step = Math.min(BOAT_SPEED_CELLS_PER_SECOND * dt, range - holdAt);
     const steered = steerToWater(
       world,
       boat,
       desired,
       BOAT_SPEED_CELLS_PER_SECOND * BOAT_LOOKAHEAD_SECONDS,
-      berths.filter((_, other) => other !== index),
+      step,
     );
     if (steered === null) continue;
     boat.heading = steered;
 
-    // Never overshoot the goal: a boat one tick's travel from its station
-    // stops on it rather than sailing past and turning back forever.
-    const step = Math.min(BOAT_SPEED_CELLS_PER_SECOND * dt, range - holdAt);
     const nextX = boat.x + Math.cos(steered) * step;
     const nextY = boat.y + Math.sin(steered) * step;
     // Belt and suspenders, monsters' own: the look-ahead cleared a cell a

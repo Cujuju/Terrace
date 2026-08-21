@@ -85,8 +85,11 @@ import {
   SCHOOL_FULL_PULL_RADIUS_CELLS,
   SCHOOL_MAX_PULL_RADIANS_PER_SECOND,
   FLEE_DURATION_SECONDS,
+  advanceEntity,
   advanceMovement,
+  bodyLengthCellsOf,
   cohesionPullRadiansPerSecond,
+  personalSpaceCellsOf,
   isFleeing,
   normalizeAngle,
   speedOf,
@@ -1053,6 +1056,22 @@ const REFORMED_RADIUS_CEILING_CELLS = 8;
  */
 const SCHOOL_DRIFT_FLOOR_CELLS = 10;
 
+/**
+ * Cells of PATH a lone fish must cover in REFORM_SECONDS to count as still
+ * swimming.
+ *
+ * Derived from the species table, not measured: a fish cruises at its own
+ * profile speed and only ever holds position on a tick where every candidate heading is
+ * vetoed — which cannot happen in the open-water fixture these tests use. So
+ * the path over the window is the full cruise distance, and half of it is a
+ * floor no amount of wandering can undercut while the fish is moving at all,
+ * yet one a frozen or stuttering fish fails outright. Unlike a displacement
+ * floor it has no random tail: which way the fish turns changes where it ends
+ * up, never how far it swam.
+ */
+const LONE_SWIMMER_PATH_FLOOR_CELLS =
+  (profileOf('fish').cruiseSpeedCellsPerSecond * REFORM_SECONDS) / 2;
+
 /** A world of nothing but shallow water, entirely unlocked. */
 function openShallowWorld(): World {
   return worldWithTerrain(WORLD_SIZE, () => OPEN_SHALLOW_HEIGHT);
@@ -1194,17 +1213,137 @@ describe('school cohesion', () => {
     // The "last fish" case: a school whose other members were lost to terrain.
     installSchool('small', 1);
     const fish = livingEntities()[0];
-    const startX = fish.x;
-    const startY = fish.y;
+    let travelled = 0;
+    let previousX = fish.x;
+    let previousY = fish.y;
 
-    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) advanceMovement(view, TICK_DT);
+    for (let n = 0; n < ticksFor(REFORM_SECONDS); n++) {
+      advanceMovement(view, TICK_DT);
+      travelled += Math.hypot(fish.x - previousX, fish.y - previousY);
+      previousX = fish.x;
+      previousY = fish.y;
+    }
 
-    // Still alive, still moving, and nothing pulled it anywhere: with no other
-    // members there is no centroid to steer toward.
+    // Still alive, and still SWIMMING — measured as PATH LENGTH, not as
+    // displacement, and that distinction is a fix rather than a detail
+    // (2026-08-21). This case used to assert displacement against
+    // SCHOOL_DRIFT_FLOOR_CELLS, a floor measured on a SCHOOL (112–178 cells,
+    // because alignment makes a school hold one heading). A solitary fish has
+    // no alignment term: its walk is a correlated random one whose displacement
+    // over the same window measures 3.4–85.8 cells (median 50.6, 200 trials),
+    // so it lands under 10 about 3% of the time and this test failed roughly
+    // one run in thirty for no reason but luck. Path length has no such tail —
+    // a fish that keeps swimming covers cruise speed × time whichever way it
+    // wanders — and it is the property the case actually means by "still
+    // moving".
     expect(livingEntities()).toHaveLength(1);
-    expect(Math.hypot(fish.x - startX, fish.y - startY)).toBeGreaterThan(
-      SCHOOL_DRIFT_FLOOR_CELLS,
+    expect(travelled).toBeGreaterThan(LONE_SWIMMER_PATH_FLOOR_CELLS);
+  });
+});
+
+describe('creatures keep out of each other (the 2026-08-21 migration)', () => {
+  let view: HabitatWorld;
+
+  beforeEach(() => {
+    resetWildlifeState();
+    view = habitatView(openShallowWorld());
+  });
+
+  /**
+   * The tightest gap any two of the school held at ANY point in `seconds`, over
+   * `trials` independent runs — a worst case, not an average. `step` is the
+   * per-tick advance under test.
+   */
+  function worstGapOverTrials(
+    trials: number,
+    seconds: number,
+    step: (dt: number) => void,
+  ): number[] {
+    const worsts: number[] = [];
+    for (let trial = 0; trial < trials; trial++) {
+      installSchool();
+      let worst = Infinity;
+      for (let n = 0; n < ticksFor(seconds); n++) {
+        step(TICK_DT);
+        const live = livingEntities();
+        for (let i = 0; i < live.length; i++) {
+          for (let j = i + 1; j < live.length; j++) {
+            worst = Math.min(worst, Math.hypot(live[i].x - live[j].x, live[i].y - live[j].y));
+          }
+        }
+      }
+      worsts.push(worst);
+    }
+    return worsts.sort((a, b) => a - b);
+  }
+
+  /** `advanceMovement` with the occupant list withheld — the pre-migration loop. */
+  function advanceWithoutSeparation(dt: number): void {
+    const population = livingEntities();
+    const schools = summarizeSchools(population);
+    for (const entity of population) advanceEntity(view, entity, dt, schools.get(entity.schoolId));
+  }
+
+  /**
+   * Trials and window for the two measurements below. 40 × 60 s is enough for
+   * the medians to be stable run to run (the distributions are wide but their
+   * middles are not), and the assertions are stated against the MEDIAN rather
+   * than the minimum for exactly that reason: this plugin runs on unseeded RNG
+   * by design (server/rng.ts), so any bound on the extreme tail of a random
+   * walk is a bound on luck.
+   */
+  const SEPARATION_TRIALS = 40;
+  const SEPARATION_SECONDS = 60;
+
+  /**
+   * The median worst-case gap separation must beat, in cells.
+   *
+   * 0.15 — measured. Over 100 trials of this exact scenario the median worst
+   * gap is 0.033 cells WITHOUT separation and 0.290 WITH it; 0.15 sits between
+   * the two with room on both sides, so this fails if separation stops working
+   * and cannot pass by accident. It is deliberately NOT the 0.42-cell body gap
+   * itself: a small fish steps 0.3 cells a tick against a 0.42-cell gap, so
+   * that gap is not guaranteeable at all (shared/src/steering.ts's
+   * `steerAvoiding` names the arithmetic) — what is claimed here is that
+   * separation demonstrably shapes where they swim, which is what it is for.
+   */
+  const SEPARATED_MEDIAN_GAP_CELLS = 0.15;
+
+  it('holds a school of fish off each other', () => {
+    const worsts = worstGapOverTrials(SEPARATION_TRIALS, SEPARATION_SECONDS, (dt) =>
+      advanceMovement(view, dt),
     );
+    const median = worsts[Math.floor(worsts.length / 2)];
+    expect(median).toBeGreaterThan(SEPARATED_MEDIAN_GAP_CELLS);
+  });
+
+  it('is what does it: the same five fish interpenetrate without the occupant list', () => {
+    // THE CONTROL, and the bug being fixed — this plugin was the fourth copy of
+    // the steering loop and the one that never gained separation, so a school
+    // swam through itself. Same fish, same cohesion, same wander; the only
+    // difference is whether anyone is told the others exist.
+    const worsts = worstGapOverTrials(
+      SEPARATION_TRIALS,
+      SEPARATION_SECONDS,
+      advanceWithoutSeparation,
+    );
+    const median = worsts[Math.floor(worsts.length / 2)];
+    expect(median).toBeLessThan(SEPARATED_MEDIAN_GAP_CELLS);
+  });
+
+  it('sizes personal space from the body, not from one constant for every species', () => {
+    // One constant for every species would either let whales overlap or hold
+    // fish a whale's length apart. It is a HALF-EXTENT — half the body as the
+    // client draws it, size class included — which is what makes it derived
+    // rather than a tuning dial, and what makes a bigger creature hold a bigger
+    // berth without anyone maintaining a table.
+    installSchool('small', 1);
+    const small = livingEntities()[0];
+    expect(personalSpaceCellsOf(small) * 2).toBeCloseTo(bodyLengthCellsOf(small), 9);
+
+    installSchool('large', 1);
+    const large = livingEntities()[0];
+    expect(personalSpaceCellsOf(large)).toBeGreaterThan(personalSpaceCellsOf(small));
   });
 });
 

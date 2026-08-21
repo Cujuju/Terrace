@@ -2,20 +2,36 @@
 //
 // The steering contract, in one sentence: a creature only ever commits to a step
 // whose DESTINATION LOOK-AHEAD is inside its own habitat, inside unlocked
-// territory, and reachable along a slope its species can climb (census.ts's
-// canTraverse), so locked chunks, the wrong terrain, and a terrace riser too
-// steep to walk are all impassable walls rather than places it can be pushed
-// out of afterwards.
+// territory, reachable along a slope its species can climb, and clear of every
+// other creature — so locked chunks, the wrong terrain, a terrace riser too
+// steep to walk and another animal's body are all impassable walls rather than
+// places it can be pushed out of afterwards.
+//
+// THE SWEEP ITSELF IS SHARED'S (2026-08-21). This file was the FOURTH copy of
+// the same steer-and-veto loop, and the last one still outstanding after
+// pilgrims, boats and monsters moved (shared/src/steering.ts's header names all
+// four). Its own copy was the one the other three cited as the original — and
+// it was the copy that never gained separation, which is why a school of fish
+// could swim through itself. `steerToValidHeading` below is now a thin adapter
+// over `steerAvoiding`: what stays local is what is genuinely wildlife's — the
+// species → archetype resolution, the unlocked-habitat veto, body size, the
+// school terms, and the two-stage contour retry.
 //
 // Everything is scaled by the host's `dt`. There is no wall clock in this file.
 
+import {
+  AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
+  AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
+  normalizeAngle as sharedNormalizeAngle,
+  steerAvoiding,
+  withoutSelf,
+  type Occupant,
+} from '@terrace/shared';
 import { WILDLIFE_SIZE_MODEL_SCALE } from '../protocol.ts';
-import { type HabitatWorld, canTraverse, isValidCellFor } from './census.ts';
+import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
 import { type WildlifeEntity, livingEntities } from './population.ts';
 import { randomSigned } from './rng.ts';
 import { SCHOOL_LOOSENESS_BY_SIZE, profileOf } from './species.ts';
-
-const TWO_PI = Math.PI * 2;
 
 /**
  * How far ahead a creature checks, expressed in seconds of its own travel. It
@@ -31,14 +47,20 @@ export const LOOKAHEAD_SECONDS = 0.6;
 
 /**
  * Candidate headings tried when the way ahead is blocked, and the angle between
- * them. Eight × 45° sweeps the full circle, so "there is a way out of this cell"
- * and "the search found it" are the same statement — no creature can be trapped
- * by the search being too coarse. Candidates alternate left/right of the current
- * heading, so the creature takes the SMALLEST turn that works and a shoreline
- * reads as a deflection rather than a bounce.
+ * them — now shared's, not this file's own copy (2026-08-21).
+ *
+ * The values and the reasoning are unchanged: eight × 45° sweeps the full
+ * circle, so "there is a way out of this cell" and "the search found it" are the
+ * same statement — no creature can be trapped by the search being too coarse —
+ * and candidates alternate left/right of the desired heading, so the creature
+ * takes the SMALLEST turn that works and a shoreline reads as a deflection
+ * rather than a bounce. What changed is where they live: three other plugins
+ * cited THIS file's copy when they wrote their own, so this is the copy that had
+ * to go for the citation chain to end. Re-exported under the old names so this
+ * plugin's own call sites and tests do not have to move.
  */
-export const AVOID_TURN_ATTEMPTS = 8;
-export const AVOID_TURN_STEP_RADIANS = Math.PI / 4;
+export const AVOID_TURN_ATTEMPTS = SHARED_AVOID_TURN_ATTEMPTS;
+export const AVOID_TURN_STEP_RADIANS = SHARED_AVOID_TURN_STEP_RADIANS;
 
 /**
  * Divides the ordinary look-ahead distance for the CONTOUR-FOLLOWING retry
@@ -172,13 +194,8 @@ export const SCHOOL_ALIGNMENT_RADIANS_PER_SECOND = 0.6;
  */
 export const SCHOOL_MIN_HEADING_COHERENCE = 0.1;
 
-/** Normalises an angle to (-π, π]. */
-export function normalizeAngle(radians: number): number {
-  const wrapped = radians % TWO_PI;
-  if (wrapped > Math.PI) return wrapped - TWO_PI;
-  if (wrapped <= -Math.PI) return wrapped + TWO_PI;
-  return wrapped;
-}
+/** Normalises an angle to (-π, π]. Shared's, re-exported — see above. */
+export const normalizeAngle = sharedNormalizeAngle;
 
 /** Current speed in cells/second: cruise, or burst while fleeing. */
 export function speedOf(entity: WildlifeEntity): number {
@@ -189,6 +206,59 @@ export function speedOf(entity: WildlifeEntity): number {
 /** This creature's actual length in cells: the species' figure, scaled by size. */
 export function bodyLengthCellsOf(entity: WildlifeEntity): number {
   return profileOf(entity.species).bodyLengthCells * WILDLIFE_SIZE_MODEL_SCALE[entity.size];
+}
+
+/**
+ * Personal space around one creature, in cells — how close another body may
+ * come before a candidate heading is refused (shared's `steerAvoiding`).
+ *
+ * HALF ITS OWN BODY LENGTH, so it is a derived half-extent rather than a tuning
+ * dial: two creatures hold their two half-lengths apart, which is one body
+ * length centre to centre for a matched pair. That is the same shape pilgrims'
+ * WALKER_PERSONAL_SPACE_CELLS has (a measured half-extent), stated as a
+ * function here because wildlife has no single body: a small fish is 0.42 cells
+ * long and a whale is 5, and one constant for both would either let whales
+ * overlap or hold fish a whale's length apart.
+ *
+ * IT DOES NOT FIGHT THE SCHOOL. Cohesion only starts pulling outside
+ * SCHOOL_COMFORT_RADIUS_CELLS (2.5 cells for a small fish, scaled up per size
+ * class), and the separation floor for two small fish is 0.42 cells — a sixth of
+ * that. The two terms therefore act on disjoint distance ranges: separation
+ * keeps bodies from interpenetrating, cohesion keeps the group together, and
+ * neither is ever the thing overruling the other. The only species whose
+ * separation is large in absolute terms is the whale, which has groupSize 1 and
+ * so has no school to fight.
+ */
+export function personalSpaceCellsOf(entity: WildlifeEntity): number {
+  return bodyLengthCellsOf(entity) / 2;
+}
+
+/**
+ * The moving population a creature must keep clear of, as shared's `Occupant`
+ * rows, in the population's own fixed order (shared/src/steering.ts's
+ * determinism note).
+ *
+ * WILDLIFE ONLY, deliberately. Boats keep clear of boats and walkers of
+ * walkers; nothing in the shipped game shares an occupant list across plugins,
+ * because no plugin can see another's population and inventing a cross-plugin
+ * registry is a bigger decision than "fish should not swim through each other".
+ * The residual is named rather than hidden: a grazer and a pilgrim on the same
+ * hillside still pass through one another.
+ *
+ * COST: one row per living creature per tick, and `steerAvoiding` scans the
+ * whole list per candidate heading — at WILDLIFE_POPULATION_CAP (150) that is
+ * at most 150 × 9 × 150 ≈ 200 k squared-distance compares per tick, ~2 M/s at
+ * TICK_HZ 10. Cheap enough to be uninteresting beside the habitat census that
+ * already walks 262 144 cells, and the same shape pilgrims and boats already
+ * pay; a spatial index is the answer if the cap ever moves by an order of
+ * magnitude, not before.
+ */
+export function creatureOccupants(entities: Iterable<WildlifeEntity>): Occupant[] {
+  const rows: Occupant[] = [];
+  for (const entity of entities) {
+    rows.push({ x: entity.x, y: entity.y, radiusCells: personalSpaceCellsOf(entity) });
+  }
+  return rows;
 }
 
 /**
@@ -386,39 +456,52 @@ export function steerWithSchool(
 }
 
 /**
- * Picks a heading whose look-ahead cell is valid habitat AND reachable from
- * where the creature stands right now without crossing a slope steeper than
- * its species can climb (canTraverse, census.ts — sampled along the whole
- * probe segment, not just its far end), preferring `desired` and then the
+ * Picks a heading whose look-ahead cell is valid habitat, reachable from where
+ * the creature stands right now without crossing a slope steeper than its
+ * species can climb (sampled along the whole probe segment, not just its far
+ * end), and clear of every other creature — preferring `desired` and then the
  * smallest deviation from it. Returns null when the creature is boxed in on
- * all eight candidates — the caller then holds position.
+ * every candidate; the caller then holds position.
  *
- * This runs for a FLEEING creature too (advanceEntity calls it with the
- * panic heading as `desired`): a startled grazer looks up to
- * FLEE_SPEED_MULTIPLIER further ahead, but the gradient veto below still
- * applies to every candidate, so panic can make it run further, never make
- * it run up a cliff it could not otherwise climb.
+ * A THIN ADAPTER over shared's `steerAvoiding` since 2026-08-21. What this
+ * function adds to the shared loop is the two things shared cannot know:
+ *
+ *   - the species → traversal archetype resolution (census.ts's
+ *     `walkerProfileOf`), and
+ *   - the `permits` veto, which is `isValidCellFor` — the SAME predicate
+ *     spawning and the habitat-loss sweep use. It re-tests the ground class
+ *     that `steerAvoiding` has already tested, and that redundancy is bought
+ *     on purpose: `isValidCellFor` is the one place "somewhere this species
+ *     may be" is defined (census.ts's own doc), and re-deriving the unlocked
+ *     half of it here would be a fourth caller free to disagree with the other
+ *     three. The extra cost is a mask lookup and a height compare per
+ *     candidate.
+ *
+ * SEPARATION IS OPTIONAL AND OFF BY DEFAULT here, because two of this
+ * function's three callers are single-creature probes with no population in
+ * hand (the contour retries in `advanceEntity`). `advanceMovement` supplies
+ * the list; a caller that does not simply gets the pre-2026-08-21 behaviour.
+ *
+ * This runs for a FLEEING creature too (advanceEntity calls it with the panic
+ * heading as `desired`): a startled grazer looks up to FLEE_SPEED_MULTIPLIER
+ * further ahead, but every veto still applies to every candidate, so panic can
+ * make it run further, never make it run up a cliff it could not otherwise
+ * climb.
  */
 export function steerToValidHeading(
   world: HabitatWorld,
   entity: WildlifeEntity,
   desired: number,
   lookahead: number,
+  stepCells: number,
+  occupants: readonly Occupant[] = [],
 ): number | null {
-  for (let attempt = 0; attempt < AVOID_TURN_ATTEMPTS; attempt++) {
-    // 0, +45°, -45°, +90°, -90°, … — smallest workable turn first.
-    const step = Math.ceil(attempt / 2) * AVOID_TURN_STEP_RADIANS;
-    const heading = desired + (attempt % 2 === 1 ? step : -step);
-    const probeX = entity.x + Math.cos(heading) * lookahead;
-    const probeY = entity.y + Math.sin(heading) * lookahead;
-    if (
-      isValidCellFor(world, entity.species, probeX, probeY) &&
-      canTraverse(world, entity.species, entity.x, entity.y, probeX, probeY)
-    ) {
-      return normalizeAngle(heading);
-    }
-  }
-  return null;
+  return steerAvoiding(world, walkerProfileOf(entity.species), entity, desired, lookahead, {
+    stepCells,
+    occupants,
+    selfRadiusCells: personalSpaceCellsOf(entity),
+    permits: (x, y) => isValidCellFor(world, entity.species, x, y),
+  });
 }
 
 /**
@@ -442,12 +525,19 @@ export function steerToValidHeading(
  * `school` is the summary of the creature's own school as it stood at the START
  * of the tick (see summarizeSchools); omitting it steers with wander alone,
  * which is what the solitary case and any caller without a population index get.
+ *
+ * `occupants` is everybody ELSE, as they stood at the start of the tick — the
+ * same snapshot discipline, and for the same reason: a creature's step must not
+ * depend on where it sits in the iteration order. It must not contain this
+ * creature (see `creatureOccupants` and shared's `withoutSelf`). Omitting it
+ * disables separation for this creature only.
  */
 export function advanceEntity(
   world: HabitatWorld,
   entity: WildlifeEntity,
   dt: number,
   school?: SchoolSummary,
+  occupants: readonly Occupant[] = [],
 ): void {
   if (entity.fleeSecondsRemaining > 0) {
     entity.fleeSecondsRemaining = Math.max(0, entity.fleeSecondsRemaining - dt);
@@ -468,7 +558,11 @@ export function advanceEntity(
   // the primary sweep is fully boxed in and when the belt-and-suspenders
   // re-check catches a miss the primary sweep didn't see.
   const contourLookahead = lookahead / CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR;
-  let steered = steerToValidHeading(world, entity, desired, lookahead);
+  // One tick's travel — where separation is tested, and the same number every
+  // step below moves by. Computed once so the distance the sweep reasons about
+  // and the distance the creature actually covers cannot come apart.
+  const stepCells = speedOf(entity) * dt;
+  let steered = steerToValidHeading(world, entity, desired, lookahead, stepCells, occupants);
 
   if (steered === null) {
     // BOXED IN AT THE LOOK-AHEAD HORIZON. Owner, 2026-08-19: obstacles should
@@ -480,7 +574,7 @@ export function advanceEntity(
     // contourLookahead: it may still have room to slide along whatever it is
     // pressed against at that distance, which is exactly what "go around"
     // means at the scale of one tick.
-    steered = steerToValidHeading(world, entity, entity.heading, contourLookahead);
+    steered = steerToValidHeading(world, entity, entity.heading, contourLookahead, stepCells, occupants);
   }
 
   if (steered === null) {
@@ -491,9 +585,8 @@ export function advanceEntity(
   }
 
   entity.heading = steered;
-  const distance = speedOf(entity) * dt;
-  let nextX = entity.x + Math.cos(steered) * distance;
-  let nextY = entity.y + Math.sin(steered) * distance;
+  let nextX = entity.x + Math.cos(steered) * stepCells;
+  let nextY = entity.y + Math.sin(steered) * stepCells;
 
   // BELT AND SUSPENDERS. The look-ahead validated a cell further out than
   // one tick's travel; that covers the ordinary case but says nothing about
@@ -512,13 +605,12 @@ export function advanceEntity(
     // lands somewhere it isn't — a thin obstacle or a corner the sweep
     // stepped past. Re-sweep from the current heading at the short distance
     // before giving up to holding position this tick.
-    const retry = steerToValidHeading(world, entity, entity.heading, contourLookahead);
+    const retry = steerToValidHeading(world, entity, entity.heading, contourLookahead, stepCells, occupants);
     if (retry === null) return; // hold position, keep facing as-is.
 
     entity.heading = retry;
-    const retryDistance = speedOf(entity) * dt;
-    nextX = entity.x + Math.cos(retry) * retryDistance;
-    nextY = entity.y + Math.sin(retry) * retryDistance;
+    nextX = entity.x + Math.cos(retry) * stepCells;
+    nextY = entity.y + Math.sin(retry) * stepCells;
     if (
       !isValidCellFor(world, entity.species, nextX, nextY) ||
       !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
@@ -534,14 +626,31 @@ export function advanceEntity(
 /**
  * Advances every living creature.
  *
- * The school summaries are built first, from the population as it stands now, so
- * every member of a school steers against the same pre-tick centroid. Cost is
- * one pass over at most WILDLIFE_POPULATION_CAP creatures.
+ * The school summaries AND the occupant rows are both built first, from the
+ * population as it stands now, so every member of a school steers against the
+ * same pre-tick centroid and every creature avoids the same pre-tick bodies.
+ * Cost is two passes over at most WILDLIFE_POPULATION_CAP creatures.
+ *
+ * `withoutSelf` filters by IDENTITY, not by position (shared's own doc): two
+ * creatures may legitimately share a position for a tick, and dropping both
+ * would disable separation exactly where it matters most. The rows are built
+ * once and the self row filtered out per creature, rather than rebuilt per
+ * creature, so the snapshot every creature sees is the same one.
  */
 export function advanceMovement(world: HabitatWorld, dt: number): void {
   const population = livingEntities();
   const schools = summarizeSchools(population);
-  for (const entity of population) advanceEntity(world, entity, dt, schools.get(entity.schoolId));
+  const occupants = creatureOccupants(population);
+  for (let index = 0; index < population.length; index++) {
+    const entity = population[index];
+    advanceEntity(
+      world,
+      entity,
+      dt,
+      schools.get(entity.schoolId),
+      withoutSelf(occupants, occupants[index]),
+    );
+  }
 }
 
 /**

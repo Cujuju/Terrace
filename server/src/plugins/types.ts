@@ -7,7 +7,7 @@
 // rewrites intents instead of patching the sim) and why plugins get namespaced
 // messages plus their own persistence slice.
 
-import type { CellDiff, RiverNetwork, SculptIntent } from '@terrace/shared';
+import type { CellDiff, FreshwaterMap, RiverNetwork, SculptIntent } from '@terrace/shared';
 import type { Player } from '../player.ts';
 
 export type { Player };
@@ -66,6 +66,27 @@ export interface WorldApi {
    * shape WorldApi.difficulty already established.
    */
   riverNetwork(): RiverNetwork;
+
+  /**
+   * The same rivers, transposed to a PER-CELL lookup — the shape
+   * `shared/`'s traversal predicates ask for (`TerrainSampler.freshwater` in
+   * shared/src/traversal.ts).
+   *
+   * A PROPERTY, NOT A METHOD, and named to match `TerrainSampler` exactly:
+   * that is what lets a plugin's own narrow world interface be handed
+   * straight to `isWalkableCell` / `canTraverseSegment` with no adapter
+   * object built per call — the same structural-typing trick `worldSize` and
+   * `heightAt` already rely on. Backed by `World.freshwaterMap()`, which
+   * caches against `riverNetwork()`'s identity, so reading it every A*
+   * expansion costs one property access and one Set lookup.
+   *
+   * BOTH SURFACES STAY. `riverNetwork()` answers "where do the rivers GO"
+   * (mana's waterfall aura, the renderer's ribbons); this answers "what is in
+   * THIS cell" (traversal). freshwater.ts's header has the cost argument for
+   * why serving the second question from the first's data structure is not an
+   * option.
+   */
+  readonly freshwater: FreshwaterMap;
 
   /**
    * Whether the CONNECTED PLAYER `playerId` has personally unlocked the

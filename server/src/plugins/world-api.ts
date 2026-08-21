@@ -5,7 +5,7 @@
 // is indistinguishable from a player edit as far as sync and anti-cheat are
 // concerned — that is the point.
 
-import type { CellDiff, RiverNetwork } from '@terrace/shared';
+import type { CellDiff, FreshwaterMap, RiverNetwork } from '@terrace/shared';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import { applyServerSculpt } from '../world/sculpt-service.ts';
@@ -73,6 +73,14 @@ export function createWorldApi(
     },
     riverNetwork(): RiverNetwork {
       return world.riverNetwork();
+    },
+    // A GETTER, so the freshwater map is resolved at the moment a mover asks
+    // rather than frozen when this view was built. A WorldApi outlives every
+    // sculpt the plugin host will ever see; capturing `world.freshwaterMap()`
+    // into a plain property here would hand every plugin the rivers as they
+    // stood at plugin-load time and never update them again.
+    get freshwater(): FreshwaterMap {
+      return world.freshwaterMap();
     },
     isChunkVisibleTo(playerId: string, cx: number, cy: number): boolean {
       return world.isChunkVisibleTo(playerId, cx, cy);
