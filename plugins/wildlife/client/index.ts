@@ -66,7 +66,10 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
     if (views.has(id)) continue;
     // Size is fixed for a creature's whole life (the server draws it at spawn),
     // so it is baked into the model here rather than re-read every frame.
-    const model = models.create(entity.species, sizeClassAt(entity.size));
+    // `id` also seeds which of the three whale bodies this creature gets: it is
+    // stable for the creature's whole life, so an individual never changes
+    // species between frames.
+    const model = models.create(entity.species, sizeClassAt(entity.size), id);
     container.add(model.root);
     views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID });
   }

@@ -10,6 +10,7 @@
 //   ?species=<fish|whale|deepsea|grazer|bird>   — defaults to "whale"
 //   ?class=<small|medium|large>                 — defaults to "medium"
 //   ?view=<iso|side|top>                        — defaults to "iso"
+//   ?variant=<n>                                — whale body to draw (0-2)
 //
 // The lighting rig (hemisphere + directional + ambient, ACES tone mapping)
 // and the ground-disc/backdrop/camera-framing choices are copied verbatim
@@ -107,6 +108,12 @@ function readView(query: URLSearchParams): CameraView {
   return requested !== null && requested in CAMERA_VIEWS ? (requested as CameraView) : 'iso';
 }
 
+/** `?variant=<n>` — which body to draw where a species has more than one. */
+function readVariant(query: URLSearchParams): number {
+  const requested = Number.parseInt(query.get('variant') ?? '', 10);
+  return Number.isFinite(requested) ? requested : 0;
+}
+
 function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
@@ -163,7 +170,10 @@ function main(): void {
   const { scene, camera, renderer } = buildScene();
 
   const models = createWildlifeModels();
-  const model = models.create(species, sizeClass);
+  // The variant seed picks between whale bodies (models.ts); exposing it lets a
+  // screenshot driver ask for a specific one instead of taking whatever id 0
+  // happens to select.
+  const model = models.create(species, sizeClass, readVariant(query));
   // Rest pose: an explicit animate(0, 0) call, not an unrotated default left
   // implicit, so the frame captured is documented rather than incidental.
   model.animate(0, 0);
