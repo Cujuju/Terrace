@@ -43,6 +43,7 @@ import {
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
+  WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
   writeWaterDepthTexels,
 } from '../terrain/waterDepth.ts';
 import { spliceShader } from './shaderSplice.ts';
@@ -120,14 +121,18 @@ export interface Water {
  * is viewed near-perpendicular from the game's usual high camera, so
  * minification aliasing is not a concern worth a mip chain for an NPOT
  * (world sizes are multiples of CHUNK_SIZE, not necessarily of 2) texture.
+ *
+ * AMENDMENT (2026-08-20): every word above applies unchanged to a SECOND
+ * texture of the identical shape — the specular-factor lookup created by the
+ * same factory just below (waterDepth.ts's depthToSpecularFactor is the
+ * other half of the milky-water fix; see its module comment for why it is a
+ * second texture rather than a second channel squeezed out of this one).
  */
-function createDepthAlphaTexture(worldSize: number): {
-  texture: DataTexture;
-  buffer: Uint8Array;
-} {
-  const buffer = new Uint8Array(worldSize * worldSize).fill(
-    WATER_DEPTH_ALPHA_DEFAULT_BYTE,
-  );
+function createDepthTexture(
+  worldSize: number,
+  defaultByte: number,
+): { texture: DataTexture; buffer: Uint8Array } {
+  const buffer = new Uint8Array(worldSize * worldSize).fill(defaultByte);
   const texture = new DataTexture(buffer, worldSize, worldSize, RedFormat, UnsignedByteType);
   texture.generateMipmaps = false;
   texture.minFilter = LinearFilter;
@@ -150,14 +155,33 @@ function createDepthAlphaTexture(worldSize: number): {
  * uWaterDepthAlpha and uWorldSizeCells are plain objects the caller mutates
  * in place (texture.image swapped, .value reassigned) rather than reassigned
  * wholesale, so nothing here needs to run again after the first compile.
+ *
+ * AMENDMENT (2026-08-20, specular suppression — the other half of the
+ * milky-water-over-Deep-Strata fix, see waterDepth.ts's "SPECULAR
+ * SUPPRESSION" comment for why this needs its own texture rather than
+ * reusing uWaterDepthAlpha's own sample). A second splice, at the exact spot
+ * three's meshphysical fragment shader finishes summing
+ * `reflectedLight.directSpecular + reflectedLight.indirectSpecular` into
+ * `totalSpecular` — i.e. before that value is folded into `outgoingLight`
+ * a few lines later (`outgoingLight = totalDiffuse + totalSpecular +
+ * totalEmissiveRadiance;`) — scales just the specular term by the
+ * depth-derived factor. Anchored there rather than on `outgoingLight`
+ * itself so ONLY the lit sheen (the broad sun highlight WATER_ROUGHNESS
+ * produces) is suppressed with depth; totalDiffuse — the water's own base
+ * colour response — is untouched, and the existing diffuseColor.a multiply
+ * below (unchanged by this amendment) still separately governs how much of
+ * the terrain shows through. Verified against the same three 0.185
+ * meshphysical fragment chunk render/terrainMeshes.ts's own splice cites.
  */
 function makeDepthAware(
   material: MeshStandardMaterial,
   depthAlphaTexture: DataTexture,
+  specularFactorTexture: DataTexture,
   worldSizeUniform: { value: number },
 ): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWaterDepthAlpha = { value: depthAlphaTexture };
+    shader.uniforms.uWaterSpecularFactor = { value: specularFactorTexture };
     shader.uniforms.uWorldSizeCells = worldSizeUniform;
     shader.vertexShader = spliceShader(
       spliceShader(
@@ -176,9 +200,24 @@ function makeDepthAware(
     );
     shader.fragmentShader = spliceShader(
       spliceShader(
-        shader.fragmentShader,
-        '#include <common>',
-        '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterDepthAlpha;\nuniform float uWorldSizeCells;',
+        spliceShader(
+          shader.fragmentShader,
+          '#include <common>',
+          '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterDepthAlpha;\nuniform sampler2D uWaterSpecularFactor;\nuniform float uWorldSizeCells;',
+          'water',
+        ),
+        // Exact anchor copied verbatim from this project's installed three
+        // 0.185 (client/node_modules/three/build/three.module.js, the
+        // `fragment$5` / meshphysical PHYSICAL chunk): the line that sums
+        // the two specular reflectedLight terms, immediately before
+        // `#include <transmission_fragment>` and the `outgoingLight =
+        // totalDiffuse + totalSpecular + totalEmissiveRadiance;` line that
+        // consumes it. spliceShader throws if a future three upgrade moves
+        // this line — the guard this codebase relies on (shaderSplice.ts).
+        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;',
+        // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
+        // beyond the world border, same as the depth-alpha sample below.
+        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterSpecularFactor, vWaterCellXZ / uWorldSizeCells ).r;',
         'water',
       ),
       '#include <opaque_fragment>',
@@ -193,11 +232,18 @@ function makeDepthAware(
 }
 
 export function createWater(parent: Object3D, initialWorldSize: number): Water {
-  const { texture: depthAlphaTexture, buffer: initialDepthAlphaBuffer } =
-    createDepthAlphaTexture(initialWorldSize);
-  // Reassigned wholesale by setWorldSize; depthAlphaTexture itself never is
-  // (see makeDepthAware's doc comment).
+  const { texture: depthAlphaTexture, buffer: initialDepthAlphaBuffer } = createDepthTexture(
+    initialWorldSize,
+    WATER_DEPTH_ALPHA_DEFAULT_BYTE,
+  );
+  // Second depth-derived texture (2026-08-20) — see makeDepthAware's
+  // amendment and waterDepth.ts's "SPECULAR SUPPRESSION" comment.
+  const { texture: specularFactorTexture, buffer: initialSpecularFactorBuffer } =
+    createDepthTexture(initialWorldSize, WATER_SPECULAR_FACTOR_DEFAULT_BYTE);
+  // Reassigned wholesale by setWorldSize; depthAlphaTexture/specularFactorTexture
+  // themselves never are (see makeDepthAware's doc comment).
   let depthAlphaBuffer = initialDepthAlphaBuffer;
+  let specularFactorBuffer = initialSpecularFactorBuffer;
   // Mutated in place on every setWorldSize; the compiled shader holds this
   // same object by reference, so no re-wiring is needed after a resize.
   const worldSizeUniform = { value: initialWorldSize };
@@ -216,7 +262,7 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
     // Visible from below, for when the camera dips toward the horizon.
     side: DoubleSide,
   });
-  makeDepthAware(material, depthAlphaTexture, worldSizeUniform);
+  makeDepthAware(material, depthAlphaTexture, specularFactorTexture, worldSizeUniform);
 
   const mesh = new Mesh(new PlaneGeometry(1, 1), material);
   mesh.rotation.x = PLANE_TO_GROUND_ROTATION_X;
@@ -243,6 +289,16 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
     );
     depthAlphaTexture.image = { data: depthAlphaBuffer, width: worldSize, height: worldSize };
     depthAlphaTexture.needsUpdate = true;
+    // Same reallocate-unconditionally contract as depthAlphaBuffer above.
+    specularFactorBuffer = new Uint8Array(worldSize * worldSize).fill(
+      WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
+    );
+    specularFactorTexture.image = {
+      data: specularFactorBuffer,
+      width: worldSize,
+      height: worldSize,
+    };
+    specularFactorTexture.needsUpdate = true;
     worldSizeUniform.value = worldSize;
   };
 
@@ -251,14 +307,22 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
   return {
     setWorldSize,
     refresh(mirror: TerrainMirror, dirty: Iterable<number>): void {
-      writeWaterDepthTexels(depthAlphaBuffer, worldSizeUniform.value, mirror, dirty);
+      writeWaterDepthTexels(
+        depthAlphaBuffer,
+        worldSizeUniform.value,
+        mirror,
+        dirty,
+        specularFactorBuffer,
+      );
       depthAlphaTexture.needsUpdate = true;
+      specularFactorTexture.needsUpdate = true;
     },
     dispose(): void {
       parent.remove(mesh);
       mesh.geometry.dispose();
       material.dispose();
       depthAlphaTexture.dispose();
+      specularFactorTexture.dispose();
     },
   };
 }
