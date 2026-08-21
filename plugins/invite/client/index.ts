@@ -19,6 +19,6 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.onMessage(INVITE_INFO_MESSAGE, (payload) => {
       setServerShareUrl(parseInviteInfoPayload(payload).shareUrl);
     });
-    ctx.registerHudPanel(InvitePanel);
+    ctx.registerHudPanel(InvitePanel, { placement: 'connection' });
   },
 };

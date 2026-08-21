@@ -327,6 +327,14 @@ body {
   overflow-y: visible;
 }
 
+/* The invite line inside the connection popup: the URL is long, so let it
+   wrap instead of widening the popup past its narrow-screen cap (the popup
+   itself is capped at min(260px, 100vw - 24px) above). */
+.hud-connection-popup .invite-url {
+  flex: 1;
+  min-width: 0;
+}
+
 .controls-row {
   gap: 6px;
 }

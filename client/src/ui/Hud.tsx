@@ -23,6 +23,14 @@
 // the shape of the two buttons it now sits with, and unlike them it needs no
 // room at all until it is asked for.
 //
+// THE INVITE LIVES IN THE CONNECTION POPUP (owner, 2026-08-21, superseding
+// the top-left listing above): the invite address moved out of the info panel
+// and into the connection popup, rendered below the status row and its hint
+// sentence. The plugin owns its markup — core only renders panels registered
+// with the 'connection' placement here — so the info panel is purely plugin
+// content again, and the address sits next to the one thing it is about: the
+// link a friend joins through.
+//
 // THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): brush panel,
 // bottom-center instruments (mana gauge) and the gear live in one grid row —
 // `minmax(0,1fr) auto minmax(0,1fr)` — so a desktop keeps the gauge
@@ -397,6 +405,12 @@ export function Hud(props: {
                 <span class="status-label">{STATUS_LABEL[connectionStatus()]}</span>
               </div>
               <p class="hud-hint">{STATUS_TITLE[connectionStatus()]}</p>
+              {/* Plugin panels registered with the 'connection' placement
+                  (the invite link) render here, under the status row and its
+                  sentence — same filter pattern as the bottom-centre stack. */}
+              <For each={pluginHudPanels().filter((p) => p.placement === 'connection')}>
+                {(panel) => <Dynamic component={panel.component} />}
+              </For>
             </div>
           </Show>
 

@@ -159,7 +159,9 @@ export function createClientPluginHost(
       },
       registerHudPanel(
         component: Component,
-        options?: { placement?: 'panel' | 'top-center' | 'bottom-center' },
+        options?: {
+          placement?: 'panel' | 'top-center' | 'bottom-center' | 'connection';
+        },
       ) {
         addPluginHudPanel({
           pluginName: plugin.name,

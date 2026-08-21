@@ -10,9 +10,15 @@ import type { Component } from 'solid-js';
  * 'top-center' floats centred along the top edge of the screen (identity and
  * status headed by the world header); 'bottom-center' mirrors it along the
  * bottom edge (persistent instruments kept out of the world's way, like the
- * mana gauge — owner move, 2026-08-14).
+ * mana gauge — owner move, 2026-08-14); 'connection' renders inside the
+ * bottom-right connection popup, under its status row and hint sentence
+ * (owner move, 2026-08-21: the invite link lives there now).
  */
-export type HudPanelPlacement = 'panel' | 'top-center' | 'bottom-center';
+export type HudPanelPlacement =
+  | 'panel'
+  | 'top-center'
+  | 'bottom-center'
+  | 'connection';
 
 export interface PluginHudPanel {
   /** Owning plugin — used as the render key and shown as the panel title. */
