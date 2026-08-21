@@ -2107,6 +2107,47 @@ session's rivers for up to the throttle window.
     is UNVERIFIED and should be checked against a running client before this
     is considered feel-tuned.
 
+### Decisions made 2026-08-20 (boats fight the kraken; the mechanic settled)
+
+**The arc parked on 2026-08-19 now has its fiction.** That entry withdrew the
+kraken's collapse rule and said the mechanic "waits for a fiction: boats fight
+the kraken (#43), terrain does not". Settled with the owner 2026-08-20 and
+shipped as `plugins/boats`:
+
+- **Villages dispatch; players do not command.** A coastal settlement that has
+  survived its first tier-up keeps up to three boats and sends them at any
+  kraken within its patrol range. There is deliberately no player verb — you
+  fight krakens by growing coastline. A direct reinforcement verb was raised
+  and explicitly deferred by the owner to its own card (#49).
+- **Combat is attrition.** The kraken sinks one engaged boat every 12 s; each
+  engaged boat wounds it 1/s; 54 wounds rout it. Every constant is derived from
+  one sentence — *it takes a full fishing fleet, and not one boat less* — and
+  the relation between them is pinned by test rather than the values being four
+  independent dials.
+- **`KRAKEN_ROUT_WOUNDS` is 54 and not 60.** 60 is reached at exactly the
+  instant the kraken sinks its second boat, which made the outcome a
+  floating-point tie-break between two accumulators. A win condition must never
+  coincide with a loss event.
+- **A rout goes through `banish`.** Boats emit `boats:defeated`; the monsters
+  plugin decides what that means, so a routed kraken gets exactly the
+  ten-minute cooldown a drained basin would have given it. This is what the
+  2026-08-19 entry meant by keeping the cooldown machinery whole for the arc.
+- **`structures` needed no change.** `VILLAGE_MIN_TIER` is 1 and reaching tier 1
+  requires an upgrade, so every qualifying settlement already announces itself
+  with its tier on structures' existing `changes` event. Coastal-ness is decided
+  in the boats plugin (a settlement with no wet 4-neighbour has nowhere to
+  launch from) rather than by teaching structures what a coastline is.
+
+**A monster is a body, not a point, when it steers (#45's last finding).**
+`protection.ts` had always treated a monster as a disc — a player may not raise
+ground within 4.5 cells of the kraken — while `lurk.ts` treated the same animal
+as a point, so it was free to swim its own 3.5-cell arm crown into ground that
+already existed. The server forbade the world from moving into the monster's
+body and permitted the monster to move its body into the world. Fixed at the
+predicate (`isLairPose`), not at the three callsites, because the callsites all
+asked the only question on offer. Filed under #44 as a render-only graphics
+item; it was neither.
+
 ### Version facts recorded at scaffold time (2026-08-13)
 
 - Latest stable: colyseus **0.17.10** (server), but `colyseus.js` (browser client)
