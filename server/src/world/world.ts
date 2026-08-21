@@ -1690,6 +1690,16 @@ export class World {
    * once per query. That ratio is the whole reason the transpose exists;
    * freshwater.ts's header has the arithmetic (`isWalkableCell` runs up to
    * eight times per A* expansion against a 4096-node budget).
+   *
+   * A METHOD, matching its sibling `riverNetwork()`, and NOT named to match
+   * `TerrainSampler.freshwater` — because a `World` is not a `TerrainSampler`
+   * and cannot become one by accident: it publishes `size`, where the
+   * interface asks for `worldSize`, so the compiler refuses the assignment
+   * outright. `WorldApi` is the sampler-shaped view (it renames `size` to
+   * `worldSize` along with everything else), and its `freshwater` getter is
+   * therefore the ONLY route by which this map reaches `shared/`'s
+   * predicates — which is what makes that one getter the thing to check when
+   * asking whether the axis is live.
    */
   freshwaterMap(): FreshwaterMap {
     const network = this.riverNetwork();

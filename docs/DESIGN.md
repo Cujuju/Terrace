@@ -2246,6 +2246,12 @@ passing a `RiverNetwork` into traversal directly (freshwater.ts's header has
 the cost argument — a linear scan per `isWalkableCell`, eight times per A*
 expansion against a 4096-node budget).
 
+`WorldApi.freshwater` is the ONLY route by which the map reaches `shared/`'s
+predicates, and deliberately so: a `World` publishes `size` where
+`TerrainSampler` asks for `worldSize`, so it cannot be handed to
+`isWalkableCell` at all — the compiler refuses. One supply route means one
+place to check when asking whether the axis is live.
+
 Cache invalidation is by IDENTITY, not a second staleness flag:
 `riverNetwork()` already promises the same object between recomputes, so
 `cachedFor === riverNetwork()` is the whole test, and there is no copy of the
