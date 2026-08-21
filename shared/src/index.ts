@@ -6,6 +6,8 @@ export * from './heightmap.ts';
 export * from './chunks.ts';
 export * from './protocol.ts';
 export * from './rivers.ts';
+export * from './freshwater.ts';
 export * from './traversal.ts';
 export * from './farmland.ts';
 export * from './pathing.ts';
+export * from './steering.ts';

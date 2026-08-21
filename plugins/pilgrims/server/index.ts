@@ -23,7 +23,7 @@ import {
 } from '../protocol.ts';
 import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
 import { applyBlessedCells, bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
-import { Pilgrimage, WalkerIdAllocator } from './pilgrimage.ts';
+import { Pilgrimage, WalkerIdAllocator, walkerOccupants } from './pilgrimage.ts';
 import { Wandering } from './wandering.ts';
 
 /**
@@ -52,9 +52,20 @@ function sameKeySet(a: readonly number[], b: readonly number[]): boolean {
 
 function simulate(world: WorldApi, dt: number): void {
   const settlements = bridgedStructures();
-  pilgrimage.advance(world, bridgedMonsters(), settlements, dt);
+
+  // EACH SIM STEERS AROUND THE OTHER'S WALKERS (owner, 2026-08-20: "they tend
+  // to run into each other"). The two populations share a wire, a client and a
+  // pavement, but they are separate objects that cannot see each other's
+  // lists — so this, the one place that holds both, is where the crossing
+  // introduction is made. Snapshots are taken BEFORE either sim advances, so
+  // pilgrims and wanderers react to the same start-of-tick world and neither
+  // gets the advantage of moving second.
+  const pilgrimCrowd = walkerOccupants(pilgrimage.walkers());
+  const wandererCrowd = walkerOccupants(wandering.walkers());
+
+  pilgrimage.advance(world, bridgedMonsters(), settlements, dt, wandererCrowd);
   // The ambient walkers (card 26): same towns, no monsters, no blessing.
-  wandering.advance(world, settlements, dt);
+  wandering.advance(world, settlements, dt, pilgrimCrowd);
 
   // Push the blessing only when the route set actually changed — structures'
   // replace semantics make re-sends harmless, but a write per tick would be

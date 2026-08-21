@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHUNK_SIZE, MIN_HEIGHT, SEA_LEVEL, type ChunkPayload } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, MIN_HEIGHT, SEA_LEVEL, type ChunkPayload } from '@terrace/shared';
 import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
   WATER_DEEP_STRATA_ALPHA,
@@ -14,6 +14,7 @@ import {
   depthSpecularFactorByte,
   depthToSpecularFactor,
   depthToWaterAlpha,
+  surfaceAlphaByte,
   waterDepthWorldUnits,
   writeWaterDepthTexels,
 } from '../src/terrain/waterDepth.ts';
@@ -341,5 +342,30 @@ describe('writeWaterDepthTexels', () => {
     expect(out[untouchedCell]).not.toBe(0);
     expect(specularOut[untouchedCell]).toBe(WATER_SPECULAR_FACTOR_DEFAULT_BYTE);
     expect(specularOut[untouchedCell]).not.toBe(0);
+  });
+});
+
+describe('surfaceAlphaByte — dry land is not drawn as sea (2026-08-20)', () => {
+  it('draws no water at all over a band-0 dry flat', () => {
+    // The bug: heights 1..BAND_HEIGHT-1 are DRY (design record Q3) but render
+    // at exactly SEA_LEVEL (quantizeToBand), underneath a sea plane lifted just
+    // above it — so the fringe every shoreline is made of wore a water film and
+    // anything standing there read as wading.
+    expect(surfaceAlphaByte(SEA_LEVEL + 1)).toBe(0);
+    expect(surfaceAlphaByte(BAND_HEIGHT - 1)).toBe(0);
+    expect(surfaceAlphaByte(BAND_HEIGHT)).toBe(0);
+  });
+
+  it('still draws the thin film over water at zero depth', () => {
+    // The asymmetry is deliberate: a cell at exactly SEA_LEVEL is water, and a
+    // sea with no film at the waterline reads as "no sea" rather than "shallow".
+    expect(surfaceAlphaByte(SEA_LEVEL)).toBe(depthAlphaByte(0));
+    expect(surfaceAlphaByte(SEA_LEVEL)).toBeGreaterThan(0);
+  });
+
+  it('is unchanged from the depth curve for every submerged height', () => {
+    for (const height of [SEA_LEVEL - 1, -BAND_HEIGHT, -BAND_HEIGHT * 8, MIN_HEIGHT]) {
+      expect(surfaceAlphaByte(height)).toBe(depthAlphaByte(waterDepthWorldUnits(height)));
+    }
   });
 });

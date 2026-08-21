@@ -19,6 +19,9 @@ import {
   PILGRIMAGE_CATCHMENT_CELLS,
   PILGRIMAGE_ONSET_SECONDS,
   PILGRIM_LINGER_SECONDS,
+  PILGRIM_STUCK_SECONDS,
+  PILGRIM_WALK_SPEED_CELLS_PER_SECOND,
+  WALKER_PERSONAL_SPACE_CELLS,
   PILGRIM_WALKER_PROFILE,
   Pilgrimage,
   SettlednessTracker,
@@ -605,5 +608,128 @@ describe('the bridges', () => {
     await monstersBridgeReady();
     expect(bridgedMonsters()).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FREEZE, AND THE CROWD (owner, 2026-08-20: little people "get stuck in
+// the middle of nowhere, and they also tend to run into each other"). The
+// route-following contract itself is pinned in shared/test/steering.test.ts;
+// these are the plugin-level facts — that a journey over real terrace terrain
+// actually finishes, and that two walkers keep out of each other's way.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Flat land cut by a terrace ridge one cell wide, with a gap to walk through —
+ * the shape that used to freeze a walker. The ridge is a riser the profile
+ * refuses, so a route must find the gap, and the walk to it leads AWAY from the
+ * goal for most of the journey (which is what the old goal-distance stuck timer
+ * could not tell apart from being stuck).
+ */
+function riddledWorld(size = 64): PilgrimWorld {
+  const land = 4 * BAND_HEIGHT;
+  const ridge = land + LAND_WALKER_MAX_GRADIENT_PER_CELL * 4;
+  const GAP_Y = 4;
+  return {
+    worldSize: size,
+    heightAt: (x, y) => {
+      const cx = Math.floor(x);
+      const cy = Math.floor(y);
+      if (cx < 2 || cy < 2 || cx >= size - 2 || cy >= size - 2) return SEA_LEVEL - BAND_HEIGHT;
+      if (cx === Math.floor(size / 2) && cy !== GAP_Y) return ridge;
+      return land;
+    },
+  };
+}
+
+describe('walkers finish their journeys (the 2026-08-20 freeze)', () => {
+  it('walks a wanderer through the gap in a ridge and home again', () => {
+    const world = riddledWorld();
+    const mid = Math.floor(world.worldSize / 2);
+    const wandering = new Wandering(new WalkerIdAllocator(), 1);
+    const settlements = [
+      { x: mid - 10, y: 20, age: 100 },
+      { x: mid + 10, y: 20, age: 100 },
+    ];
+
+    // Long enough for a there-and-back with the whole detour twice over, and
+    // then some: the round trip is ~70 cells at 0.5 cells/s.
+    let ticks = 0;
+    let sawAWalker = false;
+    while (ticks < 6000) {
+      wandering.advance(world, settlements, TICK);
+      if (wandering.populationCount() > 0) sawAWalker = true;
+      else if (sawAWalker) break; // the outing completed and the walker went home
+      ticks++;
+    }
+
+    expect(sawAWalker).toBe(true);
+    // The pin: BEFORE the fix, the population never emptied — every walker
+    // oscillated in place forever, held its cap slot, and the roads went dead.
+    expect(wandering.populationCount()).toBe(0);
+  });
+
+  it('never leaves a walker frozen on the spot', () => {
+    const world = riddledWorld();
+    const mid = Math.floor(world.worldSize / 2);
+    const wandering = new Wandering(new WalkerIdAllocator(), 1);
+    const settlements = [
+      { x: mid - 10, y: 20, age: 100 },
+      { x: mid + 10, y: 20, age: 100 },
+    ];
+
+    const stillFor = new Map<number, { x: number; y: number; ticks: number }>();
+    let worstStill = 0;
+    for (let tick = 0; tick < 4000; tick++) {
+      wandering.advance(world, settlements, TICK);
+      for (const state of wandering.states()) {
+        const seen = stillFor.get(state.id);
+        if (seen !== undefined && Math.hypot(seen.x - state.x, seen.y - state.y) < 1e-9) {
+          seen.ticks++;
+          worstStill = Math.max(worstStill, seen.ticks);
+        } else {
+          stillFor.set(state.id, { x: state.x, y: state.y, ticks: 0 });
+        }
+      }
+    }
+    // A walker may legitimately hold for a beat while a route is replanned or a
+    // neighbour clears, but never for the give-up timer's whole span: past that
+    // it is either moving again or gone.
+    expect(worstStill * TICK).toBeLessThan(PILGRIM_STUCK_SECONDS);
+  });
+});
+
+describe('walkers keep out of each other (the 2026-08-20 crowding)', () => {
+  it('holds two walkers apart when their routes coincide', () => {
+    const world = islandWorld();
+    const wandering = new Wandering(new WalkerIdAllocator(), 1);
+    // Two towns side by side sending walkers the same way, so the two routes
+    // are the same cells and the two bodies would otherwise merge.
+    const settlements = [
+      { x: 40, y: 40, age: 100 },
+      { x: 40, y: 41, age: 100 },
+      { x: 70, y: 40, age: 100 },
+    ];
+
+    let closest = Infinity;
+    for (let tick = 0; tick < 3000; tick++) {
+      wandering.advance(world, settlements, TICK);
+      const live = wandering.states();
+      for (let i = 0; i < live.length; i++) {
+        for (let j = i + 1; j < live.length; j++) {
+          closest = Math.min(closest, Math.hypot(live[i].x - live[j].x, live[i].y - live[j].y));
+        }
+      }
+    }
+    expect(closest).toBeLessThan(Infinity); // two were abroad together at some point
+    // Two personal spaces, less one tick of MUTUAL travel: separation is chosen
+    // against start-of-tick positions, so two walkers closing on each other can
+    // each shave a step off the gap. That residual is named in
+    // shared/src/steering.ts's `steerAvoiding`; the pin is that bodies never
+    // merge, not that the gap is exact to the last thousandth.
+    const stepCells = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * TICK;
+    expect(closest).toBeGreaterThanOrEqual(WALKER_PERSONAL_SPACE_CELLS * 2 - 2 * stepCells);
+    // And they are still visibly apart, not merely non-identical.
+    expect(closest).toBeGreaterThan(WALKER_PERSONAL_SPACE_CELLS);
   });
 });

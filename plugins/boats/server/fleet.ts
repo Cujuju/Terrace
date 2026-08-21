@@ -5,13 +5,31 @@
 // fight arithmetic directly against a hand-built world, exactly the way
 // plugins/monsters/server/habitat.ts and lurk.ts are testable.
 //
-// THE STEERING CONTRACT is monsters' own, restated rather than imported (see
-// protocol.ts on why nothing crosses a plugin boundary by import): a boat only
-// ever commits to a step whose DESTINATION is water, so shorelines are walls
-// rather than places it can be pushed through. A boat that cannot find any
-// watery heading holds position; it never beaches and never needs rescuing.
+// THE STEERING CONTRACT now comes from `shared/` (steering.ts's
+// `steerAvoiding`), not from a restatement of monsters' copy of it. The rule a
+// boat needs is unchanged — only ever commit to a step whose DESTINATION is
+// water, so shorelines are walls rather than places it can be pushed through,
+// and a boat that finds no watery heading holds position rather than beaching
+// — but two things it did NOT have come with the shared version:
+//
+//   - OTHER BOATS ARE OBSTACLES (owner, 2026-08-20: "they just kind of spin on
+//     top of each other"). Every boat in a fleet is sent to the same kraken and
+//     told to hold station at the same BOAT_ENGAGEMENT_RANGE_CELLS, so with no
+//     mutual awareness they all converged on one point of one circle and
+//     rotated there as the kraken drifted. That is not a fleet, it is a stack.
+//   - "Anywhere in the water" is now a PROFILE (OPEN_WATER_PROFILE), so what a
+//     hull may cross is stated in the same vocabulary as what a yeti or a
+//     pilgrim may cross, rather than as this file's own isWater() call.
+//
+// The plugin-boundary rule is untouched: `shared/` is not another plugin.
 
-import { isWater } from '@terrace/shared';
+import {
+  OPEN_WATER_PROFILE,
+  isWalkableCell as sharedIsWalkableCell,
+  normalizeAngle,
+  steerAvoiding,
+  type Occupant,
+} from '@terrace/shared';
 import {
   BOATS_PER_VILLAGE,
   BOAT_ENGAGEMENT_RANGE_CELLS,
@@ -63,11 +81,20 @@ export interface KrakenTarget {
   readonly y: number;
 }
 
-const TWO_PI = Math.PI * 2;
-
-/** Candidate headings tried when the way ahead is not water. Monsters' sweep. */
-const AVOID_TURN_ATTEMPTS = 8;
-const AVOID_TURN_STEP_RADIANS = Math.PI / 4;
+/**
+ * A boat's personal space, in cells.
+ *
+ * 0.5 — the hull's own half-length. HULL_LENGTH is 0.9 cells
+ * (plugins/boats/client/models.ts) and the oars reach a little wider than the
+ * beam, so half of 0.9 rounded up is the radius that circumscribes the rowed
+ * silhouette. Two boats therefore keep 1.0 cell between centres: hulls clear,
+ * oars clear, and a fleet at station reads as a line of boats rather than one
+ * boat drawn several times. MEASURED HERE rather than imported for the reason
+ * this plugin measures the kraken's footprint here too — a server sim does not
+ * reach into a client model file, and the failure mode of drift is boats
+ * sitting a little closer than intended, never a crash.
+ */
+export const BOAT_PERSONAL_SPACE_CELLS = 0.5;
 
 /**
  * How far ahead a boat checks, in cells. One second of its own travel — far
@@ -140,9 +167,11 @@ export function forgetVillage(x: number, y: number): void {
 export function isSailable(world: BoatWorld, cellX: number, cellY: number): boolean {
   const x = Math.floor(cellX);
   const y = Math.floor(cellY);
-  if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (!world.isCellUnlocked(x, y)) return false;
-  return isWater(world.heightAt(x, y));
+  // Bounds, ground class and everything else terrain has to say: shared's one
+  // predicate over OPEN_WATER_PROFILE, so "water a hull may cross" is decided
+  // in the same place as "water a kraken may swim" rather than beside it.
+  return sharedIsWalkableCell(world, OPEN_WATER_PROFILE, x, y);
 }
 
 /**
@@ -196,32 +225,30 @@ export function launchCell(world: BoatWorld, village: Village): KrakenTarget | n
   return null;
 }
 
-function normalizeAngle(radians: number): number {
-  const wrapped = radians % TWO_PI;
-  if (wrapped > Math.PI) return wrapped - TWO_PI;
-  if (wrapped <= -Math.PI) return wrapped + TWO_PI;
-  return wrapped;
-}
-
 /**
- * Picks a heading whose look-ahead cell is sailable, preferring `desired` and
- * then the smallest deviation from it. Null when boxed in on all eight
- * candidates — the caller then holds position.
+ * Picks a heading whose look-ahead cell is open water, is not somebody else's
+ * berth, and is inside unlocked territory — preferring `desired` and then the
+ * smallest deviation from it. Null when boxed in on every candidate, and the
+ * caller then holds position.
+ *
+ * A THIN ADAPTER over shared's `steerAvoiding` (shared/src/steering.ts), which
+ * owns the sweep. The one thing this plugin still says for itself is the
+ * unlocked-territory rule, passed as the `permits` hook: a boat only ever
+ * exists in territory clients can already see, which is a fog-of-war fact
+ * rather than a terrain one and has no business in `shared/`.
  */
 export function steerToWater(
   world: BoatWorld,
   boat: Boat,
   desired: number,
   lookahead: number,
+  occupants: readonly Occupant[] = [],
 ): number | null {
-  for (let attempt = 0; attempt < AVOID_TURN_ATTEMPTS; attempt++) {
-    const step = Math.ceil(attempt / 2) * AVOID_TURN_STEP_RADIANS;
-    const heading = desired + (attempt % 2 === 1 ? step : -step);
-    if (isSailable(world, boat.x + Math.cos(heading) * lookahead, boat.y + Math.sin(heading) * lookahead)) {
-      return normalizeAngle(heading);
-    }
-  }
-  return null;
+  return steerAvoiding(world, OPEN_WATER_PROFILE, boat, desired, lookahead, {
+    occupants,
+    selfRadiusCells: BOAT_PERSONAL_SPACE_CELLS,
+    permits: (x, y) => world.isCellUnlocked(Math.floor(x), Math.floor(y)),
+  });
 }
 
 function distance(ax: number, ay: number, bx: number, by: number): number {
@@ -292,6 +319,140 @@ export interface FleetOutcome {
 const NOTHING_HAPPENED: FleetOutcome = { routed: false, sunk: [] };
 
 /**
+ * The range below which a station has no direction — a boat sitting on its
+ * goal rather than on a circle around one, which is what "holding at home"
+ * is. Under it, `makeRoom` cannot shuffle AROUND anything and pushes straight
+ * away from the crowd instead.
+ *
+ * One personal space (0.5 cells): inside that, the goal is closer than the
+ * nearest boat may legally be, so there is no arc left to slide along.
+ */
+const STATION_MIN_RANGE_CELLS = BOAT_PERSONAL_SPACE_CELLS;
+
+/**
+ * Eases a station-keeping boat off a berth another boat already has.
+ *
+ * THIS IS WHERE THE FLEET USED TO STACK. Every boat is given the same goal and
+ * the same hold radius, so "hold station" put all of them on one circle with
+ * nothing to stop them occupying the same point of it — and then each turned
+ * in place to face the drifting kraken, which is the owner's "they just kind
+ * of spin on top of each other". Holding STATION is not holding POSITION.
+ *
+ * IT SHUFFLES ALONG THE STATION CIRCLE, NOT AWAY FROM THE GOAL, and that is
+ * the whole design of it. The obvious move — step directly away from whoever
+ * is crowding you — pushes a boat radially outward, straight out of
+ * BOAT_ENGAGEMENT_RANGE_CELLS, so a fleet that made room would stop fighting;
+ * the fight arithmetic in protocol.ts counts whole seconds of engagement, and
+ * boats drifting in and out of range would make those numbers approximate
+ * rather than exact. Rotating about the goal instead preserves the range
+ * EXACTLY (it is a rotation, not a tangent step, so there is no outward creep
+ * to accumulate) and turns a stack into an arc of boats around the beast —
+ * which is also what a fleet engaging something would actually do.
+ *
+ * `heading` is deliberately left alone: a fighting boat faces what it is
+ * fighting, which is what the caller set one line earlier. A boat sidling
+ * along its station while still facing the kraken is right.
+ *
+ * Does NOTHING when the berth is already clear, so a fleet that has settled
+ * into a line stays still rather than jittering — station-keeping is the state
+ * a fighting fleet spends most of its time in.
+ */
+function makeRoom(
+  world: BoatWorld,
+  boat: Boat,
+  goalX: number,
+  goalY: number,
+  berths: readonly Occupant[],
+  index: number,
+  dt: number,
+): void {
+  const crowded = nearestCrowder(boat, berths, index);
+  if (crowded === null) return;
+  const crowder = crowded.berth;
+  // WHICH OF THE PAIR GIVES WAY, when the two are stacked so exactly that
+  // "away" has no direction. Decided by comparing the two INDICES, not by this
+  // boat's own index parity: parity gives every even-indexed boat the same
+  // answer, so a third boat on the same spot picks the same side as the first
+  // and the two of them stay welded together for good. Comparing the pair is a
+  // strict total order, so the two always pick opposite sides and separate on
+  // the next tick — and it is deterministic, which a random jitter would not be.
+  const yieldsRight = index < crowded.index;
+
+  const step = BOAT_SPEED_CELLS_PER_SECOND * dt;
+  const range = distance(boat.x, boat.y, goalX, goalY);
+
+  if (range < STATION_MIN_RANGE_CELLS) {
+    // No circle to slide along (see STATION_MIN_RANGE_CELLS): shove apart.
+    // Two boats at EXACTLY one point have no "away" — the one case atan2
+    // cannot answer — so they take opposite fixed bearings off their own index
+    // parity, which is deterministic and breaks the tie in a single tick.
+    const awayX = boat.x - crowder.x;
+    const awayY = boat.y - crowder.y;
+    const bearing =
+      awayX === 0 && awayY === 0 ? (yieldsRight ? 0 : Math.PI) : Math.atan2(awayY, awayX);
+    moveIfSailable(world, boat, boat.x + Math.cos(bearing) * step, boat.y + Math.sin(bearing) * step);
+    return;
+  }
+
+  // Arc length → angle, so the boat travels one ordinary tick's distance along
+  // its own station circle rather than one tick's worth of ANGLE (which would
+  // move a close-in boat slowly and a far-out one at a sprint).
+  const turn = step / range;
+  const fromGoal = Math.atan2(boat.y - goalY, boat.x - goalX);
+  // Slide the way that opens the gap: whichever of the two arcs leaves the
+  // crowder behind. A crowder at the SAME bearing offers no such arc, and that
+  // is the common case here (a whole fleet launches from one cell), so the
+  // pair-order tie-break above is what actually spreads a new fleet out.
+  const crowderFromGoal = Math.atan2(crowder.y - goalY, crowder.x - goalX);
+  const separation = normalizeAngle(fromGoal - crowderFromGoal);
+  const direction = separation === 0 ? (yieldsRight ? 1 : -1) : Math.sign(separation);
+
+  for (const sign of [direction, -direction]) {
+    const angle = fromGoal + sign * turn;
+    if (moveIfSailable(world, boat, goalX + Math.cos(angle) * range, goalY + Math.sin(angle) * range)) {
+      return;
+    }
+  }
+  // Both arcs blocked by the coast: hold, and let the crowd sort itself out on
+  // a later tick as the goal moves.
+}
+
+/**
+ * The closest boat inside `boat`'s personal space, with its index, or null when
+ * the berth is clear. The index is what lets `makeRoom` break a dead-even tie
+ * on pair order — see `yieldsRight` there.
+ */
+function nearestCrowder(
+  boat: Boat,
+  berths: readonly Occupant[],
+  index: number,
+): { berth: Occupant; index: number } | null {
+  let nearest: { berth: Occupant; index: number } | null = null;
+  let nearestDistanceSq = Infinity;
+  for (let other = 0; other < berths.length; other++) {
+    if (other === index) continue;
+    const dx = boat.x - berths[other].x;
+    const dy = boat.y - berths[other].y;
+    const distanceSq = dx * dx + dy * dy;
+    const clearance = BOAT_PERSONAL_SPACE_CELLS + berths[other].radiusCells;
+    if (distanceSq >= clearance * clearance) continue;
+    if (distanceSq < nearestDistanceSq) {
+      nearestDistanceSq = distanceSq;
+      nearest = { berth: berths[other], index: other };
+    }
+  }
+  return nearest;
+}
+
+/** Commits a position only if a hull may actually be there. */
+function moveIfSailable(world: BoatWorld, boat: Boat, x: number, y: number): boolean {
+  if (!isSailable(world, x, y)) return false;
+  boat.x = x;
+  boat.y = y;
+  return true;
+}
+
+/**
  * Advances every boat by `dt`, and the fight with them.
  *
  * ORDER MATTERS, and it is the same order monsters' own tick keeps: move
@@ -308,8 +469,20 @@ export function advanceFleet(
 ): FleetOutcome {
   advanceShipyards(world, dt);
 
+  // Start-of-tick berth snapshot, so every boat gives way to where the others
+  // WERE rather than to where the ones already moved this tick now are — the
+  // same order-independence the walker sims keep (pilgrims/server/
+  // pilgrimage.ts's own note). Parallel to `boats`, so self-exclusion below is
+  // an index test rather than a position test.
+  const berths: Occupant[] = boats.map((boat) => ({
+    x: boat.x,
+    y: boat.y,
+    radiusCells: BOAT_PERSONAL_SPACE_CELLS,
+  }));
+
   let engaged = 0;
-  for (const boat of boats) {
+  for (let index = 0; index < boats.length; index++) {
+    const boat = boats[index];
     const target = targetFor(boat, kraken);
     const goalX = target?.x ?? boat.homeX;
     const goalY = target?.y ?? boat.homeY;
@@ -320,14 +493,31 @@ export function advanceFleet(
 
     // Holding station: at the fight's edge, or home. Still points at its goal,
     // so a fighting boat faces what it is fighting.
+    //
+    // THIS IS WHERE THE FLEET USED TO PILE UP. Every boat is given the same
+    // goal and the same hold radius, so "hold" put all of them on one circle
+    // with nothing to stop them occupying the same arc of it, all turning in
+    // place together as the kraken drifted — the owner's "they just kind of
+    // spin on top of each other". Holding station is not the same as holding
+    // POSITION: a boat whose berth is taken warps off it just far enough to be
+    // its own boat, and does it by the same rules it sails by (open water
+    // only, unlocked only, smallest turn first), so the line that forms is a
+    // line of boats at the fight's edge rather than a stack.
     const holdAt = target === null ? 0 : BOAT_ENGAGEMENT_RANGE_CELLS;
     if (range <= holdAt) {
       if (range > 0) boat.heading = Math.atan2(goalY - boat.y, goalX - boat.x);
+      makeRoom(world, boat, goalX, goalY, berths, index, dt);
       continue;
     }
 
     const desired = Math.atan2(goalY - boat.y, goalX - boat.x);
-    const steered = steerToWater(world, boat, desired, BOAT_SPEED_CELLS_PER_SECOND * BOAT_LOOKAHEAD_SECONDS);
+    const steered = steerToWater(
+      world,
+      boat,
+      desired,
+      BOAT_SPEED_CELLS_PER_SECOND * BOAT_LOOKAHEAD_SECONDS,
+      berths.filter((_, other) => other !== index),
+    );
     if (steered === null) continue;
     boat.heading = steered;
 

@@ -22,6 +22,7 @@ import {
   VILLAGE_PATROL_RANGE_CELLS,
 } from '../protocol.ts';
 import {
+  BOAT_PERSONAL_SPACE_CELLS,
   advanceFleet,
   currentKrakenWounds,
   fleetSnapshot,
@@ -401,5 +402,66 @@ describe('persistence', () => {
     const good = fleetSnapshot();
     loadBoats({ villages: [{ x: 1 }], boats: [], nextBoatId: 1 });
     expect(fleetSnapshot().villages).toEqual(good.villages);
+  });
+});
+
+describe('a fleet is a fleet, not a stack (owner, 2026-08-20)', () => {
+  /**
+   * Every boat is dispatched to the same kraken and told to hold at the same
+   * BOAT_ENGAGEMENT_RANGE_CELLS, so before separation existed they converged on
+   * one point of one circle and turned in place together — "they just kind of
+   * spin on top of each other". These pin both halves of the fix: they spread,
+   * and spreading does not cost them the fight.
+   */
+  function engagedFleet(): { world: BoatWorld; kraken: { x: number; y: number } } {
+    const world = coastWorld();
+    buildFullFleet(world);
+    const kraken = { x: VILLAGE_X + BOAT_ENGAGEMENT_RANGE_CELLS - 1, y: VILLAGE_Y };
+    return { world, kraken };
+  }
+
+  it('spreads boats holding the same station instead of stacking them', () => {
+    const { world, kraken } = engagedFleet();
+    // Every boat launches from the one launch cell, so they start identical.
+    const start = livingBoats().map((boat) => ({ x: boat.x, y: boat.y }));
+    expect(new Set(start.map((p) => `${p.x},${p.y}`)).size).toBe(1);
+
+    // Ten seconds of station-keeping, with nothing sinking (the kraken sinks a
+    // boat every KRAKEN_SINKS_BOAT_EVERY_SECONDS, so keep the window short).
+    for (let n = 0; n < 50; n++) advanceFleet(world, kraken, TICK_DT);
+
+    const boats = livingBoats();
+    expect(boats.length).toBeGreaterThan(1);
+    for (let i = 0; i < boats.length; i++) {
+      for (let j = i + 1; j < boats.length; j++) {
+        const gap = Math.hypot(boats[i].x - boats[j].x, boats[i].y - boats[j].y);
+        expect(gap).toBeGreaterThan(BOAT_PERSONAL_SPACE_CELLS);
+      }
+    }
+  });
+
+  it('keeps every spread boat inside engagement range — it shuffles ALONG the station circle', () => {
+    // The reason `makeRoom` rotates about the goal rather than backing away
+    // from the crowd: a boat pushed radially outward would stop fighting, and
+    // protocol.ts's rout arithmetic counts whole seconds of engagement.
+    const { world, kraken } = engagedFleet();
+    for (let n = 0; n < 50; n++) {
+      advanceFleet(world, kraken, TICK_DT);
+      for (const boat of livingBoats()) {
+        expect(Math.hypot(boat.x - kraken.x, boat.y - kraken.y)).toBeLessThanOrEqual(
+          BOAT_ENGAGEMENT_RANGE_CELLS,
+        );
+        expect(boat.fighting).toBe(true);
+      }
+    }
+  });
+
+  it('never shuffles a boat onto dry land', () => {
+    // A shuffling boat goes through the same sailable test as a sailing one.
+    const { world, kraken } = engagedFleet();
+    for (let n = 0; n < 200; n++) {
+      advanceFleet(world, kraken, TICK_DT);
+      for (const boat of livingBoats()) expect(isSailable(world, boat.x, boat.y)).toBe(true);
+    }
   });
 });

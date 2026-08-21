@@ -52,7 +52,17 @@
 // ground out from under it and it cannot stay standing on land.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, CHUNK_SIZE, DEFAULT_SCULPT_AMOUNT, MAX_STEP, SEA_COLUMN_BANDS, SEA_LEVEL } from '@terrace/shared';
+import {
+  AMPHIBIOUS_WALKER_PROFILE,
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  DEFAULT_SCULPT_AMOUNT,
+  MAX_STEP,
+  OPEN_WATER_PROFILE,
+  SEA_COLUMN_BANDS,
+  SEA_LEVEL,
+  type TraversalProfile,
+} from '@terrace/shared';
 import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
@@ -688,6 +698,27 @@ export interface MonsterProfile {
 
   /** Widest horizontal extent of the model, in cells. */
   readonly footprintCells: number;
+
+  /**
+   * WHAT IT MAY CROSS, in shared's own vocabulary (shared/src/traversal.ts) —
+   * the axis `habitat` above cannot express, added 2026-08-20 on the owner's
+   * ask: "the Yeti should easily be able to traverse water. Same with
+   * terrestrial monsters, though the terrestrial monsters should only be able
+   * to traverse the rivers, not the lakes."
+   *
+   * ORTHOGONAL TO `habitat`, NOT A REPLACEMENT FOR IT, and the split is worth
+   * stating because the two look similar. `habitat` answers "how far into deep
+   * water / how far above the snow line must this cell be" — a question about
+   * REACH that only this plugin asks, and the one that decides where a lair
+   * may form and how a kind is driven off. This answers "is there fresh water
+   * in the way", which every mover in the game asks and which the heightmap
+   * alone cannot answer (a river runs across dry ground). Both are checked;
+   * neither subsumes the other.
+   *
+   * ALWAYS AN ARCHETYPE, never a literal — see traversal.ts on why a per-caller
+   * literal is how this contract drifted the first time.
+   */
+  readonly traversal: TraversalProfile;
 }
 
 export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
@@ -706,6 +737,8 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     idleOnsetPerSecond: CTHULHU_IDLE_ONSET_PER_SECOND,
     idleEndPerSecond: CTHULHU_IDLE_END_PER_SECOND,
     footprintCells: CTHULHU_FOOTPRINT_CELLS,
+    // A sea kind is at home in the whole sea, and an estuary is still water.
+    traversal: OPEN_WATER_PROFILE,
   },
   kraken: {
     kind: 'kraken',
@@ -728,6 +761,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     idleOnsetPerSecond: KRAKEN_IDLE_ONSET_PER_SECOND,
     idleEndPerSecond: KRAKEN_IDLE_END_PER_SECOND,
     footprintCells: KRAKEN_FOOTPRINT_CELLS,
+    traversal: OPEN_WATER_PROFILE,
   },
   yeti: {
     kind: 'yeti',
@@ -754,6 +788,20 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     idleOnsetPerSecond: YETI_IDLE_ONSET_PER_SECOND,
     idleEndPerSecond: YETI_IDLE_END_PER_SECOND,
     footprintCells: YETI_FOOTPRINT_CELLS,
+    // THE YETI SWIMS (owner, 2026-08-20: "the Yeti should easily be able to
+    // traverse water"), so a tarn or a meltwater channel in his snowfield is
+    // scenery rather than a wall. What this does NOT change is where he lives:
+    // his snowfield confinement is the `habitat` field above and the banishment
+    // rule beside it — settled, and levelling his peaks is still how he goes.
+    // Amphibious means the water inside his range stops being an obstacle, not
+    // that his range grew.
+    //
+    // A future TERRESTRIAL monster that is not amphibious picks
+    // RIVER_FORDING_WALKER_PROFILE instead — long-legged enough to ford the
+    // channel, not to swim the lake. That archetype exists and is tested; the
+    // yeti is simply not its subject, because the owner named him on the other
+    // side of the line.
+    traversal: AMPHIBIOUS_WALKER_PROFILE,
   },
 };
 

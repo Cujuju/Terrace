@@ -2107,6 +2107,127 @@ session's rivers for up to the throttle window.
     is UNVERIFIED and should be checked against a running client before this
     is considered feel-tuned.
 
+### Decisions made 2026-08-20 (movement is one contract; the walkers were frozen)
+
+**The report.** Owner: "my little people seem to get stuck in the middle of
+nowhere, and they also tend to run into each other and they tend to walk
+through water, which they should not be able to do. They need to path around
+the water." Then, on seeing the code: "it would be nice if this pathing code
+was semi-generic so that we could add the ability to specify certain rules for
+different objects as to what they should and should not go around … the Yeti
+should easily be able to traverse water. Same with terrestrial monsters, though
+the terrestrial monsters should only be able to traverse the rivers, not the
+lakes. Boats should be able to go anywhere in the water. At the moment, they
+just kind of spin on top of each other."
+
+**Diagnosis, from the live world rather than from reading.** The real
+`server/data/world.db` (snapshot #188, 512², 4557 dry cells) was replayed
+through the real sims:
+
+- **Every wanderer in the world froze within 60 s and never moved again** — 16
+  of 16 alive at the cap, none ever completing a journey, for the whole 20
+  minutes of replay. Traced to a two-tick cycle: the route follower advanced
+  its waypoint index on a 0.75-cell proximity radius while orthogonal waypoints
+  are 1.0 cell apart, so a walker standing ON a waypoint was already "arrived"
+  at the next one and skipped it; it then validated a free-space line to the
+  one after that — a segment A* never certified, crossing a 44-unit riser —
+  which failed, triggering a replan whose first cell is the walker's OWN cell,
+  sending it back where it stood. The give-up timer could not catch it because
+  it measured straight-line distance to the goal, which the oscillation reduced
+  every other tick.
+- **A second, independent freeze in the planner.** A*'s corner-cutting guard
+  tested that a diagonal's two flanking cells were walkable GROUND but not that
+  they were climbable, so it emitted diagonals whose flanks were cliffs. Legal
+  on a grid; impossible for anything that moves continuously, because a body
+  crossing to a diagonal neighbour passes through a flank.
+- **Nothing anywhere implemented separation.** No mover read another mover's
+  position, in any plugin. Boats have the same hole and it is why they spin:
+  every boat is sent to the same kraken and told to hold at the same range, so
+  they converge on one point of one circle and turn in place together.
+- **They were never in the water.** 0 of 95 854 sampled walker positions were
+  on a water cell. What they walk on is BAND-0 DRY LAND (height 1 to
+  BAND_HEIGHT−1), which `quantizeToBand` draws at exactly SEA_LEVEL while
+  `render/water.ts` floats the sea plane just above it — so the fringe every
+  shoreline is made of is drawn underneath the sea. 292 of the world's 4557
+  dry cells at the time of measurement (BAND_HEIGHT was 64), all coastal, and
+  routes hug coasts. `waterDepth.ts`'s claim that "the water plane fails the
+  depth test over dry terrain" was false for exactly that band.
+
+**THE ROOT CAUSE UNDER ALL OF IT, in one sentence: four plugins had each grown
+their own copy of the same steer-and-veto movement loop, and three of them said
+so in their own comments** — boats' `steerToWater` ("Monsters' sweep"),
+monsters' `steerToValidHeading` ("this is the pattern, copied, not an import"),
+pilgrims' `stepWalker` ("wildlife's veto-the-step shape"), and wildlife's
+`movement.ts`. Duplicating the loop duplicated its gaps: only one of the four
+ever gained route following, none of them knew any other mover existed, and the
+shared `WalkerProfile` could express exactly one ground class plus a slope
+limit — which is why every rule the owner asked for was unwriteable.
+
+**The fix is the contract, not the call sites.**
+
+- **`shared/src/traversal.ts` — `WalkerProfile` becomes `TraversalProfile`,**
+  carrying four independent axes instead of two: a SET of ground classes, a
+  minimum ground height, a freshwater rule, and the slope limit. The archetypes
+  every mover uses are named there once — `LAND_WALKER_PROFILE`,
+  `RIVER_FORDING_WALKER_PROFILE`, `AMPHIBIOUS_WALKER_PROFILE`,
+  `OPEN_WATER_PROFILE`, `waterBandProfile` — and a plugin PICKS one rather than
+  building a literal, because building literals is how pilgrims shipped
+  wildlife's pre-fix rule the first time.
+- **`shared/src/freshwater.ts` — the river network, transposed.** Traversal asks
+  a per-cell question; `computeRiverNetwork` answers a per-river one. A cell
+  carries `none` / `channel` / `pool`, and pool beats channel where a spillway
+  is both. This is what makes "rivers but not lakes" sayable. Optional on
+  `TerrainSampler`, defaulting to none, so the axis is additive.
+- **`shared/src/steering.ts` — one movement loop.** `steerAvoiding` is the
+  sweep, now also refusing headings that land inside another mover, with a
+  `permits` hook for the rules that are genuinely a plugin's own (boats'
+  unlocked territory, monsters' whole-body lair pose). `followRoute` is the
+  route follower, rebuilt: the index advances by CELL CONTAINMENT, it aims at
+  the NEXT cell, it validates exactly one certified route edge, and a replan
+  never targets the mover's own cell. It reports `progressed` — did the mover
+  enter a new route cell — which is what a give-up timer must run on, since
+  goal distance can neither survive a real detour (routes on the live world run
+  a mean 1.74× and up to 3.57× straight-line) nor detect an oscillation.
+- **Separation never freezes anyone.** The sweep runs a second pass ignoring
+  occupants if every candidate was crowded out. Terrain is not relaxed on that
+  pass. A deadlocked knot of walkers would be the same bug in a new hat.
+
+**Both sides of the water question, owner-chosen.** The render is fixed — the
+sea plane is fully transparent over dry cells, so a band-0 flat reads as the
+"buildable-looking flat" §4 of the acceptance criteria always claimed — AND
+land walkers decline ground below band 1, so they path around anything that
+still reads as water. Q3 is untouched: height ≤ 0 is still water. The walker
+rule is the narrower true statement (that fringe is land; a land walker just
+will not stand on it), and it is a walker rule rather than a ground rule
+because the ground classes are shared with everything that swims.
+
+**Per-mover rules as shipped.** Yeti: amphibious — water inside his range stops
+being an obstacle. His snowfield confinement is UNCHANGED; that is the habitat
+regime and the banishment rule, both settled, and levelling his peaks is still
+how he goes. Sea kinds and boats: open water, the whole sea. Pilgrims,
+wanderers and grazers: land walkers. A future terrestrial monster that is not
+amphibious picks the river-fording archetype, which exists and is tested even
+though no shipped kind is its subject — that is what the owner asked for.
+
+**Monsters keep `isLairPose` as their movement constraint** and take only the
+freshwater axis from the new profile. Letting the archetype's slope limit
+through as well would quietly add a rule monsters have never had (a yeti
+refusing a riser inside his own snowfield), which is a gameplay decision nobody
+has made.
+
+**Named residual.** Separation is chosen against a start-of-tick snapshot of
+everyone's positions — that is what keeps a mover's path independent of where
+it sits in the iteration order. Two movers closing on each other can therefore
+end a tick up to their combined step closer than their combined radii: a tenth
+of a cell on a 0.4-cell gap at walker speed. Closing it would need a second
+resolution pass over the whole population and an order-dependent tie-break, for
+a tenth of a cell that is invisible at the scale bodies are drawn.
+
+**Measured after the fix, same world, same replay:** 14 of 20 walkers complete
+a full round trip (the rest give up honestly on a world that is 1.7% land and
+heavily fragmented); 0 frozen; 0 on band-0 ground; minimum observed separation
+0.415 cells against a 0.4 target. Before: 0 of 16 completed anything, ever.
+
 ### Decisions made 2026-08-20 (boats fight the kraken; the mechanic settled)
 
 **The arc parked on 2026-08-19 now has its fiction.** That entry withdrew the

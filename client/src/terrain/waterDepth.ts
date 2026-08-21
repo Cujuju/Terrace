@@ -279,6 +279,46 @@ export function depthAlphaByte(depthWorldUnits: number): number {
  */
 export const WATER_DEPTH_ALPHA_DEFAULT_BYTE = depthAlphaByte(0);
 
+/**
+ * Alpha at a cell that is DRY LAND: none at all. The sea is not drawn over it.
+ *
+ * THE BUG THIS FIXES (owner, 2026-08-20: little people "tend to walk through
+ * water"). This module's `waterDepthWorldUnits` doc says the depth value "is
+ * never sampled [over dry land] in practice, since the water plane fails the
+ * depth test over dry terrain". That claim is FALSE for exactly one band, and
+ * it is the band every shoreline is made of. Terrain is drawn snapped DOWN to
+ * its band floor (shared's quantizeToBand), so every dry height from
+ * SEA_LEVEL + 1 up to BAND_HEIGHT − 1 renders at exactly SEA_LEVEL — and
+ * render/water.ts puts the sea plane at `SEA_LEVEL + WATER_SURFACE_LIFT`,
+ * ABOVE it, precisely so the two do not z-fight. So band-0 land does not fail
+ * the depth test: it passes underneath the sea and comes out wearing
+ * WATER_MIN_ALPHA's film. 292 of the live world's 4557 dry cells were in that
+ * band when this was measured (server/data/world.db snapshot #188), all of it
+ * coastal fringe, and anything standing there reads as wading.
+ *
+ * ZERO, not a smaller film. A dry cell has no water column over it — that is
+ * what dry means — and the design record's own words for this ground are
+ * "raising land out of water creates buildable-looking flats" (§ acceptance 4).
+ * A waterline flat should look like a flat.
+ *
+ * NOTE THE ASYMMETRY WITH WATER_MIN_ALPHA, which is deliberate: a cell at
+ * exactly SEA_LEVEL is WATER (design record Q3, "height ≤ 0 is water") at zero
+ * depth and keeps its thin readable film. The two cases were previously
+ * indistinguishable here only because `waterDepthWorldUnits` clamps both to
+ * depth 0; height, not depth, is what tells them apart.
+ */
+export const WATER_DRY_LAND_ALPHA = 0;
+
+/**
+ * The alpha byte for one cell, from its RAW STORED HEIGHT rather than from a
+ * depth — the entry point the texel pass uses, because "is this dry" is a
+ * question only the height can answer (see WATER_DRY_LAND_ALPHA).
+ */
+export function surfaceAlphaByte(height: number): number {
+  if (height > SEA_LEVEL) return Math.round(WATER_DRY_LAND_ALPHA * WATER_DEPTH_ALPHA_BYTE_MAX);
+  return depthAlphaByte(waterDepthWorldUnits(height));
+}
+
 /** depthToSpecularFactor, quantised to the byte the specular texture stores. */
 export function depthSpecularFactorByte(depthWorldUnits: number): number {
   return Math.round(depthToSpecularFactor(depthWorldUnits) * WATER_DEPTH_ALPHA_BYTE_MAX);
@@ -294,7 +334,7 @@ export function depthSpecularFactorByte(depthWorldUnits: number): number {
 export const WATER_SPECULAR_FACTOR_DEFAULT_BYTE = depthSpecularFactorByte(0);
 
 /**
- * Writes depth-alpha texels for every cell inside `dirtyChunks` into `out` —
+ * Writes surface-alpha texels for every cell inside `dirtyChunks` into `out` —
  * a worldSize×worldSize, row-major byte buffer, the exact layout
  * render/water.ts uploads as a DataTexture. Cells outside those chunks are
  * left untouched, matching the patch-in-place contract every other terrain
@@ -332,8 +372,12 @@ export function writeWaterDepthTexels(
     for (let y = y0; y < y0 + CHUNK_SIZE; y++) {
       const row = y * worldSize;
       for (let x = x0; x < x0 + CHUNK_SIZE; x++) {
-        const depth = waterDepthWorldUnits(sampleHeight(mirror, x, y));
-        out[row + x] = depthAlphaByte(depth);
+        const height = sampleHeight(mirror, x, y);
+        const depth = waterDepthWorldUnits(height);
+        // Height, not depth, for the alpha: only the height distinguishes dry
+        // band-0 land (no sea drawn over it) from water at zero depth (a thin
+        // film). See surfaceAlphaByte / WATER_DRY_LAND_ALPHA.
+        out[row + x] = surfaceAlphaByte(height);
         if (specularOut) specularOut[row + x] = depthSpecularFactorByte(depth);
       }
     }

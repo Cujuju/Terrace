@@ -19,7 +19,7 @@
 // callers searching the same heights from the same start/goal get a
 // byte-identical route, not merely "a shortest route", every time.
 
-import { type TerrainSampler, type WalkerProfile, isWalkableCell } from './traversal.ts';
+import { type TerrainSampler, type TraversalProfile, isWalkableCell } from './traversal.ts';
 import { CHUNK_SIZE } from './constants.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,7 +260,7 @@ class RouteOpenSet {
  *  same single comparison; this is that degenerate case written directly. */
 function edgeCost(
   world: TerrainSampler,
-  profile: WalkerProfile,
+  profile: TraversalProfile,
   fromX: number,
   fromY: number,
   toX: number,
@@ -305,9 +305,24 @@ function reconstructPath(
  * than a bug.
  *
  * Diagonal steps may not cut a corner: a diagonal edge is only offered when
- * BOTH of its flanking orthogonal cells are walkable ground, the standard
- * grid-pathing rule against a walker squeezing diagonally through the corner
- * of an obstacle it could not pass along either straight edge.
+ * BOTH of its flanking orthogonal cells are cells the walker could ACTUALLY
+ * STEP INTO from here — the standard grid-pathing rule against squeezing
+ * diagonally through the corner of an obstacle it could not pass along either
+ * straight edge.
+ *
+ * "Could actually step into" means the full edge test (`edgeCost`), not merely
+ * walkable ground, and that distinction is a bug fix (2026-08-20). The ground-
+ * only version let A* emit a diagonal whose flanks were legal GROUND but
+ * impassable RISERS — e.g. from a cell at height 226 to one at 232 (a 6-unit
+ * step, happily legal) with flanks at 258 and 64, both dry land and both far
+ * past the gradient limit. On the grid that is a legal move; to anything that
+ * moves CONTINUOUSLY it is not, because a body crossing from one cell to its
+ * diagonal neighbour passes through one of the two flanks on the way, and both
+ * of these are cliffs. A follower handed such a route walks up to the corner
+ * and stops — which is exactly the "stuck in the middle of nowhere" the owner
+ * reported, arriving by a second road (see shared/src/steering.ts for the
+ * first). The planner must only ever emit edges the walker can physically
+ * take.
  *
  * `start`/`goal` are floored to their containing cell. Coincident start/goal
  * cells return a trivial one-cell, zero-cost route rather than running the
@@ -315,7 +330,7 @@ function reconstructPath(
  */
 export function findRoute(
   world: TerrainSampler,
-  profile: WalkerProfile,
+  profile: TraversalProfile,
   start: RouteCell,
   goal: RouteCell,
   nodeBudget: number = ROUTE_NODE_BUDGET,
@@ -371,13 +386,12 @@ export function findRoute(
       if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
 
       if (dx !== 0 && dy !== 0) {
-        // Corner-cutting guard (see this function's doc comment).
-        if (
-          !isWalkableCell(world, profile, current.x + dx, current.y) ||
-          !isWalkableCell(world, profile, current.x, current.y + dy)
-        ) {
-          continue;
-        }
+        // Corner-cutting guard (see this function's doc comment). The SAME
+        // edge test the move itself uses, so a flank that is legal ground but
+        // an illegal climb blocks the corner exactly as a wall would.
+        const alongX = edgeCost(world, profile, current.x, current.y, current.x + dx, current.y, ORTHOGONAL_STEP_COST);
+        const alongY = edgeCost(world, profile, current.x, current.y, current.x, current.y + dy, ORTHOGONAL_STEP_COST);
+        if (alongX === null || alongY === null) continue;
       }
 
       const cost = edgeCost(world, profile, current.x, current.y, nx, ny, baseCost);

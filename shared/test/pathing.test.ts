@@ -2,17 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
+  LAND_WALKER_PROFILE,
   ORTHOGONAL_STEP_COST,
   SEA_LEVEL,
   UNCONSTRAINED_GRADIENT_PER_CELL,
   findRoute,
   type RouteCell,
   type TerrainSampler,
-  type WalkerProfile,
+  type TraversalProfile,
+  waterBandProfile,
 } from '../src/index.ts';
 
-const LAND: WalkerProfile = { ground: 'dry', maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL };
-const WATER: WalkerProfile = { ground: 'deep', maxGradientPerCell: UNCONSTRAINED_GRADIENT_PER_CELL };
+const LAND: TraversalProfile = LAND_WALKER_PROFILE;
+const WATER: TraversalProfile = waterBandProfile('deep');
 
 const BASE = SEA_LEVEL + BAND_HEIGHT; // flat "dry" ground everywhere by default.
 

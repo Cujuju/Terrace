@@ -23,7 +23,7 @@
 // so "no monster interaction" is true by construction rather than by a rule
 // this file would have to maintain.
 
-import type { RouteCell } from '@terrace/shared';
+import type { Occupant, RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import {
   ARRIVAL_RADIUS_CELLS,
@@ -32,6 +32,8 @@ import {
   advanceWalker,
   isWalkableCell,
   planRoute,
+  walkerOccupants,
+  type MovingWalker,
   type PilgrimWorld,
 } from './pilgrimage.ts';
 import type { SettlerRace } from '../protocol.ts';
@@ -119,6 +121,28 @@ export const WANDERER_VISIT_SECONDS = 10;
 
 type WandererLeg = 'outbound' | 'visiting' | 'homebound';
 
+/**
+ * One wanderer's crowd: everybody else in this sim plus the pilgrims the
+ * caller passed in, never itself. `population` and `crowd` are parallel — see
+ * pilgrimage.ts's `crowdAround`, of which this is the wandering half. Kept
+ * local rather than exported from there because it is four lines and
+ * exporting it would put a helper on the plugin's own surface for no caller
+ * outside these two files.
+ */
+function crowd(
+  self: MovingWalker,
+  population: readonly MovingWalker[],
+  snapshot: readonly Occupant[],
+  foreign: readonly Occupant[],
+): Occupant[] {
+  const rows: Occupant[] = [];
+  for (let i = 0; i < population.length; i++) {
+    if (population[i] !== self) rows.push(snapshot[i]);
+  }
+  for (const row of foreign) rows.push(row);
+  return rows;
+}
+
 interface Wanderer {
   readonly id: number;
   readonly race: SettlerRace;
@@ -168,7 +192,12 @@ export class Wandering {
     this.dispatchModulus = dispatchModulus;
   }
 
-  advance(world: PilgrimWorld, settlements: ReadonlyArray<SettlementCell>, dt: number): void {
+  advance(
+    world: PilgrimWorld,
+    settlements: ReadonlyArray<SettlementCell>,
+    dt: number,
+    occupants: readonly Occupant[] = [],
+  ): void {
     this.elapsedSeconds += dt;
 
     const epoch = Math.floor(this.elapsedSeconds / WANDER_EPOCH_SECONDS);
@@ -176,6 +205,12 @@ export class Wandering {
       this.rolledEpoch = epoch;
       this.dispatch(world, settlements, epoch);
     }
+
+    // Start-of-tick crowd snapshot — pilgrimage.ts's own reasoning, verbatim:
+    // everyone reacts to the same world, so nobody's path depends on where it
+    // sits in the iteration order.
+    const own = [...this.wanderers.values()];
+    const ownCrowd = walkerOccupants(own);
 
     for (const wanderer of this.wanderers.values()) {
       if (wanderer.leg === 'visiting') {
@@ -191,16 +226,17 @@ export class Wandering {
         continue;
       }
 
-      const beforeDx = wanderer.goalX - wanderer.x;
-      const beforeDy = wanderer.goalY - wanderer.y;
-      const before = beforeDx * beforeDx + beforeDy * beforeDy;
-      advanceWalker(world, wanderer, dt);
+      // Route progress, not goal distance, resets the stuck clock — pilgrims'
+      // own rule and the same reasoning (shared/src/steering.ts's
+      // `progressed`): a detour must not read as being stuck, and oscillating
+      // on the spot must not read as making headway.
+      const progressed = advanceWalker(world, wanderer, dt, crowd(wanderer, own, ownCrowd, occupants));
+      if (progressed) wanderer.stuckSeconds = 0;
+      else wanderer.stuckSeconds += dt;
+
       const afterDx = wanderer.goalX - wanderer.x;
       const afterDy = wanderer.goalY - wanderer.y;
       const after = afterDx * afterDx + afterDy * afterDy;
-
-      if (after < before) wanderer.stuckSeconds = 0;
-      else wanderer.stuckSeconds += dt;
 
       if (after <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
         if (wanderer.leg === 'outbound') {
@@ -343,6 +379,11 @@ export class Wandering {
 
   populationCount(): number {
     return this.wanderers.size;
+  }
+
+  /** See Pilgrimage.walkers() — same contract, same caller (index.ts). */
+  walkers(): readonly MovingWalker[] {
+    return [...this.wanderers.values()];
   }
 
   /** See pilgrimage.ts's Pilgrimage.routes() — same contract, same reason. */

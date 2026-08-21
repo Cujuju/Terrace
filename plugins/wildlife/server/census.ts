@@ -7,27 +7,41 @@
 
 import {
   CHUNK_SIZE,
+  LAND_WALKER_PROFILE,
   canTraverseSegment,
   isWalkableCell as sharedIsWalkableCell,
-  type WalkerProfile,
+  waterBandProfile,
+  type TraversalProfile,
 } from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type Habitat, habitatOf, profileOf } from './species.ts';
 
 /**
- * Adapts one species' SpeciesProfile onto the shared WalkerProfile shape
- * (shared/src/traversal.ts). `habitatOf`'s three-value `Habitat` union
+ * Adapts one species onto a shared traversal archetype (shared/src/
+ * traversal.ts). `habitatOf`'s three-value `Habitat` union
  * ('land'/'shallow'/'deep') differs from shared's `TerrainGround`
  * ('dry'/'shallow'/'deep') by one name only — see species.ts's habitatOf doc
  * — so the one 'land' → 'dry' translation lives here, at the single seam
- * where a wildlife species profile crosses into the shared contract.
+ * where a wildlife species crosses into the shared contract.
+ *
+ * PICKS AN ARCHETYPE, does not build a literal (2026-08-20). A grazer is
+ * shared's land walker in every respect there is, including the two axes this
+ * plugin never had an opinion about — the band-0 waterline fringe not being
+ * ground, and rivers and lakes being things to walk around. Building a
+ * literal here is how this contract drifted the first time (see traversal.ts's
+ * header on pilgrims shipping wildlife's pre-fix rule); the archetype cannot
+ * drift.
+ *
+ * ASSUMPTION, named because it is a behaviour change and not merely a
+ * refactor: a grazer declining the coastal fringe and declining to graze
+ * through a river is the intended reading of "a legged animal on dry ground".
+ * If a future species genuinely wades, it earns its own archetype in
+ * traversal.ts rather than a literal here.
  */
-function walkerProfileOf(species: WildlifeHabitatSpecies): WalkerProfile {
+function walkerProfileOf(species: WildlifeHabitatSpecies): TraversalProfile {
   const profile = profileOf(species);
-  return {
-    ground: profile.habitat === 'land' ? 'dry' : profile.habitat,
-    maxGradientPerCell: profile.maxGradientPerCell,
-  };
+  if (profile.habitat === 'land') return LAND_WALKER_PROFILE;
+  return waterBandProfile(profile.habitat);
 }
 
 /** The slice of the server's WorldApi this plugin actually reads. */

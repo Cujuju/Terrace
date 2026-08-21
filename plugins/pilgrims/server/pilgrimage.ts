@@ -17,12 +17,15 @@
 // tier prosperity, never CA survival).
 
 import {
-  LAND_WALKER_MAX_GRADIENT_PER_CELL,
-  canTraverseSegment,
+  LAND_WALKER_PROFILE,
   findRoute,
+  followRoute,
   isWalkableCell as sharedIsWalkableCell,
+  steerAvoiding,
+  type Occupant,
   type RouteCell,
-  type WalkerProfile,
+  type RoutedMover,
+  type TraversalProfile,
 } from '@terrace/shared';
 import { PILGRIMS_CAP, settlementRace, type PilgrimEntityState, type SettlerRace } from '../protocol.ts';
 
@@ -125,11 +128,21 @@ export const PILGRIM_STUCK_SECONDS = 20;
  */
 export const LOOKAHEAD_SECONDS = 0.6;
 
-/** Wildlife's avoid-turn sweep: 8 × 45° candidates, smallest turn first. */
-export const AVOID_TURN_ATTEMPTS = 8;
-export const AVOID_TURN_STEP_RADIANS = Math.PI / 4;
-
-/** A pilgrim counts as arrived within this many cells of its goal. */
+/**
+ * A pilgrim counts as arrived within this many cells of its GOAL.
+ *
+ * 0.75 — comfortably under one cell, so arriving means standing in the goal
+ * cell rather than merely nearby.
+ *
+ * SCOPE NARROWED 2026-08-20, and the narrowing is the bug fix. This radius
+ * used to double as the route-following waypoint test, where it was wrong:
+ * orthogonal waypoints are 1.0 cell apart, so a walker sitting ON one
+ * waypoint was already inside 0.75 of the NEXT and skipped it without ever
+ * walking there — the first half of the freeze traced on the live world (see
+ * shared/src/steering.ts's `followRoute`). Route progress is now decided by
+ * cell containment, in shared, and this constant answers only the question it
+ * was derived for.
+ */
 export const ARRIVAL_RADIUS_CELLS = 0.75;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,22 +215,15 @@ export class SettlednessTracker {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Pilgrims and wanderers are land walkers exactly like wildlife's grazer —
- * reuse the shared land-walker gradient limit (LAND_WALKER_MAX_GRADIENT_PER_CELL,
- * shared/src/traversal.ts) rather than re-deriving it.
- *
- * THIS IS THE ROOT-CAUSE FIX for the reported bug. `isWalkableCell` below used
- * to test only `heightAt > SEA_LEVEL` — wildlife's OWN pre-fix rule, by this
- * file's former doc comment's own admission ("wildlife's grazer rule: above
- * the sea"). Ground alone says nothing about how steep the ground GETS
- * between two points, so a pilgrim's local step and a planned route could
- * both cross a terrace riser this profile now refuses — see
- * `canTraverseSegment` (stepWalker, below) and `planRoute`.
+ * Pilgrims and wanderers are land walkers exactly like wildlife's grazer, so
+ * they ARE shared's land-walker archetype — not a literal that restates it.
+ * This alias exists only so the rest of this file (and its suite) can keep
+ * calling the thing by the plugin's own name; every axis of it —  dry ground,
+ * terrace risers are walls, the band-0 waterline fringe is not ground, a river
+ * or lake is something to walk around — is decided once in
+ * shared/src/traversal.ts and never here.
  */
-export const PILGRIM_WALKER_PROFILE: WalkerProfile = {
-  ground: 'dry',
-  maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL,
-};
+export const PILGRIM_WALKER_PROFILE: TraversalProfile = LAND_WALKER_PROFILE;
 
 /**
  * Land a walker will stand on: a thin adapter over shared's bounds+ground
@@ -325,7 +331,7 @@ export interface Pilgrim {
   routeIndex: number;
 }
 
-/** The moving slice of a walker — what stepWalker needs, and nothing more.
+/** The moving slice of a walker — what `stepWalker` needs, and nothing more.
  *  Both the pilgrimage and the wandering sims feed their walkers through it. */
 export interface MovingWalker {
   x: number;
@@ -336,124 +342,134 @@ export interface MovingWalker {
 }
 
 /** A MovingWalker that also carries a planned route — what `advanceWalker`
- *  needs. Both `Pilgrim` and wandering.ts's `Wanderer` satisfy this. */
-export interface RoutedWalker extends MovingWalker {
-  route: RouteCell[] | null;
-  routeIndex: number;
+ *  needs. Both `Pilgrim` and wandering.ts's `Wanderer` satisfy this, and it is
+ *  shared's `RoutedMover` (steering.ts) plus this plugin's own goal fields. */
+export interface RoutedWalker extends MovingWalker, RoutedMover {}
+
+/**
+ * Personal space around one walker, in cells — how close another body may
+ * come before a candidate heading is refused (shared's `steerAvoiding`).
+ *
+ * 0.2 — MEASURED off the shipped model, not guessed, and measured HERE rather
+ * than imported for the reason VIEWPOINT_RING_CELLS states above: a server sim
+ * must not reach into a client model file, and the failure mode of drift is
+ * walkers passing a little closer than intended, never a crash. The widest
+ * part of a settler is the head sphere, radius 0.155 cells
+ * (pilgrims/client/models.ts), and its limbs and tail swing a little wider
+ * again; 0.2 is that rounded up. Two walkers therefore hold 0.4 cells centre
+ * to centre — bodies clear, with the gap reading as a gap rather than a graze.
+ *
+ * WHY THIS DID NOT EXIST BEFORE (owner, 2026-08-20: "they tend to run into
+ * each other"): nothing in this plugin, or in any other mover plugin, read a
+ * second mover's position at all. That is fixed at the contract layer — see
+ * shared/src/steering.ts's header — and this constant is only this plugin's
+ * body size, the one part of it that is genuinely local.
+ */
+export const WALKER_PERSONAL_SPACE_CELLS = 0.2;
+
+/**
+ * The moving population a walker must keep clear of, as shared's `Occupant`
+ * rows. Assembled by the plugin wiring (index.ts) across BOTH sims and passed
+ * down, because a pilgrim and a wanderer are equally solid to each other and
+ * neither sim can see the other's list.
+ */
+export function walkerOccupants(walkers: Iterable<MovingWalker>): Occupant[] {
+  const rows: Occupant[] = [];
+  for (const walker of walkers) {
+    rows.push({ x: walker.x, y: walker.y, radiusCells: WALKER_PERSONAL_SPACE_CELLS });
+  }
+  return rows;
 }
 
 /**
- * One walking step with water/slope avoidance toward (targetX, targetY) —
- * wildlife's veto-the-step shape, extended 2026-08-19 to also refuse a step
- * that crosses a slope steeper than PILGRIM_WALKER_PROFILE allows (the same
- * root-cause fix as `isWalkableCell`, above: this used to probe ground at the
- * look-ahead cell ALONE, nothing in between). `targetX`/`targetY` default to
- * `pilgrim.goalX`/`goalY` — the walker's ultimate destination — which is the
- * ONLY behaviour every existing caller before routing landed ever used; a
- * caller following a planned route (`advanceWalker`) passes the current
- * route waypoint instead, so the local avoidance sweep steers leg by leg
- * rather than beelining the whole journey.
+ * The crowd ONE walker must steer around: everybody else in its own sim, plus
+ * whatever the caller passed in from the other one, and never itself.
  *
- * EXPORTED since the wanderers (card 26) landed: one movement rule for every
- * little person on the road, so a pilgrim and a wanderer meeting the same
- * bay detour identically. */
+ * `population` and `crowd` are parallel — `crowd[i]` is `population[i]`'s
+ * start-of-tick snapshot — so self-exclusion is an index lookup rather than a
+ * position comparison. Position comparison would be wrong: two walkers may
+ * legitimately share a cell for a tick, and dropping both of them would
+ * disable separation exactly when it is needed.
+ */
+function crowdAround(
+  self: MovingWalker,
+  population: readonly MovingWalker[],
+  crowd: readonly Occupant[],
+  foreign: readonly Occupant[],
+): Occupant[] {
+  const rows: Occupant[] = [];
+  for (let i = 0; i < population.length; i++) {
+    if (population[i] !== self) rows.push(crowd[i]);
+  }
+  for (const row of foreign) rows.push(row);
+  return rows;
+}
+
+/** How far ahead a walker probes when steering. See LOOKAHEAD_SECONDS. */
+function lookaheadCells(): number {
+  return PILGRIM_WALK_SPEED_CELLS_PER_SECOND * LOOKAHEAD_SECONDS;
+}
+
+/**
+ * One walking step with water/slope/crowd avoidance toward (targetX, targetY)
+ * — now a thin adapter over shared's `steerAvoiding` (shared/src/steering.ts),
+ * which owns the sweep itself. `targetX`/`targetY` default to
+ * `pilgrim.goalX`/`goalY`, the walker's ultimate destination.
+ *
+ * STILL EXPORTED, and still the one movement rule for every little person on
+ * the road: what changed 2026-08-20 is only that the rule moved to the
+ * contract layer, where boats and monsters use it too. See steering.ts's
+ * header for why four copies of this sweep was the bug rather than four
+ * plugins' business.
+ */
 export function stepWalker(
   world: PilgrimWorld,
   pilgrim: MovingWalker,
   dt: number,
   targetX: number = pilgrim.goalX,
   targetY: number = pilgrim.goalY,
+  occupants: readonly Occupant[] = [],
 ): void {
-  const toGoalX = targetX - pilgrim.x;
-  const toGoalY = targetY - pilgrim.y;
-  const desired = Math.atan2(toGoalY, toGoalX);
-
-  const distance = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
-  const lookahead = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * LOOKAHEAD_SECONDS;
-
-  // Smallest workable turn: desired course first, then alternating left/right
-  // sweeps — the same reading wildlife gives its own 8 × 45° search.
-  for (let attempt = 0; attempt <= AVOID_TURN_ATTEMPTS; attempt++) {
-    const magnitude = Math.ceil(attempt / 2) * AVOID_TURN_STEP_RADIANS;
-    const sign = attempt % 2 === 1 ? 1 : -1;
-    const heading = desired + sign * magnitude;
-    const aheadX = pilgrim.x + Math.cos(heading) * lookahead;
-    const aheadY = pilgrim.y + Math.sin(heading) * lookahead;
-    if (!isWalkableCell(world, aheadX, aheadY)) continue;
-    if (!canTraverseSegment(world, PILGRIM_WALKER_PROFILE, pilgrim.x, pilgrim.y, aheadX, aheadY)) continue;
-
-    pilgrim.heading = heading;
-    pilgrim.x += Math.cos(heading) * distance;
-    pilgrim.y += Math.sin(heading) * distance;
-    return;
-  }
+  const desired = Math.atan2(targetY - pilgrim.y, targetX - pilgrim.x);
+  const heading = steerAvoiding(world, PILGRIM_WALKER_PROFILE, pilgrim, desired, lookaheadCells(), {
+    occupants,
+    selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS,
+  });
   // Boxed in: hold position this tick; the stuck timer decides what is next.
+  if (heading === null) return;
+
+  pilgrim.heading = heading;
+  const distance = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
+  pilgrim.x += Math.cos(heading) * distance;
+  pilgrim.y += Math.sin(heading) * distance;
 }
 
 /**
- * Advances one walker toward its ultimate goal (`walker.goalX`/`goalY`) for
- * one tick, following a planned route leg by leg when one exists, and
- * falling back to `stepWalker`'s direct local avoidance when it doesn't.
+ * Advances one walker toward its ultimate goal for one tick — a thin adapter
+ * over shared's `followRoute` (shared/src/steering.ts), which owns the
+ * route-following contract and the fix to the freeze it used to cause.
  *
- * ROUTE FOLLOWING: steers toward the CURRENT waypoint (`route[routeIndex]`,
- * cell-centred) via `stepWalker`; advances `routeIndex` once the walker is
- * within ARRIVAL_RADIUS_CELLS of it. The final waypoint is the same cell as
- * `goalX`/`goalY`, so ordinary arrival detection (in Pilgrimage/Wandering's
- * own advance loop) is untouched by routing.
- *
- * RE-PLANNING, bounded: before committing to the step toward the current
- * waypoint, the ONE edge about to be crossed (walker's current position to
- * that waypoint) is re-checked with `canTraverseSegment` — O(1), cheap
- * enough to run every tick. A single sculpt can cut a route out from under a
- * walker already abroad; catching that here, rather than only when the
- * walker physically reaches the now-illegal edge, is what stops it from
- * walking right up to a cliff that did not exist when the route was
- * planned. On a miss, the WHOLE remaining route is discarded and exactly one
- * replan is attempted from the walker's CURRENT position — bounded by
- * ROUTE_NODE_BUDGET, same as any other planning call, so a re-plan storm
- * cannot occur (at most one extra findRoute call per walker per tick, only
- * on the tick a route actually breaks).
- *
- * FAILURE DEGRADES, never freezes: if there is no route at all (planning
- * failed at dispatch — see Pilgrimage/Wandering's dispatch code, which never
- * mints a walker for a trip with no route in the first place — or a replan
- * above also failed), this function falls back to `stepWalker`'s direct
- * local avoidance straight at `goalX`/`goalY`. That is strictly worse than a
- * planned route (it can oscillate at a real obstacle) but it is never worse
- * than what pilgrims did before routing existed, and the existing stuck-timer
- * give-up (PILGRIM_STUCK_SECONDS, in Pilgrimage/Wandering's own advance loop)
- * remains the ultimate backstop: a walker that is truly going nowhere turns
- * for home or despawns, exactly as it always did.
+ * Returns TRUE when the walker got somewhere this tick — it entered a new
+ * route cell, or (routeless) closed on its goal. The caller's stuck timer
+ * runs off THIS, not off distance to the goal; see `followRoute`'s
+ * `progressed` for why the distance measure could neither survive a real
+ * detour nor detect a walker oscillating on the spot.
  */
-export function advanceWalker(world: PilgrimWorld, walker: RoutedWalker, dt: number): void {
-  if (walker.route === null || walker.routeIndex >= walker.route.length) {
-    stepWalker(world, walker, dt);
-    return;
-  }
-
-  let waypoint = walker.route[walker.routeIndex];
-  let targetX = waypoint.x + 0.5;
-  let targetY = waypoint.y + 0.5;
-
-  if (!canTraverseSegment(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, targetX, targetY)) {
-    walker.route = planRoute(world, walker.x, walker.y, walker.goalX, walker.goalY);
-    walker.routeIndex = 0;
-    if (walker.route === null) {
-      stepWalker(world, walker, dt); // degrade: direct local avoidance.
-      return;
-    }
-    waypoint = walker.route[0];
-    targetX = waypoint.x + 0.5;
-    targetY = waypoint.y + 0.5;
-  }
-
-  stepWalker(world, walker, dt, targetX, targetY);
-
-  const dx = walker.x - targetX;
-  const dy = walker.y - targetY;
-  if (dx * dx + dy * dy <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
-    walker.routeIndex++;
-  }
+export function advanceWalker(
+  world: PilgrimWorld,
+  walker: RoutedWalker,
+  dt: number,
+  occupants: readonly Occupant[] = [],
+): boolean {
+  const result = followRoute(world, PILGRIM_WALKER_PROFILE, walker, {
+    stepCells: PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt,
+    lookaheadCells: lookaheadCells(),
+    goalX: walker.goalX,
+    goalY: walker.goalY,
+    occupants,
+    selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS,
+  });
+  return result.progressed;
 }
 
 /** Squared distance to the current goal. */
@@ -486,6 +502,7 @@ export class Pilgrimage {
     monsters: ReadonlyArray<{ readonly id: number; readonly x: number; readonly y: number }>,
     settlements: ReadonlyArray<{ readonly x: number; readonly y: number }>,
     dt: number,
+    occupants: readonly Occupant[] = [],
   ): void {
     const settled = this.tracker.advance(monsters, dt);
     const settledById = new Map(settled.map((s) => [s.monsterId, s]));
@@ -562,6 +579,17 @@ export class Pilgrimage {
     }
 
     // ── Walk / linger / arrive. ──
+    //
+    // The crowd every walker steers around is a START-OF-TICK SNAPSHOT of all
+    // of them, taken before any of them moves. Deliberately not "wherever each
+    // one happens to be by the time we reach it": that would make a walker's
+    // path depend on its position in the iteration order, which is exactly the
+    // kind of order-dependence the rest of this file goes to some trouble to
+    // keep out (see the header's determinism note). Everyone reacts to the same
+    // world; nobody gets the advantage of moving last.
+    const own = [...this.pilgrims.values()];
+    const ownCrowd = walkerOccupants(own);
+
     for (const pilgrim of this.pilgrims.values()) {
       if (pilgrim.leg === 'lingering') {
         pilgrim.lingerSeconds += dt;
@@ -581,13 +609,16 @@ export class Pilgrimage {
         continue;
       }
 
-      const before = goalDistanceSq(pilgrim);
-      advanceWalker(world, pilgrim, dt);
-      const after = goalDistanceSq(pilgrim);
-
-      // Net progress resets the stuck clock; anything else runs it.
-      if (after < before) pilgrim.stuckSeconds = 0;
+      // Route progress — NOT distance to the goal — resets the stuck clock.
+      // The distance measure cannot tell a legitimate detour (which increases
+      // it, for as long as the detour lasts) from being stuck, nor a walker
+      // oscillating on the spot (which decreases it every other tick) from
+      // one making headway; see shared/src/steering.ts's `progressed`.
+      const progressed = advanceWalker(world, pilgrim, dt, crowdAround(pilgrim, own, ownCrowd, occupants));
+      if (progressed) pilgrim.stuckSeconds = 0;
       else pilgrim.stuckSeconds += dt;
+
+      const after = goalDistanceSq(pilgrim);
 
       if (after <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
         if (pilgrim.leg === 'outbound') {
@@ -657,6 +688,14 @@ export class Pilgrimage {
 
   populationCount(): number {
     return this.pilgrims.size;
+  }
+
+  /** The live walkers, in spawn order — what the plugin wiring turns into the
+   *  `Occupant` rows the OTHER sim steers around (see index.ts). Exposed as
+   *  the moving slice alone: nothing outside this file has business with a
+   *  pilgrim's leg, route or blessing. */
+  walkers(): readonly MovingWalker[] {
+    return [...this.pilgrims.values()];
   }
 
   /**

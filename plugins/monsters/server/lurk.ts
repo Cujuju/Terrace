@@ -16,12 +16,19 @@
 //
 // Everything is scaled by the host's `dt`. There is no wall clock in this file.
 
+import {
+  AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
+  AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
+  UNCONSTRAINED_GRADIENT_PER_CELL,
+  normalizeAngle as sharedNormalizeAngle,
+  steerAvoiding,
+  type TraversalProfile,
+} from '@terrace/shared';
 import { type LairWorld, isLairCell, isLairPose } from './habitat.ts';
 import { bodyRadiusCells, profileOf, type MonsterProfile } from './kinds.ts';
 import { monsterRandom, rollEvent } from './rng.ts';
 import { type Monster, livingMonsters } from './summoning.ts';
 
-const TWO_PI = Math.PI * 2;
 
 /**
  * How far ahead it checks, in seconds of its own travel. It looks at where it
@@ -37,21 +44,43 @@ export const LOOKAHEAD_SECONDS = 4;
 
 /**
  * Candidate headings tried when the way ahead is blocked, and the angle between
- * them. Eight × 45° sweeps the full circle, so "there is a way out of this cell"
- * and "the search found it" are the same statement. Candidates alternate left
- * and right of the current heading, so it takes the SMALLEST turn that works and
- * a shoreline reads as a slow deflection rather than a bounce. (Wildlife's
- * steering, unchanged: this is the pattern, copied, not an import.)
+ * them — now shared's, not this file's own copy (2026-08-20).
+ *
+ * The values and the reasoning are unchanged: eight × 45° sweeps the full
+ * circle, so "there is a way out of this cell" and "the search found it" are
+ * the same statement, and candidates alternate left and right of the current
+ * heading so a shoreline reads as a slow deflection rather than a bounce. What
+ * changed is where they live. This file's own comment used to end "(Wildlife's
+ * steering, unchanged: this is the pattern, copied, not an import.)" — and
+ * FOUR plugins said a version of that sentence about each other, which is why
+ * none of them ever gained the things the pattern was missing. See
+ * shared/src/steering.ts's header. Re-exported under the old names so this
+ * plugin's own call sites and tests do not have to move.
  */
-export const AVOID_TURN_ATTEMPTS = 8;
-export const AVOID_TURN_STEP_RADIANS = Math.PI / 4;
+export const AVOID_TURN_ATTEMPTS = SHARED_AVOID_TURN_ATTEMPTS;
+export const AVOID_TURN_STEP_RADIANS = SHARED_AVOID_TURN_STEP_RADIANS;
 
-/** Normalises an angle to (-π, π]. */
-export function normalizeAngle(radians: number): number {
-  const wrapped = radians % TWO_PI;
-  if (wrapped > Math.PI) return wrapped - TWO_PI;
-  if (wrapped <= -Math.PI) return wrapped + TWO_PI;
-  return wrapped;
+/** Normalises an angle to (-π, π]. Shared's, re-exported — see above. */
+export const normalizeAngle = sharedNormalizeAngle;
+
+/**
+ * The kind's traversal rule as the STEERING probe should read it: every axis
+ * of `MonsterProfile.traversal` except the gradient one.
+ *
+ * WHY THE GRADIENT AXIS IS DROPPED HERE, and it is a deliberate omission
+ * rather than an oversight. This plugin's movement constraint has always been
+ * `isLairPose` (habitat.ts) — a WHOLE-BODY rim test against the kind's own
+ * habitat regime, which is a stricter and differently-shaped rule than a
+ * per-cell slope limit. Letting the archetype's slope limit through as well
+ * would quietly add a movement rule monsters have never had (a yeti refusing
+ * a terrace riser inside his own snowfield), which is a gameplay decision
+ * nobody has made. The axis this composition is FOR is freshwater: the ground
+ * axes are vacuous or weaker than `isLairPose` for every shipped kind, so what
+ * this actually adds to the probe is "and do not walk into a lake you cannot
+ * swim" — precisely the rule that was missing.
+ */
+function steeringProfileOf(profile: MonsterProfile): TraversalProfile {
+  return { ...profile.traversal, maxGradientPerCell: UNCONSTRAINED_GRADIENT_PER_CELL };
 }
 
 /**
@@ -92,16 +121,14 @@ export function steerToValidHeading(
   lookahead: number,
   clearanceCells: number,
 ): number | null {
-  const regime = profileOf(monster.kind).habitat;
-  for (let attempt = 0; attempt < AVOID_TURN_ATTEMPTS; attempt++) {
-    // 0, +45°, -45°, +90°, -90°, … — smallest workable turn first.
-    const step = Math.ceil(attempt / 2) * AVOID_TURN_STEP_RADIANS;
-    const heading = desired + (attempt % 2 === 1 ? step : -step);
-    const probeX = monster.x + Math.cos(heading) * lookahead;
-    const probeY = monster.y + Math.sin(heading) * lookahead;
-    if (isLairPose(regime, world, probeX, probeY, clearanceCells)) return normalizeAngle(heading);
-  }
-  return null;
+  const profile = profileOf(monster.kind);
+  const regime = profile.habitat;
+  return steerAvoiding(world, steeringProfileOf(profile), monster, desired, lookahead, {
+    // The whole-body habitat test stays this plugin's own — see
+    // `steeringProfileOf` on why it is a `permits` hook rather than something
+    // shared could express.
+    permits: (x, y) => isLairPose(regime, world, x, y, clearanceCells),
+  });
 }
 
 /**
