@@ -14,11 +14,12 @@
 
 import {
   BoxGeometry,
-  ConeGeometry,
   CylinderGeometry,
+  ExtrudeGeometry,
   Group,
   Mesh,
   MeshStandardMaterial,
+  Shape,
   type BufferGeometry,
   type Material,
 } from 'three';
@@ -34,7 +35,34 @@ import {
  */
 const HULL_LENGTH = 0.9;
 const HULL_BEAM = 0.34;
-const HULL_DEPTH = 0.16;
+/**
+ * Hull depth. 0.2 rather than the 0.16 this started at: the first eyes-on pass
+ * (preview-boats.html) showed the boat reading as a flat plank with a card on
+ * it, and freeboard is most of what makes a hull look like a hull from the
+ * overhead-ish camera this game is played at.
+ */
+const HULL_DEPTH = 0.2;
+/**
+ * The hull's PLAN OUTLINE, in cells, as (fore-aft, athwart) pairs for the
+ * starboard half — the port half is mirrored, so the boat cannot end up
+ * asymmetric by a typo in one row.
+ *
+ * ONE EXTRUDED OUTLINE RATHER THAN A BOX PLUS A CONE, which is what this was
+ * for two eyes-on passes and what neither of them could rescue. A 4-segment
+ * cone laid on its side is a pyramid: from the front it read as a dark spike
+ * hanging under the boat, and from above the join between it and the box was a
+ * visible step. A hull's shape IS its plan outline — pointed forward, full
+ * amidships, square across the stern — so stating that outline once and giving
+ * it depth produces the silhouette directly instead of approximating it with
+ * two solids that meet badly.
+ */
+const HULL_OUTLINE: ReadonlyArray<readonly [number, number]> = [
+  [0.5, 0],
+  [0.34, 0.13],
+  [0.06, 0.17],
+  [-0.28, 0.16],
+  [-0.46, 0.12],
+];
 
 /** Mast height, from the deck. Two-thirds the hull's length — a working rig. */
 const MAST_HEIGHT = HULL_LENGTH * 0.66;
@@ -42,9 +70,22 @@ const MAST_RADIUS = 0.022;
 
 /** Sail dimensions. Wide enough to catch the eye from above, which is the
  * camera angle this game is actually played at. */
-const SAIL_WIDTH = HULL_BEAM * 1.5;
-const SAIL_HEIGHT = MAST_HEIGHT * 0.62;
+/**
+ * Sail dimensions.
+ *
+ * Cut down from 1.5 × beam and 0.62 × mast after the first eyes-on pass: at
+ * those numbers the sail was wider than the boat was long in silhouette and
+ * read as a billboard rather than as canvas. A square sail is roughly as wide
+ * as the hull's beam and about half the mast — that is what a working rig
+ * looks like, and it leaves the hull visible underneath it, which is the part
+ * that says "boat".
+ */
+const SAIL_WIDTH = HULL_BEAM * 1.15;
+const SAIL_HEIGHT = MAST_HEIGHT * 0.5;
 const SAIL_THICKNESS = 0.015;
+/** The yard: the spar a square sail hangs from. Without it the sail floats. */
+const YARD_RADIUS = 0.014;
+const YARD_OVERHANG = 0.03;
 
 /**
  * How far the whole boat rides above the sea surface — the waterline bite.
@@ -54,7 +95,7 @@ const SAIL_THICKNESS = 0.015;
  * (client/src/render/water.ts), so the submerged half really is visible and
  * getting this wrong reads immediately as a boat hovering.
  */
-export const BOAT_WATERLINE_LIFT = -HULL_DEPTH / 2;
+export const BOAT_WATERLINE_LIFT = -HULL_DEPTH * 0.55;
 
 const HULL_COLOR = 0x6b4a2f;
 const DECK_COLOR = 0x8a6a44;
@@ -73,7 +114,18 @@ const SAIL_COLOR = 0xe8e0cf;
  */
 const SAIL_FIGHTING_COLOR = 0xb03a2e;
 
-const OAR_LENGTH = HULL_BEAM * 1.35;
+/**
+ * Oar length, measured OUTBOARD FROM THE GUNWALE — so the boat's widest extent
+ * is HULL_BEAM/2 + OAR_LENGTH per side, and the whole rowed silhouette has to
+ * fit the one-cell budget HULL_LENGTH is chosen against, not just the hull.
+ *
+ * 0.9 × the beam puts that extent at 0.476 cells a side (0.95 across), just
+ * inside a cell. It was 1.35 × the beam until a test measured the assembled
+ * model at 1.26 cells across — real oars are longer than a beam, but a boat
+ * that occupies more sea than its cell makes every distance in the fight read
+ * wrong, and the fight's whole geometry is counted in cells.
+ */
+const OAR_LENGTH = HULL_BEAM * 0.9;
 const OAR_RADIUS = 0.012;
 const OAR_COLOR = 0x53381f;
 /** Oars per side. Two is enough to read as rowing without modelling a crew. */
@@ -89,6 +141,17 @@ const OARS_PER_SIDE = 2;
  */
 const OAR_SWEEP_RADIANS = 0.45;
 const OAR_STROKE_HZ = 0.55;
+/**
+ * How far the oars tilt DOWN toward the water, in radians.
+ *
+ * The first eyes-on pass had them dead level at deck height, where they read as
+ * loose spars floating beside the boat rather than as oars — nothing connected
+ * them to the sea. 0.38 rad drops the blade tips to about the waterline, which
+ * is the whole visual point of an oar. It is a fixed tilt and not part of the
+ * stroke: the swing stays a pure yaw (see OAR_SWEEP_RADIANS), so the animation
+ * still cannot lift a blade out of the water or drive it through the hull.
+ */
+const OAR_DIP_RADIANS = 0.38;
 /** Strokes quicken in a fight. A multiplier, so one constant sets the contrast. */
 const OAR_FIGHTING_RATE = 2.1;
 
@@ -134,15 +197,43 @@ export function createBoatModels(): BoatModels {
     return material;
   };
 
-  // A hull is a box for the body and a cone for the bow: cheap, and at this
-  // size the cone reads as a prow rather than as a cone.
-  const hullGeometry = track(new BoxGeometry(HULL_LENGTH * 0.78, HULL_DEPTH, HULL_BEAM));
-  const bowGeometry = track(new ConeGeometry(HULL_BEAM / 2, HULL_LENGTH * 0.34, 4));
-  const deckGeometry = track(
-    new BoxGeometry(HULL_LENGTH * 0.78, HULL_DEPTH * 0.18, HULL_BEAM * 0.92),
+  // The hull: HULL_OUTLINE swept to HULL_DEPTH. Built in the shape plane
+  // (x fore-aft, y athwart), extruded along +z, then stood upright so the
+  // extrusion becomes the hull's depth and the outline becomes its waterplane.
+  const hullShape = new Shape();
+  const starboard = HULL_OUTLINE.map(([along, across]) => [along * HULL_LENGTH, across * HULL_BEAM * 2] as const);
+  const port = [...starboard].reverse().slice(1).map(([along, across]) => [along, -across] as const);
+  const outline = [...starboard, ...port];
+  hullShape.moveTo(outline[0]![0], outline[0]![1]);
+  for (const [along, across] of outline.slice(1)) hullShape.lineTo(along, across);
+  hullShape.closePath();
+
+  const hullGeometry = track(
+    new ExtrudeGeometry(hullShape, { depth: HULL_DEPTH, bevelEnabled: false }),
   );
+  // Stand it up (+z extrusion becomes +y) and centre it on its own depth, so
+  // the model's origin is the waterplane and BOAT_WATERLINE_LIFT means what it
+  // says.
+  hullGeometry.rotateX(-Math.PI / 2);
+  hullGeometry.translate(0, HULL_DEPTH / 2, 0);
+
+  // The deck: the same outline, slightly inset and thin, laid on top so the
+  // boat has a lighter surface than its flanks and does not read as one solid.
+  const deckShape = new Shape();
+  const deckOutline = outline.map(([along, across]) => [along * 0.88, across * 0.82] as const);
+  deckShape.moveTo(deckOutline[0]![0], deckOutline[0]![1]);
+  for (const [along, across] of deckOutline.slice(1)) deckShape.lineTo(along, across);
+  deckShape.closePath();
+  const deckGeometry = track(
+    new ExtrudeGeometry(deckShape, { depth: HULL_DEPTH * 0.16, bevelEnabled: false }),
+  );
+  deckGeometry.rotateX(-Math.PI / 2);
+  deckGeometry.translate(0, HULL_DEPTH, 0);
   const mastGeometry = track(new CylinderGeometry(MAST_RADIUS, MAST_RADIUS, MAST_HEIGHT, 5));
   const sailGeometry = track(new BoxGeometry(SAIL_THICKNESS, SAIL_HEIGHT, SAIL_WIDTH));
+  const yardGeometry = track(
+    new CylinderGeometry(YARD_RADIUS, YARD_RADIUS, SAIL_WIDTH + YARD_OVERHANG * 2, 5),
+  );
   const oarGeometry = track(new CylinderGeometry(OAR_RADIUS, OAR_RADIUS, OAR_LENGTH, 4));
 
   const hullMaterial = trackMaterial(new MeshStandardMaterial({ color: HULL_COLOR, flatShading: true }));
@@ -163,24 +254,26 @@ export function createBoatModels(): BoatModels {
       const hull = new Mesh(hullGeometry, hullMaterial);
       root.add(hull);
 
-      const bow = new Mesh(bowGeometry, hullMaterial);
-      bow.position.x = HULL_LENGTH * 0.55;
-      // The cone points +Y by default; lay it along +X.
-      bow.rotation.z = -Math.PI / 2;
-      root.add(bow);
-
+      // Deck and hull are both baked at their final height by the geometry
+      // above, so neither needs positioning here.
       const deck = new Mesh(deckGeometry, deckMaterial);
-      deck.position.y = HULL_DEPTH * 0.5;
       root.add(deck);
 
       const mast = new Mesh(mastGeometry, mastMaterial);
-      mast.position.y = HULL_DEPTH * 0.5 + MAST_HEIGHT / 2;
+      mast.position.y = HULL_DEPTH + MAST_HEIGHT / 2;
       root.add(mast);
 
       const sailMaterial = makeSailMaterial();
       const sail = new Mesh(sailGeometry, sailMaterial);
-      sail.position.y = HULL_DEPTH * 0.5 + MAST_HEIGHT * 0.62;
+      const sailCentreY = HULL_DEPTH + MAST_HEIGHT * 0.62;
+      sail.position.y = sailCentreY;
       root.add(sail);
+
+      // The yard the sail hangs from, across the beam at the sail's head.
+      const yard = new Mesh(yardGeometry, mastMaterial);
+      yard.rotation.x = Math.PI / 2;
+      yard.position.y = sailCentreY + SAIL_HEIGHT / 2;
+      root.add(yard);
 
       // Oars, mounted along both gunwales. Each sits in its own pivot Group so
       // `animate` can yaw it about its mount rather than about the hull.
@@ -189,15 +282,19 @@ export function createBoatModels(): BoatModels {
         for (let index = 0; index < OARS_PER_SIDE; index++) {
           const pivot = new Group();
           pivot.position.set(
-            HULL_LENGTH * (0.1 - index * 0.28),
-            HULL_DEPTH * 0.4,
+            HULL_LENGTH * (0.14 - index * 0.32),
+            HULL_DEPTH * 0.9,
             (side * HULL_BEAM) / 2,
           );
           const oar = new Mesh(oarGeometry, oarMaterial);
-          // Lay the cylinder across the beam, reaching outboard.
+          // Lay the cylinder across the beam, reaching outboard, then dip the
+          // blade toward the water — a level oar reads as a loose spar.
           oar.rotation.x = Math.PI / 2;
           oar.position.z = (side * OAR_LENGTH) / 2;
-          pivot.add(oar);
+          const shaft = new Group();
+          shaft.rotation.x = side * OAR_DIP_RADIANS;
+          shaft.add(oar);
+          pivot.add(shaft);
           pivot.userData.side = side;
           oarPivots.push(pivot);
           root.add(pivot);
