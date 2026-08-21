@@ -5,7 +5,18 @@
 // step can be handed to the shared brush with a radius it throws on.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, SEA_LEVEL } from '@terrace/shared';
+import {
+  applySculpt,
+  BAND_HEIGHT,
+  createHeightmap,
+  forEachFootprintOffset,
+  MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
+  SEA_LEVEL,
+  type CellDiff,
+} from '@terrace/shared';
+import { PLUGIN_SCULPT_OPTIONS } from '../../../server/src/plugins/world-api.ts';
+import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   AZURE_HEART_COST_MULTIPLIER,
   NEUTRAL_MULTIPLIER,
@@ -29,6 +40,7 @@ import {
   QUAKE_STEPS,
   TERRAFORM_BY_SKILL,
   TERRAFORM_RING_OFFSET,
+  applyTerraform,
 } from '../server/terraform.ts';
 
 describe('mana perk composition', () => {
@@ -230,5 +242,90 @@ describe('terraform shapes', () => {
 
   it('is defined for exactly the active skills', () => {
     expect([...TERRAFORM_BY_SKILL.keys()].sort()).toEqual(['genesis', 'quake']);
+  });
+
+  it('stays inside a small footprint on real terrain, through the plugin sculpt path', () => {
+    // REGRESSION (2026-08-21, Frostwick Hollows): WorldApi.sculpt used to run
+    // the library default (smooth + FREE spill). After MAX_STEP was halved to
+    // BAND_HEIGHT, one Genesis cast's unbounded relaxation regraded every
+    // over-steep pre-existing slope in reach: 11,673 cells changed, max
+    // single-cell delta 1,772 — against 5–108 cells for a player stroke.
+    // Banded spill (what every PLAYER sculpt runs) caps outside-footprint
+    // movement to one terrace band, which is what this test pins.
+    //
+    // The world stub below runs the EXACT options the production path runs
+    // (PLUGIN_SCULPT_OPTIONS, imported, not restated) over real Heightmaps,
+    // on two fixtures: one reproducing the live failure mode (over-steep
+    // legacy terrain), one pinning the honest footprint on gradient-legal
+    // ground.
+    const size = 64;
+    const cx = size / 2;
+    const cy = size / 2;
+    const mkMap = (slope: number) => {
+      const map = createHeightmap(size);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const d = Math.max(Math.abs(x - cx), Math.abs(y - cy));
+          map.cells[y * size + x] = Math.max(0, 512 - d * slope);
+        }
+      }
+      return map;
+    };
+    const mkWorld = (map: ReturnType<typeof createHeightmap>) =>
+      // applyTerraform only reads worldSize and calls sculpt; cast the stub
+      // rather than stubbing all 17 WorldApi members the test never touches.
+      ({ worldSize: size, sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
+        return applySculpt(map, x, y, radius, amount, PLUGIN_SCULPT_OPTIONS);
+      } }) as unknown as WorldApi;
+
+    for (const [skill, steps] of TERRAFORM_BY_SKILL) {
+      // ── 1. OVER-STEEP TERRAIN — the live failure mode. A slope of 24 was
+      // legal under the old MAX_STEP of 32 and is baked into every
+      // pre-re-terrace world like Frostwick Hollows. Banded spill may slope
+      // such terrain, but may move any outside-footprint cell at most one
+      // terrace band, however far the cascade travels.
+      {
+        const map = mkMap(24); // slope 24 > today's MAX_STEP 16
+        const world = mkWorld(map);
+
+        // The exact union of the cast's brush footprints, so containment is
+        // asserted EXACTLY outside them.
+        const footprint = new Set<number>();
+        for (const step of steps) {
+          forEachFootprintOffset(step.radius, (dx, dy) => {
+            const x = cx + step.dx + dx;
+            const y = cy + step.dy + dy;
+            if (x >= 0 && y >= 0 && x < size && y < size) footprint.add(y * size + x);
+          });
+        }
+
+        const before = map.cells.slice();
+        applyTerraform(world, cx, cy, steps);
+
+        let maxOutsideDelta = 0;
+        for (let i = 0; i < map.cells.length; i++) {
+          if (footprint.has(i)) continue;
+          maxOutsideDelta = Math.max(maxOutsideDelta, Math.abs(map.cells[i] - before[i]));
+        }
+        // smooth() pins each outside cell's movable interval on first touch,
+        // so this holds regardless of cascade reach. Under the old free-spill
+        // path a single cell moved 1,772 units on the live world.
+        expect(maxOutsideDelta).toBeLessThanOrEqual(BAND_HEIGHT - 1);
+      }
+
+      // ── 2. GRADIENT-LEGAL TERRAIN — the honest footprint budget. With no
+      // legacy over-steepness to regrade, a cast's reach is bounded by its
+      // own deposit spreading at MAX_STEP: five radius-4 brushes (~180 cells)
+      // plus a modest skirt. 600 gives headroom for shape retuning; the old
+      // free-spill path blows past any such bound.
+      {
+        const map = mkMap(12); // slope 12 < MAX_STEP 16
+        const world = mkWorld(map);
+        expect(applyTerraform(world, cx, cy, steps)).toBeLessThanOrEqual(600);
+      }
+
+      // Both active skills must pass; name the key so the entry is used.
+      expect(['genesis', 'quake']).toContain(skill);
+    }
   });
 });

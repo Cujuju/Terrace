@@ -5,12 +5,30 @@
 // is indistinguishable from a player edit as far as sync and anti-cheat are
 // concerned — that is the point.
 
-import type { CellDiff, FreshwaterMap, RiverNetwork } from '@terrace/shared';
+import type {
+  CellDiff,
+  FreshwaterMap,
+  RiverNetwork,
+  SculptOptions,
+} from '@terrace/shared';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import { applyServerSculpt } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
 import type { WorldApi } from './types.ts';
+
+/**
+ * The sculpt options every plugin terraform runs, via WorldApi.sculpt.
+ *
+ * Exported so the relics footprint tests can run the EXACT options the
+ * production path runs, instead of restating them and drifting (the same
+ * one-place argument as sculptOptionsOf in shared/src/protocol.ts).
+ */
+export const PLUGIN_SCULPT_OPTIONS: SculptOptions = {
+  tool: 'smooth',
+  profile: 'soft',
+  spill: 'banded',
+};
 
 /** Separator between a plugin's name and its message type on the wire. */
 export const PLUGIN_MESSAGE_SEPARATOR = ':';
@@ -90,10 +108,19 @@ export function createWorldApi(
     },
     sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
       // Same service the intent pipeline uses: filtered broadcast included.
-      // No options argument ON PURPOSE — that is the shared library's
-      // compatibility default (smooth + soft), which is the behaviour every
-      // plugin terraform was tuned against. See WorldApi.sculpt in types.ts.
-      return applyServerSculpt(world, listener, x, y, radius, amount);
+      //
+      // Options are EXPLICIT, not the shared library default. The library
+      // default is smooth + soft with 'free' (unbounded) spill — and after
+      // the 2026-08-20 re-terrace halved MAX_STEP, an unbounded relaxation
+      // sweep regrades every now-over-steep pre-existing slope for dozens of
+      // cells around a cast: one Genesis cast measurably changed 11,673 cells
+      // with a max single-cell delta of 1,772 (a player stroke changes 5–108
+      // cells). Banded spill caps every outside-footprint cell to its
+      // pre-stroke terrace band (issue #26's fairness rule), which is the
+      // same containment every PLAYER sculpt already runs. The old "tuned
+      // against free spill" compatibility argument no longer holds — that
+      // tuning was invalidated by the re-terrace itself.
+      return applyServerSculpt(world, listener, x, y, radius, amount, PLUGIN_SCULPT_OPTIONS);
     },
     unlockChunk(cx: number, cy: number): boolean {
       return world.unlockChunk(cx, cy);
