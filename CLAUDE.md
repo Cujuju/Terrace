@@ -16,22 +16,10 @@ GitHub Issues on `Cujuju/Terrace`. Arcs are `arc/<slug>` labels, buckets are
 
 ## Committing (shared checkout, concurrent agents)
 
-**Commit your work the moment a unit of it is complete — do not leave it
-sitting in the working tree.** Several agents edit this checkout at once, and
-an uncommitted change is unprotected: another agent's `git add`, `git stash`
-or `git checkout` can sweep it into their commit or wipe it. Committed work
-cannot be silently lost.
+Commit work as soon as it is done. Agents share this checkout, and
+uncommitted changes get overwritten.
 
-- "Complete" means the smallest thing that stands on its own and passes
-  `pnpm typecheck` + the affected package's tests — not "the whole task".
-  Several small commits beat one big one held back for an hour.
-- Stage **only your exact paths**, never `-A` and never a pathspec-less
-  `git add`. Before staging a file, check it holds nothing you did not write
-  (`git diff <path>`); if a co-editor is mid-edit inside it, have them commit
-  first rather than sweeping their half-finished work in.
-- Push when you commit. A local-only commit still loses to a hard reset.
-- This does not license committing on the owner's behalf where they asked to
-  review first — say what you are about to commit if there is any doubt.
+Stage only your exact paths — never `-A`, never a bare `git add`.
 
 ## Hard rules from the design record
 
