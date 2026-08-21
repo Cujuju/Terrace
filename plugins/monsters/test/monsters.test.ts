@@ -1425,11 +1425,17 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
    * A full-size-per-seed sweep, twice over, is a real amount of work: two full
    * world generations and two full habitat surveys per seed.
    *
-   * RE-MEASURED AFTER THE 2026-08-21 RE-SAMPLE at ~15 s per test, from ~4 s: the
+     * RE-MEASURED AFTER THE 2026-08-21 RE-SAMPLE at ~76 s per test, from ~4 s: the
    * default world is 2048² cells rather than 512², and both halves of the sweep
-   * walk every one of them. Held at the same 5× margin.
+   * walk every one of them. Held at the same 5x margin.
+   *
+   * The first number recorded here was 15 s and it was WRONG — taken from a
+   * standalone script that called the same functions, not from the test, which
+   * pays for vitest's module graph and the Int16Array allocation per world on
+   * top. It set a budget the test then sat 1% under, so it passed alone and
+   * failed under full-suite load. Measure a timeout by timing the TEST.
    */
-  const GENESIS_SWEEP_TIMEOUT_MS = 75_000;
+  const GENESIS_SWEEP_TIMEOUT_MS = 450_000;
 
   /**
    * Does this heightmap contain a basin the kraken would take? Asked through
