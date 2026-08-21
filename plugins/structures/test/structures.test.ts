@@ -8,7 +8,7 @@
 // Mirrors flora/test/flora.test.ts's shape.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, SEA_LEVEL, bandOf } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
@@ -50,7 +50,7 @@ import {
   resetBlessings,
   setBlessedStructureCells,
 } from '../server/blessings.ts';
-import { isBuildableCell, isFlatEnough, type StructuresWorld } from '../server/suitability.ts';
+import { hasClearFootprint, isBuildableCell, isFlatEnough, type StructuresWorld } from '../server/suitability.ts';
 import { hasNearbyFarmland } from '../server/farmland.ts';
 import { isFarmlandCell } from '@terrace/shared';
 import {
@@ -137,6 +137,132 @@ describe('suitability (terrain as walls)', () => {
     expect(isBuildableCell(world, 79, 79)).toBe(true);
     expect(isBuildableCell(world, -1, 79)).toBe(false);
     expect(isBuildableCell(world, 160, 79)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FOOTPRINT-FIT (owner directive 2026-08-20): the model can touch, but never
+// cross, its own cell's true edge on every side including the diagonals (see
+// hasClearFootprint's own doc comment for the full derivation from
+// client/models.ts's STRUCTURE_FOOTPRINT_RADIUS). These tests build worlds
+// where the four ORTHOGONAL neighbours all pass isFlatEnough on their own —
+// proving the diagonal case is genuinely unreachable through the older,
+// orthogonal-only check — and differ only in ONE diagonal neighbour.
+
+describe('footprint fit (the model cannot overhang a terrace edge or the waterline)', () => {
+  const CENTER_BAND = 4;
+  const FOOTPRINT_WORLD_SIZE = 32; // a multiple of CHUNK_SIZE (16), as worldWithTerrain requires
+  const CX = 20;
+  const CY = 20;
+
+  /** Every Moore offset except the one under test, all on CENTER_BAND. */
+  function baseFootprintWorld(oddOneOut: { dx: number; dy: number; height: number }): StructuresWorld {
+    const w = worldWithTerrain(FOOTPRINT_WORLD_SIZE, (x, y) => {
+      if (x === CX + oddOneOut.dx && y === CY + oddOneOut.dy) return oddOneOut.height;
+      return CENTER_BAND * BAND_HEIGHT;
+    });
+    return {
+      worldSize: w.size,
+      chunksPerEdge: w.chunksPerEdge,
+      heightAt: (x, y) => w.heightAt(x, y),
+      isChunkUnlocked: (cx, cy) => w.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (x, y) => w.isCellUnlocked(x, y),
+    };
+  }
+
+  it('fits: a cell whose whole Moore neighbourhood (orthogonal AND diagonal) is dry and same-band is buildable', () => {
+    const world = worldWithTerrain(FOOTPRINT_WORLD_SIZE, () => CENTER_BAND * BAND_HEIGHT);
+    const view: StructuresWorld = {
+      worldSize: world.size,
+      chunksPerEdge: world.chunksPerEdge,
+      heightAt: (x, y) => world.heightAt(x, y),
+      isChunkUnlocked: (cx, cy) => world.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (x, y) => world.isCellUnlocked(x, y),
+    };
+    expect(isFlatEnough(view, CX, CY)).toBe(true);
+    expect(hasClearFootprint(view, CX, CY)).toBe(true);
+    expect(isBuildableCell(view, CX, CY)).toBe(true);
+  });
+
+  it('overhangs-cliff: rejected when only a DIAGONAL neighbour sits on a different terrace band, even though all four orthogonal neighbours match', () => {
+    const world = baseFootprintWorld({ dx: 1, dy: 1, height: (CENTER_BAND + 1) * BAND_HEIGHT });
+    // The older, orthogonal-only check would have let this stand — proving
+    // the diagonal gap isFlatEnough itself cannot close.
+    expect(isFlatEnough(world, CX, CY)).toBe(true);
+    expect(hasClearFootprint(world, CX, CY)).toBe(false);
+    expect(isBuildableCell(world, CX, CY)).toBe(false);
+  });
+
+  it('overhangs-water: rejected when a DIAGONAL neighbour is water at the SAME band as the (dry) centre — the reported shoreline defect', () => {
+    // Band 0 straddles the waterline: height 0 is water, heights 1..BAND_HEIGHT-1
+    // are dry, and both quantise to band 0. bandOf alone cannot tell them apart.
+    // Derived from BAND_HEIGHT, not hard-coded, so this stays correct however
+    // that constant is tuned.
+    const SHORE_BAND = 0;
+    const DRY_SHORE_HEIGHT = Math.floor(BAND_HEIGHT / 2); // dry, band 0
+    const world = worldWithTerrain(FOOTPRINT_WORLD_SIZE, (x, y) => {
+      if (x === CX + 1 && y === CY + 1) return SEA_LEVEL; // water, ALSO band 0
+      return DRY_SHORE_HEIGHT;
+    });
+    const view: StructuresWorld = {
+      worldSize: world.size,
+      chunksPerEdge: world.chunksPerEdge,
+      heightAt: (x, y) => world.heightAt(x, y),
+      isChunkUnlocked: (cx, cy) => world.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (x, y) => world.isCellUnlocked(x, y),
+    };
+    expect(bandOf(SEA_LEVEL)).toBe(SHORE_BAND);
+    expect(bandOf(DRY_SHORE_HEIGHT)).toBe(SHORE_BAND); // same band as the water neighbour — the trap
+    // Orthogonal neighbours are all dry, same band: isFlatEnough sees no problem.
+    expect(isFlatEnough(view, CX, CY)).toBe(true);
+    expect(hasClearFootprint(view, CX, CY)).toBe(false);
+    expect(isBuildableCell(view, CX, CY)).toBe(false);
+  });
+
+  it('tier-growth: a footprint that fits at birth is re-validated every generation for free, so no separate check is needed as a structure advances tiers', () => {
+    // Every tier shares STRUCTURE_FOOTPRINT_RADIUS (client/models.ts) — the
+    // ground a structure needs never changes as it upgrades, only its
+    // silhouette does (tiers.ts's maybeAdvanceTier touches tier alone). What
+    // DOES need proving is that the CA's own wall test (isBuildableCell)
+    // keeps applying hasClearFootprint on every generation regardless of
+    // tier: a structure that grows for a while on good ground, then loses
+    // its footprint fit to a neighbour's edit, dies instead of continuing to
+    // grow — with no tier-specific code path involved at all.
+    const good = worldWithTerrain(FOOTPRINT_WORLD_SIZE, () => CENTER_BAND * BAND_HEIGHT);
+    const goodView: StructuresWorld = {
+      worldSize: good.size,
+      chunksPerEdge: good.chunksPerEdge,
+      heightAt: (x, y) => good.heightAt(x, y),
+      isChunkUnlocked: (cx, cy) => good.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (x, y) => good.isCellUnlocked(x, y),
+    };
+    // A 2x2 block: a stable still life whose every cell keeps exactly 3 live
+    // Moore neighbours forever (tiers.ts), so it advances a tier every
+    // eligible generation — the fastest-growing shape available.
+    let board = boardOf([[CX, CY], [CX + 1, CY], [CX, CY + 1], [CX + 1, CY + 1]]);
+    for (let i = 0; i < CA_GENERATIONS_PER_TIER; i++) board = stepGeneration(goodView, board).nextLive;
+    const grown = board.get(structureKey(CX, CY));
+    expect(grown).toBeDefined();
+    expect(grown!.tier).toBeGreaterThan(0); // regression: ordinary growth on good ground is unaffected
+
+    // Now a diagonal neighbour becomes water — the block's own cell and its
+    // orthogonal neighbours never move, so isFlatEnough alone would still
+    // pass every one of them; only hasClearFootprint's Moore-8 check notices.
+    const spoiled = worldWithTerrain(FOOTPRINT_WORLD_SIZE, (x, y) => {
+      if (x === CX - 1 && y === CY - 1) return SEA_LEVEL;
+      return CENTER_BAND * BAND_HEIGHT;
+    });
+    const spoiledView: StructuresWorld = {
+      worldSize: spoiled.size,
+      chunksPerEdge: spoiled.chunksPerEdge,
+      heightAt: (x, y) => spoiled.heightAt(x, y),
+      isChunkUnlocked: (cx, cy) => spoiled.isChunkUnlocked(cx, cy),
+      isCellUnlocked: (x, y) => spoiled.isCellUnlocked(x, y),
+    };
+    expect(isFlatEnough(spoiledView, CX, CY)).toBe(true); // the orthogonal-only view still sees nothing wrong
+    const outcome = stepGeneration(spoiledView, board);
+    expect(outcome.nextLive.has(structureKey(CX, CY))).toBe(false); // dropped by the wall test, tier notwithstanding
+    expect(outcome.died).toContainEqual({ x: CX, y: CY });
   });
 });
 
@@ -626,23 +752,35 @@ describe('the CA through the real host', () => {
     expect(currentGeneration()).toBeGreaterThan(0);
   });
 
-  it('every standing structure is on buildable ground and a valid tier', () => {
-    const harness = boot();
-    advance(harness, 15 * 60);
-    const world: StructuresWorld = {
-      worldSize: harness.world.size,
-      chunksPerEdge: harness.world.chunksPerEdge,
-      heightAt: (x, y) => harness.world.heightAt(x, y),
-      isChunkUnlocked: (cx, cy) => harness.world.isChunkUnlocked(cx, cy),
-      isCellUnlocked: (x, y) => harness.world.isCellUnlocked(x, y),
-    };
-    expect(standingStructures().length).toBeGreaterThan(0);
-    for (const structure of standingStructures()) {
-      expect(isBuildableCell(world, structure.x, structure.y)).toBe(true);
-      expect(structure.tier).toBeGreaterThanOrEqual(0);
-      expect(structure.tier).toBeLessThanOrEqual(MAX_STRUCTURE_TIER);
-    }
-  });
+  it(
+    'every standing structure is on buildable ground and a valid tier',
+    () => {
+      const harness = boot();
+      advance(harness, 15 * 60);
+      const world: StructuresWorld = {
+        worldSize: harness.world.size,
+        chunksPerEdge: harness.world.chunksPerEdge,
+        heightAt: (x, y) => harness.world.heightAt(x, y),
+        isChunkUnlocked: (cx, cy) => harness.world.isChunkUnlocked(cx, cy),
+        isCellUnlocked: (x, y) => harness.world.isCellUnlocked(x, y),
+      };
+      expect(standingStructures().length).toBeGreaterThan(0);
+      for (const structure of standingStructures()) {
+        expect(isBuildableCell(world, structure.x, structure.y)).toBe(true);
+        expect(structure.tier).toBeGreaterThanOrEqual(0);
+        expect(structure.tier).toBeLessThanOrEqual(MAX_STRUCTURE_TIER);
+      }
+    },
+    // Explicit timeout, not the vitest default 5000ms. This test's own cost
+    // (900 simulated seconds — 60 generations, the longest advance() in this
+    // file — over a full 160x160 board's worth of scanChunk calls) already
+    // sat close to the default under load, and isBuildableCell's footprint
+    // check (suitability.ts's hasClearFootprint, added 2026-08-20) surveys
+    // eight neighbours instead of isFlatEnough's four for every candidate
+    // cell, every generation. Real synchronous CPU work, not a hung promise —
+    // widening the budget is correct here, not papering over a hang.
+    20_000,
+  );
 });
 
 describe('demolition', () => {
@@ -828,18 +966,37 @@ describe('persistence', () => {
     expect(restored.rngState).toBe(rng.state());
   });
 
-  it('a structure restored onto ground it can no longer stand on dies at the very next generation', () => {
+  it('a structure restored onto ground it can no longer stand on is pruned immediately on load, not merely at the next generation', () => {
     const first = boot();
     advance(first, 15 * 40);
     const slice = first.host.collectPersistence()[STRUCTURES_PLUGIN_NAME];
     expect(standingStructures().length).toBeGreaterThan(0);
 
-    // Restore onto an all-water world: nothing can survive a step.
+    // Restore onto an all-water world: onWorldCreate's footprint-fit prune
+    // (server/index.ts) filters every restored cell through isBuildableCell
+    // BEFORE it ever becomes live, so the board is empty the instant the
+    // world loads — nothing here can pass (isWater rejects every cell
+    // outright) — not merely after the next generation happens to step.
     const drowned = bootOn(worldWithTerrain(WORLD_SIZE, () => SEA_LEVEL - BAND_HEIGHT), slice);
-    expect(standingStructures().length).toBeGreaterThan(0); // restored, not yet stepped
+    expect(standingStructures()).toHaveLength(0); // pruned on load, before any generation ran
 
-    advance(drowned, 15 + DT); // one generation
+    advance(drowned, 15 + DT); // one generation — nothing left to step, stays empty
     expect(standingStructures()).toHaveLength(0);
+  });
+
+  it('a structure restored onto ground that still fits survives load untouched', () => {
+    const first = boot();
+    advance(first, 15 * 40);
+    const before = standingStructures();
+    expect(before.length).toBeGreaterThan(0);
+    const slice = first.host.collectPersistence()[STRUCTURES_PLUGIN_NAME];
+
+    // Restore onto the SAME terrain the structures were founded on: every
+    // one of them still fits, so the load-time prune (server/index.ts's
+    // onWorldCreate) must keep the board exactly as it was persisted, not
+    // merely "some structures".
+    bootOn(worldWithTerrain(WORLD_SIZE, flatOpenTerrain), slice);
+    expect(standingStructures().length).toBe(before.length);
   });
 });
 

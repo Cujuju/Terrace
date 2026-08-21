@@ -68,6 +68,7 @@ import {
 import { resetBlessings } from './blessings.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
+import { isBuildableCell } from './suitability.ts';
 
 /**
  * Simulated seconds between unsolicited full re-broadcasts.
@@ -334,10 +335,37 @@ export const plugin: TerracePlugin = {
   onWorldCreate(world: WorldApi): void {
     // Any snapshot has already been restored by the time this runs, so the
     // board here is either empty (fresh world) or the persisted one. Cells
-    // outside this world (a snapshot restored onto a smaller WORLD_SIZE) die
-    // at the very next generation — see life.ts's stepGeneration, which
-    // recomputes buildability for the whole board from scratch every time.
-    live = restoredLive;
+    // outside this world (a snapshot restored onto a smaller WORLD_SIZE) are
+    // now pruned immediately below (isBuildableCell already rejects an
+    // out-of-bounds cell), rather than surviving in `live` until the next
+    // generation's own rescan would have dropped them — a stricter, earlier
+    // cut of the SAME case the footprint prune below exists for.
+    //
+    // FOOTPRINT-FIT PRUNE, ON LOAD (owner directive 2026-08-20). A structure
+    // persisted from BEFORE suitability.ts's hasClearFootprint shipped may
+    // stand on ground that no longer passes isBuildableCell's now-stricter
+    // check — founded back when only the four orthogonal neighbours were
+    // surveyed, it can be straddling a diagonal terrace edge or a corner of
+    // water. PRUNE, not grandfather: the whole point of this rule is that a
+    // structure must never render hanging off its own ground, and
+    // grandfathering would leave exactly that defect standing, silently, for
+    // as long as the world lives — worst in the self-hosted worlds most
+    // likely to predate the fix, which is precisely who this change protects.
+    // Filtered HERE, before restoredLive ever becomes `live`, rather than
+    // left for the next CA generation's own full-board rescan to drop it
+    // (life.ts's header: every generation already recomputes buildability
+    // from scratch) — that path is correct but not instant: it would still
+    // broadcast the violator, unfiltered, to broadcastAll below and to any
+    // player joining before the next generation completes (up to
+    // CA_GENERATION_INTERVAL_SECONDS = 15s later), which is the exact
+    // user-visible defect this rule exists to close, not an acceptable
+    // residual. One pass over the restored board — at most STRUCTURES_CAP
+    // cells — costs nothing measurable at boot, run once, never again.
+    live = new Map();
+    for (const [key, record] of restoredLive) {
+      const cell = cellOfKey(key);
+      if (isBuildableCell(world, cell.x, cell.y)) live.set(key, record);
+    }
     generation = restoredGeneration;
     restoredLive = new Map();
     restoredGeneration = 0;
