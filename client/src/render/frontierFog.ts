@@ -65,7 +65,7 @@ import {
   type Object3D,
 } from 'three';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { CELL_HEIGHT_UNITS, CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import {
   frontierEdgeKey,
   frontierEdges,
@@ -80,13 +80,22 @@ import { WATER_COLOR } from './water.ts';
 // ---------------------------------------------------------------------------
 
 /**
- * How far the bank rises above the local ground, in height units. A band and a
+ * How far the bank rises above the local ground, in height units. A cell and a
  * quarter: tall enough that the flat cap ending at the boundary is veiled with
  * margin even where the ground sample under a column sits a little below the
  * cap's own band floor, low enough to read as a bank of mist lying on the
  * ground rather than a wall standing on it.
+ *
+ * A CELL AND A QUARTER, NOT A BAND AND A QUARTER (2026-08-20). Both readings
+ * named the same 80 height units while a band WAS a cell, and the sentence
+ * above is the tell for which one is the real constraint: "reads as mist lying
+ * on the ground rather than a wall" is a statement about the world, not about
+ * the render quantum. Left band-relative, the re-terrace would have thinned
+ * the mist to a quarter of the height it was tuned at. The veiling margin the
+ * first clause asks for is a band-scale quantity and so it only got easier to
+ * clear, never harder.
  */
-const FOG_BANK_RISE = BAND_HEIGHT * 1.25;
+const FOG_BANK_RISE = CELL_HEIGHT_UNITS * 1.25;
 
 /**
  * Fraction of FOG_BANK_RISE the bank stays fully opaque above the ground
@@ -105,8 +114,12 @@ const FOG_BANK_KNEE = 0.45;
  * screenshot pass). Half a band below the surface buries the bottom hem so
  * no camera angle can peek under the bank, while everything deeper stays the
  * water plane's own business.
+ *
+ * Half a CELL since 2026-08-20, for the same reason FOG_BANK_RISE is measured
+ * in cells: "no camera angle can peek under the bank" is a world-space fact
+ * about the hem, and the two ends of one profile must not rescale differently.
  */
-const FOG_BASE_DROP = BAND_HEIGHT / 2;
+const FOG_BASE_DROP = CELL_HEIGHT_UNITS / 2;
 
 /**
  * Peak alpha (the base and knee rows), before the breathing modulation below
