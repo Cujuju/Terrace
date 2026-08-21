@@ -321,8 +321,19 @@ function buildBasin(mirror: TerrainMirror): void {
  */
 function buildStairPools(mirror: TerrainMirror): void {
   const map = mirror.map;
-  /** Cells of ordinary channel between one basin and the next. */
-  const CELLS_BETWEEN_POOLS = 5;
+  /**
+   * Cells of ordinary channel between one basin and the next, overridable with
+   * `?gap=<cells>`.
+   *
+   * At 1 the basins are close enough that a pool's spillway is already under
+   * the water of the pool below it, so the course steps POOLED → POOLED with
+   * no flowing cell in between — a different join from the one the default
+   * spacing tests, and the one the owner's stacked-pool screenshot is of.
+   */
+  const CELLS_BETWEEN_POOLS = (() => {
+    const raw = Number(new URLSearchParams(window.location.search).get('gap'));
+    return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 5;
+  })();
   /** Half-width of a basin, in cells — 2 gives a 5-cell-wide bowl, wide
    *  enough that its outline is a shape rather than a dot. */
   const POOL_HALF_WIDTH_CELLS = 2;

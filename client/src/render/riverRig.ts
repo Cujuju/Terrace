@@ -667,15 +667,30 @@ const FALL_TAPER_MIN_SCALE = 1;
  * ending at it, and from the side it reads as water sliding down the face
  * rather than a pane of glass bolted to it.
  *
- * A THIRD OF A CELL, and centred on the lip so half the run is spent above the
- * riser and half below. Wide enough to read as continuous at orbit distance —
- * a riser is a quarter of a cell of ground, so the chute covers it with room
- * to spare — and short enough that the water still visibly DROPS at the step
- * rather than ramping gently down a slope that is not there. Where the sheet
- * passes inside the terrain it is simply hidden: depth testing is on, and the
- * ground is opaque and drawn first.
+ * A QUARTER OF A CELL, and it begins where the crest ends (FALL_CREST_CELLS),
+ * not at the lip. By then the lower tread is wide enough to take the full
+ * width of the strip, so the only job left is to get down to it over a run
+ * short enough that the water still visibly DROPS rather than ramping down a
+ * slope that is not there. Where the sheet passes inside the terrain it is
+ * simply hidden: depth testing is on, and the ground is opaque and drawn
+ * first.
  */
-const FALL_CHUTE_CELLS = 1 / 3;
+const FALL_CHUTE_CELLS = 0.25;
+
+/**
+ * How far past the lip, in CELLS, the water stays up at the UPPER terrace
+ * before it starts to descend — the crest of the fall.
+ *
+ * MEASURED, not chosen. The terrain's band outline lags at the banks of a
+ * channel: sampling the drawn mesh across the `stairpools` fixture's channel
+ * at a fall, the lower tread is 0.2 of a cell wide a quarter cell past the
+ * crossing and does not reach full width until roughly two thirds of a cell
+ * past it. Three quarters of a cell clears that with a little margin. Held any
+ * shorter and the strip drops into the lag and is buried at the banks — the
+ * defect this exists to fix; held much longer and the water visibly overshoots
+ * the lip before falling.
+ */
+const FALL_CREST_CELLS = 0.75;
 
 /**
  * Extrudes one smoothed centre-line into a ribbon, appending its triangles
@@ -770,9 +785,49 @@ function buildRibbon(
     tangentZ[i] = tz;
   }
 
+  // Distance along the centre-line at each sample, and the ability to place a
+  // cross-section at an arbitrary distance along it. A fall is no longer
+  // confined to the quarter-cell between two samples — its crest and chute
+  // routinely run past the next sample — so both ends of it are expressed as
+  // distances and resolved against the polyline itself.
+  const distanceAt = new Float64Array(centre.length);
+  for (let i = 1; i < centre.length; i++) {
+    const [px, pz] = centre[i - 1]!;
+    const [x, z] = centre[i]!;
+    distanceAt[i] = distanceAt[i - 1]! + Math.hypot(x - px, z - pz);
+  }
+  /** The point and tangent `distance` world units along the centre-line. */
+  const alongCentre = (
+    distance: number,
+  ): { x: number; z: number; tx: number; tz: number } => {
+    const last = centre.length - 1;
+    let i = 0;
+    while (i < last - 1 && distanceAt[i + 1]! < distance) i++;
+    const span = distanceAt[i + 1]! - distanceAt[i]!;
+    const f = span === 0 ? 0 : (distance - distanceAt[i]!) / span;
+    const [ax, az] = centre[i]!;
+    const [bx, bz] = centre[i + 1]!;
+    return {
+      x: ax + (bx - ax) * f,
+      z: az + (bz - az) * f,
+      tx: tangentX[i]!,
+      tz: tangentZ[i]!,
+    };
+  };
+
   const sections: Section[] = [];
   /** World distance since the last lip, for the taper. Starts wide open. */
   let sinceLip = Number.POSITIVE_INFINITY;
+  /**
+   * How far along the centre-line the last section was emitted.
+   *
+   * THE STRIP MUST ONLY EVER GO FORWARD: every section is stitched to the one
+   * before it, so a section placed behind its predecessor folds the quad
+   * between them into a bowtie. A fall's crest and chute can run past several
+   * samples, and those samples are then skipped — the fall has already drawn
+   * that stretch of river.
+   */
+  let emittedDistance = -Infinity;
 
   for (let i = 0; i < centre.length; i++) {
     const [cx, cz, t] = centre[i]!;
@@ -781,7 +836,10 @@ function buildRibbon(
       sinceLip += Math.hypot(cx - px, cz - pz);
     }
     const band = bandAt(t);
-    sections.push(sectionAt(cx, cz, tangentX[i]!, tangentZ[i]!, band, widthAfterFall(sinceLip)));
+    if (distanceAt[i]! >= emittedDistance) {
+      sections.push(sectionAt(cx, cz, tangentX[i]!, tangentZ[i]!, band, widthAfterFall(sinceLip)));
+      emittedDistance = distanceAt[i]!;
+    }
 
     const nextSample = centre[i + 1];
     if (nextSample === undefined) continue;
@@ -797,6 +855,21 @@ function buildRibbon(
     // Walk the band changes across this segment, one curtain each.
     let cursorAt = 0;
     let cursorBand = band;
+    /**
+     * How far along this segment the last section was emitted.
+     *
+     * THE STRIP MUST ONLY EVER GO FORWARD. Every section is stitched to the
+     * one before it, so a section placed UPSTREAM of its predecessor folds the
+     * quad between them into a bowtie — which renders as the pair of triangles
+     * the owner reported (2026-08-21: the water "is shaped like a triangle,
+     * and instead it should look like water flowing, falling down the face,
+     * and flowing"). It happens where several band boundaries fall inside one
+     * segment: each fall's lip is read off the terrain's own contour
+     * (`locateLip`), those contours are separate loops, and nothing about them
+     * guarantees the intersection nearest one band's estimate lies downstream
+     * of the last one. Clamping here is what guarantees it.
+     */
+    let emittedAt = 0;
     for (let fall = 0; fall < MAX_FALLS_PER_SEGMENT && cursorBand !== bandAt(nextT); fall++) {
       // Bisect for the first point past the cursor whose band differs.
       let lo = cursorAt;
@@ -811,41 +884,57 @@ function buildRibbon(
       // bands — the one whose cap ends at this face.
       const faceThreshold = Math.max(cursorBand, landedBand) * BAND_HEIGHT;
       const drawnAt = locateLip(cx, cz, nx, nz, faceThreshold, hi);
-      const lipAt = Math.min((drawnAt ?? hi) + clearance, 1);
-      const lipX = cx + spanX * lipAt;
-      const lipZ = cz + spanZ * lipAt;
+      const lipAt = Math.min(Math.max((drawnAt ?? hi) + clearance, emittedAt), 1);
       // The lip keeps the width it arrived with; everything past it restarts
       // the taper, which is what necks the water through the pinch below.
       const arrivingWidth = widthAfterFall(sinceLip + spanLength * lipAt);
-      // The chute: the lip half a run short of the crossing, the foot half a
-      // run past it, so the sheet slopes across the riser rather than hanging
-      // vertically in front of it. Both ends are clamped inside the segment —
-      // a chute longer than the gap between two samples would otherwise walk
-      // past the next sample and fold the strip back on itself.
-      const chute = (FALL_CHUTE_CELLS * CELL_WORLD_SIZE) / 2;
-      const chuteFraction = spanLength === 0 ? 0 : Math.min(chute / spanLength, lipAt, 1 - lipAt);
-      const topAt = lipAt - chuteFraction;
-      const footAt = lipAt + chuteFraction;
-      sections.push(
-        sectionAt(
-          cx + spanX * topAt,
-          cz + spanZ * topAt,
-          tangentX[i]!,
-          tangentZ[i]!,
-          cursorBand,
-          arrivingWidth,
-        ),
-      );
-      sections.push(
-        sectionAt(
-          cx + spanX * footAt,
-          cz + spanZ * footAt,
-          tangentX[i]!,
-          tangentZ[i]!,
-          landedBand,
-          widthAfterFall(0),
-        ),
-      );
+
+      // EACH EDGE OF THE RIBBON CROSSES THE FACE WHERE THE TERRAIN'S OWN
+      // OUTLINE CROSSES IT (2026-08-21, owner: the water at a step "should
+      // look like water flowing, falling down the face, and flowing", not a
+      // triangle). A terrace face does not cut a channel square-on: the band
+      // outline lags at the banks and cuts in along the middle, so a step
+      // drawn straight across the ribbon steps down early at the edges, and
+      // the upper terrace's cap — opaque, and drawn higher — covers the water
+      // that has already dropped. What survives is a wedge, which is the
+      // arrowhead in the shot. Asking `locateLip` for the crossing on the
+      // ribbon's LEFT and RIGHT edges as well as its centre makes the water's
+      // step the same line as the terrain's, so nothing is left buried.
+      // THE SHEET HOLDS THE UPPER TERRACE ACROSS THE WHOLE LIP, THEN POURS
+      // (2026-08-21, owner: the water at a step "should look like water
+      // flowing, falling down the face, and flowing", not a triangle).
+      //
+      // A terrace face does not cut a channel square-on. Measured in the
+      // `stairpools` fixture, a quarter cell past a crossing the LOWER tread
+      // is only 0.2 of a cell wide — the band outline lags at the banks and
+      // cuts in along the middle — and it does not reach full width until
+      // about two thirds of a cell downstream. Water dropped anywhere inside
+      // that window sits under the upper cap, which is opaque and drawn
+      // higher, so all that survives is a wedge down the middle: the arrowhead
+      // in the owner's shot, and what the old FALL_TAPER was narrowing the
+      // water to avoid rather than fixing.
+      //
+      // So the strip holds the upper band from the lip across FALL_CREST_CELLS
+      // — the crest of the fall, lying on the upper tread at the banks and
+      // over the drop in the middle — and only then descends, over
+      // FALL_CHUTE_CELLS, by which point the lower tread is wide enough to
+      // take it. Both run along the CENTRE-LINE by distance, not within one
+      // segment: at a quarter-cell sample spacing this fall covers several
+      // samples, and those are skipped rather than drawn behind it.
+      const lipDistance = distanceAt[i]! + spanLength * lipAt;
+      const crestDistance = lipDistance + FALL_CREST_CELLS * CELL_WORLD_SIZE;
+      const footDistance = crestDistance + FALL_CHUTE_CELLS * CELL_WORLD_SIZE;
+      const totalDistance = distanceAt[centre.length - 1]!;
+      const pushAt = (distance: number, atBand: number, width: number): void => {
+        const capped = Math.min(distance, totalDistance);
+        if (capped < emittedDistance) return;
+        const point = alongCentre(capped);
+        sections.push(sectionAt(point.x, point.z, point.tx, point.tz, atBand, width));
+        emittedDistance = capped;
+      };
+      pushAt(lipDistance, cursorBand, arrivingWidth);
+      pushAt(crestDistance, cursorBand, widthAfterFall(0));
+      pushAt(footDistance, landedBand, widthAfterFall(0));
       sinceLip = -spanLength * (1 - lipAt);
       cursorAt = hi;
       cursorBand = landedBand;
@@ -1514,13 +1603,26 @@ export function createRiverRig(
           const worldX = point.x * CELL_WORLD_SIZE;
           const worldZ = point.y * CELL_WORLD_SIZE;
           if (point.pooled) {
+            const surface = point.poolHeight ?? 0;
             // FLOWING INTO A LAKE. The run is carried one sample onto the lake
             // surface before it is flushed: the water arrives at the lip a
             // band (or several) above the pool, and this is what makes that
             // drop a fall the ribbon builder can see.
             if (run.length > 0) {
               run.push([worldX, worldZ, run.length]);
-              runHeights.push(point.poolHeight ?? 0);
+              runHeights.push(surface);
+            } else if (leftPool !== null && (leftPool.poolHeight ?? 0) !== surface) {
+              // ONE LAKE STEPPING STRAIGHT INTO THE NEXT, with no flowing cell
+              // between them — a brimming pool whose spillway is already under
+              // the water below it. 16 of these in the owner's world when this
+              // was measured, and every one of them left the terrace face
+              // between two stacked pools bare, which is what the report of
+              // "gaps between some pools" was pointing at. Two samples, one on
+              // each lake, is all the ribbon builder needs to put a chute down
+              // the face between them.
+              startOnLake(leftPool.x, leftPool.y, leftPool.poolHeight ?? 0);
+              run.push([worldX, worldZ, run.length]);
+              runHeights.push(surface);
             }
             flushRun();
             leftPool = point;
