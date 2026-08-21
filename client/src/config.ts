@@ -326,45 +326,57 @@ export const TRACKPAD_ORBIT_POLAR_RADIANS_PER_PIXEL =
  */
 export const SAFARI_GESTURE_ROTATE_SENSITIVITY = 1;
 
-/** Camera framing, in cells. */
+/** Camera framing. Every distance below is in WORLD UNITS — see CELL_WORLD_SIZE. */
 export const CAMERA_FOV_DEGREES = 55;
 export const CAMERA_NEAR = 0.1;
-/** Far plane must clear the diagonal of the largest supported world (512²). */
+/**
+ * Far plane must clear the diagonal of the largest supported world — 512 WORLD
+ * UNITS on a side, which the 2026-08-21 re-sample left exactly where it was
+ * (DEFAULT_WORLD_SPAN); only the cell count under it moved.
+ */
 export const CAMERA_FAR = 4000;
 /**
- * Initial orbit distance and the zoom bounds, in cells. The maximum lets a
- * 512² world fit on screen; the minimum is derived just below.
+ * Initial orbit distance and the zoom bounds, in world units. The maximum lets
+ * a full 512-unit world fit on screen; the minimum is derived just below.
  */
 export const CAMERA_INITIAL_DISTANCE = 80;
 
 /**
- * How much of the world the closest zoom frames, measured in cell-edges of
- * frame HEIGHT. This is the design decision the minimum orbit distance
- * encodes: at the closest zoom a player is inspecting a handful of individual
- * cells — a single structure's footprint, one terrace step, the lip of a
- * river bank — not a region. Ten cells is where the owner set it (2026-08-21,
- * trying values; four was the first attempt).
+ * How much of the world the closest zoom frames, as frame HEIGHT in world
+ * units. This is the design decision the minimum orbit distance encodes: at
+ * the closest zoom a player is inspecting a handful of individual features —
+ * a single structure's footprint, one terrace step, the lip of a river bank —
+ * not a region. TEN is where the owner set it (2026-08-21, trying values;
+ * four was the first attempt).
+ *
+ * IN WORLD UNITS, NOT CELLS, and the value is the owner's unchanged. The
+ * framing was tuned the same day on a grid where a cell WAS a world unit, so
+ * the two readings named the same camera and the choice between them was
+ * invisible. It stopped being invisible at the re-sample: the derivation below
+ * solves for a distance in whatever units the frame height is stated in, and
+ * the camera lives in world space, so the number that was tuned was always a
+ * world-unit frame height. Read literally as ten CELLS it would frame two and
+ * a half terrace treads — four times closer than what was tuned.
  *
  * Raise it to pull the closest zoom back out, lower it to get closer still.
  */
-export const CAMERA_CLOSEST_VIEW_CELLS = 10;
+export const CAMERA_CLOSEST_VIEW_WORLD_UNITS = 10;
 
 /**
- * Closest orbit distance, in cells. DERIVED from the framing decision above
+ * Closest orbit distance, in world units. DERIVED from the framing decision above
  * and the lens, never written by hand: a perspective camera of vertical field
  * CAMERA_FOV_DEGREES sees `2 * d * tan(fov / 2)` of world height at distance
- * d, so the distance that frames exactly CAMERA_CLOSEST_VIEW_CELLS cells is
+ * d, so the distance that frames exactly CAMERA_CLOSEST_VIEW_WORLD_UNITS is
  * that solved for d. Change the FOV and the closest zoom keeps framing the
  * same amount of world.
  *
- * WAS 20 CELLS, loosened 2026-08-21 on owner request ("zoom in further").
- * That value was one hand-written number justified as clearing a
- * maximum-height mountain (MAX_RELIEF_WORLD_CELLS = 16 world units) — but
- * that clearance only ever held looking straight down: orbit distance is
- * measured to the target on the ground, so at the steepest allowed orbit
- * (CAMERA_MAX_POLAR_ANGLE_DEGREES = 85°) even the old 20 put the camera
- * 20·cos 85° ≈ 1.7 cells above its target, well under a 16-cell peak. The
- * guarantee was already not there to lose.
+ * WAS 20, loosened 2026-08-21 on owner request ("zoom in further"). That value
+ * was one hand-written number justified as clearing a maximum-height mountain
+ * (MAX_RELIEF_WORLD_UNITS = 16) — but that clearance only ever held looking
+ * straight down: orbit distance is measured to the target on the ground, so at
+ * the steepest allowed orbit (CAMERA_MAX_POLAR_ANGLE_DEGREES = 85°) even the
+ * old 20 put the camera 20·cos 85° ≈ 1.7 world units above its target, well
+ * under a 16-unit peak. The guarantee was already not there to lose.
  *
  * RESIDUAL FAILURE MODE, unchanged in kind but easier to reach: with no
  * terrain-aware clamp on the camera anywhere in the client, orbiting to a
@@ -375,7 +387,7 @@ export const CAMERA_CLOSEST_VIEW_CELLS = 10;
  * exist yet.
  */
 export const CAMERA_MIN_DISTANCE =
-  CAMERA_CLOSEST_VIEW_CELLS /
+  CAMERA_CLOSEST_VIEW_WORLD_UNITS /
   (2 * Math.tan((CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
 export const CAMERA_MAX_DISTANCE = 900;
 /**
