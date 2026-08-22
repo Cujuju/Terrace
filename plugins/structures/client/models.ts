@@ -104,6 +104,7 @@ import {
   type StructureTier,
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
+import { mergeSurfaceParts, type StructurePart } from './partMerge.ts';
 import type { SiteKind } from './site.ts';
 
 // ── Shared build helpers ─────────────────────────────────────────────────────
@@ -674,13 +675,11 @@ function unitBoxGeometry(): BoxGeometry {
 }
 
 // ── One building tier: a fixed list of (geometry, material, local transforms) ─
-
-interface StructurePart {
-  readonly geometry: BufferGeometry;
-  readonly material: Material;
-  /** One matrix per instance this part contributes, per building of this tier. */
-  readonly localMatrices: Matrix4[];
-}
+//
+// StructurePart, and the merge that turns a tier's authored part list into the
+// far shorter list actually drawn, both live in ./partMerge.ts — see that
+// file's banner for the draw-call argument and for why it has to stay free of
+// the `document` this one needs for Durand's sign texture.
 
 function buildTierParts(): StructurePart[][] {
   const tiers: StructurePart[][] = [];
@@ -3053,7 +3052,11 @@ export interface StructureModels {
 }
 
 export function createStructureModels(): StructureModels {
-  const tierParts = buildTierParts();
+  // Authored part lists in, DRAWABLE part lists out: mergeSurfaceParts folds
+  // each tier's plain surfaces into one geometry (see its banner). Everything
+  // below this line — capacity, instancing, tinting, dispose — works on the
+  // merged lists and neither knows nor cares that a merge happened.
+  const tierParts = buildTierParts().map(mergeSurfaceParts);
   if (tierParts.length !== STRUCTURE_TIER_COUNT) {
     // Defensive: a mismatch here means a tier was added to the wire contract
     // (protocol.ts) without a matching model, which would silently drop that
@@ -3092,7 +3095,12 @@ export function createStructureModels(): StructureModels {
   // only bound this client can rely on without risking `count` outrunning
   // `mesh.instanceMatrix` in some adversarial-but-legal cell layout.
   const durands = buildDurandsParts();
-  const durandsMeshes: InstancedMesh[] = durands.parts.map((part) => {
+  // Merged like a tier's (see mergeSurfaceParts). The landmark's neon — sign,
+  // marquee bulbs, dancer — all fails canShareOneSurface on its emissive or
+  // its transparency, so animate() keeps hold of exactly the materials it
+  // always did; what merges is the building the neon is bolted to.
+  const durandsParts = mergeSurfaceParts(durands.parts);
+  const durandsMeshes: InstancedMesh[] = durandsParts.map((part) => {
     geometries.push(part.geometry);
     materials.push(part.material);
     const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
@@ -3108,9 +3116,17 @@ export function createStructureModels(): StructureModels {
   // tier of its own. Capacity is STRUCTURES_CAP again for the identical
   // reason Durand's comment above gives — the server's own cap is the only
   // per-world bound this client can rely on.
-  const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[]>> = {};
+  // Merged per variant, same as the tiers above. This local record — not
+  // SITE_TOP_TIER_VARIANTS itself — is what apply() reads below, so the
+  // module-level table stays the AUTHORED one and every reader here sees the
+  // drawable one. Same keys either way, so the site gate is unchanged.
+  const siteVariantParts: Partial<Record<SiteKind, StructurePart[]>> = {};
   for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-    siteVariantMeshes[siteKind] = SITE_TOP_TIER_VARIANTS[siteKind]!.map((part) => {
+    siteVariantParts[siteKind] = mergeSurfaceParts(SITE_TOP_TIER_VARIANTS[siteKind]!);
+  }
+  const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[]>> = {};
+  for (const siteKind of Object.keys(siteVariantParts) as SiteKind[]) {
+    siteVariantMeshes[siteKind] = siteVariantParts[siteKind]!.map((part) => {
       geometries.push(part.geometry);
       materials.push(part.material);
       const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
@@ -3201,8 +3217,8 @@ export function createStructureModels(): StructureModels {
       const counts = meshesByTier.map((parts) => parts.map(() => 0));
       const durandsCounts = durandsMeshes.map(() => 0);
       const siteVariantCounts: Partial<Record<SiteKind, number[]>> = {};
-      for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-        siteVariantCounts[siteKind] = SITE_TOP_TIER_VARIANTS[siteKind]!.map(() => 0);
+      for (const siteKind of Object.keys(siteVariantParts) as SiteKind[]) {
+        siteVariantCounts[siteKind] = siteVariantParts[siteKind]!.map(() => 0);
       }
 
       for (const placement of placements) {
@@ -3217,10 +3233,10 @@ export function createStructureModels(): StructureModels {
         // categorical fact about this settlement's ground, not a rarity, so
         // it wins over Durand's roll below rather than competing with it —
         // see buildHarborParts's own comment for why.
-        const siteVariantParts = SITE_TOP_TIER_VARIANTS[placement.site];
-        if (placement.tier === MAX_STRUCTURE_TIER && siteVariantParts !== undefined) {
+        const variantParts = siteVariantParts[placement.site];
+        if (placement.tier === MAX_STRUCTURE_TIER && variantParts !== undefined) {
           writeInstances(
-            siteVariantParts,
+            variantParts,
             siteVariantMeshes[placement.site]!,
             siteVariantCounts[placement.site]!,
             raceTints[placement.race],
@@ -3231,7 +3247,7 @@ export function createStructureModels(): StructureModels {
         // isDurandsCell's own contract gates this to MAX_STRUCTURE_TIER (see
         // ./durands.ts) — nothing below the top tier can ever come back true.
         if (isDurandsCell(placement.tier, placement.x, placement.z)) {
-          writeInstances(durands.parts, durandsMeshes, durandsCounts, null);
+          writeInstances(durandsParts, durandsMeshes, durandsCounts, null);
           continue;
         }
 
@@ -3243,7 +3259,7 @@ export function createStructureModels(): StructureModels {
 
       for (let tier = 0; tier < meshesByTier.length; tier++) finalizeMeshes(meshesByTier[tier], counts[tier]);
       finalizeMeshes(durandsMeshes, durandsCounts);
-      for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
+      for (const siteKind of Object.keys(siteVariantMeshes) as SiteKind[]) {
         finalizeMeshes(siteVariantMeshes[siteKind]!, siteVariantCounts[siteKind]!);
       }
     },
