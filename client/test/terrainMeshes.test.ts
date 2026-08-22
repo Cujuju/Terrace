@@ -75,10 +75,17 @@ function setup(chunks: ChunkPayload[]) {
 }
 
 describe('createTerrainMeshes', () => {
-  it('creates one mesh per received chunk and none for locked chunks', () => {
+  it('merges received chunks into one drawn mesh, and builds none for locked chunks', () => {
+    // COUNTED IN CHUNKS, NOT MESHES (2026-08-21). The mesh count stopped
+    // answering "which chunks were built" when chunks stopped being the draw
+    // quantum; both of these chunks are inside one SUPER_MESH_SPAN_CHUNKS
+    // block, so the renderer submits them together. That merge IS the
+    // behaviour under test here — one draw call carrying two chunks.
     const { group, meshes } = setup([chunkPayload(0, 0, 100), chunkPayload(1, 0, 100)]);
-    expect(group.children).toHaveLength(2);
-    expect(meshes.pickables()).toHaveLength(2);
+    expect(meshes.builtChunkCount()).toBe(2);
+    expect(meshes.drawCallCount()).toBe(1);
+    expect(group.children).toHaveLength(1);
+    expect(meshes.pickables()).toHaveLength(1);
   });
 
   it('ignores dirty indices for chunks that were never received', () => {
@@ -152,12 +159,51 @@ describe('createTerrainMeshes', () => {
     }
   });
 
-  it('gives each chunk its OWN normals, since skirt normals differ per chunk', () => {
-    const { meshes } = setup([chunkPayload(0, 0, 0), chunkPayload(1, 1, 300)]);
-    const [first, second] = meshes.pickables();
-    expect(first.geometry.getAttribute('normal')).not.toBe(
-      second.geometry.getAttribute('normal'),
-    );
+  it('patches one chunk without disturbing the others packed beside it', () => {
+    // THE FAILURE MODE THE MERGE INTRODUCES, and the reason this replaced a
+    // test that compared two chunks' normal attributes for identity. Chunks no
+    // longer own an attribute each: they own a RUN inside a shared one, packed
+    // end to end. A rebuild whose vertex count changed has to shift every run
+    // after it, and a splice that got that wrong would corrupt its neighbours
+    // rather than fail loudly — the geometry would simply be wrong.
+    //
+    // Pinned as an EQUIVALENCE: a super-mesh patched incrementally must hold
+    // exactly what one built from scratch over the same heights holds. That
+    // catches a bad shift, a stale offset and a lost tail alike, without this
+    // test having to know how the packing is laid out.
+    const built = setup([chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)]);
+    const diff = {
+      type: 'terrainDiff' as const,
+      cells: [{ x: 2, y: 3, h: 4 * BAND_HEIGHT }],
+    };
+    built.meshes.update(applyTerrainDiff(built.mirror, diff));
+
+    // The same world, reached in one build instead of two.
+    const freshMirror = createTerrainMirror(WORLD);
+    applySnapshot(freshMirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)],
+    });
+    applyTerrainDiff(freshMirror, diff);
+    // Every received chunk at once, against a mirror that already holds the
+    // edit — so this super-mesh is packed in one pass and never spliced.
+    const freshMeshes = createTerrainMeshes(new Group(), freshMirror);
+    freshMeshes.update(freshMirror.received);
+
+    const patchedGeometry = built.meshes.pickables()[0]!.geometry;
+    const freshGeometry = freshMeshes.pickables()[0]!.geometry;
+    expect(built.meshes.drawCallCount()).toBe(1);
+    expect(patchedGeometry.drawRange.count).toBe(freshGeometry.drawRange.count);
+
+    const live = patchedGeometry.drawRange.count;
+    const patchedPositions = patchedGeometry.getAttribute('position');
+    const freshPositions = freshGeometry.getAttribute('position');
+    for (let v = 0; v < live; v++) {
+      expect(patchedPositions.getX(v)).toBe(freshPositions.getX(v));
+      expect(patchedPositions.getY(v)).toBe(freshPositions.getY(v));
+      expect(patchedPositions.getZ(v)).toBe(freshPositions.getZ(v));
+    }
   });
 
   it('draws only the emitted prefix of the buffers', () => {
@@ -258,9 +304,9 @@ describe('createTerrainMeshes', () => {
     );
   });
 
-  it('adds a mesh when a chunk is unlocked later', () => {
+  it('adds a chunk\'s geometry when it is unlocked later', () => {
     const { meshes, mirror, group } = setup([chunkPayload(0, 0, 0)]);
-    expect(group.children).toHaveLength(1);
+    expect(meshes.builtChunkCount()).toBe(1);
 
     const dirty = applySnapshot(mirror, {
       type: 'snapshot',
@@ -269,7 +315,10 @@ describe('createTerrainMeshes', () => {
     });
     meshes.update(dirty);
 
-    expect(group.children).toHaveLength(2);
+    expect(meshes.builtChunkCount()).toBe(2);
+    // Still ONE drawn mesh: the new chunk joins the neighbour's super-mesh
+    // rather than adding a draw call of its own.
+    expect(group.children).toHaveLength(1);
     // The pre-existing neighbour was re-patched too, so the terrace that now
     // runs up to the seam is rebuilt against the newly revealed heights.
     expect(dirty.has(chunkIndex(WORLD, 0, 0))).toBe(true);
@@ -474,26 +523,26 @@ describe('multi-frame chunk meshing', () => {
   });
 
   it('drains the whole queue in one frame when the work fits the budget', () => {
-    const { group, meshes, clock } = scheduledSetup(FOUR_CHUNKS, 0);
+    const { meshes, clock } = scheduledSetup(FOUR_CHUNKS, 0);
     clock.frame();
-    expect(group.children).toHaveLength(4);
+    expect(meshes.builtChunkCount()).toBe(4);
     expect(meshes.pendingCount()).toBe(0);
   });
 
   it('spreads the queue across frames when it does not', () => {
     // Every build costs the whole budget, so each frame gets exactly one.
-    const { group, meshes, clock } = scheduledSetup(
+    const { meshes, clock } = scheduledSetup(
       FOUR_CHUNKS,
       CHUNK_BUILD_FRAME_BUDGET_MS,
     );
     for (let built = 1; built <= 4; built++) {
       clock.frame();
-      expect(group.children).toHaveLength(built);
+      expect(meshes.builtChunkCount()).toBe(built);
       expect(meshes.pendingCount()).toBe(4 - built);
     }
     // And it stops once there is nothing left rather than spinning.
     clock.frame();
-    expect(group.children).toHaveLength(4);
+    expect(meshes.builtChunkCount()).toBe(4);
   });
 
   it('always builds at least one chunk per frame, however over budget it is', () => {
@@ -573,9 +622,9 @@ describe('multi-frame chunk meshing', () => {
   });
 
   it('flush builds everything regardless of budget', () => {
-    const { group, meshes } = scheduledSetup(FOUR_CHUNKS, CHUNK_BUILD_FRAME_BUDGET_MS * 10);
+    const { meshes } = scheduledSetup(FOUR_CHUNKS, CHUNK_BUILD_FRAME_BUDGET_MS * 10);
     meshes.flush();
-    expect(group.children).toHaveLength(4);
+    expect(meshes.builtChunkCount()).toBe(4);
     expect(meshes.pendingCount()).toBe(0);
   });
 });

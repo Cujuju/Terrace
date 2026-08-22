@@ -25,6 +25,7 @@ import {
 import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import { createTerrainMeshes } from '../src/render/terrainMeshes.ts';
 import { pickTerrainCellByRay } from '../src/terrain/picking.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/terrainMeshes.ts';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
 
 /**
@@ -129,7 +130,13 @@ function buildWorld(): { mirror: ReturnType<typeof createTerrainMirror>; pickabl
 describe('pickTerrainCellByRay vs the mesh raycast it replaced', () => {
   it('agrees on the cell, and never disagrees about whether there is terrain at all', () => {
     const { mirror, pickables } = buildWorld();
-    expect(pickables).toHaveLength((WORLD / CHUNK_SIZE) ** 2);
+    // ONE MESH PER SUPER-MESH, not per chunk (2026-08-21). This world's 256
+    // chunks are submitted as 4 draw calls — the merge this differential test
+    // has to keep honest, since it raycasts the very geometry the renderer
+    // draws. If the merge ever silently reverted, this number would go back to
+    // 256 and the pick agreement below would be measuring something else.
+    const chunksPerSuperMesh = SUPER_MESH_SPAN_CHUNKS ** 2;
+    expect(pickables).toHaveLength((WORLD / CHUNK_SIZE) ** 2 / chunksPerSuperMesh);
 
     const raycaster = new Raycaster();
     let compared = 0;

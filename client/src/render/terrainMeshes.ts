@@ -120,7 +120,9 @@ import {
   DynamicDrawUsage,
   Mesh,
   MeshStandardMaterial,
+  Sphere,
   SRGBColorSpace,
+  Vector3,
   type Group,
 } from 'three';
 import { chunksPerEdge } from '@terrace/shared';
@@ -277,13 +279,82 @@ function toLinearPalette(palette: readonly Rgb[]): readonly Rgb[] {
   });
 }
 
-interface ChunkMesh {
+/**
+ * Chunks per super-mesh edge — the merge factor, and the whole point of this
+ * module's 2026-08-21 rewrite.
+ *
+ * WHY MERGE AT ALL. A chunk is three things at once: the sync payload, the
+ * reveal quantum, and — until now — the DRAW quantum. The first two are facts
+ * about the protocol; the third was an accident of the first two, and it is
+ * the one that costs. Measured on a live day-one world after the quarter-cell
+ * re-sample: 400 terrain meshes drawing 19 000 triangles — about 34 triangles
+ * per draw call, where a modern renderer carries thousands. A fully revealed
+ * 2048² world is 16 384 chunks and therefore 16 384 draw calls, which is more
+ * submission work than a AAA frame does to draw a thousand times the geometry.
+ * Draw calls are CPU work per object and WebGL's are dearer than native's
+ * (every one crosses into C++ and revalidates state), so the count IS the
+ * bottleneck, and it scales with how much world has been revealed rather than
+ * with what is on screen.
+ *
+ * EIGHT. A super-mesh then covers 8 × CHUNK_SPAN = 32 world units, and a
+ * default 512-world-unit map is 16 × 16 = 256 of them instead of 16 384
+ * meshes: a 64× cut. The value trades two things against each other and 8 is
+ * the middle of them:
+ *
+ *   - CULLING GRANULARITY. A super-mesh is culled whole, so a merge factor
+ *     large enough to span the view frustum stops culling from doing anything
+ *     and the world's whole revealed geometry is submitted every frame. 32
+ *     world units is well under the camera's own framing (CAMERA_INITIAL_
+ *     DISTANCE is 80), so the horizon still culls.
+ *   - EDIT COST. A sculpt re-packs the tail of ONE super-mesh (see
+ *     spliceChunk), so the memmove grows with the square of this number.
+ *
+ * Raising it is the knob if draw calls are still the bottleneck; lowering it
+ * is the knob if a pan starts submitting geometry that is behind the camera.
+ * Both are measurable with `drawCallCount()` and renderer.info.
+ */
+export const SUPER_MESH_SPAN_CHUNKS = 8;
+
+/** Non-indexed geometry: three vertices per triangle, never shared. */
+const VERTICES_PER_TRIANGLE = 3;
+
+/**
+ * Where one chunk's vertices live inside its super-mesh's packed buffers.
+ *
+ * The chunk is still the unit of BUILDING — one chunk is what a sculpt
+ * invalidates and what `writeChunkVertexData` knows how to emit — but it has
+ * stopped being the unit of DRAWING.
+ */
+interface ChunkSlot {
+  /** First vertex of this chunk's run, as an index into the packed buffers. */
+  offset: number;
+  /** Live vertices in the run. Moves on every rebuild that changes a contour. */
+  count: number;
+}
+
+/**
+ * One drawn object: the merged geometry of a SUPER_MESH_SPAN_CHUNKS square of
+ * chunks, holding their vertices back-to-back with no gaps.
+ */
+interface SuperMesh {
   mesh: Mesh;
   buffers: ChunkGeometryBuffers;
   positionAttribute: BufferAttribute;
   normalAttribute: BufferAttribute;
   colorAttribute: BufferAttribute;
   selfLitAttribute: BufferAttribute;
+  /**
+   * The chunks built into this super-mesh, in ASCENDING CHUNK INDEX order —
+   * which is the order their runs sit in the buffers, so a chunk's offset is
+   * the sum of the counts before it. A sorted array rather than a Map's
+   * insertion order because the packing depends on it: a splice shifts exactly
+   * the runs that follow, and "the runs that follow" has to be well-defined
+   * however the chunks happened to arrive.
+   */
+  order: number[];
+  slots: Map<number, ChunkSlot>;
+  /** Sum of every slot's count — the geometry's draw range, and its only one. */
+  liveVertices: number;
 }
 
 /**
@@ -324,8 +395,32 @@ export interface TerrainMeshes {
   pendingCount(): number;
   /** Drops every mesh — used when a fresh join replaces the world. */
   clear(): void;
-  /** Meshes the raycaster should test. */
+  /**
+   * The drawn meshes — ONE PER SUPER-MESH, not one per chunk.
+   *
+   * Named for the raycasting it used to serve. Nothing in the client raycasts
+   * terrain any more (input picking marches the height field instead — see
+   * terrain/picking.ts), so this survives for the differential test that pins
+   * that march against the mesh it replaced, and for tests that inspect the
+   * geometry the renderer actually submits.
+   */
   pickables(): Mesh[];
+  /**
+   * Terrain draw calls the renderer would submit with nothing culled — the
+   * number this module exists to keep down, exposed so a test can hold a
+   * budget against it rather than trusting the comment above.
+   */
+  drawCallCount(): number;
+  /**
+   * Chunks whose geometry is in the scene.
+   *
+   * The mesh count stopped answering this at the 2026-08-21 merge, and several
+   * tests had been using it as a proxy for "how many chunks got built" — for
+   * the drain budget, and for locked terrain staying invisible. Both are real
+   * contracts about CHUNKS, so they get a number about chunks rather than one
+   * about whatever the renderer currently groups them into.
+   */
+  builtChunkCount(): number;
   dispose(): void;
 }
 
@@ -336,6 +431,7 @@ export function createTerrainMeshes(
 ): TerrainMeshes {
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
+  const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
   const palettes: ChunkPalettes = {
     top: TERRAIN_PALETTE,
     cliff: CLIFF_PALETTE,
@@ -353,26 +449,47 @@ export function createTerrainMeshes(
   });
   makeSelfLitAware(material);
 
-  const meshes = new Map<number, ChunkMesh>();
+  const superMeshes = new Map<number, SuperMesh>();
 
   /**
-   * Builds the geometry and attributes around a chunk's CURRENT buffers. Run
-   * once when the chunk's mesh is created, and again only on the rare patch
-   * that grew the buffers — a typed array cannot be resized, so a grown chunk
-   * needs new attributes, and the old geometry is disposed rather than left to
-   * hold its GPU buffers until the world is replaced.
+   * The one buffer any chunk is emitted into, before its vertices are copied
+   * to their run in a super-mesh.
+   *
+   * ONE, SHARED, FOR THE WHOLE WORLD — and this is most of the memory story of
+   * the merge. Every chunk used to own a permanent set of buffers sized for
+   * INITIAL_CHUNK_TRIANGLE_CAPACITY whether it needed them or not, so a fully
+   * revealed 2048² world held 16 384 of them. Emission is synchronous and its
+   * result is copied out before the next chunk is emitted, so one scratch does
+   * the whole job; it grows to the largest chunk the world has ever contained
+   * (writeChunkVertexData's own ensureCapacity) and stays there.
    */
-  const bindGeometry = (entry: ChunkMesh): void => {
-    const positionAttribute = new BufferAttribute(entry.buffers.positions, 3);
+  const scratch = createChunkGeometryBuffers();
+
+  const superIndexOf = (chunkIdx: number): number => {
+    const cx = chunkIdx % chunkCols;
+    const cy = (chunkIdx - cx) / chunkCols;
+    const sx = Math.floor(cx / SUPER_MESH_SPAN_CHUNKS);
+    const sy = Math.floor(cy / SUPER_MESH_SPAN_CHUNKS);
+    return sy * superCols + sx;
+  };
+
+  /**
+   * Points the geometry at the super-mesh's CURRENT buffers. Run when the
+   * super-mesh is created and again whenever its buffers had to grow — a typed
+   * array cannot be resized, so growth means new arrays and therefore new
+   * attributes, and the old geometry is disposed rather than left holding its
+   * GPU buffers.
+   */
+  const bindGeometry = (sm: SuperMesh): void => {
+    const positionAttribute = new BufferAttribute(sm.buffers.positions, 3);
     // `true` = NORMALIZED: the GPU reads these byte attributes back as
     // value/127 (signed) and value/255 (unsigned). Omitting the flag would feed
     // the shader raw integers up to 255 and blow out both lighting and colour.
-    const normalAttribute = new BufferAttribute(entry.buffers.normals, 3, true);
-    const colorAttribute = new BufferAttribute(entry.buffers.colors, 3, true);
+    const normalAttribute = new BufferAttribute(sm.buffers.normals, 3, true);
+    const colorAttribute = new BufferAttribute(sm.buffers.colors, 3, true);
     // NORMALISED, so the shader reads the flag's 0/255 bytes as 0.0/1.0 and the
     // injected mix() needs no conversion of its own.
-    const selfLitAttribute = new BufferAttribute(entry.buffers.selfLit, 1, true);
-    // All four attributes are rewritten on every edit that touches this chunk.
+    const selfLitAttribute = new BufferAttribute(sm.buffers.selfLit, 1, true);
     positionAttribute.setUsage(DynamicDrawUsage);
     normalAttribute.setUsage(DynamicDrawUsage);
     colorAttribute.setUsage(DynamicDrawUsage);
@@ -383,82 +500,189 @@ export function createTerrainMeshes(
     geometry.setAttribute('normal', normalAttribute);
     geometry.setAttribute('color', colorAttribute);
     geometry.setAttribute(SELF_LIT_ATTRIBUTE, selfLitAttribute);
+    geometry.setDrawRange(0, sm.liveVertices);
 
-    const previous = entry.mesh.geometry;
-    entry.mesh.geometry = geometry;
-    // The mesh is only ever pointed at one geometry at a time, and no other
-    // mesh shares it (nothing is shared between chunks any more — geometry is
-    // non-indexed, so there is no world-independent index buffer to share).
+    const previous = sm.mesh.geometry;
+    sm.mesh.geometry = geometry;
     if (previous !== geometry) previous.dispose();
 
-    entry.positionAttribute = positionAttribute;
-    entry.normalAttribute = normalAttribute;
-    entry.colorAttribute = colorAttribute;
-    entry.selfLitAttribute = selfLitAttribute;
+    sm.positionAttribute = positionAttribute;
+    sm.normalAttribute = normalAttribute;
+    sm.colorAttribute = colorAttribute;
+    sm.selfLitAttribute = selfLitAttribute;
   };
 
   /**
-   * Rewrites one chunk's geometry in place and re-syncs everything downstream
-   * of the vertex data: the GPU upload flags, the draw range (the triangle
-   * count moves whenever a sculpt reshapes a contour), and the bound.
+   * Grows a super-mesh's buffers to hold at least `vertices`, preserving what
+   * is already in them, and rebinds. Returns true if it had to.
+   *
+   * GROWTH IS GEOMETRIC (doubling) rather than exact: a world fills in chunk by
+   * chunk, and growing by one chunk's worth each time would reallocate and copy
+   * the whole super-buffer on every chunk of every super-mesh — quadratic in
+   * the chunk count, paid during the reveal the player is watching.
    */
-  const writeChunk = (chunkIdx: number, entry: ChunkMesh): void => {
-    const cx = chunkIdx % chunkCols;
-    const cy = (chunkIdx - cx) / chunkCols;
+  const ensureSuperCapacity = (sm: SuperMesh, vertices: number): boolean => {
+    const capacity = sm.buffers.triangleCapacity * VERTICES_PER_TRIANGLE;
+    if (vertices <= capacity) return false;
+    let triangles = Math.max(sm.buffers.triangleCapacity, 1);
+    while (triangles * VERTICES_PER_TRIANGLE < vertices) triangles *= 2;
 
-    // In place: same arrays, same attributes, same geometry, same mesh —
-    // unless this chunk's geometry outgrew its capacity, which is the one case
-    // that reallocates (see the buffer strategy in the module header).
-    const counts = writeChunkVertexData(mirror, cx, cy, entry.buffers, palettes);
-    if (counts.capacityGrew) bindGeometry(entry);
-
-    entry.positionAttribute.needsUpdate = true;
-    entry.normalAttribute.needsUpdate = true;
-    entry.colorAttribute.needsUpdate = true;
-    entry.selfLitAttribute.needsUpdate = true;
-
-    // The live prefix of the buffers. Three honours drawRange in BOTH the
-    // renderer and Mesh.raycast, so the unused tail is neither drawn nor
-    // pickable — verified against three 0.185 src/objects/Mesh.js. On
-    // non-indexed geometry the range counts VERTICES.
-    entry.mesh.geometry.setDrawRange(0, counts.vertexCount);
-
-    // Heights changed, so the culling/raycast bound is stale. Skipping it makes
-    // edited chunks vanish at certain camera angles and stop being clickable.
-    // computeBoundingSphere ignores drawRange and reads the whole attribute,
-    // which is exactly why writeChunkVertexData collapses the unused tail onto
-    // a vertex inside this chunk instead of leaving it stale or zeroed.
-    entry.mesh.geometry.computeBoundingSphere();
+    const grown = createChunkGeometryBuffers(triangles);
+    grown.positions.set(sm.buffers.positions.subarray(0, sm.liveVertices * 3));
+    grown.normals.set(sm.buffers.normals.subarray(0, sm.liveVertices * 3));
+    grown.colors.set(sm.buffers.colors.subarray(0, sm.liveVertices * 3));
+    grown.selfLit.set(sm.buffers.selfLit.subarray(0, sm.liveVertices));
+    sm.buffers = grown;
+    bindGeometry(sm);
+    return true;
   };
 
-  const createChunkMesh = (chunkIdx: number): ChunkMesh => {
-    const buffers = createChunkGeometryBuffers();
-    // The mesh starts on an empty geometry that bindGeometry immediately
-    // replaces; it exists only so the entry is well-typed before its buffers
-    // are bound.
-    const mesh = new Mesh(new BufferGeometry(), material);
+  /**
+   * The bound the renderer culls against, computed over the LIVE range only.
+   *
+   * Hand-rolled rather than `geometry.computeBoundingSphere()` because that
+   * reads the whole position attribute, and the tail past `liveVertices` is
+   * whatever a previous, longer occupant left there. The old per-chunk path
+   * dodged this by collapsing its unused tail onto a live vertex; a packed
+   * super-buffer would have to do that over the whole slack after every edit,
+   * which is unbounded work to avoid a bounded loop.
+   *
+   * Centre-of-AABB, which is what Three's own implementation uses, so the
+   * radius means exactly what it did before the merge.
+   */
+  const recomputeBounds = (sm: SuperMesh): void => {
+    const geometry = sm.mesh.geometry;
+    const positions = sm.buffers.positions;
+    const live = sm.liveVertices;
+    if (live === 0) {
+      geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let v = 0; v < live; v++) {
+      const x = positions[v * 3]!;
+      const y = positions[v * 3 + 1]!;
+      const z = positions[v * 3 + 2]!;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    const centreX = (minX + maxX) / 2;
+    const centreY = (minY + maxY) / 2;
+    const centreZ = (minZ + maxZ) / 2;
+    let maxSquared = 0;
+    for (let v = 0; v < live; v++) {
+      const dx = positions[v * 3]! - centreX;
+      const dy = positions[v * 3 + 1]! - centreY;
+      const dz = positions[v * 3 + 2]! - centreZ;
+      const squared = dx * dx + dy * dy + dz * dz;
+      if (squared > maxSquared) maxSquared = squared;
+    }
+    geometry.boundingSphere = new Sphere(
+      new Vector3(centreX, centreY, centreZ),
+      Math.sqrt(maxSquared),
+    );
+  };
+
+  const createSuperMesh = (superIdx: number): SuperMesh => {
     const placeholder = new BufferAttribute(new Float32Array(0), 3);
-    const entry: ChunkMesh = {
-      mesh,
-      buffers,
+    const sm: SuperMesh = {
+      mesh: new Mesh(new BufferGeometry(), material),
+      buffers: createChunkGeometryBuffers(),
       positionAttribute: placeholder,
       normalAttribute: placeholder,
       colorAttribute: placeholder,
       selfLitAttribute: placeholder,
+      order: [],
+      slots: new Map(),
+      liveVertices: 0,
     };
-    bindGeometry(entry);
-    // One code path fills the buffers and sets the draw range, whether the
-    // chunk is new or being re-patched — a mesh created with a stale (default,
-    // Infinity) draw range would draw its whole unwritten tail on frame one.
-    writeChunk(chunkIdx, entry);
-
-    group.add(mesh);
-    return entry;
+    bindGeometry(sm);
+    group.add(sm.mesh);
+    superMeshes.set(superIdx, sm);
+    return sm;
   };
 
-  const disposeEntry = (entry: ChunkMesh): void => {
-    group.remove(entry.mesh);
-    entry.mesh.geometry.dispose();
+  /**
+   * Copies the scratch's first `count` vertices into `chunkIdx`'s run, moving
+   * everything after it if the run changed length.
+   *
+   * THE SHIFT IS WHY THE RUNS ARE PACKED rather than each chunk owning a fixed
+   * slot. A fixed slot needs no shifting, but it has to be sized for the worst
+   * chunk and the dead space inside it still runs the vertex shader: at
+   * INITIAL_CHUNK_TRIANGLE_CAPACITY per chunk a fully revealed world would
+   * submit ~16.8 M triangles a frame to draw the ~4 M it actually has, trading
+   * the draw-call bottleneck for a vertex one. Packing keeps the submitted
+   * triangle count exactly what it was before the merge, so the merge costs
+   * the GPU nothing at all.
+   *
+   * The shift is bounded by the super-mesh, not the world: a sculpt moves at
+   * most the tail of one super-mesh, and it is a copyWithin of contiguous
+   * memory rather than a rebuild.
+   */
+  const spliceChunk = (sm: SuperMesh, chunkIdx: number, count: number): void => {
+    let slot = sm.slots.get(chunkIdx);
+    if (slot === undefined) {
+      // A new chunk goes where its index sorts to, so one that arrives late
+      // still lands between its neighbours rather than at the end.
+      let at = sm.order.length;
+      for (let i = 0; i < sm.order.length; i++) {
+        if (sm.order[i]! > chunkIdx) {
+          at = i;
+          break;
+        }
+      }
+      const previous = at === 0 ? null : sm.slots.get(sm.order[at - 1]!)!;
+      slot = { offset: previous === null ? 0 : previous.offset + previous.count, count: 0 };
+      sm.order.splice(at, 0, chunkIdx);
+      sm.slots.set(chunkIdx, slot);
+    }
+
+    const delta = count - slot.count;
+    if (delta > 0) ensureSuperCapacity(sm, sm.liveVertices + delta);
+
+    const tailStart = slot.offset + slot.count;
+    const tailLength = sm.liveVertices - tailStart;
+    if (delta !== 0 && tailLength > 0) {
+      const { positions, normals, colors, selfLit } = sm.buffers;
+      // copyWithin, not set(subarray): the source and destination overlap, and
+      // copyWithin is specified to behave as if the range were copied first.
+      positions.copyWithin((tailStart + delta) * 3, tailStart * 3, (tailStart + tailLength) * 3);
+      normals.copyWithin((tailStart + delta) * 3, tailStart * 3, (tailStart + tailLength) * 3);
+      colors.copyWithin((tailStart + delta) * 3, tailStart * 3, (tailStart + tailLength) * 3);
+      selfLit.copyWithin(tailStart + delta, tailStart, tailStart + tailLength);
+    }
+
+    if (delta !== 0) {
+      const from = sm.order.indexOf(chunkIdx) + 1;
+      for (let i = from; i < sm.order.length; i++) sm.slots.get(sm.order[i]!)!.offset += delta;
+      sm.liveVertices += delta;
+      slot.count = count;
+    }
+
+    const { positions, normals, colors, selfLit } = sm.buffers;
+    positions.set(scratch.positions.subarray(0, count * 3), slot.offset * 3);
+    normals.set(scratch.normals.subarray(0, count * 3), slot.offset * 3);
+    colors.set(scratch.colors.subarray(0, count * 3), slot.offset * 3);
+    selfLit.set(scratch.selfLit.subarray(0, count), slot.offset);
+
+    sm.positionAttribute.needsUpdate = true;
+    sm.normalAttribute.needsUpdate = true;
+    sm.colorAttribute.needsUpdate = true;
+    sm.selfLitAttribute.needsUpdate = true;
+
+    // On non-indexed geometry the draw range counts VERTICES, and the packed
+    // runs have no holes, so ONE range covers every chunk in this super-mesh.
+    sm.mesh.geometry.setDrawRange(0, sm.liveVertices);
+    recomputeBounds(sm);
   };
 
   /**
@@ -472,18 +696,18 @@ export function createTerrainMeshes(
    */
   const pending = new Set<number>();
 
-  /** Builds one queued chunk, creating its mesh if this is its first build. */
+  /** Builds one queued chunk into its super-mesh, creating that if needed. */
   const buildChunk = (chunkIdx: number): void => {
     // Re-checked at DRAIN time, not at queue time: a chunk can be dropped from
     // `received` between the two (a rejoin replaces the world), and building
     // one the mirror no longer holds would read heights that are not there.
     if (!mirror.received.has(chunkIdx)) return;
-    const existing = meshes.get(chunkIdx);
-    if (existing === undefined) {
-      meshes.set(chunkIdx, createChunkMesh(chunkIdx));
-    } else {
-      writeChunk(chunkIdx, existing);
-    }
+    const cx = chunkIdx % chunkCols;
+    const cy = (chunkIdx - cx) / chunkCols;
+    const counts = writeChunkVertexData(mirror, cx, cy, scratch, palettes);
+    const superIdx = superIndexOf(chunkIdx);
+    const sm = superMeshes.get(superIdx) ?? createSuperMesh(superIdx);
+    spliceChunk(sm, chunkIdx, counts.vertexCount);
   };
 
   const now = scheduling?.now ?? (() => performance.now());
@@ -519,8 +743,11 @@ export function createTerrainMeshes(
   const stopDraining = scheduling?.onFrame(() => drain(CHUNK_BUILD_FRAME_BUDGET_MS));
 
   const clear = (): void => {
-    for (const entry of meshes.values()) disposeEntry(entry);
-    meshes.clear();
+    for (const sm of superMeshes.values()) {
+      group.remove(sm.mesh);
+      sm.mesh.geometry.dispose();
+    }
+    superMeshes.clear();
     // The queue holds indices into the world being dropped. Draining them
     // against the replacement would build chunks nobody asked for, at best;
     // this is why clear() and not just dispose() empties it.
@@ -544,7 +771,15 @@ export function createTerrainMeshes(
     },
     clear,
     pickables(): Mesh[] {
-      return Array.from(meshes.values(), (entry) => entry.mesh);
+      return Array.from(superMeshes.values(), (sm) => sm.mesh);
+    },
+    drawCallCount(): number {
+      return superMeshes.size;
+    },
+    builtChunkCount(): number {
+      let built = 0;
+      for (const sm of superMeshes.values()) built += sm.slots.size;
+      return built;
     },
     dispose(): void {
       stopDraining?.();
