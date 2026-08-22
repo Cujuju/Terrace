@@ -13,7 +13,11 @@
 // multiply, and nothing here will fail loudly to tell you so.
 
 import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
-import type { WildlifeSpecies } from '../protocol.ts';
+import {
+  WILDLIFE_SIZE_MODEL_SCALE,
+  type WildlifeSizeClass,
+  type WildlifeSpecies,
+} from '../protocol.ts';
 
 /**
  * World-space Y of the sea surface.
@@ -30,13 +34,21 @@ import type { WildlifeSpecies } from '../protocol.ts';
  */
 export const SEA_SURFACE_WORLD_Y: 0 = SEA_LEVEL;
 
-/** Where in the water column a species swims, and how much room it insists on. */
+/**
+ * Where in the water column a species swims, and how much room it insists on.
+ *
+ * BOTH CLEARANCES ARE STATED AT SIZE CLASS `medium`, the class whose model scale
+ * is 1 by definition (WILDLIFE_SIZE_MODEL_SCALE). They are half-extents of the
+ * MODEL, and the model is uniformly scaled by its class, so they are scaled by
+ * it too — see swimmerWorldY. `depthFraction` is a fraction of the water column
+ * and means the same thing at every size.
+ */
 export interface SwimProfile {
   /** 0 = at the surface, 1 = on the seabed. */
   readonly depthFraction: number;
-  /** Never closer than this to the seabed, in world units. */
+  /** Never closer than this to the seabed, in world units, at model scale 1. */
   readonly minClearance: number;
-  /** Never closer than this to the surface, in world units. */
+  /** Never closer than this to the surface, in world units, at model scale 1. */
   readonly minSubmergence: number;
 }
 
@@ -188,13 +200,27 @@ export const UNKNOWN_TERRAIN_WORLD_Y = 0;
  * would cross; splitting the remaining column is the only answer that keeps the
  * creature inside the water at all, and it degrades smoothly as the water
  * shallows rather than snapping when the two limits meet.
+ *
+ * `modelScale` IS NOT OPTIONAL, and it is the fix for a bug the table above was
+ * always one size class away from (found 2026-08-21, when whales gained size
+ * classes). A clearance is the creature's own half-height plus a little water;
+ * the class scales the model but was scaling nothing here, so at `large` (1.4x)
+ * every swimmer's half-height outgrew the clearance written for it. A large fish
+ * already breached the surface by 0.06 world units — 1.4 x its 0.26 half-height
+ * is 0.36 against a 0.3 minSubmergence, which the protocol.ts note calls
+ * "comfortably inside" and is in fact outside. A large whale would have put its
+ * belly 0.1 units into the seabed and its dorsal 0.24 above the waterline.
  */
-export function swimmerWorldY(seabedY: number, profile: SwimProfile): number {
+export function swimmerWorldY(
+  seabedY: number,
+  profile: SwimProfile,
+  modelScale: number,
+): number {
   const column = SEA_SURFACE_WORLD_Y - seabedY;
   const preferred = SEA_SURFACE_WORLD_Y - profile.depthFraction * column;
 
-  const lowest = seabedY + profile.minClearance;
-  const highest = SEA_SURFACE_WORLD_Y - profile.minSubmergence;
+  const lowest = seabedY + profile.minClearance * modelScale;
+  const highest = SEA_SURFACE_WORLD_Y - profile.minSubmergence * modelScale;
   if (highest < lowest) return seabedY + column / 2;
 
   return Math.min(Math.max(preferred, lowest), highest);
@@ -204,8 +230,17 @@ export function swimmerWorldY(seabedY: number, profile: SwimProfile): number {
  * World Y for one creature. `terrainY` is the ground/seabed height under it —
  * for a walker, use walkerGroundY, not a single-cell sample — or null before the
  * first snapshot arrives (and always, for a flyer, which ignores it).
+ *
+ * `sizeClass` is required rather than defaulted: every creature has one, the
+ * caller always knows it (it arrives on the wire with the entity), and a default
+ * would silently place a large whale as if it were an adult — the exact class of
+ * mistake swimmerWorldY's note describes.
  */
-export function creatureWorldY(species: WildlifeSpecies, terrainY: number | null): number {
+export function creatureWorldY(
+  species: WildlifeSpecies,
+  terrainY: number | null,
+  sizeClass: WildlifeSizeClass,
+): number {
   const altitude = FLIGHT_ALTITUDES[species];
   // A flyer's altitude is absolute: the ground beneath it is irrelevant, and so
   // is whether this client has even been sent that ground.
@@ -214,8 +249,11 @@ export function creatureWorldY(species: WildlifeSpecies, terrainY: number | null
   const surfaceY = terrainY ?? UNKNOWN_TERRAIN_WORLD_Y;
   const profile = SWIM_PROFILES[species];
   // Land species' models are built with the origin at their feet, so the ground
-  // height is the answer with no offset.
-  return profile === null ? surfaceY : swimmerWorldY(surfaceY, profile);
+  // height is the answer with no offset — and a walker's size scales its body
+  // upward from that origin, which moves nothing about where its feet go.
+  return profile === null
+    ? surfaceY
+    : swimmerWorldY(surfaceY, profile, WILDLIFE_SIZE_MODEL_SCALE[sizeClass]);
 }
 
 /**

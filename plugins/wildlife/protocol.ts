@@ -67,10 +67,11 @@ export type WildlifeSpecies = (typeof WILDLIFE_SPECIES)[number];
 /**
  * The size classes an individual can be born at, smallest first.
  *
- * Only fish vary today (see FISH size tuning in server/species.ts); every other
- * species is always DEFAULT_SIZE_CLASS. The class is drawn once at spawn and
- * never changes, which is why the client can bake it into the model at creation
- * time instead of re-reading it every frame.
+ * Fish and whales vary (FISH_SIZE_WEIGHTS / WHALE_SIZE_WEIGHTS in
+ * server/species.ts); the deep-sea creature and the grazer are always
+ * DEFAULT_SIZE_CLASS. The class is drawn once at spawn and never changes, which
+ * is why the client can bake it into the model at creation time instead of
+ * re-reading it every frame.
  *
  * Ordered, and the ORDER IS THE WIRE FORM: an entity carries the INDEX into this
  * array, not the name. That is what keeps the field to a single msgpack byte —
@@ -102,9 +103,14 @@ export const DEFAULT_SIZE_CLASS_INDEX = WILDLIFE_SIZE_CLASSES.indexOf(DEFAULT_SI
  * side by side, and 2× would make a large fish compete with the deep-sea
  * silhouette for attention.
  *
- * The largest fish is therefore 1.4 × 0.26 = 0.36 world units tall, comfortably
- * inside the 0.3 minimum submergence its swim profile already insists on, so no
- * placement clearance has to change with size.
+ * WHAT THE CLEARANCES DO ABOUT THIS. They scale by the same factor — see
+ * swimmerWorldY (client/placement.ts), which takes the model scale as a required
+ * argument. This paragraph used to claim the opposite: that the largest fish is
+ * 1.4 × 0.26 = 0.36 world units tall and so sits "comfortably inside the 0.3
+ * minimum submergence", which is arithmetic that says the exact reverse of its
+ * own conclusion — 0.36 is 0.06 OUTSIDE 0.3, and a large fish's dorsal has been
+ * poking through the sea surface ever since. Found 2026-08-21 while giving
+ * whales size classes, where the same error is six times larger.
  */
 export const WILDLIFE_SIZE_MODEL_SCALE: Readonly<Record<WildlifeSizeClass, number>> = {
   small: 0.6,
