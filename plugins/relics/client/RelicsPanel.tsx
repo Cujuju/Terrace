@@ -112,7 +112,8 @@ export function RelicsHeaderLine(): JSX.Element {
       class="hud-row"
       title="Gems hovering over the land right now — each one holds a skill to claim."
     >
-      <span class="hud-label">Relics ({relics().length})</span>
+      <span class="hud-label">Relics</span>
+      <span>{relics().length} in the world</span>
     </div>
   );
 }
