@@ -493,7 +493,51 @@ export function createRiverRig(
       spring = null;
     }
 
-    const waterfalls = network.rivers.flatMap((river) => river.waterfalls);
+    // WHERE THE EFFECT BELONGS (2026-08-22, owner: the rings "should only be
+    // shown at sources of water or at the bottom of drawn waterfalls").
+    //
+    // It used to sit on every Waterfall in the network, and a Waterfall is
+    // recorded at the cell the water leaves — the LIP. So the rings rode the
+    // top of each drop, where the water is smooth and leaving, and there was
+    // nothing at all where it lands or where it first comes out of the
+    // ground: the two places broken water actually is. On a staircase that
+    // put a ripple on all 68 of them.
+    //
+    // The sites are now the two the owner named:
+    //
+    //   * SOURCES — the first point of a river's trunk course, the spring
+    //     itself, which is the one place in a network where water arrives
+    //     from nowhere and should look like it.
+    //   * PLUNGE POINTS — the cell a fall LANDS in, found by walking the
+    //     course to the cell after the lip, rather than the lip cell itself.
+    //
+    // Deduplicated by cell: a fall landing straight into the next fall's lip,
+    // or a spring that is itself a plunge point, is one patch of broken water
+    // and gets one effect.
+    const siteCells = new Map<number, { readonly x: number; readonly y: number }>();
+    const addSite = (x: number, y: number): void => {
+      siteCells.set(cellIndex(mirror.map, x, y), { x, y });
+    };
+    for (const river of network.rivers) {
+      const trunk = river.courses[0];
+      const source = trunk?.points[0];
+      if (source !== undefined) addSite(source.x, source.y);
+      // The cell a fall lands in: the point after the lip along whichever
+      // course runs through it. A lip with no following point is a course
+      // that ended there (its budget ran out), and has no plunge to mark.
+      for (const fall of river.waterfalls) {
+        for (const course of river.courses) {
+          const at = course.points.findIndex(
+            (point) => point.x === fall.x && point.y === fall.y,
+          );
+          if (at < 0) continue;
+          const foot = course.points[at + 1];
+          if (foot !== undefined) addSite(foot.x, foot.y);
+          break;
+        }
+      }
+    }
+    const waterfalls = [...siteCells.values()];
     if (waterfalls.length === 0) return;
 
     // ── Ripple rings ──
