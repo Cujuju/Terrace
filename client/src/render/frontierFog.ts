@@ -36,15 +36,35 @@
 //
 // LIFECYCLE. One shared, unlit MeshBasicMaterial (fog is atmospheric, not a
 // lit surface — matching why water.ts's own translucent plane needs no
-// per-face lighting either) and one Group; each frontier edge gets its own
-// small indexed BufferGeometry, keyed by terrain/frontier.ts's
-// frontierEdgeKey so `sync` can diff the previous edge set against the new
-// one and add/dispose exactly the segments that changed, in place, whatever
-// event (join, chunk unlock, rejoin at a new world size) triggered it.
-// Because the geometry now depends on HEIGHTS as well as the edge set,
-// surviving segments are refreshed in place (same mesh, same geometry, same
-// arrays — attribute rewrite only) by `sync`, and `refresh` does the same for
-// terrain diffs — see the interface docs.
+// per-face lighting either) and one Group. Each frontier edge is a SEGMENT,
+// keyed by terrain/frontier.ts's frontierEdgeKey so `sync` can diff the
+// previous edge set against the new one and add/remove exactly the segments
+// that changed, in place, whatever event (join, chunk unlock, rejoin at a new
+// world size) triggered it. Because the geometry depends on HEIGHTS as well as
+// the edge set, surviving segments are rewritten in place (same buffers —
+// attribute rewrite only) by `sync`, and `refresh` does the same for terrain
+// diffs — see the interface docs.
+//
+// A SEGMENT IS NOT A DRAW CALL (2026-08-22, GH #73). It used to be: one Mesh
+// per frontier edge, measured on a live world at 88 meshes drawing 6 656
+// triangles through ONE shared material — 76 triangles a draw call, the worst
+// ratio in the scene, and it grows with how much of the world has been
+// revealed rather than with what is on screen. Segments are now packed into
+// SUPER-MESHES on exactly the chunk-grid blocks terrainMeshes.ts merges on
+// (SUPER_MESH_SPAN_CHUNKS, imported rather than re-chosen: the two layers
+// cover the same ground and should cull at the same granularity, and there is
+// one knob to turn if either becomes the bottleneck). The frontier is a RING,
+// so it only ever touches the blocks it passes through — that same live world
+// becomes a handful of draw calls.
+//
+// PACKING IS TRIVIAL HERE, unlike terrain's. Every segment has exactly the
+// same vertex count (FOG_ROW_COUNT × FOG_COLUMNS) and the same index topology,
+// because a segment is always one whole chunk side. So a super-mesh is a plain
+// array of FIXED-STRIDE slots: adding is an append, removing is a swap with
+// the last live slot, and the index buffer — the template offset once per slot
+// — never changes except when capacity grows. No packing splice, no per-chunk
+// offset bookkeeping, no draw range that has to be recomputed from run
+// lengths; the draw range is just liveSegments × INDICES_PER_SEGMENT.
 //
 // ANIMATION. A single slow "opacity breathing" driven by the shared
 // material's own `opacity`, via the render loop's onFrame hook
@@ -62,6 +82,8 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  Sphere,
+  Vector3,
   type Object3D,
 } from 'three';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, chunksPerEdge } from '@terrace/shared';
@@ -72,6 +94,7 @@ import {
   type FrontierEdge,
 } from '../terrain/frontier.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
 import { SKY_COLOR } from './scene.ts';
 import { WATER_COLOR } from './water.ts';
 
@@ -189,13 +212,27 @@ const FOG_BREATH_ANGULAR_FREQUENCY = (2 * Math.PI) / FOG_BREATH_PERIOD_S;
 // Geometry for one segment.
 // ---------------------------------------------------------------------------
 
-const VERTICES_PER_SEGMENT = FOG_ROW_COUNT * FOG_COLUMNS;
-const POSITION_COMPONENTS = VERTICES_PER_SEGMENT * 3;
-const COLOR_COMPONENTS = VERTICES_PER_SEGMENT * 4; // RGBA — itemSize 4 is what
+/**
+ * Vertices one segment occupies — the fixed slot stride, and the same for
+ * every segment because a segment is always one whole chunk side. Exported so
+ * the lifecycle tests can split a super-mesh's packed buffers back into slots
+ * instead of re-deriving the stride from the geometry and getting it wrong.
+ */
+export const VERTICES_PER_SEGMENT = FOG_ROW_COUNT * FOG_COLUMNS;
+const POSITION_COMPONENTS_PER_VERTEX = 3;
+const COLOR_COMPONENTS_PER_VERTEX = 4; // RGBA — itemSize 4 is what
 // triggers three's per-vertex alpha path (WebGLPrograms.js `vertexAlphas`),
 // verified against three 0.185's WebGLPrograms.js / color_fragment.glsl.js:
 // `diffuseColor *= vColor` runs whenever material.vertexColors is true AND
 // the geometry's color attribute has itemSize 4, with no shader patch needed.
+
+/**
+ * Two triangles per quad of the (rows−1) × (columns−1) lattice. Exported with
+ * VERTICES_PER_SEGMENT above, and for the same reason: a super-mesh's draw
+ * range counts indices, so this is how a test reads back how many slots are
+ * live.
+ */
+export const INDICES_PER_SEGMENT = (FOG_ROW_COUNT - 1) * (FOG_COLUMNS - 1) * 6;
 
 /**
  * The 16 border cells on the RECEIVED side of a frontier edge, plus the
@@ -242,15 +279,17 @@ function edgeSampling(edge: FrontierEdge): {
 
 /**
  * (Re)writes one segment's vertex positions and colours from the mirror's
- * CURRENT heights. Positions and colours only — the index buffer never
- * changes, which is what lets `refresh` rewrite a live segment without
- * touching its geometry or mesh identity.
+ * CURRENT heights, into the slot starting at vertex `firstVertex` of its
+ * super-mesh's buffers. Positions and colours only — the index buffer depends
+ * on the SLOT, never on the edge or the heights, which is what lets `refresh`
+ * rewrite a live segment without touching geometry or mesh identity.
  */
 function writeSegmentArrays(
   mirror: TerrainMirror,
   edge: FrontierEdge,
   positions: Float32Array,
   colors: Float32Array,
+  firstVertex: number,
 ): void {
   const s = edgeSampling(edge);
   const rowColors = fogRowColors();
@@ -268,8 +307,8 @@ function writeSegmentArrays(
   }
   const baseY = (SEA_LEVEL - FOG_BASE_DROP) * HEIGHT_WORLD_SCALE;
 
-  let p = 0;
-  let c = 0;
+  let p = firstVertex * POSITION_COMPONENTS_PER_VERTEX;
+  let c = firstVertex * COLOR_COMPONENTS_PER_VERTEX;
   for (let r = 0; r < FOG_ROW_COUNT; r++) {
     const alpha = FOG_ROW_ALPHA[r];
     const color = rowColors[r];
@@ -291,7 +330,12 @@ function writeSegmentArrays(
   }
 }
 
-function buildSegmentIndices(): number[] {
+/**
+ * The index pattern of ONE segment, relative to its own first vertex. Every
+ * segment is one whole chunk side and so has exactly this topology; a slot's
+ * real indices are these plus slot × VERTICES_PER_SEGMENT.
+ */
+const SEGMENT_INDEX_TEMPLATE: readonly number[] = (() => {
   const indices: number[] = [];
   for (let r = 0; r < FOG_ROW_COUNT - 1; r++) {
     for (let k = 0; k < FOG_COLUMNS - 1; k++) {
@@ -306,29 +350,64 @@ function buildSegmentIndices(): number[] {
     }
   }
   return indices;
-}
+})();
 
 // ---------------------------------------------------------------------------
 // Public interface.
 // ---------------------------------------------------------------------------
 
+/**
+ * Slots a super-mesh is born with, and the unit its capacity doubles from.
+ *
+ * EIGHT, which is a whole chunk-grid block's worth of frontier for the shape
+ * the frontier actually has: a super-mesh spans SUPER_MESH_SPAN_CHUNKS² chunks
+ * and the boundary is a curve crossing it, so it clips a row or a corner of
+ * that block — of the order of SUPER_MESH_SPAN_CHUNKS sides — rather than
+ * enveloping every chunk in it. The pathological case (a checkerboard of
+ * received chunks, four sides each) is 4 × SUPER_MESH_SPAN_CHUNKS² and it is
+ * reached by doubling, so guessing low costs a few reallocations during the
+ * reveal and guessing high would cost every super-mesh the memory forever.
+ */
+const INITIAL_SEGMENT_CAPACITY = 8;
+
+/** One frontier edge's placement: which super-mesh holds it, and in which slot. */
 interface FogSegment {
-  mesh: Mesh;
-  geometry: BufferGeometry;
-  positionAttribute: BufferAttribute;
-  colorAttribute: BufferAttribute;
   edge: FrontierEdge;
   /** Flat chunk index of the edge's own (received) chunk — refresh's key. */
   chunkIdx: number;
+  /** Flat index of the super-mesh block the edge's chunk falls in. */
+  superIdx: number;
+  /** This segment's fixed-stride slot inside that super-mesh. Moves on a swap-remove. */
+  slot: number;
+}
+
+/**
+ * One drawn object: every frontier segment inside one SUPER_MESH_SPAN_CHUNKS
+ * square of the chunk grid, packed into fixed-stride slots.
+ */
+interface FogSuperMesh {
+  mesh: Mesh;
+  positions: Float32Array;
+  colors: Float32Array;
+  positionAttribute: BufferAttribute;
+  colorAttribute: BufferAttribute;
+  /**
+   * Slot → the segment living in it. Its LENGTH is the live slot count, so
+   * there are never holes: a removal swaps the last occupant down into the
+   * freed slot (order is irrelevant to a set of independent quad strips) and
+   * pops, which keeps the drawn prefix contiguous with no compaction pass.
+   */
+  occupants: FogSegment[];
+  /** Slots the buffers are sized for. Never shrinks. */
+  segmentCapacity: number;
 }
 
 export interface FrontierFog {
   /**
    * Re-derives the frontier from the mirror's CURRENT received set: adds or
-   * disposes exactly the segments whose EDGE changed, and rewrites the heights
-   * of every surviving segment in place (same mesh and geometry identity).
-   * Call after every event that can change which chunks are received — a join
-   * snapshot or a chunkUnlock.
+   * removes exactly the segments whose EDGE changed, and rewrites the heights
+   * of every surviving segment in place. Call after every event that can
+   * change which chunks are received — a join snapshot or a chunkUnlock.
    */
   sync(mirror: TerrainMirror): void;
   /**
@@ -340,6 +419,23 @@ export interface FrontierFog {
    * border samples per affected segment, no allocation.
    */
   refresh(mirror: TerrainMirror, dirtyChunks: ReadonlySet<number>): void;
+  /**
+   * Frontier edges currently drawn.
+   *
+   * The mesh count stopped answering this at the 2026-08-22 merge, and the
+   * lifecycle contract this module is tested on — one segment per exposed
+   * chunk side, added and removed as the boundary moves — is about SEGMENTS,
+   * so it gets a number about segments rather than one about whatever the
+   * renderer currently groups them into. Same split as terrainMeshes.ts's
+   * builtChunkCount / drawCallCount.
+   */
+  segmentCount(): number;
+  /**
+   * Fog draw calls the renderer would submit with nothing culled — the number
+   * the merge exists to keep down, exposed so a test can hold a budget against
+   * it rather than trusting a comment.
+   */
+  drawCallCount(): number;
   dispose(): void;
 }
 
@@ -362,6 +458,14 @@ export function createFrontierFog(
   });
 
   const segments = new Map<string, FogSegment>();
+  const superMeshes = new Map<number, FogSuperMesh>();
+  /**
+   * Super-meshes whose buffers were touched since the last flush. Bounds are
+   * O(live vertices) to recompute, so a sync that adds n segments to one block
+   * must not pay that n times — every mutation marks, and each public call
+   * flushes once at the end.
+   */
+  const dirtySupers = new Set<FogSuperMesh>();
 
   let elapsedS = 0;
   const stopAnimating = onFrame((dt: number) => {
@@ -371,91 +475,280 @@ export function createFrontierFog(
     material.opacity = FOG_PLATEAU_ALPHA * breathe;
   });
 
-  const rewriteSegment = (mirror: TerrainMirror, segment: FogSegment): void => {
+  /**
+   * Points the geometry at the super-mesh's CURRENT arrays. Run at creation and
+   * again after any growth — a typed array cannot be resized, so growth means
+   * new arrays and therefore new attributes, and the old geometry is disposed
+   * rather than left holding its GPU buffers.
+   *
+   * The index buffer is rebuilt here and NOWHERE else: a slot's indices are the
+   * template plus its own first vertex, which depends on the slot alone, so
+   * they are correct for every occupant that slot will ever have. Uint32 rather
+   * than Uint16 because capacity × VERTICES_PER_SEGMENT passes 65 535 at 336
+   * slots, which the pathological frontier of one block can reach.
+   */
+  const bindGeometry = (sm: FogSuperMesh): void => {
+    const positionAttribute = new BufferAttribute(sm.positions, POSITION_COMPONENTS_PER_VERTEX);
+    const colorAttribute = new BufferAttribute(sm.colors, COLOR_COMPONENTS_PER_VERTEX);
+
+    const indices = new Uint32Array(sm.segmentCapacity * INDICES_PER_SEGMENT);
+    for (let slot = 0; slot < sm.segmentCapacity; slot++) {
+      const vertexBase = slot * VERTICES_PER_SEGMENT;
+      const indexBase = slot * INDICES_PER_SEGMENT;
+      for (let i = 0; i < INDICES_PER_SEGMENT; i++) {
+        indices[indexBase + i] = SEGMENT_INDEX_TEMPLATE[i]! + vertexBase;
+      }
+    }
+
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', positionAttribute);
+    geometry.setAttribute('color', colorAttribute);
+    geometry.setIndex(new BufferAttribute(indices, 1));
+    geometry.setDrawRange(0, sm.occupants.length * INDICES_PER_SEGMENT);
+
+    const previous = sm.mesh.geometry;
+    sm.mesh.geometry = geometry;
+    if (previous !== geometry) previous.dispose();
+
+    sm.positionAttribute = positionAttribute;
+    sm.colorAttribute = colorAttribute;
+  };
+
+  /**
+   * Grows a super-mesh to hold at least `slots`, preserving what is in it.
+   * Geometric (doubling) for the same reason terrainMeshes.ts's is: the
+   * frontier fills in segment by segment as chunks arrive, and growing by one
+   * each time would recopy the whole buffer on every arrival.
+   */
+  const ensureSegmentCapacity = (sm: FogSuperMesh, slots: number): void => {
+    if (slots <= sm.segmentCapacity) return;
+    let capacity = sm.segmentCapacity;
+    while (capacity < slots) capacity *= 2;
+
+    const positions = new Float32Array(capacity * VERTICES_PER_SEGMENT * POSITION_COMPONENTS_PER_VERTEX);
+    const colors = new Float32Array(capacity * VERTICES_PER_SEGMENT * COLOR_COMPONENTS_PER_VERTEX);
+    positions.set(sm.positions);
+    colors.set(sm.colors);
+    sm.positions = positions;
+    sm.colors = colors;
+    sm.segmentCapacity = capacity;
+    bindGeometry(sm);
+  };
+
+  const createSuperMesh = (superIdx: number): FogSuperMesh => {
+    const placeholder = new BufferAttribute(new Float32Array(0), POSITION_COMPONENTS_PER_VERTEX);
+    const sm: FogSuperMesh = {
+      mesh: new Mesh(new BufferGeometry(), material),
+      positions: new Float32Array(
+        INITIAL_SEGMENT_CAPACITY * VERTICES_PER_SEGMENT * POSITION_COMPONENTS_PER_VERTEX,
+      ),
+      colors: new Float32Array(
+        INITIAL_SEGMENT_CAPACITY * VERTICES_PER_SEGMENT * COLOR_COMPONENTS_PER_VERTEX,
+      ),
+      positionAttribute: placeholder,
+      colorAttribute: placeholder,
+      occupants: [],
+      segmentCapacity: INITIAL_SEGMENT_CAPACITY,
+    };
+    bindGeometry(sm);
+    group.add(sm.mesh);
+    superMeshes.set(superIdx, sm);
+    return sm;
+  };
+
+  /**
+   * The bound the renderer culls against, over the LIVE slots only.
+   *
+   * Hand-rolled rather than `geometry.computeBoundingSphere()` for the same
+   * reason terrainMeshes.ts's is: that reads the whole position attribute, and
+   * the slots past the live prefix hold whatever a previous occupant left
+   * there — a removed segment's stale coordinates would keep inflating the
+   * sphere and defeat the culling this merge depends on.
+   *
+   * Centre-of-AABB, which is what Three's own implementation uses.
+   */
+  const recomputeBounds = (sm: FogSuperMesh): void => {
+    const geometry = sm.mesh.geometry;
+    const live = sm.occupants.length * VERTICES_PER_SEGMENT;
+    if (live === 0) {
+      geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
+      return;
+    }
+    const positions = sm.positions;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let v = 0; v < live; v++) {
+      const x = positions[v * 3]!;
+      const y = positions[v * 3 + 1]!;
+      const z = positions[v * 3 + 2]!;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    const centreX = (minX + maxX) / 2;
+    const centreY = (minY + maxY) / 2;
+    const centreZ = (minZ + maxZ) / 2;
+    let maxSquared = 0;
+    for (let v = 0; v < live; v++) {
+      const dx = positions[v * 3]! - centreX;
+      const dy = positions[v * 3 + 1]! - centreY;
+      const dz = positions[v * 3 + 2]! - centreZ;
+      const squared = dx * dx + dy * dy + dz * dz;
+      if (squared > maxSquared) maxSquared = squared;
+    }
+    geometry.boundingSphere = new Sphere(
+      new Vector3(centreX, centreY, centreZ),
+      Math.sqrt(maxSquared),
+    );
+  };
+
+  /** Publishes every buffer edit made since the last flush. */
+  const flush = (): void => {
+    for (const sm of dirtySupers) {
+      sm.positionAttribute.needsUpdate = true;
+      sm.colorAttribute.needsUpdate = true;
+      // Indexed geometry: the draw range counts INDICES, and the live slots are
+      // a contiguous prefix, so one range covers every segment in the block.
+      sm.mesh.geometry.setDrawRange(0, sm.occupants.length * INDICES_PER_SEGMENT);
+      recomputeBounds(sm);
+    }
+    dirtySupers.clear();
+  };
+
+  const writeSlot = (mirror: TerrainMirror, sm: FogSuperMesh, segment: FogSegment): void => {
     writeSegmentArrays(
       mirror,
       segment.edge,
-      segment.positionAttribute.array as Float32Array,
-      segment.colorAttribute.array as Float32Array,
+      sm.positions,
+      sm.colors,
+      segment.slot * VERTICES_PER_SEGMENT,
     );
-    segment.positionAttribute.needsUpdate = true;
-    segment.colorAttribute.needsUpdate = true;
-    // Heights moved, so the culling bound is stale — same rule as
-    // terrainMeshes.ts's writeChunk, and just as cheap at 51 vertices.
-    segment.geometry.computeBoundingSphere();
+    dirtySupers.add(sm);
   };
 
-  const buildSegment = (mirror: TerrainMirror, edge: FrontierEdge, chunkCols: number): FogSegment => {
-    const positions = new Float32Array(POSITION_COMPONENTS);
-    const colors = new Float32Array(COLOR_COMPONENTS);
-    writeSegmentArrays(mirror, edge, positions, colors);
+  const addSegment = (mirror: TerrainMirror, segment: FogSegment): void => {
+    const sm = superMeshes.get(segment.superIdx) ?? createSuperMesh(segment.superIdx);
+    ensureSegmentCapacity(sm, sm.occupants.length + 1);
+    segment.slot = sm.occupants.length;
+    sm.occupants.push(segment);
+    writeSlot(mirror, sm, segment);
+  };
 
-    const geometry = new BufferGeometry();
-    const positionAttribute = new BufferAttribute(positions, 3);
-    const colorAttribute = new BufferAttribute(colors, 4);
-    geometry.setAttribute('position', positionAttribute);
-    geometry.setAttribute('color', colorAttribute);
-    geometry.setIndex(buildSegmentIndices());
+  /**
+   * Frees a segment's slot by swapping the last live occupant down into it —
+   * the whole removal, since nothing about a quad strip depends on the order
+   * its neighbours are drawn in and its indices belong to the slot, not to it.
+   * A block that loses its last segment loses its mesh too, so a frontier that
+   * has crept out of a chunk-grid block stops costing a draw call there.
+   */
+  const removeSegment = (segment: FogSegment): void => {
+    const sm = superMeshes.get(segment.superIdx);
+    if (sm === undefined) return;
+    const last = sm.occupants.length - 1;
+    if (segment.slot !== last) {
+      const moved = sm.occupants[last]!;
+      const from = last * VERTICES_PER_SEGMENT;
+      const to = segment.slot * VERTICES_PER_SEGMENT;
+      sm.positions.copyWithin(
+        to * POSITION_COMPONENTS_PER_VERTEX,
+        from * POSITION_COMPONENTS_PER_VERTEX,
+        (from + VERTICES_PER_SEGMENT) * POSITION_COMPONENTS_PER_VERTEX,
+      );
+      sm.colors.copyWithin(
+        to * COLOR_COMPONENTS_PER_VERTEX,
+        from * COLOR_COMPONENTS_PER_VERTEX,
+        (from + VERTICES_PER_SEGMENT) * COLOR_COMPONENTS_PER_VERTEX,
+      );
+      moved.slot = segment.slot;
+      sm.occupants[segment.slot] = moved;
+    }
+    sm.occupants.pop();
 
-    const mesh = new Mesh(geometry, material);
-    return {
-      mesh,
-      geometry,
-      positionAttribute,
-      colorAttribute,
-      edge,
-      chunkIdx: edge.cy * chunkCols + edge.cx,
-    };
+    if (sm.occupants.length === 0) {
+      group.remove(sm.mesh);
+      sm.mesh.geometry.dispose();
+      superMeshes.delete(segment.superIdx);
+      dirtySupers.delete(sm);
+      return;
+    }
+    dirtySupers.add(sm);
   };
 
   return {
     sync(mirror: TerrainMirror): void {
       const chunkCols = chunksPerEdge(mirror.map.size);
+      const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
       const nextEdges = frontierEdges(mirror.received, chunkCols);
       const nextKeys = new Set(nextEdges.map(frontierEdgeKey));
 
       // Remove segments whose edge no longer exists — the boundary crept
       // outward past them, or the world was replaced by a rejoin.
-      for (const [key, entry] of segments) {
+      for (const [key, segment] of segments) {
         if (nextKeys.has(key)) continue;
-        group.remove(entry.mesh);
-        entry.geometry.dispose();
+        removeSegment(segment);
         segments.delete(key);
       }
 
-      // Add segments for edges that are new; refresh the heights of the ones
+      // Add segments for edges that are new; rewrite the heights of the ones
       // that survive. A surviving edge's POSITION depends only on (cx, cy,
       // dir), but its bank now follows the ground, and a rejoin can hand this
-      // same key a different world's terrain — so the arrays are rewritten in
-      // place (identity preserved) rather than trusted.
+      // same key a different world's terrain — so the arrays are rewritten
+      // rather than trusted.
       for (const edge of nextEdges) {
         const key = frontierEdgeKey(edge);
         const existing = segments.get(key);
         if (existing !== undefined) {
-          rewriteSegment(mirror, existing);
+          writeSlot(mirror, superMeshes.get(existing.superIdx)!, existing);
           continue;
         }
-        const segment = buildSegment(mirror, edge, chunkCols);
-        group.add(segment.mesh);
+        const sx = Math.floor(edge.cx / SUPER_MESH_SPAN_CHUNKS);
+        const sy = Math.floor(edge.cy / SUPER_MESH_SPAN_CHUNKS);
+        const segment: FogSegment = {
+          edge,
+          chunkIdx: edge.cy * chunkCols + edge.cx,
+          superIdx: sy * superCols + sx,
+          slot: 0,
+        };
+        addSegment(mirror, segment);
         segments.set(key, segment);
       }
+
+      flush();
     },
 
     refresh(mirror: TerrainMirror, dirtyChunks: ReadonlySet<number>): void {
       if (dirtyChunks.size === 0) return;
       for (const segment of segments.values()) {
         if (!dirtyChunks.has(segment.chunkIdx)) continue;
-        rewriteSegment(mirror, segment);
+        writeSlot(mirror, superMeshes.get(segment.superIdx)!, segment);
       }
+      flush();
+    },
+
+    segmentCount(): number {
+      return segments.size;
+    },
+
+    drawCallCount(): number {
+      return superMeshes.size;
     },
 
     dispose(): void {
       stopAnimating();
-      for (const entry of segments.values()) {
-        group.remove(entry.mesh);
-        entry.geometry.dispose();
+      for (const sm of superMeshes.values()) {
+        group.remove(sm.mesh);
+        sm.mesh.geometry.dispose();
       }
+      superMeshes.clear();
       segments.clear();
+      dirtySupers.clear();
       parent.remove(group);
       material.dispose();
     },
