@@ -74,6 +74,10 @@ body {
   position: absolute;
   top: 16px;
   left: 16px;
+  /* The corner panel is a narrow stack of one-row plugin lines, so it gives
+     back ~20% of the shared panel chrome's min-width (owner, 2026-08-21) —
+     content that needs more still stretches it. */
+  min-width: 168px;
 }
 
 .hud-bottom-strip {
