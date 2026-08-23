@@ -58,6 +58,7 @@ import {
   Float32BufferAttribute,
   LineBasicMaterial,
   LineLoop,
+  LineSegments,
   type Scene,
 } from 'three';
 import {
@@ -89,6 +90,20 @@ const OUTLINE_LIFT_WORLD_UNITS = 0.05;
  * staying a hint rather than a cursor — the owner asked for "a light outline".
  */
 const OUTLINE_OPACITY = 0.45;
+
+/**
+ * Half-length of the centre crosshair's arms, in world units — a fraction of a
+ * cell so the mark fits inside even the smallest footprint without touching
+ * its outline, and CONSTANT across radii so it reads as a pointer, not as part
+ * of the (radius-scaling) stamp shape.
+ */
+const CROSSHAIR_ARM_WORLD_UNITS = CELL_WORLD_SIZE * 0.3;
+
+/**
+ * Gap between the crosshair's centre and where its arms begin, in world
+ * units — leaves the exact centre pixel-clear so the point itself is legible.
+ */
+const CROSSHAIR_GAP_WORLD_UNITS = CELL_WORLD_SIZE * 0.08;
 
 /**
  * Class the canvas carries while the outline stands in for the mouse pointer.
@@ -277,6 +292,39 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   line.visible = false;
   scene.add(line);
 
+  // A fine fixed-size crosshair at the footprint's centre: the outline grows
+  // with the brush, so on large stamps the hovered cell is only implied by
+  // symmetry — the owner asked for "a fine crosshair in the middle of the
+  // brush stamp" to mark exactly where the mouse is. Same overlay material
+  // family (depthTest off, high render order) and lifted with the outline.
+  // Built once; its size does not vary with radius by design.
+  const crosshairMaterial = new LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: OUTLINE_OPACITY + 0.2,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const arm = CROSSHAIR_ARM_WORLD_UNITS;
+  const gap = CROSSHAIR_GAP_WORLD_UNITS;
+  const crosshairGeometry = new BufferGeometry();
+  crosshairGeometry.setAttribute(
+    'position',
+    new Float32BufferAttribute(
+      [
+        -arm, 0, 0, -gap, 0, 0,
+        gap, 0, 0, arm, 0, 0,
+        0, 0, -arm, 0, 0, -gap,
+        0, 0, gap, 0, 0, arm,
+      ],
+      3,
+    ),
+  );
+  const crosshair = new LineSegments(crosshairGeometry, crosshairMaterial);
+  crosshair.renderOrder = 999;
+  crosshair.visible = false;
+  scene.add(crosshair);
+
   let shownRadius = MIN_BRUSH_RADIUS;
 
   /**
@@ -290,6 +338,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   let showing = false;
   const show = (visible: boolean): void => {
     line.visible = visible;
+    crosshair.visible = visible;
     if (visible === showing) return;
     showing = visible;
     canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, visible);
@@ -312,18 +361,19 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         line.geometry = geometries[index];
         shownRadius = radius;
       }
-      line.position.set(
-        hover.x * CELL_WORLD_SIZE,
-        hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS,
-        hover.y * CELL_WORLD_SIZE,
-      );
+      const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
+      line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
+      crosshair.position.copy(line.position);
       show(true);
     },
     dispose() {
       show(false);
       scene.remove(line);
+      scene.remove(crosshair);
       for (const g of geometries) g.dispose();
       material.dispose();
+      crosshairGeometry.dispose();
+      crosshairMaterial.dispose();
     },
   };
 }
