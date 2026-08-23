@@ -53,6 +53,9 @@ import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import { VersionWatermark } from './VersionWatermark.tsx';
 import { RestorePoints, type RollbackActions } from './RestorePoints.tsx';
 import { restorePanelOpen, setRestorePanelOpen } from '../state/rollbackState.ts';
+import { WorldManager, type WorldActions } from './WorldManager.tsx';
+import { WorldSwitchBanner } from './WorldSwitchBanner.tsx';
+import { worldPanelOpen, setWorldPanelOpen } from '../state/worldsState.ts';
 import {
   BRUSH_PROFILES,
   BRUSH_RADII,
@@ -189,6 +192,8 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 }
 
 export function Hud(props: {
+  /** What the world-manager panel may ask the server to do (multi-world). */
+  worlds: WorldActions;
   /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
   chartSource: () => ChartSource | null;
   /**
@@ -470,6 +475,23 @@ export function Hud(props: {
           <button
             type="button"
             class="hud-panel hud-settings-button"
+            classList={{ open: worldPanelOpen() }}
+            aria-expanded={worldPanelOpen()}
+            aria-haspopup="dialog"
+            aria-label="Worlds"
+            title="Worlds: create, load and archive the worlds on this server."
+            onClick={() => setWorldPanelOpen(!worldPanelOpen())}
+          >
+            {/* A stack of map layers: several worlds, one on top. */}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
+              <path d="m3 12 9 4.5L21 12" />
+              <path d="m3 16.5 9 4.5 9-4.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
             classList={{ open: restorePanelOpen() }}
             aria-expanded={restorePanelOpen()}
             aria-haspopup="dialog"
@@ -569,6 +591,16 @@ export function Hud(props: {
       <Show when={restorePanelOpen()}>
         <RestorePoints actions={props.rollback} />
       </Show>
+
+      {/* The world-manager overlay, mounted only while open — it asks the
+          server for nothing until the operator types a key and presses List. */}
+      <Show when={worldPanelOpen()}>
+        <WorldManager actions={props.worlds} />
+      </Show>
+
+      {/* Not gated on the panel: a switch countdown and "no world loaded" are
+          shown to every player, whether or not they hold a key. */}
+      <WorldSwitchBanner />
 
     </div>
   );

@@ -22,6 +22,21 @@ import type {
   SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
+  WorldAdminResultMessage,
+  WorldArchiveRequestMessage,
+  WorldCreateRequestMessage,
+  WorldDuplicateRequestMessage,
+  WorldListMessage,
+  WorldListRequestMessage,
+  WorldLoadRequestMessage,
+  WorldPinRequestMessage,
+  WorldPurgeRequestMessage,
+  WorldRenameRequestMessage,
+  WorldSwitchCancelRequestMessage,
+  WorldSwitchNoticeMessage,
+  WorldUnarchiveRequestMessage,
+  WorldUnloadRequestMessage,
+  WorldUnloadedMessage,
 } from '@terrace/shared';
 
 /** Server → one joining client: world size + the unlocked chunks only. */
@@ -65,3 +80,62 @@ export const MSG_ROLLBACK: RollbackRequestMessage['type'] = 'rollback';
 
 /** Server → the requesting client: the operator's receipt. */
 export const MSG_ROLLBACK_RESULT: RollbackResultMessage['type'] = 'rollbackResult';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD MANAGEMENT (2026-08-22). Operator traffic gated by WORLD_ADMIN_KEY —
+// a different key from rollback's, guarding a bigger blast radius. See the
+// WORLD MANAGEMENT section in shared/src/protocol.ts.
+//
+// A world SWITCH is not announced to the panel by its result message: every
+// client is sent a fresh `snapshot` for the new world, which the client
+// already treats as "the world you have has been replaced". What IS announced
+// separately is the COUNTDOWN before it (`worldSwitchNotice`) and the state of
+// having no world at all (`worldUnloaded`), because neither is a world the
+// client could render.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Client → server: "list every world you have", carrying the admin key. */
+export const MSG_WORLD_LIST: WorldListRequestMessage['type'] = 'worldList';
+
+/** Server → the requesting client: the worlds, or why it was refused. */
+export const MSG_WORLD_LISTING: WorldListMessage['type'] = 'worldListing';
+
+/** Server → the requesting client: the receipt for one management action. */
+export const MSG_WORLD_ADMIN_RESULT: WorldAdminResultMessage['type'] = 'worldAdminResult';
+
+/** Server → every client: a switch is counting down (or was called off). */
+export const MSG_WORLD_SWITCH_NOTICE: WorldSwitchNoticeMessage['type'] = 'worldSwitchNotice';
+
+/** Server → every client: there is no world loaded right now. */
+export const MSG_WORLD_UNLOADED: WorldUnloadedMessage['type'] = 'worldUnloaded';
+
+/** Client → server: create a world. */
+export const MSG_WORLD_CREATE: WorldCreateRequestMessage['type'] = 'worldCreate';
+
+/** Client → server: make a world live. */
+export const MSG_WORLD_LOAD: WorldLoadRequestMessage['type'] = 'worldLoad';
+
+/** Client → server: save and close the live world. */
+export const MSG_WORLD_UNLOAD: WorldUnloadRequestMessage['type'] = 'worldUnload';
+
+/** Client → server: rename a world. Never moves its file. */
+export const MSG_WORLD_RENAME: WorldRenameRequestMessage['type'] = 'worldRename';
+
+/** Client → server: copy a world, with its whole history. */
+export const MSG_WORLD_DUPLICATE: WorldDuplicateRequestMessage['type'] = 'worldDuplicate';
+
+/** Client → server: move a world to the trash. NOT a delete. */
+export const MSG_WORLD_ARCHIVE: WorldArchiveRequestMessage['type'] = 'worldArchive';
+
+/** Client → server: take a world back out of the trash. */
+export const MSG_WORLD_UNARCHIVE: WorldUnarchiveRequestMessage['type'] = 'worldUnarchive';
+
+/** Client → server: destroy an archived world. The only destructive name here. */
+export const MSG_WORLD_PURGE: WorldPurgeRequestMessage['type'] = 'worldPurge';
+
+/** Client → server: pin (or unpin) a restore point against retention. */
+export const MSG_WORLD_PIN: WorldPinRequestMessage['type'] = 'worldPin';
+
+/** Client → server: call off a counting-down switch. */
+export const MSG_WORLD_SWITCH_CANCEL: WorldSwitchCancelRequestMessage['type'] =
+  'worldSwitchCancel';

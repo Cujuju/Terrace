@@ -11,7 +11,8 @@
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "rollback": "node scripts/rollback.ts"
+    "rollback": "node scripts/rollback.ts",
+    "import-world": "node scripts/import-world.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.17.50",

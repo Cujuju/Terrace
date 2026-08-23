@@ -1,8 +1,16 @@
-// Boot sequence for one Terrace world (design §3.2: one world per process, no
-// lobby layer — one deployment = one world).
+// Boot sequence for a Terrace server (design §3.2, amended 2026-08-22: one
+// world LIVE per process, many worlds on disk — see the WORLD MANAGEMENT
+// section in shared/src/protocol.ts).
 //
-//   config → plugins → database → world (restored or fresh) → plugin host
-//          → tick loop → snapshot scheduler → Colyseus server
+//   config → plugins → world registry → migration → world manager
+//          → the world to load (or none) → tick loop → snapshot scheduler
+//          → Colyseus server
+//
+// WHAT CHANGED FROM ONE-WORLD-PER-PROCESS. The World, its plugin host, its
+// store and its rollback service are no longer boot-time constants; they are a
+// SESSION the WorldManager creates, replaces and destroys while the process
+// runs. Everything downstream — the tick loop, the snapshot scheduler, the
+// room — therefore talks to the manager rather than holding any of them.
 //
 // Shutdown is the reverse, driven by Colyseus's own SIGINT/SIGTERM handling
 // (verified in @colyseus/core 0.17.50: `gracefullyShutdown` defaults to true and
@@ -14,65 +22,25 @@ import './quiet-boot.ts'; // must precede any Colyseus import — see that file'
 import { Server, type ServerOptions } from '@colyseus/core';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { loadConfig, ConfigError, DEFAULT_ROLLBACK_KEY, type ServerConfig } from './config.ts';
+import {
+  loadConfig,
+  ConfigError,
+  DEFAULT_ROLLBACK_KEY,
+  DEFAULT_WORLD_ADMIN_KEY,
+  type ServerConfig,
+} from './config.ts';
 import { logError, logInfo, logWarn } from './log.ts';
-import { SnapshotStore } from './persistence/snapshot-store.ts';
+import { openWorlds } from './boot/open-worlds.ts';
+import { WorldRegistry } from './persistence/world-registry.ts';
 import { discoverPlugins } from './plugins/discovery.ts';
 import { PluginHost } from './plugins/host.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
 import { ROOM_NAME, TerraceRoom, bindRoomContext } from './net/terrace-room.ts';
-import { RollbackService } from './world/rollback.ts';
-import { World } from './world/world.ts';
+import { WorldAdminService } from './world/world-admin.ts';
+import { WorldManager } from './world/world-manager.ts';
 
 const MILLISECONDS_PER_SECOND = 1000;
-
-/** Loads the newest snapshot into a World, or creates a fresh one. */
-function openWorld(config: ServerConfig, store: SnapshotStore): {
-  world: World;
-  pluginSlices: Record<string, unknown>;
-} {
-  const snapshot = store.loadLatest();
-  if (snapshot === null) {
-    logInfo(`no snapshot found — creating a fresh ${config.worldSize}² world`);
-    return {
-      world: World.createFresh(config.worldSize, config.difficulty),
-      pluginSlices: {},
-    };
-  }
-
-  // Changing WORLD_SIZE against an existing database is undefined (see
-  // .env.example): every stored index would shift. Refuse rather than silently
-  // reinterpret a self-hoster's world.
-  if (snapshot.worldSize !== config.worldSize) {
-    throw new ConfigError(
-      `WORLD_SIZE is ${config.worldSize} but the database holds a ${snapshot.worldSize}² world; ` +
-        'point DB_PATH at a new file or restore the previous WORLD_SIZE',
-    );
-  }
-
-  const age = Math.round((Date.now() - snapshot.createdAt) / MILLISECONDS_PER_SECOND);
-  logInfo(`restoring snapshot #${snapshot.id} (${snapshot.worldSize}², ${age}s old)`);
-  return {
-    // Difficulty comes from the environment, not the snapshot; the NAME comes
-    // from the snapshot, not the environment — see World.restore for why the
-    // two are opposite. A null name means a world created before names existed:
-    // restore mints one and marks the world dirty so it is written on the next
-    // snapshot instead of being re-drawn on every boot.
-    world: World.restore(
-      config.worldSize,
-      snapshot.cells,
-      snapshot.mask,
-      config.difficulty,
-      snapshot.name,
-      // Per-player unlock masks (issue #17). Empty on a legacy snapshot —
-      // World.restore's own doc comment states what that means for a
-      // returning player.
-      snapshot.tokenMasks,
-    ),
-    pluginSlices: snapshot.pluginSlices,
-  };
-}
 
 /**
  * Wires a built client (issue #20: "one process = playable URL") into the
@@ -105,96 +73,18 @@ async function clientStaticExpressHook(
   };
 }
 
-/** Writes a snapshot if anything changed. Returns true when one was written. */
-function snapshotIfDirty(world: World, host: PluginHost, store: SnapshotStore): boolean {
-  if (!world.dirty) return false;
-  store.saveSnapshot({
-    worldSize: world.size,
-    name: world.name,
-    cells: world.map.cells,
-    mask: world.mask,
-    pluginSlices: host.collectPersistence(),
-    // Per-player unlock masks (issue #17) — persisted beside the union mask
-    // for the reasons in snapshot-store.ts's TOKEN_MASKS TABLE comment.
-    tokenMasks: world.tokenMasks(),
-  });
-  world.markSnapshotted();
-  return true;
-}
-
-async function main(): Promise<void> {
-  const config = loadConfig();
-  logInfo(
-    `starting: world=${config.worldSize}² difficulty=${config.difficulty} port=${config.port} ` +
-      `tick=${config.tickHz}Hz snapshot=${config.snapshotIntervalS}s db=${config.dbPath}`,
-  );
-
-  // Plugins load before the world so a load failure costs nothing but a boot.
-  const plugins = await discoverPlugins(config.pluginsDir);
-
-  const store = SnapshotStore.open(config.dbPath, config.snapshotRetention);
-  const { world, pluginSlices } = openWorld(config, store);
-  // The name is how a self-hoster tells one of their worlds from another in a
-  // log; it is fixed for the life of the world, so it is stated once at boot.
-  logInfo(`world is "${world.name}"`);
-
-  const host = new PluginHost(world, plugins);
-  // Restore first, then announce: onWorldCreate must see a world whose plugin
-  // state is already the state it had when the process died.
-  host.restorePersistence(pluginSlices);
-  host.worldCreate();
-
-  // BELT AND SUSPENDERS FOR WORLD IDENTITY. Booting can leave the world already
-  // differing from the file it came from: a world restored without a name has
-  // just been given one, and a plugin's onWorldCreate may have unlocked chunks.
-  // Waiting SNAPSHOT_INTERVAL_S to write that would mean a crash inside the
-  // first minute silently re-names the world on the next boot — an identity
-  // wobble, not a lost sculpt. One extra write per process start, only when
-  // something actually changed, closes it.
-  try {
-    if (snapshotIfDirty(world, host, store)) logInfo('boot snapshot written');
-  } catch (error) {
-    // Same policy as the periodic snapshot: a failed write must not stop a
-    // world from opening; the world stays dirty and the scheduler retries.
-    logError('boot snapshot failed', error);
-  }
-
-  const tickLoop = startTickLoop(config.tickHz, (dt) => host.tick(dt));
-
-  // Cadence half of the snapshot decision: every SNAPSHOT_INTERVAL_S, but only
-  // if the world changed — an idle server writes nothing at all.
-  const snapshotTimer = setInterval(() => {
-    try {
-      if (snapshotIfDirty(world, host, store)) logInfo('world snapshot written');
-    } catch (error) {
-      // A failed periodic snapshot must not kill a live world; the next tick
-      // retries, and the world stays dirty until one succeeds.
-      logError('periodic snapshot failed', error);
-    }
-  }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
-
-  // WORLD ROLLBACK (2026-08-21). Constructed here, at the one place that holds
-  // the world, the plugin host and the store together — the three things a
-  // rewind has to move in step (see world/rollback.ts).
-  const rollback = new RollbackService({
-    world,
-    host,
-    store,
-    key: config.rollbackKey,
-    retention: config.snapshotRetention,
-    intervalS: config.snapshotIntervalS,
-  });
-  // States WHETHER rollback is available, and — only for the built-in default
-  // — WHICH key is live. A key the self-hoster chose is never printed; the
-  // default is, because it is public knowledge already and the whole purpose
-  // of the line is to make sure nobody is running on it by accident.
-  if (!rollback.enabled) {
+/**
+ * States which operator keys are live, and warns about the built-in defaults.
+ *
+ * The defaults ARE named in the warning, because they are public knowledge
+ * already and the whole purpose of the line is to make sure nobody is running
+ * on one by accident. A key the self-hoster chose is never printed.
+ */
+function logOperatorKeys(config: ServerConfig): void {
+  if (config.rollbackKey === null) {
     logInfo('world rollback is disabled (ROLLBACK_KEY is set to nothing)');
   } else if (config.rollbackKey === DEFAULT_ROLLBACK_KEY) {
     logInfo(`world rollback is enabled (${config.snapshotRetention} restore points kept)`);
-    // WARN, not info: on a server anyone else can reach, this is a standing
-    // invitation to roll the world back, and the operator has not chosen it —
-    // it is simply what an unconfigured deployment does.
     logWarn(
       `world rollback is using the built-in key "${DEFAULT_ROLLBACK_KEY}", which is public. ` +
         'Anyone who can reach this server can roll the world back. Set ROLLBACK_KEY to your ' +
@@ -206,8 +96,104 @@ async function main(): Promise<void> {
     );
   }
 
+  if (config.worldAdminKey === null) {
+    logInfo('world management is disabled (WORLD_ADMIN_KEY is set to nothing)');
+  } else if (config.worldAdminKey === DEFAULT_WORLD_ADMIN_KEY) {
+    logInfo('world management is enabled');
+    // WARN for the same reason as rollback's, and more so: this key can
+    // archive a world, not merely rewind one.
+    logWarn(
+      `world management is using the built-in key "${DEFAULT_WORLD_ADMIN_KEY}", which is ` +
+        'public. Anyone who can reach this server can create, load and archive worlds. Set ' +
+        'WORLD_ADMIN_KEY to your own value, or WORLD_ADMIN_KEY= (empty) to turn it off.',
+    );
+  } else {
+    logInfo('world management is enabled with your own key');
+  }
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  // `newWorlds=` rather than `world=`: WORLD_SIZE is now the size worlds are
+  // CREATED at, not the size of the one that is about to load — an existing
+  // world keeps whatever size it was made with, and this server may hold
+  // several of different sizes. The loaded world states its own size below.
+  logInfo(
+    `starting: newWorlds=${config.worldSize}² difficulty=${config.difficulty} ` +
+      `port=${config.port} tick=${config.tickHz}Hz snapshot=${config.snapshotIntervalS}s ` +
+      `worlds=${config.worldsDir}`,
+  );
+
+  // Plugins load before any world so a load failure costs nothing but a boot.
+  const plugins = await discoverPlugins(config.pluginsDir);
+
+  const registry = new WorldRegistry(config.worldsDir);
+  const manager = new WorldManager({
+    config,
+    registry,
+    plugins,
+    switchCountdownS: config.worldSwitchCountdownS,
+  });
+
+  // Migration + "what is live" policy, in one place: see boot/open-worlds.ts
+  // for why a missing world never becomes a fresh one.
+  const outcome = openWorlds(config, registry, manager);
+  const session = manager.current;
+  if (session === null) {
+    logWarn(
+      'no world is loaded. The server is running and world management is available; ' +
+        'load or create a world from the panel.',
+    );
+  } else {
+    // The name is how a self-hoster tells one of their worlds from another in
+    // a log; it is stated once, here, whenever a world becomes live.
+    logInfo(`world is "${session.world.name}" (${outcome.loadedId})`);
+  }
+
+  const admin = new WorldAdminService({ manager, registry, config });
+  logOperatorKeys(config);
+
+  // BELT AND SUSPENDERS FOR WORLD IDENTITY. Booting can leave the world already
+  // differing from the file it came from: a world restored without a name has
+  // just been given one, and a plugin's onWorldCreate may have unlocked chunks.
+  // Waiting SNAPSHOT_INTERVAL_S to write that would mean a crash inside the
+  // first minute silently re-names the world on the next boot — an identity
+  // wobble, not a lost sculpt. One extra write per process start, only when
+  // something actually changed, closes it.
+  try {
+    if (manager.snapshotIfDirty()) logInfo('boot snapshot written');
+  } catch (error) {
+    // Same policy as the periodic snapshot: a failed write must not stop a
+    // world from opening; the world stays dirty and the scheduler retries.
+    logError('boot snapshot failed', error);
+  }
+
+  // The loop belongs to the PROCESS, not to a world: it keeps ticking across a
+  // world switch and across having no world at all (WorldManager.tick is a
+  // no-op then), so nothing has to be torn down and restarted to change worlds.
+  const tickLoop = startTickLoop(config.tickHz, (dt) => manager.tick(dt));
+
+  // Cadence half of the snapshot decision: every SNAPSHOT_INTERVAL_S, but only
+  // if the world changed — an idle server writes nothing at all.
+  const snapshotTimer = setInterval(() => {
+    try {
+      if (manager.snapshotIfDirty()) logInfo('world snapshot written');
+    } catch (error) {
+      // A failed periodic snapshot must not kill a live world; the next tick
+      // retries, and the world stays dirty until one succeeds.
+      logError('periodic snapshot failed', error);
+    }
+  }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
+
   // Bind before define(): a room can be created as soon as the server listens.
-  bindRoomContext({ world, host, rollback });
+  // The plugin message TYPES are computed once here, from the plugin set,
+  // because the room outlives every world and must register handlers without
+  // one — see PluginHost.messageTypesFor.
+  bindRoomContext({
+    manager,
+    admin,
+    pluginMessageTypes: PluginHost.messageTypesFor(plugins),
+  });
   // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
   // (@colyseus/core ServerOptions.greet, default true).
   const serverOptions: ServerOptions = { greet: false };
@@ -224,14 +210,16 @@ async function main(): Promise<void> {
     tickLoop.stop();
     clearInterval(snapshotTimer);
     try {
-      logInfo(snapshotIfDirty(world, host, store) ? 'shutdown snapshot written' : 'nothing to snapshot');
+      // `shutdown`, not `unload`: it saves and closes the live world but
+      // deliberately leaves the active pointer alone, so the next boot comes
+      // back to the same world.
+      logInfo(manager.shutdown() ? 'shutdown snapshot written' : 'nothing to snapshot');
     } catch (error) {
       logError('shutdown snapshot failed', error);
     }
   });
 
   gameServer.onShutdown(() => {
-    store.close();
     logInfo('shutdown complete');
   });
 

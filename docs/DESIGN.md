@@ -99,14 +99,39 @@ chosen over AGPL to maximize adoption; people may build closed-source games on t
     additionally closed-source and ships 10–30 MB+ bundles. Revisit only if this
     becomes a content-heavy shipped game.
 
-### 3.2 Server: Node + Colyseus, authoritative, one world per process
+### 3.2 Server: Node + Colyseus, authoritative, one world LIVE per process
 - **Colyseus** (owner choice) provides rooms, schema sync, and reconnection handling.
 - **Node over Bun** because Colyseus officially targets Node (Bun was considered and
   dropped for support reasons).
-- **One world per process** (owner decision, crash isolation): a crash takes down
-  exactly one world. Scaling = run more processes. There is no lobby layer in core;
-  one deployment = one world. The server is structured around a single `World` object
-  so a rooms layer could be added later without rework.
+- **One world LIVE per process** (owner decision, crash isolation; amended
+  2026-08-22): a crash takes down exactly one world. Scaling = run more processes.
+  There is no lobby layer in core. The server is structured around a single live
+  `World` so a rooms layer could be added later without rework.
+- **A world is a FILE, and a server may hold many** (owner decision, 2026-08-22,
+  after an incident). One SQLite database per world under `WORLDS_DIR`; the
+  operator creates, loads, renames, duplicates and archives them from an in-game
+  panel gated by `WORLD_ADMIN_KEY`. Exactly one is loaded and simulating at a
+  time — loading another saves and closes the current one first.
+  - *Why it changed.* A world used to be a ROW: every world a deployment had ever
+    run shared one `snapshots` table, distinguished only by a `world_name`
+    column, while retention kept "the newest N rows" **across the whole table**.
+    A world that stopped being written to was therefore evicted by whichever
+    world was written to next. This was not hypothetical: a world called
+    Frostwick Hollows lost 298 of its 308 snapshots exactly this way. With one
+    file per world, retention runs inside a file and cannot reach another's
+    history — a structural guarantee rather than a maintained one.
+  - *Nothing deletes a world implicitly.* Archiving MOVES a world's file to
+    `WORLDS_DIR/.trash`; the only code path that unlinks one is an explicit
+    purge of an already-archived world whose name the operator has typed back.
+    Boot never treats "I cannot find the world I expected" as "make a new one" —
+    it loads nothing and says which world it could not open.
+  - *Restore points can be PINNED*, exempting them from retention entirely, so a
+    moment worth keeping is not on a conveyor belt towards deletion.
+  - *One live world, not many, because plugin state is module-scoped.* Every
+    server plugin keeps its state in module variables, so two simultaneous worlds
+    would share forests, chronicles and mana pools. Switching works because
+    `restorePersistence` + `onWorldCreate` reset that state — the same replay a
+    rollback already relies on. Running several worlds at once is issue #78.
 - **Authoritative server is non-negotiable**: clients send *intents* ("raise at cell
   x,y"), never raw heightmap values. The server validates (bounds, unlock mask, and —
   via plugins — mana/cooldowns), applies the edit, runs the smoothing pass, and
@@ -217,7 +242,8 @@ terrace/
 │   ├── heightmap.ts   #   grid type, raise/lower, gradient smoothing, water, terracing
 │   └── protocol.ts    #   intents, diffs, snapshots, join messages
 ├── client/            # Vite + Solid + TS + Three.js
-├── server/            # Node + Colyseus; one World per process; tick loop; SQLite
+├── server/            # Node + Colyseus; one live World per process; tick loop;
+│                     one SQLite file per world under WORLDS_DIR
 ├── plugins/           # auto-discovered at boot; ships with example plugins
 │   └── reveal/        #   flagship example: progressive territory unlock
 ├── Dockerfile

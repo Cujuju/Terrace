@@ -37,6 +37,11 @@ import type {
   RollbackResultMessage,
 } from '@terrace/shared';
 import { logError, logInfo } from '../log.ts';
+import {
+  OperatorGate,
+  OPERATOR_LOCKOUT_MS,
+  OPERATOR_MAX_FAILED_ATTEMPTS,
+} from './operator-gate.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
 import { applyInitialUnlockForToken } from './initial-unlock.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
@@ -44,28 +49,14 @@ import type { PluginHost } from '../plugins/host.ts';
 import type { World } from './world.ts';
 
 /**
- * Wrong keys a single connection may send before it is refused outright for
- * ROLLBACK_LOCKOUT_MS.
- *
- * Five, not one: the operator is typing a secret by hand into a game HUD, and
- * locking them out on the first typo would make the feature hostile at the
- * exact moment they need it (their world is wrecked and they are in a hurry).
- * Five wrong tries then a minute's wait bounds an online guesser to 5 attempts
- * a minute per connection, which is far below any rate that matters against
- * even a MIN_ROLLBACK_KEY_LENGTH secret, while costing an operator with fat
- * fingers nothing.
+ * Kept as re-exports so the rollback lockout tests — and any self-hoster's
+ * script that imported them — keep working after the gate moved to
+ * world/operator-gate.ts (2026-08-22). The VALUES live there now, in the one
+ * implementation both operator keys share; these names are aliases, not a
+ * second policy.
  */
-export const ROLLBACK_MAX_FAILED_ATTEMPTS = 5;
-
-/** How long a connection stays locked out after exhausting its attempts. */
-export const ROLLBACK_LOCKOUT_MS = 60_000;
-
-/** Per-connection failed-attempt state; see ROLLBACK_MAX_FAILED_ATTEMPTS. */
-interface AttemptRecord {
-  failures: number;
-  /** Epoch ms the lockout ends, or 0 when not locked out. */
-  lockedUntil: number;
-}
+export const ROLLBACK_MAX_FAILED_ATTEMPTS = OPERATOR_MAX_FAILED_ATTEMPTS;
+export const ROLLBACK_LOCKOUT_MS = OPERATOR_LOCKOUT_MS;
 
 /** Everything a rollback needs from the process. */
 export interface RollbackDeps {
@@ -84,51 +75,36 @@ export interface RollbackDeps {
   readonly now?: () => number;
 }
 
-/**
- * Compares two secrets in time that does not depend on how far they match.
- *
- * `===` on strings short-circuits at the first differing character, which
- * leaks a prefix oracle to an attacker who can time responses. The cost of not
- * leaking it is a fixed-length loop, so there is no reason to accept the leak
- * even though a network round trip probably buries the signal in noise.
- *
- * Length is compared first and openly: the length of the key is not a secret
- * worth a branchless comparison, and every real key is the same length every
- * time anyway.
- */
-function secretsMatch(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) {
-    difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return difference === 0;
-}
-
 export class RollbackService {
   private readonly deps: RollbackDeps;
   private readonly now: () => number;
   /**
-   * Keyed by connection id, and pruned only when a connection is forgotten
-   * (see forgetClient, called from the room's onLeave). Bounded by the number
-   * of connected clients, so it cannot grow without bound the way a
-   * key-by-address map could.
+   * The shared operator gate, constructed with ROLLBACK_KEY. Rollback and
+   * world management each hold their own instance with their own key, so a
+   * lockout earned against one does not lock the other — they are different
+   * secrets guarding different blast radii (see operator-gate.ts).
    */
-  private readonly attempts = new Map<string, AttemptRecord>();
+  private readonly gate: OperatorGate;
 
   constructor(deps: RollbackDeps) {
     this.deps = deps;
     this.now = deps.now ?? Date.now;
+    this.gate = new OperatorGate({
+      key: deps.key,
+      label: 'rollback',
+      ...(deps.now !== undefined ? { now: deps.now } : {}),
+      log: logInfo,
+    });
   }
 
   /** True when ROLLBACK_KEY is configured; the boot log states this, not the key. */
   get enabled(): boolean {
-    return this.deps.key !== null;
+    return this.gate.enabled;
   }
 
   /** Drops a disconnected connection's attempt record. */
   forgetClient(clientId: string): void {
-    this.attempts.delete(clientId);
+    this.gate.forgetClient(clientId);
   }
 
   /**
@@ -283,41 +259,10 @@ export class RollbackService {
   }
 
   /**
-   * The gate. Returns null when the request may proceed, or the refusal to
-   * send back.
-   *
-   * Order matters: `disabled` is checked before the lockout, so a self-hoster
-   * who never set a key is told that however many times they ask, rather than
-   * being throttled for failing to guess a secret that does not exist.
+   * Delegates to the shared gate; the refusal names it returns are a subset of
+   * RollbackRefusal, so no translation is needed (see OperatorRefusal).
    */
   private authorize(clientId: string, key: string): RollbackRefusal | null {
-    const configured = this.deps.key;
-    if (configured === null) return 'disabled';
-
-    const now = this.now();
-    const record = this.attempts.get(clientId);
-    if (record !== undefined && record.lockedUntil > now) return 'throttled';
-
-    if (!secretsMatch(key, configured)) {
-      const failures = (record?.failures ?? 0) + 1;
-      const lockedUntil =
-        failures >= ROLLBACK_MAX_FAILED_ATTEMPTS ? now + ROLLBACK_LOCKOUT_MS : 0;
-      // Reset the counter as the lockout starts, so serving the lockout is a
-      // clean slate rather than one attempt before being locked out again.
-      this.attempts.set(clientId, {
-        failures: lockedUntil > 0 ? 0 : failures,
-        lockedUntil,
-      });
-      // Logged WITHOUT the key, and worth logging: repeated failures against a
-      // configured key is the one signal a self-hoster has that someone is
-      // trying to roll their world back.
-      logInfo(`rollback request refused: bad operator key (attempt ${failures})`);
-      return lockedUntil > 0 ? 'throttled' : 'badKey';
-    }
-
-    // A correct key clears the record entirely — the operator is who they say
-    // they are, so their earlier typos are no longer evidence of anything.
-    this.attempts.delete(clientId);
-    return null;
+    return this.gate.authorize(clientId, key);
   }
 }
