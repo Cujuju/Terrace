@@ -96,3 +96,25 @@ export function claimWorldHeaderAction(action: WorldHeaderAction): void {
 export function clearWorldHeaderAction(): void {
   setWorldHeaderAction(null);
 }
+
+/**
+ * The world clock, as DISPLAY TEXT — e.g. `3:45 p.m.` or `15:45`, formatted
+ * by the owning plugin in the viewer system's own 12/24-hour convention.
+ *
+ * Lives here (not in hudState.ts) because it is a PLUGIN → core write: the
+ * day/night plugin owns the clock (its interpolator advances the phase every
+ * frame) and this module is already the seam plugins write through. A string,
+ * not a phase number, keeps that seam one-way and narrow — core renders text
+ * it did not compute. Nullable because a server without the day/night plugin
+ * has no world time at all; the header then shows just name and difficulty,
+ * never an invented clock. Server-derived and therefore not persisted (see
+ * hudState.ts's header).
+ */
+const [worldTimeText, setWorldTimeTextSignal] = createSignal<string | null>(null);
+
+export { worldTimeText };
+
+/** Written by the day/night plugin each frame; Solid dedupes equal strings. */
+export function setWorldTimeText(text: string | null): void {
+  setWorldTimeTextSignal(text);
+}

@@ -24,6 +24,7 @@
 import { Show, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { worldIdentity } from '../state/hudState.ts';
+import { worldTimeText } from '../plugins/hudPanels.ts';
 import { worldHeaderAction } from '../plugins/hudPanels.ts';
 
 /**
@@ -79,9 +80,19 @@ export function WorldHeader(): JSX.Element {
             )}
           </Show>
         </span>
-        <Show when={worldIdentity().difficulty !== null}>
+        <Show when={worldIdentity().difficulty !== null || worldTimeText() !== null}>
           <span class="world-header__rating" title={DIFFICULTY_TITLE}>
-            Difficulty {worldIdentity().difficulty}
+            <Show when={worldIdentity().difficulty !== null}>
+              Difficulty {worldIdentity().difficulty}
+            </Show>
+            {/* The clock rides the rating row (owner ask): `Difficulty 50 –
+             * 3:45 p.m.` — one line, so identity and difficulty stay together
+             * even when a plugin supplies the time. No time signal means no
+             * separator either: an empty dash would be chrome around nothing. */}
+            <Show when={worldTimeText() !== null}>
+              {' – '}
+              <span class="world-header__time">{worldTimeText()}</span>
+            </Show>
           </span>
         </Show>
       </Dynamic>
