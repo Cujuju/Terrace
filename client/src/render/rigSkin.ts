@@ -249,7 +249,14 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
     bindRigidly(piece, joint);
     stripUnbakeableAttributes(piece);
 
-    const signature = materialSignature(material);
+    // Indexing joins the signature, because `mergeGeometries` refuses a mix and
+    // the only way to force one is to EXPAND the indexed parts to non-indexed —
+    // which triples their vertex count. Measured on the whale, whose hull is
+    // indexed and whose extruded fins are not: forcing them together took one
+    // body from 19 638 vertices to 57 996, for no change to the surface. One
+    // extra draw call through the same material is the cheaper half of that
+    // trade by a wide margin.
+    const signature = `${materialSignature(material)}|${piece.getIndex() === null ? 'flat' : 'indexed'}`;
     const group = grouped.get(signature);
     if (group === undefined) grouped.set(signature, { material, pieces: [piece] });
     else group.pieces.push(piece);
@@ -259,13 +266,11 @@ export function bakeRig(authoredRoot: Object3D): RigBlueprint {
 
   const surfaces: BakedSurface[] = [];
   for (const { material, pieces } of grouped.values()) {
-    const inputs = pieces.length === 1 ? pieces : sameIndexing(pieces);
-    const geometry = inputs.length === 1 ? inputs[0]! : mergeGeometries(inputs, false);
+    const geometry = pieces.length === 1 ? pieces[0]! : mergeGeometries(pieces, false);
     if (geometry === null) {
       throw new Error('bakeRig: could not merge parts that share a material signature');
     }
-    // Every input is scratch once merged — including any copy sameIndexing made.
-    for (const piece of new Set([...pieces, ...inputs])) {
+    for (const piece of pieces) {
       if (piece !== geometry) piece.dispose();
     }
     // A bone can swing a vertex anywhere on the sphere its chain can reach, so
@@ -405,22 +410,6 @@ function stripUnbakeableAttributes(geometry: BufferGeometry): void {
     if (geometry.getAttribute(name) !== undefined) geometry.deleteAttribute(name);
   }
   geometry.morphAttributes = {};
-}
-
-/**
- * Makes every piece indexed the same way, because `mergeGeometries` refuses a
- * mix. Expanding the indexed ones is the direction that cannot lose data: the
- * other way round would have to weld vertices and decide when two are the same,
- * which would quietly change the shading of a flat-shaded part.
- *
- * Nothing in these rigs mixes today — Three's primitive builders are all
- * indexed — so this is the guard that keeps a hand-built part from silently
- * costing a draw call of its own later.
- */
-function sameIndexing(pieces: BufferGeometry[]): BufferGeometry[] {
-  const anyNonIndexed = pieces.some((piece) => piece.getIndex() === null);
-  if (!anyNonIndexed) return pieces;
-  return pieces.map((piece) => (piece.getIndex() === null ? piece : piece.toNonIndexed()));
 }
 
 /** A copy of the material that reads its colour per vertex. */
