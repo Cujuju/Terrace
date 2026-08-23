@@ -59,6 +59,7 @@ import { worldPanelOpen, setWorldPanelOpen } from '../state/worldsState.ts';
 import {
   BRUSH_PROFILES,
   BRUSH_RADII,
+  brushWidthWorldUnits,
   BRUSH_TOOLS,
   brushProfile,
   brushRadius,
@@ -281,18 +282,27 @@ export function Hud(props: {
             <span class="hud-label">Brush</span>
             <div class="brush-picker">
               <For each={BRUSH_RADII}>
-                {(radius) => (
-                  <button
-                    type="button"
-                    class="brush-button"
-                    classList={{ active: brushRadius() === radius }}
-                    aria-label={`Brush radius ${radius}`}
-                    title={`Brush radius ${radius} — a wider brush moves more land and costs more mana.`}
-                    onClick={() => setBrushRadius(radius)}
-                  >
-                    {radius}
-                  </button>
-                )}
+                {(radius) => {
+                  // The button shows the brush's WIDTH IN WORLD UNITS, not the
+                  // ladder's raw value — see brushWidthWorldUnits for why the
+                  // raw value was showing a quarter of what it appeared to
+                  // promise. Four characters wide at the largest, so these
+                  // carry the picker's wide variant rather than its 26px
+                  // square.
+                  const width = brushWidthWorldUnits(radius);
+                  return (
+                    <button
+                      type="button"
+                      class="brush-button brush-button-wide"
+                      classList={{ active: brushRadius() === radius }}
+                      aria-label={`Brush ${width} world units across`}
+                      title={`Brush ${width} world units across — a wider brush moves more land and costs more mana.`}
+                      onClick={() => setBrushRadius(radius)}
+                    >
+                      {width}
+                    </button>
+                  );
+                }}
               </For>
             </div>
           </div>
