@@ -248,7 +248,11 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.onCanvasPress((event) => handlePress(ctx, event));
     // The summary row rides in the corner panel's header (owner move): the
     // panel is named "Relics" by that line, so the line is the title bar.
-    ctx.registerHudPanel(RelicsPanel, { headerSummary: RelicsHeaderLine });
+    // The collapsed tab gets the live count in parentheses.
+    ctx.registerHudPanel(RelicsPanel, {
+      headerSummary: RelicsHeaderLine,
+      tabSummary: () => `Relics (${relics().length})`,
+    });
   },
 
   dispose(): void {

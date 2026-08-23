@@ -162,6 +162,7 @@ export function createClientPluginHost(
         options?: {
           placement?: 'panel' | 'top-center' | 'bottom-center' | 'connection';
           headerSummary?: Component;
+          tabSummary?: () => string;
         },
       ) {
         addPluginHudPanel({
@@ -169,6 +170,7 @@ export function createClientPluginHost(
           component,
           placement: options?.placement ?? 'panel',
           headerSummary: options?.headerSummary,
+          tabSummary: options?.tabSummary,
         });
       },
       registerWorldHeaderAction(action) {

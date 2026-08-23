@@ -119,6 +119,12 @@ export interface ClientPluginCtx {
        * plugin's line, so that line belongs in the title bar).
        */
       headerSummary?: Component;
+      /**
+       * Live label for the corner panel's COLLAPSED tab, read at render time
+       * (e.g. `Relics (3)`). Falls back to the capitalised plugin name when
+       * absent.
+       */
+      tabSummary?: () => string;
     },
   ): void;
 

@@ -30,6 +30,9 @@ export interface PluginHudPanel {
    * the panel's body — the line the panel is named by (relics' count row).
    */
   readonly headerSummary?: Component;
+  /** Live label for the collapsed corner tab (`Relics (3)`); falls back to
+   *  the capitalised plugin name. */
+  readonly tabSummary?: () => string;
 }
 
 const [pluginHudPanels, setPluginHudPanels] = createSignal<

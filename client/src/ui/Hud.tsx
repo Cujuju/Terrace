@@ -174,7 +174,9 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 function cornerTabName(): string {
   const first = pluginHudPanels().find((p) => p.placement === 'panel');
   if (first === undefined) return 'Info';
-  return first.pluginName.charAt(0).toUpperCase() + first.pluginName.slice(1);
+  // A plugin may supply a live tab label (relics: "Relics (3)"); otherwise
+  // the capitalised registration name stands in.
+  return first.tabSummary?.() ?? first.pluginName.charAt(0).toUpperCase() + first.pluginName.slice(1);
 }
 
 export function Hud(props: {
