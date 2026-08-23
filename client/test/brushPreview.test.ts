@@ -8,7 +8,7 @@
 // is positioned at the hovered cell's centre.
 
 import { describe, expect, it } from 'vitest';
-import { Scene, type BufferAttribute, LineLoop, type Object3D } from 'three';
+import { Scene, type BufferAttribute, LineLoop, LineSegments, type Object3D } from 'three';
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, forEachFootprintOffset } from '@terrace/shared';
 import { createBrushPreview, type CursorSurface } from '../src/render/brushPreview.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
@@ -110,6 +110,78 @@ describe('createBrushPreview', () => {
           });
         }
       }
+    }
+
+    preview.dispose();
+  });
+
+  it('never draws a vertex outside the cells the brush edits', () => {
+    // STRICTER THAN THE TEST ABOVE, and it has to be (owner, 2026-08-22: "draw
+    // the brush outline inside the cells the brush edits, not outside"). Cell-
+    // centre membership tolerates an outline that bulges up to half a cell into
+    // ground the brush will not touch, because a bulge that small never reaches
+    // the next centre. This asserts the promise at the only place it can be
+    // broken — every vertex of the line itself.
+    //
+    // It is a real regression guard, not a restatement: before the clamp in
+    // brushPreview.ts, Chaikin pushed 24 of radius 8's 96 vertices and 48 of
+    // radius 16's 160 over concave steps, overhanging by 0.1875 of a cell.
+    const scene = new Scene();
+    const preview = createBrushPreview(scene, fakeCanvas());
+    const line = outlineOf(scene);
+
+    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+      preview.update({ x: 0, y: 0, surfaceY: 0 }, radius);
+
+      const edited = new Set<string>();
+      forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
+
+      for (const { x, z } of outlinePoints(line)) {
+        // A point lies in the union of the edited unit squares exactly when the
+        // cell it rounds into is edited: cell (i, j) covers [i±0.5, j±0.5], and
+        // rounding is what picks that cell. Float slop at an exact cell edge is
+        // absorbed by nudging the point a hair inward before rounding.
+        const i = Math.round(x - Math.sign(x) * 1e-9);
+        const j = Math.round(z - Math.sign(z) * 1e-9);
+        expect({ radius, x, z, inside: edited.has(`${i},${j}`) }).toEqual({
+          radius, x, z, inside: true,
+        });
+      }
+    }
+
+    preview.dispose();
+  });
+
+  it('draws the shared edge of every adjacent pair of footprint cells, once', () => {
+    // The cell grid the owner asked to see inside the ring. Interior edges
+    // only: the footprint's own boundary is the ring's line, and emitting it
+    // here too would double its brightness. "Once" is the half of the contract
+    // that a segment count alone would not catch — a grid drawn from all four
+    // edges of every cell looks identical and is twice the geometry.
+    const scene = new Scene();
+    const preview = createBrushPreview(scene, fakeCanvas());
+    const grids = scene.children.filter(
+      (c): c is LineSegments => c instanceof LineSegments,
+    );
+
+    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+      preview.update({ x: 0, y: 0, surfaceY: 0 }, radius);
+
+      const edited = new Set<string>();
+      forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
+      let expected = 0;
+      forEachFootprintOffset(radius, (dx, dy) => {
+        if (edited.has(`${dx + 1},${dy}`)) expected++;
+        if (edited.has(`${dx},${dy + 1}`)) expected++;
+      });
+
+      // The crosshair is a LineSegments too and never changes with radius, so
+      // the grid is identified as the one whose vertex count tracks the
+      // footprint rather than by its position in the scene.
+      const counts = grids.map((g) => g.geometry.getAttribute('position').count / 2);
+      expect({ radius, hasGrid: counts.includes(expected) }).toEqual({
+        radius, hasGrid: true,
+      });
     }
 
     preview.dispose();

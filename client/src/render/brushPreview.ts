@@ -72,6 +72,29 @@
 // that reach is measured from the footprint iterator itself rather than from a
 // formula, so it cannot drift if the footprint's shape changes again.
 //
+// AND IT NEVER CROSSES THE EDGE OF THE CELLS IT PROMISES (owner, 2026-08-22:
+// "draw the brush outline inside the cells the brush edits, not outside").
+// Marching alone already guaranteed this — every crossing sits ON the shared
+// edge of an inside cell and an outside one, so the raw contour traces the
+// footprint's own boundary exactly. CHAIKIN IS WHAT BROKE IT: cutting a corner
+// at a CONVEX step moves the line inward, which is the documented corner-clip
+// above, but cutting one at a CONCAVE step — the notches a digitised disc is
+// full of — moves it OUTWARD, over ground the brush will not touch. Measured
+// before the fix: 0 stray vertices at radius 1, 2 and 4; 24 of 96 at radius 8
+// and 48 of 160 at radius 16, overhanging by up to 0.1875 of a cell.
+//
+// So every smoothed vertex is clamped back into the union of the footprint's
+// cells (clampIntoFootprint). It is a post-pass rather than a different
+// smoother because the smoothing is the terrain's, shared on purpose, and this
+// is a constraint the outline has that a terrain contour does not: a band
+// boundary may lie anywhere, but a brush edge is a promise about whole cells.
+//
+// THE CELLS THEMSELVES ARE DRAWN (owner, 2026-08-22: "physically draw the
+// outline of the cells inside of the brush outline ... in a darker colour").
+// Only the INTERIOR edges — the ones shared by two footprint cells. The
+// boundary edges are what the ring already traces, and drawing them twice
+// would thicken and brighten exactly the line the grid is meant to stay under.
+//
 // ACCEPTED RESIDUAL: heightmap.ts's banded spill containment (issue #26)
 // explicitly suspends the MAX_STEP invariant where a band cap binds, so an
 // over-steep wall can exist. Where the outline crosses one, the skirt's bottom
@@ -130,6 +153,21 @@ const OUTLINE_OPACITY = 0.45;
  * resolves against the palette's lightest band (snow) at a glancing angle.
  */
 const SKIRT_OPACITY = OUTLINE_OPACITY / 3;
+
+/**
+ * The cell grid inside the footprint: a mid grey rather than the ring's white,
+ * so it is darker than the line it sits under at equal opacity, and dimmer
+ * again so the ring stays the thing the eye lands on. Slightly green-biased
+ * off neutral — a pure grey reads as UI laid over the world, and everything
+ * else this module draws is trying to look like it belongs to the ground.
+ */
+const CELL_GRID_COLOR = 0x8b918a;
+
+/**
+ * A little over half the ring's opacity: present when the player looks for the
+ * cell boundaries, gone when they are looking at the outline.
+ */
+const CELL_GRID_OPACITY = OUTLINE_OPACITY * 0.55;
 
 /**
  * Half-length of the centre crosshair's arms, in world units — a fraction of a
@@ -262,13 +300,62 @@ if (
  * instead of over heights: load the lattice, march it, assemble the crossings
  * into loops, smooth each one.
  */
-function footprintOutline(radius: number): ContourLoop {
-  const inFootprint = new Set<string>();
-  forEachFootprintOffset(radius, (dx, dy) => inFootprint.add(`${dx},${dy}`));
+/**
+ * The footprint as both of the shapes this module needs it in: the membership
+ * test the marcher samples, and the flat list the clamp and the cell grid walk.
+ * Built once per radius so the two can never describe different sets.
+ */
+interface Footprint {
+  readonly has: (dx: number, dy: number) => boolean;
+  readonly cells: readonly (readonly [number, number])[];
+}
 
+function footprintOf(radius: number): Footprint {
+  const keys = new Set<string>();
+  const cells: (readonly [number, number])[] = [];
+  forEachFootprintOffset(radius, (dx, dy) => {
+    keys.add(`${dx},${dy}`);
+    cells.push([dx, dy]);
+  });
+  return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
+}
+
+/**
+ * The nearest point to `x, z` that lies inside the union of the footprint's
+ * cells, each cell being the unit square centred on its own coordinates.
+ *
+ * A vertex already inside a footprint cell is returned untouched, which is
+ * every vertex at radius 1, 2 and 4 and most of them above — the scan only
+ * runs for the handful Chaikin pushed over a concave step. Clamping to the
+ * nearest cell's box (rather than, say, pulling the vertex toward the centre)
+ * keeps the correction perpendicular to the edge it crossed, so the smoothed
+ * curve is nudged back onto the boundary instead of being kinked toward the
+ * middle of the brush.
+ */
+function clampIntoFootprint(x: number, z: number, footprint: Footprint): [number, number] {
+  if (footprint.has(Math.round(x), Math.round(z))) return [x, z];
+  let bestX = x;
+  let bestZ = z;
+  let bestDistance = Infinity;
+  for (const [cx, cz] of footprint.cells) {
+    const nx = x < cx - 0.5 ? cx - 0.5 : x > cx + 0.5 ? cx + 0.5 : x;
+    const nz = z < cz - 0.5 ? cz - 0.5 : z > cz + 0.5 ? cz + 0.5 : z;
+    const dx = x - nx;
+    const dz = z - nz;
+    const distance = dx * dx + dz * dz;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestX = nx;
+      bestZ = nz;
+    }
+  }
+  return [bestX, bestZ];
+}
+
+function footprintOutline(radius: number, footprint: Footprint): ContourLoop {
   loadSampleField(
     (i, j) =>
-      inFootprint.has(`${i - FOOTPRINT_LATTICE_CENTRE},${j - FOOTPRINT_LATTICE_CENTRE}`)
+      footprint.has(i - FOOTPRINT_LATTICE_CENTRE, j - FOOTPRINT_LATTICE_CENTRE)
         ? FOOTPRINT_INSIDE
         : FOOTPRINT_OUTSIDE,
     FOOTPRINT_LATTICE_SPAN,
@@ -295,7 +382,41 @@ function footprintOutline(radius: number): ContourLoop {
       `brush radius ${radius} marched to ${loops.length} contour loops, expected 1`,
     );
   }
+
+  // The clamp — see the module header. Smoothing runs first so the curve is
+  // still the terrain's shape; this only pulls back the vertices it pushed
+  // over a concave step.
+  for (const point of loops[0]) {
+    const [x, z] = clampIntoFootprint(point.x, point.z, footprint);
+    point.x = x;
+    point.z = z;
+  }
   return loops[0];
+}
+
+/**
+ * The cell boundaries INSIDE the footprint, as a flat line-segment soup in
+ * cell coordinates.
+ *
+ * Interior edges only: an edge is emitted for a footprint cell's +x or +z
+ * neighbour exactly when that neighbour is also in the footprint. Every edge
+ * therefore appears once (it is emitted by the lower-coordinate cell of the
+ * pair and by nobody else), and no edge of the footprint's own boundary is
+ * emitted at all — that line is the ring's, and drawing it twice would
+ * brighten the one thing this grid is meant to stay beneath.
+ */
+function cellGridSegments(footprint: Footprint): number[] {
+  const segments: number[] = [];
+  for (const [dx, dy] of footprint.cells) {
+    if (footprint.has(dx + 1, dy)) {
+      // Shared edge with the cell to the +x side: vertical, at their midpoint.
+      segments.push(dx + 0.5, dy - 0.5, dx + 0.5, dy + 0.5);
+    }
+    if (footprint.has(dx, dy + 1)) {
+      segments.push(dx - 0.5, dy + 0.5, dx + 0.5, dy + 0.5);
+    }
+  }
+  return segments;
 }
 
 /**
@@ -324,14 +445,19 @@ function skirtDropWorldUnits(radius: number): number {
   return (manhattanReachCells + 1) * BAND_WORLD_HEIGHT + OUTLINE_LIFT_WORLD_UNITS;
 }
 
-/** The ring and its skirt, both in world units, from ONE march of the field. */
+/**
+ * The ring, its skirt and the cell grid inside it — all in world units, all
+ * from ONE march of ONE footprint.
+ */
 interface RadiusGeometry {
   readonly ring: BufferGeometry;
   readonly skirt: BufferGeometry;
+  readonly cellGrid: BufferGeometry;
 }
 
 function radiusGeometry(radius: number): RadiusGeometry {
-  const outline = footprintOutline(radius);
+  const footprint = footprintOf(radius);
+  const outline = footprintOutline(radius, footprint);
   const drop = skirtDropWorldUnits(radius);
 
   const ringPositions: number[] = [];
@@ -361,7 +487,18 @@ function radiusGeometry(radius: number): RadiusGeometry {
   const skirt = new BufferGeometry();
   skirt.setAttribute('position', new Float32BufferAttribute(skirtPositions, 3));
 
-  return { ring, skirt };
+  // The cell grid, flat at the ring's own height: a pair of (x, z) per segment
+  // end, lifted into 3-space here rather than in cellGridSegments so that
+  // function stays about the footprint and knows nothing about world units.
+  const gridPositions: number[] = [];
+  const flat = cellGridSegments(footprint);
+  for (let i = 0; i < flat.length; i += 2) {
+    gridPositions.push(flat[i]! * CELL_WORLD_SIZE, 0, flat[i + 1]! * CELL_WORLD_SIZE);
+  }
+  const cellGrid = new BufferGeometry();
+  cellGrid.setAttribute('position', new Float32BufferAttribute(gridPositions, 3));
+
+  return { ring, skirt, cellGrid };
 }
 
 export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
@@ -405,6 +542,24 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   skirt.renderOrder = 997;
   skirt.visible = false;
   scene.add(skirt);
+
+  // The cell grid inside the ring: which cells, exactly, drawn one step down
+  // in weight from the ring so it reads as detail rather than as a second
+  // outline. Same overlay semantics as the ring (depthTest off, high render
+  // order) — it describes the same set of cells and must read through the same
+  // terrace steps, or the two would disagree over stepped ground.
+  const cellGridMaterial = new LineBasicMaterial({
+    color: CELL_GRID_COLOR,
+    transparent: true,
+    opacity: CELL_GRID_OPACITY,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const cellGrid = new LineSegments(geometries[0].cellGrid, cellGridMaterial);
+  // Under the ring and the crosshair, over the skirt.
+  cellGrid.renderOrder = 998;
+  cellGrid.visible = false;
+  scene.add(cellGrid);
 
   // A fine fixed-size crosshair at the footprint's centre: the outline grows
   // with the brush, so on large stamps the hovered cell is only implied by
@@ -454,6 +609,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     line.visible = visible;
     crosshair.visible = visible;
     skirt.visible = visible;
+    cellGrid.visible = visible;
     if (visible === showing) return;
     showing = visible;
     canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, visible);
@@ -475,12 +631,14 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         }
         line.geometry = geometries[index].ring;
         skirt.geometry = geometries[index].skirt;
+        cellGrid.geometry = geometries[index].cellGrid;
         shownRadius = radius;
       }
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
       crosshair.position.copy(line.position);
       skirt.position.copy(line.position);
+      cellGrid.position.copy(line.position);
       show(true);
     },
     dispose() {
@@ -488,14 +646,17 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       scene.remove(line);
       scene.remove(crosshair);
       scene.remove(skirt);
+      scene.remove(cellGrid);
       for (const g of geometries) {
         g.ring.dispose();
         g.skirt.dispose();
+        g.cellGrid.dispose();
       }
       material.dispose();
       crosshairGeometry.dispose();
       crosshairMaterial.dispose();
       skirtMaterial.dispose();
+      cellGridMaterial.dispose();
     },
   };
 }
