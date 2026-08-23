@@ -19,6 +19,7 @@
 import { createSignal } from 'solid-js';
 import {
   MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
@@ -42,11 +43,24 @@ import type { ConnectionStatus } from '../net/connection.ts';
  * always meant, and the ceiling is still shared's: `expect`ed to be the top
  * rung by hudState's own test, so widening the wire bound without revisiting
  * this list fails loudly.
+ *
+ * THE SINGLE-CELL BRUSH IS BACK ON THE LADDER (owner, 2026-08-22: "can we add
+ * brush size one?"). It is the ONE sub-world-unit rung offered, and it is
+ * offered as the exception the paragraph above describes rather than as a
+ * reopening of it: the twelve rungs between it and one world unit are still
+ * brushes a player cannot tell apart, but the floor itself is qualitatively a
+ * different tool — the finest mark the grid can express. MIN_BRUSH_RADIUS's
+ * own note spells out what it does and does not do: a click on it settles
+ * inside band 0 rather than raising a terrace, so it polishes and it does not
+ * build. That is the tool the owner asked for, not a defect in it.
  */
-export const BRUSH_RADII: readonly number[] = Array.from(
-  { length: MAX_BRUSH_RADIUS / WORLD_UNIT_CELLS },
-  (_, i) => (i + 1) * WORLD_UNIT_CELLS,
-);
+export const BRUSH_RADII: readonly number[] = [
+  MIN_BRUSH_RADIUS,
+  ...Array.from(
+    { length: MAX_BRUSH_RADIUS / WORLD_UNIT_CELLS },
+    (_, i) => (i + 1) * WORLD_UNIT_CELLS,
+  ),
+];
 
 /** Selectable brush tools / edge profiles, straight from shared's own sets. */
 export const BRUSH_TOOLS: readonly SculptTool[] = SCULPT_TOOLS;
@@ -162,12 +176,18 @@ export function setFrameRate(fps: number): void {
 const STORAGE_KEY = 'terrace.hudState.v2';
 
 /**
- * The ladder's first rung — one world unit of ground, the Populous point brush
- * — is the least surprising default. NOT shared's MIN_BRUSH_RADIUS since the
- * 2026-08-21 re-sample: that is the grid's floor, four times finer, and a
- * player who has picked nothing should get the brush the game is tuned around.
+ * One world unit of ground, the Populous point brush, is the least surprising
+ * default. NOT shared's MIN_BRUSH_RADIUS: that is the grid's floor, four times
+ * finer since the 2026-08-21 re-sample, and a player who has picked nothing
+ * should get the brush the game is tuned around.
+ *
+ * WRITTEN AS THE CONVERSION, NOT AS `BRUSH_RADII[0]` (2026-08-22). It was the
+ * ladder's first rung while the ladder started at one world unit; the moment
+ * the single-cell brush was added below it, the index silently became the
+ * finest brush in the game. What this constant means is "one world unit", so
+ * that is now what it says.
  */
-export const DEFAULT_BRUSH_RADIUS = BRUSH_RADII[0]!;
+export const DEFAULT_BRUSH_RADIUS = WORLD_UNIT_CELLS;
 
 /**
  * Brush tool and edge profile default to the WIRE defaults rather than to

@@ -310,7 +310,13 @@ describe('fallback on corrupt storage', () => {
     // validation as a one-CELL brush — a quarter of the ground the player had
     // chosen. The v1 → v2 key bump orphans those entries; this is the guard
     // that stops the next change to BRUSH_RADII from minting new ones.
-    for (const offLadder of [1, 2, 3, 5, 15]) {
+    //
+    // 1 LEFT THIS LIST on 2026-08-22, when the single-cell brush was added to
+    // the ladder as a rung of its own. The orphaning above is what makes that
+    // safe: the pre-re-sample "1" this case was written about lived under the
+    // v1 key, so no stored v2 entry can mean anything but the brush the player
+    // now picks by pressing the 1 button.
+    for (const offLadder of [2, 3, 5, 15]) {
       const { hud } = await freshHud({
         [HUD_KEY]: JSON.stringify({ brushRadius: offLadder }),
       });
