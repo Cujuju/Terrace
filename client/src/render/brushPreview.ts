@@ -47,18 +47,47 @@
 // outline, so the arrow comes back. The HUD panels are separate elements with
 // their own cursor, so this never reaches a control.
 //
-// DRAWN AS AN OVERLAY, not as geometry in the world: depthTest is off and the
-// render order is high, so the outline reads through terrain steps inside the
-// footprint instead of being sliced by them. That is the honest presentation —
-// the brush affects those cells whatever their current height — and it is what
-// makes a single flat ring correct over terraced ground.
+// THE RING IS DRAWN AS AN OVERLAY, THE SKIRT IS NOT (owner, 2026-08-22: "the
+// brush is drawn as if it's floating ... it is difficult to make out where it
+// would be drawing"). The ring's depthTest is off and its render order is
+// high, so it reads through terrain steps inside the footprint instead of
+// being sliced by them. That is the honest presentation — the brush affects
+// those cells whatever their current height — and it is what makes a single
+// flat ring correct over terraced ground. What it does NOT do is say where
+// that ring meets the ground: at one sampled height with depth testing off,
+// nothing in the picture connects the ring to the terrain under it.
+//
+// So the same outline is also extruded straight DOWN into a thin translucent
+// wall — the skirt — drawn with depthTest ON. Terrain occludes the wall
+// wherever the ground is higher, so the visible bottom edge of the wall IS the
+// line where the brush's boundary meets the terrain, resolved per pixel by the
+// depth buffer. No height sampling, no per-frame geometry: the contact line
+// falls out of the depth test that was already running.
+//
+// HOW FAR IT HANGS is derived, not chosen. MAX_STEP bounds every 4-neighbour
+// height difference in the world (shared/constants.ts), and MAX_STEP equals
+// BAND_HEIGHT, so the RENDERED (band-quantised) surface drops at most one band
+// per cell of 4-neighbour travel. The furthest ground the outline passes over
+// is therefore its own Manhattan reach, in bands, below the hovered cell — and
+// that reach is measured from the footprint iterator itself rather than from a
+// formula, so it cannot drift if the footprint's shape changes again.
+//
+// ACCEPTED RESIDUAL: heightmap.ts's banded spill containment (issue #26)
+// explicitly suspends the MAX_STEP invariant where a band cap binds, so an
+// over-steep wall can exist. Where the outline crosses one, the skirt's bottom
+// edge stops short and hangs in the air for that span. It is a visual hint
+// falling back to the old floating-ring reading, not a wrong promise about
+// which cells are edited.
 
 import {
   BufferGeometry,
+  DoubleSide,
   Float32BufferAttribute,
   LineBasicMaterial,
   LineLoop,
   LineSegments,
+  Mesh,
+  MeshBasicMaterial,
   type Scene,
 } from 'three';
 import {
@@ -67,7 +96,7 @@ import {
   MIN_BRUSH_RADIUS,
   forEachFootprintOffset,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE } from '../config.ts';
+import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../config.ts';
 import {
   MAX_LATTICE_SPAN,
   assembleLoops,
@@ -90,6 +119,17 @@ const OUTLINE_LIFT_WORLD_UNITS = 0.05;
  * staying a hint rather than a cursor — the owner asked for "a light outline".
  */
 const OUTLINE_OPACITY = 0.45;
+
+/**
+ * The skirt is fainter than the ring it hangs from, and deliberately so: the
+ * ring is a LINE a few pixels wide, the skirt is a SURFACE that can cover a
+ * large slice of the viewport at a low camera angle. At the ring's own opacity
+ * it would read as a wall standing in the world rather than as a hint about
+ * where that ring meets the ground, and it would tint the terrain the player
+ * is trying to judge. A third of the ring's value is the most that still
+ * resolves against the palette's lightest band (snow) at a glancing angle.
+ */
+const SKIRT_OPACITY = OUTLINE_OPACITY / 3;
 
 /**
  * Half-length of the centre crosshair's arms, in world units — a fraction of a
@@ -258,22 +298,77 @@ function footprintOutline(radius: number): ContourLoop {
   return loops[0];
 }
 
-/** The outline as a closed line, in world units. */
-function outlineGeometry(radius: number): BufferGeometry {
-  const positions: number[] = [];
-  for (const point of footprintOutline(radius)) {
-    positions.push(point.x * CELL_WORLD_SIZE, 0, point.z * CELL_WORLD_SIZE);
+/**
+ * How far below the ring the skirt must hang to be certain of reaching the
+ * ground everywhere the outline passes over, in world units.
+ *
+ * DERIVED FROM THE FOOTPRINT, NOT PICKED. MAX_STEP bounds every 4-neighbour
+ * height difference in the world and equals BAND_HEIGHT, so the band-quantised
+ * surface the player sees drops at most ONE BAND per cell of 4-neighbour
+ * travel. The deepest ground under the outline is therefore its Manhattan
+ * reach in bands below the hovered cell — and the reach is measured by running
+ * the footprint iterator itself, so a change to the footprint's shape carries
+ * into this number instead of silently invalidating a formula.
+ *
+ * The `+ 1` is the OUTSIDE cell of each boundary crossing: the outline sits on
+ * the edge between the outermost footprint cell and its neighbour, and that
+ * neighbour is one 4-neighbour step further out than anything the iterator
+ * reports. The lift is added back because the skirt hangs from the RING, which
+ * floats OUTLINE_LIFT_WORLD_UNITS above the surface rather than on it.
+ */
+function skirtDropWorldUnits(radius: number): number {
+  let manhattanReachCells = 0;
+  forEachFootprintOffset(radius, (dx, dy) => {
+    manhattanReachCells = Math.max(manhattanReachCells, Math.abs(dx) + Math.abs(dy));
+  });
+  return (manhattanReachCells + 1) * BAND_WORLD_HEIGHT + OUTLINE_LIFT_WORLD_UNITS;
+}
+
+/** The ring and its skirt, both in world units, from ONE march of the field. */
+interface RadiusGeometry {
+  readonly ring: BufferGeometry;
+  readonly skirt: BufferGeometry;
+}
+
+function radiusGeometry(radius: number): RadiusGeometry {
+  const outline = footprintOutline(radius);
+  const drop = skirtDropWorldUnits(radius);
+
+  const ringPositions: number[] = [];
+  for (const point of outline) {
+    ringPositions.push(point.x * CELL_WORLD_SIZE, 0, point.z * CELL_WORLD_SIZE);
   }
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-  return geometry;
+  const ring = new BufferGeometry();
+  ring.setAttribute('position', new Float32BufferAttribute(ringPositions, 3));
+
+  // One quad per outline segment, wrapping at the end because the loop is
+  // closed (the same reason the ring is a LineLoop). Two triangles each,
+  // non-indexed: at a few dozen segments the index buffer would cost more to
+  // read than it saves, and this is built once at startup.
+  const skirtPositions: number[] = [];
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    const ax = a.x * CELL_WORLD_SIZE;
+    const az = a.z * CELL_WORLD_SIZE;
+    const bx = b.x * CELL_WORLD_SIZE;
+    const bz = b.z * CELL_WORLD_SIZE;
+    skirtPositions.push(
+      ax, 0, az, bx, 0, bz, bx, -drop, bz,
+      ax, 0, az, bx, -drop, bz, ax, -drop, az,
+    );
+  }
+  const skirt = new BufferGeometry();
+  skirt.setAttribute('position', new Float32BufferAttribute(skirtPositions, 3));
+
+  return { ring, skirt };
 }
 
 export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
   /** Index r - MIN_BRUSH_RADIUS holds radius r's boundary. Built once. */
-  const geometries: BufferGeometry[] = [];
+  const geometries: RadiusGeometry[] = [];
   for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
-    geometries.push(outlineGeometry(r));
+    geometries.push(radiusGeometry(r));
   }
 
   const material = new LineBasicMaterial({
@@ -287,10 +382,29 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
 
   // LineLoop, not LineSegments: the outline is one closed contour now, so the
   // closing edge comes free instead of costing a duplicated vertex pair.
-  const line = new LineLoop(geometries[0], material);
+  const line = new LineLoop(geometries[0].ring, material);
   line.renderOrder = 998;
   line.visible = false;
   scene.add(line);
+
+  // The skirt: the same outline hung downward as a translucent wall, and the
+  // ONE part of the preview that is depth-tested — see the module header. Its
+  // bottom edge is wherever the terrain cuts it, which is the whole point, so
+  // depthWrite stays off (it must not occlude the world or itself) and both
+  // faces are drawn (the camera orbits, so either side can face it).
+  const skirtMaterial = new MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: SKIRT_OPACITY,
+    side: DoubleSide,
+    depthWrite: false,
+  });
+  const skirt = new Mesh(geometries[0].skirt, skirtMaterial);
+  // Below the two overlays: it is part of the world's depth-sorted pass, and
+  // the ring and crosshair are meant to sit on top of it.
+  skirt.renderOrder = 997;
+  skirt.visible = false;
+  scene.add(skirt);
 
   // A fine fixed-size crosshair at the footprint's centre: the outline grows
   // with the brush, so on large stamps the hovered cell is only implied by
@@ -339,6 +453,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   const show = (visible: boolean): void => {
     line.visible = visible;
     crosshair.visible = visible;
+    skirt.visible = visible;
     if (visible === showing) return;
     showing = visible;
     canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, visible);
@@ -358,22 +473,29 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
           show(false);
           return;
         }
-        line.geometry = geometries[index];
+        line.geometry = geometries[index].ring;
+        skirt.geometry = geometries[index].skirt;
         shownRadius = radius;
       }
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
       crosshair.position.copy(line.position);
+      skirt.position.copy(line.position);
       show(true);
     },
     dispose() {
       show(false);
       scene.remove(line);
       scene.remove(crosshair);
-      for (const g of geometries) g.dispose();
+      scene.remove(skirt);
+      for (const g of geometries) {
+        g.ring.dispose();
+        g.skirt.dispose();
+      }
       material.dispose();
       crosshairGeometry.dispose();
       crosshairMaterial.dispose();
+      skirtMaterial.dispose();
     },
   };
 }
