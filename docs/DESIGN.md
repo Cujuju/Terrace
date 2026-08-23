@@ -1199,7 +1199,9 @@ work.
   WATER cooldown — exact rather than guessed, because version 1 predates the land
   habitat and every kind it could name lives in the sea.
 
-  **The yeti's profile**, and each number stated against the two sea kinds:
+  **The yeti's profile**, and each number stated against the two sea kinds
+  (AMENDED 2026-08-22 — he is a quarter of this size now, and the lair and the
+  amble speed went with him; see that section):
   lair = a connected snowfield of **512 cells** (two chunks, ~23 across — the
   same 4.5 body-widths Cthulhu's threshold is justified by, for a 5-cell animal
   instead of a 7-cell one), **banishable by levelling** his peaks below the snow
@@ -1219,7 +1221,8 @@ work.
   yeti is something a player builds the country for.
 
   **Client.** A per-kind model file like the other two (`client/yeti-anatomy.ts`
-  + `client/yeti.ts`, ~6 100 triangles against the kraken's 7 700): a hunched
+  + `client/yeti.ts`, ~6 100 triangles against the kraken's 7 700 — 15 600 as of
+  the 2026-08-22 fidelity pass): a hunched
   white biped, mass in the shoulders, arms below the hips, a ruff of brighter fur
   at the neck because a white animal on white snow needs a broken silhouette
   edge rather than a colour change. He is the first WALKER — placement became a
@@ -3051,3 +3054,123 @@ cost more of that cap than they did (21 against 9) and every other species is
 ~9% smaller for it — accepted, because a pod is three whales by definition and
 a world with room for only nine could hold three pods in total and would read
 as a world of lone whales.
+
+### Decisions made 2026-08-22 (the yeti shrinks to a quarter — owner request)
+
+- **The yeti is a QUARTER of the size he was, and everything derived from his
+  size goes with him** (owner request: "make the Yeti about 25% of its current
+  size", and, asked how far the shrink should reach, "shrink gameplay too" and
+  "slow his walk speed too").
+
+  **One number owns it.** `YETI_SCALE = 0.25` in `client/yeti-anatomy.ts`, and
+  every LENGTH in that file is written at its original full-size figure and
+  passed through a local `scaled()`. The silhouette record therefore still reads
+  in the proportions its prose argues for — 6.3 tall, 5 across, a hip at 39% of
+  his height, hands below them — and the animal that comes out is 1.575 by 1.25
+  world units. The amendment is the multiplier, not two hundred rewritten
+  literals, which is what makes it reversible and what makes the next rescale a
+  one-line change.
+
+  **What does NOT pass through it, and why each is right.** Angles and fractions
+  (the swings, the ~3° lean, the head scan, the eye bulge, the tuft variation,
+  the ±22% shade mottle) are dimensionless — a scaled model turns through the
+  same angles. The two spatial frequencies divide by it instead, so the same
+  NUMBER of wrinkles crosses a body a quarter the size; because the carve is
+  sampled at position × frequency, scaling the pair inversely reproduces the old
+  surface EXACTLY, four times smaller. `YETI_AMBLE_HZ` and
+  `YETI_LEG_SWING_RADIANS` are ratios of scaled quantities (speed over stride,
+  stride over leg) and fall out unchanged on their own — which is the whole
+  reason the gait survives this untouched.
+
+  **The walk speed is cut with him**, 0.45 → 0.1125 cells/s, because a speed is
+  a LENGTH per second: a quarter-size animal holding the old speed crosses its
+  own body four times as fast as it used to, which is scurrying. What justified
+  0.45 in the first place survives the cut and is now what the test pins — he
+  covers his own width in the same eleven seconds, and is still under a third of
+  a wildlife grazer, so he cannot read as livestock. What does NOT survive is
+  the comparison to the two sea kinds' absolute speeds (Cthulhu's 0.25 brood,
+  the kraken's 0.6 hunt): they are four to nine times his size now, so the
+  faster one is merely the one with longer legs.
+
+  **His country shrinks by the square.** `YETI_FOOTPRINT_CELLS` drops to 1.25
+  world units, and the minimum lair — 2 730 cells — is now WRITTEN as the
+  argument that always justified it rather than as a chunk count that happened
+  to equal it: 4.5 body-widths across, squared, cut by the 2026-08-19
+  reachability third. That formula reproduces the old number to within 1% at his
+  old size (2 700 against 2 730) and, unlike a chunk count, follows the animal.
+  At the new size it is **168 cells**, a ~13×13 patch, with collapse at 42. The
+  consequence is deliberate and was put to the owner in those words: a yeti no
+  longer costs a mega-project, and "a fresh world cannot host him" now means a
+  modest hilltop rather than a couple of hundred level-fill strokes. He is no
+  longer the biggest thing on the mountain and no longer asks for a mountain.
+
+- **The model's tessellation is raised across the board** (same request: "smooth
+  out the model a little bit by increasing its fidelity"). The yeti carried the
+  LOWEST base counts of the three creatures and it showed on exactly the parts
+  that carry this silhouette: two radial segments made an OCTAGONAL leg at
+  `MONSTER_MODEL_DETAIL = 4`. The counts are raised per part by what its shape
+  has to hold — radial segments for the swept limbs and the ruff tufts, both
+  axes for the round masses, and the tufts' path count left alone because a
+  straight taper buys nothing from rings along it. **15 600 triangles against
+  6 024**, still under Cthulhu's 18 664 and affordable because
+  `MAX_LIVING_MONSTERS` is 1.
+
+  It is NOT compensation for the rescale, and the note in the file says so: a
+  quarter-size model covers a sixteenth of the screen and would have needed
+  fewer triangles, not more. The faceting was there at full size too. The global
+  `MONSTER_MODEL_DETAIL` knob was deliberately left alone — it is one number for
+  the whole plugin by design, and this was one creature's problem.
+
+- **Two tests changed their basis rather than their numbers**, which is the part
+  worth recording. The carve comparison ("he wears fur, not skin") compared
+  ABSOLUTE wrinkle depths across three animals; at a quarter size that reads the
+  opposite of the truth, so it now compares depth as a FRACTION of each
+  creature's own height — the comparison it always meant. The amble test pinned
+  an absolute 0.45 and would have passed unchanged through this rescale while
+  the animal it described started scurrying; it now pins seconds per body-width.
+
+### Decisions made 2026-08-22 (the walkers were probing a quarter of their feet)
+
+- **Two walker footprints were stated in world units, named in cells, and
+  consumed as cells** — `YETI_FOOT_GROUND_HALF_EXTENT_CELLS` (monsters) and
+  `WALKER_FOOTPRINT_HALF_EXTENT_CELLS` (wildlife). Both are model dimensions,
+  and a model dimension has been WORLD UNITS since the 2026-08-21 re-sample cut
+  a cell to a quarter of one; both were handed straight to a function that adds
+  them to a CELL coordinate. Every walker in the game therefore probed a quarter
+  of the ground it stands on, and could stand a band below a riser its own body
+  overhung — which is precisely the clipping bug `walkerGroundY` was written to
+  prevent, reintroduced underneath it by a units change three months later.
+
+  **Root cause, in one sentence that names no callsite:** a distance crossing
+  the model↔board boundary skipped `cellsAcross`, the one conversion every
+  physical distance in this codebase is supposed to go through, and its NAME
+  asserted the wrong side of that boundary — so the value was wrong and the
+  compiler, the reviewer and the tests all read it as right.
+
+  **Fixed at the boundary, not at the callsites.** Each constant is renamed to
+  drop the `_CELLS` it never earned and states world units; the single place it
+  meets cell space converts once. The names now disagree loudly with a misuse
+  instead of endorsing it.
+
+  **The tests were part of the failure, so they changed shape.** Both plugins'
+  fixtures pinned an OUTCOME on a hand-written height field, and both passed
+  with the wrong number — the yeti's because 1.02 still reached the neighbouring
+  cell, wildlife's because its "well clear of the boundary" case was only clear
+  of a footprint a quarter of the true size (it moves from x = 9.0 to x = 8.0,
+  and the move IS the bug). Each plugin now also pins the CONVERSION itself, and
+  that the half-extent exceeds one cell — a walker that does not overhang its
+  own cell is not a walker whose footprint needs sampling.
+
+  **Found by the yeti rescale**, which is worth recording: at quarter size his
+  wrong half-extent stopped reaching any cell but his own and the fixture
+  finally failed. A four-times-too-small probe is invisible until the thing it
+  measures gets small enough that a quarter of it is nothing.
+
+  **Not changed:** the two plugins sample different extents on purpose — the
+  yeti samples his FEET (a walker stands on what it steps on; his shoulders
+  overhang bands his soles never touch), wildlife samples just inside the BODY.
+  Both are stated in their own files and both are defensible; unifying them is a
+  design decision, not a units fix. Nor does wildlife's half-extent scale with
+  `WILDLIFE_SIZE_MODEL_SCALE`, so a large creature (1.4×) still probes a medium
+  one's footprint — noted, not fixed, and the residual is one band of clipping
+  on the biggest land animals at a riser's edge.

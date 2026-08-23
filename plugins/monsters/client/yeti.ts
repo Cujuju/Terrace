@@ -28,11 +28,12 @@
 //                     ├ the swept arm
 //                     └ the hand
 //
-// COST at MONSTER_MODEL_DETAIL = 4: ~6 000 triangles — comparable to the kraken's
-// 7 700 and a third of Cthulhu's, because this animal is a handful of smooth
-// masses and six swept tubes where he is a face, a tentacle fan and two ribbed
-// membranes. All three are hero models and there is at most one of each in a
-// world.
+// COST at MONSTER_MODEL_DETAIL = 4: ~15 600 triangles — twice the kraken's 7 700
+// and still under Cthulhu's 18 664, even though this animal is a handful of
+// smooth masses and six swept tubes where he is a face, a tentacle fan and two
+// ribbed membranes. He spends the extra on ROUNDNESS rather than on parts (see
+// the base counts below, raised 2026-08-22). All three are hero models and there
+// is at most one of each in a world.
 
 // Render kit, reached the same way client/src/plugins/registry.ts reaches this
 // plugin — by path. See that module's header for why it lives there.
@@ -134,31 +135,63 @@ import {
   YETI_WRINKLE_FREQUENCY,
 } from './yeti-anatomy.ts';
 
-/** Base tessellations, in segments at detail 1. Multiplied by the knob. */
-const TORSO_SPHERE_SEGMENTS_BASE = 7;
-const TORSO_SPHERE_RINGS_BASE = 5;
-const HIPS_SPHERE_SEGMENTS_BASE = 4;
-const HIPS_SPHERE_RINGS_BASE = 3;
-const SHOULDER_SPHERE_SEGMENTS_BASE = 4;
-const SHOULDER_SPHERE_RINGS_BASE = 3;
-const HEAD_SPHERE_SEGMENTS_BASE = 5;
-const HEAD_SPHERE_RINGS_BASE = 4;
-const BROW_SPHERE_SEGMENTS_BASE = 3;
-const BROW_SPHERE_RINGS_BASE = 2;
-const MUZZLE_SPHERE_SEGMENTS_BASE = 4;
-const MUZZLE_SPHERE_RINGS_BASE = 3;
-const EYE_SPHERE_SEGMENTS_BASE = 3;
-const EYE_SPHERE_RINGS_BASE = 2;
-const FOOT_SPHERE_SEGMENTS_BASE = 4;
-const FOOT_SPHERE_RINGS_BASE = 2;
-const HAND_SPHERE_SEGMENTS_BASE = 3;
-const HAND_SPHERE_RINGS_BASE = 2;
-/** Limbs: along the sweep, and around it. */
-const LIMB_PATH_SEGMENTS_BASE = 3;
-const LIMB_RADIAL_SEGMENTS_BASE = 2;
-/** Ruff tufts: shorter, so fewer rings along them. */
+/**
+ * Base tessellations, in segments at detail 1. Multiplied by the knob.
+ *
+ * RAISED ACROSS THE BOARD, 2026-08-22, with the quarter-size rescale: these were
+ * the lowest counts of the three creatures (a torso at 7×5 against Cthulhu's
+ * 7×4 head-and-body pair and the kraken's 9×5 head), and it showed as faceting
+ * on exactly the parts that carry this silhouette — the swept limbs, whose two
+ * radial segments made an OCTAGONAL leg at detail 4, and the round masses whose
+ * profile is the whole animal.
+ *
+ * The counts below are chosen per part by what its shape has to hold, not by one
+ * blanket multiplier: a limb is a tube seen end-on from every angle and needs
+ * RADIAL segments most; a torso is a broad curved profile and needs both; a ruff
+ * tuft is a spike two-tenths of a unit thick whose length is a straight taper,
+ * so it takes the radial rise and keeps its path count. The result is ~14 400
+ * triangles at MONSTER_MODEL_DETAIL = 4, up from ~5 800 and still under
+ * Cthulhu's 18 664 — affordable because MAX_LIVING_MONSTERS is 1.
+ *
+ * NOTE THAT THIS IS NOT COMPENSATION FOR THE RESCALE. A quarter-size model
+ * covers a sixteenth of the screen and would have needed FEWER triangles, not
+ * more; the faceting was there at full size too, and the wrinkle carve — whose
+ * frequency scales inversely, so the same number of wrinkles crosses the smaller
+ * body — is sampled per vertex and gets strictly better resolved by every
+ * segment added here.
+ *
+ * COUNTED, not guessed: a UV sphere of S segments and R rings is S·(2R − 2)
+ * triangles and an uncapped tube of P path segments and N radial is 2·P·N, both
+ * at MONSTER_MODEL_DETAIL = 4 — 15 600 against the 6 024 these counts replaced.
+ */
+const TORSO_SPHERE_SEGMENTS_BASE = 10;
+const TORSO_SPHERE_RINGS_BASE = 7;
+const HIPS_SPHERE_SEGMENTS_BASE = 6;
+const HIPS_SPHERE_RINGS_BASE = 5;
+const SHOULDER_SPHERE_SEGMENTS_BASE = 6;
+const SHOULDER_SPHERE_RINGS_BASE = 5;
+const HEAD_SPHERE_SEGMENTS_BASE = 9;
+const HEAD_SPHERE_RINGS_BASE = 7;
+const BROW_SPHERE_SEGMENTS_BASE = 5;
+const BROW_SPHERE_RINGS_BASE = 4;
+const MUZZLE_SPHERE_SEGMENTS_BASE = 6;
+const MUZZLE_SPHERE_RINGS_BASE = 5;
+const EYE_SPHERE_SEGMENTS_BASE = 4;
+const EYE_SPHERE_RINGS_BASE = 3;
+const FOOT_SPHERE_SEGMENTS_BASE = 6;
+const FOOT_SPHERE_RINGS_BASE = 4;
+const HAND_SPHERE_SEGMENTS_BASE = 5;
+const HAND_SPHERE_RINGS_BASE = 4;
+/** Limbs: along the sweep, and around it. Sixteen sides to a leg, not eight. */
+const LIMB_PATH_SEGMENTS_BASE = 5;
+const LIMB_RADIAL_SEGMENTS_BASE = 4;
+/**
+ * Ruff tufts: shorter, so fewer rings along them — the path count is unchanged
+ * because a tuft's length is a straight taper and rings along it buy nothing.
+ * Its SILHOUETTE is the ring around it, so that is where the segments go.
+ */
 const TUFT_PATH_SEGMENTS_BASE = 2;
-const TUFT_RADIAL_SEGMENTS_BASE = 2;
+const TUFT_RADIAL_SEGMENTS_BASE = 3;
 
 /** The two sides, in a fixed order. +1 is the model's left (+Z). */
 const SIDES = [1, -1] as const;

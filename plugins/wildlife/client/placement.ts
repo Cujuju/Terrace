@@ -12,7 +12,7 @@
 // stops being 1, every size and position in this plugin's client half needs a
 // multiply, and nothing here will fail loudly to tell you so.
 
-import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
   type WildlifeSizeClass,
@@ -263,14 +263,32 @@ export function creatureWorldY(
 }
 
 /**
- * Half-extent of a walker's ground footprint, in cells.
+ * Half-extent of a walker's ground footprint, in WORLD UNITS.
  *
- * A grazer's body is ~1.1 cells long, so its geometry overhangs its centre by
- * roughly half a cell in every facing. Slightly under that (0.45) keeps the
+ * A grazer's body is ~1.1 world units long (client/models.ts: an 0.85 box with
+ * a head reaching 0.67 ahead of centre), so its geometry overhangs its centre
+ * by roughly half a unit in every facing. Slightly under that (0.45) keeps the
  * sample inside the body's true extent, so the creature never rides up on a
  * band it does not actually overlap.
+ *
+ * IT WAS NAMED `..._CELLS` AND IT WAS NOT CELLS, which is the whole bug (found
+ * 2026-08-22, alongside the identical one in the monsters plugin). A model
+ * dimension has been world units since the 2026-08-21 re-sample cut a cell to a
+ * quarter of one, and walkerGroundY adds this straight to a CELL coordinate —
+ * so every land creature probed 0.45 CELLS, a quarter of the ground it covers,
+ * and a grazer could stand a band below a riser its body overhung. That is the
+ * exact clipping bug walkerGroundY exists to prevent, reintroduced underneath
+ * it by a units change three months later.
+ *
+ * The conversion now happens at the one boundary (`cellsAcross`, the conversion
+ * every physical distance in this codebase is supposed to go through) and the
+ * name says which side of it this number is on — which is the part that let it
+ * hide, because 0.45 is a perfectly plausible number of cells.
  */
-export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS = 0.45;
+export const WALKER_FOOTPRINT_HALF_EXTENT = 0.45;
+
+/** The same half-extent in the CELLS walkerGroundY steps in. Converted once. */
+export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS = cellsAcross(WALKER_FOOTPRINT_HALF_EXTENT);
 
 /**
  * Ground height for a land creature: the HIGHEST rendered cell under its

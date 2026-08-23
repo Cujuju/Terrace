@@ -28,11 +28,11 @@
 // installable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { SEA_LEVEL } from '@terrace/shared';
+import { SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import type { MonsterKind } from '../protocol.ts';
 import { CTHULHU_LURK_DEPTH } from './anatomy.ts';
 import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
-import { YETI_FOOT_GROUND_HALF_EXTENT_CELLS } from './yeti-anatomy.ts';
+import { YETI_FOOT_GROUND_HALF_EXTENT } from './yeti-anatomy.ts';
 
 /**
  * World-space Y of the sea surface.
@@ -89,7 +89,12 @@ export type MonsterPlacementRule =
 const PLACEMENT_BY_KIND: Readonly<Record<MonsterKind, MonsterPlacementRule>> = {
   cthulhu: { placement: 'swimmer', lurkDepth: CTHULHU_LURK_DEPTH },
   kraken: { placement: 'swimmer', lurkDepth: KRAKEN_LURK_DEPTH },
-  yeti: { placement: 'walker', footGroundHalfExtentCells: YETI_FOOT_GROUND_HALF_EXTENT_CELLS },
+  // CONVERTED HERE, and this is the only place it may be: the anatomy states the
+  // body in world units and walkerGroundWorldY steps in CELLS.
+  yeti: {
+    placement: 'walker',
+    footGroundHalfExtentCells: cellsAcross(YETI_FOOT_GROUND_HALF_EXTENT),
+  },
 };
 
 export function placementRuleOf(kind: MonsterKind): MonsterPlacementRule {
@@ -183,7 +188,7 @@ export function monsterOriginWorldY(seabedY: number | null, lurkDepth: number): 
  * terraced world walks.
  *
  * THE FOOTPRINT SAMPLED IS THE FEET, not the body (see
- * YETI_FOOT_GROUND_HALF_EXTENT_CELLS): a walker stands on what it steps on, and
+ * YETI_FOOT_GROUND_HALF_EXTENT): a walker stands on what it steps on, and
  * sampling the shoulders would have him ride up onto every band his elbow
  * overhangs.
  *

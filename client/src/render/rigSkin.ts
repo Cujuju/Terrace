@@ -10,7 +10,7 @@
 // mesh per part) — the unit of AUTHORING keeps becoming the unit of DRAWING.
 //
 // WHY MERGING ALONE CANNOT FIX IT HERE, unlike for structures. A building holds
-// still, so plugins/structures/client/partMerge.ts can bake every part into one
+// still, so plugins/structures/client/parts.ts can bake every part into one
 // surface. A creature's parts MOVE, each under its own joint, and a merged
 // geometry has one transform. Of the kraken's 24 meshes only 10 sit still in
 // rig space; the other 14 each hang under an animated node, and they are the
@@ -64,7 +64,7 @@ import {
   type Object3D,
 } from 'three';
 // Shipped inside the `three` package itself (see its package.json "exports"),
-// not a separate dependency — same import structures/partMerge.ts uses.
+// not a separate dependency.
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /** Bones per vertex in three's skin attributes. Rigid binding uses only the first. */
@@ -87,11 +87,13 @@ const RIGID_BIND_WEIGHT = 1;
  * How a material is matched to others it can be drawn with in one call.
  *
  * Asked of the MATERIAL, never declared per part — the same rule
- * structures/partMerge.ts settled on, and for the same reason: a flag on each
+ * structures/parts.ts settled on, and for the same reason: a flag on each
  * part is a flag someone forgets on the part they add next year, while a
  * material either can share a surface or cannot. Colour is deliberately NOT in
- * the signature: differing colours are exactly what a vertex colour attribute
- * exists to carry, and collapsing them is most of the win.
+ * the signature — and this is where the rule here parts company with
+ * structures/parts.ts, whose materialSignature() keeps colour and so emits one
+ * surface per colour. Differing colours are exactly what a vertex colour
+ * attribute exists to carry, and collapsing them is most of the win.
  *
  * Everything else that changes how a surface is SHADED is in: two parts that
  * disagree about transparency, opacity, shading model, side or blending are two

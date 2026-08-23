@@ -127,7 +127,7 @@ import {
   YETI_ARM_SWING_RADIANS,
   YETI_BOB_CELLS,
   YETI_FOOT_CENTER_HEIGHT,
-  YETI_FOOT_GROUND_HALF_EXTENT_CELLS,
+  YETI_FOOT_GROUND_HALF_EXTENT,
   YETI_FOOT_RISE,
   YETI_FOOT_WIDTH,
   YETI_FUR_WRINKLE_DEPTH,
@@ -694,7 +694,32 @@ describe('the yeti is placed on the ground, not in the water', () => {
     // the low height and its body intersects the riser face.
     const straddling = sampler({ '10,10': 9, '11,11': 12, '9,9': 9, '9,11': 9, '11,9': 9 });
     expect(monsterOriginY('yeti', straddling, 10.5, 10.5)).toBe(12);
-    expect(walkerGroundWorldY(straddling, 10.5, 10.5, YETI_FOOT_GROUND_HALF_EXTENT_CELLS)).toBe(12);
+    // walkerGroundWorldY steps in CELLS, so the anatomy's world units convert —
+    // exactly as placement.ts does it. Passing the raw world-unit figure here is
+    // the bug this test caught on 2026-08-22; see the unit test below.
+    expect(
+      walkerGroundWorldY(straddling, 10.5, 10.5, cellsAcross(YETI_FOOT_GROUND_HALF_EXTENT)),
+    ).toBe(12);
+  });
+
+  it('samples his feet in CELLS, not in the world units the anatomy states', () => {
+    // THE BUG THIS PINS. Everything in yeti-anatomy.ts has been world units
+    // since the 2026-08-21 re-sample cut a cell to a quarter of one, but this
+    // constant was named `..._CELLS` and handed straight to walkerGroundWorldY,
+    // which adds it to a CELL coordinate — so the walker probed a quarter of the
+    // ground his feet cover and could stand below a riser his foot overhung.
+    //
+    // It went unnoticed for a day because at his full size the wrong number
+    // (1.02) still reached the neighbouring cell and the fixture above still
+    // passed; at a quarter of that size it reaches nothing but his own cell,
+    // which is what surfaced it. The conversion is the fix, not the fixture.
+    const rule = placementRuleOf('yeti');
+    if (rule.placement !== 'walker') throw new Error('the yeti is a walker');
+    const halfExtentCells = rule.footGroundHalfExtentCells;
+    expect(halfExtentCells).toBe(cellsAcross(YETI_FOOT_GROUND_HALF_EXTENT));
+    // A foot really does overhang its own cell: his outer foot edge is 1.02
+    // cells from the axis, so the probe must reach past cell centre ±1.
+    expect(halfExtentCells).toBeGreaterThan(1);
   });
 
   it('falls back to the DRAWN ground when its chunk has not arrived', () => {
@@ -718,10 +743,10 @@ describe('the yeti is placed on the ground, not in the water', () => {
   it('samples the FEET, which are narrower than the body', () => {
     // A walker stands on what it steps on. Sampling the shoulders would have him
     // ride up onto every band his elbow overhangs.
-    expect(YETI_FOOT_GROUND_HALF_EXTENT_CELLS).toBeGreaterThanOrEqual(
+    expect(YETI_FOOT_GROUND_HALF_EXTENT).toBeGreaterThanOrEqual(
       YETI_STANCE_HALF_WIDTH + YETI_FOOT_WIDTH / 2,
     );
-    expect(YETI_FOOT_GROUND_HALF_EXTENT_CELLS).toBeLessThan(YETI_WIDTH_CELLS / 2);
+    expect(YETI_FOOT_GROUND_HALF_EXTENT).toBeLessThan(YETI_WIDTH_CELLS / 2);
   });
 
   it('puts the sole exactly on the origin plane', () => {
@@ -809,8 +834,22 @@ describe('the yeti silhouette', () => {
     // A white mass in sunlight has no contrast of its own, which is why he needs
     // the largest shade variation of the three, and fur is a surface that is
     // broken everywhere, which is why the carve is the deepest.
-    expect(YETI_FUR_WRINKLE_DEPTH).toBeGreaterThan(KRAKEN_MANTLE_WRINKLE_DEPTH);
-    expect(YETI_FUR_WRINKLE_DEPTH).toBeGreaterThan(CTHULHU_BODY_WRINKLE_DEPTH);
+    //
+    // THE CARVE IS COMPARED RELATIVE TO THE BODY IT IS ON, as a fraction of the
+    // creature's height, and that is the only comparison that was ever meant:
+    // an absolute depth says nothing across animals of different sizes, and
+    // since the 2026-08-22 rescale took the yeti to a quarter of the other two
+    // it says the opposite of the truth. His 0.03 on a 1.575-unit body is a far
+    // coarser surface than the kraken's 0.07 on an 8-unit one.
+    const relativeCarve = (depth: number, height: number): number => depth / height;
+    expect(relativeCarve(YETI_FUR_WRINKLE_DEPTH, YETI_TOTAL_HEIGHT)).toBeGreaterThan(
+      relativeCarve(KRAKEN_MANTLE_WRINKLE_DEPTH, KRAKEN_WIDTH_CELLS),
+    );
+    expect(relativeCarve(YETI_FUR_WRINKLE_DEPTH, YETI_TOTAL_HEIGHT)).toBeGreaterThan(
+      relativeCarve(CTHULHU_BODY_WRINKLE_DEPTH, CTHULHU_TOTAL_HEIGHT),
+    );
+    // Shade variation is already a FRACTION of the material's colour, so it is
+    // scale-free and compares directly.
     expect(YETI_SHADE_VARIATION).toBeGreaterThan(KRAKEN_SHADE_VARIATION);
   });
 });

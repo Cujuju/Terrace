@@ -474,15 +474,19 @@ export const KRAKEN_FOOTPRINT_CELLS = cellsAcross(7);
  * Horizontal extent of the modelled body, in world units: shoulder to shoulder,
  * including the arms that hang either side of them (client/yeti-anatomy.ts).
  *
- * FIVE, against the sea kinds' seven, and the difference is the point rather
- * than an accident of modelling. Cthulhu and the kraken are gods that rise out
- * of an ocean; the yeti is an ANIMAL — the biggest thing on the mountain, and
- * still something a mountain could hold several of. Five cells is also what lets
- * him live on a snowfield a player can plausibly build: his minimum lair below
- * is derived from this number, and a seven-cell yeti would have demanded half
- * again as much snow for the same room to move.
+ * 1.25, against the sea kinds' seven, and the gap is the point rather than an
+ * accident of modelling. Cthulhu and the kraken are gods that rise out of an
+ * ocean; the yeti is an ANIMAL, and as of the owner's 2026-08-22 decision a
+ * SMALL one — a quarter of the five world units he was, which is the client's
+ * YETI_SCALE showing up on this side of the wire. The client half restates the
+ * same number as YETI_WIDTH_CELLS (client/yeti-anatomy.ts) and a test fails the
+ * day the two disagree, so a rescale has to touch both.
+ *
+ * His minimum lair below is DERIVED from this number, so shrinking him shrinks
+ * what he needs to live on by the square — which is the owner's intent: he is no
+ * longer the biggest thing on the mountain and no longer asks for a mountain.
  */
-export const YETI_FOOTPRINT_CELLS = cellsAcross(5);
+export const YETI_FOOTPRINT_CELLS = cellsAcross(1.25);
 
 /**
  * Cells in the smallest snowfield the yeti will accept as a lair, as a multiple
@@ -506,15 +510,33 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(5);
  * plugin asks of a player.
  *
  * AMENDMENT (owner decision, 2026-08-19): the bar is lowered to ONE THIRD of
- * the above — 170 cells — so a yeti is reachable without a mega-project. The
- * chunk-multiple framing above no longer holds at a third of a chunk, so the
- * source of truth is now the CELL COUNT itself, derived directly from the
- * pre-cut figure this comment justified. What it counts is unchanged: a TOTAL
- * over one connected, flood-filled region, of any shape — never a chunk grid
- * cell, never a bounding box.
+ * the above so a yeti is reachable without a mega-project. What it counts is
+ * unchanged: a TOTAL over one connected, flood-filled region, of any shape —
+ * never a chunk grid cell, never a bounding box.
+ *
+ * SECOND AMENDMENT (owner decision, 2026-08-22, with the quarter-size rescale):
+ * it is now WRITTEN as the argument above rather than as a chunk count that
+ * happened to equal it. Four and a half body-widths across, squared, cut by the
+ * 2026-08-19 third — which reproduces the old number to within 1% at his old
+ * size (4.5 × 20 cells = 90 across, 8 100 square, 2 700 against the 2 730 that
+ * stood here) and, unlike a chunk count, follows the animal when he changes
+ * size. At YETI_FOOTPRINT_CELLS = 5 that is 168 cells, a ~13×13 patch: a small
+ * creature wants a small territory, and a snowfield that used to be a project is
+ * now a modest hilltop.
  */
+
+/**
+ * How many of its own body-widths of room a lurking monster wants in every
+ * direction — the figure Cthulhu's own threshold is justified by, named here so
+ * the yeti's can be derived from it instead of restating the arithmetic.
+ */
+export const LAIR_BODY_WIDTHS_ACROSS = 4.5;
+
+/** The 2026-08-19 cut, as the divisor it is. See the amendment above. */
+export const YETI_LAIR_REACHABILITY_DIVISOR = 3;
+
 export const YETI_MIN_LAIR_SNOW_CELLS = Math.floor(
-  (2 * NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS) / 3,
+  (LAIR_BODY_WIDTHS_ACROSS * YETI_FOOTPRINT_CELLS) ** 2 / YETI_LAIR_REACHABILITY_DIVISOR,
 );
 
 /**
@@ -556,8 +578,8 @@ export const LAIR_COLLAPSE_HYSTERESIS_DIVISOR = 4;
 
 /**
  * Cells in its own snowfield below which the yeti's lair has COLLAPSED and he
- * leaves: a quarter of the (now 170-cell) arrival threshold — 42 cells, a
- * ~6.5×6.5 patch.
+ * leaves: a quarter of the arrival threshold above — 42 cells against its 168,
+ * a ~6.5×6.5 patch.
  *
  * AREA ONLY, DELIBERATELY — not height, for the reason the kraken's collapse
  * test is area-only: re-testing an arrival condition every five seconds is the
@@ -592,15 +614,25 @@ export const YETI_RESPAWN_COOLDOWN_SECONDS = 600;
 /**
  * Ambling speed, cells per second.
  *
- * 0.45 — between Cthulhu's 0.25 brood and the kraken's 0.6 hunt, and far under
- * the wildlife plugin's grazer (1.6 cells/s), which is the animal he shares the
- * hillside with. That last comparison is the one that matters: a monster that
- * moved at grazer speed would read as livestock, and the whole silhouette
- * argument (a five-cell biped against a one-cell deer) is undone if it also
- * moves like one. At 0.45 cells/s he covers his own five-cell width in eleven
- * seconds — a walk you can watch make progress, and never a stride.
+ * 0.1125 — a quarter of the 0.45 that stood here, cut alongside the body by the
+ * owner's 2026-08-22 rescale, because A SPEED IS A LENGTH PER SECOND: a
+ * quarter-size animal holding the old speed crosses its own body four times as
+ * fast as it used to, and that is scurrying rather than ambling.
+ *
+ * WHAT THE ORIGINAL 0.45 WAS ARGUED FROM SURVIVES THE CUT, which is why the cut
+ * is the right one. He covers his own width in the same eleven seconds — a walk
+ * you can watch make progress, and never a stride — and he is still far under
+ * the wildlife plugin's grazer (1.6 cells/s), the animal he shares the hillside
+ * with, so he cannot read as livestock. What he is no longer between is the two
+ * sea kinds' speeds (Cthulhu's 0.25 brood, the kraken's 0.6 hunt): those are
+ * gods four to nine times his size and comparing their absolute speeds to his
+ * stopped meaning anything the moment he stopped being their scale.
+ *
+ * The client half restates this as YETI_AMBLE_SPEED_CELLS_PER_SECOND and derives
+ * his step rate from it (client/yeti-anatomy.ts), so his feet cannot skate; a
+ * test pins the two together.
  */
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(0.45);
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(0.1125);
 
 /**
  * Maximum random heading change, radians per second. 0.35 rad/s is ~20°/s —
