@@ -145,10 +145,27 @@ function rowWorldY(r: number, crestY: number, footY: number, chuteCells: number)
  * Build one lofted sheet for a maximal lip run `P_start..P_end` (inclusive,
  * indices into `loop`), appending two triangles per quad into `out`.
  *
- * The foot band is the MINIMUM of the run's probed bands: a multi-band cliff
- * gets ONE sheet straight down to the lowest water rather than stacked pieces.
- * Where the sheet passes inside terrain it is simply hidden — the ground is
- * opaque, depth-tested, and drawn first (the established idiom here).
+ * The foot band is the HIGHEST water the run can see below it, so the sheet
+ * drops ONE terrace step and stops.
+ *
+ * IT USED TO TAKE THE LOWEST (2026-08-22, owner: waterfalls "shooting out of
+ * the top" of a spire, "literally being projected into space"). The argument
+ * for one sheet straight down to the lowest water was that a multi-band cliff
+ * is drawn as several stacked skirts and a single sheet covers them all, with
+ * whatever passes inside the rock hidden by opaque terrain. That argument has
+ * a premise: that there IS rock in the way. On a tall thin spire there is not.
+ * The summit's lip probe finds water at the spire's foot, dozens of bands
+ * below, and one sheet is lofted from the summit all the way down — a wall of
+ * water standing beside a spire too narrow to hide any of it, hanging in open
+ * air, which is exactly what the owner photographed.
+ *
+ * Taking the highest instead makes a fall what the terrain already is: a
+ * STAIRCASE. Each region pours onto the water one step below it, that region
+ * pours onto the next, and the cascade follows the surface down however far it
+ * goes — because every step of it is anchored to water that is really there,
+ * rather than to the far-away bottom of a drop the sheet would have to cross
+ * unsupported. Where the ground between two steps really is solid, the sheet
+ * still passes inside it and is still hidden; nothing about that case changes.
  */
 function emitSheet(
   loop: ContourLoop,
@@ -389,13 +406,14 @@ function emitRun(
   footWorldYOf: (band: number) => number,
   out: number[],
 ): void {
-  // Foot band = MINIMUM probed band along the run: one sheet to the lowest
-  // water, not stacked pieces.
-  let minBand = Infinity;
+  // Foot band = HIGHEST probed band along the run: this sheet drops ONE
+  // terrace step onto water that is really there, and the region it lands on
+  // carries the cascade further down (see the doc comment above).
+  let footBand = -Infinity;
   for (let i = start; i <= end; i++) {
     const b = bands[i];
-    if (b !== null && b < minBand) minBand = b;
+    if (b !== null && b > footBand) footBand = b;
   }
-  if (!Number.isFinite(minBand)) return;
-  emitSheet(loop, start, end, ax, az, crestWorldY, minBand, footWorldYOf, out);
+  if (!Number.isFinite(footBand)) return;
+  emitSheet(loop, start, end, ax, az, crestWorldY, footBand, footWorldYOf, out);
 }

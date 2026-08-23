@@ -148,10 +148,14 @@ describe('appendApronSurfaces', () => {
     }
   });
 
-  it('5. multi-band cliff produces one sheet to the MINIMUM band', () => {
+  it('5. a run seeing several levels below it lands on the HIGHEST of them', () => {
+    // The sheet drops ONE terrace step, onto water that is really there, and
+    // the region it lands on carries the cascade further down. Reaching for
+    // the lowest water a run can see is what threw a wall of water from the
+    // summit of a thin spire to its foot, hanging unsupported in open air
+    // because a spire that narrow hides none of it (owner, 2026-08-22).
     const loop = squareLoop();
-    // Left half of the lip drops 2 bands, right half 3 — one sheet must reach
-    // the minimum (band 1), not stop at either local level.
+    // Left half of the lip sees water 3 bands down, right half 2 bands down.
     const probe = (cx: number, cz: number) => {
       const hit = southEdgeProbe(0, 8, 0)(cx, cz);
       return hit === null ? null : cx < 4 ? 1 : 2;
@@ -159,7 +163,7 @@ describe('appendApronSurfaces', () => {
     const out: number[] = [];
     appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, out);
     const minY = Math.min(...vertices(out).map(([, y]) => y));
-    expect(minY).toBe(footWorldYOf(1));
+    expect(minY).toBe(footWorldYOf(2));
   });
 
   it('6a. one isolated lip vertex emits nothing', () => {
