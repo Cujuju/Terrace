@@ -904,6 +904,16 @@ export function createRiverRig(
           // contour, which is the approved lake-rim behaviour.
           return band !== null && band < region.surfaceBand ? band : null;
         },
+        // The DRAWN ground under a point of the fall, so the sheet steps down
+        // the terraces instead of cutting a flat plane through them.
+        // Band-quantised and lifted exactly as the water surfaces are, so
+        // water resting on a tread sits level with the water already on it.
+        (groundX, groundZ) => {
+          const size = mirror.map.size;
+          const gx = Math.min(size - 1, Math.max(0, Math.round(groundX)));
+          const gz = Math.min(size - 1, Math.max(0, Math.round(groundZ)));
+          return quantizeToBandWorldY(mirror, gx, gz) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+        },
         triangles,
       );
     }

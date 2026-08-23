@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   appendApronSurfaces,
   WATER_APRON_CREST_CELLS,
+  WATER_FALL_GROUND_STEP_CELLS,
+  WATER_FALL_MAX_REACH_CELLS,
   WATER_FACE_CLEARANCE_WORLD_UNITS,
 } from '../src/render/water/waterApron';
 import { CELL_WORLD_SIZE } from '../src/config';
@@ -14,6 +16,17 @@ import type { ContourLoop } from '../src/terrain/contours';
 const CREST_Y = 10;
 const BAND_HEIGHT = 2;
 const footWorldYOf = (band: number) => band * BAND_HEIGHT;
+
+/**
+ * The ground a test fall runs down: a terrace STAIRCASE outward from the lip
+ * at z = 0, dropping a band every cell, flat at the foot once it gets there.
+ * The sheet is meant to step with this rather than bridge it.
+ */
+const testGround = (_cellX: number, cellZ: number): number => {
+  const outCells = Math.abs(cellZ);
+  const dropped = CREST_Y - Math.floor(outCells) * BAND_HEIGHT;
+  return Math.max(footWorldYOf(0), dropped);
+};
 
 /** A square loop, inside on the left (counter-clockwise in (x,z)). */
 function squareLoop(x0 = 0, z0 = 0, size = 8): ContourLoop {
@@ -47,7 +60,7 @@ describe('appendApronSurfaces', () => {
   it('1. emits row-0 vertices bit-identical to the loop vertex world coords', () => {
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), testGround, out);
     expect(out.length).toBeGreaterThan(0);
     const verts = vertices(out);
     const world = new Set(
@@ -76,63 +89,38 @@ describe('appendApronSurfaces', () => {
 
   it('2. leaves out untouched when nothing is below', () => {
     const out: number[] = [];
-    appendApronSurfaces([squareLoop()], CREST_Y, footWorldYOf, () => null, out,);
+    appendApronSurfaces([squareLoop()], CREST_Y, footWorldYOf, () => null, testGround, out,);
     expect(out).toHaveLength(0);
   });
 
-  it('3. the drop is one clean step, crest to foot, and never climbs', () => {
-    // SUPERSEDED CONTRACT, deliberately (owner, 2026-08-22: "what if we simply
-    // drew it down the side of the layer"). This used to assert the opposite -
-    // that every descending edge had horizontal extent, and that no two
-    // vertices shared an XZ with different heights - because a fall was then a
-    // sloped chute and a vertical curtain was the failure being guarded
-    // against. Drawing the fall ON the riser makes that sharing the POINT: the
-    // strip is the terrace face, and a face is vertical.
-    //
-    // What still has to hold is that the water only ever goes down, and that
-    // it uses exactly two levels: the one it left and the one it lands on.
+  it('3. no part of the fall floats more than one terrace over the ground', () => {
+    // THE ANTI-CLIPPING CONTRACT. A fall used to be one flat plane from the
+    // crest straight down to the foot, so over a multi-terrace drop it stood
+    // several bands proud of the treads it passed and cut through every one of
+    // them (owner, 2026-08-22, with a shot of exactly that). A staircase can
+    // only ever be one step ahead of the ground it is walking down.
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), testGround, out);
     expect(out.length).toBeGreaterThan(0);
 
-    const verts = vertices(out);
     const footY = footWorldYOf(0);
-    for (const [, y] of verts) {
+    for (const [x, y, z] of vertices(out)) {
       expect(y).toBeLessThanOrEqual(CREST_Y + 1e-9);
       expect(y).toBeGreaterThanOrEqual(footY - 1e-9);
-      expect(y === CREST_Y || y === footY).toBe(true);
+      const ground = Math.max(footY, testGround(x / CELL_WORLD_SIZE, z / CELL_WORLD_SIZE));
+      expect(y - ground).toBeLessThanOrEqual(BAND_HEIGHT + 1e-9);
     }
   });
 
-  it('4. the fall is a vertical strip lying on the terrace face', () => {
-    // The sheet is no longer projected outward past the lip: the water
-    // region's lip arc IS the terrain's own cap contour there, and the riser
-    // under it is vertical, so the fall is that arc extruded straight DOWN.
-    // What has to hold is that the strip is vertical - its top and bottom
-    // share their XZ - and that it spans exactly crest to foot.
+  it('4. the fall stays within its bounded reach of the lip', () => {
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), out);
-    const verts = vertices(out);
-    expect(verts.length).toBeGreaterThan(0);
-
-    const levels = new Set(verts.map(([, y]) => y));
-    expect(levels).toEqual(new Set([CREST_Y, footWorldYOf(0)]));
-
-    // Every foot vertex stands directly under a crest vertex.
-    const crestXZ = new Set(
-      verts.filter(([, y]) => y === CREST_Y).map(([x, , z]) => `${x},${z}`),
-    );
-    for (const [x, y, z] of verts) {
-      if (y !== footWorldYOf(0)) continue;
-      expect(crestXZ.has(`${x},${z}`)).toBe(true);
-    }
-
-    // And the strip stands off the rock rather than inside it: no vertex is
-    // further out than the crest hold plus that clearance.
-    const maxOut = WATER_APRON_CREST_CELLS * CELL_WORLD_SIZE + WATER_FACE_CLEARANCE_WORLD_UNITS;
-    for (const [x, , z] of verts) {
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), testGround, out);
+    const maxOut =
+      (WATER_FALL_MAX_REACH_CELLS + WATER_APRON_CREST_CELLS) * CELL_WORLD_SIZE +
+      WATER_FACE_CLEARANCE_WORLD_UNITS;
+    for (const [x, , z] of vertices(out)) {
       const outward = Math.min(
         ...loop.map((q) => Math.hypot(x - q.x * CELL_WORLD_SIZE, z - q.z * CELL_WORLD_SIZE)),
       );
@@ -153,7 +141,7 @@ describe('appendApronSurfaces', () => {
       return hit === null ? null : cx < 4 ? 1 : 2;
     };
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, out,);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, testGround, out,);
     const minY = Math.min(...vertices(out).map(([, y]) => y));
     expect(minY).toBe(footWorldYOf(2));
   });
@@ -164,14 +152,14 @@ describe('appendApronSurfaces', () => {
     const probe = (cx: number, cz: number) =>
       cz < -0.3 && cz > -0.7 && Math.abs(cx - 4) < 0.26 ? 0 : null;
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, out,);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, testGround, out,);
     expect(out).toHaveLength(0);
   });
 
   it('6b. two adjacent lip vertices emit exactly one sheet', () => {
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(3, 4, 0), out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(3, 4, 0), testGround, out);
     expect(out.length).toBeGreaterThan(0);
   });
 
@@ -185,13 +173,16 @@ describe('appendApronSurfaces', () => {
       footWorldYOf,
       (cx, cz) =>
         (southEdgeProbe(2, 4, 0)(cx, cz) ??
-          southEdgeProbe(8, 10, 0)(cx, cz)), out,
+          southEdgeProbe(8, 10, 0)(cx, cz)), testGround, out,
     );
     expect(out.length).toBeGreaterThan(0);
-    // Foot-row vertices cluster into exactly two x-intervals separated by a
-    // gap wider than a cell — one sheet per run.
+    // LIP-row vertices cluster into exactly two x-intervals separated by a gap
+    // wider than a cell — one sheet per run. Measured at the lip rather than
+    // at the foot: a fall is a staircase walking outward, so two neighbouring
+    // falls can well have merged by the time they reach the bottom, and where
+    // they START is what says how many of them there are.
     const xsAtFoot = vertices(out)
-      .filter(([, y]) => y === footWorldYOf(0))
+      .filter(([, y]) => y === CREST_Y)
       .map(([x]) => x)
       .sort((a, b) => a - b);
     let groups = 1;
