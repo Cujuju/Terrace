@@ -346,28 +346,65 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
   });
 
   /**
+   * The radius these two relaxation tests sculpt at, and the distance at which
+   * they look for the spill.
+   *
+   * NOT RADIUS 1, AND THAT IS THE POINT (2026-08-22). A radius-1 footprint is
+   * the clicked cell and nothing else, and since the anchor bound that stops a
+   * stroke undoing itself (shared/heightmap.ts, applySculpt's anchorBounds),
+   * the clicked cell cannot shed into its neighbours — so a one-cell smooth
+   * stroke is a stamp, deliberately and by a stated boundary. It is also not a
+   * brush any player can select: the picker's ladder starts at one WORLD unit.
+   * Testing relaxation through it measured the boundary case rather than the
+   * contract, so these fixtures use a real brush.
+   *
+   * The tight disc puts radius 3's footprint two cells out on an axis, so the
+   * probe sits at three — outside the brush's own writes, where anything that
+   * moved can only have been moved by the relaxation pass.
+   */
+  const RELAX_TEST_RADIUS = 3;
+  const OUTSIDE_FOOTPRINT_CELLS = 3;
+
+  /** Cells just beyond the footprint — only relaxation can reach these. */
+  const spillHeights = (w: World, x: number, y: number): number[] => [
+    w.heightAt(x - OUTSIDE_FOOTPRINT_CELLS, y),
+    w.heightAt(x + OUTSIDE_FOOTPRINT_CELLS, y),
+    w.heightAt(x, y - OUTSIDE_FOOTPRINT_CELLS),
+    w.heightAt(x, y + OUTSIDE_FOOTPRINT_CELLS),
+  ];
+
+  /**
    * Raises the test cell to a sheer edge that EXCEEDS the gradient limit, so a
    * smooth stroke has something to relax.
    *
-   * Needed since the 2026-08-20 re-terrace: DEFAULT_SCULPT_AMOUNT and MAX_STEP
-   * are both BAND_HEIGHT now, so one stamp on flat ground leaves an edge
-   * sitting exactly ON the limit and smooth correctly does nothing — the crisp
-   * -layer contract (pinned in shared's heightmap.test.ts). Two stamps put the
-   * edge a full band over it, which is what these two tests are about.
+   * One stamp is not enough: a soft stroke's own cone falls away at
+   * DEFAULT_SCULPT_AMOUNT / radius per cell, which at every brush the picker
+   * offers is at or under MAX_STEP — so it lands already gradient-legal and
+   * smooth correctly does nothing (the crisp-layer contract, pinned in
+   * shared's heightmap.test.ts). Two stamps put the edge over the limit, which
+   * is what these two tests are about.
    */
   function stampAnOverLimitEdge(): void {
     for (let stroke = 0; stroke < 2; stroke++) {
-      handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ tool: 'stamp' }));
+      handleSculptIntent(
+        makeDeps(world, []),
+        PLAYER,
+        sculptMessage({ tool: 'stamp', radius: RELAX_TEST_RADIUS }),
+      );
     }
   }
 
-  it('a smooth intent still relaxes the neighbours', () => {
+  it('a smooth intent still relaxes the ground beyond its footprint', () => {
     stampAnOverLimitEdge();
 
-    handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ tool: 'smooth' }));
+    handleSculptIntent(
+      makeDeps(world, []),
+      PLAYER,
+      sculptMessage({ tool: 'smooth', radius: RELAX_TEST_RADIUS }),
+    );
 
     expect(
-      neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
+      spillHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
     ).toBe(true);
   });
 
@@ -422,10 +459,14 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
 
     stampAnOverLimitEdge();
 
-    handleSculptIntent(makeDeps(world, [smoother]), PLAYER, sculptMessage({ tool: 'stamp' }));
+    handleSculptIntent(
+      makeDeps(world, [smoother]),
+      PLAYER,
+      sculptMessage({ tool: 'stamp', radius: RELAX_TEST_RADIUS }),
+    );
 
     expect(
-      neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
+      spillHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).some((h) => h > 0),
     ).toBe(true);
   });
 });

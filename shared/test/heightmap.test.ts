@@ -1836,3 +1836,129 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     expect(runs[0]).toEqual(runs[1]);
   });
 });
+
+/**
+ * A PLAYER STROKE MAY NOT UNDO ITSELF (owner bug report 2026-08-22, "shift
+ * click lowering does not always work").
+ *
+ * THE CONTRACT, not the arithmetic that implements it: whatever the brush
+ * writes at a footprint cell, the relaxation pass that follows it in the SAME
+ * stroke may carry further in the stroke's direction but never back past. That
+ * is one rule and it is the same rule both ways, so both ways are tested here
+ * — the bug was precisely that the two ends of the interval were the world's
+ * limits rather than the stroke's own result, which let a lowering stroke's
+ * relaxation refill the pit the brush had just dug.
+ *
+ * Tested on terrain stated in WORLD units, not per cell: the failure needed
+ * ground with real pre-existing slope for relaxation to have anything to pull
+ * in from, and flat ground hides it completely (a flat-ground stroke is
+ * already gradient-legal at every radius the picker offers, so no relaxation
+ * fires at all).
+ */
+describe('a player stroke is never undone by its own relaxation (2026-08-22)', () => {
+  const WORLD = 128;
+
+  /** Rolling ground whose wavelengths are world distances, so the slopes are
+   * the ones the game is tuned around whatever a cell is worth. */
+  const rollingHills = (): Heightmap => {
+    const map = createHeightmap(WORLD);
+    for (let y = 0; y < WORLD; y++) {
+      for (let x = 0; x < WORLD; x++) {
+        const wx = x / WORLD_UNIT_CELLS;
+        const wy = y / WORLD_UNIT_CELLS;
+        map.cells[y * WORLD + x] = Math.round(
+          (Math.sin(wx / 9) * Math.cos(wy / 7) * 6 + Math.sin((wx + wy) / 13) * 4) *
+            BAND_HEIGHT,
+        );
+      }
+    }
+    return map;
+  };
+
+  /** What a player sculpt actually sends (protocol's WIRE defaults + smooth). */
+  const wireSmooth: SculptOptions = {
+    tool: 'smooth',
+    profile: 'soft',
+    spill: 'banded',
+    anchor: 'clicked',
+  };
+
+  /** The radii the HUD's brush ladder offers, in cells: 1-4 world units. */
+  const LADDER = [1, 2, 3, 4].map((worldUnits) => worldUnits * WORLD_UNIT_CELLS);
+
+  for (const radius of LADDER) {
+    for (const dir of [1, -1] as const) {
+      const way = dir > 0 ? 'raises' : 'lowers';
+      it(`one click ${way} the clicked cell by a band at radius ${radius}`, () => {
+        // A spread of sites rather than one: the defect was terrain-dependent,
+        // and a single lucky cell proves nothing about the rule.
+        for (let t = 0; t < 60; t++) {
+          const map = rollingHills();
+          const cx = 30 + ((t * 11) % 68);
+          const cy = 30 + ((t * 17) % 68);
+          const centre = cellIndex(map, cx, cy);
+          const before = quantizeToBand(map.cells[centre]);
+
+          applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, wireSmooth);
+
+          const after = quantizeToBand(map.cells[centre]);
+          expect(after).toBe(before + dir * BAND_HEIGHT);
+        }
+      });
+    }
+  }
+
+  it('relaxation never carries the CLICKED cell back past the brush', () => {
+    // The bound is on the ONE cell the stroke promises — the cell the player
+    // aimed at — and deliberately not on the whole footprint. Bounding every
+    // footprint cell also holds the click, but freezes the footprint (an
+    // anchored stroke leaves most of it sitting exactly on the target) and,
+    // through issue #26's coupled transfer, its neighbours too: `smooth` then
+    // moves nothing outside its own footprint and IS `stamp`. The next test
+    // pins the spill that narrowness buys.
+    for (const dir of [1, -1] as const) {
+      for (const radius of LADDER) {
+        const brushed = rollingHills();
+        const relaxed = rollingHills();
+        const cx = 61;
+        const cy = 47;
+        const centre = cellIndex(brushed, cx, cy);
+        const amount = dir * DEFAULT_SCULPT_AMOUNT;
+        // The same stroke with the relaxation pass off, and with it on.
+        applySculpt(brushed, cx, cy, radius, amount, { ...wireSmooth, tool: 'stamp' });
+        applySculpt(relaxed, cx, cy, radius, amount, wireSmooth);
+
+        if (dir > 0) {
+          expect(relaxed.cells[centre]).toBeGreaterThanOrEqual(brushed.cells[centre]);
+        } else {
+          expect(relaxed.cells[centre]).toBeLessThanOrEqual(brushed.cells[centre]);
+        }
+      }
+    }
+  });
+
+  it('still spills beyond its footprint — smooth has not become stamp', () => {
+    // The regression this guards is the one the first attempt at the fix
+    // caused: a bound wide enough to freeze the footprint silently turns the
+    // smooth tool into the stamp tool, which no test then in the tree caught
+    // at a player-selectable radius.
+    for (const radius of LADDER) {
+      const map = rollingHills();
+      const before = Int16Array.from(map.cells);
+      const cx = 61;
+      const cy = 47;
+      const footprint = new Set<number>();
+      forEachFootprintOffset(radius, (dx, dy) => {
+        footprint.add(cellIndex(map, cx + dx, cy + dy));
+      });
+
+      applySculpt(map, cx, cy, radius, DEFAULT_SCULPT_AMOUNT, wireSmooth);
+
+      let movedOutside = 0;
+      for (let i = 0; i < map.cells.length; i++) {
+        if (map.cells[i] !== before[i] && !footprint.has(i)) movedOutside++;
+      }
+      expect(movedOutside).toBeGreaterThan(0);
+    }
+  });
+});
