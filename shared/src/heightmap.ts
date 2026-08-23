@@ -1118,11 +1118,14 @@ export function applySculpt(
     //
     // KNOWN BOUNDARY, stated rather than discovered later: at radius 1 the
     // footprint IS the clicked cell, so a one-cell smooth stroke can no longer
-    // shed into its neighbours and behaves as a stamp. No brush the picker
-    // offers is that small (client/src/state/hudState.ts's BRUSH_RADII starts
-    // at one WORLD unit), and plugin terraforms run `anchor: 'free'`, which
-    // never reaches this code — so the case is reachable only by a hand-made
-    // wire message.
+    // shed into its neighbours and behaves as a stamp. THE PICKER OFFERS THAT
+    // BRUSH — client/src/state/hudState.ts's BRUSH_RADII leads with
+    // MIN_BRUSH_RADIUS, shown as the 0.25 rung — so this is a player-reachable
+    // combination, not a hand-made wire message. Verified in the running game
+    // (2026-08-22): at radius 1 the clicked cell still falls a full band on
+    // every click, 10 of 10; what it no longer does is drag its neighbours.
+    // Plugin terraforms are unaffected either way — they run `anchor: 'free'`,
+    // which never reaches this code.
     //
     // NOT the relaxation height leak itself. movePair still manufactures
     // height (a 401-unit cliff relaxes into 1,073,664 units from nowhere);
