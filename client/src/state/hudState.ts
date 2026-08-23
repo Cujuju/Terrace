@@ -32,37 +32,44 @@ import {
 import type { ConnectionStatus } from '../net/connection.ts';
 
 /**
- * The brush ladder the player picks from, in cells: one, two, three and four
- * WORLD UNITS of ground, the same four sizes offered since 2026-08-13.
+ * The brush ladder the player picks from: radii 1, 2, 4, 8 and 16 cells, which
+ * paint 0.25, 0.75, 1.75, 3.75 and 7.75 world units of ground.
  *
- * THE LADDER IS IN WORLD UNITS AND THE BOUNDS ARE NOT (2026-08-21). It used to
- * be every integer radius from shared's MIN_BRUSH_RADIUS to MAX_BRUSH_RADIUS,
- * which was the same four sizes back when a cell was a world unit. After the
- * re-sample that range is thirteen rungs, twelve of them a quarter of a world
- * unit apart — brushes a player cannot tell apart — and its first rung is the
- * one-CELL brush, which cannot raise a terrace at all (see MIN_BRUSH_RADIUS,
- * where the floor's job is spelled out). So the ladder states the sizes it
- * always meant, and the ceiling is still shared's: `expect`ed to be the top
- * rung by hudState's own test, so widening the wire bound without revisiting
- * this list fails loudly.
+ * A DOUBLING, FROM THE GRID'S FLOOR TO THE WIRE'S CEILING (owner, 2026-08-22,
+ * asked for 0.25, 1, 2, 4 and 8 world units, then for "the closest size you can
+ * do that is correct to cell sizes"). Those five sizes ARE these five radii —
+ * the requested numbers are each rung's NOMINAL diameter, 2·r cells — and the
+ * quarter-unit each rung falls short of its nominal is not slack in the ladder
+ * but the footprint rule showing through: membership is `dx² + dy² < r·(r−1)`,
+ * so a footprint reaches r−1 cells and spans 2r−1 of them, exactly one cell
+ * less than 2r, at every radius. See brushWidthWorldUnits, which measures it.
  *
- * THE SINGLE-CELL BRUSH IS BACK ON THE LADDER (owner, 2026-08-22: "can we add
- * brush size one?"). It is the ONE sub-world-unit rung offered, and it is
- * offered as the exception the paragraph above describes rather than as a
- * reopening of it: the twelve rungs between it and one world unit are still
- * brushes a player cannot tell apart, but the floor itself is qualitatively a
- * different tool — the finest mark the grid can express. MIN_BRUSH_RADIUS's
- * own note spells out what it does and does not do: a click on it settles
- * inside band 0 rather than raising a terrace, so it polishes and it does not
- * build. That is the tool the owner asked for, not a defect in it.
+ * WHY NOT THE REQUESTED NUMBERS EXACTLY. A footprint is centred ON a cell, so
+ * it always spans an ODD number of them; 1, 2 and 4 world units are 4, 8 and 16
+ * cells, all even, and none is reachable by any radius. Landing them would mean
+ * centring the brush BETWEEN cells for even widths, which changes what a
+ * SculptIntent's centre means on the wire — a real piece of work, not a
+ * constant edit, and not what "closest correct size" asked for.
+ *
+ * SUPERSEDES THE WORLD-UNIT LADDER of 2026-08-21 (radii 4, 8, 12, 16 — one,
+ * two, three and four world units of RADIUS). That ladder was arithmetically
+ * defensible and read wrong in the hand: its rungs stepped by a constant world
+ * unit, so the jump from the smallest usable brush to the next was the same
+ * size as the jump between the two largest, and the picker offered nothing
+ * between a 1.75-unit brush and a 3.75-unit one. Doubling gives the small end
+ * the resolution it needs and the large end the reach.
+ *
+ * The ceiling is still shared's, and `expect`ed to be the top rung by hudState's
+ * own test, so widening the wire bound without revisiting this list fails
+ * loudly. The floor is shared's too: the single-cell brush is the finest mark
+ * the grid can express, and MIN_BRUSH_RADIUS's note spells out that a click on
+ * it polishes rather than builds.
  */
-export const BRUSH_RADII: readonly number[] = [
-  MIN_BRUSH_RADIUS,
-  ...Array.from(
-    { length: MAX_BRUSH_RADIUS / WORLD_UNIT_CELLS },
-    (_, i) => (i + 1) * WORLD_UNIT_CELLS,
-  ),
-];
+export const BRUSH_RADII: readonly number[] = (() => {
+  const rungs: number[] = [];
+  for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r *= 2) rungs.push(r);
+  return rungs;
+})();
 
 /**
  * How wide a brush of `radius` actually paints, in WORLD UNITS — the number

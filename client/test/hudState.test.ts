@@ -24,8 +24,16 @@ import {
  */
 const DEFAULT_RADIUS = WORLD_UNIT_CELLS;
 
-/** Every rung of that ladder, in cells. */
-const LADDER = [1, 2, 3, 4].map((worldUnits) => worldUnits * WORLD_UNIT_CELLS);
+/**
+ * Every rung of that ladder, in cells — restated here rather than imported, on
+ * purpose: this is the independent copy that makes a change to BRUSH_RADII show
+ * up as a failing test instead of a silently-agreeing one.
+ *
+ * A DOUBLING since 2026-08-22, from the grid's floor to the wire's ceiling. It
+ * was `[1, 2, 3, 4] * WORLD_UNIT_CELLS` while the ladder stepped by a constant
+ * world unit of radius.
+ */
+const LADDER = [1, 2, 4, 8, 16];
 
 type HudState = typeof import('../src/state/hudState.ts');
 
@@ -311,12 +319,16 @@ describe('fallback on corrupt storage', () => {
     // chosen. The v1 → v2 key bump orphans those entries; this is the guard
     // that stops the next change to BRUSH_RADII from minting new ones.
     //
-    // 1 LEFT THIS LIST on 2026-08-22, when the single-cell brush was added to
-    // the ladder as a rung of its own. The orphaning above is what makes that
-    // safe: the pre-re-sample "1" this case was written about lived under the
-    // v1 key, so no stored v2 entry can mean anything but the brush the player
-    // now picks by pressing the 1 button.
-    for (const offLadder of [2, 3, 5, 15]) {
+    // 1 AND 2 LEFT THIS LIST on 2026-08-22 — the single-cell brush became a
+    // rung of its own, and the ladder then became a doubling, which put 2 on it
+    // and took 12 off. The orphaning above is what makes the first safe: the
+    // pre-re-sample "1" this case was written about lived under the v1 key, so
+    // no stored v2 entry can mean anything but a brush the picker offers.
+    //
+    // 12 is the useful case now: it was a rung until this morning, so a player
+    // who last used it has it in storage, and the fallback is what keeps them
+    // from holding a brush with no button lit.
+    for (const offLadder of [3, 5, 12, 15]) {
       const { hud } = await freshHud({
         [HUD_KEY]: JSON.stringify({ brushRadius: offLadder }),
       });
