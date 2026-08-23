@@ -3191,7 +3191,7 @@ because the tread's field rule stops the water on the terrain's own cap
 contour (#62). The separation is purely VERTICAL, and the only thing that ever
 covered it was the apron.
 
-**Decision: delete `water/waterApron.ts` (432 lines) and build the vertical
+**Decision: delete `water/waterApron.ts` (420 lines) and build the vertical
 face from the region boundary, one sheet PER SEGMENT** —
 `client/src/render/water/waterRiser.ts`.
 
