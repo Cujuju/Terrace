@@ -63,17 +63,20 @@
 // the cost note beside the broadcastVisible call in simulate() for why.
 //
 // 5 Hz is chosen because the extra 390 kbit/s buys nothing a player can see.
-// The fastest HABITAT species cruises at 3 cells/s, so between two 200 ms
-// updates it covers 0.6 cells — well under one cell, and the client interpolates
-// across the gap (client/interpolation.ts). Even a fleeing fish at ×3 covers 1.8
-// cells, which interpolation still renders as smooth motion, and that 1.8 is the
-// bound BIRD_CRUISE_SPEED_CELLS_PER_SECOND was chosen under (8 × 0.2 = 1.6), so
-// the fastest thing in the world still needs no cadence of its own. Halving the
+// The fastest HABITAT species cruises at 3 WORLD UNITS/s (the species table
+// states cellsAcross(3) = 12 cells/s — these figures are in world units, and
+// both are given so the two cannot be confused again), so between two 200 ms
+// updates it covers 0.6 world units (2.4 cells) — well under one cell, and the
+// client interpolates across the gap (client/interpolation.ts). Even a fleeing
+// fish at ×3 covers 1.8 world units (7.2 cells), which interpolation still
+// renders as smooth motion, and that 1.8-world-unit figure is the bound
+// BIRD_CRUISE_SPEED_CELLS_PER_SECOND was chosen under (8 × 0.2 = 1.6 world
+// units), so the fastest thing in the world still needs no cadence of its own. Halving the
 // rate halves the steady-state cost of the most expensive thing this plugin
 // does, and the remaining budget is what lets a self-hoster on a home connection
 // run ~10 players. Positions are rounded to WILDLIFE_POSITION_DECIMALS (1/100
-// cell) on the way out — two orders of magnitude finer than the smallest
-// creature.
+// cell) on the way out — roughly 280× finer than the smallest creature (a fish
+// is 0.7 world units, i.e. 2.8 cells, long).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { MAX_BRUSH_RADIUS, type CellDiff } from '@terrace/shared';

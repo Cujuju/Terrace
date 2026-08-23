@@ -15,21 +15,50 @@ changes instead of serving whatever it loaded at startup. Off by default.
 The server serves client/dist itself (issue #20) and prints
 "play at http://localhost:<PORT>" - that is the URL to open in a browser.
 ws://<PORT> in the log is the game protocol endpoint, not a page.
+
+WHICH WORLD YOU PLAY IS NO LONGER A LAUNCH DECISION (multi-world, 2026-08-22).
+A server holds many worlds, one loaded at a time, and you switch between them
+from the Worlds panel in the game. This script starts the process and reports
+what came up; it does not choose. The world that loads is the one recorded in
+WORLDS_DIR/.active, i.e. whichever you were last in.
 """
 import argparse
+import contextlib
 import os
 import signal as signal_module
+import sqlite3
 import subprocess
 import sys
+from urllib.request import pathname2url
 
 # Server configuration - validated at boot by server/src/config.ts.
 CONFIG = {
     "PORT": 2567,                 # 1-65535
+    # THE SIZE *NEW* WORLDS ARE CREATED AT - not the size of the world that
+    # loads (multi-world, 2026-08-22). Every world keeps whatever size it was
+    # made with, and a server can hold worlds of several sizes at once, so this
+    # no longer describes what you are about to play. See issue #75 for whether
+    # 512 is still the right default after the quarter-cell re-sample.
     "WORLD_SIZE": 512,            # multiple of CHUNK_SIZE (16), max 4096
     "WORLD_DIFFICULTY": 50,       # 1-100 (out of range clamps with a warning)
-    "DB_PATH": "./data/world.db", # relative to server/
+    # WHERE THE WORLDS LIVE - one SQLite file per world, plus .trash/ and the
+    # .active pointer. Replaces DB_PATH, which named a single world file back
+    # when a deployment had exactly one. DB_PATH still exists in the server's
+    # config as the LEGACY path it copies a pre-2026-08-22 world in from; it is
+    # deliberately not set here, because naming it would suggest the world
+    # lives there, and it does not.
+    "WORLDS_DIR": "./data/worlds", # relative to server/
     "TICK_HZ": 10,                # 1-60
     "SNAPSHOT_INTERVAL_S": 60,    # 1-3600
+    # OPERATOR KEYS. None means "use the server's built-in default", which for
+    # both of these is a PUBLIC value from the source - fine on a laptop, not
+    # fine on anything reachable. The server warns at boot when either is on
+    # its default. Set them here (or export them) to silence that honestly.
+    "ROLLBACK_KEY": None,         # None -> "terrace"        (rewinds the world)
+    "WORLD_ADMIN_KEY": None,      # None -> "terrace-worlds"  (creates/archives worlds)
+    # Seconds a world switch is announced for when somebody other than the
+    # operator is connected; skipped entirely when they are alone. 0 = never.
+    "WORLD_SWITCH_COUNTDOWN_S": None,  # None -> server default (10)
     "PLUGINS_DIR": None,          # None -> repo-root plugins/
     "CLIENT_DIST_PATH": None,     # None -> client/dist sibling of server/
 }
@@ -95,11 +124,71 @@ SERVER_DIR = os.path.join(REPO_ROOT, "server")
 CLIENT_DIR = os.path.join(REPO_ROOT, "client")
 CLIENT_INDEX = os.path.join(CLIENT_DIR, "dist", "index.html")
 
+# Everything that ends up INSIDE the client bundle, relative to the repo root.
+# Not the same set as WATCH_ROOTS: that one is what a SERVER restart follows
+# (and deliberately excludes client code), while this is what a client BUILD is
+# made of - the client itself, the shared math it compiles against, and both
+# halves of every plugin, whose client code Vite pulls in.
+CLIENT_SOURCE_ROOTS = ("client/src", "shared/src", "plugins")
+
+# Single files outside those trees that still change the bundle.
+CLIENT_SOURCE_FILES = ("client/index.html", "client/vite.config.ts")
+
+# Suffixes that can change what the bundle renders. CSS is here and not in
+# WATCH_SUFFIXES because a stylesheet changes the client and never the server.
+CLIENT_SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".mjs", ".json", ".css", ".html")
+
+
+def newest_client_source_mtime() -> float:
+    """Most recent mtime across everything the client bundle is built from."""
+    newest = 0.0
+    for root in CLIENT_SOURCE_ROOTS:
+        for dirpath, dirnames, filenames in os.walk(os.path.join(REPO_ROOT, root)):
+            dirnames[:] = [d for d in dirnames if d not in ("node_modules", "dist", "test")]
+            for name in filenames:
+                if not name.endswith(CLIENT_SOURCE_SUFFIXES):
+                    continue
+                try:
+                    newest = max(newest, os.stat(os.path.join(dirpath, name)).st_mtime)
+                except OSError:
+                    continue  # vanished mid-walk; the next launch will see it
+    for rel in CLIENT_SOURCE_FILES:
+        try:
+            newest = max(newest, os.stat(os.path.join(REPO_ROOT, rel)).st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def static_client_is_stale() -> bool:
+    """True when client/dist is older than something it was built from.
+
+    THE BUG THIS EXISTS TO KILL. This used to be `if os.path.isfile(index)`,
+    i.e. "a build exists" was taken to mean "the build is current". It does not:
+    nothing here ever rebuilds, so a dist built days ago is served forever, with
+    no warning and no visible difference from a fresh one. The symptom is that
+    your changes - and everyone else's - are simply ABSENT from the page, which
+    reads as "the server is loading an old snapshot" rather than as a build
+    problem. Reported exactly that way, 2026-08-22.
+
+    An mtime comparison, not a content hash: it is one stat per source file
+    against one stat on the build, it costs milliseconds, and being WRONG in
+    the conservative direction (rebuilding when nothing meaningful changed)
+    costs a few seconds while being wrong the other way costs an afternoon of
+    debugging a UI that is not the one on disk.
+    """
+    try:
+        built = os.stat(CLIENT_INDEX).st_mtime
+    except OSError:
+        return True  # no build at all
+    return newest_client_source_mtime() > built
+
 
 def prepare_static_client() -> bool:
-    if os.path.isfile(CLIENT_INDEX):
+    if os.path.isfile(CLIENT_INDEX) and not static_client_is_stale():
         return True
-    print("[run_server] building client (dist missing)...")
+    reason = "dist missing" if not os.path.isfile(CLIENT_INDEX) else "sources are newer than dist"
+    print(f"[run_server] building client ({reason})...")
     result = subprocess.call(["pnpm", "build"], cwd=CLIENT_DIR)
     if result != 0:
         print("[run_server] client build failed - fix the build or set "
@@ -143,6 +232,60 @@ def watch_snapshot() -> dict:
     return seen
 
 
+def describe_worlds(worlds_dir):
+    """Every world on disk, as (name, size, points, is_active) - newest first.
+
+    READ-ONLY AND DEFENSIVE, because this runs before the server does and must
+    never be the reason a launch fails. Each file is opened through a
+    `mode=ro` URI so this cannot create, migrate or lock anything, and any file
+    that will not open is reported as unreadable rather than skipped: a world
+    you can see and cannot open is a bug report, while one that quietly
+    vanished from the list looks exactly like a world that was deleted.
+
+    Returns (worlds, active_id). `worlds` is empty when the folder does not
+    exist yet - a first run, which the banner states rather than treating as a
+    fault.
+    """
+    if not os.path.isdir(worlds_dir):
+        return [], None
+
+    active = None
+    try:
+        with open(os.path.join(worlds_dir, ".active"), encoding="utf-8") as handle:
+            active = handle.read().strip() or None
+    except OSError:
+        pass  # no pointer yet, or unreadable: the server says so at boot
+
+    worlds = []
+    for entry in sorted(os.listdir(worlds_dir)):
+        if not entry.endswith(".db") or entry.startswith("."):
+            continue
+        world_id = entry[: -len(".db")]
+        path = os.path.join(worlds_dir, entry)
+        try:
+            uri = "file:" + pathname2url(path) + "?mode=ro"
+            with contextlib.closing(sqlite3.connect(uri, uri=True)) as db:
+                row = db.execute(
+                    "SELECT world_name, world_size FROM snapshots ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                points = db.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+                newest = db.execute("SELECT MAX(created_at) FROM snapshots").fetchone()[0]
+            name = (row[0] if row and row[0] else world_id)
+            worlds.append({
+                "id": world_id, "name": name, "size": row[1] if row else 0,
+                "points": points, "newest": newest or 0,
+                "active": world_id == active, "problem": None,
+            })
+        except Exception as error:  # noqa: BLE001 - see the doc comment
+            worlds.append({
+                "id": world_id, "name": world_id, "size": 0, "points": 0,
+                "newest": 0, "active": world_id == active, "problem": str(error),
+            })
+
+    worlds.sort(key=lambda world: world["newest"], reverse=True)
+    return worlds, active
+
+
 def spawn_server(env) -> subprocess.Popen:
     """Start the game server in its own session, so it can be killed as a group."""
     return subprocess.Popen(["pnpm", "start"], cwd=SERVER_DIR, env=env,
@@ -162,17 +305,87 @@ def main(watch: bool) -> int:
             # setdefault: an override exported in the shell beats CONFIG.
             env.setdefault(name, str(value))
 
+    # POINT THE DEV CLIENT AT THE PORT THIS LAUNCH IS ACTUALLY USING.
+    #
+    # The client only derives the server's port from the page it was served
+    # from in a BUILT bundle. Under `vite dev` the page is on 5173-ish and the
+    # server is not, so client/src/config.ts falls back to the compiled-in
+    # DEFAULT_SERVER_PORT (2567) - which is right only while PORT is 2567.
+    # Launch with PORT=2570 and the dev client cheerfully dials 2567: if
+    # nothing is there it sits on "offline" forever, and if something IS there
+    # (another checkout, another branch) it connects to the WRONG SERVER and
+    # nothing says so. Observed 2026-08-22.
+    #
+    # VITE_SERVER_URL is the documented override, so this sets it from the same
+    # PORT the server is being handed. setdefault, so an explicit
+    # VITE_SERVER_URL in the shell still wins - the Docker Compose path relies
+    # on that.
+    env.setdefault("VITE_SERVER_URL", f"ws://localhost:{env.get('PORT', 2567)}")
+
+    # IN DEV MODE, DO NOT LET THE GAME SERVER SERVE client/dist.
+    #
+    # The server serves a built client on its own port when client/dist exists
+    # (issue #20), and NOTHING in dev mode ever rebuilds it. So a stack started
+    # this way offers two clients: Vite on 5173, always current, and a frozen
+    # bundle on <PORT> that is as old as whenever somebody last ran
+    # `pnpm --dir client build`. Worse, the server's own boot line says
+    # "play at http://localhost:<PORT>" - pointing at the stale one. Open that
+    # URL and you are looking at a build from hours or days ago, with no
+    # indication anything is wrong: your changes are simply absent, and so is
+    # everybody else's. Reported 2026-08-22 as "it is loading an old snapshot".
+    #
+    # Pointing CLIENT_DIST_PATH at a path that does not exist makes the server
+    # say "no built client to serve - browse the Vite dev server instead",
+    # which is the truth in dev mode. client/dist is left alone on disk; it is
+    # simply not served, so there is exactly ONE client URL and it is the live
+    # one.
+    if CLIENT_MODE == "dev":
+        env["CLIENT_DIST_PATH"] = os.path.join(SERVER_DIR, "no-dist-in-dev-mode")
+        if os.path.exists(CLIENT_INDEX):
+            print("[run_server] note     : client/dist exists but is NOT being served "
+                  "(dev mode serves live sources; that build may be stale)")
+
     # Boot details up front (owner request 2026-08-19): one block naming every
     # port and URL this launch uses, before the two processes start talking.
     resolved = {name: env.get(name, "(server default)") for name in CONFIG}
     port = resolved["PORT"]
     print("[run_server] -- boot details ------------------------------")
-    print(f"[run_server] world    : {resolved['WORLD_SIZE']}^2 x difficulty {resolved['WORLD_DIFFICULTY']}"
+    print(f"[run_server] new worlds: {resolved['WORLD_SIZE']}^2 x difficulty {resolved['WORLD_DIFFICULTY']}"
           f" | tick {resolved['TICK_HZ']}Hz | snapshot {resolved['SNAPSHOT_INTERVAL_S']}s")
-    print(f"[run_server] database : {resolved['DB_PATH']} (relative to server/)")
+    worlds_dir = os.path.join(SERVER_DIR, resolved["WORLDS_DIR"])
+    print(f"[run_server] worlds   : {resolved['WORLDS_DIR']} (relative to server/)")
+
+    # WHAT IS ACTUALLY ABOUT TO LOAD. The point of this block is that a launch
+    # answers "which world am I in" without opening the game - and, since a
+    # server now holds several, "what else is here" without opening the panel.
+    worlds, active = describe_worlds(worlds_dir)
+    if not worlds:
+        print("[run_server]            (no worlds yet - the server will create one)")
+    else:
+        for world in worlds:
+            mark = "->" if world["active"] else "  "
+            if world["problem"]:
+                print(f"[run_server]          {mark} {world['name']}  UNREADABLE: {world['problem']}")
+            else:
+                print(f"[run_server]          {mark} {world['name']} "
+                      f"({world['size']}^2, {world['points']} restore points)")
+        if active is None:
+            print("[run_server]            no active world recorded - the server will pick the newest")
+        elif not any(world["active"] for world in worlds):
+            # Stated loudly: the server refuses to invent a replacement, so
+            # this is the difference between "it loaded something else" and
+            # "it loaded nothing at all".
+            print(f"[run_server]            WARNING: .active names '{active}', which is not here."
+                  " No world will load; pick one in the Worlds panel.")
+        print("[run_server]            switch worlds in-game (Worlds panel), not here")
     print(f"[run_server] server   : ws://localhost:{port} (game protocol endpoint)")
     if CLIENT_MODE == "dev":
-        print("[run_server] client   : http://localhost:5173  <- PLAY HERE (Vite dev)")
+        # NOT a hardcoded 5173: Vite takes the next free port when 5173 is
+        # busy (another checkout, another worktree) and says so in its own
+        # startup line. Claiming a number here that Vite then ignores sends
+        # you to somebody else's client, so the URL is quoted from Vite.
+        print("[run_server] client   : Vite prints its URL below "
+              "(5173 unless that port is taken)  <- PLAY THERE")
     elif CLIENT_MODE == "static":
         print(f"[run_server] client   : http://localhost:{port}  <- PLAY HERE (served by the game server)")
     else:
@@ -181,6 +394,42 @@ def main(watch: bool) -> int:
     # flush: when stdout is a pipe (nohup, a wrapper script) python
     # block-buffers and the details would otherwise sit invisible until exit.
     print("[run_server] ---------------------------------------------", flush=True)
+
+    # MAKE A SIGNALLED DEATH UNWIND, so the `finally` below actually runs.
+    #
+    # The cleanup at the end of this function is the thing that stops orphans
+    # holding ports, and it is a `finally` - which Python runs for a clean
+    # return, an exception, and Ctrl-C (KeyboardInterrupt is an exception), but
+    # NOT for SIGTERM. The default SIGTERM disposition kills the interpreter
+    # outright, no unwinding, so `kill <this pid>` left the game server and
+    # Vite running and holding their ports. The next launch then died with
+    # EADDRINUSE, or - worse - came up on a shifted port beside the corpse of
+    # the last one. Observed 2026-08-22, twice in a row.
+    #
+    # Raising SystemExit from the handler turns the signal into an ordinary
+    # unwind, so one code path cleans up after every way this script can end.
+    # SIGHUP gets the same treatment: closing the terminal is not a reason to
+    # leave a server running.
+    def _exit_on_signal(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    for _signal_name in ("SIGTERM", "SIGHUP"):
+        _signal = getattr(signal_module, _signal_name, None)
+        if _signal is None:
+            continue  # SIGHUP does not exist on Windows
+        # RESPECT AN INHERITED "IGNORE". `nohup` runs its child with SIGHUP set
+        # to SIG_IGN, and that is the entire point of nohup: the stack survives
+        # the terminal that started it. Installing a handler unconditionally
+        # overrides that, so `nohup python3 run_server.py &` shut the whole
+        # stack down the moment its shell exited - which this script did to
+        # itself on 2026-08-22, one commit after the SIGTERM fix above.
+        #
+        # Checking the current disposition keeps both properties: a signal the
+        # launcher told us to ignore stays ignored, and every other signal
+        # unwinds through the cleanup.
+        if signal_module.getsignal(_signal) is signal_module.SIG_IGN:
+            continue
+        signal_module.signal(_signal, _exit_on_signal)
 
     children = []  # (name, Popen) - every child gets its own process group
 
@@ -202,7 +451,7 @@ def main(watch: bool) -> int:
                                     start_new_session=True)
             children.append(vite)
             print("[run_server] client dev server starting - "
-                  "play at http://localhost:5173 once Vite is ready")
+                  "open the Local: URL Vite prints below")
         server = spawn_server(env)
         children.append(server)
         if not watch:
@@ -244,10 +493,15 @@ def main(watch: bool) -> int:
     except FileNotFoundError:
         print("pnpm not found on PATH - install pnpm (or run: corepack enable)", file=sys.stderr)
         return 1
+    except SystemExit:
+        # SIGTERM/SIGHUP, via the handler installed above. Not an error, and
+        # the finally below still runs - which is the whole point of raising.
+        return 0
     finally:
-        # Whatever ends this script (Ctrl-C, crash, clean exit) also ends every
-        # child it started - never leave an orphan holding a port. SIGINT for
-        # the server so its clean-shutdown snapshot path runs; SIGTERM for vite.
+        # Whatever ends this script (Ctrl-C, SIGTERM, SIGHUP, crash, clean
+        # exit) also ends every child it started - never leave an orphan
+        # holding a port. SIGINT for the server so its clean-shutdown snapshot
+        # path runs; the same for vite, which exits on it just as readily.
         for proc in reversed(children):
             reap(proc, signal_module.SIGINT)
 

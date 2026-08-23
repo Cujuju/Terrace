@@ -41,6 +41,11 @@ import type {
   SculptDeniedMessage,
   SculptIntent,
   TerrainDiffMessage,
+  WorldAdminRequestMessage,
+  WorldAdminResultMessage,
+  WorldListMessage,
+  WorldSwitchNoticeMessage,
+  WorldUnloadedMessage,
 } from '@terrace/shared';
 import { ROOM_NAME, SERVER_URL } from '../config.ts';
 import { getOrCreatePlayerToken } from '../state/playerToken.ts';
@@ -55,6 +60,10 @@ import {
   MSG_SCULPT_DENIED,
   MSG_SNAPSHOT,
   MSG_TERRAIN_DIFF,
+  MSG_WORLD_ADMIN_RESULT,
+  MSG_WORLD_LISTING,
+  MSG_WORLD_SWITCH_NOTICE,
+  MSG_WORLD_UNLOADED,
 } from './messageNames.ts';
 
 /**
@@ -110,10 +119,32 @@ export interface OperatorSink {
   onRollbackResult(msg: RollbackResultMessage): void;
 }
 
+/**
+ * Where world-management answers go (multi-world, 2026-08-22).
+ *
+ * SEPARATE FROM OperatorSink even though both are operator traffic, because
+ * they are gated by DIFFERENT KEYS and a client may legitimately have one and
+ * not the other. Keeping them apart means the world panel cannot accidentally
+ * be wired to a rollback key, or vice versa.
+ *
+ * `onWorldSwitchNotice` and `onWorldUnloaded` are the two that arrive
+ * UNSOLICITED, at every client rather than just the operator: a switch
+ * countdown and "there is no world" are things a player has to be told even
+ * though they never asked for anything.
+ */
+export interface WorldAdminSink {
+  onWorldListing(msg: WorldListMessage): void;
+  onWorldAdminResult(msg: WorldAdminResultMessage): void;
+  onWorldSwitchNotice(msg: WorldSwitchNoticeMessage): void;
+  onWorldUnloaded(msg: WorldUnloadedMessage): void;
+}
+
 export interface ConnectionOptions {
   sink: TerrainSink;
   /** Optional: a client with no rollback panel needs no operator routing. */
   operator?: OperatorSink;
+  /** Optional: a client with no world panel needs no world-admin routing. */
+  worldAdmin?: WorldAdminSink;
   onStatus: (status: ConnectionStatus) => void;
   /**
    * Receives every namespaced plugin message (`<plugin>:<type>`, identified
@@ -158,6 +189,16 @@ export interface Connection {
   requestRestorePoints(key: string): void;
   /** Asks the server to roll the world back to `toId`. No-op while offline. */
   requestRollback(key: string, toId: number): void;
+  /**
+   * Sends any world-management request. No-op while offline.
+   *
+   * ONE METHOD FOR ELEVEN MESSAGES, not eleven wrappers: every one of them is
+   * "send this object under its own `type`", so a wrapper per action would be
+   * eleven copies of one line — and eleven chances for one of them to send the
+   * wrong name. The message is already a validated protocol object built by
+   * the panel, and its `type` IS the wire name (see messageNames.ts).
+   */
+  sendWorldAdmin(message: WorldAdminRequestMessage): void;
   /** Leaves the room and stops retrying. */
   dispose(): void;
 }
@@ -225,6 +266,22 @@ export function connect(options: ConnectionOptions): Connection {
     });
     joined.onMessage<RollbackResultMessage>(MSG_ROLLBACK_RESULT, (msg) => {
       options.operator?.onRollbackResult(msg);
+    });
+
+    // World-management routing. Registered unconditionally, like the rollback
+    // answers above, so the handler set never depends on which options were
+    // passed; with no world-admin sink the answers are dropped.
+    joined.onMessage<WorldListMessage>(MSG_WORLD_LISTING, (msg) => {
+      options.worldAdmin?.onWorldListing(msg);
+    });
+    joined.onMessage<WorldAdminResultMessage>(MSG_WORLD_ADMIN_RESULT, (msg) => {
+      options.worldAdmin?.onWorldAdminResult(msg);
+    });
+    joined.onMessage<WorldSwitchNoticeMessage>(MSG_WORLD_SWITCH_NOTICE, (msg) => {
+      options.worldAdmin?.onWorldSwitchNotice(msg);
+    });
+    joined.onMessage<WorldUnloadedMessage>(MSG_WORLD_UNLOADED, (msg) => {
+      options.worldAdmin?.onWorldUnloaded(msg);
     });
 
     // Plugin routing. Plugin messages are namespaced `<plugin>:<type>` by the
@@ -310,6 +367,9 @@ export function connect(options: ConnectionOptions): Connection {
     },
     requestRollback(key: string, toId: number): void {
       room?.send(MSG_ROLLBACK, { type: MSG_ROLLBACK, key, toId });
+    },
+    sendWorldAdmin(message: WorldAdminRequestMessage): void {
+      room?.send(message.type, message);
     },
     sendPlugin(type: string, payload: unknown): void {
       // Dropping while offline mirrors sendSculpt: plugin messages are

@@ -109,8 +109,8 @@ export const GRAZER_MAX_GRADIENT_PER_CELL = LAND_WALKER_MAX_GRADIENT_PER_CELL;
  * against their own sum, so they are ratios and nothing needs to add up to 1.
  *
  * A species whose only non-zero weight is DEFAULT_SIZE_CLASS has exactly one
- * size — which is every species but fish today, and is why nothing else in this
- * plugin needs a "does this species vary in size" flag.
+ * size — which is every species but fish and whales today, and is why nothing
+ * else in this plugin needs a "does this species vary in size" flag.
  */
 export type SizeWeights = Readonly<Record<WildlifeSizeClass, number>>;
 
@@ -136,6 +136,36 @@ const SINGLE_SIZE_WEIGHTS: SizeWeights = Object.fromEntries(
 export const FISH_SIZE_WEIGHTS: SizeWeights = { small: 6, medium: 3, large: 1 };
 
 /**
+ * Whale size mix: 3 : 5 : 2 calf : adult : bull.
+ *
+ * Owner, 2026-08-21: "add the ability to spawn different size whales and allow
+ * them to school like whales in real life with different sizes". A pod is a
+ * family, so adults are the plurality, calves are common and a full-grown bull
+ * is the occasional one — the opposite shape to a fish shoal, where the many are
+ * the small. Combined with WHALE_SIZE_DRAW ('per-member', see SpeciesProfile),
+ * this is what puts a calf alongside its mother instead of grading the whole pod
+ * to one size.
+ *
+ * At WILDLIFE_SIZE_MODEL_SCALE (0.6 / 1 / 1.4) a whale is 3, 5 or 7 world units
+ * nose to tail. The 7-unit bull is the largest body this game draws, and it is
+ * the reason swimmerWorldY had to start scaling its clearances by size class
+ * (client/placement.ts): at 1.4x, a whale's own half-height exceeds the
+ * fixed 0.7 the whale swim profile was written for, so the unscaled version put
+ * its belly in the seabed and its dorsal through the surface.
+ */
+export const WHALE_SIZE_WEIGHTS: SizeWeights = { small: 3, medium: 5, large: 2 };
+
+/**
+ * How many whales spawn together, and therefore how big a pod is.
+ *
+ * Three is the smallest group that reads as a family rather than as a pair that
+ * happened to meet: two whales side by side are ambiguous, three with a calf
+ * among them are not. It is also what the day-one density below is sized
+ * against — see the habitatCellsPerIndividual note.
+ */
+export const WHALE_POD_SIZE = 3;
+
+/**
  * Chance that a spawn group of a group-spawning species forms a SCHOOL — one
  * cohesive body that steers together (movement.ts) and departs together
  * (population.ts) — rather than that many independent individuals that merely
@@ -152,13 +182,50 @@ export const FISH_SIZE_WEIGHTS: SizeWeights = { small: 6, medium: 3, large: 1 };
  *                disperse immediately, which is exactly the pre-schooling
  *                behaviour, so a big fish reads as a big fish alone.
  *
+ * PER SPECIES, not global (2026-08-21). These three numbers are a statement
+ * about FISH — "the small ones shoal, the big ones don't" is fish ecology — and
+ * a whale pod obeys the opposite rule: it holds together whatever sizes are in
+ * it. Keying the table by size alone would have handed whales the solitary
+ * large-fish probability and quietly undone the pod.
+ *
  * Irrelevant for a species whose groupSize is 1: a group of one is its own
  * school under either branch, so the roll cannot change anything.
  */
-export const SCHOOLING_PROBABILITY_BY_SIZE: Readonly<Record<WildlifeSizeClass, number>> = {
+export type SchoolingProbabilities = Readonly<Record<WildlifeSizeClass, number>>;
+
+export const FISH_SCHOOLING_PROBABILITY_BY_SIZE: SchoolingProbabilities = {
   small: 0.9,
   medium: 0.5,
   large: 0.1,
+};
+
+/**
+ * A pod holds together. Whales are social by default at every size, so the small
+ * and adult entries are certainty rather than a coin flip.
+ *
+ * The bull is the one exception, and it is a real one: a full-grown male is the
+ * whale most likely to be travelling alone. Three pods in four containing one
+ * still form up (the group's character is set by its LARGEST member — see
+ * spawnGroup), and the fourth disperses into singles, which is how a lone whale
+ * still occurs without being the normal sight.
+ */
+export const WHALE_SCHOOLING_PROBABILITY_BY_SIZE: SchoolingProbabilities = {
+  small: 1,
+  medium: 1,
+  large: 0.75,
+};
+
+/**
+ * The table for a species that spawns one at a time. Certainty at every size,
+ * because a group of one IS a school: the cohesive branch gives that single
+ * creature the group's school id and the non-cohesive branch gives it its own,
+ * and the two are indistinguishable. Stated as a value rather than left to a
+ * "does this species school" branch downstream.
+ */
+export const SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE: SchoolingProbabilities = {
+  small: 1,
+  medium: 1,
+  large: 1,
 };
 
 /**
@@ -219,17 +286,30 @@ export interface SpeciesProfile {
    *     and slope ring at the centre, open sea beyond (server/src/world/
    *     world.ts). The census only counts UNLOCKED cells, so day one is bounded
    *     by the starter square — INITIAL_UNLOCK_CHUNK_SPAN² chunks, shrunk
-   *     2026-08-19 by owner decision to 80×80 = 6 400 cells, the same on every
-   *     world size — split by that genesis profile into 2 304 shallow and
-   *     4 096 deep:
+   *     2026-08-19 by owner decision to 80×80 = 6 400 SQUARE WORLD UNITS, the
+   *     same on every world size — split by that genesis profile into 2 304
+   *     shallow and 4 096 deep.
+   *
+   *     UNITS, stated once and relied on for the rest of this comment: every
+   *     figure here is a SQUARE WORLD UNIT, because that is what the densities
+   *     below are (each is wrapped in cellsOverArea). The census itself counts
+   *     CELLS, and one square world unit is WORLD_UNIT_CELLS² = 16 of them, so
+   *     the same starter square is 102 400 cells split 36 864 shallow / 65 536
+   *     deep — which is what test/wildlife.test.ts asserts against a real
+   *     World.createFresh. Both sides of every division below are scaled by the
+   *     same 16, so the quotients are the same either way; only mixing the two
+   *     units in one division would be wrong.
    *
    *       fish     2 304 /   400 = 5       deepsea   4 096 / 1 500 = 2
-   *       whale    4 096 / 5 000 = 0       grazer            — = 0
+   *       whale    4 096 / 2 000 = 2       grazer            — = 0
    *
-   *     Whales no longer fit on day one (4 096 < their 5 000-cell need) — they
-   *     arrive once players creep territory outward and the census grows. An
-   *     accepted consequence of the smaller starter square, superseding the
-   *     2026-08-14 "2–3 whales immediately" tuning goal.
+   *     Whales fit on day one again as of 2026-08-21 (5 000 → 2 000, owner:
+   *     "drop the number of unlocked cells required"). Two of them: an adult and
+   *     a calf out of a WHALE_POD_SIZE of three, the third arriving with the
+   *     first territory creep. This restores the 2026-08-14 "2–3 whales
+   *     immediately" goal that the 2026-08-19 starter-square shrink had
+   *     superseded — by moving the density, which is the dial that should have
+   *     moved then, rather than by growing the square back.
    *
    *     Grazers alone have nothing on day one: there is no land until a player
    *     raises an island, and that is the intended shape of a world that starts
@@ -238,32 +318,46 @@ export interface SpeciesProfile {
    *     This is the case the owner's report was about, and it is why the two
    *     DEEP densities move much further than the other two: they were sized
    *     when deep water was a rare, remote habitat, and it is now three
-   *     quarters of the ground a brand-new server opens on. It also makes the
+   *     quarters of the ground a brand-new server opens on. That once made the
    *     deep densities the binding constraint on the shelf's size — see
-   *     FRESH_SHELF_SPAN_DIVISOR, which is chosen against the whale figure here.
+   *     FRESH_SHELF_SPAN_DIVISOR, chosen against the whale figure here. The
+   *     2026-08-21 drop to 2 000 halves how much open sea a fresh world must
+   *     keep for whales to appear at all, so the shelf now has room it did not
+   *     have; the divisor is left where it is because nothing has asked for a
+   *     bigger shelf, not because it is still pinned.
    *
    * (b) A nominal half-land / half-water 512² world at full reveal (262 144
-   *     cells; ~131 000 land, of the water roughly 40% shallow / 60% open sea):
+   *     SQUARE WORLD UNITS — the world's area, not its cell count;
+   *     ~131 000 land, of the water roughly 40% shallow / 60% open sea):
    *
    *       fish     52 429 /   400 = 131     grazer   131 072 / 2 700 = 48
-   *       deepsea  78 643 / 1 500 =  52     whale     78 643 / 5 000 = 15
+   *       deepsea  78 643 / 1 500 =  52     whale     78 643 / 2 000 = 39
    *
-   *     246 asked for. WILDLIFE_POPULATION_CAP (150) scales every species down
-   *     by 150/246 = 0.6098 and floors, giving 148 (79 fish / 31 deepsea /
-   *     29 grazer / 9 whale).
+   *     270 asked for. WILDLIFE_POPULATION_CAP (150) scales every species down
+   *     by 150/270 = 0.5556 and floors, giving 147 (72 fish / 28 deepsea /
+   *     26 grazer / 21 whale).
+   *
+   *     WHALES REMAIN THE RAREST SPECIES ASKED FOR (39 against deepsea's 52),
+   *     which is the constraint that set 2 000 rather than a rounder, lower
+   *     number — see the note on the whale entry itself.
    *
    * HONEST NOTE ON THE CAP, RECOMPUTED FOR THE FISH RETUNE. The cap was once a
    * safety rail nothing rode; after the first retune a fully revealed 512² world
    * rode it and lost ~10%; after this one it loses 40% (148 of 246). The shape
    * survives — the scaling is proportional, so a capped world is a smaller
-   * ecosystem, not a distorted one — but two things are now true and are worth
-   * saying rather than discovering later:
+   * ecosystem, not a distorted one — but three things are now true and are worth
+   * saying rather than discovering later (recomputed for the 2026-08-21 whale
+   * drop, which took the asked-for total from 246 to 270 and the loss to 45%):
    *
-   *   * FISH ARE THE MAJORITY SPECIES at full reveal (79 of 148, 53%). That is
-   *     the deliberate cost of the school retune: schools are five fish each, so
-   *     "enough fish to see schools" is arithmetically "a lot of fish". At 79
-   *     that is ~16 schools spread over a whole revealed world.
-   *   * The cap now BINDS at roughly 60% of a fully revealed 512² world's
+   *   * FISH ARE STILL THE LARGEST SPECIES at full reveal (72 of 147, 49%). That
+   *     is the deliberate cost of the school retune: schools are five fish each,
+   *     so "enough fish to see schools" is arithmetically "a lot of fish". At 72
+   *     that is ~14 schools spread over a whole revealed world.
+   *   * WHALES COST MORE OF THE CAP THAN THEY DID: 21 of 147 rather than 9 of
+   *     148, and every other species is ~9% smaller for it. Accepted — a pod is
+   *     three whales by definition, so a world with room for only nine could
+   *     hold three pods in total and would read as a world of lone whales.
+   *   * The cap now BINDS at roughly 56% of a fully revealed 512² world's
    *     unlocked area, so it is the population dial for large late-game worlds
    *     while the densities here are the dial for everything before that.
    *
@@ -284,15 +378,47 @@ export interface SpeciesProfile {
    *
    * A group spawns as a jittered cluster sharing one heading AND one school id
    * (population.ts), and — when the schooling roll fires — holds together from
-   * then on under the cohesion steering in movement.ts. Fish shoal; everything
-   * else is solitary, and a solitary species' group of one is its own school,
-   * which makes every school rule in this plugin degenerate correctly rather
-   * than needing a "does this species school" branch.
+   * then on under the cohesion steering in movement.ts. Fish shoal and whales
+   * pod (2026-08-21); the deep-sea creature and the grazer are solitary, and a
+   * solitary species' group of one is its own school, which makes every school
+   * rule in this plugin degenerate correctly rather than needing a "does this
+   * species school" branch.
+   *
+   * The two group-spawning species differ in what a group MEANS — see sizeDraw:
+   * a shoal is graded to one size, a pod is a mixed family.
    */
   readonly groupSize: number;
 
-  /** Size-class mix at spawn. See FISH_SIZE_WEIGHTS / SINGLE_SIZE_WEIGHTS. */
+  /**
+   * Size-class mix at spawn. See FISH_SIZE_WEIGHTS / WHALE_SIZE_WEIGHTS /
+   * SINGLE_SIZE_WEIGHTS.
+   */
   readonly sizeWeights: SizeWeights;
+
+  /**
+   * Whether `sizeWeights` is drawn ONCE FOR THE GROUP or once per member.
+   *
+   * The two values are two different animals, not a tuning preference:
+   *
+   *   'per-group'  a size-GRADED group — every member the same class. A real
+   *                shoal sorts itself by size, and this is what shipped for fish
+   *                from the start (2026-08-14).
+   *   'per-member' a MIXED group — a family. A whale pod is adults with a calf
+   *                or two among them, and drawing one class for the whole pod
+   *                would make every pod uniform, which is the one thing a pod
+   *                never is (owner, 2026-08-21).
+   *
+   * The group still has ONE size class for the purposes of its school character
+   * (the cohesion roll and, per member, its spacing) — for a mixed group that is
+   * its largest member. See spawnGroup.
+   */
+  readonly sizeDraw: 'per-group' | 'per-member';
+
+  /**
+   * Chance this species' spawn group forms a cohesive school, by the group's
+   * size class. See SchoolingProbabilities and the three tables above.
+   */
+  readonly schoolingProbabilityBySize: SchoolingProbabilities;
 
   /**
    * Maximum |height difference| this species will cross in ONE CELL of
@@ -316,8 +442,10 @@ export interface SpeciesProfile {
  * complete school at all.
  *
  * The arithmetic, against the genesis geometry (server/src/world/world.ts): the
- * starter square (shrunk 2026-08-19) is 80×80 = 6 400 cells of which 2 304 are
- * shallow, so the 400 density gives floor(2 304 / 400) = 5 fish — exactly ONE
+ * starter square (shrunk 2026-08-19) is 80×80 = 6 400 square world units of
+ * which 2 304 are shallow (36 864 cells — see the units note on
+ * habitatCellsPerIndividual), so the 400 density gives floor(2 304 / 400) = 5
+ * fish — exactly ONE
  * complete school of `groupSize` (5). One, down from two on the old 128×128
  * square: the density (a world-wide tuning) stayed at 400, and a single whole
  * school still reads as a school; the second returns as soon as territory
@@ -351,6 +479,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: cellsOverArea(400),
     groupSize: 5,
     sizeWeights: FISH_SIZE_WEIGHTS,
+    sizeDraw: 'per-group',
+    schoolingProbabilityBySize: FISH_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
   },
   whale: {
@@ -359,14 +489,26 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     cruiseSpeedCellsPerSecond: cellsAcross(0.8),
     turnNoiseRadiansPerSecond: 0.25,
     bodyLengthCells: cellsAcross(5),
-    // 20 000 → 5 000. The binding requirement: a fresh world's 12 288 cells of
-    // open sea inside the starter square must hold whales on day one, and
-    // 12 288/5 000 = 2 does. The old figure asked for 0 there — the owner's "I
-    // don't see any deep sea creatures" was, for whales, arithmetically
-    // guaranteed.
-    habitatCellsPerIndividual: cellsOverArea(5000),
-    groupSize: 1,
-    sizeWeights: SINGLE_SIZE_WEIGHTS,
+    // 5 000 → 2 000 (owner, 2026-08-21: "drop the number of unlocked cells
+    // required"). The 5 000 figure was chosen against a 128-chunk starter square
+    // and outlived it: the square shrank on 2026-08-19 to 4 096 square world
+    // units of open sea, so 4 096/5 000 = 0 and a fresh world had no whales at
+    // all. At 2 000 a fresh world opens with a PAIR — an adult and a calf, the
+    // pod that fits — and the third member joins as soon as territory creep adds
+    // 2 000 more units of open sea.
+    //
+    // 2 000 rather than the 1 365 that would fit a whole WHALE_POD_SIZE pod on
+    // day one, because the same density also decides how many whales a fully
+    // revealed world holds, and whales must stay the RAREST species there: at
+    // 2 000 a nominal 512² asks for 39 against deepsea's 52, and at 1 365 it
+    // would ask for 57 and make the largest animal in the game the second most
+    // common one. Day-one completeness lost to late-game shape, deliberately —
+    // and it costs one small territory expansion, not a redesign.
+    habitatCellsPerIndividual: cellsOverArea(2000),
+    groupSize: WHALE_POD_SIZE,
+    sizeWeights: WHALE_SIZE_WEIGHTS,
+    sizeDraw: 'per-member',
+    schoolingProbabilityBySize: WHALE_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
   },
   deepsea: {
@@ -381,6 +523,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: cellsOverArea(1500),
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
+    sizeDraw: 'per-group',
+    schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
   },
   grazer: {
@@ -393,6 +537,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     habitatCellsPerIndividual: cellsOverArea(2700),
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
+    sizeDraw: 'per-group',
+    schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: GRAZER_MAX_GRADIENT_PER_CELL,
   },
 };
@@ -401,3 +547,22 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
 export function profileOf(species: WildlifeHabitatSpecies): SpeciesProfile {
   return SPECIES_PROFILES[species];
 }
+
+/**
+ * The body length the school-spacing radii in movement.ts were written against.
+ *
+ * SCHOOL_COMFORT_RADIUS_CELLS and SCHOOL_FULL_PULL_RADIUS_CELLS are absolute
+ * distances, and they were calibrated when the only schooling species was the
+ * fish: 2.5 cells is "a few fish lengths", which is a sensible distance to start
+ * pulling a shoal together and a nonsense one for an animal seven times longer.
+ * Whales schooling (2026-08-21) made that latent: a pod would have been held at
+ * fish spacing, which for a five-unit body is closer than its own separation
+ * floor lets it get — cohesion pulling in and separation pushing out, for the
+ * first time in this plugin's life.
+ *
+ * Taken FROM the fish profile rather than restated as 0.7, so this is by
+ * construction the length those constants were tuned for, and the fish's own
+ * spacing multiplier is exactly 1 — the retune cannot move the species it was
+ * calibrated against. See schoolLoosenessOf in movement.ts.
+ */
+export const SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS = SPECIES_PROFILES.fish.bodyLengthCells;

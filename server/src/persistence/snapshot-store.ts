@@ -68,6 +68,13 @@ export interface SnapshotInput {
    * otherwise need fixing for.
    */
   readonly tokenMasks?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * A top-down picture of this world for the worlds panel — see
+   * persistence/thumbnail.ts. OPTIONAL and additive, following tokenMasks:
+   * a caller that does not produce one (every existing test) simply omits it,
+   * and the column stays null.
+   */
+  readonly thumbnail?: Uint8Array;
 }
 
 export interface WorldSnapshot extends Omit<SnapshotInput, 'name' | 'tokenMasks'> {
@@ -95,6 +102,8 @@ interface SnapshotRow {
   created_at: number;
   world_size: number;
   world_name: string | null;
+  /** SQLite has no boolean: 0 or 1. See PINNED_COLUMN. */
+  pinned: number;
   heightmap: Uint8Array;
   mask: Uint8Array;
 }
@@ -110,6 +119,7 @@ interface HistoryRow {
   id: number;
   created_at: number;
   world_size: number;
+  pinned: number;
   heightmap: Uint8Array;
 }
 
@@ -125,6 +135,36 @@ interface TokenMaskRow {
  * "what was this world called" — null means "nobody has named it yet".
  */
 const WORLD_NAME_COLUMN = 'world_name';
+
+/**
+ * Name of the additive column introduced with PINNED RESTORE POINTS
+ * (2026-08-22). 0 = ordinary, prunable; 1 = pinned, and therefore exempt from
+ * retention forever.
+ *
+ * WHY PINNING EXISTS. Retention is a rolling window, which means every restore
+ * point is on its way to being deleted — the newest ten are simply the ones
+ * that have not got there yet. That is right for an undo buffer and wrong for
+ * a moment you want to keep, so a pinned point is removed from the window
+ * entirely: it survives however much play happens after it, until a human
+ * unpins it. Retention then counts only UNPINNED rows, so pinning something
+ * never costs you undo depth (see the pruneOld statement).
+ *
+ * NOT NULL DEFAULT 0 is safe on an ALTER for an existing table — unlike
+ * world_name, a boolean HAS an honest default: a restore point written before
+ * pinning existed was, in fact, not pinned.
+ */
+const PINNED_COLUMN = 'pinned';
+
+/**
+ * Name of the additive column holding the world's THUMBNAIL (2026-08-22): a
+ * 64² grid of band bytes, ~4 KB, so the worlds panel can show what each world
+ * looks like without decoding a megabyte of heightmap per row.
+ *
+ * NULLABLE, like world_name and unlike pinned: there is no honest default
+ * picture of a world nobody has rendered yet, and "not drawn" has to be
+ * distinguishable from "drawn, and empty". See persistence/thumbnail.ts.
+ */
+const THUMBNAIL_COLUMN = 'thumbnail';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
@@ -165,6 +205,8 @@ const SCHEMA_DDL = `
     created_at     INTEGER NOT NULL,
     world_size     INTEGER NOT NULL,
     ${WORLD_NAME_COLUMN} TEXT,
+    ${PINNED_COLUMN}     INTEGER NOT NULL DEFAULT 0,
+    ${THUMBNAIL_COLUMN}  BLOB,
     heightmap      BLOB    NOT NULL,
     mask           BLOB    NOT NULL
   );
@@ -180,19 +222,33 @@ const SCHEMA_DDL = `
 `;
 
 /**
- * Adds the world-name column to a database created before it existed.
+ * Adds one column to a database created before that column existed.
  *
- * `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so the DDL
- * above only names the column on FRESH databases — every self-hoster who
- * already has a `world.db` needs this. Idempotent by inspection
- * (`PRAGMA table_info`) rather than by catching the duplicate-column error,
- * because a swallowed exception here would hide a real schema problem behind
- * the same silence.
+ * GENERIC BECAUSE THERE ARE NOW TWO (world_name in 2026-08-14, pinned in
+ * 2026-08-22) AND THERE WILL BE MORE. `CREATE TABLE IF NOT EXISTS` is a no-op
+ * on an existing table, so the DDL above only names a column on FRESH
+ * databases; every self-hoster who already has a world file needs this for
+ * each additive column. Writing it once means the second column cannot be
+ * added with a subtly different idempotence check than the first.
+ *
+ * Idempotent by inspection (`PRAGMA table_info`) rather than by catching the
+ * duplicate-column error, because a swallowed exception here would hide a real
+ * schema problem behind the same silence.
+ *
+ * `definition` is the column's type and constraints — everything that follows
+ * its name in an ALTER. SQLite can only add a column with a default (or a
+ * nullable one), which is why every caller either passes a DEFAULT or a
+ * nullable type.
  */
-function addWorldNameColumnIfMissing(db: Database): void {
-  const columns = db.pragma('table_info(snapshots)') as { name: string }[];
-  if (columns.some((column) => column.name === WORLD_NAME_COLUMN)) return;
-  db.exec(`ALTER TABLE snapshots ADD COLUMN ${WORLD_NAME_COLUMN} TEXT`);
+function addColumnIfMissing(
+  db: Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = db.pragma(`table_info(${table})`) as { name: string }[];
+  if (columns.some((existing) => existing.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 export class SnapshotStore {
@@ -207,6 +263,11 @@ export class SnapshotStore {
   private readonly countAll: Statement;
   private readonly selectById: Statement;
   private readonly selectHistory: Statement;
+  private readonly setPinnedStatement: Statement;
+  private readonly setWorldNameStatement: Statement;
+  private readonly selectLatestThumbnail: Statement;
+  private readonly setLatestThumbnailStatement: Statement;
+  private readonly countPinnedStatement: Statement;
 
   /**
    * How many snapshots survive a write. Held per-store rather than read from
@@ -221,8 +282,9 @@ export class SnapshotStore {
     this.retention = retention;
     this.insertSnapshot = db.prepare(
       `INSERT INTO snapshots
-         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
+          ${THUMBNAIL_COLUMN})
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -236,7 +298,8 @@ export class SnapshotStore {
     // measures each row against the one before it, so it must walk history
     // forwards even though it hands the result back newest-first.
     this.selectHistory = db.prepare(
-      `SELECT id, created_at, world_size, heightmap FROM snapshots ORDER BY id ASC`,
+      `SELECT id, created_at, world_size, ${PINNED_COLUMN}, heightmap
+         FROM snapshots ORDER BY id ASC`,
     );
     this.selectSlices = db.prepare(
       'SELECT plugin, data FROM plugin_slices WHERE snapshot_id = ?',
@@ -246,8 +309,34 @@ export class SnapshotStore {
     );
     // Keep the newest N rows; ON DELETE CASCADE removes their slices and
     // token_masks rows too — both reference snapshots(id) the same way.
+    // PINNED ROWS ARE NOT IN THE WINDOW AT ALL — note `pinned = 0` appears
+    // TWICE, and both are load-bearing. The outer one stops a pinned row from
+    // ever being deleted. The inner one keeps pinned rows from consuming the
+    // LIMIT, so pinning a moment does not silently shorten the undo history:
+    // retention means "the newest N unprotected points", plus everything a
+    // human asked to keep.
     this.pruneOld = db.prepare(
-      'DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT ?)',
+      `DELETE FROM snapshots
+         WHERE ${PINNED_COLUMN} = 0
+           AND id NOT IN (
+             SELECT id FROM snapshots WHERE ${PINNED_COLUMN} = 0 ORDER BY id DESC LIMIT ?
+           )`,
+    );
+    this.selectLatestThumbnail = db.prepare(
+      `SELECT ${THUMBNAIL_COLUMN} AS thumbnail FROM snapshots ORDER BY id DESC LIMIT 1`,
+    );
+    this.setLatestThumbnailStatement = db.prepare(
+      `UPDATE snapshots SET ${THUMBNAIL_COLUMN} = ?
+         WHERE id = (SELECT id FROM snapshots ORDER BY id DESC LIMIT 1)`,
+    );
+    this.setWorldNameStatement = db.prepare(
+      `UPDATE snapshots SET ${WORLD_NAME_COLUMN} = ?`,
+    );
+    this.setPinnedStatement = db.prepare(
+      `UPDATE snapshots SET ${PINNED_COLUMN} = ? WHERE id = ?`,
+    );
+    this.countPinnedStatement = db.prepare(
+      `SELECT COUNT(*) AS n FROM snapshots WHERE ${PINNED_COLUMN} = 1`,
     );
     this.countAll = db.prepare('SELECT COUNT(*) AS n FROM snapshots');
   }
@@ -268,7 +357,9 @@ export class SnapshotStore {
     // Required for the plugin_slices cascade — SQLite defaults it off.
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA_DDL);
-    addWorldNameColumnIfMissing(db);
+    addColumnIfMissing(db, 'snapshots', WORLD_NAME_COLUMN, 'TEXT');
+    addColumnIfMissing(db, 'snapshots', PINNED_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
     return new SnapshotStore(db, retention);
   }
 
@@ -294,6 +385,9 @@ export class SnapshotStore {
         input.name,
         heightmap,
         mask,
+        // `?? null` rather than undefined: better-sqlite3 refuses undefined as
+        // a bound value, and a caller that produced no thumbnail means NULL.
+        input.thumbnail === undefined ? null : Buffer.copyBytesFrom(input.thumbnail),
       );
       const snapshotId = Number(result.lastInsertRowid);
       for (const [plugin, data] of entries) {
@@ -481,6 +575,9 @@ export class SnapshotStore {
         createdAt: row.created_at,
         cellsChanged,
         maxCellDelta,
+        // SQLite integer → boolean at the one boundary that reads the column,
+        // so nothing downstream has to know the storage is 0/1.
+        pinned: row.pinned !== 0,
         // Overwritten below for the genuinely newest row; `false` here keeps
         // the flag a fact about position in the list rather than something
         // each iteration has to know the list's length to compute.
@@ -496,9 +593,79 @@ export class SnapshotStore {
     return points.reverse();
   }
 
+  /** The newest snapshot's thumbnail, or null when it has none. */
+  latestThumbnail(): Buffer | null {
+    const row = this.selectLatestThumbnail.get() as { thumbnail: Buffer | null } | undefined;
+    return row?.thumbnail ?? null;
+  }
+
+  /**
+   * Attaches a thumbnail to the newest snapshot — the LAZY BACKFILL path, for
+   * a world whose newest snapshot predates thumbnails existing.
+   *
+   * Targets the newest row specifically rather than every row: a thumbnail is
+   * a picture of one moment, and painting an old restore point with the
+   * current world's outline would be a small lie in the one place whose
+   * purpose is showing what a world looks like.
+   */
+  setLatestThumbnail(thumbnail: Uint8Array): boolean {
+    return this.setLatestThumbnailStatement.run(Buffer.copyBytesFrom(thumbnail)).changes > 0;
+  }
+
+  /**
+   * Renames the world this file holds, across its WHOLE history.
+   *
+   * EVERY ROW, not just the newest, because a name is the world's IDENTITY
+   * rather than per-snapshot state: the same world was called this all along
+   * as far as anyone looking at it is concerned. Leaving older rows on the old
+   * name would mean a rollback to one of them silently renamed the world back,
+   * which is precisely the identity wobble the boot snapshot in index.ts
+   * already exists to prevent.
+   *
+   * Used for renaming a world that is NOT loaded. The LIVE world is renamed
+   * through World.rename, which marks it dirty so the next snapshot carries
+   * the new name; this then aligns its history the next time the file is
+   * opened for a rename. Returns how many rows were relabelled.
+   */
+  setWorldName(name: string): number {
+    return this.setWorldNameStatement.run(name).changes;
+  }
+
+  /**
+   * Pins or unpins one restore point. Returns false when no such row exists —
+   * it was pruned before the click landed, or the id was never real.
+   *
+   * SAFE TO CALL ON AN ALREADY-PINNED ROW: the UPDATE is idempotent, so a
+   * double-click cannot toggle something the operator did not see.
+   */
+  setPinned(id: number, pinned: boolean): boolean {
+    const result = this.setPinnedStatement.run(pinned ? 1 : 0, id);
+    return result.changes > 0;
+  }
+
+  /** How many restore points are pinned, i.e. exempt from retention. */
+  countPinned(): number {
+    return (this.countPinnedStatement.get() as { n: number }).n;
+  }
+
   /** Number of retained snapshots; used by the retention test. */
   countSnapshots(): number {
     return (this.countAll.get() as { n: number }).n;
+  }
+
+  /**
+   * Folds this world's write-ahead log back into its database file.
+   *
+   * EXISTS FOR COPYING A LIVE WORLD (multi-world, 2026-08-22). In WAL mode the
+   * newest committed snapshots can live entirely in `<file>-wal`, so copying
+   * the `.db` alone can silently produce a duplicate that is missing the very
+   * rows the operator just made. The registry checkpoints through its OWN
+   * connection for worlds that are not loaded; a world that IS loaded must be
+   * checkpointed through THIS one, because a TRUNCATE checkpoint from a second
+   * connection cannot complete while this one holds the file open.
+   */
+  checkpoint(): void {
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
 
   close(): void {

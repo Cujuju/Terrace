@@ -44,7 +44,7 @@ function fakeStorage(initial: Record<string, string> = {}): Storage {
   } as Storage;
 }
 
-const HUD_KEY = 'terrace.hudState.v1';
+const HUD_KEY = 'terrace.hudState.v2';
 
 async function freshHud(initial?: Record<string, string>): Promise<{
   hud: HudState;
@@ -296,6 +296,42 @@ describe('fallback on corrupt storage', () => {
     expect(hud.brushRadius()).toBe(MAX_BRUSH_RADIUS);
     expect(hud.brushTool()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.tool);
     expect(hud.showControls()).toBe(false);
+  });
+
+  it('a stored radius the picker cannot offer falls back to the default', async () => {
+    // THE CONTRACT (owner bug report 2026-08-22): a restored radius must be a
+    // rung of the ladder the Brush row actually renders. It is not enough for
+    // it to be a legal WIRE radius — that range is about what an intent may
+    // carry, and every value in it that the picker does not offer leaves the
+    // player holding a brush with no button highlighted and no way back to it.
+    //
+    // The concrete case this closes: the 2026-08-21 re-sample re-based the
+    // radius from world units to cells, so a pre-re-sample "1" survived
+    // validation as a one-CELL brush — a quarter of the ground the player had
+    // chosen. The v1 → v2 key bump orphans those entries; this is the guard
+    // that stops the next change to BRUSH_RADII from minting new ones.
+    //
+    // 1 LEFT THIS LIST on 2026-08-22, when the single-cell brush was added to
+    // the ladder as a rung of its own. The orphaning above is what makes that
+    // safe: the pre-re-sample "1" this case was written about lived under the
+    // v1 key, so no stored v2 entry can mean anything but the brush the player
+    // now picks by pressing the 1 button.
+    for (const offLadder of [2, 3, 5, 15]) {
+      const { hud } = await freshHud({
+        [HUD_KEY]: JSON.stringify({ brushRadius: offLadder }),
+      });
+      expect(LADDER).not.toContain(offLadder);
+      expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
+    }
+  });
+
+  it('every rung of the ladder round-trips through storage', async () => {
+    for (const rung of LADDER) {
+      const { hud } = await freshHud({
+        [HUD_KEY]: JSON.stringify({ brushRadius: rung }),
+      });
+      expect(hud.brushRadius()).toBe(rung);
+    }
   });
 
   it('parseHudState is the whole contract, storage aside', async () => {

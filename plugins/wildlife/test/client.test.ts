@@ -265,19 +265,19 @@ describe('vertical placement', () => {
   });
 
   it('stands land species on the rendered ground', () => {
-    expect(creatureWorldY('grazer', 4)).toBe(4);
-    expect(creatureWorldY('grazer', -1.5)).toBe(-1.5);
+    expect(creatureWorldY('grazer', 4, DEFAULT_SIZE_CLASS)).toBe(4);
+    expect(creatureWorldY('grazer', -1.5, DEFAULT_SIZE_CLASS)).toBe(-1.5);
   });
 
   it('falls back to band 0 before the first snapshot arrives', () => {
-    expect(creatureWorldY('grazer', null)).toBe(UNKNOWN_TERRAIN_WORLD_Y);
+    expect(creatureWorldY('grazer', null, DEFAULT_SIZE_CLASS)).toBe(UNKNOWN_TERRAIN_WORLD_Y);
   });
 
   it('stacks the three swimmers surface → mid → seabed', () => {
     const seabedY = -8;
-    const fish = creatureWorldY('fish', seabedY);
-    const whale = creatureWorldY('whale', seabedY);
-    const deepsea = creatureWorldY('deepsea', seabedY);
+    const fish = creatureWorldY('fish', seabedY, DEFAULT_SIZE_CLASS);
+    const whale = creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS);
+    const deepsea = creatureWorldY('deepsea', seabedY, DEFAULT_SIZE_CLASS);
 
     expect(fish).toBeGreaterThan(whale);
     expect(whale).toBeGreaterThan(deepsea);
@@ -286,7 +286,7 @@ describe('vertical placement', () => {
   it('keeps every swimmer inside the water column', () => {
     for (const seabedY of [-20, -8, -3, -1.5, -0.9]) {
       for (const species of ['fish', 'whale', 'deepsea'] as const) {
-        const y = creatureWorldY(species, seabedY);
+        const y = creatureWorldY(species, seabedY, DEFAULT_SIZE_CLASS);
         expect(y).toBeGreaterThanOrEqual(seabedY);
         expect(y).toBeLessThanOrEqual(SEA_SURFACE_WORLD_Y);
       }
@@ -298,17 +298,49 @@ describe('vertical placement', () => {
     for (const species of ['fish', 'whale', 'deepsea'] as const) {
       const profile = SWIM_PROFILES[species];
       expect(profile).not.toBeNull();
-      const y = creatureWorldY(species, seabedY);
+      const y = creatureWorldY(species, seabedY, DEFAULT_SIZE_CLASS);
       expect(y).toBeGreaterThanOrEqual(seabedY + profile!.minClearance);
       expect(y).toBeLessThanOrEqual(SEA_SURFACE_WORLD_Y - profile!.minSubmergence);
     }
+  });
+
+  it('scales both clearances with the creature size class', () => {
+    // The bug this pins (2026-08-21): a clearance is the MODEL'S half-height
+    // plus a little water, and the model is uniformly scaled by its size class,
+    // so a clearance that ignored the class placed a large creature as if it
+    // were an adult — belly in the seabed, dorsal through the surface. Deep
+    // water so neither clamp is the one that binds by accident.
+    const seabedY = -20;
+    for (const species of ['fish', 'whale', 'deepsea'] as const) {
+      const profile = SWIM_PROFILES[species];
+      expect(profile).not.toBeNull();
+      for (const sizeClass of WILDLIFE_SIZE_CLASSES) {
+        const scale = WILDLIFE_SIZE_MODEL_SCALE[sizeClass];
+        const y = creatureWorldY(species, seabedY, sizeClass);
+        expect(y).toBeGreaterThanOrEqual(seabedY + profile!.minClearance * scale);
+        expect(y).toBeLessThanOrEqual(SEA_SURFACE_WORLD_Y - profile!.minSubmergence * scale);
+      }
+    }
+  });
+
+  it('submerges a large creature deeper than a small one of the same species', () => {
+    // The visible consequence, stated as the relation rather than as three
+    // numbers: a bigger body sits further from the surface it must not breach.
+    // Shallow enough that the submergence clamp is the binding one for the
+    // large class but not for the small, which is exactly where the old code
+    // returned the same Y for both.
+    const seabedY = -2;
+    const [small, , large] = WILDLIFE_SIZE_CLASSES;
+    expect(creatureWorldY('fish', seabedY, large)).toBeLessThan(
+      creatureWorldY('fish', seabedY, small),
+    );
   });
 
   it('splits the difference when the water is too shallow for both clearances', () => {
     // A whale insists on 0.7 above the seabed AND 0.7 below the surface; one
     // world unit of water cannot give it both.
     const seabedY = -1;
-    expect(creatureWorldY('whale', seabedY)).toBeCloseTo(-0.5, 6);
+    expect(creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS)).toBeCloseTo(-0.5, 6);
   });
 });
 
@@ -355,7 +387,7 @@ describe('birds fly overhead', () => {
     // been sent must not sag to the unknown-terrain default the way a walker
     // does — its Y does not come from the terrain at all.
     for (const terrainY of [null, -20, 0, 4, MAX_TERRAIN_WORLD_Y]) {
-      expect(creatureWorldY('bird', terrainY)).toBe(BIRD_FLIGHT_WORLD_Y);
+      expect(creatureWorldY('bird', terrainY, DEFAULT_SIZE_CLASS)).toBe(BIRD_FLIGHT_WORLD_Y);
     }
   });
 

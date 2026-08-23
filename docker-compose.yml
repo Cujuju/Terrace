@@ -37,7 +37,26 @@ services:
       # spelling in .env.example) land on the same volume — see the mounts
       # below. Any OTHER path lives in the container's disposable layer and is
       # lost on the next rebuild.
+      # WHERE YOUR WORLDS LIVE — one SQLite file per world, plus .trash/ for
+      # archived ones and .active naming the one to load at boot. Must be on
+      # the mounted volume below; any OTHER path lives in the container's
+      # disposable layer and every world in it is lost on the next rebuild.
+      WORLDS_DIR: ${WORLDS_DIR:-/data/worlds}
+      # The LEGACY single-world database, from before worlds were files. The
+      # server copies it into WORLDS_DIR on the next boot — copies, never moves
+      # — and then ignores it. Kept mounted so an upgrading deployment's world
+      # is still reachable to be copied.
       DB_PATH: ${DB_PATH:-/data/world.db}
+      # WORLD_ADMIN_KEY is deliberately NOT listed here, exactly as ROLLBACK_KEY
+      # is not: naming it with a "${WORLD_ADMIN_KEY:-}" default would pass an
+      # EMPTY value when it is unset, and empty means "turn world management
+      # off" — so the compose file would silently disable a feature the .env
+      # never mentioned. Left absent, the variable reaches the server only when
+      # the operator actually set one, and the server applies its own documented
+      # default (and its own boot warning) otherwise.
+      # Seconds a world switch is announced for when somebody other than the
+      # operator is connected; skipped entirely when they are alone.
+      WORLD_SWITCH_COUNTDOWN_S: ${WORLD_SWITCH_COUNTDOWN_S:-10}
       # Fixed simulation tick rate, 1–60.
       TICK_HZ: ${TICK_HZ:-10}
       # World snapshot cadence in seconds; a snapshot is written only when the

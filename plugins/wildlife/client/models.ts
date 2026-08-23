@@ -334,9 +334,11 @@ export function createWildlifeModels(): WildlifeModels {
    * triangles, by owner decision (2026-08-21). A whale is the largest thing in
    * the water and the one creature the camera comes near, where a stack of
    * ellipsoids reads as a stack of ellipsoids. The cost is bounded — whales are
-   * habitat-capped at a handful per world by their 5000-deep-cell requirement,
-   * and since the 2026-08-22 skinning each body is ONE draw call rather than
-   * the six the note here used to record.
+   * habitat-capped by their 2 000-square-world-unit density (cellsOverArea):
+   * at most 39 of them on a fully revealed nominal 512² world, 21 once
+   * WILDLIFE_POPULATION_CAP has scaled the population down. And since the
+   * 2026-08-22 skinning each body is ONE draw call rather than the six the
+   * note here used to record.
    */
   const whaleRigs: readonly SpeciesRig[] = whaleSets.map((set) => {
     const { root, rig } = rigged();

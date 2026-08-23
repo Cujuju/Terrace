@@ -97,9 +97,12 @@ nothing is required to boot a world.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `WORLD_SIZE` | `512` | Cells per world edge. Must be a multiple of 16 (the chunk size), max 4096. `128` is Populous-proven playable and comfortable on a small VPS; `512` wants a mid-size box. **Cannot be changed on an existing world** — the server refuses to boot rather than reinterpret your heightmap. |
+| `WORLD_SIZE` | `512` | Cells per world edge. Must be a multiple of 16 (the chunk size), max 4096. `128` is Populous-proven playable and comfortable on a small VPS; `512` wants a mid-size box. This is the size **new** worlds are created at; an existing world keeps the size it was made with, and worlds of different sizes coexist happily. |
 | `PORT` | `2567` | Port the world server listens on. Compose maps the same number on the host, so host and container never disagree. Change it and you must update `PUBLIC_WS_URL` too. |
-| `DB_PATH` | `/data/world.db` | SQLite world database, as a path *inside* the container. Both `/data/world.db` and `./data/world.db` are mounted from the world volume, so either persists; any other path is lost on the next rebuild. |
+| `WORLDS_DIR` | `/data/worlds` | Where your worlds live — **one SQLite file per world**, plus `.trash/` for archived ones and `.active` naming the one to load at boot. Must be under the mounted volume or it is lost on the next rebuild. |
+| `DB_PATH` | `/data/world.db` | The **legacy** single-world database, from before worlds were files. Copied into `WORLDS_DIR` on the next boot — copied, never moved — and then ignored forever. |
+| `WORLD_ADMIN_KEY` | `terrace` *(public!)* | Unlocks the in-game **Worlds** panel: create, load, rename, duplicate, archive. Separate from `ROLLBACK_KEY` because it has a bigger blast radius. Set your own, or `WORLD_ADMIN_KEY=` to turn it off. |
+| `WORLD_SWITCH_COUNTDOWN_S` | `10` | Seconds a world switch is announced for when somebody other than the operator is connected. Skipped when the operator is alone; `0` makes every switch immediate. |
 | `TICK_HZ` | `10` | Fixed simulation tick rate, 1–60. Rendering interpolates, so raising this mostly buys CPU load. |
 | `SNAPSHOT_INTERVAL_S` | `60` | How often a changed world is written to SQLite, 1–3600. An idle world writes nothing at all. |
 | `PLUGINS_DIR` | `<repo>/plugins` | Directory scanned for plugins at boot. Inside the image that is `/app/plugins`; leave it alone unless you are mounting plugins from elsewhere. |
@@ -130,19 +133,62 @@ If you front this with a reverse proxy for TLS, the server side needs both the
 
 ---
 
-## Your data, and how to back it up
+## Your worlds, and how to back them up
 
-Everything — heightmap, unlock mask, and every plugin's persisted slice — lives in one
-SQLite database in the Docker volume **`terrace_world-data`**.
+**A world is a file.** Each one is its own SQLite database under `WORLDS_DIR`
+(the Docker volume **`terrace_world-data`**), holding that world's heightmap,
+unlock masks, and every plugin's persisted slice. One world is loaded and
+simulating at a time; the rest sit on disk until you load them.
 
-The server writes a snapshot every `SNAPSHOT_INTERVAL_S` **only if the world changed**,
-keeps the **last 10**, and writes one final snapshot on clean shutdown. So
-`docker compose stop` / `Ctrl-C` never loses work, and a crash costs at most one
-interval. The rolling ten are your undo-by-hand if someone flattens a mountain you
-liked.
+This layout is deliberate and it is load-bearing. Worlds used to share a single
+database, with retention keeping "the newest 10 snapshots" **across all of
+them** — so a world you stopped playing could have its history evicted by a
+world you started. That is not possible now: retention runs inside one world's
+file and cannot reach another's.
 
-**Back up (safe method — stop first).** The database runs in WAL mode, so copying it
-while the server is live can capture a torn state:
+**Restore points.** The server writes a snapshot every `SNAPSHOT_INTERVAL_S`
+**only if the world changed**, keeps the last `SNAPSHOT_RETENTION` (default 10),
+and writes one final snapshot on clean shutdown. So `docker compose stop` /
+`Ctrl-C` never loses work, and a crash costs at most one interval. **Pin** a
+restore point to exempt it from retention entirely — pinned points survive any
+amount of later play, and do not count against your undo depth.
+
+**Managing worlds** (in-game, with `WORLD_ADMIN_KEY`): the Worlds panel lists
+every world with its size, restore points, disk use and when you last played it.
+From there you can create, load, rename, duplicate (with its whole history) and
+archive.
+
+**Nothing deletes a world by accident.** Archiving *moves* a world's file to
+`WORLDS_DIR/.trash` and tells you where it went. The only thing that ever
+unlinks a world is **Purge**, on the Trash tab, on a world that is already
+archived, after you type its name back. Boot never replaces a missing world with
+a fresh one either — it loads nothing and logs which world it could not open.
+
+**Importing a world from elsewhere** — a backup, another checkout, a stray
+`.db` you found:
+
+```sh
+pnpm --dir server import-world /path/to/some-world.db
+```
+
+It copies; your original file is not touched.
+
+**Recovering history from an old backup.** Retention is a rolling window, so a
+backup taken last week holds restore points this week's play has since pruned —
+and the live world holds everything since. Neither is a superset. Make the
+union:
+
+```sh
+pnpm --dir server merge-world-history old-backup.db worlds/your-world.db --pin
+```
+
+It copies only the snapshots the target is missing, refuses two files that are
+not the same world, and never writes to the source. `--pin` exempts what it
+recovers from retention, which you almost always want — recovered points are old
+by definition, so without it the next write prunes them straight back out.
+
+**Back up (safe method — stop first).** The databases run in WAL mode, so copying
+them while the server is live can capture a torn state:
 
 ```sh
 docker compose stop server                      # writes a final snapshot, closes the DB
@@ -160,7 +206,8 @@ docker run --rm -v terrace_world-data:/data -v "$PWD:/backup" busybox \
 docker compose up
 ```
 
-**Start over:** `docker compose down -v` deletes the volume and the world with it.
+**Start over:** `docker compose down -v` deletes the volume and **every world in
+it**. There is no undo for that one.
 
 **Upgrading:** `git pull && docker compose up --build`. Snapshots are versioned; a
 database this build cannot read is refused loudly instead of half-applied.

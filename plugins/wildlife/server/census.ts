@@ -94,8 +94,9 @@ export interface HabitatWorld {
  * with room left for terrain diffs" figure survives the raise; it is what stops
  * the cap going higher. The cap is the dial to turn, and it is here.
  *
- * It now BINDS on a fully revealed 512² world (the densities ask for 246 there,
- * see species.ts), which is the accepted cost of enough fish to see schools.
+ * It now BINDS on a fully revealed 512² world (the densities ask for 270 there,
+ * scaled down to 147 — a 45% loss; see species.ts and the exact assertion in
+ * wildlife.test.ts), which is the accepted cost of enough fish to see schools.
  *
  * SCOPE, since 2026-08-14: this caps the HABITAT population only. Birds are not
  * censused and do not consume it (server/flocks.ts); their own hard ceiling is

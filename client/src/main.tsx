@@ -16,6 +16,12 @@ import { worldPointToCell } from './terrain/picking.ts';
 import { createWorld } from './world.ts';
 import { brushRadius, setConnectionStatus } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
+import {
+  applyWorldAdminResult,
+  applyWorldListing,
+  applyWorldSwitchNotice,
+  setWorldLoaded,
+} from './state/worldsState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
@@ -63,6 +69,16 @@ const connection = connect({
     onRestorePointList: (msg) => applyRestorePointList(msg),
     onRollbackResult: (msg) => applyRollbackResult(msg),
   },
+  // World-management answers (multi-world). Same pattern, a separate sink
+  // because it is gated by a separate key — see WorldAdminSink.
+  worldAdmin: {
+    onWorldListing: (msg) => applyWorldListing(msg),
+    onWorldAdminResult: (msg) => applyWorldAdminResult(msg),
+    onWorldSwitchNotice: (msg) => applyWorldSwitchNotice(msg),
+    // The server has closed its world. The banner says so until a snapshot
+    // arrives, which is what marks a world loaded again (see world.ts).
+    onWorldUnloaded: () => setWorldLoaded(false),
+  },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
 });
@@ -73,6 +89,10 @@ const sculptInput = createSculptInput({
   // Accessors, not snapshots: both the mesh list and the world size change
   // when chunks stream in or a new session starts.
   pickCell: (origin, direction) => world.pickCell(origin, direction),
+  // The outline's ground height, re-read every frame for the cell the pick
+  // already chose — see sculptInput's hoverTarget for why the cell is cached
+  // and this is not.
+  terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
   worldSize: () => world.worldSize(),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
@@ -112,6 +132,9 @@ render(
       rollback={{
         list: (key) => connection.requestRestorePoints(key),
         apply: (key, toId) => connection.requestRollback(key, toId),
+      }}
+      worlds={{
+        send: (message) => connection.sendWorldAdmin(message),
       }}
     />
   ),

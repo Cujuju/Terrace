@@ -1155,7 +1155,33 @@ export class World {
    * environment, so it deliberately is NOT stored. The two live side by side
    * here and are persisted differently on purpose.
    */
-  readonly name: string;
+  private worldName: string;
+
+  /** What this world is CALLED. See the doc comment above; set by rename(). */
+  get name(): string {
+    return this.worldName;
+  }
+
+  /**
+   * Renames the world (world management, 2026-08-22).
+   *
+   * MARKS THE WORLD DIRTY, which is the entire mechanism by which the new name
+   * reaches disk: the name is snapshot state, so the next snapshot carries it
+   * and every future boot reads it back. Nothing else is touched — the id a
+   * world's FILE is named by never changes, so renaming can never move,
+   * collide with, or overwrite another world's file.
+   *
+   * A world's name was `readonly` until world management existed, on the
+   * reasoning that identity is minted once at genesis. That is still true of
+   * MINTING: no code path mints a second name for a world that has one. What
+   * changed is that a human may now correct the label, which is a different
+   * act from the world becoming a different world.
+   */
+  rename(next: string): void {
+    if (next === this.worldName) return;
+    this.worldName = next;
+    this.changedSinceSnapshot = true;
+  }
 
   private sink: MessageSink = NULL_SINK;
   private readonly playersById = new Map<string, Player>();
@@ -1219,7 +1245,7 @@ export class World {
     this.map = map;
     this.mask = mask;
     this.difficulty = difficulty;
-    this.name = name;
+    this.worldName = name;
   }
 
   /**

@@ -43,11 +43,24 @@ import type { ConnectionStatus } from '../net/connection.ts';
  * always meant, and the ceiling is still shared's: `expect`ed to be the top
  * rung by hudState's own test, so widening the wire bound without revisiting
  * this list fails loudly.
+ *
+ * THE SINGLE-CELL BRUSH IS BACK ON THE LADDER (owner, 2026-08-22: "can we add
+ * brush size one?"). It is the ONE sub-world-unit rung offered, and it is
+ * offered as the exception the paragraph above describes rather than as a
+ * reopening of it: the twelve rungs between it and one world unit are still
+ * brushes a player cannot tell apart, but the floor itself is qualitatively a
+ * different tool — the finest mark the grid can express. MIN_BRUSH_RADIUS's
+ * own note spells out what it does and does not do: a click on it settles
+ * inside band 0 rather than raising a terrace, so it polishes and it does not
+ * build. That is the tool the owner asked for, not a defect in it.
  */
-export const BRUSH_RADII: readonly number[] = Array.from(
-  { length: MAX_BRUSH_RADIUS / WORLD_UNIT_CELLS },
-  (_, i) => (i + 1) * WORLD_UNIT_CELLS,
-);
+export const BRUSH_RADII: readonly number[] = [
+  MIN_BRUSH_RADIUS,
+  ...Array.from(
+    { length: MAX_BRUSH_RADIUS / WORLD_UNIT_CELLS },
+    (_, i) => (i + 1) * WORLD_UNIT_CELLS,
+  ),
+];
 
 /** Selectable brush tools / edge profiles, straight from shared's own sets. */
 export const BRUSH_TOOLS: readonly SculptTool[] = SCULPT_TOOLS;
@@ -149,17 +162,32 @@ export function setFrameRate(fps: number): void {
 // union), so a payload from some other schema cannot masquerade as valid — it
 // simply fails per field and yields defaults. (cameraPose stamps one because
 // its fields are bare numbers, where a foreign schema's numbers WOULD parse.)
+//
+// v1 → v2 (2026-08-22, owner bug report "lowering does not always work"): the
+// 2026-08-21 re-sample changed what a stored `brushRadius` MEANS without
+// changing the schema it is stored under. The numbers 1–4 were world units and
+// became cells, so every player who had ever picked a brush silently got a
+// quarter of the ground they chose — and radius 1–3 is not on the picker's
+// ladder at all, so no brush button rendered as active. A value whose UNIT
+// changes is a schema change; orphaning the old entries is exactly what the
+// versioned key is for.
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = 'terrace.hudState.v1';
+const STORAGE_KEY = 'terrace.hudState.v2';
 
 /**
- * The ladder's first rung — one world unit of ground, the Populous point brush
- * — is the least surprising default. NOT shared's MIN_BRUSH_RADIUS since the
- * 2026-08-21 re-sample: that is the grid's floor, four times finer, and a
- * player who has picked nothing should get the brush the game is tuned around.
+ * One world unit of ground, the Populous point brush, is the least surprising
+ * default. NOT shared's MIN_BRUSH_RADIUS: that is the grid's floor, four times
+ * finer since the 2026-08-21 re-sample, and a player who has picked nothing
+ * should get the brush the game is tuned around.
+ *
+ * WRITTEN AS THE CONVERSION, NOT AS `BRUSH_RADII[0]` (2026-08-22). It was the
+ * ladder's first rung while the ladder started at one world unit; the moment
+ * the single-cell brush was added below it, the index silently became the
+ * finest brush in the game. What this constant means is "one world unit", so
+ * that is now what it says.
  */
-export const DEFAULT_BRUSH_RADIUS = BRUSH_RADII[0]!;
+export const DEFAULT_BRUSH_RADIUS = WORLD_UNIT_CELLS;
 
 /**
  * Brush tool and edge profile default to the WIRE defaults rather than to
@@ -231,12 +259,19 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
  * itself, and a payload written by an older build that simply lacks a field
  * added later still restores everything it does carry. Falling back whole
  * would throw away four good settings to punish one bad one.
+ *
+ * THE RADIUS IS VALIDATED AGAINST THE LADDER, NOT THE PROTOCOL BOUNDS
+ * (2026-08-22). It used to accept any integer in [MIN_BRUSH_RADIUS,
+ * MAX_BRUSH_RADIUS] — the WIRE's range, which is a fact about what an intent
+ * may legally carry, not about what this picker can show. Every rung the
+ * picker does not offer is a value it cannot render as selected, so restoring
+ * one leaves the Brush row with no active button and the player holding a
+ * brush no click of theirs could have chosen. The v1 → v2 key bump above
+ * clears the entries that already went stale; this is the guard that stops a
+ * future change to BRUSH_RADII from re-creating them.
  */
 function readRadius(value: unknown): number {
-  return typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= MIN_BRUSH_RADIUS &&
-    value <= MAX_BRUSH_RADIUS
+  return typeof value === 'number' && BRUSH_RADII.includes(value)
     ? value
     : DEFAULT_BRUSH_RADIUS;
 }

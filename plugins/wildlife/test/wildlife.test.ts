@@ -93,9 +93,12 @@ import {
   cohesionPullRadiansPerSecond,
   personalSpaceCellsOf,
   isFleeing,
+  lookaheadCellsFor,
+  schoolLoosenessOf,
   normalizeAngle,
   speedOf,
   startleNear,
+  steerToValidHeading,
   steerWithSchool,
   summarizeSchools,
 } from '../server/movement.ts';
@@ -120,8 +123,12 @@ import {
   DEEP_WATER_MAX_HEIGHT,
   FISH_SCHOOLS_ON_FRESH_SHELF,
   FISH_SIZE_WEIGHTS,
-  SCHOOLING_PROBABILITY_BY_SIZE,
+  FISH_SCHOOLING_PROBABILITY_BY_SIZE,
   SCHOOL_LOOSENESS_BY_SIZE,
+  SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS,
+  WHALE_POD_SIZE,
+  WHALE_SCHOOLING_PROBABILITY_BY_SIZE,
+  WHALE_SIZE_WEIGHTS,
   habitatOf,
   profileOf,
 } from '../server/species.ts';
@@ -349,16 +356,18 @@ describe('a fresh world as habitat', () => {
     expect(census.cellsByHabitat.deep).toBe(65536);
   });
 
-  it('spawns fish and deep-sea creatures on a fresh world — no whales or grazers', () => {
+  it('spawns fish, deep-sea creatures AND whales on a fresh world — no grazers', () => {
     const harness = bootOn(World.createFresh(WORLD_SIZE));
     tick(harness, ticksFor(SETTLE_SECONDS));
 
     const counts = countsBySpecies();
     expect(counts.fish).toBeGreaterThanOrEqual(1);
     expect(counts.deepsea).toBeGreaterThanOrEqual(1);
-    // The shrunk 5-chunk starter square (2026-08-19) holds 4 096 deep cells —
-    // below a whale's 5 000-cell need. Whales arrive with territory creep.
-    expect(counts.whale).toBe(0);
+    // 4 096 square world units of open sea against a 2 000-unit density
+    // (dropped from 5 000 on 2026-08-21) asks for two whales on day one, so at
+    // least one has to be alive after the settle. It is a partial pod — see the
+    // target assertion below, and WHALE_POD_SIZE for why three is a pod.
+    expect(counts.whale).toBeGreaterThanOrEqual(1);
     // No land exists yet, so this one cannot be anywhere.
     expect(counts.grazer).toBe(0);
 
@@ -404,16 +413,21 @@ describe('population targets', () => {
     });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // The documented ecosystem after the 2026-08-14 retunes: 246 asked for
-    // (131 fish / 52 deepsea / 48 grazer / 15 whale), the cap scaling that by
-    // 150/246 and flooring to 148. Asserted exactly, because this table is the
+    // The documented ecosystem after the 2026-08-21 whale retune: 270 asked for
+    // (131 fish / 52 deepsea / 48 grazer / 39 whale), the cap scaling that by
+    // 150/270 and flooring to 147. Asserted exactly, because this table is the
     // arithmetic the species.ts header claims and a silent drift in it is how
     // that header becomes a lie.
-    expect(targets).toEqual({ fish: 79, deepsea: 31, grazer: 29, whale: 9 });
-    expect(total).toBe(148);
+    expect(targets).toEqual({ fish: 72, deepsea: 28, grazer: 26, whale: 21 });
+    expect(total).toBe(147);
     expect(total).toBeGreaterThan(WILDLIFE_POPULATION_CAP / 2);
     expect(targets.fish).toBeGreaterThan(targets.whale);
     expect(targets.whale).toBeGreaterThan(0);
+    // Whales stay the rarest species even after their density halved — the
+    // constraint that stopped the drop going further (see the whale entry in
+    // species.ts). A fully revealed world must still hold several whole pods.
+    expect(targets.whale).toBeLessThan(targets.deepsea);
+    expect(targets.whale).toBeGreaterThanOrEqual(3 * profileOf('whale').groupSize);
   });
 
   it("stocks a fresh world's starter region with coastal AND open-sea life on day one", () => {
@@ -431,7 +445,7 @@ describe('population targets', () => {
       );
     }
 
-    // Day one after the 2026-08-14 school retune: 10 fish, 8 deep-sea creatures,
+    // Day one after the 2026-08-21 whale retune: 5 fish, 2 deep-sea creatures,
     // 2 whales, 0 grazers.
     //
     // The fish figure is the VISIBLE-DENSITY contract, and it is asserted as the
@@ -442,10 +456,14 @@ describe('population targets', () => {
     expect(targets.fish).toBe(FISH_SCHOOLS_ON_FRESH_SHELF * profileOf('fish').groupSize);
     expect(targets.fish).toBe(5);
     expect(targets.deepsea).toBeGreaterThanOrEqual(2);
-    // The 2026-08-14 "2–3 whales immediately" goal was superseded 2026-08-19
-    // by the smaller starter square: 4 096 deep cells cannot host a 5 000-cell
-    // whale, so day one has none — they appear as the territory creeps.
-    expect(targets.whale).toBe(0);
+    // The 2026-08-14 "2–3 whales immediately" goal, restored 2026-08-21 by
+    // halving the density rather than by growing the starter square back: 4 096
+    // square world units of open sea over a 2 000-unit density is two.
+    expect(targets.whale).toBe(2);
+    // A PARTIAL pod, and deliberately so: the day-one square is one expansion
+    // short of a whole one, and the alternative was making whales the second
+    // most common animal in a fully revealed world (see species.ts).
+    expect(targets.whale).toBeLessThan(profileOf('whale').groupSize);
     // Grazers have no habitat until someone raises an island. Honest
     // consequence of a world that starts as an ocean.
     expect(targets.grazer).toBe(0);
@@ -1573,6 +1591,110 @@ describe('habitat beats cohesion', () => {
 });
 
 /**
+ * A vetoed step must leave the HEADING alone as well as the position.
+ *
+ * THE FIXTURE IS THE WHOLE TEST, so it is derived rather than guessed. Three
+ * distances decide which branch of advanceEntity runs, and all three are read
+ * off the species table rather than typed in:
+ *
+ *   step      = cruise x TICK_DT              = 1.2 cells — where the creature
+ *                                                would actually land;
+ *   lookahead = cruise x LOOKAHEAD_SECONDS    = 7.2 cells — the only point the
+ *                                                compass sweep validates;
+ *   contour   = lookahead / the fallback divisor = 3.6 cells — the short probe.
+ *
+ * So the fixture is ONE RING OF LAND on the eight cells touching the creature's
+ * own: at 1.2 cells every candidate heading lands inside that ring (a 1.2-cell
+ * step from a cell centre always crosses into a neighbouring cell, diagonals
+ * included), while at 3.6 and 7.2 cells every endpoint is open water beyond it.
+ * The sweep therefore SUCCEEDS and the destination re-check VETOES — which is
+ * the only path that reaches the two late "hold position" returns, and exactly
+ * the blind spot the belt-and-suspenders re-check exists for.
+ *
+ * A ring even one cell thicker would fail the sweep instead and exit at the
+ * early boxed-in return, which never had this bug and would make the test pass
+ * against the broken code.
+ */
+describe('a vetoed step leaves both position and heading alone', () => {
+  /** Chebyshev distance, in CELLS, of the ring from the creature's own cell. */
+  const RING_CHEBYSHEV_CELLS = 1;
+  /** Mid-cell placement: a creature's position is the centre of its cell. */
+  const CELL_CENTRE_OFFSET = 0.5;
+  const RING_LAND_HEIGHT = SEA_LEVEL + BAND_HEIGHT;
+  /** Due +X. Any fixed value works — the point is that it is unchanged. */
+  const WEDGED_HEADING = 0;
+  /**
+   * Headings sampled around the full circle when proving the ring is closed.
+   * 64 puts a sample every 5.6 degrees — far finer than the 45-degree steps the
+   * compass sweep itself takes, so no candidate it could pick goes unchecked.
+   */
+  const FULL_TURN_SAMPLES = 64;
+
+  /** Water everywhere except the eight cells ringing SCHOOL_ORIGIN_CELL. */
+  function wedgedWorld(): World {
+    return worldWithTerrain(WORLD_SIZE, (x, y) =>
+      Math.max(Math.abs(x - SCHOOL_ORIGIN_CELL), Math.abs(y - SCHOOL_ORIGIN_CELL)) ===
+      RING_CHEBYSHEV_CELLS
+        ? RING_LAND_HEIGHT
+        : OPEN_SHALLOW_HEIGHT,
+    );
+  }
+
+  function wedgedFish(): WildlifeEntity {
+    return {
+      id: 1,
+      species: 'fish',
+      schoolId: 1,
+      size: 'small',
+      x: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
+      y: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
+      heading: WEDGED_HEADING,
+      fleeSecondsRemaining: 0,
+    };
+  }
+
+  it('holds the fixture premise: the sweep succeeds where the step is refused', () => {
+    // Asserted rather than assumed, because if this stops being true the test
+    // below still passes while measuring the wrong branch entirely.
+    const view = habitatView(wedgedWorld());
+    const subject = wedgedFish();
+    const step = speedOf(subject) * TICK_DT;
+    const lookahead = lookaheadCellsFor(subject);
+
+    expect(step).toBeLessThan(RING_CHEBYSHEV_CELLS + CELL_CENTRE_OFFSET * 2);
+    expect(lookahead).toBeGreaterThan(RING_CHEBYSHEV_CELLS + CELL_CENTRE_OFFSET * 2);
+    // The sweep's endpoint is open water in every direction...
+    expect(
+      steerToValidHeading(view, subject, WEDGED_HEADING, lookahead, step),
+    ).not.toBeNull();
+    // ...and the place one tick of travel actually puts it is not.
+    for (let turn = 0; turn < FULL_TURN_SAMPLES; turn++) {
+      const heading = (turn / FULL_TURN_SAMPLES) * Math.PI * 2;
+      const stepX = subject.x + Math.cos(heading) * step;
+      const stepY = subject.y + Math.sin(heading) * step;
+      expect(isValidCellFor(view, 'fish', stepX, stepY)).toBe(false);
+    }
+  });
+
+  it('ends the tick with its original position AND heading', () => {
+    // No school argument: the habitat veto is the only thing acting this tick.
+    const view = habitatView(wedgedWorld());
+    const subject = wedgedFish();
+
+    advanceEntity(view, subject, TICK_DT);
+
+    expect(subject.x).toBe(SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET);
+    expect(subject.y).toBe(SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET);
+    // The regression: committing the candidate heading before the destination
+    // re-check left this set to a heading the creature was just proven unable
+    // to travel along, while the comment beside the return said "keep facing
+    // as-is". Wander noise makes the broken value differ from WEDGED_HEADING
+    // on essentially every run.
+    expect(subject.heading).toBe(WEDGED_HEADING);
+  });
+});
+
+/**
  * Schools of fish used in the turnover suites. 30 × the 5-member group size is
  * exactly WILDLIFE_POPULATION_CAP, which is the largest sample a hand-built
  * population can have (loadPopulation stops at the cap) and therefore the
@@ -1784,7 +1906,7 @@ const SMALL_TO_LARGE_ABUNDANCE_FLOOR = 2;
  * The probabilities predict 5/(0.9 + 5×0.1) = 3.6 members per small school
  * against 5/(0.1 + 5×0.9) = 1.1 for large — a ratio above 3, and the measured
  * range is 2.7–3.4. Asserting 1.5 is half the predicted effect, which no
- * plausible jitter reaches but a broken SCHOOLING_PROBABILITY_BY_SIZE lookup
+ * plausible jitter reaches but a broken FISH_SCHOOLING_PROBABILITY_BY_SIZE lookup
  * would fail instantly.
  */
 const SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR = 1.5;
@@ -1792,18 +1914,18 @@ const SMALL_TO_LARGE_SCHOOL_SIZE_FLOOR = 1.5;
 describe('fish size classes drive schooling', () => {
   it('orders the tuning tables smallest-schools-most', () => {
     const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
-    expect(SCHOOLING_PROBABILITY_BY_SIZE[small]).toBeGreaterThan(
-      SCHOOLING_PROBABILITY_BY_SIZE[medium],
+    expect(FISH_SCHOOLING_PROBABILITY_BY_SIZE[small]).toBeGreaterThan(
+      FISH_SCHOOLING_PROBABILITY_BY_SIZE[medium],
     );
-    expect(SCHOOLING_PROBABILITY_BY_SIZE[medium]).toBeGreaterThan(
-      SCHOOLING_PROBABILITY_BY_SIZE[large],
+    expect(FISH_SCHOOLING_PROBABILITY_BY_SIZE[medium]).toBeGreaterThan(
+      FISH_SCHOOLING_PROBABILITY_BY_SIZE[large],
     );
     expect(FISH_SIZE_WEIGHTS[small]).toBeGreaterThan(FISH_SIZE_WEIGHTS[medium]);
     expect(FISH_SIZE_WEIGHTS[medium]).toBeGreaterThan(FISH_SIZE_WEIGHTS[large]);
-    // Every non-fish species has exactly one size, so nothing else in the plugin
-    // needs a "does this species vary" flag.
+    // The two species that vary in size are the two that spawn in groups, and
+    // no other species needs a "does this one vary" flag.
     for (const species of WILDLIFE_HABITAT_SPECIES) {
-      if (species === 'fish') continue;
+      if (species === 'fish' || species === 'whale') continue;
       const weights = profileOf(species).sizeWeights;
       expect(WILDLIFE_SIZE_CLASSES.filter((size) => weights[size] > 0)).toEqual([
         DEFAULT_SIZE_CLASS,
@@ -2182,5 +2304,154 @@ describe('flock steering keeps its priorities in order', () => {
     // Measured at ~55% closed over 30 s; asserted loosely, because the wander is
     // unseeded and this is a rate, not a target.
     expect(gapToRest()).toBeLessThan(before * 0.75);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WHALE PODS (2026-08-21). Owner: "add the ability to spawn different size
+// whales and allow them to school like whales in real life with different
+// sizes". Three separable claims — whales come in sizes, whales group, and a
+// group is MIXED rather than graded — plus the spacing contract that had to
+// move before the largest animal in the game could school at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Deep water everywhere: whale and deep-sea habitat with no boundaries. */
+const OPEN_DEEP_HEIGHT = DEEP_WATER_MAX_HEIGHT;
+
+/**
+ * Chunks per edge of unlocked water in the pod fixture.
+ *
+ * Half the world's 64-chunk edge. The population these tests want is "several
+ * whole pods and no more" — enough that mixed composition is a statistical
+ * certainty over a run, few enough that the run is cheap. A chunk is 16 cells,
+ * so 32 of them is 512 cells square: 16 384 square world units of open sea,
+ * which asks for 8 whales and 10 deep-sea creatures and nothing else. The
+ * assertions below derive what they expect from populationTargets rather than
+ * restating those counts as numbers.
+ */
+const POD_UNLOCK_CHUNK_SPAN = 32;
+
+/** Deep water, unlocked only inside a POD_UNLOCK_CHUNK_SPAN square. */
+function podWorld(): World {
+  return worldWithTerrain(
+    WORLD_SIZE,
+    () => OPEN_DEEP_HEIGHT,
+    (cx, cy) => cx >= POD_UNLOCK_CHUNK_SPAN || cy >= POD_UNLOCK_CHUNK_SPAN,
+  );
+}
+
+/**
+ * How long a pod sample runs, in simulated seconds.
+ *
+ * Long enough for turnover to cycle the whale population several times over, so
+ * the sample is many pods rather than one lucky one — the same reasoning as
+ * SIZE_SAMPLE_SECONDS, against a much smaller population.
+ */
+const POD_SAMPLE_SECONDS = 450;
+
+describe('whale pods', () => {
+  it('gives whales more than one size and draws them per member', () => {
+    const profile = profileOf('whale');
+    // Three claims, one per thing the owner asked for.
+    expect(WILDLIFE_SIZE_CLASSES.filter((size) => profile.sizeWeights[size] > 0).length)
+      .toBeGreaterThan(1);
+    expect(profile.groupSize).toBe(WHALE_POD_SIZE);
+    expect(profile.groupSize).toBeGreaterThan(1);
+    expect(profile.sizeDraw).toBe('per-member');
+
+    // A pod is adults with calves among them, not a pyramid of juveniles the way
+    // a fish shoal is — the mix is the opposite shape to FISH_SIZE_WEIGHTS.
+    const [small, medium, large] = WILDLIFE_SIZE_CLASSES;
+    expect(WHALE_SIZE_WEIGHTS[medium]).toBeGreaterThan(WHALE_SIZE_WEIGHTS[small]);
+    expect(WHALE_SIZE_WEIGHTS[small]).toBeGreaterThan(WHALE_SIZE_WEIGHTS[large]);
+  });
+
+  it('holds a pod together at sizes that would disperse a fish shoal', () => {
+    // The reason schooling probability had to stop being a global table keyed by
+    // size: these three numbers are fish ecology, and a pod obeys the opposite
+    // rule. A whale of the class that makes a fish solitary still schools.
+    for (const size of WILDLIFE_SIZE_CLASSES) {
+      expect(WHALE_SCHOOLING_PROBABILITY_BY_SIZE[size]).toBeGreaterThanOrEqual(
+        FISH_SCHOOLING_PROBABILITY_BY_SIZE[size],
+      );
+      expect(WHALE_SCHOOLING_PROBABILITY_BY_SIZE[size]).toBeGreaterThan(0.5);
+    }
+    // Every species' table is a probability, whether or not its groupSize makes
+    // the roll matter.
+    for (const species of WILDLIFE_HABITAT_SPECIES) {
+      for (const size of WILDLIFE_SIZE_CLASSES) {
+        const p = profileOf(species).schoolingProbabilityBySize[size];
+        expect(p).toBeGreaterThanOrEqual(0);
+        expect(p).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('keeps school spacing clear of every schooling creature\'s own body', () => {
+    // THE CONTRACT that whale pods made load-bearing: cohesion pulls inward only
+    // outside the comfort radius, separation pushes outward inside a body
+    // length, and the two must never meet. Fish satisfied it by luck of scale —
+    // a 0.42-cell body against a 2.5-cell radius — and a five-unit whale on the
+    // same fixed radius would have been the first creature to sit inside its own
+    // comfort distance, with cohesion and separation fighting over it.
+    for (const species of WILDLIFE_HABITAT_SPECIES) {
+      if (profileOf(species).groupSize === 1) continue;
+      for (const size of WILDLIFE_SIZE_CLASSES) {
+        const entity = { species, size } as WildlifeEntity;
+        const comfort = SCHOOL_COMFORT_RADIUS_CELLS * schoolLoosenessOf(entity);
+        // Two matched creatures hold two half-lengths — one body length — apart.
+        expect(comfort).toBeGreaterThan(personalSpaceCellsOf(entity) * 2);
+      }
+    }
+  });
+
+  it('leaves the fish that the spacing constants were calibrated on untouched', () => {
+    // The species term is 1 for the fish BY CONSTRUCTION (the baseline is taken
+    // from the fish profile), so the 2026-08-21 retune cannot have moved the one
+    // school those radii were ever measured against.
+    expect(SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS).toBe(profileOf('fish').bodyLengthCells);
+    for (const size of WILDLIFE_SIZE_CLASSES) {
+      const fish = { species: 'fish', size } as WildlifeEntity;
+      expect(schoolLoosenessOf(fish)).toBe(SCHOOL_LOOSENESS_BY_SIZE[size]);
+      // ...and a whale of the same class holds proportionally more space.
+      const whale = { species: 'whale', size } as WildlifeEntity;
+      expect(schoolLoosenessOf(whale)).toBeGreaterThan(schoolLoosenessOf(fish));
+    }
+  });
+
+  it('spawns whales in mixed-size pods', () => {
+    // The end-to-end claim, through the real spawn path. Every whale school ever
+    // seen is recorded with the set of size classes among its members, the same
+    // sampling shape the fish size test uses.
+    const harness = bootOn(podWorld());
+    // The census runs on the first tick, not at boot, so the fixture's own
+    // premise is asserted after one — this must be a world with room for whole
+    // pods, or the test below would be measuring an empty ocean.
+    harness.host.tick(TICK_DT);
+    expect(populationTargets().whale).toBeGreaterThanOrEqual(WHALE_POD_SIZE);
+
+    const podSizes = new Map<number, Set<WildlifeSizeClass>>();
+    const podMembers = new Map<number, number>();
+    for (let n = 0; n < ticksFor(POD_SAMPLE_SECONDS); n++) {
+      harness.host.tick(TICK_DT);
+      const counts = membersBySchool();
+      for (const entity of livingEntities()) {
+        if (entity.species !== 'whale') continue;
+        const sizes = podSizes.get(entity.schoolId) ?? new Set<WildlifeSizeClass>();
+        sizes.add(entity.size);
+        podSizes.set(entity.schoolId, sizes);
+        const members = counts.get(entity.schoolId) ?? 1;
+        podMembers.set(entity.schoolId, Math.max(podMembers.get(entity.schoolId) ?? 0, members));
+      }
+    }
+
+    // Whales grouped at all — the thing groupSize 1 made impossible.
+    expect(Math.max(...podMembers.values())).toBeGreaterThan(1);
+    // ...and at least one pod carried more than one size class, which is the
+    // difference between 'per-member' and the graded shoal fish get. Over a
+    // sample this long a graded implementation cannot produce one: it draws a
+    // single class for the whole group by construction.
+    expect([...podSizes.values()].some((sizes) => sizes.size > 1)).toBe(true);
   });
 });

@@ -21,6 +21,8 @@ import {
   parseClockPayload,
 } from '../protocol.ts';
 import { DayNightInterpolator } from './interpolation.ts';
+import { formatWorldTime } from './formatTime.ts';
+import { setWorldTimeText } from '../../../client/src/plugins/hudPanels.ts';
 import { skyStateAtPhase } from './sky.ts';
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
@@ -105,6 +107,14 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = ctx.onFrame((dt) => {
       interpolator.advance(dt);
 
+      // THE WORLD CLOCK READOUT (owner ask, 2026-08-21): the same interpolated
+      // phase that drives the sky also feeds the header's time text, so the
+      // clock and the sky can never disagree. Written every frame but as a
+      // minute-granular string — Solid's signal dedupes equal values, so the
+      // DOM updates once per in-world minute, not per frame. Cleared on
+      // dispose so a plugin unload leaves no frozen lie on the header.
+      setWorldTimeText(formatWorldTime(interpolator.samplePhase()));
+
       const reduced = reducedMotion?.matches() ?? false;
       if (reduced && hasPushedInitialSky) return;
 
@@ -121,6 +131,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
     interpolator.clear();
     hasPushedInitialSky = false;
+    setWorldTimeText(null);
 
     reducedMotion?.stop();
     reducedMotion = null;

@@ -36,15 +36,25 @@
 // Both are per-SECOND rates converted with the host's `dt`, so a server running
 // at any TICK_HZ behaves identically per simulated second (see CLOCK below).
 //
-// WHERE THE POPULATION SETTLES. With per-credit hatch rate 1/W and per-creature
-// departure rate 1/L, a habitat whose target is T settles at
+// WHERE THE POPULATION SETTLES. With per-credit hatch rate 1/W, per-creature
+// departure rate 1/L, and k the EFFECTIVE group size one spawn event delivers,
+// a habitat whose target is T settles at
 //
-//     N = T / (1 + W/L)
+//     N = T / (1 + W/(k·L))
 //
-// (arrivals (T−N)/W balance departures N/L). At the shipped W = 20 s and
-// L = 300 s that is T/1.067 ≈ 0.94·T: near the target, deliberately never
-// pinned to it. Tests assert BOUNDS around that, never an exact count — there
-// is no seeded RNG here and there should not be one.
+// The balance has to be struck in INDIVIDUALS, not events: one spawn event
+// delivers up to groupSize creatures (5 for fish, 3 for whales), so arrivals
+// measured in individuals are (T−N)·k/W, and those balance departures N/L. The
+// earlier form of this derivation, N = T/(1 + W/L), credited each event with a
+// single individual — that is the SOLITARY-species case (k = 1), still the
+// right figure for the deep-sea creature and the grazer: at the shipped
+// W = 20 s and L = 300 s it is T/1.067 ≈ 0.94·T. A group spawner settles much
+// closer to target: k = 5 gives T/(1 + 20/1500) ≈ 0.99·T for fish. Honest
+// caveat: k is the EFFECTIVE group size, smaller than groupSize when fewer
+// credits are ripe or when members land outside the habitat and are dropped,
+// so real group-spawner populations sit between the two figures. Tests assert
+// BOUNDS around all of this, never an exact count — there is no seeded RNG here
+// and there should not be one.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // ANTI-CHEAT BY OMISSION: every spawn candidate is drawn from the UNLOCKED chunk
@@ -66,6 +76,7 @@ import {
   type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
   roundBroadcastPosition,
+  sizeClassAt,
   sizeClassIndex,
 } from '../protocol.ts';
 import {
@@ -78,7 +89,7 @@ import {
   targetsFor,
 } from './census.ts';
 import { randomSigned } from './rng.ts';
-import { SCHOOLING_PROBABILITY_BY_SIZE, type SizeWeights, profileOf } from './species.ts';
+import { type SizeWeights, type SpeciesProfile, profileOf } from './species.ts';
 
 /** A living creature. Mutable — the tick loop writes these in place. */
 export interface WildlifeEntity {
@@ -396,15 +407,53 @@ function drawSizeClass(weights: SizeWeights): WildlifeSizeClass {
 }
 
 /**
+ * The size class of every member of one spawn group, in creation order.
+ *
+ * One draw shared by the whole group, or one draw each, per the species'
+ * `sizeDraw` — the two group shapes this plugin models (a size-graded shoal and
+ * a mixed family pod). Drawn up front rather than inside the creation loop so
+ * the group's own class is known BEFORE the first member exists, which is what
+ * the cohesion roll needs.
+ */
+function drawGroupSizes(profile: SpeciesProfile, wanted: number): WildlifeSizeClass[] {
+  if (profile.sizeDraw === 'per-member') {
+    return Array.from({ length: wanted }, () => drawSizeClass(profile.sizeWeights));
+  }
+  const shared = drawSizeClass(profile.sizeWeights);
+  return Array.from({ length: wanted }, () => shared);
+}
+
+/**
+ * The one class that stands for a whole group: its LARGEST member.
+ *
+ * A group needs a single answer to "how strongly does this school hold
+ * together", and for a mixed group the honest answer is set by its adults —
+ * three whales travelling with a bull are a bull's pod, not a calf's. For a
+ * graded group every member is that class already, so this is the identity and
+ * the caller needs no branch.
+ *
+ * An empty group (every member landed outside the habitat) has no largest
+ * member; DEFAULT_SIZE_CLASS stands in, and nothing is created either way.
+ */
+function groupSizeClassOf(sizes: readonly WildlifeSizeClass[]): WildlifeSizeClass {
+  let largest = -1;
+  for (const size of sizes) largest = Math.max(largest, sizeClassIndex(size));
+  return largest < 0 ? DEFAULT_SIZE_CLASS : sizeClassAt(largest);
+}
+
+/**
  * Spawns up to `wanted` creatures of one species around a seed cell. Members
  * that land outside the habitat are dropped rather than nudged inward: a school
  * that meets a shoreline should simply be smaller on that side.
  *
  * SCHOOL IDENTITY IS DECIDED HERE, once per group, in two rolls:
  *
- *   1. the group's SIZE CLASS, drawn from the species' weights;
- *   2. whether the group is COHESIVE, at SCHOOLING_PROBABILITY_BY_SIZE for that
- *      class — small fish nearly always, large fish nearly never.
+ *   1. the members' SIZE CLASSES, drawn from the species' weights — once for the
+ *      whole group or once per member, per the species' `sizeDraw` (a shoal is
+ *      graded, a pod is a mixed family);
+ *   2. whether the group is COHESIVE, at the species' own schooling probability
+ *      for the group's class — small fish nearly always, large fish nearly
+ *      never, whales at any size.
  *
  * A cohesive group shares one school id and will hold together (movement.ts) and
  * leave together (applyNaturalTurnover). A non-cohesive one hands every member
@@ -420,8 +469,8 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
   if (seed === null) return 0;
 
   const profile = profileOf(species);
-  const size = drawSizeClass(profile.sizeWeights);
-  const cohesive = Math.random() < SCHOOLING_PROBABILITY_BY_SIZE[size];
+  const sizes = drawGroupSizes(profile, wanted);
+  const cohesive = Math.random() < profile.schoolingProbabilityBySize[groupSizeClassOf(sizes)];
   // Allocated up front so every member of a cohesive group gets the same id even
   // though members are created one at a time.
   const groupSchoolId = nextSchoolId++;
@@ -440,7 +489,9 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
       id: allocateEntityId(),
       species,
       schoolId: cohesive ? groupSchoolId : nextSchoolId++,
-      size,
+      // Member n's own class: the same one for every member of a graded group,
+      // an independent draw for every member of a mixed one.
+      size: sizes[n]!,
       x,
       y,
       heading,

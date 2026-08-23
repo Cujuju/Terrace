@@ -127,7 +127,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // whose named residual this multiply is).
     root.position.set(
       entity.x * CELL_WORLD_SIZE,
-      creatureWorldY(entity.species, terrainY),
+      creatureWorldY(entity.species, terrainY, sizeClassAt(entity.size)),
       entity.y * CELL_WORLD_SIZE,
     );
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and the

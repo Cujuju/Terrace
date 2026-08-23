@@ -33,7 +33,11 @@ import { WILDLIFE_SIZE_MODEL_SCALE } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
 import { type WildlifeEntity, livingEntities } from './population.ts';
 import { randomSigned } from './rng.ts';
-import { SCHOOL_LOOSENESS_BY_SIZE, profileOf } from './species.ts';
+import {
+  SCHOOL_LOOSENESS_BY_SIZE,
+  SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS,
+  profileOf,
+} from './species.ts';
 
 /**
  * How far ahead a creature checks, expressed in seconds of its own travel. It
@@ -136,8 +140,8 @@ export const FLEE_DURATION_SECONDS = 2.5;
  * is born with (GROUP_SCATTER_BODY_LENGTHS × a fish's 0.7-unit body), so a newborn school
  * does not clench inward the moment it appears.
  *
- * Scaled per size class by SCHOOL_LOOSENESS_BY_SIZE: this is the SMALL-fish
- * figure, and larger classes hold proportionally more space.
+ * Scaled per creature by schoolLoosenessOf: this is the SMALL-fish figure, and
+ * a larger class — or a larger species — holds proportionally more space.
  */
 export const SCHOOL_COMFORT_RADIUS_CELLS = cellsAcross(2.5);
 
@@ -166,8 +170,8 @@ export const SCHOOL_FULL_PULL_RADIUS_CELLS = cellsAcross(5);
  * the full-pull radius sits at 5 and not at 10: a fish must start correcting
  * early enough that the overshoot still lands inside a readable blob.
  *
- * Divided per size class by SCHOOL_LOOSENESS_BY_SIZE (large fish are slower to
- * close a gap they were more relaxed about in the first place).
+ * Divided per creature by schoolLoosenessOf (a larger animal is slower to close
+ * a gap it was more relaxed about in the first place).
  */
 export const SCHOOL_MAX_PULL_RADIANS_PER_SECOND = 3;
 
@@ -206,6 +210,27 @@ export function speedOf(entity: WildlifeEntity): number {
   return entity.fleeSecondsRemaining > 0 ? cruise * FLEE_SPEED_MULTIPLIER : cruise;
 }
 
+/**
+ * This creature's school-spacing multiplier: how much more room than a small
+ * fish it keeps from its schoolmates, and how much more slowly it closes a gap.
+ *
+ * Two independent terms, because a creature is bigger in two independent ways:
+ *
+ *   * its SIZE CLASS within the species (SCHOOL_LOOSENESS_BY_SIZE) — a large
+ *     fish keeps a body length or two more space than a small one;
+ *   * its SPECIES' body length against the fish these radii were calibrated for
+ *     (SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS) — a whale is seven times a
+ *     fish and holds seven times the distance.
+ *
+ * The species term is exactly 1 for the fish by construction, so this cannot
+ * move the only school the constants above were ever tuned against.
+ */
+export function schoolLoosenessOf(entity: WildlifeEntity): number {
+  const species = profileOf(entity.species).bodyLengthCells
+    / SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS;
+  return SCHOOL_LOOSENESS_BY_SIZE[entity.size] * species;
+}
+
 /** This creature's actual length in cells: the species' figure, scaled by size. */
 export function bodyLengthCellsOf(entity: WildlifeEntity): number {
   return profileOf(entity.species).bodyLengthCells * WILDLIFE_SIZE_MODEL_SCALE[entity.size];
@@ -224,13 +249,19 @@ export function bodyLengthCellsOf(entity: WildlifeEntity): number {
  * overlap or hold fish a whale's length apart.
  *
  * IT DOES NOT FIGHT THE SCHOOL. Cohesion only starts pulling outside
- * SCHOOL_COMFORT_RADIUS_CELLS (2.5 cells for a small fish, scaled up per size
- * class), and the separation floor for two small fish is 0.42 cells — a sixth of
- * that. The two terms therefore act on disjoint distance ranges: separation
- * keeps bodies from interpenetrating, cohesion keeps the group together, and
- * neither is ever the thing overruling the other. The only species whose
- * separation is large in absolute terms is the whale, which has groupSize 1 and
- * so has no school to fight.
+ * SCHOOL_COMFORT_RADIUS_CELLS (2.5 cells for a small fish, scaled up per
+ * creature by schoolLoosenessOf), and the separation floor for two small fish is
+ * 0.42 cells — a sixth of that. The two terms therefore act on disjoint distance
+ * ranges: separation keeps bodies from interpenetrating, cohesion keeps the
+ * group together, and neither is ever the thing overruling the other.
+ *
+ * THAT DISJOINTNESS IS WHY LOOSENESS SCALES WITH SPECIES BODY LENGTH. Both terms
+ * here are proportional to the body — separation is half of it, cohesion's
+ * radii are a multiple of the fish it was calibrated against — so as long as the
+ * second scales the same way the first does, the gap between them holds for any
+ * size of animal. When whales started podding (2026-08-21) an unscaled comfort
+ * radius of 2.5 cells would have sat INSIDE the 2.5-cell personal space of a
+ * five-unit body, and the two terms would have met for the first time.
  */
 export function personalSpaceCellsOf(entity: WildlifeEntity): number {
   return bodyLengthCellsOf(entity) / 2;
@@ -357,9 +388,9 @@ export function summarizeSchools(
  * rest of its school: zero inside the comfort radius, ramping linearly to the
  * maximum at the full-pull radius, flat beyond it.
  *
- * `looseness` is the size class's SCHOOL_LOOSENESS_BY_SIZE multiplier: it widens
- * both radii and softens the maximum, which is the whole of "bigger fish school
- * more loosely".
+ * `looseness` is the caller's spacing multiplier (schoolLoosenessOf for a
+ * swimmer): it widens both radii and softens the maximum, which is the whole of
+ * "a bigger animal schools more loosely".
  */
 export function cohesionPullRadiansPerSecond(distanceCells: number, looseness: number): number {
   const comfort = SCHOOL_COMFORT_RADIUS_CELLS * looseness;
@@ -413,8 +444,8 @@ export function turnToward(
  * two members, including self would halve the perceived offset and make the
  * smallest, most fragile schools the loosest ones.
  *
- * `looseness` is the caller's spacing multiplier — SCHOOL_LOOSENESS_BY_SIZE for
- * a fish, BIRD_FLOCK_LOOSENESS for a bird. It is a parameter rather than a
+ * `looseness` is the caller's spacing multiplier — schoolLoosenessOf for a fish
+ * or a whale, BIRD_FLOCK_LOOSENESS for a bird. It is a parameter rather than a
  * lookup inside this function so the steering stays pure geometry and works for
  * any group of any species (see SchoolMember).
  */
@@ -524,6 +555,9 @@ export function steerToValidHeading(
  * A creature that cannot find any valid heading holds its position for this
  * tick, facing whichever way it already was (see the two-stage steer below) —
  * un-wedging happens by trying again next tick, never by placing it illegally.
+ * "Holds its position" means holds its HEADING too: the heading is committed
+ * together with the position, at the very end, so a vetoed step leaves both
+ * exactly as the tick found them.
  *
  * `school` is the summary of the creature's own school as it stood at the START
  * of the tick (see summarizeSchools); omitting it steers with wander alone,
@@ -555,7 +589,7 @@ export function advanceEntity(
   const desired =
     fleeing || school === undefined
       ? wander
-      : steerWithSchool(entity, school, SCHOOL_LOOSENESS_BY_SIZE[entity.size], wander, dt);
+      : steerWithSchool(entity, school, schoolLoosenessOf(entity), wander, dt);
   const lookahead = lookaheadCellsFor(entity);
   // Shorter probe used by the contour-following fallback below, both when
   // the primary sweep is fully boxed in and when the belt-and-suspenders
@@ -587,7 +621,14 @@ export function advanceEntity(
     return;
   }
 
-  entity.heading = steered;
+  // `steered` is still only a CANDIDATE — it is deliberately NOT written to
+  // entity.heading here. The destination re-check below can still veto this
+  // step, and a vetoed step must leave the heading alone as well: committing
+  // early made a wedged creature spin through headings it could not travel
+  // along and depart in an arbitrary direction once the obstacle cleared, and
+  // it made the retry sweep below start from the vetoed heading instead of the
+  // pre-tick one. Heading and position are committed together, exactly once,
+  // at the bottom.
   let nextX = entity.x + Math.cos(steered) * stepCells;
   let nextY = entity.y + Math.sin(steered) * stepCells;
 
@@ -606,14 +647,15 @@ export function advanceEntity(
     // Same contour-following idea as above, one more time: the coarse sweep
     // said `steered` was fine at `lookahead`, but the actual one-tick step
     // lands somewhere it isn't — a thin obstacle or a corner the sweep
-    // stepped past. Re-sweep from the current heading at the short distance
-    // before giving up to holding position this tick.
+    // stepped past. Re-sweep from the PRE-TICK heading — genuinely the current
+    // one now, since the candidate above has not been committed — at the short
+    // distance before giving up to holding position this tick.
     const retry = steerToValidHeading(world, entity, entity.heading, contourLookahead, stepCells, occupants);
     if (retry === null) return; // hold position, keep facing as-is.
 
-    entity.heading = retry;
-    nextX = entity.x + Math.cos(retry) * stepCells;
-    nextY = entity.y + Math.sin(retry) * stepCells;
+    steered = retry;
+    nextX = entity.x + Math.cos(steered) * stepCells;
+    nextY = entity.y + Math.sin(steered) * stepCells;
     if (
       !isValidCellFor(world, entity.species, nextX, nextY) ||
       !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
@@ -622,6 +664,10 @@ export function advanceEntity(
     }
   }
 
+  // The step is known good: commit heading and position together, here and
+  // nowhere else. Every "hold position" return above therefore leaves BOTH
+  // exactly as the tick found them.
+  entity.heading = steered;
   entity.x = nextX;
   entity.y = nextY;
 }

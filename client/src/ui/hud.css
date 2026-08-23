@@ -882,3 +882,96 @@ button.world-header {
 .restore-sheet .hud-hint {
   max-width: none;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLDS (multi-world, 2026-08-22). The world-manager panel reuses the
+   restore sheet wholesale — same scrim, same sheet, same button vocabulary —
+   because they are the same KIND of thing: an operator's document about the
+   world, covering the instruments while it is open. Only the row needs more
+   structure than a restore point does, because a world row carries a name, a
+   line of facts about it, and up to five controls.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* The row becomes a two-line block rather than the restore point's single
+   line: name and facts stack, controls wrap onto their own line beneath. */
+.restore-row-main {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.restore-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The world you are in. A left border, not a background: the row must still
+   read as one of the list, and a filled row would look like a selection the
+   operator made rather than a fact about the server. */
+.restore-row.current {
+  border-left: 2px solid rgba(120, 200, 255, 0.8);
+}
+
+.restore-row code {
+  opacity: 0.65;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLD BANNER. A switch countdown, or "no world is loaded" — shown to every
+   player, not just an operator.
+
+   TOP CENTRE, and deliberately not in the corner panels: this is the one
+   message that is about to change everything the player is looking at, and it
+   has to be findable by someone who has never opened a HUD panel. It is
+   pointer-transparent so it can never swallow a click meant for the terrain
+   underneath it.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.world-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 6px 14px;
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  background: var(--hud-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  z-index: 11;
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLD THUMBNAIL (2026-08-22). A 64px top-down picture of the world, so a
+   list of five worlds is browsed by SHAPE rather than by reading five names.
+
+   NEAREST-NEIGHBOUR SCALING is deliberate: the source really is 64 pixels
+   across, and smoothing it would imply detail that is not there.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.world-thumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 3px;
+  border: 1px solid var(--hud-border);
+  /* Both spellings: `pixelated` is the standard, `crisp-edges` is what older
+     WebKit answers to, and a blurred thumbnail is the failure mode. */
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+/* A world whose picture has not been drawn yet (its newest snapshot predates
+   thumbnails, and it is the loaded world so the backfill left it alone). A
+   flat panel, not a spinner: it fills in on the next snapshot by itself, and
+   nothing is broken in the meantime. */
+.world-thumb--empty {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* The row was a two-line block; with a picture it becomes picture + block, so
+   the text side has to stop demanding the full width. */
+.restore-row .world-thumb + .restore-row-main {
+  flex: 1 1 12rem;
+}

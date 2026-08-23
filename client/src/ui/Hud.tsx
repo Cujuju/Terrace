@@ -53,6 +53,9 @@ import { pluginHudPanels } from '../plugins/hudPanels.ts';
 import { VersionWatermark } from './VersionWatermark.tsx';
 import { RestorePoints, type RollbackActions } from './RestorePoints.tsx';
 import { restorePanelOpen, setRestorePanelOpen } from '../state/rollbackState.ts';
+import { WorldManager, type WorldActions } from './WorldManager.tsx';
+import { WorldSwitchBanner } from './WorldSwitchBanner.tsx';
+import { worldPanelOpen, setWorldPanelOpen } from '../state/worldsState.ts';
 import {
   BRUSH_PROFILES,
   BRUSH_RADII,
@@ -73,13 +76,8 @@ import {
   type SculptMode,
 } from '../state/hudState.ts';
 import {
-  ACTION_PRECEDENCE,
   controlBindings,
-  twoFingerGesture,
-  wheelBehaviour,
-  type ControlAction,
   type ControlBindings,
-  type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
@@ -127,13 +125,6 @@ const PROFILE_TITLE: Record<SculptProfile, string> = {
   hard: 'One terrace at a time: levels the lowest ground under the brush before starting the next. With Smooth, one flat lift that then slumps.',
 };
 
-const HINT_VERB: Record<ControlAction, string> = {
-  raise: 'raises',
-  lower: 'lowers',
-  orbit: 'orbits',
-  pan: 'pans',
-};
-
 const HINT_BUTTON: Record<string, string> = {
   left: 'Left',
   middle: 'Middle',
@@ -158,19 +149,6 @@ const HINT_MODIFIER: Record<string, string> = {
   alt: 'Alt+',
 };
 
-/** "Left-drag raises · Shift+Left-drag lowers · …" from the live bindings. */
-function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
-  const parts = ACTION_PRECEDENCE.map((action) => {
-    const b = bindings[action];
-    return `${HINT_MODIFIER[b.modifier]}${HINT_BUTTON[b.button]}-drag ${HINT_VERB[action]}`;
-  });
-  // The wheel verb follows the preference (input/wheelCamera.ts) — it is the
-  // one modifier-free gesture the user can change. Pinch and Alt+scroll are
-  // fixed in both modes, so they are stated flatly.
-  const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
-  return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
-}
-
 /**
  * The Mode button's tooltip. It names the LIVE lower binding rather than a
  * hardcoded "Shift", because that binding is user-editable in the Controls
@@ -188,7 +166,22 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
     : `Drags pile land up — click or tap to switch to lowering, or ${chord}-drag to lower.`;
 }
 
+/**
+ * The corner panel's collapsed-tab word: the first 'panel' plugin's name,
+ * capitalised ("relics" → "Relics"); falls back to "Info" when no plugin has
+ * claimed the corner, so the tab is never empty.
+ */
+function cornerTabName(): string {
+  const first = pluginHudPanels().find((p) => p.placement === 'panel');
+  if (first === undefined) return 'Info';
+  // A plugin may supply a live tab label (relics: "Relics (3)"); otherwise
+  // the capitalised registration name stands in.
+  return first.tabSummary?.() ?? first.pluginName.charAt(0).toUpperCase() + first.pluginName.slice(1);
+}
+
 export function Hud(props: {
+  /** What the world-manager panel may ask the server to do (multi-world). */
+  worlds: WorldActions;
   /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
   chartSource: () => ChartSource | null;
   /**
@@ -470,6 +463,23 @@ export function Hud(props: {
           <button
             type="button"
             class="hud-panel hud-settings-button"
+            classList={{ open: worldPanelOpen() }}
+            aria-expanded={worldPanelOpen()}
+            aria-haspopup="dialog"
+            aria-label="Worlds"
+            title="Worlds: create, load and archive the worlds on this server."
+            onClick={() => setWorldPanelOpen(!worldPanelOpen())}
+          >
+            {/* A stack of map layers: several worlds, one on top. */}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
+              <path d="m3 12 9 4.5L21 12" />
+              <path d="m3 16.5 9 4.5 9-4.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="hud-panel hud-settings-button"
             classList={{ open: restorePanelOpen() }}
             aria-expanded={restorePanelOpen()}
             aria-haspopup="dialog"
@@ -498,8 +508,9 @@ export function Hud(props: {
         </div>
       </div>
 
-      {/* TOP LEFT — the INFO panel: plugin 'panel' panels and the control
-          descriptions. Collapses to a tab exactly as the old all-in-one panel
+      {/* TOP LEFT — the INFO panel: plugin 'panel' panels. The control
+          descriptions moved to the settings popup (owner, 2026-08-21), so
+          this corner is purely plugin content. Collapses to a tab exactly as the old all-in-one panel
           did (owner, 2026-08-14: on a phone the open panel hides half the
           world). The connection no longer rides on either face — it is its own
           button in the bottom-right column now (see this file's header), which
@@ -511,16 +522,22 @@ export function Hud(props: {
             type="button"
             class="hud-panel hud-anchor-top-left hud-panel-tab"
             aria-expanded={false}
-            title="Open the help panel."
+            title="Open the panel."
             onClick={() => setPanelOpen(true)}
           >
-            Info ▸
+            {/* The tab is named by the panel's first plugin — "Relics", not a
+                generic "Info" — capitalised from the plugin's registration
+                name; with no plugins it falls back to the old word. */}
+            {cornerTabName()}
           </button>
         }
       >
         <div class="hud-panel hud-anchor-top-left">
           {/* The header row IS the collapse control — the panel's first row on
-              every device, so open and closed toggle in the same place. */}
+              every device, so open and closed toggle in the same place. It
+              carries no word of its own: its content is the plugins'
+              headerSummary lines (relics' "Relics · N in the world"), which
+              also name the collapsed tab below. */}
           <button
             type="button"
             class="hud-row panel-header"
@@ -528,7 +545,13 @@ export function Hud(props: {
             title="Collapse this panel."
             onClick={() => setPanelOpen(false)}
           >
-            <span class="status-label">Info</span>
+            <For
+              each={pluginHudPanels().filter(
+                (p) => p.placement === 'panel' && p.headerSummary,
+              )}
+            >
+              {(panel) => <Dynamic component={panel.headerSummary} />}
+            </For>
             <span class="panel-chevron">▴</span>
           </button>
 
@@ -544,16 +567,6 @@ export function Hud(props: {
               </div>
             )}
           </For>
-
-          <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
-          {/* Touch capability is static per device, so the guard can be a
-              plain expression — it never needs to re-run. */}
-          <Show when={navigator.maxTouchPoints > 0}>
-            <p class="hud-hint">
-              1-finger sculpts (tap Mode to switch) · 2-finger{' '}
-              {twoFingerGesture() === 'orbit' ? 'orbits' : 'pans'} + pinch zooms
-            </p>
-          </Show>
         </div>
       </Show>
 
@@ -569,6 +582,16 @@ export function Hud(props: {
       <Show when={restorePanelOpen()}>
         <RestorePoints actions={props.rollback} />
       </Show>
+
+      {/* The world-manager overlay, mounted only while open — it asks the
+          server for nothing until the operator types a key and presses List. */}
+      <Show when={worldPanelOpen()}>
+        <WorldManager actions={props.worlds} />
+      </Show>
+
+      {/* Not gated on the panel: a switch countdown and "no world loaded" are
+          shown to every player, whether or not they hold a key. */}
+      <WorldSwitchBanner />
 
     </div>
   );

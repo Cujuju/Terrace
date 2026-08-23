@@ -884,6 +884,21 @@ export const plugin: TerracePlugin = {
     // world's difficulty — which is why it is read here, from the WorldApi, and
     // not from a module-level constant.
     regenPerSecond = resolveManaRegenPerSecond(process.env[MANA_REGEN_ENV], world.difficulty);
+
+    // PER-PLAYER STATE BELONGS TO THE WORLD IT WAS EARNED IN (multi-world,
+    // 2026-08-22). onWorldCreate now runs whenever a DIFFERENT world is loaded
+    // into this process, not only at boot, and these two maps are module-level
+    // — so without clearing them a perk granted in one world would follow its
+    // holder into the next one, and a stale pool would be handed to whoever
+    // the transport later reuses that session id for.
+    //
+    // Safe for both callers of onWorldCreate. A world SWITCH re-runs
+    // onPlayerJoin for every carried player straight afterwards, which mints a
+    // fresh pool anyway; a ROLLBACK does not, and there `poolFor` creates one
+    // lazily at capacity on first use. Neither leaves a player unable to
+    // sculpt.
+    poolsByPlayer.clear();
+    perksByPlayer.clear();
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {

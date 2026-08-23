@@ -16,6 +16,7 @@ import {
   wheelBehaviour,
   type BindingModifier,
   type ControlAction,
+  type ControlBindings,
   type MouseButtonName,
   type TwoFingerGesture,
   type WheelBehaviour,
@@ -38,6 +39,40 @@ const ACTION_EFFECT: Record<ControlAction, string> = {
   lower: 'dig land down',
   orbit: 'swing the camera around the world',
   pan: 'slide the view sideways',
+};
+
+const HINT_VERB: Record<ControlAction, string> = {
+  raise: 'raises',
+  lower: 'lowers',
+  orbit: 'orbits',
+  pan: 'pans',
+};
+
+/** "Left-drag raises · Shift+Left-drag lowers · …" from the live bindings. */
+function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
+  const parts = ACTION_PRECEDENCE.map((action) => {
+    const b = bindings[action];
+    return `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag ${HINT_VERB[action]}`;
+  });
+  // The wheel verb follows the preference (input/wheelCamera.ts) — it is the
+  // one modifier-free gesture the user can change. Pinch and Alt+scroll are
+  // fixed in both modes, so they are stated flatly.
+  const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
+  return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
+}
+
+const HINT_MODIFIER: Record<BindingModifier, string> = {
+  none: '',
+  shift: 'Shift+',
+  ctrl: 'Ctrl+',
+  alt: 'Alt+',
+};
+
+/** Button captions reused by the hint text above. */
+const BUTTON_LABEL: Record<MouseButtonName, string> = {
+  left: 'Left',
+  middle: 'Middle',
+  right: 'Right',
 };
 
 const BUTTON_OPTIONS: readonly { value: MouseButtonName; label: string }[] = [
@@ -140,6 +175,20 @@ export function ControlsPanel(): JSX.Element {
             .map((a) => ACTION_LABEL[a])
             .join(', ')}{' '}
           will never trigger.
+        </p>
+      </Show>
+
+      {/* The interface summary that used to head the info panel: what the
+          live (possibly rebound) gestures do. It lives here, next to the very
+          controls it describes, so changing a binding updates the sentence
+          beside it rather than somewhere across the screen. */}
+      <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
+      {/* Touch capability is static per device, so the guard can be a plain
+          expression — it never needs to re-run. */}
+      <Show when={navigator.maxTouchPoints > 0}>
+        <p class="hud-hint">
+          1-finger sculpts (tap Mode to switch) · 2-finger{' '}
+          {twoFingerGesture() === 'orbit' ? 'orbits' : 'pans'} + pinch zooms
         </p>
       </Show>
 

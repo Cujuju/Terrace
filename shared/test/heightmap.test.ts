@@ -326,7 +326,18 @@ describe('applySculpt (the full server/prediction operation)', () => {
     expect(a.cells).toEqual(b.cells);
   });
 
-  it('survives a ceiling-burying stack of sculpts: clamped, invariant intact', () => {
+  // AN EXPLICIT TIMEOUT, because this test's WORK is derived from constants
+  // that have grown twice. STACKED_CLICKS is (MAX_HEIGHT * 6) /
+  // DEFAULT_SCULPT_AMOUNT, so re-terracing (BAND_HEIGHT 64→16) multiplied the
+  // loop by four and the quarter-cell re-sample widened what each of those
+  // clicks touches. It now runs at ~5.0 s against vitest's 5 000 ms default —
+  // i.e. it fails or passes depending on what else the machine is doing, which
+  // made `pnpm test` flaky for everyone rather than telling anybody anything.
+  //
+  // Raising the budget is the honest fix for a test that is legitimately long;
+  // whether it should still be doing this much work after the re-sample is a
+  // separate question (issue #83), and one for whoever owns the re-sample.
+  it('survives a ceiling-burying stack of sculpts: clamped, invariant intact', { timeout: 30_000 }, () => {
     // Six full ceilings of raw input, far more than the map can hold — which
     // is the point. STATED IN HEIGHT UNITS, not as a click count (it was the
     // literal 100): a click is one band, so at BAND_HEIGHT 16 a hundred clicks
