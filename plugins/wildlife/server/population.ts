@@ -36,15 +36,25 @@
 // Both are per-SECOND rates converted with the host's `dt`, so a server running
 // at any TICK_HZ behaves identically per simulated second (see CLOCK below).
 //
-// WHERE THE POPULATION SETTLES. With per-credit hatch rate 1/W and per-creature
-// departure rate 1/L, a habitat whose target is T settles at
+// WHERE THE POPULATION SETTLES. With per-credit hatch rate 1/W, per-creature
+// departure rate 1/L, and k the EFFECTIVE group size one spawn event delivers,
+// a habitat whose target is T settles at
 //
-//     N = T / (1 + W/L)
+//     N = T / (1 + W/(k·L))
 //
-// (arrivals (T−N)/W balance departures N/L). At the shipped W = 20 s and
-// L = 300 s that is T/1.067 ≈ 0.94·T: near the target, deliberately never
-// pinned to it. Tests assert BOUNDS around that, never an exact count — there
-// is no seeded RNG here and there should not be one.
+// The balance has to be struck in INDIVIDUALS, not events: one spawn event
+// delivers up to groupSize creatures (5 for fish, 3 for whales), so arrivals
+// measured in individuals are (T−N)·k/W, and those balance departures N/L. The
+// earlier form of this derivation, N = T/(1 + W/L), credited each event with a
+// single individual — that is the SOLITARY-species case (k = 1), still the
+// right figure for the deep-sea creature and the grazer: at the shipped
+// W = 20 s and L = 300 s it is T/1.067 ≈ 0.94·T. A group spawner settles much
+// closer to target: k = 5 gives T/(1 + 20/1500) ≈ 0.99·T for fish. Honest
+// caveat: k is the EFFECTIVE group size, smaller than groupSize when fewer
+// credits are ripe or when members land outside the habitat and are dropped,
+// so real group-spawner populations sit between the two figures. Tests assert
+// BOUNDS around all of this, never an exact count — there is no seeded RNG here
+// and there should not be one.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // ANTI-CHEAT BY OMISSION: every spawn candidate is drawn from the UNLOCKED chunk

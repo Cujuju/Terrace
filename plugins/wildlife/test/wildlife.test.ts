@@ -93,10 +93,12 @@ import {
   cohesionPullRadiansPerSecond,
   personalSpaceCellsOf,
   isFleeing,
+  lookaheadCellsFor,
   schoolLoosenessOf,
   normalizeAngle,
   speedOf,
   startleNear,
+  steerToValidHeading,
   steerWithSchool,
   summarizeSchools,
 } from '../server/movement.ts';
@@ -1585,6 +1587,110 @@ describe('habitat beats cohesion', () => {
     // the habitat sweep tidying up afterwards.
     expect(despawnInvalidHabitat(view)).toBe(0);
     expect(livingEntities()).toHaveLength(SCHOOL_UNDER_TEST_MEMBERS);
+  });
+});
+
+/**
+ * A vetoed step must leave the HEADING alone as well as the position.
+ *
+ * THE FIXTURE IS THE WHOLE TEST, so it is derived rather than guessed. Three
+ * distances decide which branch of advanceEntity runs, and all three are read
+ * off the species table rather than typed in:
+ *
+ *   step      = cruise x TICK_DT              = 1.2 cells — where the creature
+ *                                                would actually land;
+ *   lookahead = cruise x LOOKAHEAD_SECONDS    = 7.2 cells — the only point the
+ *                                                compass sweep validates;
+ *   contour   = lookahead / the fallback divisor = 3.6 cells — the short probe.
+ *
+ * So the fixture is ONE RING OF LAND on the eight cells touching the creature's
+ * own: at 1.2 cells every candidate heading lands inside that ring (a 1.2-cell
+ * step from a cell centre always crosses into a neighbouring cell, diagonals
+ * included), while at 3.6 and 7.2 cells every endpoint is open water beyond it.
+ * The sweep therefore SUCCEEDS and the destination re-check VETOES — which is
+ * the only path that reaches the two late "hold position" returns, and exactly
+ * the blind spot the belt-and-suspenders re-check exists for.
+ *
+ * A ring even one cell thicker would fail the sweep instead and exit at the
+ * early boxed-in return, which never had this bug and would make the test pass
+ * against the broken code.
+ */
+describe('a vetoed step leaves both position and heading alone', () => {
+  /** Chebyshev distance, in CELLS, of the ring from the creature's own cell. */
+  const RING_CHEBYSHEV_CELLS = 1;
+  /** Mid-cell placement: a creature's position is the centre of its cell. */
+  const CELL_CENTRE_OFFSET = 0.5;
+  const RING_LAND_HEIGHT = SEA_LEVEL + BAND_HEIGHT;
+  /** Due +X. Any fixed value works — the point is that it is unchanged. */
+  const WEDGED_HEADING = 0;
+  /**
+   * Headings sampled around the full circle when proving the ring is closed.
+   * 64 puts a sample every 5.6 degrees — far finer than the 45-degree steps the
+   * compass sweep itself takes, so no candidate it could pick goes unchecked.
+   */
+  const FULL_TURN_SAMPLES = 64;
+
+  /** Water everywhere except the eight cells ringing SCHOOL_ORIGIN_CELL. */
+  function wedgedWorld(): World {
+    return worldWithTerrain(WORLD_SIZE, (x, y) =>
+      Math.max(Math.abs(x - SCHOOL_ORIGIN_CELL), Math.abs(y - SCHOOL_ORIGIN_CELL)) ===
+      RING_CHEBYSHEV_CELLS
+        ? RING_LAND_HEIGHT
+        : OPEN_SHALLOW_HEIGHT,
+    );
+  }
+
+  function wedgedFish(): WildlifeEntity {
+    return {
+      id: 1,
+      species: 'fish',
+      schoolId: 1,
+      size: 'small',
+      x: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
+      y: SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET,
+      heading: WEDGED_HEADING,
+      fleeSecondsRemaining: 0,
+    };
+  }
+
+  it('holds the fixture premise: the sweep succeeds where the step is refused', () => {
+    // Asserted rather than assumed, because if this stops being true the test
+    // below still passes while measuring the wrong branch entirely.
+    const view = habitatView(wedgedWorld());
+    const subject = wedgedFish();
+    const step = speedOf(subject) * TICK_DT;
+    const lookahead = lookaheadCellsFor(subject);
+
+    expect(step).toBeLessThan(RING_CHEBYSHEV_CELLS + CELL_CENTRE_OFFSET * 2);
+    expect(lookahead).toBeGreaterThan(RING_CHEBYSHEV_CELLS + CELL_CENTRE_OFFSET * 2);
+    // The sweep's endpoint is open water in every direction...
+    expect(
+      steerToValidHeading(view, subject, WEDGED_HEADING, lookahead, step),
+    ).not.toBeNull();
+    // ...and the place one tick of travel actually puts it is not.
+    for (let turn = 0; turn < FULL_TURN_SAMPLES; turn++) {
+      const heading = (turn / FULL_TURN_SAMPLES) * Math.PI * 2;
+      const stepX = subject.x + Math.cos(heading) * step;
+      const stepY = subject.y + Math.sin(heading) * step;
+      expect(isValidCellFor(view, 'fish', stepX, stepY)).toBe(false);
+    }
+  });
+
+  it('ends the tick with its original position AND heading', () => {
+    // No school argument: the habitat veto is the only thing acting this tick.
+    const view = habitatView(wedgedWorld());
+    const subject = wedgedFish();
+
+    advanceEntity(view, subject, TICK_DT);
+
+    expect(subject.x).toBe(SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET);
+    expect(subject.y).toBe(SCHOOL_ORIGIN_CELL + CELL_CENTRE_OFFSET);
+    // The regression: committing the candidate heading before the destination
+    // re-check left this set to a heading the creature was just proven unable
+    // to travel along, while the comment beside the return said "keep facing
+    // as-is". Wander noise makes the broken value differ from WEDGED_HEADING
+    // on essentially every run.
+    expect(subject.heading).toBe(WEDGED_HEADING);
   });
 });
 

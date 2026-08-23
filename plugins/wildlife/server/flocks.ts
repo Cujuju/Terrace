@@ -72,11 +72,12 @@ const BIRD_SPECIES: WildlifeFlockSpecies = 'bird';
  * Cruise speed of a bird, in cells per second.
  *
  * The ceiling is set by the broadcast, not by ornithology: at the 5 Hz cadence a
- * creature that covers more than ~1.8 cells between updates is past what
+ * creature that covers more than ~1.8 WORLD UNITS between updates is past what
  * client-side interpolation has been argued to render smoothly (index.ts's
- * header sizes that bound against a fleeing fish, 3 cells/s × 3 × 0.2 s = 1.8).
- * 8 cells/s × 0.2 s = 1.6 cells sits just under it, so birds need no cadence of
- * their own.
+ * header sizes that bound against a fleeing fish, 3 units/s × 3 × 0.2 s = 1.8).
+ * This constant is cellsAcross(8) = 32 cells/s, i.e. 8 world units/s, so
+ * 8 units/s × 0.2 s = 1.6 world units sits just under it, and birds need no
+ * cadence of their own.
  *
  * That it is also 2.7× a fish and 5× a grazer is the point: birds are the
  * fastest thing in the world, they cross rather than mill, and at this speed a
@@ -201,8 +202,10 @@ export const FLOCK_MEAN_SPAWN_INTERVAL_SECONDS = 60;
 /**
  * How far outside the world's own corner a flock is born and dies, in cells.
  *
- * One chunk. The crossing ring (below) already circumscribes the square world,
- * so this is pure margin: it puts the birth and death of a flock beyond the
+ * One NEIGHBOURHOOD, not one chunk: NEIGHBOURHOOD_CELLS is 16 world units
+ * across (64 cells), which is four chunks (CHUNK_SIZE is CHUNK_SPAN ×
+ * WORLD_UNIT_CELLS = 16 cells). The crossing ring (below) already
+ * circumscribes the square world, so this is pure margin: it puts the birth and death of a flock beyond the
  * furthest cell any player can be looking at, so flocks are never seen popping
  * into or out of existence — they fly in from off the map and off it again.
  */

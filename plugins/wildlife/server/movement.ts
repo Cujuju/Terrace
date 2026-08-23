@@ -555,6 +555,9 @@ export function steerToValidHeading(
  * A creature that cannot find any valid heading holds its position for this
  * tick, facing whichever way it already was (see the two-stage steer below) —
  * un-wedging happens by trying again next tick, never by placing it illegally.
+ * "Holds its position" means holds its HEADING too: the heading is committed
+ * together with the position, at the very end, so a vetoed step leaves both
+ * exactly as the tick found them.
  *
  * `school` is the summary of the creature's own school as it stood at the START
  * of the tick (see summarizeSchools); omitting it steers with wander alone,
@@ -618,7 +621,14 @@ export function advanceEntity(
     return;
   }
 
-  entity.heading = steered;
+  // `steered` is still only a CANDIDATE — it is deliberately NOT written to
+  // entity.heading here. The destination re-check below can still veto this
+  // step, and a vetoed step must leave the heading alone as well: committing
+  // early made a wedged creature spin through headings it could not travel
+  // along and depart in an arbitrary direction once the obstacle cleared, and
+  // it made the retry sweep below start from the vetoed heading instead of the
+  // pre-tick one. Heading and position are committed together, exactly once,
+  // at the bottom.
   let nextX = entity.x + Math.cos(steered) * stepCells;
   let nextY = entity.y + Math.sin(steered) * stepCells;
 
@@ -637,14 +647,15 @@ export function advanceEntity(
     // Same contour-following idea as above, one more time: the coarse sweep
     // said `steered` was fine at `lookahead`, but the actual one-tick step
     // lands somewhere it isn't — a thin obstacle or a corner the sweep
-    // stepped past. Re-sweep from the current heading at the short distance
-    // before giving up to holding position this tick.
+    // stepped past. Re-sweep from the PRE-TICK heading — genuinely the current
+    // one now, since the candidate above has not been committed — at the short
+    // distance before giving up to holding position this tick.
     const retry = steerToValidHeading(world, entity, entity.heading, contourLookahead, stepCells, occupants);
     if (retry === null) return; // hold position, keep facing as-is.
 
-    entity.heading = retry;
-    nextX = entity.x + Math.cos(retry) * stepCells;
-    nextY = entity.y + Math.sin(retry) * stepCells;
+    steered = retry;
+    nextX = entity.x + Math.cos(steered) * stepCells;
+    nextY = entity.y + Math.sin(steered) * stepCells;
     if (
       !isValidCellFor(world, entity.species, nextX, nextY) ||
       !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
@@ -653,6 +664,10 @@ export function advanceEntity(
     }
   }
 
+  // The step is known good: commit heading and position together, here and
+  // nowhere else. Every "hold position" return above therefore leaves BOTH
+  // exactly as the tick found them.
+  entity.heading = steered;
   entity.x = nextX;
   entity.y = nextY;
 }

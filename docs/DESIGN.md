@@ -3023,14 +3023,19 @@ new capability for the species that had neither.
 6. **Swim clearances scale with the size class** (`swimmerWorldY` takes the
    model scale as a REQUIRED argument). A clearance is the model's own
    half-height plus a little water, and the class scales the model but was
-   scaling nothing in placement. This was already wrong before whales: a large
-   fish is 1.4 × 0.26 = 0.36 world units tall against a 0.3 minimum
-   submergence, so its dorsal has been poking through the sea surface since
-   size classes shipped — `protocol.ts` called 0.36 "comfortably inside" 0.3,
-   which is arithmetic that says the reverse of its own conclusion. At whale
-   scale the same error would have put a bull's belly 0.1 units into the seabed
-   and its dorsal 0.24 above the waterline. Required rather than defaulted
-   because a default is exactly how the caller forgets.
+   scaling nothing in placement. CORRECTED 2026-08-22: this item originally
+   blamed the fish, computing its half-height from `ellipsoid()`'s full height
+   argument — 1.4 × 0.26 = 0.36 world units tall against a 0.3 minimum
+   submergence, with `protocol.ts` calling 0.36 "comfortably inside" 0.3 — but
+   `ellipsoid()` takes FULL extents, a fish's half-height is 0.13, and
+   1.4 × 0.13 = 0.182 really is comfortably inside: there was never a fish bug.
+   The conclusion stands on the whale instead: `WHALE_ENVELOPE`
+   (whaleSpecies.ts) is a true half-extent envelope, and at the large class its
+   crown reaches 1.4 × 0.670 = 0.938 and its belly 1.4 × 0.575 = 0.805 below
+   the origin, against the whale profile's 0.7 minimum submergence and 0.7
+   minimum clearance — unscaled, a bull's belly would have sat 0.1 units into
+   the seabed and its dorsal 0.24 above the waterline. Required rather than
+   defaulted because a default is exactly how the caller forgets.
 
 **Day one and full reveal, restated against the code:**
 

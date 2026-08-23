@@ -204,12 +204,18 @@ export const UNKNOWN_TERRAIN_WORLD_Y = 0;
  * `modelScale` IS NOT OPTIONAL, and it is the fix for a bug the table above was
  * always one size class away from (found 2026-08-21, when whales gained size
  * classes). A clearance is the creature's own half-height plus a little water;
- * the class scales the model but was scaling nothing here, so at `large` (1.4x)
- * every swimmer's half-height outgrew the clearance written for it. A large fish
- * already breached the surface by 0.06 world units — 1.4 x its 0.26 half-height
- * is 0.36 against a 0.3 minSubmergence, which the protocol.ts note calls
- * "comfortably inside" and is in fact outside. A large whale would have put its
- * belly 0.1 units into the seabed and its dorsal 0.24 above the waterline.
+ * the class scales the model but was scaling nothing here. An earlier version
+ * of this note blamed the FISH, computing its half-height from ellipsoid()'s
+ * full height argument — 1.4 x 0.26 = 0.36 against a 0.3 minSubmergence, which
+ * it noted protocol.ts called "comfortably inside". That was wrong about the
+ * fish: ellipsoid() takes FULL extents, so a fish's half-height is 0.13, and at
+ * 1.4x that is 0.182 — comfortably inside, as it always was. The whale is the
+ * genuine case: WHALE_ENVELOPE (whaleSpecies.ts) IS a half-extent envelope,
+ * measured from the model's bounding box, so at `large` its crown reaches
+ * 1.4 x 0.670 = 0.938 and its belly sits 1.4 x 0.575 = 0.805 below the origin,
+ * against this table's whale minSubmergence 0.7 and minClearance 0.7.
+ * Unscaled, a large whale would have put its belly 0.1 units into the seabed
+ * and its dorsal 0.24 above the waterline.
  */
 export function swimmerWorldY(
   seabedY: number,

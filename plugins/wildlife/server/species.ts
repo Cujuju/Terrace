@@ -286,9 +286,19 @@ export interface SpeciesProfile {
    *     and slope ring at the centre, open sea beyond (server/src/world/
    *     world.ts). The census only counts UNLOCKED cells, so day one is bounded
    *     by the starter square — INITIAL_UNLOCK_CHUNK_SPAN² chunks, shrunk
-   *     2026-08-19 by owner decision to 80×80 = 6 400 cells, the same on every
-   *     world size — split by that genesis profile into 2 304 shallow and
-   *     4 096 deep:
+   *     2026-08-19 by owner decision to 80×80 = 6 400 SQUARE WORLD UNITS, the
+   *     same on every world size — split by that genesis profile into 2 304
+   *     shallow and 4 096 deep.
+   *
+   *     UNITS, stated once and relied on for the rest of this comment: every
+   *     figure here is a SQUARE WORLD UNIT, because that is what the densities
+   *     below are (each is wrapped in cellsOverArea). The census itself counts
+   *     CELLS, and one square world unit is WORLD_UNIT_CELLS² = 16 of them, so
+   *     the same starter square is 102 400 cells split 36 864 shallow / 65 536
+   *     deep — which is what test/wildlife.test.ts asserts against a real
+   *     World.createFresh. Both sides of every division below are scaled by the
+   *     same 16, so the quotients are the same either way; only mixing the two
+   *     units in one division would be wrong.
    *
    *       fish     2 304 /   400 = 5       deepsea   4 096 / 1 500 = 2
    *       whale    4 096 / 2 000 = 2       grazer            — = 0
@@ -317,7 +327,8 @@ export interface SpeciesProfile {
    *     bigger shelf, not because it is still pinned.
    *
    * (b) A nominal half-land / half-water 512² world at full reveal (262 144
-   *     cells; ~131 000 land, of the water roughly 40% shallow / 60% open sea):
+   *     SQUARE WORLD UNITS — the world's area, not its cell count;
+   *     ~131 000 land, of the water roughly 40% shallow / 60% open sea):
    *
    *       fish     52 429 /   400 = 131     grazer   131 072 / 2 700 = 48
    *       deepsea  78 643 / 1 500 =  52     whale     78 643 / 2 000 = 39
@@ -431,8 +442,10 @@ export interface SpeciesProfile {
  * complete school at all.
  *
  * The arithmetic, against the genesis geometry (server/src/world/world.ts): the
- * starter square (shrunk 2026-08-19) is 80×80 = 6 400 cells of which 2 304 are
- * shallow, so the 400 density gives floor(2 304 / 400) = 5 fish — exactly ONE
+ * starter square (shrunk 2026-08-19) is 80×80 = 6 400 square world units of
+ * which 2 304 are shallow (36 864 cells — see the units note on
+ * habitatCellsPerIndividual), so the 400 density gives floor(2 304 / 400) = 5
+ * fish — exactly ONE
  * complete school of `groupSize` (5). One, down from two on the old 128×128
  * square: the density (a world-wide tuning) stayed at 400, and a single whole
  * school still reads as a school; the second returns as soon as territory

@@ -105,12 +105,22 @@ export const DEFAULT_SIZE_CLASS_INDEX = WILDLIFE_SIZE_CLASSES.indexOf(DEFAULT_SI
  *
  * WHAT THE CLEARANCES DO ABOUT THIS. They scale by the same factor — see
  * swimmerWorldY (client/placement.ts), which takes the model scale as a required
- * argument. This paragraph used to claim the opposite: that the largest fish is
- * 1.4 × 0.26 = 0.36 world units tall and so sits "comfortably inside the 0.3
- * minimum submergence", which is arithmetic that says the exact reverse of its
- * own conclusion — 0.36 is 0.06 OUTSIDE 0.3, and a large fish's dorsal has been
- * poking through the sea surface ever since. Found 2026-08-21 while giving
- * whales size classes, where the same error is six times larger.
+ * argument. An earlier version of this paragraph justified that with arithmetic
+ * that was WRONG ABOUT THE FISH (corrected 2026-08-22): it read ellipsoid()'s
+ * FULL height argument as a half-extent and concluded a large fish stands
+ * 1.4 × 0.26 = 0.36 world units tall, outside the 0.3 minimum submergence — a
+ * bug fish never had. ellipsoid() scales a sphere of radius 0.5, so its three
+ * arguments are FULL extents: the fish body is ellipsoid(0.55, 0.26, 0.18),
+ * its half-height is 0.13, and at 1.4× that is 0.182 against the 0.3 minimum —
+ * comfortably inside, as it always was. The conclusion survives on the WHALE's
+ * numbers, and they are the reason the scaling is still necessary:
+ * WHALE_ENVELOPE (client/whaleSpecies.ts) IS a half-extent envelope, measured
+ * from the model's bounding box (crownY 0.670, bellyY -0.575), so at the large
+ * class those become 1.4 × 0.670 = 0.938 and 1.4 × 0.575 = 0.805, against the
+ * whale swim profile's minSubmergence 0.7 and minClearance 0.7
+ * (client/placement.ts). An unscaled clearance would have put a large whale's
+ * belly ~0.1 world units into the seabed and its dorsal ~0.24 above the
+ * waterline.
  */
 export const WILDLIFE_SIZE_MODEL_SCALE: Readonly<Record<WildlifeSizeClass, number>> = {
   small: 0.6,
@@ -129,10 +139,10 @@ export function sizeClassIndex(sizeClass: WildlifeSizeClass): number {
 }
 
 /**
- * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — two
- * orders of magnitude finer than the smallest creature (a fish is 0.7 cells
- * long) and far below what any camera distance in this game can resolve, so it
- * costs nothing visible. It buys a payload whose encoded size is bounded and,
+ * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — roughly
+ * 280× finer than the smallest creature (a fish is 0.7 WORLD UNITS long,
+ * cellsAcross(0.7) = 2.8 cells) and far below what any camera distance in this
+ * game can resolve, so it costs nothing visible. It buys a payload whose encoded size is bounded and,
  * more usefully, one that a test can assert on exactly.
  */
 export const WILDLIFE_POSITION_DECIMALS = 2;

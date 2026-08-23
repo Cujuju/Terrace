@@ -6,10 +6,14 @@
 // a sperm whale disagree about nearly every proportion an animal has, and the
 // point of drawing three is that you can tell which is which at a glance.
 //
-// Sizing: the server assigns whales one size class (`medium`), so these three
-// are not big/medium/small versions of one animal — they are all authored into
-// the SAME envelope the shipped whale occupied, then scaled to fit it exactly.
-// See WHALE_ENVELOPE for why that matters.
+// Sizing: whales draw their size class PER MEMBER (WHALE_SIZE_WEIGHTS with
+// sizeDraw 'per-member' on the server, and WILDLIFE_SIZE_MODEL_SCALE applied to
+// the rig here), so a big/medium/small axis genuinely exists — but it is NOT
+// what separates these three bodies. They are SPECIES variants (humpback /
+// blue / sperm), chosen by entity id — an axis orthogonal to the size-class
+// scale — and they are all authored into the SAME envelope the shipped whale
+// occupied, then scaled to fit it exactly. See WHALE_ENVELOPE for why that
+// matters.
 import {
   Box3,
   BufferGeometry,
