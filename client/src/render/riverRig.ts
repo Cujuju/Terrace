@@ -129,6 +129,17 @@ const RIVER_ROUGHNESS = 0.85;
 const RIVER_METALNESS = 0;
 
 /**
+ * A cell coordinate held inside the heightmap. A fall's sheet is sampled
+ * OUTWARD from a lip, and a lip on the world's edge points off it; the edge
+ * cell is the honest answer there, and sampling past it would read undefined.
+ */
+function clampToWorld(cellCoord: number, worldSize: number): number {
+  if (cellCoord < 0) return 0;
+  if (cellCoord > worldSize - 1) return worldSize - 1;
+  return cellCoord;
+}
+
+/**
  * Wraps a finished triangle-soup position list as a geometry, with every
  * normal AUTHORED STRAIGHT UP rather than computed from the faces.
  *
@@ -778,6 +789,16 @@ export function createRiverRig(
           // contour, which is the approved lake-rim behaviour.
           return band !== null && band < region.surfaceBand ? band : null;
         },
+        // The DRAWN ground under a point of the fall, so the sheet runs down
+        // the face rather than through the air beside it. Band-quantised and
+        // lifted exactly as the water surfaces are, so a sheet resting on a
+        // tread sits level with the water on it instead of z-fighting it.
+        (groundX, groundZ) =>
+          quantizeToBandWorldY(
+            mirror,
+            clampToWorld(Math.round(groundX), mirror.map.size),
+            clampToWorld(Math.round(groundZ), mirror.map.size),
+          ) + RIVER_SURFACE_LIFT_WORLD_UNITS,
         triangles,
       );
     }

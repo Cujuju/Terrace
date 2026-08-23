@@ -31,7 +31,7 @@ import { CELL_WORLD_SIZE } from '../../config';
  * band until there is ground to land on, plus margin for Chaikin disagreement
  * between the water loop and the terrain loop.
  */
-export const WATER_APRON_CREST_CELLS = 0.75;
+export const WATER_APRON_CREST_CELLS = 0.25;
 
 /**
  * The descent run, in CELLS: short enough to read as a drop, not a ramp.
@@ -83,6 +83,27 @@ export const WATER_APRON_MAX_FALL_SLOPE = 3;
  * governs while the drop is small, and this governs once it is not.
  */
 export const WATER_APRON_MAX_CHUTE_CELLS = 1;
+
+/**
+ * How far outward, in CELLS, a falling sheet steps between samples of the
+ * ground it is running down.
+ *
+ * A quarter of a cell: fine enough that the sheet meets every terrace tread
+ * and riser it crosses (a tread is a whole cell at its narrowest), coarse
+ * enough that a long cascade is still a handful of rows rather than hundreds.
+ */
+export const WATER_APRON_GROUND_STEP_CELLS = 0.25;
+
+/**
+ * How far outward, in CELLS, a sheet may chase the ground before it simply
+ * finishes its drop.
+ *
+ * Three cells. A fall running down a slope shallow enough to need more than
+ * that is not a fall any more — it is a river, and the trace will have given
+ * it wet cells of its own to be drawn as regions. This is the bound that keeps
+ * a single sheet from crawling across a whole terrace.
+ */
+export const WATER_APRON_MAX_REACH_CELLS = 3;
 
 /**
  * Rows across the sheet (the sheet has ROWS + 1 rows including both edges).
@@ -176,17 +197,14 @@ function emitSheet(
   crestWorldY: number,
   footBand: number,
   footWorldYOf: (band: number) => number,
+  groundWorldYAt: (cellX: number, cellZ: number) => number,
   out: number[],
 ): void {
   const footY = footWorldYOf(footBand);
-  // The descent is sized by the drop it has to make, so a three-band fall gets
-  // three times the run of a one-band fall and both are drawn at the same
-  // slope (see WATER_APRON_MAX_FALL_SLOPE).
-  const chuteCells = chuteRunCells(crestWorldY - footY);
 
   // Rows are stored per lip vertex; row 0 is the loop vertex VERBATIM —
   // bit-identical to what the tread builder ends on, so no top seam.
-  const rowCount = WATER_APRON_ROWS + 1;
+  const rowCount = Math.round(WATER_APRON_MAX_REACH_CELLS / WATER_APRON_GROUND_STEP_CELLS) + 1;
   const verts = end - start + 1;
   const xs = new Float64Array(verts * rowCount);
   const ys = new Float64Array(verts * rowCount);
@@ -196,6 +214,10 @@ function emitSheet(
     const p = loop[start + v];
     const nx = normalsX[start + v];
     const nz = normalsZ[start + v];
+    // Each row sits on the GROUND under it, so the sheet runs DOWN THE FACE
+    // instead of cutting through the air beside it — never above the water it
+    // left, never below the water it is falling to, and never rising again.
+    let previousY = crestWorldY;
     for (let r = 0; r < rowCount; r++) {
       const idx = v * rowCount + r;
       if (r === 0) {
@@ -203,12 +225,25 @@ function emitSheet(
         xs[idx] = p.x * CELL_WORLD_SIZE;
         ys[idx] = crestWorldY;
         zs[idx] = p.z * CELL_WORLD_SIZE;
-      } else {
-        const o = rowOffsetCells(r, chuteCells);
-        xs[idx] = (p.x + nx * o) * CELL_WORLD_SIZE;
-        ys[idx] = rowWorldY(r, crestWorldY, footY, chuteCells);
-        zs[idx] = (p.z + nz * o) * CELL_WORLD_SIZE;
+        continue;
       }
+      const o = r * WATER_APRON_GROUND_STEP_CELLS;
+      const cellXCoord = p.x + nx * o;
+      const cellZCoord = p.z + nz * o;
+      xs[idx] = cellXCoord * CELL_WORLD_SIZE;
+      zs[idx] = cellZCoord * CELL_WORLD_SIZE;
+      if (o <= WATER_APRON_CREST_CELLS) {
+        // The crest: hold the level the water arrived at, carrying the sheet
+        // over the terrain's own bank lag (see WATER_APRON_CREST_CELLS).
+        ys[idx] = previousY;
+        continue;
+      }
+      const ground = groundWorldYAt(cellXCoord, cellZCoord);
+      // Clamped to the fall it is actually making, and monotonic: ground that
+      // rises again beyond the lip is a bank the sheet passes under, not a
+      // hill for it to climb.
+      ys[idx] = Math.min(previousY, Math.max(footY, Math.min(crestWorldY, ground)));
+      previousY = ys[idx]!;
     }
   }
 
@@ -272,6 +307,7 @@ export function appendApronSurfaces(
   crestWorldY: number,
   footWorldYOf: (footBand: number) => number,
   probeLipFootBand: (cellX: number, cellZ: number) => number | null,
+  groundWorldYAt: (cellX: number, cellZ: number) => number,
   out: number[],
 ): void {
   for (const loop of loops) {
@@ -375,7 +411,7 @@ export function appendApronSurfaces(
     while (startIdx < n && isLip[startIdx]) startIdx++;
     if (startIdx === n) {
       // Entire loop is a lip — treat as one run covering everything.
-      emitRun(loop, 0, n - 1, ax, az, bands, crestWorldY, footWorldYOf, out);
+      emitRun(loop, 0, n - 1, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
       continue;
     }
     let i = startIdx;
@@ -387,7 +423,7 @@ export function appendApronSurfaces(
       let j = i;
       while (j + 1 < n && isLip[j + 1]) j++;
       if (j - i + 1 >= MIN_LIP_RUN_VERTICES) {
-        emitRun(loop, i, j, ax, az, bands, crestWorldY, footWorldYOf, out);
+        emitRun(loop, i, j, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
       }
       i = j + 1;
     }
@@ -404,6 +440,7 @@ function emitRun(
   bands: readonly (number | null)[],
   crestWorldY: number,
   footWorldYOf: (band: number) => number,
+  groundWorldYAt: (cellX: number, cellZ: number) => number,
   out: number[],
 ): void {
   // Foot band = HIGHEST probed band along the run: this sheet drops ONE
@@ -415,5 +452,5 @@ function emitRun(
     if (b !== null && b > footBand) footBand = b;
   }
   if (!Number.isFinite(footBand)) return;
-  emitSheet(loop, start, end, ax, az, crestWorldY, footBand, footWorldYOf, out);
+  emitSheet(loop, start, end, ax, az, crestWorldY, footBand, footWorldYOf, groundWorldYAt, out);
 }

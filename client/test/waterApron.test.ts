@@ -8,6 +8,7 @@ import {
   WATER_APRON_CREST_CELLS,
   WATER_APRON_CHUTE_CELLS,
   WATER_APRON_MAX_CHUTE_CELLS,
+  WATER_APRON_MAX_REACH_CELLS,
   WATER_APRON_MAX_FALL_SLOPE,
   WATER_APRON_ROWS,
 } from '../src/render/water/waterApron';
@@ -17,6 +18,19 @@ import type { ContourLoop } from '../src/terrain/contours';
 const CREST_Y = 10;
 const BAND_HEIGHT = 2;
 const footWorldYOf = (band: number) => band * BAND_HEIGHT;
+
+/**
+ * The ground a test fall runs down: a terrace RISER, descending straight from
+ * the crest to the foot over one cell outward of the lip (z = 0 here), flat at
+ * the foot beyond that. The sheet is supposed to ride this rather than cut
+ * through the air beside it, so every case is driven against a real face.
+ */
+const testGround = (_cellX: number, cellZ: number): number => {
+  // The lip lies on z = 0 and the sheets in these fixtures run outward to
+  // NEGATIVE z, so the distance down the face is |cellZ|.
+  const past = Math.min(1, Math.abs(cellZ));
+  return CREST_Y + (footWorldYOf(0) - CREST_Y) * past;
+};
 
 /** A square loop, inside on the left (counter-clockwise in (x,z)). */
 function squareLoop(x0 = 0, z0 = 0, size = 8): ContourLoop {
@@ -50,7 +64,7 @@ describe('appendApronSurfaces', () => {
   it('1. emits row-0 vertices bit-identical to the loop vertex world coords', () => {
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), testGround, out);
     expect(out.length).toBeGreaterThan(0);
     const verts = vertices(out);
     const world = new Set(
@@ -79,7 +93,7 @@ describe('appendApronSurfaces', () => {
 
   it('2. leaves out untouched when nothing is below', () => {
     const out: number[] = [];
-    appendApronSurfaces([squareLoop()], CREST_Y, footWorldYOf, () => null, out);
+    appendApronSurfaces([squareLoop()], CREST_Y, footWorldYOf, () => null, testGround, out,);
     expect(out).toHaveLength(0);
   });
 
@@ -87,7 +101,7 @@ describe('appendApronSurfaces', () => {
     const loop = squareLoop();
     const probe = southEdgeProbe(0, 8, 0);
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, testGround, out,);
     expect(out.length).toBeGreaterThan(0);
     const footY = footWorldYOf(0);
     void footY;
@@ -118,33 +132,35 @@ describe('appendApronSurfaces', () => {
     }
   });
 
-  it('4. foot row lands exactly CREST+CHUTE cells outward on a straight lip', () => {
+  it('4. the sheet reaches the foot, on the ground, within its bounded reach', () => {
+    // The descent is no longer a fixed run: it FOLLOWS THE GROUND out from the
+    // lip (see WATER_APRON_GROUND_STEP_CELLS), so what has to hold is that the
+    // sheet gets down to the water it is falling to, that it does so on the
+    // face rather than out in the air, and that it never wanders further than
+    // WATER_APRON_MAX_REACH_CELLS while doing it.
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), out);
-    // The chute's run is DERIVED from the drop (WATER_APRON_MAX_FALL_SLOPE),
-    // clamped between WATER_APRON_CHUTE_CELLS and WATER_APRON_MAX_CHUTE_CELLS
-    // — so the expected footprint is computed from this fixture's own drop
-    // rather than assumed to be the floor value.
-    const dropWorldY = Math.abs(CREST_Y - footWorldYOf(0));
-    const chute = Math.min(
-      WATER_APRON_MAX_CHUTE_CELLS,
-      Math.max(
-        WATER_APRON_CHUTE_CELLS,
-        dropWorldY / WATER_APRON_MAX_FALL_SLOPE / CELL_WORLD_SIZE,
-      ),
-    );
-    const total = WATER_APRON_CREST_CELLS + chute;
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), testGround, out);
     const verts = vertices(out);
     const footVerts = verts.filter(([, y]) => y === footWorldYOf(0));
     expect(footVerts.length).toBeGreaterThan(0);
-    // Every foot-row vertex is `total` cells outward of some lip vertex on
-    // the straight south edge (lip vertices at integer x, z=0).
-    for (const [x, , z] of footVerts) {
-      const dists = loop.map((p) =>
-        Math.hypot(x - p.x * CELL_WORLD_SIZE, z - p.z * CELL_WORLD_SIZE),
+
+    for (const [x, y, z] of verts) {
+      const outward = Math.min(
+        ...loop.map((p) =>
+          Math.hypot(x - p.x * CELL_WORLD_SIZE, z - p.z * CELL_WORLD_SIZE),
+        ),
       );
-      expect(Math.min(...dists)).toBeCloseTo(total * CELL_WORLD_SIZE, 9);
+      // Bounded reach.
+      expect(outward).toBeLessThanOrEqual(
+        WATER_APRON_MAX_REACH_CELLS * CELL_WORLD_SIZE + 1e-9,
+      );
+      // On the face, not in the air: past the crest hold, every vertex sits at
+      // the ground the stub reports there, or at the foot it has reached.
+      if (outward > WATER_APRON_CREST_CELLS * CELL_WORLD_SIZE + 1e-9) {
+        const ground = testGround(x / CELL_WORLD_SIZE, z / CELL_WORLD_SIZE);
+        expect(y).toBeLessThanOrEqual(Math.max(ground, footWorldYOf(0)) + 1e-9);
+      }
     }
   });
 
@@ -161,7 +177,7 @@ describe('appendApronSurfaces', () => {
       return hit === null ? null : cx < 4 ? 1 : 2;
     };
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, testGround, out,);
     const minY = Math.min(...vertices(out).map(([, y]) => y));
     expect(minY).toBe(footWorldYOf(2));
   });
@@ -172,14 +188,14 @@ describe('appendApronSurfaces', () => {
     const probe = (cx: number, cz: number) =>
       cz < -0.3 && cz > -0.7 && Math.abs(cx - 4) < 0.26 ? 0 : null;
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, testGround, out,);
     expect(out).toHaveLength(0);
   });
 
   it('6b. two adjacent lip vertices emit exactly one sheet', () => {
     const loop = squareLoop();
     const out: number[] = [];
-    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(3, 4, 0), out);
+    appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(3, 4, 0), testGround, out);
     expect(out.length).toBeGreaterThan(0);
   });
 
@@ -193,8 +209,7 @@ describe('appendApronSurfaces', () => {
       footWorldYOf,
       (cx, cz) =>
         (southEdgeProbe(2, 4, 0)(cx, cz) ??
-          southEdgeProbe(8, 10, 0)(cx, cz)),
-      out,
+          southEdgeProbe(8, 10, 0)(cx, cz)), testGround, out,
     );
     expect(out.length).toBeGreaterThan(0);
     // Foot-row vertices cluster into exactly two x-intervals separated by a
