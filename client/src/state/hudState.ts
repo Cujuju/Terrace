@@ -18,12 +18,14 @@
 
 import { createSignal } from 'solid-js';
 import {
+  CELL_WORLD_SIZE,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
+  forEachFootprintOffset,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -61,6 +63,41 @@ export const BRUSH_RADII: readonly number[] = [
     (_, i) => (i + 1) * WORLD_UNIT_CELLS,
   ),
 ];
+
+/**
+ * How wide a brush of `radius` actually paints, in WORLD UNITS — the number
+ * the picker shows the player.
+ *
+ * IT IS NOT THE RADIUS, AND IT IS NOT IN CELLS (owner, 2026-08-22: "the brush
+ * sizes for 4, 8, 12 and 16 appear larger than what I would think 4, 8, 12 or
+ * 16 units would look like"). The picker used to print the raw ladder value,
+ * which is a RADIUS expressed in CELLS — two conflations stacked on one
+ * unlabelled number. A player reads a disc's size as its width, and reads
+ * "units" as world units, so the button labelled 16 was showing a quarter of
+ * the number it appeared to promise: 16 cells of radius is 31 cells across, or
+ * 7.75 world units. Both halves of that gap are closed here by measuring the
+ * thing the player is actually looking at.
+ *
+ * MEASURED BY RUNNING THE FOOTPRINT, not by a formula over the radius. The
+ * membership rule (`dx² + dy² < r·(r−1)`) lives in one place on purpose — see
+ * forEachFootprintOffset's doc for the four consumers that must agree — and a
+ * width computed from a second, independent reading of that rule would be a
+ * fifth consumer free to drift. This asks the iterator instead.
+ *
+ * ALWAYS AN ODD NUMBER OF CELLS, hence the awkward quarters on the buttons:
+ * the footprint is centred ON a cell rather than between cells, so it spans
+ * 2·reach + 1 of them and can never be a round count of world units. 1.75 is
+ * the true width of the one-world-unit-radius brush; showing "2" would be a
+ * tidier lie, and the whole point of this function is that the number on the
+ * button is the number on the ground.
+ */
+export function brushWidthWorldUnits(radius: number): number {
+  let reachCells = 0;
+  forEachFootprintOffset(radius, (dx, dy) => {
+    reachCells = Math.max(reachCells, Math.abs(dx), Math.abs(dy));
+  });
+  return (2 * reachCells + 1) * CELL_WORLD_SIZE;
+}
 
 /** Selectable brush tools / edge profiles, straight from shared's own sets. */
 export const BRUSH_TOOLS: readonly SculptTool[] = SCULPT_TOOLS;

@@ -129,6 +129,36 @@ const RIVER_ROUGHNESS = 0.85;
 const RIVER_METALNESS = 0;
 
 /**
+ * The radius, in CELLS, of the flat ground around a cell: the distance to the
+ * nearest cell that the terrain draws in a DIFFERENT terrace band, less half a
+ * cell, because the ground ends at the edge between the two rather than at the
+ * far cell's centre.
+ *
+ * Measured in Chebyshev rings outward — the ring the effect draws is a circle,
+ * so the plot has to hold in every direction at once, and the first direction
+ * that runs out is the one that decides. Off the edge of the world counts as
+ * running out: there is no ground there either.
+ */
+function plotRadiusCells(mirror: TerrainMirror, x: number, y: number): number {
+  const band = quantizeToBand(sampleHeight(mirror, x, y));
+  for (let reach = 1; reach <= SPRING_PLOT_PROBE_CELLS; reach++) {
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        // Only the shell of this ring; the inside was cleared by earlier passes.
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== reach) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= mirror.map.size || ny >= mirror.map.size) {
+          return reach - 0.5;
+        }
+        if (quantizeToBand(sampleHeight(mirror, nx, ny)) !== band) return reach - 0.5;
+      }
+    }
+  }
+  return SPRING_PLOT_PROBE_CELLS;
+}
+
+/**
  * A cell coordinate held inside the heightmap. A fall's sheet is sampled
  * OUTWARD from a lip, and a lip on the world's edge points off it; the edge
  * cell is the honest answer there, and sampling past it would read undefined.
@@ -265,6 +295,36 @@ const SPRING_RING_MIN_RADIUS_CELLS = 0.18;
 const SPRING_RING_MAX_RADIUS_CELLS = 0.45;
 
 /**
+ * How far out, in CELLS, the plot under a spring is measured before the
+ * effect simply takes its full size.
+ *
+ * Three cells. Past that the ground is wider than the widest ring can ever
+ * be, so measuring further only costs samples to learn nothing.
+ */
+const SPRING_PLOT_PROBE_CELLS = 3;
+
+/**
+ * How much of its plot's radius the widest ring may fill.
+ *
+ * WHY THE EFFECT IS FITTED TO ITS GROUND AT ALL (2026-08-22, owner, with a
+ * photograph of a spring on a pillar: "the size of those rings should never be
+ * larger than the size of ground it spawns on"). The rings were a fixed size
+ * in cells, so on a broad plateau they looked right and on a one-cell pillar
+ * they hung over every edge — the effect claiming ground the terrain does not
+ * have.
+ *
+ * THREE FIFTHS, because a cell of plot is not a cell of DRAWN ground. The
+ * terrain's cap is a smoothed contour whose crossings sit somewhere between an
+ * eighth and seven eighths of the way to the neighbouring cell, so the visible
+ * top of a lone high cell is meaningfully smaller than the cell itself, and a
+ * ring sized to the cell would still overhang the tread that is actually
+ * drawn. Three fifths leaves room for that inset at the tightest plot while
+ * costing nothing on open ground, where SPRING_RING_MAX_RADIUS_CELLS is
+ * reached first and this stops applying.
+ */
+const SPRING_RING_PLOT_FILL_FRACTION = 0.6;
+
+/**
  * A ring's radial band width at mid-life (its widest), in cells. Wide enough
  * to survive at orbit distance; narrower than the ring spacing so consecutive
  * rings never merge into a solid disc.
@@ -356,6 +416,13 @@ interface SpringState {
   readonly ringEdge: Float32Array;
   /** Per ring-vertex cycle offset in [0, 1), staggering the rings. */
   readonly ringCycleOffset: Float32Array;
+  /**
+   * Per ring-vertex multiplier on the ring's radius, fitting the effect to the
+   * ground it stands on (see SPRING_RING_PLOT_FILL_FRACTION). 1 on open
+   * ground; smaller on a narrow pillar, where a full-size ring would hang over
+   * the edge of a tread the terrain never drew.
+   */
+  readonly ringPlotScale: Float32Array;
 
   readonly domeMesh: Mesh;
   readonly domeGeometry: BufferGeometry;
@@ -552,6 +619,7 @@ export function createRiverRig(
     const ringDirZ = new Float32Array(ringVertexCount);
     const ringEdge = new Float32Array(ringVertexCount);
     const ringCycleOffset = new Float32Array(ringVertexCount);
+    const ringPlotScale = new Float32Array(ringVertexCount);
     // Two triangles per segment per ring. Uint32: see the budget note under
     // SPRING_RING_SEGMENTS for why Uint16 cannot be assumed safe here.
     const ringIndices = new Uint32Array(
@@ -583,6 +651,13 @@ export function createRiverRig(
         RIVER_SURFACE_LIFT_WORLD_UNITS +
         SPRING_EFFECT_LIFT_WORLD_UNITS;
       const waterfallStagger = w / waterfalls.length;
+      // The effect is never wider than the ground under it: the widest ring
+      // this site may draw, as a fraction of the widest ring there is.
+      const fittedRadiusCells = Math.min(
+        SPRING_RING_MAX_RADIUS_CELLS,
+        plotRadiusCells(mirror, waterfall.x, waterfall.y) * SPRING_RING_PLOT_FILL_FRACTION,
+      );
+      const plotScale = fittedRadiusCells / SPRING_RING_MAX_RADIUS_CELLS;
 
       // Rings: static per-vertex data. X/Z are animated, so positions get a
       // throwaway 0 there; Y is FINAL here and never rewritten.
@@ -601,6 +676,7 @@ export function createRiverRig(
             ringDirZ[v] = dirZ;
             ringEdge[v] = edge;
             ringCycleOffset[v] = cycleOffset;
+            ringPlotScale[v] = plotScale;
             ringPositions[v * 3 + 1] = surfaceY;
             ringNormals[v * 3 + 1] = 1; // flat annulus: straight up, forever
           }
@@ -631,14 +707,18 @@ export function createRiverRig(
         const baseV = domeBase + s;
         const midV = domeBase + SPRING_DOME_SEGMENTS + s;
         // Base ring: on the surface, full radius.
-        domePositions[baseV * 3] = centreX + dirX * SPRING_DOME_RADIUS_CELLS * CELL_WORLD_SIZE;
-        domePositions[baseV * 3 + 2] = centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * CELL_WORLD_SIZE;
+        domePositions[baseV * 3] =
+          centreX + dirX * SPRING_DOME_RADIUS_CELLS * plotScale * CELL_WORLD_SIZE;
+        domePositions[baseV * 3 + 2] =
+          centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * plotScale * CELL_WORLD_SIZE;
         domeRestOffsetY[baseV] = 0;
         // Mid ring: 45° up the dome profile.
         domePositions[midV * 3] =
-          centreX + dirX * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * CELL_WORLD_SIZE;
+          centreX +
+          dirX * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * plotScale * CELL_WORLD_SIZE;
         domePositions[midV * 3 + 2] =
-          centreZ + dirZ * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * CELL_WORLD_SIZE;
+          centreZ +
+          dirZ * SPRING_DOME_RADIUS_CELLS * SPRING_DOME_MID_PROFILE * plotScale * CELL_WORLD_SIZE;
         domeRestOffsetY[midV] = SPRING_DOME_HEIGHT_WORLD_UNITS * SPRING_DOME_MID_PROFILE;
 
         const sn = (s + 1) % SPRING_DOME_SEGMENTS;
@@ -699,6 +779,7 @@ export function createRiverRig(
       ringDirZ,
       ringEdge,
       ringCycleOffset,
+      ringPlotScale,
       domeMesh,
       domeGeometry,
       domeRestOffsetY,
@@ -881,7 +962,9 @@ export function createRiverRig(
       const halfWidthCells = (SPRING_RING_MAX_WIDTH_CELLS * Math.sin(Math.PI * progress)) / 2;
       // edge 0 → inner (−halfWidth), edge 1 → outer (+halfWidth).
       const radiusWorld =
-        (centreLineRadiusCells + (spring.ringEdge[i]! * 2 - 1) * halfWidthCells) * CELL_WORLD_SIZE;
+        (centreLineRadiusCells + (spring.ringEdge[i]! * 2 - 1) * halfWidthCells) *
+        spring.ringPlotScale[i]! *
+        CELL_WORLD_SIZE;
       ringArray[i * 3] = spring.ringCentreX[i]! + spring.ringDirX[i]! * radiusWorld;
       ringArray[i * 3 + 2] = spring.ringCentreZ[i]! + spring.ringDirZ[i]! * radiusWorld;
     }

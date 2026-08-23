@@ -1082,13 +1082,62 @@ export function applySculpt(
     // relaxed above the clicked ceiling). So an anchored smooth stroke bounds
     // its own footprint cells for the relaxation pass, from their pre-relax
     // heights: past the target → frozen; short of it → movable up to the
-    // target in the stroke's direction, unbounded against it (slump stays
-    // physical; a wall may still shed INTO a dug ring). Both are per-stroke
-    // intervals, deterministic, and the map is only ever read via .get — no
-    // iteration-order dependence.
+    // target in the stroke's direction, and NO FURTHER BACK THAN THE BRUSH
+    // JUST PUT IT. Both are per-stroke intervals, deterministic, and the map
+    // is only ever read via .get — no iteration-order dependence.
+    //
+    // THE CLICKED CELL MAY NOT BE UNDONE BY ITS OWN STROKE (2026-08-22, owner
+    // bug report "shift click lowering does not always work"). The
+    // against-the-stroke end of that interval used to be the world's own limit
+    // for EVERY footprint cell — MIN_HEIGHT raising, MAX_HEIGHT lowering —
+    // which licensed the stroke's own relaxation pass to put the cell the
+    // player aimed at back where it started. Lowering wore it worst, because
+    // movePair hands the odd unit of every excess to the LOW cell, so
+    // relaxation is a net height source and refilled a pit as fast as the
+    // brush dug it: measured on rolling terrain at the default brush, 137 of
+    // 200 lower clicks left the clicked cell's drawn band unchanged, and 131
+    // of those cells could not be lowered a band by FORTY clicks. Raising, the
+    // same bias worked with the brush instead of against it — 30 of 200, none
+    // permanent.
+    //
+    // The fix is upstream of that rounding bias, which is why it is here and
+    // not in movePair: inverting the bias reproduces the identical bug
+    // mirrored onto raising (127 of 200), and this bound holds either way.
+    //
+    // ONLY THE CLICKED CELL, AND THAT BOUND IS LOAD-BEARING. Applying it to
+    // the whole footprint also fixes the click — and collapses `smooth` into
+    // `stamp`. An anchored stroke leaves most of its footprint sitting exactly
+    // ON the target, so bounding every cell there freezes them all, and #26's
+    // coupled transfer then refuses to move their neighbours either: measured
+    // on a stamped spire, the ring one cell outside a radius-4 footprint went
+    // from 15 units to 0, and the stroke moved only its own 37 footprint
+    // cells. Bounding the ONE cell whose result the stroke actually promises
+    // leaves the spill byte-identical to before (24.4 / 38.6 / 49.2 cells
+    // moved outside the footprint at radius 4 / 8 / 16, unchanged) while
+    // holding the click at 0 of 200 failures in both directions.
+    //
+    // KNOWN BOUNDARY, stated rather than discovered later: at radius 1 the
+    // footprint IS the clicked cell, so a one-cell smooth stroke can no longer
+    // shed into its neighbours and behaves as a stamp. No brush the picker
+    // offers is that small (client/src/state/hudState.ts's BRUSH_RADII starts
+    // at one WORLD unit), and plugin terraforms run `anchor: 'free'`, which
+    // never reaches this code — so the case is reachable only by a hand-made
+    // wire message.
+    //
+    // NOT the relaxation height leak itself. movePair still manufactures
+    // height (a 401-unit cliff relaxes into 1,073,664 units from nowhere);
+    // that is a real defect, it is what made the two directions asymmetric,
+    // and it is deliberately left for its own change — every rounding fix
+    // measured either broke the exact MAX_STEP invariant this keeps or
+    // quadrupled the pass count on a tall cliff.
+    //
+    // PLAYER STROKES ONLY. anchorBounds is built for `anchor: 'clicked'`, and
+    // the library default is `anchor: 'free'` — plugin terraforms are
+    // byte-identical across this change.
     let anchorBounds: Map<number, SpillBand> | undefined;
     if (anchoredSmooth) {
       const raising = amount > 0;
+      const clickedIndex = cellIndex(map, cx, cy);
       anchorBounds = new Map<number, SpillBand>();
       for (const i of footprint as Set<number>) {
         const h = map.cells[i];
@@ -1098,8 +1147,8 @@ export function applySculpt(
           anchorBounds.set(
             i,
             raising
-              ? { lo: MIN_HEIGHT, hi: anchorTarget }
-              : { lo: anchorTarget, hi: MAX_HEIGHT },
+              ? { lo: i === clickedIndex ? h : MIN_HEIGHT, hi: anchorTarget }
+              : { lo: anchorTarget, hi: i === clickedIndex ? h : MAX_HEIGHT },
           );
         }
       }
