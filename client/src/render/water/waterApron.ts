@@ -147,10 +147,13 @@ function emitSheet(
 
   const clearanceCells = WATER_FACE_CLEARANCE_WORLD_UNITS / CELL_WORLD_SIZE;
 
+  const ringLength = loop.length;
   for (let v = 0; v < verts; v++) {
-    const p = loop[start + v];
-    const nx = normalsX[start + v];
-    const nz = normalsZ[start + v];
+    // Ring positions modulo the loop length, for runs that wrapped the seam.
+    const ring = (start + v) % ringLength;
+    const p = loop[ring];
+    const nx = normalsX[ring];
+    const nz = normalsZ[ring];
 
     // Row 0 is the lip VERBATIM — bit-identical to what the tread builder
     // ends on, so no top seam. Compute it literally; do not trust a formula.
@@ -331,16 +334,32 @@ export function appendApronSurfaces(
     const bands: (number | null)[] = new Array(n).fill(null);
     for (let i = 0; i < n; i++) {
       const p = loop[i];
-      const band = probeLipFootBand(p.x + ax[i] * WATER_LIP_PROBE_CELLS,
-                                    p.z + az[i] * WATER_LIP_PROBE_CELLS);
+      // ASKED AT THE POINT ITSELF, not half a cell along the outward normal.
+      // Probing in a DIRECTION makes every fall depend on that direction being
+      // right, and a smoothed outline has plenty of places — tight corners,
+      // tile seams, the tip of a channel's snout — where an averaged normal
+      // points somewhere the water below is not. The caller answers "is there
+      // lower water AROUND here", which has no direction in it to get wrong.
+      const band = probeLipFootBand(p.x, p.z);
       if (band !== null) {
         isLip[i] = true;
         bands[i] = band;
       }
     }
 
-    // Maximal runs, handling wrap-around: rotate the start to a non-lip index
-    // if one exists so runs don't straddle the ring seam.
+    // Maximal runs. The scan starts after the first non-lip index so a run is
+    // never split by the array seam — but a run that REACHES the seam (ends at
+    // n−1 while index 0 is a lip too) CONTINUES across it, so its end is
+    // extended by `startIdx` indices, and emitRun/emitSheet index the ring
+    // modulo n. A run lying wholly in the head, with index n−1 dry, is emitted
+    // on its own.
+    //
+    // MEASURED (2026-08-22): this scan's comment used to claim wrap-around and
+    // never wrapped, so a run at the HEAD of the ring was silently dropped. On
+    // a loop whose whole south edge is the lip, that is every fall it has —
+    // zero triangles emitted — and in the world it is the snout tip of a
+    // channel, which is precisely where a fall lives. It is why the `fork`
+    // fixture was measured drawing 1328 flat triangles and not one falling.
     let startIdx = 0;
     while (startIdx < n && isLip[startIdx]) startIdx++;
     if (startIdx === n) {
@@ -356,10 +375,18 @@ export function appendApronSurfaces(
       }
       let j = i;
       while (j + 1 < n && isLip[j + 1]) j++;
-      if (j - i + 1 >= MIN_LIP_RUN_VERTICES) {
-        emitRun(loop, i, j, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
+      // A run ending on the last index continues into the wrapped head.
+      const runEnd = j === n - 1 && isLip[0] ? j + startIdx : j;
+      if (runEnd - i + 1 >= MIN_LIP_RUN_VERTICES) {
+        emitRun(loop, i, runEnd, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
       }
       i = j + 1;
+    }
+    // The head run ([0..startIdx−1]) lies BEFORE the scan start, and is only
+    // reached through the extension above when it wraps onto the tail. When it
+    // does not — index n−1 dry — it is a run of its own.
+    if (isLip[0] && !isLip[n - 1] && startIdx >= MIN_LIP_RUN_VERTICES) {
+      emitRun(loop, 0, startIdx - 1, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
     }
   }
 }
@@ -380,9 +407,12 @@ function emitRun(
   // Foot band = HIGHEST probed band along the run: this sheet drops ONE
   // terrace step onto water that is really there, and the region it lands on
   // carries the cascade further down (see the doc comment above).
+  // Ring positions modulo the loop length: a run that wrapped the seam carries
+  // an end index past n−1 (see the run scan).
+  const ringLength = loop.length;
   let footBand = -Infinity;
   for (let i = start; i <= end; i++) {
-    const b = bands[i];
+    const b = bands[i % ringLength];
     if (b !== null && b > footBand) footBand = b;
   }
   if (!Number.isFinite(footBand)) return;

@@ -43,9 +43,14 @@ function squareLoop(x0 = 0, z0 = 0, size = 8): ContourLoop {
  * Tolerance is loose because neighbour-averaged normals tilt slightly at
  * anything near a corner — the real oracle is band lookup, not line matching.
  */
+/**
+ * "Is there lower water AROUND here" for a lip lying on the loop's south edge
+ * (z = 0), asked AT the contour point rather than half a cell along its
+ * outward normal — the question the builder now puts (see appendApronSurfaces).
+ */
 function southEdgeProbe(minX: number, maxX: number, band: number) {
   return (cx: number, cz: number) =>
-    cz < -0.3 && cz > -0.7 && cx >= minX && cx <= maxX ? band : null;
+    Math.abs(cz) < 0.5 && cx >= minX && cx <= maxX ? band : null;
 }
 
 /** Group raw floats into world-space vertices. */
@@ -150,7 +155,7 @@ describe('appendApronSurfaces', () => {
     const loop = squareLoop();
     // Window narrower than one vertex spacing → exactly one lip vertex.
     const probe = (cx: number, cz: number) =>
-      cz < -0.3 && cz > -0.7 && Math.abs(cx - 4) < 0.26 ? 0 : null;
+      Math.abs(cz) < 0.5 && Math.abs(cx - 4) < 0.26 ? 0 : null;
     const out: number[] = [];
     appendApronSurfaces([loop], CREST_Y, footWorldYOf, probe, testGround, out,);
     expect(out).toHaveLength(0);

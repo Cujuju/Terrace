@@ -897,12 +897,29 @@ export function createRiverRig(
         bandWorldY,
         // Contour coordinates are in CELLS, and a cell's own coordinate is its
         // centre, so the cell a probe point lands in is the nearest integer.
+        // IS THERE LOWER WATER AROUND THIS POINT — the question a fall
+        // actually turns on. A contour point sits on a cell BOUNDARY, so the
+        // water it is about to pour onto can be in any of the cells that
+        // boundary touches; asking in one direction only was what left the
+        // `fork` fixture with no falls at all. The HIGHEST such band wins, so
+        // the fall drops one terrace onto water that is really there and the
+        // region it lands on carries the cascade on down.
+        //
+        // An apron pours onto WATER BELOW, never onto dry ground: where there
+        // is none, the region simply ends on the terrain's own contour, which
+        // is the approved lake-rim behaviour.
         (probeX, probeZ) => {
-          const band = waterBandAt(Math.round(probeX), Math.round(probeZ));
-          // An apron pours onto WATER BELOW, never onto dry ground: where the
-          // outside of a lip is dry the region simply ends on the terrain's own
-          // contour, which is the approved lake-rim behaviour.
-          return band !== null && band < region.surfaceBand ? band : null;
+          const atX = Math.round(probeX);
+          const atZ = Math.round(probeZ);
+          let best: number | null = null;
+          for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const band = waterBandAt(atX + dx, atZ + dz);
+              if (band === null || band >= region.surfaceBand) continue;
+              if (best === null || band > best) best = band;
+            }
+          }
+          return best;
         },
         // The DRAWN ground under a point of the fall, so the sheet steps down
         // the terraces instead of cutting a flat plane through them.
