@@ -115,15 +115,57 @@ if (missing.length === 0) {
   process.exit(0);
 }
 
-const insertSnapshot = db.prepare(
-  'INSERT INTO main.snapshots SELECT * FROM source.snapshots WHERE id = ?',
-);
-const insertSlices = db.prepare(
-  'INSERT INTO main.plugin_slices SELECT * FROM source.plugin_slices WHERE snapshot_id = ?',
-);
-const insertMasks = db.prepare(
-  'INSERT INTO main.token_masks SELECT * FROM source.token_masks WHERE snapshot_id = ?',
-);
+/**
+ * Columns every row of a table must carry for the copy to mean anything. A
+ * source missing one of these is not a world file this script can merge.
+ */
+const REQUIRED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  snapshots: ['id', 'schema_version', 'created_at', 'world_size', 'heightmap', 'mask'],
+  plugin_slices: ['snapshot_id', 'plugin', 'data'],
+  token_masks: ['snapshot_id', 'token', 'mask'],
+};
+
+/**
+ * The columns to copy for one table: those present in BOTH files.
+ *
+ * NAMED EXPLICITLY, NEVER `SELECT *`. Two copies of a world can genuinely have
+ * different schemas — one has been opened by a build with an additive column
+ * (`pinned`, `world_name`) and the other has not — and `SELECT *` is
+ * POSITIONAL. It fails loudly when the column counts differ, which is how this
+ * was found; it would fail SILENTLY, writing each value into the wrong column,
+ * if the counts ever matched in a different order. Naming the intersection
+ * makes both impossible: a column the target has and the source lacks simply
+ * takes its default (which is what `pinned` wants), and a column the source
+ * has and the target lacks is dropped rather than shifting everything after it.
+ */
+function sharedColumns(table: string): string[] {
+  const columnsOf = (schema: string): string[] =>
+    (db.pragma(`${schema}.table_info(${table})`) as { name: string }[]).map((c) => c.name);
+  const target = new Set(columnsOf('main'));
+  const shared = columnsOf('source').filter((name) => target.has(name));
+
+  const missing = (REQUIRED_COLUMNS[table] ?? []).filter((name) => !shared.includes(name));
+  if (missing.length > 0) {
+    logError(
+      `refusing: the two files do not share the column(s) ${missing.join(', ')} on ` +
+        `${table}, so a merged row would be missing something essential.`,
+    );
+    process.exit(1);
+  }
+  return shared;
+}
+
+/** `INSERT INTO main.<table> (cols) SELECT cols FROM source.<table> WHERE <key> = ?`. */
+function copyStatement(table: string, key: string): DatabaseConstructor.Statement {
+  const columns = sharedColumns(table).join(', ');
+  return db.prepare(
+    `INSERT INTO main.${table} (${columns}) SELECT ${columns} FROM source.${table} WHERE ${key} = ?`,
+  );
+}
+
+const insertSnapshot = copyStatement('snapshots', 'id');
+const insertSlices = copyStatement('plugin_slices', 'snapshot_id');
+const insertMasks = copyStatement('token_masks', 'snapshot_id');
 
 // ONE TRANSACTION for the whole merge: a half-merged history is a world with
 // restore points whose plugin state was never copied, which would restore a
