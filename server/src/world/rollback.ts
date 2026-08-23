@@ -43,6 +43,7 @@ import {
   OPERATOR_MAX_FAILED_ATTEMPTS,
 } from './operator-gate.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
+import { buildThumbnail } from '../persistence/thumbnail.ts';
 import { applyInitialUnlockForToken } from './initial-unlock.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import type { PluginHost } from '../plugins/host.ts';
@@ -235,6 +236,10 @@ export class RollbackService {
       mask: world.mask,
       pluginSlices: host.collectPersistence(),
       tokenMasks: world.tokenMasks(),
+      // Rollback writes restore points like any other saver, so it produces a
+      // picture like any other saver: a rewound world must not keep wearing
+      // the thumbnail of the world it was rolled away from.
+      thumbnail: buildThumbnail(world.map.cells, world.size),
     });
   }
 

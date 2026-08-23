@@ -68,6 +68,13 @@ export interface SnapshotInput {
    * otherwise need fixing for.
    */
   readonly tokenMasks?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * A top-down picture of this world for the worlds panel — see
+   * persistence/thumbnail.ts. OPTIONAL and additive, following tokenMasks:
+   * a caller that does not produce one (every existing test) simply omits it,
+   * and the column stays null.
+   */
+  readonly thumbnail?: Uint8Array;
 }
 
 export interface WorldSnapshot extends Omit<SnapshotInput, 'name' | 'tokenMasks'> {
@@ -148,6 +155,17 @@ const WORLD_NAME_COLUMN = 'world_name';
  */
 const PINNED_COLUMN = 'pinned';
 
+/**
+ * Name of the additive column holding the world's THUMBNAIL (2026-08-22): a
+ * 64² grid of band bytes, ~4 KB, so the worlds panel can show what each world
+ * looks like without decoding a megabyte of heightmap per row.
+ *
+ * NULLABLE, like world_name and unlike pinned: there is no honest default
+ * picture of a world nobody has rendered yet, and "not drawn" has to be
+ * distinguishable from "drawn, and empty". See persistence/thumbnail.ts.
+ */
+const THUMBNAIL_COLUMN = 'thumbnail';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
 // per (snapshot, token) — persisted BESIDE the union `mask` on `snapshots`,
@@ -188,6 +206,7 @@ const SCHEMA_DDL = `
     world_size     INTEGER NOT NULL,
     ${WORLD_NAME_COLUMN} TEXT,
     ${PINNED_COLUMN}     INTEGER NOT NULL DEFAULT 0,
+    ${THUMBNAIL_COLUMN}  BLOB,
     heightmap      BLOB    NOT NULL,
     mask           BLOB    NOT NULL
   );
@@ -246,6 +265,8 @@ export class SnapshotStore {
   private readonly selectHistory: Statement;
   private readonly setPinnedStatement: Statement;
   private readonly setWorldNameStatement: Statement;
+  private readonly selectLatestThumbnail: Statement;
+  private readonly setLatestThumbnailStatement: Statement;
   private readonly countPinnedStatement: Statement;
 
   /**
@@ -261,8 +282,9 @@ export class SnapshotStore {
     this.retention = retention;
     this.insertSnapshot = db.prepare(
       `INSERT INTO snapshots
-         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
+          ${THUMBNAIL_COLUMN})
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -300,6 +322,13 @@ export class SnapshotStore {
              SELECT id FROM snapshots WHERE ${PINNED_COLUMN} = 0 ORDER BY id DESC LIMIT ?
            )`,
     );
+    this.selectLatestThumbnail = db.prepare(
+      `SELECT ${THUMBNAIL_COLUMN} AS thumbnail FROM snapshots ORDER BY id DESC LIMIT 1`,
+    );
+    this.setLatestThumbnailStatement = db.prepare(
+      `UPDATE snapshots SET ${THUMBNAIL_COLUMN} = ?
+         WHERE id = (SELECT id FROM snapshots ORDER BY id DESC LIMIT 1)`,
+    );
     this.setWorldNameStatement = db.prepare(
       `UPDATE snapshots SET ${WORLD_NAME_COLUMN} = ?`,
     );
@@ -330,6 +359,7 @@ export class SnapshotStore {
     db.exec(SCHEMA_DDL);
     addColumnIfMissing(db, 'snapshots', WORLD_NAME_COLUMN, 'TEXT');
     addColumnIfMissing(db, 'snapshots', PINNED_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
     return new SnapshotStore(db, retention);
   }
 
@@ -355,6 +385,9 @@ export class SnapshotStore {
         input.name,
         heightmap,
         mask,
+        // `?? null` rather than undefined: better-sqlite3 refuses undefined as
+        // a bound value, and a caller that produced no thumbnail means NULL.
+        input.thumbnail === undefined ? null : Buffer.copyBytesFrom(input.thumbnail),
       );
       const snapshotId = Number(result.lastInsertRowid);
       for (const [plugin, data] of entries) {
@@ -558,6 +591,25 @@ export class SnapshotStore {
     // just happened, so the rows they want are the ones they see without
     // scrolling.
     return points.reverse();
+  }
+
+  /** The newest snapshot's thumbnail, or null when it has none. */
+  latestThumbnail(): Buffer | null {
+    const row = this.selectLatestThumbnail.get() as { thumbnail: Buffer | null } | undefined;
+    return row?.thumbnail ?? null;
+  }
+
+  /**
+   * Attaches a thumbnail to the newest snapshot — the LAZY BACKFILL path, for
+   * a world whose newest snapshot predates thumbnails existing.
+   *
+   * Targets the newest row specifically rather than every row: a thumbnail is
+   * a picture of one moment, and painting an old restore point with the
+   * current world's outline would be a small lie in the one place whose
+   * purpose is showing what a world looks like.
+   */
+  setLatestThumbnail(thumbnail: Uint8Array): boolean {
+    return this.setLatestThumbnailStatement.run(Buffer.copyBytesFrom(thumbnail)).changes > 0;
   }
 
   /**

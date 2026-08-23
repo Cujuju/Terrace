@@ -53,6 +53,7 @@ import {
 import { basename, join, resolve } from 'node:path';
 import { logInfo, logWarn } from '../log.ts';
 import { SnapshotStore } from './snapshot-store.ts';
+import { buildThumbnail } from './thumbnail.ts';
 
 /** Extension every world file carries. Also what `list()` scans for. */
 export const WORLD_FILE_EXTENSION = '.db';
@@ -149,6 +150,7 @@ function readSummary(file: WorldFile): Omit<WorldSummary, 'isActive' | 'isArchiv
     // world file, and "column not found" is a normal answer here, not a fault.
     const columns = db.pragma('table_info(snapshots)') as { name: string }[];
     const hasPinned = columns.some((column) => column.name === 'pinned');
+    const hasThumbnail = columns.some((column) => column.name === 'thumbnail');
 
     const row = db
       .prepare(
@@ -160,6 +162,14 @@ function readSummary(file: WorldFile): Omit<WorldSummary, 'isActive' | 'isArchiv
         `SELECT world_name, world_size FROM snapshots ORDER BY id DESC LIMIT 1`,
       )
       .get() as { world_name: string | null; world_size: number } | undefined;
+    // base64 on the way out: WorldSummary travels as msgpack and a Buffer is
+    // not a protocol type. ~5.5 KB per world, which is why the listing ships
+    // every world's picture rather than paginating them.
+    const thumbnail = hasThumbnail
+      ? ((db.prepare(
+          `SELECT thumbnail FROM snapshots ORDER BY id DESC LIMIT 1`,
+        ).get() as { thumbnail: Buffer | null } | undefined)?.thumbnail ?? null)
+      : null;
     const pinned = hasPinned
       ? (db.prepare(`SELECT COUNT(*) AS n FROM snapshots WHERE pinned = 1`).get() as {
           n: number;
@@ -175,6 +185,7 @@ function readSummary(file: WorldFile): Omit<WorldSummary, 'isActive' | 'isArchiv
       restorePoints: row.points,
       pinnedPoints: pinned,
       newestAt: row.newest,
+      ...(thumbnail === null ? {} : { thumbnail: thumbnail.toString('base64') }),
     };
   } catch (error) {
     return { ...base, unreadable: error instanceof Error ? error.message : String(error) };
@@ -284,6 +295,12 @@ export class WorldRegistry {
    * for a moment, and the listing must show what is actually loaded.
    */
   list(activeId: string | null): WorldSummary[] {
+    // Backfill first, so a world drawn just now appears with its picture in
+    // THIS listing rather than the next one. Each world pays a decode at most
+    // once, ever — see ensureThumbnail.
+    for (const file of this.scan(this.worldsDir)) {
+      this.ensureThumbnail(file.id, activeId);
+    }
     const summaries = this.scan(this.worldsDir).map((file) => ({
       ...readSummary(file),
       isActive: file.id === activeId,
@@ -311,6 +328,49 @@ export class WorldRegistry {
       };
     });
     return summaries.sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0));
+  }
+
+  /**
+   * Draws and stores a thumbnail for a world that has none — the LAZY half of
+   * the scheme (owner call, 2026-08-22).
+   *
+   * Every snapshot written from now on carries a picture, so this exists only
+   * for worlds whose newest snapshot predates the feature. It decodes that
+   * world's heightmap ONCE, ever, and writes the result back into its own
+   * file; the next listing reads 4 KB instead.
+   *
+   * SKIPS THE LOADED WORLD, and that is not squeamishness about SQLite's
+   * locking (WAL would serialise the write): the live world writes a snapshot
+   * of its own within SNAPSHOT_INTERVAL_S, and that one is drawn from the
+   * world as it IS rather than as its last save left it. Waiting a minute for
+   * a truer picture beats racing the session for a staler one.
+   *
+   * Every failure is swallowed to a `false`: this is decoration, and a world
+   * that cannot be drawn must still be listed, loadable and archivable.
+   */
+  ensureThumbnail(id: string, activeId: string | null): boolean {
+    if (id === activeId) return false;
+    if (!this.has(id)) return false;
+
+    let store: SnapshotStore | null = null;
+    try {
+      store = SnapshotStore.open(this.pathFor(id));
+      if (store.latestThumbnail() !== null) return false;
+
+      const snapshot = store.loadLatest();
+      if (snapshot === null) return false;
+
+      const drawn = store.setLatestThumbnail(
+        buildThumbnail(snapshot.cells, snapshot.worldSize),
+      );
+      if (drawn) logInfo(`drew a thumbnail for world "${id}"`);
+      return drawn;
+    } catch (error) {
+      logWarn(`could not draw a thumbnail for world "${id}": ${String(error)}`);
+      return false;
+    } finally {
+      store?.close();
+    }
   }
 
   /** One live world's summary, or null when there is no such file. */

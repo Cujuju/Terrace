@@ -27,6 +27,7 @@
 import { logInfo } from '../log.ts';
 import type { ServerConfig } from '../config.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
+import { buildThumbnail } from '../persistence/thumbnail.ts';
 import type { WorldRegistry } from '../persistence/world-registry.ts';
 import { PluginHost } from '../plugins/host.ts';
 import type { LoadedPlugin } from '../plugins/types.ts';
@@ -71,6 +72,10 @@ export function snapshotIfDirty(session: WorldSession): boolean {
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
     tokenMasks: world.tokenMasks(),
+    // The heightmap is already in memory here, so the picture costs only the
+    // averaging pass — the reason thumbnails are written rather than computed
+    // when somebody opens the worlds panel (persistence/thumbnail.ts).
+    thumbnail: buildThumbnail(world.map.cells, world.size),
   });
   world.markSnapshotted();
   return true;
@@ -199,6 +204,7 @@ export function createWorldFile(
       mask: world.mask,
       pluginSlices: {},
       tokenMasks: world.tokenMasks(),
+      thumbnail: buildThumbnail(world.map.cells, world.size),
     });
     logInfo(`created world "${id}" ("${name}", ${worldSize}²)`);
   } finally {

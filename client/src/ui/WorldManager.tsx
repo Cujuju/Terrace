@@ -27,6 +27,7 @@ import {
   type WorldAdminRefusal,
   type WorldAdminRequestMessage,
 } from '@terrace/shared';
+import { WorldThumbnail } from './WorldThumbnail.tsx';
 import {
   activeWorldId,
   archivedWorlds,
@@ -248,6 +249,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
           <For each={worlds()}>
             {(world) => (
               <div class="restore-row" classList={{ current: world.id === activeWorldId() }}>
+                <WorldThumbnail data={world.thumbnail} name={world.name} />
                 <div class="restore-row-main">
                   <strong>{world.name}</strong>
                   <Show when={world.id === activeWorldId()}>
@@ -420,6 +422,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
           <For each={archivedWorlds()}>
             {(world) => (
               <div class="restore-row">
+                <WorldThumbnail data={world.thumbnail} name={world.name} />
                 <div class="restore-row-main">
                   <strong>{world.name}</strong>
                   <div class="hud-hint">

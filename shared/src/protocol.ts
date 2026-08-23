@@ -548,6 +548,17 @@ export const MAX_WORLD_ID_LENGTH = 64;
 export const WORLD_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
+ * Edge of a world thumbnail, in pixels.
+ *
+ * 64 is the largest size that still reads as one glance in a list row, and it
+ * is 4 KB of band data per world — small enough that shipping every world's
+ * thumbnail with the listing is not worth paginating. It is fixed rather than
+ * negotiated because both halves index the same flat array, and a size that
+ * travelled would be one more thing for them to disagree about.
+ */
+export const WORLD_THUMBNAIL_SIZE = 64;
+
+/**
  * One world as the manager panel sees it. Everything here is DERIVED from the
  * world's own file — there is no registry index that could disagree with what
  * is on disk (see server/src/persistence/world-registry.ts).
@@ -573,6 +584,19 @@ export interface WorldSummary {
   isArchived: boolean;
   /** When it was archived, for a trash row; absent otherwise. */
   archivedAt?: number;
+  /**
+   * A top-down picture of the world, for telling one from another at a glance:
+   * base64 of a WORLD_THUMBNAIL_SIZE² grid of signed bytes, each the BAND of
+   * the mean height under that pixel, row-major.
+   *
+   * BANDS RATHER THAN COLOURS, because the palette is the client's business —
+   * see server/src/persistence/thumbnail.ts. Absent on a world that has not
+   * been snapshotted since thumbnails existed and could not be backfilled
+   * (the loaded world is left alone until its next snapshot); a reader shows
+   * a placeholder rather than treating it as an error.
+   */
+  thumbnail?: string;
+
   /**
    * Why this world could not be read, when it could not be. A world whose file
    * is corrupt is LISTED WITH ITS PROBLEM rather than hidden: a world you can

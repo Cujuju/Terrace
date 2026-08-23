@@ -941,3 +941,37 @@ button.world-header {
   z-index: 11;
   white-space: nowrap;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLD THUMBNAIL (2026-08-22). A 64px top-down picture of the world, so a
+   list of five worlds is browsed by SHAPE rather than by reading five names.
+
+   NEAREST-NEIGHBOUR SCALING is deliberate: the source really is 64 pixels
+   across, and smoothing it would imply detail that is not there.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.world-thumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 3px;
+  border: 1px solid var(--hud-border);
+  /* Both spellings: `pixelated` is the standard, `crisp-edges` is what older
+     WebKit answers to, and a blurred thumbnail is the failure mode. */
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+/* A world whose picture has not been drawn yet (its newest snapshot predates
+   thumbnails, and it is the loaded world so the backfill left it alone). A
+   flat panel, not a spinner: it fills in on the next snapshot by itself, and
+   nothing is broken in the meantime. */
+.world-thumb--empty {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* The row was a two-line block; with a picture it becomes picture + block, so
+   the text side has to stop demanding the full width. */
+.restore-row .world-thumb + .restore-row-main {
+  flex: 1 1 12rem;
+}
