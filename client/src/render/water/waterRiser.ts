@@ -43,56 +43,35 @@
  */
 
 import {
-  RECT_EAST,
-  RECT_NORTH,
-  RECT_SOUTH,
-  RECT_WEST,
+  CONTOUR_CELL_CENTRE_GUARD,
   type ContourLoop,
   type ContourPoint,
 } from '../../terrain/contours.ts';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 
 /**
- * How far OUTSIDE the loop, in CELLS, the classification probe is taken from a
+ * How far OUTSIDE the loop, in CELLS, the qualifying probe is taken from a
  * segment's midpoint.
  *
- * Half a cell. A contour crossing is clamped into the middle [1/8, 7/8] of its
- * lattice edge (CONTOUR_CELL_CENTRE_GUARD) and smoothing can only move a
- * vertex ALONG the outline, so a boundary point is always within half a cell
- * of the edge between the wet cell and its dry neighbour. Stepping half a cell
- * along the outward normal therefore lands in the NEIGHBOUR cell — the cell
- * the water is about to pour onto — and never as far as the cell past it
- * (that would need a full cell of travel from the shared edge).
+ * AN EIGHTH OF A CELL — deliberately tiny, because the question is
+ * "what is on the other side of this segment", and the other side begins
+ * immediately. It is `CONTOUR_CELL_CENTRE_GUARD`, the smallest displacement the
+ * contour pipeline itself treats as significant (every crossing is clamped and
+ * every smoothed vertex pushed by exactly this much), so a probe cannot land
+ * back on the boundary it stepped off through floating-point noise, and cannot
+ * skip over anything either.
+ *
+ * IT USED TO BE HALF A CELL, and that was the narrowness defect. With a
+ * CELL-MEMBERSHIP test the probe had to travel far enough to leave the source
+ * cell, and half a cell along a normal that has swung even 40 degrees off
+ * downstream lands in a diagonal neighbour the course never ran through.
+ * MEASURED 2026-08-23 in `fork`: a fall's qualifying arc spanned x = 31.76 to
+ * 32.24 — 0.48 cell against a channel a full cell wide, so the drawn sheet was
+ * half the width of the river it carried. Containment needs no such travel: the
+ * margin comes from the lower PLATE, which reaches about 1.13 cells back
+ * upstream past the lip it pours from and not at all sideways past a bank.
  */
-export const WATER_RISER_PROBE_CELLS = 0.5;
-
-/**
- * Where ALONG a segment the classification probes are taken, as fractions of
- * its length: both ends and the middle.
- *
- * THREE, NOT ONE, and this is a correction to the plan this module was built
- * from, which specified a single probe at the midpoint. MEASURED 2026-08-23 in
- * the `fork` fixture: a water region one cell across marches to a blob whose
- * smoothed boundary vertices are about 0.45 cell apart, so a segment's MIDPOINT
- * sits diagonally between cells and the point half a cell out along its normal
- * lands in a cell CORNER-adjacent to the course rather than on it. Every one of
- * band 15's 36 segments was rejected as "no water outside" while the cell
- * directly downstream held water a band lower — 0 of 8 one-cell regions in the
- * fixture emitted a fall.
- *
- * A segment's ENDPOINTS are contour vertices, and on a blob around a single
- * wet cell the vertex facing the outflow lies on the course centre-line, so
- * its probe lands squarely in the downstream cell. Asking at both ends and the
- * middle costs three map lookups per segment and makes the classification
- * robust to where the vertices happen to fall.
- *
- * THIS IS NOT THE APRON'S 3x3 SCAN. That scan asked "is there lower water
- * anywhere AROUND this point", which has no direction in it and fired off
- * banks the water never reached. All three probes here are displaced along the
- * segment's OWN outward normal, so every one of them asks about the water this
- * segment actually faces.
- */
-const WATER_RISER_PROBE_FRACTIONS: readonly number[] = [0, 0.5, 1];
+const WATER_RISER_PROBE_CELLS = CONTOUR_CELL_CENTRE_GUARD;
 
 /**
  * How far OUT from its top edge, in CELLS, the riser's foot stands — the
@@ -136,6 +115,90 @@ const WATER_RISER_PROBE_FRACTIONS: readonly number[] = [0, 0.5, 1];
  * read from its height, not from its footprint.
  */
 export const WATER_RISER_LEAN_CELLS = 0.5;
+
+/**
+ * One lower band's drawn tread, as the smoothed loops it was marched from,
+ * with a bounding box per loop so a containment query rejects almost all of
+ * them without touching their points.
+ *
+ * THE QUALIFYING QUESTION IS "DOES A LOWER PLATE COVER THE POINT JUST OUTSIDE
+ * THIS SEGMENT", and it is asked of the plate itself rather than of the set of
+ * wet CELLS. The difference is the margin. A lower region's plate reaches about
+ * 1.13 cells back upstream past the lip it is poured over — the tread builder's
+ * field rule runs the water under the rising bank on that side (waterTread.ts)
+ * — and reaches nothing at all sideways past a bank, because there the water
+ * simply ends on the terrain's own contour. So containment answers "is this a
+ * genuine downstream lip" with a cell of slack in the direction that should
+ * qualify and none in the direction that should not, which is exactly the
+ * discrimination a fixed-distance cell lookup could not make.
+ */
+export interface WaterPlate {
+  /** The band this plate's tread was drawn at. */
+  readonly band: number;
+  /** Its smoothed boundary loops, in emission order. */
+  readonly loops: readonly ContourLoop[];
+  /** [minX, minZ, maxX, maxZ] per loop, in the same order. */
+  readonly bounds: Float64Array;
+}
+
+/** Index one band's loops for containment queries. Pure; allocation only. */
+export function waterPlateOf(band: number, loops: readonly ContourLoop[]): WaterPlate {
+  const bounds = new Float64Array(loops.length * 4);
+  for (let i = 0; i < loops.length; i++) {
+    let minX = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxZ = -Infinity;
+    for (const p of loops[i]) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+    }
+    bounds[i * 4] = minX;
+    bounds[i * 4 + 1] = minZ;
+    bounds[i * 4 + 2] = maxX;
+    bounds[i * 4 + 3] = maxZ;
+  }
+  return { band, loops, bounds };
+}
+
+/**
+ * Whether `plate` covers the cell-space point, by the EVEN-ODD rule over every
+ * one of its loops at once.
+ *
+ * Even-odd is not a shortcut here, it is the correct rule for this data. A
+ * region can arrive as several disjoint lozenges, as two half-loops split by a
+ * marching-tile border, and as an outer ring with island HOLES inside it — and
+ * even-odd handles all three without being told which is which: a point inside
+ * one lozenge crosses one boundary, a point inside an island crosses two.
+ *
+ * The ray is cast in +x, and a vertex exactly on it is counted once by the
+ * half-open `(z0 <= z) !== (z1 <= z)` test rather than twice.
+ */
+function plateCovers(plate: WaterPlate, x: number, z: number): boolean {
+  let inside = false;
+  for (let i = 0; i < plate.loops.length; i++) {
+    const base = i * 4;
+    if (
+      x < plate.bounds[base] ||
+      x > plate.bounds[base + 2] ||
+      z < plate.bounds[base + 1] ||
+      z > plate.bounds[base + 3]
+    ) {
+      continue;
+    }
+    const loop = plate.loops[i];
+    for (let a = 0, b = loop.length - 1; a < loop.length; b = a++) {
+      const pa = loop[a];
+      const pb = loop[b];
+      if (pa.z <= z === pb.z <= z) continue;
+      const cross = pa.x + ((z - pa.z) / (pb.z - pa.z)) * (pb.x - pa.x);
+      if (x < cross) inside = !inside;
+    }
+  }
+  return inside;
+}
 
 /**
  * Whether the ring segment p→q is a marching-tile BORDER CLOSING EDGE rather
@@ -240,10 +303,9 @@ function pushTri(
  */
 export function appendRiserSurfaces(
   loops: readonly ContourLoop[],
-  surfaceBand: number,
   crestWorldY: number,
   footWorldYOf: (footBand: number) => number,
-  waterBandAtCell: (cellX: number, cellZ: number) => number | null,
+  lowerPlates: readonly WaterPlate[],
   out: number[],
 ): void {
   for (const loop of loops) {
@@ -256,8 +318,14 @@ export function appendRiserSurfaces(
     // answer has to exist before any of them can be placed.
     const normalX = new Float64Array(n);
     const normalZ = new Float64Array(n);
-    /** Foot band of segment i, or -1 where segment i is not pouring at all. */
-    const footBands = new Int32Array(n).fill(-1);
+    /**
+     * Foot band of segment i, meaningful only where `pouring[i]` is 1. A
+     * separate flag rather than a sentinel band, because a band index can be
+     * NEGATIVE (water below sea level) and any in-band sentinel would one day
+     * be a real answer.
+     */
+    const footBands = new Int32Array(n);
+    const pouring = new Uint8Array(n);
 
     for (let i = 0; i < n; i++) {
       const p = loop[i];
@@ -281,45 +349,38 @@ export function appendRiserSurfaces(
       normalX[i] = nx;
       normalZ[i] = nz;
 
-      // The HIGHEST water strictly below this region, over the three probes:
-      // the fall drops ONE terrace onto water that is really there, and the
-      // region it lands on carries the cascade further down. Taking the lowest
-      // instead was measured (2026-08-22, owner: waterfalls "literally being
-      // projected into space") to loft a single sheet from a spire's summit to
-      // its foot, standing in open air beside rock too narrow to hide it.
-      let best = -1;
-      let found = false;
-      for (const fraction of WATER_RISER_PROBE_FRACTIONS) {
-        const alongX = p.x + tx * fraction;
-        const alongZ = p.z + tz * fraction;
-        const band = waterBandAtCell(
-          alongX + nx * WATER_RISER_PROBE_CELLS,
-          alongZ + nz * WATER_RISER_PROBE_CELLS,
-        );
-        if (band === null || band >= surfaceBand) continue;
-        if (!found || band > best) {
-          best = band;
-          found = true;
-        }
+      // THE QUALIFYING TEST, once, at the point just outside the segment's
+      // midpoint. `lowerPlates` is ordered HIGHEST BAND FIRST, so the first
+      // plate that covers the point is the water this segment pours onto: the
+      // fall drops ONE terrace onto water that is really there, and the region
+      // it lands on carries the cascade further down. Taking the lowest instead
+      // was measured (2026-08-22, owner: waterfalls "literally being projected
+      // into space") to loft a sheet from a spire's summit to its foot,
+      // standing in open air beside rock too narrow to hide it.
+      const probeX = (p.x + q.x) / 2 + nx * WATER_RISER_PROBE_CELLS;
+      const probeZ = (p.z + q.z) / 2 + nz * WATER_RISER_PROBE_CELLS;
+      for (const plate of lowerPlates) {
+        if (!plateCovers(plate, probeX, probeZ)) continue;
+        footBands[i] = plate.band;
+        pouring[i] = 1;
+        break;
       }
-      if (!found) continue;
-      footBands[i] = best;
     }
 
     // PASS TWO: emit. Vertex i is where segments i-1 and i meet, so the foot
     // direction there is the mean of their normals when both pour.
     for (let i = 0; i < n; i++) {
+      if (pouring[i] === 0) continue;
       const footBand = footBands[i];
-      if (footBand < 0) continue;
 
       const p = loop[i];
       const q = loop[(i + 1) % n];
       // The foot direction at each end of this segment — the mean of the two
       // normals meeting there when both pour (see the doc comment above).
-      footDirection(normalX, normalZ, footBands, (i - 1 + n) % n, i, p, footDir);
+      footDirection(normalX, normalZ, pouring, loop, (i - 1 + n) % n, i, i, footDir);
       const startX = footDir[0];
       const startZ = footDir[1];
-      footDirection(normalX, normalZ, footBands, i, (i + 1) % n, q, footDir);
+      footDirection(normalX, normalZ, pouring, loop, i, (i + 1) % n, (i + 1) % n, footDir);
       const endX = footDir[0];
       const endZ = footDir[1];
 
@@ -389,18 +450,19 @@ const footDir = new Float64Array(2);
 function footDirection(
   normalX: Float64Array,
   normalZ: Float64Array,
-  footBands: Int32Array,
+  pouring: Uint8Array,
+  loop: ContourLoop,
   a: number,
   b: number,
-  vertex: ContourPoint,
+  vertexIndex: number,
   out: Float64Array,
 ): void {
   let dirX: number;
   let dirZ: number;
-  if (footBands[a] < 0) {
+  if (pouring[a] === 0) {
     dirX = normalX[b];
     dirZ = normalZ[b];
-  } else if (footBands[b] < 0) {
+  } else if (pouring[b] === 0) {
     dirX = normalX[a];
     dirZ = normalZ[a];
   } else {
@@ -416,21 +478,53 @@ function footDirection(
     }
   }
 
-  const onVertical = (vertex.rect & (RECT_WEST | RECT_EAST)) !== 0;
-  const onHorizontal = (vertex.rect & (RECT_NORTH | RECT_SOUTH)) !== 0;
-  // Exactly one of the two: a corner keeps neither axis and is left alone.
-  if (onVertical !== onHorizontal) {
-    // A vertical border (constant x) runs along z, and vice versa.
-    const pinnedX = onVertical ? 0 : dirX;
-    const pinnedZ = onVertical ? dirZ : 0;
-    const length = Math.hypot(pinnedX, pinnedZ);
-    if (length > 0) {
-      out[0] = pinnedX / length;
-      out[1] = pinnedZ / length;
+  const axis = borderAxisAt(loop, vertexIndex);
+  if (axis !== null) {
+    // Keep only the component running ALONG the border.
+    const along = dirX * axis[0] + dirZ * axis[1];
+    if (along !== 0) {
+      out[0] = axis[0] * Math.sign(along);
+      out[1] = axis[1] * Math.sign(along);
       return;
     }
   }
 
   out[0] = dirX;
   out[1] = dirZ;
+}
+
+/** Scratch for one border axis, [x, z]. Reused; see footDir. */
+const borderAxis = new Float64Array(2);
+
+/**
+ * The UNIT direction of the marching-tile border a loop vertex sits on, or
+ * null where it sits on none.
+ *
+ * READ OFF THE LOOP, not off `ContourPoint.rect`'s individual bits. `rect` is
+ * exported from terrain/contours.ts only as `RECT_NONE`; the four side bits are
+ * private there and this module has no business widening a file the terrain and
+ * the brush preview share to learn which side a point is on. It does not need
+ * to: a vertex on the border is, by construction, an endpoint of the straight
+ * CLOSING EDGE that assembleLoops walks along that border, so the closing
+ * edge's own direction IS the border's axis. If both of a vertex's edges are
+ * closing edges it is a domain CORNER, which has no single axis, and null is
+ * the honest answer.
+ */
+function borderAxisAt(loop: ContourLoop, index: number): Float64Array | null {
+  const n = loop.length;
+  const here = loop[index];
+  if (here.rect === 0) return null;
+  const prev = loop[(index - 1 + n) % n];
+  const next = loop[(index + 1) % n];
+  const prevIsBorder = isTileBorderClosingEdge(prev, here);
+  const nextIsBorder = isTileBorderClosingEdge(here, next);
+  if (prevIsBorder === nextIsBorder) return null; // neither, or a corner
+  const other = prevIsBorder ? prev : next;
+  const dx = other.x - here.x;
+  const dz = other.z - here.z;
+  const length = Math.hypot(dx, dz);
+  if (length === 0) return null;
+  borderAxis[0] = dx / length;
+  borderAxis[1] = dz / length;
+  return borderAxis;
 }

@@ -16,7 +16,7 @@
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, bandOf, cellIndex } from '@terrace/shared';
 import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
-import { appendRiserSurfaces } from '../src/render/water/waterRiser.ts';
+import { appendRiserSurfaces, waterPlateOf } from '../src/render/water/waterRiser.ts';
 import { createTerrainMirror } from '../src/terrain/mirror.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 
@@ -58,19 +58,21 @@ describe('a river down a cone', () => {
 
     const bandWorldY = (band: number): number => band * 0.25;
     const triangles: number[] = [];
-    for (const region of regions.values()) {
-      const loops = appendRegionSurface(mirror, region, bandWorldY(region.surfaceBand), triangles);
+    // Treads for every band first, then the falls — a fall is classified
+    // against a lower PLATE, so all the plates have to exist. Highest first.
+    const bands = [...regions.keys()].sort((a, b) => b - a);
+    const plates = bands.map((band) =>
+      waterPlateOf(
+        band,
+        appendRegionSurface(mirror, regions.get(band)!, bandWorldY(band), triangles),
+      ),
+    );
+    for (let i = 0; i < bands.length; i++) {
       appendRiserSurfaces(
-        loops,
-        region.surfaceBand,
-        bandWorldY(region.surfaceBand),
+        plates[i]!.loops,
+        bandWorldY(bands[i]!),
         bandWorldY,
-        (px, pz) => {
-          const x = Math.round(px);
-          const z = Math.round(pz);
-          if (x < 0 || z < 0 || x >= WORLD || z >= WORLD) return null;
-          return bandOfCell.get(cellIndex(mirror.map, x, z)) ?? null;
-        },
+        plates.slice(i + 1),
         triangles,
       );
     }

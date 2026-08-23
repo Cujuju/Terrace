@@ -90,17 +90,10 @@ export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
 
 /** Which of the chunk domain's four borders a point lies on (bitmask). */
 export const RECT_NONE = 0;
-/**
- * The four border bits. EXPORTED (2026-08-23) because the water riser has to
- * know WHICH border a point sits on, not merely that it sits on one: a foot
- * vertex hanging from a border point is pinned to that border's axis so the
- * two tiles' half-loops put it in the same place — the same agreement seam
- * contract S4 buys for the point itself.
- */
-export const RECT_WEST = 1;
-export const RECT_EAST = 2;
-export const RECT_NORTH = 4;
-export const RECT_SOUTH = 8;
+const RECT_WEST = 1;
+const RECT_EAST = 2;
+const RECT_NORTH = 4;
+const RECT_SOUTH = 8;
 
 /**
  * One vertex of a contour, in CELL coordinates (world coordinates are these

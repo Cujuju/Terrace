@@ -69,7 +69,7 @@ import {
   appendRegionSurface,
   type WaterRegion,
 } from './water/waterTread.ts';
-import { appendRiserSurfaces } from './water/waterRiser.ts';
+import { appendRiserSurfaces, waterPlateOf, type WaterPlate } from './water/waterRiser.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
 
@@ -892,29 +892,35 @@ export function createRiverRig(
     };
 
     const triangles: number[] = [];
-    for (const region of regions.values()) {
-      const surfaceY = bandWorldY(region.surfaceBand);
-      const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
+
+    // PASS THREE: every region's TREAD, before any riser. A riser's qualifying
+    // test is "does a lower region's PLATE cover the point just outside this
+    // segment" (water/waterRiser.ts), and a plate is exactly the smoothed loops
+    // the tread builder returns — so all of them have to exist before the first
+    // fall can be classified.
+    //
+    // BAND ORDER IS EXPLICIT, not the Map's insertion order. Insertion order is
+    // the order cells came off the courses, which is a property of the trace;
+    // pinning it to the band index makes the triangle soup a function of the
+    // heightmap alone.
+    const bands = [...regions.keys()].sort((a, b) => b - a);
+    const plates: WaterPlate[] = [];
+    for (const band of bands) {
+      const region = regions.get(band)!;
+      const loops = appendRegionSurface(mirror, region, bandWorldY(band), triangles);
+      plates.push(waterPlateOf(band, loops));
+    }
+
+    // PASS FOUR: the risers. `plates` is already highest band first, so the
+    // slice below is every band strictly under this one, in the order the riser
+    // wants to try them — the first that covers the probe is the highest water
+    // really there, which is the one terrace step down.
+    for (let i = 0; i < bands.length; i++) {
       appendRiserSurfaces(
-        loops,
-        region.surfaceBand,
-        surfaceY,
+        plates[i]!.loops,
+        bandWorldY(bands[i]!),
         bandWorldY,
-        // THE WATER AT A CELL, and nothing more clever than that. Contour
-        // coordinates are in CELLS and a cell's own coordinate is its centre,
-        // so the cell a probe point lands in is the nearest integer. The riser
-        // asks this once per boundary segment, half a cell along that
-        // segment's own exact outward normal; a lower band here means this
-        // segment pours onto that water, anything else means it does not pour
-        // at all.
-        //
-        // NO 3x3 SCAN, deliberately. The apron this replaces averaged its
-        // normals and could not trust the direction it was pointing, so it
-        // asked "is there lower water ANYWHERE around here" and took the
-        // highest answer. That question has no direction in it, which is why
-        // it also fired off banks the water never reached. A per-segment
-        // normal is exact, so the one cell it points at is the right cell.
-        (probeX, probeZ) => waterBandAt(Math.round(probeX), Math.round(probeZ)),
+        plates.slice(i + 1),
         triangles,
       );
     }

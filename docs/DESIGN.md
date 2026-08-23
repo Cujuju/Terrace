@@ -3244,21 +3244,39 @@ boundary" is a property of an EDGE), and it would break
 `waterTread.test.ts`'s "does not overhang the lip where the ground falls
 away", which is exactly the guard #62 recorded.
 
-**Two corrections found by measurement, both against the plan this was built
+**Corrections found by measurement, all of them against the plan this was built
 from.** Recorded because the plan was wrong and the measurements are what
 settled it.
 
-  1. **One probe per segment is not enough; three are.** The plan specified a
-     single probe at the segment's midpoint. A region one cell across marches
-     to a blob whose smoothed vertices are ~0.45 cell apart, so a midpoint sits
-     diagonally between cells and its probe lands corner-adjacent to the
-     course. In `fork`, **all 36 segments of band 15 were rejected as "no water
-     outside"** while the cell directly downstream held water a band lower;
-     0 of 8 one-cell regions emitted a fall. Probing at both ENDS and the
-     middle — every one of them displaced along the segment's own normal, so
-     none of them is the apron's directionless 3×3 scan — took `fork` from 128
-     falling triangles to 248 and cut the count of band steps drawn with no
-     riser across it from 68 to 4.
+  1. **The qualifying test is PLATE CONTAINMENT, not cell membership.** The
+     plan asked whether the CELL half a cell outside a segment's midpoint holds
+     water at a lower band. Two things are wrong with that. A region one cell
+     across marches to a blob whose smoothed vertices are ~0.45 cell apart, so a
+     midpoint probe sits diagonally between cells; and half a cell of travel
+     along a normal that has swung even 40° off downstream lands in a diagonal
+     neighbour the course never ran through. MEASURED in `fork`: a fall's
+     qualifying arc ran x = 31.76 to 32.24 — **0.48 cell against a channel a
+     full cell wide**, so the drawn sheet was half the width of the river it
+     carried, and on band 15 the arc was empty entirely (all 36 segments
+     rejected while the cell downstream held water a band lower).
+     The riser now asks "does a lower region's PLATE cover the point just
+     outside this segment", with the probe pulled in to
+     `CONTOUR_CELL_CENTRE_GUARD` — an eighth of a cell, the smallest
+     displacement the contour pipeline itself treats as significant. **The
+     margin comes from the plate, not from the probe distance**: a lower plate
+     reaches about 1.13 cells back upstream past the lip it is poured over (the
+     tread's field rule runs the water under the rising bank there) and reaches
+     nothing at all sideways past a bank, so containment has a cell of slack in
+     the direction that should qualify and none in the direction that should
+     not. Containment is EVEN-ODD over all of a band's loops at once, which
+     handles disjoint lozenges, border-split half-loops and island holes without
+     being told which is which. Effect: qualifying lip length **fork 56.6 → 100
+     cells, meander 32.3 → 58.1, stairpools 19.8 → 33.9**; a fork fall's arc
+     went from 0.48 to 0.84 cell across a one-cell channel; band steps drawn
+     with no riser went to ZERO in every fixture, the river's last fall into
+     the sea included.
+     This forces the rig to build every region's TREAD before any riser, since
+     a plate is exactly the loops the tread builder returns.
   2. **Feet must be shared, and pinned at a tile border.** Pushing each foot
      along its own segment's normal separates neighbouring feet by (turn angle
      × lean); around a snout that turns through half a circle in a handful of
@@ -3269,28 +3287,67 @@ settled it.
      about it, so the mean is not enough: `fork`'s course runs along x = 32, a
      tile border, and every fall had a SLIT down its centre-line showing the
      water a band below. The foot direction at a border point is therefore
-     PROJECTED onto that border's axis, which makes both halves choose the same
+     projected onto that border's axis, which makes both halves choose the same
      direction — seam contract S4 extended from the point to the sheet hanging
-     off it. `RECT_WEST`/`EAST`/`NORTH`/`SOUTH` are exported from
-     `terrain/contours.ts` for it.
+     off it. The axis is read off the loop (a border vertex is by construction
+     an endpoint of the straight closing edge assembleLoops walks along that
+     border, so that edge's direction IS the axis) rather than off
+     `ContourPoint.rect`'s side bits, so `terrain/contours.ts` — shared with the
+     terrain and the brush preview — is not widened for the water's benefit.
 
   This is not the apron's per-vertex normal returning. The apron averaged
   before it CLASSIFIED, so an undefined direction decided whether a fall
   existed. Here classification is one exact per-segment normal per segment, and
   the mean only places a foot already decided on.
 
+**The lean was checked against the RENDERER, not just the geometry.** The water
+is one material, `transparent`, `opacity` 0.8, `depthWrite: false`, so water
+never occludes water: a leaning strip lying over the plate it lands on blends
+twice. That is a shading fact no geometry probe can see, so the preview grew
+`__previewPixelAtWorld`/`__previewPixelsAtWorld` and the strip grew a temporary
+`?noriser` switch, and the same world points were sampled with the strip on and
+off.
+
+  - `meander`, top-down, across one fall: over the 0.5 cell the strip leans,
+    the pixel with the strip OFF is **rock** ([118,115,87], [103,82,52],
+    [81,80,65]) — the lower plate is there but hidden under band-B rock and
+    depth-tested away by the opaque terrain. Only at the very foot is the plate
+    exposed, over about a tenth of a cell: [32,88,114] alone, [24,103,150]
+    double. **This confirms the plate overlap is mostly harmless** and bounds
+    the double-blended area to a sliver in a carved channel.
+  - `fork`, whose treads are wide and whose lower plate IS exposed: the strip's
+    footprint reads [21,106,150] against [24,96,114] for the plate alone —
+    **+9.1 luminance, +36 blue**. The double blend is REAL but it goes the
+    other way from the prediction: two coats of a lit blue over tan rock is
+    brighter and more saturated, not darker.
+  - **Bound accepted, lean kept at half a cell.** The terrain's own band-to-band
+    colour step is about +16 luminance ([147,124,78] → [147,147,86] on the same
+    hillside), so the fall's blend edge is roughly HALF the contrast of a step
+    the world is made of everywhere. It reads as the fall being a distinct
+    sheet, which it is. Shrinking the lean to hide it would trade a sub-band
+    shading edge for the measured "staircase river read as disconnected treads"
+    defect, which is worse; and the alternative escape — trimming the plate
+    overlap — is the tread's field rule, which #62 settled and this change does
+    not touch.
+
 **Measured after, all five fixtures.** 0 dry course samples and 0 buried
-samples, unchanged. Band steps crossed with no riser drawn: fork 68 → 4,
-meander 0 → 0, stairpools 2 → 1, terrace 1 → 1, basin 1 → 1 — and **every one
-of the survivors is the river meeting the SEA**, which the river rig has never
-drawn and cannot see (`bandOfCell` holds river water only). Water mesh size:
-fork **26096 → 1576 triangles** (the apron was 95% of the mesh and ~46 of
-every 48 of its triangles were zero-area); the riser is 248 of those 1576.
+samples, unchanged. Band steps crossed with no riser drawn: **fork 68 → 0,
+meander 0 → 0, stairpools 2 → 0** (measured with a 1/20-cell walk looking for a
+whole band of fall between two neighbouring samples). Water mesh size: fork
+**26096 → 1992 triangles** (the apron was 95% of the mesh and ~46 of every 48
+of its triangles were zero-area); the riser is 664 of those 1992.
 
 **Named residuals.**
 
-  - The river's last fall into the sea has no riser. The sea is drawn by a
-    different rig and is not in `bandOfCell`; joining them is a separate change.
+  - The SEA is drawn by a different rig and is not a plate here. Where a river
+    ends at a band the trace itself never reached, nothing pours; in the
+    fixtures the trace does reach sea level, so every fall is drawn.
+  - The tread's field rule is region-blind (`wet()` never sees `bandOfCell`), so
+    a pooled cell handed to a higher band can be forced outside the lower
+    region and cut its course in two. Real but low severity: the cell is covered
+    by the higher region's plate drawn above it, so there is no hole in the
+    rendered body, and it is a consequence of the per-band grouping decision
+    rather than of the field rule. Not fixed here.
   - Two neighbouring segments pouring onto DIFFERENT bands keep their own foot
     heights, so a shared foot vertex is at two heights. It lands on the lower
     region's plate, which is opaque water drawn over it.
