@@ -412,6 +412,21 @@ function query<T extends string>(name: string, allowed: readonly T[], fallback: 
 
 const sceneName = query('scene', ['fork', 'meander', 'terrace', 'basin', 'stairpools'] as const, 'fork');
 const view = query('view', ['iso', 'side', 'top'] as const, 'iso');
+/**
+ * `?dir=x,y,z` — an arbitrary camera direction, for looking at the water from
+ * angles the three named views do not cover. Verification of a 3D surface has
+ * to be able to walk around it; three fixed vectors cannot show a sheet that
+ * is only wrong from one side. Malformed or zero-length input falls back to
+ * the named `view`.
+ */
+const dirOverride = ((): Vector3 | null => {
+  const raw = new URLSearchParams(window.location.search).get('dir');
+  if (raw === null) return null;
+  const parts = raw.split(',').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  const v = new Vector3(parts[0], parts[1], parts[2]);
+  return v.lengthSq() > 0 ? v.normalize() : null;
+})();
 const zoom = Number(new URLSearchParams(window.location.search).get('zoom') ?? '1') || 1;
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
@@ -474,7 +489,9 @@ const centre = new Vector3(
 );
 const span = PREVIEW_WORLD_SIZE * CELL_WORLD_SIZE;
 const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.1, 4000);
-camera.position.copy(centre).addScaledVector(CAMERA_VIEWS[view as CameraView], span * 0.85 * zoom);
+camera.position
+  .copy(centre)
+  .addScaledVector(dirOverride ?? CAMERA_VIEWS[view as CameraView], span * 0.85 * zoom);
 camera.lookAt(centre);
 
 let frames = 0;

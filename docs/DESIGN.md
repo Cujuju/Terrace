@@ -3174,3 +3174,130 @@ as a world of lone whales.
   `WILDLIFE_SIZE_MODEL_SCALE`, so a large creature (1.4×) still probes a medium
   one's footprint — noted, not fixed, and the residual is one band of clipping
   on the biggest land animals at a riser's edge.
+
+### Decisions made 2026-08-23 (a fall is a riser built per boundary segment, replacing the apron)
+
+Water is drawn as one flat region PER BAND (2026-08-22, above), so a course
+crossing a band every few cells is drawn as ~20 flat plates each a whole
+`BAND_HEIGHT` under the last. Measured with the terrain hidden and the apron
+suppressed, `meander` is exactly that: twenty separate lozenges.
+
+**The plates were never horizontally apart.** Walking every course at 1/20 of
+a cell and raycasting the drawn water: **0 dry samples out of 1280 (meander),
+520 (fork), 2412 (stairpools), 900 (terrace), 3395 (basin)**, and **0 course
+samples with water below ground** in any fixture. The plan-view footprint of
+the river is already continuous and already agrees with the rock at every lip,
+because the tread's field rule stops the water on the terrain's own cap
+contour (#62). The separation is purely VERTICAL, and the only thing that ever
+covered it was the apron.
+
+**Decision: delete `water/waterApron.ts` (432 lines) and build the vertical
+face from the region boundary, one sheet PER SEGMENT** —
+`client/src/render/water/waterRiser.ts`.
+
+  - **Per segment, not per vertex.** A segment has a direction, so its outward
+    normal is exact. The apron took a central difference over the ring and
+    then averaged three of the results, which is undefined at a channel's
+    snout tip and at a marching-tile seam — the two places a fall lives.
+  - **Classification is a lookup, not a probe of the neighbourhood.**
+    `bandOfCell` already holds the band of every wet cell; the riser asks it
+    for the cell half a cell out along the segment's own normal. Lower band →
+    pour onto it. A rising bank has no water outside it, so a riser cannot
+    fire off the wrong side of a channel: the direction-blindness class of bug
+    is closed by the classification rather than by a tuning constant.
+  - **No runs.** Every qualifying segment emits independently. The apron
+    required a run of >= 2 consecutive lip VERTICES, and a snout tip after
+    Chaikin is one vertex — which is why `fork` was measured emitting 1328
+    flat triangles and ZERO falling ones.
+  - **Tile-border closing edges are skipped.** Across them lies the same
+    region's other half; a riser there would be a wall of water standing in
+    the middle of the river.
+  - **The top edge is the loop's own two vertices, verbatim.** The one promise
+    the apron kept, and the reason a top seam cannot exist by construction.
+
+**Owner question 1 answered: `WATER_RISER_LEAN_CELLS = 0.5`.** One band is
+exactly one cell tall in world units (`BAND_WORLD_HEIGHT` and
+`CELL_WORLD_SIZE` are both a quarter of a world unit), so half a cell of lean
+gives a one-band fall a plan-view footprint of half a cell against a channel
+one cell wide. Not more, because the terrain's own terrace run is one cell per
+band (`MAX_STEP = BAND_HEIGHT`), so a foot a full cell out would stand on the
+next face down. Not less, because #63's residual disagreement between the
+smoothed water rim and the smoothed rock rim is about 0.11 cell and the lean
+must exceed it or the foot can end up behind the rock on the bad sign. A
+multi-band drop keeps the same lean and is therefore nearly vertical, which
+also keeps it INSIDE the rock where opaque terrain hides it — that is the
+clipping a leaning multi-band sheet produced when the apron walked the ground
+out to three cells.
+
+**Owner question 2: #63 is superseded IN PART, #62 is not touched at all.**
+#63's finding — that a fall's curtain must be placed on the DRAWN face rather
+than on an analytic crossing — stands and is now structural: the riser hangs
+from the drawn outline's own vertices, so there is nothing left to locate. What
+#63 built to do that (`makeLipLocator`, intersecting the ribbon against
+`chunkContourLoops`) belonged to the polyline ribbon and is superseded along
+with the apron. #62's field rule is UNCHANGED, deliberately: moving the
+membership boundary was considered and rejected again this session — it was
+computed for a one-band drop and moves the waterline the wrong way at the
+quarter-band drops the fixtures actually have, it cannot be expressed through
+`loadSampleField` (which takes one scalar per SAMPLE, while "membership
+boundary" is a property of an EDGE), and it would break
+`waterTread.test.ts`'s "does not overhang the lip where the ground falls
+away", which is exactly the guard #62 recorded.
+
+**Two corrections found by measurement, both against the plan this was built
+from.** Recorded because the plan was wrong and the measurements are what
+settled it.
+
+  1. **One probe per segment is not enough; three are.** The plan specified a
+     single probe at the segment's midpoint. A region one cell across marches
+     to a blob whose smoothed vertices are ~0.45 cell apart, so a midpoint sits
+     diagonally between cells and its probe lands corner-adjacent to the
+     course. In `fork`, **all 36 segments of band 15 were rejected as "no water
+     outside"** while the cell directly downstream held water a band lower;
+     0 of 8 one-cell regions emitted a fall. Probing at both ENDS and the
+     middle — every one of them displaced along the segment's own normal, so
+     none of them is the apron's directionless 3×3 scan — took `fork` from 128
+     falling triangles to 248 and cut the count of band steps drawn with no
+     riser across it from 68 to 4.
+  2. **Feet must be shared, and pinned at a tile border.** Pushing each foot
+     along its own segment's normal separates neighbouring feet by (turn angle
+     × lean); around a snout that turns through half a circle in a handful of
+     segments, and `stairpools` with the terrain hidden showed every fall as a
+     COMB, the gaps as wide as the strips. A foot is now offset along the
+     normalised MEAN of the two normals meeting there. Where the meeting point
+     is on a marching-tile border the two halves' normals are mirror images
+     about it, so the mean is not enough: `fork`'s course runs along x = 32, a
+     tile border, and every fall had a SLIT down its centre-line showing the
+     water a band below. The foot direction at a border point is therefore
+     PROJECTED onto that border's axis, which makes both halves choose the same
+     direction — seam contract S4 extended from the point to the sheet hanging
+     off it. `RECT_WEST`/`EAST`/`NORTH`/`SOUTH` are exported from
+     `terrain/contours.ts` for it.
+
+  This is not the apron's per-vertex normal returning. The apron averaged
+  before it CLASSIFIED, so an undefined direction decided whether a fall
+  existed. Here classification is one exact per-segment normal per segment, and
+  the mean only places a foot already decided on.
+
+**Measured after, all five fixtures.** 0 dry course samples and 0 buried
+samples, unchanged. Band steps crossed with no riser drawn: fork 68 → 4,
+meander 0 → 0, stairpools 2 → 1, terrace 1 → 1, basin 1 → 1 — and **every one
+of the survivors is the river meeting the SEA**, which the river rig has never
+drawn and cannot see (`bandOfCell` holds river water only). Water mesh size:
+fork **26096 → 1576 triangles** (the apron was 95% of the mesh and ~46 of
+every 48 of its triangles were zero-area); the riser is 248 of those 1576.
+
+**Named residuals.**
+
+  - The river's last fall into the sea has no riser. The sea is drawn by a
+    different rig and is not in `bandOfCell`; joining them is a separate change.
+  - Two neighbouring segments pouring onto DIFFERENT bands keep their own foot
+    heights, so a shared foot vertex is at two heights. It lands on the lower
+    region's plate, which is opaque water drawn over it.
+  - `waterTread.ts` passes `samples[0] >= threshold` as `wholeDomainInside`.
+    Flagged in the plan as meaningless; VERIFIED THIS SESSION to be correct and
+    left alone. `assembleLoops` only consults it when no chain crosses the
+    domain border, and a boundary crossing the border necessarily produces an
+    open chain — so the border is uniformly in or out and its corner sample
+    decides for all of it. Passing `false` instead would punch a hole in every
+    interior tile of a large lake.
