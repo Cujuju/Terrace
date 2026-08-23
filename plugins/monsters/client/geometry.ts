@@ -40,6 +40,9 @@ import {
   type MeshLambertMaterialParameters,
 } from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+// Render kit, reached the same way client/src/plugins/registry.ts reaches this
+// plugin — by path. See that module's header for why it lives there.
+import type { RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 
 /**
  * THE RESOLUTION KNOB. Every tessellation in a builder is a base count times
@@ -450,6 +453,14 @@ export interface ModelWorkshop {
   keepGeometry<T extends BufferGeometry>(geometry: T): T;
   /** Registers a material for disposal and returns it. */
   keepMaterial<T extends Material>(material: T): T;
+  /**
+   * Registers a baked rig for disposal and returns it.
+   *
+   * A rig owns buffers the two calls above never see — the merged geometry and
+   * the vertex-coloured material `bakeRig` produces per surface — so it needs
+   * its own line in the pool rather than being folded into either.
+   */
+  keepRig<T extends RigBlueprint>(blueprint: T): T;
   lambert(color: number, options?: LambertOptions): MeshLambertMaterial;
   /**
    * THE FINISHING PASS, and the reason a model reads as one creature.
@@ -470,6 +481,7 @@ export interface ModelWorkshop {
 export function createWorkshop(): ModelWorkshop {
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
+  const rigs: RigBlueprint[] = [];
 
   function keepGeometry<T extends BufferGeometry>(geometry: T): T {
     geometries.push(geometry);
@@ -481,6 +493,11 @@ export function createWorkshop(): ModelWorkshop {
     return material;
   }
 
+  function keepRig<T extends RigBlueprint>(blueprint: T): T {
+    rigs.push(blueprint);
+    return blueprint;
+  }
+
   return {
     segments(base: number): number {
       return Math.max(3, Math.round(base * MONSTER_MODEL_DETAIL));
@@ -488,6 +505,7 @@ export function createWorkshop(): ModelWorkshop {
 
     keepGeometry,
     keepMaterial,
+    keepRig,
 
     lambert(color: number, options: LambertOptions = {}): MeshLambertMaterial {
       // Built key by key rather than as one literal with undefineds in it: three
@@ -521,8 +539,10 @@ export function createWorkshop(): ModelWorkshop {
     },
 
     dispose(): void {
+      for (const rig of rigs) rig.dispose();
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
+      rigs.length = 0;
       geometries.length = 0;
       materials.length = 0;
     },

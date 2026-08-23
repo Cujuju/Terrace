@@ -34,6 +34,9 @@
 // membranes. All three are hero models and there is at most one of each in a
 // world.
 
+// Render kit, reached the same way client/src/plugins/registry.ts reaches this
+// plugin — by path. See that module's header for why it lives there.
+import { bakeRig, instantiateRig } from '../../../client/src/render/rigSkin.ts';
 import { CatmullRomCurve3, Group, Mesh, SphereGeometry, Vector3 } from 'three';
 import {
   NOISE_CHANNEL_TENTACLE,
@@ -460,7 +463,12 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
 
   // ── Assembly ───────────────────────────────────────────────────────────────
 
-  return function createYeti(): MonsterModel {
+  // AUTHORED ONCE, DRAWN AS ONE SURFACE. The rig below is exactly the one this
+  // builder always made — see the diagram in this file's header — but it is
+  // built a single time and handed to bakeRig, which bakes it into one skinned
+  // geometry per material class. Every Group named here survives as a BONE, so
+  // `animate` drives the identical handles it always did.
+  const authored = (() => {
     const root = new Group();
     // The caller owns `root` (position + yaw). Everything animated hangs off
     // `rig`, so the gait cannot fight the placement maths.
@@ -519,8 +527,28 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
       armJoints.push(joint);
     });
 
+    return { root, rig, upper, head, legJoints, ankles, armJoints };
+  })();
+
+  const blueprint = workshop.keepRig(bakeRig(authored.root));
+  const rigJoint = blueprint.jointIndex(authored.rig);
+  const upperJoint = blueprint.jointIndex(authored.upper);
+  const headJoint = blueprint.jointIndex(authored.head);
+  const legJointIndices = authored.legJoints.map((joint) => blueprint.jointIndex(joint));
+  const ankleJointIndices = authored.ankles.map((joint) => blueprint.jointIndex(joint));
+  const armJointIndices = authored.armJoints.map((joint) => blueprint.jointIndex(joint));
+
+  return function createYeti(): MonsterModel {
+    const instance = instantiateRig(blueprint);
+    const rig = instance.joints[rigJoint]!;
+    const upper = instance.joints[upperJoint]!;
+    const head = instance.joints[headJoint]!;
+    const legJoints = legJointIndices.map((index) => instance.joints[index]!);
+    const ankles = ankleJointIndices.map((index) => instance.joints[index]!);
+    const armJoints = armJointIndices.map((index) => instance.joints[index]!);
+
     return {
-      root,
+      root: instance.root,
       animate(seconds, phase) {
         // ONE WAVE DRIVES THE WHOLE GAIT, at the rate his stride and his speed
         // between them fix (YETI_AMBLE_HZ). Everything below is a phase of it,

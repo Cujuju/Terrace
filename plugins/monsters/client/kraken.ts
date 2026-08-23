@@ -27,6 +27,9 @@
 // tentacle fan and two ribbed membranes. Both are hero models and there is only
 // ever one in a world.
 
+// Render kit, reached the same way client/src/plugins/registry.ts reaches this
+// plugin — by path. See that module's header for why it lives there.
+import { bakeRig, instantiateRig } from '../../../client/src/render/rigSkin.ts';
 import {
   AdditiveBlending,
   BufferGeometry,
@@ -415,8 +418,6 @@ export function createKrakenFactory(workshop: ModelWorkshop): () => MonsterModel
   /** One limb's animated joint, kept so `animate` can drive the wave. */
   interface LimbRig {
     readonly joint: Group;
-    /** Phase offset around the ring, radians — this is what makes it travel. */
-    readonly phase: number;
   }
 
   /**
@@ -439,12 +440,20 @@ export function createKrakenFactory(workshop: ModelWorkshop): () => MonsterModel
     }
     bearing.add(joint);
 
-    return { bearing, rig: { joint, phase: index * KRAKEN_ARM_PHASE_STEP } };
+    return { bearing, rig: { joint } };
   }
 
   // ── Assembly ───────────────────────────────────────────────────────────────
 
-  return function createKraken(): MonsterModel {
+  // AUTHORED ONCE, DRAWN AS ONE SURFACE. The tree below is the same rig this
+  // builder always made — a mantle that swells, a head, four eye parts, and one
+  // bearing-plus-joint per limb — but it is now built a single time and handed
+  // to bakeRig, which bakes it into one skinned geometry per material class.
+  // Measured 2026-08-22 before the bake: 24 meshes for one kraken, of which 14
+  // were a single part hanging under its own animated node, at ~460 triangles a
+  // draw call. The joints survive as BONES, so `animate` below drives exactly
+  // the same handles it always did.
+  const authored = (() => {
     const root = new Group();
     // The caller owns `root` (position + yaw); everything animated hangs off
     // `rig`, so the pulse cannot fight the placement maths.
@@ -474,15 +483,33 @@ export function createKrakenFactory(workshop: ModelWorkshop): () => MonsterModel
       rig.add(halo);
     }
 
-    const limbs: LimbRig[] = [];
+    const limbJoints: Group[] = [];
     for (let index = 0; index < KRAKEN_LIMB_COUNT; index++) {
       const limb = createLimb(index);
-      limbs.push(limb.rig);
+      limbJoints.push(limb.rig.joint);
       rig.add(limb.bearing);
     }
 
+    return { root, rig, mantle, limbJoints };
+  })();
+
+  const blueprint = workshop.keepRig(bakeRig(authored.root));
+  const rigJoint = blueprint.jointIndex(authored.rig);
+  const mantleJoint = blueprint.jointIndex(authored.mantle);
+  const limbJointIndices = authored.limbJoints.map((joint) => blueprint.jointIndex(joint));
+
+  return function createKraken(): MonsterModel {
+    const instance = instantiateRig(blueprint);
+    const rig = instance.joints[rigJoint]!;
+    const mantle = instance.joints[mantleJoint]!;
+    const limbs = limbJointIndices.map((index, ordinal) => ({
+      joint: instance.joints[index]!,
+      // Phase offset around the ring, radians — this is what makes it travel.
+      phase: ordinal * KRAKEN_ARM_PHASE_STEP,
+    }));
+
     return {
-      root,
+      root: instance.root,
       animate(seconds, phase) {
         // PULSE: the mantle swells and the whole animal rides with it. The two
         // are the same wave, so the rise reads as a consequence of the swell

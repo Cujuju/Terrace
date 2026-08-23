@@ -28,9 +28,14 @@ import {
   MeshBasicMaterial,
   MeshLambertMaterial,
   SphereGeometry,
+  type Bone,
   type BufferGeometry,
   type Material,
+  type Object3D,
 } from 'three';
+// Render kit, reached the same way client/src/plugins/registry.ts reaches this
+// plugin — by path. See that module's header for why it lives there.
+import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import {
   assembleWhale,
   buildWhaleGeometrySets,
@@ -255,7 +260,13 @@ export function createWildlifeModels(): WildlifeModels {
     return mesh;
   }
 
-  /** Root + inner rig. The caller owns `root`; animation only moves `rig`. */
+  /**
+   * Root + inner rig, as AUTHORED. The tree below is built exactly once per
+   * species and handed to `bakeRig`, which turns it into one skinned drawable;
+   * `rig` and any hinge under it become bones an individual creature animates.
+   * See client/src/render/rigSkin.ts — the authoring style here is unchanged,
+   * only what the renderer is asked to draw is.
+   */
   function rigged(): { root: Group; rig: Group } {
     const root = new Group();
     const rig = new Group();
@@ -263,22 +274,55 @@ export function createWildlifeModels(): WildlifeModels {
     return { root, rig };
   }
 
-  function createFish(): CreatureModel {
+  /**
+   * A species' baked rig: the shared buffers, plus the joint index of every
+   * node its animation drives.
+   *
+   * Named joints rather than positional ones because an animation reads far
+   * better as `joints.leftWing` than as `joints[3]`, and a bake that reordered
+   * its nodes would otherwise silently swap two limbs.
+   */
+  interface SpeciesRig {
+    readonly blueprint: RigBlueprint;
+    readonly jointIndices: Readonly<Record<string, number>>;
+  }
+
+  const speciesRigs: SpeciesRig[] = [];
+
+  /** Bakes one authored tree and registers it for disposal. */
+  function bakeSpecies(root: Group, joints: Readonly<Record<string, Object3D>>): SpeciesRig {
+    const blueprint = bakeRig(root);
+    const jointIndices: Record<string, number> = {};
+    for (const [name, node] of Object.entries(joints)) {
+      jointIndices[name] = blueprint.jointIndex(node);
+    }
+    const rig: SpeciesRig = { blueprint, jointIndices };
+    speciesRigs.push(rig);
+    return rig;
+  }
+
+  /** One creature of a baked species: its own skeleton, the species' buffers. */
+  function instantiateSpecies(rig: SpeciesRig): {
+    root: Group;
+    joints: Readonly<Record<string, Bone>>;
+  } {
+    const instance = instantiateRig(rig.blueprint);
+    const joints: Record<string, Bone> = {};
+    for (const [name, index] of Object.entries(rig.jointIndices)) {
+      joints[name] = instance.joints[index]!;
+    }
+    return { root: instance.root, joints };
+  }
+
+  // ── The five rigs, authored once ───────────────────────────────────────────
+
+  const fishRig = (() => {
     const { root, rig } = rigged();
     rig.add(part(fishBody, fishMaterial, 0, 0, 0));
     const tail = part(fishTail, fishMaterial, -0.36, 0, 0);
     rig.add(tail);
-    return {
-      root,
-      animate(seconds, phase) {
-        // Tail sweeps side to side; the body counter-rolls a little so the whole
-        // fish undulates instead of dragging a hinged flap.
-        const swing = Math.sin(seconds * FISH_TAIL_HZ * TWO_PI + phase);
-        tail.rotation.y = swing * FISH_TAIL_SWING_RADIANS;
-        rig.rotation.z = swing * FISH_TAIL_SWING_RADIANS * 0.15;
-      },
-    };
-  }
+    return bakeSpecies(root, { rig, tail });
+  })();
 
   /**
    * A whale, drawn as one of three real species (whaleSpecies.ts). Which one is
@@ -291,45 +335,32 @@ export function createWildlifeModels(): WildlifeModels {
    * the water and the one creature the camera comes near, where a stack of
    * ellipsoids reads as a stack of ellipsoids. The cost is bounded — whales are
    * habitat-capped at a handful per world by their 5000-deep-cell requirement,
-   * and each body is still SIX draw calls, the same as the model it replaces.
+   * and since the 2026-08-22 skinning each body is ONE draw call rather than
+   * the six the note here used to record.
    */
-  function createWhale(variantSeed: number): CreatureModel {
+  const whaleRigs: readonly SpeciesRig[] = whaleSets.map((set) => {
     const { root, rig } = rigged();
-    const set = whaleSets[Math.abs(Math.trunc(variantSeed)) % whaleSets.length]!;
     const { body, flukes } = assembleWhale(set, whaleMaterial);
     rig.add(body);
-    return {
-      root,
-      animate(seconds, phase) {
-        // Whales flap vertically, slowly. Pitch about Z, the axis across a model
-        // that faces +X.
-        const swing = Math.sin(seconds * WHALE_FLUKE_HZ * TWO_PI + phase);
-        flukes.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS;
-        rig.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS * 0.12;
-      },
-    };
-  }
+    return bakeSpecies(root, { rig, flukes });
+  });
 
-  function createDeepsea(): CreatureModel {
+  const deepseaRig = (() => {
     const { root, rig } = rigged();
     rig.add(part(deepseaBody, deepseaMaterial, 0, 0, 0));
     rig.add(part(deepseaJaw, deepseaMaterial, 0.5, -0.12, 0));
     rig.add(part(deepseaStalk, deepseaMaterial, 0.42, 0.34, 0));
-    const lure = part(deepseaLure, deepseaLureMaterial, 0.68, 0.36, 0);
+    // The lure is a JOINT, not just a part: it bobs on its own, so it must be a
+    // bone the skinned surface can follow rather than a vertex block frozen
+    // into the body. It is also unlit, so it is its own draw either way.
+    const lure = new Group();
+    lure.position.set(0.68, 0.36, 0);
+    lure.add(part(deepseaLure, deepseaLureMaterial, 0, 0, 0));
     rig.add(lure);
-    const lureRestY = lure.position.y;
-    return {
-      root,
-      animate(seconds, phase) {
-        const sway = Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase);
-        rig.rotation.y = sway * DEEPSEA_SWAY_RADIANS;
-        // The lure lags the body, which is what sells it as dangling.
-        lure.position.y = lureRestY + Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase - 1) * DEEPSEA_LURE_BOB;
-      },
-    };
-  }
+    return bakeSpecies(root, { rig, lure });
+  })();
 
-  function createGrazer(): CreatureModel {
+  const grazerRig = (() => {
     const { root, rig } = rigged();
     // Origin at the feet: legs occupy y 0…0.42, body sits on top of them.
     const legY = 0.21;
@@ -344,16 +375,10 @@ export function createWildlifeModels(): WildlifeModels {
     ] as const) {
       rig.add(part(grazerLeg, grazerLegMaterial, lx, legY, lz));
     }
-    return {
-      root,
-      animate(seconds, phase) {
-        // A walk bob: |sin| gives two rises per stride, one per pair of legs.
-        rig.position.y = Math.abs(Math.sin(seconds * GRAZER_BOB_HZ * Math.PI + phase)) * GRAZER_BOB_AMPLITUDE;
-      },
-    };
-  }
+    return bakeSpecies(root, { rig });
+  })();
 
-  function createBird(): CreatureModel {
+  const birdRig = (() => {
     const { root, rig } = rigged();
     rig.add(part(birdBody, birdMaterial, 0, 0, 0));
     rig.add(part(birdTail, birdMaterial, -0.38, 0, 0));
@@ -370,7 +395,78 @@ export function createWildlifeModels(): WildlifeModels {
     }
     const leftWing = wing(1);
     const rightWing = wing(-1);
+    return bakeSpecies(root, { rig, leftWing, rightWing });
+  })();
 
+  // ── One creature each ──────────────────────────────────────────────────────
+
+  function createFish(): CreatureModel {
+    const { root, joints } = instantiateSpecies(fishRig);
+    const rig = joints.rig!;
+    const tail = joints.tail!;
+    return {
+      root,
+      animate(seconds, phase) {
+        // Tail sweeps side to side; the body counter-rolls a little so the whole
+        // fish undulates instead of dragging a hinged flap.
+        const swing = Math.sin(seconds * FISH_TAIL_HZ * TWO_PI + phase);
+        tail.rotation.y = swing * FISH_TAIL_SWING_RADIANS;
+        rig.rotation.z = swing * FISH_TAIL_SWING_RADIANS * 0.15;
+      },
+    };
+  }
+
+  function createWhale(variantSeed: number): CreatureModel {
+    const { root, joints } = instantiateSpecies(
+      whaleRigs[Math.abs(Math.trunc(variantSeed)) % whaleRigs.length]!,
+    );
+    const rig = joints.rig!;
+    const flukes = joints.flukes!;
+    return {
+      root,
+      animate(seconds, phase) {
+        // Whales flap vertically, slowly. Pitch about Z, the axis across a model
+        // that faces +X.
+        const swing = Math.sin(seconds * WHALE_FLUKE_HZ * TWO_PI + phase);
+        flukes.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS;
+        rig.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS * 0.12;
+      },
+    };
+  }
+
+  function createDeepsea(): CreatureModel {
+    const { root, joints } = instantiateSpecies(deepseaRig);
+    const rig = joints.rig!;
+    const lure = joints.lure!;
+    const lureRestY = lure.position.y;
+    return {
+      root,
+      animate(seconds, phase) {
+        const sway = Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase);
+        rig.rotation.y = sway * DEEPSEA_SWAY_RADIANS;
+        // The lure lags the body, which is what sells it as dangling.
+        lure.position.y = lureRestY + Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase - 1) * DEEPSEA_LURE_BOB;
+      },
+    };
+  }
+
+  function createGrazer(): CreatureModel {
+    const { root, joints } = instantiateSpecies(grazerRig);
+    const rig = joints.rig!;
+    return {
+      root,
+      animate(seconds, phase) {
+        // A walk bob: |sin| gives two rises per stride, one per pair of legs.
+        rig.position.y = Math.abs(Math.sin(seconds * GRAZER_BOB_HZ * Math.PI + phase)) * GRAZER_BOB_AMPLITUDE;
+      },
+    };
+  }
+
+  function createBird(): CreatureModel {
+    const { root, joints } = instantiateSpecies(birdRig);
+    const rig = joints.rig!;
+    const leftWing = joints.leftWing!;
+    const rightWing = joints.rightWing!;
     return {
       root,
       animate(seconds, phase) {
@@ -403,6 +499,11 @@ export function createWildlifeModels(): WildlifeModels {
       return model;
     },
     dispose() {
+      // The baked rigs own buffers of their own — the merged geometry and the
+      // vertex-coloured material per species — on top of the authored pool the
+      // two loops below free.
+      for (const rig of speciesRigs) rig.blueprint.dispose();
+      speciesRigs.length = 0;
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
       geometries.length = 0;

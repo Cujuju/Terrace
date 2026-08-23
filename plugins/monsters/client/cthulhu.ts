@@ -25,6 +25,9 @@
 // one monster in a world, and the terrain alone runs to a thousand chunk meshes,
 // so this is noise in the frame budget and it is what buys the thing a face.
 
+// Render kit, reached the same way client/src/plugins/registry.ts reaches this
+// plugin — by path. See that module's header for why it lives there.
+import { bakeRig, instantiateRig } from '../../../client/src/render/rigSkin.ts';
 import {
   AdditiveBlending,
   BufferGeometry,
@@ -652,7 +655,12 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
 
   // ── Assembly ───────────────────────────────────────────────────────────────
 
-  return function createCthulhu(): MonsterModel {
+  // AUTHORED ONCE, DRAWN AS ONE SURFACE. The rig below is the same one this
+  // builder always made — body, head, two wings, four eye parts and a fan of
+  // two-joint tentacles — but it is built a single time and handed to bakeRig,
+  // which bakes it into one skinned geometry per material class. Each joint
+  // survives as a BONE, so `animate` drives the identical handles it always did.
+  const authored = (() => {
     const root = new Group();
     // The caller owns `root` (position + yaw); everything animated hangs off
     // `rig`, so the breathing bob cannot fight the placement maths.
@@ -687,8 +695,32 @@ export function createCthulhuFactory(workshop: ModelWorkshop): () => MonsterMode
       rig.add(tentacle.root);
     }
 
+    return { root, rig, tentacles };
+  })();
+
+  const blueprint = workshop.keepRig(bakeRig(authored.root));
+  const rigJoint = blueprint.jointIndex(authored.rig);
+  // A tentacle's rest fan and phase are facts about its PLACE in the fan, not
+  // about the individual, so they are read off the authored rig once and shared.
+  const tentacleJoints = authored.tentacles.map((tentacle) => ({
+    root: blueprint.jointIndex(tentacle.root),
+    mid: blueprint.jointIndex(tentacle.mid),
+    restFan: tentacle.restFan,
+    phase: tentacle.phase,
+  }));
+
+  return function createCthulhu(): MonsterModel {
+    const instance = instantiateRig(blueprint);
+    const rig = instance.joints[rigJoint]!;
+    const tentacles = tentacleJoints.map((joint) => ({
+      root: instance.joints[joint.root]!,
+      mid: instance.joints[joint.mid]!,
+      restFan: joint.restFan,
+      phase: joint.phase,
+    }));
+
     return {
-      root,
+      root: instance.root,
       animate(seconds, phase) {
         // BREATH: a slow rise and a barely-there roll. The roll is what stops
         // the bob reading as an elevator — a body that only translates is a
