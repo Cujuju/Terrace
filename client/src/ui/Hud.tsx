@@ -73,13 +73,8 @@ import {
   type SculptMode,
 } from '../state/hudState.ts';
 import {
-  ACTION_PRECEDENCE,
   controlBindings,
-  twoFingerGesture,
-  wheelBehaviour,
-  type ControlAction,
   type ControlBindings,
-  type WheelBehaviour,
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
@@ -127,13 +122,6 @@ const PROFILE_TITLE: Record<SculptProfile, string> = {
   hard: 'One terrace at a time: levels the lowest ground under the brush before starting the next. With Smooth, one flat lift that then slumps.',
 };
 
-const HINT_VERB: Record<ControlAction, string> = {
-  raise: 'raises',
-  lower: 'lowers',
-  orbit: 'orbits',
-  pan: 'pans',
-};
-
 const HINT_BUTTON: Record<string, string> = {
   left: 'Left',
   middle: 'Middle',
@@ -157,19 +145,6 @@ const HINT_MODIFIER: Record<string, string> = {
   ctrl: 'Ctrl+',
   alt: 'Alt+',
 };
-
-/** "Left-drag raises · Shift+Left-drag lowers · …" from the live bindings. */
-function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
-  const parts = ACTION_PRECEDENCE.map((action) => {
-    const b = bindings[action];
-    return `${HINT_MODIFIER[b.modifier]}${HINT_BUTTON[b.button]}-drag ${HINT_VERB[action]}`;
-  });
-  // The wheel verb follows the preference (input/wheelCamera.ts) — it is the
-  // one modifier-free gesture the user can change. Pinch and Alt+scroll are
-  // fixed in both modes, so they are stated flatly.
-  const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
-  return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
-}
 
 /**
  * The Mode button's tooltip. It names the LIVE lower binding rather than a
@@ -498,8 +473,9 @@ export function Hud(props: {
         </div>
       </div>
 
-      {/* TOP LEFT — the INFO panel: plugin 'panel' panels and the control
-          descriptions. Collapses to a tab exactly as the old all-in-one panel
+      {/* TOP LEFT — the INFO panel: plugin 'panel' panels. The control
+          descriptions moved to the settings popup (owner, 2026-08-21), so
+          this corner is purely plugin content. Collapses to a tab exactly as the old all-in-one panel
           did (owner, 2026-08-14: on a phone the open panel hides half the
           world). The connection no longer rides on either face — it is its own
           button in the bottom-right column now (see this file's header), which
@@ -544,16 +520,6 @@ export function Hud(props: {
               </div>
             )}
           </For>
-
-          <p class="hud-hint">{hintText(controlBindings(), wheelBehaviour())}</p>
-          {/* Touch capability is static per device, so the guard can be a
-              plain expression — it never needs to re-run. */}
-          <Show when={navigator.maxTouchPoints > 0}>
-            <p class="hud-hint">
-              1-finger sculpts (tap Mode to switch) · 2-finger{' '}
-              {twoFingerGesture() === 'orbit' ? 'orbits' : 'pans'} + pinch zooms
-            </p>
-          </Show>
         </div>
       </Show>
 
