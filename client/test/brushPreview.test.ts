@@ -8,7 +8,7 @@
 // is positioned at the hovered cell's centre.
 
 import { describe, expect, it } from 'vitest';
-import { Scene, type BufferAttribute, type LineLoop } from 'three';
+import { Scene, type BufferAttribute, LineLoop, type Object3D } from 'three';
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, forEachFootprintOffset } from '@terrace/shared';
 import { createBrushPreview, type CursorSurface } from '../src/render/brushPreview.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
@@ -32,10 +32,11 @@ function fakeCanvas(): CursorSurface & { on: boolean; writes: number } {
   return surface;
 }
 
-/** The single closed line the preview adds to the scene. */
+/** The closed outline line the preview adds to the scene (the crosshair is a separate LineSegments). */
 function outlineOf(scene: Scene): LineLoop {
-  expect(scene.children).toHaveLength(1);
-  return scene.children[0] as LineLoop;
+  const loop = scene.children.find((c): c is LineLoop => c instanceof LineLoop);
+  expect(loop).toBeDefined();
+  return loop as LineLoop;
 }
 
 /** The outline's local vertices as (x, z) pairs, in cells. */
