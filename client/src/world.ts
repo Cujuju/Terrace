@@ -36,6 +36,7 @@ import {
 } from './terrain/mirror.ts';
 import { HEIGHT_WORLD_SCALE } from './config.ts';
 import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
+import { setWorldLoaded } from './state/worldsState.ts';
 import {
   createPredictionStore,
   type PredictionStore,
@@ -245,6 +246,12 @@ export function createWorld(viewport: Viewport): World {
         name: msg.worldName ?? null,
         difficulty: msg.difficulty ?? null,
       });
+      // A snapshot IS the proof that a world is loaded, and it is the only
+      // proof that arrives without being asked for. It clears the "no world is
+      // loaded" banner on a world SWITCH as well as on a first join, because
+      // the switch re-sends every client exactly this message (multi-world,
+      // 2026-08-22 — see WorldManager.openInto step 7).
+      setWorldLoaded(true);
       // Build identity travels with world identity, and matters on a REJOIN
       // for the same reason: the server may have been restarted onto a new
       // commit while this client's bundle stayed put — which is exactly the

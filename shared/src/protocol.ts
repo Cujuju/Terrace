@@ -360,6 +360,14 @@ export interface RestorePoint {
   maxCellDelta: number | null;
   /** True for the newest point — the state the live world was last saved at. */
   isCurrent: boolean;
+  /**
+   * True when this point is PINNED and therefore exempt from retention
+   * (2026-08-22). An ordinary restore point is on its way to being pruned —
+   * the newest N are just the ones that have not got there yet — so a moment
+   * worth keeping has to be taken out of that window explicitly. See
+   * WorldPinRequestMessage and the PINNED_COLUMN comment in snapshot-store.ts.
+   */
+  pinned: boolean;
 }
 
 /** Client → server: "list the restore points". Answered to the sender only. */
@@ -479,4 +487,505 @@ export function validateRollbackRequest(msg: unknown): RollbackRequestMessage | 
   const { toId } = m;
   if (!Number.isSafeInteger(toId) || (toId as number) <= 0) return null;
   return { type: 'rollback', key, toId: toId as number };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORLD MANAGEMENT (2026-08-22). Many worlds on one server, one of them live.
+//
+// WHY THIS EXISTS, stated plainly because it is a correction. Until now a
+// world was a ROW: `snapshots` held every world any deployment had ever had,
+// distinguished only by a `world_name` column, and retention kept "the newest
+// N rows" across the whole table. So a world that stopped being written to was
+// evicted by whichever world was written to next — 298 snapshots of one world
+// were lost exactly this way (2026-08-22). The fix is not a bigger retention
+// number; it is that A WORLD IS A FILE. Each world is its own SQLite database
+// under WORLDS_DIR, with its own retention inside it, so no write to world B
+// can reach a row belonging to world A. That is a structural guarantee, not a
+// carefully-maintained one.
+//
+// ONE LIVE WORLD PER PROCESS, still (design §3.2, amended not abandoned).
+// Loading a world saves and closes the current one before opening the next;
+// two worlds are never simulating at once, because every server plugin keeps
+// its state at module scope and would silently share it between them
+// (issue #78 tracks lifting that).
+//
+// OPERATOR-GATED BY ITS OWN KEY. Rollback rewinds the live world; this can
+// ARCHIVE one. Those are different blast radii, so they get different secrets:
+// WORLD_ADMIN_KEY here, ROLLBACK_KEY there (owner decision, 2026-08-22). Both
+// run through the same gate implementation — constant-time compare, five
+// attempts, then a lockout — so neither can drift into being the weaker one.
+//
+// NOTHING HERE EVER DELETES A WORLD. `worldArchive` MOVES a world's file into
+// the trash folder; `worldPurge` is the only message in this protocol that
+// unlinks anything, it names the world it will destroy, and the client must
+// echo that world's own name back for it to be honoured.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Longest world name a self-hoster may set, in UTF-16 code units. Generous
+ * enough for every shape `generateWorldName` produces ("Isles of Gloamwatch"
+ * is 19) plus a self-hoster's own poetry, short enough to render in a list row
+ * without truncation being the normal case.
+ */
+export const MAX_WORLD_NAME_LENGTH = 48;
+
+/**
+ * Longest world id. An id is a filesystem slug derived from the name, so this
+ * is a filename-length budget, not a naming policy — see slugifyWorldName.
+ */
+export const MAX_WORLD_ID_LENGTH = 64;
+
+/**
+ * Characters a world id may contain: lowercase letters, digits and hyphens.
+ *
+ * DELIBERATELY NARROW, because an id becomes a PATH. Anything outside this set
+ * — a dot, a slash, a NUL, a Windows reserved character, a trailing space — is
+ * either a traversal primitive or a filename that behaves differently on two
+ * of the three platforms this server runs on. The server derives ids itself
+ * (slugifyWorldName) and validates every inbound one against this pattern, so
+ * a hostile client cannot name a file outside WORLDS_DIR.
+ */
+export const WORLD_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * One world as the manager panel sees it. Everything here is DERIVED from the
+ * world's own file — there is no registry index that could disagree with what
+ * is on disk (see server/src/persistence/world-registry.ts).
+ */
+export interface WorldSummary {
+  /** Filesystem slug; the basename of the world's `.db` file. */
+  id: string;
+  /** The world's own name, from its newest snapshot. */
+  name: string;
+  /** Cells per edge. Worlds of different sizes coexist happily here. */
+  worldSize: number;
+  /** Restore points the file currently holds. */
+  restorePoints: number;
+  /** How many of those are pinned, and therefore exempt from retention. */
+  pinnedPoints: number;
+  /** When the newest snapshot was written, or null if it has none yet. */
+  newestAt: number | null;
+  /** Size of the file on disk, in bytes. */
+  bytes: number;
+  /** True for the world currently loaded and simulating. */
+  isActive: boolean;
+  /** True for a world sitting in the trash folder, awaiting purge or restore. */
+  isArchived: boolean;
+  /** When it was archived, for a trash row; absent otherwise. */
+  archivedAt?: number;
+  /**
+   * Why this world could not be read, when it could not be. A world whose file
+   * is corrupt is LISTED WITH ITS PROBLEM rather than hidden: a world you can
+   * see and cannot open is a bug report, and a world that silently vanished
+   * from the list is how someone concludes it was deleted.
+   */
+  unreadable?: string;
+}
+
+/** A world switch that has been announced and is counting down. */
+export interface WorldSwitchStatus {
+  /** The world being switched TO. */
+  toId: string;
+  toName: string;
+  /** Seconds left before the swap; 0 means it is happening now. */
+  secondsRemaining: number;
+}
+
+/**
+ * Why a world-management request was refused. A CLOSED SET, for the same
+ * reason RollbackRefusal is one: the panel says something useful without the
+ * server ever composing player-facing prose.
+ */
+export type WorldAdminRefusal =
+  /** No WORLD_ADMIN_KEY is configured, so world management is off entirely. */
+  | 'disabled'
+  /** A key is configured and this is not it. */
+  | 'badKey'
+  /** Too many wrong keys from this connection; it is being slowed down. */
+  | 'throttled'
+  /** No world with that id exists in the worlds folder. */
+  | 'unknownWorld'
+  /** The requested world is already the live one. */
+  | 'alreadyActive'
+  /** A world of that name/id already exists; nothing was overwritten. */
+  | 'nameInUse'
+  /** The name is empty, too long, or slugifies to nothing usable. */
+  | 'invalidName'
+  /**
+   * The requested world size is outside this server's bounds, or is not a
+   * whole number of chunks. Distinct from 'invalidName' because the operator
+   * needs to know WHICH field to fix.
+   */
+  | 'invalidSize'
+  /** The action needs a loaded world and there is none. */
+  | 'noWorldLoaded'
+  /** Cancel was asked when no switch was counting down. */
+  | 'noSwitchPending'
+  /** Purge/unarchive was asked of a world that is not in the trash. */
+  | 'notArchived'
+  /** Purge was asked without the world's own name echoed back exactly. */
+  | 'confirmationMismatch'
+  /** Another switch is already counting down; cancel it first. */
+  | 'switchInProgress'
+  /** Refused because it would archive the live world; unload or switch first. */
+  | 'worldIsActive'
+  /** It was attempted and threw. Nothing was destroyed — see the server log. */
+  | 'failed';
+
+/** Every world-management action, as one closed set of names. */
+export type WorldAdminAction =
+  | 'create'
+  | 'load'
+  | 'unload'
+  | 'rename'
+  | 'duplicate'
+  | 'archive'
+  | 'unarchive'
+  | 'purge'
+  | 'pin'
+  | 'cancelSwitch';
+
+/** Client → server: "list every world you have". Answered to the sender only. */
+export interface WorldListRequestMessage {
+  type: 'worldList';
+  /** The world-admin key; see MAX_ROLLBACK_KEY_LENGTH for the length bound. */
+  key: string;
+}
+
+/** Client → server: "make a new world and leave the live one alone". */
+export interface WorldCreateRequestMessage {
+  type: 'worldCreate';
+  key: string;
+  /** Optional; the server mints an evocative one when omitted. */
+  name?: string;
+  /** Optional; falls back to the server's WORLD_SIZE. */
+  worldSize?: number;
+  /** Optional; falls back to the server's WORLD_DIFFICULTY. */
+  difficulty?: number;
+  /** Load it immediately after creating it, rather than only creating it. */
+  loadNow?: boolean;
+}
+
+/** Client → server: "make this world the live one". */
+export interface WorldLoadRequestMessage {
+  type: 'worldLoad';
+  key: string;
+  id: string;
+}
+
+/**
+ * Client → server: "save the live world and close it, leaving none loaded".
+ *
+ * A server with no world loaded still runs, still serves the client, and still
+ * answers world management — it simply has nothing to simulate and nothing to
+ * send a joining player. That is a deliberate state, not a broken one: it is
+ * what "unload" has to mean for it to be the opposite of "load".
+ */
+export interface WorldUnloadRequestMessage {
+  type: 'worldUnload';
+  key: string;
+}
+
+/** Client → server: "call this world something else". Never moves its file. */
+export interface WorldRenameRequestMessage {
+  type: 'worldRename';
+  key: string;
+  id: string;
+  name: string;
+}
+
+/** Client → server: "copy this world, byte for byte, under a new name". */
+export interface WorldDuplicateRequestMessage {
+  type: 'worldDuplicate';
+  key: string;
+  id: string;
+  name?: string;
+}
+
+/**
+ * Client → server: "move this world to the trash".
+ *
+ * NOT A DELETE. The file is moved, not unlinked, and it keeps appearing in the
+ * archived list until somebody purges it on purpose.
+ */
+export interface WorldArchiveRequestMessage {
+  type: 'worldArchive';
+  key: string;
+  id: string;
+}
+
+/** Client → server: "take this world back out of the trash". */
+export interface WorldUnarchiveRequestMessage {
+  type: 'worldUnarchive';
+  key: string;
+  id: string;
+}
+
+/**
+ * Client → server: "destroy this archived world permanently".
+ *
+ * THE ONLY MESSAGE IN THIS PROTOCOL THAT DESTROYS A WORLD. `confirmName` must
+ * equal the world's own name exactly; a mismatch is refused with
+ * 'confirmationMismatch' and nothing is touched. It is deliberately a name and
+ * not a yes/no: typing "Frostwick Hollows" is impossible to do by reflex, and
+ * a reflexive confirmation is not a confirmation.
+ */
+export interface WorldPurgeRequestMessage {
+  type: 'worldPurge';
+  key: string;
+  id: string;
+  confirmName: string;
+}
+
+/**
+ * Client → server: "pin this restore point" (or unpin it).
+ *
+ * A pinned restore point is EXEMPT FROM RETENTION — it survives however many
+ * snapshots are written after it, until it is unpinned. This is the per-moment
+ * counterpart to the per-world guarantee: a world file cannot be pruned by
+ * another world, and a moment inside a world cannot be pruned by later play.
+ */
+export interface WorldPinRequestMessage {
+  type: 'worldPin';
+  key: string;
+  /** Restore point in the LIVE world; pinning is only offered for it. */
+  pointId: number;
+  pinned: boolean;
+}
+
+/** Client → server: "call off the switch that is counting down". */
+export interface WorldSwitchCancelRequestMessage {
+  type: 'worldSwitchCancel';
+  key: string;
+}
+
+/** Server → the requesting client only: every world this server has. */
+export interface WorldListMessage {
+  type: 'worldListing';
+  /** Live worlds, newest-played first. */
+  worlds: WorldSummary[];
+  /** Trash: archived worlds awaiting purge or restore. */
+  archived: WorldSummary[];
+  /** Id of the loaded world, or null when none is loaded. */
+  activeId: string | null;
+  /** Present while a switch is counting down. */
+  pending?: WorldSwitchStatus;
+  /** Present INSTEAD of a useful listing when the request was refused. */
+  refused?: WorldAdminRefusal;
+}
+
+/** Server → the requesting client only: what happened to one request. */
+export interface WorldAdminResultMessage {
+  type: 'worldAdminResult';
+  action: WorldAdminAction;
+  ok: boolean;
+  /** The world the action landed on, when there was one. */
+  id?: string;
+  /**
+   * Where an archived world's file was moved to, on a successful archive.
+   * Stated so the answer to "where did my world go" is on screen rather than
+   * in a log the operator would have to know to read.
+   */
+  archivedPath?: string;
+  /** Why it did not happen, when `!ok`. */
+  refused?: WorldAdminRefusal;
+}
+
+/**
+ * Server → EVERY client: a world switch was announced and is counting down.
+ *
+ * WHY A COUNTDOWN AND NOT AN INSTANT SWAP. With one player — the operator —
+ * there is nobody to warn and the swap is immediate. With others connected,
+ * yanking the ground out from under someone mid-sculpt is hostile, so the
+ * switch is announced, counted down, and only then applied. `cancelled` ends
+ * the countdown with the world unchanged.
+ */
+export interface WorldSwitchNoticeMessage {
+  type: 'worldSwitchNotice';
+  toId: string;
+  toName: string;
+  secondsRemaining: number;
+  /** True on the message that calls the whole thing off. */
+  cancelled?: boolean;
+}
+
+/**
+ * Server → EVERY client: there is no world loaded right now.
+ *
+ * Sent on unload, so a client stops rendering a world the server has closed.
+ * A client that receives this has nothing to draw until a `snapshot` arrives.
+ */
+export interface WorldUnloadedMessage {
+  type: 'worldUnloaded';
+}
+
+/** Every client → server world-management message. */
+export type WorldAdminRequestMessage =
+  | WorldListRequestMessage
+  | WorldCreateRequestMessage
+  | WorldLoadRequestMessage
+  | WorldUnloadRequestMessage
+  | WorldRenameRequestMessage
+  | WorldDuplicateRequestMessage
+  | WorldArchiveRequestMessage
+  | WorldUnarchiveRequestMessage
+  | WorldPurgeRequestMessage
+  | WorldPinRequestMessage
+  | WorldSwitchCancelRequestMessage;
+
+/**
+ * Turns a world name into a filesystem-safe id.
+ *
+ * SHARED, not server-only, because the panel previews the id a name will
+ * produce before the operator commits to it — and a preview computed by
+ * different code from the real thing is a preview that lies. The server still
+ * validates the result (WORLD_ID_PATTERN) rather than trusting any id a
+ * client sends: this function is a convenience, never a security boundary.
+ *
+ * Returns an empty string for a name with nothing slug-able in it (all
+ * punctuation, all emoji); callers treat that as 'invalidName'.
+ */
+export function slugifyWorldName(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    // Strip combining marks so "Åsgard" becomes "asgard", not "sgard".
+    // Written as escapes, not literal combining characters, so the source is
+    // readable in an editor that would otherwise stack them on the bracket.
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    // Leading/trailing hyphens would make a filename that starts with '-',
+    // which every CLI in the world treats as a flag.
+    .replace(/^-+|-+$/g, '');
+  return slug.slice(0, MAX_WORLD_ID_LENGTH);
+}
+
+/** Validates an untrusted world id; null when it could not be one. */
+export function validateWorldId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > MAX_WORLD_ID_LENGTH) return null;
+  if (!WORLD_ID_PATTERN.test(value)) return null;
+  return value;
+}
+
+/**
+ * Validates an untrusted world name; null when it could not be one.
+ *
+ * Trims, unlike the key validator: a name is a label a human typed, and
+ * " Frostwick " is the same world as "Frostwick" to everyone but a string
+ * comparison. A key is a secret and gets the opposite treatment, for the
+ * reason stated on validateRollbackKey.
+ */
+export function validateWorldName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_WORLD_NAME_LENGTH) return null;
+  // Control characters would render as nothing and could smuggle a newline
+  // into a log line; a name is display text, so they are rejected outright.
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * Validates any inbound world-management message; null if malformed.
+ *
+ * ONE VALIDATOR FOR ELEVEN MESSAGES, deliberately: every one of them carries
+ * the operator key and is refused the same way, so splitting them into eleven
+ * near-identical functions would be eleven places for the key check to drift.
+ * The per-action fields are checked in the one switch below.
+ */
+export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessage | null {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+
+  // The key check is FIRST and identical for every action — see the doc above.
+  const key = typeof m.key === 'string' ? m.key : null;
+  if (key === null || key.length === 0 || key.length > MAX_ROLLBACK_KEY_LENGTH) return null;
+
+  switch (m.type) {
+    case 'worldList':
+      return { type: 'worldList', key };
+
+    case 'worldUnload':
+      return { type: 'worldUnload', key };
+
+    case 'worldSwitchCancel':
+      return { type: 'worldSwitchCancel', key };
+
+    case 'worldCreate': {
+      const request: WorldCreateRequestMessage = { type: 'worldCreate', key };
+      if (m.name !== undefined) {
+        const name = validateWorldName(m.name);
+        if (name === null) return null;
+        request.name = name;
+      }
+      if (m.worldSize !== undefined) {
+        // Bounds are the server's (config.ts owns WORLD_SIZE's range); the
+        // protocol only insists it is a positive integer, so a float or a
+        // string never reaches the allocator.
+        if (!Number.isSafeInteger(m.worldSize) || (m.worldSize as number) <= 0) return null;
+        request.worldSize = m.worldSize as number;
+      }
+      if (m.difficulty !== undefined) {
+        if (!Number.isSafeInteger(m.difficulty)) return null;
+        request.difficulty = m.difficulty as number;
+      }
+      if (m.loadNow !== undefined) {
+        if (typeof m.loadNow !== 'boolean') return null;
+        request.loadNow = m.loadNow;
+      }
+      return request;
+    }
+
+    case 'worldLoad':
+    case 'worldArchive':
+    case 'worldUnarchive': {
+      const id = validateWorldId(m.id);
+      if (id === null) return null;
+      return { type: m.type, key, id };
+    }
+
+    case 'worldRename': {
+      const id = validateWorldId(m.id);
+      const name = validateWorldName(m.name);
+      if (id === null || name === null) return null;
+      return { type: 'worldRename', key, id, name };
+    }
+
+    case 'worldDuplicate': {
+      const id = validateWorldId(m.id);
+      if (id === null) return null;
+      const request: WorldDuplicateRequestMessage = { type: 'worldDuplicate', key, id };
+      if (m.name !== undefined) {
+        const name = validateWorldName(m.name);
+        if (name === null) return null;
+        request.name = name;
+      }
+      return request;
+    }
+
+    case 'worldPurge': {
+      const id = validateWorldId(m.id);
+      if (id === null) return null;
+      // The confirmation is compared against the world's real name by the
+      // server; here it need only BE a string of plausible length. It is not
+      // run through validateWorldName, because a world whose stored name has
+      // somehow drifted outside those rules must still be purgeable by
+      // echoing whatever it actually says.
+      if (typeof m.confirmName !== 'string' || m.confirmName.length > MAX_WORLD_NAME_LENGTH) {
+        return null;
+      }
+      return { type: 'worldPurge', key, id, confirmName: m.confirmName };
+    }
+
+    case 'worldPin': {
+      // Snapshot ids are SQLite AUTOINCREMENT rowids: positive integers.
+      if (!Number.isSafeInteger(m.pointId) || (m.pointId as number) <= 0) return null;
+      if (typeof m.pinned !== 'boolean') return null;
+      return { type: 'worldPin', key, pointId: m.pointId as number, pinned: m.pinned };
+    }
+
+    default:
+      return null;
+  }
 }

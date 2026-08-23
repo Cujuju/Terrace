@@ -12,8 +12,65 @@ import { logWarn } from './log.ts';
 /** Colyseus's conventional default port. */
 export const DEFAULT_PORT = 2567;
 
-/** Relative to the process CWD; `data/` is gitignored. */
+/**
+ * The LEGACY single-world database (pre-2026-08-22).
+ *
+ * No longer where worlds live — see DEFAULT_WORLDS_DIR — but still read at
+ * boot, once, so an existing self-hoster's world is adopted into the new
+ * layout instead of being left behind. See WorldRegistry.adopt, which COPIES:
+ * this file is never moved or deleted by the migration.
+ */
 export const DEFAULT_DB_PATH = './data/world.db';
+
+/**
+ * Where worlds live: one SQLite file per world, plus a `.trash` folder for
+ * archived ones and a `.active` pointer at the world to load next boot.
+ *
+ * A DIRECTORY RATHER THAN A FILE is the whole fix of 2026-08-22: retention
+ * runs inside one world's file and physically cannot evict another world's
+ * history. See server/src/persistence/world-registry.ts.
+ */
+export const DEFAULT_WORLDS_DIR = './data/worlds';
+
+/**
+ * Cells-per-edge bounds for a world. The floor is one chunk, because a world
+ * smaller than the unit every mask and reveal operation works in has cells no
+ * player could ever be granted. The ceiling is Int16 arithmetic meeting
+ * memory: 4096² is 32 MB of heightmap, already far past the design's 512²
+ * target, and a snapshot of it is a 32 MB synchronous write.
+ */
+export const MIN_WORLD_SIZE = CHUNK_SIZE;
+export const MAX_WORLD_SIZE = 4096;
+
+/**
+ * How long a world switch is announced before it happens, when other players
+ * are connected (owner decision, 2026-08-22).
+ *
+ * TEN SECONDS: long enough to read a banner and put a brush down, short enough
+ * that an operator alone with one other person is not waiting on ceremony. It
+ * is skipped entirely when the operator is the only client — there is nobody
+ * to warn — and 0 turns announcements off, making every switch immediate.
+ */
+export const DEFAULT_WORLD_SWITCH_COUNTDOWN_S = 10;
+export const MIN_WORLD_SWITCH_COUNTDOWN_S = 0;
+/**
+ * Five minutes. A countdown is a courtesy, not a scheduling system; past this
+ * an operator wants to tell people in chat, not hold the server in a pending
+ * state where nothing else can be switched.
+ */
+export const MAX_WORLD_SWITCH_COUNTDOWN_S = 300;
+
+/**
+ * The key world MANAGEMENT accepts when WORLD_ADMIN_KEY is not set.
+ *
+ * A SECOND KEY, DISTINCT FROM ROLLBACK'S, because the two guard different
+ * blast radii: a rollback rewinds the live world (and is itself undoable),
+ * while world management can archive one. An operator may reasonably hand out
+ * the first and not the second. Defaulted rather than required for the reason
+ * design §8 gives — nothing sensitive should be needed to boot a world — and
+ * warned about loudly at boot for the reason the rollback default is.
+ */
+export const DEFAULT_WORLD_ADMIN_KEY = 'terrace-worlds';
 
 /** Design §3.2: fixed ~10 Hz simulation tick. */
 export const DEFAULT_TICK_HZ = 10;
@@ -165,6 +222,22 @@ export interface ServerConfig {
    * which key is live is the point of that line.
    */
   readonly rollbackKey: string | null;
+
+  /**
+   * Folder holding one database per world, plus `.trash` and `.active`.
+   * Always absolute by the time it is here.
+   */
+  readonly worldsDir: string;
+
+  /**
+   * The operator key that gates world management (create/load/archive/purge).
+   * DEFAULT_WORLD_ADMIN_KEY when unset; null only when set to nothing at all,
+   * which turns world management off. Never logged when self-chosen.
+   */
+  readonly worldAdminKey: string | null;
+
+  /** Seconds a world switch is announced for when others are connected. */
+  readonly worldSwitchCountdownS: number;
 }
 
 /** Thrown for any invalid environment value; the boot path prints and exits. */
@@ -296,6 +369,37 @@ function readRollbackKey(env: NodeJS.ProcessEnv): string | null {
   return raw;
 }
 
+/**
+ * Reads WORLD_ADMIN_KEY, with exactly the three cases readRollbackKey
+ * documents for its own variable: unset → the built-in default, set-but-empty
+ * → off, set → the operator's own key subject to the same length floor.
+ *
+ * A SEPARATE FUNCTION RATHER THAN A SHARED PARAMETERISED ONE, and this is the
+ * one place duplication was chosen deliberately: the two differ in their
+ * default VALUE and in every string a self-hoster reads in an error, and a
+ * shared helper taking (variableName, defaultValue) produces messages that
+ * name a variable through a parameter — which is how the wrong variable name
+ * ends up in an error telling someone how to fix their config. The shared part
+ * that actually matters (the comparison and the lockout) is shared, in
+ * world/operator-gate.ts.
+ */
+function readWorldAdminKey(env: NodeJS.ProcessEnv): string | null {
+  const configured = env.WORLD_ADMIN_KEY;
+  if (configured === undefined) return DEFAULT_WORLD_ADMIN_KEY;
+
+  const raw = configured.trim();
+  if (raw.length === 0) return null;
+
+  if (raw.length < MIN_ROLLBACK_KEY_LENGTH) {
+    throw new ConfigError(
+      `WORLD_ADMIN_KEY must be at least ${MIN_ROLLBACK_KEY_LENGTH} characters ` +
+        `(got ${raw.length}); set it to nothing at all (WORLD_ADMIN_KEY=) to ` +
+        'turn world management off',
+    );
+  }
+  return raw;
+}
+
 /** Absolute path to `<repo>/server`, shared by every sibling-of-server default. */
 function serverDir(): string {
   // import.meta.url is <repo>/server/src/config.ts → up two levels is <repo>/server.
@@ -318,9 +422,8 @@ function defaultClientDistPath(): string {
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const worldSize = readInteger(env, 'WORLD_SIZE', DEFAULT_WORLD_SIZE, {
-    min: CHUNK_SIZE,
-    // Int16 heights: 4096² = 32 MB, already far past the design's 512² target.
-    max: 4096,
+    min: MIN_WORLD_SIZE,
+    max: MAX_WORLD_SIZE,
   });
   // The unlock mask and every chunk operation assume whole chunks. A partial
   // trailing chunk would be permanently unreachable, so this is fatal, not a
@@ -364,5 +467,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       max: MAX_SNAPSHOT_RETENTION,
     }),
     rollbackKey: readRollbackKey(env),
+    worldsDir: env.WORLDS_DIR?.trim() ? resolve(env.WORLDS_DIR.trim()) : resolve(DEFAULT_WORLDS_DIR),
+    worldAdminKey: readWorldAdminKey(env),
+    // CLAMPED, not fatal, for the same reason difficulty is: 0 and 600 both
+    // name an intent this server can honour (never announce / announce as long
+    // as it will allow), so neither is worth refusing to boot over.
+    worldSwitchCountdownS: readClampedInteger(
+      env,
+      'WORLD_SWITCH_COUNTDOWN_S',
+      DEFAULT_WORLD_SWITCH_COUNTDOWN_S,
+      { min: MIN_WORLD_SWITCH_COUNTDOWN_S, max: MAX_WORLD_SWITCH_COUNTDOWN_S },
+    ),
   };
 }

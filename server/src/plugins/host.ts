@@ -53,6 +53,8 @@ interface PluginEntry {
 
 export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, WorldEventListener {
   private readonly entries: readonly PluginEntry[];
+  /** Lazily-built message-type index; see handlerFor. */
+  private handlersByType: Map<string, (player: Player, payload: unknown) => void> | null = null;
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
 
@@ -277,6 +279,45 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    * The wire type is `<plugin>:<type>`, so a plugin can never shadow a core
    * message ('sculpt') or another plugin's.
    */
+  /**
+   * Every namespaced message type the given plugin set defines, WITHOUT
+   * needing a host — and therefore without needing a world.
+   *
+   * EXISTS FOR THE MULTI-WORLD ROOM (2026-08-22). A room is created once and
+   * outlives every world loaded into it, so it cannot register handlers bound
+   * to one host: the host is replaced on every world switch, and a handler
+   * captured at room-create time would keep sculpting the world the operator
+   * just left. It also has to work when NO world is loaded, which is a state
+   * the server now supports and in which no host exists at all.
+   *
+   * So the room registers the TYPES from here (fixed for the process, because
+   * the plugin set is fixed at boot) and looks the handler up per message via
+   * `handlerFor` on whichever host is current.
+   */
+  static messageTypesFor(plugins: readonly LoadedPlugin[]): string[] {
+    const types: string[] = [];
+    for (const { plugin } of plugins) {
+      if (!plugin.messages) continue;
+      for (const type of Object.keys(plugin.messages)) {
+        types.push(namespacedMessageType(plugin.name, type));
+      }
+    }
+    return types;
+  }
+
+  /**
+   * The handler for one namespaced message type on THIS host, or undefined
+   * when no loaded plugin claims it. See messageTypesFor for why lookup is
+   * per-message rather than bound once.
+   */
+  handlerFor(type: string): ((player: Player, payload: unknown) => void) | undefined {
+    // Built once per host, not per message: this is on the hot path for every
+    // plugin message every client sends, and the plugin set cannot change
+    // during a host's lifetime.
+    this.handlersByType ??= new Map(this.messageHandlers());
+    return this.handlersByType.get(type);
+  }
+
   messageHandlers(): Array<[string, (player: Player, payload: unknown) => void]> {
     const handlers: Array<[string, (player: Player, payload: unknown) => void]> = [];
     for (const { loaded, api } of this.entries) {

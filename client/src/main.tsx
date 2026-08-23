@@ -16,6 +16,12 @@ import { worldPointToCell } from './terrain/picking.ts';
 import { createWorld } from './world.ts';
 import { brushRadius, setConnectionStatus } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
+import {
+  applyWorldAdminResult,
+  applyWorldListing,
+  applyWorldSwitchNotice,
+  setWorldLoaded,
+} from './state/worldsState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
@@ -62,6 +68,16 @@ const connection = connect({
   operator: {
     onRestorePointList: (msg) => applyRestorePointList(msg),
     onRollbackResult: (msg) => applyRollbackResult(msg),
+  },
+  // World-management answers (multi-world). Same pattern, a separate sink
+  // because it is gated by a separate key — see WorldAdminSink.
+  worldAdmin: {
+    onWorldListing: (msg) => applyWorldListing(msg),
+    onWorldAdminResult: (msg) => applyWorldAdminResult(msg),
+    onWorldSwitchNotice: (msg) => applyWorldSwitchNotice(msg),
+    // The server has closed its world. The banner says so until a snapshot
+    // arrives, which is what marks a world loaded again (see world.ts).
+    onWorldUnloaded: () => setWorldLoaded(false),
   },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
@@ -112,6 +128,9 @@ render(
       rollback={{
         list: (key) => connection.requestRestorePoints(key),
         apply: (key, toId) => connection.requestRollback(key, toId),
+      }}
+      worlds={{
+        send: (message) => connection.sendWorldAdmin(message),
       }}
     />
   ),
