@@ -105,7 +105,7 @@ import {
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
 import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
-import type { StructurePart } from './parts.ts';
+import { mergeParts, type StructurePart } from './parts.ts';
 import type { SiteKind } from './site.ts';
 
 // ── Shared build helpers ─────────────────────────────────────────────────────
@@ -2977,7 +2977,16 @@ export interface StructureModels {
 }
 
 export function createStructureModels(): StructureModels {
-  const tierParts = buildTierParts();
+  // MERGED, not as authored: a tier is written as ~100 parts because that is
+  // how a building is legible to write, and drawn as a handful because that is
+  // how a building is cheap to draw. mergeParts() is the whole of that
+  // translation — see parts.ts for which materials may share a surface and why
+  // it asks the material rather than trusting a flag on the part.
+  //
+  // Safe to apply to the tiers specifically because nothing here is animated:
+  // animate() below drives Durand's materials only, and Durand's is built
+  // separately and deliberately left unmerged so those handles stay live.
+  const tierParts = buildTierParts().map((parts) => mergeParts(parts));
   if (tierParts.length !== STRUCTURE_TIER_COUNT) {
     // Defensive: a mismatch here means a tier was added to the wire contract
     // (protocol.ts) without a matching model, which would silently drop that
@@ -3154,7 +3163,7 @@ export function createStructureModels(): StructureModels {
         // tier-gate-as-part-of-the-contract shape): a site variant is a
         // categorical fact about this settlement's ground, not a rarity, so
         // it wins over Durand's roll below rather than competing with it —
-        // see buildHarborParts's own comment for why.
+        // see the SITE_TOP_TIER_VARIANTS banner above for why.
         const variantSet = SITE_TOP_TIER_VARIANTS[placement.site];
         if (placement.tier === MAX_STRUCTURE_TIER && variantSet !== undefined) {
           const built = siteVariantParts[placement.site]!;
