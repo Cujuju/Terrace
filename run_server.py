@@ -124,11 +124,71 @@ SERVER_DIR = os.path.join(REPO_ROOT, "server")
 CLIENT_DIR = os.path.join(REPO_ROOT, "client")
 CLIENT_INDEX = os.path.join(CLIENT_DIR, "dist", "index.html")
 
+# Everything that ends up INSIDE the client bundle, relative to the repo root.
+# Not the same set as WATCH_ROOTS: that one is what a SERVER restart follows
+# (and deliberately excludes client code), while this is what a client BUILD is
+# made of - the client itself, the shared math it compiles against, and both
+# halves of every plugin, whose client code Vite pulls in.
+CLIENT_SOURCE_ROOTS = ("client/src", "shared/src", "plugins")
+
+# Single files outside those trees that still change the bundle.
+CLIENT_SOURCE_FILES = ("client/index.html", "client/vite.config.ts")
+
+# Suffixes that can change what the bundle renders. CSS is here and not in
+# WATCH_SUFFIXES because a stylesheet changes the client and never the server.
+CLIENT_SOURCE_SUFFIXES = (".ts", ".tsx", ".js", ".mjs", ".json", ".css", ".html")
+
+
+def newest_client_source_mtime() -> float:
+    """Most recent mtime across everything the client bundle is built from."""
+    newest = 0.0
+    for root in CLIENT_SOURCE_ROOTS:
+        for dirpath, dirnames, filenames in os.walk(os.path.join(REPO_ROOT, root)):
+            dirnames[:] = [d for d in dirnames if d not in ("node_modules", "dist", "test")]
+            for name in filenames:
+                if not name.endswith(CLIENT_SOURCE_SUFFIXES):
+                    continue
+                try:
+                    newest = max(newest, os.stat(os.path.join(dirpath, name)).st_mtime)
+                except OSError:
+                    continue  # vanished mid-walk; the next launch will see it
+    for rel in CLIENT_SOURCE_FILES:
+        try:
+            newest = max(newest, os.stat(os.path.join(REPO_ROOT, rel)).st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def static_client_is_stale() -> bool:
+    """True when client/dist is older than something it was built from.
+
+    THE BUG THIS EXISTS TO KILL. This used to be `if os.path.isfile(index)`,
+    i.e. "a build exists" was taken to mean "the build is current". It does not:
+    nothing here ever rebuilds, so a dist built days ago is served forever, with
+    no warning and no visible difference from a fresh one. The symptom is that
+    your changes - and everyone else's - are simply ABSENT from the page, which
+    reads as "the server is loading an old snapshot" rather than as a build
+    problem. Reported exactly that way, 2026-08-22.
+
+    An mtime comparison, not a content hash: it is one stat per source file
+    against one stat on the build, it costs milliseconds, and being WRONG in
+    the conservative direction (rebuilding when nothing meaningful changed)
+    costs a few seconds while being wrong the other way costs an afternoon of
+    debugging a UI that is not the one on disk.
+    """
+    try:
+        built = os.stat(CLIENT_INDEX).st_mtime
+    except OSError:
+        return True  # no build at all
+    return newest_client_source_mtime() > built
+
 
 def prepare_static_client() -> bool:
-    if os.path.isfile(CLIENT_INDEX):
+    if os.path.isfile(CLIENT_INDEX) and not static_client_is_stale():
         return True
-    print("[run_server] building client (dist missing)...")
+    reason = "dist missing" if not os.path.isfile(CLIENT_INDEX) else "sources are newer than dist"
+    print(f"[run_server] building client ({reason})...")
     result = subprocess.call(["pnpm", "build"], cwd=CLIENT_DIR)
     if result != 0:
         print("[run_server] client build failed - fix the build or set "
@@ -261,6 +321,29 @@ def main(watch: bool) -> int:
     # VITE_SERVER_URL in the shell still wins - the Docker Compose path relies
     # on that.
     env.setdefault("VITE_SERVER_URL", f"ws://localhost:{env.get('PORT', 2567)}")
+
+    # IN DEV MODE, DO NOT LET THE GAME SERVER SERVE client/dist.
+    #
+    # The server serves a built client on its own port when client/dist exists
+    # (issue #20), and NOTHING in dev mode ever rebuilds it. So a stack started
+    # this way offers two clients: Vite on 5173, always current, and a frozen
+    # bundle on <PORT> that is as old as whenever somebody last ran
+    # `pnpm --dir client build`. Worse, the server's own boot line says
+    # "play at http://localhost:<PORT>" - pointing at the stale one. Open that
+    # URL and you are looking at a build from hours or days ago, with no
+    # indication anything is wrong: your changes are simply absent, and so is
+    # everybody else's. Reported 2026-08-22 as "it is loading an old snapshot".
+    #
+    # Pointing CLIENT_DIST_PATH at a path that does not exist makes the server
+    # say "no built client to serve - browse the Vite dev server instead",
+    # which is the truth in dev mode. client/dist is left alone on disk; it is
+    # simply not served, so there is exactly ONE client URL and it is the live
+    # one.
+    if CLIENT_MODE == "dev":
+        env["CLIENT_DIST_PATH"] = os.path.join(SERVER_DIR, "no-dist-in-dev-mode")
+        if os.path.exists(CLIENT_INDEX):
+            print("[run_server] note     : client/dist exists but is NOT being served "
+                  "(dev mode serves live sources; that build may be stale)")
 
     # Boot details up front (owner request 2026-08-19): one block naming every
     # port and URL this launch uses, before the two processes start talking.
