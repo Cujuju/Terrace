@@ -9,6 +9,14 @@
 //   ?tier=<0..STRUCTURE_TIER_COUNT-1>   — that tier's standard model
 //   ?durands=1                          — the Durand's variant (forces the
 //                                         top tier regardless of ?tier)
+//   ?hut=<0..9>                         — one of the ten COASTAL fishing-hut
+//                                         models (fishingHuts.ts), forcing the
+//                                         top tier and a coastal site; the
+//                                         cell is searched for one whose own
+//                                         variant roll lands on the index, so
+//                                         what is captured is the real roll's
+//                                         output and not a model handed
+//                                         straight to the renderer
 //   ?flash=on|off                       — durands=1 only: freezes the sign's
 //                                         flash at its brightest ("on") or
 //                                         dimmest ("off") point, so a driver
@@ -69,6 +77,7 @@ import {
   DURANDS_SIGN_FLASH_PERIOD_SECONDS,
   type StructurePlacement,
 } from '../../plugins/structures/client/models.ts';
+import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from '../../plugins/structures/client/fishingHuts.ts';
 import { isDurandsCell } from '../../plugins/structures/client/durands.ts';
 
 // ── Lighting rig, copied from render/scene.ts (see that file for the tuning
@@ -127,6 +136,22 @@ function findTopTierCell(wantDurands: boolean): { x: number; y: number } {
   throw new Error(
     `preview: found no ${wantDurands ? '' : 'non-'}Durand's cell in the first ${SCAN_EDGE}x${SCAN_EDGE} cells`,
   );
+}
+
+/**
+ * A cell whose coastal variant roll lands on `variant` — the same search
+ * findTopTierCell does, and for the same reason: the preview must exercise
+ * the ROLL, not bypass it, or it would happily screenshot a model the game
+ * can never actually produce on any cell.
+ */
+function findCoastalCell(variant: number): { x: number; y: number } {
+  const SCAN_EDGE = 64;
+  for (let y = 0; y < SCAN_EDGE; y++) {
+    for (let x = 0; x < SCAN_EDGE; x++) {
+      if (fishingHutVariantIndex(x, y) === variant) return { x, y };
+    }
+  }
+  throw new Error(`preview: no cell in the first ${SCAN_EDGE}x${SCAN_EDGE} rolls fishing hut ${variant}`);
 }
 
 function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGLRenderer } {
@@ -192,10 +217,15 @@ function frameCameraOn(camera: PerspectiveCamera, object: { root: Group }, view:
 function main(): void {
   const query = readQuery();
   const durandsRequested = query.get('durands') === '1';
+  const hutParam = query.get('hut');
+  const hutRequested = hutParam !== null && Number.isInteger(Number(hutParam));
+  const hutVariant = hutRequested
+    ? Math.min(Math.max(Number(hutParam), 0), FISHING_HUT_BUILDERS.length - 1)
+    : -1;
   const flashOn = query.get('flash') !== 'off';
   const bulbPhaseParam = query.get('bulbphase');
   const requestedTier = Number(query.get('tier') ?? '0');
-  const tier = durandsRequested
+  const tier = durandsRequested || hutRequested
     ? MAX_STRUCTURE_TIER
     : Math.min(Math.max(requestedTier, 0), STRUCTURE_TIER_COUNT - 1);
 
@@ -209,7 +239,11 @@ function main(): void {
   // itself happens to roll Durand's, which is why the plain-model case also
   // has to search rather than hardcode a cell — see findTopTierCell's own
   // comment.
-  const cell = tier === MAX_STRUCTURE_TIER ? findTopTierCell(durandsRequested) : { x: 0, y: 0 };
+  const cell = hutRequested
+    ? findCoastalCell(hutVariant)
+    : tier === MAX_STRUCTURE_TIER
+      ? findTopTierCell(durandsRequested)
+      : { x: 0, y: 0 };
   // `?race=rudy|uno` pins the tint for side-by-side review shots; absent, the
   // preview derives it from the cell exactly as the game client does.
   const raceParam = query.get('race');
@@ -218,16 +252,22 @@ function main(): void {
   const placement: StructurePlacement = {
     x: cell.x,
     z: cell.y,
+    // The cell drives every cosmetic roll (Durand's skin, the fishing-hut
+    // variant); x/z above are a world position this preview happens to set
+    // from the same numbers. Keeping them separate is what lets the searches
+    // above mean anything — see models.ts's StructurePlacement.cellX.
+    cellX: cell.x,
+    cellY: cell.y,
     groundY: 0,
     tier,
     scale: 1,
     yaw: 0,
     race,
-    // 'inland' — this preview has no terrain at all (a neutral backdrop, see
-    // the file banner), so there is no water to survey; the coastal harbor
-    // variant (card 33, models.ts's SITE_TOP_TIER_VARIANTS) is out of this
-    // throwaway tool's scope, unlike the Durand's variant it already drives.
-    site: 'inland',
+    // This preview has no terrain at all (a neutral backdrop, see the file
+    // banner), so there is no water for site.ts to survey — the site is
+    // ASSERTED here rather than derived, which is exactly what makes ?hut=
+    // able to show a coastal model at all.
+    site: hutRequested ? 'coastal' : 'inland',
   };
   models.apply([placement]);
 

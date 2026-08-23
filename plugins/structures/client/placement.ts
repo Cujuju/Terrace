@@ -73,6 +73,14 @@ export function placementsFor(cells: Iterable<StructureCell>, groundAt: GroundLo
     placements.push({
       x: cell.x * CELL_WORLD_SIZE,
       z: cell.y * CELL_WORLD_SIZE,
+      // The cell itself travels with the placement: every per-building
+      // cosmetic roll downstream (Durand's skin, the fishing-hut variant)
+      // hashes integer CELL coordinates, and x/z above are world units — a
+      // quarter of a cell each since the 2026-08-21 re-sample, so hashing
+      // them would fold four cells onto one roll. See
+      // models.ts's StructurePlacement.cellX.
+      cellX: cell.x,
+      cellY: cell.y,
       groundY,
       tier: cell.tier,
       scale: variation.scale,

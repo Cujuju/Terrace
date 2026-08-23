@@ -213,6 +213,12 @@ describe('placement', () => {
     expect(placements[0]).toEqual({
       x: 3 * CELL_WORLD_SIZE,
       z: 4 * CELL_WORLD_SIZE,
+      // …and the CELL travels alongside them, because the cosmetic rolls
+      // downstream (Durand's skin, the fishing-hut variant) hash integer cell
+      // coordinates. Hashing the world x/z above would fold four cells onto
+      // one roll at today's sampling — see models.ts's StructurePlacement.
+      cellX: 3,
+      cellY: 4,
       groundY: 5,
       tier: 2,
       scale: variation.scale,

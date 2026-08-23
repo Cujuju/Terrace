@@ -104,6 +104,8 @@ import {
   type StructureTier,
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
+import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
+import type { StructurePart } from './parts.ts';
 import type { SiteKind } from './site.ts';
 
 // ── Shared build helpers ─────────────────────────────────────────────────────
@@ -675,12 +677,6 @@ function unitBoxGeometry(): BoxGeometry {
 
 // ── One building tier: a fixed list of (geometry, material, local transforms) ─
 
-interface StructurePart {
-  readonly geometry: BufferGeometry;
-  readonly material: Material;
-  /** One matrix per instance this part contributes, per building of this tier. */
-  readonly localMatrices: Matrix4[];
-}
 
 function buildTierParts(): StructurePart[][] {
   const tiers: StructurePart[][] = [];
@@ -1950,139 +1946,52 @@ function buildTierParts(): StructurePart[][] {
   return tiers;
 }
 
-// ── Harbor: a cosmetic top-tier VARIANT for COASTAL sites (card 33, "Fishing
-// Villages") ─────────────────────────────────────────────────────────────
+// ── Fishing villages: the top-tier VARIANT set for COASTAL sites (card 33,
+// redesigned 2026-08-22) ────────────────────────────────────────────────────
 //
-// "A coastal branch of the tier ladder: shore settlements grow boats instead
-// of towers." At MAX_STRUCTURE_TIER, a coastal site's model is this raised
-// dock lookout — piled posts, a plank deck, a plank cabin under a small
-// gable, and a beacon on a pole — INSTEAD OF the stone watchtower above.
-// Selected by SITE_TOP_TIER_VARIANTS (below), never by a hash roll: every
-// coastal top-tier structure gets this model, full stop — site.ts's
-// classification is a terrain FACT, not a rarity, unlike Durand's own
-// ~1-in-6 skin roll. That is also why it takes PRIORITY over Durand's in
-// apply()'s dispatch (below): the two "the last stage of the ladder is
-// unusual" mechanics would otherwise fight over the same silhouette on the
-// rare cell that both rolls Durand's and sits on a coast. Durand's itself
-// (durands.ts) is untouched — it simply never gets asked about a coastal
-// cell.
+// At MAX_STRUCTURE_TIER, a coastal site renders as one of TEN grass huts
+// (fishingHuts.ts) instead of the stone watchtower — little reed and daub
+// huts with a couple of fish on the sand in front, one rolled per cell from
+// the cell's own coordinates.
 //
-// SCOPED DELIBERATELY SIMPLER than the six standard tiers' fidelity/remodel
-// passes (this file's own banner) — this is one new model, not a second set
-// of six tiers, because the card describes a divergence at the TOP of the
-// ladder ("boats instead of towers"), not a rewrite of every tier below it.
-// If a future card wants coastal sites to diverge earlier too,
-// SITE_TOP_TIER_VARIANTS's shape is the seam to extend: key it by
-// `${tier}:${site}` instead of `site` alone, and apply()'s dispatch below
-// needs no further changes — it already treats the variant as an opaque,
-// optional override.
-function buildHarborParts(): StructurePart[] {
-  // Every dimension below stays inside STRUCTURE_FOOTPRINT_RADIUS (its own
-  // doc comment, and the six standard tiers' shared bound): the widest
-  // reach here is the deck's own half-width (0.34) and the roof's half-span
-  // (0.26), both comfortably under the 0.4545 ceiling.
-  const deckHeight = 0.5;
-  const postRadius = 0.02;
-  const postHalfSpanX = 0.3;
-  const postHalfSpanZ = 0.18;
-  const posts: StructurePart = {
-    geometry: new CylinderGeometry(postRadius, postRadius, deckHeight, 6),
-    material: lambert(0x5a4028),
-    localMatrices: [
-      at(postHalfSpanX, deckHeight / 2, postHalfSpanZ),
-      at(-postHalfSpanX, deckHeight / 2, postHalfSpanZ),
-      at(postHalfSpanX, deckHeight / 2, -postHalfSpanZ),
-      at(-postHalfSpanX, deckHeight / 2, -postHalfSpanZ),
-    ],
-  };
+// WHAT CHANGED, AND WHAT DID NOT. This replaces the single raised dock
+// lookout ("buildHarborParts") that shipped with card 33; the DISPATCH
+// around it is unchanged in shape and unchanged in priority. A site variant
+// is still a categorical fact about this settlement's ground, not a rarity,
+// so it still wins over Durand's ~1-in-6 roll (see apply() below) rather
+// than competing with it. What is new is that a site now offers a SET of
+// models rather than one, and picks between them with its own per-cell roll
+// — the reason SiteVariantSet below carries a `pick` beside its builders
+// instead of the registry mapping straight to a part list.
+//
+// EXTENDING IT. A second site kind with its own look is one more entry in
+// SITE_TOP_TIER_VARIANTS: a list of builders and a pick function (or a
+// single builder and `() => 0`). Nothing in the dispatch, the allocation or
+// the disposal below needs to know how many kinds or variants exist. If a
+// future card wants coastal sites to diverge BELOW the top tier too, the
+// seam is still the registry key: make it `${tier}:${site}` and this
+// dispatch needs no further change — it already treats the variant set as
+// an opaque, optional override of one tier.
 
-  const deckHalfWidth = 0.34;
-  const deckHalfDepth = 0.2;
-  const deckThickness = 0.05;
-  const deck: StructurePart = {
-    geometry: new BoxGeometry(deckHalfWidth * 2, deckThickness, deckHalfDepth * 2),
-    material: lambert(0x8a6a42),
-    localMatrices: [at(0, deckHeight + deckThickness / 2, 0)],
-  };
-
-  const wallHeight = 0.32;
-  const wallHalfWidth = 0.22;
-  const wallHalfDepth = 0.16;
-  const wallBaseY = deckHeight + deckThickness;
-  const wall: StructurePart = {
-    geometry: new BoxGeometry(wallHalfWidth * 2, wallHeight, wallHalfDepth * 2),
-    material: lambert(0x6b4629),
-    localMatrices: [at(0, wallBaseY + wallHeight / 2, 0)],
-  };
-
-  const ridgeRise = 0.2;
-  const eave = 0.04;
-  const gable = gableRoof(wallHalfWidth + eave, ridgeRise, wallBaseY + wallHeight, wallHalfDepth + eave, wallHalfDepth, false);
-  const roof: StructurePart = {
-    geometry: new BoxGeometry(gable.slopeLength, GABLE_PANEL_THICKNESS, gable.panelLength),
-    material: lambert(0x3a4a52),
-    localMatrices: gable.panelMatrices,
-  };
-  const gableEnds: StructurePart = {
-    geometry: new CylinderGeometry(1, 1, 1, 3),
-    material: lambert(0x5a3d22),
-    localMatrices: gable.endMatrices,
-  };
-  const ridgeCap: StructurePart = {
-    geometry: new BoxGeometry(GABLE_RIDGE_CAP_HALF_WIDTH * 2, GABLE_RIDGE_CAP_HEIGHT, gable.panelLength),
-    material: lambert(0x2a2018),
-    localMatrices: gable.ridgeCapMatrices,
-  };
-
-  const doorHeight = 0.24;
-  const doorZ = wallHalfDepth + 0.012;
-  const door: StructurePart = {
-    geometry: new BoxGeometry(0.11, doorHeight, 0.02),
-    material: lambert(0x2a1a10),
-    localMatrices: [at(0, wallBaseY + doorHeight / 2, doorZ)],
-  };
-
-  const poleHeight = 0.3;
-  const poleRadius = 0.018;
-  const pole: StructurePart = {
-    geometry: new CylinderGeometry(poleRadius, poleRadius, poleHeight, 6),
-    material: lambert(0x3a2a1a),
-    localMatrices: [at(0, gable.ridgeY + poleHeight / 2, 0)],
-  };
-
-  // Beacon: a small, STATIC warm glow atop the pole — unlike Durand's sign,
-  // it does not flash (see createStructureModels's apply()/animate() split:
-  // wiring a second independent per-frame light for a variant this modest
-  // is out of scope here; it slots into StructureModels.animate() the same
-  // way Durand's does if a future pass wants it to pulse).
-  const HARBOR_BEACON_COLOR = 0xffb347;
-  const HARBOR_BEACON_EMISSIVE_INTENSITY = 0.8;
-  const lampRadius = 0.05;
-  const lamp: StructurePart = {
-    geometry: new SphereGeometry(lampRadius, 8, 6),
-    material: new MeshLambertMaterial({
-      color: HARBOR_BEACON_COLOR,
-      flatShading: true,
-      emissive: HARBOR_BEACON_COLOR,
-      emissiveIntensity: HARBOR_BEACON_EMISSIVE_INTENSITY,
-    }),
-    localMatrices: [at(0, gable.ridgeY + poleHeight + lampRadius, 0)],
-  };
-
-  return [posts, deck, wall, roof, gableEnds, ridgeCap, door, pole, lamp];
+/**
+ * One site's model set: the models it can render as, and which of them a
+ * given CELL gets. `pick` must be a pure function of the cell — every client
+ * has to draw the same village on the same shore, with nothing on the wire
+ * to reconcile them.
+ */
+interface SiteVariantSet {
+  readonly builders: ReadonlyArray<() => StructurePart[]>;
+  pick(cellX: number, cellY: number): number;
 }
 
 /**
- * TOP-TIER model variants keyed by site (card 33) — the data-driven registry
- * apply() consults instead of a special case. A site kind with an entry here
+ * TOP-TIER model variants keyed by site. A site kind with an entry here
  * REPLACES MAX_STRUCTURE_TIER's normal model (and takes priority over the
- * Durand's roll — see apply()'s dispatch order below); a kind absent from
- * this record (today, every kind but 'coastal') falls through to whatever
- * apply() would have done anyway. Adding a third site's own top-tier look is
- * exactly one more entry here — no dispatch code changes required.
+ * Durand's roll); a kind absent from this record falls through to whatever
+ * apply() would have done anyway.
  */
-const SITE_TOP_TIER_VARIANTS: Readonly<Partial<Record<SiteKind, StructurePart[]>>> = {
-  coastal: buildHarborParts(),
+const SITE_TOP_TIER_VARIANTS: Readonly<Partial<Record<SiteKind, SiteVariantSet>>> = {
+  coastal: { builders: FISHING_HUT_BUILDERS, pick: fishingHutVariantIndex },
 };
 
 // ── Durand's: a cosmetic top-tier VARIANT ───────────────────────────────────
@@ -3018,6 +2927,21 @@ function buildDurandsParts(): DurandsBuilding {
 export interface StructurePlacement {
   readonly x: number;
   readonly z: number;
+  /**
+   * The CELL this structure stands on — the input every per-building COSMETIC
+   * ROLL hashes (Durand's skin, the fishing-hut variant).
+   *
+   * Carried separately from x/z rather than derived from them, because x/z
+   * are WORLD units and every roll in this plugin hashes integers: since the
+   * 2026-08-21 quarter-cell re-sample a world coordinate is `cell × 0.25`, so
+   * hashing it truncates four cells onto one hash — cells 0..3 all roll
+   * identically, and every roll clusters in 4×4 blocks. That is a real defect
+   * this field fixes (isDurandsCell was being fed world x/z), not a
+   * hypothetical: the rolls are integer-domain functions, so they must be
+   * given the integer domain.
+   */
+  readonly cellX: number;
+  readonly cellY: number;
   readonly groundY: number;
   readonly tier: StructureTier;
   readonly scale: number;
@@ -3107,17 +3031,31 @@ export function createStructureModels(): StructureModels {
   // apply() picks in place of MAX_STRUCTURE_TIER's normal meshes, not a
   // tier of its own. Capacity is STRUCTURES_CAP again for the identical
   // reason Durand's comment above gives — the server's own cap is the only
-  // per-world bound this client can rely on.
-  const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[]>> = {};
+  // per-world bound this client can rely on. It is affordable at ten
+  // variants only because every variant's parts arrive MERGED (parts.ts):
+  // one part per material, one local matrix each, so a variant costs
+  // STRUCTURES_CAP × 1 instance slots per material rather than
+  // STRUCTURES_CAP × (every authored bundle, block and fish).
+  //
+  // Built HERE rather than at module scope so their geometries and materials
+  // are owned by this instance and die with dispose() — the harbour variant
+  // they replace was a module-level const, which meant dispose() disposed
+  // geometries a later attach() would then render through.
+  const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
+  const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
   for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-    siteVariantMeshes[siteKind] = SITE_TOP_TIER_VARIANTS[siteKind]!.map((part) => {
-      geometries.push(part.geometry);
-      materials.push(part.material);
-      const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
-      mesh.count = 0;
-      root.add(mesh);
-      return mesh;
-    });
+    const built = SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build());
+    siteVariantParts[siteKind] = built;
+    siteVariantMeshes[siteKind] = built.map((parts) =>
+      parts.map((part) => {
+        geometries.push(part.geometry);
+        materials.push(part.material);
+        const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
+        mesh.count = 0;
+        root.add(mesh);
+        return mesh;
+      }),
+    );
   }
 
   // Scratch objects, reused across every instance of every rebuild — the same
@@ -3200,9 +3138,9 @@ export function createStructureModels(): StructureModels {
     apply(placements: readonly StructurePlacement[]): void {
       const counts = meshesByTier.map((parts) => parts.map(() => 0));
       const durandsCounts = durandsMeshes.map(() => 0);
-      const siteVariantCounts: Partial<Record<SiteKind, number[]>> = {};
+      const siteVariantCounts: Partial<Record<SiteKind, number[][]>> = {};
       for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-        siteVariantCounts[siteKind] = SITE_TOP_TIER_VARIANTS[siteKind]!.map(() => 0);
+        siteVariantCounts[siteKind] = siteVariantParts[siteKind]!.map((parts) => parts.map(() => 0));
       }
 
       for (const placement of placements) {
@@ -3217,12 +3155,18 @@ export function createStructureModels(): StructureModels {
         // categorical fact about this settlement's ground, not a rarity, so
         // it wins over Durand's roll below rather than competing with it —
         // see buildHarborParts's own comment for why.
-        const siteVariantParts = SITE_TOP_TIER_VARIANTS[placement.site];
-        if (placement.tier === MAX_STRUCTURE_TIER && siteVariantParts !== undefined) {
+        const variantSet = SITE_TOP_TIER_VARIANTS[placement.site];
+        if (placement.tier === MAX_STRUCTURE_TIER && variantSet !== undefined) {
+          const built = siteVariantParts[placement.site]!;
+          // The roll is the site's own (fishingHuts.ts for coastal), and it
+          // hashes the CELL — see StructurePlacement.cellX. Clamped defensively
+          // rather than trusted: a pick() that ever returned out of range would
+          // otherwise index undefined and take the whole frame down.
+          const variant = Math.min(Math.max(variantSet.pick(placement.cellX, placement.cellY), 0), built.length - 1);
           writeInstances(
-            siteVariantParts,
-            siteVariantMeshes[placement.site]!,
-            siteVariantCounts[placement.site]!,
+            built[variant],
+            siteVariantMeshes[placement.site]![variant],
+            siteVariantCounts[placement.site]![variant],
             raceTints[placement.race],
           );
           continue;
@@ -3230,7 +3174,7 @@ export function createStructureModels(): StructureModels {
 
         // isDurandsCell's own contract gates this to MAX_STRUCTURE_TIER (see
         // ./durands.ts) — nothing below the top tier can ever come back true.
-        if (isDurandsCell(placement.tier, placement.x, placement.z)) {
+        if (isDurandsCell(placement.tier, placement.cellX, placement.cellY)) {
           writeInstances(durands.parts, durandsMeshes, durandsCounts, null);
           continue;
         }
@@ -3244,7 +3188,9 @@ export function createStructureModels(): StructureModels {
       for (let tier = 0; tier < meshesByTier.length; tier++) finalizeMeshes(meshesByTier[tier], counts[tier]);
       finalizeMeshes(durandsMeshes, durandsCounts);
       for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-        finalizeMeshes(siteVariantMeshes[siteKind]!, siteVariantCounts[siteKind]!);
+        const meshes = siteVariantMeshes[siteKind]!;
+        const counts = siteVariantCounts[siteKind]!;
+        for (let variant = 0; variant < meshes.length; variant++) finalizeMeshes(meshes[variant], counts[variant]);
       }
     },
 
@@ -3289,7 +3235,9 @@ export function createStructureModels(): StructureModels {
     dispose(): void {
       for (const parts of meshesByTier) for (const mesh of parts) mesh.dispose();
       for (const mesh of durandsMeshes) mesh.dispose();
-      for (const meshes of Object.values(siteVariantMeshes)) for (const mesh of meshes!) mesh.dispose();
+      for (const variants of Object.values(siteVariantMeshes)) {
+        for (const meshes of variants!) for (const mesh of meshes) mesh.dispose();
+      }
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
       root.clear();
