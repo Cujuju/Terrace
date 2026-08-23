@@ -35,6 +35,15 @@ const DEFAULT_RADIUS = WORLD_UNIT_CELLS;
  */
 const LADDER = [1, 2, 4, 8, 16];
 
+/**
+ * The edge a player who has chosen nothing gets. NOT the wire default since
+ * 2026-08-22: the client sends `profile` on every intent, so the HUD is free to
+ * start somewhere else, and it starts on the edge whose mark matches the brush
+ * outline on the first click. Restated here rather than imported, like LADDER
+ * above, so that changing it is a decision a test makes you take twice.
+ */
+const DEFAULT_PROFILE = 'hard';
+
 type HudState = typeof import('../src/state/hudState.ts');
 
 /** Minimal in-memory localStorage; installed before each fresh import. */
@@ -88,7 +97,7 @@ describe('defaults', () => {
     const { hud, storage } = await freshHud();
     expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
     expect(hud.brushTool()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.tool);
-    expect(hud.brushProfile()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.profile);
+    expect(hud.brushProfile()).toBe(DEFAULT_PROFILE);
     expect(hud.sculptMode()).toBe('raise');
     expect(hud.showControls()).toBe(false);
     // Reading defaults must not write anything: an untouched HUD leaves no
@@ -101,7 +110,7 @@ describe('defaults', () => {
     expect(hud.DEFAULT_HUD_STATE).toEqual({
       brushRadius: DEFAULT_RADIUS,
       brushTool: WIRE_DEFAULT_SCULPT_OPTIONS.tool,
-      brushProfile: WIRE_DEFAULT_SCULPT_OPTIONS.profile,
+      brushProfile: DEFAULT_PROFILE,
       sculptMode: 'raise',
       showControls: false,
       // The test DOM reports no touch points, so this is the desktop default.
@@ -242,7 +251,7 @@ describe('fallback on corrupt storage', () => {
       const { hud } = await freshHud({ [HUD_KEY]: bad });
       expect(hud.brushRadius()).toBe(DEFAULT_RADIUS);
       expect(hud.brushTool()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.tool);
-      expect(hud.brushProfile()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.profile);
+      expect(hud.brushProfile()).toBe(DEFAULT_PROFILE);
       expect(hud.sculptMode()).toBe('raise');
       expect(hud.showControls()).toBe(false);
     }
@@ -279,7 +288,7 @@ describe('fallback on corrupt storage', () => {
       }),
     });
     expect(hud.brushTool()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.tool);
-    expect(hud.brushProfile()).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.profile);
+    expect(hud.brushProfile()).toBe(DEFAULT_PROFILE);
     expect(hud.brushRadius()).toBe(MAX_BRUSH_RADIUS);
     expect(hud.sculptMode()).toBe('lower');
   });

@@ -2,12 +2,39 @@
 // affect, following the cursor (owner, 2026-08-14: "Show me a light outline of
 // the brush so I can see how much area I'm going to affect").
 //
-// WHICH cells is the shared footprint's business — forEachFootprintOffset, the
-// same iterator applyBrush edits with, so what the preview promises and what a
-// stroke does cannot drift apart. One geometry per radius is built once at
-// startup (there are only MAX_BRUSH_RADIUS of them) and the single line object
-// swaps between them; showing, moving and hiding the preview allocates
-// nothing.
+// WHICH cells is decided by RUNNING THE SCULPT (owner, 2026-08-22: "I want the
+// outline to be exactly the same size as what I'm going to get for a single
+// click on flat land"). The preview simulates one click of the current brush,
+// with the current tool and edge, on a synthetic flat band-aligned map, and
+// outlines the cells whose RENDERED BAND changed. Same applySculpt the server
+// runs, options resolved through the same sculptOptionsOf both sides of the
+// prediction contract use, so the promise and the stroke cannot disagree.
+//
+// IT USED TO OUTLINE THE FOOTPRINT — forEachFootprintOffset, the set of cells
+// applyBrush touches — and that was a different question wearing the same
+// shape. The footprint is cells whose stored HEIGHT moves; the player sees
+// cells whose BAND moves, and terraced rendering floors height to its band, so
+// most of a soft brush's footprint moves without appearing to. Measured on
+// flat ground, one click, width of what renders:
+//
+//     brush   outlined   stamp+hard  stamp+soft  smooth+hard  smooth+soft
+//     0.25      0.25        0.25        0.25        0.25         0.25
+//     0.75      0.75        0.75        0.25        0.25         0.25
+//     1.75      1.75        1.75        0.25        1.00         0.25
+//     3.75      3.75        3.75        0.25        3.25         0.25
+//     7.75      7.75        7.75        0.25        7.25         0.25
+//
+// One column of five was right. The old outline was the footprint, which is
+// exactly the stamp+hard column — true for that one combination and silently
+// over-promising for the other three. Worst at the small end and worst of all
+// across a control that is not the size control: the 0.75 brush covered
+// 0.75 units as a stamp and 0.25 as a smooth, a threefold change from the Tool
+// row. That is what made a click unpredictable.
+//
+// THE GEOMETRY IS THEREFORE PER (RADIUS, TOOL, EDGE), and all of them are built
+// at startup rather than on demand — 64 simulations, 24 ms measured, and it
+// keeps the structural guards below firing at load or never, which is what they
+// were written to promise. Showing, moving and hiding still allocates nothing.
 //
 // HOW that set is DRAWN is the terrain's business, and this is the whole point
 // of the module (owner, 2026-08-19: "use the terrain's pipeline for the brush
@@ -17,7 +44,7 @@
 // five-cell plus read as a shape from another renderer laid over the ground,
 // and no amount of aligning it with the stamp could make the two look related.
 //
-// So the footprint is now marched and smoothed by the code that marches and
+// So that cell set is marched and smoothed by the code that marches and
 // smooths terrain — loadSampleField → marchLevel → assembleLoops → smoothLoop,
 // the exact sequence terrain/capEmission.ts runs per band — over a BINARY
 // in/out field instead of heights. One marching-squares implementation, one
@@ -115,9 +142,18 @@ import {
 } from 'three';
 import {
   CHUNK_SIZE,
+  DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
+  SCULPT_PROFILES,
+  SCULPT_TOOLS,
+  applySculpt,
+  bandOf,
+  createHeightmap,
   forEachFootprintOffset,
+  sculptOptionsOf,
+  type SculptProfile,
+  type SculptTool,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../config.ts';
 import {
@@ -210,9 +246,21 @@ export interface BrushHover {
   readonly surfaceY: number;
 }
 
+/**
+ * The brush as the outline needs it: everything about the player's selection
+ * that changes what one click renders. Tool and edge are here for the same
+ * reason radius is — see the table in the module header, where the Tool row
+ * moves the 0.75 brush's mark by a factor of three.
+ */
+export interface BrushSelection {
+  readonly radius: number;
+  readonly tool: SculptTool;
+  readonly profile: SculptProfile;
+}
+
 export interface BrushPreview {
-  /** Shows the outline for `radius` at the hovered cell, or hides on null. */
-  update(hover: BrushHover | null, radius: number): void;
+  /** Shows the outline for `brush` at the hovered cell, or hides on null. */
+  update(hover: BrushHover | null, brush: BrushSelection): void;
   dispose(): void;
 }
 
@@ -301,22 +349,90 @@ if (
  * into loops, smooth each one.
  */
 /**
- * The footprint as both of the shapes this module needs it in: the membership
- * test the marcher samples, and the flat list the clamp and the cell grid walk.
- * Built once per radius so the two can never describe different sets.
+ * The cells one click moves, in both of the shapes this module needs them in:
+ * the membership test the marcher samples, and the flat list the clamp and the
+ * cell grid walk. Built once per (radius, tool, edge) so the two can never
+ * describe different sets.
  */
-interface Footprint {
+interface Mark {
   readonly has: (dx: number, dy: number) => boolean;
   readonly cells: readonly (readonly [number, number])[];
 }
 
-function footprintOf(radius: number): Footprint {
+/**
+ * Cells across the synthetic map one click is simulated on.
+ *
+ * Wide enough that the widest brush plus the margin the marcher needs sits
+ * clear of the border, for the same reason FOOTPRINT_LATTICE_SPAN is: a stroke
+ * clipped by the map edge would be a different stroke, and a mark touching the
+ * border would march differently. The smooth tool's relaxation cannot reach
+ * past this either — player sculpts run `spill: 'banded'`, so no cell outside
+ * the footprint may change BAND at all, which is precisely what is measured
+ * here.
+ */
+const SIMULATION_SPAN_CELLS = 2 * (MAX_BRUSH_RADIUS + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
+
+/** Height every cell of the synthetic map starts at: flat, and on a band floor. */
+const SIMULATION_GROUND_HEIGHT = 0;
+
+/**
+ * The cells a single click of this brush would visibly move, on flat ground.
+ *
+ * RUNS THE REAL SCULPT. `applySculpt` is the function the server applies and
+ * the client predicts with, and the options come from `sculptOptionsOf` — the
+ * one place "an intent means this" is decided, which both sides of the
+ * prediction contract already call. So this is not a model of the stroke that
+ * has to be kept in step with it; it IS the stroke, run once on a scratch map.
+ *
+ * BAND CHANGED, NOT HEIGHT CHANGED. Terraced rendering draws `bandOf(height)`,
+ * so a cell whose height moved within its band is invisible to the player and
+ * has no business inside a line that promises what they will see.
+ *
+ * FLAT GROUND IS THE PREMISE, and it is the owner's ("what I'm going to get for
+ * a single click on flat land"). It has to be a premise rather than a reading
+ * of the terrain under the cursor: how much of a soft brush's falloff clears
+ * the next band depends on how far the ground already sits above its band
+ * floor, which is a quantity the player cannot see — sixteen different stored
+ * heights all draw as the same flat plain. An outline computed from live ground
+ * would resize as the cursor crossed terrain that looks identical, which is
+ * less predictable than one honest premise, not more.
+ */
+function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile): Mark {
+  const map = createHeightmap(SIMULATION_SPAN_CELLS);
+  const centre = SIMULATION_SPAN_CELLS >> 1;
+  map.cells.fill(SIMULATION_GROUND_HEIGHT);
+
+  const before = bandOf(SIMULATION_GROUND_HEIGHT);
+  applySculpt(
+    map,
+    centre,
+    centre,
+    radius,
+    DEFAULT_SCULPT_AMOUNT,
+    // `dir` and the amount only have to be a legal RAISE — the mark's
+    // shape is symmetric between raise and lower on the band-aligned ground
+    // this simulates (applyLevelFillBrush's own note), so one direction
+    // answers for both.
+    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir: 1, tool, profile }),
+  );
+
   const keys = new Set<string>();
   const cells: (readonly [number, number])[] = [];
-  forEachFootprintOffset(radius, (dx, dy) => {
-    keys.add(`${dx},${dy}`);
-    cells.push([dx, dy]);
-  });
+  for (let j = 0; j < SIMULATION_SPAN_CELLS; j++) {
+    for (let i = 0; i < SIMULATION_SPAN_CELLS; i++) {
+      if (bandOf(map.cells[j * SIMULATION_SPAN_CELLS + i]!) === before) continue;
+      const dx = i - centre;
+      const dy = j - centre;
+      keys.add(`${dx},${dy}`);
+      cells.push([dx, dy]);
+    }
+  }
+  // A brush that moves nothing has nothing to outline, and every combination
+  // moves at least the clicked cell — so an empty mark means the sculpt rules
+  // changed underneath this module. All inputs are constants; startup or never.
+  if (cells.length === 0) {
+    throw new RangeError(`brush radius ${radius} (${tool}, ${profile}) renders no change`);
+  }
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
 
@@ -332,12 +448,12 @@ function footprintOf(radius: number): Footprint {
  * curve is nudged back onto the boundary instead of being kinked toward the
  * middle of the brush.
  */
-function clampIntoFootprint(x: number, z: number, footprint: Footprint): [number, number] {
-  if (footprint.has(Math.round(x), Math.round(z))) return [x, z];
+function clampIntoMark(x: number, z: number, mark: Mark): [number, number] {
+  if (mark.has(Math.round(x), Math.round(z))) return [x, z];
   let bestX = x;
   let bestZ = z;
   let bestDistance = Infinity;
-  for (const [cx, cz] of footprint.cells) {
+  for (const [cx, cz] of mark.cells) {
     const nx = x < cx - 0.5 ? cx - 0.5 : x > cx + 0.5 ? cx + 0.5 : x;
     const nz = z < cz - 0.5 ? cz - 0.5 : z > cz + 0.5 ? cz + 0.5 : z;
     const dx = x - nx;
@@ -352,10 +468,10 @@ function clampIntoFootprint(x: number, z: number, footprint: Footprint): [number
   return [bestX, bestZ];
 }
 
-function footprintOutline(radius: number, footprint: Footprint): ContourLoop {
+function markOutline(radius: number, mark: Mark): ContourLoop {
   loadSampleField(
     (i, j) =>
-      footprint.has(i - FOOTPRINT_LATTICE_CENTRE, j - FOOTPRINT_LATTICE_CENTRE)
+      mark.has(i - FOOTPRINT_LATTICE_CENTRE, j - FOOTPRINT_LATTICE_CENTRE)
         ? FOOTPRINT_INSIDE
         : FOOTPRINT_OUTSIDE,
     FOOTPRINT_LATTICE_SPAN,
@@ -387,7 +503,7 @@ function footprintOutline(radius: number, footprint: Footprint): ContourLoop {
   // still the terrain's shape; this only pulls back the vertices it pushed
   // over a concave step.
   for (const point of loops[0]) {
-    const [x, z] = clampIntoFootprint(point.x, point.z, footprint);
+    const [x, z] = clampIntoMark(point.x, point.z, mark);
     point.x = x;
     point.z = z;
   }
@@ -395,24 +511,24 @@ function footprintOutline(radius: number, footprint: Footprint): ContourLoop {
 }
 
 /**
- * The cell boundaries INSIDE the footprint, as a flat line-segment soup in
+ * The cell boundaries INSIDE the mark, as a flat line-segment soup in
  * cell coordinates.
  *
- * Interior edges only: an edge is emitted for a footprint cell's +x or +z
- * neighbour exactly when that neighbour is also in the footprint. Every edge
+ * Interior edges only: an edge is emitted for a mark cell's +x or +z
+ * neighbour exactly when that neighbour is also in the mark. Every edge
  * therefore appears once (it is emitted by the lower-coordinate cell of the
  * pair and by nobody else), and no edge of the footprint's own boundary is
  * emitted at all — that line is the ring's, and drawing it twice would
  * brighten the one thing this grid is meant to stay beneath.
  */
-function cellGridSegments(footprint: Footprint): number[] {
+function cellGridSegments(mark: Mark): number[] {
   const segments: number[] = [];
-  for (const [dx, dy] of footprint.cells) {
-    if (footprint.has(dx + 1, dy)) {
+  for (const [dx, dy] of mark.cells) {
+    if (mark.has(dx + 1, dy)) {
       // Shared edge with the cell to the +x side: vertical, at their midpoint.
       segments.push(dx + 0.5, dy - 0.5, dx + 0.5, dy + 0.5);
     }
-    if (footprint.has(dx, dy + 1)) {
+    if (mark.has(dx, dy + 1)) {
       segments.push(dx - 0.5, dy + 0.5, dx + 0.5, dy + 0.5);
     }
   }
@@ -437,28 +553,32 @@ function cellGridSegments(footprint: Footprint): number[] {
  * reports. The lift is added back because the skirt hangs from the RING, which
  * floats OUTLINE_LIFT_WORLD_UNITS above the surface rather than on it.
  */
-function skirtDropWorldUnits(radius: number): number {
+function skirtDropWorldUnits(mark: Mark): number {
   let manhattanReachCells = 0;
-  forEachFootprintOffset(radius, (dx, dy) => {
+  for (const [dx, dy] of mark.cells) {
     manhattanReachCells = Math.max(manhattanReachCells, Math.abs(dx) + Math.abs(dy));
-  });
+  }
   return (manhattanReachCells + 1) * BAND_WORLD_HEIGHT + OUTLINE_LIFT_WORLD_UNITS;
 }
 
 /**
  * The ring, its skirt and the cell grid inside it — all in world units, all
- * from ONE march of ONE footprint.
+ * from ONE march of ONE simulated click.
  */
-interface RadiusGeometry {
+interface BrushGeometry {
   readonly ring: BufferGeometry;
   readonly skirt: BufferGeometry;
   readonly cellGrid: BufferGeometry;
 }
 
-function radiusGeometry(radius: number): RadiusGeometry {
-  const footprint = footprintOf(radius);
-  const outline = footprintOutline(radius, footprint);
-  const drop = skirtDropWorldUnits(radius);
+function brushGeometry(
+  radius: number,
+  tool: SculptTool,
+  profile: SculptProfile,
+): BrushGeometry {
+  const mark = oneClickMark(radius, tool, profile);
+  const outline = markOutline(radius, mark);
+  const drop = skirtDropWorldUnits(mark);
 
   const ringPositions: number[] = [];
   for (const point of outline) {
@@ -491,7 +611,7 @@ function radiusGeometry(radius: number): RadiusGeometry {
   // end, lifted into 3-space here rather than in cellGridSegments so that
   // function stays about the footprint and knows nothing about world units.
   const gridPositions: number[] = [];
-  const flat = cellGridSegments(footprint);
+  const flat = cellGridSegments(mark);
   for (let i = 0; i < flat.length; i += 2) {
     gridPositions.push(flat[i]! * CELL_WORLD_SIZE, 0, flat[i + 1]! * CELL_WORLD_SIZE);
   }
@@ -502,11 +622,23 @@ function radiusGeometry(radius: number): RadiusGeometry {
 }
 
 export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
-  /** Index r - MIN_BRUSH_RADIUS holds radius r's boundary. Built once. */
-  const geometries: RadiusGeometry[] = [];
+  /**
+   * Every (radius, tool, edge) the wire allows, built once at startup — see the
+   * module header for the cost and for why it is eager rather than lazy.
+   */
+  const geometries = new Map<string, BrushGeometry>();
+  const key = (radius: number, tool: SculptTool, profile: SculptProfile): string =>
+    `${radius}|${tool}|${profile}`;
   for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
-    geometries.push(radiusGeometry(r));
+    for (const tool of SCULPT_TOOLS) {
+      for (const profile of SCULPT_PROFILES) {
+        geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
+      }
+    }
   }
+  const initial = geometries.get(
+    key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!),
+  )!;
 
   const material = new LineBasicMaterial({
     color: 0xffffff,
@@ -519,7 +651,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
 
   // LineLoop, not LineSegments: the outline is one closed contour now, so the
   // closing edge comes free instead of costing a duplicated vertex pair.
-  const line = new LineLoop(geometries[0].ring, material);
+  const line = new LineLoop(initial.ring, material);
   line.renderOrder = 998;
   line.visible = false;
   scene.add(line);
@@ -536,7 +668,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     side: DoubleSide,
     depthWrite: false,
   });
-  const skirt = new Mesh(geometries[0].skirt, skirtMaterial);
+  const skirt = new Mesh(initial.skirt, skirtMaterial);
   // Below the two overlays: it is part of the world's depth-sorted pass, and
   // the ring and crosshair are meant to sit on top of it.
   skirt.renderOrder = 997;
@@ -555,7 +687,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     depthTest: false,
     depthWrite: false,
   });
-  const cellGrid = new LineSegments(geometries[0].cellGrid, cellGridMaterial);
+  const cellGrid = new LineSegments(initial.cellGrid, cellGridMaterial);
   // Under the ring and the crosshair, over the skirt.
   cellGrid.renderOrder = 998;
   cellGrid.visible = false;
@@ -594,7 +726,8 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   crosshair.visible = false;
   scene.add(crosshair);
 
-  let shownRadius = MIN_BRUSH_RADIUS;
+  /** The key currently bound to the three objects, so a still brush rebinds nothing. */
+  let shownKey = key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!);
 
   /**
    * The ONE place either visibility is written. Both callers of `update` used
@@ -616,23 +749,24 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   };
 
   return {
-    update(hover, radius) {
+    update(hover, brush) {
       if (hover === null) {
         show(false);
         return;
       }
-      if (radius !== shownRadius) {
-        const index = radius - MIN_BRUSH_RADIUS;
-        // An out-of-range radius means a bug upstream (the HUD only offers the
-        // legal set); hiding beats drawing a wrong promise.
-        if (index < 0 || index >= geometries.length) {
+      const wanted = key(brush.radius, brush.tool, brush.profile);
+      if (wanted !== shownKey) {
+        const geometry = geometries.get(wanted);
+        // An unknown combination means a bug upstream (the HUD only offers the
+        // legal sets); hiding beats drawing a wrong promise.
+        if (geometry === undefined) {
           show(false);
           return;
         }
-        line.geometry = geometries[index].ring;
-        skirt.geometry = geometries[index].skirt;
-        cellGrid.geometry = geometries[index].cellGrid;
-        shownRadius = radius;
+        line.geometry = geometry.ring;
+        skirt.geometry = geometry.skirt;
+        cellGrid.geometry = geometry.cellGrid;
+        shownKey = wanted;
       }
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
@@ -647,7 +781,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       scene.remove(crosshair);
       scene.remove(skirt);
       scene.remove(cellGrid);
-      for (const g of geometries) {
+      for (const g of geometries.values()) {
         g.ring.dispose();
         g.skirt.dispose();
         g.cellGrid.dispose();

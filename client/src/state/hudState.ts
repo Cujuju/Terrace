@@ -234,14 +234,47 @@ const STORAGE_KEY = 'terrace.hudState.v2';
 export const DEFAULT_BRUSH_RADIUS = WORLD_UNIT_CELLS;
 
 /**
- * Brush tool and edge profile default to the WIRE defaults rather than to
- * literals: the HUD must start on exactly what an intent WITHOUT these fields
- * would mean, or the picker would show one thing on load and the server would
- * do another. (Decision 2026-08-14: stamp + soft is the player-facing default.)
+ * The tool still defaults to the WIRE default rather than to a literal: the HUD
+ * must start on exactly what an intent WITHOUT that field would mean, or the
+ * picker would show one thing on load and the server would do another.
+ * (Decision 2026-08-14: stamp is the player-facing default.)
  */
 export const DEFAULT_BRUSH_TOOL: SculptTool = WIRE_DEFAULT_SCULPT_OPTIONS.tool;
-export const DEFAULT_BRUSH_PROFILE: SculptProfile =
-  WIRE_DEFAULT_SCULPT_OPTIONS.profile;
+
+/**
+ * THE EDGE NO LONGER DOES (owner, 2026-08-22: "what the outline says and what I
+ * get are completely random").
+ *
+ * It was not random, and it was worse than random: it was a function of state
+ * the player cannot see. Rendering floors a height to its band, so sixteen
+ * different stored heights all draw as the same flat plain — and how far a cell
+ * sits above its band floor decides how much of a SOFT brush's falloff clears
+ * the next boundary. Measured, one click of the 1.75 brush on ground that looks
+ * identical in all sixteen cases:
+ *
+ *   height above the band floor   0–3    4–7    8–11   12–15
+ *   soft renders a mark          0.25   0.75   1.25   1.75   world units
+ *   hard renders a mark          1.75   1.75   1.75   1.75
+ *   the outline promises         1.75   1.75   1.75   1.75
+ *
+ * The outline cannot track that: the quantity it would have to read is invisible
+ * to the player it is drawn for, so an honest soft outline would have to change
+ * size as the cursor crossed ground that looks flat. Hard is the edge on which
+ * the preview is TRUE — one click, the whole footprint, every radius, whatever
+ * lies beneath — so hard is what a player who has chosen nothing now gets.
+ *
+ * SOFT IS NOT DEPRECATED and its arithmetic is untouched; it is one click away
+ * in the Edge row, and over about `radius` clicks its mark still converges on
+ * exactly the outline. This changes which of the two a new player starts on,
+ * nothing else.
+ *
+ * SAFE TO DIVERGE FROM THE WIRE DEFAULT, unlike the tool above: the client sends
+ * `profile` on every intent it emits (input/sculptInput.ts), so no player sculpt
+ * ever falls back to the wire value. That invariant guarded a divergence which
+ * cannot occur on this field, and the default now has to answer a different
+ * question — which edge makes the preview honest.
+ */
+export const DEFAULT_BRUSH_PROFILE: SculptProfile = 'hard';
 
 /** Raise is the default direction; lowering is the deliberate act. */
 export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';

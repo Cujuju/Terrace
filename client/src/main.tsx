@@ -14,7 +14,12 @@ import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { worldPointToCell } from './terrain/picking.ts';
 import { createWorld } from './world.ts';
-import { brushRadius, setConnectionStatus } from './state/hudState.ts';
+import {
+  brushProfile,
+  brushRadius,
+  brushTool,
+  setConnectionStatus,
+} from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
 import {
   applyWorldAdminResult,
@@ -116,10 +121,17 @@ const sculptInput = createSculptInput({
 // camera costs nothing — but a PAN re-picks every frame, deliberately (the
 // outline has to track the cursor while the world moves under it). That is
 // affordable because the pick marches the height field rather than raycasting
-// the meshes; brushRadius is read live so the outline resizes the moment the
+// the meshes; radius, tool and edge are all read live so the outline reshapes
+// the moment the
 // HUD changes it.
 const brushPreview = createBrushPreview(viewport.scene, canvas);
-viewport.onFrame(() => brushPreview.update(sculptInput.hoverTarget(), brushRadius()));
+viewport.onFrame(() =>
+  brushPreview.update(sculptInput.hoverTarget(), {
+    radius: brushRadius(),
+    tool: brushTool(),
+    profile: brushProfile(),
+  }),
+);
 
 // The frame-rate readout in the top-right watermark. Started here, beside the
 // other viewport frame hooks, because the viewport is what it measures.
