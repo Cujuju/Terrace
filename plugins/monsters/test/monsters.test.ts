@@ -2361,8 +2361,14 @@ describe('the yeti in the high Alps', () => {
     setMonsterRandomSource(ALWAYS);
     // Deep enough into the snow, far too little of it: height alone is not a
     // lair, which is the half of the rule the area threshold carries. A radius
-    // of 6 world units is ~113 square world units, under the demand of 170.
-    const tinyRadius = cellsAcross(6);
+    // of 1.5 world units is ~113 cells, under the demand of 168.
+    //
+    // IT WAS A RADIUS OF 6 until the 2026-08-22 rescale: the yeti is a quarter
+    // of the size he was and his minimum lair, derived from his body-width,
+    // fell by the square. The fixture shrank with the animal, and the thing it
+    // pins — a snowfield deep in the snow line and still too small — is
+    // unchanged.
+    const tinyRadius = cellsAcross(1.5);
     const world = massifWorld({
       radius: tinyRadius,
       peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT,
@@ -2628,20 +2634,35 @@ describe('the yeti in the high Alps', () => {
     }
   });
 
-  it('ambles between the two sea kinds\' speeds, and far under a grazer', () => {
-    // The comparison that matters is the last one: the wildlife plugin's grazer
-    // cruises at 1.6 cells/s on the same hillsides (plugins/wildlife/server/
-    // species.ts). Cross-referenced, not imported — plugins must not depend on
-    // each other for a number. A monster that moved like livestock would undo
-    // every silhouette decision in the model.
+  it('ambles a body-width every eleven seconds, and far under a grazer', () => {
+    // The wildlife plugin's grazer cruises at 1.6 cells/s on the same hillsides
+    // (plugins/wildlife/server/species.ts). Cross-referenced, not imported —
+    // plugins must not depend on each other for a number. A monster that moved
+    // like livestock would undo every silhouette decision in the model, and
+    // that comparison is against the GROUND they share, so it survives any
+    // rescale of either animal.
     const WILDLIFE_GRAZER_CRUISE_CELLS_PER_SECOND = cellsAcross(1.6);
-    expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeGreaterThan(
-      CTHULHU_LURK_SPEED_CELLS_PER_SECOND,
-    );
-    expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeLessThan(KRAKEN_LURK_SPEED_CELLS_PER_SECOND);
     expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeLessThan(
       WILDLIFE_GRAZER_CRUISE_CELLS_PER_SECOND / 3,
     );
+
+    // THE SPEED IS PINNED TO HIS OWN BODY, which is what "an amble" actually
+    // means and the only form of it that a rescale cannot quietly break: at his
+    // full size 0.45 cells/s took eleven seconds to carry him his own five-unit
+    // width, and at a quarter of everything it still does. An absolute figure
+    // here would have passed unchanged through the 2026-08-22 rescale while the
+    // animal it described started scurrying.
+    const AMBLE_SECONDS_PER_BODY_WIDTH = 11;
+    expect(YETI_FOOTPRINT_CELLS / YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeCloseTo(
+      AMBLE_SECONDS_PER_BODY_WIDTH,
+      0,
+    );
+
+    // Comparing his ABSOLUTE speed to the two sea kinds' (Cthulhu's 0.25 brood,
+    // the kraken's 0.6 hunt) stopped meaning anything on 2026-08-22: they are
+    // four to nine times his size, so the fast one is the one whose legs are
+    // longer. Only the kraken bound still holds, and only trivially.
+    expect(YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeLessThan(KRAKEN_LURK_SPEED_CELLS_PER_SECOND);
   });
 
   it('probes at least half its own body ahead', () => {

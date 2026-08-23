@@ -4,9 +4,11 @@
 //   * every dimension of the model lives here rather than inside the builder,
 //     because the placement maths needs some of them and a node test can read
 //     them without importing three (design §8 — no headless GL rig);
-//   * UNITS are cells. CELL_WORLD_SIZE is 1 and HEIGHT_WORLD_SCALE maps one
-//     terrace band to one world unit, so a number here is simultaneously cells
-//     across the board and world units of height;
+//   * UNITS are WORLD UNITS. HEIGHT_WORLD_SCALE maps one terrace band to one
+//     world unit, so a number here is simultaneously world units across the
+//     board and terrace bands of height. (It said "cells" until the 2026-08-21
+//     re-sample cut a cell to a quarter of a world unit; the numbers never
+//     moved, and cellsAcross() is what converts them for the server's half.)
 //   * FRAME: the model faces +X. The origin is the PIVOT — and for this one that
 //     is BETWEEN THE FEET, ON THE GROUND, because he is a walker: the client
 //     places his origin at the terrain height under him, where the two swimmers
@@ -26,8 +28,11 @@
 //
 // The yeti is an ANIMAL, and every choice here says so. He is the only one whose
 // whole body is visible, because he stands ON the ground rather than in it; he
-// is the smallest (6.3 cells to their 8 and 10.9) and the narrowest (5 cells to
-// their 7); his mass is in his SHOULDERS and his silhouette is a hunched biped
+// is by far the smallest and the narrowest — 1.575 world units tall and 1.25
+// across, against the kraken's 8-by-7 and Cthulhu's 10.9-by-7 (owner decision,
+// 2026-08-22; YETI_SCALE is the only place that quarter lives, and every figure
+// in the prose below is stated at his ORIGINAL size, as the literals are);
+// his mass is in his SHOULDERS and his silhouette is a hunched biped
 // with arms that hang below his hips. He is white on white, so the modelling
 // that has to work hardest is the SHADING — a snow-coloured mass in sunlight has
 // no contrast of its own, which is why the shade variation here is the largest
@@ -38,26 +43,69 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * THE SIZE OF THE ANIMAL, as a factor on every length below.
+ *
+ * Owner decision, 2026-08-22: a quarter of what he was. Every LENGTH in this
+ * file is written at its original full-size figure and passed through
+ * `scaled()`, so the whole silhouette record still reads in the proportions its
+ * prose argues for and one number here is the animal's size. What that prose
+ * calls "5 cells wide" and "6.3 tall" is now 1.25 and 1.575 world units — the
+ * RATIOS it justifies are all unchanged, because a uniform scale preserves
+ * every one of them.
+ *
+ * WHAT DOES NOT PASS THROUGH IT, and why each is right:
+ *   * ANGLES and FRACTIONS (the swings, the lean, the head scan, the eye bulge,
+ *     the tuft variation, the shade variation) are dimensionless — a scaled
+ *     model rotates through the same angles.
+ *   * The two spatial FREQUENCIES divide by it instead (`scaledFrequency`), so
+ *     the same NUMBER of wrinkles runs across a body a quarter the size. The
+ *     carve is sampled at position × frequency, so scaling the two inversely
+ *     reproduces the old surface exactly, four times smaller.
+ *   * YETI_AMBLE_HZ and YETI_LEG_SWING_RADIANS are RATIOS of scaled quantities
+ *     (speed over stride, stride over leg) and fall out unchanged on their own.
+ *     That is the whole reason his gait survives this: his stride shrinks with
+ *     his legs and the server's walk speed shrinks with him, so his feet still
+ *     travel at exactly the rate the ground passes under them.
+ */
+export const YETI_SCALE = 0.25;
+
+/** A length, written at full size and delivered at the size he actually is. */
+function scaled(fullSizeWorldUnits: number): number {
+  return fullSizeWorldUnits * YETI_SCALE;
+}
+
+/**
+ * A spatial frequency — cycles per world unit — written at full size. It scales
+ * INVERSELY, so a feature keeps its size relative to the animal rather than its
+ * size in the world. See YETI_SCALE.
+ */
+function scaledFrequency(fullSizeCyclesPerWorldUnit: number): number {
+  return fullSizeCyclesPerWorldUnit / YETI_SCALE;
+}
+
+/**
  * Widest horizontal extent: how far the model may reach from its own vertical
  * axis, doubled.
  *
- * The same 5 cells the SERVER knows as YETI_FOOTPRINT_CELLS (server/kinds.ts),
- * where it sets the steering look-ahead so the body never walks into a cliff the
- * centre point cleared, and from which the minimum size of his snowfield is
- * derived. The two are pinned to each other by a test rather than by an import:
- * the server half must not depend on the client half (it runs in a process that
- * never loads three), so the honest arrangement is one number in each place plus
- * a test that fails the day they disagree.
+ * The same 1.25 world units — 5 cells — the SERVER knows as
+ * YETI_FOOTPRINT_CELLS (server/kinds.ts), where it sets the steering look-ahead
+ * so the body never walks into a cliff the centre point cleared, and from which
+ * the minimum size of his snowfield is derived. The two are pinned to each other
+ * by a test rather than by an import: the server half must not depend on the
+ * client half (it runs in a process that never loads three), so the honest
+ * arrangement is one number in each place plus a test that fails the day they
+ * disagree. When YETI_SCALE moves, BOTH have to.
  *
  * THE BINDING CONSTRAINT IS A HAND, and it is only binding while he is MOVING:
- * static, the widest thing on him is a hand at 2.04 cells from the axis, against
- * the 2.5 half-footprint. The idle animation swings the arms fore-and-aft and
- * leans the upper body side to side, and the worst combination of the two puts a
- * hand 2.36 cells out. Both figures are pinned by tests, because a swing
- * amplitude retuned for looks is exactly how a limb ends up inside a cliff the
- * server's probe said was clear.
+ * static, the widest thing on him is a hand at 2.04 full-size units from the
+ * axis, against the 2.5 half-footprint. The idle animation swings the arms
+ * fore-and-aft and leans the upper body side to side, and the worst combination
+ * of the two puts a hand 2.36 out. Both figures are pinned by tests — as
+ * FRACTIONS of the half-footprint, so they survive a rescale and still fail on a
+ * swing amplitude retuned for looks, which is exactly how a limb ends up inside
+ * a cliff the server's probe said was clear.
  */
-export const YETI_WIDTH_CELLS = 5;
+export const YETI_WIDTH_CELLS = scaled(5);
 
 // ── The stance: feet, legs, hips ─────────────────────────────────────────────
 
@@ -72,11 +120,11 @@ export const YETI_WIDTH_CELLS = 5;
  * carve): the stated extents of a carved surface are still bounds, but a dent in
  * the sole would lift the one surface the placement maths trusts to be flat.
  */
-export const YETI_FOOT_LENGTH = 1.2;
-export const YETI_FOOT_RISE = 0.42;
-export const YETI_FOOT_WIDTH = 0.8;
+export const YETI_FOOT_LENGTH = scaled(1.2);
+export const YETI_FOOT_RISE = scaled(0.42);
+export const YETI_FOOT_WIDTH = scaled(0.8);
 /** How far ahead of the ankle a foot's centre sits — he is a plantigrade. */
-export const YETI_FOOT_FORWARD = 0.16;
+export const YETI_FOOT_FORWARD = scaled(0.16);
 export const YETI_FOOT_CENTER_HEIGHT = YETI_FOOT_RISE / 2;
 
 /**
@@ -86,28 +134,28 @@ export const YETI_FOOT_CENTER_HEIGHT = YETI_FOOT_RISE / 2;
  * feet do not touch (their half-widths are 0.4, so there are 0.44 cells of
  * daylight between them).
  */
-export const YETI_STANCE_HALF_WIDTH = 0.62;
+export const YETI_STANCE_HALF_WIDTH = scaled(0.62);
 
 /**
  * LEGS: short and thick, and the reason the whole animal reads as heavy. The hip
  * sits at 39% of his total height, where a human's is at 52%: short legs under a
  * deep chest is the proportion that says "built for cold and for climbing".
  */
-export const YETI_HIP_HEIGHT = 2.45;
-export const YETI_ANKLE_HEIGHT = 0.38;
-export const YETI_LEG_ROOT_RADIUS = 0.52;
-export const YETI_LEG_ANKLE_RADIUS = 0.34;
+export const YETI_HIP_HEIGHT = scaled(2.45);
+export const YETI_ANKLE_HEIGHT = scaled(0.38);
+export const YETI_LEG_ROOT_RADIUS = scaled(0.52);
+export const YETI_LEG_ANKLE_RADIUS = scaled(0.34);
 /** The knee: a slight forward break, so a leg is a limb and not a post. */
-export const YETI_KNEE_HEIGHT = 1.35;
-export const YETI_KNEE_FORWARD = 0.18;
+export const YETI_KNEE_HEIGHT = scaled(1.35);
+export const YETI_KNEE_FORWARD = scaled(0.18);
 /** Straight-line hip-to-ankle distance — what the gait's swing is derived from. */
 export const YETI_LEG_LENGTH = YETI_HIP_HEIGHT - YETI_ANKLE_HEIGHT;
 
 /** HIPS: a mass of their own under the torso, so the waist is not a pinch. */
-export const YETI_HIPS_CENTER_HEIGHT = 2.6;
-export const YETI_HIPS_LENGTH = 1.9;
-export const YETI_HIPS_HEIGHT = 1.5;
-export const YETI_HIPS_WIDTH = 2.1;
+export const YETI_HIPS_CENTER_HEIGHT = scaled(2.6);
+export const YETI_HIPS_LENGTH = scaled(1.9);
+export const YETI_HIPS_HEIGHT = scaled(1.5);
+export const YETI_HIPS_WIDTH = scaled(2.1);
 
 // ── The mass: torso, shoulders ───────────────────────────────────────────────
 
@@ -115,10 +163,10 @@ export const YETI_HIPS_WIDTH = 2.1;
  * TORSO: a deep barrel, taller than it is long and longer than it is wide, so
  * the chest reads as a chest from the side AND from the front.
  */
-export const YETI_TORSO_CENTER_HEIGHT = 3.85;
-export const YETI_TORSO_LENGTH = 2.2;
-export const YETI_TORSO_HEIGHT = 2.9;
-export const YETI_TORSO_WIDTH = 2.5;
+export const YETI_TORSO_CENTER_HEIGHT = scaled(3.85);
+export const YETI_TORSO_LENGTH = scaled(2.2);
+export const YETI_TORSO_HEIGHT = scaled(2.9);
+export const YETI_TORSO_WIDTH = scaled(2.5);
 export const YETI_TORSO_TOP = YETI_TORSO_CENTER_HEIGHT + YETI_TORSO_HEIGHT / 2;
 
 /**
@@ -129,11 +177,11 @@ export const YETI_TORSO_TOP = YETI_TORSO_CENTER_HEIGHT + YETI_TORSO_HEIGHT / 2;
  * the head sits BETWEEN the shoulders rather than above them, and the animal
  * looks like it could pull a tree over.
  */
-export const YETI_SHOULDER_HEIGHT = 4.75;
-export const YETI_SHOULDER_HALF_SPAN = 1.18;
-export const YETI_SHOULDER_LENGTH = 1.5;
-export const YETI_SHOULDER_RISE = 1.3;
-export const YETI_SHOULDER_WIDTH = 1.5;
+export const YETI_SHOULDER_HEIGHT = scaled(4.75);
+export const YETI_SHOULDER_HALF_SPAN = scaled(1.18);
+export const YETI_SHOULDER_LENGTH = scaled(1.5);
+export const YETI_SHOULDER_RISE = scaled(1.3);
+export const YETI_SHOULDER_WIDTH = scaled(1.5);
 
 // ── The head ─────────────────────────────────────────────────────────────────
 
@@ -141,25 +189,25 @@ export const YETI_SHOULDER_WIDTH = 1.5;
  * HEAD: small for the body, carried low and forward between the shoulders. Its
  * top is the highest point on the model, which is what YETI_TOTAL_HEIGHT is.
  */
-export const YETI_HEAD_CENTER_HEIGHT = 5.55;
-export const YETI_HEAD_LENGTH = 1.6;
-export const YETI_HEAD_HEIGHT = 1.5;
-export const YETI_HEAD_WIDTH = 1.45;
+export const YETI_HEAD_CENTER_HEIGHT = scaled(5.55);
+export const YETI_HEAD_LENGTH = scaled(1.6);
+export const YETI_HEAD_HEIGHT = scaled(1.5);
+export const YETI_HEAD_WIDTH = scaled(1.45);
 export const YETI_HEAD_TOP = YETI_HEAD_CENTER_HEIGHT + YETI_HEAD_HEIGHT / 2;
 
 /** BROW: a heavy ridge over the eyes. Without it the face is a snowball. */
-export const YETI_BROW_FORWARD = 0.52;
-export const YETI_BROW_HEIGHT = 5.78;
-export const YETI_BROW_LENGTH = 0.55;
-export const YETI_BROW_RISE = 0.34;
-export const YETI_BROW_WIDTH = 1.3;
+export const YETI_BROW_FORWARD = scaled(0.52);
+export const YETI_BROW_HEIGHT = scaled(5.78);
+export const YETI_BROW_LENGTH = scaled(0.55);
+export const YETI_BROW_RISE = scaled(0.34);
+export const YETI_BROW_WIDTH = scaled(1.3);
 
 /** MUZZLE: bare dark skin, pushed forward and DOWN under the brow. */
-export const YETI_MUZZLE_FORWARD = 0.72;
-export const YETI_MUZZLE_HEIGHT = 5.25;
-export const YETI_MUZZLE_LENGTH = 1;
-export const YETI_MUZZLE_RISE = 0.7;
-export const YETI_MUZZLE_WIDTH = 0.85;
+export const YETI_MUZZLE_FORWARD = scaled(0.72);
+export const YETI_MUZZLE_HEIGHT = scaled(5.25);
+export const YETI_MUZZLE_LENGTH = scaled(1);
+export const YETI_MUZZLE_RISE = scaled(0.7);
+export const YETI_MUZZLE_WIDTH = scaled(0.85);
 
 /**
  * EYES: small, set deep under the brow, and the only part of him that emits.
@@ -172,10 +220,10 @@ export const YETI_MUZZLE_WIDTH = 0.85;
  * eye on, and two dark sockets with a spark in them are where a player's
  * attention lands.
  */
-export const YETI_EYE_RADIUS = 0.14;
-export const YETI_EYE_FORWARD = 0.62;
-export const YETI_EYE_HEIGHT = 5.66;
-export const YETI_EYE_OFFSET = 0.35;
+export const YETI_EYE_RADIUS = scaled(0.14);
+export const YETI_EYE_FORWARD = scaled(0.62);
+export const YETI_EYE_HEIGHT = scaled(5.66);
+export const YETI_EYE_OFFSET = scaled(0.35);
 /** How far outside the skin an eye's centre sits, as a fraction of its radius. */
 export const YETI_EYE_BULGE = 0.35;
 
@@ -189,23 +237,23 @@ export const YETI_EYE_BULGE = 0.35;
  * proportion that makes a biped read as an APE rather than as a man in a suit.
  * Every reach below is stated from the AXIS, so the footprint test is a sum.
  */
-export const YETI_SHOULDER_JOINT_HEIGHT = 4.6;
-export const YETI_SHOULDER_JOINT_HALF_SPAN = 1.32;
+export const YETI_SHOULDER_JOINT_HEIGHT = scaled(4.6);
+export const YETI_SHOULDER_JOINT_HALF_SPAN = scaled(1.32);
 /** Drop and flare of the elbow, from the shoulder joint. */
-export const YETI_ARM_ELBOW_DROP = 1.45;
-export const YETI_ARM_ELBOW_FLARE = 0.22;
-export const YETI_ARM_ELBOW_FORWARD = 0.1;
+export const YETI_ARM_ELBOW_DROP = scaled(1.45);
+export const YETI_ARM_ELBOW_FLARE = scaled(0.22);
+export const YETI_ARM_ELBOW_FORWARD = scaled(0.1);
 /** Drop and flare of the wrist, from the shoulder joint. */
-export const YETI_ARM_HAND_DROP = 2.7;
-export const YETI_ARM_HAND_FLARE = 0.3;
-export const YETI_ARM_HAND_FORWARD = 0.25;
-export const YETI_ARM_ROOT_RADIUS = 0.42;
-export const YETI_ARM_TIP_RADIUS = 0.3;
+export const YETI_ARM_HAND_DROP = scaled(2.7);
+export const YETI_ARM_HAND_FLARE = scaled(0.3);
+export const YETI_ARM_HAND_FORWARD = scaled(0.25);
+export const YETI_ARM_ROOT_RADIUS = scaled(0.42);
+export const YETI_ARM_TIP_RADIUS = scaled(0.3);
 /** Height of a hand above the ground, and its distance from the axis. */
 export const YETI_HAND_HEIGHT = YETI_SHOULDER_JOINT_HEIGHT - YETI_ARM_HAND_DROP;
 export const YETI_HAND_REACH = YETI_SHOULDER_JOINT_HALF_SPAN + YETI_ARM_HAND_FLARE;
 /** HANDS: bare skin, and big — a fist he walks on when the slope steepens. */
-export const YETI_HAND_RADIUS = 0.42;
+export const YETI_HAND_RADIUS = scaled(0.42);
 
 // ── The ruff ─────────────────────────────────────────────────────────────────
 
@@ -226,16 +274,16 @@ export const YETI_HAND_RADIUS = 0.42;
  * kraken's limb ring is even for the opposite one.)
  */
 export const YETI_RUFF_TUFT_COUNT = 7;
-export const YETI_RUFF_RING_RADIUS = 0.75;
-export const YETI_RUFF_RING_HEIGHT = 5;
+export const YETI_RUFF_RING_RADIUS = scaled(0.75);
+export const YETI_RUFF_RING_HEIGHT = scaled(5);
 /** How far out and how far down a tuft reaches, from its root on the ring. */
-export const YETI_RUFF_TUFT_REACH = 1.1;
-export const YETI_RUFF_TUFT_DROP = 0.85;
+export const YETI_RUFF_TUFT_REACH = scaled(1.1);
+export const YETI_RUFF_TUFT_DROP = scaled(0.85);
 /** Where the tuft's midpoint sits, as a fraction of reach and drop. */
 export const YETI_RUFF_TUFT_MID_REACH = 0.45;
 export const YETI_RUFF_TUFT_MID_DROP = 0.25;
-export const YETI_RUFF_TUFT_RADIUS = 0.22;
-export const YETI_RUFF_TUFT_TIP_RADIUS = 0.04;
+export const YETI_RUFF_TUFT_RADIUS = scaled(0.22);
+export const YETI_RUFF_TUFT_TIP_RADIUS = scaled(0.04);
 /**
  * Per-tuft length variation, as a fraction, and it only ever SHORTENS — the same
  * contract the kraken's arms keep, for the same reason: YETI_WIDTH_CELLS is a
@@ -249,33 +297,44 @@ export const YETI_RUFF_REACH = YETI_RUFF_RING_RADIUS + YETI_RUFF_TUFT_REACH;
 // ── The whole ────────────────────────────────────────────────────────────────
 
 /**
- * Total modelled height, ground to the crown of the head — 6.3 cells, against
- * the kraken's 8 and Cthulhu's 10.9, and still taller than he is wide.
+ * Total modelled height, ground to the crown of the head — 1.575 world units at
+ * YETI_SCALE (6.3 at full size), against the kraken's 8 and Cthulhu's 10.9, and
+ * still taller than he is wide.
  *
- * He is the SMALLEST of the three and the only one you see all of, which is the
- * same trade the kraken makes against Cthulhu taken one step further: what a
- * player can measure him against is a wildlife grazer one cell long, and six
- * cells of him standing on a snowfield is enormous by that ruler.
+ * He is the SMALLEST of the three by a wide margin and the only one you see all
+ * of. What a player can measure him against is the wildlife grazer that shares
+ * his hillside, a quarter of a world unit long, and he still stands six times
+ * that — the ruler that matters survived the rescale, because the grazer is the
+ * only thing standing next to him.
  */
 export const YETI_TOTAL_HEIGHT = YETI_HEAD_TOP;
 
 /**
- * Half-extent of the ground his FEET cover, in cells — what the client samples
- * terrain over to decide which band he stands on (./placement.ts).
+ * Half-extent of the ground his FEET cover, in WORLD UNITS — what the client
+ * samples terrain over to decide which band he stands on (./placement.ts).
+ *
+ * IT WAS NAMED `..._CELLS` AND IT WAS NOT CELLS. Everything in this file has
+ * been world units since the 2026-08-21 re-sample cut a cell to a quarter of
+ * one, and ./placement.ts adds this straight to a CELL coordinate — so the
+ * walker sampled a quarter of the ground his feet actually cover, and a foot
+ * could overhang a riser he then stood below. The conversion belongs at that
+ * boundary and now happens there (`cellsAcross`, the one conversion every
+ * physical distance in this codebase is supposed to go through); the name here
+ * says which side of it this number is on, which is the part that let the bug
+ * hide for a day.
  *
  * DERIVED from the stance and the foot, not chosen: the outer edge of a foot is
- * exactly the stance offset plus half a foot's width, 1.02 cells. It is the FEET
- * and not the body, and that distinction is the whole content of the number: a
- * walker stands on what it steps on. Sampling the shoulders instead (1.93 cells)
- * would have him ride up onto every band his elbow overhangs.
+ * exactly the stance offset plus half a foot's width, 1.02 full-size units. It
+ * is the FEET and not the body, and that distinction is the whole content of the
+ * number: a walker stands on what it steps on. Sampling the shoulders instead
+ * (1.93) would have him ride up onto every band his elbow overhangs.
  *
- * The fore-and-aft extent is smaller (0.76 cells), so the square this describes
+ * The fore-and-aft extent is smaller (0.76), so the square this describes
  * is a slight over-estimate in that axis — deliberately, because the failure it
  * guards against is a body clipping a riser and the safe direction to err in is
  * standing a fraction too high.
  */
-export const YETI_FOOT_GROUND_HALF_EXTENT_CELLS =
-  YETI_STANCE_HALF_WIDTH + YETI_FOOT_WIDTH / 2;
+export const YETI_FOOT_GROUND_HALF_EXTENT = YETI_STANCE_HALF_WIDTH + YETI_FOOT_WIDTH / 2;
 
 // ── Colour ───────────────────────────────────────────────────────────────────
 
@@ -307,18 +366,22 @@ export const YETI_EYE_EMISSIVE = 0x2e5570;
  * YETI_WIDTH_CELLS stop being bounds.
  *
  * The carve is DEEPER and much higher-frequency than either sea creature's
- * (0.12 at 2.6 cycles/cell, against the kraken's 0.07 at 1.4). That is the
+ * RELATIVE TO THE BODY IT IS ON — 0.12 at 2.6 cycles per unit on a 6.3-unit
+ * animal, against the kraken's 0.07 at 1.4 on an 8-unit one. Relative is the
+ * only fair comparison, and now the only one a test can make: YETI_SCALE takes
+ * the depth to 0.03 and the frequency to 10.4, which is the SAME surface four
+ * times smaller. That is the
  * difference between skin and FUR: skin is a smooth surface with wrinkles in it,
  * fur is a surface that is broken everywhere, and the only tool this workshop
  * has for that is a fine, deep carve. The shade variation is the largest of the
  * three for the reason at the top of this file — a white mass in sunlight has no
  * contrast of its own, and ±22% is what stops him reading as a paper cut-out.
  */
-export const YETI_FUR_WRINKLE_DEPTH = 0.12;
-export const YETI_SKIN_WRINKLE_DEPTH = 0.04;
-export const YETI_WRINKLE_FREQUENCY = 2.6;
+export const YETI_FUR_WRINKLE_DEPTH = scaled(0.12);
+export const YETI_SKIN_WRINKLE_DEPTH = scaled(0.04);
+export const YETI_WRINKLE_FREQUENCY = scaledFrequency(2.6);
 export const YETI_SHADE_VARIATION = 0.22;
-export const YETI_SHADE_FREQUENCY = 0.9;
+export const YETI_SHADE_FREQUENCY = scaledFrequency(0.9);
 
 // ── The gait ─────────────────────────────────────────────────────────────────
 
@@ -326,22 +389,34 @@ export const YETI_SHADE_FREQUENCY = 0.9;
  * The server's amble speed, restated (server/kinds.ts,
  * YETI_AMBLE_SPEED_CELLS_PER_SECOND) and pinned to it by a test.
  *
+ * IT GOES THROUGH YETI_SCALE, because a speed is a LENGTH per second (owner
+ * decision, 2026-08-22): a quarter-size animal that kept the full-size 0.45
+ * would cross its own body four times as fast as it used to, which is what
+ * scurrying looks like. At 0.1125 he covers his own width in the same eleven
+ * seconds he always did, and is still slower than the grazer he shares the
+ * hillside with — the two comparisons that justified 0.45 in the first place.
+ *
  * It is here because the GAIT IS DERIVED FROM IT: a walk animation whose stride
  * rate has nothing to do with how fast the thing actually travels is the
  * skating-feet bug, and the only way to not have it is for the two numbers to be
  * related on purpose. Restated rather than imported for the usual reason — the
  * client half must not pull the server half into its bundle.
  */
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = 0.45;
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = scaled(0.45);
 
 /**
  * Ground covered by one full gait cycle (two steps), in cells.
  *
- * 1.6 — two steps of 0.8, which is 39% of his 2.07-cell leg. That is a walk:
+ * 1.6 — two steps of 0.8, which is 39% of his 2.07-unit leg. That is a walk:
  * humans stride about half a leg length, and a heavy short-legged animal picking
  * its way over snow takes shorter steps than that.
+ *
+ * Both figures are FULL SIZE and both go through YETI_SCALE, so the 39% — the
+ * only part of this that is a gait decision rather than a dimension — is what
+ * actually survives. YETI_AMBLE_HZ and YETI_LEG_SWING_RADIANS below are ratios
+ * of scaled quantities and come out identical at any scale.
  */
-export const YETI_STRIDE_CELLS = 1.6;
+export const YETI_STRIDE_CELLS = scaled(1.6);
 
 /**
  * Gait cycles per second, DERIVED: speed over stride length. 0.28 Hz — a
@@ -399,7 +474,7 @@ export const YETI_LEAN_RADIANS = 0.05;
  * the snow half of every step. Written as (1 - cos)/2, which is 0 at rest and
  * never below it.
  */
-export const YETI_BOB_CELLS = 0.06;
+export const YETI_BOB_CELLS = scaled(0.06);
 
 /**
  * The head scans: a slow yaw either side of forward, at its own unrelated rate.
