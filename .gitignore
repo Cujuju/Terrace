@@ -4,3 +4,6 @@ data/
 .env
 *.tsbuildinfo
 .claude/worktrees/
+
+# Python bytecode from run_server.py
+__pycache__/

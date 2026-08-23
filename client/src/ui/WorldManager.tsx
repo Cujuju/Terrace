@@ -26,7 +26,6 @@ import {
   slugifyWorldName,
   type WorldAdminRefusal,
   type WorldAdminRequestMessage,
-  type WorldSummary,
 } from '@terrace/shared';
 import {
   activeWorldId,
