@@ -101,6 +101,23 @@ function SkillRow(props: { skill: SkillView }): JSX.Element {
   );
 }
 
+/**
+ * The one-line relics summary, rendered by core inside the corner panel's
+ * HEADER (registered as `headerSummary`) rather than the panel body — the
+ * panel is named by this line, so it belongs in the title bar.
+ */
+export function RelicsHeaderLine(): JSX.Element {
+  return (
+    <div
+      class="hud-row"
+      title="Gems hovering over the land right now — each one holds a skill to claim."
+    >
+      <span class="hud-label">Relics</span>
+      <span>{relics().length} in the world</span>
+    </div>
+  );
+}
+
 export function RelicsPanel(): JSX.Element {
   // An accessor, not a const: the armed skill changes after mount.
   const armedName = (): string => {
@@ -110,14 +127,6 @@ export function RelicsPanel(): JSX.Element {
 
   return (
     <>
-      <div
-        class="hud-row"
-        title="Gems hovering over the land right now — each one holds a skill to claim."
-      >
-        <span class="hud-label">Relics</span>
-        <span>{relics().length} in the world</span>
-      </div>
-
       <Show
         when={skills().length > 0}
         fallback={

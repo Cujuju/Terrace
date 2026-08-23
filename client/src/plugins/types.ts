@@ -113,6 +113,12 @@ export interface ClientPluginCtx {
     component: Component,
     options?: {
       placement?: 'panel' | 'top-center' | 'bottom-center' | 'connection';
+      /**
+       * A one-row summary rendered inside the corner panel's HEADER rather
+       * than its body (owner move: the corner panel is named for its first
+       * plugin's line, so that line belongs in the title bar).
+       */
+      headerSummary?: Component;
     },
   ): void;
 

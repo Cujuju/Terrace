@@ -25,6 +25,11 @@ export interface PluginHudPanel {
   readonly pluginName: string;
   readonly component: Component;
   readonly placement: HudPanelPlacement;
+  /**
+   * Optional one-row summary shown in the corner panel's header instead of
+   * the panel's body — the line the panel is named by (relics' count row).
+   */
+  readonly headerSummary?: Component;
 }
 
 const [pluginHudPanels, setPluginHudPanels] = createSignal<

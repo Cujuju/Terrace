@@ -36,7 +36,7 @@ import {
   relicColor,
   relicUnderCell,
 } from './gems.ts';
-import { RelicsPanel } from './RelicsPanel.tsx';
+import { RelicsHeaderLine, RelicsPanel } from './RelicsPanel.tsx';
 import {
   armSkill,
   armedSkill,
@@ -246,7 +246,9 @@ export const clientPlugin: TerraceClientPlugin = {
 
     ctx.onFrame((dt) => animateGems(ctx, dt));
     ctx.onCanvasPress((event) => handlePress(ctx, event));
-    ctx.registerHudPanel(RelicsPanel);
+    // The summary row rides in the corner panel's header (owner move): the
+    // panel is named "Relics" by that line, so the line is the title bar.
+    ctx.registerHudPanel(RelicsPanel, { headerSummary: RelicsHeaderLine });
   },
 
   dispose(): void {

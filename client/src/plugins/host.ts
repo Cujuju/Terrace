@@ -161,12 +161,14 @@ export function createClientPluginHost(
         component: Component,
         options?: {
           placement?: 'panel' | 'top-center' | 'bottom-center' | 'connection';
+          headerSummary?: Component;
         },
       ) {
         addPluginHudPanel({
           pluginName: plugin.name,
           component,
           placement: options?.placement ?? 'panel',
+          headerSummary: options?.headerSummary,
         });
       },
       registerWorldHeaderAction(action) {

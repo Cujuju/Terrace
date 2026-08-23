@@ -163,6 +163,17 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
     : `Drags pile land up — click or tap to switch to lowering, or ${chord}-drag to lower.`;
 }
 
+/**
+ * The corner panel's collapsed-tab word: the first 'panel' plugin's name,
+ * capitalised ("relics" → "Relics"); falls back to "Info" when no plugin has
+ * claimed the corner, so the tab is never empty.
+ */
+function cornerTabName(): string {
+  const first = pluginHudPanels().find((p) => p.placement === 'panel');
+  if (first === undefined) return 'Info';
+  return first.pluginName.charAt(0).toUpperCase() + first.pluginName.slice(1);
+}
+
 export function Hud(props: {
   /** Window onto the terrain mirror for the Cartographer; null pre-snapshot. */
   chartSource: () => ChartSource | null;
@@ -487,16 +498,22 @@ export function Hud(props: {
             type="button"
             class="hud-panel hud-anchor-top-left hud-panel-tab"
             aria-expanded={false}
-            title="Open the help panel."
+            title="Open the panel."
             onClick={() => setPanelOpen(true)}
           >
-            Info ▸
+            {/* The tab is named by the panel's first plugin — "Relics", not a
+                generic "Info" — capitalised from the plugin's registration
+                name; with no plugins it falls back to the old word. */}
+            {cornerTabName()}
           </button>
         }
       >
         <div class="hud-panel hud-anchor-top-left">
           {/* The header row IS the collapse control — the panel's first row on
-              every device, so open and closed toggle in the same place. */}
+              every device, so open and closed toggle in the same place. It
+              carries no word of its own: its content is the plugins'
+              headerSummary lines (relics' "Relics · N in the world"), which
+              also name the collapsed tab below. */}
           <button
             type="button"
             class="hud-row panel-header"
@@ -504,7 +521,13 @@ export function Hud(props: {
             title="Collapse this panel."
             onClick={() => setPanelOpen(false)}
           >
-            <span class="status-label">Info</span>
+            <For
+              each={pluginHudPanels().filter(
+                (p) => p.placement === 'panel' && p.headerSummary,
+              )}
+            >
+              {(panel) => <Dynamic component={panel.headerSummary} />}
+            </For>
             <span class="panel-chevron">▴</span>
           </button>
 
