@@ -66,6 +66,13 @@ export interface SculptInputOptions {
    * brush and plugin clicks can never disagree about which cell a ray means.
    */
   pickCell: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
+  /**
+   * World-space Y of the RENDERED surface at a cell (World.terrainHeightAt) —
+   * read LIVE, every time the hover pick is read, so the brush outline sits on
+   * the ground as it is NOW rather than as it was when the ray last flew. See
+   * hoverTarget for why the cell is cached but its height is not.
+   */
+  terrainHeightAt: (x: number, y: number) => number | null;
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   send: (intent: SculptIntent) => void;
@@ -79,6 +86,11 @@ export interface SculptInput {
    * move the ray; a pan therefore re-picks every frame by design. That is
    * affordable only because the pick is a height-field march — when it was a
    * mesh raycast the same per-frame re-pick cost 29.5 ms a frame.
+   *
+   * The CELL is what the cache holds. `surfaceY` is re-read live from the
+   * terrain on every call, so the outline tracks ground the player is actively
+   * sculpting without the ray being re-fired (which would move the target —
+   * see hoverTarget's own note and emitIntent's issue-#25 comment).
    */
   hoverTarget(): TerrainRayPick | null;
   dispose(): void;
@@ -105,7 +117,14 @@ export function repeatDelayMs(repeatIndex: number): number {
 }
 
 export function createSculptInput(options: SculptInputOptions): SculptInput {
-  const { canvas, camera, pickCell: pickCellByRay, worldSize, send } = options;
+  const {
+    canvas,
+    camera,
+    pickCell: pickCellByRay,
+    terrainHeightAt,
+    worldSize,
+    send,
+  } = options;
 
   const raycaster = new Raycaster();
   const ndc = new Vector2();
@@ -189,6 +208,25 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       hoverKey = key;
       hoverCache = pickCell();
     }
+    // THE CELL IS CACHED; ITS HEIGHT IS NOT (owner bug report 2026-08-22,
+    // "lowering does not always seem to work"). The key deliberately carries
+    // nothing about the terrain — re-picking when the ground moves is what
+    // marched a held raise uphill (see emitIntent's issue-#25 note) — but that
+    // also froze the SURFACE the outline is drawn on, so after a sculpt with a
+    // still mouse the ring hung at the pre-stroke height while the ground
+    // moved out from under it. Lowering wore that worst: a raise pushes ground
+    // up through a stale ring, a lower leaves the ring floating over its own
+    // pit, which reads as "the click did nothing".
+    //
+    // Re-reading the height for the CACHED cell keeps both promises: the
+    // stroke still targets the cell the player aimed at, and the outline still
+    // lies on the ground. A cell whose chunk has gone (a rejoin between the
+    // pick and this read) yields null rather than a stale Y.
+    if (hoverCache === null) return null;
+    const surfaceY = terrainHeightAt(hoverCache.x, hoverCache.y);
+    if (surfaceY === null) return null;
+    if (surfaceY === hoverCache.surfaceY) return hoverCache;
+    hoverCache = { x: hoverCache.x, y: hoverCache.y, surfaceY };
     return hoverCache;
   };
 

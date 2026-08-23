@@ -89,6 +89,10 @@ const sculptInput = createSculptInput({
   // Accessors, not snapshots: both the mesh list and the world size change
   // when chunks stream in or a new session starts.
   pickCell: (origin, direction) => world.pickCell(origin, direction),
+  // The outline's ground height, re-read every frame for the cell the pick
+  // already chose — see sculptInput's hoverTarget for why the cell is cached
+  // and this is not.
+  terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
   worldSize: () => world.worldSize(),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this

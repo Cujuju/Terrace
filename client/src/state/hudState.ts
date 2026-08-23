@@ -19,7 +19,6 @@
 import { createSignal } from 'solid-js';
 import {
   MAX_BRUSH_RADIUS,
-  MIN_BRUSH_RADIUS,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   WIRE_DEFAULT_SCULPT_OPTIONS,
@@ -149,9 +148,18 @@ export function setFrameRate(fps: number): void {
 // union), so a payload from some other schema cannot masquerade as valid — it
 // simply fails per field and yields defaults. (cameraPose stamps one because
 // its fields are bare numbers, where a foreign schema's numbers WOULD parse.)
+//
+// v1 → v2 (2026-08-22, owner bug report "lowering does not always work"): the
+// 2026-08-21 re-sample changed what a stored `brushRadius` MEANS without
+// changing the schema it is stored under. The numbers 1–4 were world units and
+// became cells, so every player who had ever picked a brush silently got a
+// quarter of the ground they chose — and radius 1–3 is not on the picker's
+// ladder at all, so no brush button rendered as active. A value whose UNIT
+// changes is a schema change; orphaning the old entries is exactly what the
+// versioned key is for.
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = 'terrace.hudState.v1';
+const STORAGE_KEY = 'terrace.hudState.v2';
 
 /**
  * The ladder's first rung — one world unit of ground, the Populous point brush
@@ -231,12 +239,19 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
  * itself, and a payload written by an older build that simply lacks a field
  * added later still restores everything it does carry. Falling back whole
  * would throw away four good settings to punish one bad one.
+ *
+ * THE RADIUS IS VALIDATED AGAINST THE LADDER, NOT THE PROTOCOL BOUNDS
+ * (2026-08-22). It used to accept any integer in [MIN_BRUSH_RADIUS,
+ * MAX_BRUSH_RADIUS] — the WIRE's range, which is a fact about what an intent
+ * may legally carry, not about what this picker can show. Every rung the
+ * picker does not offer is a value it cannot render as selected, so restoring
+ * one leaves the Brush row with no active button and the player holding a
+ * brush no click of theirs could have chosen. The v1 → v2 key bump above
+ * clears the entries that already went stale; this is the guard that stops a
+ * future change to BRUSH_RADII from re-creating them.
  */
 function readRadius(value: unknown): number {
-  return typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= MIN_BRUSH_RADIUS &&
-    value <= MAX_BRUSH_RADIUS
+  return typeof value === 'number' && BRUSH_RADII.includes(value)
     ? value
     : DEFAULT_BRUSH_RADIUS;
 }
