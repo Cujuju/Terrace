@@ -104,6 +104,21 @@ function measureDrawn(root: { traverse(cb: (o: unknown) => void): void }): Exten
 }
 
 /** A cell whose coastal variant roll lands on `variant`. Searched, not assumed — the roll is the thing under test elsewhere. */
+/**
+ * How many draw calls a hut may cost ABOVE the priciest standard tier.
+ *
+ * One, and it is the smoke pit: its fire is emissive and its smoke is
+ * transparent, so neither can join the shared vertex-coloured surface, and
+ * they group into a call apiece. No standard tier has lit outdoor geometry to
+ * match, so the tier ceiling cannot price it. Nine of the ten variants draw in
+ * a single call and do not use the allowance at all.
+ *
+ * Raising this is how the hut library would quietly become expensive again —
+ * it is a budget, not a fudge factor. A variant that needs two more calls
+ * needs a reason recorded here, not a bigger number.
+ */
+const HUT_LIT_PART_ALLOWANCE = 1;
+
 function cellRollingVariant(variant: number): { x: number; y: number } {
   for (let y = 0; y < 64; y++) {
     for (let x = 0; x < 64; x++) {
@@ -254,15 +269,18 @@ describe('merging: the authored part list is not the drawn part list', () => {
     }
   });
 
-  it('no hut costs more draw calls than the priciest standard tier it stands beside', () => {
+  it('no hut costs meaningfully more draw calls than the priciest standard tier it stands beside', () => {
     // Ten variants is ten times the model library, and this codebase's
     // recurring render defect is the AUTHORING unit quietly becoming the
     // DRAWING unit. The budget is not a number someone picked: a coastal
     // village must not be more expensive to draw than the ordinary building
     // it replaces, so the ceiling is measured from the six shipped tiers in
-    // this same run. (They are NOT merged — each authored part is still its
-    // own mesh — which is exactly why merging the huts was necessary to stay
-    // under a bar the tiers set unmerged.)
+    // this same run.
+    //
+    // BOTH SIDES ARE MERGED as of 2026-08-23 — the tiers went through
+    // mergeParts() too, which is what took them from one mesh per authored
+    // part to the 1-2 calls they cost now. That makes this a much tighter bar
+    // than it was when the tiers were unmerged and set a ceiling of dozens.
     const models = createStructureModels();
     try {
       let tierCeiling = 0;
@@ -275,10 +293,11 @@ describe('merging: the authored part list is not the drawn part list', () => {
         const cell = cellRollingVariant(variant);
         models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal')]);
         const extent = measureDrawn(models.root);
+        const ceiling = tierCeiling + HUT_LIT_PART_ALLOWANCE;
         expect(
           extent.drawCalls,
-          `${FISHING_HUT_NAMES[variant]} draws in ${extent.drawCalls} calls; the priciest standard tier draws in ${tierCeiling}`,
-        ).toBeLessThanOrEqual(tierCeiling);
+          `${FISHING_HUT_NAMES[variant]} draws in ${extent.drawCalls} calls; the priciest standard tier draws in ${tierCeiling}, allowance ${HUT_LIT_PART_ALLOWANCE}`,
+        ).toBeLessThanOrEqual(ceiling);
       }
     } finally {
       models.dispose();

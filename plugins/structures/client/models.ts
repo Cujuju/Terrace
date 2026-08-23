@@ -105,7 +105,7 @@ import {
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
 import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
-import { mergeParts, type StructurePart } from './parts.ts';
+import { mergeParts, mergeSharedSurface, type StructurePart } from './parts.ts';
 import type { SiteKind } from './site.ts';
 
 // ── Shared build helpers ─────────────────────────────────────────────────────
@@ -3025,7 +3025,14 @@ export function createStructureModels(): StructureModels {
   // only bound this client can rely on without risking `count` outrunning
   // `mesh.instanceMatrix` in some adversarial-but-legal cell layout.
   const durands = buildDurandsParts();
-  const durandsMeshes: InstancedMesh[] = durands.parts.map((part) => {
+  // mergeSharedSurface, NOT mergeParts: Durand's is the one building that keeps
+  // material handles (the five animate() pulses below), and mergeParts' second
+  // step disposes duplicate signatures — which would silently drop one of the
+  // marquee's two identically-authored phase materials and stop the chase. The
+  // surface step cannot touch a held material: every one of the five is
+  // emissive or transparent, and canShareOneSurface() rejects both.
+  const durandsParts = mergeSharedSurface(durands.parts);
+  const durandsMeshes: InstancedMesh[] = durandsParts.map((part) => {
     geometries.push(part.geometry);
     materials.push(part.material);
     const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
@@ -3184,7 +3191,7 @@ export function createStructureModels(): StructureModels {
         // isDurandsCell's own contract gates this to MAX_STRUCTURE_TIER (see
         // ./durands.ts) — nothing below the top tier can ever come back true.
         if (isDurandsCell(placement.tier, placement.cellX, placement.cellY)) {
-          writeInstances(durands.parts, durandsMeshes, durandsCounts, null);
+          writeInstances(durandsParts, durandsMeshes, durandsCounts, null);
           continue;
         }
 

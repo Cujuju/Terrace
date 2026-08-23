@@ -18,10 +18,12 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  FrontSide,
   Matrix4,
   MeshLambertMaterial,
   Quaternion,
   Vector3,
+  type Color,
   type Material,
 } from 'three';
 
@@ -144,6 +146,55 @@ export function ringMatrices(
 // the unit a thing is AUTHORED in keeps becoming the unit it is DRAWN in.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** RGB channels per vertex in a `color` buffer attribute. */
+const COLOR_COMPONENTS = 3;
+
+/**
+ * How many shareable parts it takes before collapsing them into one
+ * vertex-coloured surface is worth doing.
+ *
+ * One shareable part is ALREADY one draw call, so merging it would buy no
+ * reduction and cost a colour attribute plus a geometry copy. Two is the first
+ * count where the surface removes a call.
+ */
+const SURFACE_MERGE_MINIMUM_PARTS = 2;
+
+/**
+ * Whether a part's material can be replaced by the shared vertex-coloured
+ * surface material without changing a single pixel.
+ *
+ * This interrogates the MATERIAL rather than reading a flag on the part on
+ * purpose. A flag would be one more thing each of models.ts's ~100 part
+ * literals has to remember, and the failure mode of forgetting it is silent —
+ * a lit window folded into the surface simply stops glowing, in one tier,
+ * noticed by nobody. A material's own properties are the ground truth for
+ * "can this share a draw call", and they cannot be forgotten.
+ */
+export function canShareOneSurface(material: Material): material is MeshLambertMaterial {
+  if (!(material instanceof MeshLambertMaterial)) return false;
+  // A texture needs its own UV space and the merge has no atlas (Durand's sign).
+  // This guard is load-bearing twice over: bakeInto() below carries position,
+  // normal and colour only, so a textured part that reached the merge would
+  // lose its UVs and sample one texel for every triangle.
+  if (material.map !== null) return false;
+  // Emissive is one uniform for the whole draw call, so anything that glows
+  // keeps its own mesh. This is also what holds Durand's ANIMATED materials out
+  // of the merge: models.ts's animate() only ever drives emissiveIntensity and
+  // opacity, and only on materials whose emissive is non-black — so excluding
+  // non-black emissive excludes every animated material by construction, with
+  // no list of animated materials for this file to fall out of date with.
+  if (material.emissive.getHex() !== 0x000000) return false;
+  // Transparency needs its own draw order, and the dancer's opacity is swung
+  // per frame by that same animate().
+  if (material.transparent || material.opacity < 1) return false;
+  // The merged material is flat-shaded and front-faced. Every material in
+  // models.ts is both today; these two guards are what keep a future material
+  // that is neither from being silently re-shaded by the merge.
+  if (!material.flatShading) return false;
+  if (material.side !== FrontSide) return false;
+  return true;
+}
+
 /**
  * A material's identity for merging purposes. Two separately-constructed
  * materials with identical settings are the same material as far as the GPU
@@ -164,11 +215,20 @@ function materialSignature(material: Material): string {
   ].join('|');
 }
 
-/** Position + normal of one geometry, baked through one local matrix. */
+/**
+ * Position + normal of one geometry, baked through one local matrix — and its
+ * material's colour per vertex, when the target is accumulating a shared
+ * vertex-coloured surface.
+ *
+ * Position, normal and colour are the whole attribute set carried here. That is
+ * why canShareOneSurface() refuses a textured material: a UV attribute would be
+ * dropped on the floor, and the part would sample a single texel.
+ */
 function bakeInto(
-  target: { positions: number[]; normals: number[] },
+  target: { positions: number[]; normals: number[]; colors?: number[] },
   geometry: BufferGeometry,
   local: Matrix4,
+  color?: Color,
 ): void {
   // toNonIndexed() first: two geometries cannot be concatenated attribute-wise
   // while either carries an index buffer, and the vertex count here is small
@@ -181,34 +241,141 @@ function bakeInto(
   for (let i = 0; i < position.count; i++) {
     target.positions.push(position.getX(i), position.getY(i), position.getZ(i));
     if (normal !== undefined) target.normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+    // NO COLOUR-SPACE CONVERSION HERE, DELIBERATELY. A Material.color is
+    // already in the renderer's LINEAR working space (three converts the
+    // authored sRGB hex on construction), and a `color` buffer attribute is
+    // read as linear too — so the channels copy across verbatim. Converting
+    // would apply the sRGB transfer a second time and wash every building out.
+    if (target.colors !== undefined && color !== undefined) {
+      target.colors.push(color.r, color.g, color.b);
+    }
   }
   baked.dispose();
 }
 
+/** Builds the output geometry for one accumulated group. */
+function geometryOf(group: { positions: number[]; normals: number[]; colors?: number[] }): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(group.positions), 3));
+  if (group.normals.length === group.positions.length) {
+    geometry.setAttribute('normal', new BufferAttribute(new Float32Array(group.normals), 3));
+  } else {
+    geometry.computeVertexNormals();
+  }
+  if (group.colors !== undefined) {
+    geometry.setAttribute('color', new BufferAttribute(new Float32Array(group.colors), COLOR_COMPONENTS));
+  }
+  return geometry;
+}
+
 /**
- * Collapses an authored part list into one part per distinct material, with
- * every local matrix baked into the vertices — see the banner above for why.
+ * Collapses an authored part list into the far shorter list actually drawn,
+ * with every local matrix baked into the vertices — see the banner above for
+ * why. Two reductions, in this order:
  *
- * Group order is FIRST APPEARANCE of each material signature, so the output
- * is deterministic for a given input list (the terrain-math determinism rule
- * does not reach rendering, but a model that shuffles its own mesh order
- * between runs would make every rendering test flaky for no benefit).
+ *   1. Every part whose material canShareOneSurface() accepts becomes ONE
+ *      vertex-coloured surface, however many distinct colours went in. Colour
+ *      is what a `color` attribute exists to carry, and collapsing it is most
+ *      of the win: a building's parts differ overwhelmingly by colour alone.
+ *   2. Whatever is left — the glowing, the transparent, the textured — is
+ *      grouped by full material signature, colour included, because for those
+ *      the colour is not the only thing that differs and the surface material
+ *      cannot represent them.
+ *
+ * Step 2 alone was the original contract, and it is why a tier of a hundred
+ * differently-coloured Lambert parts still cost dozens of draws: each distinct
+ * colour is its own signature. Step 1 is what removes that floor.
+ *
+ * Order is deterministic for a given input list — the surface first when there
+ * is one, then each signature group by FIRST APPEARANCE. (The terrain-math
+ * determinism rule does not reach rendering, but a model that shuffles its own
+ * mesh order between runs would make every rendering test flaky for no
+ * benefit.)
  *
  * The input geometries are disposed: they were only ever staging data, are
  * never handed to a renderer, and the merged copies are what the InstancedMesh
- * will hold. Duplicate materials are disposed for the same reason — one
- * representative per signature survives into the returned list.
+ * will hold. Materials are disposed for the same reason — one representative
+ * per signature survives, and the shareable ones survive not at all, having
+ * been replaced by the single surface material.
  */
+/**
+ * Step 1 on its own: the shareable parts become one vertex-coloured surface,
+ * and everything else is returned UNTOUCHED — the same part objects, holding
+ * the same material objects, in their authored order.
+ *
+ * That last property is the whole reason this is separate from mergeParts().
+ * A caller that keeps handles to its own materials — Durand's keeps five, for
+ * animate() to pulse — cannot survive step 2, which disposes every duplicate
+ * signature and would silently drop one of two identically-authored materials
+ * (the marquee's two phase groups are exactly that). Step 1 can never take a
+ * held material, because canShareOneSurface() rejects everything emissive or
+ * transparent, which is everything animate() drives, by construction.
+ *
+ * So: hold material handles → this. Hold none → mergeParts(), which reduces
+ * further.
+ */
+export function mergeSharedSurface(parts: readonly StructurePart[]): StructurePart[] {
+  const { surface, rest } = collapseSharedSurface(parts);
+  return surface === null ? [...parts] : [surface, ...rest];
+}
+
+/**
+ * The shareable parts of `parts` baked into one vertex-coloured surface, and
+ * whatever could not join it. Returns a null surface — and `rest` as the whole
+ * input — when there is nothing to gain, so neither caller special-cases it.
+ *
+ * The geometries and materials folded into the surface are disposed here: they
+ * were staging data, never uploaded, and the surface holds their copies now.
+ */
+function collapseSharedSurface(
+  parts: readonly StructurePart[],
+): { surface: StructurePart | null; rest: readonly StructurePart[] } {
+  // Carrying the narrowed material alongside the part: canShareOneSurface is a
+  // type guard on the MATERIAL, and filtering a part list cannot narrow a field.
+  const shareable: { part: StructurePart; material: MeshLambertMaterial }[] = [];
+  for (const part of parts) {
+    if (canShareOneSurface(part.material)) shareable.push({ part, material: part.material });
+  }
+  // Below the minimum the surface earns nothing, so those parts fall back to
+  // the caller's own handling rather than being copied for no reduction.
+  if (shareable.length < SURFACE_MERGE_MINIMUM_PARTS) return { surface: null, rest: parts };
+
+  const surface: { positions: number[]; normals: number[]; colors: number[] } =
+    { positions: [], normals: [], colors: [] };
+  // Through Sets because a geometry or a material may back several parts, and
+  // disposing one twice is a wasted call at best.
+  const spentGeometries = new Set<BufferGeometry>();
+  const spentMaterials = new Set<Material>();
+  for (const { part, material } of shareable) {
+    for (const local of part.localMatrices) bakeInto(surface, part.geometry, local, material.color);
+    spentGeometries.add(part.geometry);
+    spentMaterials.add(material);
+  }
+  for (const geometry of spentGeometries) geometry.dispose();
+  for (const material of spentMaterials) material.dispose();
+  return {
+    surface: {
+      geometry: geometryOf(surface),
+      material: new MeshLambertMaterial({ vertexColors: true, flatShading: true }),
+      localMatrices: [new Matrix4()],
+    },
+    rest: parts.filter((part) => !canShareOneSurface(part.material)),
+  };
+}
+
 export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
+  const { surface, rest } = collapseSharedSurface(parts);
+  const spentGeometries = new Set<BufferGeometry>();
+  const spentMaterials = new Set<Material>();
+  const merged: StructurePart[] = [];
+  if (surface !== null) merged.push(surface);
+
   const groups = new Map<string, {
     material: Material;
     positions: number[];
     normals: number[];
   }>();
-  const spentGeometries = new Set<BufferGeometry>();
-  const spentMaterials = new Set<Material>();
-
-  for (const part of parts) {
+  for (const part of rest) {
     const signature = materialSignature(part.material);
     let group = groups.get(signature);
     if (group === undefined) {
@@ -221,19 +388,16 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
     spentGeometries.add(part.geometry);
   }
 
-  for (const geometry of spentGeometries) geometry.dispose();
-  for (const material of spentMaterials) material.dispose();
-
-  const merged: StructurePart[] = [];
   for (const group of groups.values()) {
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new BufferAttribute(new Float32Array(group.positions), 3));
-    if (group.normals.length === group.positions.length) {
-      geometry.setAttribute('normal', new BufferAttribute(new Float32Array(group.normals), 3));
-    } else {
-      geometry.computeVertexNormals();
-    }
-    merged.push({ geometry, material: group.material, localMatrices: [new Matrix4()] });
+    merged.push({ geometry: geometryOf(group), material: group.material, localMatrices: [new Matrix4()] });
+  }
+
+  for (const geometry of spentGeometries) geometry.dispose();
+  // A material kept as a group representative must outlive this call; only the
+  // genuinely spent ones are disposed, and a shareable part's material is
+  // always spent because the surface material replaced it.
+  for (const material of spentMaterials) {
+    if (!merged.some((part) => part.material === material)) material.dispose();
   }
   return merged;
 }

@@ -1,4 +1,4 @@
-// The part-merge contract (client/partMerge.ts). These build real Three.js
+// The part-merge contract (client/parts.ts). These build real Three.js
 // objects but never a WebGLRenderer, so they run headless — BufferGeometry and
 // the material classes are plain data structures (the same thing
 // plugins/boats/test/models.test.ts relies on).
@@ -18,7 +18,7 @@ import {
   MeshLambertMaterial,
   Vector3,
 } from 'three';
-import { canShareOneSurface, mergeSurfaceParts, type StructurePart } from '../client/partMerge.ts';
+import { canShareOneSurface, mergeParts, mergeSharedSurface, type StructurePart } from '../client/parts.ts';
 
 /** A plain surface material, exactly as models.ts's `lambert()` builds one. */
 function plainLambert(color: number): MeshLambertMaterial {
@@ -90,7 +90,7 @@ describe('merging a building s parts', () => {
       material: new MeshLambertMaterial({ flatShading: true, emissive: 0xffcf7a }),
       localMatrices: [new Matrix4()],
     };
-    const merged = mergeSurfaceParts([
+    const merged = mergeParts([
       boxPart(0x886644, [new Matrix4()]),
       boxPart(0x445566, [new Matrix4().makeTranslation(2, 0, 0)]),
       lit,
@@ -98,18 +98,77 @@ describe('merging a building s parts', () => {
     ]);
 
     expect(merged).toHaveLength(2);
-    expect(merged[1]).toBe(lit); // untouched, still its own draw call
+    // Still its own draw call, and still ITS material — only the geometry is
+    // rebuilt, because step 2 bakes the local matrices in like step 1 does.
+    expect(merged[1].material).toBe(lit.material);
     expect((merged[0].material as MeshLambertMaterial).vertexColors).toBe(true);
     // One instance per building, not one per part per local transform.
     expect(merged[0].localMatrices).toHaveLength(1);
     expect(merged[0].localMatrices[0].equals(new Matrix4())).toBe(true);
   });
 
-  it('leaves a list with nothing to gain exactly as it was', () => {
-    // One mergeable part is already one draw call. Merging it would cost a
-    // colour attribute and a geometry copy and save nothing.
-    const parts = [boxPart(0x886644, [new Matrix4()])];
-    expect(mergeSurfaceParts(parts)).toEqual(parts);
+  it('spends no colour attribute on a lone shareable part, which is already one call', () => {
+    // One shareable part cannot be reduced further, so it must NOT be turned
+    // into a vertex-coloured surface: that would cost a colour attribute and a
+    // geometry copy for no reduction at all. It still goes through signature
+    // grouping, which is what bakes its local matrices in.
+    const material = plainLambert(0x886644);
+    const merged = mergeParts([
+      { geometry: new BoxGeometry(1, 1, 1), material, localMatrices: [new Matrix4()] },
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].material).toBe(material);
+    expect(merged[0].geometry.getAttribute('color')).toBeUndefined();
+  });
+
+  it('mergeSharedSurface hands back every un-shareable part untouched, handles and all', () => {
+    // THE PROPERTY DURAND'S RIDES ON. It keeps five material handles for
+    // animate() to pulse, and two of them — the marquee's phase groups — are
+    // authored identically, so mergeParts' signature step would fold them
+    // together and dispose one. mergeSharedSurface must return both, as the
+    // very same objects.
+    const phaseA = new MeshLambertMaterial({ flatShading: true, emissive: 0xffcf7a, emissiveIntensity: 0.5 });
+    const phaseB = new MeshLambertMaterial({ flatShading: true, emissive: 0xffcf7a, emissiveIntensity: 0.5 });
+    const bulbA: StructurePart = { geometry: new BoxGeometry(0.1, 0.1, 0.1), material: phaseA, localMatrices: [new Matrix4()] };
+    const bulbB: StructurePart = { geometry: new BoxGeometry(0.1, 0.1, 0.1), material: phaseB, localMatrices: [new Matrix4()] };
+
+    const merged = mergeSharedSurface([
+      boxPart(0x886644, [new Matrix4()]),
+      bulbA,
+      boxPart(0x445566, [new Matrix4().makeTranslation(2, 0, 0)]),
+      bulbB,
+    ]);
+
+    expect(merged).toHaveLength(3); // one surface + both bulbs, separately
+    expect(merged[1]).toBe(bulbA);
+    expect(merged[2]).toBe(bulbB);
+    // The handles animate() drives must still be the live materials on the
+    // drawn parts — identical settings must not have collapsed them into one.
+    expect(merged[1].material).toBe(phaseA);
+    expect(merged[2].material).toBe(phaseB);
+  });
+
+  it('mergeParts WOULD fold those same two bulbs together — which is why Durand s does not use it', () => {
+    // The counterpart to the test above, asserting the hazard is real rather
+    // than imagined. If this ever stops folding them, the comment in models.ts
+    // steering Durand's away from mergeParts needs revisiting.
+    const glow = () => new MeshLambertMaterial({ flatShading: true, emissive: 0xffcf7a, emissiveIntensity: 0.5 });
+    const merged = mergeParts([
+      { geometry: new BoxGeometry(0.1, 0.1, 0.1), material: glow(), localMatrices: [new Matrix4()] },
+      { geometry: new BoxGeometry(0.1, 0.1, 0.1), material: glow(), localMatrices: [new Matrix4()] },
+    ]);
+    expect(merged).toHaveLength(1);
+  });
+
+  it('groups the un-shareable remainder by material, instead of leaving one call each', () => {
+    // Two windows lit identically are one draw call, not two — the reduction
+    // that step 2 contributes on top of the surface.
+    const glow = () => new MeshLambertMaterial({ flatShading: true, emissive: 0xffcf7a });
+    const merged = mergeParts([
+      { geometry: new BoxGeometry(0.1, 0.1, 0.1), material: glow(), localMatrices: [new Matrix4()] },
+      { geometry: new BoxGeometry(0.1, 0.1, 0.1), material: glow(), localMatrices: [new Matrix4().makeTranslation(1, 0, 0)] },
+    ]);
+    expect(merged).toHaveLength(1);
   });
 
   it('draws the same triangles it was handed', () => {
@@ -118,7 +177,7 @@ describe('merging a building s parts', () => {
       boxPart(0x445566, [new Matrix4().makeTranslation(0, 2, 0)]),
     ];
     const before = parts.reduce((total, part) => total + triangleCount(part), 0);
-    const merged = mergeSurfaceParts(parts);
+    const merged = mergeParts(parts);
     expect(merged).toHaveLength(1);
     expect(triangleCount(merged[0])).toBe(before);
   });
@@ -126,7 +185,7 @@ describe('merging a building s parts', () => {
   it('bakes each local transform into the vertices, so the parts stay where they were placed', () => {
     // The merged surface carries an IDENTITY transform, so if the bake were
     // skipped every part would collapse onto the building's origin.
-    const merged = mergeSurfaceParts([
+    const merged = mergeParts([
       boxPart(0x886644, [new Matrix4().makeTranslation(5, 0, 0)]),
       boxPart(0x445566, [new Matrix4().makeTranslation(0, 7, 0)]),
     ]);
@@ -138,7 +197,7 @@ describe('merging a building s parts', () => {
   it('paints every vertex with its own part s colour, in the linear working space', () => {
     const first = plainLambert(0x886644);
     const second = plainLambert(0x445566);
-    const merged = mergeSurfaceParts([
+    const merged = mergeParts([
       { geometry: new BoxGeometry(1, 1, 1), material: first, localMatrices: [new Matrix4()] },
       { geometry: new BoxGeometry(1, 1, 1), material: second, localMatrices: [new Matrix4()] },
     ]);
