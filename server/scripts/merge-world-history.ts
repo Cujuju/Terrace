@@ -93,6 +93,52 @@ if (a.name !== b.name) {
   );
 }
 
+/**
+ * Proves the two files are the SAME WORLD, not merely two worlds that look
+ * alike, by comparing a snapshot they both claim to hold.
+ *
+ * WHY A NAME AND A SIZE ARE NOT ENOUGH. This script matches snapshots by id,
+ * and ids are AUTOINCREMENT rowids — every world's history starts at 1 and
+ * counts up. So two DIFFERENT worlds of the same size both have a snapshot
+ * #5, and merging them would interleave two unrelated heightmaps into one
+ * history: restore points that teleport between two maps. Names do not save
+ * you either, because `generateWorldName` draws from a finite table and can
+ * mint the same name twice.
+ *
+ * WHAT IS DECISIVE is the CONTENT of a shared id. Two copies of one world
+ * agree byte-for-byte about what snapshot #308 was — same heightmap, same
+ * mask, same timestamp — because they are the same row copied. Two different
+ * worlds' #308s are unrelated terrain. One matching shared snapshot is
+ * therefore proof of common lineage, and no matching one is proof against it.
+ *
+ * Returns the id that proved it, or null when nothing could.
+ */
+function sharedLineage(db: DatabaseConstructor.Database): number | null {
+  const both = (
+    db
+      .prepare(
+        'SELECT id FROM main.snapshots WHERE id IN (SELECT id FROM source.snapshots) ORDER BY id DESC',
+      )
+      .all() as { id: number }[]
+  ).map((row) => row.id);
+
+  for (const id of both) {
+    const mine = db
+      .prepare('SELECT created_at, heightmap FROM main.snapshots WHERE id = ?')
+      .get(id) as { created_at: number; heightmap: Buffer };
+    const theirs = db
+      .prepare('SELECT created_at, heightmap FROM source.snapshots WHERE id = ?')
+      .get(id) as { created_at: number; heightmap: Buffer };
+    if (
+      mine.created_at === theirs.created_at &&
+      Buffer.compare(mine.heightmap, theirs.heightmap) === 0
+    ) {
+      return id;
+    }
+  }
+  return null;
+}
+
 // Opened through SnapshotStore so the target gains any additive column this
 // build expects (notably `pinned`) before rows are written into it.
 const store = SnapshotStore.open(into);
@@ -101,6 +147,31 @@ store.close();
 const db = new DatabaseConstructor(into);
 db.pragma('foreign_keys = ON');
 db.exec(`ATTACH DATABASE '${from.replace(/'/g, "''")}' AS source`);
+
+// LINEAGE CHECK — the gate that stops two different worlds being welded into
+// one history. See sharedLineage for why the size and name checks above are
+// not sufficient on their own.
+const proof = sharedLineage(db);
+if (proof === null) {
+  const overlap = (
+    db
+      .prepare('SELECT COUNT(*) AS n FROM main.snapshots WHERE id IN (SELECT id FROM source.snapshots)')
+      .get() as { n: number }
+  ).n;
+  db.exec('DETACH DATABASE source');
+  db.close();
+  logError(
+    overlap === 0
+      ? 'refusing: these two files share no snapshot id at all, so there is nothing to ' +
+          'prove they are the same world. Merging them would interleave two unrelated ' +
+          'histories under one name.'
+      : `refusing: the ${overlap} snapshot id(s) these files share hold DIFFERENT terrain, ` +
+          'so they are two different worlds that happen to look alike — not two copies of ' +
+          'one world. Nothing was written.',
+  );
+  process.exit(1);
+}
+logInfo(`same world confirmed: snapshot #${proof} is identical in both files`);
 
 const missing = (
   db
