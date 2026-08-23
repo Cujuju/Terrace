@@ -21,6 +21,10 @@ uncommitted changes get overwritten.
 
 Stage only your exact paths — never `-A`, never a bare `git add`.
 
+Working in a worktree? Commit to its branch, then call `ExitWorktree`
+(`action: "keep"`) to return to this checkout and merge there — git against the
+shared checkout is blocked from inside a worktree until you do.
+
 ## Hard rules from the design record
 
 - `shared/` is the single source of truth for terrain math and protocol types.
@@ -32,6 +36,7 @@ Stage only your exact paths — never `-A`, never a bare `git add`.
   Node 24 can run it directly via type stripping.
 - Clients send intents, never heights. The server is authoritative.
 - Nothing "gamey" in core — mana, followers, reveal timing are plugins.
+- Never start or shut down the app (server or client) without the owner's permission in the current turn.
 
 
 # TypeScript

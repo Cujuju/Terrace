@@ -25,6 +25,7 @@ WORLDS_DIR/.active, i.e. whichever you were last in.
 import argparse
 import contextlib
 import os
+import threading
 import signal as signal_module
 import sqlite3
 import subprocess
@@ -117,6 +118,10 @@ WATCH_EXCLUDED_PARTS = ("/client/", "/test/", "/node_modules/", "/dist/")
 # Only source files trigger a restart - not the .db, the logs, or an editor's
 # swap file.
 WATCH_SUFFIXES = (".ts", ".tsx", ".js", ".mjs", ".json")
+
+# Seconds between checks of the control flags and (when watching) the source
+# tree while the stack is up. Short enough that a keypress feels immediate.
+CONTROL_POLL_INTERVAL_S = 0.25
 
 # Repo root = directory holding this script; server/client live beside it.
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -292,6 +297,55 @@ def spawn_server(env) -> subprocess.Popen:
                             start_new_session=True)
 
 
+def start_control_reader(state) -> threading.Thread:
+    """Continuously read single characters from stdin into `state`.
+
+    Keys (case-insensitive):
+      q / k - quit the whole stack
+      r     - restart the client and the server
+
+    Runs as a daemon thread so it can never keep the interpreter alive after
+    main returns; EOF (stdin closed, e.g. nohup) just ends the thread and
+    leaves keyboard control off, exactly as before this existed.
+
+    When stdin is a terminal it is put in cbreak mode for the duration, so a
+    single keypress registers immediately instead of waiting for Enter. The
+    original settings are restored in the same thread's `finally` - which runs
+    on quit, EOF, or an exception, since this thread never outlives main().
+    """
+    def read_keys():
+        termios_mod = None
+        saved = None
+        try:
+            if sys.stdin.isatty():
+                import termios
+                import tty
+                termios_mod = termios
+                saved = termios.tcgetattr(sys.stdin.fileno())
+                tty.setcbreak(sys.stdin.fileno())
+            while not state["stop"]:
+                key = sys.stdin.read(1)
+                if not key:  # EOF - no more input is coming
+                    return
+                key = key.strip().lower()
+                if key in ("q", "k"):
+                    state["stop"] = True
+                    return
+                if key == "r":
+                    state["restart"] = True
+        except (OSError, ValueError):  # stdin closed under us
+            return
+        finally:
+            if saved is not None:
+                try:
+                    termios_mod.tcsetattr(sys.stdin.fileno(), termios_mod.TCSADRAIN, saved)
+                except Exception:  # noqa: BLE001 - terminal already gone
+                    pass
+    reader = threading.Thread(target=read_keys, name="control-keys", daemon=True)
+    reader.start()
+    return reader
+
+
 def main(watch: bool) -> int:
     env = os.environ.copy()
     # Both halves see the same flag: the server watcher below reads `watch`,
@@ -443,50 +497,91 @@ def main(watch: bool) -> int:
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal_module.SIGKILL)
 
-    try:
+    # Keyboard control. One daemon thread scans stdin for the whole run; the
+    # main loop below polls these flags between wait timeouts.
+    state = {"stop": False, "restart": False}
+    print("[run_server] keys     : q/K quit | r restart client+server | Ctrl-C also works",
+          flush=True)
+    start_control_reader(state)
+
+    def launch_stack():
+        """Bring up the client (dev mode) and the game server; append to children."""
         if CLIENT_MODE == "static" and not prepare_static_client():
-            return 1
+            return None
         if CLIENT_MODE == "dev":
             vite = subprocess.Popen(["pnpm", "dev"], cwd=CLIENT_DIR, env=env,
                                     start_new_session=True)
             children.append(vite)
             print("[run_server] client dev server starting - "
                   "open the Local: URL Vite prints below")
-        server = spawn_server(env)
-        children.append(server)
-        if not watch:
-            return server.wait()
+        proc = spawn_server(env)
+        children.append(proc)
+        return proc
 
-        print(f"[run_server] watching {', '.join(WATCH_ROOTS)} "
-              f"(poll every {WATCH_POLL_INTERVAL_S}s) - server restarts on change",
-              flush=True)
-        snapshot = watch_snapshot()
+    try:
+        server = launch_stack()
+        if server is None:
+            return 1
+
+        if watch:
+            print(f"[run_server] watching {', '.join(WATCH_ROOTS)} "
+                  f"(poll every {WATCH_POLL_INTERVAL_S}s) - server restarts on change",
+                  flush=True)
+        snapshot = watch_snapshot() if watch else None
+
+        # ONE loop for watched and unwatched runs alike: either way we sit in a
+        # short wait timeout and wake to check the keyboard flags, so q/r work
+        # whether or not --watch was passed.
         while True:
+            if state["stop"]:
+                print("[run_server] quit requested - shutting down", flush=True)
+                return 0
             try:
-                return server.wait(timeout=WATCH_POLL_INTERVAL_S)
+                code = server.wait(timeout=CONTROL_POLL_INTERVAL_S)
+                # The server exited on its own (crash, pnpm failure). Do not
+                # outlive it pretending nothing happened.
+                return code
             except subprocess.TimeoutExpired:
                 pass  # still running - that is the normal path
-            current = watch_snapshot()
-            if current == snapshot:
-                continue
-            changed = sorted(
-                set(current) ^ set(snapshot)
-                | {p for p in set(current) & set(snapshot) if current[p] != snapshot[p]}
-            )
-            print(f"[run_server] source change ({len(changed)} file(s), e.g. "
-                  f"{os.path.relpath(changed[0], REPO_ROOT)}) - restarting server",
-                  flush=True)
-            # SIGINT, exactly as the shutdown path below does: it is the signal
-            # whose handler writes the clean-shutdown snapshot, so a restart
-            # never costs the world its unsaved terrain.
-            reap(server, signal_module.SIGINT)
-            children.remove(server)
-            # Re-snapshot AFTER the shutdown, not before: a save that lands
-            # while the old process is still winding down belongs to the run
-            # that is about to start, not to another restart after it.
-            snapshot = watch_snapshot()
-            server = spawn_server(env)
-            children.append(server)
+
+            if watch:
+                current = watch_snapshot()
+                if current != snapshot:
+                    changed = sorted(
+                        set(current) ^ set(snapshot)
+                        | {p for p in set(current) & set(snapshot) if current[p] != snapshot[p]}
+                    )
+                    print(f"[run_server] source change ({len(changed)} file(s), e.g. "
+                          f"{os.path.relpath(changed[0], REPO_ROOT)}) - restarting server",
+                          flush=True)
+                    # SIGINT, exactly as the shutdown path below does: it is the
+                    # signal whose handler writes the clean-shutdown snapshot, so
+                    # a restart never costs the world its unsaved terrain.
+                    reap(server, signal_module.SIGINT)
+                    children.remove(server)
+                    # Re-snapshot AFTER the shutdown, not before: a save that
+                    # lands while the old process is still winding down belongs
+                    # to the run that is about to start, not another restart.
+                    snapshot = watch_snapshot()
+                    server = spawn_server(env)
+                    children.append(server)
+
+            if state["restart"]:
+                state["restart"] = False
+                print("[run_server] restart requested - stopping client and server",
+                      flush=True)
+                reap(server, signal_module.SIGINT)
+                children.remove(server)
+                # In dev mode Vite is the client; stop it too so it re-reads its
+                # config and env (e.g. TERRACE_WATCH, VITE_SERVER_URL) fresh.
+                for proc in [c for c in children]:
+                    reap(proc, signal_module.SIGINT)
+                    children.remove(proc)
+                server = launch_stack()
+                if server is None:
+                    return 1
+                snapshot = watch_snapshot() if watch else None
+                print("[run_server] restarted client and server", flush=True)
     except KeyboardInterrupt:
         # Ctrl-C: the finally below shuts every child down; not an error.
         return 0
