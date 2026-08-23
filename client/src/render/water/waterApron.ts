@@ -33,84 +33,19 @@ import { CELL_WORLD_SIZE } from '../../config';
  */
 export const WATER_APRON_CREST_CELLS = 0.25;
 
-/**
- * The descent run, in CELLS: short enough to read as a drop, not a ramp.
- * Inherited from FALL_CHUTE_CELLS — see that constant's comment for why a
- * chute beat a wall.
- */
-export const WATER_APRON_CHUTE_CELLS = 0.25;
+
+
+
 
 /**
- * The steepest a falling sheet of water may be drawn, as world units DOWN per
- * world unit OUT.
- *
- * WHY A SLOPE AND NOT A RUN (2026-08-22, owner: "when going from one band to
- * the next, there needs to be no edges"). WATER_APRON_CHUTE_CELLS fixes the
- * horizontal RUN of the descent, which was inherited from the ribbon code
- * where a fall was one band and only ever one band. It is the wrong invariant:
- * a fixed run means the taller the fall the steeper the sheet, so on a
- * staircase that drops three bands at a time the chute has a quarter of a cell
- * (a sixteenth of a world unit) to lose three quarters of a world unit — a
- * twelve-to-one slope, which is a wall. Drawn from above a wall projects to a
- * line, which is precisely the invisible-curtain failure the apron exists to
- * replace, reintroduced through a constant nobody re-derived.
- *
- * THREE DOWN PER ONE OUT. Steep enough that the water plainly DROPS rather
- * than ramping down a slope the terrain does not have — a terrace riser here
- * is vertical, and a fall that reads as a hillside would be a different lie.
- * Shallow enough that the sheet keeps a real horizontal footprint, so it is
- * visible from overhead. The run it implies is never shorter than
- * WATER_APRON_CHUTE_CELLS: a single-band step keeps exactly the descent it has
- * now, and only taller falls stretch.
+ * How far the falling sheet stands OUT from the terrace face it runs down, in
+ * world units — the horizontal twin of the vertical lift water already carries
+ * over the ground. Without it the sheet and the riser are coplanar and fight
+ * for the depth buffer; much more and the water visibly peels off the rock.
  */
-export const WATER_APRON_MAX_FALL_SLOPE = 3;
+export const WATER_FACE_CLEARANCE_WORLD_UNITS = 1 / 64;
 
-/**
- * The longest horizontal run a chute may take, in CELLS, however far the water
- * has to fall.
- *
- * The slope rule above is the right invariant only while the drop is a terrace
- * step or two. Left unbounded it is the opposite failure: a stamped spire
- * drops dozens of bands, and holding three-to-one down that would throw a
- * skirt of water a dozen cells across the terrace below — water spread over
- * ground the river never touches, which is the one thing the channel width is
- * careful never to claim.
- *
- * ONE CELL, because the footprint is what the slope rule was really buying.
- * A fall is legible from above once its sheet covers about the width of the
- * channel pouring over it, and beyond that a taller cliff SHOULD read as
- * steeper — real water down a tall face falls nearly straight. So the slope
- * governs while the drop is small, and this governs once it is not.
- */
-export const WATER_APRON_MAX_CHUTE_CELLS = 1;
 
-/**
- * How far outward, in CELLS, a falling sheet steps between samples of the
- * ground it is running down.
- *
- * A quarter of a cell: fine enough that the sheet meets every terrace tread
- * and riser it crosses (a tread is a whole cell at its narrowest), coarse
- * enough that a long cascade is still a handful of rows rather than hundreds.
- */
-export const WATER_APRON_GROUND_STEP_CELLS = 0.25;
-
-/**
- * How far outward, in CELLS, a sheet may chase the ground before it simply
- * finishes its drop.
- *
- * Three cells. A fall running down a slope shallow enough to need more than
- * that is not a fall any more — it is a river, and the trace will have given
- * it wet cells of its own to be drawn as regions. This is the bound that keeps
- * a single sheet from crawling across a whole terrace.
- */
-export const WATER_APRON_MAX_REACH_CELLS = 3;
-
-/**
- * Rows across the sheet (the sheet has ROWS + 1 rows including both edges).
- * Fewest rows at which the smoothstep silhouette reads curved rather than
- * creased at orbit distance; 8 doubles the triangles for no visible gain.
- */
-export const WATER_APRON_ROWS = 4;
 
 /**
  * How far OUTSIDE the loop, in CELLS, to probe for lower water. Crossings are
@@ -127,40 +62,8 @@ export const WATER_LIP_PROBE_CELLS = 0.5;
  */
 export const MIN_LIP_RUN_VERTICES = 2;
 
-/**
- * The chute's horizontal run, in CELLS, for a sheet that has to lose
- * `dropWorldY` world units of height.
- *
- * The run WATER_APRON_MAX_FALL_SLOPE asks for, clamped at both ends: never
- * shorter than WATER_APRON_CHUTE_CELLS, so a one-band step descends exactly as
- * it always did; never longer than WATER_APRON_MAX_CHUTE_CELLS, so a tall
- * cliff stays a fall rather than becoming a skirt.
- */
-function chuteRunCells(dropWorldY: number): number {
-  const slopeRunCells = Math.abs(dropWorldY) / WATER_APRON_MAX_FALL_SLOPE / CELL_WORLD_SIZE;
-  return Math.min(
-    WATER_APRON_MAX_CHUTE_CELLS,
-    Math.max(WATER_APRON_CHUTE_CELLS, slopeRunCells),
-  );
-}
 
-/** Outward XZ offset of row r from its lip vertex, in cells. */
-function rowOffsetCells(r: number, chuteCells: number): number {
-  return (r / WATER_APRON_ROWS) * (WATER_APRON_CREST_CELLS + chuteCells);
-}
 
-/** Height of row r given crest height, foot height and this row's offset. */
-function rowWorldY(r: number, crestY: number, footY: number, chuteCells: number): number {
-  const o = rowOffsetCells(r, chuteCells);
-  // On the crest the sheet holds the source band's level exactly.
-  if (o <= WATER_APRON_CREST_CELLS) return crestY;
-  // Through the chute, descend on a smoothstep (3s²−2s³), which is C1 at BOTH
-  // ends — no silhouette crease where the chute leaves the crest or lands on
-  // the foot. s=0 exactly at the crest's end, s=1 at the foot.
-  const s = (o - WATER_APRON_CREST_CELLS) / (chuteCells || Number.EPSILON);
-  const t = s * s * (3 - 2 * s);
-  return crestY + (footY - crestY) * t;
-}
 
 /**
  * Build one lofted sheet for a maximal lip run `P_start..P_end` (inclusive,
@@ -197,14 +100,14 @@ function emitSheet(
   crestWorldY: number,
   footBand: number,
   footWorldYOf: (band: number) => number,
-  groundWorldYAt: (cellX: number, cellZ: number) => number,
   out: number[],
 ): void {
   const footY = footWorldYOf(footBand);
 
   // Rows are stored per lip vertex; row 0 is the loop vertex VERBATIM —
   // bit-identical to what the tread builder ends on, so no top seam.
-  const rowCount = Math.round(WATER_APRON_MAX_REACH_CELLS / WATER_APRON_GROUND_STEP_CELLS) + 1;
+  // Lip, crest, foot — see the row plan below.
+  const rowCount = 3;
   const verts = end - start + 1;
   const xs = new Float64Array(verts * rowCount);
   const ys = new Float64Array(verts * rowCount);
@@ -214,10 +117,27 @@ function emitSheet(
     const p = loop[start + v];
     const nx = normalsX[start + v];
     const nz = normalsZ[start + v];
-    // Each row sits on the GROUND under it, so the sheet runs DOWN THE FACE
-    // instead of cutting through the air beside it — never above the water it
-    // left, never below the water it is falling to, and never rising again.
-    let previousY = crestWorldY;
+    // THE SHEET IS DRAWN ON THE FACE, NOT PROJECTED PAST IT (2026-08-22,
+    // owner: "what if we simply drew it down the side of the layer").
+    //
+    // A water region's lip arc IS the terrain's own cap contour there: where
+    // the ground falls away the tread builder marches the terrain's real
+    // heights, so the water's edge is solved by the same crossings, on the
+    // same smoothed curve, as the cap the terrace is drawn with
+    // (water/waterTread.ts). The riser under that curve is vertical. So the
+    // fall needs no correspondence to be worked out and no path to be guessed:
+    // the arc extruded straight DOWN is exactly the face, which is also why it
+    // comes out "the same shape as the top layer and the bottom layer" — it is
+    // the same curve all three are cut from.
+    //
+    // Three rows, and each earns its place:
+    //   0. the lip, verbatim — the shared-vertex seam contract.
+    //   1. the crest, one WATER_APRON_CREST_CELLS outward and still level: the
+    //      water carries a little of its speed past the edge before it tips.
+    //   2. the foot, straight down from row 1 at the fall's lower level.
+    // Row 1 and row 2 share their XZ, so the drop is the riser itself.
+    const crestOutCells = WATER_APRON_CREST_CELLS;
+    const clearanceCells = WATER_FACE_CLEARANCE_WORLD_UNITS / CELL_WORLD_SIZE;
     for (let r = 0; r < rowCount; r++) {
       const idx = v * rowCount + r;
       if (r === 0) {
@@ -227,23 +147,15 @@ function emitSheet(
         zs[idx] = p.z * CELL_WORLD_SIZE;
         continue;
       }
-      const o = r * WATER_APRON_GROUND_STEP_CELLS;
-      const cellXCoord = p.x + nx * o;
-      const cellZCoord = p.z + nz * o;
-      xs[idx] = cellXCoord * CELL_WORLD_SIZE;
-      zs[idx] = cellZCoord * CELL_WORLD_SIZE;
-      if (o <= WATER_APRON_CREST_CELLS) {
-        // The crest: hold the level the water arrived at, carrying the sheet
-        // over the terrain's own bank lag (see WATER_APRON_CREST_CELLS).
-        ys[idx] = previousY;
-        continue;
-      }
-      const ground = groundWorldYAt(cellXCoord, cellZCoord);
-      // Clamped to the fall it is actually making, and monotonic: ground that
-      // rises again beyond the lip is a bank the sheet passes under, not a
-      // hill for it to climb.
-      ys[idx] = Math.min(previousY, Math.max(footY, Math.min(crestWorldY, ground)));
-      previousY = ys[idx]!;
+      // Rows 1 and 2 sit at the SAME XZ — the lip carried its crest hold
+      // outward and then nudged clear of the rock — so row 1→2 is a strictly
+      // vertical strip lying on the terrace face. Both rows take the
+      // clearance: offsetting only the foot would lean the strip into the
+      // riser at the top, which is the z-fight it exists to avoid.
+      const outCells = crestOutCells + clearanceCells;
+      xs[idx] = (p.x + nx * outCells) * CELL_WORLD_SIZE;
+      zs[idx] = (p.z + nz * outCells) * CELL_WORLD_SIZE;
+      ys[idx] = r === 1 ? crestWorldY : footY;
     }
   }
 
@@ -253,7 +165,7 @@ function emitSheet(
   // N and increasing row r moving outward, the quad corners in order
   // (v,r),(v,r+1),(v+1,r+1),(v+1,r) run around the quad consistently.
   for (let v = 0; v < verts - 1; v++) {
-    for (let r = 0; r < WATER_APRON_ROWS; r++) {
+    for (let r = 0; r < rowCount - 1; r++) {
       // Quad corners (this vertex / next vertex) × (row r / row r+1). Winding:
       // going along the run while stepping outward keeps the sheet
       // counter-clockwise seen from above.
@@ -307,7 +219,6 @@ export function appendApronSurfaces(
   crestWorldY: number,
   footWorldYOf: (footBand: number) => number,
   probeLipFootBand: (cellX: number, cellZ: number) => number | null,
-  groundWorldYAt: (cellX: number, cellZ: number) => number,
   out: number[],
 ): void {
   for (const loop of loops) {
@@ -411,7 +322,7 @@ export function appendApronSurfaces(
     while (startIdx < n && isLip[startIdx]) startIdx++;
     if (startIdx === n) {
       // Entire loop is a lip — treat as one run covering everything.
-      emitRun(loop, 0, n - 1, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
+      emitRun(loop, 0, n - 1, ax, az, bands, crestWorldY, footWorldYOf, out);
       continue;
     }
     let i = startIdx;
@@ -423,7 +334,7 @@ export function appendApronSurfaces(
       let j = i;
       while (j + 1 < n && isLip[j + 1]) j++;
       if (j - i + 1 >= MIN_LIP_RUN_VERTICES) {
-        emitRun(loop, i, j, ax, az, bands, crestWorldY, footWorldYOf, groundWorldYAt, out);
+        emitRun(loop, i, j, ax, az, bands, crestWorldY, footWorldYOf, out);
       }
       i = j + 1;
     }
@@ -440,7 +351,6 @@ function emitRun(
   bands: readonly (number | null)[],
   crestWorldY: number,
   footWorldYOf: (band: number) => number,
-  groundWorldYAt: (cellX: number, cellZ: number) => number,
   out: number[],
 ): void {
   // Foot band = HIGHEST probed band along the run: this sheet drops ONE
@@ -452,5 +362,5 @@ function emitRun(
     if (b !== null && b > footBand) footBand = b;
   }
   if (!Number.isFinite(footBand)) return;
-  emitSheet(loop, start, end, ax, az, crestWorldY, footBand, footWorldYOf, groundWorldYAt, out);
+  emitSheet(loop, start, end, ax, az, crestWorldY, footBand, footWorldYOf, out);
 }
