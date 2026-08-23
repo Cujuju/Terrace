@@ -4,7 +4,7 @@
 // node environment as the server tests.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
   DEFAULT_SIZE_CLASS_INDEX,
@@ -32,6 +32,8 @@ import {
   UNKNOWN_TERRAIN_WORLD_Y,
   creatureWorldY,
   placementKindOf,
+  WALKER_FOOTPRINT_HALF_EXTENT,
+  WALKER_FOOTPRINT_HALF_EXTENT_CELLS,
   walkerGroundY,
 } from '../client/placement.ts';
 
@@ -352,8 +354,29 @@ describe('walkerGroundY — footprint sampling', () => {
     // walker at x = 9.8 overhangs the boundary at x = 10, so it must stand at 2.
     const sample = (cx: number) => (cx >= 10 ? 2 : 0);
     expect(walkerGroundY(sample, 9.8, 5.5)).toBe(2);
-    // Well clear of the boundary the centre cell rules.
-    expect(walkerGroundY(sample, 9.0, 5.5)).toBe(0);
+    // Well clear of the boundary the centre cell rules. THE FIXTURE MOVED on
+    // 2026-08-22, from x = 9.0 to x = 8.0, and the move is the bug: a grazer
+    // reaches 1.8 CELLS either side of itself (0.45 world units), so at x = 9.0
+    // its body genuinely does overhang cell 10 and standing at band 0 there was
+    // the clipping this function exists to prevent. The old fixture passed only
+    // because the half-extent was being read as 0.45 cells — a quarter of the
+    // creature. See WALKER_FOOTPRINT_HALF_EXTENT.
+    expect(walkerGroundY(sample, 8.0, 5.5)).toBe(0);
+  });
+
+  it('probes the ground in CELLS, not in the world units the model is built in', () => {
+    // THE BUG THIS PINS, and its twin lives in the monsters plugin. Model
+    // dimensions have been world units since the 2026-08-21 re-sample cut a
+    // cell to a quarter of one; walkerGroundY adds its half-extent straight to
+    // a CELL coordinate. A raw 0.45 therefore probed a quarter of the ground
+    // the creature covers, which is a plausible-looking number and an invisible
+    // failure — exactly why the conversion is pinned here rather than trusted.
+    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBe(
+      cellsAcross(WALKER_FOOTPRINT_HALF_EXTENT),
+    );
+    // A grazer really does overhang its own cell: a body ~1.1 world units long
+    // is ~4.4 cells, so the probe must reach past cell centre ±1.
+    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBeGreaterThan(1);
   });
 
   it('matches the single-cell sample on flat ground', () => {
