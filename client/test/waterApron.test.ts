@@ -7,6 +7,8 @@ import {
   appendApronSurfaces,
   WATER_APRON_CREST_CELLS,
   WATER_APRON_CHUTE_CELLS,
+  WATER_APRON_MAX_CHUTE_CELLS,
+  WATER_APRON_MAX_FALL_SLOPE,
   WATER_APRON_ROWS,
 } from '../src/render/water/waterApron';
 import { CELL_WORLD_SIZE } from '../src/config';
@@ -120,7 +122,19 @@ describe('appendApronSurfaces', () => {
     const loop = squareLoop();
     const out: number[] = [];
     appendApronSurfaces([loop], CREST_Y, footWorldYOf, southEdgeProbe(0, 8, 0), out);
-    const total = WATER_APRON_CREST_CELLS + WATER_APRON_CHUTE_CELLS;
+    // The chute's run is DERIVED from the drop (WATER_APRON_MAX_FALL_SLOPE),
+    // clamped between WATER_APRON_CHUTE_CELLS and WATER_APRON_MAX_CHUTE_CELLS
+    // — so the expected footprint is computed from this fixture's own drop
+    // rather than assumed to be the floor value.
+    const dropWorldY = Math.abs(CREST_Y - footWorldYOf(0));
+    const chute = Math.min(
+      WATER_APRON_MAX_CHUTE_CELLS,
+      Math.max(
+        WATER_APRON_CHUTE_CELLS,
+        dropWorldY / WATER_APRON_MAX_FALL_SLOPE / CELL_WORLD_SIZE,
+      ),
+    );
+    const total = WATER_APRON_CREST_CELLS + chute;
     const verts = vertices(out);
     const footVerts = verts.filter(([, y]) => y === footWorldYOf(0));
     expect(footVerts.length).toBeGreaterThan(0);

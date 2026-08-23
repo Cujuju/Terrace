@@ -18,7 +18,7 @@
  * supplies the terrain oracle (`probeLipFootBand`) and guarantees determinism.
  */
 
-import type { ContourLoop } from '../../terrain/contours';
+import type { ContourLoop, ContourPoint } from '../../terrain/contours';
 import { CELL_WORLD_SIZE } from '../../config';
 
 /**
@@ -39,6 +39,50 @@ export const WATER_APRON_CREST_CELLS = 0.75;
  * chute beat a wall.
  */
 export const WATER_APRON_CHUTE_CELLS = 0.25;
+
+/**
+ * The steepest a falling sheet of water may be drawn, as world units DOWN per
+ * world unit OUT.
+ *
+ * WHY A SLOPE AND NOT A RUN (2026-08-22, owner: "when going from one band to
+ * the next, there needs to be no edges"). WATER_APRON_CHUTE_CELLS fixes the
+ * horizontal RUN of the descent, which was inherited from the ribbon code
+ * where a fall was one band and only ever one band. It is the wrong invariant:
+ * a fixed run means the taller the fall the steeper the sheet, so on a
+ * staircase that drops three bands at a time the chute has a quarter of a cell
+ * (a sixteenth of a world unit) to lose three quarters of a world unit — a
+ * twelve-to-one slope, which is a wall. Drawn from above a wall projects to a
+ * line, which is precisely the invisible-curtain failure the apron exists to
+ * replace, reintroduced through a constant nobody re-derived.
+ *
+ * THREE DOWN PER ONE OUT. Steep enough that the water plainly DROPS rather
+ * than ramping down a slope the terrain does not have — a terrace riser here
+ * is vertical, and a fall that reads as a hillside would be a different lie.
+ * Shallow enough that the sheet keeps a real horizontal footprint, so it is
+ * visible from overhead. The run it implies is never shorter than
+ * WATER_APRON_CHUTE_CELLS: a single-band step keeps exactly the descent it has
+ * now, and only taller falls stretch.
+ */
+export const WATER_APRON_MAX_FALL_SLOPE = 3;
+
+/**
+ * The longest horizontal run a chute may take, in CELLS, however far the water
+ * has to fall.
+ *
+ * The slope rule above is the right invariant only while the drop is a terrace
+ * step or two. Left unbounded it is the opposite failure: a stamped spire
+ * drops dozens of bands, and holding three-to-one down that would throw a
+ * skirt of water a dozen cells across the terrace below — water spread over
+ * ground the river never touches, which is the one thing the channel width is
+ * careful never to claim.
+ *
+ * ONE CELL, because the footprint is what the slope rule was really buying.
+ * A fall is legible from above once its sheet covers about the width of the
+ * channel pouring over it, and beyond that a taller cliff SHOULD read as
+ * steeper — real water down a tall face falls nearly straight. So the slope
+ * governs while the drop is small, and this governs once it is not.
+ */
+export const WATER_APRON_MAX_CHUTE_CELLS = 1;
 
 /**
  * Rows across the sheet (the sheet has ROWS + 1 rows including both edges).
@@ -62,25 +106,37 @@ export const WATER_LIP_PROBE_CELLS = 0.5;
  */
 export const MIN_LIP_RUN_VERTICES = 2;
 
-/** Outward XZ offset of row r from its lip vertex, in cells. */
-function rowOffsetCells(r: number): number {
-  return (
-    (r / WATER_APRON_ROWS) *
-    (WATER_APRON_CREST_CELLS + WATER_APRON_CHUTE_CELLS)
+/**
+ * The chute's horizontal run, in CELLS, for a sheet that has to lose
+ * `dropWorldY` world units of height.
+ *
+ * The run WATER_APRON_MAX_FALL_SLOPE asks for, clamped at both ends: never
+ * shorter than WATER_APRON_CHUTE_CELLS, so a one-band step descends exactly as
+ * it always did; never longer than WATER_APRON_MAX_CHUTE_CELLS, so a tall
+ * cliff stays a fall rather than becoming a skirt.
+ */
+function chuteRunCells(dropWorldY: number): number {
+  const slopeRunCells = Math.abs(dropWorldY) / WATER_APRON_MAX_FALL_SLOPE / CELL_WORLD_SIZE;
+  return Math.min(
+    WATER_APRON_MAX_CHUTE_CELLS,
+    Math.max(WATER_APRON_CHUTE_CELLS, slopeRunCells),
   );
 }
 
+/** Outward XZ offset of row r from its lip vertex, in cells. */
+function rowOffsetCells(r: number, chuteCells: number): number {
+  return (r / WATER_APRON_ROWS) * (WATER_APRON_CREST_CELLS + chuteCells);
+}
+
 /** Height of row r given crest height, foot height and this row's offset. */
-function rowWorldY(r: number, crestY: number, footY: number): number {
-  const o = rowOffsetCells(r);
+function rowWorldY(r: number, crestY: number, footY: number, chuteCells: number): number {
+  const o = rowOffsetCells(r, chuteCells);
   // On the crest the sheet holds the source band's level exactly.
   if (o <= WATER_APRON_CREST_CELLS) return crestY;
   // Through the chute, descend on a smoothstep (3s²−2s³), which is C1 at BOTH
   // ends — no silhouette crease where the chute leaves the crest or lands on
   // the foot. s=0 exactly at the crest's end, s=1 at the foot.
-  const s =
-    (o - WATER_APRON_CREST_CELLS) /
-    (WATER_APRON_CHUTE_CELLS || Number.EPSILON);
+  const s = (o - WATER_APRON_CREST_CELLS) / (chuteCells || Number.EPSILON);
   const t = s * s * (3 - 2 * s);
   return crestY + (footY - crestY) * t;
 }
@@ -106,6 +162,10 @@ function emitSheet(
   out: number[],
 ): void {
   const footY = footWorldYOf(footBand);
+  // The descent is sized by the drop it has to make, so a three-band fall gets
+  // three times the run of a one-band fall and both are drawn at the same
+  // slope (see WATER_APRON_MAX_FALL_SLOPE).
+  const chuteCells = chuteRunCells(crestWorldY - footY);
 
   // Rows are stored per lip vertex; row 0 is the loop vertex VERBATIM —
   // bit-identical to what the tread builder ends on, so no top seam.
@@ -127,9 +187,9 @@ function emitSheet(
         ys[idx] = crestWorldY;
         zs[idx] = p.z * CELL_WORLD_SIZE;
       } else {
-        const o = rowOffsetCells(r);
+        const o = rowOffsetCells(r, chuteCells);
         xs[idx] = (p.x + nx * o) * CELL_WORLD_SIZE;
-        ys[idx] = rowWorldY(r, crestWorldY, footY);
+        ys[idx] = rowWorldY(r, crestWorldY, footY, chuteCells);
         zs[idx] = (p.z + nz * o) * CELL_WORLD_SIZE;
       }
     }
@@ -153,6 +213,20 @@ function emitSheet(
       pushTri(xs, ys, zs, d, b, a, out);
     }
   }
+}
+
+/**
+ * Whether the ring segment p→q is a marching-tile BORDER CLOSING EDGE rather
+ * than real outline: both endpoints flagged as domain-border points
+ * (`ContourPoint.rect`, set by assembleLoops exactly on the tile rectangle)
+ * AND sharing the border's axis, since the closing path runs straight along
+ * one side of the rectangle. A genuine waterline edge between two border
+ * points would have to run ALONG the tile boundary, which the field rule in
+ * waterTread.ts forbids — outside a tile everything is forced under the
+ * threshold, so the outline always CROSSES a border, never follows it.
+ */
+function isTileBorderClosingEdge(p: ContourPoint, q: ContourPoint): boolean {
+  return p.rect !== 0 && q.rect !== 0 && (p.x === q.x || p.z === q.z);
 }
 
 /** Append one triangle (positions only, world units) to `out`. */
@@ -201,10 +275,43 @@ export function appendApronSurfaces(
     const nx = new Float64Array(n);
     const nz = new Float64Array(n);
     for (let i = 0; i < n; i++) {
+      // Central difference over the closed ring — EXCEPT across fake edges.
+      // A region spanning a marching-tile border arrives as one closed loop
+      // PER TILE, each closed by a straight segment running ALONG the border
+      // (assembleLoops clips every outline to its tile rectangle). That
+      // closing segment is INTERIOR WATER, not boundary: across it lies the
+      // same region's other half. MEASURED CONSEQUENCE of trusting it
+      // (stairpools, fall at cell (32,7)): the smoothed snout tip of the
+      // upper pool sits ON the border, its ring neighbours are the real
+      // outline on one side and the fake closing edge on the other, the
+      // tangent comes out pointing back INTO the water, and the lip probe
+      // therefore lands in the region's own last wet cell — the tip fails
+      // the lip test on BOTH half-loops at once, and the apron stops short
+      // on either side of it, leaving a V-shaped slit of visible lower
+      // water exactly at the fall. A segment joining two consecutive points
+      // that BOTH sit on their tile border and SHARE that border's axis is
+      // such a closing segment; it is excluded from the tangent, which then
+      // rides on the real outline alone.
+      const p = loop[i];
       const prev = loop[(i - 1 + n) % n];
       const next = loop[(i + 1) % n];
-      let tx = next.x - prev.x;
-      let tz = next.z - prev.z;
+      const prevFake = isTileBorderClosingEdge(p, prev);
+      const nextFake = isTileBorderClosingEdge(p, next);
+      // Both neighbours fake cannot happen for a real contour (an outline
+      // point has at least one real edge); if it ever did, keep the raw
+      // central difference rather than inventing a direction.
+      let tx: number;
+      let tz: number;
+      if (prevFake && !nextFake) {
+        tx = next.x - p.x;
+        tz = next.z - p.z;
+      } else if (nextFake && !prevFake) {
+        tx = p.x - prev.x;
+        tz = p.z - prev.z;
+      } else {
+        tx = next.x - prev.x;
+        tz = next.z - prev.z;
+      }
       const len = Math.hypot(tx, tz);
       if (len === 0) {
         tx = 1;
