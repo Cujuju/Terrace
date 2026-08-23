@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "rollback": "node scripts/rollback.ts",
-    "import-world": "node scripts/import-world.ts"
+    "import-world": "node scripts/import-world.ts",
+    "merge-world-history": "node scripts/merge-world-history.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.17.50",

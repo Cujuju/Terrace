@@ -173,6 +173,20 @@ pnpm --dir server import-world /path/to/some-world.db
 
 It copies; your original file is not touched.
 
+**Recovering history from an old backup.** Retention is a rolling window, so a
+backup taken last week holds restore points this week's play has since pruned —
+and the live world holds everything since. Neither is a superset. Make the
+union:
+
+```sh
+pnpm --dir server merge-world-history old-backup.db worlds/your-world.db --pin
+```
+
+It copies only the snapshots the target is missing, refuses two files that are
+not the same world, and never writes to the source. `--pin` exempts what it
+recovers from retention, which you almost always want — recovered points are old
+by definition, so without it the next write prunes them straight back out.
+
 **Back up (safe method — stop first).** The databases run in WAL mode, so copying
 them while the server is live can capture a torn state:
 
