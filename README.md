@@ -101,7 +101,7 @@ nothing is required to boot a world.
 | `PORT` | `2567` | Port the world server listens on. Compose maps the same number on the host, so host and container never disagree. Change it and you must update `PUBLIC_WS_URL` too. |
 | `WORLDS_DIR` | `/data/worlds` | Where your worlds live — **one SQLite file per world**, plus `.trash/` for archived ones and `.active` naming the one to load at boot. Must be under the mounted volume or it is lost on the next rebuild. |
 | `DB_PATH` | `/data/world.db` | The **legacy** single-world database, from before worlds were files. Copied into `WORLDS_DIR` on the next boot — copied, never moved — and then ignored forever. |
-| `WORLD_ADMIN_KEY` | `terrace-worlds` *(public!)* | Unlocks the in-game **Worlds** panel: create, load, rename, duplicate, archive. Separate from `ROLLBACK_KEY` because it has a bigger blast radius. Set your own, or `WORLD_ADMIN_KEY=` to turn it off. |
+| `WORLD_ADMIN_KEY` | `terrace` *(public!)* | Unlocks the in-game **Worlds** panel: create, load, rename, duplicate, archive. Separate from `ROLLBACK_KEY` because it has a bigger blast radius. Set your own, or `WORLD_ADMIN_KEY=` to turn it off. |
 | `WORLD_SWITCH_COUNTDOWN_S` | `10` | Seconds a world switch is announced for when somebody other than the operator is connected. Skipped when the operator is alone; `0` makes every switch immediate. |
 | `TICK_HZ` | `10` | Fixed simulation tick rate, 1–60. Rendering interpolates, so raising this mostly buys CPU load. |
 | `SNAPSHOT_INTERVAL_S` | `60` | How often a changed world is written to SQLite, 1–3600. An idle world writes nothing at all. |

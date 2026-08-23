@@ -63,6 +63,14 @@ export const MAX_WORLD_SWITCH_COUNTDOWN_S = 300;
 /**
  * The key world MANAGEMENT accepts when WORLD_ADMIN_KEY is not set.
  *
+ * THE SAME STRING AS DEFAULT_ROLLBACK_KEY, AND DELIBERATELY SO (owner, dev
+ * convenience, 2026-08-22). They remain two SEPARATE VARIABLES — an operator
+ * who wants to hand out rollback without handing out world management still
+ * sets them to different values — but the zero-config case is one word to
+ * type into two panels rather than two words to remember. Note the length
+ * floor below applies only to a key somebody CHOOSES: 'terrace' is 7
+ * characters, so these defaults could not be set explicitly.
+ *
  * A SECOND KEY, DISTINCT FROM ROLLBACK'S, because the two guard different
  * blast radii: a rollback rewinds the live world (and is itself undoable),
  * while world management can archive one. An operator may reasonably hand out
@@ -70,7 +78,7 @@ export const MAX_WORLD_SWITCH_COUNTDOWN_S = 300;
  * design §8 gives — nothing sensitive should be needed to boot a world — and
  * warned about loudly at boot for the reason the rollback default is.
  */
-export const DEFAULT_WORLD_ADMIN_KEY = 'terrace-worlds';
+export const DEFAULT_WORLD_ADMIN_KEY = 'terrace';
 
 /** Design §3.2: fixed ~10 Hz simulation tick. */
 export const DEFAULT_TICK_HZ = 10;
