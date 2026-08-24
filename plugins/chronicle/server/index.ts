@@ -27,7 +27,13 @@
 // pure functions of validated event data; the clock is summed fixed-dt ticks;
 // the host fans events out in load order. Same events, same saga.
 
-import { CHUNK_SIZE, DAY_LENGTH_SECONDS, weekdayOf } from '@terrace/shared';
+import {
+  CHUNK_SIZE,
+  DAY_LENGTH_SECONDS,
+  dayOfSimMillis,
+  weekdayOf,
+  worldAgeDays,
+} from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
@@ -105,14 +111,34 @@ export const GENESIS_TEXT = 'The world was young, and its history unwritten.';
 
 let entries: ChronicleEntry[] = [];
 /**
- * Accumulated simulated MILLISECONDS — this plugin's only clock, kept as an
- * integer on purpose: summing the float `dt` drifts (12 000 ticks of 0.1
- * accumulate measurably below 1 200 s), which would make day boundaries
- * engine- and history-sensitive. `Math.round(dt * 1000)` is exact for any
- * millisecond-representable tick rate, and integers add without error — the
- * same integer-determinism rule the terrain math lives under.
+ * The WORLD clock, mirrored — not a clock of this plugin's own.
+ *
+ * The world owns the only clock there is (WorldApi.simMillis) and, since
+ * 2026-08-23, that clock is an offset against real time, so it is the same
+ * number in every world alive. This mirror exists only because `write` and
+ * `alreadyToldToday` are called from paths that have no WorldApi in hand; it
+ * is refreshed on every tick and on world create, never accumulated.
  */
-let simMillis = 0;
+let worldSimMillis = 0;
+
+/**
+ * The world clock at the moment THIS SAGA's day 0 began — the number every
+ * heading counts from.
+ *
+ * Normally the world's own genesis. It is EARLIER than the world's genesis in
+ * exactly one case, and that case is this plugin's own history: until
+ * 2026-08-23 the chronicle kept the only persisted clock in the game, so a
+ * world saved before core had one carries a saga that knows it is three
+ * hundred days old onto a world that believes it was born at its next boot.
+ * Backdating this saga's day 0 by the difference is what keeps such a
+ * chronicle's headings running on from "Day 300" instead of restarting at
+ * "Day 1" underneath three hundred days of existing entries.
+ *
+ * Fixed ONCE at restore and never touched again, so the saga tracks the world
+ * clock exactly from then on rather than drifting from it or — as a `max()`
+ * would — freezing whenever the world clock is behind.
+ */
+let sagaGenesisMillis = 0;
 /** Tiers already chronicled as a world first. */
 let tierFirsts = new Set<number>();
 /** Monster kinds that have ever arrived (for "the first yeti"). */
@@ -124,6 +150,7 @@ let toldDay = -1;
 /** Restored-slice holders, applied in onWorldCreate (structures' seam). */
 let restored: {
   entries: ChronicleEntry[];
+  /** The saga's own AGE in millis, which is what the slice has always held. */
   simMillis: number;
   tierFirsts: number[];
   monsterKinds: string[];
@@ -157,23 +184,40 @@ function migrateDay(legacyDay: number): number {
 }
 
 /**
- * Simulated time this saga remembers that the WORLD clock does not.
- *
- * Almost always 0. It is non-zero for exactly one case, and that case is this
- * plugin's own history: until 2026-08-23 the chronicle kept the only persisted
- * clock in the game, so a world saved before core had one carries a saga that
- * knows it is three hundred days old onto a world clock that reads zero.
- * Without this the saga's headings would restart at Day 1 underneath three
- * hundred days of existing entries.
- *
- * Fixed ONCE at restore and never touched again, so the saga tracks the world
- * clock exactly from then on rather than drifting from it or — as a `max()`
- * would — freezing whenever the world clock is behind.
+ * How old this saga is, in milliseconds — the world clock minus this saga's
+ * day 0. This is the number the slice has always persisted under the name
+ * `simMillis`, and keeping it means slice v2 needs no migration.
  */
-let inheritedMillis = 0;
+function sagaAgeMillis(): number {
+  return Math.max(0, worldSimMillis - sagaGenesisMillis);
+}
 
+/**
+ * WHICH DAY OF THE SAGA it is — 0 for the world's first day.
+ *
+ * A DAY OF AGE, NOT A CALENDAR DAY, and since the world clock was anchored to
+ * real time those are two different numbers (shared/src/calendar.ts): the
+ * calendar day says which Monday it is and is shared by every world in
+ * existence; this one is what a reader means by "Day 57". The entries carry
+ * this one; the WEEKDAY is recovered on the client by adding `genesisDay`
+ * back on, which is why that offset goes out with every payload.
+ *
+ * Via `worldAgeDays` rather than dividing the age directly: it subtracts whole
+ * days, so this number and the calendar day turn over at the same instant and
+ * `genesisDay` below is a true constant rather than a value that wobbles by
+ * one whenever genesis falls mid-day.
+ */
 function currentDay(): number {
-  return Math.floor(simMillis / (CHRONICLE_SECONDS_PER_DAY * MILLISECONDS_PER_SECOND));
+  return worldAgeDays(worldSimMillis, sagaGenesisMillis);
+}
+
+/**
+ * The calendar day this saga's day 0 fell on — the offset a client adds to an
+ * entry's day to get the day the WEEKDAY comes from. Constant for the life of
+ * the world; see currentDay for why it is constant rather than nearly so.
+ */
+function genesisDay(): number {
+  return dayOfSimMillis(sagaGenesisMillis);
 }
 
 function placeOf(cell: EventCell): string {
@@ -212,7 +256,14 @@ function write(world: WorldApi, texts: readonly string[]): void {
   if (entries.length > CHRONICLE_MAX_ENTRIES) {
     entries = entries.slice(entries.length - CHRONICLE_MAX_ENTRIES);
   }
-  world.broadcast(CHRONICLE_APPEND_MESSAGE, { entries: packEntries(added) });
+  // `genesisDay` rides on the delta as well as on the join payload: it is one
+  // integer, and a client that somehow renders an append before its log (a
+  // reconnect race, a future partial-join path) would otherwise have to guess
+  // the weekday. See the protocol's own note.
+  world.broadcast(CHRONICLE_APPEND_MESSAGE, {
+    entries: packEntries(added),
+    genesisDay: genesisDay(),
+  });
 }
 
 // ── Event handlers ───────────────────────────────────────────────────────────
@@ -307,7 +358,10 @@ const persistence: PersistenceSlice = {
   save(): unknown {
     return {
       v: CHRONICLE_SLICE_VERSION,
-      simMillis,
+      // The saga's AGE, which is what this field has always meant and why the
+      // slice version does not move: the world clock it is measured against
+      // changed, the number stored here did not.
+      simMillis: sagaAgeMillis(),
       entries: packEntries(entries),
       tierFirsts: [...tierFirsts],
       monsterKinds: [...monsterKindsSeen],
@@ -364,21 +418,31 @@ export const plugin: TerracePlugin = {
   name: CHRONICLE_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
+    worldSimMillis = world.simMillis;
     if (restored !== null) {
       entries = restored.entries;
-      simMillis = restored.simMillis;
       tierFirsts = new Set(restored.tierFirsts);
       monsterKindsSeen = new Set(restored.monsterKinds);
       toldDay = restored.toldDay;
       toldToday = new Set(restored.toldToday);
-      // See inheritedMillis: what this saga remembers beyond the world clock.
-      // `world.simMillis` is the restored world's age, so on any world saved
-      // since core grew a clock the two agree and this is 0.
-      inheritedMillis = Math.max(0, restored.simMillis - world.simMillis);
-      simMillis = world.simMillis + inheritedMillis;
+      // See sagaGenesisMillis: a saga that remembers more days than the world
+      // does backdates its own day 0 by the difference. On any world saved
+      // since core grew a clock the two agree and this is the world's genesis
+      // exactly.
+      //
+      // NOT CLAMPED AT ZERO, deliberately: on a world whose clock was never
+      // anchored to real time — a synthetic one, i.e. every test world — the
+      // clock starts at 0 and a saga three days old genuinely began three days
+      // BEFORE the calendar's day 0. Clamping would silently discard exactly
+      // the backdating this line exists to perform. Every consumer downstream
+      // is total over negative days (weekdayIndexOf says so explicitly), and
+      // no world anchored to real time can reach here with a negative.
+      sagaGenesisMillis = Math.min(world.genesisMillis, world.simMillis - restored.simMillis);
       restored = null;
       return;
     }
+    // A world with no saga to restore starts one at the world's own birthday.
+    sagaGenesisMillis = world.genesisMillis;
     // A never-persisted world opens its own saga, so the scroll is never
     // blank and the whole write → broadcast path is exercised from boot.
     write(world, [GENESIS_TEXT]);
@@ -386,7 +450,7 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, _dt: number): void {
     // THE WORLD OWNS THE CLOCK NOW (2026-08-23) — this plugin only follows it.
-    simMillis = world.simMillis + inheritedMillis;
+    worldSimMillis = world.simMillis;
   },
 
   onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
@@ -413,7 +477,10 @@ export const plugin: TerracePlugin = {
   onPlayerJoin(world: WorldApi, player: Player): void {
     // The full scroll, to the joiner alone. Entries carry no coordinates, so
     // no visibility filter applies (protocol.ts).
-    world.sendTo(player.id, CHRONICLE_LOG_MESSAGE, { entries: packEntries(entries) });
+    world.sendTo(player.id, CHRONICLE_LOG_MESSAGE, {
+      entries: packEntries(entries),
+      genesisDay: genesisDay(),
+    });
   },
 
   persistence,
@@ -426,16 +493,16 @@ export function chronicleEntries(): readonly ChronicleEntry[] {
 }
 
 export function chronicleSimSeconds(): number {
-  return simMillis / MILLISECONDS_PER_SECOND;
+  return sagaAgeMillis() / MILLISECONDS_PER_SECOND;
 }
 
 export function resetChronicleState(): void {
   entries = [];
-  simMillis = 0;
+  worldSimMillis = 0;
+  sagaGenesisMillis = 0;
   tierFirsts = new Set();
   monsterKindsSeen = new Set();
   toldToday = new Set();
   toldDay = -1;
-  inheritedMillis = 0;
   restored = null;
 }

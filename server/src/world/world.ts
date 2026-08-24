@@ -25,6 +25,7 @@ import {
   MAX_STEP,
   MIN_HEIGHT,
   SEA_LEVEL,
+  simMillisAtRealTime,
   unlockChunk,
   type CellDiff,
   type ChunkPayload,
@@ -1174,6 +1175,68 @@ export class World {
   simMillis = 0;
 
   /**
+   * The world clock at this world's GENESIS, or null on a world that has never
+   * been anchored to real time.
+   *
+   * WHAT IT IS FOR. Since the clock became a function of real time
+   * (shared/src/calendar.ts, WORLD_EPOCH_REAL_MILLIS) `simMillis` is a fact
+   * about the universe rather than about this world: every world alive right
+   * now reads the same number. The one thing it can no longer answer is HOW OLD
+   * THIS WORLD IS, which is the number a saga heading counts ("Day 57") and the
+   * only number a player has ever been shown. That is what this stamp restores:
+   * age is `simMillis - genesisMillis`, and `worldAgeDays` turns it into days.
+   *
+   * SNAPSHOT STATE, and the most permanent kind there is — a world's birthday
+   * never changes, so unlike the clock it is written once and read back
+   * forever. A snapshot that predates it carries the world's AGE in its
+   * `sim_millis` column instead, which `anchorClockToRealTime` converts.
+   *
+   * NULL, NOT ZERO, while unanchored: zero is a legitimate genesis (a world
+   * born at the epoch), so it cannot double as "unknown". A world that is never
+   * anchored — every test world — reports genesis 0 through the getter below,
+   * which makes its age equal to its clock and reproduces exactly the
+   * tick-counting behaviour the clock had before it met real time.
+   */
+  private genesisMillisValue: number | null = null;
+
+  /**
+   * When this world began, on the world clock. Zero on an unanchored world:
+   * see the field above.
+   */
+  get genesisMillis(): number {
+    return this.genesisMillisValue ?? 0;
+  }
+
+  /**
+   * Sets the clock to what real time says it is, and stamps the world's
+   * genesis if it does not have one yet.
+   *
+   * CALLED ONCE PER SESSION, at the boot seam in session.ts, and never during
+   * a tick. That division is the whole design: real time decides where the
+   * clock STARTS, `advanceClock` carries it forward from there, so the sim
+   * loop stays integer-only and free of any dependency on the wall clock (the
+   * determinism rule in CLAUDE.md), while a restart still lands the world at
+   * the hour and weekday real time says it should be. The cost, stated: a
+   * process whose sim stalls or is suspended runs behind real time until its
+   * next boot, and nothing corrects that mid-session.
+   *
+   * THE GENESIS CASES, all three handled by one subtraction:
+   *   - a brand-new world has no accumulated clock, so genesis is now;
+   *   - a snapshot written before this change stored its AGE in `simMillis`,
+   *     so genesis is now minus that age — which keeps its saga's day
+   *     numbering continuous across the upgrade instead of restarting it;
+   *   - a snapshot written since carries its own genesis, and nothing here
+   *     touches it.
+   */
+  anchorClockToRealTime(realMillis: number = Date.now()): void {
+    const accumulatedAge = this.simMillis;
+    this.simMillis = simMillisAtRealTime(realMillis);
+    if (this.genesisMillisValue === null) {
+      this.genesisMillisValue = Math.max(0, this.simMillis - accumulatedAge);
+    }
+  }
+
+  /**
    * What this world is CALLED — minted once at genesis by world-name.ts and
    * then persisted with the heightmap, so every restart and every player sees
    * the same name.
@@ -1474,6 +1537,10 @@ export class World {
     // A snapshot written before the clock existed has none; such a world simply
     // starts its calendar now, which costs at most one extra Monday.
     simMillis = 0,
+    // Null on any snapshot written before the world clock was anchored to real
+    // time: `anchorClockToRealTime` reconstructs it from `simMillis`, which on
+    // such a snapshot is the world's age. See genesisMillisValue.
+    genesisMillis: number | null = null,
   ): World {
     const map = createHeightmap(size);
     if (cells.length !== map.cells.length) {
@@ -1500,6 +1567,11 @@ export class World {
       mintedName ?? stored,
       Number.isInteger(simMillis) && simMillis >= 0 ? simMillis : 0,
     );
+    // Same defensive parse as the clock above: a corrupt or hand-edited column
+    // leaves the world unanchored rather than dated to a nonsense birthday.
+    if (genesisMillis !== null && Number.isInteger(genesisMillis) && genesisMillis >= 0) {
+      world.genesisMillisValue = genesisMillis;
+    }
 
     for (const [token, tokenMask] of tokenMasks) {
       if (tokenMask.length !== expectedMask.length) continue; // see doc comment: degrade, don't throw

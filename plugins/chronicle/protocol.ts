@@ -20,10 +20,37 @@ export const CHRONICLE_LOG_MESSAGE = 'log';
 /** Additive delta: one or more entries just written. */
 export const CHRONICLE_APPEND_MESSAGE = 'append';
 
-/** One saga line, stamped with the world-day it was written on. */
+/**
+ * One saga line, stamped with the day OF THE WORLD'S LIFE it was written on —
+ * 0 for the world's first day, which is what a heading renders as "Day 1".
+ *
+ * NOT THE CALENDAR DAY, and since the world clock was anchored to real time
+ * (shared/src/calendar.ts) those are two different numbers: the calendar day
+ * says which Monday it is and is shared by every world in existence, this one
+ * says how old this world was. The WEEKDAY still has to come from the calendar
+ * day, so every payload carrying entries also carries `genesisDay` — add it to
+ * an entry's `day` and you have the calendar day back.
+ */
 export interface ChronicleEntry {
   readonly day: number;
   readonly text: string;
+}
+
+/**
+ * Parses the `genesisDay` an entry-bearing payload carries: the calendar day
+ * this world's day 0 fell on. Null when absent or malformed, which a caller
+ * reads as "keep whatever offset I already had" rather than as an error —
+ * losing the weekday is not worth dropping a page of history over.
+ *
+ * ANY INTEGER, INCLUDING A NEGATIVE ONE, unlike an entry's own day: a saga can
+ * be older than the clock it now runs on (see the server's sagaGenesisMillis),
+ * and `weekdayOf` is total over negative days by construction. Rejecting the
+ * sign here would throw away the offset in precisely the case it corrects for.
+ */
+export function parseGenesisDay(payload: unknown): number | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const day = (payload as { genesisDay?: unknown }).genesisDay;
+  return Number.isInteger(day) ? (day as number) : null;
 }
 
 /**

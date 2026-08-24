@@ -118,3 +118,73 @@ export function weekdayOf(day: number): Weekday {
 export function isSettlingDay(day: number): boolean {
   return weekdayIndexOf(day) === SETTLING_WEEKDAY;
 }
+
+// ── The world clock against real time ────────────────────────────────────────
+
+/**
+ * THE INSTANT WORLD TIME BEGAN, as a real-world Unix timestamp in milliseconds.
+ *
+ * WHY THE WORLD CLOCK IS ANCHORED TO REAL TIME (owner, 2026-08-23): "we should
+ * base the game world clock off a specific offset against real world time so
+ * every server iteration will always show a predictable time and schedule."
+ * Before this the clock counted ticks from each world's own genesis, so what
+ * time it was in a world depended on how long that particular process had been
+ * up — two servers were never in the same hour, a restart hid its own downtime,
+ * and nobody could say when the next Monday would fall without asking the
+ * server. Anchored here, world time is a pure function of the wall clock: every
+ * world, on every host, on every restart, agrees on the hour and the weekday,
+ * and an operator can work out when settlers land from a watch.
+ *
+ * MONDAY 2026-01-05T00:00:00Z, chosen for two properties and no others:
+ *   - It is a real MONDAY, so absolute day 0 is a Monday and the calendar above
+ *     still needs no epoch offset — `weekdayOf(0)` is 'Monday' whether that 0
+ *     came from a world's genesis or from this epoch.
+ *   - It is UTC midnight, so a world day boundary falls on every real 24-minute
+ *     mark from midnight, rather than at some arbitrary offset within the hour.
+ * It is deliberately in the past relative to every world this build can open,
+ * so no real server ever sees the negative clamp below.
+ *
+ * A WEEK IS NOT A REAL WEEK, and that is not a defect: a world day is 24
+ * minutes, so sixty of them fit in a real day and the world's Monday comes
+ * round every 2 h 48 min. What the epoch buys is PREDICTABILITY — the same
+ * instant is the same world moment everywhere — not alignment with the real
+ * weekday, which a 24-minute day cannot have.
+ */
+export const WORLD_EPOCH_REAL_MILLIS = Date.UTC(2026, 0, 5);
+
+/**
+ * What the world clock reads at a given real-world instant.
+ *
+ * CLAMPED AT ZERO rather than allowed to go negative: a host whose system
+ * clock is set before the epoch is misconfigured, and a negative clock would
+ * put every day boundary and every weekday in the world one step out (see
+ * weekdayIndexOf's note on what a negative day does). Freezing such a host at
+ * the world's first moment is wrong in an obvious, reportable way instead.
+ *
+ * FLOORED, so the clock stays an integer even if a caller hands over a
+ * fractional timestamp — every consumer of `simMillis` assumes integer
+ * milliseconds (see the module header on drift).
+ */
+export function simMillisAtRealTime(realMillis: number): number {
+  if (!Number.isFinite(realMillis)) return 0;
+  return Math.max(0, Math.floor(realMillis) - WORLD_EPOCH_REAL_MILLIS);
+}
+
+/**
+ * How many days old a world is — the number a saga heading counts, as opposed
+ * to `dayOfSimMillis`, which is the number the WEEKDAY comes from.
+ *
+ * THE TWO ARE DIFFERENT NUMBERS SINCE THE CLOCK MOVED TO REAL TIME (2026-08-23,
+ * owner's choice): the absolute day says which Monday it is and is shared by
+ * every world in existence; the age says how much of that a particular world
+ * has lived through, and is what a reader means by "Day 57". Deriving the age
+ * by subtracting whole DAYS rather than milliseconds is deliberate — it keeps
+ * the two numbers changing at the same instant, so a heading never flips to
+ * "Day 58" in the middle of a Monday.
+ *
+ * Never negative: a world cannot be older than it is, and a snapshot whose
+ * genesis somehow post-dates its clock is clamped rather than trusted.
+ */
+export function worldAgeDays(simMillis: number, genesisMillis: number): number {
+  return Math.max(0, dayOfSimMillis(simMillis) - dayOfSimMillis(genesisMillis));
+}

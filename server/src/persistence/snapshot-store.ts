@@ -77,6 +77,17 @@ export interface SnapshotInput {
    */
   readonly simMillis?: number;
   /**
+   * The world clock at this world's GENESIS, in milliseconds
+   * (World.genesisMillis) — the world's birthday, not its age.
+   *
+   * OPTIONAL and additive like `simMillis` above, and NULLABLE unlike it:
+   * since the clock became a function of real time, 0 is a legitimate genesis
+   * (a world born at the epoch) and so cannot also mean "unknown". An omitted
+   * genesis stores NULL, and World.anchorClockToRealTime reconstructs one from
+   * the row's `simMillis`, which on any pre-genesis row is the world's age.
+   */
+  readonly genesisMillis?: number;
+  /**
    * A top-down picture of this world for the worlds panel — see
    * persistence/thumbnail.ts. OPTIONAL and additive, following tokenMasks:
    * a caller that does not produce one (every existing test) simply omits it,
@@ -85,7 +96,11 @@ export interface SnapshotInput {
   readonly thumbnail?: Uint8Array;
 }
 
-export interface WorldSnapshot extends Omit<SnapshotInput, 'name' | 'tokenMasks'> {
+// `genesisMillis` is omitted and redeclared below for the same reason `name`
+// is: the writer's field is optional (`number | undefined`), the reader's is
+// `number | null`, and only a reader can meet a row that predates the column.
+export interface WorldSnapshot
+  extends Omit<SnapshotInput, 'name' | 'tokenMasks' | 'genesisMillis'> {
   readonly id: number;
   readonly createdAt: number;
   /**
@@ -104,6 +119,15 @@ export interface WorldSnapshot extends Omit<SnapshotInput, 'name' | 'tokenMasks'
   readonly tokenMasks: ReadonlyMap<string, Uint8Array>;
   /** The world clock this snapshot recorded, ms; 0 for a pre-clock row. */
   readonly simMillis: number;
+  /**
+   * The genesis this snapshot recorded, ms, or null for a row written before
+   * the world clock was anchored to real time. NULL SURVIVES TO THE READER
+   * rather than being defaulted here, because only World.anchorClockToRealTime
+   * has the second half of the answer (the row's `simMillis`, i.e. the age) —
+   * defaulting it to 0 here would silently date every legacy world to the
+   * epoch and restart its saga's day numbering.
+   */
+  readonly genesisMillis: number | null;
 }
 
 interface SnapshotRow {
@@ -116,6 +140,8 @@ interface SnapshotRow {
   pinned: number;
   /** World clock at write time, ms. 0 in a row written before the column. */
   sim_millis: number;
+  /** World clock at genesis, ms. NULL in a row written before the column. */
+  genesis_millis: number | null;
   heightmap: Uint8Array;
   mask: Uint8Array;
 }
@@ -195,6 +221,21 @@ const THUMBNAIL_COLUMN = 'thumbnail';
  */
 const SIM_MILLIS_COLUMN = 'sim_millis';
 
+/**
+ * The world clock at the world's GENESIS, in milliseconds
+ * (World.genesisMillis, 2026-08-23) — its birthday, written once and read back
+ * forever.
+ *
+ * ADDITIVE exactly like sim_millis above, and SNAPSHOT_SCHEMA_VERSION does not
+ * move for the same reasons. NULLABLE, unlike sim_millis, and that is the one
+ * real difference: a clock's "absent" and "zero" mean the same thing, but a
+ * genesis's do not — since the clock was anchored to real time, 0 is a world
+ * born at WORLD_EPOCH_REAL_MILLIS, so NULL is what "written before this column
+ * existed" has to say. World.anchorClockToRealTime turns that NULL into a real
+ * birthday using the row's sim_millis, which on such a row is the world's age.
+ */
+const GENESIS_MILLIS_COLUMN = 'genesis_millis';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
 // per (snapshot, token) — persisted BESIDE the union `mask` on `snapshots`,
@@ -237,6 +278,7 @@ const SCHEMA_DDL = `
     ${PINNED_COLUMN}     INTEGER NOT NULL DEFAULT 0,
     ${THUMBNAIL_COLUMN}  BLOB,
     ${SIM_MILLIS_COLUMN} INTEGER NOT NULL DEFAULT 0,
+    ${GENESIS_MILLIS_COLUMN} INTEGER,
     heightmap      BLOB    NOT NULL,
     mask           BLOB    NOT NULL
   );
@@ -313,8 +355,8 @@ export class SnapshotStore {
     this.insertSnapshot = db.prepare(
       `INSERT INTO snapshots
          (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
-          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -391,6 +433,7 @@ export class SnapshotStore {
     addColumnIfMissing(db, 'snapshots', PINNED_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
     addColumnIfMissing(db, 'snapshots', SIM_MILLIS_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'snapshots', GENESIS_MILLIS_COLUMN, 'INTEGER');
     return new SnapshotStore(db, retention);
   }
 
@@ -420,6 +463,9 @@ export class SnapshotStore {
         // a bound value, and a caller that produced no thumbnail means NULL.
         input.thumbnail === undefined ? null : Buffer.copyBytesFrom(input.thumbnail),
         input.simMillis ?? 0,
+        // `?? null` for the same better-sqlite3 reason as the thumbnail above;
+        // here NULL is also the meaningful value — see GENESIS_MILLIS_COLUMN.
+        input.genesisMillis ?? null,
       );
       const snapshotId = Number(result.lastInsertRowid);
       for (const [plugin, data] of entries) {
@@ -540,6 +586,9 @@ export class SnapshotStore {
       name: row.world_name ?? null,
       // `?? 0` covers a row written before the column existed: an unaged world.
       simMillis: row.sim_millis ?? 0,
+      // `?? null` covers a row written before the column existed; unlike the
+      // clock it is NOT defaulted to 0 — see WorldSnapshot.genesisMillis.
+      genesisMillis: row.genesis_millis ?? null,
       tokenMasks,
       cells,
       mask,
