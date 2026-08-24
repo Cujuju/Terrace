@@ -59,17 +59,19 @@ import {
   chunkIndexOfCell,
   computeRiverNetwork,
   quantizeToBand,
+  SEA_LEVEL,
   type RiverNetwork,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { createDrawnGround, drawnBandWorldY } from '../terrain/drawnGround.ts';
 import { WATER_COLOR } from './water.ts';
 import {
   TILE_LATTICE_OFFSETS,
   appendRegionSurface,
   type WaterRegion,
 } from './water/waterTread.ts';
-import { appendApronSurfaces } from './water/waterApron.ts';
+import { appendCurtains } from './water/waterCurtain.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
 
@@ -112,6 +114,19 @@ const RIVER_RECOMPUTE_INTERVAL_MS = 500;
  * silently stopped holding.
  */
 const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
+
+/**
+ * World Y of the sea's own surface — the floor no waterfall curtain may reach
+ * below.
+ *
+ * The SAME expression render/water.ts:293 positions the sea plane with, and
+ * for the same reason it is lifted: band-0 terrain renders exactly at
+ * SEA_LEVEL and WATER_SURFACE_LIFT is what keeps the plane off it. A curtain
+ * that ran past this would be drawing a waterfall UNDER the ocean, visible as
+ * a sheet hanging in the water column. It stops here instead and the sea takes
+ * over.
+ */
+const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
 /**
  * Translucency of ALL water in a network.
@@ -804,22 +819,39 @@ export function createRiverRig(
    *   3. March, smooth and triangulate each region through the terrain's own
    *      pipeline (water/waterTread.ts) — the treatment lakes already had, and
    *      the one the owner stopped complaining about.
-   *   4. Pour each region over its downstream lips with an APRON
-   *      (water/waterApron.ts) whose top row IS that region's own boundary
-   *      vertices, so the only remaining discontinuity — the vertical face
-   *      between two bands — is covered by a sheet that cannot have a seam at
-   *      its top edge, and that has a horizontal footprint, so it is visible
-   *      from above. (A strictly vertical curtain was measured invisible: 17
-   *      of them present in the `stairpools` mesh, not one of them seen.)
+   *   4. Pour each region over its downstream lips with CURTAINS
+   *      (water/waterCurtain.ts) cut from that region's OWN boundary loops —
+   *      the arcs the tread already returned — extruded down one band at a
+   *      time and re-seated onto each level's own contour, exactly as
+   *      capEmission.ts stacks one skirt per level. Nothing here models a
+   *      surface beside the terrain: every water vertex, tread and curtain
+   *      alike, is a number the terrain's own contour pipeline produced. That
+   *      is the whole point of the change (docs/plans/water-painted-on-bands.md)
+   *      — the apron this replaced derived its own heights from the cell
+   *      lattice and 11,340 of 84,073 vertices floated a full band.
    */
   const rebuild = (mirror: TerrainMirror): void => {
     const network = computeRiverNetwork(mirror.map, {
       isActive: (x, y) => mirror.received.has(chunkIndexOfCell(mirror.map.size, x, y)),
     });
 
-    /** World Y of a rendered terrace band, water lift included. */
+    /**
+     * World Y of a water surface standing on a rendered terrace band, water
+     * lift included.
+     *
+     * The band's height comes from `drawnBandWorldY` — the terrain's own rule
+     * — rather than being recomputed as `band * BAND_HEIGHT *
+     * HEIGHT_WORLD_SCALE` here. Numerically identical today (BAND_WORLD_HEIGHT
+     * is defined as that product, config.ts:133), and that is the point: two
+     * copies of one rule that happen to agree is exactly the arrangement that
+     * let the water and the rock drift apart in the first place.
+     *
+     * `seabed: false` because a water TREAD rests on a band the terrain draws
+     * as dry land — it is the water, not the seabed, that is at this height.
+     * The curtain makes the opposite choice for its descent, and says why.
+     */
     const bandWorldY = (band: number): number =>
-      band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
+      drawnBandWorldY(band, false) + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
     // PASS ONE: the surface band of every wet cell in the whole network,
     // before a single triangle is built. An outline can only be marched once
@@ -888,51 +920,19 @@ export function createRiverRig(
     };
 
     const triangles: number[] = [];
+    // ONE ORACLE PER REBUILD, and it must not outlive this call: it memoises
+    // marches of the terrain as it stands right now, so a terrain edit
+    // invalidates every entry (drawnGround.ts's cache note).
+    const ground = createDrawnGround(mirror);
     for (const region of regions.values()) {
       const surfaceY = bandWorldY(region.surfaceBand);
       const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
-      appendApronSurfaces(
-        loops,
-        surfaceY,
-        bandWorldY,
-        // Contour coordinates are in CELLS, and a cell's own coordinate is its
-        // centre, so the cell a probe point lands in is the nearest integer.
-        // IS THERE LOWER WATER AROUND THIS POINT — the question a fall
-        // actually turns on. A contour point sits on a cell BOUNDARY, so the
-        // water it is about to pour onto can be in any of the cells that
-        // boundary touches; asking in one direction only was what left the
-        // `fork` fixture with no falls at all. The HIGHEST such band wins, so
-        // the fall drops one terrace onto water that is really there and the
-        // region it lands on carries the cascade on down.
-        //
-        // An apron pours onto WATER BELOW, never onto dry ground: where there
-        // is none, the region simply ends on the terrain's own contour, which
-        // is the approved lake-rim behaviour.
-        (probeX, probeZ) => {
-          const atX = Math.round(probeX);
-          const atZ = Math.round(probeZ);
-          let best: number | null = null;
-          for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const band = waterBandAt(atX + dx, atZ + dz);
-              if (band === null || band >= region.surfaceBand) continue;
-              if (best === null || band > best) best = band;
-            }
-          }
-          return best;
-        },
-        // The DRAWN ground under a point of the fall, so the sheet steps down
-        // the terraces instead of cutting a flat plane through them.
-        // Band-quantised and lifted exactly as the water surfaces are, so
-        // water resting on a tread sits level with the water already on it.
-        (groundX, groundZ) => {
-          const size = mirror.map.size;
-          const gx = Math.min(size - 1, Math.max(0, Math.round(groundX)));
-          const gz = Math.min(size - 1, Math.max(0, Math.round(groundZ)));
-          return quantizeToBandWorldY(mirror, gx, gz) + RIVER_SURFACE_LIFT_WORLD_UNITS;
-        },
-        triangles,
-      );
+      // The curtain asks the terrain where the ground is; it is not told, and
+      // it is given no probe of ours to guess with. The apron needed two
+      // callbacks here — a lower-water probe and a ground-height probe, both
+      // re-deriving from the cell lattice — and those two derivations are the
+      // defect this change deletes.
+      appendCurtains(ground, loops, region.surfaceBand, SEA_SURFACE_WORLD_Y, triangles);
     }
 
     waterMesh.geometry.dispose();
