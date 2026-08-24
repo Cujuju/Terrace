@@ -24,20 +24,24 @@
 // geometry, and for the curve's shape and constants.
 
 import {
+  Box3,
+  BufferAttribute,
+  BufferGeometry,
   DataTexture,
   DoubleSide,
   LinearFilter,
   Mesh,
   MeshStandardMaterial,
-  PlaneGeometry,
   RedFormat,
+  Sphere,
   UnsignedByteType,
+  Vector3,
   type Object3D,
 } from 'three';
 import {
+  CHUNK_SIZE,
   SEA_LEVEL,
-  WORLD_UNIT_CELLS,
-  cellsAcross,
+  chunksPerEdge,
 } from '@terrace/shared';
 import {
   CELL_WORLD_SIZE,
@@ -76,25 +80,58 @@ const WATER_ROUGHNESS = 0.9;
 const WATER_METALNESS = 0;
 
 /**
- * Cells of open ocean drawn beyond the world's edge. Purely cosmetic: it stops
- * the sea ending in a visible straight edge when the camera looks outward past
- * a small revealed area.
+ * THE SEA IS DRAWN ONLY OVER REVEALED CHUNKS (owner, 2026-08-24: "I'd like to
+ * eliminate both of those. The user experience with them is poor").
  *
- * 256 WORLD UNITS of ocean — half a default world's edge, which is what makes
- * it read as open sea rather than as a rim — counted in cells because that is
- * what the span arithmetic below works in. Stated in world units so the
- * 2026-08-21 re-sample could not quietly pull the horizon in to a quarter of
- * the distance it was drawn at.
+ * WHAT IT REPLACES, and the two artefacts that were one bug. The sea used to
+ * be a single quad spanning the whole world plus a 256-world-unit ring of
+ * cosmetic open ocean on every side — 1024 units across on a default world,
+ * against a revealed area that starts at a few chunks. Two square outlines
+ * came out of that, and the owner could read neither as playable ground:
+ *
+ *   1. the quad's own silhouette, an ocean four times the world's area with
+ *      nothing in it, which is what the world looked like from any camera
+ *      pulled back far enough to see the revealed island; and
+ *   2. a second, tonal square INSIDE that silhouette, which read as another
+ *      surface entirely. MEASURED, not inferred (headless client, 2026-08-24):
+ *      hiding this one mesh removes BOTH squares, so the inner one is not a
+ *      second object; and flat-filling the depth-alpha texture darkens that
+ *      region alone, so it is this shader's own out-of-world sampling. The
+ *      depth-alpha and specular-factor samples below are `worldCellXZ /
+ *      worldSizeCells`, so every fragment of the margin ring sampled outside
+ *      [0, 1] and got border texels smeared over it by ClampToEdgeWrapping —
+ *      an alpha nobody chose, painted over four times the world's area. (The
+ *      exact reason the step landed on one corner region rather than a full
+ *      nine-patch was not chased down; it stops existing below.)
+ *
+ * Clipping the surface to the RECEIVED-CHUNK SET removes both at once, and
+ * removes the second one structurally rather than by tuning: no fragment of
+ * the sea exists outside the world any more, so no sample can leave [0, 1] and
+ * there is no clamp region to see the edge of. What is left is a sea exactly
+ * coextensive with the ground the player actually has — the same statement the
+ * frontier mist (render/frontierFog.ts) already makes, and the mist stands at
+ * that boundary by construction (its base row sits below min(local terrain,
+ * sea level)), so the surface's cut edge is veiled where it ends.
+ *
+ * ONE QUAD PER RECEIVED CHUNK, spanning exactly the ground that chunk's
+ * terrain mesh draws — the lattice of cell CENTRES, [x0, x0 + CHUNK_SIZE] in
+ * cells (terrain/vertexGrid.ts's "KNOWN, ACCEPTED" note) — so sea and terrain
+ * tile the same plane with no gap or overlap at any chunk seam.
+ *
+ * STILL ONE DRAW CALL AND STILL NO PER-TICK GEOMETRY. Every quad goes into one
+ * BufferGeometry, rebuilt only by `sync` — i.e. on join and on chunk unlock,
+ * the same two events frontierFog.sync answers to, never on a sculpt. Q3's
+ * "water is derived, never simulated" is untouched: this changes WHERE the
+ * surface is drawn, not what decides it.
  */
-const WATER_MARGIN_CELLS = cellsAcross(256);
+const VERTICES_PER_CHUNK_QUAD = 4;
+/** Two triangles. */
+const INDICES_PER_CHUNK_QUAD = 6;
 
-/** Quarter turn: PlaneGeometry is built in XY, and the sea lies in XZ. */
-const PLANE_TO_GROUND_ROTATION_X = -Math.PI / 2;
 
 export interface Water {
   /**
-   * Re-sizes and re-centres the sea once the world's size is known, and
-   * reallocates the depth-alpha texture (below) for the new size — always,
+   * Reallocates the depth-alpha texture (below) for a newly known world size — always,
    * even when the size is unchanged: a rejoin resends every chunk this
    * client has unlocked in the new JoinSnapshotMessage, so the `refresh`
    * call world.ts makes right after with that snapshot's dirty set
@@ -102,8 +139,22 @@ export interface Water {
    * already rebuilds the whole mirror/mesh set on every snapshot regardless
    * of a size change (world.ts) — one fewer "did it actually change"
    * branch to keep in sync with that contract.
+   *
+   * It no longer sizes the surface: WHERE the sea is drawn is the received-set
+   * question `sync` answers, and a world size with no chunks received yet has
+   * no sea at all.
    */
   setWorldSize(worldSize: number): void;
+  /**
+   * Rebuilds the surface over exactly the chunks the mirror has received.
+   *
+   * Called wherever `frontierFog.sync` is (world.ts: the join snapshot and a
+   * chunk unlock) and for the same reason — both layers are facts about the
+   * RECEIVED SET and nothing else, so they are correct exactly when they are
+   * refreshed together. Never called per sculpt: an edit changes heights,
+   * which the depth texture handles through `refresh`, not which chunks exist.
+   */
+  sync(mirror: TerrainMirror): void;
   /**
    * Rewrites the depth-alpha texels for exactly the given dirty chunks —
    * the same set `terrainMeshes.update` and `frontierFog.refresh` are
@@ -286,23 +337,64 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
   });
   makeDepthAware(material, depthAlphaTexture, specularFactorTexture, worldSizeUniform);
 
-  const mesh = new Mesh(new PlaneGeometry(1, 1), material);
-  mesh.rotation.x = PLANE_TO_GROUND_ROTATION_X;
+  // Built in WORLD space rather than as a rotated local plane: a quad's XZ
+  // corners come straight from its chunk's cell coordinates, and the shader's
+  // own sample is world-space too (see makeDepthAware), so there is no local
+  // frame left for either to disagree about.
+  const geometry = new BufferGeometry();
+  const mesh = new Mesh(geometry, material);
+  // Nothing to draw until the first `sync`; a mesh with an empty draw range
+  // still costs a frustum test, and this is the state between construction and
+  // the join snapshot.
+  mesh.visible = false;
+  parent.add(mesh);
   // Lifted off the SEA_LEVEL plane on purpose — band-0 terrain renders exactly
   // there and would z-fight. See WATER_SURFACE_LIFT for the full reasoning.
-  mesh.position.y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
-  parent.add(mesh);
+  const surfaceY = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
+
+  /**
+   * Quads the current buffers can hold. Grown by doubling and never shrunk,
+   * so revealing territory reallocates O(log chunks) times over a session
+   * rather than once per unlock.
+   */
+  let quadCapacity = 0;
+  let positions = new Float32Array(0);
+  let normals = new Float32Array(0);
+  let indices = new Uint32Array(0);
+
+  const growTo = (quads: number): void => {
+    if (quads <= quadCapacity) return;
+    let capacity = quadCapacity === 0 ? 1 : quadCapacity;
+    while (capacity < quads) capacity *= 2;
+    quadCapacity = capacity;
+    positions = new Float32Array(capacity * VERTICES_PER_CHUNK_QUAD * 3);
+    normals = new Float32Array(capacity * VERTICES_PER_CHUNK_QUAD * 3);
+    indices = new Uint32Array(capacity * INDICES_PER_CHUNK_QUAD);
+    // The surface is flat and horizontal everywhere, so every normal is +Y and
+    // every quad's index pattern is the same one shifted by its vertex offset —
+    // both are written once here rather than per rebuild.
+    for (let vertex = 0; vertex < capacity * VERTICES_PER_CHUNK_QUAD; vertex++) {
+      normals[vertex * 3 + 1] = 1;
+    }
+    for (let quad = 0; quad < capacity; quad++) {
+      const v = quad * VERTICES_PER_CHUNK_QUAD;
+      const i = quad * INDICES_PER_CHUNK_QUAD;
+      // (v+0, v+2, v+1) and (v+1, v+2, v+3) wind counter-clockwise seen from
+      // above, i.e. front-facing with the +Y normals written above.
+      indices[i] = v;
+      indices[i + 1] = v + 2;
+      indices[i + 2] = v + 1;
+      indices[i + 3] = v + 1;
+      indices[i + 4] = v + 2;
+      indices[i + 5] = v + 3;
+    }
+    geometry.dispose();
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new BufferAttribute(normals, 3));
+    geometry.setIndex(new BufferAttribute(indices, 1));
+  };
 
   const setWorldSize = (worldSize: number): void => {
-    const span = (worldSize - 1 + WATER_MARGIN_CELLS * 2) * CELL_WORLD_SIZE;
-    const centre = ((worldSize - 1) * CELL_WORLD_SIZE) / 2;
-    // Rebuilding this geometry is fine: it happens once per join, not per
-    // edit. The no-rebuild rule is about the terrain patch path.
-    mesh.geometry.dispose();
-    mesh.geometry = new PlaneGeometry(span, span);
-    mesh.position.x = centre;
-    mesh.position.z = centre;
-
     // See the Water.setWorldSize doc comment: reallocated unconditionally,
     // every call — the caller's next `refresh` with the fresh snapshot's
     // dirty set repopulates every texel a revealed chunk needs.
@@ -328,6 +420,60 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
 
   return {
     setWorldSize,
+    sync(mirror: TerrainMirror): void {
+      const chunkCols = chunksPerEdge(mirror.map.size);
+      const chunkWorldSpan = CHUNK_SIZE * CELL_WORLD_SIZE;
+      growTo(mirror.received.size);
+      let quad = 0;
+      let minX = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxZ = -Infinity;
+      // Ascending chunk index: the received set's own iteration order is
+      // insertion order, which differs between a join and the unlocks that
+      // follow it. Sorting keeps a chunk's vertices in the same place across
+      // rebuilds, so a diff of two frames' buffers is readable.
+      for (const chunkIdx of [...mirror.received].sort((a, b) => a - b)) {
+        const x0 = (chunkIdx % chunkCols) * chunkWorldSpan;
+        const z0 = Math.floor(chunkIdx / chunkCols) * chunkWorldSpan;
+        const x1 = x0 + chunkWorldSpan;
+        const z1 = z0 + chunkWorldSpan;
+        const v = quad * VERTICES_PER_CHUNK_QUAD * 3;
+        positions[v] = x0; positions[v + 1] = surfaceY; positions[v + 2] = z0;
+        positions[v + 3] = x1; positions[v + 4] = surfaceY; positions[v + 5] = z0;
+        positions[v + 6] = x0; positions[v + 7] = surfaceY; positions[v + 8] = z1;
+        positions[v + 9] = x1; positions[v + 10] = surfaceY; positions[v + 11] = z1;
+        if (x0 < minX) minX = x0;
+        if (z0 < minZ) minZ = z0;
+        if (x1 > maxX) maxX = x1;
+        if (z1 > maxZ) maxZ = z1;
+        quad++;
+      }
+      const positionAttribute = geometry.getAttribute('position') as BufferAttribute | undefined;
+      if (positionAttribute) positionAttribute.needsUpdate = true;
+      geometry.setDrawRange(0, quad * INDICES_PER_CHUNK_QUAD);
+      if (quad === 0) {
+        mesh.visible = false;
+        return;
+      }
+      // Bounds are SET, never computed. three's computeBoundingSphere() walks
+      // the whole position attribute — including the slots past the draw range,
+      // which still hold (0, 0, 0) from the last capacity growth — so it would
+      // stretch the sphere to the world's origin corner and cull the sea late.
+      // The surface is a flat axis-aligned rectangle, so its exact sphere is
+      // this, in closed form.
+      const centreX = (minX + maxX) / 2;
+      const centreZ = (minZ + maxZ) / 2;
+      geometry.boundingSphere = new Sphere(
+        new Vector3(centreX, surfaceY, centreZ),
+        Math.hypot(maxX - centreX, maxZ - centreZ),
+      );
+      geometry.boundingBox = new Box3(
+        new Vector3(minX, surfaceY, minZ),
+        new Vector3(maxX, surfaceY, maxZ),
+      );
+      mesh.visible = quad > 0;
+    },
     refresh(mirror: TerrainMirror, dirty: Iterable<number>): void {
       writeWaterDepthTexels(
         depthAlphaBuffer,

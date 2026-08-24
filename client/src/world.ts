@@ -296,6 +296,10 @@ export function createWorld(viewport: Viewport): World {
       // -> starter footprint) or a rejoin (old world's segments dropped, this
       // session's rebuilt).
       fog.sync(fresh.mirror);
+      // The sea is drawn over the received chunks and nowhere else (see
+      // render/water.ts's header), so it answers to `received` exactly as the
+      // mist above does — same call site, same reason.
+      water.sync(fresh.mirror);
       // The depth-alpha texture water.setWorldSize just reallocated (inside
       // resetWorld) is baseline-filled but otherwise empty — this is what
       // actually paints in every texel the newly-unlocked chunks need, same
@@ -341,6 +345,8 @@ export function createWorld(viewport: Viewport): World {
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);
+      // ...and the sea creeps outward with it, same as on the snapshot path.
+      water.sync(mirror);
       // Newly-unlocked chunks need their depth-alpha texels painted in too —
       // the texture only holds WATER_DEPTH_ALPHA_DEFAULT_BYTE for a chunk
       // until something writes real depths into it, same as the snapshot
