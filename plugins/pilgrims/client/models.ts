@@ -47,7 +47,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // Render kit, reached by path the same way wildlife/client/models.ts reaches
 // it — see that module's import and render/rigSkin.ts's header for why.
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
-import type { SettlerRace, WalkerKind } from '../protocol.ts';
+import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
 
 /** Overall height, world units — a little person: knee-high to a yeti. */
 export const PILGRIM_HEIGHT = 0.62;
@@ -76,9 +76,17 @@ const BOB_AMPLITUDE = 0.012;
  * The walker kinds × races a blueprint must cover. Both axes decide things
  * fixed at author time — geometry, fur material, shoulder width, whether the
  * staff exists — so neither can be a per-instance parameter.
+ *
+ * TAKEN FROM THE PROTOCOL, NOT RESTATED HERE. These two lists are the same
+ * facts `isSettlerRace`/`isWalkerKind` validate off the wire, and a local copy
+ * would be a second place to remember: add a third race to the protocol and a
+ * restated list here would silently bake no blueprint for it, so the first
+ * walker of that race to arrive would look up a missing rig and take the frame
+ * down. Deriving the bake set from the wire contract makes that unrepresentable
+ * — a new race is a new blueprint by construction.
  */
-const BLUEPRINT_KINDS = ['pilgrim', 'wanderer'] as const;
-const BLUEPRINT_RACES = ['rudy', 'uno'] as const;
+const BLUEPRINT_KINDS = WALKER_KINDS;
+const BLUEPRINT_RACES = SETTLER_RACES;
 
 /** Rudy tail wag: fast and wide. Uno tail sway: slow and slight. */
 const RUDY_WAG_RADIANS = 0.45;
@@ -409,7 +417,13 @@ export function createPilgrimModels(): PilgrimModels {
 
   function create(race: SettlerRace, kind: WalkerKind = 'pilgrim'): PilgrimModel {
     const rudy = race === 'rudy';
-    const rig = walkerRigs.get(`${race}:${kind}`)!;
+    const rigKey = `${race}:${kind}`;
+    const rig = walkerRigs.get(rigKey);
+    // Belt and suspenders beside the derivation above: the loop that fills this
+    // map walks the protocol's own lists, so every (race, kind) the wire can
+    // carry has a rig. If that ever stops being true, fail with the pair that
+    // is missing rather than dereferencing undefined several frames later.
+    if (rig === undefined) throw new Error(`pilgrims: no baked rig for ${rigKey}`);
     const instance = instantiateRig(rig.blueprint);
     const joints: WalkerJoints = {
       body: instance.joints[rig.jointIndices.body]!,
