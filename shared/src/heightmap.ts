@@ -123,8 +123,16 @@ function clampHeight(h: number): number {
  *              fabric-pull, kept verbatim as a deliberate blending tool and as
  *              the library default for API compatibility (plugins tuned their
  *              terraforms against relaxation).
+ * - `drag`   — THE LAYER-EDGE PULL (owner decision 2026-08-24, issue #99, and
+ *              the model Godus shipped as its first god power). Not a brush at
+ *              all: the player grabs a terrace lip and pulls it sideways, and
+ *              the edit is the REGION swept between where the lip was and
+ *              where the cursor is. It changes how far a band extends and
+ *              never which bands exist, so the vertical stays entirely the
+ *              stamp's. See `applyDragRegion` for the region's exact shape and
+ *              `DragPull` for what the wire carries.
  */
-export type SculptTool = 'stamp' | 'smooth';
+export type SculptTool = 'stamp' | 'smooth' | 'drag';
 
 /**
  * How the brush distributes its amount ACROSS its footprint.
@@ -143,7 +151,7 @@ export type SculptTool = 'stamp' | 'smooth';
 export type SculptProfile = 'soft' | 'hard';
 
 /** Every valid tool, in wire/UI order. Validation and the HUD both read this. */
-export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth'];
+export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag'];
 
 /** Every valid profile, in wire/UI order. */
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
@@ -269,6 +277,71 @@ export function canSpreadBandTo(
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE LAYER-EDGE DRAG (owner decision 2026-08-24, issues #99/#119/#120).
+//
+// WHY A REGION AND NOT A TRAIL. The first build painted the cells the cursor
+// crossed, one per intent, each one legal only if the previous had landed. It
+// produced a wandering one-cell ribbon with gaps, and the gaps were not a bug
+// in the walk: a chain whose links are separate messages breaks whenever one
+// link is dropped, and the server may drop one for reasons no client-side fix
+// can reach. A drag's unit of meaning is a REGION, so the intent carries the
+// region — absolute, idempotent, validated once. Re-sending the same stroke
+// with a larger pull is a strict superset of the smaller one, which is what
+// makes a dropped packet self-heal on the next pointer move instead of
+// severing the stroke for good.
+//
+// WHY THE NORMAL IS FROZEN AT THE GRAB. The cursor cannot name the pull on its
+// own. Sliding ALONG a lip would otherwise sweep a region sideways, and
+// re-asking "which lip is under the cursor" mid-stroke would let the drag
+// re-grab the edge it just built — the wander of #119, which is the edit
+// chasing its own result. The client freezes the grabbed lip's outward normal
+// on pointerdown and sends it with every intent of the stroke; only the
+// ACROSS-EDGE component of the cursor's displacement becomes pull depth. This
+// is the CAD "pull a wall" interaction, and it is the reason a drag is stable
+// under its own edits.
+
+/**
+ * The fixed-point scale the frozen lip normal is expressed in: `normalX` and
+ * `normalY` are a unit vector times this number, rounded to integers.
+ *
+ * FIXED POINT RATHER THAN A FLOAT PAIR because the normal crosses the wire and
+ * then drives cell arithmetic on two machines that must agree bit for bit
+ * (design §3.1). A float would be exact over the wire too, but every later
+ * derivation from it would be a float chain; scaled integers keep the whole
+ * region derivation in integer arithmetic apart from two documented divisions
+ * (see `dragRayCell`).
+ *
+ * 1024 is chosen so the worst-case rounding of the normal — half a unit in
+ * 1024 — stays well under one cell over the longest pull the radius allows,
+ * and so `normalX² + normalY²` (~2²⁰) times a cell coordinate stays far inside
+ * the exact-integer range of a double.
+ */
+export const DRAG_NORMAL_SCALE = 1024;
+
+/**
+ * The horizontal pull of a `drag` stroke: where the grabbed lip faced, and
+ * where the player has pulled it to. Absolute — every intent in a stroke
+ * describes the WHOLE pull so far, not the increment since the last one.
+ */
+export interface DragPull {
+  /**
+   * The grabbed lip's outward normal — the direction the terrace face looked
+   * when the player grabbed it — as a unit vector scaled by
+   * DRAG_NORMAL_SCALE. Frozen at pointerdown for the life of the stroke.
+   */
+  readonly normalX: number;
+  readonly normalY: number;
+  /**
+   * The cell the cursor is over now, in world cell coordinates. Only its
+   * component along the normal counts (see `dragPullDepth`); the along-lip
+   * component is deliberately discarded, which is what stops a drag from
+   * smearing when the hand wanders sideways.
+   */
+  readonly toX: number;
+  readonly toY: number;
+}
+
 /** Caller-supplied sculpt options; every field defaults when absent. */
 export interface SculptOptions {
   readonly tool?: SculptTool;
@@ -282,6 +355,13 @@ export interface SculptOptions {
    * the footprint survey instead.
    */
   readonly targetBand?: number | null;
+  /**
+   * The horizontal pull of a `drag` stroke. Meaningful ONLY with
+   * `tool: 'drag'`; null (and ignored) for the brushes, which have no lip to
+   * move. A `drag` stroke with no pull is a no-op, not an error — that is the
+   * state on the very first frame of a stroke, before the cursor has moved.
+   */
+  readonly drag?: DragPull | null;
 }
 
 /** Sculpt options with nothing left to default — what the math actually runs. */
@@ -297,6 +377,13 @@ export interface ResolvedSculptOptions {
    * the footprint survey instead.
    */
   readonly targetBand: number | null;
+  /**
+   * The horizontal pull of a `drag` stroke. Meaningful ONLY with
+   * `tool: 'drag'`; null (and ignored) for the brushes, which have no lip to
+   * move. A `drag` stroke with no pull is a no-op, not an error — that is the
+   * state on the very first frame of a stroke, before the cursor has moved.
+   */
+  readonly drag: DragPull | null;
 }
 
 /**
@@ -325,6 +412,10 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // No band to fill toward: only the 'band' anchor reads this, and the
   // library default is not it.
   targetBand: null,
+  // No pull: only the 'drag' tool reads this, and the library default is not
+  // it. Plugin terraforms are brushes and always will be — the drag is a
+  // pointer gesture, and there is no pointer behind a plugin.
+  drag: null,
 };
 
 /**
@@ -757,6 +848,161 @@ function fillTowardTarget(
 }
 
 /**
+ * HOW FAR THE LIP HAS BEEN PULLED, in cells, along the frozen normal.
+ *
+ * Only the ACROSS-EDGE component of the cursor's displacement counts: the dot
+ * product with the frozen normal, divided back out of DRAG_NORMAL_SCALE. The
+ * along-lip component is discarded, which is the whole reason sliding sideways
+ * over a lip does nothing (see the drag header above).
+ *
+ * Integer in, integer out. `dot` is an exact integer (cell offsets times a
+ * scaled unit vector, both far inside the exact range of a double), and
+ * DRAG_NORMAL_SCALE is a power of two, so the division is exact in binary
+ * floating point and the floor merely takes the integer part. Identical on
+ * every platform, which is what the determinism contract needs.
+ *
+ * Zero or negative means the cursor is level with the lip or behind it — no
+ * pull at all, and an outward drag does nothing.
+ */
+function dragPullDepth(gx: number, gy: number, drag: DragPull): number {
+  const dot = (drag.toX - gx) * drag.normalX + (drag.toY - gy) * drag.normalY;
+  return Math.floor(dot / DRAG_NORMAL_SCALE);
+}
+
+/**
+ * The cell `j` steps out along the normal and `t` steps along the lip from the
+ * grabbed cell.
+ *
+ * The tangent is the normal rotated a quarter turn — (−normalY, normalX) — so
+ * both axes carry the same DRAG_NORMAL_SCALE and one division serves both.
+ *
+ * EXACT, NOT MERELY DETERMINISTIC-IN-PRACTICE: DRAG_NORMAL_SCALE is a power of
+ * two and every numerator is an exact integer, so `num / DRAG_NORMAL_SCALE` is
+ * exact in binary floating point; `+ 0.5` then `Math.floor` is round-half-up
+ * over an exact value. There is no platform-dependent rounding anywhere in the
+ * expression.
+ */
+function dragRayCell(
+  gx: number,
+  gy: number,
+  drag: DragPull,
+  j: number,
+  t: number,
+): { x: number; y: number } {
+  const numX = drag.normalX * j - drag.normalY * t;
+  const numY = drag.normalY * j + drag.normalX * t;
+  return {
+    x: gx + Math.floor(numX / DRAG_NORMAL_SCALE + 0.5),
+    y: gy + Math.floor(numY / DRAG_NORMAL_SCALE + 0.5),
+  };
+}
+
+/**
+ * THE DRAG REGION — every cell the grabbed lip has been pulled across, filled
+ * to the grabbed band's floor.
+ *
+ * SHAPE. A fan of rays: one per step `t` along the lip, over the span the
+ * brush radius names, each running `j = 1…depth` cells outward along the
+ * frozen normal. The profile decides how the depth varies along that span, and
+ * it is the SAME axis the brushes already use for their footprint edge (owner
+ * decision 2026-08-24):
+ *
+ * - `soft` — the pull tapers to nothing at the ends of the span, so the lip
+ *            bulges into a bay. The falloff is `brushDelta`'s verbatim —
+ *            `trunc(depth · (radius − |t|) / radius)` — because "soft edge"
+ *            must mean one thing in this codebase, not two.
+ * - `hard` — the full pull across the whole span, so the lip moves as a
+ *            straight front with square ends.
+ *
+ * RAISE ONLY (2026-08-24). Pulling a lip INWARD is the same gesture with the
+ * sign flipped, but it is the direction where the stop rule has to be real
+ * code: dropping a cell to band k−1 when it actually stands at band 6 would
+ * strip everything above it. Issue #99 step 3. A lowering drag is a no-op here
+ * rather than an approximation of one.
+ *
+ * WHY A RAY STOPS. Two conditions end a ray early, and both are the owner's
+ * "a drag stops at a higher band's edge, it does not strip the ground standing
+ * on it":
+ *
+ * 1. The cell already stands AT OR ABOVE the grabbed band. The pull is blocked
+ *    by that ground; it does not skip over it and resume on the far side,
+ *    which would leave a band-k island beyond a mesa the player never crossed.
+ * 2. `canSpreadBandTo` refuses the cell. This is the same anti-cheat rule the
+ *    band anchor has always run — a grabbed band may only creep onto ground it
+ *    already touches — re-derived here from the SERVER's own heightmap, so a
+ *    forged normal or a forged `toX/toY` can at worst waste the sender's own
+ *    intent. It is what keeps "clients send intents, never heights" true of a
+ *    message that names a band and a direction.
+ *
+ * The region is ABSOLUTE and IDEMPOTENT: it is derived entirely from the grab
+ * cell, the frozen normal, the cursor cell and the radius, none of which
+ * depend on what any earlier intent did. Applying the same drag twice changes
+ * nothing the second time (every cell is already at the band), and applying a
+ * deeper pull is a strict superset of a shallower one. That is what makes a
+ * dropped intent heal on the next pointer move instead of severing the stroke
+ * — the failure that killed the per-cell chain (issue #120).
+ */
+function applyDragRegion(
+  map: Heightmap,
+  gx: number,
+  gy: number,
+  radius: number,
+  raising: boolean,
+  targetBand: number,
+  drag: DragPull,
+  profile: SculptProfile,
+  changed: Set<number>,
+): void {
+  // Inward drags are step 3 of issue #99 and deliberately do nothing yet.
+  if (!raising) return;
+
+  const depth = dragPullDepth(gx, gy, drag);
+  if (depth <= 0) return;
+
+  const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
+  // The lip stretch the grab covers, in cells either side of it. Radius 1 is
+  // the single-ray drag for the same reason it is the single-cell brush.
+  const halfSpan = radius - 1;
+
+  // Scan order is part of the determinism contract, exactly as the brush
+  // footprint's is (see forEachFootprintOffset): `t` ascending outer, `j`
+  // ascending inner. `j` ascending is also load-bearing rather than merely
+  // fixed — each cell a ray fills becomes the neighbour that lets
+  // canSpreadBandTo admit the next one, so a ray extends the band outward one
+  // step at a time instead of teleporting it.
+  for (let t = -halfSpan; t <= halfSpan; t++) {
+    const rayDepth =
+      profile === 'hard'
+        ? depth
+        : // trunc (toward zero) for the same reason brushDelta uses it: it
+          // keeps the two directions symmetric. depth is positive here, so
+          // this is a floor, but the convention is the shared one.
+          Math.trunc((depth * (radius - (t < 0 ? -t : t))) / radius);
+    for (let j = 1; j <= rayDepth; j++) {
+      const cell = dragRayCell(gx, gy, drag, j, t);
+      // Off the world: the ray has run out of land, and there is nothing
+      // beyond the edge for a later step to reach either.
+      if (!inBounds(map, cell.x, cell.y)) break;
+      const i = cellIndex(map, cell.x, cell.y);
+      const h = map.cells[i]!;
+      // Stop 1: higher ground blocks the pull (see the doc above).
+      if (h >= targetHeight) {
+        // Ground already AT the band is the lip itself, or land an earlier
+        // ray already filled — the pull passes through it rather than being
+        // blocked by it. Only ground standing ABOVE the band stops the ray.
+        if (h > targetHeight) break;
+        continue;
+      }
+      // Stop 2: the band does not reach this cell, so it may not be spread
+      // there. Re-derived from the map, never trusted from the wire.
+      if (!canSpreadBandTo(map, cell.x, cell.y, targetBand)) break;
+      map.cells[i] = targetHeight;
+      changed.add(i);
+    }
+  }
+}
+
+/**
  * HOW MUCH TERRAIN ONE SCULPT NOMINALLY MOVES: the sum, over the brush
  * footprint, of the ABSOLUTE per-cell delta a sculpt of DEFAULT_SCULPT_AMOUNT
  * would apply. Height units × cells — a volume, in the only units this project
@@ -1147,6 +1393,24 @@ export function smooth(
  * is exactly why both sides normalise an intent through one shared function
  * (`sculptOptionsOf`, protocol.ts) rather than each defaulting for itself.
  */
+/**
+ * The broadcast diff for a set of changed cell indices, in ASCENDING INDEX
+ * ORDER. The order is part of the contract, not an accident of the Set: both
+ * sides of the prediction compare these diffs, and two orderings of the same
+ * cells are two different messages.
+ *
+ * Shared by every exit from applySculpt — the brushes and the drag — so the
+ * two cannot disagree about what an applied edit looks like on the wire.
+ */
+function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
+  const indices = Array.from(changed).sort((a, b) => a - b);
+  const diff: CellDiff[] = [];
+  for (const i of indices) {
+    diff.push({ x: cellX(map.size, i), y: cellY(map.size, i), h: map.cells[i]! });
+  }
+  return diff;
+}
+
 export function applySculpt(
   map: Heightmap,
   cx: number,
@@ -1160,6 +1424,7 @@ export function applySculpt(
   const spill = options?.spill ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spill;
   const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
   const targetBand = options?.targetBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand;
+  const drag = options?.drag ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.drag;
 
   // THE DRAG'S SPREAD RULE, DECIDED FOR THE WHOLE STROKE (2026-08-23). Both
   // brushes carry the same guard, but the decision belongs here too: a refused
@@ -1170,6 +1435,38 @@ export function applySculpt(
   // guards bound the brush, and neither depends on the other being right.
   if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
     return [];
+  }
+
+  // THE DRAG IS ITS OWN EDIT, NOT A BRUSH VARIANT (owner decision 2026-08-24).
+  // It shares this entry point on purpose — the server pipeline, the client's
+  // prediction store and the brush preview all reach the sculpt through
+  // applySculpt, so a drag that returned here would have needed three new call
+  // sites to agree with each other, which is exactly the drift the one
+  // dispatch below exists to prevent. What it does NOT share is the brush: no
+  // footprint disc, no per-cell amount, and no relaxation pass, because the
+  // drag moves a level sideways and the vertical belongs to the stamp.
+  //
+  // A drag with no band or no pull is a NO-OP rather than a fallback to a
+  // brush: silently stamping where the player asked to drag would apply a
+  // differently-shaped edit than the sender predicted, and desync the
+  // prediction for a round trip (the same argument protocol.ts's validator
+  // makes for rejecting an unknown tool outright).
+  if (tool === 'drag') {
+    const dragChanged = new Set<number>();
+    if (targetBand !== null && drag !== null && amount !== 0) {
+      applyDragRegion(
+        map,
+        cx,
+        cy,
+        radius,
+        amount > 0,
+        targetBand,
+        drag,
+        profile,
+        dragChanged,
+      );
+    }
+    return diffOf(map, dragChanged);
   }
 
   // A DRAG ARRIVES IN ONE INTENT (owner decision 2026-08-23, after the first
@@ -1336,10 +1633,5 @@ export function applySculpt(
     );
   }
 
-  const indices = Array.from(changed).sort((a, b) => a - b);
-  const diff: CellDiff[] = [];
-  for (const i of indices) {
-    diff.push({ x: cellX(map.size, i), y: cellY(map.size, i), h: map.cells[i] });
-  }
-  return diff;
+  return diffOf(map, changed);
 }

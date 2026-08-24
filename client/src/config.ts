@@ -5,7 +5,7 @@
 // (CHUNK_SIZE, BAND_HEIGHT, SEA_LEVEL, brush radius bounds…) live in
 // @terrace/shared and are never re-declared here.
 
-import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_BRUSH_RADIUS, MAX_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT } from '@terrace/shared';
 
 /** 2567 is the Colyseus convention and the server's `PORT` default (§8). */
 export const DEFAULT_SERVER_PORT = 2567;
@@ -192,30 +192,37 @@ export const WATER_SURFACE_LIFT = 1 / 32;
 export const SCULPT_REPEAT_INTERVAL_MS = 120;
 
 /**
- * THE DRAG'S PER-EMISSION CELL BUDGET: how many one-cell drag intents a single
- * repeat tick may emit while walking the cursor's path (input/sculptInput.ts).
+ * The slowest display refresh this client assumes, in hertz. Used to turn a
+ * duration into a count of frames — and therefore into a count of coalesced
+ * pointer events (see DRAG_INTENTS_PER_TICK).
  *
- * WHY A WALK NEEDS A BUDGET AT ALL. A drag's brush is one cell
- * (DRAG_BRUSH_RADIUS), and intents fire on the repeat timer, so a cursor that
- * crosses forty cells between two ticks would leave the terrace lip dotted.
- * The fix is to emit the whole path rather than its endpoints — which is a
- * loop whose length is set by how fast the player moved, and therefore needs a
- * ceiling or one flick of the mouse is a burst of a hundred intents.
- *
- * DERIVED FROM THE WIDEST STAMP, not chosen for feel. MAX_BRUSH_RADIUS is the
- * furthest a single stamp intent already reaches from its centre, so a drag
- * that advances its edge by that many cells per tick changes terrain no faster
- * than the tool the player already has. It is in fact strictly cheaper on the
- * server's per-tick diff budget — the constraint SCULPT_REPEAT_INTERVAL_MS
- * above exists to protect: 16 one-cell edits against the 37 cells a
- * radius-4 stamp footprint moves in the same tick.
- *
- * NOTHING IS SKIPPED WHEN THE BUDGET BITES. The walk stops at the budget and
- * the stroke remembers where it stopped, so the next tick continues from
- * there: a very fast sweep leaves the lip TRAILING the cursor for a tick or
- * two, it never leaves a gap in the lip.
+ * 60 because that is the universal floor for a display a browser will render
+ * to, not a measurement of this machine: it is used to size a CEILING, and
+ * assuming a slower refresh than the real one would undersize it.
  */
-export const DRAG_CELLS_PER_EMIT = MAX_BRUSH_RADIUS;
+export const DISPLAY_HZ_FLOOR = 60;
+
+/**
+ * HOW MANY INTENTS ONE DRAG CAN PUT IN FLIGHT PER REPEAT TICK — the figure
+ * MAX_PENDING_PREDICTIONS (terrain/prediction.ts) is sized against.
+ *
+ * SUPERSEDES THE PER-EMISSION CELL BUDGET (2026-08-24). A drag used to walk
+ * the cursor's path and emit one intent per cell crossed, so it needed a
+ * ceiling or a flick of the mouse became a burst of a hundred messages. It now
+ * sends ONE ABSOLUTE REGION per emission, and emits at most once per cursor
+ * CELL CHANGE, so the burst is gone and what is left to bound is simply how
+ * many of those a tick can contain.
+ *
+ * DERIVED, NOT CHOSEN. A cursor changes cell at most once per pointermove
+ * event, and browsers coalesce pointermove to the display refresh, so the
+ * ceiling is the number of frames in one repeat tick. 60 Hz is the floor a
+ * display can be assumed to run at and the rate the coalescing is against; a
+ * faster display makes this generous, which is the safe direction — an
+ * undercount would make a fast drag evict its own live predictions.
+ */
+export const DRAG_INTENTS_PER_TICK = Math.ceil(
+  (SCULPT_REPEAT_INTERVAL_MS * DISPLAY_HZ_FLOOR) / 1000,
+);
 
 /**
  * Milliseconds from a stroke's FIRST intent to its second — the top of the

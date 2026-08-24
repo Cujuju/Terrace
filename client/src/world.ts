@@ -42,7 +42,11 @@ import {
   type PredictionStore,
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
-import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
+import {
+  createLayerEdgeOverlay,
+  type LayerEdgeOverlay,
+  type LipGrab,
+} from './render/layerEdgeOverlay.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createRiverRig, type RiverRig } from './render/riverRig.ts';
 import type { TerrainSink } from './net/connection.ts';
@@ -83,7 +87,7 @@ export interface World extends TerrainSink {
    * it answers "can a click name an edge?" without anything becoming
    * authoritative.
    */
-  highlightLayerEdge(cell: { x: number; y: number } | null): number | null;
+  highlightLayerEdge(cell: { x: number; y: number } | null): LipGrab | null;
   /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
@@ -399,7 +403,7 @@ export function createWorld(viewport: Viewport): World {
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
-    highlightLayerEdge(cell: { x: number; y: number } | null): number | null {
+    highlightLayerEdge(cell: { x: number; y: number } | null): LipGrab | null {
       return layerEdges?.highlightAt(cell) ?? null;
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {

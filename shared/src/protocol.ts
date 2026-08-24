@@ -7,9 +7,16 @@
 // (mana, cooldowns) AFTER this structural validation passes.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from './constants.ts';
-import { MAX_BAND, MIN_BAND, SCULPT_PROFILES, SCULPT_TOOLS } from './heightmap.ts';
+import {
+  DRAG_NORMAL_SCALE,
+  MAX_BAND,
+  MIN_BAND,
+  SCULPT_PROFILES,
+  SCULPT_TOOLS,
+} from './heightmap.ts';
 import type {
   CellDiff,
+  DragPull,
   ResolvedSculptOptions,
   SculptProfile,
   SculptTool,
@@ -61,6 +68,31 @@ export interface SculptIntent {
    */
   targetBand?: number;
   /**
+   * THE DRAG'S PULL (2026-08-24, issue #120): the grabbed lip's frozen outward
+   * normal and the cell the cursor is over now. Meaningful only with
+   * `tool: 'drag'`.
+   *
+   * ABSOLUTE, NOT INCREMENTAL, and that is the entire point of the field. The
+   * first drag build sent one cell per intent and chained them, so a single
+   * dropped message severed the stroke and left a gap no later message could
+   * fill. Every intent here describes the WHOLE pull so far, so the server
+   * re-derives the same region from scratch each time: re-applying a drag
+   * changes nothing, and a deeper pull is a strict superset of a shallower
+   * one. A dropped intent therefore heals on the next pointer move.
+   *
+   * SAFE TO ACCEPT FROM A CLIENT for the same reason `targetBand` is. The
+   * region it describes is only ever FILLED TO A BAND THE PLAYER GRABBED, and
+   * every cell of it is re-checked against the server's own heightmap by
+   * `canSpreadBandTo` — a band may only creep onto ground it already touches.
+   * A forged normal or a forged cursor cell can aim the pull somewhere silly;
+   * it cannot reach a height that is not already standing next to the land it
+   * moves. No height crosses the wire, so §3.2 holds.
+   *
+   * Optional: absent means no pull, and a `drag` stroke without one is a
+   * no-op — the state on the first frame of a stroke, before the cursor moves.
+   */
+  drag?: DragPull;
+  /**
    * Client-chosen correlation id, echoed back on the server's ANSWER to this
    * intent — SculptAppliedMessage when it was applied, SculptDeniedMessage
    * when a plugin denied it — so the sender can retire the exact client-side
@@ -100,6 +132,9 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // A stamp by default: no band grabbed, so nothing to drag toward. An intent
   // that carries one flips the anchor to 'band' in sculptOptionsOf below.
   targetBand: null,
+  // No pull by default, for the same reason: the default tool is a brush and a
+  // brush has no lip to move.
+  drag: null,
   // Player sculpts are always locked to the clicked cell's level (owner
   // decision 2026-08-19: the brush periphery must never climb past the level
   // the player pointed at). Not a wire field, same argument as `spill`.
@@ -134,6 +169,10 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // getting the drag anchor. The two cannot be desynchronised.
     anchor: intent.targetBand !== undefined ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
     targetBand: intent.targetBand ?? null,
+    // Carried through verbatim, like tool and profile and for the same reason:
+    // this is the shape of the edit the sender predicted, and both sides of
+    // the prediction contract resolve their options through this one function.
+    drag: intent.drag ?? null,
   };
 }
 
@@ -342,6 +381,43 @@ export function validateSculptIntent(
     return null;
   }
 
+  // THE DRAG PULL is optional (every brush intent sends none) but, when
+  // present, is four integers that go straight into cell arithmetic, so all
+  // four are checked for type, integrality and range before any of them is
+  // used. A float normal would put the whole region derivation on a float
+  // chain and break the bit-for-bit agreement between server and client
+  // (design §3.1); an out-of-range one would index cells wildly. Rejected WITH
+  // THE WHOLE INTENT, like a bad tool, rather than dropped and defaulted:
+  // silently turning a drag into a no-op would apply a different edit than the
+  // sender predicted.
+  //
+  // The normal's LENGTH is checked, not just its components. It is meant to be
+  // a unit vector scaled by DRAG_NORMAL_SCALE, and the region math divides by
+  // that scale on the assumption that it is — a normal ten times too long
+  // would multiply every pull by ten. One scale unit of slack either side
+  // covers the rounding that turned the real unit vector into integers.
+  const { drag } = m;
+  let validDrag: DragPull | undefined;
+  if (drag !== undefined) {
+    if (typeof drag !== 'object' || drag === null) return null;
+    const d = drag as Record<string, unknown>;
+    const { normalX, normalY, toX, toY } = d;
+    if (!Number.isInteger(normalX) || !Number.isInteger(normalY)) return null;
+    if (!Number.isInteger(toX) || (toX as number) < 0 || (toX as number) >= worldSize) {
+      return null;
+    }
+    if (!Number.isInteger(toY) || (toY as number) < 0 || (toY as number) >= worldSize) {
+      return null;
+    }
+    const nx = normalX as number;
+    const ny = normalY as number;
+    const lenSq = nx * nx + ny * ny;
+    const lo = (DRAG_NORMAL_SCALE - 1) * (DRAG_NORMAL_SCALE - 1);
+    const hi = (DRAG_NORMAL_SCALE + 1) * (DRAG_NORMAL_SCALE + 1);
+    if (lenSq < lo || lenSq > hi) return null;
+    validDrag = { normalX: nx, normalY: ny, toX: toX as number, toY: toY as number };
+  }
+
   return {
     type: 'sculpt',
     x: x as number,
@@ -351,6 +427,7 @@ export function validateSculptIntent(
     ...(tool !== undefined ? { tool: tool as SculptTool } : {}),
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
+    ...(validDrag !== undefined ? { drag: validDrag } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
 }

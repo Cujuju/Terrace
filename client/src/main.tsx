@@ -102,7 +102,7 @@ const sculptInput = createSculptInput({
   worldSize: () => world.worldSize(),
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.
-  grabbableBand: (cell) => world.highlightLayerEdge(cell),
+  grabbableLip: (cell) => world.highlightLayerEdge(cell),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
   // frame instead of a round trip later; the world reconciles it against the
@@ -118,9 +118,10 @@ const sculptInput = createSculptInput({
     if (!pluginHost.allowLocalIntent(intent)) return false;
     if (!connection.sendSculpt(intent)) return false;
     world.predictSculpt(intent);
-    // Reported back so a DRAG can tell a sent cell from a dropped one — its
-    // next cell is only legal because this one landed (see the `send` contract
-    // in input/sculptInput.ts).
+    // Reported back so the caller knows the intent reached the wire. A drag
+    // no longer depends on the answer to stay whole — it re-sends its entire
+    // region on the next pointer move — but it still uses it to avoid marking
+    // a region as sent when it was not.
     return true;
   },
 });
@@ -146,16 +147,22 @@ viewport.onFrame(() => {
   // (footprint). One query, so the highlight the player sees, the readout and
   // the pointer shape can never disagree about what is under the cursor —
   // and it is the same question input/sculptInput.ts asks on pointerdown.
-  const grabbedBand = world.highlightLayerEdge(pick);
+  const grabbedLip = world.highlightLayerEdge(pick);
   brushPreview.update(
-    pick === null ? null : { ...pick, grabbable: grabbedBand !== null },
+    // GRABBABLE MEANS "THIS PRESS WILL TAKE HOLD", so it is gated on the tool
+    // the same way pointerdown is (input/sculptInput.ts). A lip under the
+    // cursor with Stamp selected is not grabbable — the press will stamp — and
+    // a pointer that said otherwise would be advertising the wrong edit.
+    pick === null
+      ? null
+      : { ...pick, grabbable: grabbedLip !== null && brushTool() === 'drag' },
     {
       radius: brushRadius(),
       tool: brushTool(),
       profile: brushProfile(),
     },
   );
-  pickDebug.update(pick, grabbedBand);
+  pickDebug.update(pick, grabbedLip?.band ?? null);
 });
 
 // The frame-rate readout in the top-right watermark. Started here, beside the
