@@ -44,6 +44,7 @@ import {
   roundBroadcastPhase,
   wrapPhase,
 } from '../protocol.ts';
+import { dayOfSimMillis, worldAgeDays } from '@terrace/shared';
 
 /**
  * Real seconds between broadcasts.
@@ -121,7 +122,26 @@ function simulate(world: WorldApi, dt: number): void {
     return;
   }
   sinceBroadcast -= DAYNIGHT_BROADCAST_INTERVAL_SECONDS;
-  world.broadcast(DAYNIGHT_CLOCK_MESSAGE, { phase: roundBroadcastPhase(currentPhase()) });
+
+  // THE DAY RIDES THE SAME MESSAGE AS THE PHASE (owner ask, 2026-08-24: the
+  // header should show the day, not just the time). It costs two integers on a
+  // message that already goes out every five seconds, and it keeps the whole
+  // clock — where the sun is AND which day it is — one broadcast, which is
+  // what this plugin's protocol header means by "full state, not a delta".
+  //
+  // DERIVED HERE, NEVER ON THE CLIENT, for the reason this file's own header
+  // gives for owning the phase: a client's wall clock cannot be trusted to say
+  // what time it is in a world, and shared/src/calendar.ts's
+  // simMillisAtRealTime would let it try.
+  //
+  // BOTH NUMBERS COME FROM THE SHARED HELPERS rather than from division here,
+  // so the day the header names and the day a saga heading names turn over at
+  // the same instant — see worldAgeDays' own comment on whole-day subtraction.
+  world.broadcast(DAYNIGHT_CLOCK_MESSAGE, {
+    phase: roundBroadcastPhase(currentPhase()),
+    day: worldAgeDays(world.simMillis, world.genesisMillis),
+    genesisDay: dayOfSimMillis(world.genesisMillis),
+  });
 }
 
 export const plugin: TerracePlugin = {

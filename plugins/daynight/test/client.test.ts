@@ -45,8 +45,16 @@ describe('roundBroadcastPhase', () => {
 
 describe('parseClockPayload', () => {
   it('accepts a well-formed payload, wrapped', () => {
-    expect(parseClockPayload({ phase: 0.42 })).toEqual({ phase: 0.42 });
-    expect(parseClockPayload({ phase: 1.25 })).toEqual({ phase: 0.25 });
+    expect(parseClockPayload({ phase: 0.42 })).toEqual({
+      phase: 0.42,
+      day: null,
+      genesisDay: null,
+    });
+    expect(parseClockPayload({ phase: 1.25 })).toEqual({
+      phase: 0.25,
+      day: null,
+      genesisDay: null,
+    });
   });
 
   it('returns null for anything that is not a finite phase', () => {

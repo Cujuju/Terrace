@@ -1,8 +1,9 @@
 // Rendering the world clock as display text for the HUD's world header.
 //
-// The header shows `Difficulty 50 – 3:45 p.m.` on one line; this file owns
-// everything right of the dash. Pure function of a phase — no DOM, no clock —
-// so the node test runner can assert the formatting directly.
+// The header shows `Difficulty 50 – Monday · Day 57 · 3:45 p.m.` on one line;
+// this file owns everything right of the dash. Pure functions of a phase and a
+// day — no DOM, no clock — so the node test runner can assert the formatting
+// directly.
 //
 // THE CONVENTION ASK (owner, 2026-08-21): the time must read in the VIEWER'S
 // own system convention — `a.m.`/`p.m.` where the locale uses them, 24-hour
@@ -14,6 +15,7 @@
 // a reading across an hour boundary.
 
 import { DAY_LENGTH_SECONDS } from '../protocol.ts';
+import { weekdayOf } from '@terrace/shared';
 
 /** Minutes past midnight the world reads when phase is 0 — protocol.ts: 0 is dawn. */
 export const DAWN_MINUTES = 6 * 60;
@@ -36,4 +38,42 @@ export function formatWorldTime(phase: number): string {
     minute: '2-digit',
     timeZone: 'UTC',
   }).format(instant);
+}
+
+/**
+ * Separator between the header clock's parts.
+ *
+ * The middle dot, because the chronicle's own headings already join a weekday
+ * to a day with one (plugins/chronicle/client/ChroniclePanel.tsx) and the two
+ * readouts name the same day — a header that punctuated it differently would
+ * read as a different kind of fact.
+ */
+const CLOCK_PART_SEPARATOR = ' \u00b7 ';
+
+/**
+ * The whole header clock: `Monday · Day 57 · 3:45 p.m.`
+ *
+ * `day` is the world's AGE in days and `genesisDay` the calendar day its day 0
+ * fell on (protocol.ts) — the weekday needs the calendar day, so it is the sum
+ * of the two; the counter reads the age, one-based, exactly as a saga heading
+ * does ("Day 1" is the world's first day, not its second).
+ *
+ * A NULL DAY DEGRADES TO THE TIME ALONE rather than to an invented "Day 1": a
+ * server too old to send the calendar has not told us which day it is, and the
+ * header's one job is to say nothing it does not know.
+ *
+ * NOTE ON WHEN THE WEEKDAY TURNS OVER: the calendar day increments when the
+ * phase wraps, and phase 0 is DAWN (protocol.ts), so a Terrace day runs dawn to
+ * dawn — the weekday changes at 6:00 a.m. on the readout, not at midnight. That
+ * is the same instant the chronicle starts a new heading, so the two agree; it
+ * is a property of the shared calendar, not of this formatting.
+ */
+export function formatWorldClock(
+  phase: number,
+  day: number | null,
+  genesisDay: number | null,
+): string {
+  const time = formatWorldTime(phase);
+  if (day === null || genesisDay === null) return time;
+  return [weekdayOf(day + genesisDay), `Day ${day + 1}`, time].join(CLOCK_PART_SEPARATOR);
 }
