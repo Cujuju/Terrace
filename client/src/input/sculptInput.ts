@@ -31,7 +31,6 @@
 
 import { Raycaster, Vector2, type Camera } from 'three';
 import {
-  DRAG_CELLS_PER_EMIT,
   SCULPT_REPEAT_DELAY_MS,
   SCULPT_REPEAT_INTERVAL_MS,
   SCULPT_REPEAT_RAMP_FACTOR,
@@ -57,21 +56,9 @@ import {
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
-import { MIN_BRUSH_RADIUS } from '@terrace/shared';
 import type { SculptIntent } from '@terrace/shared';
+import type { LipGrab } from '../render/layerEdgeOverlay.ts';
 
-/**
- * THE DRAG BRUSH IS ONE CELL (owner decision 2026-08-23). A drag's whole point
- * is that the terrace lip follows the cursor exactly; any wider footprint and
- * the edge lands somewhere the player did not point, which is the one thing the
- * stamp already does. MIN_BRUSH_RADIUS rather than a literal 1: the brush's own
- * floor is what "the smallest possible edit" means, and if that floor ever
- * moves the drag should move with it.
- *
- * Deliberately NOT the HUD's brush radius. That slider sizes the STAMP, and a
- * radius-7.75 drag is a bulldozer rather than an edge tool.
- */
-const DRAG_BRUSH_RADIUS = MIN_BRUSH_RADIUS;
 
 export interface SculptInputOptions {
   canvas: HTMLCanvasElement;
@@ -91,25 +78,26 @@ export interface SculptInputOptions {
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
-   * The terrace band whose lip is within grabbing range of `cell`, or null for
-   * none (World.highlightLayerEdge → render/layerEdgeOverlay.ts). This is the
-   * SAME query that lights the lip up on screen, so what the player sees
-   * highlighted is exactly what a press grabs — the highlight is the
-   * affordance, and two answers to "is there a lip here" would make it a lie.
+   * The terrace lip within grabbing range of `cell` — its band and the
+   * outward normal of its face — or null for none (World.highlightLayerEdge →
+   * render/layerEdgeOverlay.ts). This is the SAME query that lights the lip up
+   * on screen, so what the player sees highlighted is exactly what a press
+   * grabs — the highlight is the affordance, and two answers to "is there a
+   * lip here" would make it a lie.
    */
-  grabbableBand: (cell: { x: number; y: number } | null) => number | null;
+  grabbableLip: (cell: { x: number; y: number } | null) => LipGrab | null;
   /**
-   * Emits one intent, and REPORTS WHETHER IT WENT OUT — false when a client
+   * Emits one intent, and reports whether it went out — false when a client
    * plugin vetoed it (out of mana) or the socket was not ready.
    *
-   * The return value is load-bearing for drags and for nothing else (owner
-   * report, 2026-08-23: a single drag came out as a ribbon, a gap, and two
-   * orphan blobs). A drag's cells are a CHAIN: the shared spread rule only
-   * lets the grabbed band reach a cell that already touches that band, so cell
-   * n+1 is legal only because cell n landed. An emitter that cannot tell a
-   * sent intent from a dropped one walks straight past the hole it just made,
-   * and every remaining cell of the stroke is then refused — one dropped
-   * intent kills the rest of the drag.
+   * NO LONGER LOAD-BEARING FOR DRAGS, and the reason is the whole point of the
+   * 2026-08-24 rework. A drag used to be a CHAIN of per-cell intents, each one
+   * legal only because the previous had landed, so an emitter that could not
+   * tell a sent intent from a dropped one walked past the hole it had just
+   * made and every remaining cell was refused. A drag now sends its WHOLE
+   * region absolutely on every emission, so a dropped intent is simply a frame
+   * the lip did not move — the next pointer move re-sends the same region and
+   * it heals itself (issue #120).
    */
   send: (intent: SculptIntent) => boolean;
 }
@@ -159,7 +147,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     pickCell: pickCellByRay,
     terrainHeightAt,
     worldSize,
-    grabbableBand,
+    grabbableLip,
     send,
   } = options;
 
@@ -187,16 +175,27 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeAction: SculptAction = 'raise';
 
   /**
-   * THE GRABBED BAND, decided once at pointerdown and fixed for the stroke —
-   * null for an ordinary stamp stroke. Fixed rather than re-queried per repeat
-   * for the same reason the stroke's target cell is cached (see emitIntent's
-   * issue-#25 note): a drag MOVES the lip, so re-asking "what lip is under the
-   * cursor now" mid-stroke would let the stroke re-grab the edge it just built
-   * — or worse, hand off to a different band's lip the drag happened to sweep
-   * past — and the player would have no way to predict which terrace they were
-   * pulling.
+   * THE GRABBED LIP, decided once at pointerdown and fixed for the stroke —
+   * null for an ordinary brush stroke. Its band says which level is being
+   * pulled; its normal says which way the face looked when the player took
+   * hold of it.
+   *
+   * FROZEN, NOT RE-QUERIED, and this is the fix for the wander the owner saw
+   * (issue #119). A drag MOVES the lip, so re-asking "what lip is under the
+   * cursor now" mid-stroke lets the stroke re-grab the edge it just built —
+   * the edit chasing its own result — or hand off to a different band's lip
+   * the drag happened to sweep past. Freezing the normal is what additionally
+   * makes the pull depend only on how far ACROSS the edge the cursor has come,
+   * so sliding along the lip does nothing at all.
    */
-  let strokeBand: number | null = null;
+  let strokeGrab: LipGrab | null = null;
+
+  /**
+   * The cell the lip was grabbed at — the origin every intent of this drag
+   * measures its pull from. Frozen with the lip, for the same reason.
+   */
+  let strokeGrabX = 0;
+  let strokeGrabY = 0;
 
   /**
    * Whether the stroke has actually started sculpting. A touch stroke waits out
@@ -207,13 +206,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeArmed = false;
 
   /**
-   * The last cell this DRAG emitted an intent for, so the next emission can
-   * walk the path from there and leave no gap in the lip. Null before the
-   * stroke's first intent, and for every non-drag stroke.
+   * The cursor cell the last drag intent named, so an unmoved cursor sends
+   * nothing.
+   *
+   * A RATE LIMIT, NOT A CHAIN — the distinction the per-cell build got wrong.
+   * Every drag intent describes the whole region absolutely, so skipping a
+   * duplicate loses no information whatsoever: the next one that does go out
+   * carries everything the skipped one would have. It exists purely so a
+   * hundred pointermove events inside one cell do not become a hundred
+   * messages.
    */
-  let lastDragCellX = 0;
-  let lastDragCellY = 0;
-  let haveDragCell = false;
+  let lastDragToX = 0;
+  let lastDragToY = 0;
+  let haveDragTo = false;
 
   /**
    * Touch pointers currently down on the canvas. One finger sculpts; the
@@ -340,8 +345,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (cell === null) return;
     const action = currentStrokeAction();
     setSculptMode(action);
-    if (strokeBand !== null) {
-      emitDrag(cell.x, cell.y, action);
+    if (strokeGrab !== null) {
+      emitDrag(cell.x, cell.y, action, strokeGrab);
       return;
     }
     // tool/profile are read (not captured) per intent, so switching the HUD
@@ -359,97 +364,70 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
-   * One drag intent at (x, y), pulling the grabbed band onto that cell.
-   * Returns whether it actually went out — see SculptInputOptions.send.
+   * THE DRAG EMISSION — one ABSOLUTE intent describing the whole pull so far.
+   *
+   * Not a step, not an increment, not a cell: the grabbed cell, the frozen
+   * normal, the cursor's cell and the radius together name the entire region
+   * the lip has been pulled across, and the server re-derives that region from
+   * scratch (shared/heightmap.ts, applyDragRegion). Re-sending it changes
+   * nothing; sending a deeper one is a strict superset of the last. That is
+   * why a dropped intent costs a frame rather than the rest of the stroke —
+   * the failure mode of the per-cell chain this replaces (issue #120).
+   *
+   * Skips a repeat of the same cursor cell, which is a rate limit and nothing
+   * more (see lastDragTo).
    */
-  const sendDragAt = (x: number, y: number, action: SculptAction): boolean => {
-    return send({
+  const emitDrag = (
+    toX: number,
+    toY: number,
+    action: SculptAction,
+    grab: LipGrab,
+  ): void => {
+    if (haveDragTo && toX === lastDragToX && toY === lastDragToY) return;
+    const sent = send({
       type: 'sculpt',
-      x,
-      y,
-      // One cell, not the HUD's stamp radius — see DRAG_BRUSH_RADIUS.
-      radius: DRAG_BRUSH_RADIUS,
+      // THE GRAB CELL, NOT THE CURSOR. Every drag intent measures its pull
+      // from where the player took hold of the lip, so the region is the same
+      // whatever route the cursor took to get where it is.
+      x: strokeGrabX,
+      y: strokeGrabY,
+      // The HUD's radius, which for this tool means HOW MUCH OF THE LIP the
+      // grab covers (owner decision 2026-08-24) — the same slider, a meaning
+      // the tool gives it. A wide grab pulls a broad front, a narrow one pulls
+      // a spur.
+      radius: brushRadius(),
       dir: sculptDirection(action),
-      // A drag is a HORIZONTAL edit (owner, 2026-08-23): it extends a level
-      // sideways and must not slope anything, so it is always a stamp
-      // regardless of the HUD's tool toggle — the smooth tool's relaxation
-      // would carry height away from the lip the player is placing. `hard` for
-      // the same reason: the drag speaks in whole bands, so a falloff cone
-      // across a one-cell footprint is a distinction without a difference on
-      // the centre cell and a wrong one on any future wider drag.
-      tool: 'stamp',
-      profile: 'hard',
-      targetBand: strokeBand ?? undefined,
+      tool: 'drag',
+      // The edge profile decides how the pull tapers ALONG the grabbed span:
+      // soft bulges the lip into a bay, hard moves it as a straight front.
+      // Read live, so switching the toggle mid-stroke reshapes the very next
+      // intent — and because the intent is absolute, the region simply becomes
+      // the new shape rather than layering the two.
+      profile: brushProfile(),
+      targetBand: grab.band,
+      drag: {
+        normalX: grab.normalX,
+        normalY: grab.normalY,
+        toX,
+        toY,
+      },
       seq: nextSeq++,
     });
-  };
-
-  /**
-   * THE DRAG WALK — emits one intent per cell along the path from the last
-   * cell this stroke touched to (x, y), so a fast pull leaves a continuous
-   * terrace lip instead of a dotted one.
-   *
-   * Bresenham over the integer cell lattice, because the path has to be the
-   * same set of cells however the sampling fell: two players making the same
-   * gesture at different frame rates should carve the same edge.
-   *
-   * Capped at DRAG_CELLS_PER_EMIT cells per call (see that constant). The cap
-   * SKIPS NOTHING — the walk stops early and `lastDragCell` records where, so
-   * the next repeat resumes from that cell and the lip merely trails the
-   * cursor for a tick.
-   */
-  const emitDrag = (x: number, y: number, action: SculptAction): void => {
-    if (!haveDragCell) {
-      // The stroke's first cell. If it did not go out there is no anchor for a
-      // walk to continue from, so the drag simply has not started yet — the
-      // next pointer move tries again from wherever the cursor is then.
-      if (!sendDragAt(x, y, action)) return;
-      lastDragCellX = x;
-      lastDragCellY = y;
-      haveDragCell = true;
-      return;
-    }
-
-    let px = lastDragCellX;
-    let py = lastDragCellY;
-    const dx = Math.abs(x - px);
-    const dy = -Math.abs(y - py);
-    const stepX = px < x ? 1 : -1;
-    const stepY = py < y ? 1 : -1;
-    let error = dx + dy;
-
-    for (let emitted = 0; emitted < DRAG_CELLS_PER_EMIT; emitted++) {
-      // The path's FIRST cell is the one already emitted last time, so every
-      // iteration advances before it sends — no cell is ever sculpted twice by
-      // the walk, and a stationary cursor emits nothing at all.
-      if (px === x && py === y) break;
-      const doubled = 2 * error;
-      if (doubled >= dy) {
-        error += dy;
-        px += stepX;
-      }
-      if (doubled <= dx) {
-        error += dx;
-        py += stepY;
-      }
-      // ADVANCE ONLY OVER GROUND THAT WAS ACTUALLY ASKED FOR. A dropped intent
-      // leaves a cell at its old height, and the spread rule will refuse every
-      // cell beyond it; stopping here keeps `lastDragCell` on the last cell
-      // that really was sent, so the next pointer move re-walks from there and
-      // the chain repairs itself instead of dying.
-      if (!sendDragAt(px, py, action)) return;
-      lastDragCellX = px;
-      lastDragCellY = py;
-    }
+    // A dropped intent leaves lastDragTo alone, so the very next pointermove
+    // — even one inside the same cell — retries the identical region.
+    if (!sent) return;
+    lastDragToX = toX;
+    lastDragToY = toY;
+    haveDragTo = true;
   };
 
   const stopRepeat = (): void => {
     strokeButton = null;
     strokePointerId = null;
     strokeIsTouch = false;
-    strokeBand = null;
+    strokeGrab = null;
     strokeArmed = false;
-    haveDragCell = false;
+    haveDragTo = false;
     if (repeatTimer !== null) {
       clearTimeout(repeatTimer);
       repeatTimer = null;
@@ -495,10 +473,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // walk that has no cells left to cross.
     //
     // The wire rate stays bounded WITHOUT a timer, because a drag emits per
-    // CELL CROSSED, not per event: a hundred pointermove events inside one
-    // cell send nothing at all, and a fast sweep is capped by
-    // DRAG_CELLS_PER_EMIT per emission.
-    if (strokeBand !== null) return;
+    // CURSOR CELL CHANGE, not per event: a hundred pointermove events inside
+    // one cell send nothing at all (see lastDragTo).
+    if (strokeGrab !== null) return;
     scheduleRepeat(0);
   };
 
@@ -515,20 +492,32 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     pointerClientX = event.clientX;
     pointerClientY = event.clientY;
     havePointer = true;
-    // GRAB, OR STAMP — decided here, once, after the pointer position is
+    // GRAB, OR BRUSH — decided here, once, after the pointer position is
     // recorded, because the lip query has to run against the cell THIS press
-    // is over. A press over a terrace lip starts a DRAG of that band; anywhere
-    // else it is the stamp it has always been. The query is the same one that
-    // highlights the edge on screen, so the player has already been shown,
-    // before pressing, which of the two this press will be.
+    // is over.
     //
-    // RAISE ONLY, for now. Dragging a lip INWARD is the same gesture with the
+    // THE PULL IS A TOOL YOU SELECT, not a mode a press falls into (owner
+    // decision 2026-08-24). It used to grab whenever a press happened to land
+    // near a lip, whatever tool was chosen, which meant the same click did two
+    // different things depending on ground the player could easily misjudge.
+    // Now Stamp and Smooth always brush and Pull always pulls, so the HUD
+    // states which of the two a press will be before the press happens. The
+    // lip query is still the one that highlights the edge on screen, so within
+    // the Pull tool what is lit up is exactly what a press takes hold of.
+    //
+    // RAISE ONLY, for now. Pulling a lip INWARD is the same gesture with the
     // lower modifier held, and it is the direction that needs a real stop rule
-    // (a lip pulled in must not strip the ground standing on it) — the next
-    // piece of this tool, deliberately not this one. Until it exists, a lower
-    // press over a lip stays an ordinary lowering stamp rather than silently
-    // doing something the player cannot predict.
-    strokeBand = action === 'raise' ? grabbableBand(hoverTarget()) : null;
+    // (a lip pulled in must not strip the ground standing on it) — issue #99
+    // step 3, deliberately not this one. Until it exists, a lower press with
+    // the Pull tool does nothing rather than silently doing something the
+    // player cannot predict.
+    const pressCell = hoverTarget();
+    strokeGrab =
+      brushTool() === 'drag' && action === 'raise' ? grabbableLip(pressCell) : null;
+    if (strokeGrab !== null && pressCell !== null) {
+      strokeGrabX = pressCell.x;
+      strokeGrabY = pressCell.y;
+    }
 
     if (strokeIsTouch) {
       // Touch arms after a grace delay so the second finger of a camera
@@ -598,7 +587,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       pointerClientY = event.clientY;
       havePointer = true;
       // A live, armed DRAG follows the cursor directly — see armStroke.
-      if (strokeArmed && strokeBand !== null) emitIntent();
+      if (strokeArmed && strokeGrab !== null) emitIntent();
     }
     // Touch moves carry no modifier keys; letting them into syncMode would
     // reset the sticky touch mode to 'raise' on every frame.

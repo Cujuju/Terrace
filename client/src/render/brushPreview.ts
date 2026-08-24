@@ -666,6 +666,12 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     `${radius}|${tool}|${profile}`;
   for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
     for (const tool of SCULPT_TOOLS) {
+      // THE PULL HAS NO FOOTPRINT TO CACHE. It is drawn as the bare crosshair
+      // in every state (see update below), so building a ring, a skirt and a
+      // cell grid for it would be a third of this eager cache that nothing can
+      // ever display. Skipped here rather than filtered at the draw site so
+      // the cache holds exactly what is drawable.
+      if (tool === 'drag') continue;
       for (const profile of SCULPT_PROFILES) {
         geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
       }
@@ -796,10 +802,17 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         show(false);
         return;
       }
-      // GRABBING A LIP: the crosshair alone, and no footprint geometry to pick.
-      // Returning before the lookup also means a drag pointer costs nothing to
-      // draw, however the HUD's brush happens to be set.
-      if (hover.grabbable) {
+      // THE PULL POINTER: the crosshair alone, and no footprint geometry to
+      // pick. It is the pointer for the WHOLE tool, not only over a lip
+      // (2026-08-24) — a ring is a promise about which cells one click will
+      // change, and the Pull tool never keeps that promise: what it changes is
+      // however far the player drags, which is unknown until they do. Over a
+      // lip the layer-edge overlay lights the edge itself, which is the
+      // affordance that says a press here will take hold.
+      //
+      // Returning before the lookup also means the pull pointer costs nothing
+      // to draw, however the HUD's radius happens to be set.
+      if (hover.grabbable || brush.tool === 'drag') {
         material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
         const grabLift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
         crosshair.position.set(hover.x * CELL_WORLD_SIZE, grabLift, hover.y * CELL_WORLD_SIZE);
