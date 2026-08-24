@@ -60,7 +60,6 @@ import {
 } from '../state/controlPrefs.ts';
 import { BAND_HEIGHT } from '@terrace/shared';
 import type { SculptIntent } from '@terrace/shared';
-import type { LipGrab } from '../render/layerEdgeOverlay.ts';
 
 
 export interface SculptInputOptions {
@@ -81,14 +80,14 @@ export interface SculptInputOptions {
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
-   * The terrace lip within grabbing range of `cell` — its band and the
-   * outward normal of its face — or null for none (World.highlightLayerEdge →
+   * The terrace band whose lip is within grabbing range of `cell`, or null for
+   * none (World.highlightLayerEdge →
    * render/layerEdgeOverlay.ts). This is the SAME query that lights the lip up
    * on screen, so what the player sees highlighted is exactly what a press
    * grabs — the highlight is the affordance, and two answers to "is there a
    * lip here" would make it a lie.
    */
-  grabbableLip: (cell: { x: number; y: number } | null) => LipGrab | null;
+  grabbableLip: (cell: { x: number; y: number } | null) => number | null;
   /**
    * Emits one intent, and reports whether it went out — false when a client
    * plugin vetoed it (out of mana) or the socket was not ready.
@@ -178,27 +177,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeAction: SculptAction = 'raise';
 
   /**
-   * THE GRABBED LIP, decided once at pointerdown and fixed for the stroke —
-   * null for an ordinary brush stroke. Its band says which level is being
-   * pulled; its normal says which way the face looked when the player took
-   * hold of it.
+   * THE GRABBED BAND, decided once at pointerdown and fixed for the stroke —
+   * null for an ordinary brush stroke.
    *
-   * FROZEN, NOT RE-QUERIED, and this is the fix for the wander the owner saw
-   * (issue #119). A drag MOVES the lip, so re-asking "what lip is under the
-   * cursor now" mid-stroke lets the stroke re-grab the edge it just built —
-   * the edit chasing its own result — or hand off to a different band's lip
-   * the drag happened to sweep past. Freezing the normal is what additionally
-   * makes the pull depend only on how far ACROSS the edge the cursor has come,
-   * so sliding along the lip does nothing at all.
+   * FROZEN, NOT RE-QUERIED, and this is what stops the wander (issue #119). A
+   * pull MOVES the lip, so re-asking "what lip is under the cursor now"
+   * mid-stroke lets the stroke re-grab the edge it just built — the edit
+   * chasing its own result — or hand off to a different band's lip the pull
+   * happened to sweep past, with the player unable to predict which terrace
+   * they were moving.
    */
-  let strokeGrab: LipGrab | null = null;
-
-  /**
-   * The cell the lip was grabbed at — the origin every intent of this drag
-   * measures its pull from. Frozen with the lip, for the same reason.
-   */
-  let strokeGrabX = 0;
-  let strokeGrabY = 0;
+  let strokeGrab: number | null = null;
 
   /**
    * Whether the stroke has actually started sculpting. A touch stroke waits out
@@ -416,7 +405,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // the HUD's raise/lower indicator is honest either way.
     setSculptMode(action);
     if (strokeGrab !== null) {
-      const to = dragPlaneCell(strokeGrab.band);
+      const to = dragPlaneCell(strokeGrab);
       // Too shallow a ray, or off the world: hold the pull where it was rather
       // than lurch. The intent is absolute, so skipping one sample loses
       // nothing — the next usable one carries the whole pull.
@@ -441,57 +430,43 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   };
 
   /**
-   * THE DRAG EMISSION — one ABSOLUTE intent describing the whole pull so far.
+   * THE PULL EMISSION — one self-contained intent describing the disc under
+   * the cursor right now.
    *
-   * Not a step, not an increment, not a cell: the grabbed cell, the frozen
-   * normal, the cursor's cell and the radius together name the entire region
-   * the lip has been pulled across, and the server re-derives that region from
-   * scratch (shared/heightmap.ts, applyDragRegion). Re-sending it changes
-   * nothing; sending a deeper one is a strict superset of the last. That is
-   * why a dropped intent costs a frame rather than the rest of the stroke —
-   * the failure mode of the per-cell chain this replaces (issue #120).
+   * Not a step, not an increment, not a link in a chain: the cursor cell and
+   * the radius name the whole edit, and the server re-derives it from its own
+   * heightmap (shared/heightmap.ts, applyDragRegion). Re-sending the same one
+   * changes nothing. That is why a dropped intent costs a frame rather than
+   * the rest of the stroke — the failure of the per-cell chain this replaces
+   * (issue #120).
    *
    * Skips a repeat of the same cursor cell, which is a rate limit and nothing
    * more (see lastDragTo).
    */
-  const emitDrag = (
-    toX: number,
-    toY: number,
-    action: SculptAction,
-    grab: LipGrab,
-  ): void => {
+  const emitDrag = (toX: number, toY: number, action: SculptAction, band: number): void => {
     if (haveDragTo && toX === lastDragToX && toY === lastDragToY) return;
     const sent = send({
       type: 'sculpt',
-      // THE GRAB CELL, NOT THE CURSOR. Every drag intent measures its pull
-      // from where the player took hold of the lip, so the region is the same
-      // whatever route the cursor took to get where it is.
-      x: strokeGrabX,
-      y: strokeGrabY,
-      // The HUD's radius, which for this tool means HOW MUCH OF THE LIP the
-      // grab covers (owner decision 2026-08-24) — the same slider, a meaning
-      // the tool gives it. A wide grab pulls a broad front, a narrow one pulls
-      // a spur.
+      // THE CURSOR CELL, which for this tool is where the edit happens — the
+      // same meaning x/y carry for every brush. The cell the lip was first
+      // grabbed at does not appear in the intent at all: a pull is wherever
+      // the hand is now, not a measurement from where it started, which is
+      // what lets the lip turn and curve instead of advancing as one straight
+      // front (owner report, 2026-08-24).
+      x: toX,
+      y: toY,
       radius: brushRadius(),
       dir: sculptDirection(action),
       tool: 'drag',
-      // The edge profile decides how the pull tapers ALONG the grabbed span:
-      // soft bulges the lip into a bay, hard moves it as a straight front.
       // Read live, so switching the toggle mid-stroke reshapes the very next
-      // intent — and because the intent is absolute, the region simply becomes
-      // the new shape rather than layering the two.
+      // intent — soft advances the lip as a smooth face, hard fills every
+      // legal cell of the disc.
       profile: brushProfile(),
-      targetBand: grab.band,
-      drag: {
-        normalX: grab.normalX,
-        normalY: grab.normalY,
-        toX,
-        toY,
-      },
+      targetBand: band,
       seq: nextSeq++,
     });
     // A dropped intent leaves lastDragTo alone, so the very next pointermove
-    // — even one inside the same cell — retries the identical region.
+    // — even one inside the same cell — retries the identical disc.
     if (!sent) return;
     lastDragToX = toX;
     lastDragToY = toY;
@@ -588,13 +563,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // step 3, deliberately not this one. Until it exists, a lower press with
     // the Pull tool does nothing rather than silently doing something the
     // player cannot predict.
-    const pressCell = hoverTarget();
     strokeGrab =
-      brushTool() === 'drag' && action === 'raise' ? grabbableLip(pressCell) : null;
-    if (strokeGrab !== null && pressCell !== null) {
-      strokeGrabX = pressCell.x;
-      strokeGrabY = pressCell.y;
-    }
+      brushTool() === 'drag' && action === 'raise' ? grabbableLip(hoverTarget()) : null;
 
     if (strokeIsTouch) {
       // Touch arms after a grace delay so the second finger of a camera

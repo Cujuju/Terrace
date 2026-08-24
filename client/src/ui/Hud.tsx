@@ -114,7 +114,7 @@ const STATUS_TITLE: Record<ConnectionStatus, string> = {
 const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Moves exactly the ground under the brush — spires, pits and sheer cliffs.',
   smooth: 'Drags neighbouring terrain along, like pulling fabric — blends shapes.',
-  drag: 'Grab the edge of a terrace and pull it sideways — extends a level without changing which levels exist.',
+  drag: 'Grab the edge of a terrace and push it about with the cursor — extends a level without changing which levels exist.',
 };
 
 // The `hard` title states the level fill (shared/heightmap.ts,
@@ -123,8 +123,8 @@ const TOOL_TITLE: Record<SculptTool, string> = {
 // keeps the plain flat lift. A tooltip that still promised "the same height
 // change across the whole brush" would be describing the old brush.
 const PROFILE_TITLE: Record<SculptProfile, string> = {
-  soft: 'Strongest at the centre and fading to nothing at the rim — a rounded hill. With Pull, the edge bulges into a bay.',
-  hard: 'One terrace at a time: levels the lowest ground under the brush before starting the next. With Smooth, one flat lift that then slumps. With Pull, the edge moves as a straight front.',
+  soft: 'Strongest at the centre and fading to nothing at the rim — a rounded hill. With Pull, the edge advances as a smooth face.',
+  hard: 'One terrace at a time: levels the lowest ground under the brush before starting the next. With Smooth, one flat lift that then slumps. With Pull, the edge fills every cell it can reach, notches included.',
 };
 
 const HINT_BUTTON: Record<string, string> = {
