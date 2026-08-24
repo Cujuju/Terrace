@@ -11,6 +11,14 @@
 //
 // SHARED GEOMETRY AND MATERIALS, allocated once by createBoatModels and freed
 // once by its dispose. Only the Groups are per boat.
+//
+// PORTED TO RIGSKIN, 2026-08-23. The reasoning above survives — a war boat
+// still gets its own skeleton and its own sail — but what "a handful of small
+// Groups" meant changed: the hull, deck, mast, yard and all four oars are now
+// baked once into a RigBlueprint (client/src/render/rigSkin.ts) and drawn as
+// ONE skinned surface per boat, animated through Bones instead of scene-graph
+// nodes. The unit of AUTHORING stopped being the unit of DRAWING: this went
+// from 9 draw calls per boat to 2 (the rig surface plus the sail).
 
 import {
   BoxGeometry,
@@ -23,6 +31,13 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
+// Render kit, reached the same way plugins/wildlife reaches it — by path. See
+// that module's header for why it lives there.
+import {
+  bakeRig,
+  instantiateRig,
+  type RigBlueprint,
+} from '../../../client/src/render/rigSkin.ts';
 
 /**
  * Hull length in cells (CELL_WORLD_SIZE is 1, so cells are world units).
@@ -155,6 +170,15 @@ const OAR_DIP_RADIANS = 0.38;
 /** Strokes quicken in a fight. A multiplier, so one constant sets the contrast. */
 const OAR_FIGHTING_RATE = 2.1;
 
+/**
+ * Height of the sail's centre above the keel line.
+ *
+ * Lifted out of `create()` because the YARD is baked into the rig and must sit
+ * at the sail's head even though the sail itself is NOT baked — see the sail
+ * comment in `create()`. One constant keeps the two from drifting apart.
+ */
+const SAIL_CENTRE_Y = HULL_DEPTH + MAST_HEIGHT * 0.62;
+
 /** Swell: how far a hull rolls and pitches at rest, and how fast. */
 const SWELL_ROLL_RADIANS = 0.07;
 const SWELL_PITCH_RADIANS = 0.04;
@@ -208,6 +232,21 @@ export function createBoatModels(): BoatModels {
   for (const [along, across] of outline.slice(1)) hullShape.lineTo(along, across);
   hullShape.closePath();
 
+  // Every BAKED part below is flattened to NON-INDEXED (`toNonIndexed`). Why:
+  // bakeRig groups parts by materialSignature PLUS indexedness, because
+  // mergeGeometries refuses a mix — so an indexed cylinder beside a non-indexed
+  // extrusion would silently cost TWO surfaces instead of one. The hull and
+  // deck arrive non-indexed from ExtrudeGeometry; converting the turned parts
+  // (mast, yard, oars) to match puts the whole rig in ONE group, which is the
+  // entire point of the port. The vertex-count cost is a few hundred vertices
+  // on 4–5-segment primitives — nothing next to a second draw call per boat.
+  // The sail is not baked, so it stays indexed.
+  const toBakeable = (geometry: BufferGeometry): BufferGeometry => {
+    const flat = geometry.toNonIndexed();
+    geometry.dispose();
+    return track(flat);
+  };
+
   const hullGeometry = track(
     new ExtrudeGeometry(hullShape, { depth: HULL_DEPTH, bevelEnabled: false }),
   );
@@ -229,12 +268,12 @@ export function createBoatModels(): BoatModels {
   );
   deckGeometry.rotateX(-Math.PI / 2);
   deckGeometry.translate(0, HULL_DEPTH, 0);
-  const mastGeometry = track(new CylinderGeometry(MAST_RADIUS, MAST_RADIUS, MAST_HEIGHT, 5));
+  const mastGeometry = toBakeable(new CylinderGeometry(MAST_RADIUS, MAST_RADIUS, MAST_HEIGHT, 5));
   const sailGeometry = track(new BoxGeometry(SAIL_THICKNESS, SAIL_HEIGHT, SAIL_WIDTH));
-  const yardGeometry = track(
+  const yardGeometry = toBakeable(
     new CylinderGeometry(YARD_RADIUS, YARD_RADIUS, SAIL_WIDTH + YARD_OVERHANG * 2, 5),
   );
-  const oarGeometry = track(new CylinderGeometry(OAR_RADIUS, OAR_RADIUS, OAR_LENGTH, 4));
+  const oarGeometry = toBakeable(new CylinderGeometry(OAR_RADIUS, OAR_RADIUS, OAR_LENGTH, 4));
 
   const hullMaterial = trackMaterial(new MeshStandardMaterial({ color: HULL_COLOR, flatShading: true }));
   const deckMaterial = trackMaterial(new MeshStandardMaterial({ color: DECK_COLOR, flatShading: true }));
@@ -246,60 +285,109 @@ export function createBoatModels(): BoatModels {
   const makeSailMaterial = (): MeshStandardMaterial =>
     new MeshStandardMaterial({ color: SAIL_COLOR, flatShading: true });
 
+  // ── THE BAKE ──────────────────────────────────────────────────────────
+  //
+  // The parts that are identical on every boat — hull, deck, mast, yard and
+  // all four oars — are authored ONCE here as a plain part-tree and handed to
+  // `bakeRig`, which turns them into one skinnable surface every boat then
+  // shares (see client/src/render/rigSkin.ts). What comes back per boat is a
+  // skeleton whose bones stand exactly where these nodes stood.
+  const authored = new Group();
+  // The model faces +X, the same convention monsters' models keep, so the
+  // render loop's heading-to-rotation rule is one rule for both plugins.
+  // Hull and deck are both baked at their final height by the geometry above,
+  // so neither needs positioning here.
+  const hull = new Mesh(hullGeometry, hullMaterial);
+  authored.add(hull);
+  const deck = new Mesh(deckGeometry, deckMaterial);
+  authored.add(deck);
+
+  const mast = new Mesh(mastGeometry, mastMaterial);
+  mast.position.y = HULL_DEPTH + MAST_HEIGHT / 2;
+  authored.add(mast);
+
+  // The yard the sail hangs from, across the beam at the sail's head.
+  const yard = new Mesh(yardGeometry, mastMaterial);
+  yard.rotation.x = Math.PI / 2;
+  yard.position.y = SAIL_CENTRE_Y + SAIL_HEIGHT / 2;
+  authored.add(yard);
+
+  // Oars, mounted along both gunwales. Each sits in its own pivot Group so
+  // `animate` can yaw it about its mount rather than about the hull.
+  //
+  // The inner `shaft` Group carries the static dip (rotation.x = side ×
+  // OAR_DIP_RADIANS) and is never animated. rigSkin makes EVERY node a bone —
+  // including static ones — and records its rest transform verbatim in the
+  // bone descriptor, so the dip survives the bake exactly; it costs one extra
+  // matrix per oar and buys not having to pre-multiply the dip into anything.
+  interface OarJoint {
+    /** The authored pivot node, for capturing its joint index after the bake. */
+    readonly node: Group;
+    /** -1 port or +1 starboard, as authored. */
+    readonly side: number;
+  }
+  const oarJoints: OarJoint[] = [];
+  for (let side = -1; side <= 1; side += 2) {
+    for (let index = 0; index < OARS_PER_SIDE; index++) {
+      const pivot = new Group();
+      pivot.position.set(
+        HULL_LENGTH * (0.14 - index * 0.32),
+        HULL_DEPTH * 0.9,
+        (side * HULL_BEAM) / 2,
+      );
+      const oar = new Mesh(oarGeometry, oarMaterial);
+      // Lay the cylinder across the beam, reaching outboard, then dip the
+      // blade toward the water — a level oar reads as a loose spar.
+      oar.rotation.x = Math.PI / 2;
+      oar.position.z = (side * OAR_LENGTH) / 2;
+      const shaft = new Group();
+      shaft.rotation.x = side * OAR_DIP_RADIANS;
+      shaft.add(oar);
+      pivot.add(shaft);
+      oarJoints.push({ node: pivot, side });
+      authored.add(pivot);
+    }
+  }
+
+  const blueprint = bakeRig(authored);
+
+  // Capture the joint indices NOW, at author time — this is the handle
+  // `animate` will use to reach each oar pivot bone. It cannot be recovered
+  // later: the authored tree is consumed by the bake, and the instance bones
+  // are fresh objects with no link back to these nodes.
+  const oarSides: number[] = [];
+  const oarJointIndices: number[] = [];
+  for (const joint of oarJoints) {
+    oarJointIndices.push(blueprint.jointIndex(joint.node));
+    oarSides.push(joint.side);
+  }
+
   return {
     create(): BoatModel {
-      const root = new Group();
-      // The model faces +X, the same convention monsters' models keep, so the
-      // render loop's heading-to-rotation rule is one rule for both plugins.
-      const hull = new Mesh(hullGeometry, hullMaterial);
-      root.add(hull);
+      // One instance of the shared rig: fresh bones and root, zero new buffers.
+      const instance = instantiateRig(blueprint);
+      const root = instance.root;
 
-      // Deck and hull are both baked at their final height by the geometry
-      // above, so neither needs positioning here.
-      const deck = new Mesh(deckGeometry, deckMaterial);
-      root.add(deck);
-
-      const mast = new Mesh(mastGeometry, mastMaterial);
-      mast.position.y = HULL_DEPTH + MAST_HEIGHT / 2;
-      root.add(mast);
-
+      // The sail is deliberately NOT part of the baked rig, though it would
+      // merge into its single surface. Two reasons, both about colour:
+      //
+      // * rigSkin's materialSignature() does NOT include `color` — parts that
+      //   differ only in colour merge into ONE surface with the colour carried
+      //   as VERTEX DATA. A baked sail's canvas tint would therefore live in a
+      //   buffer shared by every boat in the world.
+      // * A blueprint holds ONE material per surface, shared by every
+      //   instance. There is no per-instance recolour left to be had.
+      //
+      // But the sail's colour IS the fighting state signal
+      // (SAIL_FIGHTING_COLOR above): one boat engaging must redden ITS sail
+      // alone. So the sail stays a plain Mesh with its own per-boat material,
+      // hung off the instance root. Cost: 2 draw calls per boat instead of the
+      // rig's 1. Do not "fix" this back into the rig without solving those two
+      // bullets first.
       const sailMaterial = makeSailMaterial();
       const sail = new Mesh(sailGeometry, sailMaterial);
-      const sailCentreY = HULL_DEPTH + MAST_HEIGHT * 0.62;
-      sail.position.y = sailCentreY;
+      sail.position.y = SAIL_CENTRE_Y;
       root.add(sail);
-
-      // The yard the sail hangs from, across the beam at the sail's head.
-      const yard = new Mesh(yardGeometry, mastMaterial);
-      yard.rotation.x = Math.PI / 2;
-      yard.position.y = sailCentreY + SAIL_HEIGHT / 2;
-      root.add(yard);
-
-      // Oars, mounted along both gunwales. Each sits in its own pivot Group so
-      // `animate` can yaw it about its mount rather than about the hull.
-      const oarPivots: Group[] = [];
-      for (let side = -1; side <= 1; side += 2) {
-        for (let index = 0; index < OARS_PER_SIDE; index++) {
-          const pivot = new Group();
-          pivot.position.set(
-            HULL_LENGTH * (0.14 - index * 0.32),
-            HULL_DEPTH * 0.9,
-            (side * HULL_BEAM) / 2,
-          );
-          const oar = new Mesh(oarGeometry, oarMaterial);
-          // Lay the cylinder across the beam, reaching outboard, then dip the
-          // blade toward the water — a level oar reads as a loose spar.
-          oar.rotation.x = Math.PI / 2;
-          oar.position.z = (side * OAR_LENGTH) / 2;
-          const shaft = new Group();
-          shaft.rotation.x = side * OAR_DIP_RADIANS;
-          shaft.add(oar);
-          pivot.add(shaft);
-          pivot.userData.side = side;
-          oarPivots.push(pivot);
-          root.add(pivot);
-        }
-      }
 
       let wasFighting = false;
 
@@ -315,10 +403,13 @@ export function createBoatModels(): BoatModels {
 
           const strokeRate = fighting ? OAR_STROKE_HZ * OAR_FIGHTING_RATE : OAR_STROKE_HZ;
           const swing = Math.sin(t * strokeRate * Math.PI * 2) * OAR_SWEEP_RADIANS;
-          for (const pivot of oarPivots) {
+          for (let i = 0; i < oarJointIndices.length; i++) {
             // Opposite sides pull in opposition, which is what reads as rowing
-            // rather than as a shiver.
-            pivot.rotation.y = swing * (pivot.userData.side as number);
+            // rather than as a shiver. The side comes from the parallel array
+            // captured at author time, NOT from userData: instantiateRig builds
+            // fresh Bone objects from rest transforms and does not carry
+            // userData across the bake.
+            instance.joints[oarJointIndices[i]!]!.rotation.y = swing * oarSides[i]!;
           }
 
           // Only touched on the frame the state actually changes: assigning a
@@ -330,8 +421,8 @@ export function createBoatModels(): BoatModels {
           }
         },
         dispose(): void {
-          // Only this boat's own sail material; every other asset is shared and
-          // is freed by the set's dispose below.
+          // Only this boat's own sail material; the rig surface belongs to the
+          // shared blueprint and is freed by the set's dispose below.
           sailMaterial.dispose();
           root.clear();
         },
@@ -339,6 +430,10 @@ export function createBoatModels(): BoatModels {
     },
 
     dispose(): void {
+      // The blueprint first: it owns the merged rig geometry and the vertex-
+      // coloured material clone the instances draw with. Everything after it
+      // is the authoring pool this file has always tracked.
+      blueprint.dispose();
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
       geometries.length = 0;
