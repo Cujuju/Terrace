@@ -42,6 +42,7 @@ import {
   type PredictionStore,
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
+import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createRiverRig, type RiverRig } from './render/riverRig.ts';
 import type { TerrainSink } from './net/connection.ts';
@@ -119,6 +120,7 @@ export function createWorld(viewport: Viewport): World {
 
   let mirror: TerrainMirror | null = null;
   let meshes: TerrainMeshes | null = null;
+  let layerEdges: LayerEdgeOverlay | null = null;
   let predictions: PredictionStore | null = null;
   /**
    * World size the camera has already been aimed at — framed OR restored from
@@ -157,6 +159,9 @@ export function createWorld(viewport: Viewport): World {
    */
   const applyDirty = (dirty: Set<number>): void => {
     meshes?.update(dirty);
+    // Terrace lips follow the same dirty set as the meshes they lie on, so a
+    // stroke re-contours exactly the chunks it changed (render/layerEdgeOverlay.ts).
+    layerEdges?.update(dirty);
     if (mirror !== null) {
       fog.refresh(mirror, dirty);
       water.refresh(mirror, dirty);
@@ -206,8 +211,15 @@ export function createWorld(viewport: Viewport): World {
     // prediction still outstanding against the OLD session is meaningless: the
     // store is replaced along with the mirror it shadows, which drops them.
     const nextPredictions = createPredictionStore(nextMirror);
+    layerEdges?.dispose();
+    const nextLayerEdges = createLayerEdgeOverlay(
+      viewport.terrainGroup,
+      nextMirror,
+      worldSize,
+    );
     mirror = nextMirror;
     meshes = nextMeshes;
+    layerEdges = nextLayerEdges;
     predictions = nextPredictions;
     clearExpiryTimer();
     water.setWorldSize(worldSize);
@@ -267,6 +279,7 @@ export function createWorld(viewport: Viewport): World {
         nowMs(),
       );
       fresh.meshes.update(snapshotDirty);
+      layerEdges?.update(snapshotDirty);
       // The frontier is a fact about `received`, which the snapshot just
       // changed — sync unconditionally, whether this is a first join (empty
       // -> starter footprint) or a rejoin (old world's segments dropped, this
@@ -313,6 +326,7 @@ export function createWorld(viewport: Viewport): World {
         nowMs(),
       );
       meshes.update(unlockDirty);
+      layerEdges?.update(unlockDirty);
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);
