@@ -84,6 +84,16 @@ export function bandOf(h: number): number {
   return Math.floor(h / BAND_HEIGHT);
 }
 
+/**
+ * THE BAND RANGE THE WORLD CAN HOLD — the bands of its own height limits, so
+ * these move with MIN_HEIGHT/MAX_HEIGHT and BAND_HEIGHT rather than restating
+ * any of them. Used to bound a `targetBand` arriving off the wire (protocol.ts):
+ * a band outside this range names no ground that could exist, so it is rejected
+ * structurally rather than left to clamp into something plausible.
+ */
+export const MIN_BAND = bandOf(MIN_HEIGHT);
+export const MAX_BAND = bandOf(MAX_HEIGHT);
+
 /** Height snapped down to its band floor — what terraced rendering draws. */
 export function quantizeToBand(h: number): number {
   return bandOf(h) * BAND_HEIGHT;
@@ -178,11 +188,77 @@ export type SculptSpill = 'banded' | 'free';
  * what the anchored brush deposited. The two options compose; neither reads
  * the other.
  *
- * NOT a wire field, same as `spill`: the anchor is what clicking MEANS, not a
- * brush shape, so it is fixed policy and mirrored into prediction through the
- * one shared resolver (sculptOptionsOf).
+ * `clicked` and `free` are NOT wire fields, same as `spill`: the anchor is what
+ * clicking MEANS, not a brush shape, so it is fixed policy and mirrored into
+ * prediction through the one shared resolver (sculptOptionsOf). `band` is the
+ * exception, and the paragraph below it says why that is safe.
+ *
+ * - `band`   — THE DRAG ANCHOR (owner decision 2026-08-23: the drag tool owns
+ *              the horizontal). The target is a band the player physically
+ *              GRABBED — a terrace lip they clicked on — carried alongside as
+ *              `targetBand`, and the level is that band's floor exactly:
+ *              `targetBand · BAND_HEIGHT`, not one band off the cell under the
+ *              cursor. That is the whole difference from `clicked`, and it is
+ *              what lets a drag EXTEND an existing terrace over ground several
+ *              bands below it instead of building a new step one band up.
+ *
+ *              A drag never changes WHICH bands exist, only how far one
+ *              extends, and that is enforced by construction rather than by
+ *              intent: `canSpreadBandTo` below requires the band to already be
+ *              present in the cell's own neighbourhood, so the level can only
+ *              ever creep outward from ground that is already at it.
+ *
+ * IT IS THE ONE ANCHOR THAT IS PARTLY CLIENT INPUT, unlike the two above
+ * (which are fixed policy — see sculptOptionsOf in protocol.ts). It has to be:
+ * the band comes from a lip the player picked out on screen, which is a fact
+ * about their aim and not about the terrain alone. It is safe because the
+ * server never trusts the number on its own — canSpreadBandTo re-derives, from
+ * the server's own heightmap, whether that band is genuinely adjacent to the
+ * cell being sculpted, and a band that is not simply does nothing.
  */
-export type SculptAnchor = 'clicked' | 'free';
+export type SculptAnchor = 'clicked' | 'free' | 'band';
+
+/**
+ * WHETHER BAND `band` MAY SPREAD ONTO CELL (cx, cy) — the drag anchor's whole
+ * anti-cheat story, and the reason `targetBand` can be a wire field at all.
+ *
+ * True when any of the eight neighbours of (cx, cy) already stands at or above
+ * `band · BAND_HEIGHT`. A band-anchored sculpt is therefore never a way to
+ * conjure height: it can only pull a level onto ground that is already
+ * touching that level, one cell at a time. Dragging a terrace across a plain
+ * is a WALK — each intent extends the lip by one cell, and the next intent's
+ * legality is created by the previous one's result — which is exactly the
+ * "how far one extends" semantics, and it makes a forged `targetBand` on an
+ * unrelated cell a no-op rather than an exploit.
+ *
+ * EIGHT NEIGHBOURS, NOT FOUR. The lip a player grabs is a marching-squares
+ * contour over the cell lattice (see the client's layer-edge overlay), and
+ * that contour cuts diagonally across a cell corner wherever the region turns.
+ * With four-neighbour adjacency a drag following such a corner would stall on
+ * a lip it is visibly touching, which reads as the tool breaking. Off-map
+ * neighbours are simply absent — the world's border holds nothing up.
+ *
+ * Reads the map only; the caller decides what to do with a false answer (both
+ * brushes treat it as "this stroke moves nothing").
+ */
+export function canSpreadBandTo(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  band: number,
+): boolean {
+  const threshold = band * BAND_HEIGHT;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
+      if (map.cells[cellIndex(map, nx, ny)]! >= threshold) return true;
+    }
+  }
+  return false;
+}
 
 /** Caller-supplied sculpt options; every field defaults when absent. */
 export interface SculptOptions {
@@ -190,6 +266,13 @@ export interface SculptOptions {
   readonly profile?: SculptProfile;
   readonly spill?: SculptSpill;
   readonly anchor?: SculptAnchor;
+  /**
+   * The band a `band`-anchored stroke fills toward — the terrace lip the
+   * player grabbed. Meaningful ONLY with `anchor: 'band'`; null (and ignored)
+   * for every other anchor, which derive their level from the clicked cell or
+   * the footprint survey instead.
+   */
+  readonly targetBand?: number | null;
 }
 
 /** Sculpt options with nothing left to default — what the math actually runs. */
@@ -198,6 +281,13 @@ export interface ResolvedSculptOptions {
   readonly profile: SculptProfile;
   readonly spill: SculptSpill;
   readonly anchor: SculptAnchor;
+  /**
+   * The band a `band`-anchored stroke fills toward — the terrace lip the
+   * player grabbed. Meaningful ONLY with `anchor: 'band'`; null (and ignored)
+   * for every other anchor, which derive their level from the clicked cell or
+   * the footprint survey instead.
+   */
+  readonly targetBand: number | null;
 }
 
 /**
@@ -223,6 +313,9 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // (2026-08-19) is player-sculpt policy; plugin terraforms rely on the
   // unanchored cone/fill. See SculptAnchor.
   anchor: 'free',
+  // No band to fill toward: only the 'band' anchor reads this, and the
+  // library default is not it.
+  targetBand: null,
 };
 
 /**
@@ -390,7 +483,15 @@ function anchoredTargetHeight(
   cx: number,
   cy: number,
   raising: boolean,
+  targetBand: number | null = null,
 ): number {
+  // THE DRAG CASE (`anchor: 'band'`, 2026-08-23). The player grabbed a lip, so
+  // the level is that band's own floor — NOT one band off whatever happens to
+  // lie under the cursor. `raising` is deliberately unread here: which way the
+  // ground has to move to reach a grabbed level is a consequence of where it
+  // already is, not a separate choice, and fillTowardTarget/applyBrush already
+  // leave cells at or past the target alone.
+  if (targetBand !== null) return clampHeight(targetBand * BAND_HEIGHT);
   return clampHeight(
     (bandOf(map.cells[cellIndex(map, cx, cy)]) + (raising ? 1 : -1)) * BAND_HEIGHT,
   );
@@ -441,16 +542,24 @@ export function applyBrush(
   changed: Set<number>,
   profile: SculptProfile = LIBRARY_DEFAULT_SCULPT_OPTIONS.profile,
   anchor: SculptAnchor = LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor,
+  targetBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
+
+  // THE DRAG'S SPREAD RULE (`anchor: 'band'`): a grabbed level may only creep
+  // onto ground that already touches it. Checked before anything is written,
+  // from the map alone, so a forged band on an unrelated cell moves nothing.
+  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
+    return;
+  }
 
   // The ceiling/floor is pinned from the centre BEFORE any write: the centre
   // is itself a footprint cell, and computing the target mid-scan (after the
   // centre moved) would anchor the periphery to the wrong band. amount === 0
   // has no direction to anchor and writes nothing anyway.
   const raising = amount > 0;
-  const anchored = anchor === 'clicked' && amount !== 0;
-  const target = anchored ? anchoredTargetHeight(map, cx, cy, raising) : 0;
+  const anchored = anchor !== 'free' && amount !== 0;
+  const target = anchored ? anchoredTargetHeight(map, cx, cy, raising, targetBand) : 0;
 
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
@@ -543,18 +652,26 @@ export function applyLevelFillBrush(
   amount: number,
   changed: Set<number>,
   anchor: SculptAnchor = LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor,
+  targetBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
   // A zero-amount sculpt moves nothing and has no direction to fill in; without
   // this, the survey below would still run and pick a meaningless target.
   if (amount === 0) return;
 
+  // THE DRAG'S SPREAD RULE — see canSpreadBandTo, and applyBrush's identical
+  // guard. Both brushes carry it because both are reachable with this anchor.
+  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
+    return;
+  }
+
   const raising = amount > 0;
 
-  if (anchor === 'clicked') {
-    // ANCHORED: the level the player pointed at, read before any write — the
-    // same derivation the other two anchored call sites use.
-    const targetHeight = anchoredTargetHeight(map, cx, cy, raising);
+  if (anchor !== 'free') {
+    // ANCHORED: the level the player pointed at ('clicked') or grabbed
+    // ('band'), read before any write — the same derivation the other two
+    // anchored call sites use.
+    const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand);
     fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight);
     return;
   }
@@ -1033,13 +1150,30 @@ export function applySculpt(
   const profile = options?.profile ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.profile;
   const spill = options?.spill ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spill;
   const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
+  const targetBand = options?.targetBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand;
+
+  // THE DRAG'S SPREAD RULE, DECIDED FOR THE WHOLE STROKE (2026-08-23). Both
+  // brushes carry the same guard, but the decision belongs here too: a refused
+  // drag must be a NO-OP, and returning from the brush alone would still let
+  // the smooth tool's relaxation run (it seeds from the footprint when the
+  // brush changed nothing — issue #12) and reshape terrain the stroke was not
+  // allowed to touch. Belt and suspenders: this bounds the stroke, the brush
+  // guards bound the brush, and neither depends on the other being right.
+  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
+    return [];
+  }
 
   const changed = new Set<number>();
   // The anchor target for the RELAXATION containment below, read before the
   // brush writes anything — the same pre-stroke-centre derivation the brushes
   // themselves use (anchoredTargetHeight), or the three would disagree.
-  const anchoredSmooth = tool === 'smooth' && anchor === 'clicked' && amount !== 0;
-  const anchorTarget = anchoredSmooth ? anchoredTargetHeight(map, cx, cy, amount > 0) : 0;
+  // 'band' is contained exactly as 'clicked' is: a drag that let relaxation
+  // carry ground past the grabbed level would be changing the vertical, which
+  // is the one thing the drag tool is defined not to do.
+  const anchoredSmooth = tool === 'smooth' && anchor !== 'free' && amount !== 0;
+  const anchorTarget = anchoredSmooth
+    ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand)
+    : 0;
   // The one dispatch in the sculpt path. Both branches are integer-only over the
   // same footprint, and both sides of the prediction contract reach them through
   // this one function, so client and server cannot pick different branches.
@@ -1048,9 +1182,9 @@ export function applySculpt(
   // reaches both branches — it decides where the fill/ceiling level comes
   // from (the clicked cell for players, the old derivations for the library).
   if (profile === 'hard') {
-    applyLevelFillBrush(map, cx, cy, radius, amount, changed, anchor);
+    applyLevelFillBrush(map, cx, cy, radius, amount, changed, anchor, targetBand);
   } else {
-    applyBrush(map, cx, cy, radius, amount, changed, profile, anchor);
+    applyBrush(map, cx, cy, radius, amount, changed, profile, anchor, targetBand);
   }
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.

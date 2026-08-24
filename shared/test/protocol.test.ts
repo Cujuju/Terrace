@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_BAND,
   MAX_BRUSH_RADIUS,
   MAX_ROLLBACK_KEY_LENGTH,
+  MIN_BAND,
   sculptOptionsOf,
   validateRestorePointsRequest,
   validateRollbackRequest,
@@ -126,8 +128,8 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked' });
-    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked' });
+    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null });
+    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null });
   });
 
   it('honours whatever the intent DID name, and defaults only the rest', () => {
@@ -136,18 +138,21 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       profile: 'soft',
       spill: 'banded',
       anchor: 'clicked',
+      targetBand: null,
     });
     expect(sculptOptionsOf({ ...base, profile: 'hard' })).toEqual({
       tool: 'stamp',
       profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',
+      targetBand: null,
     });
     expect(sculptOptionsOf({ ...base, tool: 'smooth', profile: 'hard' })).toEqual({
       tool: 'smooth',
       profile: 'hard',
       spill: 'banded',
       anchor: 'clicked',
+      targetBand: null,
     });
   });
 });
@@ -213,5 +218,46 @@ describe('validateRollbackRequest', () => {
 
   it('rejects a bad key even when the id is fine', () => {
     expect(validateRollbackRequest({ type: 'rollback', key: '', toId: 7 })).toBeNull();
+  });
+});
+
+describe('targetBand — the drag field on the wire', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 1, dir: 1 } as const;
+
+  it('accepts a band the world could hold, and carries it through verbatim', () => {
+    for (const targetBand of [MIN_BAND, -1, 0, 1, MAX_BAND]) {
+      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toEqual({
+        ...base,
+        targetBand,
+      });
+    }
+  });
+
+  it('is optional — an intent without one is a stamp, exactly as before', () => {
+    const validated = validateSculptIntent({ ...base }, WORLD);
+    expect(validated).not.toBeNull();
+    expect(validated).not.toHaveProperty('targetBand');
+  });
+
+  it('rejects a band outside the range the world can hold', () => {
+    for (const targetBand of [MIN_BAND - 1, MAX_BAND + 1, 10_000]) {
+      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toBeNull();
+    }
+  });
+
+  it('rejects a non-integer band WITH THE WHOLE INTENT, never defaulting it', () => {
+    for (const targetBand of [1.5, NaN, Infinity, '3', null, {}]) {
+      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toBeNull();
+    }
+  });
+
+  it('flips the anchor to the drag, and only ever together with the band', () => {
+    const drag = sculptOptionsOf({ ...base, targetBand: 4 });
+    expect(drag.anchor).toBe('band');
+    expect(drag.targetBand).toBe(4);
+
+    const stamp = sculptOptionsOf(base);
+    expect(stamp.anchor).toBe('clicked');
+    expect(stamp.targetBand).toBeNull();
   });
 });

@@ -7,7 +7,7 @@
 // (mana, cooldowns) AFTER this structural validation passes.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from './constants.ts';
-import { SCULPT_PROFILES, SCULPT_TOOLS } from './heightmap.ts';
+import { MAX_BAND, MIN_BAND, SCULPT_PROFILES, SCULPT_TOOLS } from './heightmap.ts';
 import type {
   CellDiff,
   ResolvedSculptOptions,
@@ -42,6 +42,24 @@ export interface SculptIntent {
    * footprint). Optional — absent means WIRE_DEFAULT_SCULPT_OPTIONS.profile.
    */
   profile?: SculptProfile;
+  /**
+   * THE DRAG (2026-08-23): the terrace band whose lip the player grabbed. Its
+   * presence is what makes this intent a drag rather than a stamp — the stroke
+   * fills toward `targetBand · BAND_HEIGHT` instead of one band off the cell
+   * under the cursor (shared/heightmap.ts, `SculptAnchor: 'band'`).
+   *
+   * THE ONE PIECE OF LEVEL INFORMATION A CLIENT MAY SEND, and it is not a
+   * height: it names a band the player physically clicked on, which is a fact
+   * about their aim that the server cannot recover from the ray alone. It does
+   * not weaken "intents, never heights", because the server never acts on the
+   * number by itself — `canSpreadBandTo` re-derives from the SERVER's
+   * heightmap whether that band is genuinely adjacent to (x, y), and a band
+   * that is not makes the whole stroke a no-op. So the worst a hostile client
+   * can do with this field is waste its own intent.
+   *
+   * Optional: absent means a stamp, exactly as before this field existed.
+   */
+  targetBand?: number;
   /**
    * Client-chosen correlation id, echoed back on the server's ANSWER to this
    * intent — SculptAppliedMessage when it was applied, SculptDeniedMessage
@@ -79,6 +97,9 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // intent cannot name it (see sculptOptionsOf below), because containment is
   // a fairness rule, not a brush shape, so it is not the client's to choose.
   spill: 'banded',
+  // A stamp by default: no band grabbed, so nothing to drag toward. An intent
+  // that carries one flips the anchor to 'band' in sculptOptionsOf below.
+  targetBand: null,
   // Player sculpts are always locked to the clicked cell's level (owner
   // decision 2026-08-19: the brush periphery must never climb past the level
   // the player pointed at). Not a wire field, same argument as `spill`.
@@ -106,7 +127,13 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // resolve through these lines, so both sides run banded+anchored by
     // construction — the same lockstep argument as the doc above.
     spill: WIRE_DEFAULT_SCULPT_OPTIONS.spill,
-    anchor: WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
+    // THE ONE ANCHOR THE INTENT DOES DECIDE, and only by carrying a band at
+    // all: a drag is a different operation from a stamp, not a differently
+    // configured one, so there is no way to ask for the drag anchor without
+    // naming the band it drags toward, and no way to name a band without
+    // getting the drag anchor. The two cannot be desynchronised.
+    anchor: intent.targetBand !== undefined ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
+    targetBand: intent.targetBand ?? null,
   };
 }
 
@@ -297,6 +324,24 @@ export function validateSculptIntent(
     return null;
   }
 
+  // targetBand is optional (a stamp sends none) but, when present, must be a
+  // band this world could actually hold. This is the STRUCTURAL check only —
+  // it says the number is a band, not that the player may drag it. Whether the
+  // band is genuinely adjacent to (x, y) is terrain, so it is re-derived from
+  // the server's own heightmap inside the shared math (canSpreadBandTo), which
+  // is the same code the client predicted with. Rejected WITH THE WHOLE INTENT
+  // rather than dropped, for the same reason a bad tool is: silently turning a
+  // drag into a stamp would apply a different edit than the sender predicted.
+  const { targetBand } = m;
+  if (
+    targetBand !== undefined &&
+    (!Number.isInteger(targetBand) ||
+      (targetBand as number) < MIN_BAND ||
+      (targetBand as number) > MAX_BAND)
+  ) {
+    return null;
+  }
+
   return {
     type: 'sculpt',
     x: x as number,
@@ -305,6 +350,7 @@ export function validateSculptIntent(
     dir,
     ...(tool !== undefined ? { tool: tool as SculptTool } : {}),
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
+    ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
 }

@@ -79,7 +79,7 @@ import {
   validateSculptIntent,
   type SculptIntent,
 } from '@terrace/shared';
-import { SCULPT_REPEAT_INTERVAL_MS } from '../config.ts';
+import { DRAG_CELLS_PER_EMIT, SCULPT_REPEAT_INTERVAL_MS } from '../config.ts';
 import { chunksDirtiedByCell, hasChunk, type TerrainMirror } from './mirror.ts';
 
 /**
@@ -98,15 +98,22 @@ import { chunksDirtiedByCell, hasChunk, type TerrainMirror } from './mirror.ts';
 export const PREDICTION_TTL_MS = 1000;
 
 /**
- * Cap on simultaneously outstanding predictions. A held brush emits one intent
- * per SCULPT_REPEAT_INTERVAL_MS, so this is exactly "as many intents as can be
- * in flight within the deadline above" — reaching it means the link is slower
- * than the deadline assumes, and the oldest prediction is dropped rather than
+ * Cap on simultaneously outstanding predictions: "as many intents as can be in
+ * flight within the deadline above". Reaching it means the link is slower than
+ * the deadline assumes, and the oldest prediction is dropped rather than
  * letting an unbounded stack of unacknowledged edits accumulate on screen.
+ *
+ * ONE TICK IS NOT ONE INTENT ANY MORE (2026-08-23, the drag tool). A held STAMP
+ * still emits one intent per SCULPT_REPEAT_INTERVAL_MS, but a drag walks the
+ * cursor's path and emits up to DRAG_CELLS_PER_EMIT one-cell intents in the
+ * same tick (see that constant for why the path is walked and why the budget is
+ * what it is). The cap is the product because it is the same sentence it always
+ * was — ticks in the deadline, times intents per tick — and stating it any
+ * other way would make a drag start evicting its own live predictions the
+ * moment the player moved quickly.
  */
-export const MAX_PENDING_PREDICTIONS = Math.ceil(
-  PREDICTION_TTL_MS / SCULPT_REPEAT_INTERVAL_MS,
-);
+export const MAX_PENDING_PREDICTIONS =
+  Math.ceil(PREDICTION_TTL_MS / SCULPT_REPEAT_INTERVAL_MS) * DRAG_CELLS_PER_EMIT;
 
 /**
  * How far beyond the brush footprint a prediction is allowed to READ, in cells,
