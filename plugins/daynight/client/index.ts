@@ -21,7 +21,7 @@ import {
   parseClockPayload,
 } from '../protocol.ts';
 import { DayNightInterpolator } from './interpolation.ts';
-import { formatWorldTime } from './formatTime.ts';
+import { formatWorldClock } from './formatTime.ts';
 import { setWorldTimeText } from '../../../client/src/plugins/hudPanels.ts';
 import { skyStateAtPhase } from './sky.ts';
 
@@ -64,6 +64,21 @@ let reducedMotion: { matches(): boolean; stop(): void } | null = null;
  * first paint are what "no rapid transitions" actually gates.
  */
 let hasPushedInitialSky = false;
+/**
+ * THE CALENDAR HALF OF THE CLOCK, as last broadcast — the world's age in days
+ * and the calendar day it began on (protocol.ts). Null until a server that
+ * sends them has been heard from, which the formatter renders as the time
+ * alone.
+ *
+ * NOT INTERPOLATED, unlike the phase, and it does not need to be: this is an
+ * integer that changes once per world-day, so the only moment a broadcast-
+ * driven value could differ from the true one is the few seconds either side
+ * of the turnover — and the turnover is dawn, where the sky is already sliding
+ * between two broadcasts anyway. Advancing it locally would mean a second
+ * clock in this file that could disagree with the one the server owns.
+ */
+let calendarDay: number | null = null;
+let calendarGenesisDay: number | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
@@ -73,6 +88,8 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     reducedMotion = watchReducedMotion();
     hasPushedInitialSky = false;
+    calendarDay = null;
+    calendarGenesisDay = null;
 
     unsubscribeMessages = ctx.onMessage(DAYNIGHT_CLOCK_MESSAGE, (payload) => {
       const clock = parseClockPayload(payload);
@@ -80,6 +97,8 @@ export const clientPlugin: TerraceClientPlugin = {
       // reading until the next good message, a few seconds away.
       if (clock === null) return;
       interpolator.receive(clock.phase);
+      calendarDay = clock.day;
+      calendarGenesisDay = clock.genesisDay;
     });
 
     // THE RENDER PATH. Once per animation frame: a fixed handful of sines and
@@ -113,7 +132,9 @@ export const clientPlugin: TerraceClientPlugin = {
       // minute-granular string — Solid's signal dedupes equal values, so the
       // DOM updates once per in-world minute, not per frame. Cleared on
       // dispose so a plugin unload leaves no frozen lie on the header.
-      setWorldTimeText(formatWorldTime(interpolator.samplePhase()));
+      setWorldTimeText(
+        formatWorldClock(interpolator.samplePhase(), calendarDay, calendarGenesisDay),
+      );
 
       const reduced = reducedMotion?.matches() ?? false;
       if (reduced && hasPushedInitialSky) return;
@@ -131,6 +152,8 @@ export const clientPlugin: TerraceClientPlugin = {
 
     interpolator.clear();
     hasPushedInitialSky = false;
+    calendarDay = null;
+    calendarGenesisDay = null;
     setWorldTimeText(null);
 
     reducedMotion?.stop();

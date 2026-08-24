@@ -89,17 +89,21 @@ describe('broadcast', () => {
     expect(sink.ofType(NAMESPACED_TYPE)).toHaveLength(5);
   });
 
-  it('carries exactly one key, rounded, and round-trips through the client parser', () => {
+  it('carries the phase and the calendar, rounded, and round-trips through the client parser', () => {
     const { host, sink } = bootOn(worldWithUnlockedChunks(WORLD_SIZE, []));
     const ticksPerBroadcast = DAYNIGHT_BROADCAST_INTERVAL_SECONDS / TICK_SECONDS;
     for (let tick = 0; tick < ticksPerBroadcast; tick++) host.tick(TICK_SECONDS);
 
     const message = sink.ofType(NAMESPACED_TYPE)[0]!;
     const payload = message.payload as Record<string, unknown>;
-    expect(Object.keys(payload)).toEqual(['phase']);
+    expect(Object.keys(payload)).toEqual(['phase', 'day', 'genesisDay']);
     expect(payload.phase).toBeCloseTo(DAYNIGHT_BROADCAST_INTERVAL_SECONDS / DAY_LENGTH_SECONDS, 4);
 
-    expect(parseClockPayload(message.payload)).toEqual({ phase: payload.phase });
+    expect(parseClockPayload(message.payload)).toEqual({
+      phase: payload.phase,
+      day: payload.day,
+      genesisDay: payload.genesisDay,
+    });
   });
 
   it('does not drift over a long run when dt does not divide the interval evenly', () => {

@@ -122,6 +122,27 @@ export function roundBroadcastPhase(value: number): number {
 export interface DayNightClockState {
   /** Fraction of a lap through DAY_LENGTH_SECONDS, in [0, 1). 0 is dawn. */
   readonly phase: number;
+  /**
+   * WHICH DAY OF THE WORLD it is — 0 for the world's first day, which the
+   * header renders as "Day 1". A DAY OF AGE, NOT A CALENDAR DAY: since the
+   * world clock was anchored to real time (shared/src/calendar.ts) those are
+   * two different numbers, and this is the one a player means by "Day 57".
+   *
+   * Null on a server too old to send it, which the client reads as "show the
+   * time alone" — never as a reason to drop the phase and freeze the sky.
+   */
+  readonly day: number | null;
+  /**
+   * The calendar day this world's day 0 fell on — add it to `day` and the
+   * calendar day is back, which is where the WEEKDAY comes from.
+   *
+   * THE SAME TWO FIELDS, WITH THE SAME NAMES AND THE SAME MEANINGS, THAT THE
+   * CHRONICLE'S PAYLOAD ALREADY CARRIES (plugins/chronicle/protocol.ts). The
+   * header and a saga heading name the same day in the same words, so they
+   * derive it from the same pair of numbers through the same shared helpers
+   * rather than each inventing a convention that drifts from the other.
+   */
+  readonly genesisDay: number | null;
 }
 
 /**
@@ -135,5 +156,25 @@ export function parseClockPayload(payload: unknown): DayNightClockState | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const phase = (payload as { phase?: unknown }).phase;
   if (typeof phase !== 'number' || !Number.isFinite(phase)) return null;
-  return { phase: wrapPhase(phase) };
+
+  // THE CALENDAR HALF DEGRADES ON ITS OWN, and separately from the phase: a
+  // payload whose day fields are absent or malformed still carries a perfectly
+  // good sky, and the sky is what this plugin exists for. Both fields must
+  // survive together or neither is used — a weekday computed from a day
+  // without its genesis offset would be confidently wrong, which is worse than
+  // a header that shows only the time.
+  //
+  // `day` is a world's AGE and cannot be negative; `genesisDay` is a calendar
+  // day and may be, for the same reason the chronicle's parseGenesisDay
+  // accepts a negative one (a world older than the clock it now runs on).
+  const day = (payload as { day?: unknown }).day;
+  const genesisDay = (payload as { genesisDay?: unknown }).genesisDay;
+  const calendarKnown =
+    Number.isInteger(day) && (day as number) >= 0 && Number.isInteger(genesisDay);
+
+  return {
+    phase: wrapPhase(phase),
+    day: calendarKnown ? (day as number) : null,
+    genesisDay: calendarKnown ? (genesisDay as number) : null,
+  };
 }
