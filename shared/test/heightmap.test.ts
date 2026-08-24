@@ -5,6 +5,7 @@ import {
   applySculpt,
   bandOf,
   BAND_HEIGHT,
+  canSpreadBandTo,
   cellIndex,
   cellX,
   cellY,
@@ -435,6 +436,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       profile: 'soft',
       spill: 'free',
       anchor: 'free',
+      targetBand: null,
     });
   });
 
@@ -1827,7 +1829,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     for (let run = 0; run < 2; run++) {
       const map = createHeightmap(48);
       for (let i = 0; i < map.cells.length; i++) map.cells[i] = ((i * 37) % 9 - 4) * BAND_HEIGHT;
-      const wire: SculptOptions = { tool: 'smooth', profile: 'soft', spill: 'banded', anchor: 'clicked' };
+      const wire: SculptOptions = { tool: 'smooth', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null };
       applySculpt(map, 24, 24, 3, DEFAULT_SCULPT_AMOUNT, wire);
       applySculpt(map, 26, 23, 4, -DEFAULT_SCULPT_AMOUNT, wire);
       applySculpt(map, 24, 24, 2, DEFAULT_SCULPT_AMOUNT, wire);
@@ -1959,6 +1961,188 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
         if (map.cells[i] !== before[i] && !footprint.has(i)) movedOutside++;
       }
       expect(movedOutside).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// THE DRAG ANCHOR (`anchor: 'band'`, owner decision 2026-08-23: the drag tool
+// owns the horizontal). Tested at the CONTRACT level — canSpreadBandTo and
+// applySculpt — rather than through the client input that will call them, so
+// these pin the rule itself and not one caller's wiring of it.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A flat map at `height`, with a square block raised to `blockHeight`. */
+function mapWithPlateau(
+  size: number,
+  height: number,
+  blockHeight: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): ReturnType<typeof createHeightmap> {
+  const map = createHeightmap(size);
+  map.cells.fill(height);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) map.cells[cellIndex(map, x, y)] = blockHeight;
+  }
+  return map;
+}
+
+describe('canSpreadBandTo — the drag anchor’s adjacency rule', () => {
+  const BAND = 3;
+  const HIGH = BAND * BAND_HEIGHT;
+
+  it('is true beside ground already at the band, in all eight directions', () => {
+    for (const [dx, dy] of [
+      [-1, -1], [0, -1], [1, -1],
+      [-1, 0], [1, 0],
+      [-1, 1], [0, 1], [1, 1],
+    ] as const) {
+      const map = createHeightmap(16);
+      map.cells.fill(0);
+      map.cells[cellIndex(map, 8 + dx, 8 + dy)] = HIGH;
+      expect(canSpreadBandTo(map, 8, 8, BAND)).toBe(true);
+    }
+  });
+
+  it('is true beside ground ABOVE the band — a lip may spread off a taller shelf', () => {
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    map.cells[cellIndex(map, 9, 8)] = HIGH + BAND_HEIGHT * 4;
+    expect(canSpreadBandTo(map, 8, 8, BAND)).toBe(true);
+  });
+
+  it('is false in open ground — a forged band conjures no height', () => {
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    expect(canSpreadBandTo(map, 8, 8, BAND)).toBe(false);
+  });
+
+  it('is false two cells away — the band creeps one cell at a time', () => {
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    map.cells[cellIndex(map, 10, 8)] = HIGH;
+    expect(canSpreadBandTo(map, 8, 8, BAND)).toBe(false);
+    expect(canSpreadBandTo(map, 9, 8, BAND)).toBe(true);
+  });
+
+  it('ignores the cell’s OWN height — adjacency is about neighbours', () => {
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    map.cells[cellIndex(map, 8, 8)] = HIGH;
+    expect(canSpreadBandTo(map, 8, 8, BAND)).toBe(false);
+  });
+
+  it('treats off-map neighbours as absent — the world border holds nothing up', () => {
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    expect(canSpreadBandTo(map, 0, 0, BAND)).toBe(false);
+    map.cells[cellIndex(map, 1, 1)] = HIGH;
+    expect(canSpreadBandTo(map, 0, 0, BAND)).toBe(true);
+  });
+});
+
+describe('applySculpt with the drag anchor — a band extends sideways', () => {
+  const BAND = 3;
+  const HIGH = BAND * BAND_HEIGHT;
+  /** What the client sends for a drag: one cell, stamp + hard, band-anchored. */
+  const DRAG = { tool: 'stamp', profile: 'hard', spill: 'banded', anchor: 'band' } as const;
+
+  it('pulls the grabbed band onto the cell beside it, and stops AT it', () => {
+    // A plateau at band 3 filling the left half; drag its lip one cell right.
+    const map = mapWithPlateau(16, 0, HIGH, 0, 0, 7, 15);
+    const diff = applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG,
+      targetBand: BAND,
+    });
+    expect(diff.length).toBe(1);
+    // DEFAULT_SCULPT_AMOUNT is one band, so one intent climbs one band of the
+    // three — the drag WALKS a tall lip outward rather than teleporting it.
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(BAND_HEIGHT);
+    // Repeat until it arrives; it must never overshoot the grabbed level.
+    for (let i = 0; i < 10; i++) {
+      applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        ...DRAG,
+        targetBand: BAND,
+      });
+    }
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(HIGH);
+  });
+
+  it('is a NO-OP on a cell that touches no such ground — the anti-cheat rule', () => {
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    const before = [...map.cells];
+    const diff = applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG,
+      targetBand: BAND,
+    });
+    expect(diff).toEqual([]);
+    expect([...map.cells]).toEqual(before);
+  });
+
+  it('never touches ground already at or above the grabbed band', () => {
+    // The cell being dragged onto is HIGHER than the band being dragged: a
+    // drag stops at a higher band's edge, it does not strip it (owner rule).
+    const map = mapWithPlateau(16, 0, HIGH, 0, 0, 7, 15);
+    const tall = (BAND + 4) * BAND_HEIGHT;
+    map.cells[cellIndex(map, 8, 8)] = tall;
+    const diff = applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG,
+      targetBand: BAND,
+    });
+    expect(diff).toEqual([]);
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(tall);
+  });
+
+  it('targets the GRABBED band, not one band off the cell under the cursor', () => {
+    // This is the whole difference from `anchor: 'clicked'`. Ground at band 0
+    // beside a band-6 shelf: the drag climbs to band 6 and STOPS — it is
+    // levelling with the terrace it grabbed. A clicked-anchored stroke has no
+    // such destination: it re-derives "one band above where I am now" every
+    // repeat, so it climbs straight past the shelf and keeps going. That is
+    // the stamp working correctly and it is why the drag needed a new anchor
+    // rather than a wider one.
+    const grabbed = 6;
+    const map = createHeightmap(16);
+    map.cells.fill(0);
+    for (let y = 0; y < 16; y++) map.cells[cellIndex(map, 7, y)] = grabbed * BAND_HEIGHT;
+    for (let i = 0; i < 20; i++) {
+      applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        ...DRAG,
+        targetBand: grabbed,
+      });
+    }
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(grabbed * BAND_HEIGHT);
+
+    const clicked = createHeightmap(16);
+    clicked.cells.fill(0);
+    for (let y = 0; y < 16; y++) clicked.cells[cellIndex(clicked, 7, y)] = grabbed * BAND_HEIGHT;
+    for (let i = 0; i < 20; i++) {
+      applySculpt(clicked, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        tool: 'stamp', profile: 'hard', spill: 'banded', anchor: 'clicked',
+      });
+    }
+    expect(bandOf(clicked.cells[cellIndex(clicked, 8, 8)]!)).toBeGreaterThan(grabbed);
+  });
+
+  it('walks: each intent’s result is what makes the next one legal', () => {
+    // Drag straight out across open ground, one cell per intent, as the client
+    // input's path walk does. The lip must advance by exactly one cell a time.
+    const map = mapWithPlateau(24, 0, HIGH, 0, 0, 7, 23);
+    for (let x = 8; x < 14; x++) {
+      // Each cell needs BAND repeats to climb the three bands.
+      for (let i = 0; i < BAND; i++) {
+        applySculpt(map, x, 12, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+          ...DRAG,
+          targetBand: BAND,
+        });
+      }
+      expect(map.cells[cellIndex(map, x, 12)]).toBe(HIGH);
+      // The cell beyond is untouched until the drag reaches it.
+      expect(map.cells[cellIndex(map, x + 1, 12)]).toBe(0);
     }
   });
 });

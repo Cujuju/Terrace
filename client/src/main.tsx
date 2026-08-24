@@ -100,6 +100,9 @@ const sculptInput = createSculptInput({
   // and this is not.
   terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
   worldSize: () => world.worldSize(),
+  // THE GRAB QUERY — the same call the frame loop below makes to highlight the
+  // lip under the cursor, so what is lit up is exactly what a press grabs.
+  grabbableBand: (cell) => world.highlightLayerEdge(cell),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
   // frame instead of a round trip later; the world reconciles it against the
