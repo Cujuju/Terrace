@@ -310,9 +310,56 @@ export function structureVariation(x: number, y: number): StructureVariation {
 // is a fact about the ground, and @terrace/shared owns how many cells the
 // ground is sampled at.
 import {
+  CELL_WORLD_SIZE,
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from '@terrace/shared';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW MUCH GROUND A STANDING STRUCTURE IS GUARANTEED, stated once (2026-08-23).
+//
+// STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS (above) says how wide a model may be.
+// This pair says how much ground the SERVER has actually checked underneath
+// it, which is a different — and larger — number, because the server surveys
+// whole CELLS: every cell within STRUCTURE_SURVEY_RADIUS_CELLS (Chebyshev) of
+// the structure's own cell must be same-band dry land before it may be founded
+// (server/suitability.ts). A cell is a square of ground, so the guarantee
+// reaches half a cell past the last surveyed sample's centre.
+//
+// WHY THE CLIENT NEEDS IT TOO, AND WHY IT LIVES HERE. A model is drawn at a
+// per-building YAW (structureVariation), and a rotated model sweeps its RADIAL
+// reach, not its axis-aligned one — √2 further in the worst case. The
+// axis-aligned footprint bound alone therefore does not answer "can this
+// building hang over a terrace edge?"; the honest test is
+// radial × scale ≤ this radius. That makes it a fact BOTH halves need, which
+// is exactly what protocol.ts is for: before this, the server derived the
+// survey radius privately and the client had no name for the ground it was
+// promised.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Chebyshev radius, in CELLS, of the square the server surveys under a
+ * structure. The unscaled model reaches half the footprint span in any
+ * direction; converted straight through cellsAcross(), that IS the radius to
+ * survey, with no extra half-cell term — see suitability.ts's
+ * FOOTPRINT_NEIGHBOR_OFFSETS for the inequality.
+ */
+export const STRUCTURE_SURVEY_RADIUS_CELLS = Math.ceil(
+  cellsAcross(STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2),
+);
+
+/**
+ * The same guarantee in WORLD UNITS: how far from a structure's origin the
+ * ground is known to be flat, same-band and dry. The +0.5 is the surveyed
+ * cell's own half-width — the guarantee covers the whole cell, not just the
+ * sample at its centre. Two cells plus a half at today's sampling: 0.625.
+ *
+ * A model whose radial reach × STRUCTURE_SCALE_MAX exceeds this can render
+ * standing on ground nobody checked; inside it, no yaw and no scale roll can
+ * put a vertex over a terrace edge.
+ */
+export const STRUCTURE_SURVEYED_GROUND_RADIUS =
+  (STRUCTURE_SURVEY_RADIUS_CELLS + 0.5) * CELL_WORLD_SIZE;
 
 /** The two settler races. Order is meaningful: index = the race hash bit. */
 export const SETTLER_RACES = ['rudy', 'uno'] as const;

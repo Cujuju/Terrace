@@ -403,6 +403,76 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
 }
 
 /**
+ * Walks every vertex of every part through its local matrices, handing each
+ * world-space position to `visit`. The one place this file iterates geometry,
+ * so the reach measurements below cannot drift apart.
+ */
+function forEachVertex(parts: readonly StructurePart[], visit: (vertex: Vector3) => void): void {
+  const vertex = new Vector3();
+  for (const part of parts) {
+    const position = part.geometry.getAttribute('position');
+    if (position === undefined) continue;
+    for (const local of part.localMatrices) {
+      for (let i = 0; i < position.count; i++) {
+        visit(vertex.fromBufferAttribute(position as BufferAttribute, i).applyMatrix4(local));
+      }
+    }
+  }
+}
+
+/**
+ * The worst-case distance in the XZ PLANE — √(x² + z²) — any vertex sits from
+ * the building's origin.
+ *
+ * THIS, not the axis-aligned reach below, is what decides whether a building
+ * can hang over a terrace edge, because every building is drawn at a random
+ * yaw (protocol.ts's structureVariation): turn a model 45° and its corner
+ * swings out to its radial reach, up to √2 further than its axis-aligned one.
+ * Measured 2026-08-23 across the shipped models, three tiers and Durand's
+ * exceeded the axis bound once rotated — the tiers still inside the ground
+ * the server surveys, Durand's not.
+ */
+export function partsRadialReach(parts: readonly StructurePart[]): number {
+  let reach = 0;
+  forEachVertex(parts, (vertex) => {
+    reach = Math.max(reach, Math.hypot(vertex.x, vertex.z));
+  });
+  return reach;
+}
+
+/**
+ * Uniformly scales a part list down — about the building's own origin — until
+ * its radial reach fits `maxRadius`, and leaves it alone if it already does.
+ *
+ * A SAFETY NET, not a substitute for building models to size: it exists so one
+ * cosmetic landmark can never render standing on ground the server has not
+ * checked, whatever a later edit does to its geometry. Uniform, so the model's
+ * proportions are untouched — it is the same building, slightly smaller.
+ * Premultiplying the scale is what makes it uniform about the ORIGIN rather
+ * than about each part's own centre; a uniform scale commutes with rotation,
+ * so no part's orientation moves (see `composed` for when that stops being
+ * true).
+ */
+export function fitToRadius(parts: readonly StructurePart[], maxRadius: number): StructurePart[] {
+  const reach = partsRadialReach(parts);
+  if (reach <= maxRadius || reach === 0) return parts.map((part) => part);
+  // Aim a hair INSIDE the limit rather than exactly at it. Vertices live in
+  // Float32Array, and the merge step bakes each matrix through that storage,
+  // so a model fitted to the bound exactly lands a few parts per billion
+  // outside it once rounded — physically irrelevant, but it makes "fits" a
+  // coin flip for any test that asserts the bound strictly, and a guarantee
+  // that holds to within rounding is not a guarantee.
+  const FIT_SAFETY_MARGIN = 0.999;
+  const target = maxRadius * FIT_SAFETY_MARGIN;
+  const shrink = new Matrix4().makeScale(target / reach, target / reach, target / reach);
+  return parts.map((part) => ({
+    geometry: part.geometry,
+    material: part.material,
+    localMatrices: part.localMatrices.map((local) => new Matrix4().multiplyMatrices(shrink, local)),
+  }));
+}
+
+/**
  * The worst-case distance, in X or Z, any vertex of these parts sits from the
  * building's own origin — measured through every local matrix, VERTEX BY
  * VERTEX.
@@ -414,17 +484,9 @@ export function mergeParts(parts: readonly StructurePart[]): StructurePart[] {
  * committed ground to (suitability.ts's hasClearFootprint).
  */
 export function partsReach(parts: readonly StructurePart[]): number {
-  const vertex = new Vector3();
   let reach = 0;
-  for (const part of parts) {
-    const position = part.geometry.getAttribute('position');
-    if (position === undefined) continue;
-    for (const local of part.localMatrices) {
-      for (let i = 0; i < position.count; i++) {
-        vertex.fromBufferAttribute(position as BufferAttribute, i).applyMatrix4(local);
-        reach = Math.max(reach, Math.abs(vertex.x), Math.abs(vertex.z));
-      }
-    }
-  }
+  forEachVertex(parts, (vertex) => {
+    reach = Math.max(reach, Math.abs(vertex.x), Math.abs(vertex.z));
+  });
   return reach;
 }

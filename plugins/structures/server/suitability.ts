@@ -25,8 +25,8 @@
 // this predicate from needing a special case at the border.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { bandOf, cellsAcross, isWater } from '@terrace/shared';
-import { STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS } from '../protocol.ts';
+import { bandOf, isWater } from '@terrace/shared';
+import { STRUCTURE_SURVEY_RADIUS_CELLS } from '../protocol.ts';
 
 /**
  * The four orthogonal neighbours a plot's flatness is checked against.
@@ -69,35 +69,25 @@ export function isFlatEnough(world: StructuresWorld, x: number, y: number): bool
   return true;
 }
 
-// ── The footprint check's radius, DERIVED from the shared ground size ───────
+// ── The footprint check's radius ────────────────────────────────────────────
 //
-// STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS (protocol.ts) is how wide, on the
-// GROUND, the widest building the game can roll may be. The server's job is
-// to survey every CELL that model could stand on. Two quantities make that
-// up, both derived so a change to either the building's size or the sampling
-// density moves this check with them:
+// DERIVED FROM THE SHARED SPAN, and since 2026-08-23 derived in protocol.ts
+// rather than here: STRUCTURE_SURVEY_RADIUS_CELLS carries the full derivation
+// (why the model's own reach IS the Chebyshev radius, with no extra half-cell
+// term) and the history — before the 2026-08-21 re-sample this was a
+// hard-coded ±1 Moore ring, correct only while one cell was one world unit and
+// silently three-quarters of the needed coverage afterwards.
 //
-//   * MODEL_REACH_CELLS — the unscaled model reaches half the span in any
-//     direction; converted straight through cellsAcross(). Two at today's
-//     sampling (0.5 world units × 4 cells/world unit).
+// It moved because the CLIENT needs the same number. A model is drawn at a
+// random yaw, so "can this building hang over a terrace edge?" is a question
+// about its RADIAL reach measured against the ground THIS survey guarantees —
+// and the client had no name for that guarantee while it was computed
+// privately in this file. Same value, one definition, both halves.
 //
-// That single number IS the Chebyshev radius to survey, with no extra
-// half-cell term: a neighbouring ring k cells out can only be touched if
-// k·CELL_WORLD_SIZE − CELL_WORLD_SIZE < reach (the sample sits anywhere in
-// its own cell, so it can be up to half a cell closer to that ring), which
-// rearranges to k ≤ MODEL_REACH_CELLS exactly — the half-cell slack in the
-// inequality is precisely the half-cell extent of the standing cell. At
-// today's constants that is a 5×5 patch = 1.25 world units of surveyed
-// ground under a 1.0-world-unit building. Before the 2026-08-21
-// re-sample this list was a hard-coded +/-1 Moore ring: correct only while
-// one cell was one world unit, and silently three-quarters of the needed
-// coverage afterwards — the "buildings straddle terrace edges" defect, live
-// again. Offsets are generated in fixed row-major order so the survey's
-// iteration order stays deterministic (the terrain-math contract).
-const MODEL_REACH_CELLS = Math.ceil(
-  cellsAcross(STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2),
-);
-export const FOOTPRINT_CHECK_RADIUS_CELLS = MODEL_REACH_CELLS;
+// Re-exported under its old name so every call site here reads as it always
+// did, and offsets below are still generated in fixed row-major order to keep
+// the survey's iteration order deterministic (the terrain-math contract).
+export const FOOTPRINT_CHECK_RADIUS_CELLS = STRUCTURE_SURVEY_RADIUS_CELLS;
 
 /**
  * Every cell within FOOTPRINT_CHECK_RADIUS_CELLS of a plot, excluding the

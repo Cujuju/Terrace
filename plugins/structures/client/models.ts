@@ -98,6 +98,7 @@ import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
   STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS,
+  STRUCTURE_SURVEYED_GROUND_RADIUS,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_TIER_COUNT,
   type SettlerRace,
@@ -105,7 +106,7 @@ import {
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
 import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
-import { mergeParts, mergeSharedSurface, type StructurePart } from './parts.ts';
+import { fitToRadius, mergeParts, mergeSharedSurface, type StructurePart } from './parts.ts';
 import type { SiteKind } from './site.ts';
 
 // ── Shared build helpers ─────────────────────────────────────────────────────
@@ -3031,7 +3032,24 @@ export function createStructureModels(): StructureModels {
   // marquee's two identically-authored phase materials and stop the chase. The
   // surface step cannot touch a held material: every one of the five is
   // emissive or transparent, and canShareOneSurface() rejects both.
-  const durandsParts = mergeSharedSurface(durands.parts);
+  //
+  // FITTED FIRST — Durand's is the one model that did not fit its ground
+  // (measured 2026-08-23). Axis-aligned it reaches 0.475 against a 0.455
+  // bound, and its RADIAL reach — what a YAWED building actually sweeps, see
+  // parts.ts's partsRadialReach — is 0.634, which at STRUCTURE_SCALE_MAX puts
+  // a corner 0.697 world units out over ground the server surveyed only to
+  // STRUCTURE_SURVEYED_GROUND_RADIUS (0.625, protocol.ts). At some yaws the
+  // saloon stood on land nobody checked: the "buildings straddle terrace
+  // edges" defect, on the model most likely to be looked at.
+  //
+  // Fitted rather than re-authored: 400 lines of hand-tuned neon sign geometry
+  // scaled uniformly about the origin until it fits, which is invisible beside
+  // the alternative and cannot be re-broken by a later edit to the sign. Every
+  // other model in this plugin already fits, and fitToRadius is a no-op on one
+  // that does.
+  const durandsParts = mergeSharedSurface(
+    fitToRadius(durands.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
+  );
   const durandsMeshes: InstancedMesh[] = durandsParts.map((part) => {
     geometries.push(part.geometry);
     materials.push(part.material);

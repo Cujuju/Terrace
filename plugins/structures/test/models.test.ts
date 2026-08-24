@@ -36,6 +36,7 @@ import { InstancedMesh, Matrix4, Vector3 } from 'three';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURE_SCALE_MAX,
+  STRUCTURE_SURVEYED_GROUND_RADIUS,
   STRUCTURE_TIERS,
   STRUCTURE_TIER_COUNT,
   type SettlerRace,
@@ -179,6 +180,56 @@ describe('the footprint bound, measured rather than asserted', () => {
         `${FISHING_HUT_NAMES[variant]} reaches ${reach.toFixed(3)} wu, bound ${STRUCTURE_FOOTPRINT_RADIUS.toFixed(3)}`,
       ).toBeLessThanOrEqual(STRUCTURE_FOOTPRINT_RADIUS);
       for (const part of parts) part.geometry.dispose();
+    }
+  });
+
+  it('no model can sweep past the ground the server surveyed, at ANY yaw or scale', () => {
+    // THE BOUND THAT ACTUALLY MATTERS, and the one nothing checked until
+    // 2026-08-23. Every building is drawn at a random yaw
+    // (structureVariation), so the axis-aligned reach the tests above assert
+    // is not what a building occupies: turn a model 45° and its corner swings
+    // out to its RADIAL reach, up to √2 further. The server's guarantee is a
+    // square of same-band dry cells, i.e. a disc of radius
+    // STRUCTURE_SURVEYED_GROUND_RADIUS; anything past that is standing on
+    // ground nobody checked, whatever the axis-aligned number says.
+    //
+    // Measured when this was written: three tiers exceed the strict
+    // axis-aligned bound once rotated (longhouse worst at 0.518) but stay
+    // inside the surveyed ground; Durand's did not, at 0.634 — which is why
+    // models.ts now fits it. The ten huts never needed it: 0.453 worst.
+    const maxRadial = STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX;
+    const models = createStructureModels();
+    try {
+      const cases: Array<{ name: string; placement: StructurePlacement }> = [];
+      for (let tier = 0; tier < STRUCTURE_TIER_COUNT; tier++) {
+        cases.push({ name: `tier ${tier} (${STRUCTURE_TIERS[tier]})`, placement: placementAt(1, 1, tier, 'inland') });
+      }
+      for (let variant = 0; variant < FISHING_HUT_BUILDERS.length; variant++) {
+        const cell = cellRollingVariant(variant);
+        cases.push({
+          name: FISHING_HUT_NAMES[variant],
+          placement: placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal'),
+        });
+      }
+      let durands: { x: number; y: number } | null = null;
+      for (let y = 0; y < 64 && durands === null; y++) {
+        for (let x = 0; x < 64; x++) {
+          if (isDurandsCell(MAX_STRUCTURE_TIER, x, y)) { durands = { x, y }; break; }
+        }
+      }
+      expect(durands, 'no Durand’s cell in the search window').not.toBeNull();
+      cases.push({ name: "Durand's", placement: placementAt(durands!.x, durands!.y, MAX_STRUCTURE_TIER, 'inland') });
+
+      for (const { name, placement } of cases) {
+        models.apply([placement]);
+        const extent = measureDrawn(models.root);
+        expect(
+          extent.radial,
+          `${name} sweeps ${extent.radial.toFixed(3)} wu when yawed; the server only surveys ${maxRadial.toFixed(3)} (× scale ${STRUCTURE_SCALE_MAX})`,
+        ).toBeLessThanOrEqual(maxRadial);
+      }
+    } finally {
+      models.dispose();
     }
   });
 
