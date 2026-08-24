@@ -31,6 +31,8 @@
 
 import { Raycaster, Vector2, type Camera } from 'three';
 import {
+  CELL_WORLD_SIZE,
+  HEIGHT_WORLD_SCALE,
   SCULPT_REPEAT_DELAY_MS,
   SCULPT_REPEAT_INTERVAL_MS,
   SCULPT_REPEAT_RAMP_FACTOR,
@@ -56,6 +58,7 @@ import {
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
+import { BAND_HEIGHT } from '@terrace/shared';
 import type { SculptIntent } from '@terrace/shared';
 import type { LipGrab } from '../render/layerEdgeOverlay.ts';
 
@@ -269,6 +272,70 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    */
   let hoverKey = '';
   let hoverCache: TerrainRayPick | null = null;
+  /**
+   * How steeply the pointer ray must descend for its meeting with the drag
+   * plane to mean anything, as the downward component of a unit direction.
+   *
+   * A ray nearly parallel to the plane meets it a very long way off, and moves
+   * that meeting point by an enormous distance for one pixel of mouse travel —
+   * the caveat raised against plane projection when it was proposed (issue
+   * #99). Below this the sample is not merely imprecise, it is unusable, so it
+   * is discarded and the pull keeps the depth it last had.
+   *
+   * 0.05 is one part in twenty: at the horizon-most usable camera pitch the
+   * plane is still met within twenty times the camera's height above it. Above
+   * that the arithmetic is fine and the drag is simply a shallow-angle drag,
+   * which is the player's business.
+   */
+  const MIN_DRAG_PLANE_DESCENT = 0.05;
+
+  /**
+   * WHERE THE CURSOR IS, FOR A DRAG: the cell where the pointer ray meets a
+   * FIXED HORIZONTAL PLANE at the grabbed lip's height.
+   *
+   * NOT the terrain pick, and that is the whole point (issue #119). The
+   * ordinary hover pick marches the height field, so during a drag it is
+   * reading ground the drag itself is raising: the pull builds land, the new
+   * land intercepts the ray earlier, the picked cell moves back toward the
+   * grab, and the depth stops growing — the lip moves a cell or two and then
+   * stalls no matter how far the player keeps pulling. A plane frozen at the
+   * height the lip was grabbed at cannot be disturbed by the edit, so the
+   * cursor means the same thing at the end of the stroke as at the start.
+   *
+   * Null when the world is not up, the pointer is off the canvas, or the ray
+   * is too shallow to trust (MIN_DRAG_PLANE_DESCENT); the caller keeps its
+   * last depth rather than lurching.
+   */
+  const dragPlaneCell = (band: number): { x: number; y: number } | null => {
+    const size = worldSize();
+    if (size <= 0 || !havePointer) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const device = pointerToNdc(pointerClientX, pointerClientY, rect);
+    if (device === null) return null;
+    ndc.set(device.x, device.y);
+    raycaster.setFromCamera(ndc, camera);
+
+    const origin = raycaster.ray.origin;
+    const direction = raycaster.ray.direction;
+    // World Y of the grabbed band's floor — the plane the lip lies in. Derived
+    // from the band, so it is exactly the surface the player took hold of.
+    const planeY = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+    // Looking up, or level, or from below: the ray never reaches the plane
+    // ahead of the camera.
+    if (direction.y > -MIN_DRAG_PLANE_DESCENT) return null;
+    const distance = (planeY - origin.y) / direction.y;
+    if (!Number.isFinite(distance) || distance <= 0) return null;
+
+    const worldX = origin.x + direction.x * distance;
+    const worldZ = origin.z + direction.z * distance;
+    const x = Math.floor(worldX / CELL_WORLD_SIZE);
+    const y = Math.floor(worldZ / CELL_WORLD_SIZE);
+    // Off the world: the plane is infinite, the world is not.
+    if (x < 0 || y < 0 || x >= size || y >= size) return null;
+    return { x, y };
+  };
+
   const hoverTarget = (): TerrainRayPick | null => {
     const p = camera.position;
     const q = camera.quaternion;
@@ -341,14 +408,24 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // ray land on the new mound's skirt, which picking resolves to the higher
     // cell, so a stationary held raise on a slope marched uphill cell by cell,
     // building ahead of the outline the player was shown.
-    const cell = hoverTarget();
-    if (cell === null) return;
     const action = currentStrokeAction();
+    // A DRAG READS THE PLANE, NOT THE GROUND (issue #119). Resolved before the
+    // hover pick so a drag never touches it: the pick marches terrain the drag
+    // is raising, and reading it here is what made the pull stall a cell or
+    // two in (see dragPlaneCell). setSculptMode still runs first for both, so
+    // the HUD's raise/lower indicator is honest either way.
     setSculptMode(action);
     if (strokeGrab !== null) {
-      emitDrag(cell.x, cell.y, action, strokeGrab);
+      const to = dragPlaneCell(strokeGrab.band);
+      // Too shallow a ray, or off the world: hold the pull where it was rather
+      // than lurch. The intent is absolute, so skipping one sample loses
+      // nothing — the next usable one carries the whole pull.
+      if (to === null) return;
+      emitDrag(to.x, to.y, action, strokeGrab);
       return;
     }
+    const cell = hoverTarget();
+    if (cell === null) return;
     // tool/profile are read (not captured) per intent, so switching the HUD
     // toggles mid-stroke takes effect on the very next repeat.
     send({

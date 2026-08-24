@@ -389,6 +389,31 @@ export const MIN_BRUSH_RADIUS = 1;
 export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
 
 /**
+ * How far ONE drag intent may pull a terrace lip, in cells.
+ *
+ * IT IS A WORK BOUND FIRST. A drag intent names a region by its depth, and the
+ * region's bounding box grows with that depth squared; the cursor cell that
+ * sets it is bounded only by the world, so without this an intent naming a
+ * corner of a 2048-cell world would ask the server to sweep four million
+ * cells. Every field of an intent has to be bounded for the server's own sake
+ * (protocol.ts's validator makes the same argument about radius), and this is
+ * the drag's.
+ *
+ * MAX_BRUSH_RADIUS is the value because it is the reach the largest edit in
+ * the game ALREADY has: the widest stamp changes ground up to that many cells
+ * from where it was aimed, so a drag that advances its edge the same distance
+ * moves terrain no further from the player's aim than a tool they already
+ * hold. The region it sweeps — this depth across the grabbed span — stays the
+ * same order as that stamp's footprint, so no drag intent is a bigger unit of
+ * server work than the brush already is.
+ *
+ * IT IS A PER-INTENT CAP, NOT A PER-STROKE ONE. A drag intent is absolute, so
+ * the lip simply stops following a cursor that has run further than this;
+ * releasing and grabbing again pulls on from there.
+ */
+export const MAX_DRAG_PULL_CELLS = MAX_BRUSH_RADIUS;
+
+/**
  * How far excess can travel from one edit: relaxation stops where the slope
  * everywhere respects MAX_STEP, so the full height range laid out at maximum
  * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 160 cells (80 before the
