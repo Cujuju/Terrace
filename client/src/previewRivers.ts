@@ -2,9 +2,21 @@
 // previewBoats.ts. Not part of the shipped app: reached only through
 // preview-rivers.html.
 //
-//   ?scene=<fork|meander|terrace|basin|stairpools>  — fixture; defaults to "fork"
+//   ?scene=<fork|meander|terrace|basin|stairpools|cliffs>
+//                                 — fixture; defaults to "fork"
 //   ?view=<iso|side|top>           — camera angle; defaults to "iso"
 //   ?zoom=<number>                 — camera distance multiplier; defaults to 1
+//   ?at=<cellX>,<cellZ>            — the point the camera LOOKS AT, in CELL
+//                                  coordinates; defaults to the world centre.
+//                                  Malformed or out-of-bounds input falls back
+//                                  to the centre rather than throwing.
+//   ?dir=<x>,<y>,<z>               — free camera DIRECTION (a vector,
+//                                  normalised), overriding ?view when present;
+//                                  defaults to ?view's vector. Malformed,
+//                                  zero-length or non-finite input falls back
+//                                  to ?view rather than throwing.
+// ?zoom keeps its meaning under ?at: it multiplies the camera's DISTANCE from
+// the look-at point, so `?at=<a cliff>&zoom=0.15` frames that cliff close up.
 //
 // WHAT THIS EXISTS TO SHOW, and why the live client could not. The two things
 // under test — "a channel reads as a smoothed polyline, not a row of squares"
@@ -96,7 +108,7 @@ const DESCENT_PER_CELL = (() => {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : BAND_HEIGHT / 4;
 })();
 
-type SceneName = 'fork' | 'meander' | 'terrace' | 'basin' | 'stairpools';
+type SceneName = 'fork' | 'meander' | 'terrace' | 'basin' | 'stairpools' | 'cliffs';
 
 /**
  * Lowers a spring cell's four neighbours to just under it.
@@ -389,12 +401,127 @@ function buildStairPools(mirror: TerrainMirror): void {
   openSpring(mirror, channelX, 1);
 }
 
+/**
+ * CLIFFS — a channel down a gently descending shelf that then drops off a
+ * SHEER escarpment of many terrace bands in ONE cell of horizontal travel,
+ * lands on a shelf below, and does it AGAIN at a different height before
+ * running on to the sea.
+ *
+ * This is the ONLY fixture whose river crosses many bands in a single step.
+ * Every other scene descends DESCENT_PER_CELL — a quarter of a band per cell —
+ * so the tallest step anywhere is about one band, and every waterfall-fix
+ * regression to date has passed on them and failed only on TALL falls, where
+ * the ribbon must plunge a dozen-plus bands while the curtain, the spray and
+ * the underlying face all have to agree where the ground is. Two cliffs of
+ * DIFFERENT heights (see UPPER_CLIFF_BANDS / LOWER_CLIFF_BANDS) mean a fix
+ * that only works for one drop size fails visibly here.
+ *
+ * Geometry contract (each point exists because its absence silently yields NO
+ * river):
+ * - the channel always keeps a strictly lower CARDINAL neighbour along its
+ *   path (banks sit ABOVE it, never beside it at its own height), so the
+ *   trace flows instead of pooling;
+ * - `openSpring` clears the summit's neighbours, for the reason its own
+ *   comment gives;
+ * - the whole descent fits between the fixture summit and SEA_LEVEL, so the
+ *   course reaches the sea instead of being truncated by its trace budget;
+ * - each cliff is ONE cell of horizontal travel for the WHOLE drop, because
+ *   the defect under test only appears when many bands are crossed in a step.
+ */
+/** Bands dropped by the FIRST cliff the channel goes over. TALL on purpose:
+ *  a multi-band drop is where the geometry keeps failing. */
+const UPPER_CLIFF_BANDS = 12;
+/** Bands dropped by the SECOND cliff — deliberately DIFFERENT from the
+ *  first, so a fix tuned to one drop size shows as a failure on the other. */
+const LOWER_CLIFF_BANDS = 20;
+/** Gentle descent per cell along a shelf, in height units. Small, so the
+ *  shelves read as nearly-flat ground and every dramatic drop in the shot is
+ *  concentrated at the two cliffs. */
+const SHELF_DESCENT_PER_CELL = 2;
+/** Last row of the upper shelf — the lip of the first cliff. The drop lands
+ *  on the next row (one cell of horizontal travel: see the fixture contract). */
+const CLIFF1_LIP_ROW = 14;
+/** Last row of the middle shelf — the lip of the second cliff. */
+const CLIFF2_LIP_ROW = 34;
+/**
+ * This fixture's OWN summit, in height units above sea level, counted in
+ * bands. It CANNOT be the shared SUMMIT_HEIGHT: that sits 16 bands above the
+ * sea, and two cliffs of 12 and 20 bands alone need 32, so a course under
+ * SUMMIT_HEIGHT would run out of height and be cut off before the sea. Forty
+ * bands covers both cliffs, both shelves' gentle descent and the run-out to
+ * the coast, stays far under MAX_HEIGHT, and clears
+ * SPRING_MIN_HEIGHT_ABOVE_SEA several times over.
+ */
+const CLIFFS_SUMMIT_BANDS_ABOVE_SEA = 40;
+const CLIFFS_SUMMIT_HEIGHT = CLIFFS_SUMMIT_BANDS_ABOVE_SEA * BAND_HEIGHT;
+/** First row of the middle shelf — where the first cliff LANDS. */
+const CLIFF1_BASE_ROW = CLIFF1_LIP_ROW + 1;
+/** First row of the lower shelf — where the second cliff LANDS. */
+const CLIFF2_BASE_ROW = CLIFF2_LIP_ROW + 1;
+/** Cells of gentle descent on the shelf above each cliff. */
+const UPPER_SHELF_STEPS = CLIFF1_LIP_ROW - 1;
+const MID_SHELF_STEPS = CLIFF2_LIP_ROW - CLIFF1_BASE_ROW;
+
+function buildCliffs(mirror: TerrainMirror): void {
+  const map = mirror.map;
+  const set = (x: number, y: number, h: number): void => {
+    map.cells[cellIndex(map, x, y)] = h;
+  };
+
+  // Heights of each shelf's channel end-to-end, derived so the arithmetic
+  // stays readable against the band constants above.
+  const upperLipHeight = CLIFFS_SUMMIT_HEIGHT - UPPER_SHELF_STEPS * SHELF_DESCENT_PER_CELL;
+  const midShelfTopHeight = upperLipHeight - UPPER_CLIFF_BANDS * BAND_HEIGHT;
+  const lowerLipHeight = midShelfTopHeight - MID_SHELF_STEPS * SHELF_DESCENT_PER_CELL;
+  const lowerShelfTopHeight = lowerLipHeight - LOWER_CLIFF_BANDS * BAND_HEIGHT;
+  // The lower shelf must spend its remaining rows getting DOWN TO the sea, or
+  // the course ends mid-slope and `reachedSea` stays false — the fixture's own
+  // success criterion. Same self-matching trick buildFork uses for its cone.
+  const LOWER_SHELF_STEPS = PREVIEW_WORLD_SIZE - 2 - CLIFF2_BASE_ROW;
+  const LOWER_SHELF_DROP_PER_CELL = Math.ceil(lowerShelfTopHeight / LOWER_SHELF_STEPS);
+
+  /**
+   * The channel's height at a row: gently down each shelf, then ONE SHEER
+   * multi-band step at each cliff row boundary. Clamped at SEA_LEVEL so the
+   * flat coastal run never dips under the map's floor.
+   */
+  const channelAtRow = (row: number): number => {
+    if (row <= CLIFF1_LIP_ROW) {
+      return CLIFFS_SUMMIT_HEIGHT - (row - 1) * SHELF_DESCENT_PER_CELL;
+    }
+    if (row <= CLIFF2_LIP_ROW) {
+      return midShelfTopHeight - (row - CLIFF1_BASE_ROW) * SHELF_DESCENT_PER_CELL;
+    }
+    return Math.max(
+      SEA_LEVEL,
+      lowerShelfTopHeight - (row - CLIFF2_BASE_ROW) * LOWER_SHELF_DROP_PER_CELL,
+    );
+  };
+
+  // Banks first, full-width rows of them standing RIDGE_CLEARANCE_BANDS over
+  // the channel at every row — INCLUDING the cliff rows, so the escarpment is
+  // a plateau EDGE the whole width of the fixture rather than a slot canyon.
+  // A straight channel advances one row per cell (as in TERRACE), so a shelf
+  // built at the channel's own rate hugs it with no canyon to hide behind.
+  for (let y = 0; y < PREVIEW_WORLD_SIZE; y++) {
+    const shelfRow = Math.min(Math.max(y, 1), PREVIEW_WORLD_SIZE - 2);
+    const bank = channelAtRow(shelfRow) + RIDGE_CLEARANCE_BANDS * BAND_HEIGHT;
+    for (let x = 0; x < PREVIEW_WORLD_SIZE; x++) set(x, y, bank);
+  }
+  // Then the channel itself, one cell wide, down the middle.
+  const channelX = Math.floor(PREVIEW_WORLD_SIZE / 2);
+  for (let y = 1; y < PREVIEW_WORLD_SIZE - 1; y++) set(channelX, y, channelAtRow(y));
+
+  openSpring(mirror, channelX, 1);
+}
+
 const SCENE_BUILDERS: Record<SceneName, (mirror: TerrainMirror) => void> = {
   fork: buildFork,
   meander: buildMeander,
   terrace: buildTerrace,
   basin: buildBasin,
   stairpools: buildStairPools,
+  cliffs: buildCliffs,
 };
 
 const CAMERA_VIEWS = {
@@ -410,7 +537,11 @@ function query<T extends string>(name: string, allowed: readonly T[], fallback: 
   return allowed.includes(raw as T) ? (raw as T) : fallback;
 }
 
-const sceneName = query('scene', ['fork', 'meander', 'terrace', 'basin', 'stairpools'] as const, 'fork');
+const sceneName = query(
+  'scene',
+  ['fork', 'meander', 'terrace', 'basin', 'stairpools', 'cliffs'] as const,
+  'fork',
+);
 const view = query('view', ['iso', 'side', 'top'] as const, 'iso');
 const zoom = Number(new URLSearchParams(window.location.search).get('zoom') ?? '1') || 1;
 
@@ -473,9 +604,66 @@ const centre = new Vector3(
   (PREVIEW_WORLD_SIZE / 2) * CELL_WORLD_SIZE,
 );
 const span = PREVIEW_WORLD_SIZE * CELL_WORLD_SIZE;
+
+/** Offset from a cell's corner to its centre, in cells — what `?at=` aims at. */
+const CELL_CENTRE_OFFSET = 0.5;
+
+/**
+ * `?at=<cellX>,<cellZ>` — the CELL the camera looks at. Null (meaning: fall
+ * back to the world centre) when absent, malformed, non-finite, or outside
+ * the fixture — an aim at nothing must not become a crash or an underground
+ * camera; this harness is driven by scripts that iterate on URLs.
+ */
+function parseLookAtCell(): { x: number; z: number } | null {
+  const raw = new URLSearchParams(window.location.search).get('at');
+  if (raw === null) return null;
+  const parts = raw.split(',');
+  if (parts.length !== 2) return null;
+  const x = Number(parts[0]);
+  const z = Number(parts[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+  const cx = Math.floor(x);
+  const cz = Math.floor(z);
+  if (cx < 0 || cz < 0 || cx >= PREVIEW_WORLD_SIZE || cz >= PREVIEW_WORLD_SIZE) return null;
+  return { x, z };
+}
+
+/**
+ * `?dir=<x>,<y>,<z>` — a free camera direction, normalised, overriding
+ * `?view`. Null (fall back to `?view`) when absent, malformed, non-finite,
+ * or zero-length — a zero vector has no direction to normalise.
+ */
+function parseCameraDirection(): Vector3 | null {
+  const raw = new URLSearchParams(window.location.search).get('dir');
+  if (raw === null) return null;
+  const parts = raw.split(',');
+  if (parts.length !== 3) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  const v = new Vector3(nums[0]!, nums[1]!, nums[2]!);
+  if (v.lengthSq() === 0) return null;
+  return v.normalize();
+}
+
+const lookAtCell = parseLookAtCell();
+const lookAt =
+  lookAtCell === null
+    ? centre
+    : new Vector3(
+        (lookAtCell.x + CELL_CENTRE_OFFSET) * CELL_WORLD_SIZE,
+        mirror.map.cells[cellIndex(mirror.map, Math.floor(lookAtCell.x), Math.floor(lookAtCell.z))]! *
+          HEIGHT_WORLD_SCALE,
+        (lookAtCell.z + CELL_CENTRE_OFFSET) * CELL_WORLD_SIZE,
+      );
+// An explicit ?dir replaces the named view outright (it is normalised, so its
+// length carries no scale); otherwise the view vector is used exactly as
+// before, unnormalised, so the default framing is bit-identical to the old
+// behaviour.
+const viewOffset = parseCameraDirection() ?? CAMERA_VIEWS[view as CameraView];
+
 const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.1, 4000);
-camera.position.copy(centre).addScaledVector(CAMERA_VIEWS[view as CameraView], span * 0.85 * zoom);
-camera.lookAt(centre);
+camera.position.copy(lookAt).addScaledVector(viewOffset, span * 0.85 * zoom);
+camera.lookAt(lookAt);
 
 let frames = 0;
 function animate(): void {
