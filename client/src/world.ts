@@ -115,8 +115,12 @@ export interface World extends TerrainSink {
 const nowMs = (): number => performance.now();
 
 export function createWorld(viewport: Viewport): World {
-  // A sea exists from the first frame, before any server contact, so the
-  // "disconnected" boot state is a plausible empty ocean rather than a void.
+  // One sea for the whole session, like the fog and rivers below. It draws
+  // NOTHING until the first snapshot's `water.sync`: since the surface covers
+  // the received chunks and nothing else (render/water.ts), a client that has
+  // received no chunks has no sea — which replaces the old "the disconnected
+  // boot state is a plausible empty ocean rather than a void" behaviour, that
+  // ocean being the very thing the owner asked to be rid of (2026-08-24).
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
   // One fog curtain for the whole session, like water — its segments are
   // synced (added/disposed) against whatever mirror currently exists rather
