@@ -27,6 +27,7 @@ import {
 import {
   CROP_PLOT_BED_CELL_COVERAGE,
   CROP_PLOT_MAX_REACH_CELLS,
+  CROP_PLOT_TREAD_RING_CELLS,
   CROP_SCALE_MAX,
   CROP_SCALE_MIN,
   cropVariation,
@@ -50,7 +51,7 @@ import {
   type FloraWorld,
 } from '../server/bands.ts';
 import { CROP_SURVEY_INTERVAL_SECONDS, CropField } from '../server/crops.ts';
-import { isFarmlandCell, type FarmlandWorld } from '@terrace/shared';
+import { isFarmlandCell, isFarmlandPlot, type FarmlandWorld } from '@terrace/shared';
 import {
   FLORA_CELLS_PER_TREE,
   FLORA_MAX_SPROUTS_PER_SURVEY,
@@ -435,12 +436,25 @@ describe('growth', () => {
 describe('felling', () => {
   let harness: Harness;
 
+  /**
+   * Simulating 105 seconds of world synchronously, on a 256-cell board, to get
+   * trees to grow. Measured at ~11s of wall clock — over vitest's 10s default,
+   * which this hook has been close to for a while and crossed on 2026-08-23
+   * when the crop survey's per-cell predicate grew a tread ring
+   * (shared/farmland.ts's isFarmlandPlot). The extra work is real but small
+   * where it actually runs: ~2.7× the survey's per-cell cost, which crops.ts's
+   * own measurement puts at well under a millisecond per tick on a 512² board.
+   * It is only visible here because this fixture pays a hundred seconds of it
+   * up front, for trees, which have nothing to do with crops.
+   */
+  const FELLING_FIXTURE_TIMEOUT_MS = 30_000;
+
   beforeEach(() => {
     harness = boot(() => false);
     join(harness);
     advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 20);
     expect(standingTrees().length).toBeGreaterThan(0);
-  });
+  }, FELLING_FIXTURE_TIMEOUT_MS);
 
   it('removes a tree the moment its cell is sculpted, and broadcasts it', () => {
     const victim = standingTrees()[0];
@@ -872,12 +886,12 @@ describe('crops (card 28) — the CropField survey', () => {
     return worldWithTerrain(WORLD_SIZE, coastalHeight);
   }
 
-  /** Ground truth: every farmland cell in the world, via the SAME predicate the survey itself calls. */
-  function expectedFarmland(world: FarmlandWorld, size: number): Set<string> {
+  /** Ground truth: every cell with room for a whole plot, via the SAME predicate the survey itself calls. */
+  function expectedPlots(world: FarmlandWorld, size: number): Set<string> {
     const expected = new Set<string>();
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        if (isFarmlandCell(world, x, y)) expected.add(`${x},${y}`);
+        if (isFarmlandPlot(world, x, y, CROP_PLOT_TREAD_RING_CELLS)) expected.add(`${x},${y}`);
       }
     }
     return expected;
@@ -885,10 +899,17 @@ describe('crops (card 28) — the CropField survey', () => {
 
   const NEVER_OCCUPIED = (): boolean => false;
 
-  it('finds exactly the cells isFarmlandCell says are farmland — column 1 of the coastal world, minus its two off-map-neighbour edge rows', () => {
+  it('finds exactly the cells with room for a plot — column 2, one cell BACK from the lip the point test accepts', () => {
     const world = coastalWorld();
     const view = floraView(world);
-    const expected = expectedFarmland(view, WORLD_SIZE);
+    const expected = expectedPlots(view, WORLD_SIZE);
+    // Column 1 is farmland by the point test but is the terrace LIP: a plot
+    // there hangs over the drop (see shared/src/farmland.ts's isFarmlandPlot).
+    // Crops therefore stand on column 2, losing the two rows whose own tread
+    // would run off the top and bottom of the world.
+    expect(isFarmlandCell(view, 1, 10)).toBe(true);
+    expect(expected.has('1,10')).toBe(false);
+    expect(expected.has('2,10')).toBe(true);
     expect(expected.size).toBe(WORLD_SIZE - 2); // every row except y=0 and y=WORLD_SIZE-1
 
     const field = new CropField();
@@ -932,34 +953,38 @@ describe('crops (card 28) — the CropField survey', () => {
 
   it('buildings always win: an occupied farmland cell never shows a crop', () => {
     const view = floraView(coastalWorld());
-    const occupied = (x: number, y: number): boolean => x === 1 && y === 5;
+    const occupied = (x: number, y: number): boolean => x === 2 && y === 5;
     const field = new CropField();
     field.survey(view, occupied);
-    expect(field.has(1, 5)).toBe(false);
-    expect(field.has(1, 6)).toBe(true); // an ordinary, unoccupied farmland neighbour still shows one
+    expect(field.has(2, 5)).toBe(false);
+    expect(field.has(2, 6)).toBe(true); // an ordinary, unoccupied plot cell next door still shows one
   });
 
   it('reactToEdit withers the crop on its own edited cell immediately, and reports null for a cell with none', () => {
     const view = floraView(coastalWorld());
     const field = new CropField();
     field.survey(view, NEVER_OCCUPIED);
-    expect(field.has(1, 5)).toBe(true);
+    expect(field.has(2, 5)).toBe(true);
 
-    expect(field.reactToEdit(1, 5)).toEqual({ x: 1, y: 5 });
-    expect(field.has(1, 5)).toBe(false);
-    expect(field.reactToEdit(1, 5)).toBeNull(); // already gone
+    expect(field.reactToEdit(2, 5)).toEqual({ x: 2, y: 5 });
+    expect(field.has(2, 5)).toBe(false);
+    expect(field.reactToEdit(2, 5)).toBeNull(); // already gone
   });
 
   it('never exceeds FLORA_CROP_CAP, even when far more farmland exists', () => {
-    // Alternating water/land ROWS: every land row's cells touch water both
-    // north and south and are flat among their (same-row) dry neighbours —
-    // a coastline every two rows, producing far more farmland than one
-    // simple shoreline. On a 128x128 world that is roughly 64 rows x 126
-    // columns ≈ 8064 candidate cells, comfortably over FLORA_CROP_CAP (2048).
-    const combSize = 128;
+    // Water STRIPES four rows apart, so every band of land is three rows
+    // deep: the middle row of each band has a full cell of tread around it
+    // (isFarmlandPlot's ring) while still having water two rows away, which
+    // is the shore ring. A one-row-thick comb would qualify nowhere at all
+    // now that a plot needs ground on both sides of itself — the old fixture
+    // tested the point predicate's reach, not the plot predicate's.
+    // On a 256x256 world that is 64 qualifying rows x 254 columns ≈ 16k
+    // candidate cells, comfortably over FLORA_CROP_CAP (2048).
+    const combSize = 256;
+    const COMB_PERIOD_ROWS = 4;
     function combHeight(x: number, y: number): number {
-      if (y % 2 === 0) return CROP_DEEP; // even rows: water
-      return CROP_LAND_BAND * BAND_HEIGHT; // odd rows: flat land
+      if (y % COMB_PERIOD_ROWS === 0) return CROP_DEEP; // every fourth row: water
+      return CROP_LAND_BAND * BAND_HEIGHT; // the three rows between: flat land
     }
     const view = floraView(worldWithTerrain(combSize, combHeight));
     const field = new CropField();
@@ -1011,11 +1036,14 @@ describe('crops through the real host (card 28)', () => {
   it('a NEIGHBOUR-only edit (filling in the water that made a cell farmland) is caught by the next periodic survey, not instantly — the named, accepted residual', () => {
     const harness = bootCoastal();
     advance(harness, CROP_SURVEY_INTERVAL_SECONDS + DT);
-    const victim = standingCrops().find((c) => c.x === 1) as CropCell;
+    // Column 2 is where a plot stands: column 1 is the terrace lip, which has
+    // no room for the model (shared/src/farmland.ts's isFarmlandPlot).
+    const victim = standingCrops().find((c) => c.x === 2) as CropCell;
     expect(victim).toBeDefined();
 
-    // Raise the water column (x=0) up to the land band — victim no longer
-    // touches water, so it should stop being farmland, but NOT this tick.
+    // Raise the water column (x=0) up to the land band — the victim's shore
+    // ring no longer reaches water, so it should stop qualifying, but NOT this
+    // tick: the edit is two cells away and reactToEdit only sees its own cell.
     handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
@@ -1079,12 +1107,13 @@ describe('crops through the real host (card 28)', () => {
 // THE PLOT FOOTPRINT CONTRACT (protocol.ts, owner 2026-08-23)
 //
 // These test the RULE, not the number: "a plot never reaches past the cell it
-// stands on", which is simultaneously why plots cannot overlap (they sit one
-// per cell, one cell apart) and why a plot never stands on ground smaller than
-// itself (its ground is the cell isFarmlandCell already vouched for as dry,
-// unlocked and single-band). Written against the derivation so that changing
-// the model's size cannot quietly break either property — the assertions are
-// geometric, and none of them names a literal bed width.
+// stands on", which is why plots sitting one per cell can never overlap. That
+// a plot also never stands on ground SMALLER than itself is a separate rule
+// with a separate owner — isFarmlandPlot's tread ring in shared/farmland.ts —
+// because a farmland cell turned out not to guarantee a cell of ground.
+// Written against the derivation so that changing the model's size cannot
+// quietly break either property: the assertions are geometric, and none of
+// them names a literal bed width.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('crop plot footprint (card 28)', () => {

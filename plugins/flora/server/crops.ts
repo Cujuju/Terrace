@@ -1,9 +1,12 @@
 // CROPS — card 28, "Terrace Farming": the visible half. Farmland
-// (@terrace/shared's farmland.ts) that is not covered by a building shows a
-// crop. Membership is a PURE, DETERMINISTIC function of terrain — unlike
+// (@terrace/shared's farmland.ts) that has room for a whole crop model and is
+// not covered by a building shows a crop. "Room for the model" is
+// isFarmlandPlot rather than isFarmlandCell, and the difference is a cell of
+// setback from the water's edge — see that function for why a farmland cell is
+// not the same thing as a cell of ground. Membership is a PURE, DETERMINISTIC function of terrain — unlike
 // Forest (forest.ts), there is no stochastic sprouting, no growth hazard,
 // no spacing rule, and therefore no RNG and NOTHING TO PERSIST: a crop
-// exists exactly where isFarmlandCell says it does, exactly the way a river
+// exists exactly where isFarmlandPlot says it does, exactly the way a river
 // exists exactly where computeRiverNetwork says it does
 // (shared/src/rivers.ts). Restarting the server and re-scanning the SAME
 // (persisted) heightmap reproduces the SAME crop set byte for byte, so
@@ -22,7 +25,15 @@
 //
 // COST, MEASURED (ad hoc, this session, not committed — see
 // plugins/structures/server/farmland.ts's identical note for the same
-// script and methodology). A full 512² sweep calling isFarmlandCell for
+// script and methodology). RE-MEASURED 2026-08-23, when the predicate became
+// isFarmlandPlot: the tread ring and shore ring cost ~2.7× isFarmlandCell per
+// cell on adversarial all-flat ground (5.9ms vs 15.9ms over a 256² board, ad
+// hoc, this session), which puts a full 512² sweep at roughly 6.5ms and this
+// survey at well under a millisecond of extra work per tick. Both rings bail
+// out on their first failing cell, and the orthogonal neighbours — the
+// cheapest, most selective test — are checked first, so real broken terrain
+// costs far less than that adversarial figure. A full 512² sweep calling the
+// predicate for
 // EVERY cell — the worst case this survey ever does, since a real sweep
 // bails out of most cells at the first isWater/unlocked check exactly like
 // Forest's own isGreenBand does — measured 2.43ms median (10 trials) on an
@@ -39,8 +50,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE } from '@terrace/shared';
-import { FLORA_CROP_CAP, cropCellOf, cropKey, type CropCell } from '../protocol.ts';
-import { isFarmlandCell, type FarmlandWorld } from '@terrace/shared';
+import {
+  CROP_PLOT_TREAD_RING_CELLS,
+  FLORA_CROP_CAP,
+  cropCellOf,
+  cropKey,
+  type CropCell,
+} from '../protocol.ts';
+import { isFarmlandPlot, type FarmlandWorld } from '@terrace/shared';
 import type { OccupancyPredicate } from './forest.ts';
 
 /**
@@ -113,7 +130,7 @@ export class CropField {
    *
    * NAMED RESIDUAL, matching structures' life.ts precedent verbatim: a crop
    * whose NEIGHBOUR is edited (filling in the water that made it farmland,
-   * say) is not caught here — isFarmlandCell depends on more than the
+   * say) is not caught here — isFarmlandPlot depends on more than the
    * edited cell's own height, and re-testing every crop's whole
    * neighbourhood on every diff would turn a bounded sculpt-rate cost into
    * an unbounded one. It is caught by the next periodic survey instead, at
@@ -147,7 +164,12 @@ export class CropField {
         // trees, owner 2026-08-19): an occupied cell shows no crop, whatever
         // the ground beneath it would otherwise qualify as.
         if (isOccupied(x, y)) continue;
-        if (!isFarmlandCell(world, x, y)) continue;
+        // isFarmlandPlot, not isFarmlandCell: farmland promises a dry cell
+        // CENTRE, and a terrace lip may run within an eighth of a cell of it,
+        // so a plot sited on the lip hangs over the drop. The ring is derived
+        // from the model's own reach — see protocol.ts's
+        // CROP_PLOT_TREAD_RING_CELLS.
+        if (!isFarmlandPlot(world, x, y, CROP_PLOT_TREAD_RING_CELLS)) continue;
         if (this.staged.size >= FLORA_CROP_CAP) continue; // never evict an already-staged cell to make room for a later one in the same sweep
         this.staged.add(cropKey(x, y));
       }
@@ -176,7 +198,7 @@ export class CropField {
       const cy = Math.floor(this.cursor / world.chunksPerEdge);
       // Locked chunks contribute no farmland — the same per-chunk unlock
       // gate Forest.scanChunk applies before it ever tests a cell, cheaper
-      // than isFarmlandCell's own per-cell isCellUnlocked check because it
+      // than the predicate's own per-cell isCellUnlocked check because it
       // is hoisted out of 256 iterations (see forest.ts's scanChunk for the
       // identical exactness argument: a cell's unlock state IS its chunk's).
       if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isOccupied, cx, cy);

@@ -461,6 +461,16 @@ export function cropVariation(x: number, y: number): CropVariation {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THE ONE IMPORT. This file is otherwise dependency-free by design (see the
+// banner) and it stays that way in spirit: @terrace/shared is the single source
+// of truth for terrain math that BOTH halves of every plugin already import,
+// which is exactly what a footprint derived from the terrain's own contour
+// guard needs. The alternative was restating "1/8 of a cell" here, which is the
+// duplicated-terrain-math mistake shared/src/traversal.ts's header records.
+// ─────────────────────────────────────────────────────────────────────────────
+import { CONTOUR_CELL_CENTRE_GUARD } from '@terrace/shared';
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE PLOT FOOTPRINT (owner, 2026-08-23: "these terrace patches must not spawn
 // over the top of each other, only next to each other, and never on a section
 // of land that isn't at least as large as the model").
@@ -530,6 +540,36 @@ export const CROP_PLOT_MAX_REACH_CELLS = 0.5;
  */
 export const CROP_PLOT_BED_CELL_COVERAGE =
   CROP_PLOT_MAX_REACH_CELLS / (SQUARE_CIRCUMRADIUS_PER_EDGE * CROP_SCALE_MAX);
+
+/**
+ * How much SOLID same-band tread a plot needs around the cell it stands on, in
+ * cells — the setback that stops a plot hanging over a terrace lip.
+ *
+ * DERIVED, and the derivation is the whole argument. A terrace's drawn outline
+ * is a contour between cell CENTRES, not a cell boundary, and it may come as
+ * close as CONTOUR_CELL_CENTRE_GUARD to a centre — an eighth of a cell, and at
+ * a deep-water shoreline it lands at exactly that bound. So a cell that is
+ * "farmland" carries a guarantee of an eighth of a cell of ground, and a plot
+ * reaching CROP_PLOT_MAX_REACH_CELLS (half a cell) past that centre overhangs
+ * by everything in between — the defect the owner photographed on 2026-08-23.
+ *
+ * A plot is safe once every contour is further from its centre than the plot
+ * reaches. Requiring the whole square of radius R around the plot to be
+ * same-band dry land puts the nearest possible contour at R + the guard, since
+ * a contour only ever crosses an edge running from an inside sample to an
+ * outside one, and never comes closer than the guard to either end. So the
+ * requirement is reach ≤ R + guard, i.e. R ≥ reach − guard. At the shipped plot
+ * this is 1: crops grow one cell back from the water's edge, on a full cell of
+ * tread, with the lip 1.125 cells away.
+ *
+ * The alternative — keeping crops on the lip and shrinking the model to the
+ * guard — was rejected with the owner: an eighth of a cell is 0.03 world units,
+ * which is not a visible crop.
+ */
+export const CROP_PLOT_TREAD_RING_CELLS = Math.max(
+  0,
+  Math.ceil(CROP_PLOT_MAX_REACH_CELLS - CONTOUR_CELL_CENTRE_GUARD),
+);
 
 /**
  * The rule the two constants above exist to enforce, checked at module load
