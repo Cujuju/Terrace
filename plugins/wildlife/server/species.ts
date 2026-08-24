@@ -330,12 +330,20 @@ export interface SpeciesProfile {
    *     SQUARE WORLD UNITS — the world's area, not its cell count;
    *     ~131 000 land, of the water roughly 40% shallow / 60% open sea):
    *
-   *       fish     52 429 /   400 = 131     grazer   131 072 / 2 700 = 48
-   *       deepsea  78 643 / 1 500 =  52     whale     78 643 / 2 000 = 39
+   *       fish     52 429 /   400 = 131     grazer   131 072 /   100 = 1 310
+   *       deepsea  78 643 / 1 500 =  52     whale     78 643 / 2 000 =    39
    *
-   *     270 asked for. WILDLIFE_POPULATION_CAP (150) scales every species down
-   *     by 150/270 = 0.5556 and floors, giving 147 (72 fish / 28 deepsea /
-   *     26 grazer / 21 whale).
+   *     1 532 asked for. WILDLIFE_POPULATION_CAP (850) scales every species down
+   *     by 850/1 532 = 0.5548 and floors, giving 847 (72 fish / 28 deepsea /
+   *     726 grazer / 21 whale).
+   *
+   *     RECOMPUTED FOR THE 2026-08-23 GRAZER CUT (2 700 → 100) AND THE CAP RAISE
+   *     THAT PAID FOR IT (150 → 850). The three sea species are back at exactly
+   *     the counts they held before the cut — 72 / 28 / 21, unchanged — which is
+   *     the whole reason the cap moved: the proportional division would otherwise
+   *     have taken the grazers' 86% share of demand out of the sea, leaving 12
+   *     fish and a single whale pod. What the raise costs is upstream bandwidth,
+   *     and that arithmetic is stated where the cap is (census.ts).
    *
    *     WHALES REMAIN THE RAREST SPECIES ASKED FOR (39 against deepsea's 52),
    *     which is the constraint that set 2 000 rather than a rounder, lower
@@ -534,8 +542,33 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     turnNoiseRadiansPerSecond: 1.1,
     bodyLengthCells: cellsAcross(1.1),
     // 4 000 → 2 700: half again as many grazers per hillside, matching fish.
-    habitatCellsPerIndividual: cellsOverArea(2700),
-    groupSize: 1,
+    //
+// 2 700 → 100 (owner, 2026-08-23: "reduce that to a 300 square world unit
+    // per animal triplet" — 300 units buys a TRIPLET, so 100 buys the animal,
+    // and `groupSize` below is the triplet). A 10×10 world-unit patch each: the
+    // 2 700 figure was calibrated against a nominal fully-revealed half-land
+    // world, and no such world exists — every world on this machine is ocean
+    // with an island a player raised, the largest of them 462 square world
+    // units of land, on which 2 700 put no grazers at all and 900 still put
+    // none by density. At 100 that island carries four, which is the point.
+    //
+    // WHAT IT COSTS, STATED RATHER THAN DISCOVERED LATER. The ask on a
+    // hypothetical fully-revealed half-land 512-unit world goes 48 → 1 310
+    // grazers, i.e. 86% of all demand, and WILDLIFE_POPULATION_CAP divides the
+    // budget PROPORTIONALLY — so on such a world the sea thins to 12 fish, 5
+    // deepsea and 3 whales (one pod exactly). No world in existence is
+    // anywhere near that shape, and on the worlds that DO exist the cap does
+    // not bind at all, which is why the trade is acceptable rather than merely
+    // accepted. It is worth knowing which dial moves it back: the cap is a
+    // BANDWIDTH ceiling (census.ts: 150 × 58 B × 5 Hz per client), not an
+    // ecology one, and a per-species reservation in `targetsFor` would be the
+    // other answer — neither is warranted until a world of that shape exists.
+    habitatCellsPerIndividual: cellsOverArea(100),
+    // A TRIPLET (owner, 2026-08-23). Grazers arrive three at a time like whales
+    // arrive as a pod; unlike whales they keep SOLITARY schooling odds below,
+    // so the trio is how they are born rather than how they travel — three
+    // animals appear on the hillside together and then graze apart.
+    groupSize: 3,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
     sizeDraw: 'per-group',
     schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
