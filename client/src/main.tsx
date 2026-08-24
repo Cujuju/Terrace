@@ -28,6 +28,7 @@ import {
   setWorldLoaded,
 } from './state/worldsState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
+import { createPickDebugOverlay } from './render/pickDebugOverlay.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
 import './ui/hud.css';
@@ -125,13 +126,19 @@ const sculptInput = createSculptInput({
 // the moment the
 // HUD changes it.
 const brushPreview = createBrushPreview(viewport.scene, canvas);
-viewport.onFrame(() =>
-  brushPreview.update(sculptInput.hoverTarget(), {
+// The pick-debug overlay reads the SAME pick object as the outline, so the two
+// can never disagree about what is under the pointer. See its module header for
+// why it draws one cell and nothing richer.
+const pickDebug = createPickDebugOverlay(viewport.scene, canvas);
+viewport.onFrame(() => {
+  const pick = sculptInput.hoverTarget();
+  brushPreview.update(pick, {
     radius: brushRadius(),
     tool: brushTool(),
     profile: brushProfile(),
-  }),
-);
+  });
+  pickDebug.update(pick);
+});
 
 // The frame-rate readout in the top-right watermark. Started here, beside the
 // other viewport frame hooks, because the viewport is what it measures.

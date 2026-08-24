@@ -226,7 +226,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const surfaceY = terrainHeightAt(hoverCache.x, hoverCache.y);
     if (surfaceY === null) return null;
     if (surfaceY === hoverCache.surfaceY) return hoverCache;
-    hoverCache = { x: hoverCache.x, y: hoverCache.y, surfaceY };
+    // hitRiser rides along unchanged: it is a fact about the RAY, and this
+    // branch only refreshes the cached cell's height after the ground moved
+    // under a stationary pointer. The next pointermove re-picks and re-decides
+    // it.
+    hoverCache = { x: hoverCache.x, y: hoverCache.y, surfaceY, hitRiser: hoverCache.hitRiser };
     return hoverCache;
   };
 

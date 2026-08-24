@@ -244,6 +244,13 @@ export interface BrushHover {
   readonly y: number;
   /** World-space height of the picked surface point. */
   readonly surfaceY: number;
+  /**
+   * Whether the pointer is on the SIDE of a terrace step rather than its tread
+   * (terrain/picking.ts's TerrainRayPick.hitRiser). Drives the outline's colour
+   * only — the footprint is identical either way, because a click still sculpts
+   * the same cell.
+   */
+  readonly hitRiser: boolean;
 }
 
 /**
@@ -271,6 +278,20 @@ export interface BrushPreview {
  */
 const FOOTPRINT_OUTSIDE = 0;
 const FOOTPRINT_INSIDE = 1;
+
+/**
+ * Outline colour when the pointer is on a terrace TREAD — the plain overlay
+ * white the outline has always been.
+ */
+const OUTLINE_COLOR_CAP = 0xffffff;
+/**
+ * Outline colour when the pointer is on a terrace RISER (a step's side).
+ * Amber rather than a second neutral: this is a MODE readout, and the whole
+ * point is that it is unmistakable at a glance while sweeping the cursor over
+ * terraced ground. It is the one hue in the preview, so it cannot be confused
+ * with the dim grey cell grid or the white ring.
+ */
+const OUTLINE_COLOR_RISER = 0xffb347;
 
 /**
  * Where the outline crosses the lattice edge between an inside cell and an
@@ -641,7 +662,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   )!;
 
   const material = new LineBasicMaterial({
-    color: 0xffffff,
+    color: OUTLINE_COLOR_CAP,
     transparent: true,
     opacity: OUTLINE_OPACITY,
     // Overlay semantics — see the module header.
@@ -768,6 +789,11 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         cellGrid.geometry = geometry.cellGrid;
         shownKey = wanted;
       }
+      // The riser/cap readout. Shared by the ring and the crosshair (one
+      // material), so both change together and the cursor itself reports what
+      // is under it.
+      material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+      skirtMaterial.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
       crosshair.position.copy(line.position);

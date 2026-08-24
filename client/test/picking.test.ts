@@ -155,6 +155,9 @@ describe('pickTerrainCellByRay', () => {
       x: 7,
       y: 11,
       surfaceY: 0,
+      // Straight down from the sky onto a tread: the ray enters the column
+      // above the cap, so it lands ON the cap and never touches a riser.
+      hitRiser: false,
     });
   });
 
@@ -183,6 +186,9 @@ describe('pickTerrainCellByRay', () => {
           x,
           y,
           surfaceY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          // Every ray here is vertical from above the world, so every hit is
+          // a cap hit however varied the field is.
+          hitRiser: false,
         });
       }
     }
@@ -200,7 +206,15 @@ describe('pickTerrainCellByRay', () => {
       { x: 20 * CELL_WORLD_SIZE, y: rayY, z: 20 * CELL_WORLD_SIZE },
       { x: 1, y: 0, z: 0 },
     );
-    expect(hit).toEqual({ x: 32, y: 20, surfaceY: TOP * HEIGHT_WORLD_SCALE });
+    expect(hit).toEqual({
+      x: 32,
+      y: 20,
+      surfaceY: TOP * HEIGHT_WORLD_SCALE,
+      // The whole point of this fixture: the ray struck the cliff FACE, so the
+      // pick reports a riser. This is what the two-method sculpt design keys
+      // "pull an edge" off (owner, 2026-08-23).
+      hitRiser: true,
+    });
   });
 
   it('walks over a lower plateau to land on the higher ground behind it', () => {

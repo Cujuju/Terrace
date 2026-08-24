@@ -208,6 +208,25 @@ export interface TerrainRayPick {
    * tread. A terraced cell has exactly one surface height; this is it.
    */
   readonly surfaceY: number;
+  /**
+   * Whether the ray struck this column's vertical RISER rather than its flat
+   * cap — i.e. the player is pointing at the SIDE of a terrace step, not at
+   * its tread.
+   *
+   * The march has always known this (it is what the two-endpoint test below
+   * distinguishes) and always discarded it, because the only consumer was the
+   * hover outline, which marks a footprint on the tread either way. It is
+   * surfaced for the two-method sculpt design (owner, 2026-08-23): "if I tap
+   * on flat, I get a stamp. Otherwise I pull on an edge."
+   *
+   * VIEW-DEPENDENT, and deliberately so: this is a fact about THIS RAY, not
+   * about the cell. The same step reads as a riser from a low camera and as a
+   * cap from overhead, because that is what the player can actually see and
+   * therefore what they can actually aim at. It is not a substitute for "this
+   * cell has a band boundary on some side", which is view-independent geometry
+   * and lives in the mesh builder.
+   */
+  readonly hitRiser: boolean;
 }
 
 /** The world's vertical extent in world units — nothing is drawn outside it. */
@@ -336,8 +355,11 @@ export function pickTerrainCellByRay(
       // inside the cell. Entering already below it means it struck the riser;
       // dropping below it on the way through means it landed on the cap. Y is
       // linear in t, so the two endpoints decide both cases.
-      if (oy + tEnter * dy <= surfaceY || oy + tExit * dy <= surfaceY) {
-        return { x: i, y: j, surfaceY };
+      // Entering already at/below the cap means the ray came in through the
+      // riser; only dropping below it on the way THROUGH is a cap hit.
+      const enteredBelow = oy + tEnter * dy <= surfaceY;
+      if (enteredBelow || oy + tExit * dy <= surfaceY) {
+        return { x: i, y: j, surfaceY, hitRiser: enteredBelow };
       }
     }
 
