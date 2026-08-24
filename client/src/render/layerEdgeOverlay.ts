@@ -70,12 +70,24 @@ const GRABBED_OPACITY = 1;
 
 /**
  * How close the cursor must come to a lip to grab it, in world units.
- * DERIVED, not chosen: one cell is the smallest thing any sculpt can change
- * (MIN_BRUSH_RADIUS paints exactly one), so a lip within one cell of the
- * cursor is one the smallest possible edit would move. A larger tolerance
- * would claim lips the player cannot see themselves pointing at.
+ *
+ * DERIVED, not chosen: a lip that BOUNDS the cell being pointed at, or any of
+ * that cell's eight neighbours, is grabbable. A contour bounding a cell passes
+ * within half a cell of its centre, and a neighbour's contour within one and a
+ * half — so one and a half cells is exactly "the lip on or beside the cell I
+ * am pointing at", and nothing further.
+ *
+ * IT WAS ONE CELL, MEASURED FROM THE CELL'S CORNER (owner report 2026-08-24:
+ * "it is sometimes difficult to actually grab a band, like you can't reach
+ * it"). The query point is a cell, so it carries up to half a cell of
+ * quantisation on each axis before any tolerance is applied; measuring from
+ * the corner added another half cell of bias, all of it in one direction. The
+ * total error could equal the whole tolerance, which made grabbing a lip a
+ * coin toss decided by which side of the cell the contour ran along. The
+ * centre-of-cell fix below removes the bias; this covers the quantisation that
+ * is left.
  */
-const GRAB_RADIUS_WORLD_UNITS = CELL_WORLD_SIZE;
+const GRAB_RADIUS_WORLD_UNITS = 1.5 * CELL_WORLD_SIZE;
 
 /**
  * How much of the grabbed lip lights up on either side of the cursor, in world
@@ -320,8 +332,13 @@ export function createLayerEdgeOverlay(
     highlightAt(cell) {
       clearGrabbed();
       if (cell === null) return null;
-      const px = cell.x * CELL_WORLD_SIZE;
-      const pz = cell.y * CELL_WORLD_SIZE;
+      // THE CELL'S CENTRE, not its corner (owner report 2026-08-24). A cell's
+      // representative point is its centre — it is where the height field is
+      // sampled and what every contour is drawn relative to — so measuring a
+      // distance from its corner biases every grab half a cell along both
+      // axes, always in the same direction. See GRAB_RADIUS_WORLD_UNITS.
+      const px = (cell.x + 0.5) * CELL_WORLD_SIZE;
+      const pz = (cell.y + 0.5) * CELL_WORLD_SIZE;
 
       // PASS 1 — which band owns the nearest lip within grabbing range.
       const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
