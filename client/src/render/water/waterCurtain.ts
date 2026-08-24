@@ -98,14 +98,24 @@ const CURTAIN_LEVEL_SEABED = true;
 type Run = readonly ContourPoint[];
 
 /**
- * True when either endpoint lies on the marching-tile border. Such a segment
+ * True when both endpoints lie on the SAME marching-tile edge. Such a segment
  * is the tile's CLOSING edge — interior water, not outline: across it lies the
- * same region's other half. The terrain skips these too (`isBorderSegment`,
- * capEmission.ts:805); a curtain there would be a wall of water standing in
- * the middle of the river.
+ * same region's other half. A curtain there would be a wall of water standing
+ * in the middle of the river.
+ *
+ * THE TEST IS A SHARED-AXIS MASK, not "either endpoint is on a border"
+ * (W3's first draft, corrected here as W4's Pending-2 defect). `rect` is a
+ * bitmask of the tile edges a point lies on (RECT_WEST|EAST|NORTH|SOUTH,
+ * contours.ts:92), so `a.rect & b.rect` is the set of edges BOTH share, and
+ * only a segment lying ALONG one of them is a closing edge. The literal test
+ * also killed every genuine outline segment that merely TOUCHES the border —
+ * the arc where a channel crosses a tile mid-fall — so its curtain stopped
+ * short of the seam. This is exactly `isBorderSegment` (capEmission.ts:805);
+ * water and rock now skip the same segments rather than disagreeing about
+ * which ones they are.
  */
 function isTileClosingSegment(a: ContourPoint, b: ContourPoint): boolean {
-  return a.rect !== RECT_NONE || b.rect !== RECT_NONE;
+  return (a.rect & b.rect) !== RECT_NONE;
 }
 
 /**
@@ -371,8 +381,9 @@ export function appendCurtains(
  * the next level's top row: every vertex is then a contour vertex of its own
  * level, and the slabs tile the fall without seams.
  *
- * Stops when: the next level down is band −1; its Y is not above `seaWorldY`
- * (nothing is emitted below the sea); the re-seat fails; or the ground under
+ * Stops when: the next level down is band 0 (its slab is emitted first, cut
+ * off at `seaWorldY` so nothing is drawn below the sea); the re-seat fails; or
+ * the ground under
  * the re-seated run is no longer lower — the water has LANDED, and the slab
  * just emitted is the fall's foot, resting on a level the terrain really
  * draws. Every stop leaves the fall ending on drawn ground.
@@ -389,7 +400,6 @@ function descend(
   while (level > 0) {
     const below = level - 1;
     const bottomY = drawnBandWorldY(below, CURTAIN_LEVEL_SEABED);
-    if (bottomY <= seaWorldY) return;
 
     // BAND 0 IS NOT A LEVEL WITH ITS OWN CONTOUR. The marchers' threshold-0
     // region is the WHOLE DOMAIN — re-seating onto it would smear the fall's
@@ -397,8 +407,21 @@ function descend(
     // band-1 skirt hangs off the threshold-BAND_HEIGHT loop and drops straight
     // to the sunk seabed cap (makeLevels' `below`), and this final slab copies
     // that — same arc, vertical drop, no re-seat.
+    //
+    // THE SEA CLAMPS THIS SLAB, it does not delete it (corrected in W4). Band
+    // 0's seabed cap sits BELOW the sea plane by construction
+    // (-SEABED_CAP_SINK against SEA_LEVEL + WATER_SURFACE_LIFT), so a bare
+    // `bottomY <= seaWorldY → return` discarded every fall that reaches the
+    // shore — the one place a waterfall is most visible. The slab is cut off
+    // AT the sea surface instead: nothing is emitted below `seaWorldY` (the W3
+    // contract) and the fall still meets the water it pours into. Only band 0
+    // can be at or under the sea — every higher band's cap is a whole
+    // BAND_WORLD_HEIGHT above it — so this is the only level that needs the
+    // clamp.
     if (below === 0) {
-      emitLevel(current, current, drawnBandWorldY(level, CURTAIN_LEVEL_SEABED), bottomY, out);
+      const topY = drawnBandWorldY(level, CURTAIN_LEVEL_SEABED);
+      const footY = Math.max(bottomY, seaWorldY);
+      if (footY < topY) emitLevel(current, current, topY, footY, out);
       return;
     }
     const reseeded = reseatRun(ground, current, below);

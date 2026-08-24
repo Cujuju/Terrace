@@ -1,25 +1,41 @@
 // Does a river down a CONE get water on its risers at all? The unit tests
-// drive the apron with hand-built loops; this drives the REAL pair — the
-// region tread builder and the apron — over a terraced cone.
+// drive the curtain builder with hand-built loops; this drives the REAL pair
+// the rig wires together (riverRig.ts's rebuild) — the region tread builder
+// and the curtain builder — over a terraced cone.
 //
-// HONEST LIMIT, stated rather than implied: this does NOT reproduce the
-// defect it was written for. The `fork` preview fixture was measured in the
-// browser emitting 1328 flat triangles and ZERO falling ones, and this test
-// passes both with the lip test that produced that and with the one that
-// replaced it. Whatever geometry defeats the classifier there, a cone built
-// this way does not have it. What this does guard is the coarse regression —
-// a change that stops falls being emitted on ordinary sloping ground.
+// RETARGETED 2026-08-24 from the retired apron onto water/waterCurtain.ts
+// (work item W4, docs/plans/water-painted-on-bands.md). The apron took two
+// caller-supplied probes and re-derived ground height from the cell lattice;
+// the curtain takes the DrawnGround oracle and derives nothing, so this test
+// now builds one from the same mirror the tread reads and hands it over — the
+// wiring the rig performs, which is the thing an integration test here exists
+// to guard.
+//
+// HONEST LIMIT, inherited from the apron-era version and still true: this does
+// NOT reproduce the floating defect that motivated the rewrite. That is only
+// measurable against the DRAWN mesh in a browser, which is what
+// client/scripts/measureWaterFloat.mjs is for. What this guards is the coarse
+// regression — a change that stops falls being emitted on ordinary sloping
+// ground at all, the state the `fork` fixture was actually found in (1328 flat
+// triangles, ZERO falling ones).
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, bandOf, cellIndex } from '@terrace/shared';
 import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
-import { appendApronSurfaces } from '../src/render/water/waterApron.ts';
+import { appendCurtains } from '../src/render/water/waterCurtain.ts';
+import { createDrawnGround, drawnBandWorldY } from '../src/terrain/drawnGround.ts';
 import { createTerrainMirror } from '../src/terrain/mirror.ts';
-import { CELL_WORLD_SIZE } from '../src/config.ts';
 
 const WORLD = 64;
 const SUMMIT = BAND_HEIGHT * 20;
 /** Height units the cone loses per cell of radius: five bands a cell. */
 const DROP_PER_CELL = BAND_HEIGHT * 5;
+
+/**
+ * The sea surface for this fixture: sea level itself. The cone never reaches
+ * it — its lowest wet cell is many bands up — so it only has to be a number
+ * the curtain can compare against, not the rig's exact lifted plane.
+ */
+const SEA_WORLD_Y = 0;
 
 describe('a river down a cone', () => {
   it('draws water on the risers, not only on the treads', () => {
@@ -52,35 +68,12 @@ describe('a river down a cone', () => {
     }
     expect(regions.size).toBeGreaterThan(1); // the course really does step down
 
-    const bandWorldY = (band: number): number => band * 0.25;
+    const ground = createDrawnGround(mirror);
     const triangles: number[] = [];
     for (const region of regions.values()) {
-      const loops = appendRegionSurface(mirror, region, bandWorldY(region.surfaceBand), triangles);
-      appendApronSurfaces(
-        loops,
-        bandWorldY(region.surfaceBand),
-        bandWorldY,
-        (px, pz) => {
-          const ax = Math.round(px);
-          const az = Math.round(pz);
-          let best: number | null = null;
-          for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (ax + dx < 0 || az + dz < 0 || ax + dx >= WORLD || az + dz >= WORLD) continue;
-              const band = bandOfCell.get(cellIndex(mirror.map, ax + dx, az + dz));
-              if (band === undefined || band >= region.surfaceBand) continue;
-              if (best === null || band > best) best = band;
-            }
-          }
-          return best;
-        },
-        (gx, gz) => {
-          const x = Math.min(WORLD - 1, Math.max(0, Math.round(gx)));
-          const z = Math.min(WORLD - 1, Math.max(0, Math.round(gz)));
-          return bandOf(mirror.map.cells[cellIndex(mirror.map, x, z)]!) * 0.25;
-        },
-        triangles,
-      );
+      const surfaceY = drawnBandWorldY(region.surfaceBand, false);
+      const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
+      appendCurtains(ground, loops, region.surfaceBand, SEA_WORLD_Y, triangles);
     }
 
     let flat = 0;
@@ -90,7 +83,6 @@ describe('a river down a cone', () => {
       if (Math.max(...ys) - Math.min(...ys) < 1e-9) flat++;
       else falling++;
     }
-    void CELL_WORLD_SIZE;
     expect(flat).toBeGreaterThan(0);
     expect(falling, 'no water on any riser — the river is a row of puddles').toBeGreaterThan(0);
   });
