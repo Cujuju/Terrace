@@ -32,23 +32,32 @@
 // independent subsystems put creatures in this message and each has its own hard
 // ceiling; the total is what a full message actually weighs:
 //
-//   habitat population   WILDLIFE_POPULATION_CAP   150   (census.ts)
+//   habitat population   WILDLIFE_POPULATION_CAP   850   (census.ts)
 //   birds aloft          MAX_BIRDS_ALOFT            18   (flocks.ts: 2 × 9)
 //                                                  ────
-//                                                   168 entities
+//                                                   868 entities
 //
-//   168 × 58 B                = 9.7 KB per message
-//   every tick  (10 Hz)       = 97.4 KB/s ≈ 780 kbit/s per client
-//   every OTHER tick (5 Hz)   = 48.7 KB/s ≈ 390 kbit/s per client   ← chosen
-//   × ~10 players             ≈ 3.9 Mbit/s of server upstream
+//   868 × 58 B                = 49.2 KB per message
+//   every tick  (10 Hz)       = 491.6 KB/s ≈ 4.03 Mbit/s per client
+//   every OTHER tick (5 Hz)   = 245.8 KB/s ≈ 2.01 Mbit/s per client   ← chosen
+//   × ~10 players             ≈ 20.1 Mbit/s of server upstream
 //
 // 58 B is an upper bound for a bird — `bird` is the shortest species name of the
 // five and its `size` is always the default class — so the real figure is a
-// little under. Birds cost +12% over the 43.5 KB/s ≈ 348 kbit/s this was before
-// them (and 8.7 KB / 348 kbit/s is still exactly what a world with an empty sky
-// costs, since the sky is empty about half the time on a small world). Earlier
-// recomputes, for the record: 5.2 KB / 210 kbit/s at the old cap of 100, then
-// 7.8 KB / 312 kbit/s, then 8.7 KB / 348 kbit/s when `size` was added.
+// little under. Earlier recomputes, for the record: 5.2 KB / 210 kbit/s at the
+// old cap of 100, then 7.8 KB / 312 kbit/s, then 8.7 KB / 348 kbit/s when `size`
+// was added, then 9.7 KB / 390 kbit/s when birds joined the message.
+//
+// RECOMPUTED 2026-08-23 FOR THE CAP RAISE (150 → 850, census.ts). This is a
+// 5.2× jump and it is the largest single cost increase this plugin has taken:
+// ten players on a FULL world now cost 20 Mbit/s of upstream on wildlife alone,
+// where the whole budget used to be under 4. The mitigating fact, which is the
+// reason it was accepted rather than merely noticed, is that the ceiling is
+// reached only on a fully-revealed half-land world and no world in existence is
+// remotely that shape — every one is ocean with an island, where a full message
+// carries a handful of creatures. What a self-hoster on domestic upstream would
+// pay is therefore the ceiling, not the bill; if a world ever does approach it,
+// the 5 Hz cadence and the per-entity encoding are the dials, in that order.
 //
 // FOG OF WAR (added issue #18, does not change the arithmetic above). "Every
 // broadcast carries the ENTIRE entity list" is now per RECIPIENT, not one

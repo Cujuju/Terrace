@@ -45,6 +45,8 @@ import {
   sizeClassIndex,
 } from '../protocol.ts';
 import {
+  FOUNDING_POPULATION,
+  MIN_FOUNDING_HABITAT_CELLS,
   WILDLIFE_POPULATION_CAP,
   type HabitatWorld,
   isValidCellFor,
@@ -384,11 +386,58 @@ describe('a fresh world as habitat', () => {
 
 describe('population targets', () => {
   it('scales each species with the area of ITS habitat', () => {
-    const targets = targetsFor({ land: 8000, shallow: 3000, deep: 12000 });
-    expect(targets.grazer).toBe(Math.floor(8000 / profileOf('grazer').habitatCellsPerIndividual));
-    expect(targets.fish).toBe(Math.floor(3000 / profileOf('fish').habitatCellsPerIndividual));
-    expect(targets.deepsea).toBe(Math.floor(12000 / profileOf('deepsea').habitatCellsPerIndividual));
-    expect(targets.whale).toBe(Math.floor(12000 / profileOf('whale').habitatCellsPerIndividual));
+    // AREAS BIG ENOUGH THAT THE DENSITY IS WHAT BINDS (2026-08-23). These were
+    // 8 000 / 3 000 / 12 000 cells, every one of which is less than a single
+    // individual's share, so each expectation was `Math.floor(…)` of something
+    // under one — i.e. this test asserted four zeroes and would have passed
+    // against a density table of any shape at all. It now uses areas where each
+    // species genuinely earns a different count, which is the property its name
+    // claims. The founding floor has its own test below.
+    const land = 200_000;
+    const shallow = 100_000;
+    const deep = 300_000;
+    const targets = targetsFor({ land, shallow, deep });
+    expect(targets.grazer).toBe(Math.floor(land / profileOf('grazer').habitatCellsPerIndividual));
+    expect(targets.fish).toBe(Math.floor(shallow / profileOf('fish').habitatCellsPerIndividual));
+    expect(targets.deepsea).toBe(Math.floor(deep / profileOf('deepsea').habitatCellsPerIndividual));
+    expect(targets.whale).toBe(Math.floor(deep / profileOf('whale').habitatCellsPerIndividual));
+    // Each is a different number, so a table that collapsed them would fail.
+    expect(new Set(Object.values(targets)).size).toBe(WILDLIFE_HABITAT_SPECIES.length);
+  });
+
+  it('gives a habitat too small for one individual a founding pair anyway', () => {
+    // THE FIX FOR THE EMPTY HILLSIDE (owner, 2026-08-23). Even after the
+    // density cut to 100 square world units per grazer, a patch smaller than
+    // one animal's share still floor-divides to zero — so the smallest habitats
+    // get a founding pair regardless. (The island that prompted all this,
+    // Frostwick's 462 units, is now well past this case and carries four
+    // grazers by density alone; the floor is for what is smaller still.)
+    const patch = cellsOverArea(70);
+    expect(patch).toBeGreaterThanOrEqual(MIN_FOUNDING_HABITAT_CELLS);
+    expect(patch).toBeLessThan(profileOf('grazer').habitatCellsPerIndividual);
+    expect(targetsFor({ land: patch, shallow: 0, deep: 0 }).grazer).toBe(FOUNDING_POPULATION);
+
+    // Just over the threshold is enough; just under it is not. A rock is not a
+    // habitat, and a rock with two grazers welded to it is the worse bug.
+    expect(targetsFor({ land: MIN_FOUNDING_HABITAT_CELLS, shallow: 0, deep: 0 }).grazer).toBe(
+      FOUNDING_POPULATION,
+    );
+    expect(targetsFor({ land: MIN_FOUNDING_HABITAT_CELLS - 1, shallow: 0, deep: 0 }).grazer).toBe(0);
+  });
+
+  it('never lets the founding pair REDUCE a population the density earned', () => {
+    // The floor is a max, not an override: on any habitat the density already
+    // fills, it must be invisible. This is what keeps large worlds bit-for-bit
+    // unchanged — the reason a floor was chosen over a cheaper density, which
+    // would have scaled every other species down to pay for the grazers.
+    // Land enough for hundreds of grazers but not enough to reach the cap, so
+    // the density is the only thing acting on the number.
+    const land = cellsOverArea(50_000);
+    const targets = targetsFor({ land, shallow: 0, deep: 0 });
+    const byDensity = Math.floor(land / profileOf('grazer').habitatCellsPerIndividual);
+    expect(byDensity).toBeLessThan(WILDLIFE_POPULATION_CAP);
+    expect(targets.grazer).toBeGreaterThan(FOUNDING_POPULATION);
+    expect(targets.grazer).toBe(byDensity);
   });
 
   it('asks for no creatures at all when a habitat is absent', () => {
@@ -413,13 +462,22 @@ describe('population targets', () => {
     });
     const total = WILDLIFE_HABITAT_SPECIES.reduce((sum, s) => sum + targets[s], 0);
     expect(total).toBeLessThanOrEqual(WILDLIFE_POPULATION_CAP);
-    // The documented ecosystem after the 2026-08-21 whale retune: 270 asked for
-    // (131 fish / 52 deepsea / 48 grazer / 39 whale), the cap scaling that by
-    // 150/270 and flooring to 147. Asserted exactly, because this table is the
-    // arithmetic the species.ts header claims and a silent drift in it is how
-    // that header becomes a lie.
-    expect(targets).toEqual({ fish: 72, deepsea: 28, grazer: 26, whale: 21 });
-    expect(total).toBe(147);
+    // The documented ecosystem after the 2026-08-23 grazer cut and the cap
+    // raise that paid for it: 1 532 asked for (1 310 grazer / 131 fish / 52
+    // deepsea / 39 whale), the cap scaling that by 850/1 532 and flooring to
+    // 847. Asserted exactly, because this table is the arithmetic the
+    // species.ts header claims and a silent drift in it is how that header
+    // becomes a lie.
+    expect(targets).toEqual({ fish: 72, deepsea: 28, grazer: 726, whale: 21 });
+    expect(total).toBe(847);
+
+    // THE THREE SEA SPECIES ARE EXACTLY WHERE THEY WERE before the grazer
+    // density was cut 27-fold — 72 / 28 / 21, the counts this table held on
+    // 2026-08-22. That is what the cap raise was for (owner, 2026-08-23:
+    // "restore the numbers for fish, deep sea, and whales"), and asserting it as
+    // its own line means a future cap or density edit that quietly re-taxes the
+    // sea fails here rather than in someone's ocean.
+    expect([targets.fish, targets.deepsea, targets.whale]).toEqual([72, 28, 21]);
     expect(total).toBeGreaterThan(WILDLIFE_POPULATION_CAP / 2);
     expect(targets.fish).toBeGreaterThan(targets.whale);
     expect(targets.whale).toBeGreaterThan(0);
@@ -1886,8 +1944,23 @@ const SIZE_SAMPLE_SECONDS = 450;
  * 2026-08-21: added after this failed on a loaded machine and passed on an
  * idle one. See the note in the commit — four tests across four packages had
  * the same shape.
+ *
+ * 2026-08-23, 30 s → 120 s, AND THE REASON IS A REAL COST RATHER THAN A SLOW
+ * MACHINE. WILDLIFE_POPULATION_CAP went 150 → 850 (census.ts) to pay for the
+ * grazer density cut, and this fixture is an entire world of fish habitat, so
+ * its population rose with the cap. Measured here: 22.3 s of test time against
+ * the ~5 s this comment was written for — a 4.4× slowdown that left the old
+ * 30 s ceiling perhaps a second clear on an idle machine, which is exactly why
+ * it timed out in a full-suite run and passed when run alone.
+ *
+ * THE SLOWDOWN IS SUPERLINEAR AND IT IS EXPECTED: creature avoidance is
+ * quadratic in the living population (movement.ts's creatureOccupants), so a
+ * 5.7× cap is far more than 5.7× the work. The headroom here is deliberately
+ * generous rather than snug, because the honest fix is the spatial index that
+ * movement.ts now says is owed, and a snug timeout would turn that debt into
+ * an intermittently red suite in the meantime.
  */
-const SIZE_SAMPLE_TIMEOUT_MS = 30_000;
+const SIZE_SAMPLE_TIMEOUT_MS = 120_000;
 
 /**
  * How many times more common small fish must be than large ones in the sample.

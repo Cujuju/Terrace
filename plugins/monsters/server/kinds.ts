@@ -523,6 +523,22 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.25);
  * size. At YETI_FOOTPRINT_CELLS = 5 that is 168 cells, a ~13×13 patch: a small
  * creature wants a small territory, and a snowfield that used to be a project is
  * now a modest hilltop.
+ *
+ * THIRD AMENDMENT (owner decision, 2026-08-23: "just substantially reduce the
+ * requirements needed to spawn these things"). 168 was still more snow than any
+ * world on this machine had ever held. Measured the same day, the only world
+ * anyone had sculpted (Frostwick Hollows) carried 241 snow cells in total but
+ * its largest CONNECTED field — which is what this threshold counts — was 79, so
+ * the yeti was unreachable on the one mountain range that existed. The divisor
+ * goes from three to nine, i.e. one and a half body-widths of room rather than
+ * four and a half, and the threshold with it: 56 cells, a ~7.5×7.5 patch, which
+ * that range clears with room to spare.
+ *
+ * THE FLOOR THIS CANNOT GO BELOW, stated so a fourth amendment does not have to
+ * rediscover it: the yeti's own footprint is YETI_FOOTPRINT_CELLS² = 25 cells,
+ * so at 56 he already occupies nearly half his own lair. A lair he fills is not
+ * a lair, and further cuts should move his SIZE, which this constant follows,
+ * rather than this divisor.
  */
 
 /**
@@ -532,8 +548,11 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.25);
  */
 export const LAIR_BODY_WIDTHS_ACROSS = 4.5;
 
-/** The 2026-08-19 cut, as the divisor it is. See the amendment above. */
-export const YETI_LAIR_REACHABILITY_DIVISOR = 3;
+/**
+ * The reachability cut, as the divisor it is — 2026-08-19's third, deepened to
+ * a ninth on 2026-08-23. See the amendments above.
+ */
+export const YETI_LAIR_REACHABILITY_DIVISOR = 9;
 
 export const YETI_MIN_LAIR_SNOW_CELLS = Math.floor(
   (LAIR_BODY_WIDTHS_ACROSS * YETI_FOOTPRINT_CELLS) ** 2 / YETI_LAIR_REACHABILITY_DIVISOR,
@@ -578,8 +597,8 @@ export const LAIR_COLLAPSE_HYSTERESIS_DIVISOR = 4;
 
 /**
  * Cells in its own snowfield below which the yeti's lair has COLLAPSED and he
- * leaves: a quarter of the arrival threshold above — 42 cells against its 168,
- * a ~6.5×6.5 patch.
+ * leaves: a quarter of the arrival threshold above — 14 cells against its 56,
+ * a ~3.7×3.7 patch.
  *
  * AREA ONLY, DELIBERATELY — not height, for the reason the kraken's collapse
  * test is area-only: re-testing an arrival condition every five seconds is the

@@ -9,6 +9,7 @@ import {
   CHUNK_SIZE,
   LAND_WALKER_PROFILE,
   canTraverseSegment,
+  cellsOverArea,
   isWalkableCell as sharedIsWalkableCell,
   waterBandProfile,
   type FreshwaterMap,
@@ -78,25 +79,38 @@ export interface HabitatWorld {
 /**
  * Hard ceiling on living creatures, whatever the habitat census says.
  *
- * 150 is a bandwidth number, not an ecology one (raised from 100 on 2026-08-14
- * with the density retune in species.ts). The full-state broadcast costs
- * roughly 58 B per creature once msgpack has encoded the six keys and their
- * values — 52 B for the original five, plus 6 B for the `size` key and its
- * single-byte class index (protocol.ts) — so:
+ * 850 is a bandwidth number, not an ecology one (100 → 150 on 2026-08-14 with
+ * the density retune in species.ts; 150 → 850 on 2026-08-23). The full-state
+ * broadcast costs roughly 58 B per creature once msgpack has encoded the six
+ * keys and their values — 52 B for the original five, plus 6 B for the `size`
+ * key and its single-byte class index (protocol.ts) — so:
  *
- *   150 × 58 B          = 8.7 KB per message
- *   × 5 Hz              = 43.5 KB/s ≈ 348 kbit/s of steady downstream PER CLIENT
- *   × ~10 players       ≈ 3.5 Mbit/s of server upstream on wildlife alone
+ *   850 × 58 B          = 48.1 KB per message
+ *   × 5 Hz              = 240.7 KB/s ≈ 1.97 Mbit/s of steady downstream PER CLIENT
+ *   × ~10 players       ≈ 19.7 Mbit/s of server upstream on wildlife alone
  *
  * (The 5 Hz cadence and why it is not 10 Hz are argued in server/index.ts.)
- * That is up from ~210 kbit/s per client at the old cap of 100 — still a
- * fraction of a modest home upstream, so the "roughly ten concurrent players
- * with room left for terrain diffs" figure survives the raise; it is what stops
- * the cap going higher. The cap is the dial to turn, and it is here.
  *
- * It now BINDS on a fully revealed 512² world (the densities ask for 270 there,
- * scaled down to 147 — a 45% loss; see species.ts and the exact assertion in
- * wildlife.test.ts), which is the accepted cost of enough fish to see schools.
+ * WHY IT MOVED, AND WHAT IT COSTS (owner, 2026-08-23: "increase the wildlife
+ * population cap and restore the numbers for fish, deep sea, and whales"). The
+ * grazer density was cut 27-fold the same day (species.ts), which on a fully
+ * revealed world takes the total ask from 270 to 1 532 — and because this cap
+ * divides the budget PROPORTIONALLY, holding it at 150 would have paid for the
+ * hillside out of the sea: 72 fish down to 12, 21 whales down to 3. 850 is the
+ * number that leaves fish, deepsea and whales at exactly the counts they had
+ * before the grazer cut (72 / 28 / 21); anything from 845 to 853 does, and 850
+ * is the round one.
+ *
+ * THE HONEST PRICE is the table above: 348 kbit/s per client becomes 1.97
+ * Mbit/s, and ten concurrent players now cost ~19.7 Mbit/s of upstream on
+ * wildlife alone. That is no longer a fraction of a modest home connection, and
+ * it is what stops this going higher — a self-hoster on domestic upstream is
+ * the constraint, not the client's ability to render the creatures.
+ *
+ * IT STILL BINDS only on a fully revealed 512-unit world, which is a
+ * hypothetical: every world that exists is ocean with an island, where the
+ * total ask is a handful and this number is never reached. See species.ts's
+ * header table and the exact assertion in wildlife.test.ts.
  *
  * SCOPE, since 2026-08-14: this caps the HABITAT population only. Birds are not
  * censused and do not consume it (server/flocks.ts); their own hard ceiling is
@@ -104,7 +118,7 @@ export interface HabitatWorld {
  * The combined arithmetic lives in server/index.ts's header, in one place, so
  * there is a single answer to "what does a full message weigh".
  */
-export const WILDLIFE_POPULATION_CAP = 150;
+export const WILDLIFE_POPULATION_CAP = 850;
 
 /**
  * Seconds between habitat censuses. The census walks every cell of every
@@ -222,6 +236,56 @@ export function emptySpeciesCounts(): Record<WildlifeHabitatSpecies, number> {
  * approaches them stochastically and lets creatures leave again, so the living
  * count sits a little under target and never stops moving.
  */
+/**
+ * The population a habitat gets the moment it is big enough to be a habitat at
+ * all, regardless of what the density below would round to. A BREEDING PAIR.
+ *
+ * WHY THIS EXISTS (owner, 2026-08-23: "just substantially reduce the
+ * requirements needed to spawn these things"). Every density in species.ts is
+ * an area PER INDIVIDUAL calibrated against a fully-revealed half-land world —
+ * a grazer wants 2 700 square world units — and the target is a floor division,
+ * so any habitat smaller than one individual's share rounds to ZERO. That is
+ * fine for the ocean a world starts as, and wrong for every world a player
+ * actually builds: measured on the only sculpted world on this machine
+ * (Frostwick Hollows, 2026-08-23), the island a player had raised came to 462
+ * square world units of land — 17% of what the FIRST grazer costs. The hillside
+ * was empty not because it was poor habitat but because it was not yet worth a
+ * whole grazer's share of a world sixteen times its size.
+ *
+ * TWO, because that is the smallest number that is a population rather than a
+ * curiosity, and because the ecology reads better: one animal alone on an
+ * island is a stranded animal.
+ *
+ * A FLOOR RATHER THAN A CHEAPER DENSITY, deliberately, and this is the whole
+ * design choice. Cutting `habitatCellsPerIndividual` far enough to put grazers
+ * on a 462-unit island (roughly 90 units each, a thirtyfold cut) would ask for
+ * ~1 456 of them on a fully-revealed world; WILDLIFE_POPULATION_CAP scales
+ * every species down PROPORTIONALLY, so the sea would collapse from 72 fish to
+ * six to pay for them. The complaint is entirely at the small end, so the fix
+ * belongs entirely at the small end: below the threshold the density never
+ * applied anyway, above it the density is already larger than this and wins.
+ * Large worlds are bit-for-bit unchanged.
+ */
+export const FOUNDING_POPULATION = 2;
+
+/**
+ * The smallest habitat that gets a founding population at all, in CELLS.
+ *
+ * SIXTY-FOUR SQUARE WORLD UNITS — an 8×8-unit patch. Derived, not picked: the
+ * largest-bodied land species is about one world unit long (species.ts's
+ * grazer, `cellsAcross(1.1)`), so this is a territory roughly seven body
+ * lengths across — enough that a pair can walk, turn and keep apart in it
+ * rather than stand shoulder to shoulder. Anything smaller is a rock, and a
+ * rock with two grazers welded to it is a worse bug than an empty hillside.
+ *
+ * ONE THRESHOLD FOR EVERY SPECIES, like the archetype resolution above: the
+ * water species are smaller-bodied than the grazer, so a patch this size is
+ * comfortable for all of them, and a per-species floor would be four numbers
+ * expressing one idea. A future species that genuinely needs elbow room earns
+ * its own field on the profile rather than a literal here.
+ */
+export const MIN_FOUNDING_HABITAT_CELLS = cellsOverArea(64);
+
 export function targetsFor(
   cellsByHabitat: Readonly<Record<Habitat, number>>,
 ): Record<WildlifeHabitatSpecies, number> {
@@ -229,7 +293,14 @@ export function targetsFor(
   let total = 0;
   for (const species of WILDLIFE_HABITAT_SPECIES) {
     const profile = profileOf(species);
-    const count = Math.floor(cellsByHabitat[profile.habitat] / profile.habitatCellsPerIndividual);
+    const cells = cellsByHabitat[profile.habitat];
+    const byDensity = Math.floor(cells / profile.habitatCellsPerIndividual);
+    // The founding pair, for a habitat too small to be worth one individual's
+    // share of a big world but big enough to live in. Never a REDUCTION: on any
+    // habitat the density already fills, `byDensity` is the larger number and
+    // this changes nothing.
+    const count =
+      cells >= MIN_FOUNDING_HABITAT_CELLS ? Math.max(byDensity, FOUNDING_POPULATION) : byDensity;
     raw[species] = count;
     total += count;
   }

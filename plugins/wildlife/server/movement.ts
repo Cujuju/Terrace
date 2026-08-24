@@ -280,12 +280,26 @@ export function personalSpaceCellsOf(entity: WildlifeEntity): number {
  * hillside still pass through one another.
  *
  * COST: one row per living creature per tick, and `steerAvoiding` scans the
- * whole list per candidate heading — at WILDLIFE_POPULATION_CAP (150) that is
- * at most 150 × 9 × 150 ≈ 200 k squared-distance compares per tick, ~2 M/s at
- * TICK_HZ 10. Cheap enough to be uninteresting beside the habitat census that
- * already walks 262 144 cells, and the same shape pilgrims and boats already
- * pay; a spatial index is the answer if the cap ever moves by an order of
- * magnitude, not before.
+ * whole list per candidate heading — at WILDLIFE_POPULATION_CAP (850) that is
+ * at most 850 × 9 × 850 ≈ 6.5 M squared-distance compares per tick, ~65 M/s at
+ * TICK_HZ 10.
+ *
+ * THE TRIGGER THIS COMMENT NAMED HAS FIRED (2026-08-23). It used to read "at
+ * 150 … ≈ 200 k per tick, ~2 M/s … a spatial index is the answer if the cap
+ * ever moves by an order of magnitude, not before". The cap then moved 150 →
+ * 850 to pay for the grazer density cut (census.ts), and because this is
+ * QUADRATIC in the cap the cost went up 32-fold, not 5.7-fold. At 65 M compares
+ * a second this is no longer uninteresting beside the habitat census, and a
+ * spatial index (or a coarse occupancy grid, which is the cheaper half-step) is
+ * now genuinely owed.
+ *
+ * WHAT STOPS IT BEING URGENT, stated so nobody reads the paragraph above as a
+ * live fire: the quadratic is in the LIVING population, not the cap, and the
+ * living population only approaches 850 on a fully-revealed half-land world.
+ * Every world that exists is ocean with an island and carries a handful of
+ * creatures, where this is the same few thousand compares it always was. The
+ * work is owed the day a world with real land exists, and should be MEASURED
+ * then rather than guessed at now.
  */
 export function creatureOccupants(entities: Iterable<WildlifeEntity>): Occupant[] {
   const rows: Occupant[] = [];
