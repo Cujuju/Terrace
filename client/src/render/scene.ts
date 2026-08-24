@@ -197,8 +197,15 @@ export interface Viewport {
  */
 const FRAME_DELTA_CAP_S = 0.1;
 
+/** TEMPORARY PERF PROBE — not for commit. */
+const scene0Holder: { scene: unknown } = { scene: null };
+
 export function createViewport(canvas: HTMLCanvasElement): Viewport {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
+  // TEMPORARY PERF PROBE — not for commit. Exposes the renderer so a CDP
+  // driver can read renderer.info (draw calls, triangles) per frame.
+  (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
+  (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   renderer.outputColorSpace = SRGBColorSpace;
   // ACES keeps the bright snow band and the dark seabed both readable without
@@ -212,6 +219,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
 
   const scene = new Scene();
+  scene0Holder.scene = scene;
   scene.background = new Color(SKY_COLOR);
 
   const camera = new PerspectiveCamera(
