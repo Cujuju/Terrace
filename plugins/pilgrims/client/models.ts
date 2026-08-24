@@ -8,15 +8,18 @@
 //
 // CONSTRUCTION. Every static part of a race's body (coat, cream mask, muzzle,
 // ears, collar, tag base) is baked into ONE merged, vertex-colored geometry
-// per race, built once and shared by every instance — so a whole pilgrim is
-// eight draw calls: merged body, merged glossy bits (eyes + nose), two legs,
-// two arms, tail, staff. The glossy bits are a separate merge because they
-// carry the model's single specular material (dark wet eyes and nose are what
-// make a soft face read as alive); everything else is matte Lambert. Animated
-// parts (legs, arms, tail) stay their own meshes because they rotate at
-// joints, exactly like the previous low-poly rig — the animate() contract and
-// the gait constants are unchanged, this is a model swap, not a behaviour
-// change.
+// per race, built once and shared by every instance. Animated parts (legs,
+// arms, tail, the bobbing body) were originally their own meshes because they
+// rotate at joints — eight draw calls per walker — but a body whose parts MOVE
+// cannot be fixed by merging alone, so each walker is now a SKINNED rig
+// (render/rigSkin.ts): the authored part-tree is baked once per (race, kind)
+// pair into shared buffers, and each individual gets its own skeleton whose
+// bones reproduce the old scene-graph transforms exactly. The glossy bits are
+// a separate surface because they carry the model's single specular material
+// (dark wet eyes and nose are what make a soft face read as alive); everything
+// else is matte Lambert and merges into one. Two draw calls per walker — the
+// animate() contract and the gait constants are unchanged, this is a drawing
+// change, not a behaviour change.
 //
 // SILHOUETTE STILL WINS AT DISTANCE: a Rudy is round and tan with floppy ears
 // and an up-curled wagging tail; an Uno is slimmer and slate with tall
@@ -36,11 +39,15 @@ import {
   MeshPhongMaterial,
   SphereGeometry,
   TorusGeometry,
+  type Bone,
   type BufferGeometry,
   type Material,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { SettlerRace, WalkerKind } from '../protocol.ts';
+// Render kit, reached by path the same way wildlife/client/models.ts reaches
+// it — see that module's import and render/rigSkin.ts's header for why.
+import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
+import { SETTLER_RACES, WALKER_KINDS, type SettlerRace, type WalkerKind } from '../protocol.ts';
 
 /** Overall height, world units — a little person: knee-high to a yeti. */
 export const PILGRIM_HEIGHT = 0.62;
@@ -57,13 +64,29 @@ export const STRIDE_HZ = 1.6;
 const TWO_PI = Math.PI * 2;
 
 /** Peak leg swing, radians, either side of vertical. */
-const LEG_SWING_RADIANS = 0.35;
+export const LEG_SWING_RADIANS = 0.35;
 
 /** Peak arm swing — counter-phase to the legs, a touch smaller. */
-const ARM_SWING_RADIANS = 0.25;
+export const ARM_SWING_RADIANS = 0.25;
 
 /** Body bob amplitude, world units — a hair; more reads as hopping. */
 const BOB_AMPLITUDE = 0.012;
+
+/**
+ * The walker kinds × races a blueprint must cover. Both axes decide things
+ * fixed at author time — geometry, fur material, shoulder width, whether the
+ * staff exists — so neither can be a per-instance parameter.
+ *
+ * TAKEN FROM THE PROTOCOL, NOT RESTATED HERE. These two lists are the same
+ * facts `isSettlerRace`/`isWalkerKind` validate off the wire, and a local copy
+ * would be a second place to remember: add a third race to the protocol and a
+ * restated list here would silently bake no blueprint for it, so the first
+ * walker of that race to arrive would look up a missing rig and take the frame
+ * down. Deriving the bake set from the wire contract makes that unrepresentable
+ * — a new race is a new blueprint by construction.
+ */
+const BLUEPRINT_KINDS = WALKER_KINDS;
+const BLUEPRINT_RACES = SETTLER_RACES;
 
 /** Rudy tail wag: fast and wide. Uno tail sway: slow and slight. */
 const RUDY_WAG_RADIANS = 0.45;
@@ -90,6 +113,8 @@ const STAFF_COLOR = 0x6b4a2b;
 export interface PilgrimModel {
   /** Positioned and yawed by the caller; never touched by `animate`. */
   readonly root: Group;
+  /** The animated bones, exposed so tests (and only tests) can pin the gait. */
+  readonly joints: WalkerJoints;
   /** `seconds` is elapsed time; `phase` a per-pilgrim offset in radians. */
   animate(seconds: number, phase: number): void;
 }
@@ -101,6 +126,28 @@ export interface PilgrimModels {
    *  race's, not the kind's). Defaults to 'pilgrim' for old callers. */
   create(race: SettlerRace, kind?: WalkerKind): PilgrimModel;
   dispose(): void;
+}
+
+/**
+ * One (race, kind)'s baked rig plus the joint indices its animation drives.
+ *
+ * Named joints rather than positional ones for the reason wildlife/models.ts
+ * gives: an animation reads better as `joints.leftArm` than as `joints[4]`,
+ * and a bake that reordered its nodes would otherwise silently swap limbs.
+ */
+interface WalkerRig {
+  readonly blueprint: RigBlueprint;
+  readonly jointIndices: Readonly<Record<string, number>>;
+}
+
+/** The animated handles of one instantiated walker, by name. */
+interface WalkerJoints {
+  readonly body: Bone;
+  readonly leftLeg: Bone;
+  readonly rightLeg: Bone;
+  readonly leftArm: Bone;
+  readonly rightArm: Bone;
+  readonly tail: Bone;
 }
 
 /**
@@ -283,7 +330,16 @@ export function createPilgrimModels(): PilgrimModels {
     new TorusGeometry(0.1, 0.015, 10, 20, 2.0).translate(-0.1, 0, 0),
   );
 
-  function create(race: SettlerRace, kind: WalkerKind = 'pilgrim'): PilgrimModel {
+  /**
+   * Authors one walker's part-tree exactly as the pre-skinning code drew it —
+   * a Group per joint, a Mesh per part — and bakes it into a shared rig. The
+   * tree is consumed as data by `bakeRig`; the returned blueprint is shared by
+   * every walker of this (race, kind), and only its skeleton is per-instance.
+   *
+   * Every node `animate()` writes to must be captured as a joint index here,
+   * at author time — after the bake the authored nodes are inert data.
+   */
+  function bakeWalker(race: SettlerRace, kind: WalkerKind): WalkerRig {
     const rudy = race === 'rudy';
     const fur = rudy ? rudyFurMaterial : unoFurMaterial;
 
@@ -333,21 +389,71 @@ export function createPilgrimModels(): PilgrimModels {
     tail.position.set(rudy ? -0.12 : -0.1, rudy ? 0.16 : 0.13, 0);
     body.add(tail);
 
+    // Bake at the identity transform, unparented — see bakeRig's contract.
+    const blueprint = bakeRig(root);
+    return {
+      blueprint,
+      jointIndices: {
+        body: blueprint.jointIndex(body),
+        leftLeg: blueprint.jointIndex(leftLeg),
+        rightLeg: blueprint.jointIndex(rightLeg),
+        leftArm: blueprint.jointIndex(leftArm),
+        rightArm: blueprint.jointIndex(rightArm),
+        tail: blueprint.jointIndex(tail),
+      },
+    };
+  }
+
+  // ── Four blueprints, baked ONCE at model-set creation ────────────────────
+  // race selects geometry, fur material and proportions; kind decides whether
+  // the staff exists at all. Both are fixed at author time, so each pair gets
+  // its own bake rather than trying to make one rig cover both.
+  const walkerRigs = new Map<string, WalkerRig>();
+  for (const bpRace of BLUEPRINT_RACES) {
+    for (const bpKind of BLUEPRINT_KINDS) {
+      walkerRigs.set(`${bpRace}:${bpKind}`, bakeWalker(bpRace, bpKind));
+    }
+  }
+
+  function create(race: SettlerRace, kind: WalkerKind = 'pilgrim'): PilgrimModel {
+    const rudy = race === 'rudy';
+    const rigKey = `${race}:${kind}`;
+    const rig = walkerRigs.get(rigKey);
+    // Belt and suspenders beside the derivation above: the loop that fills this
+    // map walks the protocol's own lists, so every (race, kind) the wire can
+    // carry has a rig. If that ever stops being true, fail with the pair that
+    // is missing rather than dereferencing undefined several frames later.
+    if (rig === undefined) throw new Error(`pilgrims: no baked rig for ${rigKey}`);
+    const instance = instantiateRig(rig.blueprint);
+    const joints: WalkerJoints = {
+      body: instance.joints[rig.jointIndices.body]!,
+      leftLeg: instance.joints[rig.jointIndices.leftLeg]!,
+      rightLeg: instance.joints[rig.jointIndices.rightLeg]!,
+      leftArm: instance.joints[rig.jointIndices.leftArm]!,
+      rightArm: instance.joints[rig.jointIndices.rightArm]!,
+      tail: instance.joints[rig.jointIndices.tail]!,
+    };
+    const { root } = instance;
+    root.name = `pilgrims:${kind}:${race}`;
+
     return {
       root,
+      joints,
       animate(seconds: number, phase: number): void {
+        // Same writes as the pre-skinning rig, against Bones instead of scene
+        // nodes — Bone extends Object3D, so these are identical transforms.
         const stride = Math.sin(seconds * TWO_PI * STRIDE_HZ + phase);
-        leftLeg.rotation.z = stride * LEG_SWING_RADIANS;
-        rightLeg.rotation.z = -stride * LEG_SWING_RADIANS;
+        joints.leftLeg.rotation.z = stride * LEG_SWING_RADIANS;
+        joints.rightLeg.rotation.z = -stride * LEG_SWING_RADIANS;
         // Arms counter-swing their own side's leg — the natural gait.
-        leftArm.rotation.z = -stride * ARM_SWING_RADIANS;
-        rightArm.rotation.z = stride * ARM_SWING_RADIANS;
+        joints.leftArm.rotation.z = -stride * ARM_SWING_RADIANS;
+        joints.rightArm.rotation.z = stride * ARM_SWING_RADIANS;
         // Two footfalls per stride cycle → the bob runs at double frequency.
-        body.position.y = Math.abs(stride) * BOB_AMPLITUDE;
+        joints.body.position.y = Math.abs(stride) * BOB_AMPLITUDE;
         if (rudy) {
-          tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
+          joints.tail.rotation.y = Math.sin(seconds * TWO_PI * STRIDE_HZ * 2 + phase) * RUDY_WAG_RADIANS;
         } else {
-          tail.rotation.y = Math.sin(seconds * TWO_PI * (STRIDE_HZ / 3) + phase) * UNO_SWAY_RADIANS;
+          joints.tail.rotation.y = Math.sin(seconds * TWO_PI * (STRIDE_HZ / 3) + phase) * UNO_SWAY_RADIANS;
         }
       },
     };
@@ -356,6 +462,11 @@ export function createPilgrimModels(): PilgrimModels {
   return {
     create,
     dispose(): void {
+      // The baked rigs own buffers of their own — merged skinned geometry and a
+      // vertex-coloured material per surface, four rigs' worth — on top of the
+      // authored pool the two loops below free.
+      for (const rig of walkerRigs.values()) rig.blueprint.dispose();
+      walkerRigs.clear();
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
     },
