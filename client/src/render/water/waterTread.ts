@@ -105,7 +105,7 @@ const DRY_SAME_TREAD_FIELD_OFFSET = 1;
 
 /**
  * Appends one region's tread to the triangle soup at world height `surfaceY`,
- * and RETURNS the smoothed boundary loops it emitted (the riser builder
+ * and RETURNS the smoothed boundary loops it emitted (the apron builder
  * consumes them to draw the vertical fall surfaces).
  *
  * THE FIELD IT MARCHES, which is where the shape decision actually lives.

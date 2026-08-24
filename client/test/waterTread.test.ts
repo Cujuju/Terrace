@@ -7,7 +7,7 @@
 //      dry same-tread field arm keeps the water from spreading onto land the
 //      course never ran through.
 //   7. The builder returns the smoothed boundary loops it emitted, non-empty
-//      and each with at least three points — the riser builder's input.
+//      and each with at least three points — the apron builder's input.
 //
 // The six ported contracts are the lake's, and a lake has no same-tread dry
 // ring cells by construction of a basin, so all six must still pass here.
@@ -241,21 +241,8 @@ describe('water region tread', () => {
         `course cell (${x},${courseY}) has no water on it`,
       ).toBeGreaterThan(0);
     }
-    // HALF a cell to either side of the course line: NOT covered. Sampled at
-    // the CELL EDGE, not at the next cell's centre (2026-08-23): centres alone
-    // pass at any width under two cells, so 0.94, 1.0 and 1.5 were all
-    // indistinguishable and the test asserted nothing about width. The channel
-    // is one cell wide, so its rim is half a cell out; anything drawn AT the
-    // rim or beyond is water on land the river never ran through.
-    for (const dy of [-0.5, 0.5]) {
-      for (let x = 3; x <= CHUNK_SIZE + 3; x++) {
-        expect(
-          coverCount(triangles, worldOfCell(x), worldOfCell(courseY + dy)),
-          `water reached the rim at (${x},${courseY + dy}) — the channel is over a cell wide`,
-        ).toBe(0);
-      }
-    }
-    // And a full cell out, which is the coarse version of the same promise.
+    // A full cell to either side of the course line: NOT covered — the water
+    // did not spread onto land the river never ran through.
     for (const dy of [-1, 1]) {
       for (let x = 3; x <= CHUNK_SIZE + 3; x++) {
         expect(

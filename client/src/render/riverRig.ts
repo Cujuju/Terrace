@@ -59,10 +59,9 @@ import {
   chunkIndexOfCell,
   computeRiverNetwork,
   quantizeToBand,
-  SEA_LEVEL,
   type RiverNetwork,
 } from '@terrace/shared';
-import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 import { WATER_COLOR } from './water.ts';
 import {
@@ -70,11 +69,7 @@ import {
   appendRegionSurface,
   type WaterRegion,
 } from './water/waterTread.ts';
-import {
-  appendCourseRibbon,
-  type CourseNode,
-  type GroundSampler,
-} from './water/waterCourse.ts';
+import { appendApronSurfaces } from './water/waterApron.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
 
@@ -786,37 +781,36 @@ export function createRiverRig(
   /**
    * Rebuilds every drop of river water in the network into ONE triangle soup.
    *
-   * A COURSE IS THE DRAWING UNIT (2026-08-23, owner: "I would like that water
-   * source to be continuous from beginning to end with a series of vertex
-   * points so it draws as a single object"). Everything before this drew water
-   * by TERRACE BAND — all wet cells at one band marched into one flat region,
-   * with the vertical faces between bands covered by separately-classified
-   * sheets (first `waterApron.ts`, then `waterRiser.ts`). That decomposition is
-   * why a steep course read as a chain of beads: a band it crosses in one cell
-   * gets a one-cell region, which marches and smooths to a lozenge, and nothing
-   * downstream of that grouping knows the twenty lozenges are one river.
+   * WATER IS ONE BODY, MARCHED PER BAND (2026-08-22, owner: "it still doesn't
+   * look like continuous water. When going from one band to the next, there
+   * needs to be no edges"). The rig used to build flowing water and pooled
+   * water out of two different primitives — a fixed-width strip extruded along
+   * a smoothed centre-line for channels, and a marched-and-smoothed region for
+   * lakes. Two shape languages meeting along a curve that neither of them
+   * owned is why no amount of lip-locating, cresting or tapering ever closed
+   * the seam: it was structural, not a tuning error.
    *
-   * So there are now exactly two primitives, and each is used for the thing it
-   * actually describes:
+   * So there is now ONE shape rule for all of it, and it is the terrain's own:
    *
-   *   1. LAKES — a basin is genuinely a 2-D flooded area, so it keeps the
-   *      marched region through the terrain's own contour pipeline
-   *      (water/waterTread.ts, issue #62), unchanged and unreviewed this
-   *      session at the owner's word ("leave the lakes as they are"). Only
-   *      POOLED cells feed it now.
-   *   2. CHANNELS AND FALLS — one ribbon per course (water/waterCourse.ts),
-   *      a fixed-width strip along the polyline `shared/src/rivers.ts` already
-   *      hands the renderer, whose consecutive cross-sections share their
-   *      vertices. Continuity is structural rather than something a later pass
-   *      has to repair, and a waterfall is simply the stretch where two
-   *      cross-sections sit at different heights — there is no fall primitive
-   *      left to misclassify, and no sheet that can be lofted through rock.
-   *
-   * NOTHING IS DRAWN BELOW THE SEA (owner, same session: "it cannot draw below
-   * the ocean"). A lake whose surface quantises to the ocean or under is
-   * skipped, and a course is truncated at the waterline — the sea plane in
-   * render/water.ts is already drawing that water, and a second surface under
-   * it was showing through as freshwater terminating below sea level.
+   *   1. Collect every WET CELL in the network with the BAND its surface is
+   *      drawn at — a flowing cell takes the band the terrain renders that
+   *      tread at, a pooled cell takes its basin's spill band. A river is then
+   *      simply a narrow flooded region.
+   *   2. Group those cells BY BAND. Everything at one band is one region, so
+   *      two pools that brim to the same level, and a channel that runs
+   *      between them, are one outline with nothing to join. This is what
+   *      deletes the whole class of pool-to-pool and channel-to-pool seams:
+   *      they are no longer separate surfaces that have to meet.
+   *   3. March, smooth and triangulate each region through the terrain's own
+   *      pipeline (water/waterTread.ts) — the treatment lakes already had, and
+   *      the one the owner stopped complaining about.
+   *   4. Pour each region over its downstream lips with an APRON
+   *      (water/waterApron.ts) whose top row IS that region's own boundary
+   *      vertices, so the only remaining discontinuity — the vertical face
+   *      between two bands — is covered by a sheet that cannot have a seam at
+   *      its top edge, and that has a horizontal footprint, so it is visible
+   *      from above. (A strictly vertical curtain was measured invisible: 17
+   *      of them present in the `stairpools` mesh, not one of them seen.)
    */
   const rebuild = (mirror: TerrainMirror): void => {
     const network = computeRiverNetwork(mirror.map, {
@@ -827,39 +821,38 @@ export function createRiverRig(
     const bandWorldY = (band: number): number =>
       band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
-    /**
-     * World Y of the SEA plane (render/water.ts draws it at exactly this).
-     * No drop of fresh water is written at or below it — owner 2026-08-23:
-     * "it has to terminate at the ocean… it cannot draw below the ocean."
-     */
-    const seaSurfaceY = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
-
-    const triangles: number[] = [];
-
-    // PASS ONE: LAKES, unchanged (owner 2026-08-23: "leave the lakes as they
-    // are"). Only POOLED cells take part now — a flowing cell is drawn by its
-    // course's ribbon in pass two, so the per-band grouping that used to chop
-    // a channel into one lozenge per band no longer sees channels at all.
-    const bandOfPooledCell = new Map<number, number>();
+    // PASS ONE: the surface band of every wet cell in the whole network,
+    // before a single triangle is built. An outline can only be marched once
+    // every cell under that water is known, and a cell's water can arrive from
+    // more than one course (a fork rejoining the same pool contributes cells
+    // from each arm).
+    const bandOfCell = new Map<number, number>();
+    const noteWet = (x: number, y: number, band: number): void => {
+      const cell = cellIndex(mirror.map, x, y);
+      const existing = bandOfCell.get(cell);
+      // THE HIGHER WATER WINS where two courses disagree about a cell: the
+      // higher surface is the one that covers it, and the lower one is
+      // underneath. A rule on the bands themselves, so the order the courses
+      // are walked in decides nothing.
+      if (existing === undefined || band > existing) bandOfCell.set(cell, band);
+    };
     for (const river of network.rivers) {
       for (const course of river.courses) {
         for (const point of course.points) {
-          if (!point.pooled) continue;
-          const cell = cellIndex(mirror.map, point.x, point.y);
-          const band = bandOf(point.poolHeight ?? 0);
-          const existing = bandOfPooledCell.get(cell);
-          // THE HIGHER WATER WINS where two courses disagree about a cell: the
-          // higher surface is the one that covers it, and the lower one is
-          // underneath. A rule on the bands themselves, so the order the
-          // courses are walked in decides nothing.
-          if (existing === undefined || band > existing) bandOfPooledCell.set(cell, band);
+          noteWet(
+            point.x,
+            point.y,
+            point.pooled
+              ? bandOf(point.poolHeight ?? 0)
+              : bandOf(sampleHeight(mirror, point.x, point.y)),
+          );
         }
       }
     }
 
+    // PASS TWO: one region per band, plus the marching tiles it reaches.
     const regions = new Map<number, WaterRegion>();
-    for (const [cell, band] of bandOfPooledCell) {
-      if (bandWorldY(band) <= seaSurfaceY) continue;
+    for (const [cell, band] of bandOfCell) {
       let region = regions.get(band);
       if (region === undefined) {
         region = { cells: new Set<number>(), surfaceBand: band, tiles: new Set<number>() };
@@ -881,52 +874,65 @@ export function createRiverRig(
       }
     }
 
-    // BAND ORDER IS EXPLICIT, not the Map's insertion order. Insertion order is
-    // the order cells came off the courses, which is a property of the trace;
-    // pinning it to the band index makes the triangle soup a function of the
-    // heightmap alone.
-    for (const band of [...regions.keys()].sort((a, b) => b - a)) {
-      appendRegionSurface(mirror, regions.get(band)!, bandWorldY(band), triangles);
-    }
-
-    /**
-     * The DRAWN ground at a point given in CELL coordinates, lifted by the
-     * river's own clearance — what the ribbon is painted onto.
-     *
-     * `quantizeToBand` rather than the raw sample, because the terrain mesh
-     * renders terraces: the surface the eye sees at a point is its band's
-     * plateau, and draping water onto the un-terraced height would sink it
-     * into the tread over most of a band and lift it off over the rest.
-     *
-     * `Math.floor` on each coordinate, because `sampleHeight` takes a CELL and
-     * a rim vertex lands at a fractional position — the cell a point is inside
-     * is the one whose plateau is drawn under it.
-     */
-    const groundYAt: GroundSampler = (pointCellX, pointCellY) =>
-      quantizeToBand(sampleHeight(mirror, Math.floor(pointCellX), Math.floor(pointCellY))) *
-        HEIGHT_WORLD_SCALE +
-      RIVER_SURFACE_LIFT_WORLD_UNITS;
-
-    // PASS TWO: one RIBBON per course — the whole of this change. Each course
-    // becomes a single connected strip whose consecutive cross-sections share
-    // their vertices, so a course cannot break into pieces no matter how often
-    // it crosses a band (water/waterCourse.ts).
-    for (const river of network.rivers) {
-      for (const course of river.courses) {
-        const nodes: CourseNode[] = course.points.map((point) => ({
-          // The cell CENTRE: the trace names a cell, and the ribbon runs
-          // through the middle of the cells it was traced along.
-          cellX: point.x + 0.5,
-          cellY: point.y + 0.5,
-          surfaceY: bandWorldY(
-            point.pooled
-              ? bandOf(point.poolHeight ?? 0)
-              : bandOf(sampleHeight(mirror, point.x, point.y)),
-          ),
-          pooled: point.pooled,
-        }));
-        appendCourseRibbon(nodes, groundYAt, seaSurfaceY, triangles);
+    /** The band of the water standing at a cell, or null where it is dry. */
+    const waterBandAt = (cellXCoord: number, cellYCoord: number): number | null => {
+      if (
+        cellXCoord < 0 ||
+        cellYCoord < 0 ||
+        cellXCoord >= mirror.map.size ||
+        cellYCoord >= mirror.map.size
+      ) {
+        return null;
       }
+      return bandOfCell.get(cellIndex(mirror.map, cellXCoord, cellYCoord)) ?? null;
+    };
+
+    const triangles: number[] = [];
+    for (const region of regions.values()) {
+      const surfaceY = bandWorldY(region.surfaceBand);
+      const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
+      appendApronSurfaces(
+        loops,
+        surfaceY,
+        bandWorldY,
+        // Contour coordinates are in CELLS, and a cell's own coordinate is its
+        // centre, so the cell a probe point lands in is the nearest integer.
+        // IS THERE LOWER WATER AROUND THIS POINT — the question a fall
+        // actually turns on. A contour point sits on a cell BOUNDARY, so the
+        // water it is about to pour onto can be in any of the cells that
+        // boundary touches; asking in one direction only was what left the
+        // `fork` fixture with no falls at all. The HIGHEST such band wins, so
+        // the fall drops one terrace onto water that is really there and the
+        // region it lands on carries the cascade on down.
+        //
+        // An apron pours onto WATER BELOW, never onto dry ground: where there
+        // is none, the region simply ends on the terrain's own contour, which
+        // is the approved lake-rim behaviour.
+        (probeX, probeZ) => {
+          const atX = Math.round(probeX);
+          const atZ = Math.round(probeZ);
+          let best: number | null = null;
+          for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const band = waterBandAt(atX + dx, atZ + dz);
+              if (band === null || band >= region.surfaceBand) continue;
+              if (best === null || band > best) best = band;
+            }
+          }
+          return best;
+        },
+        // The DRAWN ground under a point of the fall, so the sheet steps down
+        // the terraces instead of cutting a flat plane through them.
+        // Band-quantised and lifted exactly as the water surfaces are, so
+        // water resting on a tread sits level with the water already on it.
+        (groundX, groundZ) => {
+          const size = mirror.map.size;
+          const gx = Math.min(size - 1, Math.max(0, Math.round(groundX)));
+          const gz = Math.min(size - 1, Math.max(0, Math.round(groundZ)));
+          return quantizeToBandWorldY(mirror, gx, gz) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+        },
+        triangles,
+      );
     }
 
     waterMesh.geometry.dispose();
