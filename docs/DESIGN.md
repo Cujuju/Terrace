@@ -168,6 +168,13 @@ chosen over AGPL to maximize adoption; people may build closed-source games on t
   look. Heights quantize into discrete bands for rendering. Smooth-Populous rendering
   becomes a later toggle (the underlying heightmap is smooth either way; terracing is
   a render/interaction mode).
+- **One height per cell — superseded in principle, not yet in code (2026-08-24).**
+  A single height cannot express a cell that is empty below and solid above, so
+  overhangs, arches and caves are unrepresentable. The agreed replacement is a
+  list of solid spans per column, of which today's world is the one-span special
+  case; see "Decisions made 2026-08-24 (overhangs, arches and caves)" at the end
+  of this document for the model, the rejected alternatives, the measured blast
+  radius and the staging. Nothing below changes until that work starts.
 
 ### 3.5 Plugin platform (the core product)
 - **Core = terrain sim + sync + persistence + plugin host. Nothing else.**
@@ -3174,3 +3181,141 @@ as a world of lone whales.
   `WILDLIFE_SIZE_MODEL_SCALE`, so a large creature (1.4×) still probes a medium
   one's footprint — noted, not fixed, and the residual is one band of clipping
   on the biggest land animals at a riser's edge.
+
+
+### Decisions made 2026-08-24 (overhangs, arches and caves — the column becomes a list of spans)
+
+**The problem, in one sentence: a column stores one height, so no cell can be
+empty below and solid above.** Everything an overhang, an arch or a cave is
+depends on exactly that shape. `picking.ts` states the consequence outright —
+"the column is treated as SOLID from its cap downward" — and that sentence, not
+the renderer, is the whole obstacle. Raised by the owner (2026-08-24) after
+trying to pull one layer out from under another with the Pull tool (#99) and
+getting the levels below dragged out with it: the tool was not misbehaving, the
+terrain model has no way to express what was being asked for.
+
+**The renderer is already a stack of level sets, and that is what makes this
+tractable.** `capEmission.ts` builds a chunk by looping bands, marching squares
+over the set `{h ≥ k·BAND_HEIGHT}`, triangulating each contour loop into a cap
+and extruding skirts down its edges. It never asks "what is the height here" in
+order to make geometry — it asks **"is this cell solid at band k?"** That
+question generalises to overhangs without the contour, smoothing or
+triangulation machinery changing at all. The change is in what a COLUMN is, not
+in how terrain is drawn.
+
+#### The model: a layered heightfield
+
+Each cell holds a short list of solid spans `[floor, ceiling)` instead of a
+single height.
+
+| Feature  | What it is in this model |
+| -------- | ------------------------ |
+| Overhang | a span whose floor is above its neighbour's ceiling |
+| Arch     | a column with two spans; the gap between them is the opening |
+| Cave     | a connected region of gaps between spans |
+| Today    | every cell has exactly one span, `[MIN_HEIGHT, h)` |
+
+That last row is the load-bearing one: **the world as it stands is a strict
+special case of the new model**, so this is a widening rather than a
+replacement, and it can be introduced with the one-span invariant held and
+nothing changing on screen.
+
+**What the renderer needs on top of what it already has: ceiling caps.** Every
+cap today faces up. An overhang needs its underside drawn — the same
+marching-squares pass, over "which cells have a span ENDING at band k", with
+reversed winding and lit from below. That is most of the render work, and it is
+new geometry rather than a new pipeline.
+
+#### Rejected alternatives
+
+- **Sparse voxels / marching cubes.** Fully general, and wrong here. Every
+  module in `shared/` is 2D-indexed; the terraced band look is the game's visual
+  identity and a voxel surface fights it; the wire format and the determinism
+  contract (§3.1, §3.3) both get rebuilt from scratch. It buys topology nobody
+  has asked for — floating islands, closed bubbles — at the cost of the parts of
+  the codebase that currently work.
+- **Signed distance field / dual contouring.** The best-looking caves, and the
+  furthest from this game. It produces smooth organic surfaces, which is the
+  opposite of the terracing that `bandColors`, the water renderer, the brush
+  preview and the layer-edge overlay are all built around.
+- **Keep the heightmap; add authored overhang props.** Arches and cave mouths as
+  placed models with their own collision, terrain untouched. Genuinely the
+  cheapest path and what many shipped games do. Rejected as the primary model
+  because caves would become rooms entered through a portal rather than
+  structure the sculpt tools can carve — but it remains the right answer if the
+  goal ever narrows to visual variety alone.
+
+#### Blast radius, measured rather than estimated
+
+38 non-test modules read heights, which sounds fatal and is not: raw `cells[]`
+access is concentrated in six files.
+
+| File | direct `cells[]` accesses |
+| ---- | ------------------------- |
+| `shared/heightmap.ts` | 17 (it owns the type) |
+| `client/terrain/mirror.ts` | 9 |
+| `shared/rivers.ts` | 5 |
+| `shared/chunks.ts`, `server/world/world.ts`, `client/render/brushPreview.ts` | 5 combined |
+
+Everything else goes through `heightAt`/`sampleHeight`. **If those keep meaning
+"the top of the topmost span" — the walkable surface — then rivers, pathing,
+farmland, traversal, steering, flora, boats, water and fog keep working
+untouched**, because the walkable surface stays well defined. The modules that
+genuinely must change are the mesh builder, picking, the sculpt math and the
+wire format.
+
+#### What gets harder, stated plainly rather than discovered later
+
+- **Picking.** The march must return WHICH SPAN the ray hit, because a ray can
+  now enter a cave mouth and strike a floor beneath a ceiling. Structurally it
+  is the same loop with a span test instead of a cap test, but every consumer of
+  `TerrainRayPick` inherits a new question — which layer did I click? — and the
+  sculpt tools all have to answer it.
+- **The wire.** `ChunkPayload.heights: number[]` becomes variable-length per
+  cell. Determinism survives (still integers, still fixed iteration order), but
+  the encoding, the terrain diff and the prediction store's cell-indexed journal
+  all assume one value per cell today.
+- **Sculpting.** Every tool currently means "move the surface". With spans, each
+  has to say which span it moves, and what happens when two merge or one splits.
+  That is a design pass per tool, not a mechanical port — and it is deliberately
+  NOT part of the first stages below.
+- **Water, fog, rivers.** They ask for the height and get the topmost surface,
+  which is right for them — until someone wants water inside a cave. Out of
+  scope; noted so it is not mistaken for an oversight.
+
+#### The staging (decided): render first, sculpt much later
+
+The owner's ask was explicitly "not to build those things, but to be able to
+render them at least", and the staging follows that literally. Each step is
+independently verifiable, and the first two change nothing a player can see.
+
+1. **Widen the type to spans, with an invariant that every cell has exactly
+   one.** Nothing changes on screen and nothing else moves. Verified by the
+   world rendering identically.
+2. **Add ceiling caps to the mesh builder and span-aware picking, invariant
+   still held.** Still nothing changes on screen — the ceiling pass has nothing
+   to draw while every column is one span.
+3. **Lift the invariant and hand-author a test chunk containing an arch.** This
+   is the step that answers the real question: whether the terraced look, the
+   band palette and the lighting hold up with a ceiling in the world. Nothing is
+   sculptable yet.
+4. **Only then decide what sculpting a second span means**, informed by
+   something on screen rather than in the abstract.
+
+**Steps 1–3 are the answer to "render them at least."** Step 3 is the decision
+point: if the aesthetic does not survive a ceiling, the authored-props
+alternative above is the fallback and steps 1–2 are still worth having.
+
+#### Invariants this must not break
+
+- `shared/` stays the single source of truth for terrain math, and stays
+  deterministic integer-only with fixed iteration order (§3.3). Spans are
+  integers; nothing here needs floating point.
+- Clients still send intents, never heights (§3.2). A span-aware sculpt names
+  which span it means; the server re-derives what that span is.
+- The unlocked-region mask still works by omission (§3.4) — a chunk not sent is
+  still a chunk not sent, whatever a column contains.
+- `heightAt` keeps meaning the walkable surface, which is what makes the blast
+  radius above true. Any change to that meaning invalidates the estimate.
+
+Tracked as #129 (this work), which supersedes #110 (overhangs) in scope.
