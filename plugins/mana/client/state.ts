@@ -25,14 +25,73 @@ export interface ManaPool {
   readonly manaPerBandCell: number;
   /**
    * Perk-adjusted refill rate in mana per second (server-pushed). Feeds the
-   * gauge's smoothing and its pulse period ONLY — the gate below never reads
-   * it, so the client's affordability answer stays the server's answer.
+   * gauge's smoothing and its pulse period — AND the gate's own estimate, see
+   * `liveBalance`.
    */
   readonly regenPerSecond: number;
 }
 
+/**
+ * When `balance` was last true, as `performance.now()` milliseconds. Set on
+ * every authoritative push and on every local debit; `liveBalance` measures
+ * regen from it.
+ *
+ * Kept beside the pool rather than inside `ManaPool` because `ManaPool` is the
+ * parsed shape of a wire message and this is not on the wire — folding a local
+ * clock reading into it would invite a reader to think the server sent one.
+ */
+let balanceAsOfMs = 0;
+
+/**
+ * Monotonic clock, for the same reason world.ts uses one: these timestamps are
+ * only ever compared with each other, and a wall-clock adjustment must not be
+ * able to invent or erase seconds of regen.
+ */
+const nowMs = (): number => performance.now();
+
+/**
+ * THE POOL AS IT ACTUALLY STANDS: the last known balance plus the regen earned
+ * since, capped at capacity.
+ *
+ * WHY THE GATE NEEDS THIS (owner report, 2026-08-24: after a drag "it won't let
+ * me click and pull any vertices — like we've flipped a flag and it doesn't get
+ * flipped back"). The gate debits its estimate per intent and used to be
+ * corrected ONLY by a server push. The server pushes only when ITS OWN balance
+ * moves, and `regenerate` skips a pool that is already full — so once a burst
+ * of intents drove the local estimate below the truth and the gate began
+ * refusing, nothing more was sent, the server's pool stayed full, no push was
+ * ever emitted, and the estimate stayed wrong for the rest of the session. The
+ * gauge meanwhile read full, because the gauge has always advanced itself at
+ * `regenPerSecond`. The two halves disagreeing about the same pool is the bug;
+ * they now advance the same way from the same number.
+ *
+ * A drag is what made it reachable rather than what caused it: it emits intents
+ * far faster than a held stamp, so it drains the estimate below the truth in a
+ * fraction of a second. Any future tool that emits quickly would have found it.
+ */
+export function liveBalance(pool: ManaPool, at: number = nowMs()): number {
+  const earned = ((at - balanceAsOfMs) / 1000) * pool.regenPerSecond;
+  // A backwards or absent clock reading earns nothing rather than draining the
+  // pool: this estimate may never be more pessimistic than the truth, which is
+  // the whole property the bug above violated.
+  const grown = earned > 0 ? pool.balance + earned : pool.balance;
+  return grown > pool.capacity ? pool.capacity : grown;
+}
+
 /** Null until the first mana:balance arrives (e.g. server runs no mana). */
-const [manaPool, setManaPool] = createSignal<ManaPool | null>(null);
+const [manaPool, setPoolSignal] = createSignal<ManaPool | null>(null);
+
+/**
+ * Every write to the pool stamps the moment its balance was true, so
+ * `liveBalance` can measure regen from it. Wrapping the setter rather than
+ * asking each call site to stamp is the point: a call site that forgot would
+ * re-create the stuck-gate bug, and there would be nothing in the type to say
+ * it had.
+ */
+const setManaPool: typeof setPoolSignal = ((value) => {
+  balanceAsOfMs = nowMs();
+  return setPoolSignal(value as never);
+}) as typeof setPoolSignal;
 
 /**
  * Monotonic count of denials, not a boolean: the panel keys its flash off the
@@ -69,6 +128,12 @@ export function currentBrushCost(): number {
   const pool = manaPool();
   if (pool === null) return 0;
   return sculptManaCost(pool.manaPerBandCell, brushRadius(), brushProfile());
+}
+
+/** The pool's live balance, or null when no economy has been declared. */
+export function currentBalance(): number | null {
+  const pool = manaPool();
+  return pool === null ? null : liveBalance(pool);
 }
 
 /**
@@ -109,13 +174,20 @@ export function gateLocalSculpt(intent: SculptIntent): boolean {
     sculptOptionsOf(intent).profile,
   );
 
-  if (pool.balance < cost) {
+  // The balance AS IT STANDS, regen included — not the number the last push
+  // carried. See liveBalance for what reading the stale one cost.
+  const at = nowMs();
+  const balance = liveBalance(pool, at);
+
+  if (balance < cost) {
     recordDenial();
     return false;
   }
   // Debit THIS intent's price, not a flat one: a held radius-4 hard brush drains
   // the local estimate 45× faster than a point brush, which is what the server
-  // is simultaneously doing to the authoritative pool.
-  setManaPool({ ...pool, balance: pool.balance - cost });
+  // is simultaneously doing to the authoritative pool. Written back as an
+  // absolute balance stamped at `at`, so the regen already counted into
+  // `balance` is not counted a second time by the next call.
+  setManaPool({ ...pool, balance: balance - cost });
   return true;
 }

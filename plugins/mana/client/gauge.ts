@@ -6,30 +6,20 @@
 // Keeping it out of the component is what makes it testable without a DOM, and
 // keeps ManaGauge.tsx to markup plus wiring.
 //
-// DISPLAY ONLY. Nothing here participates in affordability: the local intent
-// gate (state.ts) compares the SERVER-pushed balance against a price it computes
-// with the SERVER-pushed rate through the shared pricing function, and none of
-// this smoothing or formatting feeds back into it. The worst a bug in this file
-// can do is draw a wrong picture.
+// DISPLAY ONLY, and since 2026-08-24 that is true in the useful direction as
+// well as the dangerous one. This module used to own `advanceDisplayBalance`,
+// which advanced the drawn balance every frame from its OWN previous output —
+// a second accumulator of the same quantity the intent gate was accumulating,
+// with nothing tying the two together. They diverged exactly as you would
+// expect: a burst of pull intents drained the gate to nothing while the gauge
+// filled to the brim, and the player was shown a full pool that would not
+// spend (owner report: "how can the gauge show full and internally it's
+// zero"). What the pool holds is now said once, by `liveBalance` in state.ts,
+// and this module is left with the arithmetic that is genuinely about drawing:
+// how much of the vessel a balance fills, and how the cue is paced.
 
 /** Milliseconds per second — rAF hands out milliseconds, regen is per second. */
 export const MS_PER_SECOND = 1000;
-
-/**
- * The largest frame step the smoothing will trust, in seconds.
- *
- * requestAnimationFrame stops firing in a background tab, so the first frame
- * after the player comes back reports the whole hidden interval — minutes, in
- * practice. Advancing by that would paint a full pool from nothing but local
- * guesswork, including in the case where the socket died while the tab was
- * hidden and the server has NOT been refilling anyone. Capping the step means
- * the gauge instead climbs one quarter-second's worth and then keeps climbing
- * from there, i.e. it errs LOW and the next authoritative push corrects it.
- *
- * 0.25 s is chosen as a step a genuinely struggling machine (4 fps) could still
- * produce honestly, so the cap never truncates a real frame on real hardware.
- */
-export const MAX_DISPLAY_STEP_S = 0.25;
 
 /**
  * Bounds on the motion cue's period (see pulsePeriodSeconds).
@@ -47,45 +37,6 @@ export const MAX_PULSE_PERIOD_S = 60;
 /** True for values that can safely be used in the drawing arithmetic. */
 function usable(value: number): boolean {
   return Number.isFinite(value);
-}
-
-/**
- * The balance to show immediately after an authoritative push (or a local gate
- * debit) — a wholesale resync, clamped into the vessel.
- *
- * The clamp is defensive rather than expected: a balance above capacity or
- * below zero would put the fill level outside the glass, and the server is not
- * the only thing that can reach this state (a truncated payload that still
- * parses, a future plugin that grants an overflow bonus).
- */
-export function syncedDisplayBalance(balance: number, capacity: number): number {
-  if (!usable(balance) || !usable(capacity) || capacity <= 0) return 0;
-  if (balance < 0) return 0;
-  return balance > capacity ? capacity : balance;
-}
-
-/**
- * One frame of smoothing: the displayed balance, advanced by dt seconds of
- * regen at `regenPerSecond`, capped at capacity.
- *
- * Anything unusable (a NaN dt from a first frame, a rate that never arrived)
- * leaves the displayed value alone — a frozen gauge is a far better failure
- * than a NaN one, which would silently blank the vessel and the numbers.
- */
-export function advanceDisplayBalance(
-  displayed: number,
-  capacity: number,
-  regenPerSecond: number,
-  dtSeconds: number,
-): number {
-  if (!usable(displayed)) return 0;
-  if (!usable(capacity) || capacity <= 0) return displayed;
-  if (!usable(regenPerSecond) || regenPerSecond <= 0) return displayed;
-  if (!usable(dtSeconds) || dtSeconds <= 0) return displayed;
-
-  const step = dtSeconds > MAX_DISPLAY_STEP_S ? MAX_DISPLAY_STEP_S : dtSeconds;
-  const next = displayed + regenPerSecond * step;
-  return next > capacity ? capacity : next;
 }
 
 /** How full the vessel is drawn, 0..1. */
