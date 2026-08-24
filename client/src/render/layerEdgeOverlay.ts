@@ -58,9 +58,44 @@ const EDGE_LIFT_WORLD_UNITS = 0.004;
 /** Two endpoints per segment, three floats each. */
 const FLOATS_PER_SEGMENT = 6;
 
+/**
+ * Colour of the lip currently under the cursor — the one a drag would grab.
+ * Warm white against the resting cyan: a highlight has to win against the
+ * colour it is picked out from, and lightening the same hue does not.
+ */
+const GRABBED_COLOR = 0xfff2c4;
+
+/** The grabbed lip is drawn thicker in spirit — full opacity against the resting edges. */
+const GRABBED_OPACITY = 1;
+
+/**
+ * How close the cursor must come to a lip to grab it, in world units.
+ * DERIVED, not chosen: one cell is the smallest thing any sculpt can change
+ * (MIN_BRUSH_RADIUS paints exactly one), so a lip within one cell of the
+ * cursor is one the smallest possible edit would move. A larger tolerance
+ * would claim lips the player cannot see themselves pointing at.
+ */
+const GRAB_RADIUS_WORLD_UNITS = CELL_WORLD_SIZE;
+
+/**
+ * How much of the grabbed lip lights up on either side of the cursor, in world
+ * units. Long enough to read which way the lip runs (a couple of world units
+ * of contour is unambiguous even at a shallow camera pitch), short enough that
+ * grabbing a coastline does not set the whole coast alight and hide where the
+ * cursor actually is.
+ */
+const HIGHLIGHT_SPAN_WORLD_UNITS = 2;
+
 export interface LayerEdgeOverlay {
   /** Rebuilds the edges of the given chunks. Unreceived chunks are skipped. */
   update(dirty: Iterable<number>): void;
+  /**
+   * Lights up the lip nearest the given cell and returns the BAND it belongs
+   * to — the band a drag starting there would grab. Null clears the highlight
+   * and reports no grab, either because the pointer is off the world or
+   * because the nearest lip is further than GRAB_RADIUS_WORLD_UNITS away.
+   */
+  highlightAt(cell: { x: number; y: number } | null): number | null;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
   dispose(): void;
@@ -73,6 +108,16 @@ export function createLayerEdgeOverlay(
 ): LayerEdgeOverlay {
   const chunksPerEdge = Math.max(1, Math.floor(worldSize / CHUNK_SIZE));
   const meshes = new Map<number, LineSegments>();
+  /**
+   * The same segments the meshes draw, kept in world space and keyed by chunk
+   * then band, so "which lip is under the cursor" is a lookup rather than a
+   * re-march. Flat [ax, az, bx, bz, ...] per band — Y is implied by the band.
+   *
+   * Retained rather than recomputed because the overlay has already paid for
+   * this contour: throwing it away and marching again on hover would run the
+   * marching-squares pass every frame the pointer moves.
+   */
+  const segmentsByChunk = new Map<number, Map<number, number[]>>();
   const material = new LineBasicMaterial({
     color: EDGE_COLOR,
     transparent: true,
@@ -84,6 +129,7 @@ export function createLayerEdgeOverlay(
   });
 
   const dropMesh = (idx: number): void => {
+    segmentsByChunk.delete(idx);
     const existing = meshes.get(idx);
     if (existing === undefined) return;
     group.remove(existing);
@@ -143,6 +189,7 @@ export function createLayerEdgeOverlay(
     if (range === null) return;
 
     const positions: number[] = [];
+    const perBand = new Map<number, number[]>();
     // A contour exists at each band FLOOR above the chunk's lowest band: the
     // boundary of {h ≥ k·BAND_HEIGHT} is empty for k at or below the minimum
     // (everything is inside) and for k above the maximum (nothing is).
@@ -155,14 +202,22 @@ export function createLayerEdgeOverlay(
           const b = loop[(i + 1) % loop.length]!;
           // The chunk-seam artefact, not a lip — see the module header.
           if (a.onBorder && b.onBorder) continue;
-          positions.push(
-            a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE,
-            b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE,
-          );
+          const ax = a.x * CELL_WORLD_SIZE;
+          const az = a.z * CELL_WORLD_SIZE;
+          const bx = b.x * CELL_WORLD_SIZE;
+          const bz = b.z * CELL_WORLD_SIZE;
+          positions.push(ax, y, az, bx, y, bz);
+          let band = perBand.get(k);
+          if (band === undefined) {
+            band = [];
+            perBand.set(k, band);
+          }
+          band.push(ax, az, bx, bz);
         }
       }
     }
     if (positions.length < FLOATS_PER_SEGMENT) return;
+    segmentsByChunk.set(idx, perBand);
 
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
@@ -174,16 +229,125 @@ export function createLayerEdgeOverlay(
     meshes.set(idx, mesh);
   };
 
+  // The grabbed lip, drawn as its own mesh so highlighting never rebuilds a
+  // chunk's resting geometry.
+  const grabbedMaterial = new LineBasicMaterial({
+    color: GRABBED_COLOR,
+    transparent: true,
+    opacity: GRABBED_OPACITY,
+    depthTest: true,
+    depthWrite: false,
+  });
+  let grabbed: LineSegments | null = null;
+
+  const clearGrabbed = (): void => {
+    if (grabbed === null) return;
+    group.remove(grabbed);
+    grabbed.geometry.dispose();
+    grabbed = null;
+  };
+
+  /** Squared distance from (px, pz) to segment (ax, az)-(bx, bz), in the XZ plane. */
+  const distanceSqToSegment = (
+    px: number, pz: number,
+    ax: number, az: number, bx: number, bz: number,
+  ): number => {
+    const vx = bx - ax;
+    const vz = bz - az;
+    const lengthSq = vx * vx + vz * vz;
+    // A degenerate segment is a point; the clamp below would divide by zero.
+    let t = lengthSq === 0 ? 0 : ((px - ax) * vx + (pz - az) * vz) / lengthSq;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = px - (ax + t * vx);
+    const dz = pz - (az + t * vz);
+    return dx * dx + dz * dz;
+  };
+
+  /** The chunks whose segments can reach a query point — its own and its neighbours. */
+  const nearbyChunks = function* (cellX: number, cellY: number): Generator<number> {
+    const ccx = Math.floor(cellX / CHUNK_SIZE);
+    const ccy = Math.floor(cellY / CHUNK_SIZE);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = ccx + dx;
+        const ny = ccy + dy;
+        if (nx < 0 || ny < 0 || nx >= chunksPerEdge || ny >= chunksPerEdge) continue;
+        yield ny * chunksPerEdge + nx;
+      }
+    }
+  };
+
   return {
     update(dirty) {
       for (const idx of dirty) rebuild(idx);
+      // A rebuilt chunk's retained segments are new objects, so any highlight
+      // standing on the old ones is stale. Cheaper and more honest to drop it
+      // than to try to re-find the same lip in freshly-marched geometry.
+      clearGrabbed();
+    },
+
+    highlightAt(cell) {
+      clearGrabbed();
+      if (cell === null) return null;
+      const px = cell.x * CELL_WORLD_SIZE;
+      const pz = cell.y * CELL_WORLD_SIZE;
+
+      // PASS 1 — which band owns the nearest lip within grabbing range.
+      const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
+      let bestBand: number | null = null;
+      let bestDistanceSq = grabRadiusSq;
+      for (const idx of nearbyChunks(cell.x, cell.y)) {
+        const perBand = segmentsByChunk.get(idx);
+        if (perBand === undefined) continue;
+        for (const [band, flat] of perBand) {
+          for (let i = 0; i + 3 < flat.length; i += 4) {
+            const d = distanceSqToSegment(px, pz, flat[i]!, flat[i + 1]!, flat[i + 2]!, flat[i + 3]!);
+            if (d < bestDistanceSq) {
+              bestDistanceSq = d;
+              bestBand = band;
+            }
+          }
+        }
+      }
+      if (bestBand === null) return null;
+
+      // PASS 2 — light up that band's lip near the cursor. Scoped by distance
+      // rather than by loop identity: a loop is CLIPPED AT THE CHUNK BORDER
+      // (see chunkContourLoops), so "the whole loop" would stop dead at a seam
+      // and read as the lip ending where it plainly does not.
+      const spanSq = HIGHLIGHT_SPAN_WORLD_UNITS * HIGHLIGHT_SPAN_WORLD_UNITS;
+      const y = bestBand * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
+      const positions: number[] = [];
+      for (const idx of nearbyChunks(cell.x, cell.y)) {
+        const flat = segmentsByChunk.get(idx)?.get(bestBand);
+        if (flat === undefined) continue;
+        for (let i = 0; i + 3 < flat.length; i += 4) {
+          const ax = flat[i]!;
+          const az = flat[i + 1]!;
+          const bx = flat[i + 2]!;
+          const bz = flat[i + 3]!;
+          if (distanceSqToSegment(px, pz, ax, az, bx, bz) > spanSq) continue;
+          positions.push(ax, y, az, bx, y, bz);
+        }
+      }
+      if (positions.length < FLOATS_PER_SEGMENT) return bestBand;
+
+      const geometry = new BufferGeometry();
+      geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+      grabbed = new LineSegments(geometry, grabbedMaterial);
+      // Above the resting edges it is picked out from.
+      grabbed.renderOrder = 501;
+      group.add(grabbed);
+      return bestBand;
     },
     clear() {
+      clearGrabbed();
       for (const idx of [...meshes.keys()]) dropMesh(idx);
     },
     dispose() {
       this.clear();
       material.dispose();
+      grabbedMaterial.dispose();
     },
   };
 }

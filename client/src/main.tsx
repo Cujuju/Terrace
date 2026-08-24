@@ -137,7 +137,9 @@ viewport.onFrame(() => {
     tool: brushTool(),
     profile: brushProfile(),
   });
-  pickDebug.update(pick);
+  // The lip query rides the same pick, so the readout's grab line and the
+  // highlighted contour can never disagree about what is under the cursor.
+  pickDebug.update(pick, world.highlightLayerEdge(pick));
 });
 
 // The frame-rate readout in the top-right watermark. Started here, beside the

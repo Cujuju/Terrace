@@ -8,11 +8,15 @@
 // pickTerrainCellByRay returns {x, y, surfaceY, hitRiser} and there is no other
 // spatial information anywhere in the pick path.
 //
-// So this overlay deliberately draws A SINGLE CELL, not a contour, not a vertex
-// ring, not a set of grab handles. If it looks sparse, that IS the finding:
-// there are no edge or vertex grab points today, and a drag-to-sculpt method
-// needs them invented rather than surfaced. Drawing anything richer here would
-// misrepresent the capability the owner asked to see.
+// So the MARKER deliberately draws A SINGLE CELL — that is the whole of what
+// the picker names, and drawing anything richer would misrepresent it.
+//
+// The readout's LIP line is a different question, answered by a different
+// module: render/layerEdgeOverlay.ts matches the picked cell against the
+// terrace contours it retains and reports the band a drag would grab. It is
+// shown here, beside the pick, precisely so the two can be compared — the
+// picker names a cell, the contour query names a band, and the gap between
+// them is the vocabulary a drag-to-sculpt method needs.
 //
 // It is separate from render/brushPreview.ts on purpose. The brush outline
 // answers "what will one click change" — a FOOTPRINT, radius-sized. This
@@ -54,7 +58,7 @@ const MARKER_OPACITY = 0.55;
 
 export interface PickDebugOverlay {
   /** Draws the marker and readout for `pick`, or hides both on null. */
-  update(pick: TerrainRayPick | null): void;
+  update(pick: TerrainRayPick | null, grabbedBand: number | null): void;
   dispose(): void;
 }
 
@@ -108,7 +112,7 @@ export function createPickDebugOverlay(
   const readout = createReadout(canvas);
 
   return {
-    update(pick) {
+    update(pick, grabbedBand) {
       if (pick === null) {
         marker.visible = false;
         readout.textContent =
@@ -128,8 +132,9 @@ export function createPickDebugOverlay(
         `       surfaceY ${pick.surfaceY.toFixed(3)} wu`,
         `       ${pick.hitRiser ? 'RISER  (step side)  █ amber' : 'TREAD  (flat cap)   █ green'}`,
         '',
-        'That is everything the picker knows.',
-        'No edge or vertex grab points exist yet.',
+        grabbedBand === null
+          ? 'LIP    none in range'
+          : `LIP    band ${grabbedBand} — a drag here would grab it`,
       ].join('\n');
     },
     dispose() {

@@ -77,6 +77,14 @@ export interface World extends TerrainSink {
    */
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
+   * Lights up the terrace lip nearest `cell` and returns the band a drag
+   * starting there would grab, or null for no lip in range
+   * (render/layerEdgeOverlay.ts). Diagnostic for the two-method sculpt design:
+   * it answers "can a click name an edge?" without anything becoming
+   * authoritative.
+   */
+  highlightLayerEdge(cell: { x: number; y: number } | null): number | null;
+  /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
    * anything standing on the ground belongs. Cells in never-received chunks
@@ -391,6 +399,9 @@ export function createWorld(viewport: Viewport): World {
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
+    highlightLayerEdge(cell: { x: number; y: number } | null): number | null {
+      return layerEdges?.highlightAt(cell) ?? null;
+    },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
       return pickTerrainCellByRay(mirror, origin, direction);
