@@ -272,9 +272,27 @@ describe('persistence and the cap', () => {
     expect(after.filter((t) => t.includes("world's first")).length).toBe(1);
     expect(after.filter((t) => t.includes('first yeti')).length).toBe(1);
 
-    // Day stamps advanced with the restored clock: the new arrival is day 3.
+    // Day stamps advanced with the restored clock: three days of saga were
+    // saved and one more was lived, so the newest line is on the saga's fourth
+    // day-boundary, index 3... except that it is index 4, and the extra one is
+    // the DEFINITION rather than a defect (2026-08-23, when the world clock was
+    // anchored to real time). A day stamp is now which CALENDAR DAY OF THE
+    // WORLD'S LIFE a line falls on — `worldAgeDays` subtracts whole days — and
+    // not how many 24-minute spans have elapsed since genesis. It has to be:
+    // the weekday in a heading comes from the shared calendar, and only a
+    // whole-day subtraction makes the two numbers turn over at the same
+    // instant, so a heading can never read "Tuesday · Day 3" over lines written
+    // on Monday.
+    //
+    // The consequence is visible here because `advanceDays` overshoots by one
+    // tick (0.1 summed 28 800 times exceeds 2 880), so this saga's day 0 begins
+    // 100 ms BEFORE a day boundary rather than on one: the first 100 ms is a
+    // day of its own, and every stamp after it is one higher than an elapsed
+    // count would give. A world born mid-day behaves identically, which is what
+    // a diary does — its first afternoon is "day one", not "day zero point
+    // four".
     const last = chronicleEntries().at(-1) as ChronicleEntry;
-    expect(last.day).toBe(3);
+    expect(last.day).toBe(4);
   });
 
   it('an unknown slice version is ignored, not misread', () => {

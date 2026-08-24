@@ -68,6 +68,23 @@ export interface WorldApi {
    */
   readonly simMillis: number;
 
+  /**
+   * The world clock at THIS world's genesis, so a plugin can tell how old the
+   * world is rather than what time it is.
+   *
+   * The two stopped being the same number when the clock was anchored to real
+   * time (shared/src/calendar.ts): `simMillis` is now shared by every world in
+   * existence, so the age a saga heading counts is `worldAgeDays(simMillis,
+   * genesisMillis)`. Use that helper rather than subtracting by hand — it
+   * subtracts whole days, which is what keeps a heading from turning over in
+   * the middle of a Monday.
+   *
+   * Zero on a world that has never been anchored (every test world), which
+   * makes its age equal to its clock — the behaviour every plugin had before
+   * real time was involved at all.
+   */
+  readonly genesisMillis: number;
+
   heightAt(x: number, y: number): number;
   isCellUnlocked(x: number, y: number): boolean;
   isChunkUnlocked(cx: number, cy: number): boolean;

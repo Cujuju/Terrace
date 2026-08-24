@@ -86,6 +86,12 @@ export function createWorldApi(
     get simMillis(): number {
       return world.simMillis;
     },
+    // A getter for the opposite reason to simMillis's: this one is fixed for
+    // the world's whole life, but it is STAMPED at the boot seam after the
+    // World is built, so a captured value could be captured before the stamp.
+    get genesisMillis(): number {
+      return world.genesisMillis;
+    },
     heightAt(x: number, y: number): number {
       return world.heightAt(x, y);
     },

@@ -240,6 +240,9 @@ export class RollbackService {
       // get younger because its hills moved, and a clock that jumped backwards
       // would replay a week of Mondays.
       simMillis: world.simMillis,
+      // And a rollback never re-births the world either: same reasoning, one
+      // step stronger — the birthday is what "Day 57" counts from.
+      genesisMillis: world.genesisMillis,
       // Rollback writes restore points like any other saver, so it produces a
       // picture like any other saver: a rewound world must not keep wearing
       // the thumbnail of the world it was rolled away from.

@@ -92,6 +92,14 @@ function rollbackTo(store: SnapshotStore, id: number): number {
     mask: target.mask,
     pluginSlices: target.pluginSlices,
     tokenMasks: target.tokenMasks,
+    // CARRIED FORWARD, not dropped: the clock and the birthday belong to the
+    // world, not to the terrain being rewound (RollbackService.saveCurrent
+    // makes the same call for the live path). Omitting the birthday would
+    // leave the new row's genesis NULL, and the next boot would reconstruct
+    // one from `now` — restarting the saga's day numbering at 1 on a world
+    // that only moved its hills.
+    simMillis: target.simMillis,
+    genesisMillis: target.genesisMillis ?? undefined,
   });
   console.log(
     `restore point #${id} (${formatWhen(target.createdAt)}) is now the newest world, as #${newId}.`,

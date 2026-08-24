@@ -17,7 +17,7 @@ import { weekdayOf } from '@terrace/shared';
 import { For, Show, createEffect, onCleanup, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import type { ChronicleEntry } from '../protocol.ts';
-import { entries, readerOpen, setReaderOpen } from './state.ts';
+import { entries, genesisDay, readerOpen, setReaderOpen } from './state.ts';
 
 /** The scroll grouped for display: one block per day, oldest first. */
 function dayBlocks(all: readonly ChronicleEntry[]): Array<{ day: number; texts: string[] }> {
@@ -130,14 +130,23 @@ function Reader(): JSX.Element {
                   {/*
                     THE WEEKDAY IS THE HEADING'S POINT, not decoration (owner,
                     2026-08-23): settlers arrive on Mondays, so a reader who can
-                    see which day is which can see the rhythm. `day` is the world
-                    day counted from genesis and genesis is a Monday, so the name
-                    needs no epoch — see shared/src/calendar.ts.
+                    see which day is which can see the rhythm.
+
+                    TWO DIFFERENT NUMBERS, since the world clock was anchored to
+                    real time: `block.day` is how old the world was, which is
+                    what "Day 57" means, while the weekday belongs to the shared
+                    calendar every world runs on. `genesisDay()` is the offset
+                    between them (protocol.ts) — a world no longer necessarily
+                    begins on a Monday, so the name cannot come from the age.
+
+                    Read through the accessor at the use site, never stashed:
+                    the offset arrives with the first payload, after this
+                    component body has run.
 
                     Displayed 1-based, as it always was: the world's first day
                     reads "Day 1", not "Day 0".
                   */}
-                  {weekdayOf(block.day)} · Day {block.day + 1}
+                  {weekdayOf(block.day + genesisDay())} · Day {block.day + 1}
                 </div>
                 <For each={block.texts}>
                   {(text) => (

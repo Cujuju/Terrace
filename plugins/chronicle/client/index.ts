@@ -11,19 +11,28 @@ import {
   CHRONICLE_LOG_MESSAGE,
   CHRONICLE_PLUGIN_NAME,
   parseEntries,
+  parseGenesisDay,
 } from '../protocol.ts';
 import { BookIcon, ChronicleReaderHost } from './ChroniclePanel.tsx';
-import { appendEntries, replaceEntries, setReaderOpen } from './state.ts';
+import { appendEntries, replaceEntries, setGenesisDay, setReaderOpen } from './state.ts';
 
 export const clientPlugin: TerraceClientPlugin = {
   name: CHRONICLE_PLUGIN_NAME,
 
   attach(ctx: ClientPluginCtx): void {
+    // The offset is applied FIRST in both handlers, so the entries it explains
+    // are never rendered against a stale one. A payload that omits it (an
+    // older server) leaves whatever offset is already held — see
+    // parseGenesisDay on why that is not treated as an error.
     ctx.onMessage(CHRONICLE_LOG_MESSAGE, (payload) => {
+      const offset = parseGenesisDay(payload);
+      if (offset !== null) setGenesisDay(offset);
       const parsed = parseEntries(payload);
       if (parsed !== null) replaceEntries(parsed);
     });
     ctx.onMessage(CHRONICLE_APPEND_MESSAGE, (payload) => {
+      const offset = parseGenesisDay(payload);
+      if (offset !== null) setGenesisDay(offset);
       const parsed = parseEntries(payload);
       if (parsed !== null) appendEntries(parsed);
     });

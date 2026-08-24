@@ -75,6 +75,9 @@ export function snapshotIfDirty(session: WorldSession): boolean {
     // The world clock rides along with whatever else made this world dirty —
     // it never dirties the world itself (World.advanceClock's doc comment).
     simMillis: world.simMillis,
+    // The world's birthday, by contrast, never changes after the first write;
+    // it rides along for the same reason and costs nothing to restate.
+    genesisMillis: world.genesisMillis,
     // The heightmap is already in memory here, so the picture costs only the
     // averaging pass — the reason thumbnails are written rather than computed
     // when somebody opens the worlds panel (persistence/thumbnail.ts).
@@ -132,7 +135,15 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
       snapshot.name,
       snapshot.tokenMasks,
       snapshot.simMillis,
+      snapshot.genesisMillis,
     );
+    // THE CLOCK MEETS REAL TIME HERE, before any plugin has run: world time is
+    // an offset against the wall clock (shared/src/calendar.ts), so a restored
+    // world resumes at the hour and weekday real time says it should be rather
+    // than where its last tick left it. Also the moment a world snapshotted
+    // before this existed gets its birthday, reconstructed from the age its
+    // row stored — see World.anchorClockToRealTime for all three cases.
+    world.anchorClockToRealTime();
     pluginSlices = snapshot.pluginSlices;
   } catch (error) {
     // Do not leak the file handle when the world inside it turns out to be
@@ -201,6 +212,11 @@ export function createWorldFile(
   const store = deps.registry.createStore(id, deps.config.snapshotRetention);
   try {
     const world = World.createFresh(worldSize, difficulty, name);
+    // Genesis is NOW, and it is stamped before the genesis snapshot is written
+    // so the world's birthday is on disk from its first row — a world whose
+    // first snapshot carried no genesis would have one reconstructed at its
+    // next boot instead, dating it to whenever that boot happened.
+    world.anchorClockToRealTime();
     store.saveSnapshot({
       worldSize: world.size,
       name: world.name,
@@ -208,6 +224,8 @@ export function createWorldFile(
       mask: world.mask,
       pluginSlices: {},
       tokenMasks: world.tokenMasks(),
+      simMillis: world.simMillis,
+      genesisMillis: world.genesisMillis,
       thumbnail: buildThumbnail(world.map.cells, world.size),
     });
     logInfo(`created world "${id}" ("${name}", ${worldSize}²)`);

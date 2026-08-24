@@ -7,10 +7,13 @@ import {
   DAY_LENGTH_SECONDS,
   SETTLING_WEEKDAY,
   WEEKDAY_NAMES,
+  WORLD_EPOCH_REAL_MILLIS,
   dayOfSimMillis,
   isSettlingDay,
+  simMillisAtRealTime,
   weekdayIndexOf,
   weekdayOf,
+  worldAgeDays,
 } from '../src/calendar.ts';
 
 describe('the world calendar', () => {
@@ -64,5 +67,80 @@ describe('the world calendar', () => {
     expect(weekdayIndexOf(-1)).toBe(6);
     expect(weekdayOf(-1)).toBe('Sunday');
     expect(weekdayOf(-7)).toBe('Monday');
+  });
+});
+
+describe('the world clock against real time', () => {
+  it('begins on a real Monday, so the calendar still needs no epoch offset', () => {
+    // THE LOAD-BEARING PROPERTY of the epoch constant. Every weekday in the
+    // game is `weekdayOf(dayOfSimMillis(clock))`, and that expression carries
+    // no offset term — it is correct only because day 0 of the clock is a
+    // Monday in the real world too. A future edit that moves the epoch to a
+    // Tuesday would rename every day in the game and break the one rule two
+    // plugins agree on (settlers arrive on Mondays) with no other symptom.
+    expect(new Date(WORLD_EPOCH_REAL_MILLIS).getUTCDay()).toBe(1);
+    expect(weekdayOf(dayOfSimMillis(simMillisAtRealTime(WORLD_EPOCH_REAL_MILLIS)))).toBe('Monday');
+    expect(isSettlingDay(dayOfSimMillis(0))).toBe(true);
+  });
+
+  it('is midnight UTC, so day boundaries fall on the real 24-minute marks', () => {
+    // The second property the epoch was chosen for. Stated as an assertion
+    // rather than a comment because it is what makes world time predictable
+    // from a watch: at any real UTC midnight, a world day starts.
+    const REAL_DAY_MILLIS = 24 * 60 * 60 * 1000;
+    expect(WORLD_EPOCH_REAL_MILLIS % REAL_DAY_MILLIS).toBe(0);
+    expect(simMillisAtRealTime(WORLD_EPOCH_REAL_MILLIS + REAL_DAY_MILLIS) % DAY_LENGTH_MILLIS)
+      .toBe(0);
+  });
+
+  it('turns a real instant into a world clock reading, as a whole millisecond', () => {
+    expect(simMillisAtRealTime(WORLD_EPOCH_REAL_MILLIS)).toBe(0);
+    expect(simMillisAtRealTime(WORLD_EPOCH_REAL_MILLIS + DAY_LENGTH_MILLIS)).toBe(
+      DAY_LENGTH_MILLIS,
+    );
+    // Floored, never fractional: every consumer of the clock assumes integers.
+    expect(simMillisAtRealTime(WORLD_EPOCH_REAL_MILLIS + 1.9)).toBe(1);
+  });
+
+  it('freezes at the world\'s first moment rather than going negative', () => {
+    // A host whose system clock is set before the epoch is misconfigured. A
+    // negative clock would put every weekday in the world one step out, which
+    // is a silent wrong answer; standing still is a visible one.
+    expect(simMillisAtRealTime(WORLD_EPOCH_REAL_MILLIS - DAY_LENGTH_MILLIS)).toBe(0);
+    expect(simMillisAtRealTime(Number.NaN)).toBe(0);
+  });
+
+  it('counts a world\'s age in whole calendar days, not in elapsed spans', () => {
+    // The two numbers a heading needs are now different: the calendar day says
+    // which Monday it is, the age says what "Day 57" counts. Subtracting whole
+    // days is what keeps them turning over together — see worldAgeDays.
+    const genesis = DAY_LENGTH_MILLIS * 3;
+    expect(worldAgeDays(genesis, genesis)).toBe(0);
+    expect(worldAgeDays(genesis + DAY_LENGTH_MILLIS, genesis)).toBe(1);
+
+    // A world born mid-day: its first partial day IS a day, so one minute
+    // after the next boundary it is on its second day, not 0.04 days old.
+    const midDay = DAY_LENGTH_MILLIS * 3 + DAY_LENGTH_MILLIS - 1;
+    expect(worldAgeDays(midDay, midDay)).toBe(0);
+    expect(worldAgeDays(midDay + 1, midDay)).toBe(1);
+
+    // Never negative: a snapshot whose genesis post-dates its clock is clamped
+    // rather than trusted.
+    expect(worldAgeDays(genesis, genesis + DAY_LENGTH_MILLIS)).toBe(0);
+  });
+
+  it('offsets a world\'s age from the calendar by a CONSTANT number of days', () => {
+    // THE PROPERTY THE CHRONICLE'S WIRE FORMAT RESTS ON: the client is sent one
+    // `genesisDay` integer and adds it to every entry's age-day to recover the
+    // weekday. That is only sound if the difference never wobbles — which it
+    // does not, because both sides floor to whole days first. Subtracting the
+    // MILLISECONDS instead would alternate between two values whenever genesis
+    // falls mid-day, and the heading's weekday would be wrong half the time.
+    const genesis = DAY_LENGTH_MILLIS * 3 + 12345;
+    const genesisDay = dayOfSimMillis(genesis);
+    for (let step = 0; step < DAYS_PER_WEEK * 2; step++) {
+      const now = genesis + step * DAY_LENGTH_MILLIS + 777;
+      expect(worldAgeDays(now, genesis) + genesisDay).toBe(dayOfSimMillis(now));
+    }
   });
 });
