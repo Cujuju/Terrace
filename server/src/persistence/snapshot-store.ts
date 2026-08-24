@@ -12,10 +12,17 @@
 // on clean shutdown. This file owns the retention half; the scheduler in
 // index.ts owns the cadence half.
 
-import { isValidHeight, MAX_HEIGHT, MIN_HEIGHT, type RestorePoint } from '@terrace/shared';
+import {
+  isValidHeight,
+  LEGACY_MIN_HEIGHT,
+  MAX_HEIGHT,
+  MIN_HEIGHT,
+  type RestorePoint,
+} from '@terrace/shared';
 import DatabaseConstructor, { type Database, type Statement } from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { logWarn } from '../log.ts';
 import { decodeHeights, encodeHeights } from './codec.ts';
 
 /**
@@ -548,13 +555,42 @@ export class SnapshotStore {
     // Number.isInteger plus two comparisons. Measured on this machine
     // (Node 24, `isValidHeight` inlined): ~2.7 ms for the worst case, once per
     // boot — negligible next to the SQLite read that produced the blob.
+    //
+    // THE ONE EXCEPTION IS A WORLD SAVED AGAINST A DEEPER FLOOR (2026-08-24).
+    // See LEGACY_MIN_HEIGHT: a snapshot records no floor of its own, so a cell
+    // at −1152 is indistinguishable from corruption by range alone even though
+    // it is honest terrain a player dug when the floor was −1536. Such cells
+    // are RAISED to today's floor here — the only repair this boundary does,
+    // and it is a migration, not a repair of damage: the world model got
+    // shallower and the stored terrain follows it up. Everything outside the
+    // migration window still throws, which is the case the paragraph above is
+    // about. The clamp cannot manufacture an illegal SLOPE either: it only
+    // ever raises a cell toward its neighbours' floor, so every gradient it
+    // touches gets shallower or stays put. Nothing is written back — the next
+    // ordinary snapshot persists the migrated heights.
+    let migrated = 0;
+    let deepestMigrated = 0;
     for (let i = 0; i < cells.length; i++) {
-      if (!isValidHeight(cells[i])) {
-        throw new Error(
-          `snapshot #${row.id} heightmap cell ${i} has height ${cells[i]}, expected an ` +
-            `integer in [${MIN_HEIGHT}, ${MAX_HEIGHT}]; refusing to restore a corrupt world`,
-        );
+      const h = cells[i];
+      if (isValidHeight(h)) continue;
+      if (Number.isInteger(h) && h >= LEGACY_MIN_HEIGHT && h < MIN_HEIGHT) {
+        if (h < deepestMigrated) deepestMigrated = h;
+        cells[i] = MIN_HEIGHT;
+        migrated++;
+        continue;
       }
+      throw new Error(
+        `snapshot #${row.id} heightmap cell ${i} has height ${h}, expected an ` +
+          `integer in [${MIN_HEIGHT}, ${MAX_HEIGHT}]; refusing to restore a corrupt world`,
+      );
+    }
+    if (migrated > 0) {
+      // Said once per load, not once per cell, and said at all because this is
+      // the one moment a self-hoster's terrain silently changes shape.
+      logWarn(
+        `snapshot #${row.id}: raised ${migrated} cell(s) from as deep as ${deepestMigrated} ` +
+          `to the world floor ${MIN_HEIGHT} (saved against the older ${LEGACY_MIN_HEIGHT} floor)`,
+      );
     }
     const mask = new Uint8Array(row.mask.byteLength);
     mask.set(row.mask);

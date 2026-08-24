@@ -289,6 +289,31 @@ export const DEEP_STRATA_BANDS =
 export const MIN_HEIGHT = -(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH);
 
 /**
+ * The DEEPEST floor this game has ever had — the −1536 that Deep Strata
+ * (2026-08-19) set and the 2026-08-24 shallowing lifted.
+ *
+ * WHY THIS EXISTS RATHER THAN BEING DELETED WITH THE OLD STACK. MIN_HEIGHT is
+ * a world-model fact that the owner can retune, but a saved world is bytes
+ * written against whatever MIN_HEIGHT was true the day it was saved, and a
+ * snapshot records no floor of its own. Without a stated historical floor the
+ * two failures below are indistinguishable, and the loader must treat both as
+ * the fatal one:
+ *
+ *   * a cell at −1152 because a player dug to the old lava floor — legitimate
+ *     terrain that the world model has since made unreachable, and which must
+ *     be migrated (raised to today's floor), not refused;
+ *   * a cell at −20000 because the blob is corrupt or foreign — which must
+ *     still stop the boot rather than be silently repaired.
+ *
+ * So this is the migration window's far edge: [LEGACY_MIN_HEIGHT, MIN_HEIGHT)
+ * is old-but-honest and gets clamped on load, anything below it is corruption.
+ * It is a floor, so it must only ever go DOWN: if a future stack goes deeper
+ * than −1536, this becomes that number and the window keeps covering every
+ * world ever saved.
+ */
+export const LEGACY_MIN_HEIGHT = -1536;
+
+/**
  * Gradient limit: maximum allowed height difference between 4-neighbors.
  * THE feel-critical number — this is what makes edits "flow" outward
  * (Populous's signature).
