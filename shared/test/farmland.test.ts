@@ -9,7 +9,14 @@
 // survey).
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, SEA_LEVEL, isFarmlandCell, type FarmlandWorld } from '../src/index.ts';
+import {
+  BAND_HEIGHT,
+  CONTOUR_CELL_CENTRE_GUARD,
+  SEA_LEVEL,
+  isFarmlandCell,
+  isFarmlandPlot,
+  type FarmlandWorld,
+} from '../src/index.ts';
 
 const WORLD_SIZE = 64;
 
@@ -136,5 +143,107 @@ describe('isFarmlandCell', () => {
     const w = world();
     const first = isFarmlandCell(w, 10, 10);
     for (let i = 0; i < 100; i++) expect(isFarmlandCell(w, 10, 10)).toBe(first);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isFarmlandPlot — the same ground, asked about on behalf of a MODEL.
+//
+// The contract, not a callsite: flora derives the tread ring from its crop
+// model's reach and the contour guard, so these pin what a ring VALUE means
+// rather than what today's crop happens to be.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A straight north-south coast: column 0 is deep water, everything east of it
+ * is one flat terrace. Column 1 is the LIP (water is its own neighbour),
+ * column 2 is the first cell with a full cell of tread around it.
+ */
+function coastAt(x: number, _y: number): number {
+  return x === 0 ? DEEP : FARMLAND_BAND * BAND_HEIGHT;
+}
+
+function coast(lockedCell?: (x: number, y: number) => boolean): FarmlandWorld {
+  return {
+    worldSize: WORLD_SIZE,
+    heightAt: coastAt,
+    isCellUnlocked: (x, y) => (lockedCell === undefined ? true : !lockedCell(x, y)),
+  };
+}
+
+describe('isFarmlandPlot', () => {
+  it('rejects the LIP cell that isFarmlandCell accepts — the whole point of the predicate', () => {
+    // Column 1 is farmland by the point test and is exactly where a plot used
+    // to be drawn hanging over the drop: the terrace outline runs between
+    // column 0 and column 1, within an eighth of a cell of column 1's centre.
+    expect(isFarmlandCell(coast(), 1, 10)).toBe(true);
+    expect(isFarmlandPlot(coast(), 1, 10, 1)).toBe(false);
+  });
+
+  it('accepts the cell one back from the lip, which has a whole cell of tread', () => {
+    expect(isFarmlandPlot(coast(), 2, 10, 1)).toBe(true);
+  });
+
+  it('rejects a cell too far inland to be farming a water-edged terrace at all', () => {
+    // Column 3's shore ring reaches only column 1, which is dry: the water is
+    // out of reach, so this is an inland field and not terrace farming.
+    expect(isFarmlandPlot(coast(), 3, 10, 1)).toBe(false);
+  });
+
+  it('a bigger model is set further back — the setback follows the ring, not a literal', () => {
+    expect(isFarmlandPlot(coast(), 2, 10, 2)).toBe(false); // its tread would reach the water
+    expect(isFarmlandPlot(coast(), 3, 10, 2)).toBe(true);
+  });
+
+  it('at ring 0 it is the old point test — the guarantee that was not enough', () => {
+    expect(isFarmlandPlot(coast(), 1, 10, 0)).toBe(isFarmlandCell(coast(), 1, 10));
+    expect(isFarmlandPlot(coast(), 1, 10, 0)).toBe(true);
+  });
+
+  it('rejects a tread cell on a different terrace band even when it is dry', () => {
+    // A plot may not half-stand on the step above or below its own.
+    const stepped: FarmlandWorld = {
+      worldSize: WORLD_SIZE,
+      heightAt: (x, y) =>
+        x === 3 && y === 11 ? (FARMLAND_BAND + 1) * BAND_HEIGHT : coastAt(x, y),
+      isCellUnlocked: () => true,
+    };
+    expect(isFarmlandPlot(stepped, 2, 10, 1)).toBe(false);
+  });
+
+  it('rejects a plot whose tread runs off the world edge', () => {
+    const rim: FarmlandWorld = {
+      worldSize: WORLD_SIZE,
+      heightAt: (x, y) => (x === 2 && y === 2 ? DEEP : FARMLAND_BAND * BAND_HEIGHT),
+      isCellUnlocked: () => true,
+    };
+    expect(isFarmlandPlot(rim, 0, 0, 1)).toBe(false);
+  });
+
+  it('requires the plot cell itself to be unlocked, but not its tread', () => {
+    expect(isFarmlandPlot(coast((x, y) => x === 2 && y === 10), 2, 10, 1)).toBe(false);
+    expect(isFarmlandPlot(coast((x, y) => x === 3 && y === 11), 2, 10, 1)).toBe(true);
+  });
+
+  it('rejects a negative or non-integer ring rather than guessing', () => {
+    expect(isFarmlandPlot(coast(), 2, 10, -1)).toBe(false);
+    expect(isFarmlandPlot(coast(), 2, 10, 0.5)).toBe(false);
+  });
+
+  it('sets a plot back far enough that no contour can reach it', () => {
+    // The derivation flora relies on, stated here where the guard lives: a
+    // solid tread of radius R puts the nearest possible terrace outline at
+    // R + CONTOUR_CELL_CENTRE_GUARD from the plot's centre, because a contour
+    // only crosses edges running from an inside sample to an outside one and
+    // never comes within the guard of either end. Ring 1 therefore protects any
+    // model reaching up to 1.125 cells — comfortably more than the half-cell a
+    // crop plot reaches.
+    expect(1 + CONTOUR_CELL_CENTRE_GUARD).toBeGreaterThan(0.5);
+  });
+
+  it('is deterministic — the same world, cell and ring answer identically every call', () => {
+    const w = coast();
+    const first = isFarmlandPlot(w, 2, 10, 1);
+    for (let i = 0; i < 100; i++) expect(isFarmlandPlot(w, 2, 10, 1)).toBe(first);
   });
 });

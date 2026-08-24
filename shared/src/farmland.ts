@@ -135,3 +135,130 @@ export function isFarmlandCell(world: FarmlandWorld, x: number, y: number): bool
   }
   return touchesWater;
 }
+
+/**
+ * Does a plot of a given SIZE actually have ground to stand on at (x, y)?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY isFarmlandCell IS NOT ENOUGH, AND WHY THIS IS NOT JUST A WIDER VERSION OF
+ * IT (owner, 2026-08-23, from a screenshot of crop plots hanging over a cliff).
+ *
+ * isFarmlandCell answers a question about a POINT: it promises the cell's
+ * CENTRE is dry, unlocked, and on a terrace band. That is also exactly as much
+ * as the renderer promises — client/src/terrain/vertexGrid.ts's honesty
+ * invariant is stated over cell CENTRES, because terraces are not drawn as
+ * per-cell quads. Their outlines are marching-squares contours over the raw
+ * heightmap, interpolated along the edges BETWEEN cell centres and then
+ * smoothed, so a terrace lip cuts across cells at arbitrary angles and may pass
+ * within CONTOUR_CELL_CENTRE_GUARD — an eighth of a cell — of a centre.
+ *
+ * At a real shoreline it passes at exactly that bound. The crossing fraction is
+ * measured from the WATER end of the edge, and deep water against a dry cell
+ * only just above the band boundary drives it to its clamp, leaving the drop
+ * one eighth of a cell from the dry cell's centre. So a cell that passes
+ * isFarmlandCell has, in the common case, an eighth of a cell of tread around
+ * its centre and a cliff after that. Any model of visible size standing there
+ * overhangs — which is what the screenshot showed.
+ *
+ * Shrinking the model to an eighth of a cell is not a fix: that is 0.03 world
+ * units, invisible at play distance. So this predicate stands the model BACK
+ * from the lip instead. It asks for a solid square of same-band dry land around
+ * the plot, wide enough that no contour can reach the model, and then asks for
+ * water just beyond it so the plot is still farming a water-edged terrace
+ * rather than an inland field.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * `treadCells` is that solid radius, Chebyshev (a square, because a plot's
+ * footprint is a square). The caller derives it from the model's own reach and
+ * the contour guard — flora's CROP_PLOT_TREAD_RING_CELLS — so the size of the
+ * thing being drawn and the size of the ground it needs can never again be
+ * stated independently of one another. At `treadCells` of 0 this degenerates to
+ * the centre-cell-only promise that was not enough, which is why flora derives
+ * it rather than passing a literal.
+ *
+ * WHY THE WATER TEST MOVES OUT WITH IT rather than being dropped: card 28 is
+ * "flat terraces adjacent to water", and a plot set back one cell from the lip
+ * is still on the terrace the water made. Requiring water within `treadCells + 1`
+ * keeps that meaning at every plot size — a plot sits as close to the shore as
+ * its own footprint allows and no closer.
+ *
+ * NEIGHBOUR UNLOCK IS DELIBERATELY NOT CHECKED, matching isFarmlandCell's own
+ * documented rule: eligibility must not swing on territory the player has not
+ * earned. Only the cell the plot stands on is gated on the unlock mask.
+ *
+ * DETERMINISM: integer comparisons in a fixed iteration order, like everything
+ * else here. `treadCells` arrives as an integer count of CELLS precisely so no
+ * float ever reaches the terrain math.
+ */
+export function isFarmlandPlot(
+  world: FarmlandWorld,
+  x: number,
+  y: number,
+  treadCells: number,
+): boolean {
+  if (!Number.isInteger(treadCells) || treadCells < 0) return false;
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return false;
+  if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
+  if (!world.isCellUnlocked(x, y)) return false;
+
+  const height = world.heightAt(x, y);
+  if (isWater(height)) return false;
+  const band = bandOf(height);
+
+  // THE TREAD, ORTHOGONALS FIRST. Every cell within treadCells must be dry
+  // land on this same terrace, or a contour runs through the ground the model
+  // stands on. The four orthogonal neighbours are tested BEFORE the rest of
+  // the square because they are the cheapest rejection this predicate has and
+  // they carry most of its selectivity: they reject every lip cell (a water
+  // neighbour) and all broken ground, which between them are nearly every cell
+  // of a real board. Ordering matters here in a way it usually does not —
+  // crops.ts sweeps the WHOLE board with this predicate on a five-second
+  // cadence, so a cell's average cost is the thing being paid, not its worst
+  // case.
+  for (const [dx, dy] of ADJACENT_OFFSETS) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
+    const neighborHeight = world.heightAt(nx, ny);
+    if (isWater(neighborHeight)) {
+      // A water neighbour means this cell IS the lip. That disqualifies it
+      // once the plot needs tread around it, and is exactly what makes it
+      // farmland at treadCells 0 — where this predicate must still be
+      // isFarmlandCell, water-neighbour exemption and all.
+      if (treadCells >= 1) return false;
+      continue;
+    }
+    if (bandOf(neighborHeight) !== band) return false;
+  }
+  for (let dy = -treadCells; dy <= treadCells; dy++) {
+    for (let dx = -treadCells; dx <= treadCells; dx++) {
+      // The four already done above, plus the centre.
+      if (Math.abs(dx) + Math.abs(dy) <= 1) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      // Off-map fails, mirroring isFarmlandCell: ground that is not there is
+      // not ground a plot can stand on.
+      if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
+      const neighborHeight = world.heightAt(nx, ny);
+      if (isWater(neighborHeight)) return false;
+      if (bandOf(neighborHeight) !== band) return false;
+    }
+  }
+
+  // THE SHORE. Water in the next ring out — the terrace edge this plot farms,
+  // set back by exactly the plot's own footprint. An off-map cell is skipped
+  // rather than failing here: the tread loop above has already rejected any
+  // plot close enough to the world edge for that to matter, and a world rim is
+  // not a shoreline.
+  const shore = treadCells + 1;
+  for (let dy = -shore; dy <= shore; dy++) {
+    for (let dx = -shore; dx <= shore; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== shore) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) continue;
+      if (isWater(world.heightAt(nx, ny))) return true;
+    }
+  }
+  return false;
+}

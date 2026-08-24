@@ -450,3 +450,33 @@ export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
  * stress tests pin both modes.
  */
 export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;
+
+/**
+ * How close, in CELL units, a contour may come to a cell centre.
+ *
+ * This is the honesty guard, enforced in the CLIENT (terrain/contours.ts's
+ * crossingFraction and terrain/contourSmoothing.ts) and re-exported from there
+ * for its original readers. It lives HERE because it is also read on the
+ * SERVER: it bounds how far a terrace lip can cut into a cell, and therefore
+ * how much flat tread a model standing at a cell centre can rely on — the
+ * question shared/src/farmland.ts's isFarmlandPlot exists to answer.
+ *
+ * A cell centre is the fixed point of picking.ts's Math.round(). A cell centre is the fixed point of picking.ts's
+ * Math.round(), so whichever caps cover it decide what the player sees AND
+ * clicks at that cell. Marching squares can already only cross the edges
+ * BETWEEN samples, but a raw crossing can land arbitrarily close to one end of
+ * an edge, and two Chaikin passes could then round the outline across it. Every
+ * crossing is therefore clamped into the middle [1/8, 7/8] of its edge, and
+ * every smoothed vertex is pushed back out of the disc of this radius around
+ * its nearest cell centre.
+ *
+ * 1/8 of a cell: large enough that the guarantee survives the smoothing passes
+ * with room to spare (a Chaikin vertex is a convex combination of two vertices
+ * of the polyline it smooths, so it can only ever move ALONG the outline, never
+ * outward past it), small enough that it never becomes the thing that decides
+ * where an outline goes — a 1/8-cell clamp only fires on samples within a few
+ * height units of a band boundary, which is where the outline's exact position
+ * is meaningless anyway. It is a negative power of two, so it is exact in
+ * binary and identical on every platform.
+ */
+export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;

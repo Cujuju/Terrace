@@ -5,7 +5,12 @@
 // contracts S1–S5, which this code implements — nothing here may change
 // independently of that record.
 
-import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  CONTOUR_CELL_CENTRE_GUARD,
+  MAX_BRUSH_RADIUS,
+} from '@terrace/shared';
 import { sampleRenderHeight, type TerrainMirror } from './mirror.ts';
 
 // ---------------------------------------------------------------------------
@@ -62,27 +67,21 @@ export const CONTOUR_SAMPLE_CLEARANCE = BAND_HEIGHT / 2;
 export const SHORE_EDGE_CROSSING = 0.5;
 
 /**
- * How close, in CELL units, a contour may come to a cell centre.
+ * How close, in CELL units, a contour may come to a cell centre — the honesty
+ * guard, defined in @terrace/shared and re-exported here because this module
+ * is where it is ENFORCED (crossingFraction below and contourSmoothing.ts's
+ * push-out) and every existing reader imports it from here.
  *
- * This is the honesty guard. A cell centre is the fixed point of picking.ts's
- * Math.round(), so whichever caps cover it decide what the player sees AND
- * clicks at that cell. Marching squares can already only cross the edges
- * BETWEEN samples, but a raw crossing can land arbitrarily close to one end of
- * an edge, and two Chaikin passes could then round the outline across it. Every
- * crossing is therefore clamped into the middle [1/8, 7/8] of its edge, and
- * every smoothed vertex is pushed back out of the disc of this radius around
- * its nearest cell centre.
- *
- * 1/8 of a cell: large enough that the guarantee survives the smoothing passes
- * with room to spare (a Chaikin vertex is a convex combination of two vertices
- * of the polyline it smooths, so it can only ever move ALONG the outline, never
- * outward past it), small enough that it never becomes the thing that decides
- * where an outline goes — a 1/8-cell clamp only fires on samples within a few
- * height units of a band boundary, which is where the outline's exact position
- * is meaningless anyway. It is a negative power of two, so it is exact in
- * binary and identical on every platform.
+ * IT MOVED TO shared/ ON 2026-08-23 because it stopped being a render-only
+ * fact. It is the bound on how far a terrace lip can cut into a cell, so it is
+ * also the bound on how much tread a model standing at a cell centre can count
+ * on — and that question is decided SERVER-side, by flora's crop survey
+ * (shared/src/farmland.ts's isFarmlandPlot). Restating "1/8" over there instead
+ * would have been the traversal.ts mistake again: two copies of one terrain
+ * fact, edited at different times for different reasons.
  */
-export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
+export { CONTOUR_CELL_CENTRE_GUARD };
+
 
 // ---------------------------------------------------------------------------
 // Contour extraction
