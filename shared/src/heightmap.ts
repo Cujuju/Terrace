@@ -18,6 +18,7 @@ import {
   MIN_HEIGHT,
   SEA_LEVEL,
   SMOOTH_PASS_LIMIT,
+  WORLD_UNIT_CELLS,
 } from './constants.ts';
 
 /** The world grid. `cells` is row-major, index = y * size + x. */
@@ -797,54 +798,136 @@ function fillTowardTarget(
 }
 
 /**
- * THE DRAG REGION — the brush disc at the cursor, filled to the grabbed band
- * wherever that band already reaches.
+ * The smallest fraction of the brush radius a `soft` pull's edge can pull in
+ * to, as the ragged footprint's inner bound.
  *
- * SHAPE. The same footprint every brush uses (`forEachFootprintCell`), so the
- * radius slider means the same size of edit it means everywhere else.
+ * WHAT IT BUYS: at 1 the footprint is the plain disc and `soft` is `hard`; the
+ * lower it goes the deeper the bites out of the rim, and below about a half
+ * the outline stops reading as one shape and starts reading as scattered
+ * cells. 0.45 puts the deepest possible bite just past half the brush —
+ * measured, the edge then wanders 3 cells at radius 6 and 5 at radius 12,
+ * which is plainly irregular while the brush is plainly still round.
+ */
+const SOFT_DRAG_MIN_REACH = 0.45;
+
+/**
+ * How wide a lobe of the ragged edge is, in cells — the lattice the coarse
+ * half of `cellNoise` is sampled on.
+ *
+ * WORLD_UNIT_CELLS, so a lobe is about ONE WORLD UNIT across whatever the
+ * sampling density happens to be. That is the size at which an irregularity
+ * reads as a feature of the ground rather than as noise on a line, and stating
+ * it in world units rather than cells is what keeps it that size through a
+ * future re-sample (the trap the 2026-08-21 quartering set for every constant
+ * that was secretly "one cell").
+ *
+ * WHY THERE IS A LOBE OCTAVE AT ALL: per-cell noise alone gives a one-cell
+ * fringe — measured, a mean run of 1.5 rows at the same depth — which reads as
+ * a frayed line rather than as bays and points. Sampling on a coarser lattice
+ * alone gives the opposite problem, long axis-aligned steps that read as
+ * blocky. The two summed give lobes broken up by a fringe, which is neither.
+ */
+const SOFT_DRAG_LOBE_CELLS = WORLD_UNIT_CELLS;
+
+/**
+ * How much of the ragged edge's wander comes from the LOBE octave rather than
+ * the per-cell one. The rest comes from the fringe, and the two must sum to 1
+ * or the noise no longer spans [0, 1) and the reach bounds stop meaning what
+ * they say.
+ *
+ * Weighted toward the lobes because they are the part that reads as terrain;
+ * the fringe is there to stop the lobes looking cut with a stencil.
+ */
+const SOFT_DRAG_LOBE_SHARE = 0.65;
+
+/**
+ * A stable pseudo-random number in [0, 1) for a cell, from its coordinates
+ * alone.
+ *
+ * ANCHORED TO THE WORLD, NOT TO THE STROKE, and that is the whole design. A
+ * value that varied per push would let a cell be refused on one intent and
+ * taken on the next, so a held pull would fill in its own gaps and converge
+ * on the plain disc — the irregularity would be a shimmer that averaged away
+ * rather than a shape. Keyed on the cell, the same ground always answers the
+ * same way, so the ragged edge a pull leaves behind STAYS ragged, and pushing
+ * the same place twice reproduces it exactly.
+ *
+ * INTEGER-ONLY, therefore safe for the determinism contract (design §3.1).
+ * `Math.imul` is exact 32-bit multiplication on every platform, the shifts and
+ * xors are integer ops, and the final divisor is a power of two so the scaling
+ * is exact in binary floating point. Client and server get the same bits.
+ *
+ * The constants are the standard MurmurHash3 finalisation mixers; they are
+ * chosen for avalanche (one bit of input flipping about half the output bits),
+ * which is what stops the noise showing the cell grid's own axes as streaks.
+ */
+function hashCell(x: number, y: number): number {
+  let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * The two-octave version: a lobe the size of SOFT_DRAG_LOBE_CELLS, plus a
+ * per-cell fringe over it. See SOFT_DRAG_LOBE_CELLS for why one octave is not
+ * enough in either direction. Still in [0, 1), since the weights sum to 1.
+ *
+ * `Math.floor` rather than a shift, so the lattice follows the constant rather
+ * than requiring it to be a power of two — and so negative coordinates round
+ * the same way positive ones do, which a shift does not guarantee.
+ */
+function cellNoise(x: number, y: number): number {
+  const lobe = hashCell(
+    Math.floor(x / SOFT_DRAG_LOBE_CELLS),
+    Math.floor(y / SOFT_DRAG_LOBE_CELLS),
+  );
+  return SOFT_DRAG_LOBE_SHARE * lobe + (1 - SOFT_DRAG_LOBE_SHARE) * hashCell(x, y);
+}
+
+/**
+ * THE DRAG REGION — the brush footprint at the cursor, filled to the grabbed
+ * band wherever that band already reaches.
  *
  * THE BAND CREEPS, IT DOES NOT TELEPORT. A cell may only be raised to the
  * grabbed band if that band ALREADY stands next to it (`canSpreadBandTo`,
  * re-derived from the server's own heightmap), so the fill advances in WAVES
- * from the land that really is at that height: the first wave takes the cells
+ * from land that really is at that height: the first wave takes the cells
  * touching the existing plateau, the second takes the cells that now touch
- * those, and so on. That rule is the whole anti-cheat story — the band can
- * never reach a level that is not already there, which is what keeps "clients
- * send intents, never heights" true of a message that names a band.
+ * those, until nothing more qualifies. That rule is the whole anti-cheat
+ * story — the band can never reach a level that is not already there, which is
+ * what keeps "clients send intents, never heights" true of a message that
+ * names a band.
  *
- * AND THAT IS WHAT THE PROFILE CHOOSES: how many waves one intent gets.
+ * THE PROFILE CHOOSES THE FOOTPRINT'S EDGE:
  *
- * - `hard` — waves until nothing more qualifies, so the whole reachable disc
- *            snaps to the band in one intent. A fast, decisive fill.
- * - `soft` — exactly one wave, so the lip creeps a single cell toward the
- *            cursor per intent. The pull then follows the hand gradually and
- *            can be steered, which is what makes it the shaping tool.
+ * - `hard` — the plain disc, so the lip advances as a clean front.
+ * - `soft` — the disc with its rim eaten into by `cellNoise`, so the lip comes
+ *            out irregular and the extension reads as ground rather than as
+ *            masonry.
  *
- * A NEIGHBOUR-COUNT THRESHOLD WAS TRIED FIRST AND DOES NOT WORK: requiring
- * three band neighbours instead of one produced results IDENTICAL to `hard`,
- * because a cell that starts with one neighbour has three by the time the wave
- * reaches it. Anything the fixpoint can wash out is not a profile, it is a
- * scan order. The wave COUNT survives it because it bounds the fixpoint itself.
- *
- * EACH WAVE IS COLLECTED BEFORE ANY OF IT IS WRITTEN, and that is load-bearing
- * rather than tidy. Filling in place would let a cell taken early in a scan
- * qualify a cell later in the same scan, so a "one wave" fill would quietly
- * become a partial flood whose extent depended on the iteration order — and
- * the client and server must agree on the result bit for bit (design §3.1).
- * Collecting first makes a wave a function of the map as it stood when the
- * wave began, and therefore order-independent.
- *
- * IT CANNOT LEAK PAST THE STOP RULE. A wave only ever takes cells the spread
- * rule admits, so ground standing ABOVE the grabbed band is never written and
- * never becomes a neighbour that admits anything beyond it. The owner's "a
- * drag stops at a higher band's edge and does not strip the ground standing on
- * it" falls out of that rather than being coded separately.
+ * SOFT USED TO MEAN "ONE WAVE PER INTENT" AND THAT WAS WRONG (owner report,
+ * 2026-08-24: "what I'm getting is a big flat wall pulling along with me — I
+ * would expect something more organic when you say soft"). Limiting the wave
+ * count makes the front advance more SLOWLY; it does not make it any less
+ * straight, because a wave still takes the whole rind of the disc that touches
+ * the band, and along a straight lip that rind is a straight line of cells.
+ * The edge's shape lives in the footprint, so that is where the profile has to
+ * act. An earlier attempt at a neighbour-count threshold failed for the mirror
+ * image of the same reason: the fixpoint washed it out entirely.
  *
  * RAISE ONLY (2026-08-24). Pulling a lip INWARD is the same gesture with the
  * sign flipped, but it is the direction where the stop rule has to be real
  * code: dropping a cell to band k−1 when it actually stands at band 6 would
  * strip everything above it. Issue #99 step 3. A lowering drag is a no-op here
  * rather than an approximation of one.
+ *
+ * IT CANNOT LEAK PAST THE STOP RULE. A wave only ever takes cells the spread
+ * rule admits, so ground standing ABOVE the grabbed band is never written and
+ * never becomes a neighbour that admits anything beyond it. The owner's "a
+ * drag stops at a higher band's edge and does not strip the ground standing on
+ * it" falls out of that rather than being coded separately.
  */
 function applyDragRegion(
   map: Heightmap,
@@ -860,35 +943,42 @@ function applyDragRegion(
   if (!raising) return;
 
   const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
+  const ragged = profile === 'soft';
 
-  // The disc, collected once. forEachFootprintCell already does the offset →
-  // bounds-check → index step every brush runs, so the cells a pull considers
-  // are exactly the cells a stamp of the same radius would touch.
+  // The footprint, collected once. The offsets come from the one iterator
+  // every brush uses, so a pull considers exactly the cells a stamp of the
+  // same radius would — minus, for `soft`, the bites taken out of the rim.
   const disc: number[] = [];
-  forEachFootprintCell(map, cx, cy, radius, (i) => disc.push(i));
+  forEachFootprintOffset(radius, (dx, dy, dist) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    if (!inBounds(map, x, y)) return;
+    // THE RAGGED RIM. Each cell keeps its own share of the radius, so the
+    // outline wanders in and out by up to (1 − SOFT_DRAG_MIN_REACH) of it.
+    // Deep cells are inside every possible share and are never affected, which
+    // is what keeps the region solid rather than pocked — only the rim moves.
+    if (ragged && dist >= radius * (SOFT_DRAG_MIN_REACH + (1 - SOFT_DRAG_MIN_REACH) * cellNoise(x, y))) {
+      return;
+    }
+    disc.push(cellIndex(map, x, y));
+  });
 
-  // A wave can never take more cells than the disc holds, so the disc's own
-  // size is the bound on how many waves a `hard` fill can need — it is not a
-  // cap that ever bites, it is what makes the loop obviously terminate.
-  const waveLimit = profile === 'hard' ? disc.length : 1;
-
-  const wave: number[] = [];
-  for (let w = 0; w < waveLimit; w++) {
-    wave.length = 0;
+  // Swept to a fixpoint: every pass but the last takes at least one cell of a
+  // finite footprint, so this terminates, and the result does not depend on
+  // the order within a pass — a cell passed over early is simply offered again
+  // next time round.
+  let filledThisPass = true;
+  while (filledThisPass) {
+    filledThisPass = false;
     for (const i of disc) {
       const h = map.cells[i]!;
-      // Already at or above the band: the lip itself, land an earlier wave
+      // Already at or above the band: the lip itself, land an earlier pass
       // took, or higher ground the pull leaves standing.
       if (h >= targetHeight) continue;
       if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), targetBand)) continue;
-      wave.push(i);
-    }
-    // Nothing more qualifies: the band has spread as far into this disc as it
-    // is entitled to, and further waves would do nothing.
-    if (wave.length === 0) return;
-    for (const i of wave) {
       map.cells[i] = targetHeight;
       changed.add(i);
+      filledThisPass = true;
     }
   }
 }
