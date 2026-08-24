@@ -135,14 +135,22 @@ const brushPreview = createBrushPreview(viewport.scene, canvas);
 const pickDebug = createPickDebugOverlay(viewport.scene, canvas);
 viewport.onFrame(() => {
   const pick = sculptInput.hoverTarget();
-  brushPreview.update(pick, {
-    radius: brushRadius(),
-    tool: brushTool(),
-    profile: brushProfile(),
-  });
-  // The lip query rides the same pick, so the readout's grab line and the
-  // highlighted contour can never disagree about what is under the cursor.
-  pickDebug.update(pick, world.highlightLayerEdge(pick));
+  // THE LIP QUERY RUNS FIRST, and its answer feeds all three consumers: it
+  // lights the contour, it tells the readout which band is grabbable, and it
+  // tells the outline whether this press would drag (crosshair) or stamp
+  // (footprint). One query, so the highlight the player sees, the readout and
+  // the pointer shape can never disagree about what is under the cursor —
+  // and it is the same question input/sculptInput.ts asks on pointerdown.
+  const grabbedBand = world.highlightLayerEdge(pick);
+  brushPreview.update(
+    pick === null ? null : { ...pick, grabbable: grabbedBand !== null },
+    {
+      radius: brushRadius(),
+      tool: brushTool(),
+      profile: brushProfile(),
+    },
+  );
+  pickDebug.update(pick, grabbedBand);
 });
 
 // The frame-rate readout in the top-right watermark. Started here, beside the

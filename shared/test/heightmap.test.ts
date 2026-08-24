@@ -2058,16 +2058,17 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
       targetBand: BAND,
     });
     expect(diff.length).toBe(1);
-    // DEFAULT_SCULPT_AMOUNT is one band, so one intent climbs one band of the
-    // three — the drag WALKS a tall lip outward rather than teleporting it.
-    expect(map.cells[cellIndex(map, 8, 8)]).toBe(BAND_HEIGHT);
-    // Repeat until it arrives; it must never overshoot the grabbed level.
-    for (let i = 0; i < 10; i++) {
-      applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
-        ...DRAG,
-        targetBand: BAND,
-      });
-    }
+    // ONE INTENT ARRIVES (owner decision 2026-08-23). The cell levels with the
+    // terrace it was dragged from — all three bands — rather than climbing one
+    // band per pass, which would mean sweeping the same ground three times.
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(HIGH);
+    // And it stops there: repeating the drag on an arrived cell moves nothing,
+    // so a held drag cannot walk a terrace upward.
+    const again = applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG,
+      targetBand: BAND,
+    });
+    expect(again).toEqual([]);
     expect(map.cells[cellIndex(map, 8, 8)]).toBe(HIGH);
   });
 
@@ -2109,12 +2110,10 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
     const map = createHeightmap(16);
     map.cells.fill(0);
     for (let y = 0; y < 16; y++) map.cells[cellIndex(map, 7, y)] = grabbed * BAND_HEIGHT;
-    for (let i = 0; i < 20; i++) {
-      applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
-        ...DRAG,
-        targetBand: grabbed,
-      });
-    }
+    applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG,
+      targetBand: grabbed,
+    });
     expect(map.cells[cellIndex(map, 8, 8)]).toBe(grabbed * BAND_HEIGHT);
 
     const clicked = createHeightmap(16);
@@ -2133,13 +2132,11 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
     // input's path walk does. The lip must advance by exactly one cell a time.
     const map = mapWithPlateau(24, 0, HIGH, 0, 0, 7, 23);
     for (let x = 8; x < 14; x++) {
-      // Each cell needs BAND repeats to climb the three bands.
-      for (let i = 0; i < BAND; i++) {
-        applySculpt(map, x, 12, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
-          ...DRAG,
-          targetBand: BAND,
-        });
-      }
+      // One intent per cell, exactly what the client's path walk emits.
+      applySculpt(map, x, 12, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
+        ...DRAG,
+        targetBand: BAND,
+      });
       expect(map.cells[cellIndex(map, x, 12)]).toBe(HIGH);
       // The cell beyond is untouched until the drag reaches it.
       expect(map.cells[cellIndex(map, x + 1, 12)]).toBe(0);

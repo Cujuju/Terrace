@@ -251,6 +251,20 @@ export interface BrushHover {
    * the same cell.
    */
   readonly hitRiser: boolean;
+  /**
+   * Whether a terrace lip is within grabbing range here — i.e. whether a press
+   * would DRAG that band rather than stamp (input/sculptInput.ts asks the same
+   * question of the same pick).
+   *
+   * It hides the footprint outline and leaves the bare crosshair (owner,
+   * 2026-08-23). The ring is a promise about which cells one click will change,
+   * and a drag does not keep that promise: it changes one cell, follows the
+   * cursor, and its extent is however far the player pulls. Showing a
+   * radius-4 stamp footprint over a lip the player is about to drag would
+   * advertise an edit that is not the one about to happen — so the pointer
+   * says only "here", which is all a drag actually commits to.
+   */
+  readonly grabbable: boolean;
 }
 
 /**
@@ -759,11 +773,18 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
    * drawn" true by construction rather than by remembering.
    */
   let showing = false;
-  const show = (visible: boolean): void => {
-    line.visible = visible;
+  /**
+   * `crosshairOnly` drops the footprint parts and keeps the centre mark — the
+   * drag pointer (see BrushHover.grabbable). The cursor class still follows
+   * `visible` alone: the crosshair IS the pointer in that state, so hiding the
+   * arrow is just as right as when the full outline stands in for it.
+   */
+  const show = (visible: boolean, crosshairOnly = false): void => {
+    const footprint = visible && !crosshairOnly;
+    line.visible = footprint;
+    skirt.visible = footprint;
+    cellGrid.visible = footprint;
     crosshair.visible = visible;
-    skirt.visible = visible;
-    cellGrid.visible = visible;
     if (visible === showing) return;
     showing = visible;
     canvas.classList.toggle(OUTLINE_IS_CURSOR_CLASS, visible);
@@ -773,6 +794,16 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     update(hover, brush) {
       if (hover === null) {
         show(false);
+        return;
+      }
+      // GRABBING A LIP: the crosshair alone, and no footprint geometry to pick.
+      // Returning before the lookup also means a drag pointer costs nothing to
+      // draw, however the HUD's brush happens to be set.
+      if (hover.grabbable) {
+        material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+        const grabLift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
+        crosshair.position.set(hover.x * CELL_WORLD_SIZE, grabLift, hover.y * CELL_WORLD_SIZE);
+        show(true, true);
         return;
       }
       const wanted = key(brush.radius, brush.tool, brush.profile);

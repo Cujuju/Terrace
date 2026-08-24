@@ -94,6 +94,15 @@ export function bandOf(h: number): number {
 export const MIN_BAND = bandOf(MIN_HEIGHT);
 export const MAX_BAND = bandOf(MAX_HEIGHT);
 
+/**
+ * The furthest any single cell in a valid world can have to move: the whole
+ * height range. What a `band`-anchored stroke uses as its amount — see
+ * applySculpt — so "fill to the grabbed band" needs no special case in the
+ * brushes, only an amount large enough that the target clamp is what stops it.
+ * DERIVED, so it cannot fall behind a change to either limit.
+ */
+export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
+
 /** Height snapped down to its band floor — what terraced rendering draws. */
 export function quantizeToBand(h: number): number {
   return bandOf(h) * BAND_HEIGHT;
@@ -1163,6 +1172,34 @@ export function applySculpt(
     return [];
   }
 
+  // A DRAG ARRIVES IN ONE INTENT (owner decision 2026-08-23, after the first
+  // build felt wrong: "grab the lip and pull the terrace out to here" has to
+  // finish in one pass). Every other stroke moves by `amount` — one band per
+  // click, the server's own DEFAULT_SCULPT_AMOUNT — and repeats to climb; a
+  // drag that did the same would raise each cell the cursor crossed by a
+  // single band, so extending a band-6 terrace would mean sweeping the same
+  // ground six times. A drag instead moves each cell ALL THE WAY to the band
+  // the player grabbed, in one go.
+  //
+  // THIS IS NOT A STRONGER SCULPT, and that is why it can be safe while the
+  // amount stays server-owned everywhere else. The target is a band that is
+  // already standing next to this cell (canSpreadBandTo would have refused it
+  // otherwise), so the stroke can only ever LEVEL a cell with the terrace
+  // beside it. It cannot reach a height that is not already there, which is
+  // exactly the property that makes "clients send intents, never heights"
+  // hold: the height came from the world, not from the message.
+  //
+  // Implemented as an amount rather than a special case in the brushes because
+  // the target clamp in fillTowardTarget/applyBrush already stops at the band
+  // — an amount that cannot be the binding constraint means "go the whole way"
+  // without a second code path to keep in agreement.
+  // amount === 0 stays 0: a zero-amount stroke has no direction, and turning it
+  // into a full-span move in either direction would invent one.
+  const strokeAmount =
+    anchor === 'band' && amount !== 0
+      ? (amount > 0 ? FULL_HEIGHT_SPAN : -FULL_HEIGHT_SPAN)
+      : amount;
+
   const changed = new Set<number>();
   // The anchor target for the RELAXATION containment below, read before the
   // brush writes anything — the same pre-stroke-centre derivation the brushes
@@ -1182,9 +1219,9 @@ export function applySculpt(
   // reaches both branches — it decides where the fill/ceiling level comes
   // from (the clicked cell for players, the old derivations for the library).
   if (profile === 'hard') {
-    applyLevelFillBrush(map, cx, cy, radius, amount, changed, anchor, targetBand);
+    applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand);
   } else {
-    applyBrush(map, cx, cy, radius, amount, changed, profile, anchor, targetBand);
+    applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand);
   }
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.

@@ -186,6 +186,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeBand: number | null = null;
 
   /**
+   * Whether the stroke has actually started sculpting. A touch stroke waits out
+   * TOUCH_STROKE_GRACE_MS first, and a drag must not emit on pointer motion
+   * during that window or the second finger of a camera gesture would carve a
+   * furrow before it could cancel the stroke.
+   */
+  let strokeArmed = false;
+
+  /**
    * The last cell this DRAG emitted an intent for, so the next emission can
    * walk the path from there and leave no gap in the lip. Null before the
    * stroke's first intent, and for every non-drag stroke.
@@ -416,6 +424,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokePointerId = null;
     strokeIsTouch = false;
     strokeBand = null;
+    strokeArmed = false;
     haveDragCell = false;
     if (repeatTimer !== null) {
       clearTimeout(repeatTimer);
@@ -450,7 +459,22 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * re-targets wherever the cursor is now — but a stationary hold keeps its
    * cell even as the terrain rises (see emitIntent's issue-#25 comment). */
   const armStroke = (): void => {
+    strokeArmed = true;
     emitIntent();
+    // A DRAG IS DRIVEN BY MOTION, NOT BY A TIMER (owner report, 2026-08-23:
+    // "I get one drag, and then it's like I've unclicked"). The hold-repeat
+    // ramp exists so a HELD stamp keeps stacking bands in one place — that is
+    // the whole thing a stamp does when the cursor is still. A drag does the
+    // opposite: standing still means the lip is already where the player put
+    // it, so there is nothing to repeat. Emission therefore comes from
+    // onPointerMove below, and scheduling a repeat here would only re-run a
+    // walk that has no cells left to cross.
+    //
+    // The wire rate stays bounded WITHOUT a timer, because a drag emits per
+    // CELL CROSSED, not per event: a hundred pointermove events inside one
+    // cell send nothing at all, and a fast sweep is capped by
+    // DRAG_CELLS_PER_EMIT per emission.
+    if (strokeBand !== null) return;
     scheduleRepeat(0);
   };
 
@@ -549,6 +573,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       pointerClientX = event.clientX;
       pointerClientY = event.clientY;
       havePointer = true;
+      // A live, armed DRAG follows the cursor directly — see armStroke.
+      if (strokeArmed && strokeBand !== null) emitIntent();
     }
     // Touch moves carry no modifier keys; letting them into syncMode would
     // reset the sticky touch mode to 'raise' on every frame.
