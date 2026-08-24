@@ -58,8 +58,15 @@ export const DAYNIGHT_CLOCK_MESSAGE = 'clock';
  * record) is a mechanics dial, and this is ambience — every world runs the
  * same clock regardless of difficulty, exactly as weather's own timings are
  * difficulty-independent.
+ *
+ * IT NOW LIVES IN shared/src/calendar.ts AND IS RE-EXPORTED HERE (2026-08-23).
+ * The reasoning above is unchanged and stays in this file, because it is the
+ * SKY's argument for the number; what moved is the number itself, because the
+ * chronicle and structures both need to agree with it and plugins may not
+ * import each other. See that file's header for why one world may only have
+ * one day. Every call site in this plugin keeps importing it from here.
  */
-export const DAY_LENGTH_SECONDS = 24 * 60;
+export { DAY_LENGTH_SECONDS } from '@terrace/shared';
 
 /**
  * Decimal places kept on the broadcast phase, which is a fraction in [0, 1)

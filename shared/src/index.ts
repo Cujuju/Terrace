@@ -2,6 +2,7 @@
 // imported by both client and server. See docs/DESIGN.md §3.3.
 
 export * from './constants.ts';
+export * from './calendar.ts';
 export * from './heightmap.ts';
 export * from './chunks.ts';
 export * from './protocol.ts';

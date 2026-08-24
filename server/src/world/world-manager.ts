@@ -138,6 +138,8 @@ export class WorldManager {
    * process, not of any particular world.
    */
   tick(dt: number): void {
+    // The world clock advances inside host.tick — see PluginHost.tick for why
+    // it belongs with the thing that runs the simulation rather than here.
     this.session?.host.tick(dt);
   }
 

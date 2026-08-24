@@ -39,7 +39,7 @@
 // below, flora's identical mechanism applied to this plugin's own wire shape.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, dayOfSimMillis, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
@@ -57,7 +57,7 @@ import {
   type StructureCell,
 } from '../protocol.ts';
 import {
-  CA_SEED_PROBABILITY_PER_GENERATION,
+  shouldSeed,
   CA_STIR_PROBABILITY_PER_GENERATION,
   GenerationSurvey,
   attemptSeed,
@@ -90,6 +90,21 @@ let live: Map<number, LiveCellRecord> = new Map();
 
 /** Completed generations since the world began — persisted, diagnostic. */
 let generation = 0;
+/**
+ * World-day settlers last arrived on; -1 for never. Persisted.
+ *
+ * THE CALENDAR ITSELF IS NOT THIS PLUGIN'S (2026-08-23): the day comes from
+ * `WorldApi.simMillis`, the one world clock, so structures' Monday IS the sky's
+ * Monday. This plugin briefly kept its own persisted millisecond clock for the
+ * same job; it was correct in isolation and wrong the moment you compared it to
+ * the sunrise, which is the whole reason the clock moved to core.
+ *
+ * `simSeconds` below stays — it is a float accumulator for cadences measured in
+ * seconds (the keepalive), where drift is invisible. What a plugin must not do
+ * is derive a DAY from one of those.
+ */
+let lastSeedDay = -1;
+let restoredLastSeedDay = -1;
 
 let survey = new GenerationSurvey();
 let rng: StructuresRng = createStructuresRng(STRUCTURES_RNG_DEFAULT_SEED);
@@ -246,8 +261,16 @@ function simulate(world: WorldApi, dt: number): void {
       live = outcome.nextLive;
       generation++;
 
+      // SETTLERS COME ON MONDAY, AND ONLY TO AN EMPTY WORLD — see life.ts's
+      // shouldSeed for the rule and why the old per-generation coin flip went.
+      // `lastSeedDay` advances on the ATTEMPT, not on success: a Monday whose
+      // one attempt found nowhere to build is still a Monday that has had its
+      // turn, and re-trying it every generation for the rest of the day is
+      // precisely the ninety-six-times-a-week behaviour the rule replaces.
       let seeded: StructureCell[] = [];
-      if (rng.next() < CA_SEED_PROBABILITY_PER_GENERATION) {
+      const today = dayOfSimMillis(world.simMillis);
+      if (shouldSeed(live, today, lastSeedDay)) {
+        lastSeedDay = today;
         const placement = attemptSeed(world, live, rng);
         if (placement !== null) {
           for (const cell of placement) live.set(structureKey(cell.x, cell.y), { age: 0, tier: 0 });
@@ -319,12 +342,13 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 
 const persistence: PersistenceSlice = {
   save(): unknown {
-    return saveStructures(live, generation, rng);
+    return saveStructures(live, generation, rng, lastSeedDay);
   },
   load(data: unknown): void {
     const restored = loadStructures(data);
     restoredLive = restored.live;
     restoredGeneration = restored.generation;
+    restoredLastSeedDay = restored.lastSeedDay;
     rng = createStructuresRng(restored.rngState);
   },
 };
@@ -367,8 +391,10 @@ export const plugin: TerracePlugin = {
       if (isBuildableCell(world, cell.x, cell.y)) live.set(key, record);
     }
     generation = restoredGeneration;
+    lastSeedDay = restoredLastSeedDay;
     restoredLive = new Map();
     restoredGeneration = 0;
+    restoredLastSeedDay = -1;
 
     // No players are connected yet — this is only so a client already
     // listening at boot is not left empty for up to a keepalive.

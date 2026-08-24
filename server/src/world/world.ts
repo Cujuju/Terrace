@@ -1123,6 +1123,9 @@ function carveFallbackAbyss(map: Heightmap, profile: FreshGenesisProfile, size: 
   return FRESH_SEABED_HEIGHT;
 }
 
+/** Milliseconds in a second — the world clock's unit conversion. */
+const MILLISECONDS_PER_SECOND = 1000;
+
 export class World {
   readonly map: Heightmap;
   readonly mask: Uint8Array;
@@ -1142,6 +1145,33 @@ export class World {
    * gets the new rating on the next boot rather than a value frozen at genesis.
    */
   readonly difficulty: number;
+
+  /**
+   * How much simulated time this world has lived, in MILLISECONDS — the world
+   * CLOCK, and the only one there is.
+   *
+   * WHY CORE OWNS IT (2026-08-23). Until now there was no clock anywhere in
+   * core, so every plugin that needed elapsed time kept its own accumulator:
+   * day/night's `elapsedSeconds`, the chronicle's `simMillis`, structures'
+   * `simSeconds`. Only the chronicle persisted its one, so THE SKY RESET TO
+   * DAWN ON EVERY RESTART and no two plugins could agree what time it was.
+   * That was survivable while each clock was private bookkeeping.
+   *
+   * The weekday calendar (shared/src/calendar.ts) ended it: a player told it is
+   * Monday must be able to look at the sky and agree, and three independent
+   * clocks cannot deliver that. One clock, owned by the world, published to
+   * plugins through WorldApi and persisted with the heightmap.
+   *
+   * SNAPSHOT STATE, like the name and unlike the difficulty: how old a world is
+   * is a fact ABOUT that world, not a deployment setting, and a world that
+   * forgot its age on every boot would restart its week every time.
+   *
+   * MILLISECONDS AS AN INTEGER, never accumulated float seconds: summing a
+   * float `dt` drifts measurably over a few thousand ticks (the chronicle's own
+   * clock comment worked this out first), and a drifting clock moves day
+   * boundaries — which for the calendar means Monday itself wanders.
+   */
+  simMillis = 0;
 
   /**
    * What this world is CALLED — minted once at genesis by world-name.ts and
@@ -1241,11 +1271,33 @@ export class World {
     mask: Uint8Array,
     difficulty: number,
     name: string,
+    simMillis = 0,
   ) {
     this.map = map;
     this.mask = mask;
     this.difficulty = difficulty;
     this.worldName = name;
+    this.simMillis = simMillis;
+  }
+
+  /**
+   * Advances the world clock by one tick's worth of time.
+   *
+   * ROUNDED PER TICK rather than accumulated as a float: exact for any
+   * millisecond-representable tick rate, and integers add without error. A
+   * negative or non-finite `dt` is ignored rather than trusted — the clock only
+   * ever moves forward, and a NaN here would poison every day boundary in the
+   * world for the rest of its life.
+   *
+   * DOES NOT mark the world dirty. A clock that dirtied the world every tick
+   * would defeat the snapshot scheduler's "write only what changed" rule and
+   * rewrite the whole heightmap every few seconds; the clock rides along with
+   * whatever else caused a save, and the worst case is that a world nobody
+   * touches reloads a few minutes younger than it was.
+   */
+  advanceClock(dt: number): void {
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    this.simMillis += Math.round(dt * MILLISECONDS_PER_SECOND);
   }
 
   /**
@@ -1419,6 +1471,9 @@ export class World {
     difficulty: number = DEFAULT_WORLD_DIFFICULTY,
     name: string | null = null,
     tokenMasks: ReadonlyMap<string, Uint8Array> = new Map(),
+    // A snapshot written before the clock existed has none; such a world simply
+    // starts its calendar now, which costs at most one extra Monday.
+    simMillis = 0,
   ): World {
     const map = createHeightmap(size);
     if (cells.length !== map.cells.length) {
@@ -1443,6 +1498,7 @@ export class World {
       expectedMask,
       normalizeDifficulty(difficulty),
       mintedName ?? stored,
+      Number.isInteger(simMillis) && simMillis >= 0 ? simMillis : 0,
     );
 
     for (const [token, tokenMask] of tokenMasks) {

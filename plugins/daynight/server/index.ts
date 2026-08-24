@@ -87,6 +87,8 @@ export const DAYNIGHT_BROADCAST_INTERVAL_SECONDS = 5;
 const BROADCAST_INTERVAL_EPSILON_SECONDS = 1e-9;
 
 /** Seconds of sim time accumulated since this world booted. */
+const MILLISECONDS_PER_SECOND = 1000;
+
 let elapsedSeconds = 0;
 /** Seconds since the last broadcast; see DAYNIGHT_BROADCAST_INTERVAL_SECONDS. */
 let sinceBroadcast = 0;
@@ -108,7 +110,12 @@ export function currentPhase(): number {
  * cannot run away in a single call the way a rAF-driven accumulator could.
  */
 function simulate(world: WorldApi, dt: number): void {
-  elapsedSeconds += dt;
+  // THE SKY READS THE WORLD CLOCK (2026-08-23), so a restarted server resumes
+  // the evening it was stopped in instead of snapping back to dawn — this
+  // plugin's own accumulator was never persisted, which nobody noticed until
+  // the calendar had to agree with it. `sinceBroadcast` below stays local: it
+  // is a fan-out cadence, not a time of day, and it SHOULD restart at boot.
+  elapsedSeconds = world.simMillis / MILLISECONDS_PER_SECOND;
   sinceBroadcast += dt;
   if (sinceBroadcast < DAYNIGHT_BROADCAST_INTERVAL_SECONDS - BROADCAST_INTERVAL_EPSILON_SECONDS) {
     return;

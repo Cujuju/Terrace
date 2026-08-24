@@ -80,6 +80,12 @@ export function createWorldApi(
     get difficulty(): number {
       return world.difficulty;
     },
+    // A GETTER, and here that is load-bearing rather than cosmetic: this one
+    // genuinely moves every tick, so a captured value would freeze a plugin's
+    // calendar at whatever time it first read.
+    get simMillis(): number {
+      return world.simMillis;
+    },
     heightAt(x: number, y: number): number {
       return world.heightAt(x, y);
     },

@@ -13,6 +13,7 @@
 // follows the core theme; the icon inherits currentColor so core's banner
 // styles own its colour.
 
+import { weekdayOf } from '@terrace/shared';
 import { For, Show, createEffect, onCleanup, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import type { ChronicleEntry } from '../protocol.ts';
@@ -126,7 +127,17 @@ function Reader(): JSX.Element {
                     'text-transform': 'uppercase',
                   }}
                 >
-                  Day {block.day + 1}
+                  {/*
+                    THE WEEKDAY IS THE HEADING'S POINT, not decoration (owner,
+                    2026-08-23): settlers arrive on Mondays, so a reader who can
+                    see which day is which can see the rhythm. `day` is the world
+                    day counted from genesis and genesis is a Monday, so the name
+                    needs no epoch — see shared/src/calendar.ts.
+
+                    Displayed 1-based, as it always was: the world's first day
+                    reads "Day 1", not "Day 0".
+                  */}
+                  {weekdayOf(block.day)} · Day {block.day + 1}
                 </div>
                 <For each={block.texts}>
                   {(text) => (

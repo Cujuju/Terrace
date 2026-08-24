@@ -69,6 +69,14 @@ export interface SnapshotInput {
    */
   readonly tokenMasks?: ReadonlyMap<string, Uint8Array>;
   /**
+   * The world clock at write time, in milliseconds (World.simMillis).
+   *
+   * OPTIONAL and additive, following tokenMasks: a caller that does not track
+   * it (every existing test) omits it and the column stores 0, which reads
+   * back as a world whose calendar starts at its next boot.
+   */
+  readonly simMillis?: number;
+  /**
    * A top-down picture of this world for the worlds panel — see
    * persistence/thumbnail.ts. OPTIONAL and additive, following tokenMasks:
    * a caller that does not produce one (every existing test) simply omits it,
@@ -94,6 +102,8 @@ export interface WorldSnapshot extends Omit<SnapshotInput, 'name' | 'tokenMasks'
    * "no per-token history" has to be spelled out.
    */
   readonly tokenMasks: ReadonlyMap<string, Uint8Array>;
+  /** The world clock this snapshot recorded, ms; 0 for a pre-clock row. */
+  readonly simMillis: number;
 }
 
 interface SnapshotRow {
@@ -104,6 +114,8 @@ interface SnapshotRow {
   world_name: string | null;
   /** SQLite has no boolean: 0 or 1. See PINNED_COLUMN. */
   pinned: number;
+  /** World clock at write time, ms. 0 in a row written before the column. */
+  sim_millis: number;
   heightmap: Uint8Array;
   mask: Uint8Array;
 }
@@ -166,6 +178,23 @@ const PINNED_COLUMN = 'pinned';
  */
 const THUMBNAIL_COLUMN = 'thumbnail';
 
+/**
+ * How much simulated time the world had lived when this snapshot was written,
+ * in milliseconds — the world CLOCK (World.simMillis, 2026-08-23).
+ *
+ * ADDITIVE, like world_name/pinned/thumbnail before it, and for the same
+ * reason SNAPSHOT_SCHEMA_VERSION does not move: `addColumnIfMissing` gives an
+ * existing database the column on open, an older build's queries never name
+ * it, and a row written before it existed reads as 0 — "this world's calendar
+ * starts at its next boot", which costs at most one extra Monday and never a
+ * refused start.
+ *
+ * DEFAULT 0 AND NOT NULL, unlike the nullable columns above: absent and zero
+ * mean exactly the same thing for a clock, so there is nothing for a NULL to
+ * express that 0 does not.
+ */
+const SIM_MILLIS_COLUMN = 'sim_millis';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
 // per (snapshot, token) — persisted BESIDE the union `mask` on `snapshots`,
@@ -207,6 +236,7 @@ const SCHEMA_DDL = `
     ${WORLD_NAME_COLUMN} TEXT,
     ${PINNED_COLUMN}     INTEGER NOT NULL DEFAULT 0,
     ${THUMBNAIL_COLUMN}  BLOB,
+    ${SIM_MILLIS_COLUMN} INTEGER NOT NULL DEFAULT 0,
     heightmap      BLOB    NOT NULL,
     mask           BLOB    NOT NULL
   );
@@ -283,8 +313,8 @@ export class SnapshotStore {
     this.insertSnapshot = db.prepare(
       `INSERT INTO snapshots
          (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
-          ${THUMBNAIL_COLUMN})
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -360,6 +390,7 @@ export class SnapshotStore {
     addColumnIfMissing(db, 'snapshots', WORLD_NAME_COLUMN, 'TEXT');
     addColumnIfMissing(db, 'snapshots', PINNED_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
+    addColumnIfMissing(db, 'snapshots', SIM_MILLIS_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
     return new SnapshotStore(db, retention);
   }
 
@@ -388,6 +419,7 @@ export class SnapshotStore {
         // `?? null` rather than undefined: better-sqlite3 refuses undefined as
         // a bound value, and a caller that produced no thumbnail means NULL.
         input.thumbnail === undefined ? null : Buffer.copyBytesFrom(input.thumbnail),
+        input.simMillis ?? 0,
       );
       const snapshotId = Number(result.lastInsertRowid);
       for (const [plugin, data] of entries) {
@@ -506,6 +538,8 @@ export class SnapshotStore {
       // `?? null` covers a row written before the column existed AND a row
       // written by a build that stored nothing in it; both mean "unnamed".
       name: row.world_name ?? null,
+      // `?? 0` covers a row written before the column existed: an unaged world.
+      simMillis: row.sim_millis ?? 0,
       tokenMasks,
       cells,
       mask,

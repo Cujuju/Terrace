@@ -53,12 +53,15 @@ interface PluginEntry {
 
 export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, WorldEventListener {
   private readonly entries: readonly PluginEntry[];
+  /** The world this host drives — its clock advances on every tick(). */
+  private readonly world: World;
   /** Lazily-built message-type index; see handlerFor. */
   private handlersByType: Map<string, (player: Player, payload: unknown) => void> | null = null;
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
 
   constructor(world: World, plugins: readonly LoadedPlugin[]) {
+    this.world = world;
     // The WorldApi handed to a plugin routes edits back through this host, so
     // a plugin's own sculpt notifies every plugin (including itself) exactly
     // like a player's would.
@@ -94,8 +97,23 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     }
   }
 
-  /** Fixed-rate sim step; `dt` is the constant tick period in seconds. */
+  /**
+   * Fixed-rate sim step; `dt` is the constant tick period in seconds.
+   *
+   * ADVANCES THE WORLD CLOCK FIRST, and it lives here rather than one layer up
+   * in WorldManager for a contract reason: this is the method that runs the
+   * simulation, so there must be no way to run the simulation without time
+   * passing. With the advance in the manager, every other driver of a host —
+   * every plugin's own test suite — ticked plugins against a frozen clock, and
+   * a plugin that reads WorldApi.simMillis silently saw time stand still. That
+   * is the same class of defect as a plugin keeping its own private clock, one
+   * layer up.
+   *
+   * Before the plugins run, so every plugin in a tick reads the same time, and
+   * reads it as the time it is now rather than one tick ago.
+   */
   tick(dt: number): void {
+    this.world.advanceClock(dt);
     for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onTick) continue;

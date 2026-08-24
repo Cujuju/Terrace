@@ -47,7 +47,7 @@
 // is a short, bounded wait for a self-correcting mechanism that already runs
 // continuously, not a coverage gap plugged by a separate defensive sweep.
 
-import { CHUNK_SIZE } from '@terrace/shared';
+import { CHUNK_SIZE, isSettlingDay } from '@terrace/shared';
 import { STRUCTURES_CAP, cellOfKey, structureKey, type StructureCell } from '../protocol.ts';
 import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
@@ -71,18 +71,43 @@ import type { StructuresRng } from './rng.ts';
 export const CA_GENERATION_INTERVAL_SECONDS = 15;
 
 /**
- * Chance, rolled once per completed generation, that a fresh seed pattern is
- * attempted somewhere on the board.
+ * SETTLERS ARRIVE ON MONDAYS, AND ONLY WHEN THERE IS NO ONE LEFT (owner,
+ * 2026-08-23: "the settlement seeder only runs once per seven in-game days if
+ * the entire colony has been wiped out … it seeds on a Monday. Like the world
+ * was created on Monday and on Sunday the Creator rested").
  *
- * 0.35 — a quiet world (little or no live population) gets a new seed roughly
- * every ~2.9 generations (~43 s) in expectation, which is frequent enough
- * that a freshly-unlocked, empty world does not sit blank for long, and rare
- * enough that a lively board is not perpetually overwritten faster than its
- * own patterns can settle. The roll happens whether or not the board is
- * currently empty — a thriving board can absorb an extra pattern same as
- * a quiet one.
+ * WHAT THIS REPLACES, and why the old rule had to go rather than be re-tuned:
+ * seeding used to be a 0.35 coin flip every generation — an attempt every ~43
+ * simulated seconds, fired whether or not anyone was alive. Two things were
+ * wrong with it beyond the pacing. It re-seeded a LIVING world, so a thriving
+ * board was perpetually overwritten faster than its own patterns could settle;
+ * and it drew its target from every unlocked chunk, which on the live world
+ * meant 19 chunks in 429 held any buildable ground at all and 95.6% of attempts
+ * were thrown into open water (measured, snapshot 345, 2026-08-22).
+ *
+ * The rule now reads as one sentence: when a world has no settlements left, the
+ * next Monday brings new settlers. `attemptSeed` draws only from chunks that
+ * actually have somewhere to build, so the one attempt a week is a real one.
+ *
+ * SUNDAY IS FLAVOUR, NOT MECHANICS (owner's call, same conversation): nothing
+ * in the simulation pauses on the seventh day. A settlement automaton that
+ * visibly froze for a seventh of its life would read as a bug rather than a
+ * joke, and the joke survives perfectly well as the day before the settlers
+ * come. See shared/src/calendar.ts, which owns the week.
  */
-export const CA_SEED_PROBABILITY_PER_GENERATION = 0.35;
+export function shouldSeed(
+  live: ReadonlyMap<number, LiveCellRecord>,
+  day: number,
+  lastSeedDay: number,
+): boolean {
+  // Only into an empty world: this is repopulation, not immigration.
+  if (live.size > 0) return false;
+  if (!isSettlingDay(day)) return false;
+  // ONCE per Monday, not once per generation on a Monday — a day is ~96
+  // generations, and without this the "once a week" rule would be a
+  // ninety-six-times-a-week rule for as long as the board stayed empty.
+  return day !== lastSeedDay;
+}
 
 /**
  * Bounded random search for a clear patch of buildable ground to seed on.
@@ -94,6 +119,33 @@ export const CA_SEED_PROBABILITY_PER_GENERATION = 0.35;
  * cheap.
  */
 export const CA_SEED_MAX_PLACEMENT_ATTEMPTS = 12;
+
+/**
+ * How many patterns one Monday's arrival plants, across DIFFERENT chunks.
+ *
+ * FIVE, and the number is doing real work rather than being generous
+ * (measured, 2026-08-23). Seeding a single pattern and then waiting a week is
+ * what the weekday rule literally asks for, and it produces a dead world: a
+ * lone random soup under B3/S23 almost always dies within a few generations,
+ * so a simulated fortnight ran `day 0: peaks at 26, dead by minute 12; days
+ * 1-6 empty; day 7: 4 cells, dead within the hour` — empty about 95% of the
+ * time. The old per-generation coin flip hid that by re-seeding every ~43 s;
+ * what looked like a population was churn, which is also why the live world's
+ * saga reads "pitched a new camp" / "Ruin took N homes" over and over.
+ *
+ * A week's wait has to buy a REGION, not four cells (owner, 2026-08-23). Five
+ * scattered patterns give the arrival several independent chances to leave
+ * something standing, and — because they are placed in different chunks and
+ * therefore far apart — they evolve independently instead of colliding into
+ * one mutual annihilation.
+ *
+ * WHY NOT "ALWAYS PLANT A STILL LIFE", the other obvious fix: a block never
+ * dies, so it would guarantee survival by guaranteeing that nothing ever
+ * happens — the board would freeze into the same four cells forever, which is
+ * the exact failure attemptStir was written to prevent. Several patterns keep
+ * the automaton alive in both senses.
+ */
+export const CA_SEED_PATTERNS_PER_ARRIVAL = 5;
 
 /** Side length of the "random soup" seed pattern's bounding box. */
 export const CA_SOUP_SIZE = 5;
@@ -482,6 +534,30 @@ function chunkIndexOfCell(world: StructuresWorld, x: number, y: number): number 
  * past STRUCTURES_CAP is not placed (the CA's own births are already gated in
  * scanChunk; seeding around that gate was an oversight).
  */
+/**
+ * Does this chunk contain anywhere a structure could stand?
+ *
+ * Scanned rather than cached, and that is affordable BECAUSE of the new
+ * cadence: this runs at most once per world-day now (shouldSeed gates it), not
+ * up to twice a minute. A cache would have to be invalidated by every terrain
+ * edit — the reactive path in index.ts sees them — and buying that complexity
+ * to speed up a once-a-week scan would be the wrong trade. If seeding ever
+ * becomes frequent again, this is the line that needs the cache.
+ *
+ * Returns on the FIRST buildable cell, so a chunk with any land at all is cheap
+ * and only all-water chunks pay the full 256 probes.
+ */
+function chunkHasBuildableCell(world: StructuresWorld, cx: number, cy: number): boolean {
+  const baseX = cx * CHUNK_SIZE;
+  const baseY = cy * CHUNK_SIZE;
+  for (let dy = 0; dy < CHUNK_SIZE; dy++) {
+    for (let dx = 0; dx < CHUNK_SIZE; dx++) {
+      if (isBuildableCell(world, baseX + dx, baseY + dy)) return true;
+    }
+  }
+  return false;
+}
+
 export function attemptSeed(
   world: StructuresWorld,
   live: ReadonlyMap<number, LiveCellRecord>,
@@ -489,10 +565,20 @@ export function attemptSeed(
 ): StructureCell[] | null {
   // Fixed row-major scan, so the candidate list (and therefore the RNG-driven
   // choice) is reproducible for a given world state.
+  //
+  // THE POOL IS CHUNKS WITH SOMEWHERE TO BUILD, not merely unlocked ones
+  // (2026-08-23). An unlocked chunk is usually open water — on the live world,
+  // 19 of 429 unlocked chunks held a single buildable cell, so the old pool
+  // spent 95.6% of its attempts placing a settlement in the sea and the twelve
+  // tries below were mostly spent before one landed. Now that a world gets ONE
+  // attempt a week (see shouldSeed), an attempt that cannot succeed is not a
+  // slower world, it is a world that never repopulates.
   const unlocked: number[] = [];
   for (let cy = 0; cy < world.chunksPerEdge; cy++) {
     for (let cx = 0; cx < world.chunksPerEdge; cx++) {
-      if (world.isChunkUnlocked(cx, cy)) unlocked.push(cy * world.chunksPerEdge + cx);
+      if (world.isChunkUnlocked(cx, cy) && chunkHasBuildableCell(world, cx, cy)) {
+        unlocked.push(cy * world.chunksPerEdge + cx);
+      }
     }
   }
   if (unlocked.length === 0) return null;
@@ -505,27 +591,56 @@ export function attemptSeed(
   const settlementFree = unlocked.filter((idx) => !occupied.has(idx));
   const pool = settlementFree.length > 0 ? settlementFree : unlocked;
 
-  for (let attempt = 0; attempt < CA_SEED_MAX_PLACEMENT_ATTEMPTS; attempt++) {
-    const patternCells = choosePatternCells(rng);
-    if (live.size + patternCells.length > STRUCTURES_CAP) continue; // a smaller pattern may still fit
-    let maxDx = 0;
-    let maxDy = 0;
-    for (const [dx, dy] of patternCells) {
-      if (dx > maxDx) maxDx = dx;
-      if (dy > maxDy) maxDy = dy;
+  // ONE ARRIVAL PLANTS SEVERAL PATTERNS, in different chunks — see
+  // CA_SEED_PATTERNS_PER_ARRIVAL for why one is not enough. Each gets its own
+  // budget of placement attempts, and a pattern that cannot be placed anywhere
+  // is skipped rather than failing the whole arrival: four settlements founded
+  // is not a failed Monday.
+  //
+  // `planted` accumulates across patterns and is passed to placePatternAt as
+  // part of the occupied set, so two patterns in the same arrival can never be
+  // laid on top of each other — placePatternAt reads `live`, which does not yet
+  // contain anything this arrival placed (the caller writes them in afterwards).
+  const planted: StructureCell[] = [];
+  const claimed = new Map<number, LiveCellRecord>(live);
+  const usedChunks = new Set<number>();
+
+  for (let pattern = 0; pattern < CA_SEED_PATTERNS_PER_ARRIVAL; pattern++) {
+    // A chunk holds at most one of this arrival's patterns, so a settlement
+    // region is spread over the map rather than stacked in one corner.
+    const available = pool.filter((idx) => !usedChunks.has(idx));
+    if (available.length === 0) break;
+
+    for (let attempt = 0; attempt < CA_SEED_MAX_PLACEMENT_ATTEMPTS; attempt++) {
+      const patternCells = choosePatternCells(rng);
+      if (claimed.size + patternCells.length > STRUCTURES_CAP) break; // the board is full
+      let maxDx = 0;
+      let maxDy = 0;
+      for (const [dx, dy] of patternCells) {
+        if (dx > maxDx) maxDx = dx;
+        if (dy > maxDy) maxDy = dy;
+      }
+      if (world.worldSize <= maxDx || world.worldSize <= maxDy) continue; // too big for this world
+
+      const chunkIdx = available[Math.floor(rng.next() * available.length)]!;
+      const baseX = (chunkIdx % world.chunksPerEdge) * CHUNK_SIZE;
+      const baseY = Math.floor(chunkIdx / world.chunksPerEdge) * CHUNK_SIZE;
+      const anchorX = Math.min(baseX + Math.floor(rng.next() * CHUNK_SIZE), world.worldSize - 1 - maxDx);
+      const anchorY = Math.min(baseY + Math.floor(rng.next() * CHUNK_SIZE), world.worldSize - 1 - maxDy);
+
+      const placed = placePatternAt(world, claimed, anchorX, anchorY, patternCells);
+      if (placed === null) continue;
+
+      for (const cell of placed) claimed.set(structureKey(cell.x, cell.y), { age: 0, tier: 0 });
+      planted.push(...placed);
+      usedChunks.add(chunkIdx);
+      break;
     }
-    if (world.worldSize <= maxDx || world.worldSize <= maxDy) continue; // pattern too big for this world
-
-    const chunkIdx = pool[Math.floor(rng.next() * pool.length)];
-    const baseX = (chunkIdx % world.chunksPerEdge) * CHUNK_SIZE;
-    const baseY = Math.floor(chunkIdx / world.chunksPerEdge) * CHUNK_SIZE;
-    const anchorX = Math.min(baseX + Math.floor(rng.next() * CHUNK_SIZE), world.worldSize - 1 - maxDx);
-    const anchorY = Math.min(baseY + Math.floor(rng.next() * CHUNK_SIZE), world.worldSize - 1 - maxDy);
-
-    const placed = placePatternAt(world, live, anchorX, anchorY, patternCells);
-    if (placed !== null) return placed;
   }
-  return null;
+
+  // Null, not an empty array: the caller's contract is "a placement or
+  // nothing", and an arrival that planted nothing is nothing.
+  return planted.length > 0 ? planted : null;
 }
 
 // ── Stirring: what keeps a SETTLED board from staying frozen (owner decision

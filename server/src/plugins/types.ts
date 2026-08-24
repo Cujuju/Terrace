@@ -50,6 +50,24 @@ export interface WorldApi {
    */
   readonly difficulty: number;
 
+  /**
+   * How much simulated time this world has lived, in MILLISECONDS — the world
+   * clock, and the only one a plugin should keep.
+   *
+   * READ IT THROUGH shared/src/calendar.ts rather than dividing it by hand:
+   * `dayOfSimMillis` turns it into a world-day and `weekdayOf` names that day,
+   * which is what makes "settlers arrive on Mondays" a rule two plugins can
+   * agree on. A plugin that needs a cadence in seconds may of course keep its
+   * own float accumulator for that (structures does, for its keepalive) — what
+   * it must NOT do is derive a DAY from one, because a summed float drifts and
+   * a drifting clock moves day boundaries.
+   *
+   * Persisted with the world, so it survives a restart. Before this existed
+   * (2026-08-23) every plugin kept its own accumulator and only the chronicle
+   * saved one, which is why the sky reset to dawn on every boot.
+   */
+  readonly simMillis: number;
+
   heightAt(x: number, y: number): number;
   isCellUnlocked(x: number, y: number): boolean;
   isChunkUnlocked(cx: number, cy: number): boolean;

@@ -24,8 +24,16 @@ import {
 import { STRUCTURES_RNG_DEFAULT_SEED, type StructuresRng } from './rng.ts';
 import type { LiveCellRecord } from './life.ts';
 
-/** Schema version of this plugin's persistence slice. */
-export const STRUCTURES_SLICE_VERSION = 1;
+/**
+ * Schema version of this plugin's persistence slice.
+ *
+ * 2 as of 2026-08-23: the weekday seeding rule (life.ts's shouldSeed) needs one
+ * fact that survives a restart — which day settlers last arrived on. (How much
+ * time the world has lived is the WORLD's business now, not this plugin's:
+ * WorldApi.simMillis.) A v1 slice loads with lastSeedDay at -1, i.e. "never
+ * seeded", so the worst case is one extra Monday.
+ */
+export const STRUCTURES_SLICE_VERSION = 2;
 
 interface StoredLiveCell {
   readonly x: number;
@@ -39,12 +47,21 @@ export interface StructuresSlice {
   readonly rngState: number;
   readonly generation: number;
   readonly live: readonly StoredLiveCell[];
+  /**
+   * The world-day settlers last arrived on, or -1 for never.
+   *
+   * PERSISTED because it is what makes "once a week" once a week: without it a
+   * restart on a Monday re-arms the seeder, and a world restarted a few times
+   * in one day would be repopulated a few times in one day.
+   */
+  readonly lastSeedDay: number;
 }
 
 export function saveStructures(
   live: ReadonlyMap<number, LiveCellRecord>,
   generation: number,
   rng: StructuresRng,
+  lastSeedDay: number,
 ): StructuresSlice {
   const stored: StoredLiveCell[] = [];
   for (const [key, record] of live) {
@@ -56,6 +73,7 @@ export function saveStructures(
     rngState: rng.state(),
     generation,
     live: stored,
+    lastSeedDay,
   };
 }
 
@@ -63,6 +81,7 @@ export interface RestoredStructures {
   readonly live: Map<number, LiveCellRecord>;
   readonly generation: number;
   readonly rngState: number;
+  readonly lastSeedDay: number;
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -87,11 +106,19 @@ export function loadStructures(data: unknown): RestoredStructures {
     live: new Map(),
     generation: 0,
     rngState: STRUCTURES_RNG_DEFAULT_SEED,
+    // -1, not 0: day 0 is a real Monday, and "never seeded" must not read as
+    // "already seeded on the world's first day".
+    lastSeedDay: -1,
   };
 
   if (typeof data !== 'object' || data === null) return empty;
   const slice = data as Partial<StructuresSlice>;
-  if (slice.version !== STRUCTURES_SLICE_VERSION) return empty;
+  // A v1 slice is READ, not refused: it carries a live board and an rng state
+  // that are still valid, and only lacks the two clock fields — which default
+  // to "this world's calendar starts now". Refusing it would demolish every
+  // standing settlement in an existing world to add a weekday.
+  const legacy = slice.version === 1;
+  if (slice.version !== STRUCTURES_SLICE_VERSION && !legacy) return empty;
 
   const live = new Map<number, LiveCellRecord>();
   if (Array.isArray(slice.live)) {
@@ -111,5 +138,9 @@ export function loadStructures(data: unknown): RestoredStructures {
   const rngState =
     isNonNegativeInteger(slice.rngState) ? slice.rngState : STRUCTURES_RNG_DEFAULT_SEED;
 
-  return { live, generation, rngState };
+  const lastSeedDay = Number.isInteger(slice.lastSeedDay)
+    ? (slice.lastSeedDay as number)
+    : -1;
+
+  return { live, generation, rngState, lastSeedDay };
 }

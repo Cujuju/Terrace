@@ -236,6 +236,10 @@ export class RollbackService {
       mask: world.mask,
       pluginSlices: host.collectPersistence(),
       tokenMasks: world.tokenMasks(),
+      // A rollback rewinds the TERRAIN, never the calendar: the world does not
+      // get younger because its hills moved, and a clock that jumped backwards
+      // would replay a week of Mondays.
+      simMillis: world.simMillis,
       // Rollback writes restore points like any other saver, so it produces a
       // picture like any other saver: a rewound world must not keep wearing
       // the thumbnail of the world it was rolled away from.

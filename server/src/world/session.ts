@@ -72,6 +72,9 @@ export function snapshotIfDirty(session: WorldSession): boolean {
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
     tokenMasks: world.tokenMasks(),
+    // The world clock rides along with whatever else made this world dirty —
+    // it never dirties the world itself (World.advanceClock's doc comment).
+    simMillis: world.simMillis,
     // The heightmap is already in memory here, so the picture costs only the
     // averaging pass — the reason thumbnails are written rather than computed
     // when somebody opens the worlds panel (persistence/thumbnail.ts).
@@ -128,6 +131,7 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
       config.difficulty,
       snapshot.name,
       snapshot.tokenMasks,
+      snapshot.simMillis,
     );
     pluginSlices = snapshot.pluginSlices;
   } catch (error) {

@@ -8,6 +8,8 @@
 // Mirrors flora/test/flora.test.ts's shape.
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DAYS_PER_WEEK, isSettlingDay } from '@terrace/shared';
+import { shouldSeed } from '../server/life.ts';
 import { BAND_HEIGHT, CHUNK_SIZE, MAX_BRUSH_RADIUS, SEA_LEVEL, bandOf } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -741,6 +743,43 @@ function boot(): Harness {
   return bootOn(worldWithTerrain(WORLD_SIZE, flatOpenTerrain));
 }
 
+/**
+ * A world booted with a POPULATED board, rather than one that waits for the
+ * seeder to fill it.
+ *
+ * WHY THIS EXISTS (2026-08-23). Seeding used to be a coin flip every
+ * generation, so "advance a while and you will have structures" was reliably
+ * true and several tests below leaned on it. Under the weekday rule (life.ts's
+ * shouldSeed) a world gets ONE seed on its first Monday and no top-ups until
+ * the next one, so a soup that dies leaves the board empty for a week — correct
+ * behaviour, and a terrible foundation for a test about something else.
+ *
+ * Tests whose SUBJECT is the seeding cadence still boot empty and advance; the
+ * ones that merely need something standing use this, which also makes them
+ * deterministic rather than dependent on whether a random soup happened to
+ * survive.
+ *
+ * Two blocks and a beehive, spaced well apart on open ground: all three are
+ * B3/S23 STILL LIFES, so they persist indefinitely and none of them is within
+ * interference range of another.
+ */
+const SEEDED_BOARD: ReadonlyArray<readonly [number, number]> = [
+  // Block at (40, 40).
+  [40, 40], [41, 40], [40, 41], [41, 41],
+  // Block at (80, 80).
+  [80, 80], [81, 80], [80, 81], [81, 81],
+  // Beehive at (120, 40).
+  [121, 40], [122, 40], [120, 41], [123, 41], [121, 42], [122, 42],
+];
+
+function bootPopulated(): Harness {
+  const rng = createStructuresRng(1);
+  return bootOn(
+    worldWithTerrain(WORLD_SIZE, flatOpenTerrain),
+    saveStructures(boardOf(SEEDED_BOARD), 0, rng, -1),
+  );
+}
+
 function join(harness: Harness): void {
   harness.world.addPlayer(PLAYER);
   // Fog of war (issue #18): grant PLAYER's own token every chunk this
@@ -782,7 +821,9 @@ describe('the CA through the real host', () => {
   it(
     'every standing structure is on buildable ground and a valid tier',
     () => {
-      const harness = boot();
+      // Booted POPULATED: the subject is the invariant over whatever stands,
+      // not whether the seeder happened to fill the board (see bootPopulated).
+      const harness = bootPopulated();
       advance(harness, 15 * 60);
       const world: StructuresWorld = {
         worldSize: harness.world.size,
@@ -817,7 +858,9 @@ describe('demolition', () => {
   let harness: Harness;
 
   beforeEach(() => {
-    harness = boot();
+    // Demolition needs structures to demolish; how they got there is not this
+    // block's subject, so the board is placed rather than grown.
+    harness = bootPopulated();
     join(harness);
     advance(harness, 15 * 40);
     expect(standingStructures().length).toBeGreaterThan(0);
@@ -986,7 +1029,7 @@ describe('persistence', () => {
     rng.next();
     const live = new Map<number, LiveCellRecord>([[structureKey(10, 11), { age: 5, tier: 2 }]]);
 
-    const slice = saveStructures(live, 9, rng);
+    const slice = saveStructures(live, 9, rng, -1);
     expect(slice.version).toBe(STRUCTURES_SLICE_VERSION);
     expect(slice.generation).toBe(9);
 
@@ -1146,7 +1189,7 @@ describe('world events (structures:changes)', () => {
     const host = new PluginHost(world, [structuresPlugin, recorder].map(asLoadedPlugin));
     const rng = createStructuresRng(1);
     host.restorePersistence({
-      [STRUCTURES_PLUGIN_NAME]: saveStructures(boardOf(board), 0, rng),
+      [STRUCTURES_PLUGIN_NAME]: saveStructures(boardOf(board), 0, rng, -1),
     });
     host.worldCreate();
     return { world, host, events };
@@ -1475,5 +1518,44 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
     const live = boardOf([[9, 9], [9, 11]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(10, 10))).toBe(false);
+  });
+});
+
+
+describe('settlers arrive on Mondays, and only to an empty world', () => {
+  const EMPTY = new Map<number, LiveCellRecord>();
+  const INHABITED = new Map<number, LiveCellRecord>([[structureKey(3, 4), { age: 1, tier: 0 }]]);
+  const NEVER_SEEDED = -1;
+
+  it('seeds an empty world on a Monday', () => {
+    expect(shouldSeed(EMPTY, 0, NEVER_SEEDED)).toBe(true);
+    expect(shouldSeed(EMPTY, DAYS_PER_WEEK, NEVER_SEEDED)).toBe(true);
+  });
+
+  it('never seeds a world that still has settlements', () => {
+    // The rule is REPOPULATION, not immigration (owner, 2026-08-23). The old
+    // per-generation roll fired regardless, so a thriving board was
+    // perpetually overwritten faster than its own patterns could settle.
+    expect(shouldSeed(INHABITED, 0, NEVER_SEEDED)).toBe(false);
+  });
+
+  it('never seeds on any other day of the week', () => {
+    for (let day = 1; day < DAYS_PER_WEEK; day++) {
+      expect(shouldSeed(EMPTY, day, NEVER_SEEDED)).toBe(false);
+    }
+  });
+
+  it('seeds once per Monday, not once per generation on a Monday', () => {
+    // A day is ~96 generations. Without the lastSeedDay guard this rule would
+    // be a ninety-six-times-a-week rule for as long as the board stayed empty.
+    expect(shouldSeed(EMPTY, 7, 7)).toBe(false);
+    expect(shouldSeed(EMPTY, 14, 7)).toBe(true);
+  });
+
+  it('treats day 0 as a real Monday, so "never seeded" cannot be -1 by accident', () => {
+    // lastSeedDay defaults to -1 rather than 0 precisely so the world's first
+    // day still counts as unseeded.
+    expect(isSettlingDay(0)).toBe(true);
+    expect(shouldSeed(EMPTY, 0, 0)).toBe(false);
   });
 });
