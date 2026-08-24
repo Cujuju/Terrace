@@ -1,18 +1,22 @@
 // Does a river down a CONE get water on its risers at all? The unit tests
-// drive the apron with hand-built loops; this drives the REAL pair — the
-// region tread builder and the apron — over a terraced cone.
+// drive the riser with hand-built loops; this drives the REAL pair — the
+// region tread builder and the riser builder — over a terraced cone.
 //
 // HONEST LIMIT, stated rather than implied: this does NOT reproduce the
 // defect it was written for. The `fork` preview fixture was measured in the
 // browser emitting 1328 flat triangles and ZERO falling ones, and this test
-// passes both with the lip test that produced that and with the one that
-// replaced it. Whatever geometry defeats the classifier there, a cone built
-// this way does not have it. What this does guard is the coarse regression —
-// a change that stops falls being emitted on ordinary sloping ground.
+// passed with the apron classifier that produced that measurement as well as
+// with the one that replaced it. Whatever geometry defeated the apron there,
+// a cone built this way does not have it — which is why the riser's real
+// guarantee is contract-tested in waterRiser.test.ts and measured in the
+// browser, and why this file guards only the coarse regression: a change that
+// stops falls being emitted on ordinary sloping ground.
+//
+// RETARGETED 2026-08-23 from water/waterApron.ts to water/waterRiser.ts.
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, bandOf, cellIndex } from '@terrace/shared';
 import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
-import { appendApronSurfaces } from '../src/render/water/waterApron.ts';
+import { appendRiserSurfaces, waterPlateOf } from '../src/render/water/waterRiser.ts';
 import { createTerrainMirror } from '../src/terrain/mirror.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 
@@ -54,31 +58,21 @@ describe('a river down a cone', () => {
 
     const bandWorldY = (band: number): number => band * 0.25;
     const triangles: number[] = [];
-    for (const region of regions.values()) {
-      const loops = appendRegionSurface(mirror, region, bandWorldY(region.surfaceBand), triangles);
-      appendApronSurfaces(
-        loops,
-        bandWorldY(region.surfaceBand),
+    // Treads for every band first, then the falls — a fall is classified
+    // against a lower PLATE, so all the plates have to exist. Highest first.
+    const bands = [...regions.keys()].sort((a, b) => b - a);
+    const plates = bands.map((band) =>
+      waterPlateOf(
+        band,
+        appendRegionSurface(mirror, regions.get(band)!, bandWorldY(band), triangles),
+      ),
+    );
+    for (let i = 0; i < bands.length; i++) {
+      appendRiserSurfaces(
+        plates[i]!.loops,
+        bandWorldY(bands[i]!),
         bandWorldY,
-        (px, pz) => {
-          const ax = Math.round(px);
-          const az = Math.round(pz);
-          let best: number | null = null;
-          for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (ax + dx < 0 || az + dz < 0 || ax + dx >= WORLD || az + dz >= WORLD) continue;
-              const band = bandOfCell.get(cellIndex(mirror.map, ax + dx, az + dz));
-              if (band === undefined || band >= region.surfaceBand) continue;
-              if (best === null || band > best) best = band;
-            }
-          }
-          return best;
-        },
-        (gx, gz) => {
-          const x = Math.min(WORLD - 1, Math.max(0, Math.round(gx)));
-          const z = Math.min(WORLD - 1, Math.max(0, Math.round(gz)));
-          return bandOf(mirror.map.cells[cellIndex(mirror.map, x, z)]!) * 0.25;
-        },
+        plates.slice(i + 1),
         triangles,
       );
     }

@@ -69,7 +69,7 @@ import {
   appendRegionSurface,
   type WaterRegion,
 } from './water/waterTread.ts';
-import { appendApronSurfaces } from './water/waterApron.ts';
+import { appendRiserSurfaces, waterPlateOf, type WaterPlate } from './water/waterRiser.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
 
@@ -804,13 +804,17 @@ export function createRiverRig(
    *   3. March, smooth and triangulate each region through the terrain's own
    *      pipeline (water/waterTread.ts) — the treatment lakes already had, and
    *      the one the owner stopped complaining about.
-   *   4. Pour each region over its downstream lips with an APRON
-   *      (water/waterApron.ts) whose top row IS that region's own boundary
-   *      vertices, so the only remaining discontinuity — the vertical face
-   *      between two bands — is covered by a sheet that cannot have a seam at
-   *      its top edge, and that has a horizontal footprint, so it is visible
-   *      from above. (A strictly vertical curtain was measured invisible: 17
-   *      of them present in the `stairpools` mesh, not one of them seen.)
+   *   4. Pour each region over its downstream lips with a RISER
+   *      (water/waterRiser.ts) whose top edge IS two consecutive vertices of
+   *      that region's own boundary, so the only remaining discontinuity —
+   *      the vertical face between two bands — is covered by a sheet that
+   *      cannot have a seam at its top edge, and that leans out far enough to
+   *      have a horizontal footprint, so it is visible from above. (A strictly
+   *      vertical curtain was measured invisible: 17 of them present in the
+   *      `stairpools` mesh, not one of them seen.) The riser emits PER SEGMENT
+   *      of the boundary, classified by a single lookup in `bandOfCell`;
+   *      2026-08-23 replaced the run-based, per-vertex-normal APRON that stood
+   *      here, which could not see a one-vertex lip at all.
    */
   const rebuild = (mirror: TerrainMirror): void => {
     const network = computeRiverNetwork(mirror.map, {
@@ -888,49 +892,35 @@ export function createRiverRig(
     };
 
     const triangles: number[] = [];
-    for (const region of regions.values()) {
-      const surfaceY = bandWorldY(region.surfaceBand);
-      const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
-      appendApronSurfaces(
-        loops,
-        surfaceY,
+
+    // PASS THREE: every region's TREAD, before any riser. A riser's qualifying
+    // test is "does a lower region's PLATE cover the point just outside this
+    // segment" (water/waterRiser.ts), and a plate is exactly the smoothed loops
+    // the tread builder returns — so all of them have to exist before the first
+    // fall can be classified.
+    //
+    // BAND ORDER IS EXPLICIT, not the Map's insertion order. Insertion order is
+    // the order cells came off the courses, which is a property of the trace;
+    // pinning it to the band index makes the triangle soup a function of the
+    // heightmap alone.
+    const bands = [...regions.keys()].sort((a, b) => b - a);
+    const plates: WaterPlate[] = [];
+    for (const band of bands) {
+      const region = regions.get(band)!;
+      const loops = appendRegionSurface(mirror, region, bandWorldY(band), triangles);
+      plates.push(waterPlateOf(band, loops));
+    }
+
+    // PASS FOUR: the risers. `plates` is already highest band first, so the
+    // slice below is every band strictly under this one, in the order the riser
+    // wants to try them — the first that covers the probe is the highest water
+    // really there, which is the one terrace step down.
+    for (let i = 0; i < bands.length; i++) {
+      appendRiserSurfaces(
+        plates[i]!.loops,
+        bandWorldY(bands[i]!),
         bandWorldY,
-        // Contour coordinates are in CELLS, and a cell's own coordinate is its
-        // centre, so the cell a probe point lands in is the nearest integer.
-        // IS THERE LOWER WATER AROUND THIS POINT — the question a fall
-        // actually turns on. A contour point sits on a cell BOUNDARY, so the
-        // water it is about to pour onto can be in any of the cells that
-        // boundary touches; asking in one direction only was what left the
-        // `fork` fixture with no falls at all. The HIGHEST such band wins, so
-        // the fall drops one terrace onto water that is really there and the
-        // region it lands on carries the cascade on down.
-        //
-        // An apron pours onto WATER BELOW, never onto dry ground: where there
-        // is none, the region simply ends on the terrain's own contour, which
-        // is the approved lake-rim behaviour.
-        (probeX, probeZ) => {
-          const atX = Math.round(probeX);
-          const atZ = Math.round(probeZ);
-          let best: number | null = null;
-          for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const band = waterBandAt(atX + dx, atZ + dz);
-              if (band === null || band >= region.surfaceBand) continue;
-              if (best === null || band > best) best = band;
-            }
-          }
-          return best;
-        },
-        // The DRAWN ground under a point of the fall, so the sheet steps down
-        // the terraces instead of cutting a flat plane through them.
-        // Band-quantised and lifted exactly as the water surfaces are, so
-        // water resting on a tread sits level with the water already on it.
-        (groundX, groundZ) => {
-          const size = mirror.map.size;
-          const gx = Math.min(size - 1, Math.max(0, Math.round(groundX)));
-          const gz = Math.min(size - 1, Math.max(0, Math.round(groundZ)));
-          return quantizeToBandWorldY(mirror, gx, gz) + RIVER_SURFACE_LIFT_WORLD_UNITS;
-        },
+        plates.slice(i + 1),
         triangles,
       );
     }

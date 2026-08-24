@@ -412,6 +412,21 @@ function query<T extends string>(name: string, allowed: readonly T[], fallback: 
 
 const sceneName = query('scene', ['fork', 'meander', 'terrace', 'basin', 'stairpools'] as const, 'fork');
 const view = query('view', ['iso', 'side', 'top'] as const, 'iso');
+/**
+ * `?dir=x,y,z` — an arbitrary camera direction, for looking at the water from
+ * angles the three named views do not cover. Verification of a 3D surface has
+ * to be able to walk around it; three fixed vectors cannot show a sheet that
+ * is only wrong from one side. Malformed or zero-length input falls back to
+ * the named `view`.
+ */
+const dirOverride = ((): Vector3 | null => {
+  const raw = new URLSearchParams(window.location.search).get('dir');
+  if (raw === null) return null;
+  const parts = raw.split(',').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  const v = new Vector3(parts[0], parts[1], parts[2]);
+  return v.lengthSq() > 0 ? v.normalize() : null;
+})();
 const zoom = Number(new URLSearchParams(window.location.search).get('zoom') ?? '1') || 1;
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
@@ -474,7 +489,9 @@ const centre = new Vector3(
 );
 const span = PREVIEW_WORLD_SIZE * CELL_WORLD_SIZE;
 const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.1, 4000);
-camera.position.copy(centre).addScaledVector(CAMERA_VIEWS[view as CameraView], span * 0.85 * zoom);
+camera.position
+  .copy(centre)
+  .addScaledVector(dirOverride ?? CAMERA_VIEWS[view as CameraView], span * 0.85 * zoom);
 camera.lookAt(centre);
 
 let frames = 0;
@@ -486,6 +503,42 @@ function animate(): void {
   if (frames === SETTLE_FRAME_COUNT) {
     (window as unknown as { __previewReady?: boolean }).__previewReady = true;
     (window as unknown as { __previewScene?: unknown }).__previewScene = scene;
+    /**
+     * `__previewPixelsAtWorld(points)` — the RENDERED colour, as [r,g,b,a] in
+     * 0..255, of the pixel each world point projects to.
+     *
+     * The water is one transparent material with `depthWrite: false`
+     * (render/riverRig.ts), so water NEVER occludes water: two water surfaces
+     * over the same pixel blend twice and come out darker than either. Nothing
+     * in the geometry probes can see that — it is a shading fact, not a
+     * position fact — and the only honest way to bound how far a fall may lean
+     * over the plate it lands on is to read the pixels back and compare.
+     *
+     * Renders synchronously before reading so the back buffer is valid (the
+     * context has no `preserveDrawingBuffer`; the rAF frame's buffer is gone by
+     * the time a probe runs). GL's origin is bottom-left, the projection's is
+     * centre, hence the flip.
+     */
+    (window as unknown as { __previewPixelsAtWorld?: unknown }).__previewPixelsAtWorld = (
+      points: readonly (readonly [number, number, number])[],
+    ): number[][] => {
+      // ONE render for the whole batch. A render under SwiftShader costs
+      // hundreds of milliseconds, so a probe that rendered per point could not
+      // sample enough of a course to say anything.
+      renderer.render(scene, camera);
+      const gl = renderer.getContext();
+      const width = gl.drawingBufferWidth;
+      const height = gl.drawingBufferHeight;
+      const pixel = new Uint8Array(4);
+      return points.map(([worldX, worldY, worldZ]) => {
+        const ndc = new Vector3(worldX, worldY, worldZ).project(camera);
+        const px = Math.round((ndc.x * 0.5 + 0.5) * width);
+        const py = Math.round((ndc.y * 0.5 + 0.5) * height);
+        if (px < 0 || py < 0 || px >= width || py >= height) return [-1, -1, -1, -1];
+        gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return [pixel[0]!, pixel[1]!, pixel[2]!, pixel[3]!];
+      });
+    };
     // Debug probe: the height the terrain ACTUALLY renders at a world XZ,
     // found by raycasting the built mesh — the ground truth a ribbon's own
     // height rule has to agree with.
