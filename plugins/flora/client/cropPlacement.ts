@@ -43,6 +43,11 @@ export function cropPlacementsFor(
     placements.push({
       x: cell.x * CELL_WORLD_SIZE,
       z: cell.y * CELL_WORLD_SIZE,
+      // The cell itself travels with the placement: cropModels.ts rolls each
+      // stalk's own yaw, height and wander from integer CELL coordinates, and
+      // x/z above are world units — see CropPlacement.cellX.
+      cellX: cell.x,
+      cellY: cell.y,
       groundY,
       scale: variation.scale,
       yaw: variation.yaw,

@@ -29,11 +29,16 @@
 // the unit a thing is authored in is not the unit it is drawn in. Every
 // staging geometry is disposed inside its builder before return.
 //
-// FOOTPRINT IS NOT NEGOTIATED HERE. The bed's size comes from protocol.ts
-// (CROP_PLOT_BED_CELL_COVERAGE) and the four-stalk cluster keeps
-// cropModels.ts's exact offsets, so whichever variant wins drops into the
-// existing apply() loop untouched. Each variant's horizontal reach is
-// asserted against its bed at load, mirroring cropModels.ts's guard.
+// FOOTPRINT IS NOT NEGOTIATED HERE. The plot's span and the four-stalk
+// planting both come from protocol.ts (CROP_PLOT_CLUSTER_CELL_SPAN,
+// CROP_STALK_OFFSETS), so whichever variant is drawn drops into the renderer's
+// apply() loop untouched. Each variant's horizontal reach is asserted against
+// that plot at load.
+//
+// OPTION 2 SHIPS (owner, 2026-08-24). Harvest-heavy is what a crop plot draws
+// as; the other two stay for the preview harness and as the start of a variant
+// set if crops ever roll one per cell the way fishing huts do. Its leaves came
+// off with the tilled bed in the same pass — see buildHarvestWheat.
 
 import {
   BoxGeometry,
@@ -48,7 +53,11 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { CROP_PLOT_BED_CELL_COVERAGE } from '../protocol.ts';
+import {
+  CROP_PLOT_CLUSTER_CELL_SPAN,
+  CROP_STALK_JITTER_IN_CLUSTER_SPANS,
+  CROP_STALK_OFFSET_IN_CLUSTER_SPANS,
+} from '../protocol.ts';
 
 // ── Shared dimensions ─────────────────────────────────────────────────────
 
@@ -58,16 +67,14 @@ const cells = (n: number): number => n * CELL_WORLD_SIZE;
 /** Identity transform reused by placements that need none. */
 const IDENTITY_MATRIX = new Matrix4();
 
-/** The bed this cluster must fit on. NOT chosen here — see the file banner. */
-const BED_WIDTH_IN_CELLS = CROP_PLOT_BED_CELL_COVERAGE;
+/** The plot this cluster must fit inside. NOT chosen here — see the file banner. */
+const CLUSTER_SPAN_IN_CELLS = CROP_PLOT_CLUSTER_CELL_SPAN;
 
 /**
- * Stalk offsets copied VERBATIM from cropModels.ts: a 2×2 spread at 0.22 of
- * the bed's edge. The owner is choosing a stalk SHAPE, not a planting layout,
- * so the layout does not vary between variants — any difference between the
- * three screenshots is then attributable to the stalk alone.
+ * The planting, from protocol.ts. The variants differ in stalk SHAPE, never in
+ * layout, so any difference between two of them is attributable to the plant.
  */
-const STALK_OFFSET_IN_BED_EDGES = 0.22;
+const STALK_OFFSET_IN_CLUSTER_SPANS = CROP_STALK_OFFSET_IN_CLUSTER_SPANS;
 
 /**
  * Radial segments shared by every stem segment and cob in every variant:
@@ -96,20 +103,28 @@ const LEAF_HORIZONTAL_REACH_IN_CELLS =
   BLADE_LENGTH_IN_CELLS * Math.cos(LEAF_DROOP_RADIANS);
 
 /**
- * The cluster's reach from plot centre for one variant: the offset diagonal
- * plus the LARGER of the leaf run and that variant's head run. Asserted
+ * The cluster's reach from plot centre for one variant: the planted corner
+ * plus that variant's own widest horizontal part, which each caller supplies
+ * (the leaf run for the two leafed variants, the nodded head for the leafless
+ * one). Asserted
  * against half the bed at load — cropModels.ts makes the identical assertion
  * about its own stalk, and for the same reason: every input is a constant, so
  * this either always holds or never does, and wheat hanging off its own soil
  * is a defect visible from the first frame.
  */
 function assertClusterFitsBed(headHorizontalReachInCells: number, label: string): void {
-  const clusterReach =
-    STALK_OFFSET_IN_BED_EDGES * BED_WIDTH_IN_CELLS * Math.SQRT2 +
-    Math.max(LEAF_HORIZONTAL_REACH_IN_CELLS, headHorizontalReachInCells);
-  if (clusterReach > BED_WIDTH_IN_CELLS / 2) {
+  // The jitter term is why this is a bound and not a measurement: a stalk is
+  // planted at its lattice point PLUS a per-stalk wander (protocol.ts's
+  // cropStalkVariation), so the worst case is the outermost lattice corner
+  // pushed further out along both axes at once.
+  const plantedCornerInCells =
+    (STALK_OFFSET_IN_CLUSTER_SPANS + CROP_STALK_JITTER_IN_CLUSTER_SPANS) *
+    CLUSTER_SPAN_IN_CELLS *
+    Math.SQRT2;
+  const clusterReach = plantedCornerInCells + headHorizontalReachInCells;
+  if (clusterReach > CLUSTER_SPAN_IN_CELLS / 2) {
     throw new RangeError(
-      `${label} wheat stalks reach ${clusterReach} cells, past the ${BED_WIDTH_IN_CELLS / 2}-cell edge of their own bed`,
+      `${label} wheat stalks reach ${clusterReach} cells, past the ${CLUSTER_SPAN_IN_CELLS / 2}-cell edge of their own bed`,
     );
   }
 }
@@ -581,10 +596,18 @@ function buildHarvestWheat(): WheatStalkGeometries {
   const m = new Matrix4();
   const q = new Quaternion();
 
+  // NO LEAVES (owner, 2026-08-24: "make the arm-like appendages go away").
+  // buildLeaves attaches blades as thin slabs at a fixed droop, and at this
+  // size they read as straight arms stuck out at right angles rather than as
+  // anything botanical — the one thing every reviewer noticed in the three
+  // option renders. A bare culm under a heavy head is also the truer harvest
+  // silhouette: by the time wheat sags like this its lower leaves have dried
+  // off. The other two variants keep theirs; this is not a shared change.
+  //
   // Arcing stem: each segment is placed rotated by the cumulative bend, and
   // translated along the PREVIOUS direction, so the stem sweeps through a
   // real curve rather than kinking at joints (that is option 0's trick).
-  const stalkParts: BufferGeometry[] = [...buildLeaves(stemHeight)];
+  const stalkParts: BufferGeometry[] = [];
   const position = new Vector3(0, 0, 0);
   const direction = new Vector3(0, 1, 0);
   let cumulativeBend = 0;
@@ -685,13 +708,11 @@ function buildHarvestWheat(): WheatStalkGeometries {
   for (const part of earParts) part.applyMatrix4(headPivot);
 
   assertClusterFitsBed(
-    Math.max(
-      LEAF_HORIZONTAL_REACH_IN_CELLS,
-      // Head run: stem top's own lateral drift plus the nodded ear beyond it.
-      // position is in world units, i.e. `cells(…)` numbers — convert back.
-      Math.abs(position.x) / CELL_WORLD_SIZE +
-        earLength * Math.sin(cumulativeBend + HEAVY_HEAD_NOD_RADIANS),
-    ),
+    // No leaf term: this variant has no leaves, so its head IS its widest
+    // part — the stem top's own lateral drift plus the nodded ear beyond it.
+    // `position` is in world units, i.e. `cells(…)` numbers — convert back.
+    Math.abs(position.x) / CELL_WORLD_SIZE +
+      earLength * Math.sin(cumulativeBend + HEAVY_HEAD_NOD_RADIANS),
     'harvest',
   );
 
@@ -715,3 +736,13 @@ export const WHEAT_VARIANT_NAMES: ReadonlyArray<string> = [
   'Bearded barley',
   'Harvest-heavy',
 ];
+
+/**
+ * Which variant a crop plot actually draws as (owner's pick, 2026-08-24).
+ *
+ * An INDEX into the arrays above rather than a direct export of the builder,
+ * so the shipped model and the previewed model can never drift apart: the
+ * preview harness reaches the same builder through the same array, and there
+ * is one place to change when the pick changes.
+ */
+export const SHIPPED_WHEAT_VARIANT = 2;

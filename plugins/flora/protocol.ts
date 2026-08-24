@@ -460,6 +460,139 @@ export function cropVariation(x: number, y: number): CropVariation {
   };
 }
 
+/**
+ * Where the stalks of one plot are planted, as fractions of the cluster span,
+ * and therefore how many there are.
+ *
+ * HERE RATHER THAN IN cropModels.ts because three modules now have to agree on
+ * it: the renderer that instances the stalks, wheatVariants.ts (which asserts
+ * each variant's own reach against the plot it has to fit inside), and the
+ * preview harness that has to draw exactly what the game draws. It shipped as
+ * three copies of "0.22" for one afternoon, which is one afternoon longer than
+ * shared/src/traversal.ts's header suggests such things survive.
+ *
+ * FOUR, in a square: the fewest that reads as a clump rather than as isolated
+ * dots at the game's camera distance, and a small fixed multiple of
+ * FLORA_CROP_CAP for the instance buffers. They are fractions of the SPAN, not
+ * of a cell and not world units, so changing how big a plot is moves the
+ * planting with it and no stalk can be left standing outside its own plot.
+ */
+export const CROP_STALK_OFFSET_IN_CLUSTER_SPANS = 0.19;
+
+export const CROP_STALK_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [-CROP_STALK_OFFSET_IN_CLUSTER_SPANS, -CROP_STALK_OFFSET_IN_CLUSTER_SPANS],
+  [CROP_STALK_OFFSET_IN_CLUSTER_SPANS, -CROP_STALK_OFFSET_IN_CLUSTER_SPANS],
+  [-CROP_STALK_OFFSET_IN_CLUSTER_SPANS, CROP_STALK_OFFSET_IN_CLUSTER_SPANS],
+  [CROP_STALK_OFFSET_IN_CLUSTER_SPANS, CROP_STALK_OFFSET_IN_CLUSTER_SPANS],
+];
+
+export const CROP_STALKS_PER_PLOT = CROP_STALK_OFFSETS.length;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-STALK VARIATION (owner, 2026-08-24: "so it looks more organic")
+//
+// cropVariation above rolls the whole PLOT — one yaw and one scale applied to
+// the cluster as a unit. That was enough while a plot was a tilled bed with
+// four identical stalks standing on it in a rigid 2×2: the bed's own square
+// declared the grid, so the grid read as deliberate. With the bed gone the
+// grid is all that is left, and four identical clones on perfect lattice
+// points read as manufactured rather than grown.
+//
+// So each stalk of a plot gets its own roll on top of its plot's: a yaw so no
+// two face the same way, a height so the cluster has a skyline, and a nudge
+// off its lattice point so the four are not a perfect square. Together they
+// are the difference between "four copies of a model" and "a clump of wheat".
+//
+// STILL FREE, ON THE WIRE AND IN DRAW CALLS. Stalks are already instanced, so
+// a per-stalk matrix costs nothing a per-plot matrix did not — this is
+// variation bought with arithmetic rather than with geometry, which is the
+// same trade treeVariation makes for a forest.
+//
+// DERIVED FROM THE CELL AND THE STALK INDEX, integer-only, so every client
+// draws the same clump on the same cell: two players looking at the same field
+// must see the same field, exactly as fishingHuts.ts argues for its variant
+// roll and for the same reason.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Salt for the per-stalk roll.
+ *
+ * cropVariation has already spent this cell's hash — the low byte on scale and
+ * the next sixteen bits on yaw — and a stalk needs three more values that must
+ * not correlate with either (a taller stalk should be no more likely to lean a
+ * particular way). Rather than carve up what is left, the roll re-avalanches
+ * the cell hash through a second mixing function seeded with this constant,
+ * the same move fishingHuts.ts's FISHING_HUT_ROLL_SALT makes for the same
+ * reason. 0x9e3779b1 is the 32-bit golden-ratio odd constant, the conventional
+ * choice for "mix again, differently".
+ */
+const CROP_STALK_ROLL_SALT = 0x9e3779b1;
+
+/** How much shorter or taller than its plot one stalk may be, as a fraction. */
+export const CROP_STALK_HEIGHT_SPREAD = 0.22;
+
+/**
+ * How far a stalk may wander off its lattice point, as a fraction of the
+ * cluster span.
+ *
+ * Bounded rather than free, and the bound is not decorative: the wander adds
+ * straight onto CROP_STALK_OFFSET_IN_CLUSTER_SPANS in the worst case, and the
+ * two together plus the plant's own widest part have to fit inside half a
+ * cluster span — wheatVariants.ts asserts exactly that at load, per variant.
+ * So this number and the offset above are spending one budget between them,
+ * and pushing either up means pushing the other down or shortening the plant.
+ * At 0.03 the four stalks visibly break formation while the widest of the
+ * three variants still clears its bound with room in hand.
+ */
+export const CROP_STALK_JITTER_IN_CLUSTER_SPANS = 0.03;
+
+/** Everything that makes one stalk of a plot its own plant. */
+export interface CropStalkVariation {
+  /** Yaw about Y, radians, in [0, 2π) — this stalk's own facing. */
+  readonly yaw: number;
+  /** Height multiplier, in [1 − CROP_STALK_HEIGHT_SPREAD, 1 + CROP_STALK_HEIGHT_SPREAD]. */
+  readonly height: number;
+  /** Offset from the lattice point, in cluster spans, each in ±CROP_STALK_JITTER_IN_CLUSTER_SPANS. */
+  readonly jitterX: number;
+  readonly jitterZ: number;
+}
+
+/**
+ * A second, independent 32-bit hash of a cell, mixed once more per stalk
+ * INDEX so the four stalks of one plot roll differently from each other.
+ * Math.imul throughout — integer-only, so every JS engine agrees bit for bit.
+ */
+function cropStalkHash(x: number, y: number, index: number): number {
+  let h = (hashCell(x, y) ^ CROP_STALK_ROLL_SALT) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (index + 1), 0x846ca68b);
+  return ((h ^ (h >>> 16)) >>> 0);
+}
+
+/** Bits per jitter axis. 8 → 256 positions across the wander, far finer than the eye. */
+const JITTER_BITS = 8;
+const JITTER_DIVISOR = 1 << JITTER_BITS;
+
+/**
+ * The deterministic variation for stalk `index` of the plot at (x, y). Four
+ * independent bit slices of one hash, so height does not correlate with facing
+ * and neither correlates with which way the stalk drifted.
+ */
+export function cropStalkVariation(x: number, y: number, index: number): CropStalkVariation {
+  const hash = cropStalkHash(x, y, index);
+  const yawRoll = hash & (YAW_DIVISOR - 1);
+  const heightRoll = (hash >>> 16) & 0xff;
+  const jitterXRoll = (hash >>> 8) & (JITTER_DIVISOR - 1);
+  const jitterZRoll = (hash >>> 24) & (JITTER_DIVISOR - 1);
+  const centred = (roll: number): number => (roll / (JITTER_DIVISOR - 1)) * 2 - 1;
+  return {
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+    height: 1 + centred(heightRoll) * CROP_STALK_HEIGHT_SPREAD,
+    jitterX: centred(jitterXRoll) * CROP_STALK_JITTER_IN_CLUSTER_SPANS,
+    jitterZ: centred(jitterZRoll) * CROP_STALK_JITTER_IN_CLUSTER_SPANS,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THE ONE IMPORT. This file is otherwise dependency-free by design (see the
 // banner) and it stays that way in spirit: @terrace/shared is the single source
@@ -488,10 +621,17 @@ import { CONTOUR_CELL_CENTRE_GUARD } from '@terrace/shared';
 // changed size and the placement rule had no way to notice.
 //
 // So the footprint is stated ONCE, in CELLS, in the file both halves already
-// import: the lattice states how far a plot may reach, the bed's size is
+// import: the lattice states how far a plot may reach, the cluster's span is
 // DERIVED from that reach, and the client's geometry is derived in turn. A
 // plot that would overlap its neighbours or overhang its ground is no longer
 // something the code can express, so nothing downstream has to filter for it.
+//
+// THE TILLED BED IS GONE (owner, 2026-08-24: "get rid of the brown plot on the
+// bottom, so it looks more organic"). A plot used to be a brown box with wheat
+// standing on it, and the box WAS the footprint. It is now four stalks growing
+// straight out of the terrain, so the footprint is the stalk CLUSTER's own
+// square instead — the same number playing the same role, which is why the
+// constant below is a span and not a bed.
 //
 // IN CELLS, NOT WORLD UNITS, so this file stays dependency-free (see the
 // banner). The one multiply by CELL_WORLD_SIZE happens in the client, at the
@@ -502,7 +642,7 @@ import { CONTOUR_CELL_CENTRE_GUARD } from '@terrace/shared';
  * Half the diagonal of a unit square, i.e. the factor turning a square's EDGE
  * into its CIRCUMRADIUS — the distance from its centre to a corner.
  *
- * This factor is the whole reason the bed is not simply "0.82 of a cell". A
+ * This factor is the whole reason the span is not simply "0.82 of a cell". A
  * plot is a square that cropVariation's yaw roll can turn to ANY angle, so the
  * bound on how far it reaches from its own centre is set by its corners, never
  * by its edges: a square rotated 45° covers 41% more distance in X and Z than
@@ -529,16 +669,20 @@ const SQUARE_CIRCUMRADIUS_PER_EDGE = Math.SQRT2 / 2;
 export const CROP_PLOT_MAX_REACH_CELLS = 0.5;
 
 /**
- * How wide the tilled bed of one plot is, as a fraction of a CELL edge —
- * DERIVED from the reach bound above rather than chosen, so a plot cannot be
- * authored into overlapping its neighbours.
+ * The square one plot's stalk cluster is planted in, as a fraction of a CELL
+ * edge — DERIVED from the reach bound above rather than chosen, so a plot
+ * cannot be authored into overlapping its neighbours.
  *
  * Read it as: the largest square that, turned to its worst angle and rolled to
  * its largest scale (CROP_SCALE_MAX — the scale roll multiplies the whole
  * model, so the bound has to hold for the biggest roll, not the average one),
  * still fits inside the cell it stands on. Works out at ~0.61 of a cell.
+ *
+ * The client plants stalks at fractions of THIS span and measures each stalk's
+ * own reach against it, so "how big is a plot" has one answer no matter what
+ * the plant on it looks like.
  */
-export const CROP_PLOT_BED_CELL_COVERAGE =
+export const CROP_PLOT_CLUSTER_CELL_SPAN =
   CROP_PLOT_MAX_REACH_CELLS / (SQUARE_CIRCUMRADIUS_PER_EDGE * CROP_SCALE_MAX);
 
 /**
@@ -589,10 +733,10 @@ export const CROP_PLOT_TREAD_RING_CELLS = Math.max(
  * it stands on is always at least as large as the model standing on it.
  */
 if (
-  CROP_PLOT_BED_CELL_COVERAGE * CROP_SCALE_MAX * SQUARE_CIRCUMRADIUS_PER_EDGE >
+  CROP_PLOT_CLUSTER_CELL_SPAN * CROP_SCALE_MAX * SQUARE_CIRCUMRADIUS_PER_EDGE >
   CROP_PLOT_MAX_REACH_CELLS
 ) {
   throw new RangeError(
-    `a crop plot of ${CROP_PLOT_BED_CELL_COVERAGE} cells reaches past ${CROP_PLOT_MAX_REACH_CELLS} cells and would overlap its neighbours`,
+    `a crop plot of ${CROP_PLOT_CLUSTER_CELL_SPAN} cells reaches past ${CROP_PLOT_MAX_REACH_CELLS} cells and would overlap its neighbours`,
   );
 }

@@ -25,9 +25,14 @@ import {
   grantTokenEveryUnlockedChunk,
 } from '../../../server/test/support/harness.ts';
 import {
-  CROP_PLOT_BED_CELL_COVERAGE,
+  CROP_PLOT_CLUSTER_CELL_SPAN,
   CROP_PLOT_MAX_REACH_CELLS,
   CROP_PLOT_TREAD_RING_CELLS,
+  CROP_STALKS_PER_PLOT,
+  CROP_STALK_HEIGHT_SPREAD,
+  CROP_STALK_JITTER_IN_CLUSTER_SPANS,
+  CROP_STALK_OFFSET_IN_CLUSTER_SPANS,
+  cropStalkVariation,
   CROP_SCALE_MAX,
   CROP_SCALE_MIN,
   cropVariation,
@@ -1119,11 +1124,12 @@ describe('crops through the real host (card 28)', () => {
 describe('crop plot footprint (card 28)', () => {
   /**
    * How far the plot's furthest point sits from its own centre, in cells, at a
-   * given scale roll. The bed is a SQUARE the yaw roll may turn to any angle,
-   * so its reach is its circumradius — half its diagonal — never half its edge.
+   * given scale roll. The cluster occupies a SQUARE the yaw roll may turn to
+   * any angle, so its reach is that square's circumradius — half its diagonal
+   * — never half its edge.
    */
   function reachAtScale(scale: number): number {
-    return (CROP_PLOT_BED_CELL_COVERAGE * scale * Math.SQRT2) / 2;
+    return (CROP_PLOT_CLUSTER_CELL_SPAN * scale * Math.SQRT2) / 2;
   }
 
   it('never reaches past half a cell, at the LARGEST scale roll and the worst yaw', () => {
@@ -1144,8 +1150,8 @@ describe('crop plot footprint (card 28)', () => {
     // floor with no arbitrary number in it: even the SMALLEST scale roll must
     // cover more than half its cell edge, so the bare gap between two
     // neighbouring plots is always narrower than the plots themselves.
-    const smallestBedEdgeInCells = CROP_PLOT_BED_CELL_COVERAGE * CROP_SCALE_MIN;
-    expect(smallestBedEdgeInCells).toBeGreaterThan(1 - smallestBedEdgeInCells);
+    const smallestSpanInCells = CROP_PLOT_CLUSTER_CELL_SPAN * CROP_SCALE_MIN;
+    expect(smallestSpanInCells).toBeGreaterThan(1 - smallestSpanInCells);
   });
 
   it('every scale roll the hash can produce obeys the bound', () => {
@@ -1158,5 +1164,70 @@ describe('crop plot footprint (card 28)', () => {
         );
       }
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-STALK VARIATION (owner, 2026-08-24: "so it looks more organic")
+//
+// The properties a field's look actually rests on, not the numbers: every
+// stalk of a plot differs from its siblings, no stalk leaves the plot, and the
+// whole thing is reproducible so two players see the same field.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('per-stalk variation (card 28)', () => {
+  const STALK_INDICES = Array.from({ length: CROP_STALKS_PER_PLOT }, (_, i) => i);
+
+  it('gives the four stalks of one plot four different rolls', () => {
+    // The whole point: four identical stalks on lattice points read as copies.
+    const rolls = STALK_INDICES.map((i) => cropStalkVariation(7, 11, i));
+    expect(new Set(rolls.map((r) => r.yaw)).size).toBe(CROP_STALKS_PER_PLOT);
+    expect(new Set(rolls.map((r) => r.height)).size).toBe(CROP_STALKS_PER_PLOT);
+  });
+
+  it('gives neighbouring plots different clumps', () => {
+    // A field is many plots; if the roll ignored the cell, every plot would be
+    // the same clump repeated and the grid would come straight back.
+    const here = cropStalkVariation(7, 11, 0);
+    expect(cropStalkVariation(8, 11, 0).yaw).not.toBe(here.yaw);
+    expect(cropStalkVariation(7, 12, 0).yaw).not.toBe(here.yaw);
+  });
+
+  it('is deterministic — the same cell and index roll identically every call', () => {
+    // Two players looking at the same field must see the same field; this is
+    // also what lets the preview harness pin a cell and get a stable capture.
+    for (const i of STALK_INDICES) {
+      const first = cropStalkVariation(7, 11, i);
+      for (let n = 0; n < 50; n++) expect(cropStalkVariation(7, 11, i)).toEqual(first);
+    }
+  });
+
+  it('keeps every roll inside its declared bounds, over a whole board of cells', () => {
+    // The bounds are not decorative: wheatVariants.ts asserts each variant's
+    // reach against the plot using exactly CROP_STALK_JITTER_IN_CLUSTER_SPANS
+    // as the worst-case wander, so a roll outside it would put wheat off its
+    // own plot without tripping that guard.
+    for (let x = 0; x < 48; x++) {
+      for (let y = 0; y < 48; y++) {
+        for (const i of STALK_INDICES) {
+          const roll = cropStalkVariation(x, y, i);
+          expect(roll.yaw).toBeGreaterThanOrEqual(0);
+          expect(roll.yaw).toBeLessThan(Math.PI * 2);
+          expect(Math.abs(roll.height - 1)).toBeLessThanOrEqual(CROP_STALK_HEIGHT_SPREAD);
+          expect(Math.abs(roll.jitterX)).toBeLessThanOrEqual(CROP_STALK_JITTER_IN_CLUSTER_SPANS);
+          expect(Math.abs(roll.jitterZ)).toBeLessThanOrEqual(CROP_STALK_JITTER_IN_CLUSTER_SPANS);
+        }
+      }
+    }
+  });
+
+  it('plants every stalk, at its worst wander, inside the plot it belongs to', () => {
+    // The planted corner alone, before any plant is put on it: offset plus
+    // wander, on the diagonal, must still leave room inside half the span.
+    const plantedCorner =
+      (CROP_STALK_OFFSET_IN_CLUSTER_SPANS + CROP_STALK_JITTER_IN_CLUSTER_SPANS) *
+      CROP_PLOT_CLUSTER_CELL_SPAN *
+      Math.SQRT2;
+    expect(plantedCorner).toBeLessThan(CROP_PLOT_CLUSTER_CELL_SPAN / 2);
   });
 });
