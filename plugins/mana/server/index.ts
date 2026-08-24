@@ -331,6 +331,46 @@ export const MIN_MANA_REGEN_PER_SECOND =
 /** Fastest rate a deployment may configure. See MIN_FULL_REFILL_S. */
 export const MAX_MANA_REGEN_PER_SECOND = MANA_CAPACITY / MIN_FULL_REFILL_S;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TEMPORARY: INSTANT REGEN FOR SCULPT TESTING (owner, 2026-08-24).
+//
+// THIS IS SCAFFOLDING AND IT IS MEANT TO COME OUT. It exists so the layer-edge
+// Pull tool can be exercised without the economy interrupting, and it must be
+// removed once that work is done — tracked as its own issue so it cannot be
+// forgotten in a comment nobody reads.
+//
+// WHY AN ENV FLAG RATHER THAN AN EDITED CONSTANT. Re-tuning
+// MANA_REGEN_AT_DIFFICULTY_1 or MANA_CAPACITY would change what the shipped
+// game is balanced at, and a test setting that lives in the same numbers the
+// balance does is a test setting that eventually ships. A flag defaults to off,
+// changes nothing for anyone who does not set it, and deleting it is a
+// mechanical change rather than a judgement about what the numbers should be.
+//
+// WHY NOT MANA_REGEN_PER_S, which already exists. That value is clamped into
+// [MIN_MANA_REGEN_PER_SECOND, MAX_MANA_REGEN_PER_SECOND], and the ceiling is a
+// one-second full refill by design — deliberately short of "never runs out",
+// which is the property the sculpt testing actually needs. Raising the clamp to
+// reach it would move a bound that states what rates the economy still works
+// at, for a reason that has nothing to do with the economy.
+
+/**
+ * Environment variable that makes every pool regenerate instantly: set to '1',
+ * 'true' or 'yes' and no player ever runs out of mana.
+ */
+export const MANA_INSTANT_REGEN_ENV = 'MANA_INSTANT_REGEN';
+
+/** The values that turn it on. Anything else — including unset — leaves it off. */
+const MANA_INSTANT_REGEN_TRUTHY = new Set(['1', 'true', 'yes']);
+
+/** Whether instant regen is on for this process. Read once: it is a launch switch. */
+export function instantRegenEnabled(raw: string | undefined): boolean {
+  return raw !== undefined && MANA_INSTANT_REGEN_TRUTHY.has(raw.trim().toLowerCase());
+}
+
+/** Logged on startup so a world running with the test switch on says so. */
+export const MANA_INSTANT_REGEN_WARNING =
+  `[mana] ${MANA_INSTANT_REGEN_ENV} is on — pools never drain. TEST SETTING; must not be on in a shipped world`;
+
 /** Logged when MANA_REGEN_PER_S is set to something unusable. */
 export const MANA_REGEN_INVALID_WARNING = `[mana] ${MANA_REGEN_ENV} is not a positive finite number; falling back to this world's difficulty-derived rate`;
 
@@ -411,6 +451,14 @@ export function resolveManaRegenPerSecond(raw: string | undefined, difficulty: n
  * manaRegenFor).
  */
 let regenPerSecond: number = manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY);
+
+/**
+ * TEMPORARY: whether this world runs with instant regen (see
+ * MANA_INSTANT_REGEN_ENV). Resolved in onWorldCreate beside regenPerSecond, for
+ * the same reason — the environment is read when a world is made, not when the
+ * module loads, so a test that boots a world sees the environment as it is now.
+ */
+let instantRegen = false;
 
 /** This world's base regen rate, before any player's perk. */
 export function manaRegenPerSecond(): number {
@@ -858,6 +906,18 @@ function regenerate(world: WorldApi, dt: number): void {
   const baseGain = regenPerSecond * dt;
 
   for (const [playerId, pool] of poolsByPlayer) {
+    // TEMPORARY TEST SWITCH (see MANA_INSTANT_REGEN_ENV) — remove with it.
+    // Refilling to capacity every tick rather than skipping the charge is what
+    // makes this a change to GENERATION and nothing else: prices, the perk
+    // multipliers, the affordability check and the balance push all keep
+    // running on the real numbers, so what is being tested is the sculpt and
+    // not a second, quieter code path through the economy.
+    if (instantRegen) {
+      if (pool.balance >= MANA_CAPACITY) continue;
+      pool.balance = MANA_CAPACITY;
+      if (displayBalance(pool) !== pool.lastSentBalance) sendBalance(world, playerId, pool);
+      continue;
+    }
     if (pool.balance >= MANA_CAPACITY) continue;
     // Per-player, because regen is perk- AND waterfall-aura-scaled: a Spring
     // of Aether holder, or a player standing on their own revealed waterfall,
@@ -884,6 +944,13 @@ export const plugin: TerracePlugin = {
     // world's difficulty — which is why it is read here, from the WorldApi, and
     // not from a module-level constant.
     regenPerSecond = resolveManaRegenPerSecond(process.env[MANA_REGEN_ENV], world.difficulty);
+
+    // TEMPORARY TEST SWITCH — remove with MANA_INSTANT_REGEN_ENV. Announced on
+    // every world create rather than once at boot: a world running with the
+    // economy switched off should say so wherever it is switched on, and a
+    // silent test flag is the one that survives into a real deployment.
+    instantRegen = instantRegenEnabled(process.env[MANA_INSTANT_REGEN_ENV]);
+    if (instantRegen) console.warn(MANA_INSTANT_REGEN_WARNING);
 
     // PER-PLAYER STATE BELONGS TO THE WORLD IT WAS EARNED IN (multi-world,
     // 2026-08-22). onWorldCreate now runs whenever a DIFFERENT world is loaded
