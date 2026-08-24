@@ -810,6 +810,14 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       // lip the layer-edge overlay lights the edge itself, which is the
       // affordance that says a press here will take hold.
       //
+      // KNOWN GAP, stated rather than found later: away from any lip a press
+      // now seeds a one-band plateau the size of the brush (sculptInput's
+      // seedLayer), and THAT edit does have an exact footprint the ring could
+      // promise. The crosshair under-promises there. Left alone because the
+      // pointer would then flicker between two shapes as the cursor crossed
+      // in and out of grab range of every lip in the world, which is worse
+      // than a pointer that is merely modest.
+      //
       // Returning before the lookup also means the pull pointer costs nothing
       // to draw, however the HUD's radius happens to be set.
       if (hover.grabbable || brush.tool === 'drag') {

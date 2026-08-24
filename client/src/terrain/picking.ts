@@ -227,6 +227,24 @@ export interface TerrainRayPick {
    * and lives in the mesh builder.
    */
   readonly hitRiser: boolean;
+  /**
+   * World-space Y at which the ray actually MET this column — the point on the
+   * riser face when `hitRiser`, and the cap otherwise.
+   *
+   * WHY IT IS NOT `surfaceY`. A terrace face is vertical, so every lip stacked
+   * on it projects to the same place on the ground: a query that asks "which
+   * contour is nearest the cell under the cursor" cannot tell a band-3 lip
+   * from the band-7 lip directly above it, and always answers with whichever
+   * happens to be nearest in plan — in practice the topmost (owner report,
+   * 2026-08-24: "it only snaps to the edge of the topmost layer, and for this
+   * to really work we need to be able to grab any layer"). The HEIGHT the ray
+   * struck is the only thing that distinguishes them, and the march has always
+   * known it: it is where the ray entered the column.
+   *
+   * VIEW-DEPENDENT for the same reason `hitRiser` is — it is a fact about this
+   * ray, not about the cell.
+   */
+  readonly hitY: number;
 }
 
 /** The world's vertical extent in world units — nothing is drawn outside it. */
@@ -359,7 +377,13 @@ export function pickTerrainCellByRay(
       // riser; only dropping below it on the way THROUGH is a cap hit.
       const enteredBelow = oy + tEnter * dy <= surfaceY;
       if (enteredBelow || oy + tExit * dy <= surfaceY) {
-        return { x: i, y: j, surfaceY, hitRiser: enteredBelow };
+        // Where the ray met the column: the entry point when it came in
+        // through the riser, the cap when it dropped onto the tread. Clamped
+        // to the cap on the riser branch so a ray entering below the world's
+        // floor cannot report a height the column does not have.
+        const entryY = oy + tEnter * dy;
+        const hitY = enteredBelow ? (entryY > surfaceY ? surfaceY : entryY) : surfaceY;
+        return { x: i, y: j, surfaceY, hitRiser: enteredBelow, hitY };
       }
     }
 

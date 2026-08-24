@@ -102,12 +102,22 @@ export interface LayerEdgeOverlay {
   /** Rebuilds the edges of the given chunks. Unreceived chunks are skipped. */
   update(dirty: Iterable<number>): void;
   /**
-   * Lights up the lip nearest the given cell and returns the BAND it belongs
-   * to — the band a pull starting there would grab. Null clears the highlight
-   * and reports no grab, either because the pointer is off the world or
-   * because the nearest lip is further than GRAB_RADIUS_WORLD_UNITS away.
+   * Lights up the lip the cursor is pointing at and returns the BAND it
+   * belongs to — the band a pull starting there would grab. Null clears the
+   * highlight and reports no grab, either because the pointer is off the world
+   * or because no lip is within GRAB_RADIUS_WORLD_UNITS.
+   *
+   * `preferBand` breaks the tie a plan-view distance cannot (owner report,
+   * 2026-08-24: "it only snaps to the edge of the topmost layer"). A terrace
+   * face is VERTICAL, so every lip stacked on it sits at the same place on the
+   * ground and the nearest-in-plan test picks between them almost arbitrarily
+   * — in practice always the same one. When the ray struck a riser, the height
+   * it struck names the band the player is actually pointing at, and passing
+   * it here makes that band win over a rival the same distance away. Null for
+   * a ray that landed on a tread, where there is no stack to disambiguate and
+   * nearest-in-plan is the right answer.
    */
-  highlightAt(cell: { x: number; y: number } | null): number | null;
+  highlightAt(cell: { x: number; y: number } | null, preferBand?: number | null): number | null;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
   dispose(): void;
@@ -298,7 +308,7 @@ export function createLayerEdgeOverlay(
       clearGrabbed();
     },
 
-    highlightAt(cell) {
+    highlightAt(cell, preferBand = null) {
       clearGrabbed();
       if (cell === null) return null;
       // THE CELL'S CENTRE, not its corner (owner report 2026-08-24). A cell's
@@ -313,16 +323,30 @@ export function createLayerEdgeOverlay(
       const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
       let bestBand: number | null = null;
       let bestDistanceSq = grabRadiusSq;
+      // How far the winning lip's band is from the one the ray's height named.
+      // Compared BEFORE distance, so a lip the player is demonstrably pointing
+      // at beats a nearer one they are not — which is the whole reason a lower
+      // layer can be grabbed at all. Held at 0 when there is no preference, so
+      // every candidate ties here and the distance test decides alone, exactly
+      // as it did before this parameter existed.
+      let bestBandGap = 0;
       for (const idx of nearbyChunks(cell.x, cell.y)) {
         const perBand = segmentsByChunk.get(idx);
         if (perBand === undefined) continue;
         for (const [band, flat] of perBand) {
+          const gap = preferBand === null ? 0 : Math.abs(band - preferBand);
+          // A band further from the player's aim than the current best cannot
+          // win however close it lies, so its segments need not be measured.
+          if (bestBand !== null && gap > bestBandGap) continue;
           for (let i = 0; i + 3 < flat.length; i += 4) {
             const d = distanceSqToSegment(px, pz, flat[i]!, flat[i + 1]!, flat[i + 2]!, flat[i + 3]!);
-            if (d < bestDistanceSq) {
-              bestDistanceSq = d;
-              bestBand = band;
-            }
+            if (d >= grabRadiusSq) continue;
+            // Closer to the aimed band wins outright; a tie falls back to
+            // whichever lip is nearer on the ground.
+            if (bestBand !== null && gap === bestBandGap && d >= bestDistanceSq) continue;
+            bestDistanceSq = d;
+            bestBandGap = gap;
+            bestBand = band;
           }
         }
       }

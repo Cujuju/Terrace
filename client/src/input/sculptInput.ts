@@ -80,14 +80,14 @@ export interface SculptInputOptions {
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
-   * The terrace band whose lip is within grabbing range of `cell`, or null for
-   * none (World.highlightLayerEdge →
+   * The terrace band whose lip this PICK is pointing at, or null for none
+   * (World.highlightLayerEdge →
    * render/layerEdgeOverlay.ts). This is the SAME query that lights the lip up
    * on screen, so what the player sees highlighted is exactly what a press
    * grabs — the highlight is the affordance, and two answers to "is there a
    * lip here" would make it a lie.
    */
-  grabbableLip: (cell: { x: number; y: number } | null) => number | null;
+  grabbableLip: (pick: TerrainRayPick | null) => number | null;
   /**
    * Emits one intent, and reports whether it went out — false when a client
    * plugin vetoed it (out of mana) or the socket was not ready.
@@ -353,11 +353,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const surfaceY = terrainHeightAt(hoverCache.x, hoverCache.y);
     if (surfaceY === null) return null;
     if (surfaceY === hoverCache.surfaceY) return hoverCache;
-    // hitRiser rides along unchanged: it is a fact about the RAY, and this
-    // branch only refreshes the cached cell's height after the ground moved
-    // under a stationary pointer. The next pointermove re-picks and re-decides
-    // it.
-    hoverCache = { x: hoverCache.x, y: hoverCache.y, surfaceY, hitRiser: hoverCache.hitRiser };
+    // hitRiser and hitY ride along unchanged: both are facts about the RAY,
+    // and this branch only refreshes the cached cell's height after the ground
+    // moved under a stationary pointer. The next pointermove re-picks and
+    // re-decides them.
+    hoverCache = {
+      x: hoverCache.x,
+      y: hoverCache.y,
+      surfaceY,
+      hitRiser: hoverCache.hitRiser,
+      hitY: hoverCache.hitY,
+    };
     return hoverCache;
   };
 
@@ -404,6 +410,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // two in (see dragPlaneCell). setSculptMode still runs first for both, so
     // the HUD's raise/lower indicator is honest either way.
     setSculptMode(action);
+    // A Pull with nothing in its grasp emits nothing at all. Without this the
+    // generic send below would put a `drag` intent with no band on the wire,
+    // which the shared math treats as a no-op — a message, and a mana charge,
+    // for an edit that was never going to happen.
+    if (brushTool() === 'drag' && strokeGrab === null) return;
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
       // Too shallow a ray, or off the world: hold the pull where it was rather
@@ -527,9 +538,45 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // The wire rate stays bounded WITHOUT a timer, because a drag emits per
     // CURSOR CELL CHANGE, not per event: a hundred pointermove events inside
     // one cell send nothing at all (see lastDragTo).
-    if (strokeGrab !== null) return;
+    // THE PULL NEVER REPEATS, whether it grabbed a lip or seeded a new layer.
+    // A held stamp stacking bands in one place is the whole thing a stamp
+    // does; standing still with the Pull tool means the lip is already where
+    // the player put it, and a seeded layer is "a single layer" by the owner's
+    // instruction — a repeat would turn either into a tower.
+    if (brushTool() === 'drag') return;
     scheduleRepeat(0);
   };
+
+  /**
+   * RAISES ONE LAYER where there is no lip to take hold of (owner, 2026-08-24:
+   * "if there is no edge to pull, pop up a new layer that we can start pulling
+   * — just a single layer").
+   *
+   * A `hard` stamp, which level-fills its footprint to the next band, so what
+   * appears is a flat one-band plateau with a clean lip all the way round —
+   * the thing the pull needs in order to have anything to grab. `hard`
+   * regardless of the edge toggle: a soft stamp's falloff would leave a mound
+   * whose rim crosses no band at all on flat ground, i.e. no lip and nothing
+   * gained.
+   *
+   * EXACTLY ONE, never a stack. The press that seeds a layer does not start
+   * the hold-repeat (see armStroke), so holding the button steadies the new
+   * plateau rather than building a tower out of it.
+   *
+   * Returns whether the intent reached the wire; a seed that did not go out
+   * has raised nothing, so there is no new lip to grab either.
+   */
+  const seedLayer = (cell: { x: number; y: number }): boolean =>
+    send({
+      type: 'sculpt',
+      x: cell.x,
+      y: cell.y,
+      radius: brushRadius(),
+      dir: sculptDirection('raise'),
+      tool: 'stamp',
+      profile: 'hard',
+      seq: nextSeq++,
+    });
 
   const startStroke = (event: PointerEvent, action: SculptAction): void => {
     // Abandon any stroke still in flight (e.g. a missed pointerup) before
@@ -563,8 +610,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // step 3, deliberately not this one. Until it exists, a lower press with
     // the Pull tool does nothing rather than silently doing something the
     // player cannot predict.
-    strokeGrab =
-      brushTool() === 'drag' && action === 'raise' ? grabbableLip(hoverTarget()) : null;
+    const pulling = brushTool() === 'drag' && action === 'raise';
+    strokeGrab = pulling ? grabbableLip(hoverTarget()) : null;
+    if (pulling && strokeGrab === null) {
+      // NOTHING TO PULL, SO MAKE SOMETHING. The seed is applied locally by the
+      // prediction the moment it is sent (main.tsx's send), and the layer-edge
+      // overlay re-contours on the same dirty set, so the lip it creates
+      // already exists by the time the next line asks for it — this press
+      // becomes a pull of the layer it just raised, in one gesture.
+      const seedCell = hoverTarget();
+      if (seedCell !== null && seedLayer(seedCell)) strokeGrab = grabbableLip(hoverTarget());
+    }
 
     if (strokeIsTouch) {
       // Touch arms after a grace delay so the second finger of a camera
