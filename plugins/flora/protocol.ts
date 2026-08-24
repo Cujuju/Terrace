@@ -459,3 +459,100 @@ export function cropVariation(x: number, y: number): CropVariation {
     yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PLOT FOOTPRINT (owner, 2026-08-23: "these terrace patches must not spawn
+// over the top of each other, only next to each other, and never on a section
+// of land that isn't at least as large as the model").
+//
+// WHY THIS LIVES HERE AND NOT IN client/cropModels.ts, WHERE THE GEOMETRY IS.
+// A crop's size and a crop's eligibility are the SAME fact seen from two
+// sides, and until this block they were two unrelated numbers in two files
+// that could not see each other: cropModels.ts authored a bed 0.82 wide,
+// crops.ts (server) staged one crop per farmland CELL, and nothing anywhere
+// compared the two. That is exactly how the defect this block closes got in —
+// cropModels.ts was written when CELL_WORLD_SIZE was 1, the 2026-08-21
+// re-sample made it 0.25, and a bed that had been 0.82 of a cell silently
+// became 3.28 CELLS wide, so every plot was drawn overlapping its neighbours
+// roughly three deep and spilling off whatever terrace it stood on. The model
+// changed size and the placement rule had no way to notice.
+//
+// So the footprint is stated ONCE, in CELLS, in the file both halves already
+// import: the lattice states how far a plot may reach, the bed's size is
+// DERIVED from that reach, and the client's geometry is derived in turn. A
+// plot that would overlap its neighbours or overhang its ground is no longer
+// something the code can express, so nothing downstream has to filter for it.
+//
+// IN CELLS, NOT WORLD UNITS, so this file stays dependency-free (see the
+// banner). The one multiply by CELL_WORLD_SIZE happens in the client, at the
+// single point where a cell fraction becomes geometry.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Half the diagonal of a unit square, i.e. the factor turning a square's EDGE
+ * into its CIRCUMRADIUS — the distance from its centre to a corner.
+ *
+ * This factor is the whole reason the bed is not simply "0.82 of a cell". A
+ * plot is a square that cropVariation's yaw roll can turn to ANY angle, so the
+ * bound on how far it reaches from its own centre is set by its corners, never
+ * by its edges: a square rotated 45° covers 41% more distance in X and Z than
+ * the same square axis-aligned. Sizing a rotatable plot by its edge is the
+ * same mistake fishingHuts.ts's header records paying for with three-sided
+ * cones (a shape whose corners stand at the circumradius, measured 2.2× over
+ * its bound while looking perfectly fine in a picture).
+ */
+const SQUARE_CIRCUMRADIUS_PER_EDGE = Math.SQRT2 / 2;
+
+/**
+ * The furthest any part of a plot may reach from the cell it stands on, in
+ * CELLS — and therefore the rule "plots touch, never overlap" in one number.
+ *
+ * HALF A CELL, because crops are placed one per cell on the cell lattice
+ * (crops.ts stages cropKey(x, y); cropPlacement.ts puts the plot's CENTRE at
+ * the cell's centre — see brushPreview.ts on why cell·CELL_WORLD_SIZE is a
+ * centre and carries no half-cell shift). Two plots on adjacent cells are one
+ * cell apart, so each may claim half that distance and no more. At exactly
+ * half, neighbouring plots meet corner to corner and never cross: "next to
+ * each other", which is what a field of them should read as, and which a
+ * smaller bound would break up into isolated dots.
+ */
+export const CROP_PLOT_MAX_REACH_CELLS = 0.5;
+
+/**
+ * How wide the tilled bed of one plot is, as a fraction of a CELL edge —
+ * DERIVED from the reach bound above rather than chosen, so a plot cannot be
+ * authored into overlapping its neighbours.
+ *
+ * Read it as: the largest square that, turned to its worst angle and rolled to
+ * its largest scale (CROP_SCALE_MAX — the scale roll multiplies the whole
+ * model, so the bound has to hold for the biggest roll, not the average one),
+ * still fits inside the cell it stands on. Works out at ~0.61 of a cell.
+ */
+export const CROP_PLOT_BED_CELL_COVERAGE =
+  CROP_PLOT_MAX_REACH_CELLS / (SQUARE_CIRCUMRADIUS_PER_EDGE * CROP_SCALE_MAX);
+
+/**
+ * The rule the two constants above exist to enforce, checked at module load
+ * rather than trusted — brushPreview.ts's own precedent for a derived size
+ * that must fit a lattice: every input is a constant, so this either always
+ * holds or never does, and a build that violates it should not start.
+ *
+ * "Not over the top of each other, only next to each other" (owner,
+ * 2026-08-23) is a statement about a LATTICE, and this is it: plots sit one
+ * per cell, one cell apart, so no plot may reach more than half a cell from
+ * its own centre. It is enforced HERE, on the size, rather than as a filter in
+ * the survey, because a filter would be the symptom's fix — it would drop
+ * crops to hide a model that had outgrown its ground, where this makes the
+ * overlap unrepresentable. It is also why the survey needs no spacing pass and
+ * no larger-than-a-cell land test: a plot never covers more than the dry,
+ * unlocked, single-band cell isFarmlandCell already vouched for, so the ground
+ * it stands on is always at least as large as the model standing on it.
+ */
+if (
+  CROP_PLOT_BED_CELL_COVERAGE * CROP_SCALE_MAX * SQUARE_CIRCUMRADIUS_PER_EDGE >
+  CROP_PLOT_MAX_REACH_CELLS
+) {
+  throw new RangeError(
+    `a crop plot of ${CROP_PLOT_BED_CELL_COVERAGE} cells reaches past ${CROP_PLOT_MAX_REACH_CELLS} cells and would overlap its neighbours`,
+  );
+}

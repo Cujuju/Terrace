@@ -25,6 +25,11 @@ import {
   grantTokenEveryUnlockedChunk,
 } from '../../../server/test/support/harness.ts';
 import {
+  CROP_PLOT_BED_CELL_COVERAGE,
+  CROP_PLOT_MAX_REACH_CELLS,
+  CROP_SCALE_MAX,
+  CROP_SCALE_MIN,
+  cropVariation,
   FLORA_CHANGES_MESSAGE,
   FLORA_CROPS_MESSAGE,
   FLORA_CROP_CAP,
@@ -1067,5 +1072,62 @@ describe('crops through the real host (card 28)', () => {
     advance(second, CROP_SURVEY_INTERVAL_SECONDS + DT);
     const after = new Set(standingCrops().map((c) => `${c.x},${c.y}`));
     expect(after).toEqual(before);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PLOT FOOTPRINT CONTRACT (protocol.ts, owner 2026-08-23)
+//
+// These test the RULE, not the number: "a plot never reaches past the cell it
+// stands on", which is simultaneously why plots cannot overlap (they sit one
+// per cell, one cell apart) and why a plot never stands on ground smaller than
+// itself (its ground is the cell isFarmlandCell already vouched for as dry,
+// unlocked and single-band). Written against the derivation so that changing
+// the model's size cannot quietly break either property — the assertions are
+// geometric, and none of them names a literal bed width.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('crop plot footprint (card 28)', () => {
+  /**
+   * How far the plot's furthest point sits from its own centre, in cells, at a
+   * given scale roll. The bed is a SQUARE the yaw roll may turn to any angle,
+   * so its reach is its circumradius — half its diagonal — never half its edge.
+   */
+  function reachAtScale(scale: number): number {
+    return (CROP_PLOT_BED_CELL_COVERAGE * scale * Math.SQRT2) / 2;
+  }
+
+  it('never reaches past half a cell, at the LARGEST scale roll and the worst yaw', () => {
+    expect(reachAtScale(CROP_SCALE_MAX)).toBeLessThanOrEqual(CROP_PLOT_MAX_REACH_CELLS);
+  });
+
+  it('two plots on adjacent cells cannot overlap — the owner rule, as geometry', () => {
+    // Adjacent cells are one cell apart centre to centre; two plots overlap
+    // exactly when their reaches sum to more than that distance. Diagonal
+    // neighbours are further apart (√2 cells) and so are covered a fortiori.
+    const worstCase = reachAtScale(CROP_SCALE_MAX) * 2;
+    expect(worstCase).toBeLessThanOrEqual(1);
+  });
+
+  it('fills its cell rather than shrinking away from it — a field reads as a field, not as dots', () => {
+    // The other half of the rule: "only next to each other" is a floor as well
+    // as a ceiling, or a run of farmland cells draws as scattered dots. The
+    // floor with no arbitrary number in it: even the SMALLEST scale roll must
+    // cover more than half its cell edge, so the bare gap between two
+    // neighbouring plots is always narrower than the plots themselves.
+    const smallestBedEdgeInCells = CROP_PLOT_BED_CELL_COVERAGE * CROP_SCALE_MIN;
+    expect(smallestBedEdgeInCells).toBeGreaterThan(1 - smallestBedEdgeInCells);
+  });
+
+  it('every scale roll the hash can produce obeys the bound', () => {
+    // Not just the endpoints: cropVariation's scale comes from a byte, so walk
+    // the whole reachable set rather than trusting the interpolation.
+    for (let x = 0; x < 64; x++) {
+      for (let y = 0; y < 64; y++) {
+        expect(reachAtScale(cropVariation(x, y).scale)).toBeLessThanOrEqual(
+          CROP_PLOT_MAX_REACH_CELLS,
+        );
+      }
+    }
   });
 });
