@@ -11,6 +11,7 @@
 // previous session's terrain.
 
 import {
+  BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
   cellIndex,
@@ -77,13 +78,15 @@ export interface World extends TerrainSink {
    */
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
-   * Lights up the terrace lip nearest `cell` and returns the band a drag
-   * starting there would grab, or null for no lip in range
-   * (render/layerEdgeOverlay.ts). Diagnostic for the two-method sculpt design:
-   * it answers "can a click name an edge?" without anything becoming
-   * authoritative.
+   * Lights up the terrace lip this PICK is pointing at and returns the band a
+   * pull starting there would grab, or null for no lip in range
+   * (render/layerEdgeOverlay.ts).
+   *
+   * It takes the whole pick, not just its cell, because a ray that struck a
+   * riser names WHICH of the lips stacked on that face is meant — the thing a
+   * plan-view distance cannot answer. See the derivation in the implementation.
    */
-  highlightLayerEdge(cell: { x: number; y: number } | null): number | null;
+  highlightLayerEdge(pick: TerrainRayPick | null): number | null;
   /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
@@ -399,8 +402,28 @@ export function createWorld(viewport: Viewport): World {
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
-    highlightLayerEdge(cell: { x: number; y: number } | null): number | null {
-      return layerEdges?.highlightAt(cell) ?? null;
+    highlightLayerEdge(pick: TerrainRayPick | null): number | null {
+      // THE AIMED BAND IS DERIVED HERE, not asked of the caller. Both callers
+      // — the frame loop that lights the lip and the press that grabs it —
+      // must agree about which layer the cursor is on, and a parameter either
+      // of them could forget to pass is a way for them to disagree. They hand
+      // over the pick; this turns it into the aim.
+      //
+      // Only a RISER hit names a band: the ray struck the vertical face of a
+      // step, so the height it struck says which of the lips stacked on that
+      // face the player is pointing at (see TerrainRayPick.hitY). A ray that
+      // landed on a tread has no stack to disambiguate, and nearest-in-plan is
+      // then the right answer — null asks for exactly that.
+      //
+      // Rounded rather than floored: the lip of band k lies AT k·BAND_HEIGHT,
+      // so the nearest lip to a height is the nearest multiple, not the one
+      // below it. Flooring would make the top half of every step grab the lip
+      // beneath the one being pointed at.
+      const preferBand =
+        pick === null || !pick.hitRiser
+          ? null
+          : Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+      return layerEdges?.highlightAt(pick, preferBand) ?? null;
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
