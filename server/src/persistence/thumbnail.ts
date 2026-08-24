@@ -31,7 +31,7 @@ import { MAX_HEIGHT, MIN_HEIGHT, WORLD_THUMBNAIL_SIZE, bandOf } from '@terrace/s
  * Bounds a band value into a signed byte.
  *
  * The real range is set by the height limits — at BAND_HEIGHT 16 that is
- * bandOf(MIN_HEIGHT)..bandOf(MAX_HEIGHT), measured as −96..64 across every
+ * bandOf(MIN_HEIGHT)..bandOf(MAX_HEIGHT), measured as −69..64 across every
  * world in this repo, comfortably inside a byte. The clamp is here anyway
  * because the limits are constants somebody may move, and a silent wrap would
  * turn a deep trench into a mountain in the one artefact whose whole job is
