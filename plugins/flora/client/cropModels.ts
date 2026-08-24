@@ -42,7 +42,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { FLORA_CROP_CAP } from '../protocol.ts';
+import { CROP_PLOT_BED_CELL_COVERAGE, FLORA_CROP_CAP } from '../protocol.ts';
 
 // ── Dimensions — authored as fractions of a crop CELL, then converted once
 // through CELL_WORLD_SIZE. This is deliberate and load-bearing: when a cell
@@ -55,8 +55,19 @@ import { FLORA_CROP_CAP } from '../protocol.ts';
 /** One crop CELL's worth of world units — the unit every dimension below speaks. */
 const cells = (n: number): number => n * CELL_WORLD_SIZE;
 
-const BED_WIDTH_IN_CELLS = 0.82;
-const BED_DEPTH_IN_CELLS = 0.82;
+/**
+ * The bed's footprint is NOT chosen here. protocol.ts derives it from the one
+ * cell the plot has to fit inside (CROP_PLOT_BED_CELL_COVERAGE), because that
+ * is simultaneously the rule that plots never overlap and the rule that a plot
+ * never stands on more ground than its cell was vouched for — see that file's
+ * plot-footprint block. This module's job is to draw a plot that size, not to
+ * decide it.
+ *
+ * The plot is SQUARE, so one constant serves both axes: a rectangle would have
+ * two different reaches and the yaw roll would swing between them.
+ */
+const BED_WIDTH_IN_CELLS = CROP_PLOT_BED_CELL_COVERAGE;
+const BED_DEPTH_IN_CELLS = CROP_PLOT_BED_CELL_COVERAGE;
 const BED_HEIGHT_IN_CELLS = 0.05;
 
 /** Slender stem: visibly thinner than the old spike's 0.05-cell base. */
@@ -104,15 +115,18 @@ const KERNEL_ELONGATION = 1.8;
  * as a clump rather than as isolated dots at this camera distance while
  * keeping the instance count a small, fixed multiple of FLORA_CROP_CAP.
  *
- * Offsets are in CELLS so they cannot drift out of sync with the bed width
- * above: the outermost stalk sits at ±0.18 cells against a ±0.41-cell bed
- * edge, keeping every stalk inside the tilled footprint.
+ * Offsets are fractions of the BED's own edge, not of a cell and not world
+ * units, so a change to the bed's size moves the cluster with it and no stalk
+ * can ever end up planted off the soil it is supposed to grow in. They are
+ * converted to world units at the point of use, through the same `cells`
+ * helper every other dimension here goes through.
  */
+const STALK_OFFSET_IN_BED_EDGES = 0.22;
 const CROP_STALK_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [-0.18, -0.18],
-  [0.18, -0.18],
-  [-0.18, 0.18],
-  [0.18, 0.18],
+  [-STALK_OFFSET_IN_BED_EDGES, -STALK_OFFSET_IN_BED_EDGES],
+  [STALK_OFFSET_IN_BED_EDGES, -STALK_OFFSET_IN_BED_EDGES],
+  [-STALK_OFFSET_IN_BED_EDGES, STALK_OFFSET_IN_BED_EDGES],
+  [STALK_OFFSET_IN_BED_EDGES, STALK_OFFSET_IN_BED_EDGES],
 ];
 const CROP_STALKS_PER_CELL = CROP_STALK_OFFSETS.length;
 
@@ -132,6 +146,40 @@ const CROP_STALKS_PER_CELL = CROP_STALK_OFFSETS.length;
 const BED_COLOR = 0x5b4630;
 const STALK_COLOR = 0xd2b04a;
 const EAR_COLOR = 0xe6c96a;
+
+/**
+ * How far the outermost part of the stalk cluster reaches from the plot's
+ * centre, as a fraction of a CELL — the cluster's own version of the bound
+ * protocol.ts places on the bed.
+ *
+ * The far corner of the outermost stalk's offset, plus that stalk's own
+ * widest horizontal part. A leaf is the widest: it reaches BLADE_LENGTH out
+ * along its own yaw, foreshortened by its droop (an upright leaf reaches
+ * nothing horizontally; a horizontal one reaches its full length). The ear's
+ * nod is smaller than that and does not need its own term, but is included so
+ * the bound cannot go stale if the nod is ever opened up.
+ */
+const STALK_CLUSTER_REACH_IN_CELLS =
+  STALK_OFFSET_IN_BED_EDGES * BED_WIDTH_IN_CELLS * Math.SQRT2 +
+  Math.max(
+    BLADE_LENGTH_IN_CELLS * Math.cos(LEAF_DROOP_RADIANS),
+    EAR_LENGTH_IN_CELLS * Math.sin(EAR_NOD_RADIANS),
+  );
+
+/**
+ * The stalks must stand on their own soil — checked at load, not trusted, for
+ * the same reason protocol.ts checks the bed against its cell: every input is
+ * a constant, so this either always holds or never does, and a plot whose
+ * wheat grows off the edge of its own tilled bed is a defect visible from the
+ * first frame. This is also what keeps protocol.ts's reach bound honest, since
+ * that bound measures the BED and would say nothing about a stalk hanging past
+ * it.
+ */
+if (STALK_CLUSTER_REACH_IN_CELLS > BED_WIDTH_IN_CELLS / 2) {
+  throw new RangeError(
+    `crop stalks reach ${STALK_CLUSTER_REACH_IN_CELLS} cells, past the ${BED_WIDTH_IN_CELLS / 2}-cell edge of their own bed`,
+  );
+}
 
 /** Where one crop CELL stands and how its whole cluster varies. World units; y is the ground. */
 export interface CropPlacement {
@@ -315,13 +363,16 @@ export function createCropModels(): CropModels {
         // FLORA_CROP_CAP * CROP_STALKS_PER_CELL times here — exactly the
         // stalk and ear meshes' own shared instance allocation.
         for (const [ox, oz] of CROP_STALK_OFFSETS) {
-          // The spread scales WITH the bed: these offsets land in the matrix
-          // BEFORE placement.scale is composed in, so without multiplying
-          // them through, a scaled-up plot grew a wider bed under an
+          // Two conversions, both load-bearing. `cells(… × BED_WIDTH_IN_CELLS)`
+          // turns a fraction of the bed's edge into world units — the offsets
+          // are added to `position`, which is world units, so an unconverted
+          // offset would plant the cluster several cells away from its own
+          // bed. `× placement.scale` then spreads the cluster WITH the bed,
+          // because these offsets land in the matrix BEFORE placement.scale is
+          // composed in: without it a scaled-up plot grew a wider bed under an
           // unscaled stalk cluster.
-          stalkOffset
-            .set(ox * placement.scale, 0, oz * placement.scale)
-            .applyQuaternion(rotation);
+          const spread = cells(BED_WIDTH_IN_CELLS) * placement.scale;
+          stalkOffset.set(ox * spread, 0, oz * spread).applyQuaternion(rotation);
           stalkPosition.copy(position).add(stalkOffset);
           matrix.compose(stalkPosition, rotation, scale);
           stalks.setMatrixAt(stalkCount, matrix);
