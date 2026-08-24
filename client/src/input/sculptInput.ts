@@ -98,7 +98,20 @@ export interface SculptInputOptions {
    * affordance, and two answers to "is there a lip here" would make it a lie.
    */
   grabbableBand: (cell: { x: number; y: number } | null) => number | null;
-  send: (intent: SculptIntent) => void;
+  /**
+   * Emits one intent, and REPORTS WHETHER IT WENT OUT — false when a client
+   * plugin vetoed it (out of mana) or the socket was not ready.
+   *
+   * The return value is load-bearing for drags and for nothing else (owner
+   * report, 2026-08-23: a single drag came out as a ribbon, a gap, and two
+   * orphan blobs). A drag's cells are a CHAIN: the shared spread rule only
+   * lets the grabbed band reach a cell that already touches that band, so cell
+   * n+1 is legal only because cell n landed. An emitter that cannot tell a
+   * sent intent from a dropped one walks straight past the hole it just made,
+   * and every remaining cell of the stroke is then refused — one dropped
+   * intent kills the rest of the drag.
+   */
+  send: (intent: SculptIntent) => boolean;
 }
 
 export interface SculptInput {
@@ -345,9 +358,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     });
   };
 
-  /** One drag intent at (x, y), pulling the grabbed band onto that cell. */
-  const sendDragAt = (x: number, y: number, action: SculptAction): void => {
-    send({
+  /**
+   * One drag intent at (x, y), pulling the grabbed band onto that cell.
+   * Returns whether it actually went out — see SculptInputOptions.send.
+   */
+  const sendDragAt = (x: number, y: number, action: SculptAction): boolean => {
+    return send({
       type: 'sculpt',
       x,
       y,
@@ -384,7 +400,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    */
   const emitDrag = (x: number, y: number, action: SculptAction): void => {
     if (!haveDragCell) {
-      sendDragAt(x, y, action);
+      // The stroke's first cell. If it did not go out there is no anchor for a
+      // walk to continue from, so the drag simply has not started yet — the
+      // next pointer move tries again from wherever the cursor is then.
+      if (!sendDragAt(x, y, action)) return;
       lastDragCellX = x;
       lastDragCellY = y;
       haveDragCell = true;
@@ -413,7 +432,12 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
         error += dx;
         py += stepY;
       }
-      sendDragAt(px, py, action);
+      // ADVANCE ONLY OVER GROUND THAT WAS ACTUALLY ASKED FOR. A dropped intent
+      // leaves a cell at its old height, and the spread rule will refuse every
+      // cell beyond it; stopping here keeps `lastDragCell` on the last cell
+      // that really was sent, so the next pointer move re-walks from there and
+      // the chain repairs itself instead of dying.
+      if (!sendDragAt(px, py, action)) return;
       lastDragCellX = px;
       lastDragCellY = py;
     }

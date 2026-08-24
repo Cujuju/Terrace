@@ -115,8 +115,13 @@ const sculptInput = createSculptInput({
     // veto (out of mana, say) stops the intent HERE — nothing is sent, nothing
     // is predicted, so a refusal cannot flicker. The server still runs its own
     // authoritative chain on whatever does go out.
-    if (!pluginHost.allowLocalIntent(intent)) return;
-    if (connection.sendSculpt(intent)) world.predictSculpt(intent);
+    if (!pluginHost.allowLocalIntent(intent)) return false;
+    if (!connection.sendSculpt(intent)) return false;
+    world.predictSculpt(intent);
+    // Reported back so a DRAG can tell a sent cell from a dropped one — its
+    // next cell is only legal because this one landed (see the `send` contract
+    // in input/sculptInput.ts).
+    return true;
   },
 });
 
