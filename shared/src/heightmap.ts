@@ -825,32 +825,79 @@ const DRAG_TREAD_TOLERANCE_CELLS = WORLD_UNIT_CELLS / 2;
  * tall face. What the player expects is that the step is CARRIED — crowd the
  * level below and it gives ground too, and so on down.
  *
- * THE RULE. A cell must be raised to band j when it lies within
- * DRAG_TREAD_TOLERANCE_CELLS of ground THIS EDIT just put at band j+1 or
- * above. Applied for j = k−1, then k−2, with the cells raised at each band
- * seeding the next, so the whole stack shifts one band at a time.
+ * THE RULE, and every clause of it is load-bearing. A cell is raised to band j
+ * when all three hold:
  *
- * SEEDED BY WHAT MOVED, NEVER BY THE TERRAIN AT LARGE, and that distinction is
- * the whole safety of it. Stated as a property of the map — "bands within
- * `tolerance` cells of each other may differ by at most one" — the same rule
- * would be a global terracing constraint far stricter than MAX_STEP, and
- * applying it would raise ground across every natural slope in the world that
- * happens to be steeper than one band per half world unit. Seeded from this
+ * 1. it lies within DRAG_TREAD_TOLERANCE_CELLS of ground THIS EDIT just put at
+ *    band j+1 or above — the level above is crowding it;
+ * 2. a TREAD OF BAND j — ground standing at exactly that band — was within the
+ *    same tolerance BEFORE this edit, so there is a real step here to push
+ *    rather than open ground to terrace;
+ * 3. `canSpreadBandTo` admits it on the live map — the band can physically
+ *    reach it, the same rule the pull itself runs.
+ *
+ * CLAUSE 2 IS THE ONE THAT WAS MISSING, and its absence was not a matter of
+ * degree (owner report, 2026-08-24: pulling a layer beside a tall totem "blew
+ * up into a giant pyramid"). Judged on the map AFTER the pull, the land the
+ * pull had just created was itself ground at band j+1, so it justified
+ * spreading band j beneath it, which justified band j−1 beneath that. Beside a
+ * 20-band spire standing on flat ground there is no lower lip anywhere near —
+ * and the cascade INVENTED the entire staircase down to sea level: one click
+ * changed 2,780 cells across 12 new levels and reached 28 cells out. It was
+ * never pushing lips; it was building them.
+ *
+ * So the crowding is read from the map as it stands NOW, and the entitlement
+ * from the map as it stood BEFORE — `heightBefore`, which reports the recorded
+ * pre-edit height for anything this intent has touched and the live height for
+ * everything else. A level that was not there before this pull cannot be
+ * pushed by it.
+ *
+ * SEEDED BY WHAT MOVED, NEVER BY THE TERRAIN AT LARGE. Stated as a property of
+ * the map — "bands within `tolerance` cells of each other may differ by at most
+ * one" — the same rule would be a global terracing constraint far stricter than
+ * MAX_STEP, and applying it would raise ground across every natural slope in
+ * the world steeper than one band per half world unit. Seeded from this
  * intent's own changes it can only ever propagate outward from land the player
  * just moved, and it stops of its own accord the moment it reaches a tread
- * already wider than the tolerance — which on open terrain is immediately.
+ * already wider than the tolerance.
  *
  * It cannot invent height either: every cell it raises to band j is admitted by
- * `canSpreadBandTo`, the same rule the pull itself runs, so band j must already
- * stand next to that cell before it may spread there.
+ * `canSpreadBandTo`, so band j must already stand next to that cell before it
+ * may spread there.
  */
 function pushLowerLayers(
   map: Heightmap,
   raisedAtBand: number[],
   topBand: number,
+  heightBefore: (index: number) => number,
+  record: (index: number) => void,
   changed: Set<number>,
 ): void {
   let seeds = raisedAtBand;
+
+  /**
+   * Whether a TREAD OF BAND `band` stood within the tread tolerance of
+   * (cx, cy) before this intent — ground whose own band is exactly `band`.
+   *
+   * EXACTLY, NOT "AT OR ABOVE", and the difference is the second half of the
+   * pyramid bug. A test for `height >= band · BAND_HEIGHT` is satisfied by
+   * anything TALLER as well, so beside a 20-band totem every band from 19 down
+   * to 1 counts as "already here" — the totem is above all of them — and the
+   * cascade walks the whole way down again. What the rule means to ask is
+   * whether there is a STEP at this level being crowded, and a step at band j
+   * is ground standing at band j, not ground towering over it.
+   */
+  const treadWasNear = (cx: number, cy: number, band: number): boolean => {
+    for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
+      for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        if (!inBounds(map, x, y)) continue;
+        if (bandOf(heightBefore(cellIndex(map, x, y))) === band) return true;
+      }
+    }
+    return false;
+  };
 
   for (let band = topBand - 1; band > MIN_BAND && seeds.length > 0; band--) {
     const level = clampHeight(band * BAND_HEIGHT);
@@ -858,7 +905,8 @@ function pushLowerLayers(
     // Everything within the tolerance of what the level above just took. A Set
     // then a sort, because a cell near two seeds must be considered once and
     // the order must not depend on which seed reached it first.
-    const candidates = new Set<number>();
+    const candidates: number[] = [];
+    const seen = new Set<number>();
     for (const seed of seeds) {
       const sx = cellX(map.size, seed);
       const sy = cellY(map.size, seed);
@@ -868,13 +916,17 @@ function pushLowerLayers(
           const y = sy + dy;
           if (!inBounds(map, x, y)) continue;
           const i = cellIndex(map, x, y);
+          if (seen.has(i)) continue;
+          seen.add(i);
           if (map.cells[i]! >= level) continue;
-          candidates.add(i);
+          // Clause 2: only a step that was already here may be pushed.
+          if (!treadWasNear(x, y, band)) continue;
+          candidates.push(i);
         }
       }
     }
-    if (candidates.size === 0) return;
-    const ordered = Array.from(candidates).sort((a, b) => a - b);
+    if (candidates.length === 0) return;
+    candidates.sort((a, b) => a - b);
 
     // The same wave discipline the pull itself uses: a candidate more than one
     // cell from the band cannot take it until its inward neighbour has, so the
@@ -883,9 +935,10 @@ function pushLowerLayers(
     let filledThisPass = true;
     while (filledThisPass) {
       filledThisPass = false;
-      for (const i of ordered) {
+      for (const i of candidates) {
         if (map.cells[i]! >= level) continue;
         if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), band)) continue;
+        record(i);
         map.cells[i] = level;
         changed.add(i);
         raised.push(i);
@@ -1048,6 +1101,24 @@ function applyDragRegion(
   const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
   const ragged = profile === 'soft';
 
+  /**
+   * The height each cell this intent touches had BEFORE it did. The cascade
+   * below needs to tell "a lip that was already here" from "a lip this very
+   * pull just built", and after the fill the live map can no longer say which
+   * is which — that confusion is what turned one click into a pyramid.
+   *
+   * A map of only the touched cells rather than a snapshot of the window: the
+   * cascade's window grows with the band count, and copying it would cost more
+   * than the edit does. `heightBefore` below reads through to the live map for
+   * everything absent, which is correct precisely because absent means
+   * untouched.
+   */
+  const priorHeights = new Map<number, number>();
+  const heightBefore = (i: number): number => priorHeights.get(i) ?? map.cells[i]!;
+  const record = (i: number): void => {
+    if (!priorHeights.has(i)) priorHeights.set(i, map.cells[i]!);
+  };
+
   // The footprint, collected once. The offsets come from the one iterator
   // every brush uses, so a pull considers exactly the cells a stamp of the
   // same radius would — minus, for `soft`, the bites taken out of the rim.
@@ -1080,6 +1151,7 @@ function applyDragRegion(
       // took, or higher ground the pull leaves standing.
       if (h >= targetHeight) continue;
       if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), targetBand)) continue;
+      record(i);
       map.cells[i] = targetHeight;
       changed.add(i);
       raised.push(i);
@@ -1091,7 +1163,7 @@ function applyDragRegion(
   // levels beneath it give ground too once it crowds them — see
   // pushLowerLayers. Seeded with this intent's own cells, so a pull that moved
   // nothing cascades nothing.
-  if (raised.length > 0) pushLowerLayers(map, raised, targetBand, changed);
+  if (raised.length > 0) pushLowerLayers(map, raised, targetBand, heightBefore, record, changed);
 }
 
 /**
