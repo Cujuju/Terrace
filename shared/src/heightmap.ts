@@ -12,6 +12,7 @@ import {
   BAND_HEIGHT,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
+  MAX_DRAG_PULL_CELLS,
   MAX_HEIGHT,
   MAX_STEP,
   MIN_BRUSH_RADIUS,
@@ -870,49 +871,43 @@ function dragPullDepth(gx: number, gy: number, drag: DragPull): number {
 }
 
 /**
- * The cell `j` steps out along the normal and `t` steps along the lip from the
- * grabbed cell.
- *
- * The tangent is the normal rotated a quarter turn — (−normalY, normalX) — so
- * both axes carry the same DRAG_NORMAL_SCALE and one division serves both.
- *
- * EXACT, NOT MERELY DETERMINISTIC-IN-PRACTICE: DRAG_NORMAL_SCALE is a power of
- * two and every numerator is an exact integer, so `num / DRAG_NORMAL_SCALE` is
- * exact in binary floating point; `+ 0.5` then `Math.floor` is round-half-up
- * over an exact value. There is no platform-dependent rounding anywhere in the
- * expression.
- */
-function dragRayCell(
-  gx: number,
-  gy: number,
-  drag: DragPull,
-  j: number,
-  t: number,
-): { x: number; y: number } {
-  const numX = drag.normalX * j - drag.normalY * t;
-  const numY = drag.normalY * j + drag.normalX * t;
-  return {
-    x: gx + Math.floor(numX / DRAG_NORMAL_SCALE + 0.5),
-    y: gy + Math.floor(numY / DRAG_NORMAL_SCALE + 0.5),
-  };
-}
-
-/**
  * THE DRAG REGION — every cell the grabbed lip has been pulled across, filled
  * to the grabbed band's floor.
  *
- * SHAPE. A fan of rays: one per step `t` along the lip, over the span the
- * brush radius names, each running `j = 1…depth` cells outward along the
- * frozen normal. The profile decides how the depth varies along that span, and
- * it is the SAME axis the brushes already use for their footprint edge (owner
- * decision 2026-08-24):
+ * SHAPE. The strip swept by the grabbed stretch of lip as it advances along
+ * the frozen normal: a cell is in it when its offset from the grab cell
+ * projects to between 1 and `depth` cells ALONG the normal, and to within the
+ * grabbed span ACROSS it. The profile decides how the depth varies across that
+ * span, and it is the SAME axis the brushes already use for their footprint
+ * edge (owner decision 2026-08-24):
  *
  * - `soft` — the pull tapers to nothing at the ends of the span, so the lip
  *            bulges into a bay. The falloff is `brushDelta`'s verbatim —
- *            `trunc(depth · (radius − |t|) / radius)` — because "soft edge"
- *            must mean one thing in this codebase, not two.
+ *            `trunc(depth · (radius − |across|) / radius)` — because "soft
+ *            edge" must mean one thing in this codebase, not two.
  * - `hard` — the full pull across the whole span, so the lip moves as a
  *            straight front with square ends.
+ *
+ * CELLS ARE TESTED, NOT SAMPLED, and that is the fix for the pocked terrace
+ * the owner saw (2026-08-24). The first version of this function walked a fan
+ * of rays outward from the grab cell in unit steps and rounded each step onto
+ * the lattice. Rounding a fan does not tile a strip: measured coverage of the
+ * region was 100% only when the lip ran along an axis, and 62% / 49% / 44% at
+ * 22.5° / 30° / 45° — a lattice of holes exactly like the one on screen. Worse,
+ * each ray's first cell sat `t` cells sideways from the grab cell and had to
+ * pass the spread rule alone, so a lip that curved even slightly killed that
+ * ray at its first step and it contributed nothing at all. Enumerating the
+ * cells of the region's bounding box and asking each one whether it is inside
+ * makes coverage total by construction, and there is no longer any such thing
+ * as "this ray's chain".
+ *
+ * FILLED IN ASCENDING DEPTH, which is what keeps the spread rule satisfiable:
+ * every cell at depth d has a neighbour at depth d−1 (the normal is one cell
+ * long, so stepping back along it lands within one cell), and depth 0 is the
+ * lip itself. Filling the whole depth-1 front before any of depth 2 means each
+ * cell finds the band already standing next to it. It is also the determinism
+ * contract's scan order — depth ascending, then row-major within a depth —
+ * fixed for the same reason forEachFootprintOffset's is.
  *
  * RAISE ONLY (2026-08-24). Pulling a lip INWARD is the same gesture with the
  * sign flipped, but it is the direction where the stop rule has to be real
@@ -920,19 +915,21 @@ function dragRayCell(
  * strip everything above it. Issue #99 step 3. A lowering drag is a no-op here
  * rather than an approximation of one.
  *
- * WHY A RAY STOPS. Two conditions end a ray early, and both are the owner's
- * "a drag stops at a higher band's edge, it does not strip the ground standing
- * on it":
+ * WHY A CELL IS SKIPPED. Two conditions, and both are the owner's "a drag
+ * stops at a higher band's edge, it does not strip the ground standing on it":
  *
- * 1. The cell already stands AT OR ABOVE the grabbed band. The pull is blocked
- *    by that ground; it does not skip over it and resume on the far side,
- *    which would leave a band-k island beyond a mesa the player never crossed.
+ * 1. The cell already stands ABOVE the grabbed band — higher ground the pull
+ *    does not disturb. Ground already AT the band is the lip itself, or land
+ *    filled at a shallower depth, and is simply left alone.
  * 2. `canSpreadBandTo` refuses the cell. This is the same anti-cheat rule the
  *    band anchor has always run — a grabbed band may only creep onto ground it
  *    already touches — re-derived here from the SERVER's own heightmap, so a
- *    forged normal or a forged `toX/toY` can at worst waste the sender's own
+ *    forged normal or forged cursor cell can at worst waste the sender's own
  *    intent. It is what keeps "clients send intents, never heights" true of a
- *    message that names a band and a direction.
+ *    message that names a band and a direction. A cell it refuses is skipped
+ *    rather than ending anything: with the fill ordered by depth there is no
+ *    ray left to end, and the higher ground that refused it stops the pull by
+ *    simply never becoming a neighbour.
  *
  * The region is ABSOLUTE and IDEMPOTENT: it is derived entirely from the grab
  * cell, the frozen normal, the cursor cell and the radius, none of which
@@ -961,43 +958,117 @@ function applyDragRegion(
 
   const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
   // The lip stretch the grab covers, in cells either side of it. Radius 1 is
-  // the single-ray drag for the same reason it is the single-cell brush.
+  // the single-file drag for the same reason it is the single-cell brush.
   const halfSpan = radius - 1;
 
-  // Scan order is part of the determinism contract, exactly as the brush
-  // footprint's is (see forEachFootprintOffset): `t` ascending outer, `j`
-  // ascending inner. `j` ascending is also load-bearing rather than merely
-  // fixed — each cell a ray fills becomes the neighbour that lets
-  // canSpreadBandTo admit the next one, so a ray extends the band outward one
-  // step at a time instead of teleporting it.
-  for (let t = -halfSpan; t <= halfSpan; t++) {
-    const rayDepth =
-      profile === 'hard'
-        ? depth
-        : // trunc (toward zero) for the same reason brushDelta uses it: it
-          // keeps the two directions symmetric. depth is positive here, so
-          // this is a floor, but the convention is the shared one.
-          Math.trunc((depth * (radius - (t < 0 ? -t : t))) / radius);
-    for (let j = 1; j <= rayDepth; j++) {
-      const cell = dragRayCell(gx, gy, drag, j, t);
-      // Off the world: the ray has run out of land, and there is nothing
-      // beyond the edge for a later step to reach either.
-      if (!inBounds(map, cell.x, cell.y)) break;
-      const i = cellIndex(map, cell.x, cell.y);
-      const h = map.cells[i]!;
-      // Stop 1: higher ground blocks the pull (see the doc above).
-      if (h >= targetHeight) {
-        // Ground already AT the band is the lip itself, or land an earlier
-        // ray already filled — the pull passes through it rather than being
-        // blocked by it. Only ground standing ABOVE the band stops the ray.
-        if (h > targetHeight) break;
-        continue;
+  const nx = drag.normalX;
+  const ny = drag.normalY;
+
+  // THE BOUNDING BOX. The region reaches at most `depth` cells along the
+  // normal and `halfSpan` across it, and both axes are unit vectors, so no
+  // cell of it lies further than their sum from the grab cell in either
+  // coordinate. A box rather than the exact extent because the membership test
+  // below is what defines the region — the box only has to CONTAIN it, and one
+  // that is slightly generous costs a few rejected cells, while one that is
+  // slightly tight would silently clip the pull.
+  const reach = depth + halfSpan;
+  const minX = gx - reach < 0 ? 0 : gx - reach;
+  const maxX = gx + reach >= map.size ? map.size - 1 : gx + reach;
+  const minY = gy - reach < 0 ? 0 : gy - reach;
+  const maxY = gy + reach >= map.size ? map.size - 1 : gy + reach;
+
+  // Cell indices bucketed by their depth along the normal, so the fill below
+  // can run front by front.
+  //
+  // DEPTH 0 IS INCLUDED, and leaving it out was a bug (owner report,
+  // 2026-08-24: a pull that moved one cell and stopped). The grab cell is
+  // wherever the player's ray met the ground, which for a lip is normally the
+  // LOW side of it — so a region starting at depth 1 starts one clear cell out
+  // from the lip, and no cell of its first front has band-k ground among its
+  // eight neighbours. `canSpreadBandTo` then refuses the entire front and the
+  // pull does nothing at all. Measured on a synthetic terrace: an axis-aligned
+  // lip changed 0 cells. Diagonal lips only appeared to work because the
+  // 8-neighbourhood happens to reach back across the lip there.
+  //
+  // Cells at depth 0 that already stand at the band — the lip itself — are
+  // skipped by the fill's own height test, so including them costs nothing
+  // where the grab landed on the high side instead.
+  const byDepth: number[][] = [];
+  for (let d = 0; d <= depth; d++) byDepth.push([]);
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const dx = x - gx;
+      const dy = y - gy;
+      // Both projections are integers scaled by DRAG_NORMAL_SCALE: the dot
+      // product with the normal, and with the tangent — the normal turned a
+      // quarter turn, (−normalY, normalX).
+      const along = dx * nx + dy * ny;
+      const across = -dx * ny + dy * nx;
+      // Rounded to whole cells the same exact way everywhere in this function:
+      // DRAG_NORMAL_SCALE is a power of two and the numerators are exact
+      // integers, so the division is exact in binary floating point and the
+      // `+ 0.5` before the floor is a round-half-up over an exact value. No
+      // platform-dependent rounding, which is what the determinism contract
+      // needs (design §3.1).
+      const acrossCells = Math.floor(across / DRAG_NORMAL_SCALE + 0.5);
+      const acrossAbs = acrossCells < 0 ? -acrossCells : acrossCells;
+      if (acrossAbs > halfSpan) continue;
+      const alongCells = Math.floor(along / DRAG_NORMAL_SCALE + 0.5);
+      // Behind the lip, or past the pull. Depth 0 is in — see byDepth above.
+      if (alongCells < 0 || alongCells > depth) continue;
+      // How far the pull reaches at THIS distance across the span. `radius`
+      // rather than `halfSpan` is the denominator so the outermost cell of the
+      // span still gets a share — brushDelta's convention exactly, where a
+      // cell at `dist` of `radius` is the first one outside the brush.
+      const reachHere =
+        profile === 'hard'
+          ? depth
+          : // trunc (toward zero) for the same reason brushDelta uses it: it
+            // keeps the two directions symmetric. depth is positive here, so
+            // this is a floor, but the convention is the shared one.
+            Math.trunc((depth * (radius - acrossAbs)) / radius);
+      // Depth 0 is always in: it is the front the lip stands on, and a taper
+      // that excluded it would leave the grabbed row untouched at the ends of
+      // the span, which is a notch rather than a taper.
+      if (alongCells > reachHere && alongCells !== 0) continue;
+      byDepth[alongCells]!.push(cellIndex(map, x, y));
+    }
+  }
+
+  for (let d = 0; d <= depth; d++) {
+    const front = byDepth[d]!;
+    // SWEPT TO A FIXPOINT, not once. A cell's right to the band depends on a
+    // NEIGHBOUR already having it, and at some lip angles a cell's only
+    // qualifying neighbour is another cell of its own front rather than one a
+    // depth shallower — measured: one such cell in 87 at a 2:1 lip slope. A
+    // single row-major pass fills it only if that neighbour happens to come
+    // earlier in the scan, so the front would develop a notch whose position
+    // depended on the scan order. Repeating until a pass changes nothing
+    // removes the order dependence entirely; the loop terminates because every
+    // pass but the last fills at least one cell of a finite front.
+    //
+    // It cannot leak past the stop rule: a pass only ever fills cells that
+    // canSpreadBandTo admits at the moment it is asked, so ground standing
+    // above the band still refuses every neighbour it has, however many times
+    // they are re-offered.
+    let filledThisPass = true;
+    while (filledThisPass) {
+      filledThisPass = false;
+      for (const i of front) {
+        const h = map.cells[i]!;
+        // Already at or above the band: the lip itself, land filled at a
+        // shallower depth, or higher ground the pull leaves standing.
+        if (h >= targetHeight) continue;
+        const x = cellX(map.size, i);
+        const y = cellY(map.size, i);
+        // The band does not reach this cell, so it may not be spread there.
+        // Re-derived from the map, never trusted from the wire.
+        if (!canSpreadBandTo(map, x, y, targetBand)) continue;
+        map.cells[i] = targetHeight;
+        changed.add(i);
+        filledThisPass = true;
       }
-      // Stop 2: the band does not reach this cell, so it may not be spread
-      // there. Re-derived from the map, never trusted from the wire.
-      if (!canSpreadBandTo(map, cell.x, cell.y, targetBand)) break;
-      map.cells[i] = targetHeight;
-      changed.add(i);
     }
   }
 }
