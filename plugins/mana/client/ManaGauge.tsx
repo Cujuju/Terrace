@@ -44,16 +44,13 @@
 
 import { Show, createEffect, createSignal, onCleanup, type JSX } from 'solid-js';
 import {
-  MS_PER_SECOND,
-  advanceDisplayBalance,
   fillFraction,
   formatRegenRate,
   formatSculptCost,
   isPoolFull,
   pulsePeriodSeconds,
-  syncedDisplayBalance,
 } from './gauge.ts';
-import { currentBrushCost, deniedCount, manaPool } from './state.ts';
+import { currentBrushCost, deniedCount, liveBalance, manaPool } from './state.ts';
 
 /** How long the denial flash lasts. Matches the HUD's other transient cues. */
 const DENIAL_FLASH_MS = 600;
@@ -249,19 +246,36 @@ function prefersReducedMotion(): () => boolean {
 }
 
 export function ManaGauge(): JSX.Element {
-  /** The smoothed balance the gauge draws; resynced from the pool below. */
+  /**
+   * The balance the gauge draws.
+   *
+   * IT IS NOT A SECOND COPY OF THE POOL, and it used to be (owner, 2026-08-24:
+   * "that sounds like there are two sources of truth racing each other — how
+   * can the gauge show full and internally it's zero"). This signal held a
+   * value that advanced ITSELF every frame from its own previous output, so it
+   * and the intent gate were two independent accumulators of the same quantity
+   * with nothing tying them together. They duly disagreed: a burst of pull
+   * intents drained the gate's estimate to nothing while this one, which never
+   * looked at it, went on filling the vessel to the brim.
+   *
+   * Now it re-derives from `liveBalance` — the ONE function that says what the
+   * pool holds — every frame. What the gauge shows and what the gate spends
+   * cannot diverge, because there is nothing left to diverge.
+   */
   const [displayed, setDisplayed] = createSignal(0);
   const [flashing, setFlashing] = createSignal(false);
   const reduced = prefersReducedMotion();
 
-  // WHOLESALE RESYNC. Fires for BOTH kinds of pool change, which is the whole
-  // point: an authoritative push replaces the local estimate, and a local gate
-  // debit (state.ts writes a new pool on every allowed sculpt) shows the spend
-  // on the very next frame instead of a round trip later.
+  // WHOLESALE RESYNC on any pool change — an authoritative push, or a local
+  // gate debit (state.ts writes a new pool on every allowed sculpt, so a spend
+  // shows on the very next frame instead of a round trip later). The rAF loop
+  // below keeps it moving between those; this is what makes it jump the moment
+  // something real happens, including under prefers-reduced-motion where there
+  // is no loop at all.
   createEffect(() => {
     const pool = manaPool();
     if (pool === null) return;
-    setDisplayed(syncedDisplayBalance(pool.balance, pool.capacity));
+    setDisplayed(liveBalance(pool));
   });
 
   // A denial (the COUNT changing, see state.ts) starts/restarts the flash.
@@ -275,27 +289,30 @@ export function ManaGauge(): JSX.Element {
     return count;
   });
 
-  // THE SMOOTHING LOOP. Skipped entirely under prefers-reduced-motion, which
-  // leaves the gauge static between server pushes — the level still tells the
-  // truth, it just steps instead of sliding.
+  // THE SMOOTHING LOOP — a re-read, not an accumulator. Each frame simply asks
+  // `liveBalance` what the pool holds now; the smooth rise the player sees is
+  // that function's own regen term, not a separate integration this component
+  // performs. Skipped entirely under prefers-reduced-motion, which leaves the
+  // gauge stepping on pool changes instead of sliding — the level still tells
+  // the truth either way, which is the property that matters and the one the
+  // old accumulator could not promise.
+  //
+  // A DISCONNECTED CLIENT STILL CLIMBS TO FULL, stated rather than discovered:
+  // `liveBalance` measures regen from the last push, and a dead socket sends
+  // none. The accumulator this replaces had the same behaviour — its
+  // per-frame cap only slowed the climb, it never stopped it — so nothing is
+  // lost here, and nothing is applied either way, because a sculpt that cannot
+  // be sent is never predicted (see main.tsx's send).
   createEffect(() => {
     if (reduced()) return;
 
     let frame = 0;
-    let previousTime = performance.now();
-
-    const step = (now: number) => {
-      const dt = (now - previousTime) / MS_PER_SECOND;
-      previousTime = now;
+    const step = () => {
       // Read inside the callback, which runs outside any tracking scope, so
       // this does not subscribe the effect to the pool and restart the loop on
       // every push.
       const pool = manaPool();
-      if (pool !== null) {
-        setDisplayed((current) =>
-          advanceDisplayBalance(current, pool.capacity, pool.regenPerSecond, dt),
-        );
-      }
+      if (pool !== null) setDisplayed(liveBalance(pool));
       frame = requestAnimationFrame(step);
     };
 

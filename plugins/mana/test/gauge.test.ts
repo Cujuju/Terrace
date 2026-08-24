@@ -23,16 +23,13 @@ import {
   setBrushRadius,
 } from '../../../client/src/state/hudState.ts';
 import {
-  MAX_DISPLAY_STEP_S,
   MAX_PULSE_PERIOD_S,
   MIN_PULSE_PERIOD_S,
-  advanceDisplayBalance,
   fillFraction,
   formatRegenRate,
   formatSculptCost,
   isPoolFull,
   pulsePeriodSeconds,
-  syncedDisplayBalance,
 } from '../client/gauge.ts';
 import { currentBrushCost, setManaPool } from '../client/state.ts';
 import { sculptManaCost } from '../pricing.ts';
@@ -53,67 +50,6 @@ import {
  * whole number the readout examples in this file were written against.
  */
 const EXAMPLE_REGEN_PER_SECOND = MANA_REGEN_AT_DIFFICULTY_100;
-
-describe('display advance', () => {
-  it('advances at exactly the pushed rate', () => {
-    // dt values here are inside MAX_DISPLAY_STEP_S; the cap has its own test.
-    expect(advanceDisplayBalance(100, MANA_CAPACITY, 20, 0.2)).toBe(104);
-    expect(advanceDisplayBalance(100, MANA_CAPACITY, 20, 0.05)).toBe(101);
-    // A slower world visibly trickles: same frame, a twentieth of the gain.
-    expect(advanceDisplayBalance(100, MANA_CAPACITY, 1, 0.2)).toBe(100.2);
-  });
-
-  it('never advances past capacity', () => {
-    expect(advanceDisplayBalance(MANA_CAPACITY - 1, MANA_CAPACITY, 20, 1)).toBe(MANA_CAPACITY);
-    expect(advanceDisplayBalance(MANA_CAPACITY, MANA_CAPACITY, 20, 1)).toBe(MANA_CAPACITY);
-  });
-
-  it('caps a single frame step, so a backgrounded tab cannot invent a full pool', () => {
-    // A tab hidden for an hour reports one enormous frame on return. Only
-    // MAX_DISPLAY_STEP_S of it is trusted; the next server push does the rest.
-    const hugeCapacity = 1_000_000;
-    expect(advanceDisplayBalance(0, hugeCapacity, 20, 3600)).toBe(20 * MAX_DISPLAY_STEP_S);
-    // A step at the cap is still taken in full — the cap must not truncate the
-    // frames a genuinely slow machine produces.
-    expect(advanceDisplayBalance(0, hugeCapacity, 20, MAX_DISPLAY_STEP_S)).toBe(
-      20 * MAX_DISPLAY_STEP_S,
-    );
-  });
-
-  it('freezes rather than corrupts when an input is unusable', () => {
-    for (const dt of [Number.NaN, -1, 0, Number.POSITIVE_INFINITY]) {
-      expect(advanceDisplayBalance(100, MANA_CAPACITY, 20, dt)).toBe(100);
-    }
-    for (const rate of [Number.NaN, 0, -20, Number.POSITIVE_INFINITY]) {
-      expect(advanceDisplayBalance(100, MANA_CAPACITY, rate, 0.2)).toBe(100);
-    }
-    expect(advanceDisplayBalance(100, 0, 20, 0.2)).toBe(100);
-    expect(advanceDisplayBalance(Number.NaN, MANA_CAPACITY, 20, 0.2)).toBe(0);
-  });
-});
-
-describe('resync', () => {
-  it('takes the pushed balance wholesale', () => {
-    // Whatever the smoothing had climbed to, an authoritative push replaces it —
-    // including downwards, which is what a local gate debit looks like.
-    expect(syncedDisplayBalance(310, MANA_CAPACITY)).toBe(310);
-    expect(syncedDisplayBalance(0, MANA_CAPACITY)).toBe(0);
-  });
-
-  it('clamps a balance that could not be drawn', () => {
-    expect(syncedDisplayBalance(MANA_CAPACITY + 50, MANA_CAPACITY)).toBe(MANA_CAPACITY);
-    expect(syncedDisplayBalance(-5, MANA_CAPACITY)).toBe(0);
-    expect(syncedDisplayBalance(Number.NaN, MANA_CAPACITY)).toBe(0);
-    expect(syncedDisplayBalance(10, 0)).toBe(0);
-  });
-
-  it('round-trips advance → resync: the local estimate is never sticky', () => {
-    const smoothed = advanceDisplayBalance(300, MANA_CAPACITY, 20, 0.2);
-    expect(smoothed).toBeGreaterThan(300);
-    // Server says 275 (the player spent while the estimate was climbing).
-    expect(syncedDisplayBalance(275, MANA_CAPACITY)).toBe(275);
-  });
-});
 
 describe('fill level', () => {
   it('is the fraction of the vessel, clamped to it', () => {
