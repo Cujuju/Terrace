@@ -33,7 +33,7 @@
 
 import { BufferAttribute, BufferGeometry, LineBasicMaterial, LineSegments } from 'three';
 import type { Object3D } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE, DRAG_NORMAL_SCALE, bandOf } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, bandOf } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { chunkContourLoops } from '../terrain/capEmission.ts';
 import { hasChunk, sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
@@ -98,47 +98,16 @@ const GRAB_RADIUS_WORLD_UNITS = 1.5 * CELL_WORLD_SIZE;
  */
 const HIGHLIGHT_SPAN_WORLD_UNITS = 2;
 
-/**
- * How far either side of the grabbed lip the terrain is sampled to decide
- * WHICH WAY THE FACE LOOKS, in cells.
- *
- * Two rather than one: the contour runs between cells, so the cells
- * immediately either side of it can both read as the same band once the
- * marching-squares interpolation is accounted for, and a one-cell probe then
- * picks the outward direction by a coin toss. Two cells is clear of the lip
- * while still on the same terrace feature.
- *
- * DERIVED FROM THE CONTOUR, NOT TUNED FOR FEEL: nothing the player sees
- * changes with this number — it only decides a sign.
- */
-const NORMAL_PROBE_CELLS = 2;
-
-/**
- * A grabbed terrace lip: which band it belongs to, and which way its face
- * looks. Everything a `drag` stroke freezes on pointerdown.
- *
- * The normal is a unit vector scaled by DRAG_NORMAL_SCALE and rounded to
- * integers, because it goes on the wire and then into cell arithmetic that
- * server and client must agree on bit for bit — see shared/heightmap.ts's
- * DragPull.
- */
-export interface LipGrab {
-  readonly band: number;
-  readonly normalX: number;
-  readonly normalY: number;
-}
-
 export interface LayerEdgeOverlay {
   /** Rebuilds the edges of the given chunks. Unreceived chunks are skipped. */
   update(dirty: Iterable<number>): void;
   /**
-   * Lights up the lip nearest the given cell and returns what a drag starting
-   * there would grab — its band and the outward normal of its face. Null
-   * clears the highlight and reports no grab, either because the pointer is
-   * off the world or because the nearest lip is further than
-   * GRAB_RADIUS_WORLD_UNITS away.
+   * Lights up the lip nearest the given cell and returns the BAND it belongs
+   * to — the band a pull starting there would grab. Null clears the highlight
+   * and reports no grab, either because the pointer is off the world or
+   * because the nearest lip is further than GRAB_RADIUS_WORLD_UNITS away.
    */
-  highlightAt(cell: { x: number; y: number } | null): LipGrab | null;
+  highlightAt(cell: { x: number; y: number } | null): number | null;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
   dispose(): void;
@@ -344,12 +313,6 @@ export function createLayerEdgeOverlay(
       const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
       let bestBand: number | null = null;
       let bestDistanceSq = grabRadiusSq;
-      // The nearest segment itself, not just its band: its direction is what
-      // gives a drag the frozen normal it pulls along.
-      let bestAx = 0;
-      let bestAz = 0;
-      let bestBx = 0;
-      let bestBz = 0;
       for (const idx of nearbyChunks(cell.x, cell.y)) {
         const perBand = segmentsByChunk.get(idx);
         if (perBand === undefined) continue;
@@ -359,52 +322,11 @@ export function createLayerEdgeOverlay(
             if (d < bestDistanceSq) {
               bestDistanceSq = d;
               bestBand = band;
-              bestAx = flat[i]!;
-              bestAz = flat[i + 1]!;
-              bestBx = flat[i + 2]!;
-              bestBz = flat[i + 3]!;
             }
           }
         }
       }
       if (bestBand === null) return null;
-
-      // WHICH WAY THE FACE LOOKS. The normal is perpendicular to the lip, and
-      // the two candidates differ only in sign; the outward one is the one
-      // pointing at the LOWER ground, which is decided by sampling the terrain
-      // either side rather than by trusting the contour's winding. Winding is
-      // an implementation detail of chunkContourLoops and would silently
-      // reverse every drag in the world if it ever changed; height is the
-      // thing the player can actually see, and it cannot lie about which side
-      // is the drop.
-      const vx = bestBx - bestAx;
-      const vz = bestBz - bestAz;
-      const length = Math.sqrt(vx * vx + vz * vz);
-      // A zero-length segment has no direction, so there is no pull to define.
-      // Reporting no grab is the honest answer, and the case is not reachable
-      // from marching squares — this is a guard, not a branch with a feel.
-      if (length === 0) return null;
-      let nx = -vz / length;
-      let nz = vx / length;
-      const forward = sampleHeight(
-        mirror,
-        Math.round(cell.x + nx * NORMAL_PROBE_CELLS),
-        Math.round(cell.y + nz * NORMAL_PROBE_CELLS),
-      );
-      const backward = sampleHeight(
-        mirror,
-        Math.round(cell.x - nx * NORMAL_PROBE_CELLS),
-        Math.round(cell.y - nz * NORMAL_PROBE_CELLS),
-      );
-      if (backward < forward) {
-        nx = -nx;
-        nz = -nz;
-      }
-      const grab: LipGrab = {
-        band: bestBand,
-        normalX: Math.round(nx * DRAG_NORMAL_SCALE),
-        normalY: Math.round(nz * DRAG_NORMAL_SCALE),
-      };
 
       // PASS 2 — light up that band's lip near the cursor. Scoped by distance
       // rather than by loop identity: a loop is CLIPPED AT THE CHUNK BORDER
@@ -425,7 +347,7 @@ export function createLayerEdgeOverlay(
           positions.push(ax, y, az, bx, y, bz);
         }
       }
-      if (positions.length < FLOATS_PER_SEGMENT) return grab;
+      if (positions.length < FLOATS_PER_SEGMENT) return bestBand;
 
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
@@ -433,7 +355,7 @@ export function createLayerEdgeOverlay(
       // Above the resting edges it is picked out from.
       grabbed.renderOrder = 501;
       group.add(grabbed);
-      return grab;
+      return bestBand;
     },
     clear() {
       clearGrabbed();

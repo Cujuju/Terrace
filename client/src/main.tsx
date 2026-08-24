@@ -147,7 +147,7 @@ viewport.onFrame(() => {
   // (footprint). One query, so the highlight the player sees, the readout and
   // the pointer shape can never disagree about what is under the cursor —
   // and it is the same question input/sculptInput.ts asks on pointerdown.
-  const grabbedLip = world.highlightLayerEdge(pick);
+  const grabbedBand = world.highlightLayerEdge(pick);
   brushPreview.update(
     // GRABBABLE MEANS "THIS PRESS WILL TAKE HOLD", so it is gated on the tool
     // the same way pointerdown is (input/sculptInput.ts). A lip under the
@@ -155,14 +155,14 @@ viewport.onFrame(() => {
     // a pointer that said otherwise would be advertising the wrong edit.
     pick === null
       ? null
-      : { ...pick, grabbable: grabbedLip !== null && brushTool() === 'drag' },
+      : { ...pick, grabbable: grabbedBand !== null && brushTool() === 'drag' },
     {
       radius: brushRadius(),
       tool: brushTool(),
       profile: brushProfile(),
     },
   );
-  pickDebug.update(pick, grabbedLip?.band ?? null);
+  pickDebug.update(pick, grabbedBand);
 });
 
 // The frame-rate readout in the top-right watermark. Started here, beside the
