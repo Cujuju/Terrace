@@ -151,7 +151,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
       const points = outlinePoints(line);
       expect(points.length).toBeGreaterThanOrEqual(3);
 
@@ -189,7 +189,7 @@ describe('createBrushPreview', () => {
     for (const radius of [1, 2, 4, 8]) {
       for (const tool of ['stamp', 'smooth'] as const) {
         for (const profile of ['soft', 'hard'] as const) {
-          preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false }, { radius, tool, profile });
+          preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, { radius, tool, profile });
           const points = outlinePoints(line);
 
           const rendered = renderedCells(radius, tool, profile);
@@ -226,7 +226,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
@@ -260,7 +260,7 @@ describe('createBrushPreview', () => {
     );
 
     for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
       forEachFootprintOffset(radius, (dx, dy) => edited.add(`${dx},${dy}`));
@@ -292,7 +292,7 @@ describe('createBrushPreview', () => {
     const line = outlineOf(scene);
 
     for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false }, brush(radius));
+      preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
       const { minX, maxX, minZ, maxZ } = extent(line);
       expect(minX).toBeCloseTo(-maxX);
       expect(minZ).toBeCloseTo(-maxZ);
@@ -312,7 +312,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    preview.update({ x: 7, y: 11, surfaceY: 3, hitRiser: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 7, y: 11, surfaceY: 3, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(line.position.x).toBeCloseTo(7 * CELL_WORLD_SIZE);
     expect(line.position.z).toBeCloseTo(11 * CELL_WORLD_SIZE);
     expect(line.visible).toBe(true);
@@ -328,7 +328,7 @@ describe('createBrushPreview', () => {
     // Nothing hovered yet: the player still has their arrow.
     expect(canvas.on).toBe(false);
 
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     expect(canvas.on).toBe(true);
 
     // Off the terrain — sky, off-world, pointer gone. The arrow must come back
@@ -338,12 +338,12 @@ describe('createBrushPreview', () => {
 
     // An illegal radius hides the outline too, and must restore the arrow on
     // that path as well.
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false }, brush(MIN_BRUSH_RADIUS));
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false }, brush(MAX_BRUSH_RADIUS + 1));
+    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MAX_BRUSH_RADIUS + 1));
     expect(canvas.on).toBe(false);
 
     // Disposing must not strand the page with a hidden pointer.
-    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false }, brush(MIN_BRUSH_RADIUS));
+    preview.update({ x: 3, y: 4, surfaceY: 1, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     preview.dispose();
     expect(canvas.on).toBe(false);
   });
@@ -355,7 +355,7 @@ describe('createBrushPreview', () => {
 
     // `update` runs every frame; a steady hover must not touch the DOM.
     for (let frame = 0; frame < 60; frame++) {
-      preview.update({ x: 2, y: 2, surfaceY: 0, hitRiser: false }, brush(MIN_BRUSH_RADIUS));
+      preview.update({ x: 2, y: 2, surfaceY: 0, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
     }
     expect(canvas.writes).toBe(1);
 

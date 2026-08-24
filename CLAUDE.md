@@ -14,6 +14,18 @@ GitHub Issues on `Cujuju/Terrace`. Arcs are `arc/<slug>` labels, buckets are
 - `pnpm test` — run Vitest across the workspace
 - Tests and typecheck must pass before any commit that touches `shared/`.
 
+## Tests
+
+Do not write tests unless the owner asks for them. Owner, 2026-08-23: tests
+written after the fact just confirm the code that was written and pass by
+construction, which is worthless — and a feature that has not been seen working
+is not helped by them. What must always hold is that `pnpm typecheck` passes.
+
+When the owner does ask, write the test FIRST and make the feature pass it.
+
+Failing tests in packages you did not touch are other agents' in-flight work —
+check `git status` before reporting them as breakage.
+
 ## Committing (shared checkout, concurrent agents)
 
 Commit work as soon as it is done. Agents share this checkout, and
