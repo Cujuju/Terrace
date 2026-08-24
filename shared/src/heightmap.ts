@@ -798,6 +798,109 @@ function fillTowardTarget(
 }
 
 /**
+ * How far a pulled lip may slide over the level below it before that level is
+ * pushed along too, in cells — the narrowest tread the Pull tool will leave
+ * behind (owner, 2026-08-24: "I could pull on a level and it slides over the
+ * top of the levels below it by a small amount until it starts to pull the
+ * next level, and then the next level comes with it").
+ *
+ * HALF A WORLD UNIT. A tread is one world unit deep by the terracing the world
+ * is generated with (see MAX_STEP's derivation in constants.ts), so half of one
+ * is a visible slide — the upper lip plainly encroaches — while still leaving a
+ * step a player can see and stand on. A tolerance of a whole tread would mean
+ * the lower level never moved until the upper one had swallowed it entirely,
+ * which is the behaviour this replaces.
+ *
+ * Stated in world units rather than cells so it survives a re-sample, the trap
+ * the 2026-08-21 quartering set for every constant that was secretly "one
+ * cell".
+ */
+const DRAG_TREAD_TOLERANCE_CELLS = WORLD_UNIT_CELLS / 2;
+
+/**
+ * PUSHING THE LEVELS BELOW ALONG WITH THE ONE BEING PULLED.
+ *
+ * Without this a pull simply swallows the terrace under it: band k advances
+ * over band k−1's tread, band k−1 never moves, and a staircase turns into one
+ * tall face. What the player expects is that the step is CARRIED — crowd the
+ * level below and it gives ground too, and so on down.
+ *
+ * THE RULE. A cell must be raised to band j when it lies within
+ * DRAG_TREAD_TOLERANCE_CELLS of ground THIS EDIT just put at band j+1 or
+ * above. Applied for j = k−1, then k−2, with the cells raised at each band
+ * seeding the next, so the whole stack shifts one band at a time.
+ *
+ * SEEDED BY WHAT MOVED, NEVER BY THE TERRAIN AT LARGE, and that distinction is
+ * the whole safety of it. Stated as a property of the map — "bands within
+ * `tolerance` cells of each other may differ by at most one" — the same rule
+ * would be a global terracing constraint far stricter than MAX_STEP, and
+ * applying it would raise ground across every natural slope in the world that
+ * happens to be steeper than one band per half world unit. Seeded from this
+ * intent's own changes it can only ever propagate outward from land the player
+ * just moved, and it stops of its own accord the moment it reaches a tread
+ * already wider than the tolerance — which on open terrain is immediately.
+ *
+ * It cannot invent height either: every cell it raises to band j is admitted by
+ * `canSpreadBandTo`, the same rule the pull itself runs, so band j must already
+ * stand next to that cell before it may spread there.
+ */
+function pushLowerLayers(
+  map: Heightmap,
+  raisedAtBand: number[],
+  topBand: number,
+  changed: Set<number>,
+): void {
+  let seeds = raisedAtBand;
+
+  for (let band = topBand - 1; band > MIN_BAND && seeds.length > 0; band--) {
+    const level = clampHeight(band * BAND_HEIGHT);
+
+    // Everything within the tolerance of what the level above just took. A Set
+    // then a sort, because a cell near two seeds must be considered once and
+    // the order must not depend on which seed reached it first.
+    const candidates = new Set<number>();
+    for (const seed of seeds) {
+      const sx = cellX(map.size, seed);
+      const sy = cellY(map.size, seed);
+      for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
+        for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
+          const x = sx + dx;
+          const y = sy + dy;
+          if (!inBounds(map, x, y)) continue;
+          const i = cellIndex(map, x, y);
+          if (map.cells[i]! >= level) continue;
+          candidates.add(i);
+        }
+      }
+    }
+    if (candidates.size === 0) return;
+    const ordered = Array.from(candidates).sort((a, b) => a - b);
+
+    // The same wave discipline the pull itself uses: a candidate more than one
+    // cell from the band cannot take it until its inward neighbour has, so the
+    // set is swept until a pass changes nothing.
+    const raised: number[] = [];
+    let filledThisPass = true;
+    while (filledThisPass) {
+      filledThisPass = false;
+      for (const i of ordered) {
+        if (map.cells[i]! >= level) continue;
+        if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), band)) continue;
+        map.cells[i] = level;
+        changed.add(i);
+        raised.push(i);
+        filledThisPass = true;
+      }
+    }
+
+    // Nothing gave ground at this band, so the tread below is already wider
+    // than the tolerance and there is nothing crowding the levels under it.
+    if (raised.length === 0) return;
+    seeds = raised;
+  }
+}
+
+/**
  * The smallest fraction of the brush radius a `soft` pull's edge can pull in
  * to, as the ragged footprint's inner bound.
  *
@@ -967,6 +1070,7 @@ function applyDragRegion(
   // finite footprint, so this terminates, and the result does not depend on
   // the order within a pass — a cell passed over early is simply offered again
   // next time round.
+  const raised: number[] = [];
   let filledThisPass = true;
   while (filledThisPass) {
     filledThisPass = false;
@@ -978,9 +1082,16 @@ function applyDragRegion(
       if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), targetBand)) continue;
       map.cells[i] = targetHeight;
       changed.add(i);
+      raised.push(i);
       filledThisPass = true;
     }
   }
+
+  // THE STEP IS CARRIED, NOT SWALLOWED. Whatever this pull just took, the
+  // levels beneath it give ground too once it crowds them — see
+  // pushLowerLayers. Seeded with this intent's own cells, so a pull that moved
+  // nothing cascades nothing.
+  if (raised.length > 0) pushLowerLayers(map, raised, targetBand, changed);
 }
 
 /**
