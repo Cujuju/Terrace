@@ -47,7 +47,11 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS } from '../../plugins/temples/protocol.ts';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import {
+  TEMPLE_DOOR_OFFSET_CELLS,
+  TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS,
+} from '../../plugins/temples/protocol.ts';
 import { TEMPLE_HEIGHT, createTempleModels } from '../../plugins/temples/client/temple.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
 
@@ -114,7 +118,19 @@ const timeParam = Number(query.get('t') ?? '0');
 const seconds = Number.isFinite(timeParam) ? timeParam : 0;
 const dusk = query.get('sky') === 'dusk';
 const peepParam = query.get('peep');
-const showPeep = peepParam === null ? view !== 'summit' : peepParam === '1';
+const showPeep = peepParam === null ? view !== 'summit' : peepParam !== '0';
+/**
+ * `?peep=door` stands the settler where the SERVER spawns one — the door cell
+ * (temples/protocol.ts's TEMPLE_DOOR_OFFSET_CELLS), rather than beside the
+ * building as a ruler.
+ *
+ * It exists because that offset is a number nobody can check by reading it:
+ * the question it answers is "does the person standing there look like they
+ * just walked out of the door, or like they are standing inside the bottom
+ * step" — and the bottom tread juts further out than the plinth does, which is
+ * exactly how the previous value got it wrong.
+ */
+const peepAtDoor = peepParam === 'door';
 
 const span = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS;
 
@@ -163,10 +179,13 @@ if (showPeep) {
   const peep = pilgrims.create('rudy');
   // animate() is a pure function of the clock, so this phase IS that pose.
   peep.animate(PEEP_STRIDE_PHASE / STRIDE_HZ, 0);
-  // He stands on the axis the camera looks ACROSS, for previewYeti.ts's reason:
-  // a ruler hidden behind the subject is worse than no ruler.
+  // On the door, facing away from the building — the pose a settler holds for
+  // the first step of its walk.
   const direction = CAMERA_VIEWS[view];
-  if (Math.abs(direction.z) > Math.abs(direction.x)) {
+  if (peepAtDoor) {
+    peep.root.position.x = TEMPLE_DOOR_OFFSET_CELLS * CELL_WORLD_SIZE;
+    peep.root.rotation.y = Math.PI / 2;
+  } else if (Math.abs(direction.z) > Math.abs(direction.x)) {
     peep.root.position.x = span * PEEP_OFFSET_SPANS;
     peep.root.rotation.y = Math.PI;
   } else {
