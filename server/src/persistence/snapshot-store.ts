@@ -23,7 +23,13 @@ import DatabaseConstructor, { type Database, type Statement } from 'better-sqlit
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { logWarn } from '../log.ts';
-import { decodeHeights, encodeHeights } from './codec.ts';
+import type { Span } from '@terrace/shared';
+import {
+  decodeColumnSpans,
+  decodeHeights,
+  encodeColumnSpans,
+  encodeHeights,
+} from './codec.ts';
 
 /**
  * Bumped whenever the stored layout changes in a way this reader cannot
@@ -101,13 +107,27 @@ export interface SnapshotInput {
    * and the column stays null.
    */
   readonly thumbnail?: Uint8Array;
+  /**
+   * The world's span side table — every column holding MORE THAN ONE solid
+   * span (shared/src/columns.ts). OPTIONAL and additive, following
+   * tokenMasks/thumbnail: a caller that has never had a layered column (every
+   * pre-existing call site) simply omits it, and the column stores NULL.
+   *
+   * The map is the LIVE table (World.spansForPersistence), encoded to a blob by
+   * saveSnapshot — the same division of labour as `cells`, which arrives live
+   * and leaves as an encodeHeights blob. An EMPTY map encodes to a
+   * zero-length BLOB, not NULL: "carved, then re-merged flat" and "never
+   * carved" read back identically either way, so the distinction costs nothing
+   * to drop.
+   */
+  readonly columnSpans?: ReadonlyMap<number, Int16Array>;
 }
 
 // `genesisMillis` is omitted and redeclared below for the same reason `name`
 // is: the writer's field is optional (`number | undefined`), the reader's is
 // `number | null`, and only a reader can meet a row that predates the column.
 export interface WorldSnapshot
-  extends Omit<SnapshotInput, 'name' | 'tokenMasks' | 'genesisMillis'> {
+  extends Omit<SnapshotInput, 'name' | 'tokenMasks' | 'genesisMillis' | 'columnSpans'> {
   readonly id: number;
   readonly createdAt: number;
   /**
@@ -135,6 +155,17 @@ export interface WorldSnapshot
    * epoch and restart its saga's day numbering.
    */
   readonly genesisMillis: number | null;
+  /**
+   * The stored span side table, keyed by cell index. ALWAYS PRESENT on a read
+   * (unlike SnapshotInput's optional field) — a legacy row written before the
+   * column existed reads back as an EMPTY map, never undefined, exactly like
+   * tokenMasks above. That is honest rather than lossy because of the storage
+   * contract: NULL on disk means "written before spans existed", which IS "no
+   * layered column", so an empty map says precisely what the row said. The
+   * lists are canonical Spans, already parsed and validated at decode — see
+   * COLUMN_SPANS_COLUMN and decodeColumnSpans.
+   */
+  readonly columnSpans: ReadonlyMap<number, Span[]>;
 }
 
 interface SnapshotRow {
@@ -151,6 +182,8 @@ interface SnapshotRow {
   genesis_millis: number | null;
   heightmap: Uint8Array;
   mask: Uint8Array;
+  /** Encoded layered-column records; NULL in a row written before spans persisted. */
+  column_spans: Uint8Array | null;
 }
 
 interface SliceRow {
@@ -243,6 +276,31 @@ const SIM_MILLIS_COLUMN = 'sim_millis';
  */
 const GENESIS_MILLIS_COLUMN = 'genesis_millis';
 
+/**
+ * The world's SPAN SIDE TABLE (2026-08-24, issue #129 step 4.2): every column
+ * holding more than one solid span, as the record blob defined in codec.ts.
+ *
+ * THE COLUMN THAT MAKES SNAPSHOTS SURVIVE CARVING. Before it existed,
+ * heightsForPersistence threw the moment any column grew a second span, so a
+ * world's FIRST carve was minutes away from killing its own persistence; and a
+ * restore laid only heights back down, silently flattening every layer. The
+ * heights blob stays exactly what it always was — one Int16 per cell, the
+ * TOPMOST ceiling — because every existing consumer of it keeps working; the
+ * full picture for the rare layered column travels here, beside it.
+ *
+ * ADDITIVE, like world_name/pinned/thumbnail/sim_millis/genesis_millis before
+ * it, and SNAPSHOT_SCHEMA_VERSION does not move for the same settled reasons:
+ * addColumnIfMissing gives an existing database the column on open, an older
+ * build's queries never name it, and a row written before it existed reads as
+ * no layered column — which is the truth about that row, not a guess.
+ *
+ * NULLABLE, like world_name and unlike pinned: there is nothing for NULL to
+ * be defaulted to honestly except absence itself. A zero-length BLOB (the
+ * empty-table encoding) is also "no layered columns"; both read back as an
+ * empty map, so callers never see the difference.
+ */
+const COLUMN_SPANS_COLUMN = 'column_spans';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TOKEN_MASKS TABLE (issue #17, 2026-08-19). Per-player unlock masks — one row
 // per (snapshot, token) — persisted BESIDE the union `mask` on `snapshots`,
@@ -286,6 +344,7 @@ const SCHEMA_DDL = `
     ${THUMBNAIL_COLUMN}  BLOB,
     ${SIM_MILLIS_COLUMN} INTEGER NOT NULL DEFAULT 0,
     ${GENESIS_MILLIS_COLUMN} INTEGER,
+    ${COLUMN_SPANS_COLUMN} BLOB,
     heightmap      BLOB    NOT NULL,
     mask           BLOB    NOT NULL
   );
@@ -362,8 +421,9 @@ export class SnapshotStore {
     this.insertSnapshot = db.prepare(
       `INSERT INTO snapshots
          (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
-          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN},
+          ${COLUMN_SPANS_COLUMN})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.insertSlice = db.prepare(
       'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
@@ -441,6 +501,7 @@ export class SnapshotStore {
     addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
     addColumnIfMissing(db, 'snapshots', SIM_MILLIS_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'snapshots', GENESIS_MILLIS_COLUMN, 'INTEGER');
+    addColumnIfMissing(db, 'snapshots', COLUMN_SPANS_COLUMN, 'BLOB');
     return new SnapshotStore(db, retention);
   }
 
@@ -452,6 +513,12 @@ export class SnapshotStore {
   saveSnapshot(input: SnapshotInput): number {
     const heightmap = encodeHeights(input.cells);
     const mask = Buffer.copyBytesFrom(input.mask);
+    // Same shape as the heights above: the caller hands over live state, the
+    // encode happens HERE, once, before the transaction — so a failure in the
+    // encoder can never leave a half-written row behind. An omitted map and an
+    // empty one both become NULL/zero-length respectively; see SnapshotInput.
+    const columnSpansBlob =
+      input.columnSpans === undefined ? null : encodeColumnSpans(input.columnSpans);
     const entries = Object.entries(input.pluginSlices);
     // `?? []`: an omitted tokenMasks means "this caller never touched
     // per-token unlocks" (see SnapshotInput's doc comment) — nothing to write,
@@ -473,6 +540,9 @@ export class SnapshotStore {
         // `?? null` for the same better-sqlite3 reason as the thumbnail above;
         // here NULL is also the meaningful value — see GENESIS_MILLIS_COLUMN.
         input.genesisMillis ?? null,
+        // Already encoded (or null); binding it inside the transaction like
+        // every other column keeps "one transaction covering everything" true.
+        columnSpansBlob,
       );
       const snapshotId = Number(result.lastInsertRowid);
       for (const [plugin, data] of entries) {
@@ -595,6 +665,40 @@ export class SnapshotStore {
     const mask = new Uint8Array(row.mask.byteLength);
     mask.set(row.mask);
 
+    // The span side table: NULL means "written before spans persisted", which
+    // is exactly "no layered column", so both NULL and a zero-length blob
+    // (the empty-table encoding) read back as an empty map — see
+    // WorldSnapshot.columnSpans for why the reader never sees undefined/null.
+    // Everything else goes through decodeColumnSpans with THIS row's id as the
+    // error context: a malformed blob is fatal at this boundary rather than
+    // downstream, for the same reason the per-cell height check below-adjacent
+    // is — this is where raw DB bytes turn into values the rest of the process
+    // trusts, and a corrupt span table must stop the boot, name its snapshot,
+    // and not half-apply.
+    let columnSpans: Map<number, Span[]> = new Map();
+    if (row.column_spans !== null) {
+      columnSpans = decodeColumnSpans(
+        row.column_spans,
+        row.world_size * row.world_size,
+        `snapshot #${row.id}`,
+      );
+      // CROSS-CHECK against the heights already validated above. The storage
+      // contract makes each entry's LAST ceiling equal that cell's height
+      // (`cells[i]` IS the topmost ceiling — columns.ts); the two blobs are
+      // written together but are separate bytes, so only a corrupt or
+      // hand-edited database can desync them, and continuing would restore a
+      // world whose walkable surface disagrees with its own layers.
+      for (const [cellIndex, spans] of columnSpans) {
+        const topCeiling = spans[spans.length - 1]!.ceiling;
+        if (cells[cellIndex] !== topCeiling) {
+          throw new Error(
+            `snapshot #${row.id} span table says cell ${cellIndex}'s top ceiling is ` +
+              `${topCeiling}, heightmap says ${cells[cellIndex]}; refusing to restore a corrupt world`,
+          );
+        }
+      }
+    }
+
     const pluginSlices: Record<string, unknown> = {};
     for (const slice of this.selectSlices.all(row.id) as SliceRow[]) {
       pluginSlices[slice.plugin] = JSON.parse(slice.data);
@@ -628,6 +732,7 @@ export class SnapshotStore {
       tokenMasks,
       cells,
       mask,
+      columnSpans,
       pluginSlices,
     };
   }

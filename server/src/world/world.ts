@@ -9,11 +9,12 @@
 
 import {
   applySculpt,
-  assertSingleSpanWorld,
   BAND_HEIGHT,
   buildFreshwaterMap,
   CHUNK_SIZE,
   NEIGHBOURHOOD_CELLS,
+  cellX,
+  cellY,
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
@@ -27,6 +28,7 @@ import {
   MAX_STEP,
   MIN_HEIGHT,
   SEA_LEVEL,
+  setColumn,
   simMillisAtRealTime,
   unlockChunk,
   type CellDiff,
@@ -36,6 +38,7 @@ import {
   type RiverNetwork,
   type SculptOptions,
   type ServerMessage,
+  type Span,
 } from '@terrace/shared';
 import {
   DEFAULT_WORLD_DIFFICULTY,
@@ -1543,6 +1546,15 @@ export class World {
     // time: `anchorClockToRealTime` reconstructs it from `simMillis`, which on
     // such a snapshot is the world's age. See genesisMillisValue.
     genesisMillis: number | null = null,
+    // The span side table (layered columns), keyed by cell index — see
+    // WorldSnapshot.columnSpans. An EMPTY map (the default, and what every
+    // pre-spans snapshot reads back as) restores a fully one-span world, which
+    // is today's behaviour and must not regress. Each entry is expected to be
+    // canonical and in-range for THIS size: the persistence path guarantees it
+    // at decode (SnapshotStore.hydrate cross-checks every entry against the
+    // restored heights), so like `cells` above this parameter arrives trusted
+    // rather than re-validated here.
+    columnSpans: ReadonlyMap<number, Span[]> = new Map(),
   ): World {
     const map = createHeightmap(size);
     if (cells.length !== map.cells.length) {
@@ -1557,6 +1569,17 @@ export class World {
       );
     }
     map.cells.set(cells);
+    // Layered columns go back AFTER the heights, and clearColumns runs FIRST:
+    // that ordering is what keeps "absent from the table means one span" true
+    // for a restore too — the heights define the one-span baseline, then each
+    // stored entry lays its layers back over exactly its own cell. setColumn
+    // rewrites `cells[i]` to each entry's topmost ceiling; that is a no-op by
+    // construction here because hydrate has already verified the two agree,
+    // so the restored walkable surface is bit-identical to the stored one.
+    clearColumns(map);
+    for (const [i, spans] of columnSpans) {
+      setColumn(map, cellX(size, i), cellY(size, i), spans);
+    }
     expectedMask.set(mask);
 
     // A stored name is used verbatim; a missing or blank one is minted now.
@@ -1639,6 +1662,12 @@ export class World {
     cells: Int16Array,
     mask: Uint8Array,
     tokenMasks: ReadonlyMap<string, Uint8Array> = new Map(),
+    // The restore point's layered columns, keyed by cell index (see
+    // World.restore for the trusted-input precondition). An EMPTY map — every
+    // pre-spans restore point, and any world that never carved — must still
+    // rewind to a fully one-span world, which is exactly what the
+    // clearColumns-first ordering below guarantees.
+    columnSpans: ReadonlyMap<number, Span[]> = new Map(),
   ): void {
     if (cells.length !== this.map.cells.length) {
       throw new RangeError(
@@ -1654,10 +1683,19 @@ export class World {
     }
 
     this.map.cells.set(cells);
-    // A restore point carries one height per cell, so it describes a world of
-    // one-span columns; any span lists the live world had accumulated belong to
-    // the state being undone.
+    // A restore point carries heights PLUS its own span table, so the rewind
+    // lays both back down. clearColumns FIRST, always: it returns the live map
+    // to the one-span case everywhere, erasing whatever spans the state being
+    // undone had accumulated, and only then does each stored entry re-layer
+    // its own cell. Absent-from-the-table therefore still means one span after
+    // a rewind — the same contract `restore` keeps at boot, kept by the same
+    // ordering rather than by luck. setColumn rewriting `cells[i]` is a no-op
+    // here because hydrate verified every entry's top ceiling against the very
+    // heights being restored.
     clearColumns(this.map);
+    for (const [i, spans] of columnSpans) {
+      setColumn(this.map, cellX(this.size, i), cellY(this.size, i), spans);
+    }
     this.mask.set(mask);
 
     // Per-token masks are REPLACED, not merged. A merge would keep territory
@@ -1906,14 +1944,27 @@ export class World {
   }
 
   /**
-   * The heightmap as the snapshot writer stores it: one Int16 per cell, LIVE
-   * (not a copy — same trust level as `tokenMasks` above). Throws if any column
-   * has grown a second span, because this shape cannot carry one and saving
-   * anyway would lose it silently. See columns.ts.
+   * The heightmap as the snapshot writer stores it: one Int16 per cell — the
+   * TOPMOST CEILING of each column — LIVE (not a copy; same trust level as
+   * `tokenMasks` above). No longer throws on a layered column: the full span
+   * picture travels beside these heights in `spansForPersistence` below, so a
+   * carved world persists instead of killing its own snapshot write. See
+   * columns.ts and codec.ts.
    */
   heightsForPersistence(): Int16Array {
-    assertSingleSpanWorld(this.map, 'snapshot');
     return this.map.cells;
+  }
+
+  /**
+   * The span side table as the snapshot writer stores it: every column holding
+   * more than one solid span, keyed by cell index — LIVE, not a copy, read
+   * synchronously inside one SnapshotStore.saveSnapshot call, the same trust
+   * level `heightsForPersistence` above hands out at. An empty table (the
+   * common world) encodes to a zero-length blob and costs nothing; see
+   * codec.ts for the on-disk format and its determinism argument.
+   */
+  spansForPersistence(): ReadonlyMap<number, Int16Array> {
+    return this.map.columnSpans;
   }
 
   /**

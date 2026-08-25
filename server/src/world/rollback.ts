@@ -172,7 +172,7 @@ export class RollbackService {
 
     // STEP 3 — the rewind itself. All-or-nothing (World.rewindTo).
     try {
-      world.rewindTo(target.cells, target.mask, target.tokenMasks);
+      world.rewindTo(target.cells, target.mask, target.tokenMasks, target.columnSpans);
     } catch (error) {
       logError(`rollback to restore point #${toId} failed; world unchanged`, error);
       return { type: 'rollbackResult', ok: false, refused: 'failed' };
@@ -233,6 +233,9 @@ export class RollbackService {
       worldSize: world.size,
       name: world.name,
       cells: world.heightsForPersistence(),
+      // Layered columns ride along with the heights they complete — the same
+      // pairing every other saver uses; see World.spansForPersistence.
+      columnSpans: world.spansForPersistence(),
       mask: world.mask,
       pluginSlices: host.collectPersistence(),
       tokenMasks: world.tokenMasks(),
