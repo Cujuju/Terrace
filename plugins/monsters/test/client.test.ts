@@ -139,12 +139,6 @@ import {
   YETI_LEAN_RADIANS,
   YETI_LEG_LENGTH,
   YETI_LEG_SWING_RADIANS,
-  YETI_MANTLE_LOCK_COUNT,
-  YETI_MANTLE_LOCK_DROP,
-  YETI_MANTLE_LOCK_RADIUS,
-  YETI_MANTLE_LOCK_REACH,
-  YETI_MANTLE_LOCK_TIP_RADIUS,
-  YETI_MANTLE_REACH,
   YETI_SHADE_VARIATION,
   YETI_SHOULDER_HALF_SPAN,
   YETI_SHOULDER_JOINT_HALF_SPAN,
@@ -825,29 +819,9 @@ describe('the yeti silhouette', () => {
     expect(YETI_HAND_HEIGHT).toBeLessThan(YETI_HIP_HEIGHT);
   });
 
-  it('keeps the shoulders and the mantle inside the footprint', () => {
+  it('keeps the shoulders inside the footprint', () => {
     expect(YETI_SHOULDER_HALF_SPAN + YETI_SHOULDER_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
-    expect(YETI_MANTLE_REACH).toBeLessThanOrEqual(halfFootprint);
     expect(YETI_TORSO_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
-    // Odd, so a lock lies on the centre line and the collar is symmetric about
-    // the way he faces. (Cthulhu's face tentacles are odd for the same reason.)
-    expect(YETI_MANTLE_LOCK_COUNT % 2).toBe(1);
-  });
-
-  it('wears a mantle of fur, not a ring of spines', () => {
-    // THE DEFECT THIS PINS. Owner, 2026-08-24: "I don't know what the spikes
-    // around the neck are supposed to be. Get rid of those." What made the old
-    // ruff read as quills was not its position or its count — both survive here
-    // — but its ASPECT RATIO: 1.1 of reach on a 0.22 radius, five to one.
-    //
-    // Both assertions are ratios, so they hold at any scale and they fail on the
-    // one kind of retune that would bring the spikes back: someone lengthening a
-    // lock for looks without thickening it.
-    expect(YETI_MANTLE_LOCK_RADIUS * 2).toBeGreaterThan(YETI_MANTLE_LOCK_REACH);
-    // ...and it HANGS rather than radiates: down further than it reaches out.
-    expect(YETI_MANTLE_LOCK_DROP).toBeGreaterThan(YETI_MANTLE_LOCK_REACH);
-    // The tip stays blunt. A lock that tapers to a point is a spine again.
-    expect(YETI_MANTLE_LOCK_TIP_RADIUS / YETI_MANTLE_LOCK_RADIUS).toBeGreaterThan(0.3);
   });
 
   it('keeps a hand inside it — the binding constraint, standing still', () => {

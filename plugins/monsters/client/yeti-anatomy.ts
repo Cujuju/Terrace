@@ -37,7 +37,8 @@
 // with arms that hang below his hips. He is white on white, so the modelling
 // that has to work hardest is the SHADING — a snow-coloured mass in sunlight has
 // no contrast of its own, which is why the shade variation here is the largest
-// of the three creatures and why the ruff of brighter fur exists at all.
+// of the three creatures — and, since 2026-08-24, why his coat is the one
+// TEXTURED surface in this plugin (see YETI_FUR_TEXTURE_FREQUENCY).
 //
 // At a hundred cells the three read as a standing man, a spider on the water,
 // and an ape on a ridge. That is the distance the silhouettes have to hold at.
@@ -432,7 +433,7 @@ export const YETI_HORN_ROOT_RADIUS = scaled(0.29);
 /** Radius where the horn clears the boss — still fat, already tapering. */
 export const YETI_HORN_EMERGE_RADIUS = scaled(0.22);
 export const YETI_HORN_TIP_RADIUS = scaled(FULL_SIZE_HORN_TIP_RADIUS);
-/** How far from the axis the horns reach at their widest — a bound, like the ruff's. */
+/** How far from the axis the horns reach at their widest — a bound on his width. */
 export const YETI_HORN_REACH = YETI_HORN_MID_OFFSET;
 /**
  * Weathered horn: a warm dark brown-grey.
@@ -469,17 +470,51 @@ export const YETI_HORN_COLOR = 0x6e5d4b;
  * carry. The fangs are the exception: they hang off the darkest mass on him, so
  * their contrast is the highest anywhere on the model.
  */
-export const YETI_FANG_ROOT_FORWARD = scaled(0.84);
-export const YETI_FANG_ROOT_HEIGHT = scaled(5.22);
-export const YETI_FANG_ROOT_OFFSET = scaled(0.26);
+export const YETI_FANG_ROOT_RADIUS = scaled(0.11);
+export const YETI_FANG_TIP_RADIUS = scaled(0.01);
+
+/**
+ * HOW DEEP THE ROOT IS BURIED, as a fraction of the muzzle's half-extent on
+ * each axis. Owner, 2026-08-24: "the fangs do not intersect the face they
+ * float."
+ *
+ * He was right and the fangs were only just inside the muzzle: the old root sat
+ * at 0.915 of the muzzle ellipsoid's radius, which leaves 0.025 units of solid
+ * fur between the root and the surface — against a root RADIUS of 0.11 and a
+ * fur carve (YETI_FUR_WRINKLE_DEPTH) that pulls that surface a further 0.12
+ * inward. The flat cap the tube starts with was therefore outside the muzzle,
+ * in open air over the dark mouth, and that cap is what reads as a floating
+ * tooth. A tube is buried when you cannot see the end of it; nothing about the
+ * old numbers made that true.
+ *
+ * THE RULE, and it is a rule rather than a tuning: the root must sit deeper
+ * inside the muzzle than YETI_FANG_ROOT_RADIUS + YETI_FUR_WRINKLE_DEPTH = 0.23
+ * full-size units, measured to the muzzle surface, in EVERY direction — because
+ * the carve can take the surface toward the root from any of them. The
+ * fractions below put the clearance at 0.27 outward (±Z), 0.26 downward (−Y)
+ * and 0.38 forward (+X), all of them over the bar with room for the tessellation
+ * to fall short of the ideal ellipsoid.
+ *
+ * The MID and TIP points did not move. The visible fang — the ivory that
+ * crosses the dark mouth and hangs in front of the receding chin — is exactly
+ * the one the owner accepted; all that changed is where, out of sight, it
+ * begins.
+ */
+const FANG_ROOT_IN_MUZZLE_FORWARD = 0.1;
+const FANG_ROOT_IN_MUZZLE_RISE = -0.05;
+const FANG_ROOT_IN_MUZZLE_OUT = 0.3;
+
+export const YETI_FANG_ROOT_FORWARD =
+  YETI_MUZZLE_FORWARD + (FANG_ROOT_IN_MUZZLE_FORWARD * YETI_MUZZLE_LENGTH) / 2;
+export const YETI_FANG_ROOT_HEIGHT =
+  YETI_MUZZLE_HEIGHT + (FANG_ROOT_IN_MUZZLE_RISE * YETI_MUZZLE_RISE) / 2;
+export const YETI_FANG_ROOT_OFFSET = (FANG_ROOT_IN_MUZZLE_OUT * YETI_MUZZLE_WIDTH) / 2;
 export const YETI_FANG_MID_FORWARD = scaled(0.94);
 export const YETI_FANG_MID_HEIGHT = scaled(4.95);
 export const YETI_FANG_MID_OFFSET = scaled(0.28);
 export const YETI_FANG_TIP_FORWARD = scaled(1.02);
 export const YETI_FANG_TIP_HEIGHT = scaled(4.62);
 export const YETI_FANG_TIP_OFFSET = scaled(0.3);
-export const YETI_FANG_ROOT_RADIUS = scaled(0.11);
-export const YETI_FANG_TIP_RADIUS = scaled(0.01);
 /** Old ivory — bone that has been out in the weather, not a dentist's white. */
 export const YETI_FANG_COLOR = 0xf6f1e2;
 
@@ -543,61 +578,6 @@ export const YETI_TOE_TIP_FORWARD = scaled(0.9);
 export const YETI_TOE_ROOT_RADIUS = scaled(0.15);
 export const YETI_TOE_TIP_RADIUS = scaled(0.1);
 
-// ── The mantle ───────────────────────────────────────────────────────────────
-
-/**
- * MANTLE: a shaggy fur collar lying over the shoulders, in the brightest tone on
- * the animal.
- *
- * IT REPLACES THE RUFF, 2026-08-24, owner: "I don't know what the spikes around
- * the neck are supposed to be. Get rid of those." They were seven long thin
- * tufts radiating from a ring — 1.1 units of reach on a 0.22 radius — and at
- * that aspect ratio a tube is a SPINE, whatever the comment above it calls it.
- * Once the animal had real fangs they were worse than ineffective: he appeared
- * to have tusks growing out of his shoulders.
- *
- * WHAT SURVIVES IS THE JOB, WHICH IS REAL. This creature is white on white, so
- * the thing that separates his head from his shoulders at any distance is not a
- * colour change (there is none available) but a BROKEN EDGE. So the collar is
- * still a ring of separate pieces in a lighter tone — and every number about
- * them is inverted: they are FAT rather than thin (0.34 against 0.22 on a body a
- * fifth the size), SHORT rather than long, and they hang DOWN the shoulder
- * nearly twice as far as they reach out from it. A lock of fur is a thing whose
- * thickness is a large fraction of its length; that ratio is the entire
- * difference between a mane and a hedgehog, and it is the only thing that had to
- * change.
- *
- * THIRTEEN, and odd for the reason the seven were: one lock lies on the centre
- * line front and back, so the collar is symmetric about the direction he faces
- * rather than parted down it. The count went up from nine on eyes-on evidence —
- * at nine, a low camera looking up at him saw the locks END-ON and separated,
- * and separated cones on a shoulder are the spikes again by another route. They
- * have to OVERLAP from every angle to read as one shaggy edge, and the tip is
- * blunt (two thirds of the root radius) for the same reason.
- */
-export const YETI_MANTLE_LOCK_COUNT = 13;
-export const YETI_MANTLE_RING_RADIUS = scaled(1.05);
-export const YETI_MANTLE_RING_HEIGHT = scaled(5.25);
-/** How far out and how far down a lock reaches, from its root on the ring. */
-export const YETI_MANTLE_LOCK_REACH = scaled(0.52);
-export const YETI_MANTLE_LOCK_DROP = scaled(1.15);
-/** Where the lock's midpoint sits, as a fraction of reach and drop — biased
- *  OUT then DOWN, so the lock lies over the shoulder before it falls off it. */
-export const YETI_MANTLE_LOCK_MID_REACH = 0.7;
-export const YETI_MANTLE_LOCK_MID_DROP = 0.35;
-export const YETI_MANTLE_LOCK_RADIUS = scaled(0.36);
-export const YETI_MANTLE_LOCK_TIP_RADIUS = scaled(0.27);
-/**
- * Per-lock length variation, as a fraction, and it only ever SHORTENS — the same
- * contract the old ruff kept, for the same reason: YETI_WIDTH_CELLS is a bound
- * the server steers by, so a variation that could lengthen a lock would make the
- * stated footprint a claim the geometry exceeds.
- */
-export const YETI_MANTLE_LENGTH_VARIATION = 0.22;
-/** How far the mantle reaches from the axis at full length, tip included. */
-export const YETI_MANTLE_REACH =
-  YETI_MANTLE_RING_RADIUS + YETI_MANTLE_LOCK_REACH + YETI_MANTLE_LOCK_RADIUS;
-
 // ── The whole ────────────────────────────────────────────────────────────────
 
 /**
@@ -656,14 +636,15 @@ export const YETI_FOOT_GROUND_HALF_EXTENT = YETI_STANCE_HALF_WIDTH + YETI_FOOT_W
  *
  * So the fur sits a step DARKER than the snow (0xe4ebf2 against 0xf2f4f6) and
  * the shaded parts — belly, limbs — a long way darker still, which is what makes
- * him a shape rather than a hole in the ground. The MANTLE is the one tone lighter
- * than the fur, so the collar catches the sun where everything else falls away.
- * Cross-referenced against the palette and not imported, for the reason the snow
+ * him a shape rather than a hole in the ground. What used to separate his head
+ * from his shoulders was a COLLAR of lighter fur locks; the owner had that
+ * removed on 2026-08-24, and the job it did is now the fur texture's — a broken
+ * surface reads as an edge everywhere at once, which a collar only did at the
+ * neck. Cross-referenced against the palette and not imported, for the reason the snow
  * line itself is (server/habitat.ts).
  */
 export const YETI_FUR_COLOR = 0xe4ebf2;
 export const YETI_UNDERFUR_COLOR = 0xb6c2d1;
-export const YETI_MANTLE_COLOR = 0xf2f5f8;
 /**
  * Bare skin: the NOSE PAD, hands and feet. Dark slate.
  *
@@ -716,6 +697,33 @@ export const YETI_SKIN_WRINKLE_DEPTH = scaled(0.04);
 export const YETI_WRINKLE_FREQUENCY = scaledFrequency(2.6);
 export const YETI_SHADE_VARIATION = 0.22;
 export const YETI_SHADE_FREQUENCY = scaledFrequency(0.9);
+
+/**
+ * THE COAT, in fur tiles per world unit. See geometry.ts, furShadeTexture().
+ *
+ * WHY THERE IS A TEXTURE AT ALL, when the paragraph above argues for the carve.
+ * Owner, on the renders of 2026-08-24: "Yeah, that does not render his fur — I
+ * think you need to add a texture for the fur, not geometry." He is right, and
+ * the paragraph above is where it went wrong: the carve is the finest tool the
+ * workshop HAD, not a tool fine enough for hair. 0.12 units deep at 2.6 cycles
+ * per unit puts about sixteen dents across his chest. Sixteen dents is a
+ * quilted bedspread. Hair on an animal this size is hundreds of strands across
+ * the same chest, and a vertex per strand is a five-figure triangle bill for one
+ * coat. The carve stays — it is what breaks his SILHOUETTE, which a texture
+ * cannot do — and the strands are now texels on top of it.
+ *
+ * One tile per full-size unit, times the 26 strands a tile carries
+ * (FUR_STRAND_COUNT), is 26 strands per unit and about a hundred and sixty down
+ * his standing height. That is the count that reads as fur at the distance he is
+ * actually seen from: fewer and the eye resolves individual locks and he looks
+ * combed; many more and the strands fall below a pixel, mip down to their own
+ * average, and the coat goes back to being flat paint.
+ *
+ * It divides by YETI_SCALE like the other two frequencies, and for the same
+ * reason — the coat belongs to the animal, so his strands must not get finer
+ * when he does.
+ */
+export const YETI_FUR_TEXTURE_FREQUENCY = scaledFrequency(1);
 
 // ── The gait ─────────────────────────────────────────────────────────────────
 
