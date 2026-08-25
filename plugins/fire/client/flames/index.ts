@@ -1,20 +1,21 @@
-// The candidate flame looks, in the order the owner reviews them.
+// The flame looks: what ships, and what is still worth being able to draw.
 //
-// This file exists so the preview harness (client/src/previewFire.ts) can select
-// a candidate by INDEX from a query string without importing four modules and
-// hard-coding an order that then disagrees with the screenshots' file names.
-// When a look is chosen, the losers are deleted and this list shrinks to one.
+// FOUR CANDIDATES WERE AUTHORED (2026-08-24) and reviewed from renders. The
+// owner chose a COMPOSITE of two of them — ./plumeToRibbons.ts, the shader
+// plume crossfading into the licking ribbons as a fire takes hold — so the two
+// that lost, the faceted tongues and the ember sprites, are gone. They are in
+// git if the decision is ever revisited; keeping dead looks compiled into the
+// client to preserve an option nobody has taken is how a renderer accumulates
+// four ways to draw the same thing.
 
-import { buildConeStackFlames } from './coneStack.ts';
-import { buildBillboardFlames } from './billboards.ts';
-import { buildShaderPlumeFlames } from './shaderPlume.ts';
-import { buildRibbonFlames } from './ribbons.ts';
+import { buildRibbonsToPlumeFlames } from './ribbonsToPlume.ts';
 import type { FlameRendererBuilder } from './types.ts';
 
-/** A → D, matching the brief's lettering and the screenshot file names. */
-export const FLAME_CANDIDATES: readonly FlameRendererBuilder[] = [
-  buildConeStackFlames,
-  buildBillboardFlames,
-  buildShaderPlumeFlames,
-  buildRibbonFlames,
-];
+/**
+ * The shipped look. The fire plugin's client half builds exactly this
+ * (../index.ts), and the preview harness (client/preview-fire.html) draws
+ * exactly this — so a picture of the flame is always a picture of the game's
+ * flame, which is the property that made the last round of renders worth
+ * trusting.
+ */
+export const SHIPPED_FLAMES: FlameRendererBuilder = buildRibbonsToPlumeFlames;

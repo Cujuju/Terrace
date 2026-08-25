@@ -1,14 +1,22 @@
-// previewFire.ts — THROWAWAY preview harness for the four candidate flame
-// renderers in plugins/fire/client/flames/. The owner chooses a fire's LOOK
-// from screenshots, so each candidate has to be photographable in isolation,
-// under identical light, at identical times, before any of them is wired into
-// the fire plugin. Mirrors previewCrops.ts's pattern — see that file's header
+// previewFire.ts — THROWAWAY preview harness for the flame renderer in
+// plugins/fire/client/flames/. The owner judges a fire's LOOK from screenshots,
+// so the flame has to be photographable in isolation, under identical light, at
+// identical times.
+//
+// IT DRAWS WHAT THE GAME DRAWS (SHIPPED_FLAMES), not a candidate chosen by
+// query string. It was four candidates until the look was picked on 2026-08-24;
+// pointing it at the shipped renderer instead is what keeps a picture taken here
+// a picture of the real thing, now that there is a real thing. Mirrors previewCrops.ts's pattern — see that file's header
 // for the fuller rationale; this restates only what differs. Not part of the
 // shipped app: reached only through preview-fire.html, unlinked from
 // index.html, not registered in plugins/registry.ts.
 //
-//   ?candidate=<0..3>       which FLAME_CANDIDATES entry to build (default 0)
 //   ?scene=<single|stand>   one burning tree, or five over two terrace steps
+//   ?i=<0..1>               override every fire's intensity (default: the
+//                           scene's own). Added when the shipped look became a
+//                           CROSSFADE between two renderers: the handover is a
+//                           function of intensity, so photographing it needs
+//                           intensity to be the axis that moves.
 //   ?t=<seconds>            animation time to capture at (default 0)
 //
 // WHY THE TREES ARE HERE. A flame in an empty frame is judged as an ornament.
@@ -25,7 +33,7 @@
 // to the pixel, and a difference between t=0 and t=0.7 is real movement rather
 // than a race with the frame timer.
 //
-// A screenshot driver navigates here once per (candidate, scene, t) and waits
+// A screenshot driver navigates here once per (scene, t) and waits
 // for `window.__previewReady === true` before capturing.
 
 import {
@@ -48,7 +56,7 @@ import {
   type Material,
 } from 'three';
 import { createFloraModels, type TreePlacement } from '../../plugins/flora/client/models.ts';
-import { FLAME_CANDIDATES } from '../../plugins/fire/client/flames/index.ts';
+import { SHIPPED_FLAMES } from '../../plugins/fire/client/flames/index.ts';
 import type { FireInstance } from '../../plugins/fire/client/flames/types.ts';
 
 // ── Lighting rig, copied from previewCrops.ts / render/scene.ts ───────────
@@ -159,11 +167,17 @@ const STAND_STEP_EDGE_Z = 0;
 
 type SceneName = 'single' | 'stand';
 
-function readCandidate(params: URLSearchParams): number {
-  const requested = Number.parseInt(params.get('candidate') ?? '', 10);
-  return Number.isFinite(requested)
-    ? Math.min(Math.max(requested, 0), FLAME_CANDIDATES.length - 1)
-    : 0;
+/**
+ * The intensity every fire in the scene is forced to, or null to use each
+ * tree's own. Out-of-range and unparseable both mean "use the scene's own",
+ * so a typo photographs the scene rather than silently a fire at intensity 0.
+ */
+function readIntensityOverride(params: URLSearchParams): number | null {
+  const raw = params.get('i');
+  if (raw === null) return null;
+  const requested = Number.parseFloat(raw);
+  if (!Number.isFinite(requested) || requested < 0 || requested > 1) return null;
+  return requested;
 }
 
 function readScene(params: URLSearchParams): SceneName {
@@ -232,8 +246,8 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3): void {
 
 function main(): void {
   const params = new URLSearchParams(window.location.search);
-  const candidateIndex = readCandidate(params);
   const sceneName = readScene(params);
+  const intensityOverride = readIntensityOverride(params);
   const previewSeconds = readTime(params);
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
@@ -270,15 +284,15 @@ function main(): void {
     z: tree.z,
     groundY: tree.groundY,
     fuelHeight: TREE_HEIGHT_AT_UNIT_SCALE * tree.scale,
-    intensity: tree.intensity,
-    // The candidates all drive phase from `seed`, not from age; age is passed
-    // through honestly all the same so a candidate that used it would work.
+    intensity: intensityOverride ?? tree.intensity,
+    // The renderers drive phase from `seed`, not from age; age is passed
+    // through honestly all the same so a look that used it would work.
     ageSeconds: previewSeconds,
     seed: tree.seed,
   }));
 
-  const flames = FLAME_CANDIDATES[candidateIndex]!();
-  document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}`;
+  const flames = SHIPPED_FLAMES();
+  document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}${intensityOverride === null ? '' : ` — i=${intensityOverride}`}`;
   flames.apply(fires);
   scene.add(flames.root);
 
