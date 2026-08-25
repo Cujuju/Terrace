@@ -85,6 +85,28 @@ const STAIR_WIDTH_FRACTION = 0.26;
 const DOORWAY_WIDTH_FRACTION = 0.3;
 const DOORWAY_HEIGHT_FRACTION = 0.11;
 
+/**
+ * THE GROUND PORTALS — the door a settler actually walks out of (owner,
+ * 2026-08-24: "Are those settlers supposed to come out of the temple
+ * specifically? Because they're definitely not").
+ *
+ * TWO of them, flanking the stair rather than one behind it. The stair
+ * occupies the middle of the front face all the way to the ground, so a single
+ * centred portal would be a dark patch tucked behind a flight of steps —
+ * invisible from the only angle that matters. A symmetric pair reads as a
+ * temple entrance from any approach, and leaves the stair the clear run up the
+ * middle that makes the silhouette a pyramid.
+ *
+ * They are cut into the FIRST COURSE, whose front face is where
+ * ../protocol.ts's TEMPLE_DOOR_OFFSET_CELLS puts the spawn point — so the
+ * place that looks like a way out and the place someone appears are the same
+ * face of the same block, by construction rather than by matching numbers.
+ */
+const PORTAL_WIDTH_FRACTION = 0.13;
+const PORTAL_HEIGHT_FRACTION = 0.09;
+/** Gap between the stair's edge and the near edge of each portal. */
+const PORTAL_STAIR_GAP_FRACTION = 0.05;
+
 // Derived, once: the numbers every block below is placed by.
 const PLINTH_HEIGHT = BASE_SPAN * PLINTH_HEIGHT_FRACTION;
 const COURSE_HEIGHT = BASE_SPAN * COURSE_HEIGHT_FRACTION;
@@ -108,9 +130,17 @@ const COURSE_COLORS = [0xb6afa0, 0xaea798, 0xb9b2a3, 0xa8a192];
 const STAIR_COLOR = 0xc2bbac;
 const SHRINE_COLOR = 0xb2ab9c;
 const LINTEL_COLOR = 0x9a9385;
-/** The doorway is a hole, drawn as an almost-black face — cheaper and more
- *  legible at this size than a real recess, which would read as noise. */
-const DOORWAY_COLOR = 0x272219;
+/**
+ * Every opening — the shrine's doorway and the two ground portals — is a hole,
+ * drawn as one near-black face (cheaper and more legible at this size than a
+ * real recess, which would read as noise).
+ *
+ * DEEP NIGHT-INDIGO rather than the brown-black it began as (owner, 2026-08-24:
+ * "give the temples accoutrement colors that give it a celestial heavens
+ * feel"). A warm black reads as a shadowed room; this one reads as an opening
+ * onto night sky, which is what the rest of the building is about.
+ */
+const DOORWAY_COLOR = 0x141731;
 
 // ── Block assembly ──────────────────────────────────────────────────────────
 
@@ -221,6 +251,28 @@ function buildTempleGeometry(): BufferGeometry {
       DOORWAY_COLOR,
     ),
   );
+
+  // The two ground portals, on the first course's front face, one either side
+  // of the stair. Set a hair proud of the stone for the same reason the shrine
+  // doorway is: a coplanar face z-fights.
+  const portalWidth = BASE_SPAN * PORTAL_WIDTH_FRACTION;
+  const portalHeight = BASE_SPAN * PORTAL_HEIGHT_FRACTION;
+  const portalSkin = BASE_SPAN * 0.01;
+  const portalZ =
+    STAIR_WIDTH / 2 + BASE_SPAN * PORTAL_STAIR_GAP_FRACTION + portalWidth / 2;
+  for (const side of [-1, 1]) {
+    parts.push(
+      block(
+        portalSkin,
+        portalHeight,
+        portalWidth,
+        courseSpans[0]! / 2,
+        PLINTH_HEIGHT,
+        portalZ * side,
+        DOORWAY_COLOR,
+      ),
+    );
+  }
 
   const merged = mergeGeometries(parts, false);
   for (const part of parts) part.dispose();
