@@ -3355,6 +3355,17 @@ on a delta stream costing under a kbit/s. The 10 s keepalive is deliberately
 shorter than the shortest fuel's burn: a repair cadence longer than the thing it
 repairs never repairs anything.
 
+**A WALKING fire's repair cadence is derived, not chosen** (2026-08-24, after
+review). The 10 s constant above is a number picked against the fuels that
+existed when it was written, and entity fuel broke it silently: a creature burns
+for 8 s, so its one repair was scheduled for after it was dead. A cell fire can
+be repaired by event — its visibility only changes when the PLAYER's view does,
+which the server is told about — but a walking fire's visibility changes because
+it walked, and nothing announces that. So the entity set is re-sent on a cadence
+computed from the shortest burn currently alight
+(`ENTITY_REPAIRS_PER_BURN`), and any future plugin's shorter-lived fuel gets a
+faster repair without anyone remembering to retune a constant.
+
 **A fire ends in one of three ways, and only one consumes the fuel.** Burned out
 (the source destroys what was there), extinguished (rain, or the ground dug from
 under it — the tree survives, scorched), cleared (rollback; nobody is told).
@@ -3503,3 +3514,52 @@ creature does not set light to what it runs through. The machinery is all there
 first cut because a panicking animal towing a spread front through a forest is a
 balance question, not a plumbing one.
 
+### Decisions made 2026-08-24 (fire review — owner: "fix every fire bug")
+
+A multi-agent adversarial review of the whole fire implementation confirmed 12
+defects. Three of them were one defect wearing different clothes, and the fixes
+below are stated at the level the review put them, not at the callsites.
+
+**A cell-addressed ignite resolves to the NEAREST candidate, across every
+source.** `EntityFuelSource.entityAt` used to license "the first one it finds",
+which is sound only while every source answers for exactly the cell that was
+aimed at. Sources do not agree on that — a creature answers for half a cell, a
+boat for two — so `entityAt` now returns the distance with the id and
+`entityFuelAt` takes the global minimum. That fixes both halves of the same
+hole: the torch that lit the boat beside the one the player clicked, and the
+plugin FOLDER NAME deciding whether a berthed boat or the settler standing on
+the cell caught. The reach itself stays each plugin's own decision; only the
+arbitration is shared (`nearestWithinReach` in `shared/`).
+
+**Anything that remembers a fire between frames holds its key, never the
+instance.** The drawn list is rebuilt every frame, so a held instance object is
+a snapshot of a fire as it was — which is why a fire's light lagged a fleeing
+animal by over a world unit and went on lighting ground where a fire had already
+been put out. `FireInstance.key` exists for this and nothing else.
+
+**A plugin that publishes poses draws before the plugins that read them.** Frame
+callbacks now run in two declared phases and the HOST assigns them: calling
+`publishMovers` puts that plugin in the pose phase. The guarantee used to rest
+on the order of an array in `registry.ts`.
+
+**An id only means the same individual after a restore if its owner says so.**
+`EntityFuelSource.idsSurviveRestore` — absent means no. Existence
+(`positionOf(id) !== null`) cannot answer a question about identity, and a
+rollback across a restart used to re-attach a fire to whoever now held that
+number and kill them. Boats and wildlife persist their id spaces and declare it;
+pilgrims deliberately do not.
+
+**An episode closes where the burning set empties, not where the tick looks.**
+Digging a firebreak through the last burning cell empties the set from outside
+`onTick`, and the tick that followed took its quiet-world early-out above the
+end-of-episode check — so beating a fire, the headline mechanic, was the one
+ending that never got its chronicle line, and the next wildfire's cells were
+added to the abandoned count.
+
+**Banked time is carried, never clamped away.** The spread accumulator clamped
+to one interval before testing against that same interval and then reset to
+zero, so at any tick rate whose period does not sum exactly (the shipped 10 Hz
+included) every step threw away its remainder: fires spread ~10% slower than
+their stated rates, and by an amount that depended on `TICK_HZ`. Fixing it
+shifts the shipped feel by about that much, accepted by the owner as the price
+of the rates meaning what they say.
