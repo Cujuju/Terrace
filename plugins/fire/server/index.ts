@@ -34,6 +34,10 @@
 // out (./weather-bridge.ts, and the suppression roll in onTick), which closes
 // the loop rather than leaving fire as a thing only the player can end.
 //
+// THE PLAYER'S OWN TORCH is the other way a fire starts: a `fire:ignite`
+// message, priced in mana, gated on the player's own unlocked view. It is what
+// makes fire a TOOL rather than only a hazard.
+//
 // LIGHTNING is where fires come from today: weather picks the cell a bolt lands
 // on, emits it, and this plugin rolls whether it caught (onWorldEvent below).
 //
@@ -53,18 +57,22 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import {
   FIRE_BURNED_EVENT,
+  FIRE_CELL_CAP,
   FIRE_CHANGES_MESSAGE,
   FIRE_FIRES_MESSAGE,
+  FIRE_IGNITE_MESSAGE,
   FIRE_PLUGIN_NAME,
+  parseIgnitePayload,
   packCells,
   packFires,
   type FireCellState,
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
-import { fuelSources } from './fuel.ts';
+import { fuelAt, fuelSources } from './fuel.ts';
 import { fireRandom, happensWithin } from './rng.ts';
 import { SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
 import { parseStruckCells } from './strike-event.ts';
+import { chargeMana, loadManaBridge } from './mana-bridge.ts';
 import { loadWeatherBridge, precipitationAt } from './weather-bridge.ts';
 
 /**
@@ -387,6 +395,62 @@ function igniteStruckCells(cells: readonly { readonly x: number; readonly y: num
   }
 }
 
+/**
+ * What it costs a player to light a fire, in mana.
+ *
+ * Priced against what mana ALREADY buys, not invented: MANA_COST_PER_MIN_RADIUS_SCULPT
+ * is what the smallest possible terrain edit costs, and a fire is worth several
+ * of those — it is the cheapest way in the game to destroy a large number of
+ * things, and a torch that cost less than moving one cell of dirt would make
+ * every other tool pointless. 60 puts it at a few percent of MANA_CAPACITY: a
+ * deliberate act, several times a session, never a reflex.
+ *
+ * It lives HERE and not in mana, which holds the ledger and no opinion about
+ * prices (see mana's spendMana): fire owns what fire costs.
+ */
+export const IGNITE_MANA_COST = 60;
+
+/**
+ * A player asked to light a cell.
+ *
+ * THE ORDER IS LOAD-BEARING — every reason the fire could fail is checked
+ * BEFORE the player is charged, so there is never a debit to undo:
+ *
+ *   1. VISIBILITY. A player may only light ground they have personally
+ *      unlocked. Without this, the message is a way to set fire to a rival's
+ *      territory from across a fogged world, and to probe what is out there by
+ *      watching what catches.
+ *   2. ALREADY ALIGHT. Lighting a fire that is already burning would be paying
+ *      for nothing at all.
+ *   3. THE CAP. FIRE_CELL_CAP is checked here rather than left to
+ *      `Blaze.ignite`, because a world already burning at its ceiling is not
+ *      the player's fault and must not cost them anything.
+ *   4. FUEL. Bare rock and open water do not catch. Charging for a fire that
+ *      could never start is the phantom-debit bug mana was already bitten by
+ *      once (2026-08-19).
+ *   5. PAYMENT, and only then the fire — which cannot now decline, because
+ *      every reason it could has just been ruled out, synchronously, in this
+ *      same tick. THAT is why there is no refund path: the way to never owe a
+ *      refund is to never charge for something that can still fail.
+ *
+ * Silence is the answer to every refusal. There is no `fire:denied` message,
+ * because the client predicts nothing about a fire it asked for: it draws only
+ * what the server broadcasts, so "nothing caught" needs no correction — unlike
+ * a sculpt, where the client has already moved the ground locally.
+ */
+function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): void {
+  const request = parseIgnitePayload(payload);
+  if (request === null) return;
+  if (request.x >= world.worldSize || request.y >= world.worldSize) return;
+  if (!world.isCellVisibleTo(player.id, request.x, request.y)) return;
+  if (blaze.isBurning(request.x, request.y)) return;
+  if (blaze.size >= FIRE_CELL_CAP) return;
+  if (fuelAt(request.x, request.y) === null) return;
+  if (!chargeMana(world, player.id, IGNITE_MANA_COST)) return;
+
+  igniteAt(request.x, request.y);
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Persistence
 // ────────────────────────────────────────────────────────────────────────────
@@ -461,6 +525,9 @@ export const plugin: TerracePlugin = {
     // started, not awaited. Until it resolves — and forever, on a world with no
     // weather plugin — the air is still and spread is isotropic.
     loadWeatherBridge();
+    // The economy, on the same terms: until it resolves — and forever, on a
+    // world with no mana plugin — lighting a fire is free (./mana-bridge.ts).
+    loadManaBridge();
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -563,6 +630,10 @@ export const plugin: TerracePlugin = {
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
     refreshUnlockedChunk(world, token, cx, cy);
+  },
+
+  messages: {
+    [FIRE_IGNITE_MESSAGE]: onIgniteRequest,
   },
 
   persistence,
