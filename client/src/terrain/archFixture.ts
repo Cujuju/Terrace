@@ -8,17 +8,22 @@
 // exists to answer ONE question with something visible: does the terraced look
 // — the band palette, the skirts, the lighting — survive an underside?
 //
-// DELIBERATELY CLIENT-ONLY, AND DELIBERATELY NOT SCULPTABLE. The wire carries
-// one height per cell (`ChunkPayload.heights`), so a layered column cannot come
-// from the server yet; carving the mirror after the snapshot lands sidesteps
-// that entirely and keeps the wire work deferred until there is a reason to do
-// it. Nothing here is a tool, nothing here is authoritative: the server does
-// not know this mound exists, so sculpting it, walking on it or persisting it
-// are all out of scope, and the next terrain diff that lands on these cells
-// will simply overwrite their heights.
+// NOW THE PREVIEW HARNESS'S FIXTURE ONLY (#129 step 4.2, 2026-08-24). It was
+// client-only because the wire carried one height per cell and a layered
+// column could not come from the server; `ChunkPayload.layered` changed that,
+// so the REAL fixture is authored server-side at genesis
+// (server/src/world/arch-fixture.ts, ARCH_FIXTURE=1) and arrives by the
+// ordinary path — chunk payload, snapshot, restore — which is what makes it
+// worth anything as verification. The live client no longer carves at all.
 //
-// GATED behind `?arch=1` — off in the ordinary client, present only when
-// someone is looking at it on purpose.
+// What is left here serves `previewArch.ts`, which renders the mound with NO
+// SERVER AT ALL and therefore has to put it on the map itself. Nothing here is
+// a tool and nothing here is authoritative.
+//
+// The two copies of the mound's geometry are deliberate and bounded: this one
+// exists to draw a mound in a harness with no world behind it, and it is the
+// one that gets deleted when the preview does. Keep the CONSTANTS in step —
+// they are the numbers the step-3 eyes-on pass settled.
 
 import {
   BAND_HEIGHT,

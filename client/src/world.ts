@@ -27,7 +27,6 @@ import type {
   TerrainDiffMessage,
 } from '@terrace/shared';
 import type { Mesh } from 'three';
-import { archFixtureRequested, carveArchFixture } from './terrain/archFixture.ts';
 import {
   applyChunkUnlock,
   applySnapshot,
@@ -298,16 +297,15 @@ export function createWorld(viewport: Viewport): World {
       // the empty map the mirror was allocated with.
       const snapshotDirty = fresh.predictions.applyAuthoritative(
         (m) => {
-          const dirty = applySnapshot(m, msg);
-          // The layered-column fixture (#129 step 3, `?arch=1`) carves an arch
-          // and a cave into the mirror the snapshot just filled. Inside this
-          // mutation deliberately: the prediction store records what the
-          // mutation leaves behind as authoritative truth, and a carve made
-          // outside one would be wiped by the next diff that arrives.
-          if (archFixtureRequested()) {
-            for (const idx of carveArchFixture(m)) dirty.add(idx);
-          }
-          return dirty;
+          // The arch fixture used to be carved into the mirror right here
+          // (#129 step 3, `?arch=1`), because the wire could only carry one
+          // height per cell. Step 4.2 gave it a span, so the fixture is
+          // authored SERVER-SIDE at genesis instead (ARCH_FIXTURE=1,
+          // server/src/world/arch-fixture.ts) and arrives by the ordinary
+          // path. Two authoring routes for one mound would be two things to
+          // keep in agreement, and the client-only one became untestable the
+          // moment the wire could carry the real thing.
+          return applySnapshot(m, msg);
         },
         nowMs(),
       );
