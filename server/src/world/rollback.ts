@@ -232,7 +232,7 @@ export class RollbackService {
     return store.saveSnapshot({
       worldSize: world.size,
       name: world.name,
-      cells: world.map.cells,
+      cells: world.heightsForPersistence(),
       mask: world.mask,
       pluginSlices: host.collectPersistence(),
       tokenMasks: world.tokenMasks(),

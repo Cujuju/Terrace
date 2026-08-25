@@ -68,7 +68,7 @@ export function snapshotIfDirty(session: WorldSession): boolean {
   store.saveSnapshot({
     worldSize: world.size,
     name: world.name,
-    cells: world.map.cells,
+    cells: world.heightsForPersistence(),
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
     tokenMasks: world.tokenMasks(),
@@ -220,7 +220,7 @@ export function createWorldFile(
     store.saveSnapshot({
       worldSize: world.size,
       name: world.name,
-      cells: world.map.cells,
+      cells: world.heightsForPersistence(),
       mask: world.mask,
       pluginSlices: {},
       tokenMasks: world.tokenMasks(),

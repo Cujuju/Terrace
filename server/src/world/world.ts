@@ -9,6 +9,7 @@
 
 import {
   applySculpt,
+  assertSingleSpanWorld,
   BAND_HEIGHT,
   buildFreshwaterMap,
   CHUNK_SIZE,
@@ -16,6 +17,7 @@ import {
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
+  clearColumns,
   computeRiverNetwork,
   createChunkMask,
   createHeightmap,
@@ -1652,6 +1654,10 @@ export class World {
     }
 
     this.map.cells.set(cells);
+    // A restore point carries one height per cell, so it describes a world of
+    // one-span columns; any span lists the live world had accumulated belong to
+    // the state being undone.
+    clearColumns(this.map);
     this.mask.set(mask);
 
     // Per-token masks are REPLACED, not merged. A merge would keep territory
@@ -1897,6 +1903,17 @@ export class World {
    */
   tokenMasks(): ReadonlyMap<string, Uint8Array> {
     return this.masksByToken;
+  }
+
+  /**
+   * The heightmap as the snapshot writer stores it: one Int16 per cell, LIVE
+   * (not a copy — same trust level as `tokenMasks` above). Throws if any column
+   * has grown a second span, because this shape cannot carry one and saving
+   * anyway would lose it silently. See columns.ts.
+   */
+  heightsForPersistence(): Int16Array {
+    assertSingleSpanWorld(this.map, 'snapshot');
+    return this.map.cells;
   }
 
   /**
