@@ -73,7 +73,14 @@ describe('a river down a cone', () => {
     for (const region of regions.values()) {
       const surfaceY = drawnBandWorldY(region.surfaceBand, false);
       const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
-      appendCurtains(ground, loops, region.surfaceBand, SEA_WORLD_Y, triangles);
+      appendCurtains(
+        ground,
+        loops,
+        region.surfaceBand,
+        (band) => drawnBandWorldY(band, false),
+        SEA_WORLD_Y,
+        triangles,
+      );
     }
 
     let flat = 0;

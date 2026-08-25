@@ -28,12 +28,8 @@
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terrace/shared';
 import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
-import {
-  CURTAIN_OUTWARD_WORLD_UNITS,
-  appendCurtains,
-} from '../src/render/water/waterCurtain.ts';
+import { appendCurtains } from '../src/render/water/waterCurtain.ts';
 import { CELL_WORLD_SIZE, BAND_WORLD_HEIGHT } from '../src/config.ts';
-import { SEABED_CAP_SINK } from '../src/terrain/capEmission.ts';
 import { createDrawnGround, drawnBandWorldY } from '../src/terrain/drawnGround.ts';
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 
@@ -50,8 +46,16 @@ const PIT_HEIGHT = 0;
 const SURFACE_Y = drawnBandWorldY(3, false) + 1 / 64;
 /** Below any level the descent can reach: lets a fall run to band 0's seabed. */
 const BELOW_EVERYTHING = -1;
-/** The sea plane as the caller would pass it: dry-land band 0 sits exactly here. */
-const SEA_WORLD_Y = 0;
+/** The sea plane as the caller would pass it: band 1's own surface. */
+const SEA_WORLD_Y = drawnBandWorldY(1, false);
+
+/**
+ * The rig's own `bandWorldY`, as the curtain now receives it: the height water
+ * standing on a band sits at. Without the rig's 1/64 lift, which none of these
+ * contracts turn on — what matters is that top, foot and tread all come from
+ * ONE function, which is what welds the junctions.
+ */
+const bandSurfaceY = (band: number): number => drawnBandWorldY(band, false);
 
 /** A world of plateau-height ground with `dig` cells dropped to the pit. */
 function mirrorWithPlateau(dig: Iterable<number>): TerrainMirror {
@@ -113,6 +117,7 @@ function curtainsFor(
     fixture.ground,
     fixture.loops,
     bandOf(PLATEAU_HEIGHT),
+    bandSurfaceY,
     seaWorldY,
     out,
   );
@@ -148,15 +153,10 @@ describe('waterfall curtains', () => {
 
   it('places every vertex Y exactly on some band drawn cap', () => {
     const triangles = curtainsFor(cliffFixture(), BELOW_EVERYTHING);
-    // Band 0 has two levels; the curtain descends onto the SUNK one (the
-    // seabed face the terrain actually drew), so both are legitimate answers.
-    const allowed = new Set<number>([
-      drawnBandWorldY(0, true),
-      drawnBandWorldY(0, false),
-      drawnBandWorldY(1, true),
-      drawnBandWorldY(2, true),
-      drawnBandWorldY(3, true),
-    ]);
+    // Every height is the surface a pool on some band would stand at — the
+    // same function the tread was built from, which is what makes a junction
+    // weld rather than merely meet.
+    const allowed = new Set<number>([0, 1, 2, 3].map(bandSurfaceY));
     for (let i = 1; i < triangles.length; i += 3) {
       expect(
         allowed.has(triangles[i]!),
@@ -169,7 +169,7 @@ describe('waterfall curtains', () => {
     const surfaceBand = bandOf(PLATEAU_HEIGHT); // 3
     const triangles = curtainsFor(cliffFixture(), BELOW_EVERYTHING);
     expect(triangles.length).toBeGreaterThan(0);
-    const topY = drawnBandWorldY(surfaceBand, true);
+    const topY = bandSurfaceY(surfaceBand);
 
     // EVERY quad hangs from the water's own band — never from an intermediate
     // level. That is what "one sheet, top to bottom" means and what separates
@@ -187,7 +187,7 @@ describe('waterfall curtains', () => {
     // half cell of contour interpolation and every sheet stopped there, which
     // on a 20-band cliff would leave water on the first band only.
     expect(
-      quadsBetween(triangles, topY, drawnBandWorldY(0, true)),
+      quadsBetween(triangles, topY, bandSurfaceY(0)),
       'no sheet reached the pit floor — the falls stop short',
     ).toBeGreaterThan(0);
 
@@ -195,8 +195,8 @@ describe('waterfall curtains', () => {
     // diagonally really does have nearer, higher ground under it. What is not
     // allowed is a landing height that is no band's drawn cap, which the Y
     // test above covers.
-    const fullDrop = topY - drawnBandWorldY(0, true);
-    expect(fullDrop).toBe(surfaceBand * BAND_WORLD_HEIGHT + SEABED_CAP_SINK);
+    const fullDrop = topY - bandSurfaceY(0);
+    expect(fullDrop).toBe(surfaceBand * BAND_WORLD_HEIGHT);
   });
 
   it('loses no vertex between the rows: every quad is exactly vertical', () => {
@@ -221,41 +221,39 @@ describe('waterfall curtains', () => {
     }
   });
 
-  it('seats every vertex on the tread own contour, top row and bottom row alike', () => {
-    // The sheet is vertical, so BOTH rows stand over the same plan-view curve:
-    // the loop `appendRegionSurface` marched and smoothed. There is no
-    // per-level re-seating any more, and therefore no second curve a vertex
-    // could be mistraced onto — the claim is simply that every vertex, at
-    // either height, lies within the mandated depth-buffer inset of a point
-    // the tread's own march produced.
+  it('welds to the pool above: every top vertex IS a tread boundary vertex', () => {
+    // THE JUNCTION CONTRACT (owner, 2026-08-24: "the vertices from the flat
+    // pool to the vertical wall aren't connected and they need to be").
+    //
+    // This is an EXACT-EQUALITY test, with no tolerance at all, and that is
+    // the point: the sheet's top row is the loop's own points at the pool's
+    // own surface height, so each top vertex is bit-for-bit a vertex of the
+    // tread triangulated from that same loop. The previous version offset the
+    // sheet 1/64 of a world unit outward and hung it from the terrain cap
+    // instead of the water surface, and could only be tested to within that
+    // offset — which is exactly the hairline crack that showed in the render.
     const fixture = cliffFixture();
     const triangles = curtainsFor(fixture, BELOW_EVERYTHING);
     expect(triangles.length).toBeGreaterThan(0);
 
-    const treadPoints: { x: number; z: number }[] = [];
+    const treadVertices = new Set<string>();
     for (const loop of fixture.loops) {
       for (const p of loop) {
-        treadPoints.push({ x: p.x * CELL_WORLD_SIZE, z: p.z * CELL_WORLD_SIZE });
+        treadVertices.add(`${p.x * CELL_WORLD_SIZE},${p.z * CELL_WORLD_SIZE}`);
       }
     }
 
-    // Exact coordinate equality holds for the LEVEL, never for the offset, so
-    // what is asserted without a tolerance is the BOUND: one inset, no more.
-    const reach = CURTAIN_OUTWARD_WORLD_UNITS * 1.000001;
+    const topY = bandSurfaceY(bandOf(PLATEAU_HEIGHT));
+    let topVertices = 0;
     for (let i = 0; i < triangles.length; i += 3) {
-      const vx = triangles[i]!;
-      const vz = triangles[i + 2]!;
-      let ok = false;
-      for (const p of treadPoints) {
-        const dx = vx - p.x;
-        const dz = vz - p.z;
-        if (dx * dx + dz * dz <= reach * reach) {
-          ok = true;
-          break;
-        }
-      }
-      expect(ok, `vertex (${vx},${vz}) is off every point of the tread's own contour`).toBe(true);
+      const key = `${triangles[i]!},${triangles[i + 2]!}`;
+      expect(
+        treadVertices.has(key),
+        `vertex (${key}) is not a vertex of the tread's own boundary`,
+      ).toBe(true);
+      if (triangles[i + 1]! === topY) topVertices++;
     }
+    expect(topVertices, 'no vertex sits at the pool surface').toBeGreaterThan(0);
   });
 
   it('emits nothing for chunk-border closing segments', () => {
@@ -272,7 +270,14 @@ describe('waterfall curtains', () => {
     const triangles: number[] = [];
     const loops = appendRegionSurface(mirror, regionOf(wet), SURFACE_Y, triangles);
     const out: number[] = [];
-    appendCurtains(createDrawnGround(mirror), loops, bandOf(PLATEAU_HEIGHT), BELOW_EVERYTHING, out);
+    appendCurtains(
+      createDrawnGround(mirror),
+      loops,
+      bandOf(PLATEAU_HEIGHT),
+      bandSurfaceY,
+      BELOW_EVERYTHING,
+      out,
+    );
 
     expect(out.length).toBeGreaterThan(0);
     const borderLine = CHUNK_SIZE * CELL_WORLD_SIZE;
@@ -284,16 +289,15 @@ describe('waterfall curtains', () => {
   });
 
   it('stops at the sea instead of pouring below it', () => {
-    // Same cliff, but the caller says the sea plane is at band 0's dry-shore
-    // level. The next level down would be the sunk seabed cap — below the sea
-    // — so that final drop must be absent entirely: no clamping, no vertex.
+    // The caller puts the sea plane at band 1's surface, so the pit floor at
+    // band 0 is under water. The sheets must stop AT the sea rather than
+    // continue to a floor nobody can see, and nothing may be emitted below it.
     const triangles = curtainsFor(cliffFixture(), SEA_WORLD_Y);
     expect(triangles.length).toBeGreaterThan(0);
-    const sunkCapY = drawnBandWorldY(0, true);
-    expect(sunkCapY).toBeLessThan(SEA_WORLD_Y);
+    expect(bandSurfaceY(0)).toBeLessThan(SEA_WORLD_Y);
     for (const y of levelsOf(triangles)) {
       expect(y, 'a curtain vertex reached below the sea').toBeGreaterThanOrEqual(SEA_WORLD_Y);
     }
-    expect(levelsOf(triangles).has(sunkCapY)).toBe(false);
+    expect(levelsOf(triangles).has(bandSurfaceY(0))).toBe(false);
   });
 });

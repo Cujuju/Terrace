@@ -62,10 +62,7 @@ import {
   type ContourLoop,
   type ContourPoint,
 } from '../../terrain/contours.ts';
-import {
-  drawnBandWorldY,
-  type DrawnGround,
-} from '../../terrain/drawnGround.ts';
+import { type DrawnGround } from '../../terrain/drawnGround.ts';
 
 /**
  * How far outside a segment's midpoint the classification probe steps, in
@@ -107,36 +104,6 @@ export const CURTAIN_PROBE_CELLS = 0.25;
 const CURTAIN_FOOT_SEARCH_MAX_CELLS = 1;
 
 /**
- * How far OUTSIDE the rock face the curtain stands, in WORLD UNITS — a
- * depth-buffer offset so a surface coincident with the skirt does not
- * z-fight it.
- *
- * This is the twin of the terrain skirt's pick inset (SKIRT_PICK_INSET,
- * capEmission.ts:895) with the OPPOSITE SIGN: that one pushes the riser INTO
- * the hillside so picking prefers it, this one pulls the curtain OFF the face
- * so the depth buffer does. The magnitude matches the water surface's own
- * clearance above the ground (riverRig.ts's RIVER_SURFACE_LIFT_WORLD_UNITS),
- * the smallest offset the renderer has already been shown to resolve.
- *
- * NOT the outward step the owner asked to remove: that was the staircase's
- * re-seated footprint, up to a cell of horizontal travel per band. This is
- * 1/64 of a world unit — a quarter of a millimetre at the world's scale,
- * present only so the sheet wins the depth test against the rock it is drawn
- * flat against.
- */
-export const CURTAIN_OUTWARD_WORLD_UNITS = 1 / 64;
-
-/**
- * Which of band 0's TWO levels a fall's foot uses, passed to
- * `drawnBandWorldY`. The terrain's own skirt stack lands on the SUNK seabed
- * cap (-SEABED_CAP_SINK) wherever a drop reaches band 0 — makeLevels computes
- * `below` exactly that way — so the curtain does too: a fall that reaches the
- * shore pours down the seabed face the terrain actually drew, not onto a
- * dry-shore cap that exists only above sunken ground.
- */
-const CURTAIN_LEVEL_SEABED = true;
-
-/**
  * True when both endpoints lie on the SAME marching-tile edge. Such a segment
  * is the tile's CLOSING edge — interior water, not outline: across it lies the
  * same region's other half. A curtain there would be a wall of water standing
@@ -174,24 +141,33 @@ function outwardNormal(a: ContourPoint, b: ContourPoint): { x: number; z: number
 
 /**
  * The band a segment's water lands on: walk straight out from its midpoint in
- * CURTAIN_PROBE_CELLS steps, following the ground DOWN, and return the lowest
- * band reached before it levels off or the search runs out of reach.
+ * CURTAIN_PROBE_CELLS steps and return the lowest band the face reaches.
  *
- * The first step doubles as the classification probe — a band no lower than
- * the water's own means this segment has nothing to pour onto and the caller
- * skips it.
+ * TWO PHASES, and keeping them distinct is the whole correctness argument.
  *
- * WHY IT FOLLOWS THE FACE RATHER THAN TAKING THE MINIMUM over the whole reach:
- * on a STAIRCASE the far end of a one-cell reach can already be over the NEXT
- * step down, and a sheet cut to that depth would slice through the tread in
- * between. Stopping where the ground stops falling ends the sheet on the first
- * surface the water actually meets, which on a staircase is that tread and on
- * a sheer cliff is the floor.
+ *   1. LOOKING FOR THE DROP. Until the ground has fallen below the water's own
+ *      band, a step that reads the SAME band means nothing yet — the rim of
+ *      the water and the rim of the rock disagree by up to 0.11 cell (issue
+ *      #63), and on a smoothed contour that disagreement varies along the arc.
+ *      So this phase keeps walking. It gives up only when the ground RISES,
+ *      which means a bank, not a lip.
+ *   2. FOLLOWING THE FACE DOWN. Once the ground has started falling, a step
+ *      that stops falling is the floor, and the walk ends there.
  *
- * RESIDUAL, named rather than hidden: a face that is momentarily flat partway
- * down — one probe step reading the same band as the last — ends the walk
+ * MEASURED, 2026-08-24, which is why phase 1 exists: with a single break on
+ * "stopped falling" counted from the water's own band, a straight channel down
+ * a terraced slope poured on 5 of its 9 lip segments at one cell wide, 9 of 13
+ * at two cells, 6 of 10 at four. The ones lost were the OUTER segments of every
+ * lip — the arc's shoulders, where the rim disagreement is largest — so a fall
+ * came out narrower than the pool feeding it, and on a short lip it could
+ * vanish entirely. The owner's screenshot of two courses down a terraced
+ * hillside showed exactly that: the wider course had falls, the narrower one
+ * had none at all between its pools.
+ *
+ * RESIDUAL, named rather than hidden: in phase 2 a face that goes momentarily
+ * flat — one probe step reading the same band as the last — ends the walk
  * there. The sheet then stops on a level the terrain genuinely draws, so it
- * rests on real ground and never hangs in air; it is just shorter than the
+ * rests on real ground and never hangs in air; it is only shorter than the
  * full drop. Refining that needs a finer step, not a different rule.
  */
 function footBandOf(
@@ -205,11 +181,18 @@ function footBandOf(
   const midZ = (a.z + b.z) / 2;
   const steps = Math.round(CURTAIN_FOOT_SEARCH_MAX_CELLS / CURTAIN_PROBE_CELLS);
   let lowest = surfaceBand;
+  let falling = false;
   for (let step = 1; step <= steps; step++) {
     const reach = step * CURTAIN_PROBE_CELLS;
     const band = ground.bandAt(midX + normal.x * reach, midZ + normal.z * reach);
-    if (band >= lowest) break;
-    lowest = band;
+    if (band < lowest) {
+      lowest = band;
+      falling = true;
+      continue;
+    }
+    // Phase 2: the face bottomed out. Phase 1: rising ground is a bank, and
+    // level ground is not yet an answer — keep looking outward.
+    if (falling || band > lowest) break;
   }
   return lowest;
 }
@@ -220,28 +203,38 @@ function footBandOf(
  * the same soup the tread builder writes).
  *
  * `loops` is EXACTLY what `appendRegionSurface` returned for the region whose
- * surface stands at `surfaceBand`; `seaWorldY` is the world height of the sea
- * plane, below which no curtain may reach.
+ * surface stands at `surfaceBand`. `bandSurfaceY` gives the world height of
+ * water standing on a band — the rig's own rule, the one the TREAD was built
+ * with. `seaWorldY` is the sea plane, below which no curtain may reach.
  *
- * One vertical quad per pouring segment. A segment pours when the drawn ground
- * just outside its midpoint sits in a LOWER band than the water's own; the
- * quad then runs from that band's drawn cap straight down to the cap of the
- * band it pours onto, clamped at the sea.
+ * One vertical quad per pouring segment, welded to the pool above it.
  */
 export function appendCurtains(
   ground: DrawnGround,
   loops: readonly ContourLoop[],
   surfaceBand: number,
+  bandSurfaceY: (band: number) => number,
   seaWorldY: number,
   out: number[],
 ): void {
-  // The fall's top edge: the drawn cap of the band the water stands on. The
-  // TREAD sits RIVER_SURFACE_LIFT_WORLD_UNITS above this, so the water surface
-  // overhangs the curtain's top edge by that much rather than leaving a gap —
-  // an overhang hides the join, a gap would show as a hairline of rock between
-  // the river and its own fall.
-  const topY = drawnBandWorldY(surfaceBand, CURTAIN_LEVEL_SEABED);
-  const insetCells = CURTAIN_OUTWARD_WORLD_UNITS / CELL_WORLD_SIZE;
+  // WELDED, NOT MERELY ADJACENT (owner, 2026-08-24: "the vertices from the
+  // flat pool to the vertical wall aren't connected and they need to be").
+  //
+  // The top row is the loop's OWN points at the pool's OWN surface height, so
+  // each top vertex is numerically identical to a boundary vertex of the tread
+  // triangulated from that same loop: one shared edge, no crack, nothing to
+  // line up. The previous version pushed the sheet 1/64 of a world unit
+  // outward along each segment's normal and hung it from the terrain cap
+  // rather than the water surface — two separate 1/64 discrepancies, which is
+  // precisely the hairline the owner saw, and the doubled bright lines were
+  // neighbouring quads offset along their own differing normals.
+  //
+  // The depth-buffer bias that offset used to provide now lives on the water
+  // MATERIAL as a polygon offset (riverRig.ts's WATER_DEPTH_BIAS_*), which is
+  // where a depth-buffer concern belongs: it biases the comparison without
+  // moving a single vertex, so geometry can be exactly coincident and exactly
+  // welded at the same time.
+  const topY = bandSurfaceY(surfaceBand);
 
   for (const loop of loops) {
     if (loop.length < 3) continue;
@@ -255,27 +248,18 @@ export function appendCurtains(
       const landingBand = footBandOf(ground, a, b, normal, surfaceBand);
       if (landingBand >= surfaceBand) continue;
 
-      // THE SEA CLAMPS THE FOOT, it does not delete the sheet. Band 0's seabed
-      // cap sits BELOW the sea plane by construction (-SEABED_CAP_SINK against
-      // SEA_LEVEL + WATER_SURFACE_LIFT), so refusing to emit whenever the foot
-      // is under the sea would delete every waterfall that reaches the shore —
-      // the one place a fall is most visible. It is cut off AT the surface
-      // instead: nothing is drawn below `seaWorldY`, and the fall still meets
-      // the water it pours into.
-      const bottomY = Math.max(drawnBandWorldY(landingBand, CURTAIN_LEVEL_SEABED), seaWorldY);
+      // The foot lands at the height water on THAT band stands at, not at the
+      // bare rock cap — so where a pool really is down there, the sheet's
+      // bottom edge meets that pool's surface plane exactly, the same way its
+      // top edge meets the pool above. Clamped at the sea: nothing is drawn
+      // below the surface the sea plane already covers.
+      const bottomY = Math.max(bandSurfaceY(landingBand), seaWorldY);
       if (bottomY >= topY) continue;
 
-      // Both rows share one plan-view position — that is what makes the sheet
-      // vertical, and what makes it impossible to lose a vertex between the
-      // rows. Each segment is offset along its OWN normal, as the terrain's
-      // skirts are; at a convex corner that leaves a hairline between
-      // neighbouring quads of one inset times the corner's tangent, which at
-      // 1/64 of a world unit on a Chaikin-smoothed contour is far below a
-      // pixel and is the same residual the rock face itself carries.
-      const ax = (a.x + normal.x * insetCells) * CELL_WORLD_SIZE;
-      const az = (a.z + normal.z * insetCells) * CELL_WORLD_SIZE;
-      const bx = (b.x + normal.x * insetCells) * CELL_WORLD_SIZE;
-      const bz = (b.z + normal.z * insetCells) * CELL_WORLD_SIZE;
+      const ax = a.x * CELL_WORLD_SIZE;
+      const az = a.z * CELL_WORLD_SIZE;
+      const bx = b.x * CELL_WORLD_SIZE;
+      const bz = b.z * CELL_WORLD_SIZE;
 
       // Winding follows emitSkirtQuad (capEmission.ts:775): a→b along the top,
       // then down.
