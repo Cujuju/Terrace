@@ -40,6 +40,44 @@ export const TEMPLE_PLACE_MESSAGE = 'place';
 export const TEMPLE_REMOVE_MESSAGE = 'remove';
 
 /**
+ * Server → the pressing player only, "that press built nothing, and here is
+ * why" (`temples:refused`). Sent on a refused `temples:place` and never
+ * otherwise — one message, on a real press, to one player.
+ *
+ * WHY THIS PLUGIN NOW HAS A REFUSAL CHANNEL, having deliberately gone without
+ * one (owner, 2026-08-24: "why can't the client just ask the server?"). Two of
+ * the three refusals the client CAN predict, and it does — it offers no ghost
+ * where the ground is wrong and none at all while a temple stands. The third
+ * cannot be predicted at any price: whether a settler could ever walk out and
+ * find somewhere to build is a question about a walker sim and a whole county
+ * of terrain, and putting that on the client would mean shipping the sim
+ * twice. So the ghost stays the fast, local, every-frame answer, and this
+ * message is the slow, authoritative one that arrives only when a player has
+ * actually pressed — which is exactly when a silent no-op is unacceptable.
+ *
+ * IT CARRIES THE CELL, because the client tracks no pending press: a press is
+ * fire-and-forget, and a refusal that did not say WHERE could not be told from
+ * a refusal of an older press somewhere else.
+ */
+export const TEMPLE_REFUSED_MESSAGE = 'refused';
+
+/**
+ * Why a placement was refused. Plain integers on the wire, and the client
+ * treats an unknown code as REASON_GROUND — the conservative reading, since
+ * every reason a future server adds will still mean "not here".
+ */
+export const TEMPLE_REFUSED_STANDING = 0;
+export const TEMPLE_REFUSED_GROUND = 1;
+export const TEMPLE_REFUSED_NO_SETTLERS = 2;
+
+/** A refusal as the client understands it. */
+export interface TempleRefusal {
+  readonly x: number;
+  readonly y: number;
+  readonly reason: number;
+}
+
+/**
  * How wide, in WORLD UNITS, the temple is on the ground.
  *
  * 2 — deliberately twice a settlement building's own footprint span
@@ -158,6 +196,54 @@ export const TEMPLE_DOOR_OFFSET_CELLS = cellsAcross(
  */
 export function templeDoorCell(temple: TempleCell): { x: number; y: number } {
   return { x: temple.x + TEMPLE_DOOR_OFFSET_CELLS, y: temple.y };
+}
+
+/**
+ * `temples:refused` → the flat triple the wire carries, and back. Flat for the
+ * same reason `temples:state` is: no per-object key strings to re-send.
+ */
+export function packTempleRefusal(refusal: TempleRefusal): number[] {
+  return [refusal.x, refusal.y, refusal.reason];
+}
+
+/** Defensive parse of `temples:refused`; null for anything malformed. */
+export function parseTempleRefusalPayload(payload: unknown): TempleRefusal | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const refused = (payload as { refused?: unknown }).refused;
+  if (!Array.isArray(refused) || refused.length < 3) return null;
+  const x = refused[0];
+  const y = refused[1];
+  const reason = refused[2];
+  if (!isCellCoordinate(x) || !isCellCoordinate(y)) return null;
+  if (typeof reason !== 'number' || !Number.isInteger(reason)) return null;
+  return { x, y, reason };
+}
+
+/**
+ * Every cell of the square of ground a temple standing on this cell claims —
+ * flat x, y, x, y…, the packing a list of cells travels in everywhere in this
+ * repo.
+ *
+ * THE SURVEYED SQUARE, exactly: the ground this plugin has already checked is
+ * flat, dry and unlocked, doorstep included. It is the right claim precisely
+ * because it is the same square — a building that surveys ground in order to
+ * stand on it, and then lets somebody else build a house on that ground, has
+ * surveyed it for nothing. The one consumer today is structures (see
+ * server/structures-bridge.ts), which grew a house inside the temple.
+ *
+ * Cells that fall outside the world are simply included and dropped by the
+ * consumer, which already validates coordinates defensively across the bridge;
+ * clamping here would need the world size, which this dependency-free module
+ * does not have.
+ */
+export function templeFootprintCells(temple: TempleCell): number[] {
+  const cells: number[] = [];
+  for (let dy = -TEMPLE_SURVEY_RADIUS_CELLS; dy <= TEMPLE_SURVEY_RADIUS_CELLS; dy++) {
+    for (let dx = -TEMPLE_SURVEY_RADIUS_CELLS; dx <= TEMPLE_SURVEY_RADIUS_CELLS; dx++) {
+      cells.push(temple.x + dx, temple.y + dy);
+    }
+  }
+  return cells;
 }
 
 /**

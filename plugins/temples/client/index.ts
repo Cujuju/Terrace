@@ -2,9 +2,21 @@
 // ghost it drags around, and the one standing temple the server says exists.
 //
 // NO AUTHORITY, NO PREDICTION. A press sends an intent and nothing more; the
-// temple appears when `temples:state` says it does. That is why a refused
-// placement needs no message back (server/index.ts's own note): nothing was
-// drawn to take away.
+// temple appears when `temples:state` says it does — nothing is drawn that a
+// refusal would have to take away.
+//
+// WHAT A REFUSAL DOES INSTEAD IS TEACH THE GHOST. The server answers a refused
+// press with the cell and a reason (`temples:refused`), and this half remembers
+// that cell: the ghost reads red there from the next frame on, so the press
+// that failed explains itself in the world's own vocabulary and a second press
+// on the same spot is never offered. No banner, no toast, no error text — the
+// affordance is the message, which is the same principle the rest of this file
+// is built on.
+//
+// THE REMEMBERED SET IS PROVABLY FRESH, and it is the tool that proves it:
+// terrain can only be sculpted with a sculpt tool held, and picking up any
+// other tool drops this one — so clearing the set whenever the tool is taken
+// up again means no refusal can survive an edit to the ground it was about.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // THE TOOL'S TWO ACTIONS, AND WHY THE GHOST IS THE ONLY UI.
@@ -39,9 +51,12 @@ import type {
 import {
   TEMPLES_PLUGIN_NAME,
   TEMPLE_PLACE_MESSAGE,
+  TEMPLE_REFUSED_MESSAGE,
+  TEMPLE_REFUSED_STANDING,
   TEMPLE_REMOVE_MESSAGE,
   TEMPLE_STATE_MESSAGE,
   TEMPLE_SURVEY_RADIUS_CELLS,
+  parseTempleRefusalPayload,
   parseTempleStatePayload,
   type TempleCell,
 } from '../protocol.ts';
@@ -72,6 +87,28 @@ let toolHeld = false;
 let hoverCell: TempleCell | null = null;
 
 /**
+ * Cells the server has refused a placement on this tool-hold, packed x*STRIDE+y.
+ *
+ * Only cells refused for a reason ABOUT THE GROUND go in — "a temple already
+ * stands" is a fact about the world, not about the cell, and remembering it
+ * would leave a red patch behind after the temple came down. Cleared whenever
+ * the tool is taken up: see this file's header for why that is enough to keep
+ * the set honest across a sculpt.
+ */
+let refusedCells = new Set<number>();
+
+/**
+ * Packs a cell into one comparable key. 65536 — the stride every plugin in
+ * this repo uses for the same job, and for the same reason: the heightmap's
+ * Int16 storage caps a world edge at 32767, so no two cells can collide.
+ */
+const REFUSED_KEY_STRIDE = 65536;
+
+function refusedKey(x: number, y: number): number {
+  return y * REFUSED_KEY_STRIDE + x;
+}
+
+/**
  * The crown's clock: elapsed seconds since attach, accumulated from the host's
  * already-capped `dt` so a backgrounded tab cannot jump the star half a turn.
  *
@@ -84,6 +121,7 @@ let hoverCell: TempleCell | null = null;
 let crownSeconds = 0;
 
 let unsubscribeMessages: (() => void) | null = null;
+let unsubscribeRefusals: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
 let onPointerMove: ((event: PointerEvent) => void) | null = null;
@@ -105,6 +143,10 @@ function worldX(cell: number): number {
  * be guessing, and the server would refuse it anyway.
  */
 function isGhostSite(ctx: ClientPluginCtx, cell: TempleCell): boolean {
+  // The server has already said no about this exact cell, for a reason no
+  // amount of local terrain reading could have predicted. Its answer outranks
+  // the survey below, so it is checked first.
+  if (refusedCells.has(refusedKey(cell.x, cell.y))) return false;
   const centre = ctx.terrainHeightAt(cell.x, cell.y);
   if (centre === null) return false;
   for (let dy = -TEMPLE_SURVEY_RADIUS_CELLS; dy <= TEMPLE_SURVEY_RADIUS_CELLS; dy++) {
@@ -215,6 +257,16 @@ export const clientPlugin: TerraceClientPlugin = {
       temple = parseTempleStatePayload(payload);
     });
 
+    unsubscribeRefusals = ctx.onMessage(TEMPLE_REFUSED_MESSAGE, (payload) => {
+      const refusal = parseTempleRefusalPayload(payload);
+      if (refusal === null) return;
+      // "A temple already stands" says nothing about the ground pressed — see
+      // `refusedCells`. Every other reason, known or added later, means "not
+      // this cell", which is exactly what the set is for.
+      if (refusal.reason === TEMPLE_REFUSED_STANDING) return;
+      refusedCells.add(refusedKey(refusal.x, refusal.y));
+    });
+
     ctx.registerTool({
       id: TEMPLE_TOOL_ID,
       label: TEMPLE_TOOL_LABEL,
@@ -222,6 +274,12 @@ export const clientPlugin: TerraceClientPlugin = {
       icon: TempleIcon,
       onSelected: (selected) => {
         toolHeld = selected;
+        if (selected) {
+          // Taking the tool up forgets every refusal — the ground may have been
+          // sculpted since, and it could only have been sculpted while this
+          // tool was down (this file's header).
+          refusedCells = new Set();
+        }
         if (!selected) {
           // Dropped the tool: the ghost goes with it THIS INSTANT rather than
           // on the next frame, so putting the brush back never leaves a stone
@@ -248,9 +306,11 @@ export const clientPlugin: TerraceClientPlugin = {
 
   dispose(): void {
     unsubscribeMessages?.();
+    unsubscribeRefusals?.();
     unsubscribeFrames?.();
     unsubscribePress?.();
     unsubscribeMessages = null;
+    unsubscribeRefusals = null;
     unsubscribeFrames = null;
     unsubscribePress = null;
 
@@ -262,6 +322,7 @@ export const clientPlugin: TerraceClientPlugin = {
     temple = null;
     toolHeld = false;
     hoverCell = null;
+    refusedCells = new Set();
     crownSeconds = 0;
   },
 };

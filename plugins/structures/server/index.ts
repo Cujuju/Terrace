@@ -67,6 +67,7 @@ import {
   type LiveCellRecord,
 } from './life.ts';
 import { resetBlessings } from './blessings.ts';
+import { resetReservations } from './reservations.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
@@ -551,6 +552,11 @@ export const plugin: TerracePlugin = {
 // active route. Re-exported here so the bridge has ONE module to load.
 export { setBlessedStructureCells } from './blessings.ts';
 
+// THE TEMPLES-FACING SURFACE (2026-08-24), same pattern, other claimant: the
+// temples plugin pushes the square of ground its building stands on, and this
+// plugin will not grow a house there. See ./reservations.ts for the contract.
+export { setReservedStructureCells } from './reservations.ts';
+
 /**
  * FOUND A HOME AT (x, y) FROM OUTSIDE THIS PLUGIN — the third member of the
  * pilgrims-facing surface (owner, 2026-08-24: a temple's settlers walk out and
@@ -643,6 +649,7 @@ export function resetStructuresState(): void {
   generation = 0;
   survey = new GenerationSurvey();
   resetBlessings();
+  resetReservations();
   rng = createStructuresRng(STRUCTURES_RNG_DEFAULT_SEED);
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
