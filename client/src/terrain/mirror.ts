@@ -27,6 +27,8 @@ import {
   CHUNK_SIZE,
   cellIndex,
   chunkIndex,
+  columnCoversBand,
+  columnSampleAtBand,
   chunksPerEdge,
   createHeightmap,
   isValidHeight,
@@ -116,29 +118,73 @@ function cellChunkReceived(mirror: TerrainMirror, x: number, y: number): boolean
  * to before.
  */
 export function sampleRenderHeight(mirror: TerrainMirror, x: number, y: number): number {
+  const cell = renderSampleCell(mirror, x, y);
+  return mirror.map.cells[cellIndex(mirror.map, cell.x, cell.y)];
+}
+
+/**
+ * `sampleRenderHeight` for ONE BAND of a layered column: the same pull-back,
+ * the same clamping, but the sample the contour pass needs to answer "is this
+ * cell solid at band k" (shared's columnSampleAtBand).
+ *
+ * Identical to `sampleRenderHeight` at every band while a column holds one
+ * span, which is what lets the mesh builder keep marching the plain height
+ * lattice until a chunk actually carries a layer.
+ */
+export function sampleRenderBandHeight(
+  mirror: TerrainMirror,
+  x: number,
+  y: number,
+  band: number,
+): number {
+  const cell = renderSampleCell(mirror, x, y);
+  return columnSampleAtBand(mirror.map, cell.x, cell.y, band);
+}
+
+/**
+ * Whether the column a render sample reads is SOLID at one band — the ceiling
+ * pass's field, resolved through the same pull-back as every other sampler
+ * here so a cave mouth cannot crack a seam.
+ */
+export function sampleRenderBandSolid(
+  mirror: TerrainMirror,
+  x: number,
+  y: number,
+  band: number,
+): boolean {
+  const cell = renderSampleCell(mirror, x, y);
+  return columnCoversBand(mirror.map, cell.x, cell.y, band);
+}
+
+/**
+ * WHICH CELL a render sample reads, after clamping to the world and pulling
+ * back across the frontier. Extracted so that every render sampler — the
+ * height, and the per-band one above — resolves the position identically;
+ * seam contracts S1/S3 hold because the answer depends only on the world
+ * position and the received set, never on which chunk is asking.
+ */
+function renderSampleCell(
+  mirror: TerrainMirror,
+  x: number,
+  y: number,
+): { x: number; y: number } {
   const max = mirror.map.size - 1;
   const sx = x < 0 ? 0 : x > max ? max : x;
   const sy = y < 0 ? 0 : y > max ? max : y;
-  if (cellChunkReceived(mirror, sx, sy)) {
-    return mirror.map.cells[cellIndex(mirror.map, sx, sy)];
-  }
+  if (cellChunkReceived(mirror, sx, sy)) return { x: sx, y: sy };
   const onColumnSeam = sx > 0 && sx % CHUNK_SIZE === 0;
   const onRowSeam = sy > 0 && sy % CHUNK_SIZE === 0;
   if (onColumnSeam && onRowSeam) {
-    if (cellChunkReceived(mirror, sx, sy - 1)) {
-      return mirror.map.cells[cellIndex(mirror.map, sx, sy - 1)];
-    }
-    if (cellChunkReceived(mirror, sx - 1, sy)) {
-      return mirror.map.cells[cellIndex(mirror.map, sx - 1, sy)];
-    }
-    return mirror.map.cells[cellIndex(mirror.map, sx - 1, sy - 1)];
+    if (cellChunkReceived(mirror, sx, sy - 1)) return { x: sx, y: sy - 1 };
+    if (cellChunkReceived(mirror, sx - 1, sy)) return { x: sx - 1, y: sy };
+    return { x: sx - 1, y: sy - 1 };
   }
-  if (onColumnSeam) return mirror.map.cells[cellIndex(mirror.map, sx - 1, sy)];
-  if (onRowSeam) return mirror.map.cells[cellIndex(mirror.map, sx, sy - 1)];
+  if (onColumnSeam) return { x: sx - 1, y: sy };
+  if (onRowSeam) return { x: sx, y: sy - 1 };
   // Interior of a never-received chunk: no received chunk's lattice reaches
   // here (the overflow is exactly one cell, always landing on a seam), so the
-  // value is unobservable by any mesh — return the allocated height unchanged.
-  return mirror.map.cells[cellIndex(mirror.map, sx, sy)];
+  // value is unobservable by any mesh — read the cell itself.
+  return { x: sx, y: sy };
 }
 
 /**

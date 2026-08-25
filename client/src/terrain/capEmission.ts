@@ -10,7 +10,13 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   SEA_LEVEL,
+  anyColumnLayered,
   bandOf,
+  columnCoversBand,
+  isSpanDrawn,
+  spanAt,
+  spanCapHeight,
+  spanCount,
 } from '@terrace/shared';
 import {
   BAND_WORLD_HEIGHT,
@@ -23,13 +29,18 @@ import {
   isSeabedPaletteIndex,
   type Rgb,
 } from './bandColors.ts';
-import type { TerrainMirror } from './mirror.ts';
+import {
+  sampleRenderBandHeight,
+  sampleRenderBandSolid,
+  type TerrainMirror,
+} from './mirror.ts';
 import {
   LATTICE_PER_CHUNK,
   RECT_NONE,
   SAMPLE_COUNT,
   SHORE_EDGE_CROSSING,
   assembleLoops,
+  loadSampleField,
   loadSamples,
   marchLevel,
   samples,
@@ -427,6 +438,13 @@ export interface ChunkGeometryCounts {
   capTriangleCount: number;
   /** Vertical risers between one band and the one below. */
   skirtTriangleCount: number;
+  /**
+   * Undersides: the bottom of a slab that has open space beneath it. Zero for
+   * every chunk of plain columns, which is every chunk until a column is
+   * carved — a column solid at one band is solid at every band below it, so
+   * there is nothing with space under it to draw.
+   */
+  ceilingTriangleCount: number;
   triangleCount: number;
   /** Vertices written, i.e. triangleCount * 3 — also the draw range. */
   vertexCount: number;
@@ -528,8 +546,24 @@ export function createChunkGeometryBuffers(
 interface ContourLevel {
   /** Inside means `height >= threshold`, in HEIGHT units. */
   threshold: number;
+  /**
+   * WHICH BAND's solidity this level marches — `threshold / BAND_HEIGHT` for a
+   * band boundary, and 0 for the waterline, which is a colour boundary drawn
+   * across band 0's own ground.
+   *
+   * Only a chunk holding a layered column reads it: a plain column answers
+   * "solid at band k" with its height at every band, so the one height lattice
+   * loaded up front serves every level (columns.ts's columnSampleAtBand).
+   */
+  sampleBand: number;
   /** World Y of the cap. */
   capY: number;
+  /**
+   * World Y of the BOTTOM of this band's slab — where the skirt hanging under
+   * the cap ends, and so where a ceiling cap at this level closes it off.
+   * Equal to `capY` at the stack's lowest level, which has no slab under it.
+   */
+  undersideY: number;
   /** World height of the skirt hanging under it; 0 emits no skirt. */
   skirtDrop: number;
   capColor: Rgb;
@@ -584,7 +618,7 @@ interface ContourLevel {
  * reach cost nothing: an absent band's region would either be empty or identical
  * to its neighbour's, so the stack is exactly as tall as the terrain is.
  */
-function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
+function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourLevel[] {
   let lowestBand = Infinity;
   let highestBand = -Infinity;
   for (let i = 0; i < SAMPLE_COUNT; i++) {
@@ -592,6 +626,10 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
     if (band < lowestBand) lowestBand = band;
     if (band > highestBand) highestBand = band;
   }
+  // The lattice holds SURFACE heights, so it says nothing about a span buried
+  // under one. A chunk with a cave in it passes the band of the deepest cap
+  // hiding below its surfaces, and the stack reaches down to draw it.
+  if (floorBand !== null && floorBand < lowestBand) lowestBand = floorBand;
 
   const levels: ContourLevel[] = [];
   for (let k = lowestBand; k <= highestBand; k++) {
@@ -617,7 +655,9 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
       skirtDrop > SEABED_RISER_BORDER_WORLD_HEIGHT;
     levels.push({
       threshold: k * BAND_HEIGHT,
+      sampleBand: k,
       capY,
+      undersideY: k === lowestBand ? capY : below,
       skirtDrop,
       capColor: palettes.top[paletteIndex],
       capSelfLit: capSelfLitFor(paletteIndex),
@@ -638,7 +678,11 @@ function makeLevels(palettes: ChunkPalettes): ContourLevel[] {
       const shoreIndex = bandPaletteIndex(SEA_LEVEL + 1);
       levels.push({
         threshold: SEA_LEVEL + 1,
+        sampleBand: 0,
         capY: 0,
+        // The waterline is a colour boundary on flat ground, never a slab, and
+        // the ceiling pass skips it outright (see the builder).
+        undersideY: 0,
         skirtDrop: SEABED_CAP_SINK,
         capColor: palettes.top[shoreIndex],
         capSelfLit: capSelfLitFor(shoreIndex),
@@ -762,6 +806,30 @@ function emitCapTriangle(
   pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
   pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
   pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, 1, 0, color, selfLit);
+}
+
+/**
+ * A flat CEILING triangle: the underside of an overhang, drawn from below.
+ *
+ * The same loop and the same Y as a cap, with the winding left alone rather
+ * than reversed — which is precisely what turns the face over — and the normal
+ * pointing down, so the sun rakes across it the way it rakes a cliff rather
+ * than lighting it like a tread.
+ *
+ * It takes the band's CLIFF colour, not its tread colour, for the same reason:
+ * a cave roof is rock that has been cut, which is what the cliff ramp is for.
+ */
+function emitCeilingTriangle(
+  a: ContourPoint,
+  b: ContourPoint,
+  c: ContourPoint,
+  y: number,
+  color: Rgb,
+  selfLit: number,
+): void {
+  pushVertex(a.x * CELL_WORLD_SIZE, y, a.z * CELL_WORLD_SIZE, 0, -1, 0, color, selfLit);
+  pushVertex(b.x * CELL_WORLD_SIZE, y, b.z * CELL_WORLD_SIZE, 0, -1, 0, color, selfLit);
+  pushVertex(c.x * CELL_WORLD_SIZE, y, c.z * CELL_WORLD_SIZE, 0, -1, 0, color, selfLit);
 }
 
 /**
@@ -992,6 +1060,105 @@ function writeBlockyFallback(
 // ---------------------------------------------------------------------------
 
 /**
+ * Where a ceiling's outline crosses a lattice edge, as a fraction of the edge.
+ *
+ * A ceiling level set is BINARY — a cell either has a roof at this band or is
+ * open sky beneath it — and open sky has no height to interpolate toward, so
+ * unlike a band boundary there is no gradient here to place the crossing with.
+ * A half puts it on the cell boundary, which is the honest answer to "the roof
+ * ends somewhere between these two cells" and makes a cave mouth read as a rim
+ * on the lattice rather than at an arbitrary point along it.
+ *
+ * PROVISIONAL, and deliberately one constant so it can be swapped after the
+ * first arch is on screen (the alternative is to interpolate the two spans'
+ * real floors wherever BOTH cells have a roof and pin only against open sky).
+ */
+const CEILING_EDGE_CROSSING = 0.5;
+
+/** The two values of the binary ceiling field, marched at threshold INSIDE. */
+const CEILING_INSIDE = 1;
+const CEILING_OUTSIDE = 0;
+
+/** The lattice a chunk marches, clamped to the world for span lookups. */
+function chunkLatticeRect(
+  worldSize: number,
+  originX: number,
+  originZ: number,
+): { x0: number; y0: number; width: number; height: number } {
+  const x0 = originX < 0 ? 0 : originX;
+  const y0 = originZ < 0 ? 0 : originZ;
+  const x1 = Math.min(originX + LATTICE_PER_CHUNK, worldSize);
+  const y1 = Math.min(originZ + LATTICE_PER_CHUNK, worldSize);
+  return { x0, y0, width: x1 - x0, height: y1 - y0 };
+}
+
+/**
+ * The band of the DEEPEST cap hiding under a surface anywhere in this chunk, or
+ * null when no column here is layered.
+ *
+ * It is what makes a cave floor drawable: the level stack is built from surface
+ * heights, and a span buried under one reaches no further up than its own cap,
+ * which can sit below every surface in the chunk.
+ */
+function buriedFloorBand(
+  mirror: TerrainMirror,
+  originX: number,
+  originZ: number,
+): number | null {
+  const rect = chunkLatticeRect(mirror.map.size, originX, originZ);
+  if (!anyColumnLayered(mirror.map, rect.x0, rect.y0, rect.width, rect.height)) return null;
+  let lowest = Infinity;
+  for (let y = rect.y0; y < rect.y0 + rect.height; y++) {
+    for (let x = rect.x0; x < rect.x0 + rect.width; x++) {
+      const count = spanCount(mirror.map, x, y);
+      if (count === 1) continue;
+      for (let k = 0; k < count; k++) {
+        const span = spanAt(mirror.map, x, y, k);
+        if (!isSpanDrawn(span)) continue;
+        const band = bandOf(spanCapHeight(span));
+        if (band < lowest) lowest = band;
+      }
+    }
+  }
+  return lowest === Infinity ? null : lowest;
+}
+
+/**
+ * The ceiling outline for one band: the polygons whose interior is
+ * "solid at this band, open at the band below" — everything with space under
+ * it, which is what an overhang, an arch and a cave roof all are.
+ *
+ * A BINARY field, unlike every other level set here. Solidity at a band is a
+ * yes/no fact, and the cell on the open side of the rim has no height to
+ * interpolate toward, so the crossing is placed by CEILING_EDGE_CROSSING
+ * rather than by the samples.
+ *
+ * Empty for every chunk of plain columns: a column solid at band k is solid at
+ * every band under it, so there is nothing anywhere with space beneath it.
+ */
+function marchCeiling(
+  mirror: TerrainMirror,
+  originX: number,
+  originZ: number,
+  band: number,
+): CapPolygon[] {
+  loadSampleField(
+    (i, j) =>
+      sampleRenderBandSolid(mirror, originX + i, originZ + j, band) &&
+      !sampleRenderBandSolid(mirror, originX + i, originZ + j, band - 1)
+        ? CEILING_INSIDE
+        : CEILING_OUTSIDE,
+    CHUNK_SIZE,
+  );
+  const segmentCount = marchLevel(CEILING_INSIDE, originX, originZ, CEILING_EDGE_CROSSING);
+  const wholeInside = samples[0] >= CEILING_INSIDE;
+  const loops = assembleLoops(segmentCount, originX, originZ, wholeInside)
+    .map(smoothLoop)
+    .filter((loop) => loop.length >= 3);
+  return groupLoops(loops);
+}
+
+/**
  * Fills a chunk's position/normal/colour buffers from the mirror and reports
  * how much of them is live.
  *
@@ -1013,7 +1180,20 @@ export function writeChunkVertexData(
   const originZ = cy * CHUNK_SIZE;
   loadSamples(mirror, originX, originZ);
 
-  const levels = makeLevels(palettes);
+  // A chunk of plain columns marches the one height lattice loaded above at
+  // every level, exactly as it always has; only a chunk that actually carries a
+  // layer reloads the lattice per band. See columnSampleAtBand for why the two
+  // are the same field while every column holds one span.
+  const floorBand = buriedFloorBand(mirror, originX, originZ);
+  const layered = floorBand !== null;
+  const loadLevel = (band: number): void => {
+    loadSampleField(
+      (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+      CHUNK_SIZE,
+    );
+  };
+
+  const levels = makeLevels(palettes, floorBand);
 
   // --- geometry, level by level -----------------------------------------
   //
@@ -1023,13 +1203,17 @@ export function writeChunkVertexData(
   // fallback BEFORE the super-linear work — see CHUNK_TRIANGLE_BUDGET.
   let capTriangles = 0;
   let skirtTriangles = 0;
+  let ceilingTriangles = 0;
   /** Σ V² over the polygons to be triangulated — see the work budget. */
   let triangulationWork = 0;
   /** Largest single polygon's V² — the adversarial-shape discriminator. */
   let maxPolygonWork = 0;
   let overBudget = false;
   const polygonsPerLevel: CapPolygon[][] = [];
+  /** Ceiling polygons per level, in lockstep with polygonsPerLevel. */
+  const ceilingsPerLevel: CapPolygon[][] = [];
   for (const level of levels) {
+    if (layered) loadLevel(level.sampleBand);
     const segmentCount = marchLevel(
       level.threshold,
       originX,
@@ -1069,11 +1253,33 @@ export function writeChunkVertexData(
         }
       }
     }
+    // CEILINGS — the underside of anything with open space beneath it, marched
+    // as its own level set over "solid at this band, open at the one below".
+    //
+    // Sequential with the cap pass above, never interleaved: the lattice and
+    // the edge tables are module scratch with a stated one-pass-at-a-time
+    // precondition (contours.ts), and the cap pass is complete here — its loops
+    // were copied out by smoothLoop. Skipped for the waterline, which is a
+    // colour boundary across band 0's ground rather than a slab of its own.
+    ceilingsPerLevel.push(
+      layered && level.threshold === level.sampleBand * BAND_HEIGHT
+        ? marchCeiling(mirror, originX, originZ, level.sampleBand)
+        : [],
+    );
+    for (const polygon of ceilingsPerLevel[ceilingsPerLevel.length - 1]) {
+      let vertices = polygon.outer.length;
+      for (const hole of polygon.holes) vertices += hole.length;
+      const merged = vertices + 2 * polygon.holes.length;
+      ceilingTriangles += merged - 2;
+      const polygonWork = merged * merged;
+      triangulationWork += polygonWork;
+      if (polygonWork > maxPolygonWork) maxPolygonWork = polygonWork;
+    }
     // Either budget alone is enough to abandon the contour path: one bounds the
     // geometry (and the buffers behind it), the other the time it takes to make
     // it. Both are checked here, before any of the super-linear work runs.
     if (
-      capTriangles + skirtTriangles > CHUNK_TRIANGLE_BUDGET ||
+      capTriangles + skirtTriangles + ceilingTriangles > CHUNK_TRIANGLE_BUDGET ||
       triangulationWork > CHUNK_TRIANGULATION_WORK_BUDGET ||
       maxPolygonWork > CHUNK_POLYGON_WORK_BUDGET
     ) {
@@ -1084,7 +1290,7 @@ export function writeChunkVertexData(
 
   const triangleTarget = overBudget
     ? FALLBACK_MAX_TRIANGLES
-    : capTriangles + skirtTriangles;
+    : capTriangles + skirtTriangles + ceilingTriangles;
   let capacityGrew = ensureCapacity(buffers, triangleTarget);
 
   // --- write -------------------------------------------------------------
@@ -1092,6 +1298,7 @@ export function writeChunkVertexData(
   outVertex = 0;
   let capEmitted = 0;
   let skirtEmitted = 0;
+  let ceilingEmitted = 0;
 
   for (let index = 0; index < (overBudget ? 0 : levels.length); index++) {
     const level = levels[index];
@@ -1101,6 +1308,14 @@ export function writeChunkVertexData(
       earClip(merged, (a, b, c) => {
         emitCapTriangle(a, b, c, level.capY, level.capColor, level.capSelfLit);
         capEmitted++;
+      });
+    }
+    for (const polygon of ceilingsPerLevel[index]) {
+      let merged = polygon.outer;
+      for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
+      earClip(merged, (a, b, c) => {
+        emitCeilingTriangle(a, b, c, level.undersideY, level.skirtColor, level.skirtSelfLit);
+        ceilingEmitted++;
       });
     }
     if (level.skirtDrop <= 0) continue;
@@ -1154,7 +1369,12 @@ export function writeChunkVertexData(
   // failed. A geometry bug must degrade to ugly, never to see-through, so the
   // chunk is redrawn blocky instead.
   let usedFallback = overBudget;
-  if (!overBudget && (capEmitted !== capTriangles || skirtEmitted !== skirtTriangles)) {
+  if (
+    !overBudget &&
+    (capEmitted !== capTriangles ||
+      skirtEmitted !== skirtTriangles ||
+      ceilingEmitted !== ceilingTriangles)
+  ) {
     usedFallback = true;
   }
   if (usedFallback && !overBudget) {
@@ -1165,9 +1385,14 @@ export function writeChunkVertexData(
     const emitted = writeBlockyFallback(originX, originZ, palettes);
     capEmitted = emitted.caps;
     skirtEmitted = emitted.skirts;
+    // The fallback is per-cell boxes off the height field: it has no notion of
+    // a span, so a chunk that falls back loses its undersides along with its
+    // contours. Ugly, not see-through — the same bargain the fallback has
+    // always made.
+    ceilingEmitted = 0;
   }
 
-  const triangleCount = capEmitted + skirtEmitted;
+  const triangleCount = capEmitted + skirtEmitted + ceilingEmitted;
   const vertexCount = triangleCount * VERTICES_PER_TRIANGLE;
   collapseTail(buffers, vertexCount);
   outBuffers = null;
@@ -1175,6 +1400,7 @@ export function writeChunkVertexData(
   return {
     capTriangleCount: capEmitted,
     skirtTriangleCount: skirtEmitted,
+    ceilingTriangleCount: ceilingEmitted,
     triangleCount,
     vertexCount,
     triangleCapacity: buffers.triangleCapacity,

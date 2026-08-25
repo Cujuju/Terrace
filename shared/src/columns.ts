@@ -31,8 +31,8 @@
 // anything but an error message, and nothing outside here may either: read it
 // BY CELL INDEX, and walk the world in grid order when you need every column.
 
-import { MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
-import { cellIndex, cellX, cellY, type Heightmap } from './heightmap.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
+import { cellIndex, cellX, cellY, quantizeToBand, type Heightmap } from './heightmap.ts';
 
 /**
  * The floor of the bottom span of an uncarved column — the bottom of the world,
@@ -176,4 +176,148 @@ export function assertSingleSpanWorld(map: Heightmap, context: string): void {
       `first at (${cellX(map.size, first)}, ${cellY(map.size, first)}). ` +
       `This path carries one height per cell and cannot express a layered column.`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// What a span looks like once it is DRAWN.
+// ---------------------------------------------------------------------------
+//
+// The renderer is a stack of level sets: it asks "is this cell solid at band
+// k?", so a span occupies whole bands, and its drawn extent is the band
+// boundaries it reaches — not its exact floor and ceiling. Picking and the mesh
+// builder must agree on that extent to the last unit or the player clicks one
+// thing and sculpts another, so the rule lives here, once, in shared.
+
+/**
+ * The band cap a span is drawn with — its TOP surface, and for the topmost span
+ * of a column exactly what the renderer has always drawn at `quantizeToBand(h)`.
+ */
+export function spanCapHeight(span: Span): number {
+  return quantizeToBand(span.ceiling);
+}
+
+/**
+ * The LOWEST band boundary a span reaches — the first threshold at or above its
+ * floor, and the mirror image of `spanCapHeight`, which rounds the ceiling
+ * down. A span is solid at exactly the bands from here up to its cap.
+ */
+export function spanLowestBandHeight(span: Span): number {
+  const quantized = quantizeToBand(span.floor);
+  return quantized === span.floor ? quantized : quantized + BAND_HEIGHT;
+}
+
+/**
+ * The UNDERSIDE the renderer draws for a span — ONE BAND BELOW its lowest
+ * filled band.
+ *
+ * Not a quirk: it is how the existing mesh already draws material. A band's cap
+ * sits at its own threshold and its skirt hangs one band below, so the slab the
+ * renderer draws for band k occupies [(k−1)·BAND_HEIGHT, k·BAND_HEIGHT] — cap
+ * on top, skirt as the side wall. A span filling one band is therefore one band
+ * thick, and the ceiling cap that closes it off is the bottom of that same
+ * slab, which the band's own skirt already walls in. Rounding to the lowest
+ * filled band instead would give a one-band roof no thickness at all, and its
+ * cap and its underside the same Y to fight over.
+ *
+ * For an uncarved column this lands a band BELOW the bottom of the world, which
+ * is exactly as unobservable as today's "solid from the cap downward".
+ */
+export function spanUndersideHeight(span: Span): number {
+  return spanLowestBandHeight(span) - BAND_HEIGHT;
+}
+
+/**
+ * Whether a span reaches a band boundary at all.
+ *
+ * A span thinner than a band that falls between two boundaries fills no level
+ * set, so the renderer draws nothing for it — and picking must miss it for the
+ * same reason, or the player would be able to click terrain that is not there.
+ */
+export function isSpanDrawn(span: Span): boolean {
+  return spanLowestBandHeight(span) <= spanCapHeight(span);
+}
+
+// ---------------------------------------------------------------------------
+// The question the renderer actually asks: "is this cell solid at band k?"
+// ---------------------------------------------------------------------------
+
+/**
+ * A sample lower than any band threshold a world can have, for a column that is
+ * OPEN at the band being asked about and has no solid span below it either.
+ *
+ * The marching pass classifies a sample as inside when it reaches the
+ * threshold, so "open" has to be expressible as a height — and BEDROCK_FLOOR
+ * itself will not do, because it IS the lowest threshold: a column open at the
+ * bottom band would read as solid there.
+ */
+export const OPEN_COLUMN_SAMPLE = BEDROCK_FLOOR - BAND_HEIGHT;
+
+/** Whether any span of this column fills band `band` — solid at that level. */
+export function columnCoversBand(map: Heightmap, x: number, y: number, band: number): boolean {
+  const threshold = band * BAND_HEIGHT;
+  const count = spanCount(map, x, y);
+  for (let k = 0; k < count; k++) {
+    const span = spanAt(map, x, y, k);
+    // `floor <= threshold` rather than the span's lowest band: the threshold is
+    // a band boundary, so the two say the same thing, and this says it in the
+    // terms the span itself is stored in.
+    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return true;
+  }
+  return false;
+}
+
+/**
+ * The HEIGHT the contour pass marches for one band — the number that answers
+ * "solid at band k" through the same `sample >= threshold` test the renderer
+ * has always used, and that interpolates against its neighbours to place the
+ * crossing.
+ *
+ * Solid at the band: the ceiling of the span that fills it, so two neighbouring
+ * columns interpolate their real heights and the outline keeps the organic
+ * wander that is most of the terraced look.
+ *
+ * Open at the band: the ceiling of the highest span BELOW it — the surface a
+ * ray would land on there — which is under the threshold by construction, so
+ * the cell reads as outside and the crossing still has a real height to
+ * interpolate toward.
+ *
+ * FOR A COLUMN OF ONE SPAN THIS IS `heightAt`, AT EVERY BAND. That is the
+ * property the mesh builder's fast path rests on: while the world holds one
+ * span per column, marching this field is marching exactly the field the
+ * renderer marched before spans existed.
+ */
+export function columnSampleAtBand(map: Heightmap, x: number, y: number, band: number): number {
+  const threshold = band * BAND_HEIGHT;
+  const count = spanCount(map, x, y);
+  let below = OPEN_COLUMN_SAMPLE;
+  for (let k = 0; k < count; k++) {
+    const span = spanAt(map, x, y, k);
+    if (!isSpanDrawn(span)) continue;
+    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return span.ceiling;
+    if (spanCapHeight(span) < threshold) below = span.ceiling;
+  }
+  return below;
+}
+
+/**
+ * Whether any column in the rectangle holds more than one span.
+ *
+ * The mesh builder's fast path: a chunk of plain columns is marched once, as it
+ * always was, and only a chunk that actually carries a layer pays for a
+ * per-band reload. O(1) while the world holds no layered column at all.
+ */
+export function anyColumnLayered(
+  map: Heightmap,
+  x0: number,
+  y0: number,
+  width: number,
+  height: number,
+): boolean {
+  if (map.columnSpans.size === 0) return false;
+  for (let y = y0; y < y0 + height; y++) {
+    for (let x = x0; x < x0 + width; x++) {
+      if (map.columnSpans.has(cellIndex(map, x, y))) return true;
+    }
+  }
+  return false;
 }
