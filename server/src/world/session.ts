@@ -69,6 +69,10 @@ export function snapshotIfDirty(session: WorldSession): boolean {
     worldSize: world.size,
     name: world.name,
     cells: world.heightsForPersistence(),
+    // The layered columns ride along with the heights they complete: without
+    // them a carved world's snapshot would be unwritable (or worse, silently
+    // flattened on restore). See World.spansForPersistence.
+    columnSpans: world.spansForPersistence(),
     mask: world.mask,
     pluginSlices: host.collectPersistence(),
     tokenMasks: world.tokenMasks(),
@@ -136,6 +140,7 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
       snapshot.tokenMasks,
       snapshot.simMillis,
       snapshot.genesisMillis,
+      snapshot.columnSpans,
     );
     // THE CLOCK MEETS REAL TIME HERE, before any plugin has run: world time is
     // an offset against the wall clock (shared/src/calendar.ts), so a restored
@@ -221,6 +226,7 @@ export function createWorldFile(
       worldSize: world.size,
       name: world.name,
       cells: world.heightsForPersistence(),
+      columnSpans: world.spansForPersistence(),
       mask: world.mask,
       pluginSlices: {},
       tokenMasks: world.tokenMasks(),
