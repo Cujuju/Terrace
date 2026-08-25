@@ -44,7 +44,10 @@ import {
   type BufferGeometry,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS } from '../protocol.ts';
+import {
+  TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS,
+  TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS,
+} from '../protocol.ts';
 import { createCelestialCrown, type CelestialCrown } from './celestial.ts';
 
 // ── Proportions, every one derived from the footprint span ──────────────────
@@ -133,21 +136,47 @@ const DOORWAY_HEIGHT_FRACTION = 0.2;
  * temple entrance from any approach, and leaves the stair the clear run up the
  * middle that makes the silhouette a pyramid.
  *
- * They are cut into the FIRST COURSE, whose front face is where
- * ../protocol.ts's TEMPLE_DOOR_OFFSET_CELLS puts the spawn point — so the
- * place that looks like a way out and the place someone appears are the same
- * face of the same block, by construction rather than by matching numbers.
+ * They are cut into the FIRST COURSE, and they stand ON THE DOOR LINE:
+ * ../protocol.ts's TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS is where they are
+ * placed from, and it is the same number the server spawns a settler at. That
+ * direction matters. It used to run the other way — the portals were placed
+ * from the stair's width and a gap, and the spawn was placed from the
+ * footprint span — and the two landed a world unit apart on the same face,
+ * which is how a settler came to appear inside the bottom step instead of out
+ * of a doorway.
  */
 const PORTAL_MAX_WIDTH_FRACTION = 0.13;
 const PORTAL_HEIGHT_FRACTION = 0.105;
-/** Gap between the stair's edge and the near edge of each portal. */
+/** Clear ground either side of each portal, so the stair never crowds one. */
 const PORTAL_STAIR_GAP_FRACTION = 0.05;
 
 // Derived, once: the numbers every block below is placed by.
 const PLINTH_HEIGHT = BASE_SPAN * PLINTH_HEIGHT_FRACTION;
 const COURSE_HEIGHT = BASE_SPAN * COURSE_HEIGHT_FRACTION;
 const COURSE_INSET = BASE_SPAN * COURSE_INSET_FRACTION;
-const STAIR_WIDTH = BASE_SPAN * STAIR_WIDTH_FRACTION;
+
+/** The two ground portals, sized by the opening contract and placed on the
+ *  protocol's door line — see PORTAL_MAX_WIDTH_FRACTION's block. */
+const PORTAL = opening(
+  BASE_SPAN * PORTAL_MAX_WIDTH_FRACTION,
+  BASE_SPAN * PORTAL_HEIGHT_FRACTION,
+);
+const PORTAL_Z = TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS;
+
+/**
+ * The stair's width — and THE STAIR MAY NOT REACH THE DOOR LINE.
+ *
+ * The belt to the protocol's braces. The whole defect was masonry standing
+ * where a person is spawned, and the stair is the one part of this model that
+ * juts out over that ground; a later widening of STAIR_WIDTH_FRACTION would
+ * re-create the bug silently, in a file that says nothing about spawning. So
+ * the authored width is capped by the clear span the portals leave it, and the
+ * cap — not the author — has the last word.
+ */
+const STAIR_WIDTH = Math.min(
+  BASE_SPAN * STAIR_WIDTH_FRACTION,
+  (PORTAL_Z - PORTAL.width / 2 - BASE_SPAN * PORTAL_STAIR_GAP_FRACTION) * 2,
+);
 
 /**
  * Total height of the finished model, world units: the top of the lintel,
@@ -312,22 +341,16 @@ function buildTempleGeometry(): BufferGeometry {
   // The two ground portals, on the first course's front face, one either side
   // of the stair. Set a hair proud of the stone for the same reason the shrine
   // doorway is: a coplanar face z-fights.
-  const portal = opening(
-    BASE_SPAN * PORTAL_MAX_WIDTH_FRACTION,
-    BASE_SPAN * PORTAL_HEIGHT_FRACTION,
-  );
   const portalSkin = BASE_SPAN * 0.01;
-  const portalZ =
-    STAIR_WIDTH / 2 + BASE_SPAN * PORTAL_STAIR_GAP_FRACTION + portal.width / 2;
   for (const side of [-1, 1]) {
     parts.push(
       block(
         portalSkin,
-        portal.height,
-        portal.width,
+        PORTAL.height,
+        PORTAL.width,
         courseSpans[0]! / 2,
         PLINTH_HEIGHT,
-        portalZ * side,
+        PORTAL_Z * side,
         DOORWAY_COLOR,
       ),
     );

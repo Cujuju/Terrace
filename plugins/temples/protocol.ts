@@ -117,12 +117,39 @@ export const TEMPLE_DOOR_OFFSET_CELLS =
   cellsAcross(TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2) + 0.5;
 
 /**
+ * How far OFF THE CENTRELINE of that face the door sits — the second half of
+ * the door's position, and the half that was missing.
+ *
+ * THE STAIR IS ON THE CENTRELINE, AND IT JUTS. Clearing the footprint edge
+ * (above) is not the same as clearing the BUILDING: the client's flight of
+ * steps stands proud of the front face by half a tread, so the strip of ground
+ * directly in front of the temple is solid stone for the width of the stair.
+ * A door on the centreline put a settler inside the bottom step — the spawn
+ * moved out of the masonry in the middle of the pyramid and into the masonry
+ * on the front of it (owner, 2026-08-24: "still stuck inside the temple").
+ *
+ * A QUARTER OF THE SPAN, which is where the client draws its ground portals —
+ * and that is not a coincidence to be maintained, it is a derivation: this
+ * constant is what the model places its portals FROM (client/temple.ts), and
+ * the same file clamps its stair so the stair can never reach this line. The
+ * door and the doorway are one number, in one direction, rather than two
+ * numbers that have to be kept in agreement.
+ */
+export const TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 4;
+export const TEMPLE_DOOR_LATERAL_OFFSET_CELLS = cellsAcross(
+  TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS,
+);
+
+/**
  * The temple's door, in FRACTIONAL cell coordinates — where a settler stands
- * the moment it steps outside. Cell centres are at `+0.5`, which is the
- * convention every walker in this repo spawns and navigates by.
+ * the moment it steps outside: clear of the front face, and clear of the stair
+ * that stands on it.
  */
 export function templeDoorCell(temple: TempleCell): { x: number; y: number } {
-  return { x: temple.x + TEMPLE_DOOR_OFFSET_CELLS, y: temple.y + 0.5 };
+  return {
+    x: temple.x + TEMPLE_DOOR_OFFSET_CELLS,
+    y: temple.y + TEMPLE_DOOR_LATERAL_OFFSET_CELLS,
+  };
 }
 
 /**
