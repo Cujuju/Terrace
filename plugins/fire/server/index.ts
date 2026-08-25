@@ -543,6 +543,31 @@ export const plugin: TerracePlugin = {
 
     const { burnedOut, stopped } = blaze.advance(dt);
 
+    // CONSUME THE FUEL BEFORE ANYTHING SPREADS. This order is load-bearing, not
+    // tidiness (found by a headless run, 2026-08-24): `advance` has just taken
+    // the burned-out cells out of the burning set, so until their source is told
+    // to destroy what was there, the registry still answers "there is a tree
+    // here" for a cell that is now neither burning nor standing. Spreading first
+    // let a neighbour RE-LIGHT the cell that had just burned to nothing — 47 of
+    // 256 trees in a test wood burned twice, and every one of those second fires
+    // reported another tree consumed that never existed.
+    //
+    // Each finished fire goes back to the plugin whose stuff it consumed; that
+    // source destroys what was there and broadcasts its own change. This plugin
+    // never touches another plugin's state.
+    if (burnedOut.size > 0) {
+      for (const source of fuelSources()) {
+        const cells = burnedOut.get(source.name);
+        if (cells === undefined || cells.length === 0) continue;
+        source.onBurnedOut(cells);
+        // The episode counts what was actually CONSUMED, not what stopped
+        // burning: a fire the rain saved took nothing, and a chronicle line
+        // claiming otherwise would be a lie about a forest that is still there.
+        episodeConsumed += cells.length;
+        episodeOrigin ??= cells[0]!;
+      }
+    }
+
     // SPREAD, on its own cadence. Accumulated rather than run every tick, and
     // capped at one interval so a stalled or resumed server cannot bank an
     // unbounded debt and then spread the fire across the world in one step —
@@ -559,22 +584,6 @@ export const plugin: TerracePlugin = {
       drenched = suppressWithRain(spreadDebtSeconds);
       ignited = spreadOnce(world, blaze, spreadDebtSeconds);
       spreadDebtSeconds = 0;
-    }
-
-    // Route each finished fire back to the plugin whose stuff it consumed. The
-    // source destroys what was there and broadcasts its own change; this plugin
-    // never touches another plugin's state.
-    if (burnedOut.size > 0) {
-      for (const source of fuelSources()) {
-        const cells = burnedOut.get(source.name);
-        if (cells === undefined || cells.length === 0) continue;
-        source.onBurnedOut(cells);
-        // The episode counts what was actually CONSUMED, not what stopped
-        // burning: a fire the rain saved took nothing, and a chronicle line
-        // claiming otherwise would be a lie about a forest that is still there.
-        episodeConsumed += cells.length;
-        episodeOrigin ??= cells[0]!;
-      }
     }
 
     const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
