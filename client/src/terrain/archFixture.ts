@@ -84,6 +84,47 @@ const CAVE_TUNNEL_OFFSET_CELLS = 14;
  */
 const CAVE_DEPTH_FRACTION = 2 / 3;
 
+/**
+ * Where the fixture's features land, in CELL coordinates, for a world of this
+ * size — what a camera has to aim at to see an underside at all.
+ *
+ * Exported because the preview harness (previewArch.ts) frames the shot from
+ * outside this module, and the alternative is restating the tunnel offsets
+ * there, where they would drift the first time one of them moved.
+ */
+export function archFixtureAim(worldSize: number): {
+  readonly archBore: { x: number; z: number };
+  readonly caveMouth: { x: number; z: number };
+  readonly crest: { x: number; z: number };
+} {
+  const centreX = Math.floor(worldSize / 2);
+  const centreZ = Math.floor(worldSize / 2);
+  return {
+    archBore: { x: centreX + ARCH_TUNNEL_OFFSET_CELLS, z: centreZ },
+    // The cave opens where its bore meets the mound's -Z rim. That is NOT the
+    // mound's own -Z extreme: the rim is an ellipse, so a bore offset along X
+    // reaches the edge short of it, and aiming at the extreme aims at bare
+    // ground outside the mound (measured, 2026-08-24).
+    caveMouth: {
+      x: centreX + CAVE_TUNNEL_OFFSET_CELLS,
+      z: centreZ - moundEdgeZCells(CAVE_TUNNEL_OFFSET_CELLS),
+    },
+    crest: { x: centreX, z: centreZ },
+  };
+}
+
+/**
+ * How far the mound reaches along Z at an X offset, in whole cells — the
+ * ellipse solved for dz, floored so the answer names a cell that is actually
+ * inside the mound rather than the first one outside it.
+ */
+function moundEdgeZCells(dx: number): number {
+  const nx = dx / MOUND_RADIUS_X_CELLS;
+  const remaining = 1 - nx * nx;
+  if (remaining <= 0) return 0;
+  return Math.floor(MOUND_RADIUS_Z_CELLS * Math.sqrt(remaining));
+}
+
 /** Whether the URL asks for the fixture. */
 export function archFixtureRequested(): boolean {
   if (typeof window === 'undefined') return false;
