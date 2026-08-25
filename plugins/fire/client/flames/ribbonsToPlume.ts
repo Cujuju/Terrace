@@ -156,6 +156,16 @@ export const buildRibbonsToPlumeFlames: FlameRendererBuilder = () => {
     name: 'ribbons → plume',
     root,
 
+    /**
+     * ./types.ts's drawn-set contract. A fire can be in one sub-renderer, the
+     * other, or both during the handover, so this is the SUM: it answers "is
+     * anything of mine on screen", which is what the contract is for, and never
+     * claims empty while either look still has instances.
+     */
+    get drawnCount(): number {
+      return plume.drawnCount + ribbons.drawnCount;
+    },
+
     apply(fires: readonly FireInstance[]): void {
       ensurePool(plumePool, fires.length);
       ensurePool(ribbonPool, fires.length);

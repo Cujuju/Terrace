@@ -418,8 +418,22 @@ export const clientPlugin: TerraceClientPlugin = {
 
       // A world that is not on fire costs two comparisons and nothing else — no
       // instance build, no renderer update, no light work.
+      //
+      // EXCEPT ON THE FRAME IT STOPS BURNING, which this early-out used to
+      // swallow (bug, 2026-08-24). `flames.apply` is the only writer of the
+      // drawn set, so returning here with instances still applied left a
+      // full-brightness flame standing over — most visibly — the hole the
+      // player had just dug under the last burning tree, frozen because
+      // `update` was skipped too, until something else caught fire anywhere in
+      // the world. The renderer now reports what it is drawing
+      // (./flames/types.ts's drawnCount), so "nothing is burning" is not
+      // treated as "nothing is drawn" until it actually is.
       if (fires.size === 0 && entityFires.size === 0) {
         lights.darken();
+        if (flames.drawnCount > 0) {
+          instances.length = 0;
+          flames.apply(instances);
+        }
         return;
       }
 
