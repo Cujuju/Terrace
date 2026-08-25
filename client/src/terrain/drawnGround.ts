@@ -75,9 +75,20 @@ function smoothedContourLoops(
 // ---------------------------------------------------------------------------
 
 /**
- * Even-odd point-in-loop test, edges excluded by construction of the query:
- * every probe in this module sits at a CELL CENTRE, which CONTOUR_CELL_CENTRE_GUARD
- * keeps at least an eighth of a cell clear of any contour vertex or edge.
+ * Even-odd point-in-loop test.
+ *
+ * EDGE CASES ARE NOT EXCLUDED BY CONSTRUCTION — this comment used to claim
+ * "every probe in this module sits at a CELL CENTRE, which
+ * CONTOUR_CELL_CENTRE_GUARD keeps at least an eighth of a cell clear of any
+ * contour vertex or edge", and that stopped being true when waterCurtain
+ * became the only caller: its probes are `midpoint + normal × reach` and land
+ * anywhere. A probe exactly on an edge is therefore possible in principle, and
+ * the even-odd rule may call it either way. It is left as is deliberately:
+ * both answers name a band the terrain draws immediately either side of that
+ * edge, the caller (`footBandOf`) is choosing where a sheet of water ends, and
+ * a coin-flip between two adjacent bands at a boundary is not a defect worth
+ * a tolerance parameter. What WOULD have been a defect — the guess that walk
+ * starts from — is fixed in `bandAt` instead.
  *
  * This mirrors triangulation.ts's own pointInLoop; that one stays private to
  * the triangulator, and duplicating twelve lines of standard ray casting beats
@@ -165,21 +176,51 @@ export function createDrawnGround(mirror: TerrainMirror): DrawnGround {
     /**
      * The band whose cap the terrain actually DRAWS over (cellX, cellZ).
      *
-     * Starts from the lattice guess `bandOf(sampleHeight(...))` and walks DOWN
-     * one threshold at a time, returning the first whose smoothed contour
-     * contains the point. Smoothing can only ever SHRINK a region relative to
-     * its lattice (Chaikin cut points are convex combinations, and the
-     * clearance bias pulls a boundary a quarter-cell inside the higher cell),
-     * so the true drawn band is the guess or LOWER — never higher — and within
-     * a couple of levels. It is a correction of one or two bands, not a scan
-     * from the summit.
+     * Starts from a lattice guess and walks DOWN one threshold at a time,
+     * returning the first whose smoothed contour contains the point. The walk
+     * only ever DECREMENTS, so the whole thing is correct if and only if the
+     * guess is an UPPER BOUND on the drawn band at that point — an under-guess
+     * is returned verbatim, because band regions nest ({h ≥ k+1} lies inside
+     * {h ≥ k}) and so the first containment test the walk reaches succeeds.
+     *
+     * THE GUESS IS THE MAX OF THE FOUR ENCLOSING SAMPLES, and it has to be
+     * (fixed 2026-08-24; the review that found it is in the git history of
+     * this line). It used to read ONE sample, `Math.floor(cellX/cellZ)`, which
+     * is only the point's own cell when the coordinate is integral. Contour
+     * coordinates are CELL-CENTRE units — marchLevel's own contract, "sample
+     * (i,j) is the centre of world cell (x0+i, y0+j)" — and waterCurtain's
+     * probes are `midpoint + normal × reach`, fractional by construction. So
+     * for roughly half of all probes floor read a DIFFERENT cell than the one
+     * the probe sits in, and wherever that neighbour was lower the walk began
+     * below the true drawn band and returned it. Downstream that reads as a
+     * fall the terrain never draws: a curtain sheet hung down the inside of a
+     * bank, or a foot sunk a full BAND_WORLD_HEIGHT into rock.
+     *
+     * Math.round would fix the common case and not the general one: the
+     * crossing can sit as close as CONTOUR_CELL_CENTRE_GUARD (⅛ cell) to a
+     * sample, so a point can be inside a region while rounding to the sample
+     * OUTSIDE it. The four-sample max needs no such argument. A point strictly
+     * inside the threshold-T region must have at least one enclosing sample at
+     * or above T — marching squares emits no boundary at all through a square
+     * whose four corners are all below T, and Chaikin only ever pulls the
+     * boundary further in — so the max of those four bands cannot understate
+     * the answer. Four array reads, and the invariant becomes structural
+     * rather than a claim about how far smoothing moves things.
      *
      * Termination: threshold 0's region is the whole domain (every height is
      * ≥ 0), so the walk always finds a container by band 0; MIN_PROBE_BAND is
      * belt-and-braces against a malformed fixture.
      */
     bandAt(cellX: number, cellZ: number): number {
-      const guess = bandOf(sampleHeight(mirror, Math.floor(cellX), Math.floor(cellZ)));
+      const x0 = Math.floor(cellX);
+      const z0 = Math.floor(cellZ);
+      let guess = MIN_PROBE_BAND;
+      for (let dz = 0; dz <= 1; dz++) {
+        for (let dx = 0; dx <= 1; dx++) {
+          const band = bandOf(sampleHeight(mirror, x0 + dx, z0 + dz));
+          if (band > guess) guess = band;
+        }
+      }
       for (let band = guess; band >= MIN_PROBE_BAND; band--) {
         if (insideGrouped(cellX, cellZ, groupedAt(band * BAND_HEIGHT, cellX, cellZ))) {
           return band;
