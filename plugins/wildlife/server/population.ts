@@ -672,6 +672,70 @@ export function applyNaturalTurnover(dt: number): void {
   }
 }
 
+// ── Fire ─────────────────────────────────────────────────────────────────────
+// What `fire` needs to know about this population, and nothing more: which
+// creature is standing on a cell, where a given one is now, and how to kill it.
+// See ./fire-bridge.ts and plugins/fire/server/entityFuel.ts.
+
+/**
+ * How close a creature's own position must be to a cell for that cell's fire to
+ * be ON it, in cells.
+ *
+ * HALF A CELL — the cell it is standing in, and nothing more. A creature is a
+ * point in fractional cell space, so "is it here" is a rounding question, and
+ * rounding to the containing cell is the only answer a player can predict: they
+ * torched the cell the animal is drawn on.
+ */
+const FIRE_CELL_REACH = 0.5;
+
+/**
+ * The land creature standing on this cell, or null. First match wins — which
+ * member of a crowded cell caught is not a question anyone can ask.
+ *
+ * LAND ONLY, and not as a performance filter: a fish is not flammable, and the
+ * owner's rule for this whole mechanic is that what is ON LAND can be burned.
+ */
+export function burnableEntityAt(x: number, y: number): WildlifeEntity | null {
+  for (const entity of entities) {
+    if (profileOf(entity.species).habitat !== 'land') continue;
+    if (Math.abs(entity.x - x) > FIRE_CELL_REACH) continue;
+    if (Math.abs(entity.y - y) > FIRE_CELL_REACH) continue;
+    return entity;
+  }
+  return null;
+}
+
+/** Where this creature is now, in fractional cell space — null once it is gone. */
+export function entityPosition(id: number): { x: number; y: number } | null {
+  const entity = entities.find((candidate) => candidate.id === id);
+  return entity === undefined ? null : { x: entity.x, y: entity.y };
+}
+
+/**
+ * Kills these outright — no respawn credit, deliberately.
+ *
+ * A credit means "this one was displaced and will reappear elsewhere shortly"
+ * (despawnWithCredit, for the drained lake). A creature that burned to death
+ * did not go anywhere. The population recovers through the ordinary census and
+ * spawn machinery, at the ordinary pace, exactly as it does after natural
+ * turnover — which is the same kind of event: one fewer animal in the world.
+ *
+ * Returns how many were actually removed.
+ */
+export function killEntities(ids: readonly number[]): number {
+  if (ids.length === 0) return 0;
+  const doomed = new Set(ids);
+  let killed = 0;
+  // Backwards, so a removal cannot skip the next candidate — applyNaturalTurnover's
+  // idiom, for its reason.
+  for (let i = entities.length - 1; i >= 0; i--) {
+    if (!doomed.has(entities[i].id)) continue;
+    entities.splice(i, 1);
+    killed++;
+  }
+  return killed;
+}
+
 // ── Tick entry point ─────────────────────────────────────────────────────────
 
 /**

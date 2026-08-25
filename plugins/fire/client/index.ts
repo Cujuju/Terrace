@@ -57,15 +57,19 @@ import type {
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   FIRE_CHANGES_MESSAGE,
+  FIRE_ENTITIES_MESSAGE,
   FIRE_FIRES_MESSAGE,
   FIRE_IGNITE_MESSAGE,
   FIRE_PLUGIN_NAME,
   fireIntensity,
   fireKey,
   isBurnedOut,
+  fireEntityKey,
   parseChangesPayload,
+  parseEntitiesPayload,
   parseFiresPayload,
   type FireCellState,
+  type FireEntityState,
 } from '../protocol.ts';
 import { TorchIcon } from './TorchIcon.tsx';
 import { createFireLights, type FireLights } from './fireLights.ts';
@@ -112,6 +116,21 @@ let unsubscribeFrames: (() => void) | null = null;
 
 /** Everything alight, by packed cell key. This client's whole model of fire. */
 const fires = new Map<number, LocalFire>();
+
+/**
+ * A burning thing that MOVES, as this client holds it: the wire state plus the
+ * locally advanced age. There is no position here on purpose — see
+ * ../protocol.ts's "FIRE THAT WALKS": the pose is read from the plugin that
+ * owns the creature, every frame, so the flame is drawn ON the body rather than
+ * near where the body was last said to be.
+ */
+interface LocalEntityFire {
+  readonly entity: FireEntityState;
+  ageSeconds: number;
+}
+
+/** Everything alight that is walking around, by source#id. */
+const entityFires = new Map<string, LocalEntityFire>();
 
 /** Fires whose ground was unknown at the last placement, and the retry clock. */
 let pendingGround = 0;
@@ -197,6 +216,49 @@ function buildInstances(): void {
 }
 
 /**
+ * Appends this frame's WALKING fires to the instance list.
+ *
+ * THE POSE COMES FROM THE OWNER, every frame (ClientPluginCtx.moverPose). That
+ * is the whole design: wildlife is already drawing this animal, interpolated
+ * its own way, and asking it where the animal is means the flame is exactly
+ * where the body is — not a second, independently smoothed guess at it that
+ * slides off whenever the two disagree.
+ *
+ * A fire whose owner cannot place it is OMITTED, not drawn at its last known
+ * position: an animal the client has not been told about yet, or has already
+ * removed, must not leave a flame burning in mid-air. The server drops the same
+ * fire on its own next tick (../server/entityBlaze.ts's VANISHED ending), so
+ * this is a frame or two of silence, not a leak.
+ *
+ * A fire past its own burn time is dropped as it is passed over, exactly as a
+ * cell fire is — the local half of the drift bound in this file's header.
+ */
+function buildEntityInstances(ctx: ClientPluginCtx): void {
+  for (const [key, fire] of entityFires) {
+    if (isBurnedOut(fire.ageSeconds, fire.entity.burnSeconds)) {
+      entityFires.delete(key);
+      continue;
+    }
+
+    const pose = ctx.moverPose(fire.entity.sourceName, fire.entity.id);
+    if (pose === null) continue;
+
+    instances.push({
+      x: pose.x,
+      z: pose.z,
+      groundY: pose.y,
+      fuelHeight: fire.entity.fuelHeight,
+      intensity: fireIntensity(fire.ageSeconds, fire.entity.burnSeconds),
+      ageSeconds: fire.ageSeconds,
+      // The id, not a cell key: two animals alight on the same cell are two
+      // fires and must not share a phase, and one animal's flame must not
+      // change character because it walked across a cell boundary.
+      seed: fire.entity.id,
+    });
+  }
+}
+
+/**
  * The tool's id, label and the sentence the toolbar shows on hover.
  *
  * The title says what it COSTS and what it does not promise, because neither is
@@ -248,6 +310,7 @@ export const clientPlugin: TerraceClientPlugin = {
     // Module scope outlives an attach, so a re-attach after a rejoin would
     // otherwise open on the previous world's fires.
     fires.clear();
+    entityFires.clear();
     pendingGround = 0;
     sinceRetrySeconds = 0;
     elapsedSeconds = 0;
@@ -302,6 +365,28 @@ export const clientPlugin: TerraceClientPlugin = {
         replaceAll(ctx, cells);
       }),
 
+      ctx.onMessage(FIRE_ENTITIES_MESSAGE, (payload) => {
+        const entities = parseEntitiesPayload(payload);
+        // Same rule as the fire snapshot: a malformed payload changes nothing,
+        // and what is already drawn keeps burning until the next good message.
+        if (entities === null) return;
+        // THE WHOLE SET REPLACES THE WHOLE SET (../protocol.ts). Anything the
+        // server no longer lists has stopped burning — which is what makes it
+        // impossible for this client to hold a flame the server has forgotten,
+        // the one failure mode a delta stream cannot rule out.
+        //
+        // The server's age wins outright, for every fire, every time: this
+        // message IS the re-anchor, and a local clock that has drifted is
+        // exactly what it exists to correct.
+        entityFires.clear();
+        for (const entity of entities) {
+          entityFires.set(fireEntityKey(entity.sourceName, entity.id), {
+            entity,
+            ageSeconds: entity.ageSeconds,
+          });
+        }
+      }),
+
       ctx.onMessage(FIRE_CHANGES_MESSAGE, (payload) => {
         const changes = parseChangesPayload(payload);
         if (changes === null) return;
@@ -331,14 +416,15 @@ export const clientPlugin: TerraceClientPlugin = {
         marker?.hide();
       }
 
-      // A world that is not on fire costs one comparison and nothing else — no
+      // A world that is not on fire costs two comparisons and nothing else — no
       // instance build, no renderer update, no light work.
-      if (fires.size === 0) {
+      if (fires.size === 0 && entityFires.size === 0) {
         lights.darken();
         return;
       }
 
       for (const fire of fires.values()) fire.ageSeconds += dt;
+      for (const fire of entityFires.values()) fire.ageSeconds += dt;
 
       if (pendingGround > 0) {
         sinceRetrySeconds += dt;
@@ -346,6 +432,10 @@ export const clientPlugin: TerraceClientPlugin = {
       }
 
       buildInstances();
+      // ONE renderer, one light pool, both kinds of fire: a flame on an animal
+      // must look like a flame on a tree, because it is the same fire. The only
+      // difference between the two lists is where the position came from.
+      buildEntityInstances(ctx);
       // apply() every frame, unlike flora's on-change rebuild: a fire's
       // intensity moves continuously, so "what changed" is "all of it".
       flames.apply(instances);
@@ -367,6 +457,7 @@ export const clientPlugin: TerraceClientPlugin = {
     torchCell = null;
 
     fires.clear();
+    entityFires.clear();
     instances.length = 0;
     pendingGround = 0;
     sinceRetrySeconds = 0;

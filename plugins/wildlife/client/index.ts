@@ -23,6 +23,7 @@ import {
   sizeClassAt,
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
+import type { MoverPose } from '../../../client/src/plugins/types.ts';
 import { createWildlifeModels, type CreatureModel, type WildlifeModels } from './models.ts';
 import {
   SWIM_PROFILES,
@@ -75,6 +76,10 @@ let models: WildlifeModels | null = null;
 let container: Group | null = null;
 const views = new Map<number, CreatureView>();
 const interpolator = new WildlifeInterpolator();
+
+/** Withdraws this plugin's aimable creatures / pose lookup from the host. */
+let unmarkPickable: (() => void) | null = null;
+let unpublishMovers: (() => void) | null = null;
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
@@ -168,6 +173,27 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   }
 }
 
+/**
+ * Where a creature is DRAWN, for anything that has to be drawn on it — a flame,
+ * today (ClientPluginCtx.publishMovers).
+ *
+ * Read straight off the model's own root, so it is the pose this frame actually
+ * put on screen: interpolated, ground-sampled, eased. That is the entire point
+ * of answering per id per frame instead of publishing positions — a second
+ * consumer re-deriving this from the same wire messages would get a slightly
+ * different answer every frame, and whatever it drew would crawl around the
+ * animal instead of sitting on it.
+ *
+ * Null for a creature this client is not drawing: one it has never heard of,
+ * one already removed, or one whose view has not been built yet.
+ */
+function drawnPoseOf(id: number): MoverPose | null {
+  const view = views.get(id);
+  if (view === undefined) return null;
+  const at = view.model.root.position;
+  return { x: at.x, y: at.y, z: at.z };
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,
 
@@ -180,6 +206,12 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'wildlife:creatures';
     ctx.layer.add(container);
+    // AN ANIMAL IS SOMETHING YOU CAN POINT AT — without this the torch aims
+    // through a grazer at the ground behind it (ClientPluginCtx.pickWorldCell).
+    unmarkPickable = ctx.markPickable(container);
+    // And something a flame can be drawn ON: fire asks this plugin, every
+    // frame, where the creature it set alight has got to.
+    unpublishMovers = ctx.publishMovers(drawnPoseOf);
 
     unsubscribeMessages = ctx.onMessage(WILDLIFE_ENTITIES_MESSAGE, (payload) => {
       const entities = parseEntitiesPayload(payload);
@@ -197,6 +229,10 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unmarkPickable?.();
+    unmarkPickable = null;
+    unpublishMovers?.();
+    unpublishMovers = null;
 
     for (const view of views.values()) view.model.root.clear();
     views.clear();
