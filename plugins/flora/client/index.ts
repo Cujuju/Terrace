@@ -116,8 +116,8 @@ function rebuild(ctx: ClientPluginCtx): void {
  * REBUILDS ARE WHOLESALE HERE TOO, and this is the population where that
  * deserves a number rather than a shrug. The header's argument is
  * "3000 trees × one compose is tens of microseconds"; the meadow is up to
- * FLORA_GRASS_CAP × GRASS_BLADES_PER_TUFT ≈ 74k matrices, i.e. roughly
- * twenty times that — low single-digit milliseconds on a fully unlocked 512²
+ * FLORA_GRASS_CAP × GRASS_BLADES_PER_TUFT ≈ 205k matrices, i.e. roughly
+ * seventy times that — low single-digit milliseconds on a fully unlocked 512²
  * world, and only on a message that actually changed something.
  *
  * The frequency is what keeps it affordable: a survey delta at most every 5 s,

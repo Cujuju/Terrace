@@ -776,18 +776,20 @@ if (
 // worst case this population has, and materially bigger than the other two, so
 // it is stated rather than assumed:
 //
-//   wire      24 576 × 6 B ≈ 147 KB for a full snapshot, sent on join and on
-//             the FLORA_KEEPALIVE_SECONDS repair cadence — ≈ 2.5 KB/s ≈ 20
-//             kbit/s per client at 60 s. Six times the forest's own keepalive
-//             for six times the objects; still ~5% of wildlife's budget.
-//             Fog of war caps what a real client pays at the ground it has
-//             actually unlocked, which early on is almost none of this.
+//   wire      40 960 × 6 B ≈ 246 KB for a full snapshot, sent on join and on
+//             the FLORA_KEEPALIVE_SECONDS repair cadence — ≈ 4 KB/s ≈ 33
+//             kbit/s per client at 60 s. Ten times the forest's own keepalive
+//             for ten times the objects; still under a tenth of wildlife's
+//             budget. Fog of war caps what a real client pays at the ground it
+//             has actually unlocked, which early on is almost none of this.
 //   geometry  two InstancedMeshes (client/grassModels.ts), so TWO draw calls
-//             whatever the count, and 24 576 × GRASS_BLADES_PER_TUFT ≈ 74k
-//             blade instances at FIVE triangles each ≈ 370k triangles at the
-//             absolute cap — under a tenth of the forest's own budget for six
-//             times the objects, which is what the flat-ribbon blade buys
-//             (see grassModels.ts's "why a ribbon and not a box").
+//             whatever the count, and 40 960 × GRASS_BLADES_PER_TUFT ≈ 205k
+//             blade instances at FIVE triangles each ≈ 1.0M triangles at the
+//             absolute cap — which the terrain's own 1024 chunk meshes dwarf,
+//             and which is what the flat-ribbon blade buys (see
+//             grassModels.ts's "why a ribbon and not a box"). The instance
+//             matrices are the other half of that bill: 205k × 64 B × 2 meshes
+//             ≈ 26 MB of GPU buffer, allocated up front at the cap.
 //
 // RESIDUAL, stated the way FLORA_CROP_CAP states its own: past the cap grass
 // simply stops appearing on the newest ground swept, rather than thinning out
@@ -814,8 +816,14 @@ export const FLORA_GRASS_CHANGES_MESSAGE = 'grassChanges';
  *
  * Expressed as cells-per-tuft rather than as a probability so it reads as the
  * spacing it produces, matching FLORA_CELLS_PER_TREE's own framing.
+ *
+ * TIGHTENED 3.5 → 2.5 (2026-08-24) after the first screenshots: at 3.5, tufts
+ * a little over half a cell wide left more bare ground than meadow between
+ * them, which reads as scattered clumps rather than as the cover the owner
+ * asked for. Every step down here is paid for in the cap below and in the
+ * wire, so it is a dial with a real price rather than a free one.
  */
-export const GRASS_CELLS_PER_TUFT = 3.5;
+export const GRASS_CELLS_PER_TUFT = 2.5;
 
 /**
  * The thinning roll's threshold, out of 256 — GRASS_CELLS_PER_TUFT expressed
@@ -828,17 +836,17 @@ export const FLORA_GRASS_SHARE_OF_256 = Math.round(256 / GRASS_CELLS_PER_TUFT);
  * Hard ceiling on standing grass tufts, whatever the terrain asks for.
  *
  * A GEOMETRY number first and a wire number second — see the section header
- * for both figures. 24 576 is three times FLORA_CROP_CAP's own headroom
- * argument applied to a population that covers the whole green ramp rather
- * than a shoreline: it is what a fully revealed 512² world of which ~35% is
- * green asks for at GRASS_CELLS_PER_TUFT, and it keeps the worst-case blade
- * count inside a triangle budget the terrain itself already dwarfs.
+ * for both figures. DERIVED, not picked: a fully revealed 512² world is
+ * 262 144 cells, of which roughly 35% is green ramp, and
+ * FLORA_GRASS_SHARE_OF_256 takes ~40% of those — about 36 500 tufts. 40 960
+ * is the next power-of-two step above that, so the cap has headroom on a
+ * greener-than-typical world instead of binding on an ordinary one.
  *
  * Here rather than in the server half because both halves need it: the server
  * enforces it, the client sizes its instance buffers from it, and
  * parseGrassCells caps a hostile payload against it.
  */
-export const FLORA_GRASS_CAP = 24576;
+export const FLORA_GRASS_CAP = 40960;
 
 /**
  * A cell showing one tuft of grass. At most one per cell by construction — the
@@ -978,35 +986,46 @@ export function grassVariation(x: number, y: number): GrassVariation {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE TUFT FOOTPRINT — the same lattice argument CROP_PLOT_MAX_REACH_CELLS
-// makes, resolved to a different number for a reason worth stating.
+// THE TUFT FOOTPRINT — CROP_PLOT_MAX_REACH_CELLS' lattice argument, and it
+// lands on the same number for the same reason.
 //
-// A crop plot claims half a cell, so plots touch and never overlap, and it
-// pays for that reach with CROP_PLOT_TREAD_RING_CELLS — a whole cell of
-// same-band tread the survey has to verify around every plot, because a plot
-// reaching half a cell can hang over a terrace lip (a drawn contour comes as
-// close as CONTOUR_CELL_CENTRE_GUARD to a cell centre).
+// IT DID NOT, FOR ONE AFTERNOON, AND THAT WAS THE BUG (owner, 2026-08-24: "I
+// don't see the grass spawning"). This first shipped bound to
+// CONTOUR_CELL_CENTRE_GUARD — an eighth of a cell — on the argument that a
+// tuft which cannot reach past the closest a contour can come to a cell centre
+// can never overhang a terrace lip, and so needs no tread-ring test of the
+// kind crops pay for. That reasoning is sound and the result was useless: an
+// eighth-cell clump is 0.03 world units across, about ONE PIXEL at the game's
+// CLOSEST zoom (config.ts's CAMERA_CLOSEST_VIEW_WORLD_UNITS frames 10 world
+// units). Verified by screenshot, not by argument — the tufts were being
+// drawn the whole time and could not be seen.
 //
-// GRASS PAYS THE OTHER WAY. There are an order of magnitude more tufts than
-// plots and they must grow on the frontier cells a tread ring would strip —
-// the band edge is exactly where a meadow should still be green. So a tuft is
-// sized to fit inside the guarantee EVERY green cell already carries: it
-// reaches no further from its centre than CONTOUR_CELL_CENTRE_GUARD, which is
-// the closest a contour can come. A tuft therefore cannot overhang a lip by
-// construction, the survey needs no ring test at all, and the per-cell cost of
-// the grass sweep stays a band lookup.
+// So the guarantee is traded away deliberately: a tuft claims HALF A CELL,
+// exactly as a crop plot does, and tufts on adjacent cells meet corner to
+// corner without ever crossing. That is what makes a meadow read as ground
+// cover rather than as scattered dots.
 //
-// The clump is consequently TIGHT — an eighth of a cell of spread, 0.03 world
-// units — which is what a tuft of grass is: a few blades out of one crown,
-// tall relative to their base, not a bush.
+// THE RESIDUAL THAT BUYS, NAMED. A tuft on a cell whose contour runs close to
+// its centre can lean up to (reach − CONTOUR_CELL_CENTRE_GUARD) = 0.375 cells
+// past the lip — under a tenth of a world unit of blade tip hanging over an
+// edge. Crops answer the same exposure with CROP_PLOT_TREAD_RING_CELLS, and
+// that answer is NOT available here: a tread ring would strip every frontier
+// cell of grass, and the band edge is precisely where a meadow must still be
+// green. The exposure is also an order of magnitude less severe than the one
+// the owner photographed on crops, because what overhangs is a blade tip
+// rather than a whole plot on a bed. If it ever reads badly, the fix is to
+// shorten the blade's arch (grassModels.ts's BLADE_ARCH_RADIANS, which is what
+// actually converts height into horizontal reach), not to re-introduce a ring
+// test this population cannot afford.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * The furthest any part of a tuft may reach from the cell it stands on, in
- * CELLS. Not chosen — it IS the terrain's own contour guard, for the reason
- * the block above gives.
+ * CELLS — and therefore "tufts touch, never overlap" in one number, exactly as
+ * CROP_PLOT_MAX_REACH_CELLS states it for plots. Tufts sit one per cell on the
+ * cell lattice, so each may claim half the distance to its neighbour.
  */
-export const GRASS_TUFT_MAX_REACH_CELLS = CONTOUR_CELL_CENTRE_GUARD;
+export const GRASS_TUFT_MAX_REACH_CELLS = 0.5;
 
 /**
  * The square one tuft's blades are planted in, as a fraction of a CELL edge —
@@ -1018,28 +1037,32 @@ export const GRASS_TUFT_CLUSTER_CELL_SPAN =
   GRASS_TUFT_MAX_REACH_CELLS / (SQUARE_CIRCUMRADIUS_PER_EDGE * GRASS_SCALE_MAX);
 
 /**
- * Where a tuft's blades are planted, as fractions of the cluster span.
+ * How far a tuft's blades are planted from its crown, as a fraction of the
+ * cluster span, and how many there are.
  *
- * THREE, IN A TRIANGLE, not four in a square: a square of blades reads as the
- * lattice it is from directly above, which is the angle this game's camera
- * spends most of its time near, and three is the fewest that still shows a
- * crown from every side. The blades fan OUTWARD from the crown (see
- * grassModels.ts's tilt), so these are where they meet the ground, not where
- * they end up.
+ * FIVE, IN A RING, not the crop plot's four in a square: a square reads as the
+ * lattice it came from when seen from above, which is near where this game's
+ * camera spends its time, and an odd count in a ring has no such alignment at
+ * any angle. Five is also mass — three was what the first, invisible version
+ * shipped with, and a tuft that has to read as ground cover from ten world
+ * units away needs more silhouette than three hairlines.
+ *
+ * The blades fan OUTWARD as they arc (grassModels.ts authors the arch in the
+ * blade's local +X, and each blade's own yaw is which way that points), so
+ * these are where a blade meets the ground, not where its tip ends up.
  */
-const GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS = 0.16;
+const GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS = 0.25;
 
-export const GRASS_BLADE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
-  [0, GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS],
-  [
-    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.sin((Math.PI * 2) / 3),
-    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.cos((Math.PI * 2) / 3),
-  ],
-  [
-    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.sin((Math.PI * 4) / 3),
-    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.cos((Math.PI * 4) / 3),
-  ],
-];
+const GRASS_BLADE_COUNT = 5;
+
+export const GRASS_BLADE_OFFSETS: ReadonlyArray<readonly [number, number]> =
+  Array.from({ length: GRASS_BLADE_COUNT }, (_unused, index): readonly [number, number] => {
+    const angle = (Math.PI * 2 * index) / GRASS_BLADE_COUNT;
+    return [
+      GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.sin(angle),
+      GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.cos(angle),
+    ];
+  });
 
 export const GRASS_BLADES_PER_TUFT = GRASS_BLADE_OFFSETS.length;
 
@@ -1052,7 +1075,7 @@ export const GRASS_BLADE_HEIGHT_SPREAD = 0.35;
  * does: jitter plus the planting radius plus the blade's own outward lean has
  * to stay inside half a cluster span, which grassModels.ts asserts at load.
  */
-export const GRASS_BLADE_JITTER_IN_CLUSTER_SPANS = 0.05;
+export const GRASS_BLADE_JITTER_IN_CLUSTER_SPANS = 0.06;
 
 /** Everything that makes one blade of a tuft its own blade. */
 export interface GrassBladeVariation {
