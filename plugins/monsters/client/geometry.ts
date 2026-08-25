@@ -633,15 +633,36 @@ export function taperedTube(
     }
   }
 
-  // The cap: one vertex on the curve's end and a fan of triangles back to the
-  // last ring. Not a ring of radius zero — that collapses a whole row of
-  // triangles to nothing and pinches the shading at the tip.
+  // THE CAPS: one vertex on each end of the curve and a fan of triangles back to
+  // the ring there. Not a ring of radius zero — that collapses a whole row of
+  // triangles to nothing and pinches the shading at the end.
+  //
+  // BOTH ENDS, since 2026-08-24. This used to cap the tip only, on the reasoning
+  // that every root is buried in the mass the limb grows out of — and the owner
+  // found the case where it was not: "the legs do not bind correctly to the
+  // body, the geometry is still open." A leg is thicker than the hips are wide
+  // at the stance, so the outer half of its root ring stood clear of them and
+  // you could see up inside the tube. The burial is fixed where it belongs (the
+  // haunch, in yeti.ts), and this is the other half of the belt: a tube that
+  // cannot show its inside CANNOT produce that defect again, in this plugin or
+  // the next one, however a caller places it. Two triangle fans is a rounding
+  // error against the tube itself.
   const tipIndex = positions.length / 3;
   curve.getPointAt(1, point);
   positions.push(point.x, point.y, point.z);
   const lastRing = pathSegments * radialSegments;
   for (let side = 0; side < radialSegments; side++) {
     indices.push(lastRing + side, lastRing + ((side + 1) % radialSegments), tipIndex);
+  }
+
+  // The root fan winds the other way round: the ring is seen from OUTSIDE the
+  // tube here, where the tip's was seen from behind, and a fan wound the same
+  // way at both ends leaves one of them facing inward and invisible.
+  const rootIndex = positions.length / 3;
+  curve.getPointAt(0, point);
+  positions.push(point.x, point.y, point.z);
+  for (let side = 0; side < radialSegments; side++) {
+    indices.push(((side + 1) % radialSegments), side, rootIndex);
   }
 
   const tube = new BufferGeometry();
