@@ -27,6 +27,18 @@
 // plugin spends.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// THE TORCH. This half also owns the player's own way of starting a fire: a
+// toolbar tool that sends `fire:ignite` for the cell under the click
+// (../protocol.ts). It predicts NOTHING — no local flame, no optimistic
+// anything. The server answers by broadcasting a fire or by staying silent, and
+// the flame appearing is the whole feedback.
+//
+// That is why the only local affordance is a ring under the cursor
+// (./torchMarker.ts): the client can honestly say WHICH CELL it will light, and
+// cannot honestly say whether anything there will catch — that is the fuel
+// registry's business, on the server, in a plugin this one must not import.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // WHY THE LOOK IS BEHIND AN INTERFACE.
 //
 // `./flames/types.ts` defines FlameRenderer, and this file draws through it
@@ -46,6 +58,7 @@ import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   FIRE_CHANGES_MESSAGE,
   FIRE_FIRES_MESSAGE,
+  FIRE_IGNITE_MESSAGE,
   FIRE_PLUGIN_NAME,
   fireIntensity,
   fireKey,
@@ -54,7 +67,9 @@ import {
   parseFiresPayload,
   type FireCellState,
 } from '../protocol.ts';
+import { TorchIcon } from './TorchIcon.tsx';
 import { createFireLights, type FireLights } from './fireLights.ts';
+import { createTorchMarker, type TorchMarker } from './torchMarker.ts';
 import { SHIPPED_FLAMES } from './flames/index.ts';
 import type { FireInstance, FlameRenderer } from './flames/types.ts';
 
@@ -81,6 +96,17 @@ interface LocalFire {
 
 let flames: FlameRenderer | null = null;
 let lights: FireLights | null = null;
+let marker: TorchMarker | null = null;
+
+/** True while the player is holding the Torch rather than the sculpt brush. */
+let torchHeld = false;
+
+/** The cell under the cursor while the torch is held, or null. */
+let torchCell: { x: number; y: number } | null = null;
+
+/** Window pointer listener, live only for the plugin's lifetime. */
+let onPointerMove: ((event: PointerEvent) => void) | null = null;
+let unsubscribePress: (() => void) | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 
@@ -170,6 +196,45 @@ function buildInstances(): void {
   }
 }
 
+/**
+ * The tool's id, label and the sentence the toolbar shows on hover.
+ *
+ * The title says what it COSTS and what it does not promise, because neither is
+ * discoverable by trying: the mana is debited server-side with no local gate,
+ * and a torch on bare ground looks identical to a torch on a tree that refused
+ * to catch.
+ */
+const TORCH_TOOL_ID = 'ignite';
+const TORCH_TOOL_LABEL = 'Torch';
+const TORCH_TOOL_TITLE =
+  'Set light to what grows on a cell you have unlocked. Costs mana; only living things catch, and rain will put it out.';
+
+/**
+ * The mouse button an ignite press is made with. 0 — the primary only, so a
+ * middle- or right-drag still reaches the camera: holding a tool must never
+ * cost the player the ability to look around. (temples/client/index.ts's rule,
+ * and the same number for the same reason.)
+ */
+const TORCH_BUTTON = 0;
+
+/**
+ * Takes the click. Returns true whenever the torch is held so the press never
+ * falls through to the sculpt brush — a player holding the torch must not dig a
+ * hole by missing a tree.
+ */
+function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
+  if (!torchHeld) return false;
+  if (event.button !== TORCH_BUTTON) return false;
+
+  const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
+  // A press that missed the terrain entirely (sky, sea, locked territory) is
+  // still CLAIMED: the tool is held, so the click was meant for it.
+  if (cell === null) return true;
+
+  ctx.send(FIRE_IGNITE_MESSAGE, { x: cell.x, y: cell.y });
+  return true;
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: FIRE_PLUGIN_NAME,
 
@@ -186,6 +251,39 @@ export const clientPlugin: TerraceClientPlugin = {
 
     lights = createFireLights();
     ctx.layer.add(lights.root);
+
+    marker = createTorchMarker();
+    ctx.layer.add(marker.mesh);
+
+    ctx.registerTool({
+      id: TORCH_TOOL_ID,
+      label: TORCH_TOOL_LABEL,
+      title: TORCH_TOOL_TITLE,
+      icon: TorchIcon,
+      onSelected: (selected) => {
+        torchHeld = selected;
+        if (!selected) {
+          // Dropped the tool: the ring goes with it THIS INSTANT rather than on
+          // the next frame, so putting the brush back never leaves an ember ring
+          // sitting under the cursor.
+          torchCell = null;
+          marker?.hide();
+        }
+      },
+    });
+
+    // HOVER on the window, not the canvas: a plugin is handed no canvas
+    // (ClientPluginCtx has none by design) and pickTerrainCell takes CLIENT
+    // coordinates, so a window listener answers the same question. The pick only
+    // runs while the torch is actually held — temples/client/index.ts's
+    // arrangement, for its reasons.
+    onPointerMove = (event: PointerEvent): void => {
+      if (!torchHeld) return;
+      torchCell = ctx.pickTerrainCell(event.clientX, event.clientY);
+    };
+    window.addEventListener('pointermove', onPointerMove);
+
+    unsubscribePress = ctx.onCanvasPress((event) => handlePress(ctx, event));
 
     unsubscribeMessages = [
       ctx.onMessage(FIRE_FIRES_MESSAGE, (payload) => {
@@ -212,6 +310,21 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = ctx.onFrame((dt) => {
       if (flames === null || lights === null) return;
 
+      elapsedSeconds += dt;
+
+      // THE TORCH RING, before the early-out below: it is drawn while the player
+      // is aiming, which is precisely when nothing is burning yet.
+      if (torchHeld && torchCell !== null && marker !== null) {
+        const groundY = ctx.terrainHeightAt(torchCell.x, torchCell.y);
+        if (groundY === null) marker.hide();
+        else {
+          marker.showAt(torchCell.x * CELL_WORLD_SIZE, groundY, torchCell.y * CELL_WORLD_SIZE);
+          marker.update(elapsedSeconds);
+        }
+      } else {
+        marker?.hide();
+      }
+
       // A world that is not on fire costs one comparison and nothing else — no
       // instance build, no renderer update, no light work.
       if (fires.size === 0) {
@@ -219,7 +332,6 @@ export const clientPlugin: TerraceClientPlugin = {
         return;
       }
 
-      elapsedSeconds += dt;
       for (const fire of fires.values()) fire.ageSeconds += dt;
 
       if (pendingGround > 0) {
@@ -241,6 +353,12 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeMessages = [];
     unsubscribeFrames?.();
     unsubscribeFrames = null;
+    unsubscribePress?.();
+    unsubscribePress = null;
+    if (onPointerMove !== null) window.removeEventListener('pointermove', onPointerMove);
+    onPointerMove = null;
+    torchHeld = false;
+    torchCell = null;
 
     fires.clear();
     instances.length = 0;
@@ -252,5 +370,7 @@ export const clientPlugin: TerraceClientPlugin = {
     flames?.dispose();
     flames = null;
     lights = null;
+    marker?.dispose();
+    marker = null;
   },
 };

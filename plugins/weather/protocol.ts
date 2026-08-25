@@ -210,7 +210,18 @@ export const WEATHER_STRIKES_MESSAGE = 'strikes';
  */
 export const MAX_STRIKES_PER_MESSAGE = 8;
 
-/** One bolt: which system threw it, and the cell it hit. */
+/**
+ * Sentinel `systemId` for a bolt no weather system threw — a DRY strike out of
+ * a clear sky (server/lightning.ts). System ids start at 1, so 0 can never
+ * collide with a real one.
+ *
+ * On the client it is the difference between a bolt drawn as an offset from a
+ * storm's rig and one drawn at a world position of its own: a dry strike has no
+ * rig to belong to.
+ */
+export const STRIKE_NO_SYSTEM = 0;
+
+/** One bolt: which system threw it (or STRIKE_NO_SYSTEM), and the cell it hit. */
 export interface WeatherStrike {
   readonly systemId: number;
   readonly x: number;
