@@ -1656,18 +1656,29 @@ describe('habitat beats cohesion', () => {
  * off the species table rather than typed in:
  *
  *   step      = cruise x TICK_DT              = 1.2 cells — where the creature
- *                                                would actually land;
- *   lookahead = cruise x LOOKAHEAD_SECONDS    = 7.2 cells — the only point the
- *                                                compass sweep validates;
- *   contour   = lookahead / the fallback divisor = 3.6 cells — the short probe.
+ *                                                would actually land, and the
+ *                                                ladder's shortest probe;
+ *   lookahead = cruise x LOOKAHEAD_SECONDS    = 7.2 cells — the full probe;
+ *   contour   = lookahead / the fallback divisor = 3.6 cells — the middle one.
  *
- * So the fixture is ONE RING OF LAND on the eight cells touching the creature's
- * own: at 1.2 cells every candidate heading lands inside that ring (a 1.2-cell
- * step from a cell centre always crosses into a neighbouring cell, diagonals
- * included), while at 3.6 and 7.2 cells every endpoint is open water beyond it.
- * The sweep therefore SUCCEEDS and the destination re-check VETOES — which is
- * the only path that reaches the two late "hold position" returns, and exactly
- * the blind spot the belt-and-suspenders re-check exists for.
+ * So the fixture is ONE RING OF LOCKED CELLS on the eight touching the
+ * creature's own: at 1.2 cells every candidate heading lands inside that ring
+ * (a 1.2-cell step from a cell centre always crosses into a neighbouring cell,
+ * diagonals included), while at 3.6 and 7.2 cells every endpoint is open,
+ * unlocked water beyond it. The sweep therefore SUCCEEDS and the destination
+ * re-check VETOES — which is the only path that reaches the late "hold
+ * position" returns, and exactly the blind spot the belt-and-suspenders
+ * re-check exists for.
+ *
+ * LOCKED CELLS, NOT LAND, SINCE 2026-08-24, and the swap is the point. The
+ * ring used to be land, and land no longer produces this branch: the sweep
+ * samples GROUND legality along the whole probe segment now (shared's
+ * `canProceedAlong`), so a land ring is seen at 7.2 cells and the creature
+ * exits at the early boxed-in return instead. The unlock mask is the veto that
+ * is still endpoint-only — `permits` is a caller's own rule and shared samples
+ * it where the probe ends, not along it (SteerOptions.permits names this
+ * residual) — so a locked ring is what a can-see-past-it obstacle looks like
+ * today, and this fixture is the thing that will fail if that ever changes.
  *
  * A ring even one cell thicker would fail the sweep instead and exit at the
  * early boxed-in return, which never had this bug and would make the test pass
@@ -1678,7 +1689,6 @@ describe('a vetoed step leaves both position and heading alone', () => {
   const RING_CHEBYSHEV_CELLS = 1;
   /** Mid-cell placement: a creature's position is the centre of its cell. */
   const CELL_CENTRE_OFFSET = 0.5;
-  const RING_LAND_HEIGHT = SEA_LEVEL + BAND_HEIGHT;
   /** Due +X. Any fixed value works — the point is that it is unchanged. */
   const WEDGED_HEADING = 0;
   /**
@@ -1688,14 +1698,23 @@ describe('a vetoed step leaves both position and heading alone', () => {
    */
   const FULL_TURN_SAMPLES = 64;
 
-  /** Water everywhere except the eight cells ringing SCHOOL_ORIGIN_CELL. */
+  /** Open shallow water everywhere; the ring is a MASK, not terrain. */
   function wedgedWorld(): World {
-    return worldWithTerrain(WORLD_SIZE, (x, y) =>
+    return worldWithTerrain(WORLD_SIZE, () => OPEN_SHALLOW_HEIGHT);
+  }
+
+  /** Is this cell one of the eight ringing SCHOOL_ORIGIN_CELL? */
+  function isRingCell(x: number, y: number): boolean {
+    return (
       Math.max(Math.abs(x - SCHOOL_ORIGIN_CELL), Math.abs(y - SCHOOL_ORIGIN_CELL)) ===
       RING_CHEBYSHEV_CELLS
-        ? RING_LAND_HEIGHT
-        : OPEN_SHALLOW_HEIGHT,
     );
+  }
+
+  /** The plugin's world view with the ring locked out from under the creature. */
+  function wedgedView(): HabitatWorld {
+    const view = habitatView(wedgedWorld());
+    return { ...view, isCellUnlocked: (x, y) => !isRingCell(x, y) && view.isCellUnlocked(x, y) };
   }
 
   function wedgedFish(): WildlifeEntity {
@@ -1714,7 +1733,7 @@ describe('a vetoed step leaves both position and heading alone', () => {
   it('holds the fixture premise: the sweep succeeds where the step is refused', () => {
     // Asserted rather than assumed, because if this stops being true the test
     // below still passes while measuring the wrong branch entirely.
-    const view = habitatView(wedgedWorld());
+    const view = wedgedView();
     const subject = wedgedFish();
     const step = speedOf(subject) * TICK_DT;
     const lookahead = lookaheadCellsFor(subject);
@@ -1736,7 +1755,7 @@ describe('a vetoed step leaves both position and heading alone', () => {
 
   it('ends the tick with its original position AND heading', () => {
     // No school argument: the habitat veto is the only thing acting this tick.
-    const view = habitatView(wedgedWorld());
+    const view = wedgedView();
     const subject = wedgedFish();
 
     advanceEntity(view, subject, TICK_DT);

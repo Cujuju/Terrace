@@ -18,12 +18,19 @@ import type {
 import {
   WILDLIFE_ENTITIES_MESSAGE,
   WILDLIFE_PLUGIN_NAME,
+  WILDLIFE_SIZE_MODEL_SCALE,
   parseEntitiesPayload,
   sizeClassAt,
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import { createWildlifeModels, type CreatureModel, type WildlifeModels } from './models.ts';
-import { creatureWorldY, placementKindOf, walkerGroundY } from './placement.ts';
+import {
+  SWIM_PROFILES,
+  creatureWorldY,
+  placementKindOf,
+  swimmerSeabedY,
+  walkerGroundY,
+} from './placement.ts';
 
 /**
  * Per-creature animation phase offset, in radians per unit of entity id. The
@@ -44,6 +51,19 @@ interface CreatureView {
   readonly model: CreatureModel;
   /** Fixed at creation from the entity id — never recomputed per frame. */
   readonly phase: number;
+  /**
+   * World Y this creature was drawn at last frame, or null until it has been
+   * drawn once. A SWIMMER's depth is eased frame to frame rather than
+   * recomputed from scratch (placement.ts's SWIM_VERTICAL_WORLD_UNITS_PER_
+   * SECOND), so it is the one part of a pose that has history; walkers and
+   * flyers never read it.
+   *
+   * Held HERE rather than read back off `model.root.position.y`, which would
+   * work today and would silently become wrong the moment anything else — an
+   * idle animation, a hit reaction — moved the root: the eased value has to be
+   * the one this loop last COMMITTED, not wherever the node ended up.
+   */
+  drawnY: number | null;
 }
 
 /**
@@ -72,7 +92,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
     // species between frames.
     const model = models.create(entity.species, sizeClassAt(entity.size), id);
     container.add(model.root);
-    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID });
+    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID, drawnY: null });
   }
 
   for (const [id, view] of views) {
@@ -113,23 +133,33 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     //   * walkers stand on the highest band their FOOTPRINT overlaps (see
     //     walkerGroundY — the single-cell sample is the body-through-the-riser
     //     clipping bug);
-    //   * swimmers float in the column over their centre cell, so the single
-    //     sample is right for them.
+    //   * swimmers float over the highest band their own HULL overlaps, nose to
+    //     tail along their heading (swimmerSeabedY — the same bug, and a whale
+    //     is five world units of it), and ease toward their preferred depth
+    //     instead of recomputing it from a band-quantised seabed each frame.
+    const sizeClass = sizeClassAt(entity.size);
     const kind = placementKindOf(entity.species);
+    const sample = (cx: number, cy: number): number | null => ctx.terrainHeightAt(cx, cy);
+    const swimProfile = SWIM_PROFILES[entity.species];
     const terrainY =
       kind === 'flyer'
         ? null
-        : kind === 'walker'
-          ? walkerGroundY((cx, cy) => ctx.terrainHeightAt(cx, cy), entity.x, entity.y)
-          : ctx.terrainHeightAt(Math.floor(entity.x), Math.floor(entity.y));
+        : kind === 'walker' || swimProfile === null
+          ? walkerGroundY(sample, entity.x, entity.y)
+          : swimmerSeabedY(
+              sample,
+              entity.x,
+              entity.y,
+              entity.heading,
+              swimProfile,
+              WILDLIFE_SIZE_MODEL_SCALE[sizeClass],
+            );
+    const drawnY = creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt);
+    view.drawnY = drawnY;
     const root = view.model.root;
     // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
     // whose named residual this multiply is).
-    root.position.set(
-      entity.x * CELL_WORLD_SIZE,
-      creatureWorldY(entity.species, terrainY, sizeClassAt(entity.size)),
-      entity.y * CELL_WORLD_SIZE,
-    );
+    root.position.set(entity.x * CELL_WORLD_SIZE, drawnY, entity.y * CELL_WORLD_SIZE);
     // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and the
     // creature travels toward (cos heading, 0, sin heading) — hence the negation.
     root.rotation.y = -entity.heading;
