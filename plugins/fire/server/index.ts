@@ -103,6 +103,34 @@ import { loadWeatherBridge, precipitationAt } from './weather-bridge.ts';
 export const FIRE_KEEPALIVE_SECONDS = 10;
 
 /**
+ * How many times a WALKING fire is re-anchored during its own life.
+ *
+ * WHY THE ENTITY SET NEEDS A CADENCE OF ITS OWN, AND WHY IT IS DERIVED
+ * (bug, 2026-08-24: a burning grazer walked into view unburnt, then dropped
+ * dead). A cell fire's visibility changes only when the PLAYER's view changes,
+ * which is a discrete event this plugin is told about
+ * (onChunkUnlockedForToken). A walking fire's visibility changes because THE
+ * FIRE MOVED, and nothing tells anyone that — so the only repair it can have is
+ * a re-send often enough that "you cannot see it yet" is never the last word for
+ * long.
+ *
+ * FIRE_KEEPALIVE_SECONDS could not be that cadence, and the arithmetic is the
+ * whole point: a creature burns for 8 s under a 10 s keepalive, so the repair
+ * was scheduled for 2 s AFTER the animal was already dead and in the single-fire
+ * case never arrived at all. Restating the keepalive as a smaller constant would
+ * fix today's numbers and leave the next plugin free to register a 3 s burn and
+ * silently reintroduce it.
+ *
+ * So the cadence is derived from the SHORTEST BURN ACTUALLY ALIGHT rather than
+ * chosen: whatever a plugin declares, every walking fire is re-sent at least
+ * this many times before it ends. FOUR is the smallest count that keeps a
+ * repair on both sides of the halfway point of a burn — one before, one after —
+ * and at the shipped 8 s creature burn it costs one small message every 2 s
+ * while anything is alight, against a set capped at FIRE_ENTITY_CAP.
+ */
+const ENTITY_REPAIRS_PER_BURN = 4;
+
+/**
  * `skipEmpty: false` — fire's ONE deliberate departure from flora's wire.
  *
  * flora may skip a recipient whose own subset is empty because a tree never
@@ -157,6 +185,18 @@ let simSeconds = 0;
 let lastKeepaliveSeconds = 0;
 
 /**
+ * Simulated time of the last entity broadcast — a SEPARATE clock from the cell
+ * keepalive above, and separate for a reason beyond its shorter period: it is
+ * stamped inside `broadcastEntities` and nowhere else, so an idle tick can
+ * never push it forward. The cell clock is re-armed while the world is quiet
+ * (onTick's early-out), which is harmless for something that cannot move but
+ * was fatal for something that can — it meant the first repair of a walking
+ * fire was scheduled from the moment it was lit rather than from the last time
+ * anyone was actually told about it.
+ */
+let lastEntityBroadcastSeconds = 0;
+
+/**
  * THE EPISODE. Cells consumed since the world last stopped burning, and where
  * the first of them was.
  *
@@ -172,6 +212,20 @@ let lastKeepaliveSeconds = 0;
  */
 let episodeConsumed = 0;
 let episodeOrigin: FuelCell | null = null;
+
+/**
+ * Most simulated seconds the spread step will ever owe.
+ *
+ * TWO INTERVALS, and the second one is the fix rather than slack (bug,
+ * 2026-08-24): the debt has to be able to exceed one interval, or the remainder
+ * of the step that just ran cannot survive to be carried into the next one, and
+ * at any tick rate whose period does not sum exactly the fire loses that
+ * remainder every single step. Bounded all the same, for the reason the old
+ * one-interval clamp was written down: a server that stalls or resumes must not
+ * bank an unbounded debt and then spread the fire across the world in one step.
+ * One extra interval is all a carry can ever need.
+ */
+const MAX_SPREAD_DEBT_SECONDS = SPREAD_INTERVAL_SECONDS * 2;
 
 /**
  * Simulated seconds owed to the spread step, carried between ticks.
@@ -267,7 +321,7 @@ function broadcastChanges(
  * and a client that is never told about the shrink keeps drawing a flame on an
  * animal that is no longer on fire.
  */
-function broadcastEntities(world: WorldApi): void {
+function broadcastEntities(world: WorldApi, onlyPlayerId: string | null = null): void {
   const positions = new Map<string, { x: number; y: number }>();
   for (const at of entityBlaze.positions()) {
     positions.set(fireEntityKey(at.sourceName, at.id), { x: at.x, y: at.y });
@@ -287,8 +341,39 @@ function broadcastEntities(world: WorldApi): void {
       return { x: Math.floor(at.x), y: Math.floor(at.y) };
     },
     (visible) => packEntities(visible),
-    FIRE_SEND_EMPTY,
+    onlyPlayerId === null ? FIRE_SEND_EMPTY : { skipEmpty: false, onlyPlayerId },
   );
+  // A send to ONE player is a repair for that player, not for everybody, so it
+  // must not reset the cadence everyone else is relying on.
+  if (onlyPlayerId === null) lastEntityBroadcastSeconds = simSeconds;
+}
+
+/**
+ * The entity set, to whoever holds this token — the walking half of
+ * `refreshUnlockedChunk`.
+ *
+ * VISIBILITY-FILTERED PER PLAYER even though only one player is being written
+ * to: the client REPLACES its whole set from this message (../protocol.ts), so
+ * an unfiltered send would hand somebody every burning animal in the world.
+ */
+function refreshEntitiesForToken(world: WorldApi, token: string): void {
+  for (const player of world.players()) {
+    if (player.token === token) broadcastEntities(world, player.id);
+  }
+}
+
+/**
+ * How often the entity set is re-sent, in simulated seconds — derived from the
+ * shortest burn currently alight (ENTITY_REPAIRS_PER_BURN).
+ *
+ * Never slower than the cell keepalive: a walking fire has strictly more ways
+ * to go stale than a standing one, so it can never be the thing repaired least
+ * often.
+ */
+function entityRepairIntervalSeconds(): number {
+  const shortest = entityBlaze.shortestBurnSeconds();
+  if (shortest === null) return FIRE_KEEPALIVE_SECONDS;
+  return Math.min(FIRE_KEEPALIVE_SECONDS, shortest / ENTITY_REPAIRS_PER_BURN);
 }
 
 /**
@@ -373,6 +458,16 @@ export function extinguishAt(cells: Iterable<{ readonly x: number; readonly y: n
   if (stopped.length === 0) return 0;
 
   broadcastChanges(world, [], stopped);
+  // THE EPISODE CLOSES WHERE THE SET EMPTIES, not where the tick happens to
+  // look (bug, 2026-08-24). This path is called from outside onTick — a player
+  // digging a firebreak arrives through onTerrainChanged — so when the trench
+  // took the last burning cell, the tick that followed took its "nothing is
+  // alight" early-out and returned above the end-of-episode check. No
+  // `fire:burned` was ever emitted, the counter stayed open, and the NEXT
+  // unrelated wildfire's cells were added to it and reported at the first
+  // fire's origin. Beating a fire is the headline mechanic of this plugin; it
+  // has to be the ending that most reliably gets its line.
+  if (blaze.size === 0) endEpisode(world);
   return stopped.length;
 }
 
@@ -680,6 +775,18 @@ export const plugin: TerracePlugin = {
     // The economy, on the same terms: until it resolves — and forever, on a
     // world with no mana plugin — lighting a fire is free (./mana-bridge.ts).
     loadManaBridge();
+
+    // ANNOUNCE WHAT WAS RESTORED, unconditionally — including "nothing"
+    // (bug, 2026-08-24). This hook runs again on a live world when an operator
+    // rolls back, and every client is still drawing whatever was burning at the
+    // moment they were last told. Restoring a set is silent by design
+    // (./blaze.ts's restore contract), the world-switch path re-announces per
+    // player and the rollback path does not, and if the restored world happens
+    // to be quiet then onTick's early-out means the keepalive that exists for
+    // exactly this repair can never run. So the one send that costs a rolled-
+    // back world two small messages is made here, where the set changed.
+    broadcastSnapshot(world);
+    broadcastEntities(world);
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -688,7 +795,13 @@ export const plugin: TerracePlugin = {
     // A world with nothing alight costs two comparisons per tick. Everything
     // below — the advance, the keepalive, the empty snapshot FIRE_SEND_EMPTY
     // exists for — is work that only a burning world pays for.
+    //
+    // BELT AND SUSPENDERS ON THE EPISODE: `extinguishAt` already closes it at
+    // the moment it empties the set, and this catches any future path that
+    // empties it without saying so. `endEpisode` is a no-op when nothing was
+    // consumed, so a quiet world still pays only the comparisons.
     if (blaze.size === 0 && entityBlaze.size === 0) {
+      if (episodeConsumed > 0) endEpisode(world);
       lastKeepaliveSeconds = simSeconds;
       return;
     }
@@ -747,18 +860,27 @@ export const plugin: TerracePlugin = {
     // capped at one interval so a stalled or resumed server cannot bank an
     // unbounded debt and then spread the fire across the world in one step —
     // flora's scanCredit is capped for the same reason.
-    spreadDebtSeconds = Math.min(spreadDebtSeconds + dt, SPREAD_INTERVAL_SECONDS);
+    spreadDebtSeconds = Math.min(spreadDebtSeconds + dt, MAX_SPREAD_DEBT_SECONDS);
     let ignited: FireCellState[] = [];
     let drenched: FuelCell[] = [];
-    if (spreadDebtSeconds >= SPREAD_INTERVAL_SECONDS) {
+    while (spreadDebtSeconds >= SPREAD_INTERVAL_SECONDS) {
       // RAIN BEFORE SPREAD, so a fire the rain has just put out does not get to
       // throw one last spark on its way out. The two share a cadence because
       // they are two halves of one question — where is the fire a second from
       // now — and evaluating them on different clocks would let a fire spread
       // from a cell it was extinguished on.
-      drenched = suppressWithRain(spreadDebtSeconds);
-      ignited = spreadOnce(world, blaze, spreadDebtSeconds);
-      spreadDebtSeconds = 0;
+      // THE INTERVAL, NOT THE DEBT, is what the rate functions are charged —
+      // and the remainder is CARRIED rather than dropped (bug, 2026-08-24).
+      // `dt` at the shipped 10 Hz is 0.1, which is not representable in binary:
+      // ten of them sum to 0.9999999999999999, so the step fired on the
+      // eleventh tick having covered 1.1 s, was charged 1.0 s, and threw the
+      // rest away. Fires spread and rain suppressed ~10% slower than their
+      // stated per-second rates, and by an amount that depended on TICK_HZ —
+      // precisely what handing the elapsed interval to the rate arithmetic is
+      // supposed to prevent.
+      drenched = [...drenched, ...suppressWithRain(SPREAD_INTERVAL_SECONDS)];
+      ignited = [...ignited, ...spreadOnce(world, blaze, SPREAD_INTERVAL_SECONDS)];
+      spreadDebtSeconds -= SPREAD_INTERVAL_SECONDS;
     }
 
     const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
@@ -773,9 +895,17 @@ export const plugin: TerracePlugin = {
 
     if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) {
       broadcastSnapshot(world);
-      // The walking fires re-anchor on the SAME cadence, and they need it more:
-      // their visibility changes as they move, so a player who was not told
-      // about one because it was out of sight has to be told when it runs in.
+    }
+
+    // THE WALKING FIRES RE-ANCHOR ON THEIR OWN, FASTER CADENCE — see
+    // ENTITY_REPAIRS_PER_BURN. They used to share the cell keepalive, which is
+    // longer than a creature burns, so the one repair that could have told a
+    // player about an animal that walked into their view was scheduled for
+    // after the animal was dead.
+    if (
+      entityBlaze.size > 0 &&
+      simSeconds - lastEntityBroadcastSeconds >= entityRepairIntervalSeconds()
+    ) {
       broadcastEntities(world);
     }
   },
@@ -828,6 +958,10 @@ export const plugin: TerracePlugin = {
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
     refreshUnlockedChunk(world, token, cx, cy);
+    // The walking fires too: a chunk that comes into view may already have a
+    // burning animal standing in it, and the cadence above is a repair, not a
+    // reason to make a player wait for one.
+    if (entityBlaze.size > 0) refreshEntitiesForToken(world, token);
   },
 
   messages: {

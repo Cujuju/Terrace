@@ -31,6 +31,12 @@ interface BurningEntity {
   readonly burnSeconds: number;
   /** The only mutable field. */
   ageSeconds: number;
+  /**
+   * True until this fire has been checked against the source that owns it —
+   * set only by `restore`, cleared by the first `advance` that sees it. See
+   * ./entityFuel.ts's idsSurviveRestore.
+   */
+  awaitingIdentityCheck?: boolean;
 }
 
 /** What one `advance` produced. */
@@ -48,6 +54,21 @@ export class EntityBlaze {
 
   get size(): number {
     return this.burning.size;
+  }
+
+  /**
+   * The shortest burn among everything alight, or null when nothing is —
+   * what ../index.ts derives the re-send cadence from, so a plugin that
+   * registers a shorter-lived fuel than anything shipped today gets a faster
+   * repair automatically instead of falling through a constant tuned for
+   * somebody else's numbers.
+   */
+  shortestBurnSeconds(): number | null {
+    let shortest: number | null = null;
+    for (const entity of this.burning.values()) {
+      if (shortest === null || entity.burnSeconds < shortest) shortest = entity.burnSeconds;
+    }
+    return shortest;
   }
 
   isBurning(sourceName: string, id: number): boolean {
@@ -112,6 +133,23 @@ export class EntityBlaze {
         changed = true;
         continue;
       }
+      // THE IDENTITY CHECK, once, on the first tick after a restore. A restored
+      // fire names an individual by a number, and a number only means the same
+      // individual if its owner keeps id spaces across a restore — so a source
+      // that has not said it does gets its restored fires dropped rather than
+      // re-attached to whoever holds those numbers now (./entityFuel.ts's
+      // idsSurviveRestore). Silent, like every other way a fire's subject turns
+      // out not to be there: there is nothing to tell anyone about a fire that
+      // was never really burning on this world.
+      if (entity.awaitingIdentityCheck === true) {
+        if (source.idsSurviveRestore !== true) {
+          this.burning.delete(key);
+          changed = true;
+          continue;
+        }
+        entity.awaitingIdentityCheck = false;
+      }
+
       if (source.positionOf(entity.id) === null) {
         this.burning.delete(key);
         changed = true;
@@ -174,7 +212,10 @@ export class EntityBlaze {
    * A restored fire is NOT re-validated against the registry here: the sources
    * that own these individuals restore their own state on the same pass, and
    * asking them now would ask before they had. `advance` drops anything they
-   * turn out not to have, on the very next tick.
+   * turn out not to have, on the very next tick — and on that same tick it
+   * asks the harder question a restore raises, whether the id still means the
+   * individual it meant when the snapshot was written (./entityFuel.ts's
+   * idsSurviveRestore).
    */
   restore(entities: Iterable<FireEntityState>): void {
     this.burning.clear();
@@ -188,6 +229,7 @@ export class EntityBlaze {
         fuelHeight: entity.fuelHeight,
         burnSeconds: entity.burnSeconds,
         ageSeconds: entity.ageSeconds,
+        awaitingIdentityCheck: true,
       });
     }
   }

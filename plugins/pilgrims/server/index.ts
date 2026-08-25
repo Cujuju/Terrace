@@ -140,6 +140,13 @@ export const plugin: TerracePlugin = {
       },
       positionOf: walkerPosition,
       onBurnedOut: pilgrimsBurnedOut,
+      // DELIBERATELY NOT DECLARED (the default is false). This plugin has no
+      // PersistenceSlice by settled design — journeys are re-derived from the
+      // world, and WalkerIdAllocator restarts at 1 every process — so walker 7
+      // after a restore is a different person from walker 7 before it. Fire
+      // therefore drops a restored fire that named one of ours rather than
+      // burning a bystander to death (plugins/fire/server/entityFuel.ts's
+      // idsSurviveRestore).
     });
   },
 
