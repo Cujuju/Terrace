@@ -8,11 +8,22 @@
 // two animals are interleaved with the tools that make them.
 //
 // Rules this file keeps (the wildlife plugin's, for the same reasons):
-//   * NO textures, NO per-model lights, NO external assets. Everything is
-//     generated here; the scene's hemisphere + sun light (render/scene.ts) does
-//     the lighting. Surface interest comes from GEOMETRY (a deterministic
-//     wrinkle carved into the skin) and from PER-VERTEX SHADE, not from maps.
-//     The one exception is emissive eyes, which emit rather than being lit.
+//   * NO EXTERNAL ASSETS and no per-model lights. Everything is generated here;
+//     the scene's hemisphere + sun light (render/scene.ts) does the lighting.
+//     Surface interest comes from GEOMETRY (a deterministic wrinkle carved into
+//     the skin), from PER-VERTEX SHADE, and — since 2026-08-24 — from ONE
+//     generated texture. Emissive eyes emit rather than being lit.
+//
+//     THE TEXTURE RULE USED TO SAY "NO TEXTURES", and it was wrong about fur.
+//     Owner, on the yeti's renders: "I think you need to add a texture for the
+//     fur, not geometry." He is right, and the reason is a budget one. Fur is
+//     hair-width detail; carving it needs a vertex per strand, which is tens of
+//     thousands of triangles for one animal's coat and still comes out as
+//     lumps, because carveWrinkles can only dent a surface it already has. A
+//     texel costs nothing and there are a million of them. See furShadeTexture()
+//     below — it is COMPUTED, from the same deterministic reasoning as the
+//     noise field, so "no asset files, same creature on every client" survives
+//     intact. What is banned is a texture that arrives over the network.
 //   * NO Math.random anywhere in the geometry. Every irregularity — the
 //     wrinkles, the mottle, the uneven curl of a tentacle fan — comes out of
 //     one deterministic noise field with a constant seed, so every client in the
@@ -30,11 +41,17 @@
 import {
   BufferGeometry,
   CatmullRomCurve3,
+  DataTexture,
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  LinearFilter,
+  LinearMipmapLinearFilter,
   MeshLambertMaterial,
+  RGBAFormat,
+  RepeatWrapping,
   SphereGeometry,
+  Texture,
   Vector3,
   type Material,
   type MeshLambertMaterialParameters,
@@ -218,6 +235,293 @@ export function applyShadeVariation(
     shades[index * 3 + 2] = shade;
   }
   geometry.setAttribute('color', new Float32BufferAttribute(shades, 3));
+}
+
+// ── The fur ──────────────────────────────────────────────────────────────────
+
+/**
+ * The fur tile, in texels on a side.
+ *
+ * One tile carries FUR_STRAND_COUNT strands across it, so this is about five
+ * texels per strand — enough to describe a lit body and a dark parting either
+ * side of it. Doubling it buys nothing a mipmap does not immediately throw away
+ * at any distance the animal is actually seen from; halving it takes the strand
+ * below three texels and aliases it into moire.
+ */
+export const FUR_TEXTURE_SIZE = 128;
+
+/**
+ * THE STRANDS.
+ *
+ * WHY EVERYTHING HERE IS PERIODIC ON THE TILE. The tile repeats every
+ * FUR_TEXTURE_SIZE texels, and a pattern that does not come back to the same
+ * value at the far edge lays a visible grid over the animal. Every frequency
+ * below is an INTEGER number of cycles per tile, so the tile is seamless as a
+ * matter of arithmetic rather than of tuning — and it is still one deterministic
+ * function of position, with no Math.random in it.
+ *
+ * WHY IT IS NOT JUST A COMB. The first attempt was: sum four cosines across the
+ * tile, map to a shade. It rendered as CORDUROY, and the reason is that parallel
+ * ribs of constant width and constant tone are what corduroy IS. Three things
+ * separate hair from cloth, and the tile does all three:
+ *
+ *   1. THE STRANDS WANDER. The across-coordinate is warped by a slow wave before
+ *      the strands are cut out of it (FUR_WARP_*), so no two run parallel for
+ *      their whole length and the spacing between them opens and closes.
+ *   2. THE PARTINGS ARE NARROW AND THE LOCKS ARE WIDE. A cosine spends half its
+ *      range dark, which is a rib. Fur is mostly lit surface with a thin dark
+ *      line where two locks part, so the dark is raised to a power
+ *      (FUR_PARTING_SHARPNESS) that keeps it near zero except right at the
+ *      parting.
+ *   3. NO TWO STRANDS ARE THE SAME TONE. A slow variation over the warped
+ *      coordinate (FUR_TONE_SPREAD) makes neighbouring locks differ in
+ *      lightness, which is what stops the eye reading the whole field as one
+ *      machined surface.
+ *
+ * On top of that the strands BREAK along their length (FUR_BREAK_*): a lock that
+ * runs the full height of the tile at constant depth is a groove, and a real one
+ * is interrupted every few strand-widths by another lock crossing over it.
+ */
+
+/** Strands across one tile. About five texels each at FUR_TEXTURE_SIZE, which
+ *  is the least that can carry a lit body and a dark edge without aliasing. */
+const FUR_STRAND_COUNT = 26;
+/** Locks across one tile: the coarse gathering the strands fall into. Chosen
+ *  well away from a divisor of FUR_STRAND_COUNT so the two never line up. */
+const FUR_LOCK_COUNT = 7;
+
+/**
+ * The wander, in tile widths, and the two waves that make it.
+ *
+ * The amplitude is stated against the strand pitch it disturbs: 1/26 of a tile
+ * is one strand, so 0.030 is about three-quarters of a strand of sideways drift
+ * from the slow wave and a quarter from the fast one. Less and the field is
+ * visibly combed; much more and the strands cross each other, which reads as
+ * matting rather than as a coat.
+ *
+ * `along` is cycles down the strand, `across` cycles perpendicular to it. Both
+ * are low: the warp must be much coarser than what it warps, or it stops being a
+ * wander and becomes a second, finer set of strands running crosswise.
+ */
+const FUR_WARP_WAVES = [
+  { across: 7, along: 2, amplitude: 0.012, phase: 0.7 },
+  { across: 13, along: 5, amplitude: 0.005, phase: 2.9 },
+] as const;
+
+/**
+ * How dark a parting between two strands goes, as a fraction taken off the
+ * surface's own colour, and how narrow it is.
+ *
+ * The sharpness is an exponent on a value that is 1 exactly at the parting and 0
+ * at the middle of a strand, so raising it squeezes the dark into the parting
+ * and leaves the strand itself lit. At 1 (no sharpening) this is a cosine and
+ * the result is a rib.
+ */
+const FUR_PARTING_DEPTH = 0.3;
+const FUR_PARTING_SHARPNESS = 2.6;
+/** The same pair for the coarse partings BETWEEN locks — deeper, because a lock
+ *  boundary is a real gap in the pile, and broader, because it is. */
+const FUR_LOCK_PARTING_DEPTH = 0.07;
+const FUR_LOCK_PARTING_SHARPNESS = 3;
+
+/**
+ * How much a strand's depth varies down its own length: 0 is a groove of
+ * constant depth running the height of the tile, 1 lets it close up entirely.
+ *
+ * This is what makes a strand END. The frequency is deliberately not a multiple
+ * of anything else here, so the breaks of neighbouring strands do not line up
+ * into a seam running across the coat.
+ */
+const FUR_BREAK_SPREAD = 0.45;
+const FUR_BREAK_ALONG = 3;
+const FUR_BREAK_ACROSS = 11;
+
+/**
+ * Lightness spread between neighbouring locks, as a fraction either side of 1.
+ *
+ * Small, because this is fur of one colour and not a piebald coat — but not
+ * zero, which is the machined look the first tile had.
+ */
+const FUR_TONE_SPREAD = 0.05;
+const FUR_TONE_COUNT = 9;
+
+/**
+ * The floor: how dark the deepest parting is allowed to get, as a fraction of
+ * the surface's own colour.
+ *
+ * This multiplies the diffuse colour, so 0 would put pure black lines through
+ * white fur. What is actually down there is the same coat in shadow, and a coat
+ * in the open loses roughly a third of its light to self-shadowing at the bottom
+ * of the pile.
+ */
+const FUR_SHADE_FLOOR = 0.6;
+
+/** Bytes per texel of an RGBA texture. */
+const FUR_TEXEL_BYTES = 4;
+/** The largest value a byte channel can hold. */
+const FUR_CHANNEL_MAX = 255;
+
+/**
+ * How sharply the three triplanar projections cut over at an edge.
+ *
+ * The weights are the object-space normal's components raised to this power and
+ * renormalised. At 1 the three planes cross-fade over the whole quarter-turn and
+ * every surface not facing an axis is a wash of all three, which blurs the
+ * strands away exactly on the rounded masses this animal is made of. Higher
+ * makes each projection dominate its own octant and the blend a narrow band; too
+ * high and that band becomes a visible seam. 4 puts the cross-fade at roughly
+ * the width of a lock.
+ */
+const FUR_BLEND_SHARPNESS = 4;
+
+/**
+ * Builds the shared fur tile: a seamless greyscale MULTIPLIER, not a colour.
+ *
+ * Every fur surface on the model is a different tone (see the yeti's fur,
+ * underfur and mantle colours) and they all want the same hair. Storing a shade
+ * rather than a colour is what lets one texture serve all three: the shader
+ * multiplies it into whatever diffuse colour the surface already has, so the
+ * tone stays the anatomy file's decision and the STRUCTURE stays this one's.
+ *
+ * Written to all three channels because the sampler is read as `.r` and a
+ * greyscale one-channel format is not worth a second code path for 64 KB.
+ */
+export function furShadeTexture(): DataTexture {
+  const data = new Uint8Array(FUR_TEXTURE_SIZE * FUR_TEXTURE_SIZE * FUR_TEXEL_BYTES);
+  for (let row = 0; row < FUR_TEXTURE_SIZE; row++) {
+    const along = row / FUR_TEXTURE_SIZE;
+    for (let column = 0; column < FUR_TEXTURE_SIZE; column++) {
+      const across = column / FUR_TEXTURE_SIZE;
+
+      // 1. The wander. Every strand below is cut out of THIS coordinate rather
+      //    than out of `across`, which is what stops them running parallel.
+      let wander = across;
+      for (const wave of FUR_WARP_WAVES) {
+        wander +=
+          wave.amplitude *
+          Math.cos(TWO_PI * (wave.across * across + wave.along * along) + wave.phase);
+      }
+
+      // 2. The partings. `parted` is 1 at a parting and 0 at the middle of a
+      //    strand; the power is what keeps it near 0 for most of the strand.
+      const parted = 0.5 - 0.5 * Math.cos(TWO_PI * FUR_STRAND_COUNT * wander);
+      const lockParted = 0.5 - 0.5 * Math.cos(TWO_PI * FUR_LOCK_COUNT * wander);
+
+      // 3. The break down the strand's length, which is what gives it an end.
+      const broken =
+        1 -
+        FUR_BREAK_SPREAD *
+          (0.5 - 0.5 * Math.cos(TWO_PI * (FUR_BREAK_ALONG * along + FUR_BREAK_ACROSS * across)));
+
+      // 4. The tone this lock happens to be, over the warped coordinate so it
+      //    follows the strands rather than cutting across them.
+      const tone = 1 + FUR_TONE_SPREAD * Math.cos(TWO_PI * FUR_TONE_COUNT * wander);
+
+      const shade =
+        tone *
+        (1 -
+          FUR_PARTING_DEPTH * Math.pow(parted, FUR_PARTING_SHARPNESS) * broken -
+          FUR_LOCK_PARTING_DEPTH * Math.pow(lockParted, FUR_LOCK_PARTING_SHARPNESS));
+      const byte = Math.round(Math.min(1, Math.max(FUR_SHADE_FLOOR, shade)) * FUR_CHANNEL_MAX);
+      const texel = (row * FUR_TEXTURE_SIZE + column) * FUR_TEXEL_BYTES;
+      data[texel] = byte;
+      data[texel + 1] = byte;
+      data[texel + 2] = byte;
+      data[texel + 3] = FUR_CHANNEL_MAX;
+    }
+  }
+  const texture = new DataTexture(data, FUR_TEXTURE_SIZE, FUR_TEXTURE_SIZE, RGBAFormat);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  // NOT sRGB, and this is the whole reason the tile is a shade and not a colour:
+  // an sRGB decode would be applied to a number that is already a linear
+  // multiplier and darken the coat by the gamma curve. DataTexture defaults to
+  // no colour space; it is stated here so nobody "fixes" it later.
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * The name the fur injection goes by in three's program cache.
+ *
+ * A material's compiled program is cached by its parameters, and onBeforeCompile
+ * is invisible to that cache — two materials identical in every parameter but
+ * differing in their injected source would otherwise share one program and one
+ * of them would render as the other. customProgramCacheKey is three's answer,
+ * and client/src/render/rigSkin.ts reads the same key when it decides which
+ * parts may be merged into one draw call.
+ */
+const FUR_PROGRAM_KEY = 'monster-fur-triplanar';
+
+/**
+ * Makes a material sample the fur tile TRIPLANAR, in the surface's own object
+ * space.
+ *
+ * WHY TRIPLANAR AND NOT UVs. There are no UVs to use. `positionsOnly` strips
+ * them from every primitive on the way in and `organicSurface` merges a dozen
+ * ellipsoids and swept tubes into one surface — a sphere's own UVs pinch to
+ * nothing at its poles and stop dead at its seam, and a dozen of those merged is
+ * a dozen pinches and a dozen seams down the middle of the animal. Projecting
+ * from the three axis planes and blending by the normal needs no UVs at all, has
+ * no poles, and is continuous across a merge because it is a function of
+ * POSITION, which the merge preserves exactly.
+ *
+ * WHY BIND-POSE POSITION. The varying is taken at `begin_vertex`, before
+ * `skinning_vertex` moves the vertex. Sampling after skinning would fix the fur
+ * to the WORLD and let the coat swim over the animal as he walks; sampling
+ * before fixes it to the animal, which is where fur is attached.
+ *
+ * The strand direction is the tile's second axis, so on the two upright
+ * projections (ZY and XY) the hair hangs DOWN — the direction it hangs on a real
+ * animal. The third projection is the top-down one, where "down" has no meaning
+ * on the surface; it runs the strands along Z, and it only ever covers the tops
+ * of the shoulders and the skull.
+ */
+function applyFurShader(material: MeshLambertMaterial, texture: Texture, frequency: number): void {
+  material.customProgramCacheKey = () => FUR_PROGRAM_KEY;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.furMap = { value: texture };
+    shader.uniforms.furFrequency = { value: frequency };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying vec3 vFurPosition;
+varying vec3 vFurNormal;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+vFurPosition = transformed;
+vFurNormal = objectNormal;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+uniform sampler2D furMap;
+uniform float furFrequency;
+varying vec3 vFurPosition;
+varying vec3 vFurNormal;`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+{
+  vec3 furAxis = pow(abs(normalize(vFurNormal)), vec3(${FUR_BLEND_SHARPNESS}.0));
+  furAxis /= max(furAxis.x + furAxis.y + furAxis.z, 1e-5);
+  vec3 furAt = vFurPosition * furFrequency;
+  float furShade =
+      texture2D(furMap, vec2(furAt.z, furAt.y)).r * furAxis.x
+    + texture2D(furMap, vec2(furAt.x, furAt.z)).r * furAxis.y
+    + texture2D(furMap, vec2(furAt.x, furAt.y)).r * furAxis.z;
+  diffuseColor.rgb *= furShade;
+}`,
+      );
+  };
 }
 
 /**
@@ -440,6 +744,16 @@ export interface LambertOptions {
   readonly doubleSided?: boolean;
   /** False for a surface with no vertex-colour attribute (eyes, not skin). */
   readonly shaded?: boolean;
+  /**
+   * Spatial frequency of the fur tile on this surface, in tiles per world unit.
+   * Omitted for anything that is not fur — hide, horn, ivory, eye.
+   *
+   * A frequency rather than a boolean because a coat's strand size belongs to
+   * the CREATURE, not to the workshop: it scales with the animal exactly the way
+   * the wrinkle frequency does, so a yeti at a fifth of his original size keeps
+   * the same number of strands rather than shrinking to velvet.
+   */
+  readonly furFrequency?: number;
 }
 
 /**
@@ -482,6 +796,17 @@ export function createWorkshop(): ModelWorkshop {
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
   const rigs: RigBlueprint[] = [];
+  /**
+   * The one fur tile, shared by every furred surface of every kind and built the
+   * first time one is asked for.
+   *
+   * Lazy rather than eager because most of what this workshop makes is not
+   * furred, and a plugin attach that never builds a yeti should not pay for
+   * 64 KB it will not sample. Shared rather than per-material because
+   * rigSkin.ts's merge keys on texture IDENTITY: two surfaces sampling one
+   * texture can be drawn together, two sampling identical copies cannot.
+   */
+  let furTexture: DataTexture | undefined;
 
   function keepGeometry<T extends BufferGeometry>(geometry: T): T {
     geometries.push(geometry);
@@ -521,7 +846,12 @@ export function createWorkshop(): ModelWorkshop {
       };
       if (options.emissive !== undefined) parameters.emissive = options.emissive;
       if (options.doubleSided === true) parameters.side = DoubleSide;
-      return keepMaterial(new MeshLambertMaterial(parameters));
+      const material = new MeshLambertMaterial(parameters);
+      if (options.furFrequency !== undefined) {
+        if (furTexture === undefined) furTexture = furShadeTexture();
+        applyFurShader(material, furTexture, options.furFrequency);
+      }
+      return keepMaterial(material);
     },
 
     organicSurface(parts: BufferGeometry[], skin: SkinFinish): BufferGeometry {
@@ -542,6 +872,10 @@ export function createWorkshop(): ModelWorkshop {
       for (const rig of rigs) rig.dispose();
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
+      // The tile outlives every material that sampled it — it is shared, so no
+      // one of them may free it — and dies here with the workshop that made it.
+      furTexture?.dispose();
+      furTexture = undefined;
       rigs.length = 0;
       geometries.length = 0;
       materials.length = 0;

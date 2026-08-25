@@ -128,6 +128,14 @@ function materialSignature(material: Material): string {
     // differently must stay apart. Black (the default) means "not emissive" and
     // merges freely.
     shaded.emissive === undefined ? 'noem' : shaded.emissive.getHexString(),
+    // A material whose SHADER has been rewritten (three's onBeforeCompile) is a
+    // different program, and no vertex attribute can bridge two programs. Every
+    // field above is a parameter three itself keys its program cache on;
+    // customProgramCacheKey is the hook by which a material declares the rest,
+    // and reading it here is how a merge learns about an injection it cannot
+    // otherwise see. Two parts that inject the SAME source still merge, which is
+    // what keeps a creature's several furred tones in one draw call.
+    material.customProgramCacheKey(),
   ].join('|');
 }
 
@@ -426,6 +434,15 @@ function stripUnbakeableAttributes(geometry: BufferGeometry): void {
 /** A copy of the material that reads its colour per vertex. */
 function vertexColoured(material: Material): Material {
   const clone = material.clone();
+  // THE SHADER HOOKS DO NOT SURVIVE A CLONE. Material.copy() copies the
+  // properties three knows about; onBeforeCompile and customProgramCacheKey are
+  // functions the caller assigned to the instance and it copies neither, so a
+  // material with an injected shader came out of here as a plain one — the
+  // injection silently gone, and gone only in the baked path, which is the one
+  // every rigged creature takes. Carried across explicitly, so a material that
+  // rewrites its own shader means the same thing baked as it does unbaked.
+  clone.onBeforeCompile = material.onBeforeCompile;
+  clone.customProgramCacheKey = material.customProgramCacheKey;
   clone.vertexColors = true;
   const tinted = clone as Material & { color?: Color };
   // White, because the vertex colours now carry the part's own colour and the

@@ -1,13 +1,20 @@
 // The yeti, built procedurally: a hunched white biped with a heavy shoulder
-// mass, arms that hang below its hips, and a ruff of brighter fur at the neck.
+// mass and arms that hang below its hips.
+//
+// HIS COAT IS A TEXTURE, and he is the only creature here whose is. Owner,
+// 2026-08-24: "I wanted [the neck collar] removed, and then I wanted you to add
+// a texture to the surface that looks like fur." So the thirteen fur locks that
+// used to break the line between his head and his shoulders are gone, and every
+// furred surface samples the generated strand tile instead — see
+// ./geometry.ts, furShadeTexture(), for what it is and why it is not an asset.
 //
 // Same rules and same tools as the other two builders (./geometry.ts): no
-// textures, no per-model lights, no Math.random anywhere in the geometry, shared
-// resources freed exactly once. ./yeti-anatomy.ts owns every number. This file
+// external assets, no per-model lights, no Math.random anywhere in the
+// geometry, shared resources freed exactly once. ./yeti-anatomy.ts owns every number. This file
 // owns the CREATURE — which masses there are, how the skeleton is rigged, and
 // how it moves.
 //
-// FRAME. The torso, hips, shoulders, head and ruff are authored directly in rig
+// FRAME. The torso, hips, shoulders and head are authored directly in rig
 // space, so one continuous noise field runs across the whole animal and the fur
 // does not change character at a seam. The LIMBS are the exception, exactly as
 // the kraken's arms are: each hangs off a joint, so its geometry is authored in
@@ -22,16 +29,24 @@
 //       │          └ ankle (counter-rotated, so the sole stays flat) → foot
 //       └ upper   — the lean rides here, so no foot can ever be rolled into the
 //          │        ground the client placed him on
-//          ├ body, ruff                     (static, rig space)
+//          ├ body                           (static, rig space)
 //          ├ head (rotation.y is the scan)  → head, brow, muzzle, eyes
 //          └ arm k: joint at the shoulder (rotation.z is the counter-swing)
 //                     ├ the swept arm
 //                     └ the hand
 //
-// COST at MONSTER_MODEL_DETAIL = 4: 82 320 triangles in TWO draw calls, MEASURED
-// rather than estimated — up from the ~15 600 that stood here before the
-// 2026-08-24 pass, and now the most expensive of the three by a wide margin (the
-// kraken is 7 684, Cthulhu 18 664).
+// COST at MONSTER_MODEL_DETAIL = 4: 74 520 triangles in THREE draw calls,
+// MEASURED rather than estimated — up from the ~15 600 that stood here before
+// the 2026-08-24 pass, and still the most expensive of the three by a wide
+// margin (the kraken is 7 684, Cthulhu 18 664).
+//
+// THE THIRD DRAW CALL IS THE COAT, and it is the price of the fur texture. A
+// baked rig merges parts that can be drawn together, and a material whose SHADER
+// has been rewritten cannot be drawn with one whose has not (see rigSkin.ts,
+// materialSignature) — so the furred surfaces are now one call and the horn,
+// ivory, hide and maw another, where all of them used to be one. Two calls for
+// a coat that reads as fur is the right side of that trade at
+// MAX_LIVING_MONSTERS = 1.
 //
 // THAT IS THE OWNER'S STANDING FIDELITY BAR BEING PAID FOR, not drift: world
 // objects go in "substantially higher resolution" than the first-pass primitive
@@ -123,6 +138,7 @@ import {
   YETI_FOOT_RISE,
   YETI_FOOT_WIDTH,
   YETI_FUR_COLOR,
+  YETI_FUR_TEXTURE_FREQUENCY,
   YETI_FUR_WRINKLE_DEPTH,
   YETI_HAND_RADIUS,
   YETI_HEAD_CENTER_HEIGHT,
@@ -169,17 +185,6 @@ import {
   YETI_LEG_ANKLE_RADIUS,
   YETI_LEG_ROOT_RADIUS,
   YETI_LEG_SWING_RADIANS,
-  YETI_MANTLE_COLOR,
-  YETI_MANTLE_LENGTH_VARIATION,
-  YETI_MANTLE_LOCK_COUNT,
-  YETI_MANTLE_LOCK_DROP,
-  YETI_MANTLE_LOCK_MID_DROP,
-  YETI_MANTLE_LOCK_MID_REACH,
-  YETI_MANTLE_LOCK_RADIUS,
-  YETI_MANTLE_LOCK_REACH,
-  YETI_MANTLE_LOCK_TIP_RADIUS,
-  YETI_MANTLE_RING_HEIGHT,
-  YETI_MANTLE_RING_RADIUS,
   YETI_MAW_COLOR,
   YETI_MOUTH_FORWARD,
   YETI_MOUTH_HEIGHT,
@@ -232,10 +237,9 @@ import {
  *
  * The counts below are chosen per part by what its shape has to hold, not by one
  * blanket multiplier: a limb is a tube seen end-on from every angle and needs
- * RADIAL segments most; a torso is a broad curved profile and needs both; a ruff
- * tuft is a spike two-tenths of a unit thick whose length is a straight taper,
- * so it takes the radial rise and keeps its path count. Affordable, that day and
- * this one, only because MAX_LIVING_MONSTERS is 1.
+ * RADIAL segments most; a torso is a broad curved profile and needs both; a
+ * finger is never seen end-on and needs neither. Affordable, that day and this
+ * one, only because MAX_LIVING_MONSTERS is 1.
  *
  * NOTE THAT NEITHER RAISE IS COMPENSATION FOR A RESCALE. A quarter-size model
  * covers a sixteenth of the screen and would have needed FEWER triangles, not
@@ -255,10 +259,11 @@ import {
  * screen and every bit of it is better resolved.
  *
  * MEASURED, not guessed — `node --experimental-strip-types` over the built
- * geometry, summing index counts: 82 320 triangles at MONSTER_MODEL_DETAIL = 4,
- * against the 15 600 these counts replaced and the 6 024 before that. The face
- * rebuild, the mantle, the horn bosses and the digits are most of that; the
- * raised counts below are the rest.
+ * geometry, summing index counts: 74 520 triangles at
+ * MONSTER_MODEL_DETAIL = 4, against the 15 600 these counts replaced and the
+ * 6 024 before that. The face rebuild, the horn bosses and the digits are most
+ * of that; the raised counts below are the rest. It came DOWN on 2026-08-24
+ * when the neck collar's thirteen locks left with the owner's fur note.
  */
 const TORSO_SPHERE_SEGMENTS_BASE = 18;
 const TORSO_SPHERE_RINGS_BASE = 13;
@@ -295,14 +300,6 @@ const HAND_SPHERE_RINGS_BASE = 7;
 /** Limbs: along the sweep, and around it. Thirty-two sides to a leg, not eight. */
 const LIMB_PATH_SEGMENTS_BASE = 8;
 const LIMB_RADIAL_SEGMENTS_BASE = 8;
-/**
- * MANTLE LOCKS: fat and short, which is the whole difference between the collar
- * and the spikes it replaced (see YETI_MANTLE_LOCK_COUNT). Being fat is also
- * what decides the counts: a thick tube's silhouette is its RING, and its length
- * is a straight taper that rings along it buy nothing for.
- */
-const LOCK_PATH_SEGMENTS_BASE = 3;
-const LOCK_RADIAL_SEGMENTS_BASE = 6;
 /** Fingers and toes: small, and never seen end-on. Cheap on both axes. */
 const DIGIT_PATH_SEGMENTS_BASE = 2;
 const DIGIT_RADIAL_SEGMENTS_BASE = 4;
@@ -344,9 +341,8 @@ const YETI_FUR_SKIN = yetiSkin(YETI_FUR_WRINKLE_DEPTH);
  *  not fur. */
 const YETI_BARE_SKIN = yetiSkin(YETI_SKIN_WRINKLE_DEPTH);
 /**
- * Parts that must keep their exact shape: the swept limbs, the mantle locks,
- * the horns, the fangs and —
- * above all — the FEET, whose soles are the surface the client's placement maths
+ * Parts that must keep their exact shape: the swept limbs, the horns, the fangs
+ * and — above all — the FEET, whose soles are the surface the client's placement maths
  * puts on the ground (see YETI_FOOT_CENTER_HEIGHT).
  */
 const YETI_SMOOTH_SKIN = yetiSkin(0);
@@ -362,9 +358,15 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
 
   // ── Shared materials ───────────────────────────────────────────────────────
 
-  const furMaterial = lambert(YETI_FUR_COLOR);
-  const underfurMaterial = lambert(YETI_UNDERFUR_COLOR);
-  const mantleMaterial = lambert(YETI_MANTLE_COLOR);
+  // BOTH FURRED TONES SAMPLE THE ONE TILE, so they still merge into a single
+  // draw call (rigSkin.ts keys the merge on texture identity and on the injected
+  // shader, both of which are shared here) while each keeps its own colour. The
+  // tile is a SHADE multiplier, so "lighter coat over darker underfur" survives
+  // it untouched.
+  const furMaterial = lambert(YETI_FUR_COLOR, { furFrequency: YETI_FUR_TEXTURE_FREQUENCY });
+  const underfurMaterial = lambert(YETI_UNDERFUR_COLOR, {
+    furFrequency: YETI_FUR_TEXTURE_FREQUENCY,
+  });
   const mawMaterial = lambert(YETI_MAW_COLOR);
   const skinMaterial = lambert(YETI_SKIN_COLOR);
   const hornMaterial = lambert(YETI_HORN_COLOR);
@@ -688,68 +690,6 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
     FANG_RADIAL_SEGMENTS_BASE,
   );
 
-  // ── Mantle ─────────────────────────────────────────────────────────────────
-
-  /**
-   * The collar, as ONE geometry: every lock is static in rig space and they all
-   * share a material, so merging them costs nothing and saves eight draw calls.
-   *
-   * Each lock's length is a deterministic sample of the noise field at its index
-   * — the same trick the kraken's crown uses, so every client grows the same
-   * mantle — and it only ever SHORTENS (see YETI_MANTLE_LENGTH_VARIATION), which
-   * is what keeps YETI_MANTLE_REACH a real bound.
-   *
-   * A LOCK RUNS OUT AND THEN DOWN, which is the shape the ruff it replaced did
-   * not have: the midpoint is 70% of the way out but only 35% of the way down,
-   * so the piece lies along the top of the shoulder before it falls off the
-   * side of it. Drop is nearly twice reach, and the tube is thick — those two
-   * facts together are the difference between a mane and a set of quills.
-   */
-  function buildMantle(): ReturnType<typeof organicSurface> {
-    const locks = [];
-    for (let index = 0; index < YETI_MANTLE_LOCK_COUNT; index++) {
-      // organicNoise is in [-1, 1]; this maps it to [0, 1] so the scale below is
-      // in [1 - variation, 1] and a lock can only ever be shorter.
-      const wobble = 0.5 + 0.5 * organicNoise(index, 0, 0, NOISE_CHANNEL_TENTACLE);
-      const scale = 1 - wobble * YETI_MANTLE_LENGTH_VARIATION;
-
-      // Lock 0 lies on the centre line ahead of him; the rest divide the circle.
-      const angle = (index / YETI_MANTLE_LOCK_COUNT) * TWO_PI;
-      const outX = Math.cos(angle);
-      const outZ = Math.sin(angle);
-      const at = (reach: number, drop: number): Vector3 => {
-        const radius = YETI_MANTLE_RING_RADIUS + reach * scale;
-        return new Vector3(
-          radius * outX,
-          YETI_MANTLE_RING_HEIGHT - drop * scale,
-          radius * outZ,
-        );
-      };
-
-      const curve = new CatmullRomCurve3([
-        at(0, 0),
-        at(
-          YETI_MANTLE_LOCK_REACH * YETI_MANTLE_LOCK_MID_REACH,
-          YETI_MANTLE_LOCK_DROP * YETI_MANTLE_LOCK_MID_DROP,
-        ),
-        at(YETI_MANTLE_LOCK_REACH, YETI_MANTLE_LOCK_DROP),
-      ]);
-      locks.push(
-        taperedTube(
-          curve,
-          (along) =>
-            YETI_MANTLE_LOCK_RADIUS +
-            (YETI_MANTLE_LOCK_TIP_RADIUS - YETI_MANTLE_LOCK_RADIUS) * along,
-          segments(LOCK_PATH_SEGMENTS_BASE),
-          segments(LOCK_RADIAL_SEGMENTS_BASE),
-        ),
-      );
-    }
-    return organicSurface(locks, YETI_SMOOTH_SKIN);
-  }
-
-  const mantleGeometry = buildMantle();
-
   // ── Limbs ──────────────────────────────────────────────────────────────────
 
   /**
@@ -911,7 +851,6 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
     const upper = new Group();
     rig.add(upper);
     upper.add(new Mesh(bodyGeometry, furMaterial));
-    upper.add(new Mesh(mantleGeometry, mantleMaterial));
 
     const head = new Group();
     head.add(new Mesh(headGeometry, furMaterial));
