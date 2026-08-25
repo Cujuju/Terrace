@@ -356,11 +356,13 @@ describe('walkerGroundY — footprint sampling', () => {
     expect(walkerGroundY(sample, 9.8, 5.5)).toBe(2);
     // Well clear of the boundary the centre cell rules. THE FIXTURE MOVED on
     // 2026-08-22, from x = 9.0 to x = 8.0, and the move is the bug: a grazer
-    // reaches 1.8 CELLS either side of itself (0.45 world units), so at x = 9.0
-    // its body genuinely does overhang cell 10 and standing at band 0 there was
-    // the clipping this function exists to prevent. The old fixture passed only
-    // because the half-extent was being read as 0.45 cells — a quarter of the
-    // creature. See WALKER_FOOTPRINT_HALF_EXTENT.
+    // then reached 1.8 CELLS either side of itself (0.45 world units), so at
+    // x = 9.0 its body genuinely did overhang cell 10 and standing at band 0
+    // there was the clipping this function exists to prevent. The old fixture
+    // passed only because the half-extent was being read as 0.45 cells — a
+    // quarter of the creature. The grazer has since shrunk to 0.18 world units
+    // (0.72 cells, GRAZER_SCALE), so x = 8.0 is clear by an even wider margin
+    // and the fixture stays where it is. See WALKER_FOOTPRINT_HALF_EXTENT.
     expect(walkerGroundY(sample, 8.0, 5.5)).toBe(0);
   });
 
@@ -374,9 +376,10 @@ describe('walkerGroundY — footprint sampling', () => {
     expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBe(
       cellsAcross(WALKER_FOOTPRINT_HALF_EXTENT),
     );
-    // A grazer really does overhang its own cell: a body ~1.1 world units long
-    // is ~4.4 cells, so the probe must reach past cell centre ±1.
-    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBeGreaterThan(1);
+    // A grazer still overhangs most of its own cell: a body ~0.44 world units
+    // long is ~1.76 cells, so the probe must reach a good part of a cell either
+    // side of centre — far more than the raw world-unit number would give.
+    expect(WALKER_FOOTPRINT_HALF_EXTENT_CELLS).toBeGreaterThan(0.5);
   });
 
   it('matches the single-cell sample on flat ground', () => {
