@@ -21,10 +21,20 @@ import {
   WORLD_UNIT_CELLS,
 } from './constants.ts';
 
-/** The world grid. `cells` is row-major, index = y * size + x. */
+/**
+ * The world grid. `cells` is row-major, index = y * size + x, and holds the
+ * CEILING OF EACH COLUMN'S TOPMOST SOLID SPAN — the walkable surface, which is
+ * what it has always held and what `heightAt` returns.
+ *
+ * `columnSpans` is the sparse side table of the rare column that holds more
+ * than one span (an overhang, an arch, a cave roof); a cell absent from it is
+ * solid from the bottom of the world up to `cells[i]`. See columns.ts for the
+ * model, the encoding and the determinism rule that goes with the table.
+ */
 export interface Heightmap {
   readonly size: number;
   readonly cells: Int16Array;
+  readonly columnSpans: Map<number, Int16Array>;
 }
 
 /** One changed cell, as broadcast to clients after an applied edit. */
@@ -39,7 +49,7 @@ export function createHeightmap(size: number): Heightmap {
   if (!Number.isInteger(size) || size <= 0) {
     throw new RangeError(`world size must be a positive integer, got ${size}`);
   }
-  return { size, cells: new Int16Array(size * size) };
+  return { size, cells: new Int16Array(size * size), columnSpans: new Map() };
 }
 
 export function inBounds(map: Heightmap, x: number, y: number): boolean {

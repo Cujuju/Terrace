@@ -8,6 +8,7 @@
 
 import { CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
 import { cellIndex, type Heightmap } from './heightmap.ts';
+import { assertSingleSpanWorld, resetColumns } from './columns.ts';
 
 /**
  * True for a height that is safe to store: a whole number within
@@ -75,6 +76,10 @@ export function unlockChunk(mask: Uint8Array, chunkIdx: number): void {
  */
 export function extractChunkHeights(map: Heightmap, cx: number, cy: number): number[] {
   chunkIndex(map.size, cx, cy); // bounds check
+  // One height per cell is all this payload can say, so a layered column would
+  // be silently flattened on its way to a client. Refuse instead — the wire
+  // grows a span-aware shape before the world is allowed to hold one.
+  assertSingleSpanWorld(map, 'extractChunkHeights');
   const heights: number[] = new Array(CHUNK_SIZE * CHUNK_SIZE);
   const x0 = cx * CHUNK_SIZE;
   const y0 = cy * CHUNK_SIZE;
@@ -113,6 +118,9 @@ export function writeChunkHeights(
   }
   const x0 = cx * CHUNK_SIZE;
   const y0 = cy * CHUNK_SIZE;
+  // The payload defines these columns completely, so whatever spans they held
+  // locally are stale the moment it lands.
+  resetColumns(map, x0, y0, CHUNK_SIZE, CHUNK_SIZE);
   let k = 0;
   for (let y = 0; y < CHUNK_SIZE; y++) {
     for (let x = 0; x < CHUNK_SIZE; x++) {

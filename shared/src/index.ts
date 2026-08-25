@@ -4,6 +4,7 @@
 export * from './constants.ts';
 export * from './calendar.ts';
 export * from './heightmap.ts';
+export * from './columns.ts';
 export * from './chunks.ts';
 export * from './protocol.ts';
 export * from './rivers.ts';
