@@ -85,12 +85,56 @@ export const DAYS_PER_WEEK = WEEKDAY_NAMES.length;
 export const SETTLING_WEEKDAY = 0;
 
 /**
+ * Hours on the world's clock face — the world reads the same 24 hours a real
+ * one does, compressed into DAY_LENGTH_SECONDS.
+ */
+export const HOURS_PER_WORLD_DAY = 24;
+
+/**
+ * The hour the SIM clock's zero point reads: phase 0 is DAWN, not midnight
+ * (plugins/daynight/protocol.ts), and dawn is six o'clock.
+ *
+ * Lives here rather than in day/night's formatter because it is no longer only
+ * a display offset — since the calendar day turns over at midnight (below) it
+ * is the distance between the two zero points, and a formatter that disagreed
+ * with the calendar about where dawn falls would print a weekday that changes
+ * at the wrong hour. day/night's DAWN_MINUTES is derived from this.
+ */
+export const DAWN_HOUR = 6;
+
+/**
+ * How far the calendar day is AHEAD of the sim day, in milliseconds.
+ *
+ * THE CALENDAR DAY TURNS OVER AT MIDNIGHT (owner, 2026-08-24), while the sim
+ * clock — and the sky it drives — still starts its lap at dawn. Six of the new
+ * day's hours are therefore already spent at sim-time zero, and adding them
+ * back before the divide is what moves the boundary from dawn to the midnight
+ * eighteen world-hours later. Nothing about the sun moves: the phase, its
+ * keyframes and the broadcast are untouched, and only the NAME of the day
+ * changes at a different moment than before.
+ *
+ * The world's first day is consequently a short one — a world born at dawn
+ * lives eighteen hours of its Monday, exactly as a calendar treats anything
+ * born at six in the morning.
+ *
+ * Floored so the offset stays an integer for any future DAY_LENGTH_SECONDS or
+ * DAWN_HOUR that does not divide evenly; at the current values it is exact
+ * (1_440_000 * 6 / 24 = 360_000).
+ */
+const CALENDAR_LEAD_MILLIS = Math.floor((DAY_LENGTH_MILLIS * DAWN_HOUR) / HOURS_PER_WORLD_DAY);
+
+/**
  * Which day of the world a moment falls in — day 0 is the world's first.
+ *
+ * MIDNIGHT TO MIDNIGHT, not dawn to dawn: see CALENDAR_LEAD_MILLIS. Every
+ * consumer of a day — the weekday the header names, the heading the chronicle
+ * writes, the Monday settlers arrive on — moves together because they all
+ * come through here.
  *
  * Takes integer milliseconds, not seconds: see this file's header on drift.
  */
 export function dayOfSimMillis(simMillis: number): number {
-  return Math.floor(simMillis / DAY_LENGTH_MILLIS);
+  return Math.floor((simMillis + CALENDAR_LEAD_MILLIS) / DAY_LENGTH_MILLIS);
 }
 
 /**
@@ -139,8 +183,11 @@ export function isSettlingDay(day: number): boolean {
  *   - It is a real MONDAY, so absolute day 0 is a Monday and the calendar above
  *     still needs no epoch offset — `weekdayOf(0)` is 'Monday' whether that 0
  *     came from a world's genesis or from this epoch.
- *   - It is UTC midnight, so a world day boundary falls on every real 24-minute
- *     mark from midnight, rather than at some arbitrary offset within the hour.
+ *   - It is UTC midnight, so the world's dawn — the sim clock's zero, where the
+ *     sky starts its lap — falls on every real 24-minute mark from midnight,
+ *     rather than at some arbitrary offset within the hour. The world's own
+ *     midnight, where the DAY NAME turns over, is a fixed eighteen world-hours
+ *     (18 real minutes) after each of those marks; see CALENDAR_LEAD_MILLIS.
  * It is deliberately in the past relative to every world this build can open,
  * so no real server ever sees the negative clamp below.
  *
