@@ -50,7 +50,7 @@ import {
   type MovingWalker,
   type PilgrimWorld,
 } from './pilgrimage.ts';
-import { foundStructureAt } from './structures-bridge.ts';
+import { canFoundStructureAt, foundStructureAt } from './structures-bridge.ts';
 import type { BridgedTemple } from './temples-bridge.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,23 +94,28 @@ export const SETTLE_MIN_DISTANCE_CELLS = cellsAcross(4);
 export const SETTLE_MAX_DISTANCE_CELLS = cellsAcross(20);
 
 /**
- * How many directions out of the temple are tried when choosing a site.
+ * How many directions out of the temple are tried when choosing a site, and
+ * how many distances along each, from the minimum out to the maximum.
  *
- * 12 — every 30°, which is fine enough that a coastline or a cliff blocking a
- * whole quadrant still leaves plenty of legal bearings, and coarse enough that
- * the whole scan is a couple of dozen walkability probes rather than a sweep
- * of the county. (pickViewpoint uses 16 for the same kind of ring; a settler
- * needs less resolution than a viewpoint because any legal ground will do.)
+ * 48 × 16 = 768 probes, MEASURED rather than reasoned (the live world,
+ * snapshot 468, 2026-08-24). These were 12 × 4 = 48 on the argument that a
+ * couple of dozen probes must be enough to find ground when a whole quadrant
+ * is not blocked. They were not: the settle range is an annulus 16 to 80 cells
+ * out — about nineteen thousand cells — and 48 probes sample a quarter of one
+ * percent of it, so with only 7.2% of walkable blocks actually buildable (see
+ * scanSettleSites) whole legal valleys fell between the probes. Of 421 land
+ * sites on the live world, a temple could dispatch anybody from 25 at 12 × 4,
+ * 35 at 24 × 8, and 42 at 48 × 16 — where it SATURATES: 96 × 32 finds not one
+ * site more, so 768 probes is where the ground itself, rather than the sample,
+ * becomes the limit.
+ *
+ * The cost at that resolution is 1.5 ms for a scan that finds nothing (the
+ * worst case; a scan that succeeds stops early), paid once per dispatch
+ * — one every SETTLER_DISPATCH_SECONDS — and once per temple placement press.
  */
-export const SETTLE_RING_SAMPLES = 12;
+export const SETTLE_RING_SAMPLES = 48;
 
-/**
- * How many distances along each bearing are tried, from the minimum out to the
- * maximum. 4 — with the shipped range that is a probe every four world units,
- * about one every homestead-and-a-gap, so no legal band of ground between the
- * temple and the range limit is stepped over.
- */
-export const SETTLE_DISTANCE_STEPS = 4;
+export const SETTLE_DISTANCE_STEPS = 16;
 
 /**
  * How many sites one settler may try before giving up and going home to the
@@ -187,11 +192,28 @@ function doorOf(temple: BridgedTemple): { x: number; y: number } {
  * bearing is what stops every settler from a given temple filing out in the
  * same direction.
  *
- * WALKABILITY IS THE ONLY TEST MADE ON THE GROUND ITSELF. Whether it will take
- * a HOUSE is structures' predicate, and this plugin deliberately keeps no copy
- * of it (a second copy is exactly the drift the bridge exists to avoid) — so
- * the honest answer arrives when the settler gets there and asks, which is
- * what SETTLER_SITE_ATTEMPTS exists to pay for.
+ * THE GROUND IS TESTED TWICE, AND BOTH TESTS BELONG TO SOMEBODY ELSE: can a
+ * walker stand on the whole block (shared's traversal, via isWalkableCell),
+ * and would structures take a house on each of its cells (that plugin's own
+ * predicate, over the bridge — `canFoundStructureAt`). Neither is copied here.
+ *
+ * THE SECOND TEST USED NOT TO BE MADE (2026-08-24). The scan tested walkability
+ * alone and left buildability to be discovered on arrival, on the reasoning
+ * that structures owns that predicate and a copy of it here would drift. That
+ * reasoning was right — and asking across the bridge honours it exactly, while
+ * keeping a copy would not. Leaving the question unasked was the mistake:
+ * walkable means dry ground, buildable means dry ground whose whole footprint
+ * sits in one terrace band, and on the live world only 7.2% of walkable 2×2
+ * blocks clear the second bar (measured, snapshot 468). A settler choosing on
+ * walkability alone therefore missed roughly four times out of five, spent all
+ * SETTLER_SITE_ATTEMPTS missing, and vanished — the owner's "they walk off to a
+ * corner and just disappear".
+ *
+ * THE ARRIVAL CHECK AND THE RETRIES STAY, because the answer can change while
+ * the settler walks: the ground it was promised can be sculpted away, or
+ * another settlement can take the cell first. That is now a rare race rather
+ * than the common case, which is exactly what SETTLER_SITE_ATTEMPTS was always
+ * meant to pay for.
  */
 function scanSettleSites<T>(
   world: PilgrimWorld,
@@ -215,7 +237,7 @@ function scanSettleSites<T>(
         SETTLE_MIN_DISTANCE_CELLS + (span * d) / Math.max(1, SETTLE_DISTANCE_STEPS - 1);
       const anchorX = Math.floor(temple.x + cos * distance);
       const anchorY = Math.floor(temple.y + sin * distance);
-      if (!isBlockWalkable(world, anchorX, anchorY)) continue;
+      if (!isBlockSettleable(world, anchorX, anchorY)) continue;
 
       const site: SettleSite = {
         x: anchorX,
@@ -232,11 +254,19 @@ function scanSettleSites<T>(
   return null;
 }
 
-/** Is every cell of the 2x2 block at this anchor ground a settler can stand on? */
-function isBlockWalkable(world: PilgrimWorld, anchorX: number, anchorY: number): boolean {
+/**
+ * Is every cell of the 2x2 block at this anchor ground a settler can stand on
+ * AND ground structures would raise a home on? Both, per cell — a homestead
+ * that can only be half built is not a homestead (see this file's header: two
+ * cells of the four die out next generation).
+ */
+function isBlockSettleable(world: PilgrimWorld, anchorX: number, anchorY: number): boolean {
   for (let dy = 0; dy < HOMESTEAD_EDGE_CELLS; dy++) {
     for (let dx = 0; dx < HOMESTEAD_EDGE_CELLS; dx++) {
-      if (!isWalkableCell(world, anchorX + dx, anchorY + dy)) return false;
+      const x = anchorX + dx;
+      const y = anchorY + dy;
+      if (!isWalkableCell(world, x, y)) return false;
+      if (!canFoundStructureAt(world, x, y)) return false;
     }
   }
   return true;
