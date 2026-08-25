@@ -860,14 +860,22 @@ export function createRiverRig(
    *      the one the owner stopped complaining about.
    *   4. Pour each region over its downstream lips with CURTAINS
    *      (water/waterCurtain.ts) cut from that region's OWN boundary loops —
-   *      the arcs the tread already returned — extruded down one band at a
-   *      time and re-seated onto each level's own contour, exactly as
-   *      capEmission.ts stacks one skirt per level. Nothing here models a
-   *      surface beside the terrain: every water vertex, tread and curtain
-   *      alike, is a number the terrain's own contour pipeline produced. That
-   *      is the whole point of the change (docs/plans/water-painted-on-bands.md)
-   *      — the apron this replaced derived its own heights from the cell
-   *      lattice and 11,340 of 84,073 vertices floated a full band.
+   *      the arcs the tread already returned — as flat VERTICAL sheets, each
+   *      running from the pool it hangs off straight down to the pool or
+   *      ground it lands on. Nothing here models a surface beside the terrain:
+   *      every water vertex, tread and curtain alike, is a number the
+   *      terrain's own contour pipeline produced. That is the whole point of
+   *      the change (docs/plans/water-painted-on-bands.md) — the apron this
+   *      replaced derived its own heights from the cell lattice and 11,340 of
+   *      84,073 vertices floated a full band.
+   *
+   *      CORRECTED 2026-08-24: this paragraph used to describe the curtain as
+   *      "extruded down one band at a time and re-seated onto each level's own
+   *      contour, exactly as capEmission.ts stacks one skirt per level". That
+   *      was true of the staircase design, which the owner paused in favour of
+   *      vertical sheets the same day — so the comment was asserting deleted
+   *      code as present-tense fact. See waterCurtain.ts's header for the
+   *      reasoning behind the pause.
    */
   const rebuild = (mirror: TerrainMirror): void => {
     const network = computeRiverNetwork(mirror.map, {

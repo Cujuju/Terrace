@@ -1,7 +1,36 @@
 # Water painted onto the terrain's own bands
 
-Status: PLAN — approved to implement 2026-08-23. Supersedes the apron (retired),
-the per-segment riser (reverted), and the draped course ribbon (reverted).
+Status: IMPLEMENTED 2026-08-24, WITH ONE PART SUPERSEDED. Supersedes the apron
+(retired), the per-segment riser (reverted), and the draped course ribbon
+(reverted).
+
+> **W3's staircase was paused by the owner on 2026-08-24, the day it shipped,
+> and the code no longer does what §"W3" below describes.** A waterfall is now
+> a flat VERTICAL sheet — one quad per pouring segment, from the pool it hangs
+> off straight down to the pool or ground it lands on — not a run of arcs
+> re-seated onto each level's own contour. The sections below are kept as the
+> derivation that got us here and as the record of the staircase, should it be
+> resumed; they are NOT a description of the shipped code. Specifically, these
+> are now false:
+>
+> * the `appendCurtains` signature in §W3 (it now also takes `bandSurfaceY` and
+>   `waterBandAt`, which are what weld a fall to the pools above and below it);
+> * §W3 step 3's per-level walk-down and `nearestOnContour` re-seating, and the
+>   acceptance test "an N-band cliff emits N stacked quads per segment" — that
+>   test would now FAIL on correct code;
+> * §W3 step 1's border rule, written as `rect !== RECT_NONE` on either
+>   endpoint. The shipped test is the shared-axis mask `(a.rect & b.rect) !== 0`,
+>   which is what `capEmission.ts`'s `isBorderSegment` actually uses; the
+>   literal reading killed genuine segments merely touching a border;
+> * `CURTAIN_OUTWARD_WORLD_UNITS` in §"Explicit decisions" — deleted. Moving a
+>   vertex to buy depth clearance was itself the hairline crack at every
+>   pool-to-wall junction. The bias now lives on the water material as a
+>   polygon offset (`WATER_DEPTH_BIAS_FACTOR`/`_UNITS`), which biases the depth
+>   comparison without moving geometry.
+>
+> The contract in §"The contract change" — water is never modelled alongside
+> the terrain, every vertex comes from the terrain's own contour output — is
+> unchanged and still governs.
 
 ## The defect, measured
 

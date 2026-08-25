@@ -182,7 +182,7 @@ function footBandOf(
   b: ContourPoint,
   normal: { x: number; z: number },
   surfaceBand: number,
-): number {
+): { band: number; inWater: boolean } {
   const midX = (a.x + b.x) / 2;
   const midZ = (a.z + b.z) / 2;
   const steps = Math.round(CURTAIN_FOOT_SEARCH_MAX_CELLS / CURTAIN_PROBE_CELLS);
@@ -213,7 +213,9 @@ function footBandOf(
     if (groundFalling || band > lowestGround) groundSettled = true;
   }
 
-  return lowestWater ?? lowestGround;
+  return lowestWater !== null
+    ? { band: lowestWater, inWater: true }
+    : { band: lowestGround, inWater: false };
 }
 
 /**
@@ -268,15 +270,33 @@ export function appendCurtains(
       if (isTileClosingSegment(a, b)) continue;
 
       const normal = outwardNormal(a, b);
-      const landingBand = footBandOf(ground, waterBandAt, a, b, normal, surfaceBand);
-      if (landingBand >= surfaceBand) continue;
+      const foot = footBandOf(ground, waterBandAt, a, b, normal, surfaceBand);
+      if (foot.band >= surfaceBand) continue;
 
       // The foot lands at the height water on THAT band stands at, not at the
       // bare rock cap — so where a pool really is down there, the sheet's
       // bottom edge meets that pool's surface plane exactly, the same way its
-      // top edge meets the pool above. Clamped at the sea: nothing is drawn
-      // below the surface the sea plane already covers.
-      const bottomY = Math.max(bandSurfaceY(landingBand), seaWorldY);
+      // top edge meets the pool above.
+      //
+      // THE SEA CLAMPS A FALL ONTO ROCK, NEVER ONE INTO WATER (found in
+      // review, 2026-08-24). The clamp exists so a sheet cannot hang inside
+      // the ocean column with nothing to pour onto, which is a statement about
+      // falls onto bare ground. Applied to a fall INTO a pool it breaks the
+      // weld, because there the foot's height IS the join to that pool's
+      // surface.
+      //
+      // Band 0 is where that bit, and it bit every time: water standing on
+      // band 0 sits at bandSurfaceY(0) = 1/64 while the sea plane sits at
+      // SEA_LEVEL + WATER_SURFACE_LIFT = 1/32 — the river lift is deliberately
+      // HALF the sea's (riverRig.ts's RIVER_SURFACE_LIFT_WORLD_UNITS) — so a
+      // band-0 pool is under the sea plane by construction and an
+      // unconditional clamp ALWAYS won. Every fall into a band-0 pool stopped
+      // 1/64 above the pool it was supposed to be welded to, and over dry
+      // band-0 shore, where the sea's depth-alpha is zero and hides nothing,
+      // that slit shows at the foot of the wall.
+      const bottomY = foot.inWater
+        ? bandSurfaceY(foot.band)
+        : Math.max(bandSurfaceY(foot.band), seaWorldY);
       if (bottomY >= topY) continue;
 
       const ax = a.x * CELL_WORLD_SIZE;
