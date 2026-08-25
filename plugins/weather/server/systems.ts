@@ -569,6 +569,40 @@ export function advanceWind(dt: number): void {
  *
  * Iterating backwards is what lets step 3 splice inside the same pass.
  */
+/**
+ * The kinds that put WATER on the ground. Fog is a haze and does not wet
+ * anything; the other three do, and snow counts because a fire under falling
+ * snow is a fire under falling water with extra steps.
+ */
+const WETTING_KINDS: readonly WeatherKind[] = ['rain', 'storm', 'snow'];
+
+/**
+ * How wet cell (x, y) is right now, in [0, 1] — the strongest wetting system
+ * covering it, or 0 under clear sky.
+ *
+ * Added 2026-08-24 for fire (plugins/fire/server/weather-bridge.ts): rain is
+ * what puts a fire out, and it closes the loop the storm opened by starting one.
+ * STRONGEST rather than summed, because two overlapping fronts do not make the
+ * ground twice as wet as water can make it, and a sum would exceed 1 and break
+ * every caller that treats this as a fraction.
+ *
+ * A HARD-EDGED DISC, matching how the client draws a system's footprint and how
+ * every other query in this file treats a system's radius — a soft falloff here
+ * would put out fires at a range no player can see the rain reaching.
+ */
+export function precipitationAt(x: number, y: number): number {
+  let wettest = 0;
+  for (const system of systems) {
+    if (!WETTING_KINDS.includes(system.kind)) continue;
+    const dx = x - system.x;
+    const dy = y - system.y;
+    if (dx * dx + dy * dy > system.radius * system.radius) continue;
+    const intensity = system.peakIntensity * system.envelope;
+    if (intensity > wettest) wettest = intensity;
+  }
+  return Math.min(1, wettest);
+}
+
 export function advanceWeather(world: WeatherWorld, dt: number): void {
   advanceWind(dt);
   const { vx, vy } = windVelocity();

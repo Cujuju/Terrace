@@ -1,11 +1,11 @@
 // How a fire gets from one cell to the next.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ONE RATE, THREE MULTIPLIERS.
+// ONE RATE, AND THE TERMS THAT MULTIPLY IT.
 //
 // Every neighbour of every burning cell has a chance per second of catching:
 //
-//   rate = BASE_SPREAD_RATE × intensity × wind × slope × diagonal
+//   rate = BASE_SPREAD_RATE × intensity × wind × slope × diagonal × wet
 //
 // and `happensWithin` (./rng.ts) turns that rate into a yes or no for the step.
 // Nothing else influences it. Keeping it to one product is what makes the
@@ -20,6 +20,10 @@
 //              player can actually see, and it is why the terrain matters.
 //   DIAGONAL   a diagonal neighbour is √2 further away, so it catches at
 //              1/√2 the rate. Without it a fire spreads as a square.
+//   WET        rain on the ground ahead. The same number that puts fires out
+//              (./index.ts) also stops them starting, so a front walking into a
+//              squall slows before it dies rather than marching on and then
+//              vanishing all at once.
 //
 // WHAT IS NOT A TERM, and does not need to be: fuel. A cell with nothing on it
 // simply fails to ignite (Blaze.ignite consults the registry), so water, bare
@@ -33,7 +37,7 @@ import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import { fireIntensity, type FireCellState } from '../protocol.ts';
 import type { Blaze } from './blaze.ts';
 import { happensWithin } from './rng.ts';
-import { currentWind } from './weather-bridge.ts';
+import { currentWind, precipitationAt } from './weather-bridge.ts';
 
 /**
  * Simulated seconds between spread evaluations.
@@ -126,6 +130,17 @@ export const SLOPE_UPHILL_MULTIPLIER_PER_BAND = 1.6;
  */
 export const SLOPE_CLAMP_BANDS = 2;
 
+/**
+ * How much of the spread rate rain can take away, at full intensity.
+ *
+ * 0.9 rather than 1: even in a downpour a fire in dense fuel can creep, and a
+ * hard zero would make heavy rain an absolute wall that a player could stand
+ * behind. The remaining tenth is slow enough to outrun and too visible to
+ * ignore, which is the same shape as WIND_UPWIND_FLOOR and chosen for the same
+ * reason — no term in this product is ever allowed to be a guarantee.
+ */
+export const WET_SPREAD_PENALTY = 0.9;
+
 /** 1/√2 — a diagonal neighbour is that much further away. See the header. */
 const DIAGONAL_RATE_FACTOR = Math.SQRT1_2;
 
@@ -191,12 +206,17 @@ export function spreadRate(
   if (intensity < SPREAD_MIN_INTENSITY) return 0;
 
   const distanceFactor = dx !== 0 && dy !== 0 ? DIAGONAL_RATE_FACTOR : 1;
+  // The wetness of the TARGET cell, not of the burning one: what matters is
+  // whether the thing about to catch is wet, and a fire under a squall's edge
+  // should still light the dry ground behind it.
+  const wetFactor = 1 - WET_SPREAD_PENALTY * precipitationAt(fire.x + dx, fire.y + dy);
   return (
     BASE_SPREAD_RATE_PER_SECOND *
     intensity *
     windFactor(dx, dy, wind.heading, wind.speed) *
     slopeFactor(world.heightAt(fire.x, fire.y), world.heightAt(fire.x + dx, fire.y + dy)) *
-    distanceFactor
+    distanceFactor *
+    wetFactor
   );
 }
 

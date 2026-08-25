@@ -19,9 +19,21 @@
 // day. One warning is logged, once. That is the right failure mode: a
 // self-hoster who removed the weather plugin removed weather, not fire.
 
-/** The slice of weather this plugin uses — the wind, and nothing else. */
+/**
+ * The slice of weather this plugin uses: the wind that carries a fire, and the
+ * rain that ends one. Two members, and they are the whole compatibility surface
+ * between two independently-deletable folders — every one added here is another
+ * way a version mismatch can degrade.
+ */
 export interface WeatherWindApi {
   currentWind(): { readonly heading: number; readonly speed: number };
+  /**
+   * How wet a cell is, in [0, 1]. OPTIONAL on purpose: a weather plugin from
+   * before 2026-08-24 exports `currentWind` and not this, and the right
+   * degradation is "the wind still steers the fire, but rain does not put it
+   * out" rather than refusing the whole bridge over a missing member.
+   */
+  precipitationAt?(x: number, y: number): number;
 }
 
 /** Loads the weather module. Swappable so tests can exercise the absent path. */
@@ -93,6 +105,21 @@ export function currentWind(): { readonly heading: number; readonly speed: numbe
   // zero every neighbour's chance and stop fire spreading at all.
   if (!Number.isFinite(wind.heading) || !Number.isFinite(wind.speed)) return CALM;
   return wind;
+}
+
+/**
+ * How wet cell (x, y) is, in [0, 1]. Zero — bone dry — while the bridge is
+ * loading, when weather is absent, and when the installed weather is too old to
+ * answer. Callers never branch on any of that.
+ */
+export function precipitationAt(x: number, y: number): number {
+  if (weatherApi === null || weatherApi.precipitationAt === undefined) return 0;
+  const wetness = weatherApi.precipitationAt(x, y);
+  // A malformed answer is treated as dry rather than trusted into the
+  // suppression arithmetic, where a NaN would make every comparison false and
+  // silently disable rain.
+  if (!Number.isFinite(wetness)) return 0;
+  return Math.min(1, Math.max(0, wetness));
 }
 
 /** Test seam: forgets the load and the warning. */
