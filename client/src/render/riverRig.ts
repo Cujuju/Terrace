@@ -239,29 +239,31 @@ const MIST_BOB_HEIGHT_WORLD_UNITS = CELL_WORLD_SIZE * 0.15;
 const TWO_PI = Math.PI * 2;
 
 // ── Spring / plunge-pool effect ──────────────────────────────────────────────
-// The waterfall marker that replaced the mist puffs (2026-08-20, owner
+// The SPRING marker that replaced the mist puffs (2026-08-20, owner
 // directive: springs must LOOK like springs). Two merged meshes cover every
-// waterfall in the network:
+// spring in the network — and only springs: the plunge-point half was removed
+// 2026-08-24 (see "WHERE THE EFFECT BELONGS" in rebuildSprings for the
+// owner's reasoning).
 //
-//   1. RIPPLE RINGS — SPRING_RING_COUNT flat concentric annuli per waterfall,
+//   1. RIPPLE RINGS — SPRING_RING_COUNT flat concentric annuli per spring,
 //      each cycling from SPRING_RING_MIN_RADIUS_CELLS out to
 //      SPRING_RING_MAX_RADIUS_CELLS. A ring's band width follows
 //      sin(π · progress): zero at birth, widest mid-life, zero again as it
 //      dies at full radius — so rings appear and dissolve with no popping and
 //      WITHOUT animating material opacity (one shared material serves every
-//      waterfall; per-ring opacity would need per-vertex alpha machinery for
+//      spring; per-ring opacity would need per-vertex alpha machinery for
 //      no extra legibility at orbit distance).
-//   2. FOAM DOME — a faceted low-poly dome over the plunge point that swells
-//      and settles like water welling up, in the flat-shaded style of the
-//      rest of the world.
+//   2. FOAM DOME — a faceted low-poly dome over the spring that swells and
+//      settles like water welling up, in the flat-shaded style of the rest of
+//      the world.
 //
 // Both geometries are built once per throttled recompute and their position
 // buffers are MUTATED IN PLACE per frame (house rule #1/#2 in the module
-// header). Per-waterfall cost is fixed and small — see the budget note under
+// header). Per-spring cost is fixed and small — see the budget note under
 // SPRING_RING_SEGMENTS.
 
 /**
- * Concurrent ripple rings per waterfall. Three staggered thirds of a cycle
+ * Concurrent ripple rings per spring. Three staggered thirds of a cycle
  * apart read as a continuous "welling" train; two leaves a visible dead gap
  * between ripples, four adds cost with no legibility gain at orbit distance.
  */
@@ -272,16 +274,19 @@ const SPRING_RING_COUNT = 3;
  * still reads as a CIRCLE rather than a hexagon-ish blob at orbit distance,
  * and its faceting matches the world's flat-shaded style anyway.
  *
- * BUDGET, per waterfall: rings are SPRING_RING_COUNT × (2 ×
+ * BUDGET, per spring: rings are SPRING_RING_COUNT × (2 ×
  * SPRING_RING_SEGMENTS) = 72 vertices / 72 triangles; the dome is
  * 2 × SPRING_DOME_SEGMENTS + 1 = 17 vertices / 24 triangles. Total 89
- * vertices / 96 triangles per waterfall. Network-wide: at most
- * MAX_SPRINGS_PER_NETWORK = 24 rivers (shared/src/rivers.ts), each dropping
- * one waterfall PER BAND CROSSED — a typical mountain course is a handful,
- * so a network is a few thousand triangles, far below one terrain chunk.
- * (The index buffers are Uint32 rather than Uint16 because that per-river
- * multiplier is unbounded by a constant — a pathological all-cliff world
- * could pass 65 535 ring vertices.)
+ * vertices / 96 triangles per spring.
+ *
+ * Network-wide this is now BOUNDED BY A CONSTANT, which it was not before
+ * 2026-08-24: one site per river, at most MAX_SPRINGS_PER_NETWORK = 24 rivers
+ * (shared/src/rivers.ts) — about 2 100 vertices, a rounding error against one
+ * terrain chunk. The old per-band plunge sites made the count scale with how
+ * cliffy the world was, which is why the index buffers are Uint32; they are
+ * left that way rather than narrowed to Uint16 on the strength of one bound,
+ * since the cost is nil and a future foot-of-fall effect would restore the
+ * unbounded case.
  */
 const SPRING_RING_SEGMENTS = 12;
 
@@ -513,7 +518,7 @@ export function createRiverRig(
   const waterMesh = new Mesh(new BufferGeometry(), waterMaterial);
   parent.add(waterMesh);
 
-  // Spring materials — one shared instance each across every waterfall in
+  // Spring materials — one shared instance each across every spring in
   // the network (the rings/dome geometries are merged, so one draw call per
   // mesh). depthWrite stays false like the water tiles': the effect layers
   // over translucent water and must not punch holes in what renders behind.
@@ -539,24 +544,24 @@ export function createRiverRig(
 
   let lastRebuildMs = Number.NEGATIVE_INFINITY;
 
-  /** Band-quantised render height, in world Y units, for one mirror cell. */
-  const quantizeToBandWorldY = (mirror: TerrainMirror, x: number, y: number): number =>
-    quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
-
   /**
    * Rebuilds the spring effect from scratch, one ripple-ring set and one foam
-   * dome per waterfall, merged into two indexed geometries (one draw call
+   * dome per spring, merged into two indexed geometries (one draw call
    * each). Vertex POSITIONS here are only placeholders for the animated
    * components — the frame handler below overwrites ring X/Z and dome Y every
    * frame from the flat per-vertex arrays captured in SpringState — but the
    * static components (ring Y, dome X/Z) and both index buffers are final.
    *
-   * Cycle offsets are staggered per ring AND per waterfall (`w /
-   * waterfalls.length`) for the same reason the superseded mist staggered its
+   * Cycle offsets are staggered per ring AND per spring (`w /
+   * springs.length`) for the same reason the superseded mist staggered its
    * bob phases across the whole buffer: no two springs pulsing in visible
    * lockstep.
    */
-  const rebuildSprings = (mirror: TerrainMirror, network: RiverNetwork): void => {
+  const rebuildSprings = (
+    mirror: TerrainMirror,
+    network: RiverNetwork,
+    waterSurfaceYAt: (x: number, y: number) => number | null,
+  ): void => {
     if (spring !== null) {
       parent.remove(spring.ringMesh);
       parent.remove(spring.domeMesh);
@@ -565,57 +570,48 @@ export function createRiverRig(
       spring = null;
     }
 
-    // WHERE THE EFFECT BELONGS (2026-08-22, owner: the rings "should only be
-    // shown at sources of water or at the bottom of drawn waterfalls").
+    // WHERE THE EFFECT BELONGS.
     //
-    // It used to sit on every Waterfall in the network, and a Waterfall is
-    // recorded at the cell the water leaves — the LIP. So the rings rode the
-    // top of each drop, where the water is smooth and leaving, and there was
-    // nothing at all where it lands or where it first comes out of the
-    // ground: the two places broken water actually is. On a staircase that
-    // put a ripple on all 68 of them.
+    // 2026-08-22, owner: the rings "should only be shown at sources of water
+    // or at the bottom of drawn waterfalls". Before that it sat on every
+    // Waterfall in the network, and a Waterfall is recorded at the cell the
+    // water LEAVES — the lip. So the rings rode the top of each drop, where
+    // the water is smooth and leaving, and there was nothing where it lands
+    // or where it comes out of the ground.
     //
-    // The sites are now the two the owner named:
+    // 2026-08-24, owner, NARROWING THAT to sources alone: "I would prefer if
+    // that spring slash plunge foam effect was only applied to springs. If
+    // it's going to draw a plunge effect where water pours into more water
+    // like the bottom of a waterfall, that animation needs to be changed
+    // because that's not what it would look like."
     //
-    //   * SOURCES — the first point of a river's trunk course, the spring
-    //     itself, which is the one place in a network where water arrives
-    //     from nowhere and should look like it.
-    //   * PLUNGE POINTS — the cell a fall LANDS in, found by walking the
-    //     course to the cell after the lip, rather than the lip cell itself.
+    // So plunge points are dropped rather than left drawing the wrong thing.
+    // Expanding rings ARE what a spring looks like — water welling up and
+    // spreading out from a point — and are NOT what a fall's foot looks like,
+    // which is churn and spray driven downward, not a tidy concentric
+    // ripple. Marking the foot of a fall is deferred until it has an
+    // animation of its own; it is not approximated with this one.
     //
-    // Deduplicated by cell: a fall landing straight into the next fall's lip,
-    // or a spring that is itself a plunge point, is one patch of broken water
-    // and gets one effect.
+    // A SOURCE is the first point of a river's trunk course: the one place in
+    // a network where water arrives from nowhere and should look like it.
+    // Deduplicated by cell, so two rivers sharing a head spring get one
+    // effect.
     const siteCells = new Map<number, { readonly x: number; readonly y: number }>();
-    const addSite = (x: number, y: number): void => {
-      siteCells.set(cellIndex(mirror.map, x, y), { x, y });
-    };
     for (const river of network.rivers) {
-      const trunk = river.courses[0];
-      const source = trunk?.points[0];
-      if (source !== undefined) addSite(source.x, source.y);
-      // The cell a fall lands in: the point after the lip along whichever
-      // course runs through it. A lip with no following point is a course
-      // that ended there (its budget ran out), and has no plunge to mark.
-      for (const fall of river.waterfalls) {
-        for (const course of river.courses) {
-          const at = course.points.findIndex(
-            (point) => point.x === fall.x && point.y === fall.y,
-          );
-          if (at < 0) continue;
-          const foot = course.points[at + 1];
-          if (foot !== undefined) addSite(foot.x, foot.y);
-          break;
-        }
-      }
+      const source = river.courses[0]?.points[0];
+      if (source === undefined) continue;
+      siteCells.set(cellIndex(mirror.map, source.x, source.y), {
+        x: source.x,
+        y: source.y,
+      });
     }
-    const waterfalls = [...siteCells.values()];
-    if (waterfalls.length === 0) return;
+    const springs = [...siteCells.values()];
+    if (springs.length === 0) return;
 
     // ── Ripple rings ──
     const ringVertsPerRing = SPRING_RING_SEGMENTS * 2; // inner edge + outer edge
-    const ringVertsPerWaterfall = SPRING_RING_COUNT * ringVertsPerRing;
-    const ringVertexCount = waterfalls.length * ringVertsPerWaterfall;
+    const ringVertsPerSpring = SPRING_RING_COUNT * ringVertsPerRing;
+    const ringVertexCount = springs.length * ringVertsPerSpring;
     const ringPositions = new Float32Array(ringVertexCount * 3);
     const ringNormals = new Float32Array(ringVertexCount * 3);
     const ringCentreX = new Float32Array(ringVertexCount);
@@ -628,47 +624,62 @@ export function createRiverRig(
     // Two triangles per segment per ring. Uint32: see the budget note under
     // SPRING_RING_SEGMENTS for why Uint16 cannot be assumed safe here.
     const ringIndices = new Uint32Array(
-      waterfalls.length * SPRING_RING_COUNT * SPRING_RING_SEGMENTS * 2 * 3,
+      springs.length * SPRING_RING_COUNT * SPRING_RING_SEGMENTS * 2 * 3,
     );
 
     // ── Foam domes ──
     // Base octagon + mid octagon + apex point.
     const domeVertsPerDome = SPRING_DOME_SEGMENTS * 2 + 1;
-    const domeVertexCount = waterfalls.length * domeVertsPerDome;
+    const domeVertexCount = springs.length * domeVertsPerDome;
     const domePositions = new Float32Array(domeVertexCount * 3);
     const domeRestOffsetY = new Float32Array(domeVertexCount);
     const domeSurfaceY = new Float32Array(domeVertexCount);
     const domePhase = new Float32Array(domeVertexCount);
     // Base→mid band is 2 triangles per segment; mid→apex fan is 1. Uint32 for
     // the same reason as the ring indices.
-    const domeIndices = new Uint32Array(waterfalls.length * SPRING_DOME_SEGMENTS * 3 * 3);
+    const domeIndices = new Uint32Array(springs.length * SPRING_DOME_SEGMENTS * 3 * 3);
 
     let ringIndexWrite = 0;
     let domeIndexWrite = 0;
-    for (let w = 0; w < waterfalls.length; w++) {
-      const waterfall = waterfalls[w]!;
-      const centreX = waterfall.x * CELL_WORLD_SIZE;
-      const centreZ = waterfall.y * CELL_WORLD_SIZE;
+    for (let w = 0; w < springs.length; w++) {
+      const site = springs[w]!;
+      const centreX = site.x * CELL_WORLD_SIZE;
+      const centreZ = site.y * CELL_WORLD_SIZE;
       // The effect's resting surface: the river's height at the plunge cell,
       // plus its own anti-z-fight lift over that water.
+      // FOAM SITS ON THE WATER, NOT ON THE BED (fixed 2026-08-24, owner's
+      // screenshot: faint white rings visible INSIDE the water rather than on
+      // it). This used to read `quantizeToBandWorldY(mirror, x, y)` — the
+      // band-quantised height of the GROUND at the cell, straight off the cell
+      // lattice — which is the bed, not the surface. Wherever a spring is
+      // submerged under a lake or the sea, that put the rings on the lakebed
+      // and you saw them dimly through the water above.
+      //
+      // Two rules, both of them "the surface a viewer would actually see":
+      //   * the river's own water surface at that cell, which is the tread the
+      //     rings are foam on — the SAME bandWorldY the tread was built with,
+      //     not a second derivation of it;
+      //   * never below the sea, because where the terrain is drowned the
+      //     visible surface is the sea plane and nothing else.
+      // A spring whose cell carries no water at all has no surface to sit on;
+      // it is skipped when the sites are gathered.
       const surfaceY =
-        quantizeToBandWorldY(mirror, waterfall.x, waterfall.y) +
-        RIVER_SURFACE_LIFT_WORLD_UNITS +
+        Math.max(waterSurfaceYAt(site.x, site.y) ?? SEA_SURFACE_WORLD_Y, SEA_SURFACE_WORLD_Y) +
         SPRING_EFFECT_LIFT_WORLD_UNITS;
-      const waterfallStagger = w / waterfalls.length;
+      const springStagger = w / springs.length;
       // The effect is never wider than the ground under it: the widest ring
       // this site may draw, as a fraction of the widest ring there is.
       const fittedRadiusCells = Math.min(
         SPRING_RING_MAX_RADIUS_CELLS,
-        plotRadiusCells(mirror, waterfall.x, waterfall.y) * SPRING_RING_PLOT_FILL_FRACTION,
+        plotRadiusCells(mirror, site.x, site.y) * SPRING_RING_PLOT_FILL_FRACTION,
       );
       const plotScale = fittedRadiusCells / SPRING_RING_MAX_RADIUS_CELLS;
 
       // Rings: static per-vertex data. X/Z are animated, so positions get a
       // throwaway 0 there; Y is FINAL here and never rewritten.
       for (let r = 0; r < SPRING_RING_COUNT; r++) {
-        const ringBase = w * ringVertsPerWaterfall + r * ringVertsPerRing;
-        const cycleOffset = (r / SPRING_RING_COUNT + waterfallStagger) % 1;
+        const ringBase = w * ringVertsPerSpring + r * ringVertsPerRing;
+        const cycleOffset = (r / SPRING_RING_COUNT + springStagger) % 1;
         for (let s = 0; s < SPRING_RING_SEGMENTS; s++) {
           const angle = (s / SPRING_RING_SEGMENTS) * TWO_PI;
           const dirX = Math.cos(angle);
@@ -704,7 +715,7 @@ export function createRiverRig(
       // handler recomputes it from surfaceY + restOffsetY.
       const domeBase = w * domeVertsPerDome;
       const apex = domeBase + SPRING_DOME_SEGMENTS * 2;
-      const domeSwellPhase = waterfallStagger * TWO_PI;
+      const domeSwellPhase = springStagger * TWO_PI;
       for (let s = 0; s < SPRING_DOME_SEGMENTS; s++) {
         const angle = (s / SPRING_DOME_SEGMENTS) * TWO_PI;
         const dirX = Math.cos(angle);
@@ -938,7 +949,12 @@ export function createRiverRig(
     waterMesh.geometry.dispose();
     waterMesh.geometry = geometryFromTriangles(triangles);
 
-    rebuildSprings(mirror, network);
+    // The foam belongs on the WATER, so the springs are told where the water
+    // surface is rather than left to ask the ground — see the site loop.
+    rebuildSprings(mirror, network, (x, y) => {
+      const band = bandOfCell.get(cellIndex(mirror.map, x, y));
+      return band === undefined ? null : bandWorldY(band);
+    });
     // A rebuild leaves the rings' animated X/Z as placeholders — pose them
     // immediately so the effect is correct even if the frame handler never
     // runs again (prefers-reduced-motion: the spring holds THIS still frame,
