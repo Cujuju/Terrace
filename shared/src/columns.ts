@@ -237,6 +237,36 @@ export function isSpanDrawn(span: Span): boolean {
   return spanLowestBandHeight(span) <= spanCapHeight(span);
 }
 
+/**
+ * Whether the renderer draws AIR between two consecutive spans of a column —
+ * the mirror of `isSpanDrawn`, and so the rule that decides when two spans of
+ * one column are really one span.
+ *
+ * A span's top surface is its cap and its bottom surface is its underside, so
+ * the opening between `lower` and `upper` is the distance between those two,
+ * and it exists on screen only when the underside sits STRICTLY ABOVE the cap.
+ * Because the underside hangs one band below the lowest filled band (see
+ * `spanUndersideHeight` for why the mesh has always drawn it there), an
+ * opening of one band puts the roof's underside at exactly the height of the
+ * floor's cap: no thickness, nothing drawn, and — since the picking march
+ * gates on the same drawn extent — nothing clickable either. Two bands is the
+ * first opening that is actually there.
+ *
+ * Worked through, at BAND_HEIGHT = 16, for a lower span capped at 0:
+ *   upper floored at 16 (one band of air):  underside 16 − 16 =  0;  0 > 0 is false
+ *   upper floored at 32 (two bands of air): underside 32 − 16 = 16; 16 > 0 is true
+ * The threshold is therefore never written down as a number — it falls out of
+ * `spanUndersideHeight`/`spanCapHeight` and follows a re-terrace for free.
+ *
+ * NOT YET CONFIRMED BY EYE (2026-08-24). The arithmetic above is derived from
+ * those two functions as they are written; no one has yet carved a one-band
+ * gap into a mound and looked at it. If a one-band gap ever proves visible,
+ * this predicate is the thing to change — never its callers.
+ */
+export function isGapDrawn(lower: Span, upper: Span): boolean {
+  return spanUndersideHeight(upper) > spanCapHeight(lower);
+}
+
 // ---------------------------------------------------------------------------
 // The question the renderer actually asks: "is this cell solid at band k?"
 // ---------------------------------------------------------------------------
@@ -252,8 +282,30 @@ export function isSpanDrawn(span: Span): boolean {
  */
 export const OPEN_COLUMN_SAMPLE = BEDROCK_FLOOR - BAND_HEIGHT;
 
-/** Whether any span of this column fills band `band` — solid at that level. */
-export function columnCoversBand(map: Heightmap, x: number, y: number, band: number): boolean {
+/**
+ * WHICH span of this column fills band `band`, or `null` if the column is open
+ * there — the one way a stroke is ever allowed to resolve "the span the player
+ * has hold of".
+ *
+ * A span index is a position in a list whose length is server state: a carve by
+ * another player between a pick and its apply shifts every index above it, so an
+ * index that travelled over the wire would name a different span on each
+ * replica. A BAND names a place in the world instead, and this re-derives the
+ * span from the map that is actually there — the same argument `targetBand`
+ * already rests on (protocol.ts).
+ *
+ * At most one span can answer: spans ascend with a drawn gap between them, so no
+ * two of them reach the same band boundary. A span too thin to reach any
+ * boundary (`!isSpanDrawn`) answers for no band at all — it cannot satisfy the
+ * test below — which is what keeps this in step with the picking march, which
+ * skips exactly those spans.
+ */
+export function spanIndexCoveringBand(
+  map: Heightmap,
+  x: number,
+  y: number,
+  band: number,
+): number | null {
   const threshold = band * BAND_HEIGHT;
   const count = spanCount(map, x, y);
   for (let k = 0; k < count; k++) {
@@ -261,9 +313,20 @@ export function columnCoversBand(map: Heightmap, x: number, y: number, band: num
     // `floor <= threshold` rather than the span's lowest band: the threshold is
     // a band boundary, so the two say the same thing, and this says it in the
     // terms the span itself is stored in.
-    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return true;
+    if (span.floor <= threshold && threshold <= spanCapHeight(span)) return k;
   }
-  return false;
+  return null;
+}
+
+/**
+ * Whether any span of this column fills band `band` — solid at that level.
+ *
+ * The same question `spanIndexCoveringBand` answers, asked without caring which
+ * span it was, and phrased through it so the mesh and the sculpt tools can never
+ * end up disagreeing about what "solid at band k" means.
+ */
+export function columnCoversBand(map: Heightmap, x: number, y: number, band: number): boolean {
+  return spanIndexCoveringBand(map, x, y, band) !== null;
 }
 
 /**
@@ -317,6 +380,243 @@ export function anyColumnLayered(
   for (let y = y0; y < y0 + height; y++) {
     for (let x = x0; x < x0 + width; x++) {
       if (map.columnSpans.has(cellIndex(map, x, y))) return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// The only two writers of a multi-span column.
+// ---------------------------------------------------------------------------
+//
+// Every sculpt tool moves a surface, and on a layered column "the surface" is a
+// choice: which span, and what happens to the ones above and below it. The two
+// functions below are the whole answer, and they are the ONLY code in the repo
+// that may write a column holding more than one span:
+//
+//   * `moveSpanCeiling` moves one span's ceiling and touches nothing else. It is
+//     the only source of merges.
+//   * `carveRange` removes a height range from a column. It is the only source
+//     of splits — lowering a ceiling can shrink a span away, but it can never
+//     divide one — which is what makes "where did this second span come from"
+//     an answerable question.
+//
+// Both re-canonicalise through the one pass below and both end in `setColumn`,
+// so the ascending-with-a-gap form is enforced in a single place and cannot be
+// half-enforced in four tools. `setColumn` still THROWS on a column the model
+// cannot express rather than repairing it quietly: a loud RangeError is what
+// makes the invariant checkable, and two replicas that disagree about a column
+// must diverge visibly rather than agree about a repair.
+//
+// Two such inexpressible results are reachable from here, both of them a column
+// with nothing left at the bottom of the world: a carve that removes every
+// span, and a carve or a collapse that leaves ONE span no longer standing on
+// BEDROCK_FLOOR (the storage says a lone span is floored there, so a single
+// floating span has no encoding). Neither can occur in play, because every
+// column covers the world's bottom band — a span reaches down to BEDROCK_FLOOR
+// unless something above it was carved first — so `canCarveBandAt` refuses that
+// band on every cell in the world. Callers that reach past the sculpt tools are
+// on notice: the RangeError is the contract.
+
+/** A column's spans as a mutable array, ascending, for the passes below. */
+function readSpans(map: Heightmap, x: number, y: number): Span[] {
+  const count = spanCount(map, x, y);
+  const spans: Span[] = [];
+  for (let k = 0; k < count; k++) spans.push(spanAt(map, x, y, k));
+  return spans;
+}
+
+/**
+ * Puts an edited span list back into canonical form: ONE ascending pass that
+ * drops what cannot be seen and merges what is not really two spans.
+ *
+ * Two rules, both of them this file's existing definition of what a span looks
+ * like drawn rather than new policy:
+ *
+ * - NO INVISIBLE SOLID. A span too thin to reach a band boundary
+ *   (`!isSpanDrawn`) is dropped. Keeping it would be honest to the arithmetic
+ *   and dishonest to the player: `heightAt` would report material where the
+ *   renderer draws none and the picking march refuses to hit — terrain you can
+ *   see through and cannot touch. A cut that leaves such a sliver therefore
+ *   consumes it instead.
+ * - NO INVISIBLE AIR. A gap the renderer cannot draw (`!isGapDrawn`) is closed,
+ *   and the merged span takes the UPPER span's ceiling: filling in under a roof
+ *   cannot push the roof up. Two overlapping spans fail `isGapDrawn` too, so
+ *   this is also what performs an ordinary merge; and because the pass keeps
+ *   comparing against the span it has just merged into, a fill that reaches
+ *   through three spans welds all three in one call.
+ *
+ * Both rules only ever make spans taller or fewer, so one pass reaches the
+ * fixed point: a merge cannot un-draw a span, and a drop cannot un-draw the gap
+ * that swallows it.
+ */
+function canonicaliseColumn(spans: readonly Span[]): Span[] {
+  const out: Span[] = [];
+  for (let k = 0; k < spans.length; k++) {
+    const span = spans[k]!;
+    if (!isSpanDrawn(span)) continue;
+    const last = out.length === 0 ? undefined : out[out.length - 1]!;
+    if (last !== undefined && !isGapDrawn(last, span)) {
+      out[out.length - 1] = { floor: last.floor, ceiling: span.ceiling };
+      continue;
+    }
+    out.push(span);
+  }
+  return out;
+}
+
+/**
+ * Moves span `k`'s ceiling to `newCeiling`, leaving every other span of the
+ * column byte-untouched.
+ *
+ * That second clause is the point of the whole span model: the report this work
+ * answers (#99) was that pulling on one layer dragged the layers below it out
+ * with it, and a primitive that can only write one span's ceiling makes that
+ * impossible rather than merely unlikely.
+ *
+ * The span's FLOOR never moves — a raise adds material on top of the span it
+ * has hold of, whichever way the camera happens to be looking at it. Two
+ * consequences fall out of the canonical form rather than being decided here:
+ *
+ * - Raising into the span above merges the two (`canonicaliseColumn`), and the
+ *   merged ceiling is the upper span's, so a ceiling raised past a roof does
+ *   not carry the roof up with it.
+ * - `newCeiling` at or below the span's own floor empties it, and an emptied
+ *   span is REMOVED — its opening joins the one below it. The bottom span
+ *   floors at BEDROCK_FLOOR, so lowering it digs toward the bottom of the world
+ *   exactly as an unlayered column always has.
+ *
+ * On a column of one span this is `map.cells[i] = newCeiling` and nothing else,
+ * which is what keeps sculpting ordinary ground identical to what it was.
+ */
+export function moveSpanCeiling(
+  map: Heightmap,
+  x: number,
+  y: number,
+  k: number,
+  newCeiling: number,
+): void {
+  const spans = readSpans(map, x, y);
+  if (!Number.isInteger(k) || k < 0 || k >= spans.length) {
+    throw new RangeError(`cell (${x}, ${y}) has ${spans.length} span(s), asked to move span ${k}`);
+  }
+  const target = spans[k]!;
+  if (newCeiling <= target.floor) {
+    spans.splice(k, 1);
+  } else {
+    spans[k] = { floor: target.floor, ceiling: newCeiling };
+  }
+  setColumn(map, x, y, canonicaliseColumn(spans));
+}
+
+/**
+ * Removes the height range `[lo, hi)` from every span of a column — the one
+ * operation that can turn one span into two, and so the only way a cave, an
+ * arch or an overhang ever comes into existence.
+ *
+ * A span the range crosses keeps whatever of it lies below `lo` and whatever
+ * lies above `hi`; a span the range swallows disappears. What survives is then
+ * re-canonicalised, which is where the two rules that keep the result honest
+ * live (`canonicaliseColumn`): a leftover sliver too thin to draw is consumed
+ * by the cut rather than left as terrain that cannot be seen or clicked, and an
+ * opening too thin to draw is closed again — a carve that would open a gap
+ * nobody can see does not open one, so a hole through a roof has to be cut deep
+ * enough to actually be a hole.
+ *
+ * `lo >= hi` removes nothing. The caller decides WHERE to cut and whether the
+ * player is allowed to cut there (`canCarveBandAt`); this decides only what the
+ * column looks like afterwards.
+ */
+export function carveRange(map: Heightmap, x: number, y: number, lo: number, hi: number): void {
+  if (lo >= hi) return;
+  const spans = readSpans(map, x, y);
+  const cut: Span[] = [];
+  for (let k = 0; k < spans.length; k++) {
+    const span = spans[k]!;
+    if (hi <= span.floor || lo >= span.ceiling) {
+      cut.push(span);
+      continue;
+    }
+    if (span.floor < lo) cut.push({ floor: span.floor, ceiling: lo });
+    if (hi < span.ceiling) cut.push({ floor: hi, ceiling: span.ceiling });
+  }
+  setColumn(map, x, y, canonicaliseColumn(cut));
+}
+
+// ---------------------------------------------------------------------------
+// What a stroke is allowed to reach — the same walk, once for material and
+// once for air.
+// ---------------------------------------------------------------------------
+//
+// `canSpreadBandTo` (heightmap.ts) is the drag anchor's whole anti-cheat story:
+// a band may only spread onto a cell one of whose eight neighbours already
+// stands at it, re-derived from the server's own map, so a level creeps outward
+// from ground that is really there and a forged band on an unrelated cell does
+// nothing. The two below are that rule said in spans — the form every layered
+// tool uses — and they differ from it only in what "stands at that band" means.
+
+/**
+ * The span-aware `canSpreadBandTo`: whether band `band` may spread ONTO cell
+ * (cx, cy), asked as "is a neighbour SOLID AT that band" rather than "is a
+ * neighbour's topmost surface above it".
+ *
+ * STRICTLY TIGHTER THAN THE HEIGHT TEST, which is the safe direction to move. A
+ * neighbour with a cave running under it has its top surface above the band and
+ * no material AT the band; the height test would let a terrace creep out of
+ * that neighbour's shadow, which is growing terrain out of thin air with extra
+ * steps. On a world of one-span columns the two tests agree by construction —
+ * `columnCoversBand` on a single span IS `cells[i] >= threshold` — so ordinary
+ * play does not change.
+ *
+ * Eight neighbours, not four, for the reason `canSpreadBandTo` gives: the lip a
+ * player grabs is a marching-squares contour that cuts across cell corners, and
+ * four-neighbour adjacency would stall a drag on a lip it is visibly touching.
+ * Off-map neighbours are absent — the world's border holds nothing up.
+ */
+export function canSpreadBandToSpan(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  band: number,
+): boolean {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
+      if (columnCoversBand(map, nx, ny, band)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The exact mirror for removing material: whether cell (cx, cy) may be CARVED
+ * at band `band` — true when at least one of its eight neighbours is already
+ * OPEN there.
+ *
+ * Air spreads the way material does, one cell per intent, outward from air that
+ * is really there, re-derived from the server's own map. So a tunnel must start
+ * at a face the open world already touches: the low ground outside a cliff is
+ * open at the face's band, which admits the face cell; carving it makes that
+ * cell open, which admits the next one inward on the next intent. No single
+ * message can hollow out the middle of a mountain, for the same reason no
+ * single message can raise a plateau in the middle of a plain.
+ *
+ * It reads like a limitation in one case and is not: on flat ground every
+ * neighbour covers the top band, so carving it is refused — and that is exactly
+ * the case where lowering is the tool that means what the player wants. Carve
+ * is refused precisely where it is redundant.
+ */
+export function canCarveBandAt(map: Heightmap, cx: number, cy: number, band: number): boolean {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
+      if (!columnCoversBand(map, nx, ny, band)) return true;
     }
   }
   return false;
