@@ -51,7 +51,9 @@ import {
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
+  WATER_SHADE_DEEP,
   WATER_SHADE_MIX_DEFAULT_BYTE,
+  WATER_SHADE_SHALLOW,
   WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
   writeWaterDepthTexels,
 } from '../terrain/waterDepth.ts';
@@ -92,29 +94,7 @@ const WATER_METALNESS = 0;
  * The mix parameter between them is the texel waterDepth.ts's depthToShadeMix
  * writes; these two constants are the only place the range lives.
  */
-/**
- * CEILING, not a taste setting. The shade, the band range and the crest gain
- * are three multipliers that STACK on WATER_COLOR, whose blue channel is
- * already 0.620 — so their product must stay under 1/0.620 = 1.614 or blue
- * clips at 1.0 before anything else does. At the previous 1.35 x 1.30 x 1.20 =
- * 2.106 the peak drove blue to 1.305: every bright crest in shallow water
- * clipped to the same flat cyan, which erased exactly the variation the shade
- * ramp was there to create and pulled the hue toward white. Owner spotted it
- * from the screen ("you just made the blue from the texture too opaque")
- * before the arithmetic was checked.
- *
- * 1.15 x 1.25 x 1.10 = 1.581 -> peak blue 0.980, just under. Any future
- * brightening of one of the three has to come out of the other two.
- */
-const WATER_SHADE_SHALLOW = 1.15;
-/**
- * 0.3 → 0.22 (owner, 2026-08-24: "I would like to see the deeper sections a
- * little bit darker"). Note what this trades: the bands are a MULTIPLY on this
- * value, so every step darker here also compresses the painted steps' absolute
- * contrast in deep water by the same factor. waterBands.ts's range was widened
- * in the same change to pay for it.
- */
-const WATER_SHADE_DEEP = 0.22;
+
 
 /**
  * THE SEA IS DRAWN ONLY OVER REVEALED CHUNKS (owner, 2026-08-24: "I'd like to
