@@ -183,3 +183,73 @@ export function parseSystemsPayload(payload: unknown): WeatherSystemState[] | nu
   }
   return parsed;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// STRIKES (2026-08-24) — the one thing in this plugin that is an EVENT rather
+// than a state.
+//
+// A system is a state: it exists, it has a position, and re-sending it is how a
+// client stays right about it. A strike is an instant. It is broadcast once, on
+// the tick it happens, and never re-sent — a client that missed one missed a
+// flash, which is the correct amount to care.
+//
+// WHY IT IS ON THE WIRE AT ALL, when bolts used to be a client's own business:
+// lightning now starts fires (plugins/fire), and a fire the server authorised
+// under a bolt the client invented elsewhere is a forest burning under clear
+// sky. See ./server/lightning.ts's header for the full argument.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Server → client, bolts that landed this tick (`weather:strikes`). */
+export const WEATHER_STRIKES_MESSAGE = 'strikes';
+
+/**
+ * Hard bound on strikes in one message. MAX_ACTIVE_SYSTEMS is 3 and each rolls
+ * at most one strike per tick, so 3 is the real ceiling; the constant exists so
+ * the PARSER has a bound that does not depend on importing the server's sim
+ * constants into the client's parse path.
+ */
+export const MAX_STRIKES_PER_MESSAGE = 8;
+
+/** One bolt: which system threw it, and the cell it hit. */
+export interface WeatherStrike {
+  readonly systemId: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** `weather:strikes` — flat `[systemId, x, y, …]`, msgpack's cheapest shape. */
+export interface WeatherStrikesPayload {
+  readonly strikes: readonly number[];
+}
+
+/** How many integers one strike occupies in the flat wire form. */
+export const STRIKE_WIRE_STRIDE = 3;
+
+export function packStrikes(strikes: Iterable<WeatherStrike>): number[] {
+  const packed: number[] = [];
+  for (const strike of strikes) packed.push(strike.systemId, strike.x, strike.y);
+  return packed;
+}
+
+/**
+ * Defensive parse, to this file's existing rule: malformed entries are dropped
+ * individually, a payload that is not an array at all yields null so the caller
+ * can ignore the message whole.
+ */
+export function parseStrikesPayload(payload: unknown): WeatherStrike[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const strikes = (payload as { strikes?: unknown }).strikes;
+  if (!Array.isArray(strikes)) return null;
+
+  const parsed: WeatherStrike[] = [];
+  for (let i = 0; i + STRIKE_WIRE_STRIDE - 1 < strikes.length; i += STRIKE_WIRE_STRIDE) {
+    if (parsed.length >= MAX_STRIKES_PER_MESSAGE) break;
+    const systemId = strikes[i];
+    const x = strikes[i + 1];
+    const y = strikes[i + 2];
+    if (!isFiniteNumber(systemId) || !isFiniteNumber(x) || !isFiniteNumber(y)) continue;
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) continue;
+    parsed.push({ systemId, x, y });
+  }
+  return parsed;
+}

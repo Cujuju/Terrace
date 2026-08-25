@@ -648,68 +648,53 @@ export class LightningGovernor {
 }
 
 /**
- * One storm's lightning clock: decides WHEN it would like to flash and how
- * bright the flash in progress is now.
+ * One storm's flash envelope: how bright the flash in progress is now.
  *
- * It knows nothing about three, about the system it belongs to, or about the
- * user's motion preference — a caller that must not flash simply passes
- * `armed: false`, which is what makes "no flashes at all under
- * prefers-reduced-motion" a property of one `if` rather than of every value this
- * class produces.
+ * IT NO LONGER DECIDES WHEN (2026-08-24). It used to run its own countdown and
+ * propose flashes on a random clock — which was right while lightning was
+ * decoration, and became wrong the moment a bolt could start a fire: the server
+ * picks the cell now (plugins/weather/server/lightning.ts) and this class is
+ * TOLD. Two independent RNGs cannot agree on where a forest is burning.
  *
- * The first flash is scheduled from the same distribution as every other, so a
- * storm does not announce itself with a bolt the instant it gathers.
+ * What it kept is everything it was good at: the flash curve, the governor
+ * handshake, and knowing nothing about three or about the system it belongs to.
  */
 export class LightningSchedule {
-  private readonly random: () => number;
-  /** Seconds remaining until this storm would like to flash. */
-  private untilNext: number;
   /** Seconds since the current flash began; large means "none in progress". */
   private sinceFlash = Number.POSITIVE_INFINITY;
 
-  constructor(random: () => number = createFlashRandom(Date.now())) {
-    this.random = random;
-    this.untilNext = nextFlashIntervalSeconds(random());
+  /**
+   * Advances the decay clock by `dt` seconds.
+   *
+   * That is now its ENTIRE responsibility. It no longer counts down to anything
+   * and no longer returns a flash, because it no longer decides that one
+   * happens — see `strike` and the class header.
+   *
+   * There is no `armed` parameter any more either. Reduced motion and a storm
+   * that is drifting away both used to be expressed by withholding the
+   * countdown; with nothing to withhold, the caller simply does not CALL
+   * `strike`, and a flash already in progress still decays away on its own
+   * curve, which is what both cases wanted.
+   */
+  advance(dt: number): void {
+    this.sinceFlash += Math.max(0, dt);
   }
 
   /**
-   * Advances the clock by `dt` seconds. Returns the flash that STARTED this
-   * frame, or null — which is every frame but roughly one in five hundred, so
-   * the one small object allocated here is not a per-frame allocation.
+   * A bolt just landed on this storm: begin a flash, if the governor allows one.
+   * Returns whether it started, so the caller can decline to move the bolt for a
+   * flash that was refused.
    *
-   * `armed` false holds the countdown where it is and starts nothing, while
-   * still letting a flash already in progress decay away on its own curve —
-   * which is what a storm drifting off the map wants: it stops proposing
-   * lightning, but it does not freeze a lit bolt in mid-air. (The OTHER caller
-   * of `armed: false` is reduced motion, and there the renderer additionally
-   * forces the brightness to zero on the spot: someone who has just asked for
-   * less motion should get none, not the tail of a flash.)
-   *
-   * `governor` has the last word, and a refusal RESCHEDULES rather than
-   * retrying next frame — otherwise a storm refused once would ask again 16 ms
-   * later and fire the instant the floor cleared, turning the governor into a
-   * synchroniser that makes two storms flash together.
-   *
-   * At most one flash can start per call whatever `dt` is: a long frame (a
-   * background tab coming back) shortens the wait to zero and fires once,
-   * instead of paying out the whole backlog as a burst.
+   * The governor still has the last word, and a refusal is still DROPPED rather
+   * than deferred (see LightningGovernor) — the photosensitivity floor is a
+   * property of this client and is not up for negotiation by the server. A
+   * dropped flash costs a bolt nobody sees; the fire the server started still
+   * burns, because that was never this class's decision.
    */
-  advance(dt: number, armed: boolean, governor: LightningGovernor): Flash | null {
-    const step = Math.max(0, dt);
-    this.sinceFlash += step;
-    if (!armed) return null;
-    this.untilNext -= step;
-    if (this.untilNext > 0) return null;
-
-    this.untilNext = nextFlashIntervalSeconds(this.random());
-    if (!governor.requestFlash()) return null;
-
+  strike(governor: LightningGovernor): boolean {
+    if (!governor.requestFlash()) return false;
     this.sinceFlash = 0;
-    return {
-      bearing: this.random() * TWO_PI,
-      reach: this.random() * BOLT_MAX_REACH_FRACTION,
-      yaw: this.random() * TWO_PI,
-    };
+    return true;
   }
 
   /** Brightness of the flash in progress, in [0, 1]; 0 between flashes. */
@@ -727,6 +712,5 @@ export class LightningSchedule {
    */
   reset(): void {
     this.sinceFlash = Number.POSITIVE_INFINITY;
-    this.untilNext = nextFlashIntervalSeconds(this.random());
   }
 }

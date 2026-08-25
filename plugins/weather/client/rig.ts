@@ -380,6 +380,18 @@ export interface WeatherRig {
     governor: LightningGovernor,
   ): void;
   /**
+   * A bolt landed at this world-space offset from the system's own centre
+   * (plugins/weather/server/lightning.ts chose the cell; the caller converted
+   * it). Moves the bolt and its light there and begins the flash — unless the
+   * governor refuses, in which case NOTHING moves: a refused flash must not
+   * leave a dark bolt sitting at the new position, waiting to be lit by the
+   * next one.
+   *
+   * A no-op for kinds with no lightning at all, so a caller does not have to
+   * ask whether a system is a storm before telling it it was struck.
+   */
+  strike(offsetX: number, offsetZ: number, governor: LightningGovernor): void;
+  /**
    * Forgets any in-progress lightning flash. Called by the pool before a rig
    * re-enters the free list, so a storm rig reused by a later system never opens
    * with a stale flash that the LightningGovernor never approved (sky.ts). A
@@ -548,19 +560,14 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
 
       if (lightning === null) return;
 
-      // THE LIGHTNING. Armed only when the user has not asked for less motion —
-      // the single `if` that makes "no flashes at all under
-      // prefers-reduced-motion" true, rather than something every value below
-      // has to remember. The governor then has the last word (sky.ts).
-      const flash = lightning.advance(dt, !reduced, governor);
-      if (flash !== null) {
-        const distance = flash.reach * worldRadius;
-        const x = Math.cos(flash.bearing) * distance;
-        const z = Math.sin(flash.bearing) * distance;
-        boltPivot!.position.set(x, 0, z);
-        boltPivot!.rotation.y = flash.yaw;
-        flashLight!.position.set(x, BOLT_BOTTOM_WORLD_Y, z);
-      }
+      // THE LIGHTNING. This frame only DECAYS the flash envelope — where and
+      // when a bolt lands is the server's call now, and arrives through
+      // `strike` below (sky.ts's LightningSchedule header). Reduced motion no
+      // longer needs to disarm anything here: the caller does not deliver
+      // strikes at all under it, and the brightness is forced to zero on the
+      // spot two lines down, so a preference turned on mid-flash takes effect
+      // on the next frame rather than after the tail.
+      lightning.advance(dt);
 
       // Intensity multiplies the flash as well, so a storm dissipating mid-flash
       // takes its lightning down with it instead of leaving a bolt over ground
@@ -578,6 +585,22 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
         glowSheet!.position.y = FOG_LAYERS[0]!.height;
       }
       flashLight!.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+    },
+
+    strike(offsetX: number, offsetZ: number, governor: LightningGovernor): void {
+      if (lightning === null) return;
+      // The governor first, and the move only if it says yes — see the
+      // interface's doc comment for why a refused flash must not reposition the
+      // bolt.
+      if (!lightning.strike(governor)) return;
+
+      boltPivot!.position.set(offsetX, 0, offsetZ);
+      // The jag is authored once in its own space (shared.bolt); spinning the
+      // pivot is what stops every bolt in a session from being the same
+      // silhouette. Derived from the strike's own offset rather than drawn at
+      // random, so the same strike looks the same on every client that draws it.
+      boltPivot!.rotation.y = Math.atan2(offsetZ, offsetX);
+      flashLight!.position.set(offsetX, BOLT_BOTTOM_WORLD_Y, offsetZ);
     },
 
     reset(): void {
