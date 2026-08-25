@@ -808,24 +808,33 @@ function fillTowardTarget(
 }
 
 /**
- * How far a pulled lip may slide over the level below it before that level is
- * pushed along too, in cells — the narrowest tread the Pull tool will leave
- * behind (owner, 2026-08-24: "I could pull on a level and it slides over the
- * top of the levels below it by a small amount until it starts to pull the
- * next level, and then the next level comes with it").
+ * How close a pulled lip must come to the level below before that level is
+ * pushed along too, in cells. ONE CELL — adjacency, i.e. the lower level gives
+ * ground only once the upper lip is standing directly against it and the tread
+ * between them has been consumed to nothing.
  *
- * HALF A WORLD UNIT. A tread is one world unit deep by the terracing the world
- * is generated with (see MAX_STEP's derivation in constants.ts), so half of one
- * is a visible slide — the upper lip plainly encroaches — while still leaving a
- * step a player can see and stand on. A tolerance of a whole tread would mean
- * the lower level never moved until the upper one had swallowed it entirely,
- * which is the behaviour this replaces.
+ * SUPERSEDES HALF A WORLD UNIT (owner, 2026-08-24, with a screenshot: "I am
+ * soft pulling that top band and it keeps pushing out all the bands below it.
+ * I'm unable to pull it to the edge"). At half a world unit every band of a
+ * staircase with treads that narrow is inside the window at once, so the WHOLE
+ * STACK translates outward with the pull and the pulled band never gains on
+ * it — measured on 2-cell treads, bands 7 down to 1 each moved out two cells,
+ * so the lip could not be pulled to the edge however long the stroke was held.
+ * That is the ladder. At adjacency the same pull leaves every band below
+ * exactly where it stood and only the pulled band advances.
  *
- * Stated in world units rather than cells so it survives a re-sample, the trap
- * the 2026-08-21 quartering set for every constant that was secretly "one
- * cell".
+ * A LATTICE FACT, NOT A GROUND FACT, which is why this one is NOT stated in
+ * world units. "The edges are aligned" means the two lips are in touching
+ * cells; that is a statement about the sampling grid and stays true at any
+ * re-sample, so scaling it by WORLD_UNIT_CELLS (the 2026-08-21 quartering trap
+ * that the previous value was written against) would be the error here rather
+ * than the protection against it.
+ *
+ * The earlier value's own doc named this outcome as the alternative it was
+ * replacing — "the lower level never moved until the upper one had swallowed
+ * it entirely". That is now the intended behaviour, chosen deliberately.
  */
-const DRAG_TREAD_TOLERANCE_CELLS = WORLD_UNIT_CELLS / 2;
+const DRAG_TREAD_TOLERANCE_CELLS = 1;
 
 /**
  * PUSHING THE LEVELS BELOW ALONG WITH THE ONE BEING PULLED.
