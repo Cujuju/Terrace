@@ -610,15 +610,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // lip query is still the one that highlights the edge on screen, so within
     // the Pull tool what is lit up is exactly what a press takes hold of.
     //
-    // RAISE ONLY, for now. Pulling a lip INWARD is the same gesture with the
-    // lower modifier held, and it is the direction that needs a real stop rule
-    // (a lip pulled in must not strip the ground standing on it) — issue #99
-    // step 3, deliberately not this one. Until it exists, a lower press with
-    // the Pull tool does nothing rather than silently doing something the
-    // player cannot predict.
-    const pulling = brushTool() === 'drag' && action === 'raise';
+    // BOTH DIRECTIONS (issue #99 step 3, 2026-08-24). The lower modifier pulls
+    // the grabbed lip INWARD and the band retreats, exposing the ground it was
+    // standing proud of; the stop rule that direction needed now exists in the
+    // shared math (applyDragRegion/retreatHeightAt — only cells at exactly the
+    // grabbed band move, so a lip pulled in never strips the ground standing on
+    // it). The grab itself is direction-blind: it is the same lip either way.
+    const pulling = brushTool() === 'drag';
     strokeGrab = pulling ? grabbableLip(hoverTarget()) : null;
-    if (pulling && strokeGrab === null) {
+    // SEEDING IS A RAISE-ONLY RESCUE. A lower press with nothing in its grasp
+    // has nothing to retreat, and stamping a plateau to pull in would be the
+    // opposite of what the player just asked for — it emits nothing instead.
+    if (pulling && action === 'raise' && strokeGrab === null) {
       // NOTHING TO PULL, SO MAKE SOMETHING. The seed is applied locally by the
       // prediction the moment it is sent (main.tsx's send), and the layer-edge
       // overlay re-contours on the same dirty set, so the lip it creates
