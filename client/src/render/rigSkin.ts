@@ -366,21 +366,30 @@ function isDrawableMesh(node: Object3D): node is Mesh & { material: Material } {
 }
 
 /**
- * Writes the material's own colour into every vertex, so parts that differed
- * only by colour can share one draw. Geometry that already carries colours
- * keeps them — a part authored with per-vertex colour has said something the
- * material cannot.
+ * Folds the material's own colour into every vertex, so parts that differed
+ * only by colour can share one draw.
+ *
+ * MULTIPLIED IN, never skipped. A `color` attribute that is already there is
+ * not the part's colour — in this codebase it is a per-vertex SHADE, values
+ * either side of 1 that mottle a broad mass (see
+ * plugins/monsters/client/geometry.ts, applyShadeVariation). The shader
+ * multiplies material colour by vertex colour, so a shaded part means exactly
+ * `material.color * shade`; taking the shade to BE the colour and then
+ * whitening the material (see `vertexColoured`) threw the part's real colour
+ * away, and a near-black kraken came out near-white. Multiplying reproduces the
+ * unbaked shading for both cases at once — an absent attribute is the shade
+ * 1 everywhere.
  */
 function paintVertexColor(geometry: BufferGeometry, material: Material): void {
-  if (geometry.getAttribute('color') !== undefined) return;
   const source = (material as Material & { color?: Color }).color;
   const colour = source ?? new Color(0xffffff);
   const count = geometry.getAttribute('position').count;
+  const shade = geometry.getAttribute('color');
   const colors = new Float32Array(count * COLOR_COMPONENTS);
   for (let v = 0; v < count; v++) {
-    colors[v * COLOR_COMPONENTS] = colour.r;
-    colors[v * COLOR_COMPONENTS + 1] = colour.g;
-    colors[v * COLOR_COMPONENTS + 2] = colour.b;
+    colors[v * COLOR_COMPONENTS] = colour.r * (shade === undefined ? 1 : shade.getX(v));
+    colors[v * COLOR_COMPONENTS + 1] = colour.g * (shade === undefined ? 1 : shade.getY(v));
+    colors[v * COLOR_COMPONENTS + 2] = colour.b * (shade === undefined ? 1 : shade.getZ(v));
   }
   geometry.setAttribute('color', new BufferAttribute(colors, COLOR_COMPONENTS));
 }
