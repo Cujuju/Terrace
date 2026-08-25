@@ -57,6 +57,13 @@ const SEA_WORLD_Y = drawnBandWorldY(1, false);
  */
 const bandSurfaceY = (band: number): number => drawnBandWorldY(band, false);
 
+/**
+ * These fixtures pour onto DRY ground — there is no pool at the foot of the
+ * cliff — so the curtain falls back to its rock walk. The water-first path is
+ * covered by waterFallIntegration.test.ts, which has a real course.
+ */
+const NO_WATER_BELOW = (): number | null => null;
+
 /** A world of plateau-height ground with `dig` cells dropped to the pit. */
 function mirrorWithPlateau(dig: Iterable<number>): TerrainMirror {
   const mirror = createTerrainMirror(WORLD_SIZE);
@@ -118,6 +125,7 @@ function curtainsFor(
     fixture.loops,
     bandOf(PLATEAU_HEIGHT),
     bandSurfaceY,
+    NO_WATER_BELOW,
     seaWorldY,
     out,
   );
@@ -275,6 +283,7 @@ describe('waterfall curtains', () => {
       loops,
       bandOf(PLATEAU_HEIGHT),
       bandSurfaceY,
+      NO_WATER_BELOW,
       BELOW_EVERYTHING,
       out,
     );

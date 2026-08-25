@@ -78,6 +78,7 @@ describe('a river down a cone', () => {
         loops,
         region.surfaceBand,
         (band) => drawnBandWorldY(band, false),
+        (x, y) => bandOfCell.get(cellIndex(mirror.map, x, y)) ?? null,
         SEA_WORLD_Y,
         triangles,
       );

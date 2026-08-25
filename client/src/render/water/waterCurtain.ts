@@ -140,38 +140,44 @@ function outwardNormal(a: ContourPoint, b: ContourPoint): { x: number; z: number
 }
 
 /**
- * The band a segment's water lands on: walk straight out from its midpoint in
- * CURTAIN_PROBE_CELLS steps and return the lowest band the face reaches.
+ * The band a segment's water lands on — the WATER below it where there is
+ * any, and only the bare rock where there is none.
  *
- * TWO PHASES, and keeping them distinct is the whole correctness argument.
+ * WHY WATER FIRST, and why asking the terrain alone was wrong (owner,
+ * 2026-08-24: "I expect the water to have a continuous path from top to bottom
+ * with no breaks"). A fall's foot answers "where does this water go", and the
+ * terrain cannot answer it. Measured on the `stairpools` fixture, whose course
+ * occupies bands 16,15,14,11,10,8,7,6,4,3,2,0 — nothing at 12, 9, 5 or 1 — the
+ * ground-only search landed band 14's quads on bands 12 AND 11, band 10's on 9
+ * and 7, band 6's on 5 and 3. Every foot at 12, 9 or 5 ended in mid-air
+ * against a rock ledge with the next pool still a band or two below it, and
+ * one lip's quads disagreeing about where to stop is what tore each fall in
+ * half. The rock's first ledge and the water's next surface are two different
+ * questions, and only the second one makes a continuous path.
  *
+ * So: the lowest water standing BELOW this region within reach wins outright,
+ * even over lower bare ground, because that is the pool this fall feeds and
+ * `bandSurfaceY` puts the foot exactly on its surface. Only where the probe
+ * finds no water at all does the rock answer, by the two-phase walk below —
+ * a fall onto dry ground, which must still end on something the terrain draws.
+ *
+ * THE GROUND WALK'S TWO PHASES, kept for that dry case:
  *   1. LOOKING FOR THE DROP. Until the ground has fallen below the water's own
- *      band, a step that reads the SAME band means nothing yet — the rim of
- *      the water and the rim of the rock disagree by up to 0.11 cell (issue
- *      #63), and on a smoothed contour that disagreement varies along the arc.
- *      So this phase keeps walking. It gives up only when the ground RISES,
- *      which means a bank, not a lip.
- *   2. FOLLOWING THE FACE DOWN. Once the ground has started falling, a step
- *      that stops falling is the floor, and the walk ends there.
+ *      band, a step reading the SAME band means nothing — the water's rim and
+ *      the rock's rim disagree by up to 0.11 cell (issue #63) and that
+ *      disagreement varies along a smoothed arc — so it keeps walking, giving
+ *      up only when the ground RISES, which is a bank and not a lip.
+ *   2. FOLLOWING THE FACE DOWN. Once falling, a step that stops falling is the
+ *      floor and the walk ends there.
  *
- * MEASURED, 2026-08-24, which is why phase 1 exists: with a single break on
- * "stopped falling" counted from the water's own band, a straight channel down
- * a terraced slope poured on 5 of its 9 lip segments at one cell wide, 9 of 13
- * at two cells, 6 of 10 at four. The ones lost were the OUTER segments of every
- * lip — the arc's shoulders, where the rim disagreement is largest — so a fall
- * came out narrower than the pool feeding it, and on a short lip it could
- * vanish entirely. The owner's screenshot of two courses down a terraced
- * hillside showed exactly that: the wider course had falls, the narrower one
- * had none at all between its pools.
- *
- * RESIDUAL, named rather than hidden: in phase 2 a face that goes momentarily
- * flat — one probe step reading the same band as the last — ends the walk
- * there. The sheet then stops on a level the terrain genuinely draws, so it
- * rests on real ground and never hangs in air; it is only shorter than the
- * full drop. Refining that needs a finer step, not a different rule.
+ * RESIDUAL, named rather than hidden: on DRY ground phase 2 still stops at the
+ * first ledge, so a fall down a stepped dry face is shorter than the full drop.
+ * It rests on a level the terrain really draws and never hangs in air, and no
+ * water is left disconnected because there is none below to connect to.
  */
 function footBandOf(
   ground: DrawnGround,
+  waterBandAt: (cellX: number, cellZ: number) => number | null,
   a: ContourPoint,
   b: ContourPoint,
   normal: { x: number; z: number },
@@ -180,21 +186,34 @@ function footBandOf(
   const midX = (a.x + b.x) / 2;
   const midZ = (a.z + b.z) / 2;
   const steps = Math.round(CURTAIN_FOOT_SEARCH_MAX_CELLS / CURTAIN_PROBE_CELLS);
-  let lowest = surfaceBand;
-  let falling = false;
+  let lowestGround = surfaceBand;
+  let groundFalling = false;
+  let groundSettled = false;
+  let lowestWater: number | null = null;
+
   for (let step = 1; step <= steps; step++) {
     const reach = step * CURTAIN_PROBE_CELLS;
-    const band = ground.bandAt(midX + normal.x * reach, midZ + normal.z * reach);
-    if (band < lowest) {
-      lowest = band;
-      falling = true;
+    const probeX = midX + normal.x * reach;
+    const probeZ = midZ + normal.z * reach;
+
+    // A contour coordinate is in CELLS and a cell's coordinate is its centre,
+    // so the cell a probe lands in is the nearest integer.
+    const water = waterBandAt(Math.round(probeX), Math.round(probeZ));
+    if (water !== null && water < surfaceBand && (lowestWater === null || water < lowestWater)) {
+      lowestWater = water;
+    }
+
+    if (groundSettled) continue;
+    const band = ground.bandAt(probeX, probeZ);
+    if (band < lowestGround) {
+      lowestGround = band;
+      groundFalling = true;
       continue;
     }
-    // Phase 2: the face bottomed out. Phase 1: rising ground is a bank, and
-    // level ground is not yet an answer — keep looking outward.
-    if (falling || band > lowest) break;
+    if (groundFalling || band > lowestGround) groundSettled = true;
   }
-  return lowest;
+
+  return lowestWater ?? lowestGround;
 }
 
 /**
@@ -205,7 +224,10 @@ function footBandOf(
  * `loops` is EXACTLY what `appendRegionSurface` returned for the region whose
  * surface stands at `surfaceBand`. `bandSurfaceY` gives the world height of
  * water standing on a band — the rig's own rule, the one the TREAD was built
- * with. `seaWorldY` is the sea plane, below which no curtain may reach.
+ * with. `waterBandAt` gives the band of water standing on a cell, or null
+ * where it is dry, so a fall can end in the pool it feeds rather than on the
+ * first rock ledge under it. `seaWorldY` is the sea plane, below which no
+ * curtain may reach.
  *
  * One vertical quad per pouring segment, welded to the pool above it.
  */
@@ -214,6 +236,7 @@ export function appendCurtains(
   loops: readonly ContourLoop[],
   surfaceBand: number,
   bandSurfaceY: (band: number) => number,
+  waterBandAt: (cellX: number, cellZ: number) => number | null,
   seaWorldY: number,
   out: number[],
 ): void {
@@ -245,7 +268,7 @@ export function appendCurtains(
       if (isTileClosingSegment(a, b)) continue;
 
       const normal = outwardNormal(a, b);
-      const landingBand = footBandOf(ground, a, b, normal, surfaceBand);
+      const landingBand = footBandOf(ground, waterBandAt, a, b, normal, surfaceBand);
       if (landingBand >= surfaceBand) continue;
 
       // The foot lands at the height water on THAT band stands at, not at the
