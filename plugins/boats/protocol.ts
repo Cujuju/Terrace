@@ -112,23 +112,31 @@ export const BOATS_PER_VILLAGE = 3;
 export const BOAT_REBUILD_SECONDS = 20;
 
 /**
- * Boat speed, cells per second — 1.5 WORLD UNITS per second, converted.
+ * Boat speed, cells per second — 0.9 WORLD UNITS per second, converted.
  *
  * A speed is a distance across the ground per second, so it is stated in world
  * units and multiplied by WORLD_UNIT_CELLS like every other distance in this
- * file. Left as a literal 1.5 through the 2026-08-21 re-sample every boat in
+ * file. Left as a literal 0.9 through the 2026-08-21 re-sample every boat in
  * the game would have slowed to a quarter of the speed it was tuned at, and
  * the ratio the next paragraph rests on would still have held — which is
  * exactly why nothing would have failed.
  *
- * 1.5, and it is a RATIO rather than a feel number: the kraken lurks at 0.6
- * world units/s (plugins/monsters/server/kinds.ts), so a boat closes at 2.5× its
- * quarry. Anything at or under the kraken's own speed would let it simply
- * out-swim the fleet forever and the mechanic would never resolve; 2.5× closes
- * a full engagement range in under four seconds while still reading as a
- * working boat rather than a torpedo.
+ * 0.9, AND IT IS STILL A RATIO RATHER THAN A FEEL NUMBER. The kraken lurks at
+ * 0.6 world units/s (plugins/monsters/server/kinds.ts), so a boat closes at
+ * 1.5× its quarry: anything at or under the kraken's own speed would let it
+ * out-swim the fleet forever and the mechanic would never resolve, and 1.5× is
+ * the slowest ratio that still shortens the range in a stern chase — the worst
+ * case, a kraken running dead away, closes at 0.3 units/s and covers a full
+ * BOAT_ENGAGEMENT_RANGE_CELLS in ~17 s. A kraken does not flee (it wanders at
+ * KRAKEN_TURN_NOISE_RADIANS_PER_SECOND), so the ordinary case is far shorter.
+ *
+ * WAS 1.5 UNTIL 2026-08-24 (owner: boats "travel too fast"). 1.5 also made a
+ * rowed boat the fastest thing in the water, ahead of the wildlife whale's 0.8
+ * — which that animal's own comment claims nothing exceeds. At 0.9 the whale is
+ * a shade slower than a boat under oars, which is the reading the bestiary was
+ * written for, and the hull is no longer a torpedo.
  */
-export const BOAT_SPEED_CELLS_PER_SECOND = cellsAcross(1.5);
+export const BOAT_SPEED_CELLS_PER_SECOND = cellsAcross(0.9);
 
 /**
  * How close a boat must get to fight, in cells — five WORLD UNITS, converted.

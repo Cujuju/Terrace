@@ -22,10 +22,14 @@
 import {
   AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
   AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
+  CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR as SHARED_CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  limitTurn as sharedLimitTurn,
   normalizeAngle as sharedNormalizeAngle,
   steerAvoiding,
+  steerWithShorteningProbe,
+  turnToward as sharedTurnToward,
   withoutSelf,
   type Occupant,
 } from '@terrace/shared';
@@ -69,24 +73,14 @@ export const AVOID_TURN_ATTEMPTS = SHARED_AVOID_TURN_ATTEMPTS;
 export const AVOID_TURN_STEP_RADIANS = SHARED_AVOID_TURN_STEP_RADIANS;
 
 /**
- * Divides the ordinary look-ahead distance for the CONTOUR-FOLLOWING retry
- * `steerToValidHeading` runs when the primary sweep finds nothing (see
- * `advanceEntity`'s two-stage steer).
+ * Divides the ordinary look-ahead distance for the CONTOUR-FOLLOWING rung of
+ * the steer ladder. SHARED'S, re-exported — the value and the reasoning behind
+ * it live with the ladder in shared/src/steering.ts since 2026-08-24.
  *
  * Owner, 2026-08-19: "anything traveling across the map … attempts to go
- * around obstacles instead of over or through them." The primary sweep tries
- * all eight AVOID_TURN_ATTEMPTS compass headings at the FULL look-ahead
- * distance; when every one of those fails the creature is genuinely boxed in
- * at that distance, but may still have room to slide along whatever it is
- * pressed against at a shorter one — the same reasoning a person hugging a
- * wall uses short glances, not a long sightline, to keep finding the wall.
- * 2 is the smallest divisor that meaningfully shortens the probe (half
- * distance) while staying well above one tick's own travel (bodyLengthCellsOf
- * already floors the ordinary look-ahead above that), so the retry still
- * senses which way the obstacle runs rather than only re-confirming the
- * creature's own current cell.
+ * around obstacles instead of over or through them."
  */
-export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = 2;
+export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = SHARED_CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR;
 
 /**
  * The tightest arc a creature will turn through, as a fraction of its own body
@@ -121,9 +115,6 @@ export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = 2;
  * moves with it.
  */
 export const TURN_RADIUS_BODY_LENGTHS = 0.5;
-
-/** Shared empty occupant list — the short rungs of the steer ladder separate from nobody. */
-const NO_OCCUPANTS: readonly Occupant[] = [];
 
 /**
  * Multiplier on cruise speed while fleeing, and how long the panic lasts.
@@ -475,29 +466,20 @@ export function cohesionPullRadiansPerSecond(distanceCells: number, looseness: n
   return (ramp * SCHOOL_MAX_PULL_RADIANS_PER_SECOND) / looseness;
 }
 
-/** Clamps a turn to `limit` radians while keeping its direction. */
-export function limitTurn(turn: number, limit: number): number {
-  return Math.max(-limit, Math.min(limit, turn));
-}
+/** Clamps a turn to `limit` radians while keeping its direction. Shared's. */
+export const limitTurn = sharedLimitTurn;
 
 /**
  * Turns `heading` toward `target` by at most `radiansPerSecond × dt`, and never
- * past it.
+ * past it. SHARED'S, re-exported — it moved to shared/src/steering.ts on
+ * 2026-08-24 when boats needed the same turning circle these creatures got.
  *
  * The shape every steering term in this plugin has: clamped by a rate AND by the
  * angle actually remaining, so terms compose additively without any of them
- * being able to overshoot. Extracted because the flock course-hold in
- * ./flocks.ts is precisely this and nothing else.
+ * being able to overshoot. The flock course-hold in ./flocks.ts is precisely
+ * this and nothing else.
  */
-export function turnToward(
-  heading: number,
-  target: number,
-  radiansPerSecond: number,
-  dt: number,
-): number {
-  const remaining = normalizeAngle(target - heading);
-  return normalizeAngle(heading + limitTurn(remaining, radiansPerSecond * dt));
-}
+export const turnToward = sharedTurnToward;
 
 /**
  * THE STEERING BLEND. Takes the heading the creature's own wander wants and
@@ -613,51 +595,15 @@ export function steerToValidHeading(
 }
 
 /**
- * The whole steer for one tick: the sweep, run down a ladder of SHORTENING
- * probes until one of them finds somewhere to go. Returns null only when the
- * creature has nowhere to be next tick at all.
+ * The whole steer for one tick. SHARED'S LADDER (`steerWithShorteningProbe`),
+ * with this plugin's two additions bolted on: the species → traversal archetype
+ * resolution and the `isValidCellFor` veto that `steerToValidHeading` supplies
+ * — see that function for why the veto is worth its redundancy.
  *
- * THREE RUNGS, and the third one is the fix for the reported stall (owner,
- * 2026-08-24: fish "get stuck in place … presumably because of the contours of
- * the seabed"). A fish is bound to the SHALLOW band alone (SPECIES_PROFILES),
- * and on a sculpted shelf that band is often a strip narrower than the fish's
- * own 7-cell look-ahead. Every candidate at the full probe fails, every
- * candidate at half of it fails, and the pre-2026-08-24 code then held
- * position — forever, because nothing about the situation changes next tick.
- * The fish was not boxed in; it was near-sighted about a place it could
- * perfectly well have swum to.
- *
- * The third rung probes at exactly `stepCells`, one tick's travel, which is
- * the SAME distance `advanceEntity`'s destination re-check judges. So the
- * ladder can only report "nowhere to go" when there is genuinely no legal cell
- * one step away in any direction — a one-cell pocket — and a heading it does
- * return can never be refused by that re-check, which is what stops the two
- * from disagreeing and stalling a creature that had somewhere to go.
- *
- * The two short rungs steer from the creature's CURRENT heading rather than
- * from `desired` (owner, 2026-08-19: obstacles should deflect a traveller ALONG
- * themselves, not bounce it backward) — sliding along whatever it is pressed
- * against is what "go around" means at the scale of one tick.
- *
- * WHAT IT RETURNS IS A DIRECTION TO WANT, not the heading the creature adopts:
- * `advanceEntity` turns toward it at the creature's own turning circle. The
- * ladder must therefore NOT be turn-limited itself — a whale that could only
- * consider headings inside its 1.8°-per-tick arc would find the full probe
- * blocked, drop to the short one, find that clear because the wall is still
- * twenty cells off, and swim straight at it. The long probe exists precisely to
- * say "blocked at range, start coming about now", and it can only say it if the
- * heading it names is allowed to be a big turn.
- *
- * SEPARATION IS OFF ON THE TWO SHORT RUNGS, and that is a decision about cost
- * as much as about behaviour. Behaviourally it is what the ladder already
- * means: the short rungs only run for a creature that is wedged, and
- * `steerAvoiding` relaxes separation before anything else for exactly that
- * creature anyway — carrying the occupant list down the ladder mostly buys the
- * right to relax it again one rung later. The cost is the other half: that
- * list is scanned per candidate, it is the whole population, and it is already
- * the quadratic term in this plugin (see `creatureOccupants`). Scanning it on
- * every rung multiplies the worst case — a dense, boxed-in population, which
- * is precisely when the short rungs fire — by the number of rungs.
+ * The three shortening rungs and the reasoning behind each of them moved to
+ * `shared/` on 2026-08-24, when boats needed exactly the same ladder for
+ * exactly the same reason ("constantly getting stuck"). Read the contract
+ * there; nothing about it is wildlife-specific.
  */
 function steerThisTick(
   world: HabitatWorld,
@@ -667,20 +613,19 @@ function steerThisTick(
   stepCells: number,
   occupants: readonly Occupant[],
 ): number | null {
-  const full = steerToValidHeading(world, entity, desired, lookahead, stepCells, occupants);
-  if (full !== null) return full;
-
-  const contour = steerToValidHeading(
+  return steerWithShorteningProbe(
     world,
+    walkerProfileOf(entity.species),
     entity,
-    entity.heading,
-    lookahead / CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR,
-    stepCells,
-    NO_OCCUPANTS,
+    desired,
+    lookahead,
+    {
+      stepCells,
+      occupants,
+      selfRadiusCells: personalSpaceCellsOf(entity),
+      permits: (x, y) => isValidCellFor(world, entity.species, x, y),
+    },
   );
-  if (contour !== null) return contour;
-
-  return steerToValidHeading(world, entity, entity.heading, stepCells, stepCells, NO_OCCUPANTS);
 }
 
 /**
