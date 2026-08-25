@@ -25,6 +25,7 @@
 
 import {
   CHUNK_SIZE,
+  applyPackedSpans,
   cellIndex,
   chunkIndex,
   columnCoversBand,
@@ -319,6 +320,13 @@ export function applyChunkUnlock(
  * (The server validates intents before applying them, so this is
  * belt-and-suspenders, not an expected path.)
  *
+ * A cell's LAYERED COLUMNS ride in the same entry (`CellDiff.spans`) and are
+ * written right behind its height, through the shared `applyPackedSpans`: a
+ * diff that carried a carve installs the split, and — the half that is easy
+ * to forget — a diff that carries NO spans deletes any split this client is
+ * still holding, because absent means one span and the world may have
+ * re-merged the column since the last diff we saw.
+ *
  * Returns the chunk indices to re-patch. Note it returns chunks regardless of
  * whether we hold them; the renderer ignores indices with no mesh.
  */
@@ -328,6 +336,12 @@ export function applyTerrainDiff(
 ): Set<number> {
   const worldSize = mirror.map.size;
   const dirty = new Set<number>();
+  // Counted across the whole message and reported once, not once per cell:
+  // the same policy the chunk payload path uses for its rejected layered
+  // columns above. A diff is a broadcast — every client logs the same bad
+  // entry, and one noisy column must not become one log line per recipient
+  // per sculpt.
+  let rejectedSpans = 0;
 
   for (const cell of msg.cells) {
     if (
@@ -342,9 +356,33 @@ export function applyTerrainDiff(
       continue;
     }
     mirror.map.cells[cellIndex(mirror.map, cell.x, cell.y)] = cell.h;
+
+    // A diff that DISAGREES WITH ITSELF — a span list whose topmost ceiling
+    // is not the height beside it in the same entry — is refused its spans
+    // (the height still stands), exactly as `writeChunkPayload` refuses the
+    // same tear within a chunk payload: `setColumn` inside `applyPackedSpans`
+    // would otherwise overwrite the height we just wrote with the list's own
+    // last ceiling, rendering a surface the server never sent. Degrading the
+    // column to one span at the sent height keeps it renderable until the
+    // server's next word on it, and passing `undefined` rather than leaving
+    // the old list standing is the delete-half of "absent means one span".
+    if (cell.spans !== undefined && cell.spans[cell.spans.length - 1] !== cell.h) {
+      rejectedSpans++;
+      applyPackedSpans(mirror.map, cell.x, cell.y, undefined);
+    } else if (!applyPackedSpans(mirror.map, cell.x, cell.y, cell.spans)) {
+      // A PRESENT list that did not parse costs this cell its span list —
+      // `applyPackedSpans` has already deleted it — but not its height.
+      rejectedSpans++;
+    }
+
     for (const idx of chunksDirtiedByCell(worldSize, cell.x, cell.y)) {
       dirty.add(idx);
     }
+  }
+  if (rejectedSpans > 0) {
+    console.warn(
+      `[terrace] terrain diff: dropped ${rejectedSpans} malformed layered column(s)`,
+    );
   }
   return dirty;
 }
