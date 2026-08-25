@@ -204,4 +204,10 @@ export { MAX_ACTIVE_SYSTEMS };
  * Readonly, and only advanceWind ever writes it.
  */
 export { currentWind } from './systems.ts';
+
+/**
+ * HOW WET A CELL IS, re-exported for other plugins (2026-08-24, for fire's rain
+ * suppression) — same entry-point-is-the-API argument as `currentWind` above.
+ */
+export { precipitationAt } from './systems.ts';
 export type { WeatherWorld };

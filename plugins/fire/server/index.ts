@@ -30,6 +30,10 @@
 // (SPREAD_INTERVAL_SECONDS) — one product of one rate and three multipliers,
 // with the firebreak falling out of it rather than being written into it.
 //
+// RAIN is where fires go. The same weather that throws the bolt puts the fire
+// out (./weather-bridge.ts, and the suppression roll in onTick), which closes
+// the loop rather than leaving fire as a thing only the player can end.
+//
 // LIGHTNING is where fires come from today: weather picks the cell a bolt lands
 // on, emits it, and this plugin rolls whether it caught (onWorldEvent below).
 //
@@ -57,10 +61,10 @@ import {
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
 import { fuelSources } from './fuel.ts';
-import { fireRandom } from './rng.ts';
+import { fireRandom, happensWithin } from './rng.ts';
 import { SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
 import { parseStruckCells } from './strike-event.ts';
-import { loadWeatherBridge } from './weather-bridge.ts';
+import { loadWeatherBridge, precipitationAt } from './weather-bridge.ts';
 
 /**
  * Simulated seconds between unsolicited re-broadcasts of the whole burning set.
@@ -282,6 +286,36 @@ export function burningCells(): FireCellState[] {
 export { registerFuel, unregisterFuel, type CellFuel, type FuelSource } from './fuel.ts';
 
 /**
+ * Chance per second that a fire under FULL-intensity rain is put out.
+ *
+ * Sized against the burn it has to interrupt: a tree burns for 22 s, so at
+ * 0.25/s a fire caught in a downpour is out within about four seconds and has
+ * essentially no chance of surviving a squall's passage. Rain is meant to be the
+ * decisive answer to fire — it is the one the player cannot cause, so it is
+ * allowed to be strong — while WET_SPREAD_PENALTY keeps even that short of a
+ * guarantee at the edges of a system where intensity is low.
+ */
+export const RAIN_SUPPRESSION_RATE_PER_SECOND = 0.25;
+
+/**
+ * Rolls rain against every fire and returns the ones it put out.
+ *
+ * The fuel SURVIVES (blaze.ts's three endings): a tree the rain saved is still a
+ * tree, scorched. That distinction is the whole reason extinguish and burn-out
+ * are separate paths.
+ */
+function suppressWithRain(dt: number): FuelCell[] {
+  const drenched: FuelCell[] = [];
+  for (const fire of blaze.fires()) {
+    const wetness = precipitationAt(fire.x, fire.y);
+    if (wetness <= 0) continue;
+    if (!happensWithin(RAIN_SUPPRESSION_RATE_PER_SECOND * wetness, dt)) continue;
+    drenched.push({ x: fire.x, y: fire.y });
+  }
+  return blaze.extinguish(drenched);
+}
+
+/**
  * Chance that a bolt landing on something flammable sets it alight.
  *
  * NOT 1, and the difference is the whole feel of the mechanic: most lightning
@@ -406,7 +440,14 @@ export const plugin: TerracePlugin = {
     // flora's scanCredit is capped for the same reason.
     spreadDebtSeconds = Math.min(spreadDebtSeconds + dt, SPREAD_INTERVAL_SECONDS);
     let ignited: FireCellState[] = [];
+    let drenched: FuelCell[] = [];
     if (spreadDebtSeconds >= SPREAD_INTERVAL_SECONDS) {
+      // RAIN BEFORE SPREAD, so a fire the rain has just put out does not get to
+      // throw one last spark on its way out. The two share a cadence because
+      // they are two halves of one question — where is the fire a second from
+      // now — and evaluating them on different clocks would let a fire spread
+      // from a cell it was extinguished on.
+      drenched = suppressWithRain(spreadDebtSeconds);
       ignited = spreadOnce(world, blaze, spreadDebtSeconds);
       spreadDebtSeconds = 0;
     }
@@ -421,7 +462,8 @@ export const plugin: TerracePlugin = {
       }
     }
 
-    if (ignited.length > 0 || stopped.length > 0) broadcastChanges(world, ignited, stopped);
+    const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
+    if (ignited.length > 0 || ended.length > 0) broadcastChanges(world, ignited, ended);
 
     if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) broadcastSnapshot(world);
   },
