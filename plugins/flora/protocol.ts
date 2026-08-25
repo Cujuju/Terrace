@@ -26,11 +26,11 @@
 // 6 B per tree in a flat array and a 128² world costs 2 B.
 //
 //   full snapshot   3000 × 6 B                    = 18 KB, ONCE, at join
-//   growth deltas   24 sprouts × 6 B / 5 s        = 29 B/s  ≈ 0.23 kbit/s
+//   growth deltas   48 sprouts × 6 B / 5 s        = 58 B/s  ≈ 0.46 kbit/s
 //   fell deltas     ≤ ~30 trees × 6 B per sculpt  = ≤ 180 B per edit
 //   keepalive       18 KB / 60 s                  = 300 B/s ≈ 2.4 kbit/s
 //                                                   ─────────────────────
-//                                                   ≈ 2.7 kbit/s per client
+//                                                   ≈ 2.9 kbit/s per client
 //
 // The rejected alternative is wildlife's: full state at 5 Hz. That would be
 // 18 KB × 5 = 90 KB/s ≈ 720 kbit/s per client — nearly double the ENTIRE
@@ -78,9 +78,9 @@ export const FLORA_CHANGES_MESSAGE = 'changes';
  *     chunk meshes at 512²), which is what makes the cap a wire number.
  *
  * It BINDS only on a large, largely-revealed, largely-green world: at
- * FLORA_CELLS_PER_TREE = 12 the cap is reached once 36 000 stable green cells
- * exist, i.e. ~14% of a 512² world (and it can never bind at 128², whose 16 384
- * cells could ask for at most 1365 trees). Past that the forest simply stops
+ * FLORA_CELLS_PER_TREE = 8 the cap is reached once 24 000 stable green cells
+ * exist, i.e. ~9% of a 512² world (and it can never bind at 128², whose 16 384
+ * cells could ask for at most 2048 trees). Past that the forest simply stops
  * getting denser, which reads as woodland rather than as a bug.
  *
  * It lives HERE rather than in the server half because both halves need it: the
