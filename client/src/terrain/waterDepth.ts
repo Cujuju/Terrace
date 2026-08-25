@@ -373,16 +373,33 @@ export function surfaceAlphaByte(height: number): number {
  * since that curve is separately tuned and entangled with the specular
  * correction.
  *
- * 32 bands is the genesis trench floor: the deepest water a fresh world
- * contains. Ramping to exactly that means the range covers every depth that
- * actually exists, end to end, with nothing clamped flat and nothing spent on
- * crust no swimmer ever sees. The worldgen numbers it is chosen against live in
- * server/src/world/world.ts (FRESH_SHELF/SLOPE/SEABED_DEPTH_BELOW_SEA,
- * GENESIS_TRENCH_FLOOR_DEPTH_BELOW_SEA); they are worldgen's to move, and if
- * they move far this constant wants revisiting — it is a rendering choice made
- * against that profile, not a copy of any one of those values.
+ * CORRECTED AGAIN, same day, same report ("I restarted and now I can't tell the
+ * difference again"). The first correction picked 32 bands — the genesis trench
+ * floor, the deepest water a world CAN contain — which is the deepest-possible
+ * argument, not the where-is-it-actually one. Measuring the live world settled
+ * it. Depth histogram of frostwick-hollows (512², 90% water):
+ *
+ *     p5  5 bands   p50 11 bands   p90 14 bands
+ *     p25 10 bands  p75 12 bands   p95 16 bands   p99 37 bands
+ *
+ * SIXTY-TWO PERCENT of all water sits in bands 10–12. Against a 32-band ramp
+ * that entire population spanned shade 0.926–0.997 — a 7% spread carrying most
+ * of the ocean, which is why it read as one flat colour for the second time.
+ * The trench tail that justified 32 is 1% of cells.
+ *
+ * 16 bands is this world's p95: the depth below which 95% of its water sits.
+ * The dominant 10–12 population now spans 0.644–0.503, a 14% spread — double
+ * what 32 gave — and everything past p95 clamps to the deep end, which is the
+ * right answer for a trench anyway.
+ *
+ * THE METHOD, which is the part worth keeping: this constant was wrong twice
+ * because it was reasoned from worldgen constants (the crust's floor, then the
+ * trench's) instead of measured from a world. The seabed's THEORETICAL range
+ * and the range it actually occupies are different questions, and only the
+ * second one is on screen. Re-measure before moving this number again — the
+ * histogram above is one query against server/data/worlds/<world>.db.
  */
-const WATER_SHADE_SATURATION_BANDS = 32;
+const WATER_SHADE_SATURATION_BANDS = 16;
 
 export const WATER_SHADE_SATURATION_WORLD_UNITS =
   WATER_SHADE_SATURATION_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
