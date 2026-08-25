@@ -160,8 +160,17 @@ const WATER_DEPTH_BIAS_UNITS = -1;
  * seeing one (2026-08-22, "it still doesn't look like continuous water").
  * Keeps the pooled value — the calmer, deeper read — and stays distinct from
  * the sea's own.
+ *
+ * 0.8 → 0.7 (owner, 2026-08-24, on first seeing the painted bands: "looks very
+ * nice, but maybe if it was a little more translucent"). The bands are a
+ * multiply on the base colour and do not touch alpha, so the note is about how
+ * solid the water reads, not about the texture. Lowered HERE and not on the
+ * sea: the sea's alpha is already a depth-driven curve topping out at
+ * WATER_MAX_ALPHA 0.55 (terrain/waterDepth.ts), so the rivers at a flat 0.8
+ * were the solid ones, and that curve is separately tuned — dragging it along
+ * would be relitigating a settled decision rather than answering this one.
  */
-const WATER_OPACITY = 0.8;
+const WATER_OPACITY = 0.7;
 
 const RIVER_ROUGHNESS = 0.85;
 const RIVER_METALNESS = 0;
