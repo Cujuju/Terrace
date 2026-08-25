@@ -645,11 +645,13 @@ function steerThisTick(
  *   5. the position moves, and is re-checked.
  *
  * A creature that cannot find any valid heading holds its position for this
- * tick, facing whichever way it already was (see `steerThisTick`'s ladder) —
- * un-wedging happens by trying again next tick, never by placing it illegally.
- * "Holds its position" means holds its HEADING too: the heading is committed
- * together with the position, at the very end, so a vetoed step leaves both
- * exactly as the tick found them.
+ * tick — un-wedging happens by trying again next tick, never by placing it
+ * illegally. Position and heading are committed TOGETHER at the very end, with
+ * exactly one exception, added 2026-08-24 and argued at its own call site: a
+ * creature whose step is vetoed but which the ladder DID hand a legal direction
+ * commits the turn alone, so a turn-rate-limited animal can come about on the
+ * spot instead of standing against a riser forever. Every other "hold position"
+ * return leaves both exactly as the tick found them.
  *
  * `school` is the summary of the creature's own school as it stood at the START
  * of the tick (see summarizeSchools); omitting it steers with wander alone,
@@ -746,7 +748,27 @@ export function advanceEntity(
       !isValidCellFor(world, entity.species, nextX, nextY) ||
       !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
     ) {
-      return; // still nowhere to go this tick; hold position.
+      // TURN WITHOUT MOVING, and this is the fix for the permanent wedge
+      // (owner, 2026-08-24: grazers "get stuck"). `retry` is a direction the
+      // ladder certified THIS TICK; `steered` is one tick of the creature's own
+      // turning circle toward it, and that partial turn can still point into
+      // the obstacle — a creature standing against a riser is asked to go 135°
+      // the other way and gets 17°, which is still the riser. Holding BOTH
+      // heading and position then made the next tick identical to this one, and
+      // the one after that, forever: the escape direction was never inside the
+      // arc, so it could never be reached, so the creature never moved again.
+      //
+      // Committing the heading alone breaks that fixed point without breaking
+      // the rule it was protecting. What the 2026-08-24 "commit them together"
+      // discipline exists to prevent is a creature spinning through headings
+      // NOTHING certified and then departing along an arbitrary one; here the
+      // heading only ever rotates toward a direction the ladder just approved,
+      // monotonically, so it converges in at most π / turnRate seconds (~1 s
+      // for a grazer) and the creature walks away facing somewhere it can go.
+      // A grazer that stops at a riser and turns to follow it is also the
+      // behaviour the animal should have had all along.
+      entity.heading = steered;
+      return; // turned in place; no step this tick.
     }
   }
 

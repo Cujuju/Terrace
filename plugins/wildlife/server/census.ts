@@ -6,8 +6,11 @@
 // population maths directly against a hand-built world.
 
 import {
+  AVOID_TURN_ATTEMPTS,
+  AVOID_TURN_STEP_RADIANS,
   CHUNK_SIZE,
   LAND_WALKER_PROFILE,
+  canProceedAlong,
   canTraverseSegment,
   cellsOverArea,
   isWalkableCell as sharedIsWalkableCell,
@@ -187,6 +190,62 @@ export function canTraverse(
   toY: number,
 ): boolean {
   return canTraverseSegment(world, walkerProfileOf(species), fromX, fromY, toX, toY);
+}
+
+/**
+ * How many of the eight compass directions this species could actually LEAVE
+ * (cellX, cellY) along — its own body length of travel, ground and slope
+ * sampled the whole way.
+ *
+ * WHY IT EXISTS (owner, 2026-08-24: grazers should "spawn in fairly flat
+ * areas", and their "pathing [is] fixed so they don't get stuck"). Both halves
+ * of that are the same missing question. `isValidCellFor` above asks only what
+ * ONE cell is; it cannot tell a hillside from a one-cell pinnacle, because a
+ * pinnacle's own cell is perfectly good dry land. A land walker placed on one
+ * is stuck the moment it exists — every direction crosses a riser steeper than
+ * LAND_WALKER_MAX_GRADIENT_PER_CELL — and no amount of steering can fix a
+ * position that should never have been chosen.
+ *
+ * SO THIS IS A COUNT, NOT A PREDICATE, and the two callers read it at their own
+ * thresholds (population.ts): spawning demands a MAJORITY of the compass, which
+ * is what "fairly flat" means in the only units this simulation has; the
+ * habitat sweep only despawns at ZERO, which is what "walled in" means. One
+ * measurement, two decisions, and a wide gap between them so a creature that
+ * merely walked somewhere snug is never culled for it.
+ *
+ * IT ASKS EXACTLY THE QUESTION STEERING ASKS, deliberately: the same eight
+ * candidate headings the sweep tries (shared's AVOID_TURN_ATTEMPTS ×
+ * AVOID_TURN_STEP_RADIANS), the same `canProceedAlong` along the probe, and the
+ * same `isValidCellFor` veto at its far end. A direction this function calls
+ * open is one `steerAvoiding` would accept, so "there is somewhere to go" and
+ * "the mover will find it" cannot come apart.
+ *
+ * THE PROBE IS ONE BODY LENGTH — the species' own, unscaled. Shorter and a
+ * ledge narrower than the animal itself reads as open ground; longer and a
+ * perfectly walkable saddle reads as a wall. It is also the floor `movement.ts`
+ * already uses for its look-ahead (`lookaheadCellsFor`), so the distance a
+ * creature is placed against is the distance it will steer against.
+ */
+export function openDirectionCount(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  cellX: number,
+  cellY: number,
+): number {
+  const profile = walkerProfileOf(species);
+  const probeCells = profileOf(species).bodyLengthCells;
+  let open = 0;
+
+  for (let direction = 0; direction < AVOID_TURN_ATTEMPTS; direction++) {
+    const heading = direction * AVOID_TURN_STEP_RADIANS;
+    const toX = cellX + Math.cos(heading) * probeCells;
+    const toY = cellY + Math.sin(heading) * probeCells;
+    if (!canProceedAlong(world, profile, cellX, cellY, toX, toY)) continue;
+    if (!isValidCellFor(world, species, toX, toY)) continue;
+    open++;
+  }
+
+  return open;
 }
 
 export interface Census {

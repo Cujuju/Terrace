@@ -85,6 +85,7 @@ import {
   type HabitatWorld,
   emptySpeciesCounts,
   isValidCellFor,
+  openDirectionCount,
   takeCensus,
   targetsFor,
 } from './census.ts';
@@ -370,6 +371,44 @@ function sampleUnlockedCell(): { x: number; y: number } | null {
   };
 }
 
+/**
+ * May a creature of `species` be PLACED at (x, y)? Two conditions, and the
+ * second one is the 2026-08-24 addition:
+ *
+ *   * the cell itself is habitat inside unlocked territory (isValidCellFor —
+ *     the same predicate movement and the habitat sweep use), and
+ *   * enough of the compass around it is somewhere the creature could actually
+ *     walk to (census.ts's `openDirectionCount`, against the species' own
+ *     `spawnOpenDirectionsRequired`).
+ *
+ * WHY PLACEMENT NEEDS ITS OWN PREDICATE and cannot simply be isValidCellFor
+ * (owner, 2026-08-24: grazers should "spawn in fairly flat areas"). Validity is
+ * a statement about ONE cell, and every trap a land walker can be stuck in is
+ * built out of perfectly valid cells: a pinnacle, a notch between two terrace
+ * risers, a one-cell ledge. Movement cannot rescue a creature from a position
+ * that had nowhere to go the moment it was chosen, so the fix belongs at the
+ * one place positions are chosen.
+ *
+ * BOTH PLACEMENT CALL SITES GO THROUGH IT — the seed cell AND the scattered
+ * members of a group — which is the whole reason it is a function rather than
+ * an extra line in `findSpawnCell`: a grazer triplet placed with only its seed
+ * checked would still put two of its three on the riser above the meadow.
+ *
+ * Vacuous for every water species (NO_SPAWN_CLEARANCE_REQUIRED), so their
+ * placement is bit-for-bit what it was before this existed.
+ */
+function canSettleAt(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  x: number,
+  y: number,
+): boolean {
+  if (!isValidCellFor(world, species, x, y)) return false;
+  const required = profileOf(species).spawnOpenDirectionsRequired;
+  if (required <= 0) return true;
+  return openDirectionCount(world, species, x, y) >= required;
+}
+
 /** Rejection-samples a spawn point for `species`. Null when none was found. */
 function findSpawnCell(
   world: HabitatWorld,
@@ -378,7 +417,7 @@ function findSpawnCell(
   for (let attempt = 0; attempt < SPAWN_SAMPLE_ATTEMPTS; attempt++) {
     const candidate = sampleUnlockedCell();
     if (candidate === null) return null;
-    if (isValidCellFor(world, species, candidate.x, candidate.y)) return candidate;
+    if (canSettleAt(world, species, candidate.x, candidate.y)) return candidate;
   }
   return null;
 }
@@ -484,7 +523,7 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
     // Member 0 sits exactly on the known-valid seed; the rest scatter.
     const x = n === 0 ? seed.x : seed.x + randomSigned(scatter);
     const y = n === 0 ? seed.y : seed.y + randomSigned(scatter);
-    if (!isValidCellFor(world, species, x, y)) continue;
+    if (!canSettleAt(world, species, x, y)) continue;
     entities.push({
       id: allocateEntityId(),
       species,
@@ -523,18 +562,48 @@ function rollSpawnEvent(ripe: number, dt: number): boolean {
 }
 
 /**
- * Consumes ripe credits, at most SPAWN_GROUPS_PER_TICK groups per call and only
- * when the probabilistic roll fires.
+ * Pushes every RIPE credit for `species` out by a census interval.
+ *
+ * Called when a placement attempt found nowhere to put the species — all its
+ * deep water still locked, or (since 2026-08-24) a world whose land is all
+ * riser and offers no cell flat enough to settle on. Deferring the WHOLE ripe
+ * pile rather than the one credit that was drawn is what bounds the wasted
+ * work: a species with ninety unplaceable credits would otherwise draw a fresh
+ * one and rejection-sample SPAWN_SAMPLE_ATTEMPTS cells for it on every single
+ * tick, forever. Now it costs one failed attempt per species per census
+ * interval, which is the same cadence the habitat that could change the answer
+ * is re-measured on.
  */
-function consumeCredits(world: HabitatWorld, dt: number): void {
-  for (let group = 0; group < SPAWN_GROUPS_PER_TICK; group++) {
-    if (entities.length >= WILDLIFE_POPULATION_CAP) return;
-    const ripe = ripeCreditCount();
-    if (ripe === 0) return;
-    if (!rollSpawnEvent(ripe, dt)) return;
+function deferRipeCredits(species: WildlifeHabitatSpecies): void {
+  for (let i = 0; i < credits.length; i++) {
+    if (credits[i].species !== species || credits[i].readyAt > simSeconds) continue;
+    credits[i] = { species, readyAt: simSeconds + HABITAT_CENSUS_INTERVAL_SECONDS };
+  }
+}
 
+/**
+ * Spawns ONE group from the ripe credits, trying each ripe species in turn.
+ * Returns whether anything was created.
+ *
+ * TRIES EVERY SPECIES, NOT JUST THE FIRST (2026-08-24), and that is a fix for a
+ * real starvation, not a tidy-up. The ripe credit drawn was simply the first in
+ * the array; when its species could not be placed, the whole call returned —
+ * so one unplaceable species consumed the tick's single spawn slot and NOTHING
+ * ELSE could be born while it kept failing. It stayed theoretical only while
+ * every target was placeable. It stopped being theoretical the moment spawning
+ * gained a flatness rule (`canSettleAt`): a world of steep land asks for
+ * grazers by area, cannot place a single one, and used to take the fish and the
+ * whales down with it — the ecosystem starved on behalf of an animal that could
+ * not live there anyway.
+ *
+ * Bounded by the number of species: each failure defers that species' whole
+ * ripe pile (`deferRipeCredits`), so it cannot be drawn again in this call or
+ * for a census interval afterwards.
+ */
+function spawnOneGroup(world: HabitatWorld): boolean {
+  for (let attempt = 0; attempt < WILDLIFE_HABITAT_SPECIES.length; attempt++) {
     const index = credits.findIndex((credit) => credit.readyAt <= simSeconds);
-    if (index === -1) return;
+    if (index === -1) return false;
 
     const species = credits[index].species;
     const wanted = Math.min(
@@ -545,11 +614,8 @@ function consumeCredits(world: HabitatWorld, dt: number): void {
     const created = spawnGroup(world, species, wanted);
 
     if (created === 0) {
-      // No habitat available right now (all deep water still locked, say).
-      // Defer this credit by a census interval rather than rejection-sampling
-      // for it on every tick forever.
-      credits[index] = { species, readyAt: simSeconds + HABITAT_CENSUS_INTERVAL_SECONDS };
-      return;
+      deferRipeCredits(species);
+      continue;
     }
 
     // Debit exactly the credits `created` was earned against: ripe ones, same
@@ -565,6 +631,22 @@ function consumeCredits(world: HabitatWorld, dt: number): void {
       credits.splice(i, 1);
       removed++;
     }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Consumes ripe credits, at most SPAWN_GROUPS_PER_TICK groups per call and only
+ * when the probabilistic roll fires.
+ */
+function consumeCredits(world: HabitatWorld, dt: number): void {
+  for (let group = 0; group < SPAWN_GROUPS_PER_TICK; group++) {
+    if (entities.length >= WILDLIFE_POPULATION_CAP) return;
+    const ripe = ripeCreditCount();
+    if (ripe === 0) return;
+    if (!rollSpawnEvent(ripe, dt)) return;
+    if (!spawnOneGroup(world)) return;
   }
 }
 
@@ -598,6 +680,54 @@ export function despawnInvalidHabitat(world: HabitatWorld): number {
   for (let i = entities.length - 1; i >= 0; i--) {
     const entity = entities[i];
     if (isValidCellFor(world, entity.species, entity.x, entity.y)) continue;
+    despawnWithCredit(i);
+    despawned++;
+  }
+  return despawned;
+}
+
+/**
+ * Sweeps every creature that has ended up WALLED IN — no legal step in any of
+ * the eight compass directions (census.ts's `openDirectionCount` at zero) —
+ * and returns how many were removed.
+ *
+ * THE FAILURE MODE THIS CLOSES, and it is the residual left by the two fixes
+ * beside it. Spawning now refuses a cell with nowhere to go (`canSettleAt`) and
+ * steering now lets a wedged creature turn on the spot until it faces somewhere
+ * it can walk (movement.ts). Neither can help a creature the WORLD closed in on
+ * afterwards: a player raises a ring of terrace around a grazing hillside and
+ * every cell under the animal is still perfectly valid habitat, so the
+ * habitat-loss sweep never looks at it, while every direction out of it now
+ * crosses a riser. That creature would stand there for the rest of its natural
+ * life. This is the sweep that notices, and it hands the population back a
+ * credit so the species reappears somewhere it can live — the same treatment a
+ * drained lake's fish get, for the same reason.
+ *
+ * ZERO, NOT the majority `canSettleAt` demands. The gap between the two
+ * thresholds is deliberate hysteresis: a creature is PLACED on generous ground
+ * and is only ever CULLED from ground that has become impossible, so an animal
+ * that merely grazed its way into a snug corner is left alone. See
+ * GRAZER_SPAWN_OPEN_DIRECTIONS.
+ *
+ * SPECIES THAT DECLARE NO CLEARANCE RULE ARE EXEMPT, which is every swimmer.
+ * Not an optimisation: a whale's body length is 20 cells, so probing one of
+ * them in eight directions asks whether it has a whole basin around it, and a
+ * pod legitimately nosing into a bay would read as walled in. The swimmers'
+ * own stuck-in-place report (2026-08-24) was answered by the shortening probe
+ * in shared/src/steering.ts, and nothing has asked for a cull on top of it.
+ *
+ * RUN ON THE CENSUS CADENCE, not per tick (advancePopulation), for the census's
+ * own reason: being walled in is a property of the TERRAIN, which only changes
+ * at human pace, and the probe is eight sampled segments per creature — far too
+ * much to spend ten times a second on a condition that can only arise when
+ * somebody sculpts.
+ */
+export function despawnWedged(world: HabitatWorld): number {
+  let despawned = 0;
+  for (let i = entities.length - 1; i >= 0; i--) {
+    const entity = entities[i];
+    if (profileOf(entity.species).spawnOpenDirectionsRequired <= 0) continue;
+    if (openDirectionCount(world, entity.species, entity.x, entity.y) > 0) continue;
     despawnWithCredit(i);
     despawned++;
   }
@@ -755,6 +885,9 @@ export function advancePopulation(world: HabitatWorld, dt: number): void {
     const census = takeCensus(world);
     spawnChunks = census.chunks;
     targets = targetsFor(census.cellsByHabitat);
+    // BEFORE reconciling, so a creature the terrain has walled in is counted as
+    // the loss it is and its replacement is issued in the same pass.
+    despawnWedged(world);
     reconcileToTargets();
   }
 

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
   CHUNK_SIZE,
+  LAND_WALKER_MAX_GRADIENT_PER_CELL,
   MAX_BRUSH_RADIUS,
   SEA_LEVEL,
   cellsAcross,
@@ -191,11 +192,21 @@ const BURST_POPULATION_CEILING_FRACTION = 0.5;
 /**
  * A north-to-south ramp: abyss at y=0, shoreline at y=200, hills below that.
  *
- * Slope is 8 height units per cell — a quarter of MAX_STEP — so the world
- * already satisfies the gradient limit and a sculpt anywhere in it produces a
- * small local diff instead of a map-wide relaxation cascade.
+ * SLOPE IS THE LAND WALKER'S OWN LIMIT, taken from the constant rather than
+ * typed out, so the ramp is by construction the steepest world a grazer can
+ * still walk on — and a sculpt anywhere in it produces a small local diff
+ * instead of a map-wide relaxation cascade.
+ *
+ * IT USED TO BE THE LITERAL 8, described here as "a quarter of MAX_STEP". That
+ * was true when MAX_STEP was 32; the 2026-08-21 re-sample re-derived MAX_STEP
+ * as BAND_HEIGHT / WORLD_UNIT_CELLS = 4, which left this fixture modelling a
+ * world twice as steep as any legal terrain and four times as steep as any land
+ * animal can cross. Every grazer this suite spawned was therefore frozen where
+ * it stood — the exact defect the 2026-08-24 flatness rule was written to stop
+ * — and no assertion could see it, because a stuck creature is still a living
+ * creature. Derived from the walker's limit, the fixture cannot drift again.
  */
-const RAMP_SLOPE_PER_CELL = 8;
+const RAMP_SLOPE_PER_CELL = LAND_WALKER_MAX_GRADIENT_PER_CELL;
 const SHORELINE_ROW = 200;
 function rampHeight(_x: number, y: number): number {
   return (y - SHORELINE_ROW) * RAMP_SLOPE_PER_CELL;
