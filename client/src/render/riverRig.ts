@@ -980,6 +980,7 @@ export function createRiverRig(
         loops,
         region.surfaceBand,
         bandWorldY,
+        waterBandAt,
         SEA_SURFACE_WORLD_Y,
         triangles,
       );
