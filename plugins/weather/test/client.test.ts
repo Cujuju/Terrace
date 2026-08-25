@@ -349,21 +349,21 @@ describe('the photosensitivity floor', () => {
   });
 
   it('holds the floor within one storm across a long run', () => {
+    // The server now decides when a bolt lands (server/lightning.ts), so the
+    // worst case this floor exists for is a server striking EVERY FRAME — which
+    // is what this asks for.
     const governor = new LightningGovernor();
-    // A source pinned at 0 asks for the shortest interval the sampler can give,
-    // which is exactly the case the floor exists for.
-    const schedule = new LightningSchedule(() => 0);
+    const schedule = new LightningSchedule();
     const dt = 1 / 60;
     let sinceLast = Number.POSITIVE_INFINITY;
     let flashes = 0;
 
     for (let frame = 0; frame < 60 * 600; frame++) {
       governor.advance(dt);
-      const flash = schedule.advance(dt, true, governor);
+      schedule.advance(dt);
       sinceLast += dt;
-      if (flash !== null) {
+      if (schedule.strike(governor)) {
         expect(sinceLast).toBeGreaterThanOrEqual(MIN_FLASH_INTERVAL_SECONDS - 1e-9);
-        expect(flash.reach).toBeLessThanOrEqual(BOLT_MAX_REACH_FRACTION);
         sinceLast = 0;
         flashes++;
       }
@@ -376,7 +376,7 @@ describe('the photosensitivity floor', () => {
     // hold and the client would still see three flashes 16 ms apart; this is the
     // property MAX_ACTIVE_SYSTEMS makes possible and the governor forbids.
     const governor = new LightningGovernor();
-    const schedules = [0, 1, 2].map(() => new LightningSchedule(() => 0));
+    const schedules = [0, 1, 2].map(() => new LightningSchedule());
     const dt = 1 / 60;
     let sinceLast = Number.POSITIVE_INFINITY;
     let flashes = 0;
@@ -385,7 +385,8 @@ describe('the photosensitivity floor', () => {
       governor.advance(dt);
       sinceLast += dt;
       for (const schedule of schedules) {
-        if (schedule.advance(dt, true, governor) === null) continue;
+        schedule.advance(dt);
+        if (!schedule.strike(governor)) continue;
         expect(sinceLast).toBeGreaterThanOrEqual(MIN_FLASH_INTERVAL_SECONDS - 1e-9);
         sinceLast = 0;
         flashes++;
@@ -396,27 +397,38 @@ describe('the photosensitivity floor', () => {
     expect(flashes).toBeLessThanOrEqual(600 / MIN_FLASH_INTERVAL_SECONDS + 1);
   });
 
-  it('starts nothing at all when the caller is not armed', () => {
+  it('starts nothing at all on its own — only a strike lights it', () => {
+    // The property the old `armed: false` parameter bought, restated for a
+    // schedule that no longer proposes anything: ten minutes of frames with no
+    // strike delivered is ten minutes of darkness. This is what reduced motion
+    // and a dissipating storm both rely on now — the caller simply does not
+    // deliver the strike.
     const governor = new LightningGovernor();
-    const schedule = new LightningSchedule(() => 0);
+    const schedule = new LightningSchedule();
     for (let frame = 0; frame < 60 * 600; frame++) {
       governor.advance(1 / 60);
-      expect(schedule.advance(1 / 60, false, governor)).toBeNull();
+      schedule.advance(1 / 60);
+      expect(schedule.brightness()).toBe(0);
     }
-    // …and the governor was never touched, so the first armed frame afterwards
-    // is free to flash rather than being held back by phantom suppressions.
+    // …and the governor was never touched, so the first strike afterwards is
+    // free to flash rather than being held back by phantom suppressions.
     expect(governor.secondsSinceLastFlash()).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it('fires at most once for one enormous frame, never a backlog burst', () => {
+  it('drops a second strike inside the floor rather than deferring it', () => {
+    // The server may legitimately land two bolts in quick succession. The floor
+    // is a property of THIS client and is not up for negotiation by the server,
+    // and a refusal must DROP the flash, not queue it — a queue would repay the
+    // suppressed flashes the instant the floor cleared, which is the burst the
+    // floor exists to prevent.
     const governor = new LightningGovernor();
-    const schedule = new LightningSchedule(() => 0);
+    const schedule = new LightningSchedule();
     governor.advance(600);
-    const first = schedule.advance(600, true, governor);
-    expect(first).not.toBeNull();
+    expect(schedule.strike(governor)).toBe(true);
     // The very next frame is inside the floor, so nothing can follow it.
     governor.advance(1 / 60);
-    expect(schedule.advance(1 / 60, true, governor)).toBeNull();
+    schedule.advance(1 / 60);
+    expect(schedule.strike(governor)).toBe(false);
   });
 
   it('survives a NaN dt without disarming the floor forever', () => {
@@ -447,15 +459,14 @@ describe('the photosensitivity floor', () => {
     // INSTANT reset() is called, with no advance() in between to decay it away.
     const governor = new LightningGovernor();
     governor.advance(MEAN_FLASH_INTERVAL_SECONDS * 10);
-    const schedule = new LightningSchedule(() => 0);
+    const schedule = new LightningSchedule();
 
-    const started = schedule.advance(MEAN_FLASH_INTERVAL_SECONDS * 10, true, governor);
-    expect(started).not.toBeNull();
-    // Move partway through the flash's decay — armed false, so this only ages
-    // `sinceFlash` and proposes nothing new, exactly like a rig whose storm has
-    // already dissipated (rig.ts: `if (!lit) return;` stops calling advance() at
-    // all once intensity hits 0, so age freezes rather than resets on its own).
-    schedule.advance(FLASH_ATTACK_SECONDS * 2, false, governor);
+    expect(schedule.strike(governor)).toBe(true);
+    // Move partway through the flash's decay — exactly like a rig whose storm
+    // has already dissipated (rig.ts: `if (!lit) return;` stops calling
+    // advance() at all once intensity hits 0, so age freezes rather than
+    // resets on its own).
+    schedule.advance(FLASH_ATTACK_SECONDS * 2);
     expect(schedule.brightness()).toBeGreaterThan(0);
 
     schedule.reset();
@@ -463,10 +474,11 @@ describe('the photosensitivity floor', () => {
     // storm before a single frame has run.
     expect(schedule.brightness()).toBe(0);
 
-    // The redrawn wait also respects the photosensitivity floor: the very next
-    // frame cannot propose a flash the governor would have to refuse.
-    const immediate = schedule.advance(1 / 60, true, governor);
-    expect(immediate).toBeNull();
+    // And the floor still holds across the handover: a strike delivered to the
+    // new storm on its very first frame is refused, because the governor
+    // remembers the flash the OLD storm just had.
+    schedule.advance(1 / 60);
+    expect(schedule.strike(governor)).toBe(false);
   });
 
   it('places a bolt from the cloud base down into the haze', () => {

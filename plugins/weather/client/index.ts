@@ -23,13 +23,16 @@
 // WEATHER rather than to the viewer. See RENDERING IS ANCHORED TO THE SYSTEM.
 
 import { Group } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
 import {
   WEATHER_PLUGIN_NAME,
+  WEATHER_STRIKES_MESSAGE,
   WEATHER_SYSTEMS_MESSAGE,
+  parseStrikesPayload,
   parseSystemsPayload,
 } from '../protocol.ts';
 import { WeatherInterpolator, type InterpolatedSystem } from './interpolation.ts';
@@ -126,6 +129,7 @@ const governor = new LightningGovernor();
 let animationSeconds = 0;
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 let unsubscribeMessages: (() => void) | null = null;
+let unsubscribeStrikes: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
 /** Adds/removes rigs so `views` matches the sampled system list. */
@@ -183,6 +187,34 @@ function renderFrame(dt: number): void {
   }
 }
 
+/**
+ * A bolt landed. Finds the rig drawing the system that threw it and tells it
+ * where, in that rig's OWN space — the rig's root sits at the system's centre,
+ * so a strike is an offset from there rather than a world position.
+ *
+ * THE SYSTEM'S SAMPLED POSITION, not its last broadcast one: the rig is drawn at
+ * the interpolated position this frame (interpolation.ts), so measuring the
+ * offset against anything else would put the bolt a fraction of a cell away from
+ * where the storm actually is.
+ *
+ * Dropped silently when the system is unknown — a strike can arrive for a system
+ * whose broadcast has not landed yet, or one this client has already retired.
+ * There is nothing to draw and nothing to correct; the fire the server started
+ * is not this client's to decide about.
+ */
+function applyStrike(systemId: number, cellX: number, cellY: number): void {
+  const rig = views.get(systemId);
+  if (rig === undefined) return;
+  const system = interpolator.sample().get(systemId);
+  if (system === undefined) return;
+
+  rig.strike(
+    (cellX - system.x) * CELL_WORLD_SIZE,
+    (cellY - system.y) * CELL_WORLD_SIZE,
+    governor,
+  );
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: WEATHER_PLUGIN_NAME,
 
@@ -205,13 +237,26 @@ export const clientPlugin: TerraceClientPlugin = {
       interpolator.receive(systems);
     });
 
+    unsubscribeStrikes = ctx.onMessage(WEATHER_STRIKES_MESSAGE, (payload) => {
+      const strikes = parseStrikesPayload(payload);
+      if (strikes === null) return;
+      // REDUCED MOTION DROPS THE BOLT HERE, at the door, rather than inside the
+      // rig: it is the one place that knows the strike is a visual event at all.
+      // The server's fire burns either way — a player who asked for less motion
+      // asked for less motion, not for a different world.
+      if (reducedMotion?.matches() ?? false) return;
+      for (const strike of strikes) applyStrike(strike.systemId, strike.x, strike.y);
+    });
+
     unsubscribeFrames = ctx.onFrame((dt) => renderFrame(dt));
   },
 
   dispose(): void {
     unsubscribeMessages?.();
+    unsubscribeStrikes?.();
     unsubscribeFrames?.();
     unsubscribeMessages = null;
+    unsubscribeStrikes = null;
     unsubscribeFrames = null;
 
     views.clear();

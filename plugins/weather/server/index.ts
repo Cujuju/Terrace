@@ -95,7 +95,13 @@ import type {
 // Type-only import of the plugin contract (fully erased at runtime). It reaches
 // into server/src because core publishes no plugin-API entry point yet — the
 // same arrangement the mana, reveal, relics, wildlife and monsters plugins use.
-import { WEATHER_PLUGIN_NAME, WEATHER_SYSTEMS_MESSAGE } from '../protocol.ts';
+import {
+  WEATHER_PLUGIN_NAME,
+  WEATHER_STRIKES_MESSAGE,
+  WEATHER_SYSTEMS_MESSAGE,
+  packStrikes,
+} from '../protocol.ts';
+import { rollStrikes } from './lightning.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
   advanceWeather,
@@ -135,6 +141,23 @@ let tickCount = 0;
  */
 function simulate(world: WorldApi, dt: number): void {
   advanceWeather(world, dt);
+
+  // STRIKES, on the TICK they happen rather than on the broadcast cadence
+  // below (./lightning.ts). A bolt is an instant: holding one for up to a
+  // second so it could ride the next systems message would put the flash
+  // somewhere it visibly does not belong, and would delay the fire it starts
+  // by the same amount.
+  //
+  // Broadcast AND emitted as a world event, which is not redundancy — they
+  // have different audiences. The message is for the CLIENTS, which draw the
+  // bolt; the event is for other SERVER plugins (fire lights what was struck),
+  // by-name and with no import in either direction.
+  const strikes = rollStrikes(world, dt);
+  if (strikes.length > 0) {
+    const payload = { strikes: packStrikes(strikes) };
+    world.broadcast(WEATHER_STRIKES_MESSAGE, payload);
+    world.emitEvent(WEATHER_STRIKES_MESSAGE, payload);
+  }
 
   tickCount++;
   if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;

@@ -30,9 +30,11 @@
 // (SPREAD_INTERVAL_SECONDS) — one product of one rate and three multipliers,
 // with the firebreak falling out of it rather than being written into it.
 //
-// WHAT IS NOT HERE YET, deliberately: rain suppression, lightning ignition, and
-// the player's own ignite intent. `igniteAt` below is the seam every one of
-// those arrives through.
+// LIGHTNING is where fires come from today: weather picks the cell a bolt lands
+// on, emits it, and this plugin rolls whether it caught (onWorldEvent below).
+//
+// WHAT IS NOT HERE YET, deliberately: rain suppression and the player's own
+// ignite intent. `igniteAt` is the seam both arrive through.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
@@ -55,7 +57,9 @@ import {
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
 import { fuelSources } from './fuel.ts';
+import { fireRandom } from './rng.ts';
 import { SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
+import { parseStruckCells } from './strike-event.ts';
 import { loadWeatherBridge } from './weather-bridge.ts';
 
 /**
@@ -277,6 +281,38 @@ export function burningCells(): FireCellState[] {
 // would make the bridge's shape depend on this plugin's internal file layout.
 export { registerFuel, unregisterFuel, type CellFuel, type FuelSource } from './fuel.ts';
 
+/**
+ * Chance that a bolt landing on something flammable sets it alight.
+ *
+ * NOT 1, and the difference is the whole feel of the mechanic: most lightning
+ * should be spectacle and some of it should be a disaster. A player who learns
+ * that every bolt starts a fire stops watching storms and starts dreading them.
+ *
+ * THE ARITHMETIC IT LANDS AT, on a mature world: flora plants roughly one tree
+ * per FLORA_CELLS_PER_TREE (12) eligible cells, so a bolt aimed by height alone
+ * (weather/server/lightning.ts) lands on fuel maybe one time in twelve; at 0.35
+ * that is ~3% of bolts starting a fire, and a storm throwing a dozen bolts over
+ * its life starts one about a third of the time it crosses woodland. Rare
+ * enough to be an event, common enough that a long game sees several.
+ */
+export const LIGHTNING_IGNITION_CHANCE = 0.35;
+
+/**
+ * A bolt landed on each of these cells. Rolls each one independently.
+ *
+ * The struck cell is the only candidate — no searching a neighbourhood for
+ * something more flammable. A bolt hit a cell; either something there caught or
+ * it did not. Widening the search would make the strike's DRAWN position a lie
+ * about where the fire started, which is the exact defect moving strike
+ * selection to the server was meant to fix.
+ */
+function igniteStruckCells(cells: readonly { readonly x: number; readonly y: number }[]): void {
+  for (const cell of cells) {
+    if (fireRandom() >= LIGHTNING_IGNITION_CHANCE) continue;
+    igniteAt(cell.x, cell.y);
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Persistence
 // ────────────────────────────────────────────────────────────────────────────
@@ -407,6 +443,17 @@ export const plugin: TerracePlugin = {
   onTerrainChanged(_world: WorldApi, diff: readonly CellDiff[]): void {
     if (blaze.size === 0 || diff.length === 0) return;
     extinguishAt(diff);
+  },
+
+  onWorldEvent(_world: WorldApi, event: string, payload: unknown): void {
+    // By-name subscription (server/src/plugins/types.ts's emitEvent doc
+    // comment): weather's plugin name is the coupling, exactly like a wire
+    // message namespace — never an import of weather's code. A world with no
+    // weather plugin simply never sees this event, and nothing here fires.
+    if (event !== 'weather:strikes') return;
+    const struck = parseStruckCells(payload);
+    if (struck === null) return;
+    igniteStruckCells(struck);
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
