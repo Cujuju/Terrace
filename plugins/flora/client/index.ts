@@ -72,6 +72,8 @@ export const FLORA_GROUND_RETRY_SECONDS = 0.5;
 let models: FloraModels | null = null;
 let cropModels: CropModels | null = null;
 let unsubscribeMessages: Array<() => void> = [];
+/** Withdraws this plugin's aimable objects from the host's pick set. */
+let unmarkPickable: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 
 /** Standing trees by packed cell key. The client's whole model of the world. */
@@ -149,9 +151,17 @@ export const clientPlugin: TerraceClientPlugin = {
 
     models = createFloraModels();
     ctx.layer.add(models.root);
+    // A TREE IS SOMETHING YOU CAN POINT AT. Without this, a ray through a
+    // canopy carries on to the ground several cells behind it, and the torch
+    // lights bare dirt behind the wood the player was aiming at
+    // (ClientPluginCtx.pickWorldCell).
+    unmarkPickable.push(ctx.markPickable(models.root));
 
     cropModels = createCropModels();
     ctx.layer.add(cropModels.root);
+    // Crops too: knee-high, so the parallax is small, but a field is exactly
+    // the sort of thing a player sets light to on purpose.
+    unmarkPickable.push(ctx.markPickable(cropModels.root));
 
     unsubscribeMessages = [
       ctx.onMessage(FLORA_FOREST_MESSAGE, (payload) => {
@@ -201,6 +211,8 @@ export const clientPlugin: TerraceClientPlugin = {
   dispose(): void {
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
     unsubscribeMessages = [];
+    for (const unmark of unmarkPickable) unmark();
+    unmarkPickable = [];
     unsubscribeFrames?.();
     unsubscribeFrames = null;
 

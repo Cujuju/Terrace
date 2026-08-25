@@ -8,12 +8,12 @@
 // the hot path.
 
 import type { SculptIntent } from '@terrace/shared';
-import { Group, Raycaster, Vector2 } from 'three';
+import { Group, Raycaster, Vector2, type Intersection, type Object3D } from 'three';
 import type { Component } from 'solid-js';
 import type { Connection } from '../net/connection.ts';
 import type { Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
-import { pointerToNdc } from '../terrain/picking.ts';
+import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
 import { addPluginTool, clearPluginTools } from './toolbar.ts';
@@ -128,6 +128,54 @@ export function createClientPluginHost(
     return hit === null ? null : { x: hit.x, y: hit.y };
   };
 
+  /**
+   * Everything any plugin has declared aimable (ClientPluginCtx.markPickable).
+   * An ARRAY because that is what Raycaster.intersectObjects takes, and the
+   * membership churn is a handful of registrations at attach time rather than
+   * anything per-frame.
+   */
+  const pickableObjects: Object3D[] = [];
+
+  /**
+   * The cell the player is pointing at: the nearest declared object under the
+   * pointer, and the terrain only when there is none.
+   *
+   * See ClientPluginCtx.pickWorldCell for WHY this is a different question
+   * from pickTerrainCell. The conversion from the hit point is
+   * `worldPointToCell` — the terrain picker's own function, so an object hit
+   * and a ground hit can never disagree about which cell a world position is
+   * in.
+   */
+  const pickWorldCell = (
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } | null => {
+    const size = world.worldSize();
+    if (size <= 0) return null;
+
+    if (pickableObjects.length > 0) {
+      const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+      if (device !== null) {
+        const raycaster = new Raycaster();
+        raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
+        // RECURSIVE, because what a plugin holds is a Group: flora's whole
+        // forest is one node over three InstancedMeshes. A registration
+        // therefore declares a SUBTREE aimable, and keeping unaimable things
+        // out of it is the registrant's business — which is the right place
+        // for it, since the registrant is the only one who knows.
+        const hits: Intersection[] = raycaster.intersectObjects(pickableObjects, true);
+        // Sorted nearest-first by Raycaster, so the first hit is the object the
+        // player can actually see at that pixel.
+        for (const hit of hits) {
+          const cell = worldPointToCell(hit.point.x, hit.point.z, size);
+          if (cell !== null) return { x: cell.x, y: cell.y };
+        }
+      }
+    }
+
+    return pickTerrainCell(clientX, clientY);
+  };
+
   for (const plugin of plugins) {
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
@@ -195,6 +243,14 @@ export function createClientPluginHost(
         };
       },
       pickTerrainCell,
+      pickWorldCell,
+      markPickable(object: Object3D): () => void {
+        if (!pickableObjects.includes(object)) pickableObjects.push(object);
+        return () => {
+          const index = pickableObjects.indexOf(object);
+          if (index !== -1) pickableObjects.splice(index, 1);
+        };
+      },
       onLocalIntent(handler) {
         localIntentHandlers.push(handler);
         return () => {
