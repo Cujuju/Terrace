@@ -96,15 +96,23 @@ const TWO_PI = Math.PI * 2;
 /** The stone's half-diagonal: how far its points reach from its centre. */
 const STONE_RADIUS_FRACTION = 0.085;
 /** The aureole, as a multiple of the stone. Clearly a glow around the stone
- *  rather than a second stone. */
-const HALO_SCALE = 1.9;
+ *  rather than a second stone — but no bigger, because everything the aureole
+ *  gains it takes from the white star at the centre, and the star is the
+ *  subject. At 1.9 the stone had shrunk to a chip inside its own glow. */
+const HALO_SCALE = 1.6;
 /** The additive bloom shell, as a multiple of the stone — outside the aureole,
  *  so at night the glow reads as reaching past it. */
 const BLOOM_SCALE = 2.8;
-/** How far above the temple's summit the stone hangs. Nearly a third of the
- *  span: a clear column of air, so the crown is plainly not resting on the
- *  lintel. */
-const HOVER_GAP_FRACTION = 0.3;
+/**
+ * How far above the temple's summit the stone hangs.
+ *
+ * A CLEAR COLUMN OF AIR, AND NO MORE. This number is a narrow window: too low
+ * and the crown is a bauble sitting on the roof, too high and it is a kite on
+ * a string with no visible business over this particular building. Measured
+ * eyes-on at 0.3 (detached) and 0.11 (perched); 0.18 keeps the gap readable
+ * while the crown still belongs to the temple under it.
+ */
+const HOVER_GAP_FRACTION = 0.18;
 
 /** The two hoops, as fractions of the span. The outer one is 0.52 of the span
  *  across — wider than the lintel below it (about 0.42), which is the whole
@@ -164,8 +172,8 @@ const HALO_BREATH = 0.13;
  * the header). Against a pale sky this is a soft violet column; against a dark
  * one it is a faint one.
  */
-const SHAFT_OPACITY_BASE = 0.2;
-const SHAFT_OPACITY_SWING = 0.07;
+const SHAFT_OPACITY_BASE = 0.16;
+const SHAFT_OPACITY_SWING = 0.06;
 
 /** The aureole's opacity. High enough to hold its own hue against a white
  *  sky, short of opaque so the bloom behind it still shows through at night. */
@@ -216,7 +224,21 @@ const SHAFT_COLOR = 0x8f74ff;
  * together into an obvious pulse.
  */
 const AURORA_HZ = 0.043;
-const AURORA_COOL_COLOR = 0x3fd6c8;
+/**
+ * The cool end of the drift.
+ *
+ * IT MUST CONTRAST WITH THE SKY AT BOTH ENDS OF THE DAY, and the first value
+ * here (0x3fd6c8) did not: a bright teal sits at almost exactly the value AND
+ * almost the hue of the daylit sky (render/scene.ts's SKY_COLOR 0x9fc7e8), so
+ * for the half of every aurora cycle spent near the cool end the crown faded
+ * back into the blue it had just been rescued from — the same failure as the
+ * additive one, arriving by a different road.
+ *
+ * So the teal is taken down to a mid-dark one. It is clearly darker than a
+ * noon sky and still clearly lighter than a dusk sky, which is the band a
+ * colour has to live in to survive both.
+ */
+const AURORA_COOL_COLOR = 0x1f9e9a;
 
 /** What the plugin gets back: one group to parent, and a clock to drive it. */
 export interface CelestialCrown {
