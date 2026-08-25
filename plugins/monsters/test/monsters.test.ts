@@ -2371,7 +2371,7 @@ describe('the yeti in the high Alps', () => {
     // the snow line and still too small — is unchanged. The assertion below is
     // what keeps that honest: it fails rather than silently passing if the
     // fixture ever stops being under the bar.
-    const tinyRadius = cellsAcross(1);
+    const tinyRadius = cellsAcross(0.6);
     const world = massifWorld({
       radius: tinyRadius,
       peakHeight: SNOW_LINE_MIN_HEIGHT + 4 * BAND_HEIGHT,
@@ -2481,9 +2481,12 @@ describe('the yeti in the high Alps', () => {
     // Shrink it below the collapse threshold while his own cell stays snow, so
     // the ONLY thing that can drive him off is the region test. THREE UNTIL
     // 2026-08-23, when the arrival threshold fell 168 → 56 and the collapse
-    // threshold with it, 42 → 14 (kinds.ts): a radius-3 disc is ~28 cells and
-    // would no longer be a collapse at all.
-    snow.radius = 2;
+    // threshold with it, 42 → 14 (kinds.ts); TWO until 2026-08-24, when cutting
+    // the animal to two peep-heights took the thresholds down again with him
+    // (29 and 7) and a radius-2 disc, ~13 cells, stopped being a collapse.
+    // The fixture follows the animal every time, which is what the assertion
+    // below is for.
+    snow.radius = 1;
     expect(Math.PI * snow.radius * snow.radius).toBeLessThan(YETI_LAIR_COLLAPSE_SNOW_CELLS);
     expect(isLairCell(LAND_HABITAT, world, snowMonster()!.x, snowMonster()!.y)).toBe(true);
 
@@ -2558,8 +2561,8 @@ describe('the yeti in the high Alps', () => {
     snowMonster()!.x = MASSIF_CENTER + 0.5;
     snowMonster()!.y = MASSIF_CENTER + 0.5;
 
-    // Two, not three — see the collapse test above on the 2026-08-23 cut.
-    snow.radius = 2;
+    // One, not two — see the collapse test above on the 2026-08-24 rescale.
+    snow.radius = 1;
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
       advanceSummoning(world, TICK_DT);
     }
