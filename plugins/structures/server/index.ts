@@ -70,6 +70,7 @@ import { resetBlessings } from './blessings.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
+import { loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
 
 /**
  * Simulated seconds between unsolicited full re-broadcasts.
@@ -340,6 +341,76 @@ function simulate(world: WorldApi, dt: number): void {
   if (simSeconds - lastKeepaliveSeconds >= STRUCTURES_KEEPALIVE_SECONDS) broadcastAll(world);
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Fire
+//
+// A building is flammable, and it burns the way everything else in the world
+// burns: `fire` owns the flame and the clock, this plugin owns what is standing
+// there and what it means for it to be gone. See ./fire-bridge.ts, and
+// plugins/fire/server/fuel.ts for why the dependency runs this way.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a building burns, in simulated seconds.
+ *
+ * Longer than flora's tree (22 s) because there is more of it to consume and
+ * because the loss is heavier — a player who sees a home catch has time to dig
+ * a break around the rest of the street. Still under a minute: a fire is an
+ * event, not the world's new weather.
+ */
+export const STRUCTURES_BURN_SECONDS = 30;
+
+/**
+ * Flame size for a building, in world units.
+ *
+ * Restated here rather than imported, exactly as flora restates FLORA_TREE_
+ * FUEL_HEIGHT and for the same reason: the drawn height lives in a THREE-
+ * dependent client module the server must not load. A home reads a little
+ * shorter than a full-grown tree (1.5), so the flame that replaces it is sized
+ * to match rather than towering over the roof it is consuming.
+ */
+export const STRUCTURES_FUEL_HEIGHT = 1.0;
+
+/** What burns at this cell: a building, or nothing of this plugin's. */
+function structuresFuelAt(x: number, y: number): { burnSeconds: number; height: number } | null {
+  if (!live.has(structureKey(x, y))) return null;
+  return { burnSeconds: STRUCTURES_BURN_SECONDS, height: STRUCTURES_FUEL_HEIGHT };
+}
+
+/**
+ * A fire finished here: the building is gone.
+ *
+ * THE SAME DEMOLITION AS EVERY OTHER — the board loses the cell, the same
+ * delta message goes out, and the chronicle hears about it. Only the CAUSE is
+ * new ('fire' rather than 'sculpt' or 'generation'), because "the town burned"
+ * and "the ground was dug out from under it" are different stories about the
+ * same missing house.
+ *
+ * Called ONLY for fires that ran their full course (plugins/fire/server/
+ * blaze.ts's three endings): a building the rain saved is scorched and still
+ * standing, which is the whole point of putting the fire out.
+ */
+function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: number }[]): void {
+  const world = fuelWorld;
+  if (world === null) return;
+
+  const burned: Array<{ x: number; y: number }> = [];
+  for (const cell of cells) {
+    if (live.delete(structureKey(cell.x, cell.y))) burned.push({ x: cell.x, y: cell.y });
+  }
+  if (burned.length === 0) return;
+
+  broadcastChanges(world, [], [], burned);
+  world.emitEvent('changes', { cause: 'fire', died: burned });
+}
+
+/**
+ * The live world, stashed for structuresBurnedOut — which is called from fire's
+ * tick rather than from one of this plugin's own hooks, and so is handed no
+ * world of its own. flora keeps its own for the identical reason.
+ */
+let fuelWorld: WorldApi | null = null;
+
 /**
  * THE REACTIVE PATH. Fired after any applied edit with the FULL server-side
  * diff. A live cell standing exactly on a changed cell is killed immediately
@@ -421,6 +492,18 @@ export const plugin: TerracePlugin = {
     restoredLive = new Map();
     restoredGeneration = 0;
     restoredLastSeedDay = -1;
+
+    // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
+    // started, not awaited. The registration is buffered and replayed if fire
+    // has not resolved yet, so the town is flammable from the moment fire
+    // exists rather than from whenever the import happens to land.
+    fuelWorld = world;
+    loadFireBridge();
+    registerStructuresFuel({
+      name: STRUCTURES_PLUGIN_NAME,
+      fuelAt: structuresFuelAt,
+      onBurnedOut: structuresBurnedOut,
+    });
 
     // No players are connected yet — this is only so a client already
     // listening at boot is not left empty for up to a keepalive.
