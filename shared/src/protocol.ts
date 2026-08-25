@@ -200,11 +200,41 @@ export interface TerrainDiffMessage {
   cells: CellDiff[];
 }
 
-/** One chunk's heights on the wire (see extractChunkHeights for the shape). */
+/**
+ * Every layered column in one chunk, as a sparse side-channel mirroring
+ * `Heightmap.columnSpans` exactly.
+ *
+ * `at` holds IN-CHUNK cell offsets (the same row-major index `heights` uses),
+ * ASCENDING. `runs` holds, for each entry of `at` in the same order,
+ * `[spanCount, floor0, ceiling0, floor1, ceiling1, ...]` — the count first so
+ * a reader can walk the list without a second length array.
+ *
+ * A chunk with no layered column omits the field entirely, so the 99.9% case
+ * pays ZERO BYTES on the wire, which is the same bargain the in-memory side
+ * table strikes. A layered column costs `1 + 2 · spanCount` numbers.
+ */
+export interface ChunkLayeredSpans {
+  at: number[];
+  runs: number[];
+}
+
+/**
+ * One chunk's terrain on the wire (see extractChunkPayload for the shape).
+ *
+ * `heights` is unchanged: CHUNK_SIZE² topmost ceilings, row-major, and its
+ * fixed length is still the structural check that catches a truncated payload.
+ *
+ * ABSENT MEANS ONE SPAN. A cell not named by `layered.at` is the one-span
+ * column `[BEDROCK_FLOOR, h)`, so applying a payload must clear any span list
+ * the receiver still holds for the chunk — which `writeChunkHeights` has
+ * always done via `resetColumns`, and which is why the spans are applied
+ * AFTER the heights rather than beside them.
+ */
 export interface ChunkPayload {
   cx: number;
   cy: number;
   heights: number[];
+  layered?: ChunkLayeredSpans;
 }
 
 /** Server → clients: newly unlocked chunks streaming in. */

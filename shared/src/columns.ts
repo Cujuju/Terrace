@@ -621,3 +621,121 @@ export function canCarveBandAt(map: Heightmap, cx: number, cy: number, band: num
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// SERIALISATION — the one flattened form, shared by the wire and the disk.
+// ---------------------------------------------------------------------------
+//
+// A column's spans travel as a flat integer list, `[floor0, ceiling0, floor1,
+// ceiling1, ...]` ascending — exactly the layout `map.columnSpans` already
+// holds in memory. One shape for the diff, the chunk payload and the snapshot
+// blob, so a column cannot mean one thing on the wire and another on disk.
+//
+// ABSENT MEANS ONE SPAN, everywhere. A cell with no packed entry is the
+// one-span column `[BEDROCK_FLOOR, cells[i])`, so a receiver that holds a span
+// list for a cell the sender did not list must DELETE it (see `applyPackedSpans`
+// below). Without that, a carve which later re-merges back to a single span
+// would leave the receiver split forever.
+
+/**
+ * A column's spans in flattened form, or `undefined` for the one-span case
+ * that needs no entry at all. Returns a plain `number[]` rather than the live
+ * `Int16Array`: this value is destined for JSON and for callers that keep it
+ * past the next sculpt, and handing out the backing store would alias both.
+ */
+export function packColumnSpans(map: Heightmap, x: number, y: number): number[] | undefined {
+  const packed = map.columnSpans.get(cellIndex(map, x, y));
+  return packed === undefined ? undefined : Array.from(packed);
+}
+
+/**
+ * Parses a flattened span list into canonical spans, or `null` if it is not
+ * one. NULL RATHER THAN A THROW, and deliberately: every caller is a trust
+ * boundary reading bytes it did not write — a broadcast diff, a chunk payload,
+ * a row out of SQLite — and one malformed entry must cost that one cell, not
+ * the whole message. Callers that consider a bad entry fatal (persistence at
+ * boot) still get to say so themselves.
+ *
+ * Rejects everything `setColumn` rejects, plus the two shapes only a
+ * serialised list can have: an odd length, and a lone span (which is the
+ * absent case and must never be written out, or the same column would have two
+ * encodings and two replicas could disagree while agreeing).
+ */
+export function parsePackedSpans(flat: readonly number[]): Span[] | null {
+  if (flat.length % SPAN_STRIDE !== 0) return null;
+  const count = flat.length / SPAN_STRIDE;
+  if (count < 2) return null;
+  const spans: Span[] = [];
+  for (let k = 0; k < count; k++) {
+    const floor = flat[k * SPAN_STRIDE]!;
+    const ceiling = flat[k * SPAN_STRIDE + 1]!;
+    if (!Number.isInteger(floor) || !Number.isInteger(ceiling)) return null;
+    if (floor < MIN_HEIGHT || ceiling > MAX_HEIGHT) return null;
+    if (floor >= ceiling) return null;
+    if (k > 0 && spans[k - 1]!.ceiling >= floor) return null;
+    spans.push({ floor, ceiling });
+  }
+  if (spans[0]!.floor !== BEDROCK_FLOOR) return null;
+  return spans;
+}
+
+/**
+ * Applies a received span list to one column: sets it when the list parses,
+ * and returns the column to the one-span case when the list is absent.
+ *
+ * THIS IS WHERE "ABSENT MEANS ONE SPAN" IS ENFORCED, and it is the reason
+ * every receiver calls this rather than reaching for `setColumn` itself — the
+ * delete is the half that is easy to forget and impossible to see going wrong
+ * until a column stays split long after the world re-merged it.
+ *
+ * Returns false when a present list did not parse; the caller's height for the
+ * cell still stands, so the column degrades to one span rather than to
+ * nothing. The single-span path always returns true — there is nothing to
+ * reject.
+ */
+export function applyPackedSpans(
+  map: Heightmap,
+  x: number,
+  y: number,
+  flat: readonly number[] | undefined,
+): boolean {
+  if (flat === undefined) {
+    map.columnSpans.delete(cellIndex(map, x, y));
+    return true;
+  }
+  const spans = parsePackedSpans(flat);
+  if (spans === null) {
+    map.columnSpans.delete(cellIndex(map, x, y));
+    return false;
+  }
+  setColumn(map, x, y, spans);
+  return true;
+}
+
+/**
+ * Throws unless every column in ONE CHUNK has exactly one span — the per-chunk
+ * form of `assertSingleSpanWorld`, for the paths that still carry one height
+ * per cell after the world as a whole is allowed to hold a span.
+ *
+ * Costs nothing in the ordinary world: the side table is empty, so this is a
+ * size check. It only walks the chunk once someone has carved somewhere.
+ */
+export function assertSingleSpanChunk(
+  map: Heightmap,
+  x0: number,
+  y0: number,
+  width: number,
+  height: number,
+  context: string,
+): void {
+  if (map.columnSpans.size === 0) return;
+  for (let y = y0; y < y0 + height; y++) {
+    for (let x = x0; x < x0 + width; x++) {
+      if (!map.columnSpans.has(cellIndex(map, x, y))) continue;
+      throw new Error(
+        `${context}: column (${x}, ${y}) holds more than one span. ` +
+          `This path carries one height per cell and cannot express a layered column.`,
+      );
+    }
+  }
+}

@@ -32,7 +32,7 @@ import {
   chunksPerEdge,
   createHeightmap,
   isValidHeight,
-  writeChunkHeights,
+  writeChunkPayload,
   type ChunkPayload,
   type ChunkUnlockMessage,
   type Heightmap,
@@ -235,15 +235,32 @@ export function chunksDirtiedByCell(
  */
 function applyChunkPayload(mirror: TerrainMirror, chunk: ChunkPayload): number[] {
   const worldSize = mirror.map.size;
-  // writeChunkHeights bounds-checks the chunk coords, the payload length, and
-  // now every individual height (isValidHeight) — a malformed server message
+  // writeChunkPayload bounds-checks the chunk coords, the payload length, and
+  // every individual height (isValidHeight) — a malformed server message
   // throws rather than silently corrupting the map. Caught immediately below
   // and dropped: the established drop-don't-crash policy for server-
   // originated messages (see applyTerrainDiff below), because one bad chunk
   // in a broadcast must not take down every client's render loop, and the
   // chunk is simply never marked received.
+  //
+  // The chunk's LAYERED COLUMNS ride in the same call, after the heights and
+  // after the reset the heights imply, so a chunk that used to hold an arch
+  // and no longer does comes back flat instead of keeping the old split. A
+  // single bad span entry does not throw — it costs that one column, which
+  // writeChunkPayload counts and we log once for the chunk.
   try {
-    writeChunkHeights(mirror.map, chunk.cx, chunk.cy, chunk.heights);
+    const rejected = writeChunkPayload(
+      mirror.map,
+      chunk.cx,
+      chunk.cy,
+      chunk.heights,
+      chunk.layered,
+    );
+    if (rejected > 0) {
+      console.warn(
+        `[terrace] chunk (${chunk.cx},${chunk.cy}): dropped ${rejected} malformed layered column(s)`,
+      );
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[terrace] dropping malformed chunk (${chunk.cx},${chunk.cy}): ${message}`);

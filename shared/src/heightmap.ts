@@ -37,11 +37,23 @@ export interface Heightmap {
   readonly columnSpans: Map<number, Int16Array>;
 }
 
-/** One changed cell, as broadcast to clients after an applied edit. */
+/**
+ * One changed cell, as broadcast to clients after an applied edit.
+ *
+ * `h` is the TOPMOST CEILING — what it has always been — so every existing
+ * consumer of a diff keeps working untouched.
+ *
+ * `spans` carries the whole column, flattened `[floor0, ceiling0, ...]`, and
+ * only for the rare column that holds more than one. ABSENT MEANS ONE SPAN:
+ * a receiver must return the cell to `[BEDROCK_FLOOR, h)` — deleting any span
+ * list it still holds for it — or a carve that later re-merges would leave it
+ * split forever. `applyPackedSpans` (columns.ts) is that rule, written once.
+ */
 export interface CellDiff {
   x: number;
   y: number;
   h: number;
+  spans?: number[];
 }
 
 /** Allocates a flat (all-zero = sea-level shoreline) world up front. */
@@ -1713,7 +1725,20 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
   const indices = Array.from(changed).sort((a, b) => a - b);
   const diff: CellDiff[] = [];
   for (const i of indices) {
-    diff.push({ x: cellX(map.size, i), y: cellY(map.size, i), h: map.cells[i]! });
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    // The span list is attached only when there IS one, so a diff for an
+    // ordinary column is byte-identical to what this has always produced.
+    //
+    // Read straight off the side table this module owns rather than through
+    // columns.ts's `packColumnSpans`, which is the same one line: heightmap.ts
+    // is what columns.ts imports, and importing back would put a cycle between
+    // the two modules the whole determinism contract rests on. Reading BY CELL
+    // INDEX is what columns.ts's header licenses; iterating the table is what
+    // it forbids, and nothing here iterates it.
+    const packed = map.columnSpans.get(i);
+    const h = map.cells[i]!;
+    diff.push(packed === undefined ? { x, y, h } : { x, y, h, spans: Array.from(packed) });
   }
   return diff;
 }
