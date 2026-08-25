@@ -48,6 +48,7 @@ import {
   type TempleCell,
 } from '../protocol.ts';
 import { isTempleSite } from './suitability.ts';
+import { loadPilgrimsBridge, templeCanSettle } from './pilgrims-bridge.ts';
 
 // ── Mutable module state ─────────────────────────────────────────────────────
 // Module-level singletons with a reset seam, matching every other plugin here.
@@ -92,17 +93,36 @@ function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
  * place on top of a standing temple is a client that got ahead of its own
  * state, not a case to be clever about) or when the ground will not take it.
  *
- * SILENTLY IS THE POINT: the client already knows both answers. It offers no
+ * SILENTLY, FOR TWO OF THE THREE ANSWERS: the client knows them. It offers no
  * placement ghost where the ground looks wrong and none at all while a temple
- * stands, so the only way to reach a refusal here is a malformed or
- * out-of-date client — the case every plugin's message handler answers by
- * doing nothing.
+ * stands, so those refusals are only reachable by a malformed or out-of-date
+ * client — the case every plugin's message handler answers by doing nothing.
+ *
+ * THE THIRD IS THE SETTLER CHECK BELOW, AND THE CLIENT CANNOT PREDICT IT: it
+ * would need the walker sim to know whether a homestead site is reachable. So
+ * there is one case — good ground, unsettleable county — where the ghost reads
+ * green and the press does nothing, and a silent no-op is the wrong answer to
+ * a player who did everything right. It is narrow (the surveyed square now
+ * covers the doorstep, so the common failures are already ghosted red) and it
+ * is NOT closed: closing it means either telling the client (a refusal message
+ * this plugin has deliberately never needed) or teaching it the walk rules.
+ * Recorded here rather than left to be rediscovered from the symptom.
  */
 function placeTemple(world: WorldApi, payload: unknown): void {
   if (temple !== null) return;
   const cell = parseTemplePlacePayload(payload);
   if (cell === null) return;
   if (!isTempleSite(world, cell.x, cell.y)) return;
+
+  // AND IT MUST BE ABLE TO DO ITS JOB (owner, 2026-08-24: "prevent placing the
+  // temple in a location where it cannot spawn a settler"). Standing on good
+  // ground is not the same as being useful on it: a temple on an islet, or on
+  // a plateau whose every neighbour is a cliff, passes every test above and
+  // then sends nobody out for the rest of the world's life, silently, which is
+  // exactly the shape of bug the player reported. So the county is asked too,
+  // by the plugin that owns what a settler can do with it (pilgrims-bridge).
+  const door = templeDoorCell(cell);
+  if (!templeCanSettle(world, { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y })) return;
 
   temple = cell;
   broadcastState(world);
@@ -192,6 +212,11 @@ export const plugin: TerracePlugin = {
   name: TEMPLES_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
+    // Started, never awaited — the bridge pattern's second rule. A press that
+    // arrives before it resolves is settler-checked as "allowed", which is the
+    // same answer a world without pilgrims gets (pilgrims-bridge's header).
+    void loadPilgrimsBridge();
+
     // RE-VALIDATE ON LOAD, structures' footprint-prune rule (its
     // onWorldCreate) for the same reason: a snapshot restored onto a smaller
     // world, or onto ground a later edit or a stricter rule has spoiled,

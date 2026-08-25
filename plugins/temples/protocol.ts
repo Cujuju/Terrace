@@ -59,6 +59,22 @@ export const TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS = 2;
 import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
 
 /**
+ * THE APRON: clear ground in front of the temple, past the footprint edge, in
+ * WORLD UNITS.
+ *
+ * A quarter of the span. It exists because the building's front face is not
+ * its outermost thing — the stair stands proud of it by half a tread — and
+ * because a settler has to stand SOMEWHERE when it steps out. The apron is
+ * that somewhere: the strip the model may not build on and the ground the
+ * survey must cover, so "in front of the steps" is a place that is known to
+ * exist rather than a place that happens to be free.
+ *
+ * The model enforces its half of this (client/temple.ts clamps the stair's
+ * tread against it); this file enforces the survey's half.
+ */
+export const TEMPLE_FRONT_APRON_WORLD_UNITS = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 4;
+
+/**
  * Chebyshev radius, in CELLS, of the square of ground the server surveys
  * under a temple: every cell within it must be same-band, unlocked, dry land
  * before the temple may stand there.
@@ -68,9 +84,16 @@ import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
  * in any direction, so half the span, converted to cells, IS the radius to
  * survey. A hand-picked cell count would drift the moment the sampling
  * density changes again.
+ *
+ * PLUS THE APRON. The surveyed square covers the doorstep too, because a
+ * settler is spawned onto it: ground nobody checked is ground that can be a
+ * cliff face or a lake, and a building that puts a person there has not
+ * finished surveying itself. This is what makes the temple's ask a 13x13 of
+ * flat dry land rather than a 9x9 — a stricter placement, deliberately, in
+ * exchange for a doorstep that is always there.
  */
 export const TEMPLE_SURVEY_RADIUS_CELLS = Math.ceil(
-  cellsAcross(TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2),
+  cellsAcross(TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2 + TEMPLE_FRONT_APRON_WORLD_UNITS),
 );
 
 /**
@@ -113,43 +136,28 @@ export interface TempleCell {
  * +X, like the stair and the shrine's own doorway — the direction every model
  * in this repo faces.
  */
-export const TEMPLE_DOOR_OFFSET_CELLS =
-  cellsAcross(TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2) + 0.5;
-
-/**
- * How far OFF THE CENTRELINE of that face the door sits — the second half of
- * the door's position, and the half that was missing.
- *
- * THE STAIR IS ON THE CENTRELINE, AND IT JUTS. Clearing the footprint edge
- * (above) is not the same as clearing the BUILDING: the client's flight of
- * steps stands proud of the front face by half a tread, so the strip of ground
- * directly in front of the temple is solid stone for the width of the stair.
- * A door on the centreline put a settler inside the bottom step — the spawn
- * moved out of the masonry in the middle of the pyramid and into the masonry
- * on the front of it (owner, 2026-08-24: "still stuck inside the temple").
- *
- * A QUARTER OF THE SPAN, which is where the client draws its ground portals —
- * and that is not a coincidence to be maintained, it is a derivation: this
- * constant is what the model places its portals FROM (client/temple.ts), and
- * the same file clamps its stair so the stair can never reach this line. The
- * door and the doorway are one number, in one direction, rather than two
- * numbers that have to be kept in agreement.
- */
-export const TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 4;
-export const TEMPLE_DOOR_LATERAL_OFFSET_CELLS = cellsAcross(
-  TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS,
+export const TEMPLE_DOOR_OFFSET_CELLS = cellsAcross(
+  TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2 + TEMPLE_FRONT_APRON_WORLD_UNITS,
 );
 
 /**
  * The temple's door, in FRACTIONAL cell coordinates — where a settler stands
- * the moment it steps outside: clear of the front face, and clear of the stair
- * that stands on it.
+ * the moment it steps outside.
+ *
+ * ON THE CENTRELINE, AT THE FOOT OF THE STEPS (owner, 2026-08-24: "spawn the
+ * settler outside the temple just in front of the bottom steps"). The stair is
+ * the way out, so the door is where the stair lands: same axis, one apron
+ * clear of the bottom tread. A settler appears at the bottom of the flight and
+ * walks away from it, which is the read the whole front face was built for.
+ *
+ * NOT `+ 0.5`, and that is the correction. Half a cell past the footprint edge
+ * cleared the PLINTH and nothing else — the bottom tread juts half a tread
+ * further out still, so the old door stood inside the step (measured: door at
+ * 1.125 world units, tread from 0.82 to 1.18). Clearing the footprint is not
+ * clearing the building; clearing the apron is.
  */
 export function templeDoorCell(temple: TempleCell): { x: number; y: number } {
-  return {
-    x: temple.x + TEMPLE_DOOR_OFFSET_CELLS,
-    y: temple.y + TEMPLE_DOOR_LATERAL_OFFSET_CELLS,
-  };
+  return { x: temple.x + TEMPLE_DOOR_OFFSET_CELLS, y: temple.y };
 }
 
 /**

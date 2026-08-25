@@ -45,8 +45,8 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS,
   TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS,
+  TEMPLE_FRONT_APRON_WORLD_UNITS,
 } from '../protocol.ts';
 import { createCelestialCrown, type CelestialCrown } from './celestial.ts';
 
@@ -136,46 +136,56 @@ const DOORWAY_HEIGHT_FRACTION = 0.2;
  * temple entrance from any approach, and leaves the stair the clear run up the
  * middle that makes the silhouette a pyramid.
  *
- * They are cut into the FIRST COURSE, and they stand ON THE DOOR LINE:
- * ../protocol.ts's TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS is where they are
- * placed from, and it is the same number the server spawns a settler at. That
- * direction matters. It used to run the other way — the portals were placed
- * from the stair's width and a gap, and the spawn was placed from the
- * footprint span — and the two landed a world unit apart on the same face,
- * which is how a settler came to appear inside the bottom step instead of out
- * of a doorway.
+ * They are cut into the FIRST COURSE, flanking the stair. THE STAIR IS THE
+ * WAY OUT, not these: a settler is spawned on the centreline at the foot of
+ * the flight (../protocol.ts's templeDoorCell), so what these two have to do
+ * is read as a temple entrance from any approach while leaving that centreline
+ * clear. The number that keeps them honest is not their own — it is
+ * TEMPLE_FRONT_APRON_WORLD_UNITS, which STAIR_TREAD_DEPTH is clamped against
+ * below so no part of this model can ever stand where a person is spawned.
  */
 const PORTAL_MAX_WIDTH_FRACTION = 0.13;
 const PORTAL_HEIGHT_FRACTION = 0.105;
-/** Clear ground either side of each portal, so the stair never crowds one. */
+/** Gap between the stair's edge and the near edge of each portal. */
 const PORTAL_STAIR_GAP_FRACTION = 0.05;
 
 // Derived, once: the numbers every block below is placed by.
 const PLINTH_HEIGHT = BASE_SPAN * PLINTH_HEIGHT_FRACTION;
 const COURSE_HEIGHT = BASE_SPAN * COURSE_HEIGHT_FRACTION;
 const COURSE_INSET = BASE_SPAN * COURSE_INSET_FRACTION;
+const STAIR_WIDTH = BASE_SPAN * STAIR_WIDTH_FRACTION;
 
-/** The two ground portals, sized by the opening contract and placed on the
- *  protocol's door line — see PORTAL_MAX_WIDTH_FRACTION's block. */
+/** The two ground portals, sized by the opening contract. */
 const PORTAL = opening(
   BASE_SPAN * PORTAL_MAX_WIDTH_FRACTION,
   BASE_SPAN * PORTAL_HEIGHT_FRACTION,
 );
-const PORTAL_Z = TEMPLE_DOOR_LATERAL_OFFSET_WORLD_UNITS;
+/** Off the centreline, clear of the stair on either side. */
+const PORTAL_Z = STAIR_WIDTH / 2 + BASE_SPAN * PORTAL_STAIR_GAP_FRACTION + PORTAL.width / 2;
 
 /**
- * The stair's width — and THE STAIR MAY NOT REACH THE DOOR LINE.
+ * How much of the apron the stair is allowed to eat. Half.
  *
- * The belt to the protocol's braces. The whole defect was masonry standing
- * where a person is spawned, and the stair is the one part of this model that
- * juts out over that ground; a later widening of STAIR_WIDTH_FRACTION would
- * re-create the bug silently, in a file that says nothing about spawning. So
- * the authored width is capped by the clear span the portals leave it, and the
- * cap — not the author — has the last word.
+ * THE DOOR IS ON THIS AXIS, so this is the one dimension of this model that
+ * can put stone where a person is spawned — and it did: the flight's bottom
+ * tread stood exactly where the settler appeared. Half the apron leaves the
+ * settler the other half to stand in, which at the shipped span is a clear
+ * quarter of a world unit between a peep and the step it walks up.
  */
-const STAIR_WIDTH = Math.min(
-  BASE_SPAN * STAIR_WIDTH_FRACTION,
-  (PORTAL_Z - PORTAL.width / 2 - BASE_SPAN * PORTAL_STAIR_GAP_FRACTION) * 2,
+const STAIR_APRON_SHARE = 0.5;
+
+/**
+ * The depth each tread juts out from the course it serves — CAPPED so the
+ * flight can never cross the apron.
+ *
+ * The belt to the protocol's braces. A later hand widening COURSE_INSET_
+ * FRACTION (which is about the pyramid's batter, and says nothing about
+ * spawning) would otherwise walk the bottom step back over the door, silently,
+ * in a file with no reason to mention settlers. The cap has the last word.
+ */
+const STAIR_TREAD_DEPTH = Math.min(
+  COURSE_INSET * 2,
+  TEMPLE_FRONT_APRON_WORLD_UNITS * STAIR_APRON_SHARE * 2,
 );
 
 /**
@@ -285,11 +295,11 @@ function buildTempleGeometry(): BufferGeometry {
   for (let i = 0; i < COURSE_COUNT; i++) {
     const span = courseSpans[i]!;
     // Half the tread juts proud of the course it serves; the other half is
-    // buried in it, which is what keeps the flight visually attached.
-    const tread = COURSE_INSET * 2;
+    // buried in it, which is what keeps the flight visually attached — and how
+    // far it may jut is STAIR_TREAD_DEPTH's business, not this loop's.
     parts.push(
       block(
-        tread,
+        STAIR_TREAD_DEPTH,
         COURSE_HEIGHT,
         STAIR_WIDTH,
         span / 2,
