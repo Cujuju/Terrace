@@ -17,7 +17,7 @@
 // tapering strip, and drawing one as a box costs 12 triangles to say something
 // 4 can say. The whole blade here is FIVE triangles: a two-quad ribbon that
 // narrows along an arc, plus a single triangle for the point. At the shipped
-// cap that is 24 576 tufts × GRASS_BLADES_PER_TUFT × 5 ≈ 370k triangles in two
+// cap that is 40 960 tufts × GRASS_BLADES_PER_TUFT × 5 ≈ 1.0M triangles in two
 // draw calls, which is why grass can be an order of magnitude more numerous
 // than wheat without costing an order of magnitude more.
 //
@@ -74,21 +74,33 @@ const CLUSTER_SPAN_IN_CELLS = GRASS_TUFT_CLUSTER_CELL_SPAN;
  * darker base and the lighter tip do between them: the tone CONTRAST is what
  * survives at distance once the individual blades stop resolving.
  */
-const BLADE_COLOR = 0x4e7d33;
-const TIP_COLOR = 0x8fb857;
+const BLADE_COLOR = 0x3f7a26;
+const TIP_COLOR = 0xc8e07a;
 
 /**
  * How tall one blade stands, in CELLS, before its per-blade height roll.
  *
- * Shorter than a wheat culm (4 × 0.075 = 0.3 cells in wheatVariants.ts) on
- * purpose: crops are a cultivated thing standing above the meadow they were
- * planted in, and grass that matched them would erase that difference from
- * every distance at once.
+ * TALLER THAN A WHEAT CULM (4 × 0.075 = 0.3 cells in wheatVariants.ts), which
+ * is not the relationship a real field has and is the right call anyway. The
+ * first version was shorter than wheat on the "crops stand above the meadow
+ * they were planted in" argument, and the result could not be seen at all
+ * (protocol.ts's tuft-footprint block records the screenshot). What separates
+ * a crop from grass in this game is the GOLD against the green, not two
+ * centimetres of height, and half a cell is what makes a blade about a dozen
+ * pixels tall at the closest zoom instead of two.
  */
-const BLADE_LENGTH_IN_CELLS = 0.26;
+const BLADE_LENGTH_IN_CELLS = 0.5;
 
-/** How wide a blade is at the ground, in CELLS. It tapers to a point at the tip. */
-const BLADE_BASE_WIDTH_IN_CELLS = 0.022;
+/**
+ * How wide a blade is at the ground, in CELLS. It tapers to a point at the tip.
+ *
+ * Four times the first version's, for the same reason the length is: at 0.022
+ * cells a blade was 0.0055 world units across — well under one pixel at any
+ * zoom the game offers, so the whole meadow rendered as faint noise on the
+ * ground. A blade is the widest thing in this model at its base and it is what
+ * has to catch the light.
+ */
+const BLADE_BASE_WIDTH_IN_CELLS = 0.09;
 
 /**
  * Cross-sections along a blade. THREE segments, which is the fewest that reads
@@ -110,12 +122,15 @@ const BLADE_TIP_SEGMENTS = 1;
  *
  * BOUNDED BY THE FOOTPRINT, not chosen for looks alone: every radian of arch
  * is horizontal reach, and a tuft may not reach further from its cell than
- * protocol.ts's GRASS_TUFT_MAX_REACH_CELLS. At 0.5 rad (~29°) the built
+ * protocol.ts's GRASS_TUFT_MAX_REACH_CELLS. At 0.7 rad (~40°) the built
  * blade's measured reach leaves the planting lattice and its jitter room
  * inside that bound — which assertBladeFitsTuft checks against the geometry
  * this file actually built, rather than against an estimate of it.
+ *
+ * It is also the constant to REDUCE if a blade tip ever reads badly hanging
+ * over a terrace lip — see protocol.ts's named residual on the footprint.
  */
-const BLADE_ARCH_RADIANS = 0.5;
+const BLADE_ARCH_RADIANS = 0.7;
 
 /**
  * How sharply the blade narrows: width is (1 − t)^this along the blade. Above
