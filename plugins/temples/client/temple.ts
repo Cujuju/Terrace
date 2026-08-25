@@ -72,18 +72,54 @@ const PLINTH_HEIGHT_FRACTION = 0.045;
 
 /** The shrine cell on the summit, as a fraction of the topmost course. */
 const SHRINE_WIDTH_FRACTION = 0.78;
-const SHRINE_HEIGHT_FRACTION = 0.17;
+/**
+ * Shrine height, as a fraction of the base span. TALL ENOUGH TO HOLD A DOOR:
+ * at 0.17 it was a slab with a letterbox scratched in it, because no portrait
+ * opening fits in a cell shorter than it is wide. The cell is sized by what it
+ * must contain, and what it contains is a doorway a person could walk through.
+ */
+const SHRINE_HEIGHT_FRACTION = 0.3;
 
-/** The lintel slab that caps the shrine, overhanging it on every side. */
-const LINTEL_OVERHANG_FRACTION = 0.06;
+/**
+ * The lintel slab that caps the shrine. It overhangs the shrine on every side
+ * — but it must stay NARROWER than the top course, or the summit reads as a
+ * lid clapped over the pyramid rather than a shrine cell standing on top of
+ * it. Both numbers below are enforced together where the lintel is cut.
+ */
+const LINTEL_OVERHANG_OF_SHRINE = 0.09;
+/** The reveal of top course left visible around the lintel, as a fraction of
+ *  that course — the ledge that keeps the last step reading as a step. */
+const LINTEL_TOP_COURSE_REVEAL = 0.08;
 const LINTEL_HEIGHT_FRACTION = 0.035;
 
 /** The stair up the front (+X) face, as a fraction of the base span. */
 const STAIR_WIDTH_FRACTION = 0.26;
 
-/** The doorway sunk into the shrine's front face. */
-const DOORWAY_WIDTH_FRACTION = 0.3;
-const DOORWAY_HEIGHT_FRACTION = 0.11;
+/**
+ * EVERY OPENING ON THIS BUILDING IS PORTRAIT.
+ *
+ * An opening wider than it is tall is a letterbox, not a way in. Each of the
+ * three openings here had been given its own independent pair of fixed
+ * fractions, so each could be — and each was — a letterbox on its own. The
+ * aspect is not a property of any one of them; it is what "opening" means, so
+ * it lives here, once, and the callsites cannot forget it.
+ *
+ * An opening is described by the HEIGHT its wall affords and the WIDEST it
+ * would like to be; `opening` returns the width that actually reads.
+ */
+const OPENING_MIN_HEIGHT_OVER_WIDTH = 1.6;
+
+function opening(
+  maxWidth: number,
+  height: number,
+): { readonly width: number; readonly height: number } {
+  return { width: Math.min(maxWidth, height / OPENING_MIN_HEIGHT_OVER_WIDTH), height };
+}
+
+/** The doorway sunk into the shrine's front face — the height it is given,
+ *  and the most width it would take if the aspect guard allowed it. */
+const DOORWAY_MAX_WIDTH_FRACTION = 0.3;
+const DOORWAY_HEIGHT_FRACTION = 0.2;
 
 /**
  * THE GROUND PORTALS — the door a settler actually walks out of (owner,
@@ -102,8 +138,8 @@ const DOORWAY_HEIGHT_FRACTION = 0.11;
  * place that looks like a way out and the place someone appears are the same
  * face of the same block, by construction rather than by matching numbers.
  */
-const PORTAL_WIDTH_FRACTION = 0.13;
-const PORTAL_HEIGHT_FRACTION = 0.09;
+const PORTAL_MAX_WIDTH_FRACTION = 0.13;
+const PORTAL_HEIGHT_FRACTION = 0.105;
 /** Gap between the stair's edge and the near edge of each portal. */
 const PORTAL_STAIR_GAP_FRACTION = 0.05;
 
@@ -113,8 +149,13 @@ const COURSE_HEIGHT = BASE_SPAN * COURSE_HEIGHT_FRACTION;
 const COURSE_INSET = BASE_SPAN * COURSE_INSET_FRACTION;
 const STAIR_WIDTH = BASE_SPAN * STAIR_WIDTH_FRACTION;
 
-/** Total height of the finished model, world units — used by the ghost's
- *  hover marker and by nothing else. ~0.9 world units at the shipped span. */
+/**
+ * Total height of the finished model, world units: the top of the lintel,
+ * which is where the celestial crown is told the summit is. It is 0.9 x the
+ * footprint span by construction — 1.8 world units at the shipped span of 2.
+ * (It is NOT ~0.9 world units; that comment was wrong, and it was the number
+ * the crown was sized against.)
+ */
 export const TEMPLE_HEIGHT =
   PLINTH_HEIGHT +
   COURSE_HEIGHT * COURSE_COUNT +
@@ -122,14 +163,23 @@ export const TEMPLE_HEIGHT =
   BASE_SPAN * LINTEL_HEIGHT_FRACTION;
 
 // ── Palette: dressed limestone, weathered ───────────────────────────────────
-// Three greys close enough to read as one material and far enough apart that
-// each course catches its own light — the courses are what make the silhouette
-// legible, so they must not merge into one grey mass.
-const PLINTH_COLOR = 0x8f887a;
-const COURSE_COLORS = [0xb6afa0, 0xaea798, 0xb9b2a3, 0xa8a192];
-const STAIR_COLOR = 0xc2bbac;
-const SHRINE_COLOR = 0xb2ab9c;
-const LINTEL_COLOR = 0x9a9385;
+// One material, read as one material — but with a REAL VALUE RANGE across it.
+// The first palette lived in 0xb0-0xc2, four greys within twenty levels of each
+// other, and under this world's ambient rig every one of them washed to the
+// same white plastic: no course could be told from the course above it.
+//
+// So the range is opened to roughly 0x55-0xae, and the courses ALTERNATE light
+// and dark rather than drifting one way. The courses are what make the
+// silhouette legible; alternation is what guarantees an edge between each pair
+// of them no matter which way the sun happens to be.
+//
+// The lintel is the darkest thing on the building on purpose: it is the last
+// stone before the sky, and the crown above it has to read against something.
+const PLINTH_COLOR = 0x5f5a4e;
+const COURSE_COLORS = [0x9a9280, 0x7e7767, 0x8d8574, 0x726b5c];
+const STAIR_COLOR = 0xaea48e;
+const SHRINE_COLOR = 0x8a8271;
+const LINTEL_COLOR = 0x554f45;
 /**
  * Every opening — the shrine's doorway and the two ground portals — is a hole,
  * drawn as one near-black face (cheaper and more legible at this size than a
@@ -229,7 +279,12 @@ function buildTempleGeometry(): BufferGeometry {
   const shrineHeight = BASE_SPAN * SHRINE_HEIGHT_FRACTION;
   parts.push(block(shrineSpan, shrineHeight, shrineSpan, 0, summit, 0, SHRINE_COLOR));
 
-  const lintelSpan = shrineSpan + BASE_SPAN * LINTEL_OVERHANG_FRACTION * 2;
+  // The overhang the shrine wants, capped by the reveal the top course must
+  // keep — whichever is narrower wins, so the lid case cannot come back.
+  const lintelSpan = Math.min(
+    shrineSpan * (1 + LINTEL_OVERHANG_OF_SHRINE * 2),
+    topSpan * (1 - LINTEL_TOP_COURSE_REVEAL),
+  );
   const lintelHeight = BASE_SPAN * LINTEL_HEIGHT_FRACTION;
   parts.push(
     block(lintelSpan, lintelHeight, lintelSpan, 0, summit + shrineHeight, 0, LINTEL_COLOR),
@@ -237,14 +292,16 @@ function buildTempleGeometry(): BufferGeometry {
 
   // The doorway: a dark slab set a hair proud of the shrine's front face, so
   // it never z-fights the wall it is cut into.
-  const doorWidth = BASE_SPAN * DOORWAY_WIDTH_FRACTION;
-  const doorHeight = BASE_SPAN * DOORWAY_HEIGHT_FRACTION;
+  const door = opening(
+    BASE_SPAN * DOORWAY_MAX_WIDTH_FRACTION,
+    BASE_SPAN * DOORWAY_HEIGHT_FRACTION,
+  );
   const doorSkin = shrineSpan * 0.04;
   parts.push(
     block(
       doorSkin,
-      doorHeight,
-      doorWidth,
+      door.height,
+      door.width,
       shrineSpan / 2,
       summit,
       0,
@@ -255,17 +312,19 @@ function buildTempleGeometry(): BufferGeometry {
   // The two ground portals, on the first course's front face, one either side
   // of the stair. Set a hair proud of the stone for the same reason the shrine
   // doorway is: a coplanar face z-fights.
-  const portalWidth = BASE_SPAN * PORTAL_WIDTH_FRACTION;
-  const portalHeight = BASE_SPAN * PORTAL_HEIGHT_FRACTION;
+  const portal = opening(
+    BASE_SPAN * PORTAL_MAX_WIDTH_FRACTION,
+    BASE_SPAN * PORTAL_HEIGHT_FRACTION,
+  );
   const portalSkin = BASE_SPAN * 0.01;
   const portalZ =
-    STAIR_WIDTH / 2 + BASE_SPAN * PORTAL_STAIR_GAP_FRACTION + portalWidth / 2;
+    STAIR_WIDTH / 2 + BASE_SPAN * PORTAL_STAIR_GAP_FRACTION + portal.width / 2;
   for (const side of [-1, 1]) {
     parts.push(
       block(
         portalSkin,
-        portalHeight,
-        portalWidth,
+        portal.height,
+        portal.width,
         courseSpans[0]! / 2,
         PLINTH_HEIGHT,
         portalZ * side,
