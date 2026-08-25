@@ -474,19 +474,25 @@ export const KRAKEN_FOOTPRINT_CELLS = cellsAcross(7);
  * Horizontal extent of the modelled body, in world units: shoulder to shoulder,
  * including the arms that hang either side of them (client/yeti-anatomy.ts).
  *
- * 1.25, against the sea kinds' seven, and the gap is the point rather than an
- * accident of modelling. Cthulhu and the kraken are gods that rise out of an
- * ocean; the yeti is an ANIMAL, and as of the owner's 2026-08-22 decision a
- * SMALL one — a quarter of the five world units he was, which is the client's
- * YETI_SCALE showing up on this side of the wire. The client half restates the
- * same number as YETI_WIDTH_CELLS (client/yeti-anatomy.ts) and a test fails the
- * day the two disagree, so a rescale has to touch both.
+ * 0.901..., against the sea kinds' seven, and the gap is the point rather than
+ * an accident of modelling. Cthulhu and the kraken are gods that rise out of an
+ * ocean; the yeti is an ANIMAL, and as of the owner's 2026-08-22 and 2026-08-24
+ * decisions a SMALL one — under a fifth of the five world units he was, which is
+ * the client's YETI_SCALE showing up on this side of the wire. The client half
+ * states the same number as YETI_WIDTH_CELLS (client/yeti-anatomy.ts) and a test
+ * fails the day the two disagree, so a rescale has to touch both.
+ *
+ * THE LITERAL IS UNROUND ON PURPOSE. Over there it is 5 × YETI_SCALE, and
+ * YETI_SCALE is solved for the owner's ceiling of two peep-heights rather than
+ * picked — so this is that product written out to the last digit that round-trips
+ * through a double, which is what lets the pinning test compare with `toBe`
+ * instead of a tolerance. Do not tidy it; re-derive it.
  *
  * His minimum lair below is DERIVED from this number, so shrinking him shrinks
  * what he needs to live on by the square — which is the owner's intent: he is no
  * longer the biggest thing on the mountain and no longer asks for a mountain.
  */
-export const YETI_FOOTPRINT_CELLS = cellsAcross(1.25);
+export const YETI_FOOTPRINT_CELLS = cellsAcross(0.9011627906976745);
 
 /**
  * Cells in the smallest snowfield the yeti will accept as a lair, as a multiple
@@ -520,7 +526,7 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.25);
  * 2026-08-19 third — which reproduces the old number to within 1% at his old
  * size (4.5 × 20 cells = 90 across, 8 100 square, 2 700 against the 2 730 that
  * stood here) and, unlike a chunk count, follows the animal when he changes
- * size. At YETI_FOOTPRINT_CELLS = 5 that is 168 cells, a ~13×13 patch: a small
+ * size. At the YETI_FOOTPRINT_CELLS of that day, 5, that is 168 cells, a ~13×13 patch: a small
  * creature wants a small territory, and a snowfield that used to be a project is
  * now a modest hilltop.
  *
@@ -535,10 +541,11 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.25);
  * that range clears with room to spare.
  *
  * THE FLOOR THIS CANNOT GO BELOW, stated so a fourth amendment does not have to
- * rediscover it: the yeti's own footprint is YETI_FOOTPRINT_CELLS² = 25 cells,
- * so at 56 he already occupies nearly half his own lair. A lair he fills is not
- * a lair, and further cuts should move his SIZE, which this constant follows,
- * rather than this divisor.
+ * rediscover it: the yeti's own footprint is YETI_FOOTPRINT_CELLS², and at the
+ * 2026-08-24 size that is 13 cells against a 29-cell threshold — he already
+ * occupies nearly half his own lair, exactly as he did at 25-against-56. A lair
+ * he fills is not a lair, and further cuts should move his SIZE, which this
+ * constant follows, rather than this divisor.
  */
 
 /**
@@ -651,7 +658,7 @@ export const YETI_RESPAWN_COOLDOWN_SECONDS = 600;
  * his step rate from it (client/yeti-anatomy.ts), so his feet cannot skate; a
  * test pins the two together.
  */
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(0.1125);
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(0.08110465116279071);
 
 /**
  * Maximum random heading change, radians per second. 0.35 rad/s is ~20°/s —

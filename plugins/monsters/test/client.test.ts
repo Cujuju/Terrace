@@ -139,9 +139,12 @@ import {
   YETI_LEAN_RADIANS,
   YETI_LEG_LENGTH,
   YETI_LEG_SWING_RADIANS,
-  YETI_RUFF_REACH,
-  YETI_RUFF_TUFT_COUNT,
-  YETI_RUFF_TUFT_TIP_RADIUS,
+  YETI_MANTLE_LOCK_COUNT,
+  YETI_MANTLE_LOCK_DROP,
+  YETI_MANTLE_LOCK_RADIUS,
+  YETI_MANTLE_LOCK_REACH,
+  YETI_MANTLE_LOCK_TIP_RADIUS,
+  YETI_MANTLE_REACH,
   YETI_SHADE_VARIATION,
   YETI_SHOULDER_HALF_SPAN,
   YETI_SHOULDER_JOINT_HALF_SPAN,
@@ -150,6 +153,9 @@ import {
   YETI_STANCE_HALF_WIDTH,
   YETI_STRIDE_CELLS,
   YETI_TORSO_WIDTH,
+  PEEP_HEIGHT_WORLD_UNITS,
+  YETI_HORN_TIP_HEIGHT,
+  YETI_HORN_TIP_RADIUS,
   YETI_TOTAL_HEIGHT,
   YETI_WIDTH_CELLS,
 } from '../client/yeti-anatomy.ts';
@@ -159,6 +165,9 @@ import {
   YETI_AMBLE_SPEED_CELLS_PER_SECOND,
   YETI_FOOTPRINT_CELLS,
 } from '../server/kinds.ts';
+// The pilgrims plugin's own figure, imported HERE and only here: this file is
+// where the two halves of a restated constant are allowed to meet.
+import { PILGRIM_HEIGHT } from '../../pilgrims/client/models.ts';
 
 function monster(id: number, overrides: Partial<MonsterState> = {}): MonsterState {
   return { id, kind: 'cthulhu', x: 0, y: 0, heading: 0, ...overrides };
@@ -717,9 +726,18 @@ describe('the yeti is placed on the ground, not in the water', () => {
     if (rule.placement !== 'walker') throw new Error('the yeti is a walker');
     const halfExtentCells = rule.footGroundHalfExtentCells;
     expect(halfExtentCells).toBe(cellsAcross(YETI_FOOT_GROUND_HALF_EXTENT));
-    // A foot really does overhang its own cell: his outer foot edge is 1.02
-    // cells from the axis, so the probe must reach past cell centre ±1.
-    expect(halfExtentCells).toBeGreaterThan(1);
+    // A foot really does overhang its own cell: the probe has to reach past the
+    // cell BOUNDARY at ±0.5, or the whole conversion buys nothing.
+    //
+    // STATED AGAINST THE BOUNDARY, NOT AGAINST A CELL COUNT. This assertion read
+    // `> 1` until 2026-08-24, which was true of the animal's size that day and
+    // of nothing else — the 2026-08-24 rescale to two peep-heights took the
+    // half-extent to 0.74 cells and failed a test that had caught no bug. What
+    // the conversion actually guarantees, at every size he will ever be, is that
+    // the CELL figure exceeds the world-unit one it is made from; that, plus the
+    // boundary, is the contract and neither moves with his scale.
+    expect(halfExtentCells).toBeGreaterThan(0.5);
+    expect(halfExtentCells).toBeGreaterThan(YETI_FOOT_GROUND_HALF_EXTENT);
   });
 
   it('falls back to the DRAWN ground when its chunk has not arrived', () => {
@@ -780,21 +798,56 @@ describe('the yeti silhouette', () => {
     expect(YETI_TOTAL_HEIGHT).toBeLessThan(KRAKEN_WIDTH_CELLS);
     expect(YETI_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
     expect(YETI_TOTAL_HEIGHT).toBeGreaterThan(YETI_WIDTH_CELLS);
-    // The crown of the head is the highest point, which is what the total is.
-    expect(YETI_TOTAL_HEIGHT).toBe(YETI_HEAD_TOP);
+    // THE HIGHEST POINT IS A HORN TIP, as of the owner's 2026-08-24 request, and
+    // the total is measured to the apex of that tube — its end point plus its
+    // end radius. It pointed at YETI_HEAD_TOP until the horns existed.
+    expect(YETI_TOTAL_HEIGHT).toBe(YETI_HORN_TIP_HEIGHT + YETI_HORN_TIP_RADIUS);
+    // ...and the skull is genuinely under it, which is the thing that would
+    // silently stop being true if a horn were ever shortened.
+    expect(YETI_HEAD_TOP).toBeLessThan(YETI_TOTAL_HEIGHT);
+  });
+
+  it('is exactly the owner\'s ceiling of two peeps, and knows a peep\'s real height', () => {
+    // THE RESTATEMENT, PINNED. yeti-anatomy.ts states a peep's height rather
+    // than importing it — a monster must not pull the pilgrims plugin's model
+    // module into its bundle for one number — which is only safe while this
+    // fails the day the two drift apart. Same arrangement, same reason, as the
+    // server/client footprint pin above.
+    expect(PEEP_HEIGHT_WORLD_UNITS).toBe(PILGRIM_HEIGHT);
+    // And the ceiling itself (owner, 2026-08-24: "no more than two times taller
+    // than one of the peeps"). YETI_SCALE is SOLVED for this, so it holds to the
+    // last bit rather than approximately.
+    expect(YETI_TOTAL_HEIGHT).toBeLessThanOrEqual(2 * PILGRIM_HEIGHT);
+    expect(YETI_TOTAL_HEIGHT).toBeCloseTo(2 * PILGRIM_HEIGHT, 10);
   });
 
   it('hangs its hands below its hips — the one proportion that says APE', () => {
     expect(YETI_HAND_HEIGHT).toBeLessThan(YETI_HIP_HEIGHT);
   });
 
-  it('keeps the shoulders and the ruff inside the footprint', () => {
+  it('keeps the shoulders and the mantle inside the footprint', () => {
     expect(YETI_SHOULDER_HALF_SPAN + YETI_SHOULDER_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
-    expect(YETI_RUFF_REACH + YETI_RUFF_TUFT_TIP_RADIUS).toBeLessThanOrEqual(halfFootprint);
+    expect(YETI_MANTLE_REACH).toBeLessThanOrEqual(halfFootprint);
     expect(YETI_TORSO_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
-    // Odd, so a tuft lies on the centre line and the collar is symmetric about
+    // Odd, so a lock lies on the centre line and the collar is symmetric about
     // the way he faces. (Cthulhu's face tentacles are odd for the same reason.)
-    expect(YETI_RUFF_TUFT_COUNT % 2).toBe(1);
+    expect(YETI_MANTLE_LOCK_COUNT % 2).toBe(1);
+  });
+
+  it('wears a mantle of fur, not a ring of spines', () => {
+    // THE DEFECT THIS PINS. Owner, 2026-08-24: "I don't know what the spikes
+    // around the neck are supposed to be. Get rid of those." What made the old
+    // ruff read as quills was not its position or its count — both survive here
+    // — but its ASPECT RATIO: 1.1 of reach on a 0.22 radius, five to one.
+    //
+    // Both assertions are ratios, so they hold at any scale and they fail on the
+    // one kind of retune that would bring the spikes back: someone lengthening a
+    // lock for looks without thickening it.
+    expect(YETI_MANTLE_LOCK_RADIUS * 2).toBeGreaterThan(YETI_MANTLE_LOCK_REACH);
+    // ...and it HANGS rather than radiates: down further than it reaches out.
+    expect(YETI_MANTLE_LOCK_DROP).toBeGreaterThan(YETI_MANTLE_LOCK_REACH);
+    // The tip stays blunt. A lock that tapers to a point is a spine again.
+    expect(YETI_MANTLE_LOCK_TIP_RADIUS / YETI_MANTLE_LOCK_RADIUS).toBeGreaterThan(0.3);
   });
 
   it('keeps a hand inside it — the binding constraint, standing still', () => {
