@@ -41,7 +41,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import { FIRE_CELL_CAP } from '../../protocol.ts';
+import { FIRE_FLAME_INSTANCE_CAP } from '../../protocol.ts';
 import type { FireInstance, FlameRenderer, FlameRendererBuilder } from './types.ts';
 
 // ── The strips ────────────────────────────────────────────────────────────
@@ -382,15 +382,15 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
     side: DoubleSide,
   });
 
-  const mesh = new InstancedMesh(geometry, material, FIRE_CELL_CAP);
+  const mesh = new InstancedMesh(geometry, material, FIRE_FLAME_INSTANCE_CAP);
   mesh.name = 'fire:ribbons:tongues';
   mesh.count = 0;
   // The whip and the breathing move vertices past the authored bounds.
   mesh.frustumCulled = false;
   root.add(mesh);
 
-  const seeds = new InstancedBufferAttribute(new Float32Array(FIRE_CELL_CAP), 1);
-  const intensities = new InstancedBufferAttribute(new Float32Array(FIRE_CELL_CAP), 1);
+  const seeds = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
+  const intensities = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
   seeds.setUsage(DynamicDrawUsage);
   intensities.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aSeed', seeds);
@@ -401,7 +401,7 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
   // drives the flame's HEIGHT in the vertex shader: folding them would make a
   // half-faded flame a short one, and the compositor's whole contract is that a
   // fading look keeps its size and loses only its opacity.
-  const presences = new InstancedBufferAttribute(new Float32Array(FIRE_CELL_CAP), 1);
+  const presences = new InstancedBufferAttribute(new Float32Array(FIRE_FLAME_INSTANCE_CAP), 1);
   presences.setUsage(DynamicDrawUsage);
   geometry.setAttribute('aPresence', presences);
 
@@ -415,7 +415,7 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
     root,
 
     apply(fires: readonly FireInstance[]): void {
-      const count = Math.min(fires.length, FIRE_CELL_CAP);
+      const count = Math.min(fires.length, FIRE_FLAME_INSTANCE_CAP);
       const seedArray = seeds.array as Float32Array;
       const intensityArray = intensities.array as Float32Array;
       const presenceArray = presences.array as Float32Array;

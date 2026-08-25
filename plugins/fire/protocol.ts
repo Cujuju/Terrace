@@ -378,6 +378,16 @@ export interface FireEntityState {
   readonly burnSeconds: number;
 }
 
+/**
+ * How many flames a renderer must be able to draw at once.
+ *
+ * THE SUM, not either cap, because the two kinds of fire share one instanced
+ * mesh (client/flames/) and a pool sized to the cells alone would silently drop
+ * the burning animals off the end of a full wildfire — the flames that are
+ * hardest to see missing and the ones a player is most likely to be watching.
+ */
+export const FIRE_FLAME_INSTANCE_CAP = FIRE_CELL_CAP + FIRE_ENTITY_CAP;
+
 /** Identity of one burning entity: its owner's name and its owner's id. */
 export function fireEntityKey(sourceName: string, id: number): string {
   return `${sourceName}#${id}`;
