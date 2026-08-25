@@ -3437,3 +3437,69 @@ whatever the fire count, no external assets, no per-fire lights, allocation-free
 steady state. Firelight is a fixed pool of four PointLights that move between
 the fiercest fires, because adding or removing a light invalidates every
 material's shader program.
+
+### Decisions made 2026-08-24 (fire that walks — owner request)
+
+Owner, after the first in-world session with fire: "We also need the ability to
+set buildings, boats, grazers, peeps on fire. If it's on land, I should be able
+to burn it," and — asked what a burning creature does, since fire is anchored to
+a cell and a creature is not — "They catch fire and continued to burn until they
+dropped dead."
+
+**A building is cell fuel; anything that moves is not.** structures registers
+into the existing `registerFuel` and nothing new was needed. A creature broke
+the cell model in three places at once: its fire has to ask where it is every
+tick, it must survive the thing being removed by something else entirely (an
+animal dies of old age mid-burn), and what it consumes at the end is an
+individual rather than a patch of ground. Bolting those onto `CellFuel` would
+make every static source implement callbacks it can never use, so `fire` gained
+a SECOND registry and a second burning set (`entityFuel.ts`, `entityBlaze.ts`)
+sharing one clock, one intensity curve and one flame. A cell fire and a walking
+fire look identical because they are the same fire; only where the position
+comes from differs.
+
+**The position is not on the wire, and that is the load-bearing decision.** The
+plugin that owns the creature is already drawing it, interpolated its own way,
+sixty times a second. Sending a position from the server would mean two
+independent interpolations of one animal, and the flame would slide off the body
+— the same defect as a river modelled beside its own valley instead of from it.
+So the flame is drawn at the pose the OWNER publishes.
+
+**That needed a client-side cross-plugin seam, which this repo had none of.**
+Three options were put to the owner: a neutral primitive in core; `fire`
+publishing a client registry that registrants import; or streaming positions and
+interpolating them twice. The owner chose the neutral primitive, and it is the
+one consistent with §"World events" ("cross-plugin agreement travels as
+documented copies... never by import"): `ClientPluginCtx.publishMovers` /
+`moverPose`, addressed BY PLUGIN NAME exactly as `WorldApi.emitEvent` is. Core
+knows nothing about what is being drawn or why — it holds one lookup per plugin
+and hands it to whoever asks.
+
+**A boat needed no special case in the end.** It is the only flammable thing not
+standing on the ground, and a "how far above the ground does this flame sit"
+field was approved for the cell wire before it turned out to be unnecessary: an
+entity flame sits at its owner's published pose, and boats draw hulls at the
+waterline. The deck is where the fire lands, by construction.
+
+**Aiming was the other half of the same request.** `pickTerrainCell` raycasts
+the terrain surface only, so a tree's canopy — drawn above its own cell — sent
+the ray past it onto ground several cells behind; torching a wood was luck.
+`pickWorldCell` asks the declared objects first (`markPickable`, opt-in per
+plugin so weather's sky dome and the frontier fog are never aimed at) and falls
+back to the terrain. The torch — now labelled **Pyro** — uses it for both the
+hover ring and the click, so the ring cannot promise a cell the click would not
+light.
+
+**Burn times, and what they are relative to.** A crop flashes in 4 s, a creature
+or a peep dies in 8, a tree takes 22, a boat 16, a building 30. Creatures are
+the shortest of the solid things on purpose: a creature on fire is a death, not
+a bonfire, and the number is how long the player watches it run before it drops.
+Peeps are deliberately NOT tuned apart from grazers — same size, same sort of
+thing, and a player who has learned one has learned the other.
+
+**What a fire does NOT do yet, named rather than discovered later:** a burning
+creature does not set light to what it runs through. The machinery is all there
+(`EntityBlaze.positions()` exists for exactly this), and it was left out of the
+first cut because a panicking animal towing a spread front through a forest is a
+balance question, not a plumbing one.
+
