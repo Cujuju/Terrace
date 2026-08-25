@@ -92,8 +92,8 @@ const WATER_METALNESS = 0;
  * The mix parameter between them is the texel waterDepth.ts's depthToShadeMix
  * writes; these two constants are the only place the range lives.
  */
-const WATER_SHADE_SHALLOW = 1.25;
-const WATER_SHADE_DEEP = 0.4;
+const WATER_SHADE_SHALLOW = 1.35;
+const WATER_SHADE_DEEP = 0.3;
 
 /**
  * THE SEA IS DRAWN ONLY OVER REVEALED CHUNKS (owner, 2026-08-24: "I'd like to
