@@ -67,26 +67,30 @@ export const FLORA_SURVEY_INTERVAL_SECONDS = 5;
 /**
  * Stable green cells per tree — the density the world is steered toward.
  *
- * 12 means about 8% of a settled meadow's cells hold a tree. Bounded on both
- * sides by what the ground has to say:
+ * Retuned 2026-08-25 (owner: "increase the spawn rate and frequency for trees"):
+ * 8 means about 12.5% of a settled meadow's cells hold a tree, up from 12 (≈8%).
+ * Still bounded by what the ground has to say:
  *
- *   * The terraces are the thing being looked at. Past roughly one tree per ten
- *     cells the canopy starts hiding the band edges and the Godus silhouette
- *     that the whole renderer exists to produce goes with it.
+ *   * The terraces are the thing being looked at. Denser than roughly one tree
+ *     per eight cells and the canopy starts hiding the band edges and the Godus
+ *     silhouette that the whole renderer exists to produce goes with it — so 8
+ *     sits right at the edge rather than comfortably inside it. Accepted: the
+ *     owner asked for a visibly fuller forest.
  *   * Sparser than ~1 in 20 and a chunk of grass holds twelve trees spread over
  *     256 square world units, which reads as litter rather than as woodland.
  *
- * At 12, a chunk of pure grass settles at 21 trees — a copse you can walk
- * around, on ground you can still read. It also sits comfortably above the
- * densest packing the spacing rule allows (1 in 4), so the two constants shape
- * the pattern together instead of fighting: see FLORA_MIN_TREE_SPACING_CELLS.
+ * At 8, a chunk of pure grass settles at 32 trees — real woodland you can walk
+ * around in, on ground you can mostly still read. It also sits comfortably above
+ * the densest packing the spacing rule allows (1 in 4), so the two constants
+ * shape the pattern together instead of fighting: see
+ * FLORA_MIN_TREE_SPACING_CELLS.
  *
  * IT IS A DENSITY OVER GROUND, so it is stated in SQUARE WORLD UNITS per tree
  * and multiplied by WORLD_UNIT_CELLS twice. Left as a flat count of cells, the
  * 2026-08-21 re-sample would have put sixteen times as many trees on every
  * hillside — the same forest counted in a finer grid, not a denser one.
  */
-export const FLORA_CELLS_PER_TREE = cellsOverArea(12);
+export const FLORA_CELLS_PER_TREE = cellsOverArea(8);
 
 /**
  * Minimum Chebyshev distance between two trees — two WORLD UNITS, converted,
@@ -116,30 +120,34 @@ export const FLORA_MIN_TREE_SPACING_CELLS = cellsAcross(2);
  * 2W, ~95% after 3W. (The same shape, and the same reasoning, as wildlife's
  * SPAWN_MEAN_WAIT_SECONDS.)
  *
- * 60 s puts a small meadow's first trees in within a survey or two of it
- * stabilising and has it essentially grown in about three minutes. Faster and a
- * flattened hillside pops into a forest between two glances, which loses the
- * thing the owner asked for — that trees arrive because the ground was LEFT
- * alone. Slower and a player never sees it happen at all.
+ * Retuned 2026-08-25 (owner: "increase the spawn rate and frequency for trees"):
+ * 60 s down to 30 s. A small meadow's first trees now arrive within a survey of
+ * it stabilising and it is essentially grown in about ninety seconds. Faster
+ * still and a flattened hillside pops into a forest between two glances, which
+ * loses the thing the owner originally asked for — that trees arrive because the
+ * ground was LEFT alone. Slower and a player never sees it happen at all.
  */
-export const FLORA_MEAN_SPROUT_WAIT_SECONDS = 60;
+export const FLORA_MEAN_SPROUT_WAIT_SECONDS = 30;
 
 /**
  * Hard ceiling on new trees per survey. Also the size of the candidate
  * reservoir, because there is no point sampling cells that cannot be used.
  *
- * 24 is chosen against the two things it bounds:
+ * Retuned 2026-08-25 (owner: "increase the spawn rate and frequency for trees"):
+ * 24 up to 48, so a large newly-eligible area fills in visibly faster. Chosen
+ * against the two things it bounds:
  *
- *   * WIRE — a growth delta is at most 24 × 6 B ≈ 144 B every 5 s (protocol.ts).
- *   * PACING — it binds only when the deficit exceeds 24 × (60 / 5) = 288 trees,
+ *   * WIRE — a growth delta is at most 48 × 6 B ≈ 288 B every 5 s (protocol.ts),
+ *     still noise next to the join snapshot.
+ *   * PACING — it binds only when the deficit exceeds 48 × (30 / 5) = 288 trees,
  *     i.e. only on a large area that just became eligible all at once. Below
  *     that the hazard is what paces growth, which is the intended behaviour: a
  *     meadow fills in gradually, and it is only a continent that gets rate
  *     limited. A world going from bare to the full 3000-tree cap takes
- *     3000 / 24 ≈ 125 surveys ≈ 10 minutes at the limit, which is fast against
+ *     3000 / 48 ≈ 63 surveys ≈ 5 minutes at the limit, which is fast against
  *     how long revealing that much territory takes in the first place.
  */
-export const FLORA_MAX_SPROUTS_PER_SURVEY = 24;
+export const FLORA_MAX_SPROUTS_PER_SURVEY = 48;
 
 /**
  * Seed for a world that has never grown a tree. Fixed rather than clock-derived,

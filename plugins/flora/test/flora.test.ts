@@ -91,7 +91,7 @@ import { worldWithTerrain } from './support/world.ts';
 /**
  * 64² WORLD UNITS — small enough to survey thousands of times a suite, and big
  * enough to hold a forest at the shipped density. Counted in world units rather
- * than cells because that density is: FLORA_CELLS_PER_TREE is a tree per twelve
+ * than cells because that density is: FLORA_CELLS_PER_TREE is a tree per eight
  * square world units, so a 64-CELL world after the 2026-08-21 re-sample would
  * be sixteen world units of ground and hold almost no trees at all.
  */
@@ -306,16 +306,16 @@ describe('density maths', () => {
     // Expected arrivals per survey are deficit × interval / mean wait.
     const deficit = 120;
     const expected = deficit * (FLORA_SURVEY_INTERVAL_SECONDS / FLORA_MEAN_SPROUT_WAIT_SECONDS);
-    expect(expected).toBe(10);
-    expect(sproutCount(deficit, fixedRng(0.99))).toBe(10);
-    expect(sproutCount(deficit, fixedRng(0))).toBe(10);
+    expect(expected).toBe(20);
+    expect(sproutCount(deficit, fixedRng(0.99))).toBe(20);
+    expect(sproutCount(deficit, fixedRng(0))).toBe(20);
   });
 
   it('rounds a fractional expectation stochastically', () => {
-    // Deficit 6 → expectation 0.5: never a whole tree, so the fractional draw is
+    // Deficit 3 → expectation 0.5: never a whole tree, so the fractional draw is
     // the only thing that can produce one.
-    expect(sproutCount(6, fixedRng(0.4))).toBe(1);
-    expect(sproutCount(6, fixedRng(0.6))).toBe(0);
+    expect(sproutCount(3, fixedRng(0.4))).toBe(1);
+    expect(sproutCount(3, fixedRng(0.6))).toBe(0);
   });
 
   it('never exceeds the per-survey ceiling or the deficit', () => {
