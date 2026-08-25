@@ -1,8 +1,18 @@
 # Water painted onto the terrain's own bands
 
-Status: IMPLEMENTED 2026-08-24, WITH ONE PART SUPERSEDED. Supersedes the apron
-(retired), the per-segment riser (reverted), and the draped course ribbon
-(reverted).
+Status: IMPLEMENTED 2026-08-24, WITH ONE PART SUPERSEDED, AND W1 REBUILT AS A
+CONTRACT (2026-08-24 late). Supersedes the apron (retired), the per-segment
+riser (reverted), and the draped course ribbon (reverted).
+
+> **W1's oracle is no longer a second pipeline.** `drawnGround.ts` used to
+> re-run capEmission's own five calls and trust the two runs to agree; they
+> provably did not (layered chunks marched a different sample FIELD, the
+> crossingOverride was hardcoded null, band 0's seabed sink was a restated
+> rule, and a blocky-fallback chunk was invisible to it). `planChunkCaps` in
+> capEmission.ts is now the ONE producer of "what will be drawn" and
+> drawnGround is a reader; `drawnBandWorldY` is gone, replaced by `capYAt` /
+> `capYOfBand`. Water also gained a painted-band texture shared with the sea
+> and a depth-shade ramp — neither is described below.
 
 > **W3's staircase was paused by the owner on 2026-08-24, the day it shipped,
 > and the code no longer does what §"W3" below describes.** A waterfall is now
