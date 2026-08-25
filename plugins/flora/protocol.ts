@@ -744,3 +744,364 @@ if (
     `a crop plot of ${CROP_PLOT_CLUSTER_CELL_SPAN} cells reaches past ${CROP_PLOT_MAX_REACH_CELLS} cells and would overlap its neighbours`,
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRASS (owner, 2026-08-24: "another texture just like the wheat, but green …
+// spawn abundantly on all of the green or green-like bands"). A THIRD
+// independent static population, alongside the forest and the crop field, and
+// independent for the same reason those two are independent of each other: a
+// different eligibility rule, a different cap, a different cadence, its own
+// wire messages. Nothing below is a second view of a tree or a crop.
+//
+// WHAT MAKES IT DIFFERENT FROM CROPS, which it otherwise mirrors line for line:
+//
+//   * ELIGIBILITY is bands.ts's isGreenBand — the same predicate the forest
+//     already plants by — not farmland. Grass wants the whole green ramp,
+//     including the ground trees and settlements stand on.
+//   * IT GROWS UNDER TREES (owner's call, 2026-08-24). Only crops and
+//     buildings exclude it: a wheat plot is cultivated ground and a house has
+//     a floor, but a forest floor is grass.
+//   * IT IS THINNED. Every eligible cell would be a carpet — a cell is a
+//     quarter of a world unit since the 2026-08-21 re-sample — so a
+//     deterministic per-cell roll keeps roughly one tuft per
+//     GRASS_CELLS_PER_TUFT cells. See FLORA_GRASS_SHARE_OF_256.
+//
+// WHAT IT IS FOR, beyond looking like a meadow: the standing tuft count IS the
+// forage measure the grazer population will be sized from (owner, same day),
+// which is why the field is server-authoritative state rather than a client
+// decoration derived from the heightmap. The server has to be able to answer
+// "how much grass is there" without asking anybody.
+//
+// THE ARITHMETIC, at FLORA_GRASS_CAP on a fully revealed 512² world — the
+// worst case this population has, and materially bigger than the other two, so
+// it is stated rather than assumed:
+//
+//   wire      24 576 × 6 B ≈ 147 KB for a full snapshot, sent on join and on
+//             the FLORA_KEEPALIVE_SECONDS repair cadence — ≈ 2.5 KB/s ≈ 20
+//             kbit/s per client at 60 s. Six times the forest's own keepalive
+//             for six times the objects; still ~5% of wildlife's budget.
+//             Fog of war caps what a real client pays at the ground it has
+//             actually unlocked, which early on is almost none of this.
+//   geometry  two InstancedMeshes (client/grassModels.ts), so TWO draw calls
+//             whatever the count, and 24 576 × GRASS_BLADES_PER_TUFT ≈ 74k
+//             blade instances at FIVE triangles each ≈ 370k triangles at the
+//             absolute cap — under a tenth of the forest's own budget for six
+//             times the objects, which is what the flat-ribbon blade buys
+//             (see grassModels.ts's "why a ribbon and not a box").
+//
+// RESIDUAL, stated the way FLORA_CROP_CAP states its own: past the cap grass
+// simply stops appearing on the newest ground swept, rather than thinning out
+// evenly. On a world large enough to hit it that reads as "the far meadow has
+// not come in yet"; it is not silently wrong, but it is not graceful either,
+// and the fix if it ever bites is a distance-sorted survey rather than a
+// bigger number.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Server → client, the WHOLE grass field (`flora:grass`). Replaces the
+ * receiver's entire tuft list — FLORA_CROPS_MESSAGE's contract exactly.
+ */
+export const FLORA_GRASS_MESSAGE = 'grass';
+
+/** Server → client, what changed since the last message (`flora:grassChanges`). */
+export const FLORA_GRASS_CHANGES_MESSAGE = 'grassChanges';
+
+/**
+ * How many green cells there are, on average, per tuft of grass — the density
+ * dial, and the only one. Owner's choice, 2026-08-24: "abundant", which at a
+ * quarter-world-unit cell means roughly one tuft per world unit rather than
+ * one per cell (a carpet) or one per eight (scattered dots).
+ *
+ * Expressed as cells-per-tuft rather than as a probability so it reads as the
+ * spacing it produces, matching FLORA_CELLS_PER_TREE's own framing.
+ */
+export const GRASS_CELLS_PER_TUFT = 3.5;
+
+/**
+ * The thinning roll's threshold, out of 256 — GRASS_CELLS_PER_TUFT expressed
+ * as the byte comparison the survey actually does, so the two can never drift.
+ * Rounded, because the roll is a byte and a fraction of one is not a thing.
+ */
+export const FLORA_GRASS_SHARE_OF_256 = Math.round(256 / GRASS_CELLS_PER_TUFT);
+
+/**
+ * Hard ceiling on standing grass tufts, whatever the terrain asks for.
+ *
+ * A GEOMETRY number first and a wire number second — see the section header
+ * for both figures. 24 576 is three times FLORA_CROP_CAP's own headroom
+ * argument applied to a population that covers the whole green ramp rather
+ * than a shoreline: it is what a fully revealed 512² world of which ~35% is
+ * green asks for at GRASS_CELLS_PER_TUFT, and it keeps the worst-case blade
+ * count inside a triangle budget the terrain itself already dwarfs.
+ *
+ * Here rather than in the server half because both halves need it: the server
+ * enforces it, the client sizes its instance buffers from it, and
+ * parseGrassCells caps a hostile payload against it.
+ */
+export const FLORA_GRASS_CAP = 24576;
+
+/**
+ * A cell showing one tuft of grass. At most one per cell by construction — the
+ * cell IS the tuft's identity, exactly TreeCell's and CropCell's own contract.
+ */
+export interface GrassCell {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Shares FLORA_CELL_KEY_STRIDE with trees and crops for cropKey's own reason:
+ * the three populations are keyed into SEPARATE Sets, so sharing the stride
+ * costs nothing and keeps every cell key in this plugin one encoding.
+ */
+export function grassKey(x: number, y: number): number {
+  return y * FLORA_CELL_KEY_STRIDE + x;
+}
+
+export function grassCellOf(key: number): GrassCell {
+  return { x: key % FLORA_CELL_KEY_STRIDE, y: Math.floor(key / FLORA_CELL_KEY_STRIDE) };
+}
+
+/** Cells → the flat `[x0, y0, x1, y1, …]` wire form — packTreeCells' shape, restated for grass. */
+export function packGrassCells(cells: Iterable<GrassCell>): number[] {
+  const packed: number[] = [];
+  for (const cell of cells) packed.push(cell.x, cell.y);
+  return packed;
+}
+
+/**
+ * Defensive parse of a flat coordinate list, capped at FLORA_GRASS_CAP.
+ * Otherwise identical to parseTreeCells and parseCropCells — see the former
+ * for why the cap has to be this population's own and not a shared one.
+ */
+export function parseGrassCells(value: unknown): GrassCell[] | null {
+  if (!Array.isArray(value)) return null;
+  const cells: GrassCell[] = [];
+  for (let i = 0; i + 1 < value.length; i += 2) {
+    if (cells.length >= FLORA_GRASS_CAP) break;
+    const x = value[i];
+    const y = value[i + 1];
+    if (!isCellCoordinate(x) || !isCellCoordinate(y)) continue;
+    cells.push({ x, y });
+  }
+  return cells;
+}
+
+/** `flora:grass` — the receiver's whole tuft list. */
+export interface FloraGrassPayload {
+  readonly grass: readonly number[];
+}
+
+/** `flora:grassChanges` — what to add and what to remove. */
+export interface FloraGrassChangesPayload {
+  readonly sprouted: readonly number[];
+  readonly withered: readonly number[];
+}
+
+export function parseGrassPayload(payload: unknown): GrassCell[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  return parseGrassCells((payload as { grass?: unknown }).grass);
+}
+
+export function parseGrassChangesPayload(
+  payload: unknown,
+): { sprouted: GrassCell[]; withered: GrassCell[] } | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const message = payload as { sprouted?: unknown; withered?: unknown };
+  const sprouted = parseGrassCells(message.sprouted ?? []);
+  const withered = parseGrassCells(message.withered ?? []);
+  if (sprouted === null || withered === null) return null;
+  return { sprouted, withered };
+}
+
+/**
+ * Salt for the grass rolls.
+ *
+ * hashCell(x, y) is already spent twice on this cell — treeVariation slices it
+ * for a tree's kind/scale/yaw, cropVariation for a plot's scale/yaw — and a
+ * tuft's rolls must not correlate with either, or grass would appear
+ * preferentially where a tree would have been broadleaf. Re-avalanching
+ * through a second mixer seeded with a distinct constant is the same move
+ * CROP_STALK_ROLL_SALT makes, and 0x85ebca77 is an odd constant unrelated to
+ * that one.
+ */
+const GRASS_ROLL_SALT = 0x85ebca77;
+
+/** The grass hash for a cell — integer-only, so server and client agree bit for bit. */
+function grassHash(x: number, y: number): number {
+  let h = (hashCell(x, y) ^ GRASS_ROLL_SALT) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x2545f491);
+  return ((h ^ (h >>> 15)) >>> 0);
+}
+
+/**
+ * Does the thinning roll put a tuft on this cell?
+ *
+ * PURE AND DETERMINISTIC, no RNG: which cells carry grass is a fact about the
+ * cell's coordinates, not about when the survey happened to run, so a tuft
+ * removed by a sculpt and re-surveyed later comes back in the SAME place
+ * rather than jumping — which is what stops a meadow shimmering every time
+ * anybody digs near it.
+ *
+ * Lives here, not in the server half, because it is half the definition of
+ * "where grass is": the server applies it, and the tests and any future
+ * client-side prediction have to be able to ask the same question.
+ */
+export function grassCoversCell(x: number, y: number): boolean {
+  return (grassHash(x, y) & 0xff) < FLORA_GRASS_SHARE_OF_256;
+}
+
+/** Uniform scale bounds applied to a whole tuft — cropVariation's shape, its own range. */
+export const GRASS_SCALE_MIN = 0.75;
+export const GRASS_SCALE_MAX = 1.25;
+
+export interface GrassVariation {
+  readonly scale: number;
+  readonly yaw: number;
+}
+
+/**
+ * The deterministic variation for the tuft at (x, y) — two independent bit
+ * slices of the grass hash, so a big tuft is no more likely to face one way
+ * than another. Wider scale spread than a crop's (0.85…1.15): a wheat field is
+ * a planting and reads better even, where grass is not and a visible range of
+ * tuft sizes is most of what stops a meadow looking stamped.
+ */
+export function grassVariation(x: number, y: number): GrassVariation {
+  const hash = grassHash(x, y);
+  const scaleRoll = (hash >>> 8) & 0xff;
+  const yawRoll = (hash >>> 16) & (YAW_DIVISOR - 1);
+  return {
+    scale: GRASS_SCALE_MIN + (scaleRoll / 0xff) * (GRASS_SCALE_MAX - GRASS_SCALE_MIN),
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TUFT FOOTPRINT — the same lattice argument CROP_PLOT_MAX_REACH_CELLS
+// makes, resolved to a different number for a reason worth stating.
+//
+// A crop plot claims half a cell, so plots touch and never overlap, and it
+// pays for that reach with CROP_PLOT_TREAD_RING_CELLS — a whole cell of
+// same-band tread the survey has to verify around every plot, because a plot
+// reaching half a cell can hang over a terrace lip (a drawn contour comes as
+// close as CONTOUR_CELL_CENTRE_GUARD to a cell centre).
+//
+// GRASS PAYS THE OTHER WAY. There are an order of magnitude more tufts than
+// plots and they must grow on the frontier cells a tread ring would strip —
+// the band edge is exactly where a meadow should still be green. So a tuft is
+// sized to fit inside the guarantee EVERY green cell already carries: it
+// reaches no further from its centre than CONTOUR_CELL_CENTRE_GUARD, which is
+// the closest a contour can come. A tuft therefore cannot overhang a lip by
+// construction, the survey needs no ring test at all, and the per-cell cost of
+// the grass sweep stays a band lookup.
+//
+// The clump is consequently TIGHT — an eighth of a cell of spread, 0.03 world
+// units — which is what a tuft of grass is: a few blades out of one crown,
+// tall relative to their base, not a bush.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The furthest any part of a tuft may reach from the cell it stands on, in
+ * CELLS. Not chosen — it IS the terrain's own contour guard, for the reason
+ * the block above gives.
+ */
+export const GRASS_TUFT_MAX_REACH_CELLS = CONTOUR_CELL_CENTRE_GUARD;
+
+/**
+ * The square one tuft's blades are planted in, as a fraction of a CELL edge —
+ * DERIVED from the reach bound above exactly as CROP_PLOT_CLUSTER_CELL_SPAN
+ * is: the largest square that, turned to its worst angle by the yaw roll and
+ * rolled to GRASS_SCALE_MAX, still fits inside the reach.
+ */
+export const GRASS_TUFT_CLUSTER_CELL_SPAN =
+  GRASS_TUFT_MAX_REACH_CELLS / (SQUARE_CIRCUMRADIUS_PER_EDGE * GRASS_SCALE_MAX);
+
+/**
+ * Where a tuft's blades are planted, as fractions of the cluster span.
+ *
+ * THREE, IN A TRIANGLE, not four in a square: a square of blades reads as the
+ * lattice it is from directly above, which is the angle this game's camera
+ * spends most of its time near, and three is the fewest that still shows a
+ * crown from every side. The blades fan OUTWARD from the crown (see
+ * grassModels.ts's tilt), so these are where they meet the ground, not where
+ * they end up.
+ */
+const GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS = 0.16;
+
+export const GRASS_BLADE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
+  [0, GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS],
+  [
+    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.sin((Math.PI * 2) / 3),
+    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.cos((Math.PI * 2) / 3),
+  ],
+  [
+    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.sin((Math.PI * 4) / 3),
+    GRASS_BLADE_RADIUS_IN_CLUSTER_SPANS * Math.cos((Math.PI * 4) / 3),
+  ],
+];
+
+export const GRASS_BLADES_PER_TUFT = GRASS_BLADE_OFFSETS.length;
+
+/** How much shorter or taller than its tuft one blade may be, as a fraction. */
+export const GRASS_BLADE_HEIGHT_SPREAD = 0.35;
+
+/**
+ * How far a blade may wander off its lattice point, as a fraction of the
+ * cluster span. Spends the same budget CROP_STALK_JITTER_IN_CLUSTER_SPANS
+ * does: jitter plus the planting radius plus the blade's own outward lean has
+ * to stay inside half a cluster span, which grassModels.ts asserts at load.
+ */
+export const GRASS_BLADE_JITTER_IN_CLUSTER_SPANS = 0.05;
+
+/** Everything that makes one blade of a tuft its own blade. */
+export interface GrassBladeVariation {
+  /** Yaw about Y, radians, in [0, 2π) — which way this blade arcs. */
+  readonly yaw: number;
+  /** Height multiplier, in [1 − GRASS_BLADE_HEIGHT_SPREAD, 1 + GRASS_BLADE_HEIGHT_SPREAD]. */
+  readonly height: number;
+  /** Offset from the lattice point, in cluster spans, each in ±GRASS_BLADE_JITTER_IN_CLUSTER_SPANS. */
+  readonly jitterX: number;
+  readonly jitterZ: number;
+}
+
+/**
+ * A third mix of the cell hash, per blade INDEX — cropStalkHash's construction
+ * with grass's own salt already folded in by grassHash, so a blade's rolls
+ * correlate with neither a tree's nor a crop's on the same cell.
+ */
+function grassBladeHash(x: number, y: number, index: number): number {
+  let h = grassHash(x, y);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (index + 1), 0x846ca68b);
+  return ((h ^ (h >>> 16)) >>> 0);
+}
+
+/** The deterministic variation for blade `index` of the tuft at (x, y). */
+export function grassBladeVariation(x: number, y: number, index: number): GrassBladeVariation {
+  const hash = grassBladeHash(x, y, index);
+  const yawRoll = hash & (YAW_DIVISOR - 1);
+  const heightRoll = (hash >>> 16) & 0xff;
+  const jitterXRoll = (hash >>> 8) & (JITTER_DIVISOR - 1);
+  const jitterZRoll = (hash >>> 24) & (JITTER_DIVISOR - 1);
+  const centred = (roll: number): number => (roll / (JITTER_DIVISOR - 1)) * 2 - 1;
+  return {
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+    height: 1 + centred(heightRoll) * GRASS_BLADE_HEIGHT_SPREAD,
+    jitterX: centred(jitterXRoll) * GRASS_BLADE_JITTER_IN_CLUSTER_SPANS,
+    jitterZ: centred(jitterZRoll) * GRASS_BLADE_JITTER_IN_CLUSTER_SPANS,
+  };
+}
+
+/**
+ * The tuft analogue of the crop plot's load-time lattice check — every input
+ * is a constant, so this either always holds or never does.
+ */
+if (
+  GRASS_TUFT_CLUSTER_CELL_SPAN * GRASS_SCALE_MAX * SQUARE_CIRCUMRADIUS_PER_EDGE >
+  GRASS_TUFT_MAX_REACH_CELLS + Number.EPSILON
+) {
+  throw new RangeError(
+    `a grass tuft of ${GRASS_TUFT_CLUSTER_CELL_SPAN} cells reaches past ${GRASS_TUFT_MAX_REACH_CELLS} cells and could overhang a terrace lip`,
+  );
+}

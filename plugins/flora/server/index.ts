@@ -1,24 +1,27 @@
 // flora — trees grow on green ground that has been left alone (owner,
 // 2026-08-14: "I would like to see trees spawn in the green layers when they've
-// been stable for a short period of time"), and (card 28, 2026-08-19,
-// "Terrace Farming") crops grow on flat ground next to water.
+// been stable for a short period of time"), (card 28, 2026-08-19, "Terrace
+// Farming") crops grow on flat ground next to water, and (owner, 2026-08-24)
+// grass covers the green bands abundantly.
 //
 // Core knows nothing about vegetation. This half owns the whole mechanic —
 // what counts as green (./bands.ts), what counts as left alone (./stability.ts),
 // how fast a meadow fills in (./forest.ts), what counts as farmland
 // (@terrace/shared's farmland.ts — the predicate is shared terrain math, not
-// this plugin's) and where crops currently stand (./crops.ts), and what
-// survives a restart (./persistence.ts — crops themselves do not; see
-// crops.ts's header) — and publishes it on FOUR namespaced messages (two
-// per population); the client half under ../client draws both.
+// this plugin's), where crops currently stand (./crops.ts) and where grass
+// currently stands (./grass.ts), and what
+// survives a restart (./persistence.ts — neither crops nor grass do; see
+// crops.ts's header) — and publishes it on SIX namespaced messages (a
+// snapshot and a delta per population); the client half under ../client draws
+// all three.
 //
-// TREES AND CROPS ARE TWO INDEPENDENT POPULATIONS, not two views of one
-// mechanism: different eligibility predicate, different cap, different
+// TREES, CROPS AND GRASS ARE THREE INDEPENDENT POPULATIONS, not three views of
+// one mechanism: different eligibility predicate, different cap, different
 // growth model (stochastic-with-a-hazard for trees, purely deterministic for
-// crops — see crops.ts), different wire messages. Everywhere below that
-// forest.ts's machinery is mirrored for crops.ts, it is mirrored
-// DELIBERATELY — the two are meant to read as the same house pattern applied
-// twice, not as one shared abstraction.
+// crops and grass — see crops.ts and grass.ts), different wire messages.
+// Everywhere below that forest.ts's machinery is mirrored for crops.ts and
+// grass.ts, it is mirrored DELIBERATELY — the three are meant to read as the
+// same house pattern applied three times, not as one shared abstraction.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT THIS PLUGIN IS, NEXT TO THE OTHER TWO THAT DRAW THINGS IN THE WORLD.
@@ -94,10 +97,15 @@ import {
   FLORA_CROP_CHANGES_MESSAGE,
   FLORA_FOREST_MESSAGE,
   FLORA_PLUGIN_NAME,
+  FLORA_GRASS_MESSAGE,
+  FLORA_GRASS_CHANGES_MESSAGE,
   packCropCells,
+  packGrassCells,
   packTreeCells,
+  grassKey,
   treeKey,
   type CropCell,
+  type GrassCell,
   type TreeCell,
 } from '../protocol.ts';
 import {
@@ -109,6 +117,7 @@ import {
   type OccupancyPredicate,
 } from './forest.ts';
 import { CropField, cropSurveyChunksPerTick } from './crops.ts';
+import { GrassField, grassSurveyChunksPerTick } from './grass.ts';
 import { loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
@@ -144,6 +153,14 @@ const forest = new Forest();
 const cropField = new CropField();
 
 /**
+ * The meadow (owner, 2026-08-24). A THIRD independent object, not a second
+ * list inside either of the two above: its own predicate, its own cap, its own
+ * survey — see grass.ts's header for why it is a separate class rather than a
+ * configured CropField.
+ */
+const grassField = new GrassField();
+
+/**
  * Null until onWorldCreate: the record is sized from the world edge, which is
  * not known before then. Every path that touches it therefore checks — which
  * doubles as the guard for "a hook fired before the world existed".
@@ -176,6 +193,14 @@ let scanCredit = 0;
  * keep — see crops.ts's CROP_SURVEY_INTERVAL_SECONDS comment).
  */
 let cropScanCredit = 0;
+
+/**
+ * Fractional chunks owed to the grass survey — the third independent budget,
+ * for the third independent sweep (grass.ts's
+ * GRASS_SURVEY_INTERVAL_SECONDS), on the same "restated, not shared" rule the
+ * other two keep.
+ */
+let grassScanCredit = 0;
 
 /**
  * Trees restored from a snapshot, held until onWorldCreate.
@@ -331,6 +356,75 @@ function refreshUnlockedChunkCrops(world: WorldApi, token: string, cx: number, c
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Grass wire (owner, 2026-08-24) — the crop wire above, restated for the
+// meadow. Same fog-of-war rule and the same skipEmpty justification: a tuft
+// never moves once it stands, so a tuft invisible to a player now was equally
+// invisible at every earlier moment it could have been announced.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A tuft's own cell — what `WorldApi.broadcastVisible` gates visibility by. */
+function grassPosition(cell: GrassCell): { x: number; y: number } {
+  return { x: cell.x, y: cell.y };
+}
+
+function broadcastGrass(world: WorldApi): void {
+  world.broadcastVisible(
+    FLORA_GRASS_MESSAGE,
+    grassField.cells(),
+    grassPosition,
+    (visible) => ({ grass: packGrassCells(visible) }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/** One cell tagged with which half of a `flora:grassChanges` delta it belongs to. */
+interface TaggedGrassChange {
+  readonly kind: 'sprouted' | 'withered';
+  readonly cell: GrassCell;
+}
+
+function broadcastGrassChanges(
+  world: WorldApi,
+  sprouted: readonly GrassCell[],
+  withered: readonly GrassCell[],
+): void {
+  if (sprouted.length === 0 && withered.length === 0) return;
+
+  const tagged: TaggedGrassChange[] = [
+    ...sprouted.map((cell): TaggedGrassChange => ({ kind: 'sprouted', cell })),
+    ...withered.map((cell): TaggedGrassChange => ({ kind: 'withered', cell })),
+  ];
+  world.broadcastVisible(
+    FLORA_GRASS_CHANGES_MESSAGE,
+    tagged,
+    (change) => grassPosition(change.cell),
+    (visible) => ({
+      sprouted: packGrassCells(visible.filter((c) => c.kind === 'sprouted').map((c) => c.cell)),
+      withered: packGrassCells(visible.filter((c) => c.kind === 'withered').map((c) => c.cell)),
+    }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/** refreshUnlockedChunkCrops, restated for the meadow (issue #18's mechanism). */
+function refreshUnlockedChunkGrass(world: WorldApi, token: string, cx: number, cy: number): void {
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const inChunk: GrassCell[] = [];
+  for (const tuft of grassField.cells()) {
+    if (tuft.x >= x0 && tuft.x < x0 + CHUNK_SIZE && tuft.y >= y0 && tuft.y < y0 + CHUNK_SIZE) {
+      inChunk.push(tuft);
+    }
+  }
+  if (inChunk.length === 0) return;
+
+  const payload = { sprouted: packGrassCells(inChunk), withered: [] };
+  for (const player of world.players()) {
+    if (player.token === token) world.sendTo(player.id, FLORA_GRASS_CHANGES_MESSAGE, payload);
+  }
+}
+
 /**
  * THE TARGETED-REFRESH PATH (issue #18). `broadcastForest`'s keepalive is a
  * 60 s REPAIR cadence (see FLORA_KEEPALIVE_SECONDS), not a sync mechanism —
@@ -416,6 +510,23 @@ function occupiedCells(): OccupancyPredicate {
 }
 
 /**
+ * What grass yields to: buildings AND crops, but NOT trees (owner, 2026-08-24:
+ * grass grows under trees). Built on top of the structure occupancy the other
+ * two surveys already use, so "a building was founded this tick" reaches all
+ * three sweeps identically — the difference is only the extra crop term.
+ *
+ * Rebuilt per call for occupiedCells' own reason, with one extra bound: the
+ * crop field is capped at FLORA_CROP_CAP (2048), so this Set costs at most
+ * ~2560 inserts against a sweep that visits tens of thousands of cells.
+ */
+function grassOccupiedCells(): OccupancyPredicate {
+  const occupied = new Set<number>();
+  for (const cell of bridgedStructures()) occupied.add(grassKey(cell.x, cell.y));
+  for (const cell of cropField.cells()) occupied.add(grassKey(cell.x, cell.y));
+  return (x: number, y: number): boolean => occupied.has(grassKey(x, y));
+}
+
+/**
  * THE SIM STEP. Fixed order, once per host tick:
  *
  *   1. advance the clock — everything else reads simSeconds, nothing reads a
@@ -468,9 +579,23 @@ function simulate(world: WorldApi, dt: number): void {
     if (outcome !== null) broadcastCropChanges(world, outcome.sprouted, outcome.withered);
   }
 
+  // The grass survey — again its own budget and cursor, over its own
+  // predicate (grass.ts). It runs AFTER the crop survey in the same tick on
+  // purpose: grassOccupiedCells reads the crop field, so the meadow it stages
+  // is the one that yields to the crops that exist right now rather than to
+  // last tick's.
+  grassScanCredit = Math.min(grassScanCredit + grassSurveyChunksPerTick(world, dt), totalChunks);
+  const grassBudget = Math.floor(grassScanCredit);
+  if (grassBudget > 0) {
+    grassScanCredit -= grassBudget;
+    const outcome = grassField.advance(world, grassOccupiedCells(), grassBudget);
+    if (outcome !== null) broadcastGrassChanges(world, outcome.sprouted, outcome.withered);
+  }
+
   if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) {
     broadcastForest(world);
     broadcastCrops(world);
+    broadcastGrass(world);
   }
 }
 
@@ -502,6 +627,7 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
+  const uprooted: GrassCell[] = [];
   for (const cell of diff) {
     stability.markChanged(cell.x, cell.y, simSeconds);
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
@@ -513,10 +639,16 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
     // named, accepted residual rather than a gap.
     const witheredCell = cropField.reactToEdit(cell.x, cell.y);
     if (witheredCell !== null) withered.push(witheredCell);
+    // Grass on a dug cell goes with it, same rule and same reasoning. The
+    // next survey puts it back if the new height is still green — which is
+    // the honest outcome: you turned the ground over, and it grew back.
+    const uprootedCell = grassField.reactToEdit(cell.x, cell.y);
+    if (uprootedCell !== null) uprooted.push(uprootedCell);
   }
 
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
+  broadcastGrassChanges(world, [], uprooted);
 }
 
 /**
@@ -548,19 +680,22 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
 
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
-  for (const cell of occupation.seeded) {
-    if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
-    const witheredCell = cropField.reactToEdit(cell.x, cell.y);
+  const uprooted: GrassCell[] = [];
+  const clearCell = (x: number, y: number): void => {
+    if (forest.fell(x, y)) felled.push({ x, y });
+    const witheredCell = cropField.reactToEdit(x, y);
     if (witheredCell !== null) withered.push(witheredCell);
-  }
-  for (const cell of occupation.upgraded) {
-    if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
-    const witheredCell = cropField.reactToEdit(cell.x, cell.y);
-    if (witheredCell !== null) withered.push(witheredCell);
-  }
+    // A building has a floor, so the grass under it goes too — the one place
+    // grass is NOT exempt from occupancy the way it is from trees.
+    const uprootedCell = grassField.reactToEdit(x, y);
+    if (uprootedCell !== null) uprooted.push(uprootedCell);
+  };
+  for (const cell of occupation.seeded) clearCell(cell.x, cell.y);
+  for (const cell of occupation.upgraded) clearCell(cell.x, cell.y);
 
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
+  broadcastGrassChanges(world, [], uprooted);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -611,8 +746,19 @@ export const FLORA_TREE_FUEL_HEIGHT = 1.5;
 export const FLORA_CROP_FUEL_HEIGHT = 0.35;
 
 /**
- * What burns at this cell. Trees are checked before crops for no deeper reason
- * than that a cell cannot hold both — flora plants only one thing per cell.
+ * What burns at this cell.
+ *
+ * GRASS IS NOT FUEL, and that is a decision rather than an omission (owner has
+ * not asked for it, 2026-08-24). Grass covers roughly a third of every green
+ * cell in the world, so registering it would give fire a continuous fuel bed
+ * from one coast to the other and turn every stray torch into a world-ending
+ * firestorm — a gameplay change, not a fidelity one. Add it when the burn
+ * mechanic is designed to want it, not because the hook exists.
+ *
+ * Trees are checked before crops for no deeper reason than that a cell cannot
+ * hold both: flora plants at most one FLAMMABLE thing per cell (grass, which
+ * may share a cell with a tree, is exactly why that sentence now needs the
+ * qualifier).
  */
 function floraFuelAt(x: number, y: number): { burnSeconds: number; height: number } | null {
   if (forest.has(x, y)) {
@@ -716,6 +862,10 @@ export const plugin: TerracePlugin = {
     // inert at boot; kept for symmetry with broadcastForest and to cover a
     // future restart-without-reconnect path cleanly.
     broadcastCrops(world);
+    // The meadow is empty here for crops.ts's own reason — nothing is
+    // persisted, the first survey populates it from this world's heightmap —
+    // so this is inert at boot and kept for the same symmetry.
+    broadcastGrass(world);
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -764,11 +914,24 @@ export const plugin: TerracePlugin = {
       (visible) => ({ crops: packCropCells(visible) }),
       { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
     );
+
+    // The meadow, same join-time treatment. This is the largest of the three
+    // sends by an order of magnitude (protocol.ts's grass arithmetic), and
+    // fog of war is what keeps it proportional: a joining player is sent the
+    // grass on the ground they have actually unlocked, not the world's.
+    world.broadcastVisible(
+      FLORA_GRASS_MESSAGE,
+      grassField.cells(),
+      grassPosition,
+      (visible) => ({ grass: packGrassCells(visible) }),
+      { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
+    );
   },
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
     refreshUnlockedChunk(world, token, cx, cy);
     refreshUnlockedChunkCrops(world, token, cx, cy);
+    refreshUnlockedChunkGrass(world, token, cx, cy);
   },
 
   persistence,
@@ -803,16 +966,28 @@ export function currentCropField(): CropField {
   return cropField;
 }
 
+/** The standing grass tufts, in no particular order. */
+export function standingGrass(): readonly GrassCell[] {
+  return grassField.cells();
+}
+
+/** The live meadow, for suites that need to assert on its own maths. */
+export function currentGrassField(): GrassField {
+  return grassField;
+}
+
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetFloraState(): void {
   stability = null;
   fuelWorld = null;
   forest.replaceAll([]);
   cropField.clear();
+  grassField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
   scanCredit = 0;
   cropScanCredit = 0;
+  grassScanCredit = 0;
   restoredCells = [];
 }
