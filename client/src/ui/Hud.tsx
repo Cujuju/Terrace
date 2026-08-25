@@ -7,9 +7,10 @@
 //                    Collapsible to a tab, as the old all-in-one panel was.
 //   * BOTTOM LEFT   the brush panel: radius, tool, edge, mode — the things a
 //                    sculpting hand actually reaches for, always visible.
-//   * BOTTOM RIGHT  a column of equal-sized icon buttons, each opening one
-//                    thing: connection status, the Cartographer, and the
-//                    control-bindings editor.
+//   * BOTTOM RIGHT  the mana gauge (owner move, 2026-08-25, out of the
+//                    bottom-centre cell) beside a column of equal-sized icon
+//                    buttons, each opening one thing: connection status, the
+//                    Cartographer, and the control-bindings editor.
 // Top CENTRE stays what it was: world header + top-center plugin stack.
 //
 // WHERE THE CONNECTION LIVES (owner, 2026-08-19, superseding the above): the
@@ -32,13 +33,14 @@
 // link a friend joins through.
 //
 // THE BOTTOM EDGE IS ONE STRIP (owner refinement, same day): brush panel,
-// bottom-center instruments (mana gauge) and the gear live in one grid row —
-// `minmax(0,1fr) auto minmax(0,1fr)` — so a desktop keeps the gauge
+// bottom-centre instruments and the gear live in one grid row —
+// `minmax(0,1fr) auto minmax(0,1fr)` — so a desktop keeps the toolbar
 // dead-centre while a phone shrinks the side cells and everything flows along
-// the bottom instead of the three absolutely-anchored pieces colliding. On
-// narrow screens the brush rows drop their text labels (hud.css) — every
-// button keeps its title and aria-label — and coarse pointers get larger
-// touch targets. All three sections must stay visible AND operable at iPhone
+// the bottom instead of the three absolutely-anchored pieces colliding. (The
+// mana gauge left the centre cell for the right one, 2026-08-25.) On narrow
+// screens the brush rows drop their text labels (hud.css) — every button
+// keeps its title and aria-label — and coarse pointers get larger touch
+// targets. All three sections must stay visible AND operable at iPhone
 // portrait width; that is the requirement this strip exists to meet.
 //
 // SOLID REACTIVITY: every reactive value below is read by CALLING its accessor
@@ -269,11 +271,12 @@ export function Hud(props: {
       <VersionWatermark />
 
       {/* THE BOTTOM STRIP (owner refinement, 2026-08-19): brush panel, the
-          bottom-centre instruments and the settings gear share ONE grid row —
-          `minmax(0,1fr) auto minmax(0,1fr)` — so the gauge stays dead-centre
-          on a desktop while a phone-width screen shrinks the side cells and
-          the three sections flow along the bottom edge instead of colliding.
-          The strip itself never takes pointer events; each section does. */}
+          bottom-centre toolbar and the settings column share ONE grid row —
+          `minmax(0,1fr) auto minmax(0,1fr)` — so the toolbar stays
+          dead-centre on a desktop while a phone-width screen shrinks the side
+          cells and the three sections flow along the bottom edge instead of
+          colliding. The strip itself never takes pointer events; each section
+          does. */}
       <div class="hud-bottom-strip">
         {/* BOTTOM LEFT — the BRUSH panel: what a playing hand reaches for.
             Always visible; collapsing the info panel never takes the tools
@@ -374,12 +377,10 @@ export function Hud(props: {
           </div>
         </div>
 
-        {/* Bottom centre: the tool bar and the persistent instruments (the
-            mana gauge), the strip's middle cell so the world's centre stays
-            clear above it. The container is `column-reverse` (hud.css), so
-            SOURCE ORDER IS BOTTOM-UP: the toolbar is first here and therefore
-            sits along the bottom edge, nearest the hand, with the gauge above
-            it — one instrument, as the owner asked (2026-08-24). */}
+        {/* Bottom centre: the tool bar, alone in its cell now that the
+            gauge has moved right (owner move, 2026-08-25). The container is
+            `column-reverse` (hud.css), so plugin 'bottom-center' panels
+            registered later stack above it. */}
         <div class="hud-bottom-center">
           <Toolbar />
           <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
@@ -387,13 +388,20 @@ export function Hud(props: {
           </For>
         </div>
 
-        {/* BOTTOM RIGHT — the BUTTON COLUMN: three equal icon buttons, each
-            opening exactly one thing, and the popups that grow upward from
-            the top of the column so no button ever moves under the pointer.
-            Everything shares one container so the click-outside dismissal
-            (top of the component) can treat it as one region. Icon-only
-            (owner, 2026-08-19); the aria-label and title carry the words the
-            faces no longer do. */}
+        {/* BOTTOM RIGHT — the MANA GAUGE (owner move, 2026-08-25: out of the
+            centre cell, whose toolbar no longer shares it) and the BUTTON
+            COLUMN of equal icon buttons, each opening exactly one thing, with
+            the popups that grow upward from the top of the column so no
+            button ever moves under the pointer. The gauge sits to the LEFT of
+            the column, in the same strip cell, so the two read as one corner.
+            Everything below shares the cell; the click-outside dismissal (top
+            of the component) still treats only the button column as one
+            region. Icon-only buttons (owner, 2026-08-19); the aria-label and
+            title carry the words the faces no longer do. */}
+        <div class="hud-bottom-right">
+        <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-right')}>
+          {(panel) => <Dynamic component={panel.component} />}
+        </For>
         <div class="hud-settings hud-anchor-bottom-right" ref={settingsRoot}>
           <Show when={showControls()}>
             <div
@@ -523,6 +531,7 @@ export function Hud(props: {
           >
             ⚙
           </button>
+        </div>
         </div>
       </div>
 

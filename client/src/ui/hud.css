@@ -65,11 +65,12 @@ body {
 }
 
 /* The top-left corner keeps its absolute anchor; the bottom edge is a STRIP
-   (owner refinement 2026-08-19): one grid row holding brush panel, gauge and
-   gear. `minmax(0, 1fr)` sides are the load-bearing part — they let the side
-   cells SHRINK below their content's natural width on a phone (plain 1fr
-   would grow to fit and silently overflow the viewport), so the middle cell's
-   gauge stays visible at every width, dead-centred whenever the sides fit. */
+   (owner refinement 2026-08-19): one grid row holding brush panel, toolbar
+   and the gauge-and-buttons corner. `minmax(0, 1fr)` sides are the
+   load-bearing part — they let the side cells SHRINK below their content's
+   natural width on a phone (plain 1fr would grow to fit and silently
+   overflow the viewport), so the middle cell's toolbar stays visible at
+   every width, dead-centred whenever the sides fit. */
 .hud-anchor-top-left {
   position: absolute;
   top: 16px;
@@ -87,6 +88,22 @@ body {
   align-items: end;
   gap: 10px;
   pointer-events: none; /* sections take their own events, canvas stays free */
+}
+
+/* The strip's RIGHT cell: plugin 'bottom-right' panels (the mana gauge) and
+   the icon-button column, laid out as one end-anchored row so the gauge sits
+   immediately left of the buttons (owner move, 2026-08-25) and both ride the
+   bottom edge together. Pointer-transparent like its sibling cells. */
+.hud-bottom-right {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.hud-bottom-right > * {
+  pointer-events: auto;
 }
 
 .hud-anchor-bottom-left {
@@ -430,10 +447,9 @@ body {
 
 /* ── THE TOOLBAR (owner, 2026-08-24) ────────────────────────────────────────
    The bottom-centre cell's first child, so `column-reverse` above seats it
-   along the bottom edge with the mana gauge stacked over it. Its chrome is
-   .hud-panel's, tightened to a single row of buttons; it WRAPS rather than
-   overflows, because the tool list is open-ended (any plugin may add one) and
-   a bar that grew past the viewport would push the gauge off a phone. */
+   along the bottom edge. Its chrome is .hud-panel's, tightened to a single
+   row of buttons; it WRAPS rather than overflows, because the tool list is
+   open-ended (any plugin may add one). */
 .hud-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -479,8 +495,9 @@ body {
   white-space: nowrap;
 }
 
-/* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, gauge and
-   gear all usable at once on an iPhone). Below 640px the brush rows drop
+/* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, toolbar
+   and the right corner all usable at once on an iPhone). Below 640px the
+   brush rows drop
    their text labels — every control keeps its title and aria-label — and the
    chrome tightens, which brings the whole strip inside a 390px viewport. ── */
 @media (max-width: 640px) {
@@ -505,11 +522,11 @@ body {
 
   /* One row, asymmetric (owner follow-up, 2026-08-19): the brush cluster
      sits ALL THE WAY in the bottom-left corner (safe-area insets aside), and
-     the gauge gives up the centre — it slides right into whatever space is
-     free beside the gear. `auto` left cell = the brush takes exactly what it
-     needs; the gauge's `minmax(0,1fr)` cell absorbs the slack with the gauge
-     end-aligned inside it. (An earlier symmetric 1fr|auto|1fr row overflowed
-     not because the row was too small but because the LEFT cell was.) */
+     the toolbar gives up the centre — it slides into whatever space is free.
+     `auto` left cell = the brush takes exactly what it needs; the middle's
+     `minmax(0,1fr)` cell absorbs the slack with the toolbar centred inside
+     it. (An earlier symmetric 1fr|auto|1fr row overflowed not because the
+     row was too small but because the LEFT cell was.) */
   .hud-bottom-strip {
     left: env(safe-area-inset-left, 0px);
     right: 8px;
@@ -519,8 +536,8 @@ body {
   }
 
   /* Centred in the FREE SPACE (owner refinement): the middle cell spans from
-     the brush cluster's right edge to the gear's left edge, and the gauge
-     sits at that span's midpoint — not against either neighbour. */
+     the brush cluster's right edge to the gauge-and-buttons corner, and the
+     toolbar sits at that span's midpoint — not against either neighbour. */
   .hud-bottom-center {
     justify-self: center;
   }

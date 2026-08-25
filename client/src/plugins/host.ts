@@ -161,7 +161,12 @@ export function createClientPluginHost(
       registerHudPanel(
         component: Component,
         options?: {
-          placement?: 'panel' | 'top-center' | 'bottom-center' | 'connection';
+          placement?:
+            | 'panel'
+            | 'top-center'
+            | 'bottom-center'
+            | 'bottom-right'
+            | 'connection';
           headerSummary?: Component;
           tabSummary?: () => string;
         },

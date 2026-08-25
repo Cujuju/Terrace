@@ -9,15 +9,18 @@ import type { Component } from 'solid-js';
  * Where a plugin panel renders. 'panel' stacks inside the corner HUD panel;
  * 'top-center' floats centred along the top edge of the screen (identity and
  * status headed by the world header); 'bottom-center' mirrors it along the
- * bottom edge (persistent instruments kept out of the world's way, like the
- * mana gauge — owner move, 2026-08-14); 'connection' renders inside the
- * bottom-right connection popup, under its status row and hint sentence
- * (owner move, 2026-08-21: the invite link lives there now).
+ * bottom edge (persistent instruments kept out of the world's way — the
+ * toolbar's plugin tools render there too); 'bottom-right' sits in the
+ * bottom-right strip cell, immediately left of the icon-button column (owner
+ * move, 2026-08-25: the mana gauge left the centre for it); 'connection'
+ * renders inside the bottom-right connection popup, under its status row and
+ * hint sentence (owner move, 2026-08-21: the invite link lives there now).
  */
 export type HudPanelPlacement =
   | 'panel'
   | 'top-center'
   | 'bottom-center'
+  | 'bottom-right'
   | 'connection';
 
 export interface PluginHudPanel {
