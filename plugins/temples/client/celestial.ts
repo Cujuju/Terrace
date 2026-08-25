@@ -9,10 +9,15 @@
 //     shrine's lintel, touching nothing. It turns slowly on its own axis and
 //     breathes up and down. Nothing else in this world floats, so the fact
 //     that it is unsupported is the whole read: this is not masonry.
-//   * its HALO — a second, larger octahedron drawn additively over the first.
-//     A cheap standing-in for a bloom pass (this renderer has none): it makes
-//     the stone read as a light SOURCE rather than a lit object, which is what
-//     separates a star from a polished rock.
+//   * its AUREOLE — a second, larger octahedron around the first, drawn
+//     BACK-FACES-ONLY so it rings the stone without veiling it. This is the
+//     piece that makes the stone read as a light SOURCE rather than a lit
+//     object, and it is opaque-ish and saturated for a reason written out
+//     under DAYLIGHT below.
+//   * its BLOOM — a third, larger shell, additive. The cheap stand-in for a
+//     bloom pass this renderer does not have. It is a BONUS, not the read: it
+//     earns its keep once the sky darkens and contributes almost nothing at
+//     midday, which is exactly what additive light does.
 //   * two ARMILLARY RINGS — gilded hoops on tilted, mismatched axes, turning
 //     at different rates and in opposite directions. An orrery is the oldest
 //     visual shorthand there is for "this instrument is about the heavens",
@@ -35,6 +40,23 @@
 // total, not six per instance. If the one-temple rule ever goes, this crown
 // must become instanced before it ships; that is the condition, written down.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// DAYLIGHT IS THE HARD CASE, AND ADDITIVE BLENDING FAILS IT.
+//
+// Everything up here was additive once — halo, shaft, and a near-white stone —
+// and the whole crown was invisible against a bright sky. That is not a
+// tuning miss, it is what the blend mode does: additive light ADDS to what is
+// behind it, and the daylit sky is already near white, so every channel
+// saturates and nothing changes. Raising opacity cannot fix it; adding to
+// white is white at any strength.
+//
+// So the read is carried by HUE AND VALUE CONTRAST from opaque, saturated
+// surfaces — a deep violet aureole the pale sky cannot swallow, with the white
+// stone sitting inside it — and additive is kept only as the night bonus it is
+// good at. Anything added here must be legible with the additive layers
+// switched off entirely.
+// ─────────────────────────────────────────────────────────────────────────────
+//
 // DETERMINISTIC AND STATELESS. `animate` is a pure function of elapsed seconds
 // — no accumulators, no per-frame deltas — so a dropped frame, a paused tab or
 // a re-attach cannot leave the crown out of step with itself, and two clients
@@ -43,6 +65,7 @@
 
 import {
   AdditiveBlending,
+  BackSide,
   Color,
   ConeGeometry,
   Group,
@@ -62,20 +85,35 @@ const TWO_PI = Math.PI * 2;
 // Passed in rather than imported so this module says nothing about how big a
 // temple is — it decorates whatever it is given.
 
-/** The stone's half-diagonal: how far its points reach from its centre. */
-const STONE_RADIUS_FRACTION = 0.05;
-/** The halo, as a multiple of the stone. 1.9 — clearly a glow around the
- *  stone rather than a second stone. */
-const HALO_SCALE = 1.9;
-/** How far above the temple's summit the stone hangs. */
-const HOVER_GAP_FRACTION = 0.11;
+// A CROWN, NOT A BAUBLE. Every size here was roughly half what it is now, and
+// the result sat on the roof like an ornament: the hoops were narrower than
+// the lintel they hovered over, so the eye read them as something ON the
+// building rather than something the building reaches into. The rule the
+// numbers below keep is that THE OUTER HOOP IS WIDER THAN THE LINTEL — it
+// encircles the summit instead of perching on it — and it clears the stone by
+// enough that the gap, not the roof, is what the silhouette is about.
 
-/** The two hoops, as fractions of the span. */
-const OUTER_RING_RADIUS_FRACTION = 0.13;
-const INNER_RING_RADIUS_FRACTION = 0.095;
+/** The stone's half-diagonal: how far its points reach from its centre. */
+const STONE_RADIUS_FRACTION = 0.085;
+/** The aureole, as a multiple of the stone. Clearly a glow around the stone
+ *  rather than a second stone. */
+const HALO_SCALE = 1.9;
+/** The additive bloom shell, as a multiple of the stone — outside the aureole,
+ *  so at night the glow reads as reaching past it. */
+const BLOOM_SCALE = 2.8;
+/** How far above the temple's summit the stone hangs. Nearly a third of the
+ *  span: a clear column of air, so the crown is plainly not resting on the
+ *  lintel. */
+const HOVER_GAP_FRACTION = 0.3;
+
+/** The two hoops, as fractions of the span. The outer one is 0.52 of the span
+ *  across — wider than the lintel below it (about 0.42), which is the whole
+ *  point of the number. */
+const OUTER_RING_RADIUS_FRACTION = 0.26;
+const INNER_RING_RADIUS_FRACTION = 0.19;
 /** Hoop thickness — thin enough to read as wire, thick enough not to alias
  *  into a dashed line when the camera pulls back. */
-const RING_TUBE_FRACTION = 0.006;
+const RING_TUBE_FRACTION = 0.01;
 
 /** Tilts of the two hoops, radians. Deliberately not multiples of each other:
  *  two rings on related axes read as a single wobbling ring. */
@@ -84,7 +122,7 @@ const INNER_RING_TILT = -1.05;
 
 /** The motes riding the outer hoop. */
 const MOTE_COUNT = 3;
-const MOTE_RADIUS_FRACTION = 0.011;
+const MOTE_RADIUS_FRACTION = 0.017;
 
 /** The shaft: how far up it reaches, and how wide it is at the stone and at
  *  its top. Widening upward — a beam leaving, not one arriving. */
@@ -119,9 +157,21 @@ const BREATH_HZ = 0.17;
 /** Halo scale swing, either side of HALO_SCALE. */
 const HALO_BREATH = 0.13;
 
-/** Shaft opacity floor and swing. Kept low: a shaft you notice is a laser. */
-const SHAFT_OPACITY_BASE = 0.1;
-const SHAFT_OPACITY_SWING = 0.045;
+/**
+ * Shaft opacity floor and swing. Still low — a shaft you NOTICE is a laser —
+ * but no longer the near-nothing that additive blending needed, because the
+ * shaft now tints what is behind it instead of adding to it (see DAYLIGHT in
+ * the header). Against a pale sky this is a soft violet column; against a dark
+ * one it is a faint one.
+ */
+const SHAFT_OPACITY_BASE = 0.2;
+const SHAFT_OPACITY_SWING = 0.07;
+
+/** The aureole's opacity. High enough to hold its own hue against a white
+ *  sky, short of opaque so the bloom behind it still shows through at night. */
+const AUREOLE_OPACITY = 0.72;
+/** The bloom's opacity — the night bonus, deliberately slight. */
+const BLOOM_OPACITY = 0.3;
 
 // ── Palette: THE CELESTIAL VAULT ────────────────────────────────────────────
 // Owner, 2026-08-24: "give the temples accoutrement colors that give it a
@@ -146,7 +196,9 @@ const SHAFT_OPACITY_SWING = 0.045;
 // in neither family, so three small moving things stay findable against a gold
 // hoop AND against the violet glow behind it.
 const STONE_COLOR = 0xfff6e2;
-const HALO_COLOR = 0x7a63ff;
+/** The aureole and the bloom share this hue. DEEP and SATURATED, not a pastel
+ *  wash: it is the only thing separating a white stone from a white sky. */
+const HALO_COLOR = 0x4a2fd6;
 const RING_COLOR = 0xe0b45c;
 const MOTE_COLOR = 0xbdf0ff;
 const SHAFT_COLOR = 0x8f74ff;
@@ -220,20 +272,42 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
   );
   stone.add(core);
 
+  // The AUREOLE: normal blending, so it TINTS the sky behind it rather than
+  // adding to it, and BackSide, so only its far shell is drawn — the stone
+  // inside stays a crisp white silhouette instead of being veiled by violet.
+  // Depth is tested but not written: the aureole's back faces lose to the
+  // stone that already wrote depth in front of them, which is what keeps the
+  // stone clean without any sorting for the renderer to get wrong.
   const haloMaterial = keepMaterial(
     new MeshBasicMaterial({
       color: HALO_COLOR,
       transparent: true,
-      opacity: 0.3,
-      blending: AdditiveBlending,
-      // Additive glows must never write depth or they punch holes in
-      // whatever is drawn after them, including each other.
+      opacity: AUREOLE_OPACITY,
+      side: BackSide,
       depthWrite: false,
     }),
   );
   const halo = new Mesh(keepGeometry(new OctahedronGeometry(stoneRadius, 0)), haloMaterial);
   halo.scale.setScalar(HALO_SCALE);
   stone.add(halo);
+
+  // The BLOOM: the additive layer, kept for what additive is actually good at
+  // — a night sky, where there is headroom to add into. It contributes almost
+  // nothing at midday and nothing here depends on it.
+  const bloomMaterial = keepMaterial(
+    new MeshBasicMaterial({
+      color: HALO_COLOR,
+      transparent: true,
+      opacity: BLOOM_OPACITY,
+      blending: AdditiveBlending,
+      // Additive glows must never write depth or they punch holes in
+      // whatever is drawn after them, including each other.
+      depthWrite: false,
+    }),
+  );
+  const bloom = new Mesh(keepGeometry(new OctahedronGeometry(stoneRadius, 0)), bloomMaterial);
+  bloom.scale.setScalar(BLOOM_SCALE);
+  stone.add(bloom);
 
   // ── The armillary ─────────────────────────────────────────────────────────
   // Each hoop is a TILT group holding a SPIN group: the tilt is fixed at build
@@ -301,7 +375,8 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
       color: SHAFT_COLOR,
       transparent: true,
       opacity: SHAFT_OPACITY_BASE,
-      blending: AdditiveBlending,
+      // Normal blending, for the reason in DAYLIGHT above: an additive shaft
+      // against a bright sky is nothing at all.
       depthWrite: false,
     }),
   );
@@ -333,6 +408,7 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
       stone.position.y = hoverY + Math.sin(seconds * BOB_HZ * TWO_PI) * bobAmplitude;
       core.rotation.y = seconds * STONE_SPIN_TURNS_PER_SECOND * TWO_PI;
       halo.rotation.y = seconds * HALO_SPIN_TURNS_PER_SECOND * TWO_PI;
+      bloom.rotation.y = -halo.rotation.y;
 
       outerSpin.rotation.y = seconds * OUTER_RING_TURNS_PER_SECOND * TWO_PI;
       innerSpin.rotation.y = seconds * INNER_RING_TURNS_PER_SECOND * TWO_PI;
@@ -340,6 +416,7 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
       // ONE breath drives both swells — see BREATH_HZ.
       const breath = Math.sin(seconds * BREATH_HZ * TWO_PI);
       halo.scale.setScalar(HALO_SCALE + breath * HALO_BREATH);
+      bloom.scale.setScalar(BLOOM_SCALE + breath * HALO_BREATH);
       shaftMaterial.opacity = SHAFT_OPACITY_BASE + breath * SHAFT_OPACITY_SWING;
 
       // The aurora drift, on its OWN slower clock (AURORA_HZ) so hue and
@@ -347,6 +424,7 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
       // [0, 1] a lerp wants.
       const drift = (Math.sin(seconds * AURORA_HZ * TWO_PI) + 1) / 2;
       haloMaterial.color.copy(scratch.lerpColors(auroraWarm, auroraCool, drift));
+      bloomMaterial.color.copy(haloMaterial.color);
       shaftMaterial.color.copy(
         scratch.lerpColors(auroraShaftWarm, auroraCool, drift),
       );
