@@ -51,6 +51,7 @@ import {
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
+  WATER_SHADE_MIX_DEFAULT_BYTE,
   WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
   writeWaterDepthTexels,
 } from '../terrain/waterDepth.ts';
@@ -79,6 +80,20 @@ const WATER_ROUGHNESS = 0.9;
  * colour, translucency and the seabed under it, not from reflecting the sun.
  */
 const WATER_METALNESS = 0;
+
+/**
+ * How the depth SHADE scales the sea's own colour at each end of the water
+ * column (2026-08-24, owner: "Shallows should draw light, and the Deeper the
+ * water, the darker it should render").
+ *
+ * Above 1 at the shallow end and well below it at the deep end, so the ramp
+ * spends its range in BOTH directions from the flat colour the sea used to be
+ * everywhere — shallows genuinely lighten rather than merely darkening less.
+ * The mix parameter between them is the texel waterDepth.ts's depthToShadeMix
+ * writes; these two constants are the only place the range lives.
+ */
+const WATER_SHADE_SHALLOW = 1.25;
+const WATER_SHADE_DEEP = 0.4;
 
 /**
  * THE SEA IS DRAWN ONLY OVER REVEALED CHUNKS (owner, 2026-08-24: "I'd like to
@@ -249,11 +264,13 @@ function makeDepthAware(
   material: MeshStandardMaterial,
   depthAlphaTexture: DataTexture,
   specularFactorTexture: DataTexture,
+  shadeMixTexture: DataTexture,
   worldSizeUniform: { value: number },
 ): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWaterDepthAlpha = { value: depthAlphaTexture };
     shader.uniforms.uWaterSpecularFactor = { value: specularFactorTexture };
+    shader.uniforms.uWaterShadeMix = { value: shadeMixTexture };
     shader.uniforms.uWorldSizeCells = worldSizeUniform;
     shader.vertexShader = spliceShader(
       spliceShader(
@@ -277,7 +294,7 @@ function makeDepthAware(
         spliceShader(
           shader.fragmentShader,
           '#include <common>',
-          '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterDepthAlpha;\nuniform sampler2D uWaterSpecularFactor;\nuniform float uWorldSizeCells;',
+          '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterDepthAlpha;\nuniform sampler2D uWaterSpecularFactor;\nuniform sampler2D uWaterShadeMix;\nuniform float uWorldSizeCells;',
           'water',
         ),
         // Exact anchor copied verbatim from this project's installed three
@@ -294,6 +311,23 @@ function makeDepthAware(
         'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterSpecularFactor, vWaterCellXZ / uWorldSizeCells ).r;',
         'water',
       ),
+      // Spliced at <color_fragment> — the base colour BEFORE lighting, the same
+      // anchor water/waterBands.ts uses, and for the same reason: the shade is
+      // part of what colour this water IS, so it should be lit, tone-mapped and
+      // fogged like any other surface colour rather than pasted over the lit
+      // result. It composes with the bands by plain multiplication, which is
+      // what lets the painted steps stay legible against a deep sea instead of
+      // being flattened by it — the whole point of adding it.
+      '#include <color_fragment>',
+      `#include <color_fragment>\ndiffuseColor.rgb *= mix( ${glslFloat(
+        WATER_SHADE_DEEP,
+      )}, ${glslFloat(
+        WATER_SHADE_SHALLOW,
+      )}, texture2D( uWaterShadeMix, vWaterCellXZ / uWorldSizeCells ).r );`,
+      'water',
+    );
+    shader.fragmentShader = spliceShader(
+      shader.fragmentShader,
       '#include <opaque_fragment>',
       // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
       // beyond the world border: UVs past [0,1] just hold the edge cell's
@@ -314,10 +348,18 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
   // amendment and waterDepth.ts's "SPECULAR SUPPRESSION" comment.
   const { texture: specularFactorTexture, buffer: initialSpecularFactorBuffer } =
     createDepthTexture(initialWorldSize, WATER_SPECULAR_FACTOR_DEFAULT_BYTE);
+  // Third depth-derived texture (2026-08-24) — the depth SHADE, which gives the
+  // sea its own light-to-dark structure. See waterDepth.ts's depthToShadeMix
+  // for why it is a third curve and not a reuse of either of the two above.
+  const { texture: shadeMixTexture, buffer: initialShadeMixBuffer } = createDepthTexture(
+    initialWorldSize,
+    WATER_SHADE_MIX_DEFAULT_BYTE,
+  );
   // Reassigned wholesale by setWorldSize; depthAlphaTexture/specularFactorTexture
   // themselves never are (see makeDepthAware's doc comment).
   let depthAlphaBuffer = initialDepthAlphaBuffer;
   let specularFactorBuffer = initialSpecularFactorBuffer;
+  let shadeMixBuffer = initialShadeMixBuffer;
   // Mutated in place on every setWorldSize; the compiled shader holds this
   // same object by reference, so no re-wiring is needed after a resize.
   const worldSizeUniform = { value: initialWorldSize };
@@ -336,7 +378,13 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
     // Visible from below, for when the camera dips toward the horizon.
     side: DoubleSide,
   });
-  makeDepthAware(material, depthAlphaTexture, specularFactorTexture, worldSizeUniform);
+  makeDepthAware(
+    material,
+    depthAlphaTexture,
+    specularFactorTexture,
+    shadeMixTexture,
+    worldSizeUniform,
+  );
   // The sea gets the same painted bands the rivers do — one rule, in
   // water/waterBands.ts, precisely so the ocean cannot be left behind when the
   // rivers get a treatment. Applied AFTER makeDepthAware because makeBanded
@@ -420,6 +468,10 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
       height: worldSize,
     };
     specularFactorTexture.needsUpdate = true;
+    // Same reallocate-unconditionally contract again.
+    shadeMixBuffer = new Uint8Array(worldSize * worldSize).fill(WATER_SHADE_MIX_DEFAULT_BYTE);
+    shadeMixTexture.image = { data: shadeMixBuffer, width: worldSize, height: worldSize };
+    shadeMixTexture.needsUpdate = true;
     worldSizeUniform.value = worldSize;
   };
 
@@ -488,14 +540,17 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
         mirror,
         dirty,
         specularFactorBuffer,
+        shadeMixBuffer,
       );
       depthAlphaTexture.needsUpdate = true;
       specularFactorTexture.needsUpdate = true;
+      shadeMixTexture.needsUpdate = true;
     },
     dispose(): void {
       parent.remove(mesh);
       mesh.geometry.dispose();
       material.dispose();
+      shadeMixTexture.dispose();
       depthAlphaTexture.dispose();
       specularFactorTexture.dispose();
     },

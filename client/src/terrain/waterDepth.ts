@@ -319,6 +319,59 @@ export function surfaceAlphaByte(height: number): number {
   return depthAlphaByte(waterDepthWorldUnits(height));
 }
 
+/**
+ * DEPTH SHADING (2026-08-24, owner: "We can't see any of the texture below the
+ * sea. Shallows should draw light, and the Deeper the water, the darker it
+ * should render").
+ *
+ * The third depth-derived curve, and the one that gives the sea its own value
+ * structure. Until now depth drove only how much TERRAIN showed through (alpha)
+ * and how much SHEEN survived (specular); the water's own colour was one flat
+ * value everywhere, so an ocean read as a single pane of blue and the painted
+ * bands laid over it had nothing to read against.
+ *
+ * WHY A THIRD CURVE RATHER THAN REUSING EITHER EXISTING ONE. The same reason
+ * the specular factor could not reuse alpha, stated in the SPECULAR
+ * SUPPRESSION comment above: `depthToWaterAlpha` is deliberately NON-MONOTONIC
+ * past the sea-column floor, so one alpha byte cannot tell "shallow" apart from
+ * "past the cap", and a shade built by inverting it would make the very deepest
+ * water start getting LIGHTER again — precisely backwards from what was asked
+ * for. `depthToSpecularFactor` is monotone but is deliberately FLAT across the
+ * entire ordinary sea column (that flatness is a shipped correction, and the
+ * contract it keeps is that ordinary sea must not lose its sheen), which is
+ * exactly the range this curve has to vary across. Neither can do this job
+ * without breaking the job it already does.
+ *
+ * SHAPE. Monotone decreasing over the WHOLE range, with no plateau and no sign
+ * change anywhere: brightest at the waterline, darkest at the world's floor.
+ * That is the entire requested behaviour, and being monotone end to end is what
+ * keeps this curve from ever developing alpha's ambiguity.
+ *
+ * The stored byte is the MIX PARAMETER, not the multiplier — 1 at the surface
+ * falling to 0 at the floor — so the two ends of the range live in the shader
+ * as named constants and the texture stays a plain [0,1] scalar like its two
+ * siblings. Encoding a multiplier that can exceed 1 would have needed an
+ * encode scale that every reader then has to know about.
+ */
+export function depthToShadeMix(depthWorldUnits: number): number {
+  if (depthWorldUnits <= 0) return 1;
+  if (depthWorldUnits >= WATER_DEPTH_FLOOR_WORLD_UNITS) return 0;
+  return 1 - depthWorldUnits / WATER_DEPTH_FLOOR_WORLD_UNITS;
+}
+
+/** depthToShadeMix, quantised to the byte the shade texture stores. */
+export function depthShadeMixByte(depthWorldUnits: number): number {
+  return Math.round(depthToShadeMix(depthWorldUnits) * WATER_DEPTH_ALPHA_BYTE_MAX);
+}
+
+/**
+ * The byte a freshly (re)allocated shade texture is filled with before any
+ * chunk has written into it — the shallow end, for the same reason
+ * WATER_SPECULAR_FACTOR_DEFAULT_BYTE picks full sheen: an unrevealed texel
+ * should read as ordinary shallow water rather than as an abyss.
+ */
+export const WATER_SHADE_MIX_DEFAULT_BYTE = depthShadeMixByte(0);
+
 /** depthToSpecularFactor, quantised to the byte the specular texture stores. */
 export function depthSpecularFactorByte(depthWorldUnits: number): number {
   return Math.round(depthToSpecularFactor(depthWorldUnits) * WATER_DEPTH_ALPHA_BYTE_MAX);
@@ -362,6 +415,7 @@ export function writeWaterDepthTexels(
   mirror: TerrainMirror,
   dirtyChunks: Iterable<number>,
   specularOut?: Uint8Array,
+  shadeOut?: Uint8Array,
 ): void {
   const chunkCols = chunksPerEdge(worldSize);
   for (const chunkIdx of dirtyChunks) {
@@ -379,6 +433,9 @@ export function writeWaterDepthTexels(
         // film). See surfaceAlphaByte / WATER_DRY_LAND_ALPHA.
         out[row + x] = surfaceAlphaByte(height);
         if (specularOut) specularOut[row + x] = depthSpecularFactorByte(depth);
+        // Third curve, same single height sample and same single loop — see
+        // depthToShadeMix. Optional for the same reason specularOut is.
+        if (shadeOut) shadeOut[row + x] = depthShadeMixByte(depth);
       }
     }
   }
