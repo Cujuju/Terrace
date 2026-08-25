@@ -73,8 +73,9 @@ export interface FireLights {
   readonly root: Group;
   /**
    * Points the pool at the fiercest of these fires. Cheap to call every frame:
-   * the RANKING only re-runs on FIRE_LIGHT_REASSIGN_SECONDS, while the
-   * brightness of whatever is already held follows every frame.
+   * the RANKING only re-runs on FIRE_LIGHT_REASSIGN_SECONDS, while the POSE AND
+   * BRIGHTNESS of whatever is already held are re-read from this frame's list
+   * every frame.
    */
   update(fires: readonly FireInstance[], dt: number): void;
   /** Drops every light to dark. Called when nothing is burning. */
@@ -93,8 +94,25 @@ export function createFireLights(): FireLights {
     root.add(light);
   }
 
-  /** The fires currently holding a light, by pool slot. Re-chosen on the cadence. */
-  let held: (FireInstance | null)[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(null);
+  /**
+   * WHICH FIRE holds each light — by ./flames/types.ts's `key`, never by the
+   * instance object, and 0 for "this slot holds nothing".
+   *
+   * BUG THIS SHAPE EXISTS TO PREVENT (2026-08-24). The pool used to keep the
+   * FireInstance objects the ranking pass was handed, and the caller rebuilds
+   * that list every frame — so between two rankings a quarter of a second
+   * apart, every held object was a discarded snapshot of a fire as it had been.
+   * A light on a burning animal sat where the animal used to be and then jumped
+   * (measured at over a world unit behind a fleeing one, four times a second),
+   * a light on a fire that had been put out went on burning at full brightness
+   * until the next ranking, and brightness climbed in visible steps instead of
+   * following the flame.
+   *
+   * A key cannot go stale: it either matches a fire in THIS frame's list, in
+   * which case the light reads that fire's current pose, or it does not, in
+   * which case the fire is gone and the light goes out.
+   */
+  let heldKeys: number[] = new Array(FIRE_LIGHT_POOL_SIZE).fill(0);
   let sinceReassignSeconds = FIRE_LIGHT_REASSIGN_SECONDS;
 
   /** Scratch, reused: ranking must not allocate a new array every frame. */
@@ -105,8 +123,25 @@ export function createFireLights(): FireLights {
     for (const fire of fires) ranked.push(fire);
     ranked.sort((a, b) => b.intensity - a.intensity);
     for (let slot = 0; slot < FIRE_LIGHT_POOL_SIZE; slot++) {
-      held[slot] = ranked[slot] ?? null;
+      heldKeys[slot] = ranked[slot]?.key ?? 0;
     }
+  }
+
+  /**
+   * This frame's instance for a held key, or null if that fire is no longer
+   * being drawn.
+   *
+   * A LINEAR SCAN, and it is the cheap half of this file: it runs
+   * FIRE_LIGHT_POOL_SIZE times over a list capped at a few hundred, against a
+   * ranking pass that SORTS the same list — which is why the sort is on a
+   * cadence and this is not.
+   */
+  function findByKey(fires: readonly FireInstance[], key: number): FireInstance | null {
+    if (key === 0) return null;
+    for (const fire of fires) {
+      if (fire.key === key) return fire;
+    }
+    return null;
   }
 
   return {
@@ -121,8 +156,12 @@ export function createFireLights(): FireLights {
 
       for (let slot = 0; slot < FIRE_LIGHT_POOL_SIZE; slot++) {
         const light = lights[slot]!;
-        const fire = held[slot];
-        if (fire === undefined || fire === null) {
+        const fire = findByKey(fires, heldKeys[slot] ?? 0);
+        if (fire === null) {
+          // The fire this slot held is not in this frame's list: it burned out,
+          // was rained out, or its owner stopped drawing it. Dark, now, rather
+          // than at the next ranking.
+          heldKeys[slot] = 0;
           light.intensity = 0;
           continue;
         }
@@ -136,7 +175,7 @@ export function createFireLights(): FireLights {
     },
 
     darken(): void {
-      held = new Array(FIRE_LIGHT_POOL_SIZE).fill(null);
+      heldKeys = new Array(FIRE_LIGHT_POOL_SIZE).fill(0);
       for (const light of lights) light.intensity = 0;
     },
   };
