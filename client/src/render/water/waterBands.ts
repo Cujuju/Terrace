@@ -64,16 +64,22 @@ const BAND_WAVES = [
  * At 0.22 a ±19% band range becomes a ±4% one in absolute terms — the steps
  * were still there and no longer legible. Widening here is what keeps the
  * texture readable at the dark end; darkening the deeps and keeping the bands
- * visible are in direct tension, and this is the knob that pays for it. Centred a
+ * visible are in direct tension, and this is the knob that pays for it.
+ *
+ * BOUNDED ABOVE by the clipping ceiling in render/water.ts (WATER_SHADE_SHALLOW's
+ * comment): this range, that shade and BAND_CREST_GAIN multiply together onto
+ * WATER_COLOR, and their product must stay under 1.614 or the blue channel
+ * clips and every crest turns the same flat cyan. Trimmed 1.30 -> 1.25 and the
+ * crest 1.20 -> 1.10 for exactly that reason. Centred a
  * little under 1 rather than around it: water reading slightly DEEPER than its
  * flat colour, with the crest steps lifting back up, keeps the sea from looking
  * washed out where the depth-alpha is already thinning it.
  */
 const BAND_SHADE_MIN = 0.66;
-const BAND_SHADE_MAX = 1.3;
+const BAND_SHADE_MAX = 1.25;
 
 /** Extra lift on the top step only, so a crest reads as catching the light. */
-const BAND_CREST_GAIN = 1.2;
+const BAND_CREST_GAIN = 1.1;
 /** Where the crest lift starts, in normalised band units. */
 const BAND_CREST_THRESHOLD = 0.8;
 
