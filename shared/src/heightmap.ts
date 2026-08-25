@@ -965,10 +965,28 @@ function pushLowerLayers(
       }
     }
 
-    // Nothing gave ground at this band, so the tread below is already wider
-    // than the tolerance and there is nothing crowding the levels under it.
-    if (raised.length === 0) return;
-    seeds = raised;
+    // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
+    // pulling up to those layers, it pushes them out until it slowly stops
+    // pushing them and slowly catches up").
+    //
+    // This used to be `seeds = raised`, which fed each level's push into the
+    // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
+    // different hat. There, the cascade judged entitlement on land the pull had
+    // just created; here it judged crowding on land THE CASCADE ITSELF had just
+    // created. Band j−4 was never crowded by the band the player grabbed; it was
+    // crowded by band j−3, which this loop moved a moment earlier. Measured on
+    // the owner's own world, one intent grabbing band 24: 33 cells filled at the
+    // grabbed band and 202 cells pushed across NINE bands beneath it — the
+    // cascade doing six times the work of the pull, which is what reads on
+    // screen as a ladder the lip can never catch up to.
+    //
+    // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
+    // stroke moves the grabbed band and at most the single level under it. To
+    // carry the next one down the player pulls again — the same walk the inward
+    // drag makes, and the same "one gesture, one level" the stamp has always
+    // had. The step is still carried rather than swallowed; it is simply
+    // carried one at a time instead of all the way to the sea.
+    return;
   }
 }
 
