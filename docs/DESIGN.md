@@ -3385,6 +3385,21 @@ photosensitivity governor and gives up choosing when; a refused flash is still
 DROPPED, never deferred, and reduced motion drops the bolt at the door while the
 server's fire burns either way.
 
+**Dry lightning, and what "exposed" means** (owner, 2026-08-24: "I would like it
+to randomly fire even without a storm, and it needs to do so over exposed
+land"). A world-wide Poisson process independent of any weather system, one bolt
+every ~4 minutes, aimed at the most EXPOSED of 24 sampled cells — where exposure
+is `height + 2 × prominence` and prominence is the cell's height minus the mean
+of four samples one world unit out. Height alone picks the middle of the highest
+plateau; prominence alone picks a one-cell pimple in a valley. Measured on a test
+world whose ridge is 6% of its area: the ridge takes 74% of dry strikes, the
+surrounding plateau 26%, low ground and sea none.
+
+It carries `STRIKE_NO_SYSTEM` (0) as its system id, and the client draws it with
+a single loose bolt rig positioned in world space rather than as an offset inside
+a storm's rig — the same path now also covers a strike from a system the client
+does not know about, which previously drew nothing at all.
+
 **Lighting a fire is a plugin message, not a sculpt intent** — it moves no
 ground and the client predicts nothing about it. Gated on the player's own
 unlocked view; every reason it could fail is checked BEFORE the mana debit, so

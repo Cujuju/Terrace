@@ -29,6 +29,7 @@ import type {
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
 import {
+  STRIKE_NO_SYSTEM,
   WEATHER_PLUGIN_NAME,
   WEATHER_STRIKES_MESSAGE,
   WEATHER_SYSTEMS_MESSAGE,
@@ -177,6 +178,10 @@ function renderFrame(dt: number): void {
   governor.advance(dt);
   interpolator.advance(dt);
 
+  // The dry bolt is advanced every frame whatever the weather: it belongs to no
+  // system, so nothing else would ever decay its flash.
+  rigs?.dryBolt.update(dt, reduced);
+
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
@@ -203,10 +208,18 @@ function renderFrame(dt: number): void {
  * is not this client's to decide about.
  */
 function applyStrike(systemId: number, cellX: number, cellY: number): void {
-  const rig = views.get(systemId);
-  if (rig === undefined) return;
-  const system = interpolator.sample().get(systemId);
-  if (system === undefined) return;
+  const rig = systemId === STRIKE_NO_SYSTEM ? undefined : views.get(systemId);
+  const system = rig === undefined ? undefined : interpolator.sample().get(systemId);
+
+  if (rig === undefined || system === undefined) {
+    // DRY LIGHTNING, or a bolt from a system this client does not know about —
+    // one whose broadcast has not landed yet, or one already retired. Both are
+    // drawn by the same loose bolt at the strike's own world position, which is
+    // strictly better than the old behaviour of dropping the second case: a
+    // player saw a forest catch under a clear sky with no bolt at all.
+    rigs?.dryBolt.strike(cellX * CELL_WORLD_SIZE, cellY * CELL_WORLD_SIZE, governor);
+    return;
+  }
 
   rig.strike(
     (cellX - system.x) * CELL_WORLD_SIZE,
@@ -228,6 +241,10 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'weather:systems';
     ctx.layer.add(container);
+
+    // Beside the systems, not inside them: a dry bolt is positioned in world
+    // space and must not ride any system's transform.
+    ctx.layer.add(rigs.dryBolt.root);
 
     unsubscribeMessages = ctx.onMessage(WEATHER_SYSTEMS_MESSAGE, (payload) => {
       const systems = parseSystemsPayload(payload);

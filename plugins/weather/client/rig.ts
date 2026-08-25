@@ -621,6 +621,104 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
   };
 }
 
+
+// ── The dry bolt ─────────────────────────────────────────────────────────────
+
+/**
+ * ONE bolt that belongs to no weather system — the client half of dry lightning
+ * (server/lightning.ts; owner, 2026-08-24: "randomly fire even without a
+ * storm").
+ *
+ * A storm's bolt is a child of its rig, placed as an OFFSET from the system's
+ * centre, so it moves with the front and dies with it. A dry bolt has no front:
+ * it is placed at a world position and is gone in a fraction of a second. That
+ * is the whole difference, and it is why this cannot be a storm rig with the
+ * rain turned off — a rig is anchored to a system that, here, does not exist.
+ *
+ * ONE, not a pool: two dry bolts inside FLASH_DURATION_SECONDS of each other
+ * cannot happen, because the governor's photosensitivity floor
+ * (MIN_FLASH_INTERVAL_SECONDS) is longer than a flash and refuses the second.
+ * A second instance could never be lit.
+ *
+ * It shares the pool's bolt GEOMETRY and owns its own material, light and
+ * schedule — the same division every storm rig keeps.
+ */
+export interface DryBoltRig {
+  /** Add to the plugin's layer. Positioned in world space, never re-parented. */
+  readonly root: Group;
+  /**
+   * A bolt just landed at this world position. Begins the flash unless the
+   * governor refuses, in which case NOTHING moves — a refused flash must not
+   * leave a dark bolt standing at the new position waiting to be lit.
+   */
+  strike(worldX: number, worldZ: number, governor: LightningGovernor): void;
+  /** One frame: decays the flash. `reduced` forces it dark on the spot. */
+  update(dt: number, reduced: boolean): void;
+  dispose(): void;
+}
+
+export function createDryBoltRig(shared: SharedGeometry): DryBoltRig {
+  const root = new Group();
+  root.name = 'weather:dry-bolt';
+
+  const material = new MeshBasicMaterial({
+    color: FLASH_COLOR,
+    transparent: true,
+    opacity: 0,
+    side: DoubleSide,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  });
+  const bolt = new Mesh(shared.bolt, material);
+  bolt.visible = false;
+  bolt.renderOrder = WEATHER_RENDER_ORDER;
+
+  // The pivot carries the bolt so a strike is placed by moving ONE node, and so
+  // the jag can be spun rather than re-authored — a storm rig's arrangement,
+  // for its reasons.
+  const pivot = new Group();
+  pivot.add(bolt);
+  root.add(pivot);
+
+  // Created once and left in the graph at zero intensity, NEVER added and
+  // removed per flash: the light count is baked into every material's shader
+  // program key, so toggling one recompiles the terrain, the water and every
+  // creature (see createRig's flashLight).
+  const light = new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
+  light.position.y = BOLT_BOTTOM_WORLD_Y;
+  root.add(light);
+
+  const schedule = new LightningSchedule();
+
+  return {
+    root,
+
+    strike(worldX: number, worldZ: number, governor: LightningGovernor): void {
+      if (!schedule.strike(governor)) return;
+      pivot.position.set(worldX, 0, worldZ);
+      // Yaw from the strike's own coordinates rather than at random, so the same
+      // bolt has the same silhouette on every client that draws it.
+      pivot.rotation.y = Math.atan2(worldZ, worldX);
+      light.position.set(worldX, BOLT_BOTTOM_WORLD_Y, worldZ);
+    },
+
+    update(dt: number, reduced: boolean): void {
+      schedule.advance(dt);
+      const brightness = reduced ? 0 : schedule.brightness();
+      const flashing = brightness > 0;
+      bolt.visible = flashing;
+      if (flashing) material.opacity = brightness;
+      light.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+    },
+
+    dispose(): void {
+      root.clear();
+      material.dispose();
+      // The bolt GEOMETRY is the pool's; PointLight owns no GPU resource.
+    },
+  };
+}
+
 // ── The pool ─────────────────────────────────────────────────────────────────
 
 /**
@@ -634,6 +732,12 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
  * it pays it once per kind, and the shared fog and bolt geometry once ever.
  */
 export interface WeatherRigs {
+  /**
+   * The world's single dry bolt — lightning that belongs to no system. Owned by
+   * the pool because it shares the pool's bolt geometry and has exactly the same
+   * lifetime.
+   */
+  readonly dryBolt: DryBoltRig;
   /** A rig for this kind, from the free list if one is waiting. */
   acquire(kind: WeatherKind): WeatherRig;
   /** Returns a rig to the free list. The caller has already unparented it. */
@@ -646,8 +750,11 @@ export function createWeatherRigs(): WeatherRigs {
   const shared: SharedGeometry = { fog: buildFogGeometry(), bolt: buildBoltGeometry() };
   const free = new Map<WeatherKind, WeatherRig[]>();
   const all: WeatherRig[] = [];
+  const dryBolt = createDryBoltRig(shared);
 
   return {
+    dryBolt,
+
     acquire(kind: WeatherKind): WeatherRig {
       const waiting = free.get(kind);
       const reused = waiting?.pop();
@@ -676,6 +783,7 @@ export function createWeatherRigs(): WeatherRigs {
       for (const rig of all) rig.dispose();
       all.length = 0;
       free.clear();
+      dryBolt.dispose();
       shared.fog.dispose();
       shared.bolt.dispose();
     },

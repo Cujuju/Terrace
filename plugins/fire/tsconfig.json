@@ -17,6 +17,11 @@
     // compiles the same files with a real transform. This flag turns that class
     // of bug into a compile error. (It caught one: StabilityMap shipped with a
     // `constructor(readonly worldSize: number)` that crashed plugin discovery.)
+    // The Torch tool's icon is a Solid component (client/TorchIcon.tsx), so this
+    // package compiles JSX exactly as plugins/temples does — same two settings,
+    // same reason: a toolbar tool must hand core a component.
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "erasableSyntaxOnly": true
   },
   "include": ["protocol.ts", "server", "client", "test"]

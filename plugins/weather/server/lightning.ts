@@ -23,7 +23,8 @@
 // that misses one missed a flash, which is the correct amount to care.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rollEvent, weatherRandom } from './rng.ts';
+import { STRIKE_NO_SYSTEM } from '../protocol.ts';
+import { randomInRange, rollEvent, weatherRandom } from './rng.ts';
 import { livingSystems, type WeatherSystem, type WeatherWorld } from './systems.ts';
 
 /**
@@ -53,6 +54,113 @@ export const STRIKE_RATE_PER_SECOND = 0.06;
  * struck every single time.
  */
 export const STRIKE_TARGET_SAMPLES = 6;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRY LIGHTNING (owner, 2026-08-24: "I would like it to randomly fire even
+// without a storm, and it needs to do so over exposed land").
+//
+// A bolt out of a clear sky, belonging to no system. It is not a rarity for its
+// own sake: it is the only thing that starts a fire on a world where no storm
+// happens to be crossing woodland, which was the difference between fire being
+// a mechanic and fire being something a player might never see.
+//
+// EXPOSED, and the word is doing real work. A storm's bolt is aimed inside its
+// own footprint and takes the tallest of a few samples (chooseStrikeCell); a dry
+// bolt has no footprint, so it is aimed at the most EXPOSED cell in the world —
+// which is not the same as the highest. A cell on a plateau is high and dull; a
+// cell that stands above what surrounds it is the one lightning finds, and it is
+// the one a player reads as "of course that got hit".
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Chance per second that a dry bolt lands somewhere in the world.
+ *
+ * One every ~4 minutes of simulated time. Sized against a STORM's own output
+ * rather than picked: a storm throws STRIKE_RATE_PER_SECOND (0.06/s) while it
+ * lasts and there is a storm in the sky roughly 40% of the time
+ * (SYSTEM_KIND_WEIGHTS), so dry lightning at 1/240 s adds a few percent to the
+ * world's total bolts. It is a punctuation mark, not a second weather system:
+ * often enough that a long session sees several, rare enough that one is
+ * startling.
+ */
+export const DRY_STRIKE_RATE_PER_SECOND = 1 / 240;
+
+/**
+ * Cells sampled before a dry bolt picks its target.
+ *
+ * Far more than a storm's six, because the search space is the WHOLE WORLD
+ * rather than one system's disc — 24 samples over a 512² world is a coarse net,
+ * and it is meant to be: a dry bolt should reliably find high exposed ground
+ * without always finding the single highest peak, which would make the same
+ * ridge the target every time.
+ */
+export const DRY_STRIKE_TARGET_SAMPLES = 24;
+
+/**
+ * How far out prominence is measured, in cells.
+ *
+ * Four cells is one world unit at the shipped CELL_WORLD_SIZE — the scale a
+ * terrace step is shaped at, so a cell that stands a band above its
+ * surroundings scores as exposed while a gentle rise does not.
+ */
+export const EXPOSURE_SAMPLE_RADIUS_CELLS = 4;
+
+/** The four cardinal offsets prominence is measured against. */
+const EXPOSURE_OFFSETS: readonly (readonly [number, number])[] = [
+  [-EXPOSURE_SAMPLE_RADIUS_CELLS, 0],
+  [EXPOSURE_SAMPLE_RADIUS_CELLS, 0],
+  [0, -EXPOSURE_SAMPLE_RADIUS_CELLS],
+  [0, EXPOSURE_SAMPLE_RADIUS_CELLS],
+];
+
+/**
+ * How much a cell's PROMINENCE counts next to its raw height.
+ *
+ * Both matter and neither alone is right: height alone picks the middle of the
+ * highest plateau, prominence alone picks a one-cell pimple in a valley. At 2
+ * a cell standing one band above its neighbours beats a cell two bands higher
+ * on flat ground — which is the ordering the phrase "exposed land" means.
+ */
+export const EXPOSURE_PROMINENCE_WEIGHT = 2;
+
+/**
+ * How exposed this cell is. Raw heightmap units; higher is more likely to be
+ * struck. Negative infinity for anything at or below sea level — the sea is not
+ * land, and a dry bolt into open water starts nothing and reads as a miss.
+ */
+export function exposureAt(world: WeatherWorld, x: number, y: number): number {
+  const height = world.heightAt(x, y);
+  if (height <= 0) return Number.NEGATIVE_INFINITY;
+
+  let surrounding = 0;
+  for (const [dx, dy] of EXPOSURE_OFFSETS) {
+    const sx = Math.min(world.worldSize - 1, Math.max(0, x + dx));
+    const sy = Math.min(world.worldSize - 1, Math.max(0, y + dy));
+    surrounding += world.heightAt(sx, sy);
+  }
+  const prominence = height - surrounding / EXPOSURE_OFFSETS.length;
+  return height + prominence * EXPOSURE_PROMINENCE_WEIGHT;
+}
+
+/**
+ * The most exposed of several random cells, or null if every sample landed in
+ * the sea — an ocean world simply gets no dry lightning, which is honest.
+ */
+export function chooseDryStrikeCell(world: WeatherWorld): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestExposure = Number.NEGATIVE_INFINITY;
+
+  for (let sample = 0; sample < DRY_STRIKE_TARGET_SAMPLES; sample++) {
+    const x = Math.floor(randomInRange(0, world.worldSize));
+    const y = Math.floor(randomInRange(0, world.worldSize));
+    const exposure = exposureAt(world, x, y);
+    if (exposure <= bestExposure) continue;
+    bestExposure = exposure;
+    best = { x, y };
+  }
+
+  return best;
+}
 
 /** A strike, in the cell space everything else in this plugin sims in. */
 export interface Strike {
@@ -119,6 +227,13 @@ export function chooseStrikeCell(
  */
 export function rollStrikes(world: WeatherWorld, dt: number): Strike[] {
   const strikes: Strike[] = [];
+
+  // THE DRY BOLT FIRST, so it is never crowded out by a storm's — the two are
+  // independent processes and this one is the rare one.
+  if (rollEvent(DRY_STRIKE_RATE_PER_SECOND, dt)) {
+    const cell = chooseDryStrikeCell(world);
+    if (cell !== null) strikes.push({ systemId: STRIKE_NO_SYSTEM, x: cell.x, y: cell.y });
+  }
 
   for (const system of livingSystems()) {
     if (system.kind !== 'storm') continue;
