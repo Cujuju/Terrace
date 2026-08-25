@@ -3,7 +3,7 @@
 // previewStructures.ts for the original rationale). Not part of the shipped
 // app: reached only through preview-yeti.html.
 //
-//   ?view=<iso|side|front|face|scale>  — defaults to "iso"
+//   ?view=<iso|side|front|face|hips|scale>  — defaults to "iso"
 //   ?t=<seconds>                       — frozen animation time; defaults to 0
 //   ?peep=<0|1>                        — force the peep off/on; by default he
 //                                        is present in every view but "face"
@@ -40,6 +40,8 @@ import {
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
 import {
   YETI_HEAD_CENTER_HEIGHT,
+  YETI_HIPS_WIDTH,
+  YETI_HIP_HEIGHT,
   YETI_TOTAL_HEIGHT,
 } from '../../plugins/monsters/client/yeti-anatomy.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
@@ -85,6 +87,7 @@ const CAMERA_VIEWS = {
   side: new Vector3(0.02, 0.05, 1),
   front: new Vector3(1, 0.15, 0.08),
   face: new Vector3(1, 0.55, 0.35),
+  hips: new Vector3(0.85, 0.3, 0.6),
   scale: new Vector3(0.55, 0.22, 0.9),
 } as const;
 
@@ -110,7 +113,7 @@ const view: CameraView =
 const timeParam = Number(query.get('t') ?? '0');
 const seconds = Number.isFinite(timeParam) ? timeParam : 0;
 const peepParam = query.get('peep');
-const showPeep = peepParam === null ? view !== 'face' : peepParam === '1';
+const showPeep = peepParam === null ? view !== 'face' && view !== 'hips' : peepParam === '1';
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -187,12 +190,16 @@ const box = new Box3().setFromObject(subject);
 const center =
   view === 'face'
     ? new Vector3(0, YETI_HEAD_CENTER_HEIGHT, 0)
-    : box.getCenter(new Vector3());
+    : view === 'hips'
+      ? new Vector3(0, YETI_HIP_HEIGHT, 0)
+      : box.getCenter(new Vector3());
 const size = box.getSize(new Vector3());
 const radius =
   view === 'face'
     ? YETI_TOTAL_HEIGHT - YETI_HEAD_CENTER_HEIGHT
-    : Math.max(size.x, size.y, size.z) * 0.5;
+    : view === 'hips'
+      ? YETI_HIPS_WIDTH
+      : Math.max(size.x, size.y, size.z) * 0.5;
 
 const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
 const pullback = view === 'scale' ? SCALE_VIEW_PULLBACK : 1;

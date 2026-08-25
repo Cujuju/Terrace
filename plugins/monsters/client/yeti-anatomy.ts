@@ -88,6 +88,14 @@ const FULL_SIZE_HEAD_HEIGHT = 1.5;
 const FULL_SIZE_HEAD_TOP = FULL_SIZE_HEAD_CENTER_HEIGHT + FULL_SIZE_HEAD_HEIGHT / 2;
 const FULL_SIZE_HORN_TIP_HEIGHT = 6.85;
 const FULL_SIZE_HORN_TIP_RADIUS = 0.03;
+/**
+ * The fur carve's depth, hoisted for the same reason the horn figures are: a
+ * length further down the file (YETI_HAUNCH_RADIUS) is SOLVED against it, and a
+ * const cannot be read before it is initialised. The exported
+ * YETI_FUR_WRINKLE_DEPTH below is this number, scaled; the argument for the
+ * value is with it, in the skin-detail section.
+ */
+const FULL_SIZE_FUR_WRINKLE_DEPTH = 0.12;
 const FULL_SIZE_TOTAL_HEIGHT = FULL_SIZE_HORN_TIP_HEIGHT + FULL_SIZE_HORN_TIP_RADIUS;
 
 /**
@@ -209,6 +217,44 @@ export const YETI_KNEE_FORWARD = scaled(0.18);
 /** Straight-line hip-to-ankle distance — what the gait's swing is derived from. */
 export const YETI_LEG_LENGTH = YETI_HIP_HEIGHT - YETI_ANKLE_HEIGHT;
 
+/**
+ * HAUNCH: the thigh mass at the top of the leg, and the reason the leg is
+ * attached to anything.
+ *
+ * OWNER, 2026-08-24: "fix the legs because they also do not bind correctly to
+ * the body, the geometry is still open." He is describing a hole and there was
+ * one. The leg is a swept tube whose root ring sits ON the hip joint, at
+ * YETI_STANCE_HALF_WIDTH (0.62) from the axis with a radius of 0.52 — so its
+ * outer edge is 1.14 from the axis while the HIPS ellipsoid only reaches 1.05.
+ * A quarter of the ring stood outside the body with nothing behind it, and
+ * because a tapered tube was capped at the tip and open at the root, what showed
+ * through that quarter was the inside of the leg.
+ *
+ * A THIGH IS WIDER THAN A PELVIS, on an ape and on him, so the answer is not to
+ * narrow the leg or widen the hips — it is the mass that is missing. The haunch
+ * is an ellipsoid merged into the LEG's own surface and centred exactly on the
+ * hip joint, which is the whole trick: a body centred on the pivot is unmoved by
+ * a rotation about that pivot, so the root ring is swallowed identically at
+ * every point of the stride rather than at the neutral pose only. It overlaps
+ * the hips from z = -0.10 out to 1.05 — no gap can open between them — and its
+ * top stays under the hips' own top, so it thickens the thigh without giving him
+ * a second pair of shoulders.
+ *
+ * THE RADIUS IS SOLVED, not chosen: the ring it must contain has radius
+ * YETI_LEG_ROOT_RADIUS, and the smallest half-extent here has to exceed that by
+ * the fur carve (FULL_SIZE_FUR_WRINKLE_DEPTH, which pulls the surface inward,
+ * toward the ring) plus slack for the tessellation falling inside the ideal
+ * ellipsoid. See YETI_HAUNCH_CLEARANCE.
+ */
+const YETI_HAUNCH_CLEARANCE = scaled(0.08);
+export const YETI_HAUNCH_RADIUS =
+  YETI_LEG_ROOT_RADIUS + scaled(FULL_SIZE_FUR_WRINKLE_DEPTH) + YETI_HAUNCH_CLEARANCE;
+/** Taller than it is wide: a haunch, not a ball bearing. The two horizontal
+ *  extents are the solved minimum; the vertical one is free to be longer. */
+export const YETI_HAUNCH_LENGTH = 2 * YETI_HAUNCH_RADIUS;
+export const YETI_HAUNCH_WIDTH = 2 * YETI_HAUNCH_RADIUS;
+export const YETI_HAUNCH_RISE = scaled(1.72);
+
 /** HIPS: a mass of their own under the torso, so the waist is not a pinch. */
 export const YETI_HIPS_CENTER_HEIGHT = scaled(2.6);
 export const YETI_HIPS_LENGTH = scaled(1.9);
@@ -316,12 +362,25 @@ export const YETI_NOSE_WIDTH = scaled(0.36);
  * between two pale masses is a shadow a viewer has to guess at; a dark mass
  * filling that gap is a MOUTH, and it is what the fangs hang out of rather than
  * out of the middle of a snout.
+ *
+ * PULLED BACK AND SHRUNK, 2026-08-24. Owner: "what is the black ellipse under
+ * the mouth of the yeti." It WAS the mouth, and the question is the bug report:
+ * at 0.8 long and 0.7 wide, centred 0.78 forward, the slot reached 1.18 from the
+ * axis while the muzzle above it stops at 1.11 and the jaw below it at 0.99. It
+ * was the most forward thing on his face. A flat pancake that protrudes past
+ * both masses it is meant to sit BETWEEN does not read as a gap between them —
+ * every camera above the horizon looks down onto its whole top surface, and a
+ * horizontal black disc stuck on the front of a white face is exactly what he
+ * saw. So the extents are now smaller than the muzzle's and the jaw's in both
+ * horizontal axes and the centre is back at 0.6, which leaves only the wedge
+ * where the two masses genuinely part — the mouth line — showing dark. The RISE
+ * is unchanged, because thinness was never the problem.
  */
-export const YETI_MOUTH_FORWARD = scaled(0.78);
-export const YETI_MOUTH_HEIGHT = scaled(5.03);
-export const YETI_MOUTH_LENGTH = scaled(0.8);
-export const YETI_MOUTH_RISE = scaled(0.13);
-export const YETI_MOUTH_WIDTH = scaled(0.7);
+export const YETI_MOUTH_FORWARD = scaled(0.6);
+export const YETI_MOUTH_HEIGHT = scaled(5.06);
+export const YETI_MOUTH_LENGTH = scaled(0.62);
+export const YETI_MOUTH_RISE = scaled(0.14);
+export const YETI_MOUTH_WIDTH = scaled(0.62);
 
 /**
  * JAW: a furred lower jaw, set BACK from the muzzle's front.
@@ -409,20 +468,38 @@ export const YETI_EYE_BULGE = 0.35;
  *     makes the horn leave the head thick and flare into the taper instead of
  *     starting at its final thickness the moment it clears the fur.
  *
+ * THEY MOVED TO THE CROWN, 2026-08-24. Owner: "move the horns to the top of the
+ * head instead of the forehead." The boss sat at 0.30 forward and 0.54 out, on
+ * the upper front corner of the skull — over the BROW, which is a forehead horn
+ * and reads as a helmet strapped on. It is on the centre line now (0 forward)
+ * and higher (6.10 against 5.86), with the pair drawn in toward each other, so
+ * both bosses swell out of the top of the skull the way a bovid's pedicles do.
+ *
+ * THE SINK DEPTH IS PRESERVED THROUGH THE MOVE, and that is the part worth
+ * checking when these numbers are next touched: the old boss sat at 0.94 of the
+ * head ellipsoid's radius, deep enough that it merges into the skull instead of
+ * balancing on it, and the new one is at 0.93. Move a boss without re-deriving
+ * that fraction and it either floats off the crown or vanishes inside it.
+ *
+ * MID AND TIP DID NOT MOVE. The sweep back and out is what the paragraph above
+ * argues for and the owner accepted; only where the horn LEAVES him changed. It
+ * also means YETI_HORN_TIP_HEIGHT is untouched, so YETI_SCALE — which is solved
+ * against it — does not move, and neither does anything on the server.
+ *
  * Every figure is stated FULL SIZE from the axis, as everything in this file is.
  */
-export const YETI_HORN_BOSS_FORWARD = scaled(0.3);
-export const YETI_HORN_BOSS_HEIGHT = scaled(5.86);
-export const YETI_HORN_BOSS_OFFSET = scaled(0.54);
+export const YETI_HORN_BOSS_FORWARD = scaled(0);
+export const YETI_HORN_BOSS_HEIGHT = scaled(6.1);
+export const YETI_HORN_BOSS_OFFSET = scaled(0.42);
 export const YETI_HORN_BOSS_LENGTH = scaled(0.58);
 export const YETI_HORN_BOSS_RISE = scaled(0.34);
 export const YETI_HORN_BOSS_WIDTH = scaled(0.56);
-export const YETI_HORN_ROOT_FORWARD = scaled(0.32);
-export const YETI_HORN_ROOT_HEIGHT = scaled(5.76);
-export const YETI_HORN_ROOT_OFFSET = scaled(0.5);
-export const YETI_HORN_EMERGE_FORWARD = scaled(0.22);
-export const YETI_HORN_EMERGE_HEIGHT = scaled(6.06);
-export const YETI_HORN_EMERGE_OFFSET = scaled(0.66);
+export const YETI_HORN_ROOT_FORWARD = scaled(0);
+export const YETI_HORN_ROOT_HEIGHT = scaled(6.01);
+export const YETI_HORN_ROOT_OFFSET = scaled(0.35);
+export const YETI_HORN_EMERGE_FORWARD = scaled(-0.05);
+export const YETI_HORN_EMERGE_HEIGHT = scaled(6.22);
+export const YETI_HORN_EMERGE_OFFSET = scaled(0.58);
 export const YETI_HORN_MID_FORWARD = scaled(-0.15);
 export const YETI_HORN_MID_HEIGHT = scaled(6.45);
 export const YETI_HORN_MID_OFFSET = scaled(0.92);
@@ -692,7 +769,7 @@ export const YETI_EYE_EMISSIVE = 0x16283a;
  * three for the reason at the top of this file — a white mass in sunlight has no
  * contrast of its own, and ±22% is what stops him reading as a paper cut-out.
  */
-export const YETI_FUR_WRINKLE_DEPTH = scaled(0.12);
+export const YETI_FUR_WRINKLE_DEPTH = scaled(FULL_SIZE_FUR_WRINKLE_DEPTH);
 export const YETI_SKIN_WRINKLE_DEPTH = scaled(0.04);
 export const YETI_WRINKLE_FREQUENCY = scaledFrequency(2.6);
 export const YETI_SHADE_VARIATION = 0.22;

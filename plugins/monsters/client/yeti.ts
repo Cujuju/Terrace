@@ -35,7 +35,7 @@
 //                     ├ the swept arm
 //                     └ the hand
 //
-// COST at MONSTER_MODEL_DETAIL = 4: 74 520 triangles in THREE draw calls,
+// COST at MONSTER_MODEL_DETAIL = 4: 79 896 triangles in THREE draw calls,
 // MEASURED rather than estimated — up from the ~15 600 that stood here before
 // the 2026-08-24 pass, and still the most expensive of the three by a wide
 // margin (the kraken is 7 684, Cthulhu 18 664).
@@ -141,6 +141,9 @@ import {
   YETI_FUR_TEXTURE_FREQUENCY,
   YETI_FUR_WRINKLE_DEPTH,
   YETI_HAND_RADIUS,
+  YETI_HAUNCH_LENGTH,
+  YETI_HAUNCH_RISE,
+  YETI_HAUNCH_WIDTH,
   YETI_HEAD_CENTER_HEIGHT,
   YETI_HEAD_HEIGHT,
   YETI_HEAD_LENGTH,
@@ -259,7 +262,7 @@ import {
  * screen and every bit of it is better resolved.
  *
  * MEASURED, not guessed — `node --experimental-strip-types` over the built
- * geometry, summing index counts: 74 520 triangles at
+ * geometry, summing index counts: 79 896 triangles at
  * MONSTER_MODEL_DETAIL = 4, against the 15 600 these counts replaced and the
  * 6 024 before that. The face rebuild, the horn bosses and the digits are most
  * of that; the raised counts below are the rest. It came DOWN on 2026-08-24
@@ -271,6 +274,10 @@ const BELLY_SPHERE_SEGMENTS_BASE = 12;
 const BELLY_SPHERE_RINGS_BASE = 9;
 const HIPS_SPHERE_SEGMENTS_BASE = 12;
 const HIPS_SPHERE_RINGS_BASE = 9;
+/** The haunch: a broad round mass, but half of it is inside the hips and never
+ *  drawn against the sky, so it needs fewer than the hips it hides in. */
+const HAUNCH_SPHERE_SEGMENTS_BASE = 10;
+const HAUNCH_SPHERE_RINGS_BASE = 8;
 const SHOULDER_SPHERE_SEGMENTS_BASE = 12;
 const SHOULDER_SPHERE_RINGS_BASE = 9;
 const HEAD_SPHERE_SEGMENTS_BASE = 18;
@@ -700,6 +707,16 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
    */
   const legGeometry = organicSurface(
     [
+      // THE HAUNCH, first: the thigh mass that swallows the tube's root ring and
+      // holds the leg into the hips. Centred on the joint's own origin, which is
+      // what makes it stride-proof — see YETI_HAUNCH_RADIUS for the derivation.
+      ellipsoid(
+        YETI_HAUNCH_LENGTH,
+        YETI_HAUNCH_RISE,
+        YETI_HAUNCH_WIDTH,
+        segments(HAUNCH_SPHERE_SEGMENTS_BASE),
+        segments(HAUNCH_SPHERE_RINGS_BASE),
+      ),
       taperedTube(
         new CatmullRomCurve3([
           new Vector3(0, 0, 0),
