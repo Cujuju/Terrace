@@ -27,6 +27,7 @@ import type {
   TerrainDiffMessage,
 } from '@terrace/shared';
 import type { Mesh } from 'three';
+import { archFixtureRequested, carveArchFixture } from './terrain/archFixture.ts';
 import {
   applyChunkUnlock,
   applySnapshot,
@@ -296,7 +297,18 @@ export function createWorld(viewport: Viewport): World {
       // store's authoritative copy is seeded from the snapshot rather than from
       // the empty map the mirror was allocated with.
       const snapshotDirty = fresh.predictions.applyAuthoritative(
-        (m) => applySnapshot(m, msg),
+        (m) => {
+          const dirty = applySnapshot(m, msg);
+          // The layered-column fixture (#129 step 3, `?arch=1`) carves an arch
+          // and a cave into the mirror the snapshot just filled. Inside this
+          // mutation deliberately: the prediction store records what the
+          // mutation leaves behind as authoritative truth, and a carve made
+          // outside one would be wiped by the next diff that arrives.
+          if (archFixtureRequested()) {
+            for (const idx of carveArchFixture(m)) dirty.add(idx);
+          }
+          return dirty;
+        },
         nowMs(),
       );
       fresh.meshes.update(snapshotDirty);
