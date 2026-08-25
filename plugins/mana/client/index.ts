@@ -35,12 +35,13 @@ export const clientPlugin: TerraceClientPlugin = {
       );
       recordDenial();
     });
-    // Bottom centre (owner move, 2026-08-14 — it began top-centre): the gauge
-    // is a glanceable status instrument (design of the panel itself is in
-    // ManaGauge.tsx) and the moment it matters is the moment the brush stops
-    // responding — but the top centre now belongs to the world header, and an
-    // instrument at the bottom edge sits nearer the hand and clear of the sky.
-    ctx.registerHudPanel(ManaGauge, { placement: 'bottom-center' });
+    // Bottom right (owner move, 2026-08-25 — it began top-centre, then the
+    // bottom centre, 2026-08-14): the gauge is a glanceable status instrument
+    // (design of the panel itself is in ManaGauge.tsx) and the moment it
+    // matters is the moment the brush stops responding. The toolbar now owns
+    // the bottom-centre cell alone; the gauge sits beside the icon-button
+    // column, where an instrument belongs among the chrome.
+    ctx.registerHudPanel(ManaGauge, { placement: 'bottom-right' });
 
     // The client half of the interceptor chain: unaffordable sculpts stop
     // here, before they are sent or predicted (see gateLocalSculpt). The INTENT
