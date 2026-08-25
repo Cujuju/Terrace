@@ -53,23 +53,29 @@ const MOUND_RADIUS_Z_CELLS = 14;
  * that matters most — it must clear the opening below with a band of roof left
  * over, which is exactly `MOUND_RIM_BANDS > TUNNEL_OPENING_BANDS`.
  */
-const MOUND_CREST_BANDS = 6;
-const MOUND_SHOULDER_BANDS = 5;
-const MOUND_RIM_BANDS = 4;
+const MOUND_CREST_BANDS = 9;
+const MOUND_SHOULDER_BANDS = 8;
+const MOUND_RIM_BANDS = 7;
 
 /** Where the crest gives way to the shoulder, and the shoulder to the rim, as
  * a fraction of the mound's radius — squared, since the ellipse test is. */
 const MOUND_CREST_EDGE_SQUARED = 0.5 * 0.5;
 const MOUND_SHOULDER_EDGE_SQUARED = 0.8 * 0.8;
 
-/** Headroom under the roof, in bands. Three bands is 48 units — a passage a
- * settler-scale figure would read as walkable, and enough that the underside
- * is visible from a normal camera pitch rather than only from ground level. */
-const TUNNEL_OPENING_BANDS = 3;
+/**
+ * Headroom under the roof, in bands — and the number the first eyes-on pass
+ * moved (2026-08-24). At three bands the opening rendered correctly and still
+ * read as a SHADOWED TERRACE STEP rather than as an arch: a band of height is
+ * one world unit of run (MAX_STEP), so three bands of opening was barely two
+ * units of air under a mound fifteen units across, and the roof's underside
+ * eats one of them (spanUndersideHeight). Five bands clears that margin.
+ */
+const TUNNEL_OPENING_BANDS = 5;
 
-/** Half-width of a tunnel, in cells: 3 either side of the centre line makes a
- * 7-cell bore, a little under two world units. */
-const TUNNEL_HALF_WIDTH_CELLS = 3;
+/** Half-width of a tunnel, in cells: 6 either side of the centre line makes a
+ * 13-cell bore, a little over three world units — wide enough to read as a
+ * passage against a mound this size, for the same reason the opening is. */
+const TUNNEL_HALF_WIDTH_CELLS = 6;
 
 /** Where the two tunnels sit along the mound's long axis, as an offset in
  * cells from its centre. The first runs clean through — that is the ARCH. The
