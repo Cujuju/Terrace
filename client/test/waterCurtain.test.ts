@@ -8,9 +8,18 @@
 //   1. every emitted vertex's Y equals `drawnBandWorldY` of some band EXACTLY;
 //   2. every emitted vertex lies on the terrain's own contour for its own
 //      level (to within the mandated depth-buffer inset — see the test);
-//   3. an N-band cliff emits N stacked quads per segment, not one flat sheet;
-//   4. a chunk-border segment emits nothing;
-//   5. nothing is emitted below `seaWorldY`.
+//   3. every quad is VERTICAL — its bottom row shares the top row's plan-view
+//      position, so no vertex can be lost between the rows;
+//   4. a cliff emits ONE sheet per segment, running from the water's own band
+//      straight to the band it pours onto;
+//   5. a chunk-border segment emits nothing;
+//   6. nothing is emitted below `seaWorldY`.
+//
+// RETARGETED 2026-08-24 from the staircase contract (items 3 and 4 used to
+// assert N stacked one-band quads per segment, each re-seated onto its own
+// level's contour). The owner paused that design in favour of a flat vertical
+// sheet; see waterCurtain.ts's header for why, including the three ways the
+// re-seating could drop geometry that these tests did not catch.
 //
 // Fixtures are built with `createTerrainMirror` and hand-written heights, the
 // way waterTread.test.ts does. No WebGLRenderer, no DOM: appendCurtains writes
@@ -156,117 +165,96 @@ describe('waterfall curtains', () => {
     }
   });
 
-  it('stacks one quad per band down an N-band cliff', () => {
+  it('emits one sheet per segment, always starting at the water own band', () => {
     const surfaceBand = bandOf(PLATEAU_HEIGHT); // 3
     const triangles = curtainsFor(cliffFixture(), BELOW_EVERYTHING);
+    expect(triangles.length).toBeGreaterThan(0);
+    const topY = drawnBandWorldY(surfaceBand, true);
 
-    // Four distinct levels: bands 3, 2, 1 and the sunk band-0 seabed — a tall
-    // fall is a STAIRCASE of slabs, not one sheet.
-    const levels = levelsOf(triangles);
-    expect(levels.size).toBe(surfaceBand + 1);
-
-    // Every step of the staircase is present.
-    for (let band = surfaceBand; band >= 1; band--) {
-      expect(
-        quadsBetween(
-          triangles,
-          drawnBandWorldY(band, true),
-          drawnBandWorldY(band - 1, true),
-        ),
-        `no quads between bands ${band} and ${band - 1}`,
-      ).toBeGreaterThan(0);
+    // EVERY quad hangs from the water's own band — never from an intermediate
+    // level. That is what "one sheet, top to bottom" means and what separates
+    // this from the paused staircase, which emitted a slab per band and so had
+    // quads whose tops sat at bands 2 and 1 as well.
+    for (let i = 0; i < triangles.length; i += 9) {
+      const ys = [triangles[i + 1]!, triangles[i + 4]!, triangles[i + 7]!];
+      expect(Math.max(...ys), `a quad at ${i} hangs from below the water band`).toBe(topY);
+      expect(Math.min(...ys)).toBeLessThan(topY);
     }
 
-    // And NO triangle spans two bands: every quad is one band tall — what
-    // "stacked", not "one flat sheet", means in numbers — except the last,
-    // which drops the extra SEABED_CAP_SINK to the sunk seabed cap, copying
-    // the terrain's own band-1 skirt drop (makeLevels' `below`).
-    const fullDrop = BAND_WORLD_HEIGHT;
-    const seabedDrop = BAND_WORLD_HEIGHT + SEABED_CAP_SINK;
+    // A SHEER 3-BAND CLIFF IS DRAWN TO THE BOTTOM, not stopped one band down.
+    // This is the assertion that catches the defect the foot search was added
+    // for: a single probe read the terrain's own band-2 skirt level inside the
+    // half cell of contour interpolation and every sheet stopped there, which
+    // on a 20-band cliff would leave water on the first band only.
+    expect(
+      quadsBetween(triangles, topY, drawnBandWorldY(0, true)),
+      'no sheet reached the pit floor — the falls stop short',
+    ).toBeGreaterThan(0);
+
+    // Corners are allowed to land higher: a segment whose outward normal runs
+    // diagonally really does have nearer, higher ground under it. What is not
+    // allowed is a landing height that is no band's drawn cap, which the Y
+    // test above covers.
+    const fullDrop = topY - drawnBandWorldY(0, true);
+    expect(fullDrop).toBe(surfaceBand * BAND_WORLD_HEIGHT + SEABED_CAP_SINK);
+  });
+
+  it('loses no vertex between the rows: every quad is exactly vertical', () => {
+    // THE CONTRACT THIS FILE EXISTS FOR SINCE 2026-08-24. The paused staircase
+    // paired two independently-marched arcs and dropped whatever the shorter
+    // one could not match; a vertical sheet cannot, because the bottom row IS
+    // the top row at a lower Y. Asserted on the coordinates, exactly: every
+    // triangle must stand on exactly two plan-view columns and span exactly
+    // two heights — three corners of a rectangle standing on end.
+    const triangles = curtainsFor(cliffFixture(), BELOW_EVERYTHING);
+    expect(triangles.length).toBeGreaterThan(0);
+
     for (let i = 0; i < triangles.length; i += 9) {
-      const drop = Math.max(
-        Math.abs(triangles[i + 1]! - triangles[i + 4]!),
-        Math.abs(triangles[i + 4]! - triangles[i + 7]!),
-        Math.abs(triangles[i + 1]! - triangles[i + 7]!),
-      );
-      expect(drop === fullDrop || drop === seabedDrop).toBe(true);
+      const columns = new Set<string>();
+      const heights = new Set<number>();
+      for (let v = 0; v < 3; v++) {
+        columns.add(`${triangles[i + v * 3]!},${triangles[i + v * 3 + 2]!}`);
+        heights.add(triangles[i + v * 3 + 1]!);
+      }
+      expect(columns.size, `triangle at ${i} spans ${columns.size} plan-view columns`).toBe(2);
+      expect(heights.size, `triangle at ${i} is flat, not vertical`).toBe(2);
     }
   });
 
-  it('seats every vertex on the terrain own contour for its level', () => {
+  it('seats every vertex on the tread own contour, top row and bottom row alike', () => {
+    // The sheet is vertical, so BOTH rows stand over the same plan-view curve:
+    // the loop `appendRegionSurface` marched and smoothed. There is no
+    // per-level re-seating any more, and therefore no second curve a vertex
+    // could be mistraced onto — the claim is simply that every vertex, at
+    // either height, lies within the mandated depth-buffer inset of a point
+    // the tread's own march produced.
     const fixture = cliffFixture();
     const triangles = curtainsFor(fixture, BELOW_EVERYTHING);
+    expect(triangles.length).toBeGreaterThan(0);
 
-    // Contour points per band, kept in WORLD coordinates exactly as emission
-    // multiplies them, so comparisons are against the terrain's own floats.
-    const contourPoints = new Map<number, { x: number; z: number }[]>();
-    const contourPointsFor = (band: number): { x: number; z: number }[] => {
-      let points = contourPoints.get(band);
-      if (!points) {
-        points = [];
-        // Sweep every chunk so holes and neighbouring chunks are covered.
-        for (let cz = 0; cz < WORLD_SIZE; cz += CHUNK_SIZE) {
-          for (let cx = 0; cx < WORLD_SIZE; cx += CHUNK_SIZE) {
-            for (const loop of fixture.ground.loopsAt(band * BAND_HEIGHT, cx, cz)) {
-              for (const p of loop) {
-                points.push({ x: p.x * CELL_WORLD_SIZE, z: p.z * CELL_WORLD_SIZE });
-              }
-            }
-          }
-        }
-        contourPoints.set(band, points);
-      }
-      return points;
-    };
-
-    // The top level hangs off the TREAD'S loops (a different march, same
-    // pipeline), so those are its legitimate points.
     const treadPoints: { x: number; z: number }[] = [];
     for (const loop of fixture.loops) {
-      for (const p of loop) treadPoints.push({ x: p.x * CELL_WORLD_SIZE, z: p.z * CELL_WORLD_SIZE });
-    }
-
-    const levelToPoints = new Map<number, { x: number; z: number }[]>();
-    for (let band = 0; band <= bandOf(PLATEAU_HEIGHT); band++) {
-      levelToPoints.set(
-        drawnBandWorldY(band, true),
-        band === bandOf(PLATEAU_HEIGHT) ? treadPoints : contourPointsFor(band),
-      );
-      // BOTH band-0 levels hang off the threshold-BAND_HEIGHT contour: the
-      // terrain's band-1 skirt drops to the sunk seabed from that loop, and
-      // the curtain's final slab copies it. Threshold 0's own march is the
-      // whole domain — no contour a fall could land on.
-      if (band === 0) {
-        levelToPoints.set(drawnBandWorldY(0, true), contourPointsFor(1));
-        levelToPoints.set(drawnBandWorldY(0, false), contourPointsFor(1));
+      for (const p of loop) {
+        treadPoints.push({ x: p.x * CELL_WORLD_SIZE, z: p.z * CELL_WORLD_SIZE });
       }
     }
 
-    // Each vertex stands CURTAIN_OUTWARD_WORLD_UNITS off its source point —
-    // the depth-buffer inset the plan mandates — so exact coordinate equality
-    // holds for the LEVEL, never for the offset. What can be asserted without
-    // a tolerance is the bound: the vertex must lie within one inset of SOME
-    // contour point of its own level, and no farther. (The exact-number claim
-    // itself is carried by the Y test above and the quad test.)
+    // Exact coordinate equality holds for the LEVEL, never for the offset, so
+    // what is asserted without a tolerance is the BOUND: one inset, no more.
     const reach = CURTAIN_OUTWARD_WORLD_UNITS * 1.000001;
-    for (let i = 0; i < triangles.length; i += 9) {
-      for (let v = 0; v < 3; v++) {
-        const vx = triangles[i + v * 3]!;
-        const vy = triangles[i + v * 3 + 1]!;
-        const vz = triangles[i + v * 3 + 2]!;
-        const points = levelToPoints.get(vy);
-        expect(points, `Y ${vy} matched no level`).toBeDefined();
-        let ok = false;
-        for (const p of points!) {
-          const dx = vx - p.x;
-          const dz = vz - p.z;
-          if (dx * dx + dz * dz <= reach * reach) {
-            ok = true;
-            break;
-          }
+    for (let i = 0; i < triangles.length; i += 3) {
+      const vx = triangles[i]!;
+      const vz = triangles[i + 2]!;
+      let ok = false;
+      for (const p of treadPoints) {
+        const dx = vx - p.x;
+        const dz = vz - p.z;
+        if (dx * dx + dz * dz <= reach * reach) {
+          ok = true;
+          break;
         }
-        expect(ok, `vertex (${vx},${vy},${vz}) is off every contour of its level`).toBe(true);
       }
+      expect(ok, `vertex (${vx},${vz}) is off every point of the tread's own contour`).toBe(true);
     }
   });
 
