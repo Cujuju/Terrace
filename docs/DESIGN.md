@@ -3319,3 +3319,88 @@ alternative above is the fallback and steps 1–2 are still worth having.
   radius above true. Any change to that meaning invalidates the estimate.
 
 Tracked as #129 (this work), which supersedes #110 (overhangs) in scope.
+
+### Decisions made 2026-08-24 (fire — things burn, owner request)
+
+Owner: "I want the ability to set trees on fire. In fact, I want the ability to
+set a lot of things on fire," plus a specific mechanic — lightning strikes a
+tree, the tree burns, and nearby trees catch from it.
+
+**Fire is its own plugin, and it knows nothing about trees.** The alternative
+considered and rejected was a burn flag on flora: "a lot of things" means
+crops, buildings and whatever comes next, and a flora-owned mechanic would be
+copied into structures within a week, at which point two spread models exist
+and disagree.
+
+**The dependency is INVERTED relative to every other cross-plugin link here.**
+`fire` publishes `registerFuel`; each flammable plugin bridges to `fire` and
+declares what it owns, how long it burns and how tall it is
+(`plugins/fire/server/fuel.ts`). The established pattern — a bridge per sibling
+(`relics → mana`, `flora → structures`) — would mean a file and an edit inside
+`fire` for every burnable thing ever added. Registering inward means `fire`
+never changes. The cost, stated: a registration is a WRITE, so bridge rule 3
+("buffer, don't drop") lands on the registrant, which is one slot's worth of
+care in each registrant instead of a bridge here per registrant.
+
+The one thing `fire` DOES bridge out to is weather (`currentWind`,
+`precipitationAt`), because wind and rain are one fact from one named plugin
+and there will never be a second source of either.
+
+**A fire's whole state is its age.** No stage union, no per-stage timer:
+fierceness is `fireIntensity(age, burn)` and burnout is `age >= burn`, computed
+identically on both sides of the wire (`plugins/fire/protocol.ts`). So a fire
+is SENT ONCE — cell, fuel height, age at send, total burn — and the client runs
+it forward with its own clock, which is what lets a 400-cell wildfire animate
+on a delta stream costing under a kbit/s. The 10 s keepalive is deliberately
+shorter than the shortest fuel's burn: a repair cadence longer than the thing it
+repairs never repairs anything.
+
+**A fire ends in one of three ways, and only one consumes the fuel.** Burned out
+(the source destroys what was there), extinguished (rain, or the ground dug from
+under it — the tree survives, scorched), cleared (rollback; nobody is told).
+Collapsing the first two was the obvious simplification and it is wrong: it
+makes "we saved the forest" and "the forest burned down" the same message.
+
+**Spread is one rate and five multipliers** — intensity, wind, slope, diagonal,
+wet (`plugins/fire/server/spread.ts`). Only the FRONT spreads
+(`SPREAD_MIN_INTENSITY`), so a burn is a ring rather than a filled disc. Fire
+runs uphill at 1.6× per terrace band, which is the term that makes the world's
+own geometry the mechanic.
+
+**The firebreak is not a feature.** A cell with no registered fuel simply fails
+to ignite, so water, bare rock, a ploughed field and a dug trench all stop a
+fire through one code path. Digging under a live fire puts it out on the same
+diff that fells the tree.
+
+**Lightning moved to the server** (`plugins/weather/server/lightning.ts`). Every
+bolt used to be a client decision — each rig ran its own `LightningSchedule` on
+its own RNG — which was right while lightning was decoration and became wrong
+the moment a bolt could start a fire: a fire authorised under a bolt drawn
+elsewhere is a wood alight under clear sky. The server now rolls strikes per
+storm, aims at the tallest of six samples under it, broadcasts the cell for
+clients to draw and emits it for `fire` to roll ignition against
+(`LIGHTNING_IGNITION_CHANCE` 0.35, which lands at roughly one fire per three
+storms crossing woodland). `LightningSchedule` keeps the flash curve and the
+photosensitivity governor and gives up choosing when; a refused flash is still
+DROPPED, never deferred, and reduced motion drops the bolt at the door while the
+server's fire burns either way.
+
+**Lighting a fire is a plugin message, not a sculpt intent** — it moves no
+ground and the client predicts nothing about it. Gated on the player's own
+unlocked view; every reason it could fail is checked BEFORE the mana debit, so
+there is no refund path to get wrong. `mana` gained `spendMana(world, playerId,
+amount)`: the ledger takes an amount and never an opinion about what things
+cost.
+
+**The chronicle gets one line per WILDFIRE, not per tree.** `fire` accumulates
+an episode — cells consumed since the world last stopped burning — and emits
+`fire:burned` once, when the last fire goes out.
+
+**The LOOK is behind an interface** (`plugins/fire/client/flames/types.ts`)
+because it is chosen from pictures and the sim had to ship first. Four
+candidates were authored and rendered for selection; the budget rules any
+candidate must keep are in that file's header — fixed small draw-call count
+whatever the fire count, no external assets, no per-fire lights, allocation-free
+steady state. Firelight is a fixed pool of four PointLights that move between
+the fiercest fires, because adding or removing a light invalidates every
+material's shader program.
