@@ -253,18 +253,36 @@ export interface GenerationOutcome {
  * a large world's — see flora/server/index.ts's chunksPerTick for the
  * measured numbers this design avoids repeating.
  *
- * DOUBLE-BUFFERED BY CONSTRUCTION: every cell read during a sweep (`live`,
- * the CURRENT generation) is never written to until the whole board has been
- * scanned and `advance` swaps in the result — a chunk scanned early in a
- * multi-tick sweep sees exactly the same board a chunk scanned late does.
+ * DOUBLE-BUFFERED BY A SNAPSHOT TAKEN AT THE START OF EACH SWEEP, not by the
+ * caller's promise not to write. Every cell read during a sweep comes from
+ * `board` below — a copy of the live map made on the tick the sweep begins —
+ * so a chunk scanned early sees exactly the board a chunk scanned late does,
+ * whatever happens to the caller's own map in between.
+ *
+ * IT USED TO BE THE PROMISE, AND THE PROMISE WAS BROKEN (2026-08-24). A sweep
+ * spans many ticks, and `foundStructure` — a settler moving in, from outside
+ * this plugin, at a moment nobody schedules — writes straight into the live
+ * map. A home founded into a chunk this sweep had ALREADY scanned was absent
+ * from `staged`, and the swap at the end of the sweep therefore deleted it:
+ * four houses appeared, stood for up to fifteen seconds, and vanished. The
+ * board the CA reasons about now belongs to the CA for the length of the
+ * sweep, so no outside write can be half-seen by it, and cells that appeared
+ * mid-sweep are CARRIED into the next generation rather than silently dropped
+ * (see `advance`).
  */
 export class GenerationSurvey {
   private cursor = 0;
   private readonly staged = new Map<number, LiveCellRecord>();
+  /**
+   * The generation being scanned — a copy taken when the sweep starts, and
+   * the ONLY board `scanChunk` reads. Null between sweeps.
+   */
+  private board: ReadonlyMap<number, LiveCellRecord> | null = null;
 
   private resetSweep(): void {
     this.cursor = 0;
     this.staged.clear();
+    this.board = null;
   }
 
   private scanChunk(
@@ -342,19 +360,42 @@ export class GenerationSurvey {
     let budget = Math.floor(chunkBudget);
     if (budget <= 0) return null;
 
+    // The sweep's own copy of the generation it is scanning — see the class
+    // header. Taken on the tick the sweep starts and read by every chunk of
+    // it; the caller's map may change underneath without the CA seeing half
+    // of the change.
+    if (this.board === null) this.board = new Map(live);
+    const board = this.board;
+
     while (budget > 0 && this.cursor < totalChunks) {
-      this.scanChunk(world, live, this.cursor % world.chunksPerEdge, Math.floor(this.cursor / world.chunksPerEdge));
+      this.scanChunk(world, board, this.cursor % world.chunksPerEdge, Math.floor(this.cursor / world.chunksPerEdge));
       this.cursor++;
       budget--;
     }
     if (this.cursor < totalChunks) return null;
+
+    // CELLS THAT APPEARED MID-SWEEP ARE CARRIED, NOT JUDGED. They were founded
+    // from outside (foundStructure) after this generation's board was fixed,
+    // so B3/S23 has not been applied to them and must not be: they enter the
+    // next generation exactly as founded and face the rules from the sweep
+    // after this one — the same "evaluated starting next generation, never the
+    // one that just ran" rule attemptSeed and attemptStir keep. Nor are they
+    // reported as born: the founding path broadcast them when it happened.
+    for (const [key, record] of live) {
+      if (board.has(key) || this.staged.has(key)) continue;
+      this.staged.set(key, record);
+    }
 
     const born: StructureCell[] = [];
     const upgraded: StructureCell[] = [];
     const died: Array<{ x: number; y: number }> = [];
 
     for (const [key, record] of this.staged) {
-      const previous = live.get(key);
+      // Against the SWEPT board, never against `live`: a cell carried in above
+      // is in `live` and not in `board`, and reporting it born would send a
+      // second copy of a founding already on the wire.
+      if (!board.has(key) && live.has(key)) continue;
+      const previous = board.get(key);
       const cell = cellOfKey(key);
       if (previous === undefined) {
         born.push({ x: cell.x, y: cell.y, tier: record.tier });
@@ -362,7 +403,7 @@ export class GenerationSurvey {
         upgraded.push({ x: cell.x, y: cell.y, tier: record.tier });
       }
     }
-    for (const key of live.keys()) {
+    for (const key of board.keys()) {
       if (this.staged.has(key)) continue;
       const cell = cellOfKey(key);
       died.push({ x: cell.x, y: cell.y });

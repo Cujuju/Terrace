@@ -11,6 +11,10 @@
 //     on the far side: a structures build from before 2026-08-24 does not have
 //     it, and `foundStructureAt` below degrades to "the house never appears"
 //     rather than to a crash, the same way `age` degrades above.
+//   * canFoundStructure(world, x, y) — would that founding succeed? Asked
+//     while a settler is choosing where to go (settling.ts's scan). OPTIONAL
+//     and degrades to "yes" — see `canFoundStructureAt` for why this one
+//     degrades permissively where the founding itself degrades to false.
 //
 // DEGRADED BEHAVIOUR when structures is absent: no settlements exist, so no
 // pilgrimages ever start — which is exactly true. One warning is logged,
@@ -47,6 +51,15 @@ export interface StructuresApi {
    * OPTIONAL: an older structures build simply does not export it.
    */
   foundStructure?(world: unknown, x: number, y: number): boolean;
+  /**
+   * Would `foundStructure` succeed at this cell right now? Pure — asked while
+   * a settler is CHOOSING where to walk, once per candidate cell.
+   *
+   * OPTIONAL, and its absence degrades to "yes" rather than to "no" — see
+   * `canFoundStructureAt` below for why the two directions are not
+   * interchangeable here.
+   */
+  canFoundStructure?(world: unknown, x: number, y: number): boolean;
 }
 
 export type StructuresModuleLoader = () => Promise<unknown>;
@@ -125,6 +138,25 @@ export function bridgedStructures(): BridgedStructureCell[] {
  */
 export function foundStructureAt(world: unknown, x: number, y: number): boolean {
   return structuresApi?.foundStructure?.(world, x, y) ?? false;
+}
+
+/**
+ * Asks structures whether a home could go up at (x, y) — the question a
+ * settler needs answered BEFORE it walks somewhere, not after.
+ *
+ * TRUE IS THE DEGRADED ANSWER, the opposite of `foundStructureAt`'s, and the
+ * asymmetry is deliberate. This predicate is a FILTER on candidate ground, and
+ * the same scan that a settler uses to pick a site is what tells the temples
+ * plugin whether a temple may be placed at all (settling.ts's
+ * canDispatchSettler). A missing structures plugin answering "no" would refuse
+ * every temple in the world and dispatch nobody — turning "settlements do not
+ * exist here" into "temples are broken here". Answering "yes" degrades instead
+ * to exactly the pre-2026-08-24 behaviour: the settler walks to walkable
+ * ground and finds out on arrival, which with structures absent means no house
+ * appears, which `foundStructureAt` already reports honestly.
+ */
+export function canFoundStructureAt(world: unknown, x: number, y: number): boolean {
+  return structuresApi?.canFoundStructure?.(world, x, y) ?? true;
 }
 
 /** Records and forwards the total blessed set (structures' replace semantics). */

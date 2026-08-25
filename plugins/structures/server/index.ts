@@ -575,14 +575,38 @@ export { setBlessedStructureCells } from './blessings.ts';
  * settlement, it does not exempt one from the rules the rest live under.
  */
 export function foundStructure(world: StructuresWorld, x: number, y: number): boolean {
-  if (live.size >= STRUCTURES_CAP) return false;
-  const key = structureKey(x, y);
-  if (live.has(key)) return false;
-  if (!isBuildableCell(world, x, y)) return false;
+  if (!canFoundStructure(world, x, y)) return false;
 
-  live.set(key, { age: 0, tier: 0 });
+  live.set(structureKey(x, y), { age: 0, tier: 0 });
   pendingFounded.push({ x, y, tier: 0 });
   return true;
+}
+
+/**
+ * WOULD `foundStructure` SUCCEED HERE, RIGHT NOW? The fourth member of the
+ * pilgrims-facing surface, and the predicate `foundStructure` itself is
+ * defined by — so an asker and a builder can never disagree about what ground
+ * will take a house.
+ *
+ * WHY AN OUTSIDE CALLER NEEDS TO ASK (2026-08-24, measured on the live world,
+ * snapshot 468). A settler used to choose where to build on WALKABILITY alone
+ * and learn the truth on arrival, on the reasoning that buildability is this
+ * plugin's business and a copy of it elsewhere would drift. The reasoning was
+ * right and the conclusion was wrong: walkable is dry ground, buildable is dry
+ * ground whose whole 3×3 footprint sits in one terrace band, and on real
+ * sculpted terrain only 7.2% of walkable 2×2 blocks clear that bar. Four in
+ * five settlers therefore spent every one of their attempts walking to ground
+ * that would not have them, and vanished — the "they walk off to a corner and
+ * disappear" the owner saw. Asking across the bridge keeps the predicate here,
+ * in one place, and is the opposite of a copy.
+ *
+ * PURE: no cell is written and no wire traffic is produced, so a chooser may
+ * call it per candidate site.
+ */
+export function canFoundStructure(world: StructuresWorld, x: number, y: number): boolean {
+  if (live.size >= STRUCTURES_CAP) return false;
+  if (live.has(structureKey(x, y))) return false;
+  return isBuildableCell(world, x, y);
 }
 
 /**
