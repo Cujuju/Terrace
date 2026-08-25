@@ -1053,6 +1053,65 @@ function cellNoise(x: number, y: number): number {
 }
 
 /**
+ * WHAT CELL (cx, cy) FALLS TO WHEN BAND `band` RETREATS OFF IT — the highest
+ * ground already standing beside it that is BELOW the band's floor, or null if
+ * there is none.
+ *
+ * THE EXACT MIRROR OF `canSpreadBandTo`, AND THAT IS THE POINT. The outward
+ * pull may only raise a cell to a level that already stands beside it; the
+ * inward pull may only drop a cell to a level that already stands beside it.
+ * One reads the neighbourhood for the highest thing at or above the band, the
+ * other for the highest thing below it — same eight neighbours (a lip is a
+ * marching-squares contour and cuts diagonally, see canSpreadBandTo), same
+ * "the world, not the message, supplies the height".
+ *
+ * WHY IT ANSWERS "WHAT IS EXPOSED UNDERNEATH", which the terrain itself cannot:
+ * a column stores one height, so the level this band was built on top of is not
+ * recorded anywhere. It does not need to be. The lip being pulled in is by
+ * definition standing against lower ground — that ground IS the surface the
+ * band was sitting proud of, and continuing it inward is the only answer that
+ * invents nothing. On a staircase the neighbour is the tread one band down, so
+ * the retreat exposes band−1 and widens that tread; where the band was pulled
+ * out over a plain several bands below, the retreat exposes the plain. THE
+ * ACID TEST IS THAT THIS UNDOES AN OUTWARD PULL: pull band 7 out over a band-2
+ * flat and pull it back in, and band 2 is what returns. A rule that always
+ * exposed band−1 instead would fail that test in both directions at once — it
+ * would leave a band-6 shelf that was never there (inventing a level, which
+ * the drag tool is defined never to do) and it could never retreat a lip that
+ * had no band−1 beneath it at all.
+ *
+ * IT CANNOT DIG. The height returned is a height the map already holds one cell
+ * away, so a retreat never goes below its own surroundings and never below the
+ * level underneath — it can only flatten a cell into ground that is already
+ * there. Null (no neighbour below the band) means the cell is in the interior
+ * of the plateau, and an interior cell is untouchable: the retreat has to eat
+ * inward from the rim one wave at a time, exactly as the pull creeps outward
+ * one wave at a time, so there is no way to punch a hole in the middle of a
+ * plateau or to delete ground the gesture never reached.
+ */
+function retreatHeightAt(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  band: number,
+): number | null {
+  const floor = band * BAND_HEIGHT;
+  let best: number | null = null;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
+      const h = map.cells[cellIndex(map, nx, ny)]!;
+      if (h >= floor) continue;
+      if (best === null || h > best) best = h;
+    }
+  }
+  return best;
+}
+
+/**
  * THE DRAG REGION — the brush footprint at the cursor, filled to the grabbed
  * band wherever that band already reaches.
  *
@@ -1083,17 +1142,19 @@ function cellNoise(x: number, y: number): number {
  * act. An earlier attempt at a neighbour-count threshold failed for the mirror
  * image of the same reason: the fixpoint washed it out entirely.
  *
- * RAISE ONLY (2026-08-24). Pulling a lip INWARD is the same gesture with the
- * sign flipped, but it is the direction where the stop rule has to be real
- * code: dropping a cell to band k−1 when it actually stands at band 6 would
- * strip everything above it. Issue #99 step 3. A lowering drag is a no-op here
- * rather than an approximation of one.
- *
  * IT CANNOT LEAK PAST THE STOP RULE. A wave only ever takes cells the spread
  * rule admits, so ground standing ABOVE the grabbed band is never written and
  * never becomes a neighbour that admits anything beyond it. The owner's "a
  * drag stops at a higher band's edge and does not strip the ground standing on
  * it" falls out of that rather than being coded separately.
+ *
+ * PULLING INWARD IS THE SAME GESTURE WITH THE SIGN FLIPPED (owner, 2026-08-24:
+ * "we also still need the lower mode for pull as well"). The band RETREATS:
+ * every footprint cell standing at exactly the grabbed band falls to the ground
+ * already beside it, so the band's extent shrinks and the level it was standing
+ * proud of comes back into view. `retreatBandTo` below is its whole stop rule,
+ * and the three questions it has to answer are answered there. Issue #99
+ * step 3.
  */
 function applyDragRegion(
   map: Heightmap,
@@ -1105,9 +1166,6 @@ function applyDragRegion(
   profile: SculptProfile,
   changed: Set<number>,
 ): void {
-  // Inward drags are step 3 of issue #99 and deliberately do nothing yet.
-  if (!raising) return;
-
   const targetHeight = clampHeight(targetBand * BAND_HEIGHT);
   const ragged = profile === 'soft';
 
@@ -1146,6 +1204,54 @@ function applyDragRegion(
     }
     disc.push(cellIndex(map, x, y));
   });
+
+  // THE RETREAT — the inward pull, and it returns before the outward pull's
+  // machinery because almost none of that machinery applies to it.
+  //
+  // ONLY GROUND AT EXACTLY THE GRABBED BAND MOVES. That single clause is the
+  // "a lip pulled in must not strip the ground standing on it" stop rule: a
+  // cell standing at band 9 is not part of band 7's extent, so pulling band 7
+  // in leaves it and everything it holds up exactly where it stands. It is the
+  // same lesson `treadWasNear` learned on the way out (0b81845) — "at or above"
+  // would have made every band beneath a totem answer for the totem — read in
+  // the other direction: here it is "at or above" that would strip a tower.
+  //
+  // NO CASCADE, DELIBERATELY, and this is where the symmetry with the outward
+  // pull is broken on purpose. `pushLowerLayers` exists because an ADVANCING
+  // lip swallows the tread below it: the step is destroyed unless the level
+  // below gives ground too. A RETREATING lip does the opposite — it uncovers
+  // the level below and makes that tread WIDER — so nothing is being crowded
+  // and there is nothing to carry. Dragging the lower levels inward as well
+  // would be exactly the "everything comes with it" the owner complained about
+  // (8103dc9), and it would also be the unbounded terrain-delete this tool must
+  // not be: one gesture would strip a whole staircase. To retreat the next
+  // level down the player grabs THAT lip, which is the same walk the outward
+  // pull is.
+  if (!raising) {
+    // Swept to a fixpoint like the fill, so the rim's retreat exposes the
+    // cells behind it and they may retreat in turn — the wave eats inward from
+    // the frontier and stops at the edge of the footprint. It terminates
+    // because every write moves a cell strictly below the band's floor, so no
+    // cell can ever be taken twice. Order within a pass is the footprint
+    // iterator's fixed scan order, so client and server walk it identically.
+    let cutThisPass = true;
+    while (cutThisPass) {
+      cutThisPass = false;
+      for (const i of disc) {
+        // Not this band's ground: higher land the retreat leaves standing,
+        // lower land it has already exposed, or a level it never owned.
+        if (bandOf(map.cells[i]!) !== targetBand) continue;
+        const exposed = retreatHeightAt(map, cellX(map.size, i), cellY(map.size, i), targetBand);
+        // Interior of the plateau — nothing lower beside it, so the band does
+        // not end here and there is no lip at this cell to pull in.
+        if (exposed === null) continue;
+        map.cells[i] = exposed;
+        changed.add(i);
+        cutThisPass = true;
+      }
+    }
+    return;
+  }
 
   // Swept to a fixpoint: every pass but the last takes at least one cell of a
   // finite footprint, so this terminates, and the result does not depend on
