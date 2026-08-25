@@ -150,7 +150,16 @@ export function applyWorldAdminResult(message: {
   });
 }
 
-/** Applies a switch countdown (or its cancellation). */
+/**
+ * Applies a switch countdown (or its cancellation).
+ *
+ * TWO TERMINAL SHAPES end a countdown, and both must clear `pendingSwitch`:
+ * `cancelled: true` (the operator called it off; the world stays put) and
+ * `secondsRemaining <= 0` (the swap is firing NOW — sent by the server just
+ * before it blocks the thread saving/opening worlds). A snapshot arriving
+ * afterwards also clears, as belt-and-braces against a lost terminal notice
+ * (see client/src/world.ts onSnapshot).
+ */
 export function applyWorldSwitchNotice(message: {
   toId: string;
   toName: string;

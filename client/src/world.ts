@@ -37,7 +37,7 @@ import {
 } from './terrain/mirror.ts';
 import { HEIGHT_WORLD_SCALE } from './config.ts';
 import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
-import { setWorldLoaded } from './state/worldsState.ts';
+import { setPendingSwitch, setWorldLoaded } from './state/worldsState.ts';
 import {
   createPredictionStore,
   type PredictionStore,
@@ -279,6 +279,12 @@ export function createWorld(viewport: Viewport): World {
       // the switch re-sends every client exactly this message (multi-world,
       // 2026-08-22 — see WorldManager.openInto step 7).
       setWorldLoaded(true);
+      // Belt-and-braces against a lost terminal switch notice (reconnect
+      // mid-countdown): the snapshot proves the new world landed, so whatever
+      // countdown the client still believes in is over. Normally this arrives
+      // after the server's secondsRemaining: 0 notice has already cleared it,
+      // making this a no-op — see worldsState.applyWorldSwitchNotice.
+      setPendingSwitch(null);
       // Build identity travels with world identity, and matters on a REJOIN
       // for the same reason: the server may have been restarted onto a new
       // commit while this client's bundle stayed put — which is exactly the
