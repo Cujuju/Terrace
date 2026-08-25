@@ -64,7 +64,7 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
-import { createDrawnGround, drawnBandWorldY } from '../terrain/drawnGround.ts';
+import { createDrawnGround } from '../terrain/drawnGround.ts';
 import { WATER_COLOR } from './water.ts';
 import {
   TILE_LATTICE_OFFSETS,
@@ -882,23 +882,7 @@ export function createRiverRig(
       isActive: (x, y) => mirror.received.has(chunkIndexOfCell(mirror.map.size, x, y)),
     });
 
-    /**
-     * World Y of a water surface standing on a rendered terrace band, water
-     * lift included.
-     *
-     * The band's height comes from `drawnBandWorldY` — the terrain's own rule
-     * — rather than being recomputed as `band * BAND_HEIGHT *
-     * HEIGHT_WORLD_SCALE` here. Numerically identical today (BAND_WORLD_HEIGHT
-     * is defined as that product, config.ts:133), and that is the point: two
-     * copies of one rule that happen to agree is exactly the arrangement that
-     * let the water and the rock drift apart in the first place.
-     *
-     * `seabed: false` because a water TREAD rests on a band the terrain draws
-     * as dry land — it is the water, not the seabed, that is at this height.
-     * The curtain makes the opposite choice for its descent, and says why.
-     */
-    const bandWorldY = (band: number): number =>
-      drawnBandWorldY(band, false) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+
 
     // PASS ONE: the surface band of every wet cell in the whole network,
     // before a single triangle is built. An outline can only be marched once
@@ -971,8 +955,30 @@ export function createRiverRig(
     // marches of the terrain as it stands right now, so a terrain edit
     // invalidates every entry (drawnGround.ts's cache note).
     const ground = createDrawnGround(mirror);
+
+    /**
+     * World Y of a water surface standing on a rendered terrace band, water
+     * lift included.
+     *
+     * READ FROM THE ORACLE, not restated here. Until 2026-08-24 this called a
+     * `drawnBandWorldY(band, seabed)` that re-derived capEmission's rule — and
+     * passed `seabed: false` unconditionally, which is a guess the caller had
+     * no business making. `capYOfBand` answers from the cap stack the chunk
+     * really drew, so band 0's two levels resolve themselves and a blocky chunk
+     * answers with the blocky height. The anchor cell is what makes that
+     * possible, which is why every caller now has to supply one.
+     */
+    const bandWorldY = (band: number, cellXCoord: number, cellZCoord: number): number =>
+      ground.capYOfBand(band, cellXCoord, cellZCoord) + RIVER_SURFACE_LIFT_WORLD_UNITS;
+
     for (const region of regions.values()) {
-      const surfaceY = bandWorldY(region.surfaceBand);
+      // Anchored at a cell the region actually covers, so band 0 resolves in
+      // the chunk the water is really in. Regions are non-empty by
+      // construction (they are created when their first cell is added).
+      const anchor = region.cells.values().next().value as number;
+      const anchorX = cellX(mirror.map.size, anchor);
+      const anchorZ = cellY(mirror.map.size, anchor);
+      const surfaceY = bandWorldY(region.surfaceBand, anchorX, anchorZ);
       const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
       // The curtain asks the terrain where the ground is; it is not told, and
       // it is given no probe of ours to guess with. The apron needed two
@@ -987,6 +993,7 @@ export function createRiverRig(
         ground,
         loops,
         region.surfaceBand,
+        surfaceY,
         bandWorldY,
         waterBandAt,
         SEA_SURFACE_WORLD_Y,
@@ -1001,7 +1008,7 @@ export function createRiverRig(
     // surface is rather than left to ask the ground — see the site loop.
     rebuildSprings(mirror, network, (x, y) => {
       const band = bandOfCell.get(cellIndex(mirror.map, x, y));
-      return band === undefined ? null : bandWorldY(band);
+      return band === undefined ? null : bandWorldY(band, x, y);
     });
     // A rebuild leaves the rings' animated X/Z as placeholders — pose them
     // immediately so the effect is correct even if the frame handler never

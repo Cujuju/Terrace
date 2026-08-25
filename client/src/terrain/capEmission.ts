@@ -432,6 +432,53 @@ export const SELF_LIT = 255;
 // Public shapes
 // ---------------------------------------------------------------------------
 
+/**
+ * One cap level AS THE TERRAIN DREW IT — the published half of the drawn-ground
+ * contract (plan water-painted-on-bands; the contract fix of 2026-08-24).
+ *
+ * WHY THIS EXISTS. Until now the only way to ask "what does the terrain draw at
+ * (x, z)?" was to re-run this file's own pipeline — loadSamples, marchLevel,
+ * assembleLoops, smoothLoop, groupLoops — from somewhere else and hope the two
+ * runs agreed. They provably did not: the caller could not see `layered` (which
+ * swaps the whole sample FIELD, see loadLevel), could not see
+ * `crossingOverride`, restated the band-0 seabed sink as a copied rule, and had
+ * no way at all to know the chunk had fallen back to blocky per-cell geometry.
+ * Water floated for four rewrites on exactly those disagreements.
+ *
+ * So emission now PUBLISHES what it drew instead of leaving it to be guessed.
+ * These are the very polygons handed to the ear clipper and the very `capY`
+ * written into the vertex buffer — not a re-derivation that ought to match.
+ *
+ * LIFETIME. Valid only until the chunk is re-emitted. The holder must drop it
+ * on the same invalidation that redraws the chunk, or it will answer later
+ * queries from pre-edit contours.
+ */
+export interface DrawnCapLevel {
+  /** The level-set threshold this cap was marched at, in height units. */
+  readonly threshold: number;
+  /** The band whose sample field was marched (see ContourLevel.sampleBand). */
+  readonly sampleBand: number;
+  /** The world Y every triangle of this cap was emitted at. */
+  readonly capY: number;
+  /** The grouped polygons that were triangulated — outers with their holes. */
+  readonly polygons: readonly CapPolygon[];
+}
+
+/**
+ * What one chunk's emission drew, published for anything that must AGREE with
+ * the rock rather than re-derive it (water, above all).
+ *
+ * `blocky` is not a detail to be smoothed over: a fallback chunk is drawn as
+ * axis-aligned per-cell quads at `blockyCellCapY(height)`, a DIFFERENT surface
+ * from the smoothed contours, and `levels` is empty for it. A consumer that
+ * ignores the flag and reads contours anyway is asking about a surface that is
+ * not on screen.
+ */
+export interface ChunkDrawnCaps {
+  readonly blocky: boolean;
+  readonly levels: readonly DrawnCapLevel[];
+}
+
 /** What one call to writeChunkVertexData emitted. */
 export interface ChunkGeometryCounts {
   /** Flat band tops. */
@@ -473,6 +520,12 @@ export interface ChunkGeometryCounts {
    * can measure the two populations rather than infer them.
    */
   maxPolygonWork: number;
+  /**
+   * What this call actually drew, for consumers that must sit ON the rock —
+   * see ChunkDrawnCaps. Published rather than re-derived; the holder must drop
+   * it when the chunk is invalidated.
+   */
+  drawnCaps: ChunkDrawnCaps;
 }
 
 /**
@@ -911,7 +964,7 @@ export const FALLBACK_MAX_TRIANGLES =
  * World Y of a cell's flat top: its band floor, with band-0 SEA sunk to match
  * the contour path's seabed cap so the two renderers meet at the same height.
  */
-function cellCapY(height: number): number {
+export function blockyCellCapY(height: number): number {
   const band = bandOf(height);
   if (band === 0 && height <= SEA_LEVEL) return -SEABED_CAP_SINK;
   return band * BAND_WORLD_HEIGHT;
@@ -935,13 +988,13 @@ function writeBlockyFallback(
     Math.min(originZ + j + CELL_HALF_EXTENT, originZ + CHUNK_SIZE);
 
   let floorY = Infinity;
-  for (let i = 0; i < SAMPLE_COUNT; i++) floorY = Math.min(floorY, cellCapY(samples[i]));
+  for (let i = 0; i < SAMPLE_COUNT; i++) floorY = Math.min(floorY, blockyCellCapY(samples[i]));
 
   // --- caps -------------------------------------------------------------
   for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
     for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
       const height = heightAt(i, j);
-      const y = cellCapY(height);
+      const y = blockyCellCapY(height);
       const capIndex = bandPaletteIndex(height);
       const color = palettes.top[capIndex];
       // The fallback keeps the lava glow: same predicate as the contour path.
@@ -965,8 +1018,8 @@ function writeBlockyFallback(
     for (let i = 0; i < CHUNK_SIZE; i++) {
       const here = heightAt(i, j);
       const next = heightAt(i + 1, j);
-      const hereY = cellCapY(here);
-      const nextY = cellCapY(next);
+      const hereY = blockyCellCapY(here);
+      const nextY = blockyCellCapY(next);
       if (hereY === nextY) continue;
       const westHigher = hereY > nextY;
       const planeX = originX + i + CELL_HALF_EXTENT;
@@ -997,8 +1050,8 @@ function writeBlockyFallback(
     for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
       const here = heightAt(i, j);
       const next = heightAt(i, j + 1);
-      const hereY = cellCapY(here);
-      const nextY = cellCapY(next);
+      const hereY = blockyCellCapY(here);
+      const nextY = blockyCellCapY(next);
       if (hereY === nextY) continue;
       const northHigher = hereY > nextY;
       const planeZ = originZ + j + CELL_HALF_EXTENT;
@@ -1041,15 +1094,15 @@ function writeBlockyFallback(
   const last = CHUNK_SIZE;
   for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
     const west = heightAt(0, j);
-    curtain(originX, hiZ(j), originX, loZ(j), cellCapY(west), west);
+    curtain(originX, hiZ(j), originX, loZ(j), blockyCellCapY(west), west);
     const east = heightAt(last, j);
-    curtain(originX + last, loZ(j), originX + last, hiZ(j), cellCapY(east), east);
+    curtain(originX + last, loZ(j), originX + last, hiZ(j), blockyCellCapY(east), east);
   }
   for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
     const north = heightAt(i, 0);
-    curtain(loX(i), originZ, hiX(i), originZ, cellCapY(north), north);
+    curtain(loX(i), originZ, hiX(i), originZ, blockyCellCapY(north), north);
     const south = heightAt(i, last);
-    curtain(hiX(i), originZ + last, loX(i), originZ + last, cellCapY(south), south);
+    curtain(hiX(i), originZ + last, loX(i), originZ + last, blockyCellCapY(south), south);
   }
 
   return { caps, skirts };
@@ -1169,13 +1222,50 @@ function marchCeiling(
  * shading a clean crease at every cap/skirt boundary, and it means the live
  * range is simply the first `vertexCount` vertices.
  */
-export function writeChunkVertexData(
+/**
+ * What one chunk is going to be drawn as — marched, grouped and budget-checked,
+ * but not yet triangulated.
+ *
+ * THIS IS THE CONTRACT. Before it existed, "what does the terrain draw here?"
+ * had two answers: the one writeChunkVertexData computed on its way to a vertex
+ * buffer, and the one drawnGround.ts recomputed by re-running the same five
+ * calls from outside. They disagreed on `layered` (a different sample FIELD per
+ * level), on `crossingOverride`, on band 0's seabed sink, and — completely — on
+ * chunks that fell back to blocky. Water floated on those disagreements through
+ * four rewrites. Now there is one producer and two consumers: the vertex writer
+ * below, and the oracle that water stands on.
+ *
+ * HAZARD — runs the shared march scratch (contours.ts) synchronously start to
+ * finish. Must not be interleaved with another marcher; see the note at the top
+ * of drawnGround.ts.
+ */
+export interface ChunkCapPlan {
+  readonly levels: ContourLevel[];
+  /** Grouped cap polygons, in lockstep with `levels`. */
+  readonly polygonsPerLevel: CapPolygon[][];
+  /** Grouped ceiling polygons, in lockstep with `levels`. */
+  readonly ceilingsPerLevel: CapPolygon[][];
+  /** True when a budget tripped and the chunk must be drawn blocky instead. */
+  readonly overBudget: boolean;
+  readonly capTriangles: number;
+  readonly skirtTriangles: number;
+  readonly ceilingTriangles: number;
+  readonly triangulationWork: number;
+  readonly maxPolygonWork: number;
+}
+
+/**
+ * Marches and groups one chunk's cap stack. Palettes are read for COLOUR only —
+ * every geometric decision here (thresholds, capY, skirt drops, the budget
+ * verdict) is independent of them, which is what lets the oracle plan a chunk
+ * with the same palettes the renderer uses without caring what they are.
+ */
+export function planChunkCaps(
   mirror: TerrainMirror,
   cx: number,
   cy: number,
-  buffers: ChunkGeometryBuffers,
   palettes: ChunkPalettes,
-): ChunkGeometryCounts {
+): ChunkCapPlan {
   const originX = cx * CHUNK_SIZE;
   const originZ = cy * CHUNK_SIZE;
   loadSamples(mirror, originX, originZ);
@@ -1288,6 +1378,42 @@ export function writeChunkVertexData(
     }
   }
 
+
+  return {
+    levels,
+    polygonsPerLevel,
+    ceilingsPerLevel,
+    overBudget,
+    capTriangles,
+    skirtTriangles,
+    ceilingTriangles,
+    triangulationWork,
+    maxPolygonWork,
+  };
+}
+
+export function writeChunkVertexData(
+  mirror: TerrainMirror,
+  cx: number,
+  cy: number,
+  buffers: ChunkGeometryBuffers,
+  palettes: ChunkPalettes,
+): ChunkGeometryCounts {
+  const originX = cx * CHUNK_SIZE;
+  const originZ = cy * CHUNK_SIZE;
+  const plan = planChunkCaps(mirror, cx, cy, palettes);
+  const {
+    levels,
+    polygonsPerLevel,
+    ceilingsPerLevel,
+    overBudget,
+    capTriangles,
+    skirtTriangles,
+    ceilingTriangles,
+    triangulationWork,
+    maxPolygonWork,
+  } = plan;
+
   const triangleTarget = overBudget
     ? FALLBACK_MAX_TRIANGLES
     : capTriangles + skirtTriangles + ceilingTriangles;
@@ -1397,6 +1523,24 @@ export function writeChunkVertexData(
   collapseTail(buffers, vertexCount);
   outBuffers = null;
 
+  // The published record, built from the SAME arrays the write loop above drew
+  // from: `levels[i].capY` is the Y every triangle of that cap was emitted at,
+  // and polygonsPerLevel[i] is what was handed to the ear clipper (bridgeHole
+  // allocates a fresh outline per hole and never mutates its inputs, so these
+  // survive emission untouched). A blocky chunk publishes no levels at all —
+  // it did not draw contours, and saying so is the whole point of the flag.
+  const drawnCaps: ChunkDrawnCaps = usedFallback
+    ? { blocky: true, levels: [] }
+    : {
+        blocky: false,
+        levels: levels.map((level, index) => ({
+          threshold: level.threshold,
+          sampleBand: level.sampleBand,
+          capY: level.capY,
+          polygons: polygonsPerLevel[index],
+        })),
+      };
+
   return {
     capTriangleCount: capEmitted,
     skirtTriangleCount: skirtEmitted,
@@ -1408,6 +1552,7 @@ export function writeChunkVertexData(
     usedFallback,
     triangulationWork,
     maxPolygonWork,
+    drawnCaps,
   };
 }
 

@@ -17,13 +17,14 @@
 //      bug this module replaces (the 430 floating water vertices).
 //   2. A basin enclosed inside a higher band reads as its own lower band — the
 //      hole rule; containment must be tested on groupLoops output.
-//   3. Band 0 is two levels and `drawnBandWorldY` distinguishes them.
+//   3. Band 0 is two levels and `capYOfBand` distinguishes them — resolved from
+//      the chunk's published cap stack, not from a boolean the caller passes.
 
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf, chunkIndex } from '@terrace/shared';
+import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 import {
   createDrawnGround,
-  drawnBandWorldY,
 } from '../src/terrain/drawnGround.ts';
 import { createTerrainMirror, sampleHeight, type TerrainMirror } from '../src/terrain/mirror.ts';
 import { assembleLoops, loadSamples, marchLevel, samples } from '../src/terrain/contours.ts';
@@ -152,7 +153,12 @@ describe('drawnGround', () => {
     expect(ground.bandAt(12.5, 15.5)).toBe(3);
   });
 
-  it('drawnBandWorldY distinguishes band 0’s two levels', () => {
-    expect(drawnBandWorldY(0, true)).not.toBe(drawnBandWorldY(0, false));
+  it('capYOfBand distinguishes band 0’s two levels from the drawn stack', () => {
+    // A shore fixture draws BOTH band-0 caps: the sunk seabed and the waterline
+    // above it. The oracle must answer with the one the terrain actually put
+    // over the query point rather than asking the caller which it meant.
+    const mirror = terracedMirror();
+    const ground = createDrawnGround(mirror);
+    expect(ground.capYOfBand(1, 15.5, 15.5)).toBe(BAND_WORLD_HEIGHT);
   });
 });
