@@ -113,7 +113,17 @@ const PLUME_GAIN = 1.0;
 const FLAME_HEIGHT_PER_FUEL = 1.4;
 const FLAME_RADIUS_PER_FUEL = 0.24;
 const INTENSITY_SIZE_FLOOR = 0.34;
-const INTENSITY_BRIGHTNESS_FLOOR = 0.4;
+/**
+ * Opacity floor, RAISED from 0.4 on 2026-08-24 after the renders showed a
+ * catching fire as a brown smudge.
+ *
+ * Intensity governs a flame's SIZE, and should barely govern its opacity: a
+ * small fire is not a see-through fire, it is a small one. At 0.4 the young
+ * plume was blended half-and-half with bright green grass, which is how orange
+ * becomes brown. 0.7 keeps the young flame's own colour and leaves intensity to
+ * say what it should say — how much of it there is.
+ */
+const INTENSITY_BRIGHTNESS_FLOOR = 0.7;
 
 /** Stable 0…1 from an integer — see coneStack.ts. Never Math.random(). */
 function unitFromSeed(seed: number, salt: number): number {
@@ -154,11 +164,13 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
 
   attribute float aSeed;
   attribute float aIntensity;
+  attribute float aPresence;
 
   varying float vHeight;
   varying float vSeed;
   varying float vAngle;
   varying float vIntensity;
+  varying float vPresence;
 
   ${NOISE_GLSL}
 
@@ -169,6 +181,7 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
     vHeight = height;
     vSeed = aSeed;
     vIntensity = aIntensity;
+    vPresence = aPresence;
     vAngle = atan(position.z, position.x);
 
     // Anchor the foot, free the tip.
@@ -206,6 +219,7 @@ const PLUME_FRAGMENT_SHADER = /* glsl */ `
   varying float vSeed;
   varying float vAngle;
   varying float vIntensity;
+  varying float vPresence;
 
   ${NOISE_GLSL}
 
@@ -233,7 +247,7 @@ const PLUME_FRAGMENT_SHADER = /* glsl */ `
       vHeight * 5.0 - uTime * ${PLUME_FLICKER_SPEED.toFixed(2)}));
     float flicker = 1.0 - ${PLUME_FLICKER_DEPTH.toFixed(2)} * vHeight * (0.5 - 0.5 * gutter) * 2.0;
 
-    float alpha = body * clamp(flicker, 0.0, 1.0) * vIntensity * ${PLUME_ALPHA_PEAK.toFixed(2)};
+    float alpha = body * clamp(flicker, 0.0, 1.0) * vIntensity * vPresence * ${PLUME_ALPHA_PEAK.toFixed(2)};
     if (alpha <= 0.01) discard;
     gl_FragColor = vec4(color * ${PLUME_GAIN.toFixed(2)}, alpha);
   }
@@ -285,6 +299,15 @@ export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer =>
   geometry.setAttribute('aSeed', seeds);
   geometry.setAttribute('aIntensity', intensities);
 
+  // PRESENCE — how much of THIS look to draw (../flames/types.ts). Its own
+  // attribute rather than folded into aIntensity, because aIntensity also
+  // drives the flame's HEIGHT in the vertex shader: folding them would make a
+  // half-faded flame a short one, and the compositor's whole contract is that a
+  // fading look keeps its size and loses only its opacity.
+  const presences = new InstancedBufferAttribute(new Float32Array(FIRE_CELL_CAP), 1);
+  presences.setUsage(DynamicDrawUsage);
+  geometry.setAttribute('aPresence', presences);
+
   // Scratch — used only by `apply`, but allocated here all the same: `apply`
   // runs on every server delta of a spreading fire, which is often enough.
   const matrix = new Matrix4();
@@ -300,11 +323,15 @@ export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer =>
       const count = Math.min(fires.length, FIRE_CELL_CAP);
       const seedArray = seeds.array as Float32Array;
       const intensityArray = intensities.array as Float32Array;
+      const presenceArray = presences.array as Float32Array;
 
       for (let i = 0; i < count; i++) {
         const fire = fires[i]!;
         const intensity = Math.min(Math.max(fire.intensity, 0), 1);
         const sizeScale = INTENSITY_SIZE_FLOOR + (1 - INTENSITY_SIZE_FLOOR) * intensity;
+        // Height and radius do NOT scale together: a young fire is squat and
+        // broad, a fierce one is a column. See PLUME_LOW_INTENSITY_SPREAD.
+
 
         position.set(fire.x, fire.groundY, fire.z);
         scale.set(
@@ -320,12 +347,16 @@ export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer =>
         seedArray[i] = unitFromSeed(fire.seed, 4) * 64;
         intensityArray[i] =
           INTENSITY_BRIGHTNESS_FLOOR + (1 - INTENSITY_BRIGHTNESS_FLOOR) * intensity;
+        // Absent presence means "draw me fully" — a renderer used on its own,
+        // with no compositor above it, never sees anything else.
+        presenceArray[i] = fire.presence === undefined ? 1 : Math.min(Math.max(fire.presence, 0), 1);
       }
 
       mesh.count = count;
       mesh.instanceMatrix.needsUpdate = true;
       seeds.needsUpdate = true;
       intensities.needsUpdate = true;
+      presences.needsUpdate = true;
     },
 
     update(_dt: number, elapsed: number): void {

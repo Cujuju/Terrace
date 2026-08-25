@@ -259,6 +259,7 @@ const RIBBON_VERTEX_SHADER = /* glsl */ `
 
   attribute float aSeed;
   attribute float aIntensity;
+  attribute float aPresence;
   attribute float aRibbon;
   attribute float aAlong;
   attribute float aEdge;
@@ -267,6 +268,7 @@ const RIBBON_VERTEX_SHADER = /* glsl */ `
   varying float vEdge;
   varying float vSeed;
   varying float vIntensity;
+  varying float vPresence;
   varying float vRibbon;
 
   void main() {
@@ -274,6 +276,7 @@ const RIBBON_VERTEX_SHADER = /* glsl */ `
     vEdge = aEdge;
     vSeed = aSeed;
     vIntensity = aIntensity;
+    vPresence = aPresence;
     vRibbon = aRibbon;
 
     int ribbon = int(aRibbon + 0.5);
@@ -309,6 +312,7 @@ const RIBBON_FRAGMENT_SHADER = /* glsl */ `
   varying float vEdge;
   varying float vSeed;
   varying float vIntensity;
+  varying float vPresence;
   varying float vRibbon;
 
   void main() {
@@ -334,7 +338,7 @@ const RIBBON_FRAGMENT_SHADER = /* glsl */ `
       (0.5 + 0.5 * sin((vAlong * 9.0 - uTime * ${RIBBON_FLICKER_RATE.toFixed(2)}) * ${TURN.toFixed(6)}
         + vRibbon * 2.1 + vSeed * 5.0));
 
-    float alpha = lengthwise * across * flicker * vIntensity * ${RIBBON_ALPHA_PEAK.toFixed(2)};
+    float alpha = lengthwise * across * flicker * vIntensity * vPresence * ${RIBBON_ALPHA_PEAK.toFixed(2)};
     if (alpha <= 0.01) discard;
     // Premultiplied: the colour is scaled by its own alpha before it leaves
     // the shader, which is what the ONE/1−srcAlpha blend above expects.
@@ -386,6 +390,15 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
   geometry.setAttribute('aSeed', seeds);
   geometry.setAttribute('aIntensity', intensities);
 
+  // PRESENCE — how much of THIS look to draw (../flames/types.ts). Its own
+  // attribute rather than folded into aIntensity, because aIntensity also
+  // drives the flame's HEIGHT in the vertex shader: folding them would make a
+  // half-faded flame a short one, and the compositor's whole contract is that a
+  // fading look keeps its size and loses only its opacity.
+  const presences = new InstancedBufferAttribute(new Float32Array(FIRE_CELL_CAP), 1);
+  presences.setUsage(DynamicDrawUsage);
+  geometry.setAttribute('aPresence', presences);
+
   const matrix = new Matrix4();
   const position = new Vector3();
   const rotation = new Quaternion();
@@ -399,6 +412,7 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
       const count = Math.min(fires.length, FIRE_CELL_CAP);
       const seedArray = seeds.array as Float32Array;
       const intensityArray = intensities.array as Float32Array;
+      const presenceArray = presences.array as Float32Array;
 
       for (let i = 0; i < count; i++) {
         const fire = fires[i]!;
@@ -419,12 +433,16 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
         seedArray[i] = unitFromSeed(fire.seed, 5);
         intensityArray[i] =
           INTENSITY_BRIGHTNESS_FLOOR + (1 - INTENSITY_BRIGHTNESS_FLOOR) * intensity;
+        // Absent presence means "draw me fully" — a renderer used on its own,
+        // with no compositor above it, never sees anything else.
+        presenceArray[i] = fire.presence === undefined ? 1 : Math.min(Math.max(fire.presence, 0), 1);
       }
 
       mesh.count = count;
       mesh.instanceMatrix.needsUpdate = true;
       seeds.needsUpdate = true;
       intensities.needsUpdate = true;
+      presences.needsUpdate = true;
     },
 
     update(_dt: number, elapsed: number): void {

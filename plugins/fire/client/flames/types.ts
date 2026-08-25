@@ -67,6 +67,23 @@ export interface FireInstance {
    */
   readonly ageSeconds: number;
   /**
+   * HOW MUCH OF THIS LOOK TO DRAW, 0…1. Absent means 1 — draw it fully.
+   *
+   * Distinct from `intensity`, and the distinction is the point: intensity is
+   * how fiercely the fire is burning and belongs to the SIMULATION; presence is
+   * how much of this particular renderer's contribution is wanted and belongs
+   * to whoever is composing the looks. A renderer must express it as
+   * TRANSPARENCY, never as size — a fire at presence 0 is being drawn by
+   * somebody else, not burning less, so shrinking it would leave a stub
+   * standing inside the other renderer's flame.
+   *
+   * It exists because the shipped look is TWO renderers crossfaded over a
+   * fire's life (./ribbonsToPlume.ts). A renderer with no compositor above it
+   * simply never sees anything but 1, which is why it is optional rather than
+   * required.
+   */
+  readonly presence?: number;
+  /**
    * A stable per-fire integer, derived from the cell. Two fires must never
    * flicker in lockstep, and the fire at a given cell must look the same on
    * every client — so this, and never Math.random(), is what a renderer varies

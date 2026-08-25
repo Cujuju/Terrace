@@ -30,9 +30,12 @@
 // WHY THE LOOK IS BEHIND AN INTERFACE.
 //
 // `./flames/types.ts` defines FlameRenderer, and this file draws through it
-// without knowing which candidate it holds. The look is chosen from pictures by
-// the owner; the simulation half must be shippable before that choice exists.
-// See that file's header for the budget rules any candidate must keep.
+// without knowing what it holds. That seam is what let the simulation ship
+// while the look was still four candidates being judged from renders; it is
+// what lets the shipped look today be TWO renderers crossfaded over a fire's
+// life (./flames/ribbonsToPlume.ts) with nothing here needing to know; and it
+// is what will let the look be re-tuned later without touching a line of the
+// sim. See ./flames/types.ts for the budget rules any look must keep.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type {
@@ -52,15 +55,8 @@ import {
   type FireCellState,
 } from '../protocol.ts';
 import { createFireLights, type FireLights } from './fireLights.ts';
-import { FLAME_CANDIDATES } from './flames/index.ts';
+import { SHIPPED_FLAMES } from './flames/index.ts';
 import type { FireInstance, FlameRenderer } from './flames/types.ts';
-
-/**
- * Which candidate look is shipped. ONE LINE TO CHANGE once the owner has picked
- * from the preview renders (client/preview-fire.html), and the only line in the
- * plugin that knows a choice was ever made.
- */
-export const SELECTED_FLAME_CANDIDATE_INDEX = 0;
 
 /**
  * Seconds between retries while some fire's ground is still unknown — flora's
@@ -185,8 +181,7 @@ export const clientPlugin: TerraceClientPlugin = {
     sinceRetrySeconds = 0;
     elapsedSeconds = 0;
 
-    const build = FLAME_CANDIDATES[SELECTED_FLAME_CANDIDATE_INDEX] ?? FLAME_CANDIDATES[0]!;
-    flames = build();
+    flames = SHIPPED_FLAMES();
     ctx.layer.add(flames.root);
 
     lights = createFireLights();

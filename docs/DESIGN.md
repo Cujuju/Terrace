@@ -3396,6 +3396,24 @@ cost.
 an episode — cells consumed since the world last stopped burning — and emits
 `fire:burned` once, when the last fire goes out.
 
+**The look is TWO of the four candidates, crossfaded by intensity** (owner,
+2026-08-24; `plugins/fire/client/flames/ribbonsToPlume.ts`). The order asked for
+was plume → ribbons; the renders inverted it, for a geometric reason worth
+recording because it will recur for any future flame:
+
+> A plume is a column standing at the tree's centre, and a crown is opaque. Its
+> height is 1.4× the fuel's, scaled by intensity, so below intensity ≈0.56 the
+> whole flame is shorter than the tree it stands in and is depth-culled by it. A
+> catching fire drawn as a plume rendered as NOTHING.
+
+Widening, brightening and raising its height floor were each tried and
+photographed; they give a translucent smear over the crown or a wisp at its tip.
+So the ribbons — which wrap the trunk and pool on the ground, outside the crown's
+silhouette — own the low end, and the plume takes over at 0.55, exactly the
+intensity at which its column starts to clear the tree. The handover is an
+EQUAL-POWER crossfade (√share, not share): two looks at 0.5 opacity read as two
+ghosts, because what must stay constant through a handover is energy, not sum.
+
 **The LOOK is behind an interface** (`plugins/fire/client/flames/types.ts`)
 because it is chosen from pictures and the sim had to ship first. Four
 candidates were authored and rendered for selection; the budget rules any
