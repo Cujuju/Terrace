@@ -166,4 +166,19 @@ export function resetWeatherState(): void {
 // Re-exported so tests and any future HUD can reach the tuning numbers through
 // the plugin's own entry point rather than by importing its internals.
 export { MAX_ACTIVE_SYSTEMS };
+
+/**
+ * THE WIND, re-exported for other plugins (2026-08-24, for fire's spread).
+ *
+ * Through the entry point rather than ./systems.ts for the reason the line
+ * above states, and it matters more for a cross-plugin reader than for a test:
+ * a bridge duck-types the module it imports (plugins/fire/server/weather-
+ * bridge.ts), so what this file exports IS this plugin's compatibility surface.
+ * A consumer reaching into ./systems.ts would be coupling to a file layout
+ * instead of to an API.
+ *
+ * Read-only by construction — `currentWind` returns the live object as
+ * Readonly, and only advanceWind ever writes it.
+ */
+export { currentWind } from './systems.ts';
 export type { WeatherWorld };

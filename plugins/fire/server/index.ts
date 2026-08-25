@@ -26,10 +26,13 @@
 // FIRE_SEND_EMPTY below, which is the one place fire's wire genuinely differs
 // from the static-content pattern it otherwise copies.
 //
-// WHAT IS NOT HERE YET, deliberately, because it is the next step and not this
-// one: spread from cell to cell, wind and slope bias, rain suppression,
-// lightning ignition, and the player's own ignite intent. `igniteAt` below is
-// the seam every one of those arrives through.
+// SPREAD lives in ./spread.ts and runs on its own slower cadence
+// (SPREAD_INTERVAL_SECONDS) — one product of one rate and three multipliers,
+// with the firebreak falling out of it rather than being written into it.
+//
+// WHAT IS NOT HERE YET, deliberately: rain suppression, lightning ignition, and
+// the player's own ignite intent. `igniteAt` below is the seam every one of
+// those arrives through.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
@@ -52,6 +55,8 @@ import {
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
 import { fuelSources } from './fuel.ts';
+import { SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
+import { loadWeatherBridge } from './weather-bridge.ts';
 
 /**
  * Simulated seconds between unsolicited re-broadcasts of the whole burning set.
@@ -117,6 +122,17 @@ let simSeconds = 0;
 
 /** Simulated time of the last full snapshot. */
 let lastKeepaliveSeconds = 0;
+
+/**
+ * Simulated seconds owed to the spread step, carried between ticks.
+ *
+ * Spread runs on a slower cadence than the tick (SPREAD_INTERVAL_SECONDS), and
+ * it is handed the WHOLE elapsed interval rather than one tick's dt — the rate
+ * arithmetic in ./spread.ts is expressed per second, so the two must agree
+ * about how much time a step covers or the game's balance silently follows the
+ * server's tick rate.
+ */
+let spreadDebtSeconds = 0;
 
 /**
  * Fires restored from a snapshot, held until onWorldCreate.
@@ -325,8 +341,14 @@ export const plugin: TerracePlugin = {
     // REPLACES rather than adds — the rollback contract (types.ts's
     // PersistenceSlice). A load()/onWorldCreate() pair may run again on a live
     // world, and a fire that survived that would be burning twice.
+    spreadDebtSeconds = 0;
     blaze.restore(restoredFires);
     restoredFires = [];
+
+    // THE CROSS-PLUGIN DEPENDENCY PATTERN, read-direction (./weather-bridge.ts):
+    // started, not awaited. Until it resolves — and forever, on a world with no
+    // weather plugin — the air is still and spread is isotropic.
+    loadWeatherBridge();
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -342,6 +364,17 @@ export const plugin: TerracePlugin = {
 
     const { burnedOut, stopped } = blaze.advance(dt);
 
+    // SPREAD, on its own cadence. Accumulated rather than run every tick, and
+    // capped at one interval so a stalled or resumed server cannot bank an
+    // unbounded debt and then spread the fire across the world in one step —
+    // flora's scanCredit is capped for the same reason.
+    spreadDebtSeconds = Math.min(spreadDebtSeconds + dt, SPREAD_INTERVAL_SECONDS);
+    let ignited: FireCellState[] = [];
+    if (spreadDebtSeconds >= SPREAD_INTERVAL_SECONDS) {
+      ignited = spreadOnce(world, blaze, spreadDebtSeconds);
+      spreadDebtSeconds = 0;
+    }
+
     // Route each finished fire back to the plugin whose stuff it consumed. The
     // source destroys what was there and broadcasts its own change; this plugin
     // never touches another plugin's state.
@@ -352,7 +385,7 @@ export const plugin: TerracePlugin = {
       }
     }
 
-    if (stopped.length > 0) broadcastChanges(world, [], stopped);
+    if (ignited.length > 0 || stopped.length > 0) broadcastChanges(world, ignited, stopped);
 
     if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) broadcastSnapshot(world);
   },
@@ -400,6 +433,7 @@ export function resetFireState(): void {
   currentWorld = null;
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
+  spreadDebtSeconds = 0;
   restoredFires = [];
   blaze.clear();
 }
