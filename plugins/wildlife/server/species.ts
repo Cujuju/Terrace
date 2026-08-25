@@ -96,6 +96,42 @@ export const AQUATIC_MAX_GRADIENT_PER_CELL = UNCONSTRAINED_GRADIENT_PER_CELL;
  */
 export const GRAZER_MAX_GRADIENT_PER_CELL = LAND_WALKER_MAX_GRADIENT_PER_CELL;
 
+/**
+ * How many of the eight compass directions must be walkable at a candidate
+ * spawn point before a GRAZER will be placed there — census.ts's
+ * `openDirectionCount`, read at a threshold.
+ *
+ * Owner, 2026-08-24: grazers should "spawn in fairly flat areas". Habitat
+ * validity alone cannot express that: `isValidCellFor` classifies ONE cell, and
+ * a one-cell pinnacle between two terrace risers is as valid as the middle of a
+ * meadow. So the flatness test is a test of the NEIGHBOURHOOD, measured in the
+ * only units this simulation has for "flat" — how far a land walker can
+ * actually get from here before a riser stops it.
+ *
+ * FIVE OF EIGHT: a majority of the compass, so the worst a grazer can be placed
+ * at is the edge of open ground, never in a notch, on a ledge or on a pinnacle.
+ * Not eight, which would demand a fully enclosed disc of level ground and would
+ * refuse the ordinary hillside a grazer belongs on; not four, which a saddle
+ * between two risers passes while being exactly the trap this exists to avoid.
+ *
+ * A SPAWN-TIME RULE ONLY. It is deliberately far above the ZERO at which
+ * `despawnWedged` (population.ts) removes a creature that has ended up walled
+ * in: a grazer is placed on generous ground and is only ever culled from ground
+ * that has become impossible, so ordinary grazing into a snug corner costs it
+ * nothing.
+ */
+export const GRAZER_SPAWN_OPEN_DIRECTIONS = 5;
+
+/**
+ * The vacuous threshold — "put me anywhere my habitat is". Every water species:
+ * a fish's shelf and a whale's basin have no risers in them by construction
+ * (AQUATIC_MAX_GRADIENT_PER_CELL), so a neighbourhood test could only ever
+ * refuse a spawn for being near a shoreline, which is precisely where a fish
+ * should be. Stated as a named value rather than a bare 0 so a profile says
+ * WHY it has no clearance rule.
+ */
+export const NO_SPAWN_CLEARANCE_REQUIRED = 0;
+
 // ── Size classes ─────────────────────────────────────────────────────────────
 //
 // Owner, 2026-08-14: "fish come in three sizes; smaller fish should be more
@@ -437,6 +473,21 @@ export interface SpeciesProfile {
    * for the one land species today. See those constants for the reasoning.
    */
   readonly maxGradientPerCell: number;
+
+  /**
+   * How many of the eight compass directions must be open — one body length of
+   * walkable, climbable ground (census.ts's `openDirectionCount`) — at a cell
+   * before this species may SPAWN there.
+   *
+   * The "fairly flat areas" dial (owner, 2026-08-24), and the same number the
+   * scattered members of a spawn group are placed against, so a triplet cannot
+   * arrive with two on the meadow and one on the riser above it.
+   *
+   * NO_SPAWN_CLEARANCE_REQUIRED for every water species, which is exactly the
+   * behaviour that shipped before this field existed; GRAZER_SPAWN_OPEN_
+   * DIRECTIONS for the one land species. See both constants.
+   */
+  readonly spawnOpenDirectionsRequired: number;
 }
 
 /**
@@ -490,6 +541,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     sizeDraw: 'per-group',
     schoolingProbabilityBySize: FISH_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
+    spawnOpenDirectionsRequired: NO_SPAWN_CLEARANCE_REQUIRED,
   },
   whale: {
     species: 'whale',
@@ -518,6 +570,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     sizeDraw: 'per-member',
     schoolingProbabilityBySize: WHALE_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
+    spawnOpenDirectionsRequired: NO_SPAWN_CLEARANCE_REQUIRED,
   },
   deepsea: {
     species: 'deepsea',
@@ -534,6 +587,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     sizeDraw: 'per-group',
     schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: AQUATIC_MAX_GRADIENT_PER_CELL,
+    spawnOpenDirectionsRequired: NO_SPAWN_CLEARANCE_REQUIRED,
   },
   grazer: {
     species: 'grazer',
@@ -573,6 +627,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     sizeDraw: 'per-group',
     schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: GRAZER_MAX_GRADIENT_PER_CELL,
+    spawnOpenDirectionsRequired: GRAZER_SPAWN_OPEN_DIRECTIONS,
   },
 };
 
