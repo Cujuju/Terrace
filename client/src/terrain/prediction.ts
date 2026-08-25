@@ -156,6 +156,18 @@ interface PendingPrediction {
   indices: number[];
   /** Height each of those cells held immediately after that application. */
   after: number[];
+  /**
+   * Whether that application involved a LAYERED COLUMN at all — either it
+   * left one standing, or it changed a cell the authoritative base holds a
+   * span list for.
+   *
+   * RECORDED AT APPLY TIME, and that is the whole point: `isConfirmed` runs
+   * after `restoreToBase` has already rolled this prediction off, so by then
+   * a split this prediction CREATED is gone from the live table and the
+   * question is unanswerable. Asking while the prediction's own effect is
+   * still standing is the only moment the answer exists.
+   */
+  touchedLayeredColumn: boolean;
 }
 
 export interface PredictionStore {
@@ -220,6 +232,15 @@ export interface PredictionStore {
   authoritativeHeightAt(x: number, y: number): number;
 }
 
+/**
+ * The one empty span snapshot, shared by every base that holds no layered
+ * column. Never written to — snapshots are only ever READ (`restoreBaseSpans`
+ * copies out of them, `isConfirmed` probes them) and the live table is
+ * mutated in place instead — so sharing it is what makes the un-carved world's
+ * reconciliation allocate nothing.
+ */
+const EMPTY_SPAN_SNAPSHOT: ReadonlyMap<number, Int16Array> = new Map();
+
 export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   const size = mirror.map.size;
   const rendered = mirror.map.cells;
@@ -229,6 +250,53 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
    * (design §3.4), and it means reconciliation never allocates.
    */
   const base = new Int16Array(rendered);
+
+  /**
+   * The base's SPAN side table, snapshotted alongside the height copy above
+   * and restored with it. Heights alone are not the whole authoritative
+   * state any more: a predicted carve can split a column into two spans, and
+   * a rollback that reset only `cells` would leave that split standing on
+   * top of authoritative heights after reconciliation — the mirror holding
+   * one player's predicted cave over the server's re-merged world, which is
+   * exactly the divergence this module exists to prevent.
+   *
+   * Values are COPIED Int16Arrays, never aliased ones: a replay (or the
+   * shared sculpt math itself) writes through `map.columnSpans`' backing
+   * stores via `setColumn`, and an alias would let the next prediction
+   * mutate the saved base out from under us.
+   */
+  let baseSpans = EMPTY_SPAN_SNAPSHOT;
+
+  /**
+   * Copies the live span table as the new base. FREE while nobody has
+   * carved: `columnSpans.size === 0` is the overwhelmingly common case (the
+   * table holds only columns with more than one span), so it returns the
+   * shared empty map and allocates nothing at all — this runs once per
+   * authoritative message, and the module's per-reconciliation cost must not
+   * grow for every player who never touches the carve tool.
+   */
+  const snapshotBaseSpans = (): void => {
+    const live = mirror.map.columnSpans;
+    if (live.size === 0) {
+      baseSpans = EMPTY_SPAN_SNAPSHOT;
+      return;
+    }
+    const snapshot = new Map<number, Int16Array>();
+    for (const [i, packed] of live) snapshot.set(i, new Int16Array(packed));
+    baseSpans = snapshot;
+  };
+
+  /**
+   * Puts the live span table back to the base's, copying values for the same
+   * aliasing reason as above. The both-empty check first keeps the common
+   * world free: no clear, no iteration, nothing written.
+   */
+  const restoreBaseSpans = (): void => {
+    const live = mirror.map.columnSpans;
+    if (live.size === 0 && baseSpans.size === 0) return;
+    live.clear();
+    for (const [i, packed] of baseSpans) live.set(i, new Int16Array(packed));
+  };
 
   let pending: PendingPrediction[] = [];
 
@@ -312,9 +380,19 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
 
     p.indices = [];
     p.after = [];
+    // Asked here, while this prediction's effect is still on the mirror: the
+    // live table therefore holds any split it just made, and `baseSpans` holds
+    // any split it just removed. Both make the prediction unconfirmable by
+    // height (see isConfirmed). Two size checks cover an un-carved world, so
+    // the ordinary player pays nothing.
+    const live = mirror.map.columnSpans;
+    const anyLayered = live.size !== 0 || baseSpans.size !== 0;
+    p.touchedLayeredColumn = false;
     for (const cell of diff) {
-      p.indices.push(cellIndex(mirror.map, cell.x, cell.y));
+      const i = cellIndex(mirror.map, cell.x, cell.y);
+      p.indices.push(i);
       p.after.push(cell.h);
+      if (anyLayered && (live.has(i) || baseSpans.has(i))) p.touchedLayeredColumn = true;
       for (const idx of chunksDirtiedByCell(size, cell.x, cell.y)) dirty.add(idx);
     }
   };
@@ -322,8 +400,14 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   /** Rolls every prediction off: the rendered map becomes pure authoritative. */
   const restoreToBase = (dirty: Set<number>): void => {
     if (pending.length === 0) return;
+    // Safe to skip the span table too when nothing is pending: every path
+    // that empties `pending` passes through here FIRST, so a zero-pending
+    // store always has the base's span table standing already. (The one
+    // writer that bypasses it, the dropped no-op prediction in `predict`,
+    // changed no cells and so created no split.)
     for (const p of pending) addJournalChunks(p, dirty);
     rendered.set(base);
+    restoreBaseSpans();
   };
 
   const replayPending = (dirty: Set<number>): void => {
@@ -356,8 +440,22 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
    *
    * A prediction with no comparable cells at all is never confirmed: zero
    * evidence must not read as agreement.
+   *
+   * Nor is a prediction that TOUCHED A LAYERED COLUMN confirmed by heights,
+   * even matching ones: two different span lists can share a topmost ceiling
+   * (a column whose roof got a window cut under it stands at the same
+   * `cells[i]`), so value agreement there would retire a prediction whose
+   * SPAN structure the server never applied — a hole the client drew shut.
+   * "Touched" is a flag the prediction RECORDED WHEN IT WAS APPLIED, not a
+   * probe of the tables now: by the time this runs the prediction has been
+   * rolled off, so a split it created is already gone and probing here would
+   * confirm exactly the case it is meant to refuse. See
+   * `PendingPrediction.touchedLayeredColumn`. Such a prediction still
+   * reconciles through its ack (`resolveSeq`, the primary path since issue
+   * #21) or falls to the deadline; this fallback simply refuses to guess.
    */
   const isConfirmed = (p: PendingPrediction): boolean => {
+    if (p.touchedLayeredColumn) return false;
     let comparable = 0;
     for (let k = 0; k < p.indices.length; k++) {
       const i = p.indices[k];
@@ -397,6 +495,9 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
         createdAtMs: nowMs,
         indices: [],
         after: [],
+        // Overwritten by the applyPrediction below, which is the only thing
+        // that can answer it; false until then, matching the empty journal.
+        touchedLayeredColumn: false,
       };
       pending.push(prediction);
       applyPrediction(prediction, dirty);
@@ -425,7 +526,11 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       //    would mean duplicating the mirror's writers — the exact drift the
       //    single-source-of-truth rule exists to prevent. At the design's
       //    budget of a diff per tick this is far below the frame budget.
+      //    The span side table is snapshotted with it, so the base stays the
+      //    COMPLETE column state (see `snapshotBaseSpans`) — free until
+      //    someone has actually carved a layer.
       base.set(rendered);
+      snapshotBaseSpans();
 
       // 4. Retire what the server has now confirmed or what has run out of
       //    time, then put the survivors back on top. Retiring is not restricted
