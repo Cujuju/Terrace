@@ -17,7 +17,7 @@ import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
 import { addPluginTool, clearPluginTools } from './toolbar.ts';
-import type { ClientPluginCtx, TerraceClientPlugin } from './types.ts';
+import type { ClientPluginCtx, MoverPose, TerraceClientPlugin } from './types.ts';
 
 export interface ClientPluginHost {
   /**
@@ -176,6 +176,27 @@ export function createClientPluginHost(
     return pickTerrainCell(clientX, clientY);
   };
 
+  /**
+   * One pose lookup per publishing plugin (ClientPluginCtx.publishMovers),
+   * keyed by plugin name — the same by-name addressing the wire and the
+   * server's world events use, and for the same reason: it is unforgeable and
+   * needs no import.
+   */
+  const moverLookups = new Map<string, (id: number) => MoverPose | null>();
+
+  const moverPose = (pluginName: string, id: number): MoverPose | null => {
+    const lookup = moverLookups.get(pluginName);
+    if (lookup === undefined) return null;
+    // A publisher that throws answers "I am not drawing that" rather than
+    // taking down its reader's frame — the same degradation every other
+    // plugin-supplied callback here gets.
+    try {
+      return lookup(id);
+    } catch {
+      return null;
+    }
+  };
+
   for (const plugin of plugins) {
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
@@ -244,6 +265,17 @@ export function createClientPluginHost(
       },
       pickTerrainCell,
       pickWorldCell,
+      moverPose,
+      publishMovers(lookup: (id: number) => MoverPose | null): () => void {
+        // Last publisher wins rather than first: unlike the sky rig there is
+        // nothing to arbitrate — a plugin publishes its OWN things under its
+        // OWN name, so a second call is the same plugin replacing its own
+        // lookup (a re-attach), never a rival claiming someone else's.
+        moverLookups.set(plugin.name, lookup);
+        return () => {
+          if (moverLookups.get(plugin.name) === lookup) moverLookups.delete(plugin.name);
+        };
+      },
       markPickable(object: Object3D): () => void {
         if (!pickableObjects.includes(object)) pickableObjects.push(object);
         return () => {

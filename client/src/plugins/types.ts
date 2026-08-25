@@ -66,6 +66,19 @@ export interface SkyRigState {
   readonly backgroundColor: number;
 }
 
+/**
+ * Where something is drawn, in WORLD units — three's own space, the same
+ * coordinates `ClientPluginCtx.layer` is in, not cell space.
+ *
+ * `y` is the point the thing STANDS ON (its feet, a hull's waterline), not its
+ * centre or its top: whatever is attached to it is attached at the ground.
+ */
+export interface MoverPose {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
 export interface ClientPluginCtx {
   /**
    * Plugin-owned Three.js layer, already parented into the scene. Everything
@@ -230,6 +243,38 @@ export interface ClientPluginCtx {
    * inner loop.
    */
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
+
+  /**
+   * Publishes where THIS plugin's movable things are drawn, so that another
+   * plugin can draw something ON one of them. Returns an unpublish function.
+   *
+   * A NEUTRAL PRIMITIVE, deliberately — core's answer to the same problem
+   * WorldApi.emitEvent solves on the server (design §"World events"): a plugin
+   * addresses another BY NAME and validates what it gets structurally, never by
+   * importing it. Core knows nothing about what is being drawn or why; it holds
+   * one lookup per plugin and hands it to whoever asks.
+   *
+   * WHY A LOOKUP AND NOT A LIST OF POSITIONS. The reader needs the pose the
+   * OWNER IS DRAWING RIGHT NOW, after that plugin's own interpolation — a
+   * position copied out and re-interpolated separately drifts away from the
+   * body it is supposed to be attached to, which is precisely the bug a flame
+   * on a running animal would be made of. Answering per id, per frame, from the
+   * owner's own draw state is what makes that impossible rather than unlikely.
+   *
+   * `id` is the plugin's own id for the thing, the same one its wire protocol
+   * uses. Null for an id it no longer has, or is not currently drawing.
+   */
+  publishMovers(lookup: (id: number) => MoverPose | null): () => void;
+
+  /**
+   * Where another plugin's movable thing is drawn right now — the reading half
+   * of `publishMovers`. Null when that plugin publishes nothing, does not have
+   * the id, or is not drawing it this frame.
+   *
+   * Cheap enough for a per-frame call: one map lookup and the owner's own
+   * answer.
+   */
+  moverPose(pluginName: string, id: number): MoverPose | null;
 
   /**
    * The client-side mirror of the server's onIntent interceptor chain: lets a

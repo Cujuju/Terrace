@@ -320,3 +320,129 @@ export function parseChangesPayload(
   if (ignited === null || extinguished === null) return null;
   return { ignited, extinguished };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// FIRE THAT WALKS
+//
+// A cell fire is anchored to the ground and everything above derives from that.
+// A creature is not: it catches, it keeps moving, and it dies where it happens
+// to be standing when its time runs out. So a burning ENTITY is a second kind
+// of fire, and it is a genuinely different thing rather than a cell fire with a
+// moving position — which is why it gets its own message rather than a sixth
+// integer on the old one.
+//
+// WHAT TRAVELS, AND WHAT POINTEDLY DOES NOT: the position. It is not on this
+// wire at all. The owning plugin is already drawing the creature, interpolated
+// its own way, sixty times a second; the flame is drawn at THAT pose, read from
+// the owner through the host's neutral mover lookup (ClientPluginCtx.
+// publishMovers). Sending a position here would mean two independent
+// interpolations of one animal, and the flame would slide off the body — the
+// same failure as a river modelled beside its own valley instead of from it.
+//
+// THE WHOLE SET, EVERY TIME, rather than deltas. A burning herd is a handful of
+// entities where a wildfire is hundreds of cells, so the saving a delta would
+// buy is a few bytes — and a full set cannot leave a client holding a fire the
+// server has forgotten about, which is worth more than the bytes.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Server → client, the whole set of burning entities (`fire:entities`). */
+export const FIRE_ENTITIES_MESSAGE = 'entities';
+
+/**
+ * How many things may be alight AT ONCE, over and above the burning cells.
+ *
+ * Far below FIRE_CELL_CAP and for a different reason: every burning entity
+ * costs a per-frame pose lookup through its owner and a flame instance, and a
+ * world where sixty animals are alight at once is not a harder version of a
+ * herd catching — it is a stampede nobody designed. When the cap binds, further
+ * ignitions simply fail, exactly as they do for cells.
+ */
+export const FIRE_ENTITY_CAP = 48;
+
+/**
+ * One burning thing, as it travels and as both halves hold it.
+ *
+ * `sourceName` is the OWNING PLUGIN's name — the same by-name addressing the
+ * server-side fuel registry and the client-side mover lookup both use, so the
+ * client can ask the right plugin where this creature is without knowing what
+ * kind of creature it is.
+ */
+export interface FireEntityState {
+  readonly sourceName: string;
+  readonly id: number;
+  /** Flame size in world units, as ./server/fuel.ts's CellFuel.height. */
+  readonly fuelHeight: number;
+  /** Age at the moment of sending; the receiver advances it with its own clock. */
+  readonly ageSeconds: number;
+  /** The whole life of this fire, fixed when it caught. */
+  readonly burnSeconds: number;
+}
+
+/** Identity of one burning entity: its owner's name and its owner's id. */
+export function fireEntityKey(sourceName: string, id: number): string {
+  return `${sourceName}#${id}`;
+}
+
+/** How many integers one burning entity occupies in the flat wire form. */
+export const FIRE_ENTITY_WIRE_STRIDE = 5;
+
+/**
+ * Packs the set as a SOURCE TABLE plus flat integers — `[sourceIndex, id,
+ * height, age, burn, …]`.
+ *
+ * The table exists because the one non-integer a burning entity carries is its
+ * owner's name, and repeating "wildlife" once per animal would cost more than
+ * everything else on this wire put together. There are at most a handful of
+ * distinct sources in any world.
+ */
+export function packEntities(entities: Iterable<FireEntityState>): {
+  sources: string[];
+  entities: number[];
+} {
+  const sources: string[] = [];
+  const packed: number[] = [];
+  for (const entity of entities) {
+    let index = sources.indexOf(entity.sourceName);
+    if (index === -1) index = sources.push(entity.sourceName) - 1;
+    packed.push(
+      index,
+      entity.id,
+      toFixed(entity.fuelHeight),
+      toFixed(entity.ageSeconds),
+      toFixed(entity.burnSeconds),
+    );
+  }
+  return { sources, entities: packed };
+}
+
+/**
+ * Defensive parse, to the same rule as parseFires: a malformed entry is dropped
+ * on its own, a payload that is not the right shape at all yields null so the
+ * caller can ignore the message whole, and the count is capped.
+ */
+export function parseEntitiesPayload(payload: unknown): FireEntityState[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const { sources, entities } = payload as { sources?: unknown; entities?: unknown };
+  if (!Array.isArray(sources) || !Array.isArray(entities)) return null;
+  for (const name of sources) {
+    if (typeof name !== 'string') return null;
+  }
+
+  const parsed: FireEntityState[] = [];
+  for (let i = 0; i + FIRE_ENTITY_WIRE_STRIDE - 1 < entities.length; i += FIRE_ENTITY_WIRE_STRIDE) {
+    if (parsed.length >= FIRE_ENTITY_CAP) break;
+    const [sourceIndex, id, height, age, burn] = entities.slice(i, i + FIRE_ENTITY_WIRE_STRIDE);
+    if (!isWireInteger(sourceIndex) || sourceIndex >= sources.length) continue;
+    if (typeof id !== 'number' || !Number.isInteger(id) || id < 0) continue;
+    if (!isWireInteger(height) || !isWireInteger(age) || !isWireInteger(burn)) continue;
+    if (burn <= 0) continue;
+    parsed.push({
+      sourceName: sources[sourceIndex] as string,
+      id,
+      fuelHeight: fromFixed(height),
+      ageSeconds: fromFixed(age),
+      burnSeconds: fromFixed(burn),
+    });
+  }
+  return parsed;
+}

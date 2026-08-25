@@ -104,10 +104,14 @@ import { FLEE_DURATION_SECONDS, advanceMovement, startleNear } from './movement.
 import { loadPopulation, savePopulation } from './persistence.ts';
 import {
   advancePopulation,
+  burnableEntityAt,
   despawnInvalidHabitat,
+  entityPosition,
   entityStates,
+  killEntities,
   resetPopulation,
 } from './population.ts';
+import { loadFireBridge, registerWildlifeFuel } from './fire-bridge.ts';
 
 /**
  * Ticks between broadcasts. 2 → 5 Hz at the shipped TICK_HZ of 10. See the
@@ -250,6 +254,48 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
  * resets the shared entity-id counter (population.ts), so any flock still aloft
  * would be holding ids the counter is about to hand out again.
  */
+// ────────────────────────────────────────────────────────────────────────────
+// Fire
+//
+// An animal is flammable, and unlike a tree it runs while it burns — so this
+// plugin registers into fire's ENTITY registry (plugins/fire/server/
+// entityFuel.ts), which asks it every tick where the creature has got to and
+// tells it, at the end, which of its animals died of it.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a burning animal lives, in simulated seconds.
+ *
+ * SHORT, and shorter than anything else that burns (a tree is 22 s, a home 30):
+ * a creature on fire is a death, not a bonfire, and the number is how long the
+ * player watches it run before it drops. Long enough to see it happen and to
+ * see which way it ran — into the wood, into the water — because that run is
+ * the whole reason this is an entity fire and not a cell one.
+ */
+export const WILDLIFE_BURN_SECONDS = 8;
+
+/**
+ * Flame size for a burning animal, in world units.
+ *
+ * A grazer's body is 1.1 world units long (./species.ts's bodyLengthCells) and
+ * it stands well under that; 0.6 puts the flame at roughly the animal's own
+ * height, so it reads as the creature alight rather than as a bonfire it is
+ * standing inside. Restated here rather than imported from a client model, for
+ * flora's reason: the server must not load a THREE-dependent module.
+ */
+export const WILDLIFE_FUEL_HEIGHT = 0.6;
+
+/**
+ * A fire finished on these: they burned to death.
+ *
+ * Nothing else to do — the next full-state broadcast (this plugin sends one
+ * every other tick) simply does not contain them, which is exactly how every
+ * other way of losing an animal already reads on the wire.
+ */
+function wildlifeBurnedOut(ids: readonly number[]): void {
+  killEntities(ids);
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return savePopulation();
@@ -262,6 +308,27 @@ const persistence: PersistenceSlice = {
 
 export const plugin: TerracePlugin = {
   name: WILDLIFE_PLUGIN_NAME,
+
+  onWorldCreate(): void {
+    // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
+    // started, not awaited, and the registration is buffered and replayed if
+    // fire has not resolved yet. This plugin needs no world of its own here —
+    // every callback below answers from the population, not from the map.
+    loadFireBridge();
+    registerWildlifeFuel({
+      name: WILDLIFE_PLUGIN_NAME,
+      entityAt: (x: number, y: number) => {
+        const entity = burnableEntityAt(x, y);
+        if (entity === null) return null;
+        return {
+          id: entity.id,
+          fuel: { burnSeconds: WILDLIFE_BURN_SECONDS, height: WILDLIFE_FUEL_HEIGHT },
+        };
+      },
+      positionOf: entityPosition,
+      onBurnedOut: wildlifeBurnedOut,
+    });
+  },
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);

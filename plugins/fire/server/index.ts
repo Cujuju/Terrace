@@ -60,15 +60,22 @@ import {
   FIRE_BURNED_EVENT,
   FIRE_CELL_CAP,
   FIRE_CHANGES_MESSAGE,
+  FIRE_ENTITY_CAP,
+  FIRE_ENTITIES_MESSAGE,
   FIRE_FIRES_MESSAGE,
   FIRE_IGNITE_MESSAGE,
   FIRE_PLUGIN_NAME,
   parseIgnitePayload,
+  fireEntityKey,
   packCells,
+  packEntities,
   packFires,
   type FireCellState,
+  type FireEntityState,
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
+import { EntityBlaze } from './entityBlaze.ts';
+import { entityFuelAt, entityFuelSource } from './entityFuel.ts';
 import { fuelAt, fuelSources } from './fuel.ts';
 import { fireRandom, happensWithin } from './rng.ts';
 import { SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
@@ -128,6 +135,14 @@ const FIRE_SKIP_EMPTY = { skipEmpty: true } as const;
 const blaze = new Blaze();
 
 /**
+ * The things that are alight and WALKING — creatures, boats, anything whose
+ * position is somebody else's business (./entityBlaze.ts). Kept beside `blaze`
+ * rather than inside it because the two answer different questions; what they
+ * share is the burn, and only the burn.
+ */
+const entityBlaze = new EntityBlaze();
+
+/**
  * The live world, stashed at onWorldCreate so `igniteAt` can be called from
  * outside a hook — by the weather plugin's lightning, and later by the player's
  * own ignite intent. Null before the world exists, which doubles as the guard
@@ -177,6 +192,9 @@ let spreadDebtSeconds = 0;
  * way and for the same reason.
  */
 let restoredFires: Array<FireCellState & { readonly sourceName: string }> = [];
+
+/** Burning individuals restored from a snapshot, held until onWorldCreate. */
+let restoredEntities: FireEntityState[] = [];
 
 // ────────────────────────────────────────────────────────────────────────────
 // Wire
@@ -238,6 +256,42 @@ function broadcastChanges(
 }
 
 /**
+ * The whole burning-entity set, to everyone who can see any of it.
+ *
+ * VISIBILITY IS BY CURRENT POSITION, asked of the owner right now — a burning
+ * animal that runs into a player's territory becomes visible to them at the
+ * next send, and one that runs out stops being. An individual whose owner can
+ * no longer place it is left out entirely rather than sent at a stale position.
+ *
+ * `skipEmpty: false`, for FIRE_SEND_EMPTY's reason exactly: this set SHRINKS,
+ * and a client that is never told about the shrink keeps drawing a flame on an
+ * animal that is no longer on fire.
+ */
+function broadcastEntities(world: WorldApi): void {
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const at of entityBlaze.positions()) {
+    positions.set(fireEntityKey(at.sourceName, at.id), { x: at.x, y: at.y });
+  }
+
+  const placed = entityBlaze
+    .entities()
+    .filter((entity) => positions.has(fireEntityKey(entity.sourceName, entity.id)));
+
+  world.broadcastVisible(
+    FIRE_ENTITIES_MESSAGE,
+    placed,
+    (entity) => {
+      const at = positions.get(fireEntityKey(entity.sourceName, entity.id))!;
+      // Cell-space is fractional for a moving thing; visibility is asked per
+      // CELL, so it is floored to the cell the creature is standing in.
+      return { x: Math.floor(at.x), y: Math.floor(at.y) };
+    },
+    (visible) => packEntities(visible),
+    FIRE_SEND_EMPTY,
+  );
+}
+
+/**
  * THE TARGETED-REFRESH PATH (issue #18): a player who has just unlocked a chunk
  * is sent the fires already burning inside it, rather than waiting up to a
  * keepalive.
@@ -287,6 +341,26 @@ export function igniteAt(x: number, y: number): boolean {
 }
 
 /**
+ * Lights whatever MOVING thing is standing on this cell — the walking half of
+ * `igniteAt` (./entityBlaze.ts). True when something caught.
+ *
+ * A separate entry point rather than a branch inside `igniteAt` because the two
+ * have different callers and different meanings: a firebreak dug through a cell
+ * puts out the cell's fire, and does nothing whatever to an animal that was
+ * standing on it and has since run somewhere else.
+ */
+export function igniteEntityAt(x: number, y: number): boolean {
+  const world = currentWorld;
+  if (world === null) return false;
+
+  const fire = entityBlaze.igniteAtCell(x, y);
+  if (fire === null) return false;
+
+  broadcastEntities(world);
+  return true;
+}
+
+/**
  * Puts out these cells without consuming their fuel — the "we saved it" path
  * (blaze.ts's header). Exported for the rain suppression that is coming, and
  * used already by onTerrainChanged below.
@@ -311,6 +385,12 @@ export function burningCells(): FireCellState[] {
 // duck-types this entry point, and asking it to reach into ./fuel.ts as well
 // would make the bridge's shape depend on this plugin's internal file layout.
 export { registerFuel, unregisterFuel, type CellFuel, type FuelSource } from './fuel.ts';
+export {
+  registerEntityFuel,
+  unregisterEntityFuel,
+  type EntityFuel,
+  type EntityFuelSource,
+} from './entityFuel.ts';
 
 /**
  * Emits the finished wildfire, if anything actually burned.
@@ -365,6 +445,25 @@ function suppressWithRain(dt: number): FuelCell[] {
 }
 
 /**
+ * The same rain, on the things that are running around alight — asked at WHERE
+ * EACH ONE IS NOW, not where it caught.
+ *
+ * Returns how many went out. A creature the rain saves is scorched and alive:
+ * this is the extinguish path, so nothing is consumed and its owner is not
+ * told, exactly as a rained-out tree is left standing.
+ */
+function suppressEntitiesWithRain(dt: number): number {
+  const drenched: Array<{ sourceName: string; id: number }> = [];
+  for (const at of entityBlaze.positions()) {
+    const wetness = precipitationAt(Math.floor(at.x), Math.floor(at.y));
+    if (wetness <= 0) continue;
+    if (!happensWithin(RAIN_SUPPRESSION_RATE_PER_SECOND * wetness, dt)) continue;
+    drenched.push({ sourceName: at.sourceName, id: at.id });
+  }
+  return entityBlaze.extinguish(drenched);
+}
+
+/**
  * Chance that a bolt landing on something flammable sets it alight.
  *
  * NOT 1, and the difference is the whole feel of the mechanic: most lightning
@@ -372,11 +471,13 @@ function suppressWithRain(dt: number): FuelCell[] {
  * that every bolt starts a fire stops watching storms and starts dreading them.
  *
  * THE ARITHMETIC IT LANDS AT, on a mature world: flora plants roughly one tree
- * per FLORA_CELLS_PER_TREE (12) eligible cells, so a bolt aimed by height alone
- * (weather/server/lightning.ts) lands on fuel maybe one time in twelve; at 0.35
- * that is ~3% of bolts starting a fire, and a storm throwing a dozen bolts over
- * its life starts one about a third of the time it crosses woodland. Rare
- * enough to be an event, common enough that a long game sees several.
+ * per FLORA_CELLS_PER_TREE (8) eligible cells (retuned down from 12, 2026-08-25,
+ * owner asked for a denser forest), so a bolt aimed by height alone
+ * (weather/server/lightning.ts) lands on fuel maybe one time in eight; at 0.35
+ * that is ~4% of bolts starting a fire, and a storm throwing a dozen bolts over
+ * its life starts one about half the time it crosses woodland — slightly more
+ * often than before the retune, an accepted knock-on. Rare enough to be an
+ * event, common enough that a long game sees several.
  */
 export const LIGHTNING_IGNITION_CHANCE = 0.35;
 
@@ -392,7 +493,13 @@ export const LIGHTNING_IGNITION_CHANCE = 0.35;
 function igniteStruckCells(cells: readonly { readonly x: number; readonly y: number }[]): void {
   for (const cell of cells) {
     if (fireRandom() >= LIGHTNING_IGNITION_CHANCE) continue;
+    // ONE ROLL, BOTH REGISTRIES. The roll is about the BOLT — whether this
+    // strike started a fire at all — not about what happened to be standing
+    // under it, so a bolt that lands on an animal in a wood lights both, and a
+    // second roll would make being struck twice as survivable for a grazer as
+    // for the tree it is sheltering under.
     igniteAt(cell.x, cell.y);
+    igniteEntityAt(cell.x, cell.y);
   }
 }
 
@@ -444,12 +551,29 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
   if (request === null) return;
   if (request.x >= world.worldSize || request.y >= world.worldSize) return;
   if (!world.isCellVisibleTo(player.id, request.x, request.y)) return;
-  if (blaze.isBurning(request.x, request.y)) return;
-  if (blaze.size >= FIRE_CELL_CAP) return;
-  if (fuelAt(request.x, request.y) === null) return;
+
+  // WHAT WOULD CATCH, decided in full BEFORE a single mana is spent — the same
+  // no-refund rule as before, now over two registries. Both are asked, because
+  // a torch put to a cell lights what is THERE: the wood, and the animal
+  // standing in it. One payment either way; a player who happened to catch a
+  // grazer under the tree they were aiming at has not bought anything extra,
+  // they have set fire to the same patch of world.
+  const cellCatches =
+    !blaze.isBurning(request.x, request.y) &&
+    blaze.size < FIRE_CELL_CAP &&
+    fuelAt(request.x, request.y) !== null;
+
+  const standing = entityFuelAt(request.x, request.y);
+  const entityCatches =
+    standing !== null &&
+    !entityBlaze.isBurning(standing.source.name, standing.id) &&
+    entityBlaze.size < FIRE_ENTITY_CAP;
+
+  if (!cellCatches && !entityCatches) return;
   if (!chargeMana(world, player.id, IGNITE_MANA_COST)) return;
 
-  igniteAt(request.x, request.y);
+  if (cellCatches) igniteAt(request.x, request.y);
+  if (entityCatches) igniteEntityAt(request.x, request.y);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -468,11 +592,12 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
  */
 const persistence: PersistenceSlice = {
   save(): unknown {
-    return { fires: blaze.entries() };
+    return { fires: blaze.entries(), entities: entityBlaze.entities() };
   },
 
   load(data: unknown): void {
     restoredFires = [];
+    restoredEntities = [];
     if (typeof data !== 'object' || data === null) return;
     const fires = (data as { fires?: unknown }).fires;
     if (!Array.isArray(fires)) return;
@@ -499,6 +624,32 @@ const persistence: PersistenceSlice = {
         sourceName: fire.sourceName,
       });
     }
+
+    // A snapshot written before fire could burn anything that walks has no
+    // `entities` key at all, and that is not a corrupt slice — it is an older
+    // world, which restores with nothing alight and is exactly right.
+    const entities = (data as { entities?: unknown }).entities;
+    if (!Array.isArray(entities)) return;
+    for (const entry of entities) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const entity = entry as Partial<FireEntityState>;
+      if (
+        typeof entity.sourceName !== 'string' ||
+        typeof entity.id !== 'number' ||
+        typeof entity.fuelHeight !== 'number' ||
+        typeof entity.ageSeconds !== 'number' ||
+        typeof entity.burnSeconds !== 'number'
+      ) {
+        continue;
+      }
+      restoredEntities.push({
+        sourceName: entity.sourceName,
+        id: entity.id,
+        fuelHeight: entity.fuelHeight,
+        ageSeconds: entity.ageSeconds,
+        burnSeconds: entity.burnSeconds,
+      });
+    }
   },
 };
 
@@ -521,6 +672,8 @@ export const plugin: TerracePlugin = {
     episodeOrigin = null;
     blaze.restore(restoredFires);
     restoredFires = [];
+    entityBlaze.restore(restoredEntities);
+    restoredEntities = [];
 
     // THE CROSS-PLUGIN DEPENDENCY PATTERN, read-direction (./weather-bridge.ts):
     // started, not awaited. Until it resolves — and forever, on a world with no
@@ -534,10 +687,10 @@ export const plugin: TerracePlugin = {
   onTick(world: WorldApi, dt: number): void {
     simSeconds += dt;
 
-    // A world with nothing alight costs one comparison per tick. Everything
+    // A world with nothing alight costs two comparisons per tick. Everything
     // below — the advance, the keepalive, the empty snapshot FIRE_SEND_EMPTY
     // exists for — is work that only a burning world pays for.
-    if (blaze.size === 0) {
+    if (blaze.size === 0 && entityBlaze.size === 0) {
       lastKeepaliveSeconds = simSeconds;
       return;
     }
@@ -569,6 +722,29 @@ export const plugin: TerracePlugin = {
       }
     }
 
+    // THE WALKING FIRES, advanced on the same clock as the cells and routed the
+    // same way: each source is told which of ITS individuals died of it and
+    // destroys them itself, and this plugin touches nobody else's state.
+    //
+    // AFTER the cell burnouts above, for that block's own reason applied to
+    // creatures: a source asked to destroy an animal has to be asked while it
+    // still has it, and it must not be asked twice.
+    const walking = entityBlaze.advance(dt);
+    let entitiesChanged = walking.changed;
+    if (walking.burnedOut.size > 0) {
+      for (const [sourceName, ids] of walking.burnedOut) {
+        const source = entityFuelSource(sourceName);
+        if (source === null || ids.length === 0) continue;
+        source.onBurnedOut(ids);
+        // NOT counted into the wildfire episode: the episode is a story about
+        // how much of the WORLD burned (chronicle's "a fire took forty trees"),
+        // and folding animals into that count would make the sentence a lie
+        // about trees. What burning livestock deserves is its own line, which
+        // is a chronicle change, not a change to this counter.
+      }
+    }
+    if (suppressEntitiesWithRain(dt) > 0) entitiesChanged = true;
+
     // SPREAD, on its own cadence. Accumulated rather than run every tick, and
     // capped at one interval so a stalled or resumed server cannot bank an
     // unbounded debt and then spread the fire across the world in one step —
@@ -589,11 +765,21 @@ export const plugin: TerracePlugin = {
 
     const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
     if (ignited.length > 0 || ended.length > 0) broadcastChanges(world, ignited, ended);
+    // THE WHOLE SET on any change (../protocol.ts): a burning herd is small
+    // enough that a delta would save bytes nobody is short of, and a full set
+    // cannot leave a client drawing a flame on an animal that stopped burning.
+    if (entitiesChanged) broadcastEntities(world);
 
     // The world just stopped burning: whatever that fire was, it is over.
     if (blaze.size === 0) endEpisode(world);
 
-    if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) broadcastSnapshot(world);
+    if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) {
+      broadcastSnapshot(world);
+      // The walking fires re-anchor on the SAME cadence, and they need it more:
+      // their visibility changes as they move, so a player who was not told
+      // about one because it was out of sight has to be told when it runs in.
+      broadcastEntities(world);
+    }
   },
 
   /**
@@ -636,6 +822,10 @@ export const plugin: TerracePlugin = {
       (visible) => ({ fires: packFires(visible) }),
       { skipEmpty: false, onlyPlayerId: player.id },
     );
+    // The walking fires are sent to EVERYONE rather than to the joiner alone:
+    // this set is broadcast whole, and it is small. Filtering it per recipient
+    // would be a second code path for a message that is a handful of bytes.
+    broadcastEntities(world);
   },
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
@@ -658,5 +848,7 @@ export function resetFireState(): void {
   episodeConsumed = 0;
   episodeOrigin = null;
   restoredFires = [];
+  restoredEntities = [];
   blaze.clear();
+  entityBlaze.clear();
 }
