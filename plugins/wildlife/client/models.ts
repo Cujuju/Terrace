@@ -63,6 +63,21 @@ const FISH_COLOR = 0xe8a13c; // warm orange against blue shallows
 const WHALE_COLOR = 0x39506b; // dark slate; big, so it needs no help
 const DEEPSEA_COLOR = 0x161c26; // near-black, an abyssal silhouette
 const DEEPSEA_LURE_COLOR = 0xa8fbff; // the one bright thing down there
+/**
+ * Uniform scale on the grazer's authored dimensions, applied at authoring time
+ * so the geometry itself is the shipped size (nothing downstream has to know).
+ *
+ * Owner, 2026-08-24: grazers read as oversized beside the settlers. Authored at
+ * 1.0 a grazer stands 0.93 world units tall against PILGRIM_HEIGHT 0.62, i.e.
+ * half again as tall as a Rudy or an Uno; 0.4 puts it at ~0.37 — plainly a
+ * smaller animal than the people who live beside it, without shrinking to the
+ * rodent scale a literal one-fifth would give.
+ *
+ * WALKER_FOOTPRINT_HALF_EXTENT (client/placement.ts) is derived from the body
+ * length this scales, and moves with it.
+ */
+const GRAZER_SCALE = 0.4;
+
 const GRAZER_BODY_COLOR = 0xa8814f; // tan, warmer than any terrain band
 const GRAZER_LEG_COLOR = 0x6d5334;
 /**
@@ -96,7 +111,7 @@ const FISH_TAIL_SWING_RADIANS = 0.55;
 const WHALE_FLUKE_SWING_RADIANS = 0.3;
 const DEEPSEA_SWAY_RADIANS = 0.22;
 /** Vertical travel of the walk bob, in world units (= cells). */
-const GRAZER_BOB_AMPLITUDE = 0.05;
+const GRAZER_BOB_AMPLITUDE = 0.05 * GRAZER_SCALE;
 /** How far the lure bobs on its stalk, in world units. */
 const DEEPSEA_LURE_BOB = 0.05;
 /**
@@ -243,9 +258,13 @@ export function createWildlifeModels(): WildlifeModels {
 
   const grazerBodyMaterial = lambert(GRAZER_BODY_COLOR);
   const grazerLegMaterial = lambert(GRAZER_LEG_COLOR);
-  const grazerBody = keepGeometry(new BoxGeometry(0.85, 0.4, 0.45));
-  const grazerHead = ellipsoid(0.34, 0.3, 0.28);
-  const grazerLeg = keepGeometry(new BoxGeometry(0.1, 0.42, 0.1));
+  const grazerBody = keepGeometry(
+    new BoxGeometry(0.85 * GRAZER_SCALE, 0.4 * GRAZER_SCALE, 0.45 * GRAZER_SCALE),
+  );
+  const grazerHead = ellipsoid(0.34 * GRAZER_SCALE, 0.3 * GRAZER_SCALE, 0.28 * GRAZER_SCALE);
+  const grazerLeg = keepGeometry(
+    new BoxGeometry(0.1 * GRAZER_SCALE, 0.42 * GRAZER_SCALE, 0.1 * GRAZER_SCALE),
+  );
 
   /** Mesh helper: shared geometry + material, positioned in the rig. */
   function part(
@@ -364,18 +383,20 @@ export function createWildlifeModels(): WildlifeModels {
 
   const grazerRig = (() => {
     const { root, rig } = rigged();
-    // Origin at the feet: legs occupy y 0…0.42, body sits on top of them.
-    const legY = 0.21;
-    const bodyY = 0.62;
+    // Origin at the feet: legs occupy y 0…0.42, body sits on top of them. Every
+    // offset here is an authored dimension, so it takes GRAZER_SCALE too — a
+    // scaled body on unscaled offsets is a floating head and detached legs.
+    const legY = 0.21 * GRAZER_SCALE;
+    const bodyY = 0.62 * GRAZER_SCALE;
     rig.add(part(grazerBody, grazerBodyMaterial, 0, bodyY, 0));
-    rig.add(part(grazerHead, grazerBodyMaterial, 0.5, bodyY + 0.16, 0));
+    rig.add(part(grazerHead, grazerBodyMaterial, 0.5 * GRAZER_SCALE, bodyY + 0.16 * GRAZER_SCALE, 0));
     for (const [lx, lz] of [
       [0.3, 0.16],
       [0.3, -0.16],
       [-0.3, 0.16],
       [-0.3, -0.16],
     ] as const) {
-      rig.add(part(grazerLeg, grazerLegMaterial, lx, legY, lz));
+      rig.add(part(grazerLeg, grazerLegMaterial, lx * GRAZER_SCALE, legY, lz * GRAZER_SCALE));
     }
     return bakeSpecies(root, { rig });
   })();
