@@ -173,6 +173,7 @@ export const plugin: TerracePlugin = {
         return {
           id: boat.id,
           fuel: { burnSeconds: BOATS_BURN_SECONDS, height: BOATS_FUEL_HEIGHT },
+          distanceCells: boat.distanceCells,
         };
       },
       positionOf: boatPosition,

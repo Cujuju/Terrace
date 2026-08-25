@@ -64,9 +64,17 @@ export class EntityBlaze {
   igniteAtCell(x: number, y: number): FireEntityState | null {
     if (this.burning.size >= FIRE_ENTITY_CAP) return null;
 
-    const found = entityFuelAt(x, y);
+    // The registry is told what is ALREADY ALIGHT so it can offer the nearest
+    // thing that could actually catch, rather than offering something that is
+    // burning already and having it refused here — which is how a burning boat
+    // used to mask its whole reach (./entityFuel.ts's alreadyBurning note).
+    const found = entityFuelAt(x, y, (sourceName, id) =>
+      this.burning.has(fireEntityKey(sourceName, id)),
+    );
     if (found === null) return null;
 
+    // Belt and suspenders: the registry has just filtered these out, and a
+    // source that ignored the filter still must not light the same thing twice.
     const key = fireEntityKey(found.source.name, found.id);
     if (this.burning.has(key)) return null;
 

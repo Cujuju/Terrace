@@ -28,6 +28,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
   isWalkableCell as sharedIsWalkableCell,
+  nearestWithinReach,
   normalizeAngle,
   steerWithShorteningProbe,
   turnToward,
@@ -780,39 +781,25 @@ export function advanceFleet(
 const FIRE_REACH_CELLS = BOAT_PERSONAL_SPACE_CELLS;
 
 /**
- * The boat lying over this cell, or null — THE NEAREST ONE within reach, not
- * the first in the roster.
+ * The boat lying over this cell, or null — the NEAREST hull within reach, and
+ * how far away it is.
  *
- * WHY NEAREST AND NOT FIRST. FIRE_REACH_CELLS is a whole hull's reach, so two
- * boats manoeuvring near each other — forming up on a kraken, passing on the
- * way home — are both candidates for the same torch, and "first match" handed
- * the fire to whichever was LAUNCHED EARLIER rather than to the one the player
- * aimed at. The player then watched the boat beside their target burn down
- * while their own sailed on untouched. Reproduced headlessly (2026-08-24):
- * three boats two cells apart, aimed at the third, the second caught.
+ * NEAREST, NOT FIRST, and the rule is `nearestWithinReach`'s rather than this
+ * file's (bug, owner-observed 2026-08-24: "the boat burns, and then the boat
+ * keeps sailing"). FIRE_REACH_CELLS is a whole hull's reach, so two boats
+ * manoeuvring near each other are both candidates for the same torch, and
+ * first-match handed the fire to whichever was LAUNCHED EARLIER — the player
+ * watched the boat beside their target burn down while their own sailed on.
  *
- * Distance is measured to the boat's own position because that is the only
- * thing this plugin knows about a hull's whereabouts; ties break on the lower
- * id so two boats holding station on top of each other still resolve the same
- * way on every run.
+ * The distance goes back to the caller because fire arbitrates between sources
+ * with it: a boat at the edge of its two-cell reach must not outrank a peep
+ * standing dead centre on the cell (plugins/fire/server/entityFuel.ts).
  */
-export function burnableBoatAt(x: number, y: number): { id: number } | null {
-  let nearest: Boat | null = null;
-  let nearestDistanceSquared = Infinity;
-  for (const boat of boats) {
-    const dx = boat.x - x;
-    const dy = boat.y - y;
-    if (Math.abs(dx) > FIRE_REACH_CELLS) continue;
-    if (Math.abs(dy) > FIRE_REACH_CELLS) continue;
-    const distanceSquared = dx * dx + dy * dy;
-    if (distanceSquared > nearestDistanceSquared) continue;
-    if (distanceSquared === nearestDistanceSquared && nearest !== null && boat.id > nearest.id) {
-      continue;
-    }
-    nearest = boat;
-    nearestDistanceSquared = distanceSquared;
-  }
-  return nearest === null ? null : { id: nearest.id };
+export function burnableBoatAt(x: number, y: number): { id: number; distanceCells: number } | null {
+  const nearest = nearestWithinReach(boats, x, y, FIRE_REACH_CELLS, (boat) => boat);
+  return nearest === null
+    ? null
+    : { id: nearest.item.id, distanceCells: nearest.distanceCells };
 }
 
 /** Where this boat is now, in fractional cell space — null once it is gone. */

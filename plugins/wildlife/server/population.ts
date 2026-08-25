@@ -67,7 +67,7 @@
 // CLOCK: `dt` from the host is the only time source. No Date.now anywhere, so a
 // server running at a different TICK_HZ behaves identically per simulated second.
 
-import { CHUNK_SIZE } from '@terrace/shared';
+import { CHUNK_SIZE, nearestWithinReach } from '@terrace/shared';
 import {
   DEFAULT_SIZE_CLASS,
   WILDLIFE_HABITAT_SPECIES,
@@ -819,20 +819,30 @@ export function applyNaturalTurnover(dt: number): void {
 const FIRE_CELL_REACH = 0.5;
 
 /**
- * The land creature standing on this cell, or null. First match wins — which
- * member of a crowded cell caught is not a question anyone can ask.
+ * The land creature standing on this cell, or null — the NEAREST one, and how
+ * far away it is.
+ *
+ * NEAREST rather than first match: at this reach the two answers are almost
+ * always the same animal, but "almost always" is what the boats bug was made of
+ * (`nearestWithinReach`'s header), and the distance has to be honest anyway
+ * because fire ranks this answer against other plugins' answers for the same
+ * cell (plugins/fire/server/entityFuel.ts).
  *
  * LAND ONLY, and not as a performance filter: a fish is not flammable, and the
  * owner's rule for this whole mechanic is that what is ON LAND can be burned.
  */
-export function burnableEntityAt(x: number, y: number): WildlifeEntity | null {
-  for (const entity of entities) {
-    if (profileOf(entity.species).habitat !== 'land') continue;
-    if (Math.abs(entity.x - x) > FIRE_CELL_REACH) continue;
-    if (Math.abs(entity.y - y) > FIRE_CELL_REACH) continue;
-    return entity;
-  }
-  return null;
+export function burnableEntityAt(
+  x: number,
+  y: number,
+): { entity: WildlifeEntity; distanceCells: number } | null {
+  const nearest = nearestWithinReach(
+    entities.filter((entity) => profileOf(entity.species).habitat === 'land'),
+    x,
+    y,
+    FIRE_CELL_REACH,
+    (entity) => entity,
+  );
+  return nearest === null ? null : { entity: nearest.item, distanceCells: nearest.distanceCells };
 }
 
 /** Where this creature is now, in fractional cell space — null once it is gone. */

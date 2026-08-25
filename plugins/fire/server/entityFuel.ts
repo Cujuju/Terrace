@@ -40,13 +40,28 @@ export interface EntityFuelSource {
 
   /**
    * Which of this source's individuals is standing on this cell and could
-   * catch, or null for "nothing of mine".
+   * catch, or null for "nothing of mine" — THE NEAREST ONE, with how far away
+   * it is.
    *
-   * Called at IGNITION only. A source with many individuals is free to answer
-   * with the first one it finds — a fire lights ONE thing, and which member of
-   * a herd caught is not a question the player can ask.
+   * Called at IGNITION only.
+   *
+   * WHY DISTANCE IS PART OF THE ANSWER AND NOT AN IMPLEMENTATION DETAIL (bug,
+   * owner-observed 2026-08-24: a torch put to a boat burned the boat beside
+   * it). This interface used to say a source "is free to answer with the first
+   * one it finds", which is sound only while every source's reach is the single
+   * cell that was aimed at. Sources do not agree on that: a creature is a point
+   * and answers for half a cell, a boat is several cells of hull and answers for
+   * two. As soon as one answer covers more than the cell, "first" is no longer
+   * "the one the player aimed at", and a registry with no distance in hand
+   * cannot tell that it has been handed the wrong thing — nor can it choose
+   * between two sources that both claim the cell.
+   *
+   * So the distance comes back with the id, in cells, measured from the cell
+   * that was aimed at. `nearestWithinReach` from `@terrace/shared` computes
+   * exactly this and is what every source here uses: it is the reason a new
+   * flammable plugin cannot re-introduce the bug by writing the obvious loop.
    */
-  entityAt(x: number, y: number): { id: number; fuel: EntityFuel } | null;
+  entityAt(x: number, y: number): { id: number; fuel: EntityFuel; distanceCells: number } | null;
 
   /**
    * Where this individual is NOW, in fractional cell coordinates — or null once
@@ -108,21 +123,49 @@ export function entityFuelSource(name: string): EntityFuelSource | null {
 
 /**
  * What individual is standing on this cell that could burn, and whose it is —
- * first non-null answer in registration order, exactly as ./fuel.ts resolves
- * cell fuel.
+ * THE NEAREST across every source, not the first source that claims the cell.
+ *
+ * WHY NOT ./fuel.ts's FIRST-SOURCE-WINS. That rule is sound for cells because
+ * cell sources are mutually exclusive (one thing grows on a cell) and every one
+ * of them matches at exactly one cell, so "first" and "nearest" are the same
+ * answer. Entity sources are neither: a boat answers for two cells around
+ * itself and a peep for half of one, so a boat berthed two cells off a beach
+ * used to claim the beach cell a settler was standing dead centre of — and
+ * which of them burned was decided by the alphabetical order of the plugin
+ * FOLDERS (`boats` before `pilgrims`). Ordering that loop deterministically
+ * fixes nothing; the distance is what the question actually turns on.
+ *
+ * `alreadyBurning` is asked before a candidate is offered, so a source's
+ * nearest individual being alight cannot mask everything else on the cell — a
+ * boat burns for 16 s, and without this its whole reach was dead ground for
+ * that whole time and the peep under the cursor could not be lit at all.
  */
 export function entityFuelAt(
   x: number,
   y: number,
+  alreadyBurning?: (sourceName: string, id: number) => boolean,
 ): { id: number; fuel: EntityFuel; source: EntityFuelSource } | null {
+  let best: { id: number; fuel: EntityFuel; source: EntityFuelSource } | null = null;
+  let bestDistance = Infinity;
+
   for (const source of sources) {
     const found = source.entityAt(x, y);
+    if (found === null) continue;
     // A source answering with a nonsensical burn time is treated as having
     // nothing there rather than trusted — ./fuel.ts's rule, same reason: a
     // zero-length fire is already dead and would never clear.
-    if (found !== null && found.fuel.burnSeconds > 0) {
-      return { id: found.id, fuel: found.fuel, source };
-    }
+    if (found.fuel.burnSeconds <= 0) continue;
+    // A distance that is not a number is a source that has not implemented this
+    // contract; it is dropped rather than ranked as 0 and allowed to win
+    // everything.
+    if (!Number.isFinite(found.distanceCells)) continue;
+    if (alreadyBurning?.(source.name, found.id) === true) continue;
+    // STRICTLY nearer to win: ties keep registration order, which is stable
+    // (./index.ts's load order) — `nearestWithinReach`'s rule, same reason.
+    if (found.distanceCells >= bestDistance) continue;
+    best = { id: found.id, fuel: found.fuel, source };
+    bestDistance = found.distanceCells;
   }
-  return null;
+
+  return best;
 }
