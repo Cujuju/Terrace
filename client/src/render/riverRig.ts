@@ -66,6 +66,7 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../conf
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 import { createDrawnGround } from '../terrain/drawnGround.ts';
 import { WATER_COLOR } from './water.ts';
+import { installWaterBandClock, makeBanded } from './water/waterBands.ts';
 import {
   TILE_LATTICE_OFFSETS,
   appendRegionSurface,
@@ -542,6 +543,13 @@ export function createRiverRig(
     polygonOffsetFactor: WATER_DEPTH_BIAS_FACTOR,
     polygonOffsetUnits: WATER_DEPTH_BIAS_UNITS,
   });
+
+  // The painted bands, and the clock that drives them. The rig is built by both
+  // the real client and the river previews, so installing the clock here is what
+  // makes the water move in a preview harness too; the installer is idempotent,
+  // so the sea sharing the same uniform cannot double-tick it.
+  makeBanded(waterMaterial);
+  installWaterBandClock(onFrame);
 
   const waterMesh = new Mesh(new BufferGeometry(), waterMaterial);
   parent.add(waterMesh);

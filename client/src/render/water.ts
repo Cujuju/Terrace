@@ -55,6 +55,7 @@ import {
   writeWaterDepthTexels,
 } from '../terrain/waterDepth.ts';
 import { spliceShader } from './shaderSplice.ts';
+import { makeBanded } from './water/waterBands.ts';
 
 /**
  * Exported so other render modules that want to blend toward "the sea" — the
@@ -336,6 +337,12 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
     side: DoubleSide,
   });
   makeDepthAware(material, depthAlphaTexture, specularFactorTexture, worldSizeUniform);
+  // The sea gets the same painted bands the rivers do — one rule, in
+  // water/waterBands.ts, precisely so the ocean cannot be left behind when the
+  // rivers get a treatment. Applied AFTER makeDepthAware because makeBanded
+  // chains onto whatever onBeforeCompile is already there; the reverse order
+  // would drop the depth-alpha splice and take the shallows with it.
+  makeBanded(material);
 
   // Built in WORLD space rather than as a rotated local plane: a quad's XZ
   // corners come straight from its chunk's cell coordinates, and the shader's
