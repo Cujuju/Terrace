@@ -85,6 +85,29 @@ export interface EntityFuelSource {
 
   /** Optional: these just caught. For a source that wants to react (panic, flee). */
   onIgnited?(ids: readonly number[]): void;
+
+  /**
+   * Whether an id means THE SAME INDIVIDUAL after a restart or a rollback.
+   *
+   * ABSENT MEANS NO, and that default is the safe one because it is the
+   * common one: a source only earns a `true` here by persisting both its
+   * individuals and its id counter, and a source that does neither hands out
+   * id 7 to a different person every process.
+   *
+   * WHY FIRE HAS TO ASK (bug, 2026-08-24). A burning individual is saved as
+   * `{sourceName, id}` and restored on that pair, and the only test the sim can
+   * make afterwards is `positionOf(id) !== null` — which asks whether ANYBODY
+   * holds that number, not whether it is still the one that was alight. Roll a
+   * world back to a point captured before a restart and a fire lit on walker 7
+   * re-attaches to whoever is walker 7 now, draws a flame on them, and kills
+   * them when the clock runs out. Existence cannot answer a question about
+   * identity, so the source has to.
+   *
+   * The obligation this replaces was invisible: durability used to depend on
+   * every registrant independently persisting a stable id space, which this
+   * interface never asked for and no registrant could have known it owed.
+   */
+  readonly idsSurviveRestore?: boolean;
 }
 
 /** Registered sources, in registration order. */

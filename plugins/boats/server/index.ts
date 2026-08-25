@@ -178,6 +178,10 @@ export const plugin: TerracePlugin = {
       },
       positionOf: boatPosition,
       onBurnedOut: boatsBurnedOut,
+      // A boat's id survives a restore: ./persistence.ts saves the fleet AND
+      // `nextBoatId`, so hull 7 in a restored world is the same hull that was
+      // alight when the snapshot was written.
+      idsSurviveRestore: true,
     });
   },
 

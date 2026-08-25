@@ -328,6 +328,10 @@ export const plugin: TerracePlugin = {
       },
       positionOf: entityPosition,
       onBurnedOut: wildlifeBurnedOut,
+      // A creature's id survives a restore: ./persistence.ts saves the
+      // population AND the id counter (nextEntityIdValue), so the animal that
+      // was on fire is the animal that comes back on fire.
+      idsSurviveRestore: true,
     });
   },
 
