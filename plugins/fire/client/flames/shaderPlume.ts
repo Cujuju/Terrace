@@ -333,6 +333,11 @@ export const buildShaderPlumeFlames: FlameRendererBuilder = (): FlameRenderer =>
     name: 'C — noise plume',
     root,
 
+    /** ./types.ts's drawn-set contract: the count the mesh is drawing. */
+    get drawnCount(): number {
+      return mesh.count;
+    },
+
     apply(fires: readonly FireInstance[]): void {
       const count = Math.min(fires.length, FIRE_FLAME_INSTANCE_CAP);
       const seedArray = seeds.array as Float32Array;

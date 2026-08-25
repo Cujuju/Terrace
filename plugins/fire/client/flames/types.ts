@@ -107,6 +107,22 @@ export interface FlameRenderer {
    */
   apply(fires: readonly FireInstance[]): void;
   /**
+   * How many fires this renderer is CURRENTLY DRAWING — the length of the last
+   * list `apply` was handed, after any cap of its own.
+   *
+   * WHY THE CONTRACT REPORTS THIS (bug, 2026-08-24: a flame stood motionless
+   * over a hole in the ground until something else, anywhere in the world,
+   * caught fire). `apply` is the only writer of the drawn set, so a caller that
+   * returns early on a quiet frame leaves whatever was last applied on screen —
+   * and the one frame that MUST reach `apply` is the frame the world stops
+   * burning, which is exactly the frame a "nothing is burning" early-out skips.
+   *
+   * Reporting the drawn count turns that from a rule a caller has to remember
+   * into a condition it can test: nothing is really undrawn until `drawnCount`
+   * says so. A compositor reports the total across its sub-renderers.
+   */
+  readonly drawnCount: number;
+  /**
    * Advances the animation. `dt` is seconds since the last frame; `elapsed` is
    * seconds since the plugin attached, supplied so a renderer can drive a
    * continuous phase without integrating its own clock.
