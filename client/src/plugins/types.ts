@@ -129,6 +129,32 @@ export interface ClientPluginCtx {
   ): void;
 
   /**
+   * Adds a TOOL to the bottom toolbar — a mode the player can hold instead of
+   * the sculpt brush (plugins/toolbar.ts owns the selection; read its header
+   * for why core owns it and the plugin does not).
+   *
+   * `id` is namespaced `<plugin>:<id>` by the host, like every message type,
+   * so two plugins may both call theirs `place`. `onSelected` is the plugin's
+   * ONLY view of the selection: it fires with true when this tool becomes the
+   * held one and false when it stops being it — including when another
+   * plugin's tool takes over, or when the player goes back to the brush. A
+   * plugin that shows a placement ghost builds it on true and tears it down
+   * on false.
+   *
+   * TAKING THE PRESS IS STILL THE PLUGIN'S JOB: holding a tool does not route
+   * clicks anywhere by itself. Claim them with `onCanvasPress` while selected
+   * — core suppresses only its OWN brush (the outline preview and the sculpt
+   * press) while any tool is held.
+   */
+  registerTool(tool: {
+    id: string;
+    label: string;
+    title: string;
+    icon: Component;
+    onSelected: (selected: boolean) => void;
+  }): void;
+
+  /**
    * Claims the top-centre world banner as this plugin's entry point: core
    * renders `icon` to the right of the world name and makes the whole banner
    * a button firing `onClick`, labelled `label` for tooltip and screen

@@ -57,9 +57,9 @@ const PUFF_NOTCH_DEPTH = 0.3;
 /** Alpha ramp stops: [radius fraction, alpha]. Hot flat core, long soft skirt. */
 const PUFF_ALPHA_STOPS: readonly (readonly [number, number])[] = [
   [0.0, 1.0],
-  [0.26, 0.94],
-  [0.5, 0.55],
-  [0.78, 0.14],
+  [0.18, 0.98],
+  [0.42, 0.62],
+  [0.72, 0.16],
   [1.0, 0.0],
 ];
 /** The paint is white; all colour comes from the per-instance tint. */
@@ -71,11 +71,11 @@ const PUFF_CORE_WHITE = 255;
  * from the game's camera without the additive stack blowing to flat white in
  * the middle — five leaves visible gaps as they rise, ten is a white pillar.
  */
-const PUFFS_PER_FIRE = 16;
+const PUFFS_PER_FIRE = 22;
 /** Complete rise-and-recycle cycles per second. */
 const PUFF_RISE_RATE = 1.15;
 /** A puff rises this many times the flame height over one cycle. */
-const PUFF_RISE_SPAN = 0.95;
+const PUFF_RISE_SPAN = 0.85;
 /** Puff diameter at birth, as a fraction of the flame's width. */
 const PUFF_BIRTH_SIZE = 1.0;
 /** …and at death. Fire narrows as it climbs, so a puff SHRINKS as it fades. */
@@ -101,8 +101,8 @@ const PUFF_FADE_IN_FRACTION = 0.18;
 
 /** The tint ramp a puff walks as it rises: white-hot at birth, deep red at death. */
 const PUFF_COLOR_STOPS: readonly (readonly [number, number])[] = [
-  [0.0, 0xfff0c0],
-  [0.28, 0xffa828],
+  [0.0, 0xffc247],
+  [0.28, 0xff8a12],
   [0.6, 0xe8480c],
   [1.0, 0x5e0e03],
 ];
@@ -111,7 +111,7 @@ const PUFF_COLOR_STOPS: readonly (readonly [number, number])[] = [
 /** Column height as a multiple of the fuel's height, at full intensity. */
 const FLAME_HEIGHT_PER_FUEL = 1.3;
 /** Puff diameter as a multiple of the fuel's height. */
-const FLAME_WIDTH_PER_FUEL = 0.62;
+const FLAME_WIDTH_PER_FUEL = 0.55;
 /** A dying fire is small but not gone; a dying fire is dim but not black. */
 const INTENSITY_SIZE_FLOOR = 0.34;
 const INTENSITY_BRIGHTNESS_FLOOR = 0.4;

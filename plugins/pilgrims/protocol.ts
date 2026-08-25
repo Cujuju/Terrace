@@ -40,11 +40,17 @@ export const PILGRIMS_CAP = 24;
  * The walker kinds this wire carries. 'pilgrim' is the original journey-to-a-
  * monster walker (card 47); 'wanderer' is ambient town-to-town strolling
  * (card 26, "Peeps", owner-picked 2026-08-19) — purely cosmetic, no blessing,
- * no gameplay effect. One wire for both: they share every field, and a second
- * message type would duplicate the interpolator and the fog plumbing for no
- * contract gain.
+ * no gameplay effect; 'settler' walks OUT of a player-placed temple and founds
+ * a home where it stops (owner, 2026-08-24 — see server/settling.ts). One wire
+ * for all three: they share every field, and a second message type would
+ * duplicate the interpolator and the fog plumbing for no contract gain.
+ *
+ * ORDER IS APPEND-ONLY. `parseEntitiesPayload` treats an unrecognised kind as
+ * a newer server than this client and drops the row, so an OLD client meeting
+ * a settler simply does not draw it — the additive-field rule this wire
+ * already keeps, extended to the kind list.
  */
-export const WALKER_KINDS = ['pilgrim', 'wanderer'] as const;
+export const WALKER_KINDS = ['pilgrim', 'wanderer', 'settler'] as const;
 
 export type WalkerKind = (typeof WALKER_KINDS)[number];
 
@@ -64,8 +70,22 @@ export function isWalkerKind(value: unknown): value is WalkerKind {
  */
 export const WANDERERS_CAP = 16;
 
-/** The most walker rows one entities message may carry (both kinds). */
-export const WALKERS_WIRE_CAP = PILGRIMS_CAP + WANDERERS_CAP;
+/**
+ * Hard ceiling on settlers walking out of the temple at once.
+ *
+ * 6 — a temple is ONE building, and what leaves it should read as a founding
+ * party, not a migration: at the dispatch cadence below (settling.ts's
+ * SETTLER_DISPATCH_SECONDS) six abroad is already the steady state of a temple
+ * whose nearest legal ground is a long walk away, and a nearer one never
+ * reaches the cap at all because its settlers arrive and become houses. Well
+ * under both other caps for the same reason wandering's is: this is standing
+ * background, and the player asked for it by building the temple, not for a
+ * crowd.
+ */
+export const SETTLERS_CAP = 6;
+
+/** The most walker rows one entities message may carry (every kind). */
+export const WALKERS_WIRE_CAP = PILGRIMS_CAP + WANDERERS_CAP + SETTLERS_CAP;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Settler races — OWN COPY of the structures plugin's derivation (its

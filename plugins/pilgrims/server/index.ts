@@ -23,7 +23,9 @@ import {
 } from '../protocol.ts';
 import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
 import { applyBlessedCells, bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
+import { bridgedTemple, loadTemplesBridge } from './temples-bridge.ts';
 import { Pilgrimage, WalkerIdAllocator, walkerOccupants } from './pilgrimage.ts';
+import { Settling } from './settling.ts';
 import { Wandering } from './wandering.ts';
 
 /**
@@ -39,6 +41,7 @@ let tickCount = 0;
 let walkerIds = new WalkerIdAllocator();
 let pilgrimage = new Pilgrimage(walkerIds);
 let wandering = new Wandering(walkerIds);
+let settling = new Settling(walkerIds);
 
 /** The last blessed set pushed, for change detection (order-insensitive). */
 let lastBlessedKeys: readonly number[] = [];
@@ -62,10 +65,19 @@ function simulate(world: WorldApi, dt: number): void {
   // gets the advantage of moving second.
   const pilgrimCrowd = walkerOccupants(pilgrimage.walkers());
   const wandererCrowd = walkerOccupants(wandering.walkers());
+  const settlerCrowd = walkerOccupants(settling.walkers());
 
-  pilgrimage.advance(world, bridgedMonsters(), settlements, dt, wandererCrowd);
+  pilgrimage.advance(world, bridgedMonsters(), settlements, dt, [
+    ...wandererCrowd,
+    ...settlerCrowd,
+  ]);
   // The ambient walkers (card 26): same towns, no monsters, no blessing.
-  wandering.advance(world, settlements, dt, pilgrimCrowd);
+  wandering.advance(world, settlements, dt, [...pilgrimCrowd, ...settlerCrowd]);
+  // The temple's own people (owner, 2026-08-24): out of its door, into a
+  // homestead. `world` travels INTO the sim rather than only being read by it
+  // — a founding is validated against this same world on the far side of the
+  // structures bridge; see Settling.advance.
+  settling.advance(world, bridgedTemple(), dt, [...pilgrimCrowd, ...wandererCrowd]);
 
   // Push the blessing only when the route set actually changed — structures'
   // replace semantics make re-sends harmless, but a write per tick would be
@@ -84,9 +96,9 @@ function simulate(world: WorldApi, dt: number): void {
   // (WorldApi.broadcastVisible's own doc, wildlife's identical call).
   world.broadcastVisible(
     PILGRIMS_ENTITIES_MESSAGE,
-    // Both walker kinds on the one wire: pilgrims first, then wanderers —
-    // fixed concatenation order, so the payload is deterministic too.
-    [...pilgrimage.states(), ...wandering.states()],
+    // Every walker kind on the one wire: pilgrims, then wanderers, then
+    // settlers — fixed concatenation order, so the payload is deterministic.
+    [...pilgrimage.states(), ...wandering.states(), ...settling.states()],
     (walker) => ({ x: Math.floor(walker.x), y: Math.floor(walker.y) }),
     (visible) => ({
       pilgrims: visible.map((p) => ({
@@ -108,6 +120,7 @@ export const plugin: TerracePlugin = {
     // Rule 2 of the bridge pattern: kick the loads off, do not await them.
     void loadMonstersBridge();
     void loadStructuresBridge();
+    void loadTemplesBridge();
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -121,6 +134,7 @@ export function resetPilgrimsState(): void {
   walkerIds = new WalkerIdAllocator();
   pilgrimage = new Pilgrimage(walkerIds);
   wandering = new Wandering(walkerIds);
+  settling = new Settling(walkerIds);
   lastBlessedKeys = [];
 }
 
@@ -132,4 +146,9 @@ export function currentPilgrimage(): Pilgrimage {
 /** Test seam: the ambient population, same purpose. */
 export function currentWandering(): Wandering {
   return wandering;
+}
+
+/** Test seam: the temple's settlers, same purpose. */
+export function currentSettling(): Settling {
+  return settling;
 }

@@ -428,6 +428,57 @@ body {
   pointer-events: auto;
 }
 
+/* ── THE TOOLBAR (owner, 2026-08-24) ────────────────────────────────────────
+   The bottom-centre cell's first child, so `column-reverse` above seats it
+   along the bottom edge with the mana gauge stacked over it. Its chrome is
+   .hud-panel's, tightened to a single row of buttons; it WRAPS rather than
+   overflows, because the tool list is open-ended (any plugin may add one) and
+   a bar that grew past the viewport would push the gauge off a phone. */
+.hud-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  min-width: 0;
+  /* Never wider than the strip it sits in, whatever the plugin count. */
+  max-width: 100%;
+}
+
+/* One tool: icon over caption, sized like the brush buttons it sits beside so
+   the whole bottom edge reads as one instrument. */
+.hud-tool {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-text);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hud-tool:hover {
+  border-color: var(--hud-accent);
+}
+
+/* HELD, not merely hovered: the same accent fill the brush pickers use for
+   the selected radius, so "what am I holding" is answered the same way
+   everywhere in the HUD. */
+.hud-tool.active {
+  border-color: var(--hud-accent);
+  background: rgba(111, 191, 115, 0.18);
+}
+
+.hud-tool__label {
+  white-space: nowrap;
+}
+
 /* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, gauge and
    gear all usable at once on an iPhone). Below 640px the brush rows drop
    their text labels — every control keeps its title and aria-label — and the
@@ -435,6 +486,17 @@ body {
 @media (max-width: 640px) {
   .hud-anchor-bottom-left .hud-label {
     display: none;
+  }
+
+  /* Icon-only below 640px — the brush rows' own rule, applied to the bar for
+     the same reason: the whole strip must stay inside a 390px viewport. Every
+     button keeps its title and aria-label, so nothing becomes unreachable. */
+  .hud-tool__label {
+    display: none;
+  }
+
+  .hud-tool {
+    padding: 6px;
   }
 
   .hud-anchor-bottom-left {
@@ -513,6 +575,11 @@ body {
 
   .mode-value {
     padding: 6px 12px;
+  }
+
+  .hud-tool {
+    min-height: 44px;
+    padding: 0 12px;
   }
 
   .hud-settings-button {

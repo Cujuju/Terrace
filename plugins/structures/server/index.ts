@@ -49,6 +49,7 @@ import type {
 import {
   STRUCTURES_ALL_MESSAGE,
   STRUCTURES_CHANGES_MESSAGE,
+  STRUCTURES_CAP,
   STRUCTURES_PLUGIN_NAME,
   cellOfKey,
   packCells,
@@ -68,7 +69,7 @@ import {
 import { resetBlessings } from './blessings.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
-import { isBuildableCell } from './suitability.ts';
+import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 
 /**
  * Simulated seconds between unsolicited full re-broadcasts.
@@ -115,6 +116,18 @@ let lastKeepaliveSeconds = 0;
 
 /** Fractional chunks owed to the CA sweep, carried between ticks. */
 let scanCredit = 0;
+
+/**
+ * Homes founded by an OUTSIDE hand this tick (see `foundStructure`), waiting
+ * for the next `simulate` to broadcast them.
+ *
+ * A QUEUE RATHER THAN AN IMMEDIATE SEND because the caller does not have a
+ * WorldApi to broadcast with — it has its own, from its own plugin, and a
+ * broadcast made through that one would go out under the WRONG namespace. The
+ * cell itself is written into `live` immediately, so `standingStructures()`
+ * and the CA see it at once; only the WIRE waits, by at most one tick.
+ */
+let pendingFounded: StructureCell[] = [];
 
 /** Restored from a snapshot, held until onWorldCreate — flora's identical seam. */
 let restoredLive: Map<number, LiveCellRecord> = new Map();
@@ -250,6 +263,19 @@ function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: nu
  */
 function simulate(world: WorldApi, dt: number): void {
   simSeconds += dt;
+
+  // Outside foundings first, on their own: they are already in `live` (see
+  // foundStructure), so all that is owed is the delta. Sent as its OWN
+  // broadcast rather than folded into the generation's below, because a
+  // generation completes at most every CA_GENERATION_INTERVAL_SECONDS and a
+  // settler that has just walked into its new house must not wait fifteen
+  // seconds to be given one.
+  if (pendingFounded.length > 0) {
+    const founded = pendingFounded;
+    pendingFounded = [];
+    broadcastChanges(world, founded, [], []);
+    world.emitEvent('changes', { cause: 'settled', seeded: founded, upgraded: [], died: [] });
+  }
 
   const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
   scanCredit = Math.min(scanCredit + generationChunksPerTick(world, dt), totalChunks);
@@ -443,6 +469,40 @@ export const plugin: TerracePlugin = {
 export { setBlessedStructureCells } from './blessings.ts';
 
 /**
+ * FOUND A HOME AT (x, y) FROM OUTSIDE THIS PLUGIN — the third member of the
+ * pilgrims-facing surface (owner, 2026-08-24: a temple's settlers walk out and
+ * build). Returns whether it happened.
+ *
+ * WHY IT TAKES A WORLD. Buildability is a question about the ground, and this
+ * plugin holds no WorldApi between hooks (see the module-state note above);
+ * the caller has one and passes it, which is also what keeps this a PURE
+ * request — nothing here reaches into another plugin's world.
+ *
+ * ONE PREDICATE, NOT A SECOND OPINION: the cell must pass the same
+ * `isBuildableCell` the CA's own wall test uses, so a house founded this way
+ * stands on exactly the ground a house born of the CA would. A cell that is
+ * already built on, or that the board is full of, is refused rather than
+ * overwritten — an outside caller may not evict a standing settlement, which
+ * is the same rule the CA's own birth path keeps at STRUCTURES_CAP.
+ *
+ * The new cell is a TIER-0, AGE-0 birth: a home just moved into, which the CA
+ * then ages and upgrades on its ordinary schedule. It is subject to B3/S23
+ * from the next generation like any other cell — a house founded alone in
+ * empty country will die of loneliness, and that is correct: this API founds a
+ * settlement, it does not exempt one from the rules the rest live under.
+ */
+export function foundStructure(world: StructuresWorld, x: number, y: number): boolean {
+  if (live.size >= STRUCTURES_CAP) return false;
+  const key = structureKey(x, y);
+  if (live.has(key)) return false;
+  if (!isBuildableCell(world, x, y)) return false;
+
+  live.set(key, { age: 0, tier: 0 });
+  pendingFounded.push({ x, y, tier: 0 });
+  return true;
+}
+
+/**
  * A standing town as bridge consumers see it: the wire cell plus how long it
  * has STOOD — `age` is life.ts's generations-survived counter (resets on
  * birth), the CA's own measure of "has been here some while". Deliberately
@@ -482,4 +542,5 @@ export function resetStructuresState(): void {
   scanCredit = 0;
   restoredLive = new Map();
   restoredGeneration = 0;
+  pendingFounded = [];
 }

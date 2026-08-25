@@ -50,7 +50,7 @@ import type { FireInstance, FlameRenderer, FlameRendererBuilder } from './types.
 const PLUME_RADIAL_SEGMENTS = 10;
 const PLUME_HEIGHT_SEGMENTS = 18;
 /** Unit sleeve: 1 tall, radius 1 at the foot, tapering to this at the tip. */
-const PLUME_TIP_RADIUS_FRACTION = 0.1;
+const PLUME_TIP_RADIUS_FRACTION = 0.18;
 
 // ── Warp ──────────────────────────────────────────────────────────────────
 /** Noise cycles along the plume's height. ~3 lobes of writhe from foot to tip. */
@@ -70,13 +70,13 @@ const WARP_HEIGHT_BIAS = 1.5;
 
 // ── Colour and alpha ──────────────────────────────────────────────────────
 /** The height ramp, as three stops the fragment shader mixes between. */
-const PLUME_CORE_COLOR: readonly [number, number, number] = [1.0, 0.96, 0.82];
+const PLUME_CORE_COLOR: readonly [number, number, number] = [1.0, 0.86, 0.5];
 const PLUME_MID_COLOR: readonly [number, number, number] = [1.0, 0.42, 0.06];
 const PLUME_TIP_COLOR: readonly [number, number, number] = [0.62, 0.08, 0.03];
 /** Height fraction at which the ramp reaches the mid colour. */
 const PLUME_MID_HEIGHT = 0.26;
 /** Above this height the plume is guttering out; alpha falls to zero by 1.0. */
-const PLUME_GUTTER_HEIGHT = 0.62;
+const PLUME_GUTTER_HEIGHT = 0.5;
 /** Flicker: noise cycles per second, and how much of the alpha it eats. */
 const PLUME_FLICKER_SPEED = 4.7;
 const PLUME_FLICKER_DEPTH = 0.45;
@@ -86,12 +86,14 @@ const PLUME_FLICKER_DEPTH = 0.45;
  * bend it into a flame profile in the vertex shader: a narrower foot where the
  * gas leaves the fuel, a belly a third of the way up, and a long taper to the
  * tip. `WAIST` is the radius factor at the extremes, `BELLY_GAIN` how far the
- * belly swells past it, and `BELLY_BIAS` pushes the widest point DOWN the plume
- * (an exponent below 1 on the height), because a flame's shoulders are low.
+ * belly swells past it, and `BELLY_BIAS` places the widest point (an exponent
+ * ABOVE 1 on the height pushes it UP; below 1 it slides down to the foot, which
+ * renders as a balloon sitting on the ground — the second pass of this
+ * candidate did exactly that).
  */
-const PLUME_WAIST = 0.55;
+const PLUME_WAIST = 0.42;
 const PLUME_BELLY_GAIN = 0.75;
-const PLUME_BELLY_BIAS = 0.75;
+const PLUME_BELLY_BIAS = 1.4;
 /**
  * Alpha ceiling.
  *
