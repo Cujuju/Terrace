@@ -353,14 +353,20 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const surfaceY = terrainHeightAt(hoverCache.x, hoverCache.y);
     if (surfaceY === null) return null;
     if (surfaceY === hoverCache.surfaceY) return hoverCache;
-    // hitRiser and hitY ride along unchanged: both are facts about the RAY,
-    // and this branch only refreshes the cached cell's height after the ground
-    // moved under a stationary pointer. The next pointermove re-picks and
-    // re-decides them.
+    // hitRiser, hitY and spanIndex ride along unchanged: all three are facts
+    // about the RAY, and this branch only refreshes the cached cell's height
+    // after the ground moved under a stationary pointer. The next pointermove
+    // re-picks and re-decides them.
+    //
+    // The refreshed height is `terrainHeightAt`, i.e. the TOPMOST span's cap,
+    // so this is only the right surface for a pick on the topmost span. That
+    // is every pick while every column holds exactly one (columns.ts); a
+    // layered world has to re-pick here instead of re-reading.
     hoverCache = {
       x: hoverCache.x,
       y: hoverCache.y,
       surfaceY,
+      spanIndex: hoverCache.spanIndex,
       hitRiser: hoverCache.hitRiser,
       hitY: hoverCache.hitY,
     };

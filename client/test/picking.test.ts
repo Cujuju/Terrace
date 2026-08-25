@@ -156,8 +156,12 @@ describe('pickTerrainCellByRay', () => {
       y: 11,
       surfaceY: 0,
       // Straight down from the sky onto a tread: the ray enters the column
-      // above the cap, so it lands ON the cap and never touches a riser.
+      // above the cap, so it lands ON the cap and never touches a riser, and
+      // the height it met the column at is that cap.
       hitRiser: false,
+      hitY: 0,
+      // One span per column, so the only span there is is also the topmost.
+      spanIndex: 0,
     });
   });
 
@@ -187,8 +191,11 @@ describe('pickTerrainCellByRay', () => {
           y,
           surfaceY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
           // Every ray here is vertical from above the world, so every hit is
-          // a cap hit however varied the field is.
+          // a cap hit however varied the field is — and a cap hit meets the
+          // column exactly at the cap.
           hitRiser: false,
+          hitY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          spanIndex: 0,
         });
       }
     }
@@ -214,6 +221,11 @@ describe('pickTerrainCellByRay', () => {
       // pick reports a riser. This is what the two-method sculpt design keys
       // "pull an edge" off (owner, 2026-08-23).
       hitRiser: true,
+      // A face hit meets the column at the ray's own height, which is what
+      // names WHICH lip of the face was grabbed — the ray is level here, so
+      // that is the height it came in at.
+      hitY: rayY,
+      spanIndex: 0,
     });
   });
 

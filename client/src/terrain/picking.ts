@@ -17,10 +17,14 @@ import {
   MAX_HEIGHT,
   MIN_HEIGHT,
   chunkIndex,
-  quantizeToBand,
+  isSpanDrawn,
+  spanAt,
+  spanUndersideHeight,
+  spanCapHeight,
+  spanCount,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import { hasChunk, sampleHeight, type TerrainMirror } from './mirror.ts';
+import { hasChunk, type TerrainMirror } from './mirror.ts';
 
 export interface Ndc {
   x: number;
@@ -199,19 +203,33 @@ export interface TerrainRayPick {
   readonly x: number;
   readonly y: number;
   /**
-   * World-space Y of that cell's RENDERED surface — its band cap, the height
-   * the mesh actually draws there (World.terrainHeightAt's value).
+   * World-space Y of the RENDERED surface the ray met — the band cap of the
+   * span it struck, which for a column of one span is the height the mesh
+   * draws there (World.terrainHeightAt's value).
    *
    * Always the CAP, never the point on the riser the ray happened to graze:
    * the consumer is the hover outline (render/brushPreview.ts), which marks
-   * the footprint about to be sculpted, and that footprint lies on the cell's
-   * tread. A terraced cell has exactly one surface height; this is it.
+   * the footprint about to be sculpted, and that footprint lies on the tread.
    */
   readonly surfaceY: number;
   /**
-   * Whether the ray struck this column's vertical RISER rather than its flat
-   * cap — i.e. the player is pointing at the SIDE of a terrace step, not at
-   * its tread.
+   * WHICH SPAN of the column the ray met, indexed as columns.ts indexes them:
+   * 0 is the deepest, `spanCount - 1` the one carrying the walkable surface.
+   *
+   * Always the last index while every column holds one span. It is what lets a
+   * consumer answer "which layer did I click" once they do not — a ray can
+   * enter a cave mouth and strike a floor with a ceiling above it, and the cell
+   * coordinates alone cannot say which of them was hit.
+   */
+  readonly spanIndex: number;
+  /**
+   * Whether the ray struck this span's vertical RISER rather than a flat face —
+   * i.e. the player is pointing at the SIDE of a terrace step, not at its
+   * tread.
+   *
+   * False therefore means a HORIZONTAL face, which is the tread when
+   * `hitY === surfaceY` and the span's UNDERSIDE — the roof of a cave, seen
+   * from below — when it is lower.
    *
    * The march has always known this (it is what the two-endpoint test below
    * distinguishes) and always discarded it, because the only consumer was the
@@ -229,7 +247,7 @@ export interface TerrainRayPick {
   readonly hitRiser: boolean;
   /**
    * World-space Y at which the ray actually MET this column — the point on the
-   * riser face when `hitRiser`, and the cap otherwise.
+   * riser face when `hitRiser`, and the horizontal face it crossed otherwise.
    *
    * WHY IT IS NOT `surfaceY`. A terrace face is vertical, so every lip stacked
    * on it projects to the same place on the ground: a query that asks "which
@@ -368,23 +386,51 @@ export function pickTerrainCellByRay(
     if (tExit < tEnter) return null;
 
     if (cellRevealed(mirror, i, j)) {
-      const surfaceY = quantizeToBand(sampleHeight(mirror, i, j)) * HEIGHT_WORLD_SCALE;
-      // The ray meets this column iff it is at or below the cap anywhere
-      // inside the cell. Entering already below it means it struck the riser;
-      // dropping below it on the way through means it landed on the cap. Y is
-      // linear in t, so the two endpoints decide both cases.
-      // Entering already at/below the cap means the ray came in through the
-      // riser; only dropping below it on the way THROUGH is a cap hit.
-      const enteredBelow = oy + tEnter * dy <= surfaceY;
-      if (enteredBelow || oy + tExit * dy <= surfaceY) {
-        // Where the ray met the column: the entry point when it came in
-        // through the riser, the cap when it dropped onto the tread. Clamped
-        // to the cap on the riser branch so a ray entering below the world's
-        // floor cannot report a height the column does not have.
-        const entryY = oy + tEnter * dy;
-        const hitY = enteredBelow ? (entryY > surfaceY ? surfaceY : entryY) : surfaceY;
-        return { x: i, y: j, surfaceY, hitRiser: enteredBelow, hitY };
+      const entryY = oy + tEnter * dy;
+      const exitY = oy + tExit * dy;
+      // Every span of this column, TOPMOST FIRST. A ray that crosses a cave
+      // meets the roof before the floor, and only the first one it meets is
+      // the one the player is pointing at — but "first" is along the ray, not
+      // up the column, so a rising ray meets them in the other order. Scanning
+      // all of them and keeping the earliest is the one rule that is right for
+      // both, and a column of one span makes it a single pass.
+      const count = spanCount(mirror.map, i, j);
+      let hit: TerrainRayPick | null = null;
+      let hitT = Infinity;
+      for (let k = count - 1; k >= 0; k--) {
+        const span = spanAt(mirror.map, i, j, k);
+        // A span too thin to reach a band boundary draws nothing, so there is
+        // nothing here to click.
+        if (!isSpanDrawn(span)) continue;
+        const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+        const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
+        // The ray meets this span iff its Y sweep across the cell overlaps the
+        // span's drawn extent. Y is linear in t, so the two endpoints decide
+        // it: the sweep is [min, max] of them.
+        const lowY = entryY < exitY ? entryY : exitY;
+        const highY = entryY < exitY ? exitY : entryY;
+        if (lowY > capY || highY < baseY) continue;
+        // Where it met it, and how. Entering the cell already INSIDE the span
+        // means it came in through the riser; otherwise it crossed a
+        // horizontal face on the way through — the cap when it arrived from
+        // above, the underside when it arrived from below.
+        const insideOnEntry = entryY <= capY && entryY >= baseY;
+        const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
+        // dy === 0 is a level ray: it never crosses a face, so it can only be
+        // inside on entry, and then it met the span where it came in.
+        const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
+        if (t >= hitT) continue;
+        hitT = t;
+        hit = {
+          x: i,
+          y: j,
+          surfaceY: capY,
+          spanIndex: k,
+          hitRiser: insideOnEntry,
+          hitY: faceY,
+        };
       }
+      if (hit !== null) return hit;
     }
 
     if (tExit >= tMax) return null;
