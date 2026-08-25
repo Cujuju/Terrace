@@ -769,6 +769,47 @@ export function advanceFleet(
 }
 
 /** The afloat fleet, in wire shape. */
+/**
+ * How close a boat must be to a cell for that cell's fire to be ON it, in cells.
+ *
+ * Its own personal space rather than half a cell: a hull is 0.9 world units of
+ * timber (BOAT_PERSONAL_SPACE_CELLS's note) and a torch put to any part of it
+ * has hit the boat. Answering "half a cell" here would mean a player aiming at
+ * a hull that plainly spans several cells missed most of it.
+ */
+const FIRE_REACH_CELLS = BOAT_PERSONAL_SPACE_CELLS;
+
+/** The boat lying over this cell, or null. First match wins. */
+export function burnableBoatAt(x: number, y: number): { id: number } | null {
+  for (const boat of boats) {
+    if (Math.abs(boat.x - x) > FIRE_REACH_CELLS) continue;
+    if (Math.abs(boat.y - y) > FIRE_REACH_CELLS) continue;
+    return { id: boat.id };
+  }
+  return null;
+}
+
+/** Where this boat is now, in fractional cell space — null once it is gone. */
+export function boatPosition(id: number): { x: number; y: number } | null {
+  const boat = boats.find((candidate) => candidate.id === id);
+  return boat === undefined ? null : { x: boat.x, y: boat.y };
+}
+
+/**
+ * Burns these to the waterline. Returns how many were actually afloat.
+ *
+ * THE SAME LOSS AS A KRAKEN TAKING ONE — the boat leaves the fleet and its home
+ * village is then short, so the ordinary shipyard machinery
+ * (advanceShipyards) lays down a replacement on the ordinary timer. A burned
+ * boat and a sunk one are the same fact about a village: it has one fewer boat.
+ */
+export function burnBoats(ids: readonly number[]): number {
+  const doomed = new Set(ids);
+  const before = boats.length;
+  boats = boats.filter((boat) => !doomed.has(boat.id));
+  return before - boats.length;
+}
+
 export function boatStates(): BoatState[] {
   return boats.map((boat) => ({
     id: boat.id,

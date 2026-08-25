@@ -14,6 +14,7 @@ import { Group } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
+  MoverPose,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
 import { BOATS_PLUGIN_NAME, BOATS_STATE_MESSAGE, parseBoatsPayload } from '../protocol.ts';
@@ -63,6 +64,10 @@ const views = new Map<number, BoatView>();
 
 let models: BoatModels | null = null;
 let container: Group | null = null;
+
+/** Withdraws this plugin's aimable boats / pose lookup from the host. */
+let unmarkPickable: (() => void) | null = null;
+let unpublishMovers: (() => void) | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let animationSeconds = 0;
@@ -127,6 +132,22 @@ function renderFrame(dt: number): void {
   }
 }
 
+/**
+ * Where a boat is DRAWN, for anything that has to be drawn on it — a flame
+ * (ClientPluginCtx.publishMovers).
+ *
+ * THIS IS WHY BURNING BOATS NEEDED NO NEW WIRE FIELD. The pose's `y` is this
+ * plugin's own waterline, so a flame attached to it sits on the deck rather
+ * than on the seabed several world units below — which is what a flame placed
+ * from the TERRAIN height under a boat would have done.
+ */
+function drawnPoseOf(id: number): MoverPose | null {
+  const view = views.get(id);
+  if (view === undefined) return null;
+  const at = view.model.root.position;
+  return { x: at.x, y: at.y, z: at.z };
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: BOATS_PLUGIN_NAME,
 
@@ -136,6 +157,10 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'boats:afloat';
     ctx.layer.add(container);
+    // Aimable, and something a flame can be drawn on — the two halves of being
+    // able to put a torch to a boat and watch it burn to the waterline.
+    unmarkPickable = ctx.markPickable(container);
+    unpublishMovers = ctx.publishMovers(drawnPoseOf);
 
     unsubscribeMessages = ctx.onMessage(BOATS_STATE_MESSAGE, (payload) => {
       const boats = parseBoatsPayload(payload);
@@ -154,6 +179,10 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unmarkPickable?.();
+    unmarkPickable = null;
+    unpublishMovers?.();
+    unpublishMovers = null;
 
     for (const view of views.values()) view.model.dispose();
     views.clear();
