@@ -146,6 +146,127 @@ const HOMESTEAD_MIN_CELLS = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** A candidate homestead: the block's anchor, and the cell a settler walks to. */
+interface SettleSite {
+  readonly x: number;
+  readonly y: number;
+  readonly goalX: number;
+  readonly goalY: number;
+}
+
+/**
+ * Where a settler stands the instant it steps outside.
+ *
+ * The temple sends its own door across the bridge because only it knows how
+ * wide it is and what stands on its front face; absent (an older temples
+ * build) the cell centre stands in, which is the pre-2026-08-24 behaviour and
+ * the reason the field is optional.
+ */
+function doorOf(temple: BridgedTemple): { x: number; y: number } {
+  return { x: temple.doorX ?? temple.x + 0.5, y: temple.doorY ?? temple.y + 0.5 };
+}
+
+/**
+ * Walks the settle ring in the rolled order and hands each candidate site to
+ * `plan`; the first site `plan` accepts wins, and whatever it built comes back
+ * with it.
+ *
+ * WHY THE ROUTE IS PLANNED INSIDE THE SCAN. Choosing a site and finding a way
+ * to it used to be two steps, and every one of the three callers spelled out
+ * the same sequence: pick, plan, and on `null` give up entirely. So a single
+ * unreachable candidate — one homestead site across a river, on the one
+ * bearing the roll happened to start at — retired a settler or cost a whole
+ * epoch's dispatch, while eleven other bearings sat untried. A site nobody can
+ * walk to is not a site; the scan is the right place to say so, and saying it
+ * here also deletes the pick-then-plan-then-bail sequence from all three.
+ *
+ * A RING SCAN, not a survey of the county: bearings in a fixed order starting
+ * from one the roll picks, and along each bearing the distances from the
+ * minimum out to the maximum, nearest first. That is cheap, it is the same
+ * shape as pilgrimage.ts's own `pickViewpoint` ring, and starting at a rolled
+ * bearing is what stops every settler from a given temple filing out in the
+ * same direction.
+ *
+ * WALKABILITY IS THE ONLY TEST MADE ON THE GROUND ITSELF. Whether it will take
+ * a HOUSE is structures' predicate, and this plugin deliberately keeps no copy
+ * of it (a second copy is exactly the drift the bridge exists to avoid) — so
+ * the honest answer arrives when the settler gets there and asks, which is
+ * what SETTLER_SITE_ATTEMPTS exists to pay for.
+ */
+function scanSettleSites<T>(
+  world: PilgrimWorld,
+  temple: BridgedTemple,
+  roll: number,
+  plan: (site: SettleSite) => T | null,
+): { site: SettleSite; planned: T } | null {
+  const bearingOffset = roll % SETTLE_RING_SAMPLES;
+  const span = SETTLE_MAX_DISTANCE_CELLS - SETTLE_MIN_DISTANCE_CELLS;
+
+  for (let s = 0; s < SETTLE_RING_SAMPLES; s++) {
+    const bearing = ((bearingOffset + s) % SETTLE_RING_SAMPLES) / SETTLE_RING_SAMPLES;
+    const angle = bearing * Math.PI * 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    for (let d = 0; d < SETTLE_DISTANCE_STEPS; d++) {
+      // Nearest ring first: a settler should build in the temple's own country
+      // before it walks to the edge of its range.
+      const distance =
+        SETTLE_MIN_DISTANCE_CELLS + (span * d) / Math.max(1, SETTLE_DISTANCE_STEPS - 1);
+      const anchorX = Math.floor(temple.x + cos * distance);
+      const anchorY = Math.floor(temple.y + sin * distance);
+      if (!isBlockWalkable(world, anchorX, anchorY)) continue;
+
+      const site: SettleSite = {
+        x: anchorX,
+        y: anchorY,
+        // The goal is the block's CENTRE: the settler walks into the middle of
+        // the homestead it is about to raise, not to one of its corners.
+        goalX: anchorX + HOMESTEAD_EDGE_CELLS / 2,
+        goalY: anchorY + HOMESTEAD_EDGE_CELLS / 2,
+      };
+      const planned = plan(site);
+      if (planned !== null) return { site, planned };
+    }
+  }
+  return null;
+}
+
+/** Is every cell of the 2x2 block at this anchor ground a settler can stand on? */
+function isBlockWalkable(world: PilgrimWorld, anchorX: number, anchorY: number): boolean {
+  for (let dy = 0; dy < HOMESTEAD_EDGE_CELLS; dy++) {
+    for (let dx = 0; dx < HOMESTEAD_EDGE_CELLS; dx++) {
+      if (!isWalkableCell(world, anchorX + dx, anchorY + dy)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * COULD A TEMPLE HERE EVER SEND ANYBODY OUT? The predicate the temples plugin
+ * asks before it lets the player put a building down (owner, 2026-08-24:
+ * "prevent placing the temple in a location where it cannot spawn a settler").
+ *
+ * It lives here, with the numbers it is made of. Every term in the answer —
+ * how far a settler will walk, how big a homestead is, what ground a walker
+ * will cross, what counts as a route — is this plugin's, and a copy of any of
+ * them in the temples plugin would be a second opinion waiting to drift from
+ * this one. So temples asks across the bridge instead, exactly as this plugin
+ * asks temples where its door is.
+ *
+ * PURE AND SYNCHRONOUS: no settler is created and no state is touched, so the
+ * placement path may call it on the press.
+ */
+export function canDispatchSettler(world: PilgrimWorld, temple: BridgedTemple): boolean {
+  const door = doorOf(temple);
+  if (!isWalkableCell(world, Math.floor(door.x), Math.floor(door.y))) return false;
+  return (
+    scanSettleSites(world, temple, 0, (site) =>
+      planRoute(world, door.x, door.y, site.goalX, site.goalY),
+    ) !== null
+  );
+}
+
 /** One settler on the road out of the temple. */
 interface Settler {
   readonly id: number;
@@ -327,17 +448,17 @@ export class Settling {
     // so two settlers dispatched in the same epoch that both fail do not both
     // re-target the same cell — and it stays deterministic, because the id
     // sequence is.
-    const site = this.chooseSite(world, temple, hashCell(epoch, settler.id + settler.attempts));
-    if (site === null) {
+    const found = scanSettleSites(
+      world,
+      temple,
+      hashCell(epoch, settler.id + settler.attempts),
+      (candidate) => planRoute(world, settler.x, settler.y, candidate.goalX, candidate.goalY),
+    );
+    if (found === null) {
       this.settlers.delete(settler.id);
       return;
     }
-
-    const route = planRoute(world, settler.x, settler.y, site.goalX, site.goalY);
-    if (route === null) {
-      this.settlers.delete(settler.id);
-      return;
-    }
+    const { site, planned: route } = found;
 
     settler.siteX = site.x;
     settler.siteY = site.y;
@@ -354,20 +475,17 @@ export class Settling {
     if (this.settlers.size >= SETTLERS_CAP) return;
 
     const roll = hashCell(hashCell(temple.x, temple.y) ^ epoch, epoch);
-    const site = this.chooseSite(world, temple, roll);
-    if (site === null) return;
-
-    // OUT OF THE DOOR, not out of the middle of the building. The temple
-    // sends its own door across the bridge because only it knows how wide it
-    // is; absent (an older temples build) the cell centre stands in, which is
-    // the pre-2026-08-24 behaviour and the reason this field exists.
-    const doorX = temple.doorX ?? temple.x + 0.5;
-    const doorY = temple.doorY ?? temple.y + 0.5;
-    // NEVER DISPATCH A SETTLER TO A TRIP IT CANNOT WALK — the rule both sims
-    // beside this one keep. A temple whose whole county is unreachable simply
-    // sends nobody this epoch.
-    const route = planRoute(world, doorX, doorY, site.goalX, site.goalY);
-    if (route === null) return;
+    // OUT OF THE DOOR, not out of the middle of the building — and NEVER to a
+    // trip it cannot walk, the rule both sims beside this one keep. The scan
+    // enforces the second while it picks for the first, so a temple sends
+    // nobody this epoch only when its whole county is unreachable, not when
+    // one rolled bearing was.
+    const { x: doorX, y: doorY } = doorOf(temple);
+    const found = scanSettleSites(world, temple, roll, (candidate) =>
+      planRoute(world, doorX, doorY, candidate.goalX, candidate.goalY),
+    );
+    if (found === null) return;
+    const { site, planned: route } = found;
 
     const id = this.ids.allocate();
     this.settlers.set(id, {
@@ -388,70 +506,6 @@ export class Settling {
       route,
       routeIndex: 0,
     });
-  }
-
-  /**
-   * Picks a homestead site around the temple, deterministically.
-   *
-   * A RING SCAN, not a survey of the county: bearings are tried in a fixed
-   * order starting from one the roll picks, and along each bearing the
-   * distances from the minimum out to the maximum. The first anchor whose
-   * whole 2×2 block is walkable wins. That is cheap (a few dozen probes,
-   * once per dispatch), it is the same shape as pilgrimage.ts's own
-   * `pickViewpoint` ring, and starting the sweep at a rolled bearing is what
-   * stops every settler from a given temple filing out in the same direction.
-   *
-   * WALKABILITY IS THE ONLY TEST MADE HERE. Whether the ground will take a
-   * HOUSE is structures' predicate, and this plugin deliberately keeps no copy
-   * of it (a second copy is exactly the drift the bridge exists to avoid) — so
-   * the honest answer arrives when the settler gets there and asks, which is
-   * what SETTLER_SITE_ATTEMPTS exists to pay for.
-   */
-  private chooseSite(
-    world: PilgrimWorld,
-    temple: BridgedTemple,
-    roll: number,
-  ): { x: number; y: number; goalX: number; goalY: number } | null {
-    const bearingOffset = roll % SETTLE_RING_SAMPLES;
-    const span = SETTLE_MAX_DISTANCE_CELLS - SETTLE_MIN_DISTANCE_CELLS;
-
-    for (let s = 0; s < SETTLE_RING_SAMPLES; s++) {
-      const bearing = ((bearingOffset + s) % SETTLE_RING_SAMPLES) / SETTLE_RING_SAMPLES;
-      const angle = bearing * Math.PI * 2;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-
-      for (let d = 0; d < SETTLE_DISTANCE_STEPS; d++) {
-        // Nearest ring first: a settler should build in the temple's own
-        // country before it walks to the edge of its range.
-        const distance =
-          SETTLE_MIN_DISTANCE_CELLS +
-          (span * d) / Math.max(1, SETTLE_DISTANCE_STEPS - 1);
-        const anchorX = Math.floor(temple.x + cos * distance);
-        const anchorY = Math.floor(temple.y + sin * distance);
-        if (!this.isBlockWalkable(world, anchorX, anchorY)) continue;
-
-        return {
-          x: anchorX,
-          y: anchorY,
-          // The goal is the block's CENTRE: the settler walks into the middle
-          // of the homestead it is about to raise, not to one of its corners.
-          goalX: anchorX + HOMESTEAD_EDGE_CELLS / 2,
-          goalY: anchorY + HOMESTEAD_EDGE_CELLS / 2,
-        };
-      }
-    }
-    return null;
-  }
-
-  /** Is every cell of the 2×2 block at this anchor ground a settler can stand on? */
-  private isBlockWalkable(world: PilgrimWorld, anchorX: number, anchorY: number): boolean {
-    for (let dy = 0; dy < HOMESTEAD_EDGE_CELLS; dy++) {
-      for (let dx = 0; dx < HOMESTEAD_EDGE_CELLS; dx++) {
-        if (!isWalkableCell(world, anchorX + dx, anchorY + dy)) return false;
-      }
-    }
-    return true;
   }
 
   /** Wire rows for the broadcast, insertion (spawn) order. */
@@ -477,6 +531,18 @@ export class Settling {
   /** See Pilgrimage.walkers() — same contract, same caller (index.ts). */
   walkers(): readonly MovingWalker[] {
     return [...this.settlers.values()];
+  }
+
+  /**
+   * Removes one settler outright — a DEATH, not an arrival.
+   *
+   * The only caller is fire (index.ts's fuel registration): a settler that
+   * burned to death never reaches the cell it was walking to, so it must not go
+   * through the arrival path that founds a home there. Returns whether this sim
+   * had them; the other two walker sims are asked in turn.
+   */
+  remove(id: number): boolean {
+    return this.settlers.delete(id);
   }
 
   clear(): void {

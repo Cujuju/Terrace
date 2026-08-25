@@ -748,6 +748,18 @@ export class Pilgrimage {
     return rows;
   }
 
+  /**
+   * Removes one pilgrim outright — a DEATH, not a homecoming.
+   *
+   * Nothing else has to be unwound: the settledness tracker is keyed by MONSTER
+   * rather than by pilgrim, and a settlement's blessing is derived from who is
+   * abroad (blessedCellKeys) rather than stored, so a pilgrim who burns simply
+   * stops being counted on the next pass. fire is the only caller.
+   */
+  remove(id: number): boolean {
+    return this.pilgrims.delete(id);
+  }
+
   clear(): void {
     this.tracker.clear();
     this.pilgrims.clear();
