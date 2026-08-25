@@ -109,6 +109,7 @@ import {
   type OccupancyPredicate,
 } from './forest.ts';
 import { CropField, cropSurveyChunksPerTick } from './crops.ts';
+import { loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
 import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
@@ -563,6 +564,101 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// THE FLAMMABLE PATH — what flora contributes to the world's fire (./fire-
+// bridge.ts, and plugins/fire/server/fuel.ts's header for the contract).
+//
+// Nothing here starts, spreads or draws a fire. This plugin says only what it
+// owns that can burn, how long it burns for, and what to destroy when it has —
+// which is the whole of flora's involvement in the mechanic.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a tree burns, in simulated seconds.
+ *
+ * Long enough to be an event you can react to — the player watching a stand
+ * catch has time to dig a break before the next tree goes up — and short enough
+ * that a fire is over within a minute rather than becoming the world's
+ * permanent weather. It is also the number FIRE_KEEPALIVE_SECONDS (10 s) is
+ * sized against: a tree fire is re-anchored on every client at least twice
+ * during its life.
+ */
+export const FLORA_TREE_BURN_SECONDS = 22;
+
+/**
+ * How long a crop burns. A FLASH, not a burn: dry standing grain goes up in
+ * seconds and leaves nothing, which is the whole difference between losing a
+ * field and losing a wood.
+ */
+export const FLORA_CROP_BURN_SECONDS = 4;
+
+/**
+ * Flame size for a tree, in world units — the drawn height of a full-grown one
+ * at scale 1 (TRUNK_HEIGHT + CONIFER_CROWN_HEIGHT in ../client/models.ts, ≈1.5).
+ *
+ * Restated rather than imported: that constant lives in a THREE-dependent
+ * client module the server must not load. It is a render-facing number in both
+ * places, so a drift between them costs a flame slightly the wrong size — the
+ * reason it is not worth pulling a client module (or a shared one) into the
+ * server to fix.
+ */
+export const FLORA_TREE_FUEL_HEIGHT = 1.5;
+
+/**
+ * Flame size for a crop. A quarter of a tree's: knee-high standing grain, so a
+ * burning field reads as a running line of low flame rather than as a forest
+ * fire in miniature.
+ */
+export const FLORA_CROP_FUEL_HEIGHT = 0.35;
+
+/**
+ * What burns at this cell. Trees are checked before crops for no deeper reason
+ * than that a cell cannot hold both — flora plants only one thing per cell.
+ */
+function floraFuelAt(x: number, y: number): { burnSeconds: number; height: number } | null {
+  if (forest.has(x, y)) {
+    return { burnSeconds: FLORA_TREE_BURN_SECONDS, height: FLORA_TREE_FUEL_HEIGHT };
+  }
+  if (cropField.has(x, y)) {
+    return { burnSeconds: FLORA_CROP_BURN_SECONDS, height: FLORA_CROP_FUEL_HEIGHT };
+  }
+  return null;
+}
+
+/**
+ * A fire finished here: whatever was standing is gone.
+ *
+ * Called ONLY for fires that ran their full course — a fire cut short by rain
+ * or by a dug firebreak never reaches this (plugins/fire/server/blaze.ts's
+ * three endings), and the tree it was burning survives, scorched but standing.
+ *
+ * Stability is NOT reset, for onStructuresChanges' reason: fire changes no
+ * height, so the ground was never disturbed. A burned-out cell is as stable as
+ * it was, and flora's ordinary survey recolonizes it on the usual schedule.
+ */
+function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number }[]): void {
+  const world = fuelWorld;
+  if (world === null) return;
+
+  const felled: TreeCell[] = [];
+  const withered: CropCell[] = [];
+  for (const cell of cells) {
+    if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+    const witheredCell = cropField.reactToEdit(cell.x, cell.y);
+    if (witheredCell !== null) withered.push(witheredCell);
+  }
+
+  broadcastChanges(world, [], felled);
+  broadcastCropChanges(world, [], withered);
+}
+
+/**
+ * The live world, stashed for floraBurnedOut — which is called from fire's tick
+ * rather than from one of this plugin's own hooks, and so is handed no world of
+ * its own.
+ */
+let fuelWorld: WorldApi | null = null;
+
+// ────────────────────────────────────────────────────────────────────────────
 // The plugin
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -596,6 +692,19 @@ export const plugin: TerracePlugin = {
     // working. Every occupiedCells() query until then simply sees an empty
     // occupied set, same as a world with no structures plugin installed at all.
     void loadStructuresBridge();
+
+    // The same pattern, pointing the other way (./fire-bridge.ts's header):
+    // flora TELLS fire what of its own can burn. Started here and not awaited;
+    // the registration is buffered and replayed if fire has not resolved yet,
+    // so the forest is flammable from the moment fire exists rather than from
+    // whenever the import happens to land.
+    fuelWorld = world;
+    loadFireBridge();
+    registerFloraFuel({
+      name: FLORA_PLUGIN_NAME,
+      fuelAt: floraFuelAt,
+      onBurnedOut: floraBurnedOut,
+    });
 
     // No players are connected at world create, so this is not how anyone gets
     // their first forest (onPlayerJoin is). It is here so that a client which is
@@ -697,6 +806,7 @@ export function currentCropField(): CropField {
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetFloraState(): void {
   stability = null;
+  fuelWorld = null;
   forest.replaceAll([]);
   cropField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
