@@ -55,16 +55,25 @@ const BAND_WAVES = [
 ] as const;
 
 /**
- * Darkest and brightest the bands drive the surface's own colour to. Centred a
+ * Darkest and brightest the bands drive the surface's own colour to.
+ *
+ * WIDENED 0.78/1.16 → 0.66/1.3 (owner, 2026-08-24: "it's a little hard to see
+ * the texture now"). "Now" is the operative word and it is not a coincidence:
+ * these are MULTIPLIERS, and the depth shade landing under them means deep
+ * water multiplies this range by WATER_SHADE_DEEP before it reaches the screen.
+ * At 0.22 a ±19% band range becomes a ±4% one in absolute terms — the steps
+ * were still there and no longer legible. Widening here is what keeps the
+ * texture readable at the dark end; darkening the deeps and keeping the bands
+ * visible are in direct tension, and this is the knob that pays for it. Centred a
  * little under 1 rather than around it: water reading slightly DEEPER than its
  * flat colour, with the crest steps lifting back up, keeps the sea from looking
  * washed out where the depth-alpha is already thinning it.
  */
-const BAND_SHADE_MIN = 0.78;
-const BAND_SHADE_MAX = 1.16;
+const BAND_SHADE_MIN = 0.66;
+const BAND_SHADE_MAX = 1.3;
 
 /** Extra lift on the top step only, so a crest reads as catching the light. */
-const BAND_CREST_GAIN = 1.14;
+const BAND_CREST_GAIN = 1.2;
 /** Where the crest lift starts, in normalised band units. */
 const BAND_CREST_THRESHOLD = 0.8;
 

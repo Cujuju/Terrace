@@ -93,7 +93,14 @@ const WATER_METALNESS = 0;
  * writes; these two constants are the only place the range lives.
  */
 const WATER_SHADE_SHALLOW = 1.35;
-const WATER_SHADE_DEEP = 0.3;
+/**
+ * 0.3 → 0.22 (owner, 2026-08-24: "I would like to see the deeper sections a
+ * little bit darker"). Note what this trades: the bands are a MULTIPLY on this
+ * value, so every step darker here also compresses the painted steps' absolute
+ * contrast in deep water by the same factor. waterBands.ts's range was widened
+ * in the same change to pay for it.
+ */
+const WATER_SHADE_DEEP = 0.22;
 
 /**
  * THE SEA IS DRAWN ONLY OVER REVEALED CHUNKS (owner, 2026-08-24: "I'd like to
