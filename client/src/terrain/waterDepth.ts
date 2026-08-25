@@ -353,10 +353,44 @@ export function surfaceAlphaByte(height: number): number {
  * siblings. Encoding a multiplier that can exceed 1 would have needed an
  * encode scale that every reader then has to know about.
  */
+/**
+ * The depth at which the shade ramp bottoms out.
+ *
+ * CORRECTED 2026-08-24, same day, owner: "There's no visual difference between
+ * deep water and shallow water." The first version ramped over
+ * WATER_DEPTH_FLOOR_WORLD_UNITS — the world's GEOLOGICAL floor, 96 bands down.
+ * Real water is nowhere near that deep. A genesis world lays down a coastal
+ * staircase of 4 bands (shelf), 8 (slope) and 12 (open seabed), with 32 at a
+ * trench floor; against a 96-band ramp the whole ocean lived in the top eighth
+ * of the range and every depth came out within 6% of every other. The curve was
+ * correct and invisible, which is the same as broken.
+ *
+ * The lesson generalises past this curve: a depth ramp must be scaled to the
+ * depth of WATER, not to the depth of the CRUST. WATER_DEPTH_SATURATION_
+ * WORLD_UNITS makes the same mistake for alpha (it is the 64-band sea column),
+ * which is why ordinary open ocean sits at alpha 0.18 and the sea's own colour
+ * barely reaches the screen — flagged to the owner rather than changed here,
+ * since that curve is separately tuned and entangled with the specular
+ * correction.
+ *
+ * 32 bands is the genesis trench floor: the deepest water a fresh world
+ * contains. Ramping to exactly that means the range covers every depth that
+ * actually exists, end to end, with nothing clamped flat and nothing spent on
+ * crust no swimmer ever sees. The worldgen numbers it is chosen against live in
+ * server/src/world/world.ts (FRESH_SHELF/SLOPE/SEABED_DEPTH_BELOW_SEA,
+ * GENESIS_TRENCH_FLOOR_DEPTH_BELOW_SEA); they are worldgen's to move, and if
+ * they move far this constant wants revisiting — it is a rendering choice made
+ * against that profile, not a copy of any one of those values.
+ */
+const WATER_SHADE_SATURATION_BANDS = 32;
+
+export const WATER_SHADE_SATURATION_WORLD_UNITS =
+  WATER_SHADE_SATURATION_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+
 export function depthToShadeMix(depthWorldUnits: number): number {
   if (depthWorldUnits <= 0) return 1;
-  if (depthWorldUnits >= WATER_DEPTH_FLOOR_WORLD_UNITS) return 0;
-  return 1 - depthWorldUnits / WATER_DEPTH_FLOOR_WORLD_UNITS;
+  if (depthWorldUnits >= WATER_SHADE_SATURATION_WORLD_UNITS) return 0;
+  return 1 - depthWorldUnits / WATER_SHADE_SATURATION_WORLD_UNITS;
 }
 
 /** depthToShadeMix, quantised to the byte the shade texture stores. */
