@@ -129,6 +129,28 @@ const RIVER_SURFACE_LIFT_WORLD_UNITS = 1 / 64;
 const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE + WATER_SURFACE_LIFT;
 
 /**
+ * Depth-buffer bias for the whole water mesh, pulling it TOWARD the camera in
+ * the depth comparison without moving any vertex.
+ *
+ * WHY A MATERIAL BIAS AND NOT A GEOMETRIC ONE (2026-08-24). A waterfall sheet
+ * is drawn flat against the rock face it pours down, and coincident surfaces
+ * z-fight. The curtain used to buy its clearance by pushing every vertex 1/64
+ * of a world unit outward along its own segment normal — which worked for the
+ * depth buffer and broke the thing that matters more: the sheet no longer
+ * shared vertices with the pool above it, so there was a hairline crack at
+ * every pool-to-wall junction, and neighbouring quads offset along DIFFERENT
+ * normals showed as bright doubled lines down each fall.
+ *
+ * A polygon offset resolves the depth comparison where the problem actually
+ * is, leaving geometry free to be exactly coincident and exactly welded. One
+ * unit each of slope-relative and constant bias: the smallest the GL spec
+ * guarantees is resolvable, which is all a coplanar surface needs, and small
+ * enough that water never pulls in front of geometry genuinely nearer.
+ */
+const WATER_DEPTH_BIAS_FACTOR = -1;
+const WATER_DEPTH_BIAS_UNITS = -1;
+
+/**
  * Translucency of ALL water in a network.
  *
  * ONE VALUE, not the old FLOW_OPACITY 0.72 / POOL_OPACITY 0.8 pair. A channel
@@ -513,6 +535,12 @@ export function createRiverRig(
     metalness: RIVER_METALNESS,
     depthWrite: false, // see render/water.ts: lets submerged/underlying terrain show through
     side: DoubleSide,
+    // Waterfall sheets are coincident with the rock face by design — see
+    // WATER_DEPTH_BIAS_FACTOR for why the clearance lives here rather than in
+    // the vertices.
+    polygonOffset: true,
+    polygonOffsetFactor: WATER_DEPTH_BIAS_FACTOR,
+    polygonOffsetUnits: WATER_DEPTH_BIAS_UNITS,
   });
 
   const waterMesh = new Mesh(new BufferGeometry(), waterMaterial);
@@ -943,7 +971,18 @@ export function createRiverRig(
       // callbacks here — a lower-water probe and a ground-height probe, both
       // re-deriving from the cell lattice — and those two derivations are the
       // defect this change deletes.
-      appendCurtains(ground, loops, region.surfaceBand, SEA_SURFACE_WORLD_Y, triangles);
+      // bandWorldY is handed over rather than re-derived, so the sheet's top
+      // edge is the SAME NUMBER as the pool surface it hangs from and its foot
+      // is the same number as the pool it lands in — which is what makes the
+      // junctions welded rather than merely close.
+      appendCurtains(
+        ground,
+        loops,
+        region.surfaceBand,
+        bandWorldY,
+        SEA_SURFACE_WORLD_Y,
+        triangles,
+      );
     }
 
     waterMesh.geometry.dispose();
