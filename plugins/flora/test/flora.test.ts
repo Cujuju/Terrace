@@ -91,7 +91,7 @@ import { worldWithTerrain } from './support/world.ts';
 /**
  * 64² WORLD UNITS — small enough to survey thousands of times a suite, and big
  * enough to hold a forest at the shipped density. Counted in world units rather
- * than cells because that density is: FLORA_CELLS_PER_TREE is a tree per eight
+ * than cells because that density is: FLORA_CELLS_PER_TREE is a tree per four
  * square world units, so a 64-CELL world after the 2026-08-21 re-sample would
  * be sixteen world units of ground and hold almost no trees at all.
  */

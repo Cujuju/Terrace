@@ -28,7 +28,7 @@
 //   relics   : five objects that DON'T → full list on every change plus a 15 s
 //                                        keepalive; five items is small enough
 //                                        that a delta would be pure ceremony
-//   flora    : up to 3000 objects that DON'T → deltas, plus a snapshot on join
+//   flora    : up to 4096 objects that DON'T → deltas, plus a snapshot on join
 //                                        and a 60 s keepalive; ≈2.7 kbit/s
 //
 // The middle column is the whole argument. A forest is big enough that resending

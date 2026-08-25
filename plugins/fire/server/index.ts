@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WHERE THIS PLUGIN SITS NEXT TO THE OTHER TWO THAT PLACE THINGS ON CELLS.
 //
-//   flora  : up to 3000 objects that never change → deltas + a 60 s keepalive
+//   flora  : up to 4096 objects that never change → deltas + a 60 s keepalive
 //   fire   : up to 400 objects with a KNOWN FUTURE → deltas + a 10 s keepalive
 //   wildlife: 150 objects that move unpredictably → full state, twice a second
 //
@@ -471,13 +471,12 @@ function suppressEntitiesWithRain(dt: number): number {
  * that every bolt starts a fire stops watching storms and starts dreading them.
  *
  * THE ARITHMETIC IT LANDS AT, on a mature world: flora plants roughly one tree
- * per FLORA_CELLS_PER_TREE (8) eligible cells (retuned down from 12, 2026-08-25,
- * owner asked for a denser forest), so a bolt aimed by height alone
- * (weather/server/lightning.ts) lands on fuel maybe one time in eight; at 0.35
- * that is ~4% of bolts starting a fire, and a storm throwing a dozen bolts over
- * its life starts one about half the time it crosses woodland — slightly more
- * often than before the retune, an accepted knock-on. Rare enough to be an
- * event, common enough that a long game sees several.
+ * per FLORA_CELLS_PER_TREE (4) eligible cells (retuned down twice, 2026-08-25,
+ * owner asked for a visibly fuller forest), so a bolt aimed by height alone
+ * (weather/server/lightning.ts) crosses treed ground more often than it used
+ * to and LIGHTNING_IGNITION_CHANCE now starts fires proportionally more often —
+ * an accepted knock-on of wanting denser woodland. Rare enough to be an event,
+ * common enough that a long game sees several.
  */
 export const LIGHTNING_IGNITION_CHANCE = 0.35;
 
