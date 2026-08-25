@@ -205,7 +205,7 @@ function buildInstances(): void {
  * to catch.
  */
 const TORCH_TOOL_ID = 'ignite';
-const TORCH_TOOL_LABEL = 'Torch';
+const TORCH_TOOL_LABEL = 'Pyro';
 const TORCH_TOOL_TITLE =
   'Set light to what grows on a cell you have unlocked. Costs mana; only living things catch, and rain will put it out.';
 
@@ -221,12 +221,18 @@ const TORCH_BUTTON = 0;
  * Takes the click. Returns true whenever the torch is held so the press never
  * falls through to the sculpt brush — a player holding the torch must not dig a
  * hole by missing a tree.
+ *
+ * pickWorldCell, NOT pickTerrainCell: what the player is aiming at is the TREE
+ * they can see, and a tree's canopy stands above its own cell — a terrain-only
+ * ray goes straight past it and lands on ground several cells behind (see
+ * ClientPluginCtx.pickWorldCell). The hover ring uses the same call, so the
+ * ring cannot promise a cell the click would not light.
  */
 function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   if (!torchHeld) return false;
   if (event.button !== TORCH_BUTTON) return false;
 
-  const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
+  const cell = ctx.pickWorldCell(event.clientX, event.clientY);
   // A press that missed the terrain entirely (sky, sea, locked territory) is
   // still CLAIMED: the tool is held, so the click was meant for it.
   if (cell === null) return true;
@@ -273,13 +279,13 @@ export const clientPlugin: TerraceClientPlugin = {
     });
 
     // HOVER on the window, not the canvas: a plugin is handed no canvas
-    // (ClientPluginCtx has none by design) and pickTerrainCell takes CLIENT
+    // (ClientPluginCtx has none by design) and pickWorldCell takes CLIENT
     // coordinates, so a window listener answers the same question. The pick only
     // runs while the torch is actually held — temples/client/index.ts's
     // arrangement, for its reasons.
     onPointerMove = (event: PointerEvent): void => {
       if (!torchHeld) return;
-      torchCell = ctx.pickTerrainCell(event.clientX, event.clientY);
+      torchCell = ctx.pickWorldCell(event.clientX, event.clientY);
     };
     window.addEventListener('pointermove', onPointerMove);
 

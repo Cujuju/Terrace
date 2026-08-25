@@ -11,7 +11,7 @@
 // directions, so a plugin cannot collide with core messages or another plugin.
 
 import type { SculptIntent } from '@terrace/shared';
-import type { Group } from 'three';
+import type { Group, Object3D } from 'three';
 import type { Component } from 'solid-js';
 
 /**
@@ -191,6 +191,45 @@ export interface ClientPluginCtx {
    * call: fine for clicks, not for per-frame use.
    */
   pickTerrainCell(clientX: number, clientY: number): { x: number; y: number } | null;
+
+  /**
+   * Declares one of this plugin's objects to be A THING STANDING ON THE GROUND
+   * — a tree, a hut, a boat, an animal — so that `pickWorldCell` can aim at it.
+   * Returns an unregister function.
+   *
+   * OPT-IN, NOT AUTOMATIC, and that is the whole point. A plugin's layer also
+   * holds things that are emphatically NOT aimable: weather's sky dome, the
+   * frontier fog, a flame. An indiscriminate raycast over the layers would hit
+   * the sky before it ever reached a tree, so a plugin says which of its
+   * objects are part of the solid world and the host believes exactly that.
+   *
+   * The object may be a Group or an InstancedMesh: the host descends into it,
+   * so a whole forest is ONE registration. The cell comes from WHERE THE RAY
+   * HIT rather than from which instance it was, so the host needs no
+   * instance-to-cell mapping — and a plugin whose group also holds something
+   * unaimable should register the aimable child instead of the group.
+   */
+  markPickable(object: Object3D): () => void;
+
+  /**
+   * The cell the player is POINTING AT — which is not the same question as
+   * `pickTerrainCell`, and the difference is the bug this exists to fix.
+   *
+   * A tree's canopy is drawn ABOVE its cell. At an orbit camera's angle a ray
+   * through the canopy carries on and meets the ground several cells BEHIND
+   * it, so a player who clicks the tree they can plainly see targets bare
+   * ground somewhere past it. Aiming at things standing on the ground was
+   * therefore impossible with a terrain-only pick, however carefully the
+   * player clicked.
+   *
+   * So this asks the objects first (whatever `markPickable` declared, nearest
+   * hit wins) and falls back to the terrain when the ray hits none of them.
+   * Null when it hits nothing at all.
+   *
+   * Allocates and raycasts per call: a click or a hover, never a per-instance
+   * inner loop.
+   */
+  pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
 
   /**
    * The client-side mirror of the server's onIntent interceptor chain: lets a

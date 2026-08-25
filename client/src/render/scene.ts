@@ -282,6 +282,39 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   // and null again for any point with no ground — see GroundHeightSampler.
   let groundHeightSampler: GroundHeightSampler | null = null;
 
+  /**
+   * Frame callbacks that have already thrown once. A callback that throws does
+   * so EVERY frame, so the console would otherwise carry sixty copies of the
+   * same stack per second and bury whatever else was being reported — the same
+   * once-per-claimant rule the plugin host applies to its sky-rig refusals.
+   */
+  const brokenFrameCallbacks = new WeakSet<(dt: number) => void>();
+
+  /**
+   * Runs one frame callback in isolation.
+   *
+   * WITHOUT THIS, ONE PLUGIN FREEZES THE WHOLE GAME. The callbacks share a
+   * single loop with `controls.update()` and `renderer.render()` below, so a
+   * throw from any one of them skipped every later subscriber AND the render
+   * itself: the canvas kept showing its last frame forever, which reads as
+   * "the world froze" rather than as "one plugin is broken". A per-callback
+   * boundary keeps the failure the size of the plugin that caused it.
+   *
+   * A throwing callback is NOT unsubscribed. Some of them are waiting on data
+   * that has not arrived (a chunk, a texture) and recover on their own, and
+   * silently disabling a plugin for one bad frame would be a worse failure than
+   * the one this guards against.
+   */
+  const runFrameCallback = (cb: (dt: number) => void, dt: number): void => {
+    try {
+      cb(dt);
+    } catch (error) {
+      if (brokenFrameCallbacks.has(cb)) return;
+      brokenFrameCallbacks.add(cb);
+      console.error('[scene] a frame callback threw; the rest of the frame still ran', error);
+    }
+  };
+
   let frameHandle = 0;
   let lastFrameMs = 0;
   const renderFrame = (): void => {
@@ -293,7 +326,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
         ? 0
         : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
     lastFrameMs = nowMs;
-    for (const cb of frameCallbacks) cb(dt);
+    for (const cb of frameCallbacks) runFrameCallback(cb, dt);
     // Damping needs a per-frame update; it is also what applies any pending
     // camera input.
     controls.update();
