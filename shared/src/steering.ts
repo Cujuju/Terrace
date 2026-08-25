@@ -37,7 +37,7 @@ import {
   cellsAcross,
 } from './constants.ts';
 import { findRoute, type RouteCell } from './pathing.ts';
-import { canTraverseSegment, isWalkableCell, type TerrainSampler, type TraversalProfile } from './traversal.ts';
+import { canProceedAlong, type TerrainSampler, type TraversalProfile } from './traversal.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -127,8 +127,11 @@ export interface SteerOptions {
   /**
    * An extra veto a plugin needs and this file has no business knowing about
    * — boats' "only inside unlocked territory", monsters' whole-body lair
-   * pose. Called with the candidate LOOK-AHEAD point. Terrain legality is
-   * already checked; this is for everything else.
+   * pose. Called with the candidate LOOK-AHEAD point, which is the far END of
+   * the probe and not the path to it: ground legality IS sampled the whole way
+   * (canProceedAlong), a caller's own extra rule is not. Stated because it is
+   * a gap for any veto that can be true at both ends of a segment and false in
+   * the middle — a chunk-granular unlock mask clipped by a corner, say.
    */
   readonly permits?: (x: number, y: number) => boolean;
 }
@@ -174,15 +177,32 @@ function isClearOfOccupants(
  * at the look-ahead distance made separation an accident of the ratio between
  * the two; see `SteerOptions.stepCells` for the measurements.
  *
- * TWO PASSES, and the second one is load-bearing. Separation is applied on
- * the first pass only; if every candidate is rejected, the sweep runs again
- * IGNORING occupants. Crowding must never be able to freeze a mover: the
- * whole reported bug this file exists to fix is movers that stop and never
- * start again, and a rule that can deadlock a knot of walkers into mutual
- * paralysis would be that same bug wearing a new hat. Bodies overlapping for
- * a few ticks while a jam clears is a cosmetic cost; a permanently frozen
- * walker is not. Terrain legality is NOT relaxed on the second pass — a
+ * THE WAY AHEAD IS SAMPLED THE WHOLE WAY, not just at the probe's far end
+ * (`canProceedAlong`, and see its own doc for the whale that swam into a
+ * ridge because nothing looked between it and the open water beyond).
+ *
+ * CROWDING MAY NEVER FREEZE A MOVER. The whole reported bug this file exists
+ * to fix is movers that stop and never start again, and a rule that can
+ * deadlock a knot of walkers into mutual paralysis would be that same bug
+ * wearing a new hat — so bodies overlap for a few ticks while a jam clears
+ * rather than anybody standing still. Terrain is different in kind: a
  * shoreline stays a wall no matter how crowded it gets.
+ *
+ * SEPARATION RELAXES WITHIN THE SINGLE SWEEP: the smallest terrain-legal
+ * candidate that happened to be occupied is remembered and returned if nothing
+ * better turns up, so each candidate's terrain is sampled exactly once.
+ * Overlapping bodies for a few ticks is the cheapest fault there is, and it is
+ * what the residual note below already accepts.
+ *
+ * WHAT THIS RETURNS IS A DIRECTION TO WANT, NOT NECESSARILY ONE TO ADOPT THIS
+ * TICK. It is free to be 90° off the mover's current heading — nothing here
+ * knows what a mover's turning circle is, and a mover that HAS one turns
+ * toward this answer at its own rate rather than snapping onto it (wildlife's
+ * `advanceEntity` and its `maxTurnRadiansPerSecondOf` are the worked example).
+ * Deliberately not a knob here: clamping candidates to a turning circle inside
+ * this sweep makes a long look-ahead useless, because every candidate then
+ * collapses into the same narrow arc and "the way ahead is blocked at range"
+ * stops being expressible at all.
  *
  * RESIDUAL, NAMED: `occupants` is a snapshot of where everyone was at the top
  * of the tick (that is what makes the result independent of who is stepped
@@ -220,33 +240,39 @@ export function steerAvoiding(
   const selfRadius = options.selfRadiusCells ?? 0;
   const separates = occupants.length > 0;
 
-  for (let pass = 0; pass < (separates ? 2 : 1); pass++) {
-    const honourSeparation = pass === 0;
-    // Candidate 0 is `desired` itself (magnitude 0); the rest alternate right
-    // then left at growing magnitude, so the smallest workable turn wins.
-    for (let attempt = 0; attempt <= attempts; attempt++) {
-      const magnitude = Math.ceil(attempt / 2) * stepRadians;
-      const sign = attempt % 2 === 1 ? 1 : -1;
-      const heading = desired + sign * magnitude;
-      const aheadX = mover.x + Math.cos(heading) * lookaheadCells;
-      const aheadY = mover.y + Math.sin(heading) * lookaheadCells;
+  // The smallest-magnitude candidate that is terrain-legal but stands in
+  // somebody. Separation is relaxed by FALLING BACK to it rather than by a
+  // second sweep, so the terrain work — which is the expensive half, a sampled
+  // segment per candidate — is done exactly once per candidate.
+  let crowded: number | null = null;
 
-      if (!isWalkableCell(world, profile, aheadX, aheadY)) continue;
-      if (!canTraverseSegment(world, profile, mover.x, mover.y, aheadX, aheadY)) continue;
-      if (options.permits !== undefined && !options.permits(aheadX, aheadY)) continue;
-      if (honourSeparation) {
-        // Where this mover would STAND, not where it can see — see the two-
-        // distances note above. Computed inside the branch so a caller with no
-        // occupants pays nothing for it.
-        const stepX = mover.x + Math.cos(heading) * options.stepCells;
-        const stepY = mover.y + Math.sin(heading) * options.stepCells;
-        if (!isClearOfOccupants(stepX, stepY, occupants, selfRadius)) continue;
+  // Candidate 0 is `desired` itself (magnitude 0); the rest alternate right
+  // then left at growing magnitude, so the smallest workable turn wins.
+  for (let attempt = 0; attempt <= attempts; attempt++) {
+    const magnitude = Math.ceil(attempt / 2) * stepRadians;
+    const sign = attempt % 2 === 1 ? 1 : -1;
+    const heading = desired + sign * magnitude;
+    const aheadX = mover.x + Math.cos(heading) * lookaheadCells;
+    const aheadY = mover.y + Math.sin(heading) * lookaheadCells;
+
+    if (!canProceedAlong(world, profile, mover.x, mover.y, aheadX, aheadY)) continue;
+    if (options.permits !== undefined && !options.permits(aheadX, aheadY)) continue;
+    if (separates) {
+      // Where this mover would STAND, not where it can see — see the two-
+      // distances note above. Computed inside the branch so a caller with no
+      // occupants pays nothing for it.
+      const stepX = mover.x + Math.cos(heading) * options.stepCells;
+      const stepY = mover.y + Math.sin(heading) * options.stepCells;
+      if (!isClearOfOccupants(stepX, stepY, occupants, selfRadius)) {
+        if (crowded === null) crowded = heading;
+        continue;
       }
-
-      return normalizeAngle(heading);
     }
+
+    return normalizeAngle(heading);
   }
-  return null;
+
+  return crowded === null ? null : normalizeAngle(crowded);
 }
 
 /**
@@ -465,7 +491,10 @@ export function followRoute(
  *
  * Both halves, because A* checked both: the destination cell must still be
  * ground this profile accepts (a sculpt can flood it), and the step must not
- * have become a riser. Deliberately taken between the two CELL CENTRES rather
+ * have become a riser. `canProceedAlong` is exactly those two questions, and
+ * over a single edge — two adjacent cell centres — its sample loop reduces to
+ * the destination cell, so this is the same test it always was in one call
+ * rather than two. Deliberately taken between the two CELL CENTRES rather
  * than from the mover's fractional position, so the segment tested is exactly
  * the edge the planner accepted and the two can never disagree.
  */
@@ -475,8 +504,7 @@ function isRouteEdgeStillLegal(
   from: { x: number; y: number },
   to: { x: number; y: number },
 ): boolean {
-  if (!isWalkableCell(world, profile, to.x, to.y)) return false;
-  return canTraverseSegment(world, profile, from.x, from.y, to.x, to.y);
+  return canProceedAlong(world, profile, from.x, from.y, to.x, to.y);
 }
 
 function squaredDistance(ax: number, ay: number, bx: number, by: number): number {

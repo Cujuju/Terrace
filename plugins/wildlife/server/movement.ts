@@ -89,6 +89,43 @@ export const AVOID_TURN_STEP_RADIANS = SHARED_AVOID_TURN_STEP_RADIANS;
 export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = 2;
 
 /**
+ * The tightest arc a creature will turn through, as a fraction of its own body
+ * length — the radius of its turning circle.
+ *
+ * ROOT CAUSE THIS FIXES (owner, 2026-08-24: whales "will do 90-degree turns in
+ * place"; sea creatures should "travel in smooth polylines"). Nothing bounded
+ * how far a creature's heading could move in ONE tick. Every steering term
+ * ABOVE the habitat veto is rate-limited — turn noise by
+ * turnNoiseRadiansPerSecond, cohesion by SCHOOL_MAX_PULL_RADIANS_PER_SECOND,
+ * alignment by SCHOOL_ALIGNMENT_RADIANS_PER_SECOND — and then the veto itself,
+ * which is the term that actually decides where a creature near anything goes,
+ * committed whichever compass candidate it liked with no rate at all. A whale
+ * pressed against a ridge went from heading east to heading north in 100 ms.
+ *
+ * HALF A BODY LENGTH. An animal that pivots inside its own hull reads as a
+ * sprite being rotated; one that needs several body lengths of water to come
+ * about reads as a barge. Half its length is the arc that looks like an animal
+ * turning — tight, but visibly an arc — and it is a RATIO rather than a
+ * per-species dial so that "a whale turns like a whale and a fish turns like a
+ * fish" is a consequence of how long they are, which is already stated once
+ * (SPECIES_PROFILES.bodyLengthCells), rather than a fourth table to keep in
+ * step with the other three.
+ *
+ * IT IS ALSO WHY THE LOOK-AHEAD IS ALREADY LONG ENOUGH, and that relation is
+ * the reason this number is not free. A mover must see an obstacle while it
+ * still has room to arc around it, i.e. at no less than its turning radius;
+ * `lookaheadCellsFor` floors the probe at a full body length, which at this
+ * ratio is exactly twice that radius. Raising this above 0.5 would make a
+ * creature's turning circle wider than its own sightline and it would arc into
+ * things it had already seen — so if it ever moves up, the look-ahead floor
+ * moves with it.
+ */
+export const TURN_RADIUS_BODY_LENGTHS = 0.5;
+
+/** Shared empty occupant list — the short rungs of the steer ladder separate from nobody. */
+const NO_OCCUPANTS: readonly Occupant[] = [];
+
+/**
  * Multiplier on cruise speed while fleeing, and how long the panic lasts.
  * ×3 is the difference between "swimming" and "bolting" at a glance; 2.5 s is
  * long enough for a fish to clear the ~12-cell disturbance radius (3 cells/s × 3
@@ -265,6 +302,29 @@ export function bodyLengthCellsOf(entity: WildlifeEntity): number {
  */
 export function personalSpaceCellsOf(entity: WildlifeEntity): number {
   return bodyLengthCellsOf(entity) / 2;
+}
+
+/**
+ * How fast this creature may swing its heading, radians per second: its speed
+ * divided by the radius of its turning circle (TURN_RADIUS_BODY_LENGTHS).
+ *
+ * BOTH INPUTS ARE THE LIVE ONES, and that is what makes this a turning CIRCLE
+ * rather than a turn-rate dial:
+ *
+ *   * body length is the SIZE-SCALED one, so a large whale comes about more
+ *     slowly than a calf — because it is longer, not because a table says so;
+ *   * speed is the CURRENT one, so a fleeing creature at FLEE_SPEED_MULTIPLIER
+ *     turns three times as fast in radians and traces the SAME arc through the
+ *     water. Panic makes an animal cover its turn quicker; it does not let it
+ *     pivot on the spot.
+ *
+ * Comfortably above every wander in the table (a whale's own turn noise is
+ * 0.25 rad/s against the ~0.32 this gives it, a fish's 1.4 against ~8.6), so
+ * this bounds the habitat veto's candidate — which had no bound at all — and
+ * does not quietly become a second, tighter noise limit.
+ */
+export function maxTurnRadiansPerSecondOf(entity: WildlifeEntity): number {
+  return speedOf(entity) / (TURN_RADIUS_BODY_LENGTHS * bodyLengthCellsOf(entity));
 }
 
 /**
@@ -553,6 +613,77 @@ export function steerToValidHeading(
 }
 
 /**
+ * The whole steer for one tick: the sweep, run down a ladder of SHORTENING
+ * probes until one of them finds somewhere to go. Returns null only when the
+ * creature has nowhere to be next tick at all.
+ *
+ * THREE RUNGS, and the third one is the fix for the reported stall (owner,
+ * 2026-08-24: fish "get stuck in place … presumably because of the contours of
+ * the seabed"). A fish is bound to the SHALLOW band alone (SPECIES_PROFILES),
+ * and on a sculpted shelf that band is often a strip narrower than the fish's
+ * own 7-cell look-ahead. Every candidate at the full probe fails, every
+ * candidate at half of it fails, and the pre-2026-08-24 code then held
+ * position — forever, because nothing about the situation changes next tick.
+ * The fish was not boxed in; it was near-sighted about a place it could
+ * perfectly well have swum to.
+ *
+ * The third rung probes at exactly `stepCells`, one tick's travel, which is
+ * the SAME distance `advanceEntity`'s destination re-check judges. So the
+ * ladder can only report "nowhere to go" when there is genuinely no legal cell
+ * one step away in any direction — a one-cell pocket — and a heading it does
+ * return can never be refused by that re-check, which is what stops the two
+ * from disagreeing and stalling a creature that had somewhere to go.
+ *
+ * The two short rungs steer from the creature's CURRENT heading rather than
+ * from `desired` (owner, 2026-08-19: obstacles should deflect a traveller ALONG
+ * themselves, not bounce it backward) — sliding along whatever it is pressed
+ * against is what "go around" means at the scale of one tick.
+ *
+ * WHAT IT RETURNS IS A DIRECTION TO WANT, not the heading the creature adopts:
+ * `advanceEntity` turns toward it at the creature's own turning circle. The
+ * ladder must therefore NOT be turn-limited itself — a whale that could only
+ * consider headings inside its 1.8°-per-tick arc would find the full probe
+ * blocked, drop to the short one, find that clear because the wall is still
+ * twenty cells off, and swim straight at it. The long probe exists precisely to
+ * say "blocked at range, start coming about now", and it can only say it if the
+ * heading it names is allowed to be a big turn.
+ *
+ * SEPARATION IS OFF ON THE TWO SHORT RUNGS, and that is a decision about cost
+ * as much as about behaviour. Behaviourally it is what the ladder already
+ * means: the short rungs only run for a creature that is wedged, and
+ * `steerAvoiding` relaxes separation before anything else for exactly that
+ * creature anyway — carrying the occupant list down the ladder mostly buys the
+ * right to relax it again one rung later. The cost is the other half: that
+ * list is scanned per candidate, it is the whole population, and it is already
+ * the quadratic term in this plugin (see `creatureOccupants`). Scanning it on
+ * every rung multiplies the worst case — a dense, boxed-in population, which
+ * is precisely when the short rungs fire — by the number of rungs.
+ */
+function steerThisTick(
+  world: HabitatWorld,
+  entity: WildlifeEntity,
+  desired: number,
+  lookahead: number,
+  stepCells: number,
+  occupants: readonly Occupant[],
+): number | null {
+  const full = steerToValidHeading(world, entity, desired, lookahead, stepCells, occupants);
+  if (full !== null) return full;
+
+  const contour = steerToValidHeading(
+    world,
+    entity,
+    entity.heading,
+    lookahead / CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR,
+    stepCells,
+    NO_OCCUPANTS,
+  );
+  if (contour !== null) return contour;
+
+  return steerToValidHeading(world, entity, entity.heading, stepCells, stepCells, NO_OCCUPANTS);
+}
+
+/**
  * Advances one creature by `dt`.
  *
  * Order matters, and it is the order the priorities are stated in:
@@ -563,11 +694,13 @@ export function steerToValidHeading(
  *   3. its school pulls on that, UNLESS it is fleeing, in which case panic
  *      overrides the school entirely and the group scatters;
  *   4. steering vetoes the result against the world — habitat and unlocked
- *      territory beat everything above, always;
+ *      territory beat everything above, always — and the heading it commits to
+ *      is bounded by the creature's turning circle (maxTurnRadiansPerSecondOf),
+ *      which is the one rate limit the veto used not to have;
  *   5. the position moves, and is re-checked.
  *
  * A creature that cannot find any valid heading holds its position for this
- * tick, facing whichever way it already was (see the two-stage steer below) —
+ * tick, facing whichever way it already was (see `steerThisTick`'s ladder) —
  * un-wedging happens by trying again next tick, never by placing it illegally.
  * "Holds its position" means holds its HEADING too: the heading is committed
  * together with the position, at the very end, so a vetoed step leaves both
@@ -605,35 +738,28 @@ export function advanceEntity(
       ? wander
       : steerWithSchool(entity, school, schoolLoosenessOf(entity), wander, dt);
   const lookahead = lookaheadCellsFor(entity);
-  // Shorter probe used by the contour-following fallback below, both when
-  // the primary sweep is fully boxed in and when the belt-and-suspenders
-  // re-check catches a miss the primary sweep didn't see.
-  const contourLookahead = lookahead / CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR;
   // One tick's travel — where separation is tested, and the same number every
   // step below moves by. Computed once so the distance the sweep reasons about
   // and the distance the creature actually covers cannot come apart.
   const stepCells = speedOf(entity) * dt;
-  let steered = steerToValidHeading(world, entity, desired, lookahead, stepCells, occupants);
+  const turnRate = maxTurnRadiansPerSecondOf(entity);
+  const wanted = steerThisTick(world, entity, desired, lookahead, stepCells, occupants);
 
-  if (steered === null) {
-    // BOXED IN AT THE LOOK-AHEAD HORIZON. Owner, 2026-08-19: obstacles should
-    // deflect a traveller ALONG themselves, not bounce it backward — the
-    // previous rule here (`heading += PI`) read as a twitch, and doubly so
-    // here since the ±180° candidate is already one of the eight the primary
-    // sweep just tried and failed. Retry the SAME compass sweep, but from the
-    // creature's CURRENT heading (not `desired`) and at the much shorter
-    // contourLookahead: it may still have room to slide along whatever it is
-    // pressed against at that distance, which is exactly what "go around"
-    // means at the scale of one tick.
-    steered = steerToValidHeading(world, entity, entity.heading, contourLookahead, stepCells, occupants);
-  }
-
-  if (steered === null) {
-    // Enclosed even at the short probe: nothing to turn toward this tick.
-    // Hold position and keep facing as-is — inventing a heading with no
-    // matching movement is the twitch this replaces.
+  if (wanted === null) {
+    // Nowhere legal even one tick's travel away, in any direction: a one-cell
+    // pocket. Hold position and keep facing as-is — inventing a heading with
+    // no matching movement is the twitch this replaces.
     return;
   }
+
+  // THE TURNING CIRCLE, and it is the whole answer to "no spinning in place"
+  // (owner, 2026-08-24). `wanted` is a DIRECTION, freely up to 180° off; what
+  // the creature adopts is its current heading turned toward that direction by
+  // at most one tick's worth of its own turn rate. Nothing anywhere overrides
+  // this — a creature with no in-arc option holds still (above and below)
+  // rather than pivoting, which is exactly the behaviour asked for: it has to
+  // swim the arc to come about.
+  let steered = turnToward(entity.heading, wanted, turnRate, dt);
 
   // `steered` is still only a CANDIDATE — it is deliberately NOT written to
   // entity.heading here. The destination re-check below can still veto this
@@ -646,28 +772,29 @@ export function advanceEntity(
   let nextX = entity.x + Math.cos(steered) * stepCells;
   let nextY = entity.y + Math.sin(steered) * stepCells;
 
-  // BELT AND SUSPENDERS. The look-ahead validated a cell further out than
-  // one tick's travel; that covers the ordinary case but says nothing about
-  // the cells in between, so a narrow tongue of the wrong habitat — or a
-  // riser steeper than this species can climb — crossing the path could
-  // still be stepped into. Re-checking the actual destination, against both
-  // isValidCellFor and canTraverse, makes the invariant "no creature is ever
-  // outside its habitat, and no creature ever crosses a slope it can't
-  // climb" true by construction rather than by trusting the probe distance.
+  // BELT AND SUSPENDERS. Since 2026-08-24 the sweep samples the whole probe
+  // segment rather than only its far end (shared's `canProceedAlong`), so the
+  // narrow-tongue-of-wrong-habitat case this re-check was written for is
+  // caught up front now. It stays anyway, and stays cheap: the sweep samples
+  // at ~1-cell spacing and the `permits` veto is still only applied at the
+  // probe's far end, so a corner clipped between two samples remains
+  // expressible. Re-checking the actual destination against both
+  // isValidCellFor and canTraverse keeps "no creature is ever outside its
+  // habitat, and no creature ever crosses a slope it can't climb" true by
+  // construction rather than by trusting the sampling grain.
   if (
     !isValidCellFor(world, entity.species, nextX, nextY) ||
     !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
   ) {
-    // Same contour-following idea as above, one more time: the coarse sweep
+    // Run the whole ladder again from the PRE-TICK heading — genuinely the
+    // current one, since the candidate above has not been committed. The sweep
     // said `steered` was fine at `lookahead`, but the actual one-tick step
-    // lands somewhere it isn't — a thin obstacle or a corner the sweep
-    // stepped past. Re-sweep from the PRE-TICK heading — genuinely the current
-    // one now, since the candidate above has not been committed — at the short
-    // distance before giving up to holding position this tick.
-    const retry = steerToValidHeading(world, entity, entity.heading, contourLookahead, stepCells, occupants);
+    // lands somewhere it isn't: a corner clipped between two samples, or a
+    // `permits` rule that only the end of the probe was tested against.
+    const retry = steerThisTick(world, entity, entity.heading, lookahead, stepCells, occupants);
     if (retry === null) return; // hold position, keep facing as-is.
 
-    steered = retry;
+    steered = turnToward(entity.heading, retry, turnRate, dt);
     nextX = entity.x + Math.cos(steered) * stepCells;
     nextY = entity.y + Math.sin(steered) * stepCells;
     if (

@@ -349,6 +349,88 @@ export function canTraverseSegment(
   return true;
 }
 
+/**
+ * Is the straight line from (fromX, fromY) to (toX, toY) somewhere `profile`
+ * may GO — ground legality AND slope, sampled the whole way along?
+ *
+ * ROOT CAUSE THIS FIXES (owner report, 2026-08-24: whales "will do 90-degree
+ * turns in place and have a tendency to glitch into the seabed"; fish "get
+ * stuck in place"). The steering sweep used to ask two questions about a
+ * candidate heading: `isWalkableCell` at the FAR END of the probe, and
+ * `canTraverseSegment` along it. For a mover with a finite gradient limit the
+ * second one incidentally sampled the interior of the path; for a mover with
+ * `UNCONSTRAINED_GRADIENT_PER_CELL` — every swimmer and every boat — it
+ * returns `true` on its first line without reading a single height, so
+ * NOTHING looked at the ground between the mover and its look-ahead point.
+ *
+ * A whale therefore probed twenty cells ahead, found deep water at the far
+ * end, and swam straight at a shallow ridge sitting ten cells in front of it:
+ * invisible until the per-tick destination re-check refused a 0.32-cell step,
+ * at which point the only heading left was a hard one. That is the reported
+ * "90-degree turn in place", and the frames before it — a five-unit body
+ * pressed against a bank its centre had not reached yet — are the reported
+ * clipping.
+ *
+ * ONE PREDICATE, ONE LOOP, and that is the point: "may I be there" and "may I
+ * get there" were two functions, so a profile that answered the second one
+ * vacuously silently stopped asking the first one anywhere but at the end
+ * point. Merging them means a sample is a sample — every point on the path is
+ * tested for everything — and the gradient term costs nothing extra because
+ * it reuses the height this loop already fetched.
+ *
+ * THE START CELL IS NOT GROUND-CHECKED, only used as the gradient's first
+ * height. A mover already standing somewhere illegal (the terrain was sculpted
+ * under it) must still be able to steer OUT; vetoing every heading because the
+ * cell under its own body fails would freeze it exactly where it most needs to
+ * move.
+ *
+ * Sample spacing is `canTraverseSegment`'s, unchanged and for its reason: ~1
+ * cell, matching `heightAt`'s own grain, so nothing narrower than a full cell
+ * can hide between two consecutive samples. `Math.sqrt` rather than
+ * `Math.hypot` for the determinism reason spelled out there.
+ */
+export function canProceedAlong(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): boolean {
+  const limit = profile.maxGradientPerCell;
+  const checksGradient = Number.isFinite(limit);
+
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  const steps = Math.max(1, Math.ceil(distance));
+
+  let previousHeight = world.heightAt(Math.floor(fromX), Math.floor(fromY));
+  for (let step = 1; step <= steps; step++) {
+    const t = step / steps;
+    const sampleX = Math.floor(fromX + dx * t);
+    const sampleY = Math.floor(fromY + dy * t);
+    if (
+      sampleX < 0 ||
+      sampleY < 0 ||
+      sampleX >= world.worldSize ||
+      sampleY >= world.worldSize
+    ) {
+      return false;
+    }
+
+    const height = world.heightAt(sampleX, sampleY);
+    if (checksGradient && Math.abs(height - previousHeight) > limit) return false;
+    previousHeight = height;
+
+    if (height < profile.minGroundHeight) return false;
+    if (!profile.grounds.includes(groundOf(height))) return false;
+    const freshwater = (world.freshwater ?? NO_FRESHWATER).at(sampleX, sampleY);
+    if (!admitsFreshwater(profile.freshwater, freshwater)) return false;
+  }
+  return true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The archetypes — the shipped answers to "what may this thing cross?"
 //
