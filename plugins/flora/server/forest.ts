@@ -67,47 +67,42 @@ export const FLORA_SURVEY_INTERVAL_SECONDS = 5;
 /**
  * Stable green cells per tree — the density the world is steered toward.
  *
- * Retuned 2026-08-25 (owner: "increase the spawn rate and frequency for trees"):
- * 8 means about 12.5% of a settled meadow's cells hold a tree, up from 12 (≈8%).
- * Still bounded by what the ground has to say:
+ * Retuned twice at the owner's request ("increase the spawn rate and frequency
+ * for trees", 2026-08-25; "I don't see enough trees… on the green bands",
+ * same day): 12 → 8 → 4 SQUARE WORLD UNITS per tree, i.e. one tree per 64
+ * cells. A full 16×16-cell chunk (16 square world units) holds 4 trees, each
+ * crown spanning a fifth of the chunk's edge. Still bounded by what the ground
+ * has to say:
  *
- *   * The terraces are the thing being looked at. Denser than roughly one tree
- *     per eight cells and the canopy starts hiding the band edges and the Godus
- *     silhouette that the whole renderer exists to produce goes with it — so 8
- *     sits right at the edge rather than comfortably inside it. Accepted: the
- *     owner asked for a visibly fuller forest.
- *   * Sparser than ~1 in 20 and a chunk of grass holds twelve trees spread over
- *     256 square world units, which reads as litter rather than as woodland.
- *
- * At 8, a chunk of pure grass settles at 32 trees — real woodland you can walk
- * around in, on ground you can mostly still read. It also sits comfortably above
- * the densest packing the spacing rule allows (1 in 4), so the two constants
- * shape the pattern together instead of fighting: see
- * FLORA_MIN_TREE_SPACING_CELLS.
+ *   * The terraces are the thing being looked at. Denser than this and the
+ *     canopy starts hiding the band edges and the Godus silhouette that the
+ *     whole renderer exists to produce goes with it.
  *
  * IT IS A DENSITY OVER GROUND, so it is stated in SQUARE WORLD UNITS per tree
  * and multiplied by WORLD_UNIT_CELLS twice. Left as a flat count of cells, the
  * 2026-08-21 re-sample would have put sixteen times as many trees on every
  * hillside — the same forest counted in a finer grid, not a denser one.
  */
-export const FLORA_CELLS_PER_TREE = cellsOverArea(8);
+export const FLORA_CELLS_PER_TREE = cellsOverArea(4);
 
 /**
- * Minimum Chebyshev distance between two trees — two WORLD UNITS, converted,
- * so the ground around a tree stays clear of other trees.
+ * Minimum Chebyshev distance between two trees — one and a HALF WORLD UNITS,
+ * converted, so the ground around a tree stays clear of other trees.
  *
- * This is a MODEL constraint, not an ecological one: a tree's crown is about
- * 0.8 world units across and its scale varies up to ×1.25, so two trees a unit
- * apart visibly interpenetrate and read as one shapeless mass. One clear world
- * unit between them is the least that keeps them separate — which is why it is
- * measured against the crown rather than against the sampling grid.
+ * Tightened 2026-08-25 alongside the density retune (FLORA_CELLS_PER_TREE
+ * 8 → 4): the old two-unit rule capped local packing at one tree per four
+ * square world units, which is exactly what the new target asks for — the
+ * spacing rule, not the target, would have decided how many trees a world has.
+ * At 1.5 units the cap is one tree per 2.25 square units, comfortably above
+ * the target, so the two constants shape the pattern together instead of
+ * fighting: the target decides how many, the spacing decides where they are not.
  *
- * It caps local density at 1 tree per 4 square world units, which is denser
- * than the 1-in-12
- * the target asks for — deliberately, so the spacing rule never becomes the thing
- * that decides how many trees a world has. It only decides where they are not.
+ * It stays a MODEL constraint measured against the crown: a crown is about 0.8
+ * world units across and its scale varies up to ×1.25, so the widest crown is
+ * ~1.0 unit across — centres 1.5 units apart still leave a visible sliver of
+ * ground between neighbours at their closest approach.
  */
-export const FLORA_MIN_TREE_SPACING_CELLS = cellsAcross(2);
+export const FLORA_MIN_TREE_SPACING_CELLS = cellsAcross(1.5);
 
 /**
  * Mean simulated seconds one missing tree waits before it sprouts.

@@ -20,20 +20,20 @@
 // sent. Terrain itself is synced exactly this way (snapshot on join, diffs
 // after), and a forest is terrain-shaped state.
 //
-// THE ARITHMETIC, at the shipped FLORA_TREE_CAP of 3000 on a 512² world.
+// THE ARITHMETIC, at the shipped FLORA_TREE_CAP of 4096 on a 512² world.
 // A tree on the wire is two integers; msgpack encodes 0…127 in one byte, 128…255
 // in two, and 256…65535 in three, so a 512² world (coordinates up to 511) costs
 // 6 B per tree in a flat array and a 128² world costs 2 B.
 //
-//   full snapshot   3000 × 6 B                    = 18 KB, ONCE, at join
+//   full snapshot   4096 × 6 B                    = 24 KB, ONCE, at join
 //   growth deltas   48 sprouts × 6 B / 5 s        = 58 B/s  ≈ 0.46 kbit/s
 //   fell deltas     ≤ ~30 trees × 6 B per sculpt  = ≤ 180 B per edit
-//   keepalive       18 KB / 60 s                  = 300 B/s ≈ 2.4 kbit/s
+//   keepalive       24 KB / 60 s                  = 400 B/s ≈ 3.2 kbit/s
 //                                                   ─────────────────────
-//                                                   ≈ 2.9 kbit/s per client
+//                                                   ≈ 3.7 kbit/s per client
 //
 // The rejected alternative is wildlife's: full state at 5 Hz. That would be
-// 18 KB × 5 = 90 KB/s ≈ 720 kbit/s per client — nearly double the ENTIRE
+// 24 KB × 5 = 120 KB/s ≈ 960 kbit/s per client — nearly double the ENTIRE
 // wildlife budget (390 kbit/s), to tell every client sixty times a minute that
 // three thousand trees are still standing exactly where they were.
 //
@@ -66,27 +66,31 @@ export const FLORA_CHANGES_MESSAGE = 'changes';
 /**
  * Hard ceiling on standing trees, whatever the density maths asks for.
  *
- * 3000 is a bandwidth-and-geometry number, not an ecology one:
+ * Raised 3000 → 4096 (2026-08-25) so the cap keeps pace with the density
+ * retune: at FLORA_CELLS_PER_TREE = 4 the old 3000 would bind on a 512² world
+ * of which only ~73% is stable green ground. It remains a bandwidth-and-
+ * geometry number, not an ecology one:
  *
- *   * WIRE — 3000 × 6 B = 18 KB for a full snapshot on the largest world. The
+ *   * WIRE — 4096 × 6 B ≈ 24 KB for a full snapshot on the largest world. The
  *     design's join budget is "tens of KB" for a typical early world, and an
  *     early world has almost no unlocked chunks, so this figure is the ceiling a
  *     fully revealed 512² veteran world reaches, not what a new player pays.
  *   * GEOMETRY — the client draws every tree from three InstancedMeshes
- *     (client/models.ts), so 3000 trees are 3 draw calls and roughly 3000 × 40 ≈
- *     120k triangles. That sits well under the terrain's own budget (up to 1024
+ *     (client/models.ts), so 4096 trees are 3 draw calls and roughly 4096 × 40 ≈
+ *     164k triangles. That sits well under the terrain's own budget (up to 1024
  *     chunk meshes at 512²), which is what makes the cap a wire number.
  *
- * It BINDS only on a large, largely-revealed, largely-green world: at
- * FLORA_CELLS_PER_TREE = 8 the cap is reached once 24 000 stable green cells
- * exist, i.e. ~9% of a 512² world (and it can never bind at 128², whose 16 384
- * cells could ask for at most 2048 trees). Past that the forest simply stops
- * getting denser, which reads as woodland rather than as a bug.
+ * It BINDS only on a very large, very green world: the cap asks for exactly
+ * FLORA_TREE_CAP × FLORA_CELLS_PER_TREE = 16 384 square world units = 262 144
+ * cells of stable green ground — every cell of a fully revealed 512² world. Any
+ * realistic mix of water, coast, rock and churn stays well below it. Past that
+ * point the forest simply stops getting denser, which reads as woodland rather
+ * than as a bug.
  *
  * It lives HERE rather than in the server half because both halves need it: the
  * server enforces it, and the client sizes its instance buffers from it.
  */
-export const FLORA_TREE_CAP = 3000;
+export const FLORA_TREE_CAP = 4096;
 
 /**
  * A cell holding one tree. There is at most one tree per cell by construction —
@@ -127,8 +131,8 @@ export function treeCellOf(key: number): TreeCell {
  *
  * Flat rather than an array of `{x, y}` objects because msgpack re-sends the key
  * strings for every object (there is no schema here): `{x: 12, y: 34}` costs
- * ~8 B where the pair costs 2. Over a 3000-tree snapshot that is 24 KB versus
- * 6 KB, for exactly the same information.
+ * ~8 B where the pair costs 2. Over a 4096-tree snapshot that is 33 KB versus
+ * 8 KB, for exactly the same information.
  */
 export function packTreeCells(cells: Iterable<TreeCell>): number[] {
   const packed: number[] = [];
