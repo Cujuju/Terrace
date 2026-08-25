@@ -93,6 +93,39 @@ export interface TempleCell {
 }
 
 /**
+ * How far in front of the temple's own cell its DOOR is, in cells.
+ *
+ * WHY THIS EXISTS AT ALL (owner, 2026-08-24: "Are those settlers supposed to
+ * come out of the temple specifically? Because they're definitely not"). They
+ * are, and they were not: a settler used to be spawned at the temple's own
+ * CELL — which is the centre of a building two world units across, i.e. eight
+ * cells — so it began its walk buried inside four cells of solid masonry and
+ * emerged by passing through the wall. From outside, a little person simply
+ * appeared partway down the pyramid's flank. Nothing about that reads as
+ * coming out of a temple.
+ *
+ * DERIVED, not chosen: half the footprint span is the front face, and the
+ * extra half-cell puts the door on the ground just clear of the plinth rather
+ * than inside it. The client draws its portals at the same face
+ * (client/temple.ts), so the place a settler steps out of and the place that
+ * looks like a doorway are one number apart by construction.
+ *
+ * +X, like the stair and the shrine's own doorway — the direction every model
+ * in this repo faces.
+ */
+export const TEMPLE_DOOR_OFFSET_CELLS =
+  cellsAcross(TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2) + 0.5;
+
+/**
+ * The temple's door, in FRACTIONAL cell coordinates — where a settler stands
+ * the moment it steps outside. Cell centres are at `+0.5`, which is the
+ * convention every walker in this repo spawns and navigates by.
+ */
+export function templeDoorCell(temple: TempleCell): { x: number; y: number } {
+  return { x: temple.x + TEMPLE_DOOR_OFFSET_CELLS, y: temple.y + 0.5 };
+}
+
+/**
  * `temples:state` — the standing temple as a flat `[x, y]` pair, or an empty
  * list for "there is no temple". A pair rather than an object for the reason
  * every other plugin packs its cells flat: no per-object key strings to

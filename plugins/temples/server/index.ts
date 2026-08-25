@@ -43,6 +43,7 @@ import {
   TEMPLE_STATE_MESSAGE,
   TEMPLE_SURVEY_RADIUS_CELLS,
   packTemple,
+  templeDoorCell,
   parseTemplePlacePayload,
   type TempleCell,
 } from '../protocol.ts';
@@ -230,14 +231,29 @@ export const plugin: TerracePlugin = {
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Where the temple stands, or null. THE PILGRIMS-FACING SURFACE: that plugin
+ * Where the temple stands AND where its door is, or null. THE PILGRIMS-FACING
+ * SURFACE: that plugin
  * duck-types this off this module through the dynamic-import bridge pattern
  * (plugins/relics/server/mana-bridge.ts owns the pattern's four rules) to
  * decide where its settlers walk out from. A plain read — this plugin never
  * learns it has a consumer.
  */
-export function standingTemple(): TempleCell | null {
-  return temple;
+export function standingTemple(): StandingTemple | null {
+  if (temple === null) return null;
+  const door = templeDoorCell(temple);
+  return { x: temple.x, y: temple.y, doorX: door.x, doorY: door.y };
+}
+
+/**
+ * The temple as bridge consumers see it: the cell it stands on, plus the
+ * fractional cell its DOOR is at. The door travels because the consumer needs
+ * it and cannot derive it — deriving it needs this plugin's footprint span,
+ * and a plugin may not import another's constants (see TEMPLE_DOOR_OFFSET_
+ * CELLS for what spawning at the bare cell looked like).
+ */
+export interface StandingTemple extends TempleCell {
+  readonly doorX: number;
+  readonly doorY: number;
 }
 
 /** Test seam: drops all state so a suite can start from zero. */

@@ -20,6 +20,23 @@
 export interface BridgedTemple {
   readonly x: number;
   readonly y: number;
+  /**
+   * The temple's DOOR, in fractional cell coordinates — where a settler
+   * stands the instant it steps outside.
+   *
+   * IT TRAVELS RATHER THAN BEING DERIVED because deriving it needs the
+   * temple's footprint span, and a plugin may not import another's constants.
+   * Without it a settler spawns on the temple's own cell, which is the CENTRE
+   * of a building eight cells across — buried in the masonry, emerging through
+   * the wall (owner, 2026-08-24: "they're definitely not").
+   *
+   * OPTIONAL: a temples build from before 2026-08-24 does not send it, and
+   * `bridgedTemple` degrades to the old cell-centre spawn rather than to no
+   * settlers at all — the same additive-field rule `age` keeps in the
+   * structures bridge.
+   */
+  readonly doorX?: number;
+  readonly doorY?: number;
 }
 
 /** The slice of temples this plugin uses — one function. */

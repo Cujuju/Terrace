@@ -126,6 +126,14 @@ export const SETTLE_DISTANCE_STEPS = 4;
  */
 export const SETTLER_SITE_ATTEMPTS = 3;
 
+/**
+ * Multiplier that packs the temple's cell into one comparable key. 65536 —
+ * the stride every plugin here uses for the same job, and for the same reason:
+ * the heightmap's Int16 storage caps a world edge at 32767, so no two cells
+ * can collide.
+ */
+const TEMPLE_KEY_STRIDE = 65536;
+
 /** Edge of the homestead block, in cells. 2 — see this file's header. */
 const HOMESTEAD_EDGE_CELLS = 2;
 
@@ -187,8 +195,25 @@ export class Settling {
   private readonly ids: WalkerIdAllocator;
   private elapsedSeconds = 0;
   /** The last epoch whose roll was taken, so each epoch dispatches exactly
-   *  once regardless of tick rate. −1 = the first advance rolls epoch 0. */
+   *  once regardless of tick rate. −1 = the next advance rolls epoch 0. */
   private rolledEpoch = -1;
+  /**
+   * The temple this clock is anchored to, as a cell key, or null for none.
+   *
+   * THE CLOCK BELONGS TO THE TEMPLE, NOT TO THE SERVER (owner, 2026-08-24:
+   * "I don't think I've seen any settlers come out of the temple"). It used to
+   * run from world create, so the epoch boundaries fell wherever boot happened
+   * to put them and a temple built just after one had to stand there for most
+   * of a full epoch — up to SETTLER_DISPATCH_SECONDS — before anyone came out
+   * of it. Nothing was broken and nothing said so: the building simply looked
+   * inert for as long as twenty-five seconds, which is exactly long enough for
+   * a player to conclude it does nothing and go and do something else.
+   *
+   * Anchoring here makes the first settler leave on the tick the temple
+   * appears, and makes "raze it and build again" a genuine restart rather than
+   * a re-entry into somebody else's schedule.
+   */
+  private templeKey: number | null = null;
 
   constructor(ids?: WalkerIdAllocator) {
     this.ids = ids ?? new WalkerIdAllocator();
@@ -207,6 +232,16 @@ export class Settling {
     dt: number,
     occupants: readonly Occupant[] = [],
   ): void {
+    // A NEW TEMPLE RESTARTS THE CLOCK — see `templeKey`. Checked before the
+    // clock advances, so the tick that first sees a temple is epoch 0 of that
+    // temple's own life and dispatches immediately.
+    const key = temple === null ? null : temple.y * TEMPLE_KEY_STRIDE + temple.x;
+    if (key !== this.templeKey) {
+      this.templeKey = key;
+      this.elapsedSeconds = 0;
+      this.rolledEpoch = -1;
+    }
+
     this.elapsedSeconds += dt;
 
     const epoch = Math.floor(this.elapsedSeconds / SETTLER_DISPATCH_SECONDS);
@@ -322,8 +357,12 @@ export class Settling {
     const site = this.chooseSite(world, temple, roll);
     if (site === null) return;
 
-    const doorX = temple.x + 0.5;
-    const doorY = temple.y + 0.5;
+    // OUT OF THE DOOR, not out of the middle of the building. The temple
+    // sends its own door across the bridge because only it knows how wide it
+    // is; absent (an older temples build) the cell centre stands in, which is
+    // the pre-2026-08-24 behaviour and the reason this field exists.
+    const doorX = temple.doorX ?? temple.x + 0.5;
+    const doorY = temple.doorY ?? temple.y + 0.5;
     // NEVER DISPATCH A SETTLER TO A TRIP IT CANNOT WALK — the rule both sims
     // beside this one keep. A temple whose whole county is unreachable simply
     // sends nobody this epoch.
@@ -444,5 +483,6 @@ export class Settling {
     this.settlers.clear();
     this.elapsedSeconds = 0;
     this.rolledEpoch = -1;
+    this.templeKey = null;
   }
 }

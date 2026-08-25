@@ -13,7 +13,7 @@
 //     A cheap standing-in for a bloom pass (this renderer has none): it makes
 //     the stone read as a light SOURCE rather than a lit object, which is what
 //     separates a star from a polished rock.
-//   * two ARMILLARY RINGS — bronze hoops on tilted, mismatched axes, turning
+//   * two ARMILLARY RINGS — gilded hoops on tilted, mismatched axes, turning
 //     at different rates and in opposite directions. An orrery is the oldest
 //     visual shorthand there is for "this instrument is about the heavens",
 //     and two rings that never line up read as MACHINERY tracking something
@@ -43,6 +43,7 @@
 
 import {
   AdditiveBlending,
+  Color,
   ConeGeometry,
   Group,
   Mesh,
@@ -122,14 +123,48 @@ const HALO_BREATH = 0.13;
 const SHAFT_OPACITY_BASE = 0.1;
 const SHAFT_OPACITY_SWING = 0.045;
 
-// ── Palette ─────────────────────────────────────────────────────────────────
-// The stone is COLD and the metal around it is WARM, which is what keeps the
-// stone reading as light and the armillary as an object holding it.
-const STONE_COLOR = 0xe4f1ff;
-const HALO_COLOR = 0x6ea6ff;
-const RING_COLOR = 0xb08a4c;
-const MOTE_COLOR = 0xffe6a4;
-const SHAFT_COLOR = 0x8fbaff;
+// ── Palette: THE CELESTIAL VAULT ────────────────────────────────────────────
+// Owner, 2026-08-24: "give the temples accoutrement colors that give it a
+// celestial heavens feel".
+//
+// The scheme is the oldest one there is for painting the heavens — GILT ON
+// DEEP BLUE, the star-ceiling of every vaulted nave and every astrolabe's
+// engraved limb. It settles three questions at once:
+//
+//   * the ARMILLARY is gold, not the weathered bronze it began as. Bronze is
+//     the colour of a tool left outside; gold is the colour of an instrument
+//     made for the sky, and it is the one warm thing up here, so the eye reads
+//     the hoops as the OBJECT and everything around them as light.
+//   * the LIGHT is violet-indigo rather than the daylight blue it began as.
+//     Sky blue at midday says "weather"; indigo says "the hour when stars come
+//     out", which is the register the whole crown is written in.
+//   * the STONE at the centre stays near-white but is warmed a touch toward
+//     starlight, so it does not read as a chip of the same light its own halo
+//     is made of — a star is white, its corona is not.
+//
+// The MOTES break the gold/indigo pair on purpose: pale ice-cyan, the one hue
+// in neither family, so three small moving things stay findable against a gold
+// hoop AND against the violet glow behind it.
+const STONE_COLOR = 0xfff6e2;
+const HALO_COLOR = 0x7a63ff;
+const RING_COLOR = 0xe0b45c;
+const MOTE_COLOR = 0xbdf0ff;
+const SHAFT_COLOR = 0x8f74ff;
+
+/**
+ * The AURORA DRIFT: the halo and the shaft do not hold one colour, they wander
+ * slowly between indigo and a cold teal and back.
+ *
+ * It is the cheapest possible aurora — two constants and a lerp on a clock
+ * already being read — and it is what stops the crown reading as a coloured
+ * lamp. A light that never changes hue is electric; one that drifts is
+ * atmospheric, and the register this whole palette is aiming at is atmosphere.
+ *
+ * Its own clock, slower than the breath, so hue and brightness never swell
+ * together into an obvious pulse.
+ */
+const AURORA_HZ = 0.043;
+const AURORA_COOL_COLOR = 0x3fd6c8;
 
 /** What the plugin gets back: one group to parent, and a clock to drive it. */
 export interface CelestialCrown {
@@ -185,20 +220,18 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
   );
   stone.add(core);
 
-  const halo = new Mesh(
-    keepGeometry(new OctahedronGeometry(stoneRadius, 0)),
-    keepMaterial(
-      new MeshBasicMaterial({
-        color: HALO_COLOR,
-        transparent: true,
-        opacity: 0.3,
-        blending: AdditiveBlending,
-        // Additive glows must never write depth or they punch holes in
-        // whatever is drawn after them, including each other.
-        depthWrite: false,
-      }),
-    ),
+  const haloMaterial = keepMaterial(
+    new MeshBasicMaterial({
+      color: HALO_COLOR,
+      transparent: true,
+      opacity: 0.3,
+      blending: AdditiveBlending,
+      // Additive glows must never write depth or they punch holes in
+      // whatever is drawn after them, including each other.
+      depthWrite: false,
+    }),
   );
+  const halo = new Mesh(keepGeometry(new OctahedronGeometry(stoneRadius, 0)), haloMaterial);
   halo.scale.setScalar(HALO_SCALE);
   stone.add(halo);
 
@@ -284,6 +317,15 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
 
   const bobAmplitude = span * BOB_AMPLITUDE_FRACTION;
 
+  // The aurora's two ends, plus ONE scratch colour to lerp into. Allocated
+  // here and reused for the life of the crown: `animate` runs at frame rate,
+  // and three colour objects per frame is exactly the kind of per-frame
+  // allocation every other animated model in this repo is careful not to make.
+  const auroraWarm = new Color(HALO_COLOR);
+  const auroraCool = new Color(AURORA_COOL_COLOR);
+  const auroraShaftWarm = new Color(SHAFT_COLOR);
+  const scratch = new Color();
+
   return {
     root,
 
@@ -299,6 +341,15 @@ export function createCelestialCrown(span: number, summitY: number): CelestialCr
       const breath = Math.sin(seconds * BREATH_HZ * TWO_PI);
       halo.scale.setScalar(HALO_SCALE + breath * HALO_BREATH);
       shaftMaterial.opacity = SHAFT_OPACITY_BASE + breath * SHAFT_OPACITY_SWING;
+
+      // The aurora drift, on its OWN slower clock (AURORA_HZ) so hue and
+      // brightness never swell together. Mapped from sine's [-1, 1] into the
+      // [0, 1] a lerp wants.
+      const drift = (Math.sin(seconds * AURORA_HZ * TWO_PI) + 1) / 2;
+      haloMaterial.color.copy(scratch.lerpColors(auroraWarm, auroraCool, drift));
+      shaftMaterial.color.copy(
+        scratch.lerpColors(auroraShaftWarm, auroraCool, drift),
+      );
     },
 
     dispose(): void {
