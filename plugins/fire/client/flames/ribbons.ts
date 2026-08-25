@@ -26,11 +26,13 @@
 // BUDGET: one InstancedMesh, one draw call for every fire in the world.
 
 import {
-  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
+  CustomBlending,
   DoubleSide,
   DynamicDrawUsage,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -82,20 +84,36 @@ interface RibbonProfile {
  * full flame height — a fire has one leading tongue, not five.
  */
 const RIBBON_PROFILES: readonly RibbonProfile[] = [
-  { height: 1.0, rootRadius: 0.34, tipRadius: 0.1, width: 0.76, curl: 0.32, phase: 0.0, spinRate: 0.29, rollTwist: 0.62 },
-  { height: 0.82, rootRadius: 0.52, tipRadius: 0.16, width: 0.64, curl: -0.44, phase: 0.2, spinRate: -0.43, rollTwist: -0.85 },
-  { height: 0.68, rootRadius: 0.66, tipRadius: 0.22, width: 0.58, curl: 0.55, phase: 0.42, spinRate: 0.61, rollTwist: 0.5 },
-  { height: 0.9, rootRadius: 0.45, tipRadius: 0.12, width: 0.68, curl: -0.28, phase: 0.63, spinRate: -0.19, rollTwist: 0.74 },
-  { height: 0.56, rootRadius: 0.72, tipRadius: 0.3, width: 0.50, curl: 0.7, phase: 0.81, spinRate: 0.83, rollTwist: -0.44 },
+  { height: 1.0, rootRadius: 0.36, tipRadius: 0.14, width: 0.99, curl: 0.32, phase: 0.0, spinRate: 0.29, rollTwist: 0.62 },
+  { height: 0.82, rootRadius: 0.54, tipRadius: 0.22, width: 0.83, curl: -0.44, phase: 0.2, spinRate: -0.43, rollTwist: -0.85 },
+  { height: 0.68, rootRadius: 0.70, tipRadius: 0.30, width: 0.75, curl: 0.55, phase: 0.42, spinRate: 0.61, rollTwist: 0.5 },
+  { height: 0.9, rootRadius: 0.48, tipRadius: 0.16, width: 0.88, curl: -0.28, phase: 0.63, spinRate: -0.19, rollTwist: 0.74 },
+  { height: 0.56, rootRadius: 0.77, tipRadius: 0.41, width: 0.65, curl: 0.7, phase: 0.81, spinRate: 0.83, rollTwist: -0.44 },
 ];
 
+/** Where along a strip it is at full width — low, like a flame's shoulders. */
+const RIBBON_WIDEST_AT = 0.32;
+/** Width at the strip's root, as a fraction of its full width. */
+const RIBBON_ROOT_WIDTH_FRACTION = 0.3;
+/** Taper above the widest point. Above 1: holds width, then falls away quickly. */
+const RIBBON_TAPER_EXPONENT = 1.4;
+
 /**
- * Width profile along a strip: full at the root, holding through the lower
- * half, then tapering to a point. A strip that tapers linearly from the root is
- * a triangle and reads as one.
+ * Width profile along a strip: narrow at the root, full width low down, then
+ * tapering to a point. A strip that tapers linearly from the root is a triangle
+ * and reads as one.
  */
 function ribbonWidthAt(t: number): number {
-  return t < 0.35 ? 1 : 1 - Math.pow((t - 0.35) / 0.65, 1.4);
+  // Narrow at the root, widest at RIBBON_WIDEST, tapering to a point.
+  //
+  // The root narrowing is not decoration. A strip that is full width where it
+  // meets the ground is a horizontal blade half a unit across lying flat on the
+  // terrain, and from this game's overhead-ish camera that is exactly what it
+  // looks like — the white slabs the second pass of this candidate rendered
+  // around the foot of every tree.
+  if (t < RIBBON_WIDEST_AT) return RIBBON_ROOT_WIDTH_FRACTION +
+    (1 - RIBBON_ROOT_WIDTH_FRACTION) * (t / RIBBON_WIDEST_AT);
+  return 1 - Math.pow((t - RIBBON_WIDEST_AT) / (1 - RIBBON_WIDEST_AT), RIBBON_TAPER_EXPONENT);
 }
 
 // ── Animated twist ────────────────────────────────────────────────────────
@@ -109,17 +127,23 @@ const BREATHE_DEPTH = 0.13;
 const BREATHE_RATE = 2.3;
 
 // ── Colour ────────────────────────────────────────────────────────────────
-const RIBBON_ROOT_COLOR: readonly [number, number, number] = [1.0, 0.94, 0.75];
+const RIBBON_ROOT_COLOR: readonly [number, number, number] = [1.0, 0.82, 0.42];
 const RIBBON_MID_COLOR: readonly [number, number, number] = [1.0, 0.5, 0.1];
 const RIBBON_TIP_COLOR: readonly [number, number, number] = [0.55, 0.06, 0.02];
-const RIBBON_MID_HEIGHT = 0.3;
+const RIBBON_MID_HEIGHT = 0.24;
 /** The strip fades out over its last stretch rather than ending in a hard edge. */
 const RIBBON_FADE_START = 0.62;
 /** Flicker along the strip: cycles per second and depth. */
 const RIBBON_FLICKER_RATE = 5.3;
 const RIBBON_FLICKER_DEPTH = 0.3;
 /** Additive gain. Higher than the plume's: a strip is thin and overlaps less. */
-const RIBBON_GAIN = 1.7;
+const RIBBON_GAIN = 1.3;
+/**
+ * Alpha ceiling per strip. Five strips, each drawn front and back, overlap near
+ * the axis; without a ceiling that stack saturates and the ramp below is thrown
+ * away.
+ */
+const RIBBON_ALPHA_PEAK = 0.75;
 
 // ── Scaling a fire to a flame ─────────────────────────────────────────────
 const FLAME_HEIGHT_PER_FUEL = 1.35;
@@ -310,9 +334,11 @@ const RIBBON_FRAGMENT_SHADER = /* glsl */ `
       (0.5 + 0.5 * sin((vAlong * 9.0 - uTime * ${RIBBON_FLICKER_RATE.toFixed(2)}) * ${TURN.toFixed(6)}
         + vRibbon * 2.1 + vSeed * 5.0));
 
-    float alpha = lengthwise * across * flicker * vIntensity;
+    float alpha = lengthwise * across * flicker * vIntensity * ${RIBBON_ALPHA_PEAK.toFixed(2)};
     if (alpha <= 0.01) discard;
-    gl_FragColor = vec4(color * ${RIBBON_GAIN.toFixed(2)}, alpha);
+    // Premultiplied: the colour is scaled by its own alpha before it leaves
+    // the shader, which is what the ONE/1−srcAlpha blend above expects.
+    gl_FragColor = vec4(color * ${RIBBON_GAIN.toFixed(2)} * alpha, alpha);
   }
 `;
 
@@ -330,7 +356,17 @@ export const buildRibbonFlames: FlameRendererBuilder = (): FlameRenderer => {
     vertexShader: RIBBON_VERTEX_SHADER,
     fragmentShader: RIBBON_FRAGMENT_SHADER,
     transparent: true,
-    blending: AdditiveBlending,
+    // PREMULTIPLIED-ALPHA blending: src ONE, dst 1−srcAlpha. This is additive
+    // where the strip is faint and opaque where it is dense, in ONE blend
+    // equation — which is the behaviour fire actually needs here. Straight
+    // additive was tried first and fails on this world specifically: what a
+    // burning tree stands on is BRIGHT GREEN GRASS, and orange added to bright
+    // green is a pale yellow whatever the gain, so every strip washed out to
+    // the same pastel. Premultiplied keeps the hot cores their own colour and
+    // still lets the feathered edges glow into whatever is behind them.
+    blending: CustomBlending,
+    blendSrc: OneFactor,
+    blendDst: OneMinusSrcAlphaFactor,
     depthWrite: false,
     // A strip has two faces and both burn.
     side: DoubleSide,

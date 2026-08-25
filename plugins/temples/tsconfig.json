@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is needed by the CLIENT half's contract (the toolbar icon is a Solid
+    // component) — the same arrangement every other plugin's tsconfig uses.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    // The server loads this plugin's TypeScript through Node 24's type
+    // STRIPPING (CLAUDE.md's hard rule for shared/, and how plugin discovery
+    // imports a server half). Syntax that must be TRANSFORMED rather than
+    // erased — parameter properties, enums, namespaces — would therefore fail
+    // to boot; this flag turns that class of bug into a compile error.
+    "erasableSyntaxOnly": true,
+    // Matches client/tsconfig.json and plugins/mana: the toolbar icon is a
+    // Solid component compiled by the client's vite-plugin-solid, which expects
+    // untransformed JSX.
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js"
+  },
+  "include": ["protocol.ts", "server", "client"]
+}

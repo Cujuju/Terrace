@@ -109,6 +109,10 @@ const UNO_NOSE_COLOR = 0xb08585;
 const TAG_COLOR = 0xe3c56b;
 const EYE_COLOR = 0x1d1a16;
 const STAFF_COLOR = 0x6b4a2b;
+/** The settler's bundle: oiled canvas, a shade warmer than the staff's wood so
+ *  the two props never read as the same object at distance. */
+const BUNDLE_COLOR = 0x9c7f52;
+const BUNDLE_STRAP_COLOR = 0x5c4630;
 
 export interface PilgrimModel {
   /** Positioned and yawed by the caller; never touched by `animate`. */
@@ -223,7 +227,18 @@ export function createPilgrimModels(): PilgrimModels {
 
   const staffGeometry = keep(new CylinderGeometry(0.012, 0.012, 0.5, 12));
 
+  // The settler's bundle: everything a household owns, rolled and strapped
+  // high on the back. A capsule lying across the shoulders, not a box — it has
+  // to read as soft goods from any angle, and a rounded roll does that at a
+  // fraction of the vertices a bag with a flap would take. The strap is the
+  // one detail that keeps it from looking stuck on.
+  const bundleGeometry = keep(new CapsuleGeometry(0.052, 0.09, 6, 14));
+  bundleGeometry.rotateX(Math.PI / 2);
+  const bundleStrapGeometry = keep(new TorusGeometry(0.058, 0.008, 6, 16));
+
   const staffMaterial = matte(STAFF_COLOR);
+  const bundleMaterial = matte(BUNDLE_COLOR);
+  const bundleStrapMaterial = matte(BUNDLE_STRAP_COLOR);
   const rudyFurMaterial = matte(RUDY_COAT_COLOR);
   const unoFurMaterial = matte(UNO_COAT_COLOR);
 
@@ -373,14 +388,26 @@ export function createPilgrimModels(): PilgrimModels {
     rightArm.position.set(0, shoulderY, shoulderZ);
     body.add(leftArm, rightArm);
 
-    // Only the long-journey walker carries a staff; a strolling wanderer is
-    // empty-pawed — the kinds' single visual distinguisher.
+    // WHAT EACH KIND CARRIES — the kinds' single visual distinguisher (body,
+    // gait and palette are the race's, not the kind's). A pilgrim has the
+    // staff of a long journey; a settler has its household on its back and
+    // both paws free; a strolling wanderer carries nothing at all.
     if (kind === 'pilgrim') {
       const staff = new Mesh(staffGeometry, staffMaterial);
       // In the arm's own frame: seated IN the paw (the arm's low end) — round
       // 2 had it floating a visible gap outside the hand.
       staff.position.set(0.045, -0.105, 0.012);
       rightArm.add(staff);
+    } else if (kind === 'settler') {
+      // Parented to the BODY, not an arm: a pack rides the trunk, so it bobs
+      // with the walk instead of swinging with a limb.
+      const bundle = new Mesh(bundleGeometry, bundleMaterial);
+      bundle.position.set(-0.075, 0.235, 0);
+      const strap = new Mesh(bundleStrapGeometry, bundleStrapMaterial);
+      // Round the roll, standing in the walker's own vertical plane.
+      strap.position.set(-0.075, 0.235, 0);
+      strap.rotation.y = Math.PI / 2;
+      body.add(bundle, strap);
     }
 
     // Tail pivots where it meets the body — LOW on the rear (at shoulder

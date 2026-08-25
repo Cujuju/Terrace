@@ -28,6 +28,7 @@ import {
   setWorldLoaded,
 } from './state/worldsState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
+import { SCULPT_TOOL_ID, activeToolId } from './plugins/toolbar.ts';
 import { createPickDebugOverlay } from './render/pickDebugOverlay.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
@@ -140,7 +141,13 @@ const brushPreview = createBrushPreview(viewport.scene, canvas);
 // why it draws one cell and nothing richer.
 const pickDebug = createPickDebugOverlay(viewport.scene, canvas);
 viewport.onFrame(() => {
-  const pick = sculptInput.hoverTarget();
+  // THE BRUSH IS ONLY LIVE WHEN NOTHING ELSE IS HELD (owner, 2026-08-24).
+  // A plugin tool takes the pointer (plugins/toolbar.ts), so core stops
+  // answering "what would a press do here" — no outline, no lit contour, no
+  // pick readout. Suppressed at the PICK, not at each consumer, so the three
+  // of them cannot disagree about whether the brush is in play; the press
+  // itself is already the plugin's, claimed in the capture phase.
+  const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   // THE LIP QUERY RUNS FIRST, and its answer feeds all three consumers: it
   // lights the contour, it tells the readout which band is grabbable, and it
   // tells the outline whether this press would drag (crosshair) or stamp

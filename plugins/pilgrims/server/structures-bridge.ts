@@ -6,7 +6,11 @@
 // WHAT THIS PLUGIN NEEDS FROM STRUCTURES:
 //   * standingStructures() — where the towns are, to pick who sends pilgrims;
 //   * setBlessedStructureCells(keys) — total-state route blessing (structures'
-//     blessings.ts owns the semantics: replace on every call, empty clears).
+//     blessings.ts owns the semantics: replace on every call, empty clears);
+//   * foundStructure(world, x, y) — a settler moving in (settling.ts). OPTIONAL
+//     on the far side: a structures build from before 2026-08-24 does not have
+//     it, and `foundStructureAt` below degrades to "the house never appears"
+//     rather than to a crash, the same way `age` degrades above.
 //
 // DEGRADED BEHAVIOUR when structures is absent: no settlements exist, so no
 // pilgrimages ever start — which is exactly true. One warning is logged,
@@ -31,6 +35,18 @@ export interface BridgedStructureCell {
 export interface StructuresApi {
   standingStructures(): BridgedStructureCell[];
   setBlessedStructureCells(keys: readonly number[]): void;
+  /**
+   * Founds a tier-0 home, returning whether it happened. `world` is the
+   * CALLER'S WorldApi, handed across because buildability is a question about
+   * the ground and structures holds no world of its own between hooks — see
+   * that plugin's `foundStructure`. Typed `unknown` on this side of the bridge
+   * for the same reason every other member here is duck-typed: this plugin
+   * must build with structures deleted, so it may not name that plugin's
+   * types.
+   *
+   * OPTIONAL: an older structures build simply does not export it.
+   */
+  foundStructure?(world: unknown, x: number, y: number): boolean;
 }
 
 export type StructuresModuleLoader = () => Promise<unknown>;
@@ -96,6 +112,19 @@ export function structuresBridgeReady(): Promise<void> {
 /** The standing towns, or an empty world while structures is absent/loading. */
 export function bridgedStructures(): BridgedStructureCell[] {
   return structuresApi?.standingStructures() ?? [];
+}
+
+/**
+ * Asks structures to found a home at (x, y), returning whether one went up.
+ *
+ * FALSE IS AN ORDINARY ANSWER, not an error: structures is absent, is still
+ * loading, is an older build without the entry point, the board is full, or
+ * the ground will not take a house. The caller (settling.ts) treats every one
+ * of those the same way — the settler arrived and no house appeared — because
+ * from the world's point of view they ARE the same thing.
+ */
+export function foundStructureAt(world: unknown, x: number, y: number): boolean {
+  return structuresApi?.foundStructure?.(world, x, y) ?? false;
 }
 
 /** Records and forwards the total blessed set (structures' replace semantics). */

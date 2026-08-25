@@ -16,6 +16,7 @@ import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import { pointerToNdc } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
+import { addPluginTool, clearPluginTools } from './toolbar.ts';
 import type { ClientPluginCtx, TerraceClientPlugin } from './types.ts';
 
 export interface ClientPluginHost {
@@ -173,6 +174,11 @@ export function createClientPluginHost(
           tabSummary: options?.tabSummary,
         });
       },
+      registerTool(tool) {
+        // Namespaced exactly like a message type, and for the same reason: a
+        // tool's id is a public name two plugins could otherwise both take.
+        addPluginTool({ ...tool, id: `${plugin.name}:${tool.id}`, pluginName: plugin.name });
+      },
       registerWorldHeaderAction(action) {
         claimWorldHeaderAction({ ...action, pluginName: plugin.name });
       },
@@ -247,6 +253,10 @@ export function createClientPluginHost(
     },
 
     dispose(): void {
+      // The toolbar FIRST, before any plugin is disposed: dropping the tools
+      // deselects whichever was held, and a tool tearing down its placement
+      // ghost must do it while its own layer is still in the scene.
+      clearPluginTools();
       for (const plugin of plugins) {
         try {
           plugin.dispose?.();

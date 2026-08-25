@@ -82,6 +82,7 @@ import {
 } from '../state/controlPrefs.ts';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
+import { Toolbar } from './Toolbar.tsx';
 import { Cartographer, chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { ChartSource } from '../terrain/chart.ts';
 import type { ConnectionStatus } from '../net/connection.ts';
@@ -373,9 +374,14 @@ export function Hud(props: {
           </div>
         </div>
 
-        {/* Bottom centre: persistent instruments (the mana gauge), the
-            strip's middle cell so the world's centre stays clear above it. */}
+        {/* Bottom centre: the tool bar and the persistent instruments (the
+            mana gauge), the strip's middle cell so the world's centre stays
+            clear above it. The container is `column-reverse` (hud.css), so
+            SOURCE ORDER IS BOTTOM-UP: the toolbar is first here and therefore
+            sits along the bottom edge, nearest the hand, with the gauge above
+            it — one instrument, as the owner asked (2026-08-24). */}
         <div class="hud-bottom-center">
+          <Toolbar />
           <For each={pluginHudPanels().filter((p) => p.placement === 'bottom-center')}>
             {(panel) => <Dynamic component={panel.component} />}
           </For>
