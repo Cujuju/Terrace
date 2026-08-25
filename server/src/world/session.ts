@@ -31,6 +31,7 @@ import { buildThumbnail } from '../persistence/thumbnail.ts';
 import type { WorldRegistry } from '../persistence/world-registry.ts';
 import { PluginHost } from '../plugins/host.ts';
 import type { LoadedPlugin } from '../plugins/types.ts';
+import { archFixtureRequested, carveArchFixture } from './arch-fixture.ts';
 import { RollbackService } from './rollback.ts';
 import { World } from './world.ts';
 
@@ -217,6 +218,20 @@ export function createWorldFile(
   const store = deps.registry.createStore(id, deps.config.snapshotRetention);
   try {
     const world = World.createFresh(worldSize, difficulty, name);
+    // THE ARCH FIXTURE, if this server was asked for it (ARCH_FIXTURE=1). It
+    // is authored HERE — into genesis terrain, before the first snapshot —
+    // rather than into a running world, so the mound reaches clients by the
+    // ordinary path (chunk payload, snapshot blob, restore) and every one of
+    // those is exercised for real. A world that already exists is loaded from
+    // its snapshot and never re-carved, so the flag only ever affects a NEW
+    // world. See arch-fixture.ts.
+    if (archFixtureRequested()) {
+      const layered = carveArchFixture(world.map);
+      logInfo(
+        `arch fixture: carved into world "${id}" — ${layered} layered column(s)` +
+          (layered === 0 ? ' (nothing opened under the mound; this is a bug)' : ''),
+      );
+    }
     // Genesis is NOW, and it is stamped before the genesis snapshot is written
     // so the world's birthday is on disk from its first row — a world whose
     // first snapshot carried no genesis would have one reconstructed at its
