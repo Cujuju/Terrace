@@ -69,20 +69,25 @@ const SETTLE_FRAME_COUNT = 6;
 const PREVIEW_WORLD_SIZE = CHUNK_SIZE * 6;
 
 /**
- * The ground the mound stands on, in height units — two bands above sea level.
+ * The ground the mound stands on, in height units — two and a half bands above
+ * sea level, deliberately MID-BAND so the roll below never crosses a boundary.
  *
  * Above SEA_LEVEL so the water renderer draws nothing over the fixture, and
  * clear of the bedrock floor so the tunnel's lower span is a real span rather
  * than the empty one `setColumn` rejects.
  */
-const GROUND_HEIGHT = SEA_LEVEL + BAND_HEIGHT * 2;
+const GROUND_HEIGHT = SEA_LEVEL + BAND_HEIGHT * 2 + BAND_HEIGHT / 2;
 
 /**
- * How far the ground rolls either side of that, in height units. A QUARTER of
- * a band: enough that the tunnel floor is not a machined plane, and far too
- * little to climb into the opening three bands above it.
+ * How far the ground rolls either side of that, in height units.
+ *
+ * A THIRD of a band, around a ground height sitting MID-BAND, so the swell
+ * never crosses a band boundary. It crossed one in the first pass, and every
+ * crossing is a contour: the plain around the mound came out tiled with
+ * lozenges that had nothing to do with the fixture and read as terrain detail
+ * in the shot. Kept non-zero so the tunnel floor is not a machined plane.
  */
-const GROUND_ROLL = BAND_HEIGHT / 4;
+const GROUND_ROLL = BAND_HEIGHT / 3;
 
 /** Wavelength of the ground roll, in cells — a slow swell, not a ripple. */
 const GROUND_ROLL_CELLS = 23;
