@@ -44,6 +44,22 @@ import type { Group } from 'three';
  * never what kind of thing is alight.
  */
 export interface FireInstance {
+  /**
+   * THIS FIRE'S IDENTITY, unique among everything drawn this frame and stable
+   * for as long as the fire burns.
+   *
+   * WHY THE LIST CARRIES ONE (bug, 2026-08-24: a fire's light lagged more than
+   * a world unit behind the burning animal it belonged to, and went on lighting
+   * ground where a fire had already been put out). The instance list is rebuilt
+   * every frame, so an instance OBJECT is worth nothing beyond the frame it was
+   * made in — anything that has to remember a particular fire between frames
+   * (the light pool, today) must remember this number and look the fire up
+   * again, never keep the object.
+   *
+   * Distinct from `seed`, which is a look: two fires may not share a key, while
+   * `seed` is free to be anything stable that varies the animation.
+   */
+  readonly key: number;
   /** World X/Z of the burning cell's centre. */
   readonly x: number;
   readonly z: number;

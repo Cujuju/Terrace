@@ -118,12 +118,13 @@ type MutableFireInstance = { -readonly [K in keyof FireInstance]: FireInstance[K
 /** Grows `pool` to at least `size` entries. Allocates only when the fire grows. */
 function ensurePool(pool: MutableFireInstance[], size: number): void {
   while (pool.length < size) {
-    pool.push({ x: 0, z: 0, groundY: 0, fuelHeight: 0, intensity: 0, ageSeconds: 0, presence: 1, seed: 0 });
+    pool.push({ key: 0, x: 0, z: 0, groundY: 0, fuelHeight: 0, intensity: 0, ageSeconds: 0, presence: 1, seed: 0 });
   }
 }
 
 /** Copies one fire into a pooled slot, with the presence this side is owed. */
 function writeSlot(slot: MutableFireInstance, fire: FireInstance, presence: number): void {
+  slot.key = fire.key;
   slot.x = fire.x;
   slot.z = fire.z;
   slot.groundY = fire.groundY;

@@ -279,7 +279,11 @@ function main(): void {
   scene.add(flora.root);
 
   // …and one fire per tree, sized to the tree it is consuming.
-  const fires: FireInstance[] = trees.map((tree) => ({
+  const fires: FireInstance[] = trees.map((tree, index) => ({
+    // The preview redraws from scratch each time, so the index IS a stable
+    // identity for the life of a drawn set — nothing here holds a fire across
+    // one (./plugins/fire/client/flames/types.ts's key).
+    key: index + 1,
     x: tree.x,
     z: tree.z,
     groundY: tree.groundY,

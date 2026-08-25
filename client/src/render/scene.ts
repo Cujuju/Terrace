@@ -142,6 +142,15 @@ export interface SkyLightingRig {
   readonly ambient: AmbientLight;
 }
 
+/**
+ * When in a frame a callback runs.
+ *
+ * 'pose' — this callback WRITES where things are drawn, and something else may
+ *          ask about it this same frame (ClientPluginCtx.publishMovers).
+ * 'draw' — everything else. The default; may read any pose published above.
+ */
+export type FramePhase = 'pose' | 'draw';
+
 export interface Viewport {
   readonly scene: Scene;
   readonly camera: PerspectiveCamera;
@@ -173,7 +182,7 @@ export interface Viewport {
    * delta in seconds (capped — see FRAME_DELTA_CAP_S). Returns an unregister
    * function. This is how plugin layers animate without owning a loop.
    */
-  onFrame(handler: (dt: number) => void): () => void;
+  onFrame(handler: (dt: number) => void, phase?: FramePhase): () => void;
   /**
    * Supplies the ground the camera is held above (render/cameraClearance.ts).
    * Null — the state at boot — disables the floor entirely, which is correct
@@ -276,7 +285,24 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     renderer.setSize(width, height, false);
   };
 
+  /**
+   * Frame callbacks, in TWO PHASES.
+   *
+   * WHY A PHASE AND NOT JUST REGISTRATION ORDER (bug, 2026-08-24). Some plugins
+   * draw a thing ON another plugin's thing — a flame on a burning boat — by
+   * asking its owner, every frame, where that thing is being drawn
+   * (ClientPluginCtx.publishMovers). That is a read-after-write between two
+   * plugins inside one frame, and with a single callback list its correctness
+   * came down to the order of an array in client/src/plugins/registry.ts: fire
+   * happened to be listed after wildlife and before boats, so it read one
+   * owner's poses fresh and the other's one frame stale.
+   *
+   * So the dependency is DECLARED instead of stumbled into. Everything that
+   * publishes poses runs in the 'pose' phase, everything else in 'draw', and
+   * the loop below runs the phases in that order.
+   */
   const frameCallbacks = new Set<(dt: number) => void>();
+  const poseFrameCallbacks = new Set<(dt: number) => void>();
 
   // Null until the world can answer where the ground is (main.tsx wires it),
   // and null again for any point with no ground — see GroundHeightSampler.
@@ -326,6 +352,8 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
         ? 0
         : Math.min((nowMs - lastFrameMs) / 1000, FRAME_DELTA_CAP_S);
     lastFrameMs = nowMs;
+    // POSE FIRST, then everything that may read a pose.
+    for (const cb of poseFrameCallbacks) runFrameCallback(cb, dt);
     for (const cb of frameCallbacks) runFrameCallback(cb, dt);
     // Damping needs a per-frame update; it is also what applies any pending
     // camera input.
@@ -435,9 +463,10 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
     terrainGroup,
     lighting: { sun, hemisphere, ambient },
     restoreOrFocus,
-    onFrame(handler: (dt: number) => void): () => void {
-      frameCallbacks.add(handler);
-      return () => frameCallbacks.delete(handler);
+    onFrame(handler: (dt: number) => void, phase: FramePhase = 'draw'): () => void {
+      const set = phase === 'pose' ? poseFrameCallbacks : frameCallbacks;
+      set.add(handler);
+      return () => set.delete(handler);
     },
     setGroundHeightSampler(sampler: GroundHeightSampler | null): void {
       groundHeightSampler = sampler;
@@ -449,6 +478,7 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
       cancelAnimationFrame(frameHandle);
       frameHandle = 0;
       frameCallbacks.clear();
+      poseFrameCallbacks.clear();
       resizeObserver.disconnect();
       // Last write wins: the pose on screen at teardown is the one remembered.
       savePoseNow();

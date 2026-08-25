@@ -11,7 +11,7 @@ import type { SculptIntent } from '@terrace/shared';
 import { Group, Raycaster, Vector2, type Intersection, type Object3D } from 'three';
 import type { Component } from 'solid-js';
 import type { Connection } from '../net/connection.ts';
-import type { Viewport } from '../render/scene.ts';
+import type { FramePhase, Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
@@ -137,6 +137,16 @@ export function createClientPluginHost(
   const pickableObjects: Object3D[] = [];
 
   /**
+   * Scratch for the object pick, allocated once.
+   *
+   * Both picks below used to build a fresh Raycaster and Vector2 per call, and
+   * `pickWorldCell` is called from pointer handlers — so a tool held across a
+   * drag allocated two of each per pointer event.
+   */
+  const pickRaycaster = new Raycaster();
+  const pickNdc = new Vector2();
+
+  /**
    * The cell the player is pointing at: the nearest declared object under the
    * pointer, and the terrain only when there is none.
    *
@@ -155,9 +165,17 @@ export function createClientPluginHost(
 
     if (pickableObjects.length > 0) {
       const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
-      if (device !== null) {
-        const raycaster = new Raycaster();
-        raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
+      // OFF THE CANVAS IS NOT A MISS TO BE COMPUTED. `pointerToNdc` only fails
+      // on a zero-sized viewport, so a pointer over the toolbar or off the
+      // window still produces coordinates — and the declared subtrees span the
+      // whole world, so their bounding spheres accept the ray and the descent
+      // runs in full to answer a question about a pixel that is not in the
+      // scene. Costed at 2.28 ms with a mature forest declared.
+      if (device !== null && device.x >= -1 && device.x <= 1 && device.y >= -1 && device.y <= 1) {
+        // The scratch is module-scoped and reused: this runs on pointer events,
+        // which arrive far faster than frames.
+        pickRaycaster.setFromCamera(pickNdc.set(device.x, device.y), viewport.camera);
+        const raycaster = pickRaycaster;
         // RECURSIVE, because what a plugin holds is a Group: flora's whole
         // forest is one node over three InstancedMeshes. A registration
         // therefore declares a SUBTREE aimable, and keeping unaimable things
@@ -197,7 +215,15 @@ export function createClientPluginHost(
     }
   };
 
+  /** One plugin's frame callbacks, held until its attach() has finished. */
+  interface DeferredFrameHandler {
+    readonly handler: (dt: number) => void;
+    unregister: (() => void) | null;
+    cancelled: boolean;
+  }
+
   for (const plugin of plugins) {
+    const deferredFrameHandlers: DeferredFrameHandler[] = [];
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
     // Into the scene, NOT terrainGroup: the sculpt raycaster must never see a
@@ -223,9 +249,20 @@ export function createClientPluginHost(
         deps.connection().sendPlugin(`${plugin.name}:${type}`, payload);
       },
       onFrame(handler) {
-        const unregister = viewport.onFrame(handler);
-        unregisterFns.push(unregister);
-        return unregister;
+        // THE PHASE IS NOT THE PLUGIN'S TO CHOOSE, and that is the point: a
+        // plugin that publishes poses must draw before the plugins that read
+        // them (render/scene.ts's FramePhase), and asking every publisher to
+        // remember to say so would make the guarantee only as good as the next
+        // registration. So the handler is HELD until this plugin's attach()
+        // has finished, and then registered in the 'pose' phase if the plugin
+        // published a pose lookup during it, or the 'draw' phase if it did not.
+        const deferred: DeferredFrameHandler = { handler, unregister: null, cancelled: false };
+        deferredFrameHandlers.push(deferred);
+        return () => {
+          deferred.cancelled = true;
+          deferred.unregister?.();
+          deferred.unregister = null;
+        };
       },
       registerHudPanel(
         component: Component,
@@ -316,6 +353,17 @@ export function createClientPluginHost(
     // same containment stance as the server host's `safely`.
     try {
       plugin.attach(ctx);
+
+      // Now that attach() has run we know whether this plugin publishes poses,
+      // so its frame callbacks can go into the phase that fact demands.
+      const phase: FramePhase = moverLookups.has(plugin.name) ? 'pose' : 'draw';
+      for (const deferred of deferredFrameHandlers) {
+        if (deferred.cancelled) continue;
+        const unregister = viewport.onFrame(deferred.handler, phase);
+        deferred.unregister = unregister;
+        unregisterFns.push(unregister);
+      }
+      deferredFrameHandlers.length = 0;
     } catch (error) {
       console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
     }

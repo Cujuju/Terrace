@@ -96,6 +96,8 @@ interface LocalFire {
   groundY: number | null;
   /** Advanced locally every frame — see the header. */
   ageSeconds: number;
+  /** This fire's identity in the drawn list (./flames/types.ts's key). */
+  readonly drawKey: number;
 }
 
 let flames: FlameRenderer | null = null;
@@ -107,6 +109,11 @@ let torchHeld = false;
 
 /** The cell under the cursor while the torch is held, or null. */
 let torchCell: { x: number; y: number } | null = null;
+
+/** Last cursor position seen while the torch was held, and whether it is new. */
+let pointerX = 0;
+let pointerY = 0;
+let pointerMoved = false;
 
 /** Window pointer listener, live only for the plugin's lifetime. */
 let onPointerMove: ((event: PointerEvent) => void) | null = null;
@@ -127,10 +134,25 @@ const fires = new Map<number, LocalFire>();
 interface LocalEntityFire {
   readonly entity: FireEntityState;
   ageSeconds: number;
+  /** This fire's identity in the drawn list (./flames/types.ts's key). */
+  readonly drawKey: number;
 }
 
 /** Everything alight that is walking around, by source#id. */
 const entityFires = new Map<string, LocalEntityFire>();
+
+/**
+ * Hands out ./flames/types.ts's `key`.
+ *
+ * A COUNTER RATHER THAN THE WIRE IDENTIFIERS, because there are two wire
+ * identifier spaces — a packed cell (fireKey) and a source#id pair — and
+ * nothing stops a cell key and a creature id from being the same number. The
+ * key's whole job is to be unique across everything drawn in one frame, so it
+ * is minted here, where both kinds are known, rather than derived from either.
+ * Monotonic and never reused, so a light can never follow a key onto a
+ * different fire.
+ */
+let nextDrawKey = 1;
 
 /** Fires whose ground was unknown at the last placement, and the retry clock. */
 let pendingGround = 0;
@@ -168,7 +190,12 @@ function resolveGround(ctx: ClientPluginCtx): void {
 }
 
 function addFire(ctx: ClientPluginCtx, cell: FireCellState): void {
-  const fire: LocalFire = { cell, groundY: null, ageSeconds: cell.ageSeconds };
+  const fire: LocalFire = {
+    cell,
+    groundY: null,
+    ageSeconds: cell.ageSeconds,
+    drawKey: nextDrawKey++,
+  };
   adoptGround(ctx, fire);
   fires.set(fireKey(cell.x, cell.y), fire);
 }
@@ -201,6 +228,7 @@ function buildInstances(): void {
     if (fire.groundY === null) continue;
 
     instances.push({
+      key: fire.drawKey,
       x: fire.cell.x * CELL_WORLD_SIZE,
       z: fire.cell.y * CELL_WORLD_SIZE,
       groundY: fire.groundY,
@@ -244,6 +272,7 @@ function buildEntityInstances(ctx: ClientPluginCtx): void {
     if (pose === null) continue;
 
     instances.push({
+      key: fire.drawKey,
       x: pose.x,
       z: pose.z,
       groundY: pose.y,
@@ -346,9 +375,18 @@ export const clientPlugin: TerraceClientPlugin = {
     // coordinates, so a window listener answers the same question. The pick only
     // runs while the torch is actually held — temples/client/index.ts's
     // arrangement, for its reasons.
+    //
+    // ONE PICK PER FRAME, NOT ONE PER EVENT. Pointer events arrive several
+    // times per frame, and a pick costs the whole declared world
+    // (ClientPluginCtx.pickWorldCell) — a mature forest measured at 2.28 ms a
+    // call, which a moving cursor was paying repeatedly for a ring that is only
+    // drawn once. So the handler does nothing but remember where the cursor is;
+    // the frame callback below resolves it.
     onPointerMove = (event: PointerEvent): void => {
       if (!torchHeld) return;
-      torchCell = ctx.pickWorldCell(event.clientX, event.clientY);
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      pointerMoved = true;
     };
     window.addEventListener('pointermove', onPointerMove);
 
@@ -378,11 +416,20 @@ export const clientPlugin: TerraceClientPlugin = {
         // The server's age wins outright, for every fire, every time: this
         // message IS the re-anchor, and a local clock that has drifted is
         // exactly what it exists to correct.
+        // THE DRAW KEY SURVIVES THE RE-ANCHOR. The set is replaced wholesale,
+        // but a fire that is in both the old set and the new one is the SAME
+        // fire — and this message arrives several times during one burn
+        // (../server/index.ts's ENTITY_REPAIRS_PER_BURN), so minting a fresh
+        // key here would drop the light off a burning animal every couple of
+        // seconds for no reason the player could see.
+        const previous = new Map(entityFires);
         entityFires.clear();
         for (const entity of entities) {
-          entityFires.set(fireEntityKey(entity.sourceName, entity.id), {
+          const key = fireEntityKey(entity.sourceName, entity.id);
+          entityFires.set(key, {
             entity,
             ageSeconds: entity.ageSeconds,
+            drawKey: previous.get(key)?.drawKey ?? nextDrawKey++,
           });
         }
       }),
@@ -402,6 +449,12 @@ export const clientPlugin: TerraceClientPlugin = {
       if (flames === null || lights === null) return;
 
       elapsedSeconds += dt;
+
+      // The one pick per frame the pointer handler defers to us.
+      if (torchHeld && pointerMoved) {
+        pointerMoved = false;
+        torchCell = ctx.pickWorldCell(pointerX, pointerY);
+      }
 
       // THE TORCH RING, before the early-out below: it is drawn while the player
       // is aiming, which is precisely when nothing is burning yet.
@@ -469,6 +522,7 @@ export const clientPlugin: TerraceClientPlugin = {
     onPointerMove = null;
     torchHeld = false;
     torchCell = null;
+    pointerMoved = false;
 
     fires.clear();
     entityFires.clear();

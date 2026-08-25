@@ -239,14 +239,27 @@ export interface ClientPluginCtx {
    * hit wins) and falls back to the terrain when the ray hits none of them.
    * Null when it hits nothing at all.
    *
-   * Allocates and raycasts per call: a click or a hover, never a per-instance
-   * inner loop.
+   * COSTS THE WHOLE DECLARED WORLD PER CALL, and a caller has to budget for it:
+   * every subtree any plugin has marked pickable is descended, and an
+   * InstancedMesh is tested per instance — a mature forest is over twenty
+   * thousand per-instance tests, measured at 2.28 ms, which is a seventh of a
+   * 60 fps frame. Fine for a click. NOT fine once per pointer event: a tool
+   * that follows the cursor must remember the last coordinates and pick ONCE
+   * PER FRAME (plugins/fire/client/index.ts's torch does exactly this).
    */
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
 
   /**
    * Publishes where THIS plugin's movable things are drawn, so that another
    * plugin can draw something ON one of them. Returns an unpublish function.
+   *
+   * PUBLISHING MOVES THIS PLUGIN EARLIER IN THE FRAME. A pose is read by
+   * somebody else during the SAME frame it is written, so the host puts every
+   * frame callback of a plugin that publishes into the pose phase, ahead of
+   * every plugin that does not (render/scene.ts's FramePhase). Nothing is asked
+   * of the publisher — it is a consequence of calling this — but it is the
+   * reason a reader is entitled to say the pose it gets is the one being drawn
+   * now, rather than the one drawn last frame.
    *
    * A NEUTRAL PRIMITIVE, deliberately — core's answer to the same problem
    * WorldApi.emitEvent solves on the server (design §"World events"): a plugin
