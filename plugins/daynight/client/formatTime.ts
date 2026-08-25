@@ -15,10 +15,20 @@
 // a reading across an hour boundary.
 
 import { DAY_LENGTH_SECONDS } from '../protocol.ts';
-import { weekdayOf } from '@terrace/shared';
+import { DAWN_HOUR, weekdayOf } from '@terrace/shared';
 
-/** Minutes past midnight the world reads when phase is 0 — protocol.ts: 0 is dawn. */
-export const DAWN_MINUTES = 6 * 60;
+const MINUTES_PER_HOUR = 60;
+
+/**
+ * Minutes past midnight the world reads when phase is 0 — protocol.ts: 0 is
+ * dawn.
+ *
+ * DERIVED FROM THE SHARED CALENDAR'S DAWN_HOUR, never restated: the same
+ * offset decides where the calendar day starts (shared/src/calendar.ts,
+ * CALENDAR_LEAD_MILLIS), so a second copy here could drift and print a weekday
+ * that changed at an hour the clock never shows as midnight.
+ */
+export const DAWN_MINUTES = DAWN_HOUR * MINUTES_PER_HOUR;
 
 /**
  * Formats a phase (fraction of DAY_LENGTH_SECONDS in [0, 1)) as the in-world
@@ -62,11 +72,12 @@ const CLOCK_PART_SEPARATOR = ' \u00b7 ';
  * server too old to send the calendar has not told us which day it is, and the
  * header's one job is to say nothing it does not know.
  *
- * NOTE ON WHEN THE WEEKDAY TURNS OVER: the calendar day increments when the
- * phase wraps, and phase 0 is DAWN (protocol.ts), so a Terrace day runs dawn to
- * dawn — the weekday changes at 6:00 a.m. on the readout, not at midnight. That
- * is the same instant the chronicle starts a new heading, so the two agree; it
- * is a property of the shared calendar, not of this formatting.
+ * NOTE ON WHEN THE WEEKDAY TURNS OVER: at MIDNIGHT on this readout — the
+ * calendar day is offset from the sim clock's dawn-anchored lap by exactly the
+ * DAWN_MINUTES above (shared/src/calendar.ts, CALENDAR_LEAD_MILLIS), so the
+ * name changes when the time reads 12:00 a.m. and not when the sun comes up.
+ * That is the same instant the chronicle starts a new heading, so the two
+ * agree; it is a property of the shared calendar, not of this formatting.
  */
 export function formatWorldClock(
   phase: number,
