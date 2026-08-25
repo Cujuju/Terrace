@@ -245,6 +245,18 @@ export function parseCells(value: unknown): Array<{ x: number; y: number }> | nu
   return cells;
 }
 
+/**
+ * Plugin → plugin (`fire:burned`, via WorldApi.emitEvent), once per WILDFIRE:
+ * emitted when the world stops burning, carrying how many cells that fire
+ * consumed in total and where it started.
+ *
+ * NOT a client message. Nothing on screen changes when a fire ends — every
+ * cell's own extinguishment already went out as a delta — and the audience is
+ * other server plugins that think in episodes rather than in cells (the
+ * chronicle writes one line per fire, not one per tree).
+ */
+export const FIRE_BURNED_EVENT = 'burned';
+
 /** `fire:fires` — the receiver's whole burning set. */
 export interface FireFiresPayload {
   readonly fires: readonly number[];

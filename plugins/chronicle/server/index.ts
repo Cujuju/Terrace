@@ -58,11 +58,13 @@ import {
   godsHandLine,
   monsterArrivedLine,
   monsterDepartedLine,
+  parseFireBurned,
   parseMonsterEvent,
   parseRelicCollected,
   parseStructuresChanges,
   relicLine,
   seededLine,
+  wildfireLine,
   type EventCell,
 } from './saga.ts';
 
@@ -346,6 +348,36 @@ function onMonsterArrived(world: WorldApi, payload: unknown): void {
   write(world, [monsterArrivedLine(event.kind, placeOf(event), isFirstEver)]);
 }
 
+/**
+ * How many growing things one fire must consume before the saga notices.
+ *
+ * A single tree struck by lightning is weather, not history — and lightning is
+ * common enough that a line per bolt would fill a page with nothing. EIGHT is
+ * the smallest number that cannot be one unlucky tree and its neighbours: it
+ * means the fire crossed a stand, which is the event a player would remember
+ * having watched.
+ *
+ * It sits alongside CHRONICLE_CALAMITY_MIN_HOMES and is the same kind of number
+ * for the same reason — the chronicle's whole value is what it leaves out.
+ */
+export const CHRONICLE_WILDFIRE_MIN_CELLS = 8;
+
+/**
+ * A wildfire ended. One line per fire, not per tree: the fire plugin does the
+ * aggregating and emits once, when the world stops burning.
+ *
+ * Day-scoped suppression by PLACE, like the calamity line above: a valley that
+ * burns twice in one afternoon gets one line, and a valley that burns again
+ * tomorrow gets another.
+ */
+function onFireBurned(world: WorldApi, payload: unknown): void {
+  const event = parseFireBurned(payload);
+  if (event === null) return;
+  if (event.consumed < CHRONICLE_WILDFIRE_MIN_CELLS) return;
+  if (alreadyToldToday(`fire:${chunkKeyOf(event)}`)) return;
+  write(world, [wildfireLine(event.consumed, placeOf(event))]);
+}
+
 function onMonsterDeparted(world: WorldApi, payload: unknown): void {
   const event = parseMonsterEvent(payload);
   if (event === null) return;
@@ -465,6 +497,9 @@ export const plugin: TerracePlugin = {
         break;
       case 'monsters:arrived':
         onMonsterArrived(world, payload);
+        break;
+      case 'fire:burned':
+        onFireBurned(world, payload);
         break;
       case 'monsters:departed':
         onMonsterDeparted(world, payload);

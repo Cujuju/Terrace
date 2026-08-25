@@ -185,6 +185,41 @@ export function monsterArrivedLine(kind: string, place: string, isFirstEver: boo
     : `A ${kind} returned to the lands near ${place}.`;
 }
 
+/**
+ * A wildfire that consumed enough to be worth remembering (see
+ * CHRONICLE_WILDFIRE_MIN_CELLS in ./index.ts).
+ *
+ * The count is of CELLS CONSUMED, which for a forest is trees; the line says
+ * "growing things" rather than "trees" because the same fire may have taken a
+ * field, and the chronicle does not receive the distinction — fire tells it what
+ * burned, not what kind of thing it was.
+ */
+export function wildfireLine(consumed: number, place: string): string {
+  return `Fire took ${consumed} growing things near ${place}.`;
+}
+
+/** Parsed `fire:burned` — a finished wildfire. */
+export interface FireBurnedEvent {
+  readonly consumed: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Structural parse of fire's `burned` world-event. An own copy of the shape,
+ * never an import from the fire plugin — the by-name subscription rule every
+ * parser in this file already keeps (see this module's other parsers).
+ */
+export function parseFireBurned(payload: unknown): FireBurnedEvent | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const event = payload as { consumed?: unknown; x?: unknown; y?: unknown };
+  if (typeof event.consumed !== 'number' || !Number.isFinite(event.consumed)) return null;
+  if (typeof event.x !== 'number' || typeof event.y !== 'number') return null;
+  if (!Number.isInteger(event.x) || !Number.isInteger(event.y)) return null;
+  if (event.consumed <= 0) return null;
+  return { consumed: Math.floor(event.consumed), x: event.x, y: event.y };
+}
+
 export function monsterDepartedLine(kind: string): string {
   return `The ${kind} was driven from the world.`;
 }

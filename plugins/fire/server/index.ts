@@ -52,6 +52,7 @@ import type {
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
 import {
+  FIRE_BURNED_EVENT,
   FIRE_CHANGES_MESSAGE,
   FIRE_FIRES_MESSAGE,
   FIRE_PLUGIN_NAME,
@@ -130,6 +131,23 @@ let simSeconds = 0;
 
 /** Simulated time of the last full snapshot. */
 let lastKeepaliveSeconds = 0;
+
+/**
+ * THE EPISODE. Cells consumed since the world last stopped burning, and where
+ * the first of them was.
+ *
+ * A wildfire is not an event the sim has — the sim has hundreds of cells each
+ * finishing on their own second. But it is the only unit anything OUTSIDE this
+ * plugin cares about: "a fire took forty trees above the lake" is a line in the
+ * chronicle, and "cell (91, 40) finished burning" is not. So the episode is
+ * accumulated here and emitted once, when the last fire goes out.
+ *
+ * BOUNDED BY CONSTRUCTION: it counts, it does not collect. The origin is one
+ * cell and the total is one integer, so a fire that burns for an hour costs the
+ * same memory as one that burns for a second.
+ */
+let episodeConsumed = 0;
+let episodeOrigin: FuelCell | null = null;
 
 /**
  * Simulated seconds owed to the spread step, carried between ticks.
@@ -286,6 +304,28 @@ export function burningCells(): FireCellState[] {
 export { registerFuel, unregisterFuel, type CellFuel, type FuelSource } from './fuel.ts';
 
 /**
+ * Emits the finished wildfire, if anything actually burned.
+ *
+ * Called when the burning set empties, whatever emptied it — burned out, rained
+ * out, or dug out. A fire the player beat still gets its line: the world does
+ * not distinguish, and "twelve trees were lost before the rain came" is exactly
+ * the sort of thing worth recording.
+ *
+ * Emitted as a world EVENT and not broadcast to clients: nothing on screen
+ * changes when a fire ends (every cell's own extinguish delta already went out),
+ * and the audience for this is other server plugins — the chronicle, today.
+ */
+function endEpisode(world: WorldApi): void {
+  const origin = episodeOrigin;
+  const consumed = episodeConsumed;
+  episodeOrigin = null;
+  episodeConsumed = 0;
+  if (origin === null || consumed === 0) return;
+
+  world.emitEvent(FIRE_BURNED_EVENT, { consumed, x: origin.x, y: origin.y });
+}
+
+/**
  * Chance per second that a fire under FULL-intensity rain is put out.
  *
  * Sized against the burn it has to interrupt: a tree burns for 22 s, so at
@@ -412,6 +452,8 @@ export const plugin: TerracePlugin = {
     // PersistenceSlice). A load()/onWorldCreate() pair may run again on a live
     // world, and a fire that survived that would be burning twice.
     spreadDebtSeconds = 0;
+    episodeConsumed = 0;
+    episodeOrigin = null;
     blaze.restore(restoredFires);
     restoredFires = [];
 
@@ -458,12 +500,21 @@ export const plugin: TerracePlugin = {
     if (burnedOut.size > 0) {
       for (const source of fuelSources()) {
         const cells = burnedOut.get(source.name);
-        if (cells !== undefined && cells.length > 0) source.onBurnedOut(cells);
+        if (cells === undefined || cells.length === 0) continue;
+        source.onBurnedOut(cells);
+        // The episode counts what was actually CONSUMED, not what stopped
+        // burning: a fire the rain saved took nothing, and a chronicle line
+        // claiming otherwise would be a lie about a forest that is still there.
+        episodeConsumed += cells.length;
+        episodeOrigin ??= cells[0]!;
       }
     }
 
     const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
     if (ignited.length > 0 || ended.length > 0) broadcastChanges(world, ignited, ended);
+
+    // The world just stopped burning: whatever that fire was, it is over.
+    if (blaze.size === 0) endEpisode(world);
 
     if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) broadcastSnapshot(world);
   },
@@ -523,6 +574,8 @@ export function resetFireState(): void {
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
   spreadDebtSeconds = 0;
+  episodeConsumed = 0;
+  episodeOrigin = null;
   restoredFires = [];
   blaze.clear();
 }
