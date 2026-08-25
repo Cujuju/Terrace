@@ -237,7 +237,8 @@ export function appendCurtains(
   ground: DrawnGround,
   loops: readonly ContourLoop[],
   surfaceBand: number,
-  bandSurfaceY: (band: number) => number,
+  surfaceY: number,
+  bandSurfaceY: (band: number, cellX: number, cellZ: number) => number,
   waterBandAt: (cellX: number, cellZ: number) => number | null,
   seaWorldY: number,
   out: number[],
@@ -259,7 +260,11 @@ export function appendCurtains(
   // where a depth-buffer concern belongs: it biases the comparison without
   // moving a single vertex, so geometry can be exactly coincident and exactly
   // welded at the same time.
-  const topY = bandSurfaceY(surfaceBand);
+  // The tread's OWN surface height, handed in rather than recomputed from the
+  // band. riverRig already built the pool at this exact number; deriving it a
+  // second time here is how a top edge stops being welded to the pool it hangs
+  // from, and it is the same duplication this whole arc is about.
+  const topY = surfaceY;
 
   for (const loop of loops) {
     if (loop.length < 3) continue;
@@ -294,9 +299,13 @@ export function appendCurtains(
       // 1/64 above the pool it was supposed to be welded to, and over dry
       // band-0 shore, where the sea's depth-alpha is zero and hides nothing,
       // that slit shows at the foot of the wall.
-      const bottomY = foot.inWater
-        ? bandSurfaceY(foot.band)
-        : Math.max(bandSurfaceY(foot.band), seaWorldY);
+      // Anchored at the segment's own midpoint: band 0's cap is two levels (the
+      // sunk seabed and the waterline above it) and which one the terrain drew
+      // is a per-chunk fact, so the foot must ask where it actually lands.
+      const midCellX = (a.x + b.x) / 2;
+      const midCellZ = (a.z + b.z) / 2;
+      const footY = bandSurfaceY(foot.band, midCellX, midCellZ);
+      const bottomY = foot.inWater ? footY : Math.max(footY, seaWorldY);
       if (bottomY >= topY) continue;
 
       const ax = a.x * CELL_WORLD_SIZE;

@@ -5,7 +5,7 @@
 // produced, at a level height capEmission's skirt stack already uses. So the
 // tests are exact-equality contracts, not tolerances:
 //
-//   1. every emitted vertex's Y equals `drawnBandWorldY` of some band EXACTLY;
+//   1. every emitted vertex's Y equals `bandCapY` of some band EXACTLY;
 //   2. every emitted vertex lies on the terrain's own contour for its own
 //      level (to within the mandated depth-buffer inset — see the test);
 //   3. every quad is VERTICAL — its bottom row shares the top row's plan-view
@@ -30,7 +30,7 @@ import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terra
 import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
 import { appendCurtains } from '../src/render/water/waterCurtain.ts';
 import { CELL_WORLD_SIZE, BAND_WORLD_HEIGHT } from '../src/config.ts';
-import { createDrawnGround, drawnBandWorldY } from '../src/terrain/drawnGround.ts';
+import { createDrawnGround } from '../src/terrain/drawnGround.ts';
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
@@ -43,11 +43,29 @@ const PIT_HEIGHT = 0;
  * The tread is asked at an arbitrary world Y; the curtains must not care.
  * Drawn at the band's own cap plus a lift, as the rig does.
  */
-const SURFACE_Y = drawnBandWorldY(3, false) + 1 / 64;
+/**
+ * The drawn cap Y of a band, as capEmission's makeLevels assigns it. The
+ * fixtures below are dry-land terraces, so band 0's seabed sink never applies;
+ * the oracle is what the SOURCE now uses, and this is the test's independent
+ * statement of the same expectation.
+ */
+const bandCapY = (band: number): number => band * BAND_WORLD_HEIGHT;
+
+/**
+ * The river lift riverRig applies to every water surface
+ * (RIVER_SURFACE_LIFT_WORLD_UNITS, module-private there). The fixture has to
+ * apply it the SAME WAY riverRig does — to the tread and to every band a foot
+ * can land on — or the two ends of a fall are measured on different rulers.
+ * Before the drawn-caps contract they were: the tread was lifted and the
+ * curtain's own top was not, and the test asserted the unlifted number.
+ */
+const RIVER_LIFT_WORLD_UNITS = 1 / 64;
+
+const SURFACE_Y = bandCapY(3) + RIVER_LIFT_WORLD_UNITS;
 /** Below any level the descent can reach: lets a fall run to band 0's seabed. */
 const BELOW_EVERYTHING = -1;
 /** The sea plane as the caller would pass it: band 1's own surface. */
-const SEA_WORLD_Y = drawnBandWorldY(1, false);
+const SEA_WORLD_Y = bandCapY(1);
 
 /**
  * The rig's own `bandWorldY`, as the curtain now receives it: the height water
@@ -55,7 +73,7 @@ const SEA_WORLD_Y = drawnBandWorldY(1, false);
  * contracts turn on — what matters is that top, foot and tread all come from
  * ONE function, which is what welds the junctions.
  */
-const bandSurfaceY = (band: number): number => drawnBandWorldY(band, false);
+const bandSurfaceY = (band: number): number => bandCapY(band) + RIVER_LIFT_WORLD_UNITS;
 
 /**
  * These fixtures pour onto DRY ground — there is no pool at the foot of the
@@ -124,6 +142,7 @@ function curtainsFor(
     fixture.ground,
     fixture.loops,
     bandOf(PLATEAU_HEIGHT),
+    SURFACE_Y,
     bandSurfaceY,
     NO_WATER_BELOW,
     seaWorldY,
@@ -177,7 +196,7 @@ describe('waterfall curtains', () => {
     const surfaceBand = bandOf(PLATEAU_HEIGHT); // 3
     const triangles = curtainsFor(cliffFixture(), BELOW_EVERYTHING);
     expect(triangles.length).toBeGreaterThan(0);
-    const topY = bandSurfaceY(surfaceBand);
+    const topY = SURFACE_Y;
 
     // EVERY quad hangs from the water's own band — never from an intermediate
     // level. That is what "one sheet, top to bottom" means and what separates
@@ -251,7 +270,7 @@ describe('waterfall curtains', () => {
       }
     }
 
-    const topY = bandSurfaceY(bandOf(PLATEAU_HEIGHT));
+    const topY = SURFACE_Y;
     let topVertices = 0;
     for (let i = 0; i < triangles.length; i += 3) {
       const key = `${triangles[i]!},${triangles[i + 2]!}`;
@@ -282,6 +301,7 @@ describe('waterfall curtains', () => {
       createDrawnGround(mirror),
       loops,
       bandOf(PLATEAU_HEIGHT),
+      SURFACE_Y,
       bandSurfaceY,
       NO_WATER_BELOW,
       BELOW_EVERYTHING,

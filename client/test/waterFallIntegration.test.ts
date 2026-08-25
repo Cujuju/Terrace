@@ -22,8 +22,9 @@ import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, bandOf, cellIndex } from '@terrace/shared';
 import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
 import { appendCurtains } from '../src/render/water/waterCurtain.ts';
-import { createDrawnGround, drawnBandWorldY } from '../src/terrain/drawnGround.ts';
+import { createDrawnGround } from '../src/terrain/drawnGround.ts';
 import { createTerrainMirror } from '../src/terrain/mirror.ts';
+import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 
 const WORLD = 64;
 const SUMMIT = BAND_HEIGHT * 20;
@@ -71,13 +72,14 @@ describe('a river down a cone', () => {
     const ground = createDrawnGround(mirror);
     const triangles: number[] = [];
     for (const region of regions.values()) {
-      const surfaceY = drawnBandWorldY(region.surfaceBand, false);
+      const surfaceY = region.surfaceBand * BAND_WORLD_HEIGHT;
       const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
       appendCurtains(
         ground,
         loops,
         region.surfaceBand,
-        (band) => drawnBandWorldY(band, false),
+        surfaceY,
+        (band: number) => band * BAND_WORLD_HEIGHT,
         (x, y) => bandOfCell.get(cellIndex(mirror.map, x, y)) ?? null,
         SEA_WORLD_Y,
         triangles,
