@@ -40,6 +40,33 @@
 export const FIRE_PLUGIN_NAME = 'fire';
 
 /**
+ * Client → server, "light this cell" (`fire:ignite`), payload `{x, y}`.
+ *
+ * A MESSAGE, NOT A SCULPT INTENT. The intent pipeline is for edits to the
+ * heightmap — it validates a brush, prices terrain and reconciles a client's
+ * predicted terrain (design §3.5, and server/src/intent/pipeline.ts). Lighting a
+ * fire moves no ground and predicts nothing: the client asks, the server answers
+ * by broadcasting a fire or by staying silent, which is exactly what a plugin
+ * message is for.
+ */
+export const FIRE_IGNITE_MESSAGE = 'ignite';
+
+/**
+ * Parses a `fire:ignite` request. Null for anything that is not two
+ * non-negative integers — the client is untrusted here in a way the server
+ * halves of this protocol are not.
+ */
+export function parseIgnitePayload(payload: unknown): { x: number; y: number } | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const request = payload as { x?: unknown; y?: unknown };
+  const { x, y } = request;
+  if (typeof x !== 'number' || typeof y !== 'number') return null;
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
+  if (x < 0 || y < 0 || x >= FIRE_CELL_KEY_STRIDE || y >= FIRE_CELL_KEY_STRIDE) return null;
+  return { x, y };
+}
+
+/**
  * Server → client, everything currently alight (`fire:fires`). Sent to a
  * joining player and on the keepalive cadence. Replaces the receiver's whole
  * set.

@@ -776,6 +776,41 @@ function poolFor(playerId: string): ManaPool {
 }
 
 /**
+ * CHARGES A PLAYER FOR A NON-SCULPT ACTION. True if they could afford it and
+ * were debited; false leaves the pool untouched.
+ *
+ * Added 2026-08-24 for fire's ignite (plugins/fire/server/mana-bridge.ts), and
+ * it is the first thing to spend mana that is not a sculpt. The split is
+ * deliberate:
+ *
+ *   A SCULPT is priced HERE, because mana knows what terrain costs — the
+ *   pricing is shared terrain math (../pricing.ts) and the interceptor chain
+ *   already routes every intent through this plugin.
+ *   ANY OTHER ACTION is priced by the plugin that owns it. Fire knows what
+ *   lighting a fire is worth; mana has no opinion and should not grow one. So
+ *   this takes an AMOUNT, not an action — mana stays the ledger and never
+ *   becomes a table of what everything in the game costs.
+ *
+ * Pushes the new balance immediately rather than waiting for the regen tick's
+ * next whole-unit change: the caller's client predicted a debit the moment it
+ * asked, and a spend it cannot see land reads as the action having failed.
+ */
+export function spendMana(world: WorldApi, playerId: string, amount: number): boolean {
+  // A malformed amount is refused rather than trusted into the pool, where a
+  // NaN balance compares false against every threshold and would silently make
+  // the player unable to sculpt forever — the exact failure mode this file
+  // already guards the regen path against.
+  if (!Number.isFinite(amount) || amount < 0) return false;
+
+  const pool = poolFor(playerId);
+  if (pool.balance < amount) return false;
+
+  pool.balance -= amount;
+  sendBalance(world, playerId, pool);
+  return true;
+}
+
+/**
  * VERDICT PHASE — CRITICAL, AND READ-ONLY (issue #19).
  *
  * Runs inside the host's interceptor chain (the verdict phase — see onIntent's
