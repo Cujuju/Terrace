@@ -27,8 +27,9 @@
 // from the static-content pattern it otherwise copies.
 //
 // SPREAD lives in ./spread.ts and runs on its own slower cadence
-// (SPREAD_INTERVAL_SECONDS) — one product of one rate and three multipliers,
-// with the firebreak falling out of it rather than being written into it.
+// (SPREAD_INTERVAL_SECONDS) — one rate multiplied by intensity, wind, slope,
+// distance and wetness, with the firebreak falling out of it rather than being
+// written into it.
 //
 // RAIN is where fires go. The same weather that throws the bolt puts the fire
 // out (./weather-bridge.ts, and the suppression roll in onTick), which closes
@@ -38,11 +39,11 @@
 // message, priced in mana, gated on the player's own unlocked view. It is what
 // makes fire a TOOL rather than only a hazard.
 //
-// LIGHTNING is where fires come from today: weather picks the cell a bolt lands
+// LIGHTNING is the other way fires start: weather picks the cell a bolt lands
 // on, emits it, and this plugin rolls whether it caught (onWorldEvent below).
-//
-// WHAT IS NOT HERE YET, deliberately: rain suppression and the player's own
-// ignite intent. `igniteAt` is the seam both arrive through.
+// Both causes arrive through `igniteAt`, which is the ONE place a fire is ever
+// created — so the cap, the fuel lookup and the broadcast exist once and a new
+// cause of fire cannot forget one of them.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';

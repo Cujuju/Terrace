@@ -148,8 +148,14 @@ const RIBBON_ALPHA_PEAK = 0.75;
 // ── Scaling a fire to a flame ─────────────────────────────────────────────
 const FLAME_HEIGHT_PER_FUEL = 1.35;
 const FLAME_RADIUS_PER_FUEL = 0.42;
-const INTENSITY_SIZE_FLOOR = 0.34;
-const INTENSITY_BRIGHTNESS_FLOOR = 0.4;
+const INTENSITY_SIZE_FLOOR = 0.45;
+/**
+ * RAISED from 0.4 on 2026-08-24, when these ribbons became the look that owns
+ * the LOW end of every fire (./ribbonsToPlume.ts). Intensity should say how much
+ * flame there is, not how see-through it is: at 0.4 a catching fire was blended
+ * half-and-half with bright green grass, which is how orange becomes brown.
+ */
+const INTENSITY_BRIGHTNESS_FLOOR = 0.62;
 
 /**
  * How much of a strip's roll shows as VERTICAL spread, relative to horizontal.

@@ -72,9 +72,23 @@ const WARP_HEIGHT_BIAS = 1.5;
 /** The height ramp, as three stops the fragment shader mixes between. */
 const PLUME_CORE_COLOR: readonly [number, number, number] = [1.0, 0.86, 0.5];
 const PLUME_MID_COLOR: readonly [number, number, number] = [1.0, 0.42, 0.06];
-const PLUME_TIP_COLOR: readonly [number, number, number] = [0.62, 0.08, 0.03];
-/** Height fraction at which the ramp reaches the mid colour. */
-const PLUME_MID_HEIGHT = 0.26;
+/**
+ * TIP, RAISED off near-black red on 2026-08-24. The tip is the only part of a
+ * plume that is ever seen against the SKY — everything below it is over grass or
+ * over the tree — and 0.62/0.08/0.03 against a pale sky read as soot, not as
+ * flame. A hot ember red keeps the ramp's direction (cooling upward) while
+ * staying a colour fire actually goes.
+ */
+const PLUME_TIP_COLOR: readonly [number, number, number] = [0.88, 0.22, 0.05];
+/**
+ * Height fraction at which the ramp reaches the mid colour.
+ *
+ * RAISED from 0.26 with the tip colour above: at 0.26 three quarters of the
+ * plume was already past orange and sliding into the tip, so the part that
+ * clears the crown — the part anyone actually sees — was the coldest part of the
+ * flame. 0.42 keeps the body orange up to and through the canopy line.
+ */
+const PLUME_MID_HEIGHT = 0.42;
 /** Above this height the plume is guttering out; alpha falls to zero by 1.0. */
 const PLUME_GUTTER_HEIGHT = 0.5;
 /** Flicker: noise cycles per second, and how much of the alpha it eats. */
