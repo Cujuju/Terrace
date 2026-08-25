@@ -26,7 +26,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bandOf, isWater } from '@terrace/shared';
-import { STRUCTURE_SURVEY_RADIUS_CELLS } from '../protocol.ts';
+import { STRUCTURE_SURVEY_RADIUS_CELLS, structureKey } from '../protocol.ts';
+import { hasReservedStructureCells, isReservedStructureCell } from './reservations.ts';
 
 /**
  * The four orthogonal neighbours a plot's flatness is checked against.
@@ -186,10 +187,13 @@ export function hasClearFootprint(world: StructuresWorld, x: number, y: number):
 }
 
 /**
- * Is this cell somewhere a structure may stand? Five conditions, all
+ * Is this cell somewhere a structure may stand? Six conditions, all
  * required: inside the world, inside UNLOCKED territory (the same anti-leak
  * rule flora's isPlantableCell keeps — an unfiltered broadcast must never
- * mention locked land), dry, flat against its four orthogonal neighbours
+ * mention locked land), dry, NOT RESERVED by another plugin (reservations.ts
+ * — the temple's own footprint is the one claim in the shipping game, and
+ * this is where "a house grew inside the temple" is closed for every path at
+ * once), flat against its four orthogonal neighbours
  * (isFlatEnough), and FOOTPRINT-CLEAR against its full footprint square
  * neighbourhood (hasClearFootprint) — the model's own maximum reach, so a
  * structure standing here can never render overhanging a terrace edge or the
@@ -212,5 +216,8 @@ export function isBuildableCell(world: StructuresWorld, x: number, y: number): b
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (!world.isCellUnlocked(x, y)) return false;
   if (isWater(world.heightAt(x, y))) return false;
+  // Guarded on the set being non-empty: a world with no temple in it — every
+  // world until the player builds one — never pays for the key or the lookup.
+  if (hasReservedStructureCells() && isReservedStructureCell(structureKey(x, y))) return false;
   return isFlatEnough(world, x, y) && hasClearFootprint(world, x, y);
 }

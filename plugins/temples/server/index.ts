@@ -19,8 +19,11 @@
 // AUTHORITY. A press is an INTENT, exactly like a sculpt (CLAUDE.md's hard
 // rule: clients send intents, never state). The client half predicts nothing:
 // it draws a ghost while the tool is held and the real temple only when this
-// half says the temple exists. So a refusal needs no reconciliation message —
-// there is nothing on the client to claw back.
+// half says the temple exists. So a refusal needs no reconciliation — there is
+// nothing on the client to claw back — but it does now get an ANSWER
+// (`temples:refused`), because a press that did nothing and said nothing is
+// not a reconciliation problem, it is a player left guessing. See
+// ../protocol.ts's TEMPLE_REFUSED_MESSAGE.
 //
 // FULL-STATE PUSHES, NEVER DELTAS. The whole state is two integers or a null,
 // so every push carries all of it (skipEmpty: false — the fog-of-war default
@@ -39,16 +42,26 @@ import type {
 import {
   TEMPLES_PLUGIN_NAME,
   TEMPLE_PLACE_MESSAGE,
+  TEMPLE_REFUSED_GROUND,
+  TEMPLE_REFUSED_MESSAGE,
+  TEMPLE_REFUSED_NO_SETTLERS,
+  TEMPLE_REFUSED_STANDING,
   TEMPLE_REMOVE_MESSAGE,
   TEMPLE_STATE_MESSAGE,
   TEMPLE_SURVEY_RADIUS_CELLS,
   packTemple,
+  packTempleRefusal,
   templeDoorCell,
+  templeFootprintCells,
   parseTemplePlacePayload,
   type TempleCell,
 } from '../protocol.ts';
 import { isTempleSite } from './suitability.ts';
 import { loadPilgrimsBridge, templeCanSettle } from './pilgrims-bridge.ts';
+import {
+  loadStructuresBridge,
+  reserveStructureGround,
+} from './structures-bridge.ts';
 
 // ── Mutable module state ─────────────────────────────────────────────────────
 // Module-level singletons with a reset seam, matching every other plugin here.
@@ -83,36 +96,66 @@ function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
   );
 }
 
+/**
+ * Tells one player their press built nothing, and why.
+ *
+ * SENT FOR EVERY REFUSAL, including the two a well-behaved client already
+ * predicts. The alternative — speaking only for the unpredictable one — makes
+ * the contract "some refusals are answered", which is a table the two halves
+ * must agree on forever; "a refused press is always answered" is a rule. It
+ * costs one three-integer message on a press that did nothing, to one player.
+ */
+function refuse(world: WorldApi, playerId: string, cell: TempleCell, reason: number): void {
+  world.sendTo(playerId, TEMPLE_REFUSED_MESSAGE, {
+    refused: packTempleRefusal({ x: cell.x, y: cell.y, reason }),
+  });
+}
+
+/**
+ * Re-asserts the ground no house may grow on — the temple's whole surveyed
+ * square, or nothing when no temple stands (../protocol.ts's
+ * templeFootprintCells, structures' reservations.ts).
+ *
+ * CALLED WHEREVER `temple` CHANGES, and that is the whole discipline: the
+ * claim is a pure function of this plugin's one piece of state, so it is
+ * re-derived from that state rather than maintained alongside it. A push that
+ * arrives before structures has finished loading is buffered by the bridge.
+ */
+function publishClaim(): void {
+  reserveStructureGround(temple === null ? [] : templeFootprintCells(temple));
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // The two intents
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * `temples:place`. Refused — silently, with no state change and no push —
- * when a temple already stands (moving one means removing it first, so a
- * place on top of a standing temple is a client that got ahead of its own
- * state, not a case to be clever about) or when the ground will not take it.
+ * `temples:place`. Three ways to be refused, each of them ANSWERED: a temple
+ * already stands (moving one means removing it first), the ground will not
+ * take it, or the county around it would never let a settler out.
  *
- * SILENTLY, FOR TWO OF THE THREE ANSWERS: the client knows them. It offers no
- * placement ghost where the ground looks wrong and none at all while a temple
- * stands, so those refusals are only reachable by a malformed or out-of-date
- * client — the case every plugin's message handler answers by doing nothing.
- *
- * THE THIRD IS THE SETTLER CHECK BELOW, AND THE CLIENT CANNOT PREDICT IT: it
- * would need the walker sim to know whether a homestead site is reachable. So
- * there is one case — good ground, unsettleable county — where the ghost reads
- * green and the press does nothing, and a silent no-op is the wrong answer to
- * a player who did everything right. It is narrow (the surveyed square now
- * covers the doorstep, so the common failures are already ghosted red) and it
- * is NOT closed: closing it means either telling the client (a refusal message
- * this plugin has deliberately never needed) or teaching it the walk rules.
- * Recorded here rather than left to be rediscovered from the symptom.
+ * THE THIRD IS WHY THE ANSWER EXISTS (owner, 2026-08-24). The client can and
+ * does predict the first two, so those refusals only reach a client that got
+ * ahead of its own state. It cannot predict the third at any price — that
+ * needs the walker sim and a county of terrain — so there was one case, good
+ * ground and an unsettleable county, where the ghost read green and the press
+ * did nothing at all. A player who did everything right was told nothing.
+ * Now they are told, and the client turns that cell's ghost red so the second
+ * press is never offered (client/index.ts).
  */
-function placeTemple(world: WorldApi, payload: unknown): void {
-  if (temple !== null) return;
+function placeTemple(world: WorldApi, playerId: string, payload: unknown): void {
   const cell = parseTemplePlacePayload(payload);
+  // A malformed payload is the ONE refusal that gets no answer: there is no
+  // cell to name in it, and nothing a player did produced it.
   if (cell === null) return;
-  if (!isTempleSite(world, cell.x, cell.y)) return;
+  if (temple !== null) {
+    refuse(world, playerId, cell, TEMPLE_REFUSED_STANDING);
+    return;
+  }
+  if (!isTempleSite(world, cell.x, cell.y)) {
+    refuse(world, playerId, cell, TEMPLE_REFUSED_GROUND);
+    return;
+  }
 
   // AND IT MUST BE ABLE TO DO ITS JOB (owner, 2026-08-24: "prevent placing the
   // temple in a location where it cannot spawn a settler"). Standing on good
@@ -122,9 +165,13 @@ function placeTemple(world: WorldApi, payload: unknown): void {
   // exactly the shape of bug the player reported. So the county is asked too,
   // by the plugin that owns what a settler can do with it (pilgrims-bridge).
   const door = templeDoorCell(cell);
-  if (!templeCanSettle(world, { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y })) return;
+  if (!templeCanSettle(world, { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y })) {
+    refuse(world, playerId, cell, TEMPLE_REFUSED_NO_SETTLERS);
+    return;
+  }
 
   temple = cell;
+  publishClaim();
   broadcastState(world);
   // The chronicle's ear: a temple going up is a world event a historian can
   // use, in the loose by-name shape WorldApi.emitEvent documents. Nothing in
@@ -138,6 +185,7 @@ function removeTemple(world: WorldApi): void {
   if (temple === null) return;
   const fallen = temple;
   temple = null;
+  publishClaim();
   broadcastState(world);
   world.emitEvent('fallen', { x: fallen.x, y: fallen.y, cause: 'razed' });
 }
@@ -176,6 +224,7 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 
   const fallen = temple;
   temple = null;
+  publishClaim();
   broadcastState(world);
   // A different STORY from a razing (the ground moved, not a hand on the
   // tool), so the cause travels — structures' own sculpt/generation split.
@@ -216,6 +265,11 @@ export const plugin: TerracePlugin = {
     // arrives before it resolves is settler-checked as "allowed", which is the
     // same answer a world without pilgrims gets (pilgrims-bridge's header).
     void loadPilgrimsBridge();
+    // The same rule, the other direction: started, never awaited. The claim
+    // published below is buffered by the bridge until this lands, which is
+    // what protects the ground under a RESTORED temple from the first
+    // generation (structures-bridge.ts's header).
+    void loadStructuresBridge();
 
     // RE-VALIDATE ON LOAD, structures' footprint-prune rule (its
     // onWorldCreate) for the same reason: a snapshot restored onto a smaller
@@ -229,6 +283,7 @@ export const plugin: TerracePlugin = {
         ? restoredTemple
         : null;
     restoredTemple = null;
+    publishClaim();
 
     // No players are connected yet — this is only so a client already
     // listening at boot is not left empty until someone joins.
@@ -244,7 +299,7 @@ export const plugin: TerracePlugin = {
   },
 
   messages: {
-    [TEMPLE_PLACE_MESSAGE]: (world, _player, payload) => placeTemple(world, payload),
+    [TEMPLE_PLACE_MESSAGE]: (world, player, payload) => placeTemple(world, player.id, payload),
     [TEMPLE_REMOVE_MESSAGE]: (world) => removeTemple(world),
   },
 
