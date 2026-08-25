@@ -71,6 +71,18 @@ let toolHeld = false;
 /** The cell under the cursor, or null when the pointer is off the ground. */
 let hoverCell: TempleCell | null = null;
 
+/**
+ * The crown's clock: elapsed seconds since attach, accumulated from the host's
+ * already-capped `dt` so a backgrounded tab cannot jump the star half a turn.
+ *
+ * IT RUNS WHETHER OR NOT A TEMPLE STANDS, deliberately: the crown's pose is a
+ * pure function of this number (celestial.ts), so a temple built, razed and
+ * rebuilt picks the sky-machine up mid-turn instead of snapping it back to a
+ * start pose every time — which is what "the heavens do not wait for you"
+ * looks like in one variable.
+ */
+let crownSeconds = 0;
+
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
@@ -123,8 +135,10 @@ function isOnTemple(cell: TempleCell): boolean {
  * frame is how it appears the moment it does (flora and structures retry the
  * same way, on their own cadence).
  */
-function renderFrame(ctx: ClientPluginCtx): void {
+function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   if (models === null) return;
+
+  crownSeconds += dt;
 
   // The standing temple.
   const groundY = temple === null ? null : ctx.terrainHeightAt(temple.x, temple.y);
@@ -133,6 +147,10 @@ function renderFrame(ctx: ClientPluginCtx): void {
   } else {
     models.standing.visible = true;
     models.standing.position.set(worldX(temple.x), groundY, worldX(temple.y));
+    // Posed only while it is on screen: a hidden crown costs nothing, and
+    // because `animate` is pure in the clock it is never out of step when the
+    // temple comes back.
+    models.animate(crownSeconds);
   }
 
   // The ghost — only while the tool is held and the pointer is on the ground.
@@ -225,7 +243,7 @@ export const clientPlugin: TerraceClientPlugin = {
     window.addEventListener('pointermove', onPointerMove);
 
     unsubscribePress = ctx.onCanvasPress((event) => handlePress(ctx, event));
-    unsubscribeFrames = ctx.onFrame(() => renderFrame(ctx));
+    unsubscribeFrames = ctx.onFrame((dt) => renderFrame(ctx, dt));
   },
 
   dispose(): void {
@@ -244,5 +262,6 @@ export const clientPlugin: TerraceClientPlugin = {
     temple = null;
     toolHeld = false;
     hoverCell = null;
+    crownSeconds = 0;
   },
 };

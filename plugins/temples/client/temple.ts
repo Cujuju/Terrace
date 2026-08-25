@@ -4,11 +4,16 @@
 // dark doorway; the whole thing is one landmark, not a hut, so it is exactly
 // twice a settlement building's footprint across.
 //
-// ONE DRAW CALL. Every block is baked into a single merged, vertex-coloured
-// geometry, built once and shared by the standing temple AND the placement
-// ghost (which differs only in its material). The temple never animates and
-// never varies — there is one in the world — so there is nothing here that a
-// merge would have to give up, unlike a walker's moving limbs.
+// ONE DRAW CALL FOR THE STONE. Every block is baked into a single merged,
+// vertex-coloured geometry, built once and shared by the standing temple AND
+// the placement ghost (which differs only in its material). The masonry never
+// moves and never varies — there is one temple in the world — so there is
+// nothing here that a merge would have to give up, unlike a walker's limbs.
+//
+// WHAT DOES MOVE IS ABOVE IT: the celestial crown (./celestial.ts) turning over
+// the shrine, which is separate meshes for exactly the reason the stone is not
+// — see that file's header for the draw-call reasoning and the one-temple
+// condition it rests on.
 //
 // FLAT-SHADED, like the rest of the environment: the little people are the one
 // family of models in this world that is deliberately smooth (see
@@ -40,6 +45,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS } from '../protocol.ts';
+import { createCelestialCrown, type CelestialCrown } from './celestial.ts';
 
 // ── Proportions, every one derived from the footprint span ──────────────────
 
@@ -230,11 +236,16 @@ function buildTempleGeometry(): BufferGeometry {
 }
 
 /**
- * The temple model set: one shared geometry, two materials, and the two
- * objects that use them. Built once at attach and disposed with the plugin.
+ * The temple model set: one shared stone geometry, the materials that draw it,
+ * and the two objects that use them. Built once at attach and disposed with
+ * the plugin.
  */
 export interface TempleModels {
-  /** The real, standing temple. The caller positions and shows/hides it. */
+  /**
+   * The real, standing temple — the stone AND the celestial crown turning
+   * above it (celestial.ts). The caller positions and shows/hides it, and
+   * drives the crown through `animate`.
+   */
   readonly standing: Group;
   /**
    * The placement GHOST the tool follows. The same stone, made translucent
@@ -245,6 +256,13 @@ export interface TempleModels {
   readonly ghost: Group;
   /** Green while the press would build, red while it would be refused. */
   setGhostLegal(legal: boolean): void;
+  /**
+   * Poses the standing temple's crown for the given elapsed seconds. Pure in
+   * `seconds`; the caller need only skip it while the temple is hidden, and
+   * the crown picks up mid-turn when it comes back rather than snapping to a
+   * start pose (celestial.ts's header).
+   */
+  animate(seconds: number): void;
   dispose(): void;
 }
 
@@ -271,6 +289,11 @@ export function createTempleModels(): TempleModels {
   const standing = new Group();
   standing.name = 'temples:standing';
   standing.add(new Mesh(geometry, stone));
+  // The crown rides the STANDING temple only. The ghost is a question about
+  // ground — "will a temple fit here" — and a star turning over a proposal
+  // that may never be built would answer a different one.
+  const crown: CelestialCrown = createCelestialCrown(BASE_SPAN, TEMPLE_HEIGHT);
+  standing.add(crown.root);
   standing.visible = false;
 
   const ghost = new Group();
@@ -284,7 +307,11 @@ export function createTempleModels(): TempleModels {
     setGhostLegal(legal: boolean): void {
       ghostMaterial.color.setHex(legal ? GHOST_LEGAL_COLOR : GHOST_ILLEGAL_COLOR);
     },
+    animate(seconds: number): void {
+      crown.animate(seconds);
+    },
     dispose(): void {
+      crown.dispose();
       standing.clear();
       ghost.clear();
       geometry.dispose();
