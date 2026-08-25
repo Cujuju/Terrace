@@ -136,18 +136,18 @@ describe('water and terracing', () => {
 
 describe('deep strata constants', () => {
   it('derives MIN_HEIGHT from the strata stack (Deep Strata, 2026-08-19)', () => {
-    // The floor IS the bottom of the lava stratum: sea column, then basalt,
-    // obsidian, lava. Restating −1104 as a literal anywhere would let the
+    // The floor IS the bottom of the lava stratum: sea column (the pre-strata
+    // −1024 floor, kept exactly so old snapshots are unchanged), then basalt,
+    // obsidian, lava. Restating −1536 as a literal anywhere would let the
     // floor and the strata that define it drift apart — this is the pin.
-    // The stack was shallowed on 2026-08-24 (owner) from 64/16/12/4 bands to
-    // 48/12/8/1, which is why the sea column is no longer MAX_HEIGHT deep.
+    expect(SEA_COLUMN_DEPTH).toBe(MAX_HEIGHT);
     expect(DEEP_STRATA_DEPTH).toBe(
       DEEP_BASALT_DEPTH + DEEP_OBSIDIAN_DEPTH + DEEP_LAVA_DEPTH,
     );
     expect(MIN_HEIGHT).toBe(-(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH));
-    expect(MIN_HEIGHT).toBe(-1104);
-    // The world still goes deeper than it goes high.
-    expect(-MIN_HEIGHT).toBeGreaterThan(MAX_HEIGHT);
+    expect(MIN_HEIGHT).toBe(-1536);
+    // Every pre-strata height remains valid: the old floor sits inside the
+    // new range, so no stored world can have gone out of contract.
     expect(isValidHeight(-SEA_COLUMN_DEPTH)).toBe(true);
     expect(isValidHeight(MIN_HEIGHT)).toBe(true);
     expect(isValidHeight(MIN_HEIGHT - 1)).toBe(false);
@@ -178,12 +178,9 @@ describe('deep strata constants', () => {
     ]) {
       expect(Number.isInteger(bands)).toBe(true);
     }
-    // The stack the owner asked for on 2026-08-24, band by band. Lava is ONE
-    // band because it is a floor to arrive at, not a stratum to dig through.
-    expect(SEA_COLUMN_BANDS).toBe(48);
-    expect(DEEP_BASALT_BANDS).toBe(12);
-    expect(DEEP_OBSIDIAN_BANDS).toBe(8);
-    expect(DEEP_LAVA_BANDS).toBe(1);
+    // The crust keeps the 4 : 3 : 1 proportion the original band counts set.
+    expect(DEEP_BASALT_DEPTH / DEEP_LAVA_DEPTH).toBe(4);
+    expect(DEEP_OBSIDIAN_DEPTH / DEEP_LAVA_DEPTH).toBe(3);
   });
 
   it('scales the smoothing budget with the range AND the gradient limit', () => {
@@ -191,13 +188,11 @@ describe('deep strata constants', () => {
     // of this drifts to a literal, the deepest cascades truncate. It doubled
     // on 2026-08-20 because MAX_STEP halved, not because the range moved, and
     // quadrupled again on 2026-08-21 because MAX_STEP is now a slope per WORLD
-    // UNIT — sampled four times as finely — and shrank on 2026-08-24 because
-    // the shallower strata stack lifted the world floor to −1104: 2128 units
-    // of range over a 16-unit step is 133 world units of travel.
+    // UNIT — the same 160 world units of travel, sampled four times as finely.
     expect(SMOOTH_SPREAD_CELLS).toBe(
       Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP),
     );
-    expect(SMOOTH_SPREAD_CELLS).toBe(133 * WORLD_UNIT_CELLS);
+    expect(SMOOTH_SPREAD_CELLS).toBe(160 * WORLD_UNIT_CELLS);
   });
 });
 

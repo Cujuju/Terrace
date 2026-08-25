@@ -228,33 +228,28 @@ export const MAX_HEIGHT = 1024;
  * The world's depth is a stack of named strata, shallowest first:
  *
  *   * the SEA COLUMN — the ordinary seabed: the blue water column the
- *     2026-08-19 depth ramp colours, ending in very dark blue. 768 units,
- *     48 bands.
- *   * DEEP BASALT — volcanic rock, the bulk of the crust. Deep enough that
- *     breaking through the seabed is an act, not an accident. 192 units,
- *     12 bands.
+ *     2026-08-19 depth ramp colours, ending in very dark blue. It is exactly
+ *     as deep as the sky is high, which is the PRE-deep-strata floor (the old
+ *     MIN_HEIGHT = −MAX_HEIGHT), kept exactly so every world saved before the
+ *     strata landed is unchanged, and so everything anchored to "the sea"
+ *     (monster depth thresholds, the seabed palette) keeps meaning the sea
+ *     rather than the crust.
+ *   * DEEP BASALT — volcanic rock, half the crust. Deep enough that breaking
+ *     through the seabed is an act, not an accident.
  *   * DEEP OBSIDIAN — glass-black rock, the darkest material in the game.
- *     128 units, 8 bands.
- *   * DEEP LAVA — the absolute floor: molten glow, and ONE BAND thick
- *     (owner, 2026-08-24: "we don't need to be able to dig into that"). It is
- *     a boundary rather than a place — the world ends in light, and the first
- *     tread a player reaches in it is also the last.
+ *   * DEEP LAVA — the absolute floor: molten glow, and the thinnest stratum
+ *     of the three, because it is a boundary rather than a place — the world
+ *     ends in light.
  *
  * STATED IN HEIGHT UNITS, COUNTED IN BANDS (2026-08-20). These depths were
  * originally written as band counts (16 / 4 / 3 / 1), which silently made the
  * world four times shallower the moment BAND_HEIGHT was re-tuned: a band is a
  * render quantum, and the seabed is not. The DEPTH of each stratum is
  * therefore the primary fact and its band count is derived, so re-terracing
- * the world can never move its floor.
- *
- * SHALLOWED TO 48 / 12 / 8 / 1 BANDS (owner, 2026-08-24). The previous stack
- * — 64 / 16 / 12 / 4 bands, a −1536 floor — made the sea column exactly as
- * deep as the sky is high and the crust half again as deep, so a dig to the
- * floor was ~96 held clicks. The floor is now −1104: 69 bands of digging
- * against 64 of building, still deeper than the world is high, but reachable.
- * NOTE this moves the world floor: a world saved with cells below −1104 is
- * out of the Int16 range isValidHeight now accepts, so a pre-change save with
- * a deep dig will be rejected by snapshot-store rather than clamped.
+ * the world can never move its floor. The 4 : 3 : 1 proportion between the
+ * crust strata is preserved exactly from the original band counts, and the
+ * crust is half as deep as the sky is high — 1024 of sea over 512 of rock,
+ * the same −1536 floor as before.
  *
  * These are WORLD-MODEL facts, not render trivia: the client palette derives
  * its stops from them and the monsters plugin derives "deep for this world"
@@ -262,12 +257,11 @@ export const MAX_HEIGHT = 1024;
  * are deliberately NOT core — nothing gamey in core; a future plugin reads
  * these same boundaries.
  */
-export const SEA_COLUMN_DEPTH = 768;
-export const DEEP_BASALT_DEPTH = 192;
-export const DEEP_OBSIDIAN_DEPTH = 128;
-export const DEEP_LAVA_DEPTH = 16;
-export const DEEP_STRATA_DEPTH =
-  DEEP_BASALT_DEPTH + DEEP_OBSIDIAN_DEPTH + DEEP_LAVA_DEPTH;
+export const SEA_COLUMN_DEPTH = MAX_HEIGHT;
+export const DEEP_STRATA_DEPTH = MAX_HEIGHT / 2;
+export const DEEP_BASALT_DEPTH = DEEP_STRATA_DEPTH / 2;
+export const DEEP_OBSIDIAN_DEPTH = (DEEP_STRATA_DEPTH * 3) / 8;
+export const DEEP_LAVA_DEPTH = DEEP_STRATA_DEPTH / 8;
 
 /**
  * The same stack counted in terrace bands — DERIVED, so a BAND_HEIGHT change
@@ -285,7 +279,7 @@ export const DEEP_LAVA_BANDS = DEEP_LAVA_DEPTH / BAND_HEIGHT;
 export const DEEP_STRATA_BANDS =
   DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS;
 
-/** The floor of the world: the bottom of the lava stratum (−1104). */
+/** The floor of the world: the bottom of the lava stratum (−1536). */
 export const MIN_HEIGHT = -(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH);
 
 /**
@@ -423,21 +417,21 @@ export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
 /**
  * How far excess can travel from one edit: relaxation stops where the slope
  * everywhere respects MAX_STEP, so the full height range laid out at maximum
- * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 532 cells (640 before the
- * 2026-08-24 shallowing lifted the world floor from −1536 to −1104; 160 before
- * the 2026-08-21 re-sample quartered the cell; the budget scales with both).
- * Math.floor guards the value against a future range/step change that stops
- * dividing exactly (today's division is exact).
+ * slope spans (MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP = 160 cells (80 before the
+ * 2026-08-20 re-terrace halved MAX_STEP, 64 before Deep Strata widened the
+ * range; the budget scales with both). Math.floor guards the value against a
+ * future range/step change that stops dividing exactly (today's division is
+ * exact).
  *
  * WHAT THE DOUBLING DOES AND DOES NOT COST. This is the worst case — a single
- * stroke laid against the full 2128-unit range — not the common one. A PLAYER
+ * stroke laid against the full 2560-unit range — not the common one. A PLAYER
  * click got cheaper, not dearer: DEFAULT_SCULPT_AMOUNT and MAX_STEP are both
  * BAND_HEIGHT now, so one click's excess spills exactly one cell, where the
  * old 64-against-32 pair spilled two.
  *
  * FOUR TIMES THE CELLS, THE SAME DISTANCE (2026-08-21). MAX_STEP is a slope
  * per world unit, so spread went 160 to 640 CELLS while staying 160 world
- * units (133 world units since the 2026-08-24 shallowing): excess travels exactly as far across the ground as it did, and it is
+ * units: excess travels exactly as far across the ground as it did, and it is
  * only counted more finely. One click still spills one world unit — four cells
  * now — because DEFAULT_SCULPT_AMOUNT is a band and a band is MAX_STEP per
  * world unit.
