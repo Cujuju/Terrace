@@ -7,7 +7,7 @@
 //
 // THE BUG THIS REPLACES. render/water.ts drew the sea as one flat plane at a
 // CONSTANT opacity (0.62) regardless of what was underneath: a knee-deep
-// shelf and a full-depth dig to the Deep Strata lava floor (shared/src/
+// shelf and a 1536-unit dig to the Deep Strata lava floor (shared/src/
 // constants.ts's MIN_HEIGHT) rendered identically. Confirmed by screenshotting
 // the actual owner-dug lava crater in server/data/world.db through the live
 // client (2026-08-19): the sea over it rendered as a flat, textureless sheet
@@ -19,8 +19,8 @@
 // THE FIX'S SHAPE. Alpha becomes a function of the WATER COLUMN'S depth at
 // each cell — clear at the waterline, richening through the ordinary sea
 // column, then capped (not climbing further) for anything deeper. The cap is
-// the load-bearing decision: it is what lets a self-lit lava band at the
-// world's floor still contribute a visible fraction of its raw colour to the final
+// the load-bearing decision: it is what lets a self-lit lava band 1536 units
+// down still contribute a visible fraction of its raw colour to the final
 // pixel, rather than being asymptotically smothered the way a realistic
 // (uncapped) light-attenuation curve would smother it.
 
@@ -64,8 +64,8 @@ export const WATER_MAX_ALPHA = 0.55;
 /**
  * World-unit water-column depth at which the curve reaches WATER_MAX_ALPHA.
  * Pinned to the bottom of the ORDINARY sea column (shared's SEA_COLUMN_BANDS,
- * 48 bands) rather than to the world's true floor (MIN_HEIGHT, 21 crust bands
- * further down through the Deep Strata). Two consequences, both
+ * 16 bands) rather than to the world's true floor (MIN_HEIGHT, 24 bands
+ * further down through the Deep Strata crust). Two consequences, both
  * intended:
  *
  *   - every depth an unmodified genesis ocean or an everyday dig reaches gets

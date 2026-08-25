@@ -48,8 +48,8 @@ function rgb(hex: number): Rgb {
  * AMENDMENT (owner request, 2026-08-19: "the sea bottom to get progressively
  * darker as you go down the layers until it ends in a very dark blue"). The
  * four-stop truncation above is superseded: the ramp now runs the FULL water
- * column — one stop per band from the h = 0 flats (band 0) down to band −48,
- * the bottom of the sea column — so no two depths share a colour
+ * column — seventeen stops, one per band from the h = 0 flats (band 0) down
+ * to band −16, the bottom of the sea column — so no two depths share a colour
  * and the descent ends in a very dark blue rather than plateauing at the old
  * deep-water stop. The first four stops are unchanged (waterline, shelf, ring,
  * and the old deep stop, which is now simply band −3's own), so worlds that
@@ -57,8 +57,8 @@ function rgb(hex: number): Rgb {
  *
  * DEEP STRATA AMENDMENT (2026-08-19, mechanics card 41): below the sea
  * column's very-dark-blue floor the world now continues into CRUST — basalt
- * (bands −49..−60), obsidian (−61..−68), and one lava band at MIN_HEIGHT
- * (−69). The blue ramp's strict darkening contract deliberately ENDS at the
+ * (bands −17..−20), obsidian (−21..−23), and one lava band at MIN_HEIGHT
+ * (−24). The blue ramp's strict darkening contract deliberately ENDS at the
  * sea column: the first basalt stop is BRIGHTER than the blue floor, because
  * the material change is the message — breaking through the seabed must read
  * as arriving somewhere, not as more of the same darkness. Within the rock
