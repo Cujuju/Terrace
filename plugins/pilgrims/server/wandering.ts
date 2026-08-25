@@ -401,6 +401,14 @@ export class Wandering {
     return rows;
   }
 
+  /**
+   * Removes one wanderer outright — a DEATH, not a homecoming. See Settling's
+   * `remove`; fire is the only caller.
+   */
+  remove(id: number): boolean {
+    return this.wanderers.delete(id);
+  }
+
   clear(): void {
     this.wanderers.clear();
     this.elapsedSeconds = 0;

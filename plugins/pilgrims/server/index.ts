@@ -24,8 +24,9 @@ import {
 import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
 import { applyBlessedCells, bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
 import { bridgedTemple, loadTemplesBridge } from './temples-bridge.ts';
+import { loadFireBridge, registerPilgrimsFuel } from './fire-bridge.ts';
 import { Pilgrimage, WalkerIdAllocator, walkerOccupants } from './pilgrimage.ts';
-import { Settling } from './settling.ts';
+import { Settling, canDispatchSettler } from './settling.ts';
 import { Wandering } from './wandering.ts';
 
 /**
@@ -121,12 +122,103 @@ export const plugin: TerracePlugin = {
     void loadMonstersBridge();
     void loadStructuresBridge();
     void loadTemplesBridge();
+    // The same pattern pointing the other way (./fire-bridge.ts): this plugin
+    // TELLS fire that its walkers can burn, buffered and replayed if fire has
+    // not resolved yet.
+    loadFireBridge();
+    registerPilgrimsFuel({
+      name: PILGRIMS_PLUGIN_NAME,
+      entityAt: (x: number, y: number) => {
+        const walker = burnableWalkerAt(x, y);
+        if (walker === null) return null;
+        return {
+          id: walker.id,
+          fuel: { burnSeconds: PILGRIMS_BURN_SECONDS, height: PILGRIMS_FUEL_HEIGHT },
+        };
+      },
+      positionOf: walkerPosition,
+      onBurnedOut: pilgrimsBurnedOut,
+    });
   },
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
   },
 };
+
+// ────────────────────────────────────────────────────────────────────────────
+// Fire
+//
+// A peep burns the way an animal does — it keeps walking while it is alight and
+// then falls — so this plugin registers into fire's ENTITY registry
+// (plugins/fire/server/entityFuel.ts), not its cell one.
+//
+// ALL THREE WALKER SIMS AT ONCE, behind one registration. A pilgrim, a wanderer
+// and a settler are three different journeys and one kind of thing to a fire;
+// they already share one id allocator, so an id identifies a walker uniquely
+// across all three and the registry needs to know nothing about which is which.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a burning peep lives, in simulated seconds.
+ *
+ * The same 8 s a grazer gets (wildlife's WILDLIFE_BURN_SECONDS), and
+ * deliberately not tuned apart from it: they are the same size, made of the
+ * same sort of thing, and a player who has learned how long an animal takes to
+ * die has learned this too. Restated rather than imported for the reason every
+ * cross-plugin number here is — plugins must build with the others deleted.
+ */
+export const PILGRIMS_BURN_SECONDS = 8;
+
+/**
+ * Flame size for a burning peep, in world units.
+ *
+ * A peep stands about half a world unit; 0.55 puts the flame at roughly their
+ * own height, so it reads as a person alight rather than as a bonfire they
+ * happen to be standing in.
+ */
+export const PILGRIMS_FUEL_HEIGHT = 0.55;
+
+/**
+ * How close a walker must be to a cell for that cell's fire to be ON them, in
+ * cells. Half a cell — the cell they are standing in, wildlife's rule and its
+ * reason: the player torched the cell the peep is drawn on.
+ */
+const FIRE_CELL_REACH = 0.5;
+
+/** Every walker this plugin has, across all three journeys. */
+function allWalkerStates(): Array<{ id: number; x: number; y: number }> {
+  return [...pilgrimage.states(), ...wandering.states(), ...settling.states()];
+}
+
+/** The walker standing on this cell, or null. First match wins. */
+function burnableWalkerAt(x: number, y: number): { id: number } | null {
+  for (const walker of allWalkerStates()) {
+    if (Math.abs(walker.x - x) > FIRE_CELL_REACH) continue;
+    if (Math.abs(walker.y - y) > FIRE_CELL_REACH) continue;
+    return { id: walker.id };
+  }
+  return null;
+}
+
+/** Where this walker is now — null once they are gone. */
+function walkerPosition(id: number): { x: number; y: number } | null {
+  const walker = allWalkerStates().find((candidate) => candidate.id === id);
+  return walker === undefined ? null : { x: walker.x, y: walker.y };
+}
+
+/**
+ * These burned to death. Asked of each sim in turn — an id belongs to exactly
+ * one of them, and none of them mind being asked about an id that is not
+ * theirs.
+ */
+function pilgrimsBurnedOut(ids: readonly number[]): void {
+  for (const id of ids) {
+    if (pilgrimage.remove(id)) continue;
+    if (wandering.remove(id)) continue;
+    settling.remove(id);
+  }
+}
 
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetPilgrimsState(): void {
@@ -147,6 +239,24 @@ export function currentPilgrimage(): Pilgrimage {
 export function currentWandering(): Wandering {
   return wandering;
 }
+
+/**
+ * COULD A TEMPLE ON THIS GROUND EVER SEND ANYBODY OUT? THE TEMPLES-FACING
+ * SURFACE: that plugin duck-types this off this module through the dynamic-
+ * import bridge pattern (plugins/relics/server/mana-bridge.ts owns the
+ * pattern's four rules) and refuses a placement that would answer no, so a
+ * player cannot put down a building that is inert by construction.
+ *
+ * IT IS THE MIRROR OF THE BRIDGE ALREADY RUNNING THE OTHER WAY — this plugin
+ * asks temples where its door is, temples asks this one whether anyone can use
+ * it — and it is the right direction for the question, because every term in
+ * the answer (how far a settler walks, how big a homestead is, what ground a
+ * walker crosses, what counts as a route) is this plugin's. A copy in temples
+ * would be a second opinion waiting to drift.
+ *
+ * A plain read: nothing here is created, and no settler state is touched.
+ */
+export { canDispatchSettler };
 
 /** Test seam: the temple's settlers, same purpose. */
 export function currentSettling(): Settling {

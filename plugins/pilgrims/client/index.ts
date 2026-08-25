@@ -7,6 +7,7 @@ import { Group } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
+  MoverPose,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
 import {
@@ -32,6 +33,10 @@ let models: PilgrimModels | null = null;
 let container: Group | null = null;
 const views = new Map<number, PilgrimView>();
 const interpolator = new PilgrimInterpolator();
+
+/** Withdraws this plugin's aimable walkers / pose lookup from the host. */
+let unmarkPickable: (() => void) | null = null;
+let unpublishMovers: (() => void) | null = null;
 let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
@@ -94,6 +99,23 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   }
 }
 
+/**
+ * Where a walker is DRAWN, for anything that has to be drawn on them — a flame
+ * (ClientPluginCtx.publishMovers). wildlife's drawnPoseOf, same reasoning: read
+ * off the model's own root so it is the pose this frame actually put on screen,
+ * never a second derivation of it.
+ *
+ * Null for a walker this client is not drawing — including one hidden because
+ * the ground under them is not known yet, which is exactly when a flame drawn
+ * on them would be hanging in the air.
+ */
+function drawnPoseOf(id: number): MoverPose | null {
+  const view = views.get(id);
+  if (view === undefined || !view.model.root.visible) return null;
+  const at = view.model.root.position;
+  return { x: at.x, y: at.y, z: at.z };
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: PILGRIMS_PLUGIN_NAME,
 
@@ -103,6 +125,11 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'pilgrims:walkers';
     ctx.layer.add(container);
+    // A PEEP IS SOMETHING YOU CAN POINT AT (ClientPluginCtx.pickWorldCell), and
+    // something a flame can be drawn ON (publishMovers) — the two halves of
+    // being able to set one alight and watch them run.
+    unmarkPickable = ctx.markPickable(container);
+    unpublishMovers = ctx.publishMovers(drawnPoseOf);
 
     unsubscribeMessages = ctx.onMessage(PILGRIMS_ENTITIES_MESSAGE, (payload) => {
       const pilgrims = parseEntitiesPayload(payload);
@@ -120,6 +147,10 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
+    unmarkPickable?.();
+    unmarkPickable = null;
+    unpublishMovers?.();
+    unpublishMovers = null;
 
     for (const view of views.values()) view.model.root.clear();
     views.clear();
