@@ -50,6 +50,41 @@ export function normalizeAngle(radians: number): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The turning circle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Clamps a turn to `limit` radians while keeping its direction. */
+export function limitTurn(turn: number, limit: number): number {
+  return Math.max(-limit, Math.min(limit, turn));
+}
+
+/**
+ * Turns `heading` toward `target` by at most `radiansPerSecond × dt`, and never
+ * past it.
+ *
+ * THE ONE SHAPE THAT MAKES A MOVER TRACE AN ARC INSTEAD OF PIVOTING (owner,
+ * 2026-08-24: no spinning in place, for swimmers and then for boats). What a
+ * sweep returns is a DIRECTION TO WANT; what a mover adopts is its current
+ * heading turned toward that direction by one tick's worth of its own rate.
+ * Clamped both by the rate and by the angle actually remaining, so callers can
+ * add several such terms without any of them overshooting.
+ *
+ * IT LIVES IN `shared/` because a turning circle is steering, and it is now the
+ * rule for two populations that cannot see each other (wildlife's creatures,
+ * boats' hulls). The rate itself is NOT here: it is speed ÷ turn radius, and
+ * each plugin measures its own movers’ radius against its own bodies.
+ */
+export function turnToward(
+  heading: number,
+  target: number,
+  radiansPerSecond: number,
+  dt: number,
+): number {
+  const remaining = normalizeAngle(target - heading);
+  return normalizeAngle(heading + limitTurn(remaining, radiansPerSecond * dt));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The sweep
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -276,6 +311,90 @@ export function steerAvoiding(
 }
 
 /**
+ * Divisor for the ladder's middle rung — see `steerWithShorteningProbe`.
+ *
+ * 2 is the smallest divisor that meaningfully shortens the probe (half
+ * distance) while staying well above one tick's own travel, so the retry still
+ * senses which way the obstacle runs rather than only re-confirming the mover's
+ * own current cell.
+ */
+export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = 2;
+
+/**
+ * THE WHOLE STEER FOR ONE TICK: `steerAvoiding` run down a ladder of SHORTENING
+ * probes until one of them finds somewhere to go. Null only when the mover has
+ * nowhere to be next tick at all — a one-cell pocket.
+ *
+ * THREE RUNGS, and the third one is the fix for the stall the owner reported on
+ * 2026-08-24 — first for fish "stuck in place … presumably because of the
+ * contours of the seabed", then for boats "constantly getting stuck". A mover
+ * bound to one narrow band of ground (a fish to the shallows, a hull to open
+ * water) meets strips of that band narrower than its own look-ahead. Every
+ * candidate at the full probe fails, every candidate at half of it fails, and
+ * the ladder-less code then held position — forever, because nothing about the
+ * situation changes next tick. The mover was not boxed in; it was near-sighted
+ * about a place it could perfectly well have travelled to.
+ *
+ * The third rung probes at exactly `options.stepCells`, one tick's travel,
+ * which is the SAME distance a caller's destination re-check judges. So the
+ * ladder can only report "nowhere to go" when there is genuinely no legal cell
+ * one step away in any direction, and a heading it does return can never be
+ * refused by that re-check — which is what stops the two from disagreeing and
+ * stalling a mover that had somewhere to go.
+ *
+ * The two short rungs steer from the mover's CURRENT heading rather than from
+ * `desired` (owner, 2026-08-19: obstacles should deflect a traveller ALONG
+ * themselves, not bounce it backward) — sliding along whatever it is pressed
+ * against is what "go around" means at the scale of one tick.
+ *
+ * WHAT IT RETURNS IS A DIRECTION TO WANT, not the heading the mover adopts:
+ * the caller turns toward it at its own turning circle (`turnToward`). The
+ * ladder must therefore NOT be turn-limited itself — a whale that could only
+ * consider headings inside its 1.8°-per-tick arc would find the full probe
+ * blocked, drop to the short one, find that clear because the wall is still
+ * twenty cells off, and swim straight at it. The long probe exists precisely
+ * to say "blocked at range, start coming about now", and it can only say it if
+ * the heading it names is allowed to be a big turn.
+ *
+ * SEPARATION IS OFF ON THE TWO SHORT RUNGS, and that is a decision about cost
+ * as much as about behaviour. Behaviourally it is what the ladder already
+ * means: the short rungs only run for a mover that is wedged, and
+ * `steerAvoiding` relaxes separation before anything else for exactly that
+ * mover anyway. The cost is the other half: the occupant list is scanned per
+ * candidate and it is the whole population, so scanning it on every rung
+ * multiplies the worst case — a dense, boxed-in population, which is precisely
+ * when the short rungs fire — by the number of rungs.
+ */
+export function steerWithShorteningProbe(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  mover: Mover,
+  desired: number,
+  lookaheadCells: number,
+  options: SteerOptions,
+): number | null {
+  const full = steerAvoiding(world, profile, mover, desired, lookaheadCells, options);
+  if (full !== null) return full;
+
+  // The short rungs: from the mover's own heading, and with no separation term
+  // (see the note above). `occupants` is dropped rather than emptied so the
+  // fast path inside `steerAvoiding` skips the separation work entirely.
+  const { occupants: _ignored, ...alone } = options;
+
+  const contour = steerAvoiding(
+    world,
+    profile,
+    mover,
+    mover.heading,
+    lookaheadCells / CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR,
+    alone,
+  );
+  if (contour !== null) return contour;
+
+  return steerAvoiding(world, profile, mover, mover.heading, options.stepCells, alone);
+}
+
+/**
  * Every occupant except the one at `self`, preserving order — the filter a
  * caller applies when it holds ONE population list and steers each member of
  * it in turn. Identity, not position: two movers may legitimately share a
@@ -309,9 +428,10 @@ export interface RoutedMover extends Mover {
  * How far ahead of `routeIndex` a re-sync will look for the mover's own cell.
  *
  * TWO WORLD UNITS of route ahead. A mover cannot cross more than one cell
- * boundary per tick at any shipped speed (the fastest is boats' 1.5 world
- * units/s = 6 cells/s against a 10 Hz tick = 0.6 cells), so one cell is all
- * that is ever strictly needed; the rest is the margin that lets a mover
+ * boundary per tick at any shipped speed (the fastest is boats' 0.9 world
+ * units/s = 3.6 cells/s against a 10 Hz tick = 0.36 cells — it was 1.5 until
+ * 2026-08-24, and the claim held with more room to spare afterwards), so one
+ * cell is all that is ever strictly needed; the rest is the margin that lets a mover
  * nudged off its line by the separation term (steerAvoiding, above) re-find
  * the route instead of insisting on a cell it has already passed. That margin
  * is a distance across the ground, so it is stated in world units: left at 2

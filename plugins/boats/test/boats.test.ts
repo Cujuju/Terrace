@@ -422,9 +422,11 @@ describe('a fleet is a fleet, not a stack (owner, 2026-08-20)', () => {
 
   it('spreads boats holding the same station instead of stacking them', () => {
     const { world, kraken } = engagedFleet();
-    // Every boat launches from the one launch cell, so they start identical.
+    // Every boat launches from its OWN berth (launchBerth, 2026-08-24 — owner:
+    // boats were "spawning on top of each other"), so a fleet is already spread
+    // the instant it is built rather than only after it has sorted itself out.
     const start = livingBoats().map((boat) => ({ x: boat.x, y: boat.y }));
-    expect(new Set(start.map((p) => `${p.x},${p.y}`)).size).toBe(1);
+    expect(new Set(start.map((p) => `${p.x},${p.y}`)).size).toBe(start.length);
 
     // Ten seconds of station-keeping, with nothing sinking (the kraken sinks a
     // boat every KRAKEN_SINKS_BOAT_EVERY_SECONDS, so keep the window short).
@@ -445,15 +447,26 @@ describe('a fleet is a fleet, not a stack (owner, 2026-08-20)', () => {
     // from the crowd: a boat pushed radially outward would stop fighting, and
     // protocol.ts's rout arithmetic counts whole seconds of engagement.
     const { world, kraken } = engagedFleet();
+    // ENGAGEMENT IS NOW SOMETHING A BOAT ARRIVES AT, not something it starts
+    // in: since boats launch from separate berths (launchBerth) the outer ones
+    // begin a cell or so beyond BOAT_ENGAGEMENT_RANGE_CELLS and sail in. So the
+    // property under test is the one makeRoom actually owes — once a boat is
+    // engaged, shuffling never puts it back out — rather than "every boat is
+    // engaged on tick one", which was an artefact of the shared launch cell.
+    const everEngaged = new Set<number>();
     for (let n = 0; n < 50; n++) {
       advanceFleet(world, kraken, TICK_DT);
       for (const boat of livingBoats()) {
+        if (boat.fighting) everEngaged.add(boat.id);
+        if (!everEngaged.has(boat.id)) continue;
         expect(Math.hypot(boat.x - kraken.x, boat.y - kraken.y)).toBeLessThanOrEqual(
           BOAT_ENGAGEMENT_RANGE_CELLS,
         );
         expect(boat.fighting).toBe(true);
       }
     }
+    // The fleet did close: the property above is vacuous if nobody ever engaged.
+    expect(everEngaged.size).toBe(livingBoats().length);
   });
 
   it('never shuffles a boat onto dry land', () => {

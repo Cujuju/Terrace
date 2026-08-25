@@ -29,7 +29,8 @@ import {
   cellsAcross,
   isWalkableCell as sharedIsWalkableCell,
   normalizeAngle,
-  steerAvoiding,
+  steerWithShorteningProbe,
+  turnToward,
   type Occupant,
 } from '@terrace/shared';
 import {
@@ -106,6 +107,51 @@ export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
  * along a ragged coast rather than refusing every heading near one.
  */
 const BOAT_LOOKAHEAD_SECONDS = 1;
+
+/**
+ * The hull's own length, in cells — 0.9 WORLD UNITS, converted.
+ *
+ * Restated from HULL_LENGTH in plugins/boats/client/models.ts for the same
+ * reason BOAT_PERSONAL_SPACE_CELLS above restates half of it: a server sim does
+ * not reach into a client model file. It is the length the turning circle below
+ * is measured in, so the boat that comes about on the screen is the boat the sim
+ * turned — and the failure mode of drift is a slightly wider or tighter arc,
+ * never a crash.
+ */
+const BOAT_HULL_LENGTH_CELLS = cellsAcross(0.9);
+
+/**
+ * The tightest arc a boat will turn through, as a multiple of its own hull
+ * length — the radius of its turning circle.
+ *
+ * ROOT CAUSE THIS FIXES (owner, 2026-08-24: implement boats "like you did
+ * whales"). Nothing bounded a boat's heading: `advanceFleet` wrote whatever the
+ * sweep returned straight onto `boat.heading`, so a hull that found its way
+ * blocked snapped through 45° or 180° between two ticks and set off in the new
+ * direction from a standing start. A rowed boat cannot do that; it has to carry
+ * its way through the turn.
+ *
+ * 2 HULL LENGTHS, against wildlife's half a body length for a fish or a whale
+ * (its TURN_RADIUS_BODY_LENGTHS), and the difference is the point: a fish
+ * pivots on its own centre and a boat does not. At 2 the circle is 1.8 world
+ * units across the water and a full 180° takes about six seconds at cruise —
+ * slow enough to read as a boat coming about, fast enough that a fleet still
+ * forms up on a drifting kraken inside one engagement.
+ */
+const BOAT_TURN_RADIUS_HULL_LENGTHS = 2;
+
+/**
+ * How fast a boat may swing its heading, radians per second: its speed divided
+ * by the radius of its turning circle.
+ *
+ * A CONSTANT here where wildlife needs a function of the animal
+ * (maxTurnRadiansPerSecondOf), because both inputs are constants for this
+ * plugin — every boat is the same hull at the same cruise. Derived rather than
+ * typed out, so cutting BOAT_SPEED_CELLS_PER_SECOND widens the arc the hull
+ * traces instead of silently tightening it.
+ */
+const BOAT_TURN_RADIANS_PER_SECOND =
+  BOAT_SPEED_CELLS_PER_SECOND / (BOAT_TURN_RADIUS_HULL_LENGTHS * BOAT_HULL_LENGTH_CELLS);
 
 // ── state ────────────────────────────────────────────────────────────────────
 
@@ -234,11 +280,25 @@ export function launchCell(world: BoatWorld, village: Village): KrakenTarget | n
  * territory — preferring `desired` and then the smallest deviation from it.
  * Null when boxed in on every candidate, and the caller then holds position.
  *
- * A THIN ADAPTER over shared's `steerAvoiding` (shared/src/steering.ts), which
- * owns the sweep. The one thing this plugin still says for itself is the
+ * A THIN ADAPTER over shared's `steerWithShorteningProbe` (shared/src/
+ * steering.ts), which owns the sweep AND the ladder of shortening probes it is
+ * run down. The one thing this plugin still says for itself is the
  * unlocked-territory rule, passed as the `permits` hook: a boat only ever
  * exists in territory clients can already see, which is a fog-of-war fact
  * rather than a terrain one and has no business in `shared/`.
+ *
+ * THE LADDER IS THE FIX FOR "CONSTANTLY GETTING STUCK" (owner, 2026-08-24).
+ * A boat probes a full second of travel ahead, and a bay, a strait or a river
+ * mouth is routinely narrower than that: every one of the eight candidates
+ * failed at the full probe, the pre-ladder code returned null, and the caller
+ * held position — forever, because nothing about the situation changed on the
+ * next tick either. The shortest rung probes exactly one tick's travel, which
+ * is the same distance the destination re-check in `advanceFleet` judges, so a
+ * boat now holds still only when there is genuinely no water one step away in
+ * any direction. Read the rungs and their reasoning at the shared function.
+ *
+ * WHAT IT RETURNS IS A DIRECTION TO WANT, not the heading the boat adopts:
+ * `advanceFleet` turns toward it at BOAT_TURN_RADIANS_PER_SECOND.
  *
  * NO SEPARATION HERE, DELIBERATELY, AND IT IS A DIVISION OF LABOUR RATHER THAN
  * AN OMISSION (2026-08-21). This fleet keeps clear of itself in exactly one
@@ -266,7 +326,7 @@ export function steerToWater(
   lookahead: number,
   stepCells: number,
 ): number | null {
-  return steerAvoiding(world, OPEN_WATER_PROFILE, boat, desired, lookahead, {
+  return steerWithShorteningProbe(world, OPEN_WATER_PROFILE, boat, desired, lookahead, {
     stepCells,
     permits: (x, y) => world.isCellUnlocked(Math.floor(x), Math.floor(y)),
   });
@@ -277,6 +337,66 @@ function distance(ax: number, ay: number, bx: number, by: number): number {
 }
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
+
+/**
+ * The nearest sailable cell to `village` that no boat is already sitting in, or
+ * null when every one of them is taken.
+ *
+ * THE OTHER HALF OF "SPAWNING ON TOP OF EACH OTHER" (owner, 2026-08-24).
+ * `makeRoom` has kept a fighting fleet from stacking since 2026-08-21, but
+ * nothing looked at the fleet on the way IN: every boat of a village was placed
+ * on the single cell `launchCell` names, so BOATS_PER_VILLAGE hulls were drawn
+ * through one another for as long as it took them to sort themselves out — and
+ * a village at strength in peacetime never even sorts, because a boat at home
+ * has arrived and only shuffles when crowded. Separation at spawn is cheaper
+ * and more honest than separation-by-recovery: the boats are simply never
+ * placed on top of each other in the first place.
+ *
+ * Scans the same COASTAL_DISC in the same nearest-first order as `launchCell`,
+ * so a village's boats still put out from the same side of it — just from
+ * adjacent berths rather than from one.
+ *
+ * `occupied` is the live fleet, not a start-of-tick snapshot: two villages
+ * sharing a bay may both launch on the same tick, and the second must see the
+ * first one's new boat.
+ */
+export function launchBerth(
+  world: BoatWorld,
+  village: Village,
+  occupied: readonly Occupant[],
+): KrakenTarget | null {
+  for (const [dx, dy] of COASTAL_DISC) {
+    const x = village.x + dx;
+    const y = village.y + dy;
+    if (!isSailable(world, x, y)) continue;
+    // The cell CENTRE is what the boat is placed on, and it is what the
+    // clearance is measured from — the same point `makeRoom` will keep clear
+    // from the next tick onward.
+    if (!isClearOfFleet(x, y, occupied)) continue;
+    return { x, y };
+  }
+  return null;
+}
+
+/** Is (x, y) outside every boat's personal space? `launchBerth`'s one test. */
+function isClearOfFleet(x: number, y: number, occupied: readonly Occupant[]): boolean {
+  for (const berth of occupied) {
+    const clearance = BOAT_PERSONAL_SPACE_CELLS + berth.radiusCells;
+    const dx = x - berth.x;
+    const dy = y - berth.y;
+    if (dx * dx + dy * dy < clearance * clearance) return false;
+  }
+  return true;
+}
+
+/** Every living boat as an `Occupant` — the fleet, as something to keep clear of. */
+function fleetBerths(): Occupant[] {
+  return boats.map((boat) => ({
+    x: boat.x,
+    y: boat.y,
+    radiusCells: BOAT_PERSONAL_SPACE_CELLS,
+  }));
+}
 
 /**
  * Builds replacement boats. A village short of its fleet accumulates build
@@ -299,14 +419,27 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
     }
     village.rebuildSeconds += dt;
     if (village.rebuildSeconds < BOAT_REBUILD_SECONDS) continue;
+
+    const berth = launchBerth(world, village, fleetBerths());
+    // The harbour is full: every water cell within the coastal disc has a boat
+    // in it. The finished build STAYS BANKED (no subtraction, no reset) and the
+    // boat slides down the ways on the first tick a berth clears — which is a
+    // second or two later, as soon as the fleet ahead of it puts out. Launching
+    // anyway is what put two hulls on one cell.
+    if (berth === null) continue;
+
     village.rebuildSeconds -= BOAT_REBUILD_SECONDS;
     boats.push({
       id: nextBoatId++,
       homeX: village.x,
       homeY: village.y,
-      x: launch.x,
-      y: launch.y,
-      heading: 0,
+      x: berth.x,
+      y: berth.y,
+      // Facing OUT of the harbour — away from the village that built it. A boat
+      // now has a turning circle (BOAT_TURN_RADIANS_PER_SECOND), so the heading
+      // it is launched with is one it has to sail out of; a flat 0 pointed a
+      // third of every fleet at its own beach for the first few seconds.
+      heading: Math.atan2(berth.y - village.y, berth.x - village.x),
       fighting: false,
     });
   }
@@ -421,9 +554,10 @@ function makeRoom(
   const turn = step / range;
   const fromGoal = Math.atan2(boat.y - goalY, boat.x - goalX);
   // Slide the way that opens the gap: whichever of the two arcs leaves the
-  // crowder behind. A crowder at the SAME bearing offers no such arc, and that
-  // is the common case here (a whole fleet launches from one cell), so the
-  // pair-order tie-break above is what actually spreads a new fleet out.
+  // crowder behind. A crowder at the SAME bearing offers no such arc — rarer
+  // since boats stopped launching from one shared cell (`launchBerth`), but
+  // still reachable whenever two boats converge on one station from opposite
+  // sides — so the pair-order tie-break above is what breaks that case.
   const crowderFromGoal = Math.atan2(crowder.y - goalY, crowder.x - goalX);
   const separation = normalizeAngle(fromGoal - crowderFromGoal);
   const direction = separation === 0 ? (yieldsRight ? 1 : -1) : Math.sign(separation);
@@ -495,11 +629,7 @@ export function advanceFleet(
   // same order-independence the walker sims keep (pilgrims/server/
   // pilgrimage.ts's own note). Parallel to `boats`, so self-exclusion below is
   // an index test rather than a position test.
-  const berths: Occupant[] = boats.map((boat) => ({
-    x: boat.x,
-    y: boat.y,
-    radiusCells: BOAT_PERSONAL_SPACE_CELLS,
-  }));
+  const berths: readonly Occupant[] = fleetBerths();
 
   let engaged = 0;
   for (let index = 0; index < boats.length; index++) {
@@ -526,7 +656,15 @@ export function advanceFleet(
     // line of boats at the fight's edge rather than a stack.
     const holdAt = target === null ? 0 : BOAT_ENGAGEMENT_RANGE_CELLS;
     if (range <= holdAt) {
-      if (range > 0) boat.heading = Math.atan2(goalY - boat.y, goalX - boat.x);
+      // Comes ROUND to face its goal at its own turning circle rather than
+      // snapping to it (2026-08-24). A station-keeping boat is the one a player
+      // watches longest — it is stopped, at the edge of a fight, with a kraken
+      // drifting in front of it — so a heading that teleported here read as a
+      // hull spinning on the spot even though the boat was where it belonged.
+      if (range > 0) {
+        const faceGoal = Math.atan2(goalY - boat.y, goalX - boat.x);
+        boat.heading = turnToward(boat.heading, faceGoal, BOAT_TURN_RADIANS_PER_SECOND, dt);
+      }
       makeRoom(world, boat, goalX, goalY, berths, index, dt);
       continue;
     }
@@ -539,21 +677,52 @@ export function advanceFleet(
     // its station must be judged against the short step it is really taking,
     // not against a full tick of travel it is not.
     const step = Math.min(BOAT_SPEED_CELLS_PER_SECOND * dt, range - holdAt);
-    const steered = steerToWater(
+    const wanted = steerToWater(
       world,
       boat,
       desired,
       BOAT_SPEED_CELLS_PER_SECOND * BOAT_LOOKAHEAD_SECONDS,
       step,
     );
-    if (steered === null) continue;
-    boat.heading = steered;
+    if (wanted === null) continue;
+
+    // THE TURNING CIRCLE (owner, 2026-08-24: boats like the whales). `wanted`
+    // is a DIRECTION, freely up to 180° off; what the boat adopts is its
+    // current heading turned toward that direction by at most one tick's worth
+    // of BOAT_TURN_RADIANS_PER_SECOND. Nothing overrides it — a boat with no
+    // in-arc water holds still rather than pivoting, so it has to sail the arc
+    // to come about.
+    const steered = turnToward(boat.heading, wanted, BOAT_TURN_RADIANS_PER_SECOND, dt);
 
     const nextX = boat.x + Math.cos(steered) * step;
     const nextY = boat.y + Math.sin(steered) * step;
     // Belt and suspenders, monsters' own: the look-ahead cleared a cell a
-    // second away, which says nothing about the cells in between.
-    if (!isSailable(world, nextX, nextY)) continue;
+    // second away, which says nothing about the cells in between — and the
+    // heading actually sailed is the turn-limited one, which the sweep never
+    // tested.
+    if (!isSailable(world, nextX, nextY)) {
+      // BLOCKED, AND THE TURN IS COMMITTED ANYWAY. This is the one place boats
+      // deliberately part company with wildlife's advanceEntity, which commits
+      // heading and position together and holds both when a step is vetoed.
+      // Committing both together DEADLOCKS a turn-limited mover: a boat lying a
+      // fraction of a cell off a beach with its bow toward it can only leave by
+      // turning, its turn is bounded to one tick's arc, and that first tick's
+      // arc still points at the beach — so the step is vetoed, the heading is
+      // rolled back with it, and the next tick is identical. Forever. That is
+      // the owner's "constantly getting stuck" in its purest form, and the
+      // shortening probe alone does not cure it: the ladder finds open water
+      // perfectly well, the hull just cannot swing round to it.
+      //
+      // A boat that cannot make way can still work its bow round — an oar
+      // backed against the water is exactly how a beached boat gets off. It is
+      // the SAME turning circle either way (BOAT_TURN_RADIANS_PER_SECOND), so
+      // what this shows is a hull taking a second or two to come about and then
+      // pulling away, never a hull snapping to a new heading: the pivot the
+      // owner objected to was an instant one.
+      boat.heading = steered;
+      continue;
+    }
+    boat.heading = steered;
     boat.x = nextX;
     boat.y = nextY;
   }
