@@ -84,6 +84,14 @@ interface PendingSwitch {
   readonly toName: string;
   secondsRemaining: number;
   readonly timer: NodeJS.Timeout;
+  /**
+   * Connection that asked for this switch, for reporting a failure at FIRE
+   * time back to whoever pressed the button. The original request has long
+   * since been answered `ok` by then — announcing is not loading — so without
+   * this there is no channel left to say "it never happened". Null when no
+   * operator context exists (boot paths, tests).
+   */
+  readonly requesterId: string | null;
 }
 
 export class WorldManager {
@@ -187,7 +195,12 @@ export class WorldManager {
    * Returns what it decided, so the operator's panel can say "switching in
    * 10s" rather than guessing which behaviour it got.
    */
-  requestLoad(id: string): { mode: 'immediate' | 'countdown'; secondsRemaining: number } | LoadRefusal {
+  requestLoad(
+    id: string,
+    // Optional so boot callers and tests compile untouched; only the live
+    // room handler can name the connection to blame/report to.
+    requesterId?: string,
+  ): { mode: 'immediate' | 'countdown'; secondsRemaining: number } | LoadRefusal {
     if (!this.deps.registry.has(id)) return 'unknownWorld';
     if (this.session?.id === id) return 'alreadyActive';
     if (this.pending !== null) return 'switchInProgress';
@@ -204,7 +217,7 @@ export class WorldManager {
       return { mode: 'immediate', secondsRemaining: 0 };
     }
 
-    this.announceSwitch(id, countdown);
+    this.announceSwitch(id, countdown, requesterId ?? null);
     return { mode: 'countdown', secondsRemaining: countdown };
   }
 
@@ -339,7 +352,7 @@ export class WorldManager {
   }
 
   /** Starts the announced countdown to a switch. */
-  private announceSwitch(id: string, seconds: number): void {
+  private announceSwitch(id: string, seconds: number, requesterId: string | null): void {
     const summary = this.deps.registry.summaryFor(id, this.activeId);
     const toName = summary?.name ?? id;
 
@@ -360,17 +373,45 @@ export class WorldManager {
       // Time is up. Clear `pending` BEFORE the swap so a failure inside it
       // cannot leave a countdown that has already fired still showing.
       clearInterval(this.pending.timer);
-      const target = this.pending.toId;
+      const { toId: target, toName, requesterId } = this.pending;
       this.pending = null;
+
+      // TERMINAL NOTICE FIRST, before the swap blocks the thread on saving and
+      // opening worlds. Without it every client sits frozen at "in 1s" until
+      // the new snapshot lands — and if the swap FAILS, forever, because this
+      // was the last message the countdown would ever send.
+      this.broadcast('worldSwitchNotice', {
+        type: 'worldSwitchNotice',
+        toId: target,
+        toName,
+        secondsRemaining: 0,
+      });
+
       try {
         this.openInto(target);
       } catch (error) {
         logError(`announced switch to "${target}" failed`, error);
+        // Guarantee 4 leaves NO world loaded here — but the clients are still
+        // drawing the old one, believing it live. Tell them what unload tells
+        // them, so the banner states the fact instead of a stale view.
+        this.broadcast('worldUnloaded', { type: 'worldUnloaded' });
+        // And tell the operator who asked. Their receipt already said ok —
+        // announcing is not loading — so this async refusal is the ONLY word
+        // they get. An absent/unknown id (disconnected since) is silently
+        // dropped by the sink, which is all that can be done.
+        if (requesterId !== null) {
+          this.sendTo(requesterId, 'worldAdminResult', {
+            type: 'worldAdminResult',
+            action: 'load' as const,
+            ok: false,
+            refused: 'failed' as const,
+          });
+        }
       }
     };
 
     const timer = setInterval(tick, MILLISECONDS_PER_SECOND);
-    this.pending = { toId: id, toName, secondsRemaining: seconds, timer };
+    this.pending = { toId: id, toName, secondsRemaining: seconds, timer, requesterId };
 
     this.broadcast('worldSwitchNotice', {
       type: 'worldSwitchNotice',
@@ -384,5 +425,10 @@ export class WorldManager {
   /** Broadcasts through the room, or drops the message when none is attached. */
   private broadcast(type: string, payload: unknown): void {
     this.bridge?.sink.broadcast(type, payload);
+  }
+
+  /** Sends to one connection through the room, or drops when none is attached. */
+  private sendTo(playerId: string, type: string, payload: unknown): void {
+    this.bridge?.sink.sendTo(playerId, type, payload);
   }
 }

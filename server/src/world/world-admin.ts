@@ -105,7 +105,7 @@ export class WorldAdminService {
     if (refusal !== null) return fail(action, refusal);
 
     try {
-      return this.dispatch(request);
+      return this.dispatch(clientId, request);
     } catch (error) {
       // A throw here means the filesystem or SQLite said no. Nothing in this
       // file destroys anything except purge, so "failed" genuinely means the
@@ -129,7 +129,7 @@ export class WorldAdminService {
     };
   }
 
-  private dispatch(request: WorldAdminRequestMessage): WorldAdminResultMessage {
+  private dispatch(clientId: string, request: WorldAdminRequestMessage): WorldAdminResultMessage {
     switch (request.type) {
       case 'worldList':
         // Handled by list() above; reaching here means a caller routed a list
@@ -137,10 +137,16 @@ export class WorldAdminService {
         return fail('load', 'failed');
 
       case 'worldCreate':
-        return this.create(request.name, request.worldSize, request.difficulty, request.loadNow);
+        return this.create(
+          clientId,
+          request.name,
+          request.worldSize,
+          request.difficulty,
+          request.loadNow,
+        );
 
       case 'worldLoad':
-        return this.load(request.id);
+        return this.load(clientId, request.id);
 
       case 'worldUnload':
         return this.deps.manager.unload()
@@ -176,8 +182,13 @@ export class WorldAdminService {
    * Creates a world. Size and difficulty fall back to this server's own
    * configuration, so the common case ("another world like this one") needs
    * no numbers at all.
+   *
+   * The requester id rides along only for the loadNow path: an announced
+   * switch that later fails at fire time must be able to reach the operator
+   * who asked for it (see PendingSwitch.requesterId).
    */
   private create(
+    requesterId: string,
     name: string | undefined,
     worldSize: number | undefined,
     difficulty: number | undefined,
@@ -199,7 +210,7 @@ export class WorldAdminService {
     if (id === null) return fail('create', 'nameInUse');
 
     if (loadNow === true) {
-      const outcome = manager.requestLoad(id);
+      const outcome = manager.requestLoad(id, requesterId);
       if (typeof outcome === 'string') {
         // The world WAS created; only loading it failed. Report the create as
         // the success it is, so nobody goes looking for a world that exists.
@@ -209,8 +220,8 @@ export class WorldAdminService {
     return { type: 'worldAdminResult', action: 'create', ok: true, id };
   }
 
-  private load(id: string): WorldAdminResultMessage {
-    const outcome = this.deps.manager.requestLoad(id);
+  private load(requesterId: string, id: string): WorldAdminResultMessage {
+    const outcome = this.deps.manager.requestLoad(id, requesterId);
     if (typeof outcome === 'string') return fail('load', outcome);
     return { type: 'worldAdminResult', action: 'load', ok: true, id };
   }
