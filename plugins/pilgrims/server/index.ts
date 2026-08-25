@@ -15,6 +15,7 @@
 // settlement state within seconds of a restart; restoring one would resume a
 // walk nobody was watching. The blessing set re-asserts on the first tick.
 
+import { nearestWithinReach } from '@terrace/shared';
 import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   PILGRIMS_ENTITIES_MESSAGE,
@@ -134,6 +135,7 @@ export const plugin: TerracePlugin = {
         return {
           id: walker.id,
           fuel: { burnSeconds: PILGRIMS_BURN_SECONDS, height: PILGRIMS_FUEL_HEIGHT },
+          distanceCells: walker.distanceCells,
         };
       },
       positionOf: walkerPosition,
@@ -191,14 +193,20 @@ function allWalkerStates(): Array<{ id: number; x: number; y: number }> {
   return [...pilgrimage.states(), ...wandering.states(), ...settling.states()];
 }
 
-/** The walker standing on this cell, or null. First match wins. */
-function burnableWalkerAt(x: number, y: number): { id: number } | null {
-  for (const walker of allWalkerStates()) {
-    if (Math.abs(walker.x - x) > FIRE_CELL_REACH) continue;
-    if (Math.abs(walker.y - y) > FIRE_CELL_REACH) continue;
-    return { id: walker.id };
-  }
-  return null;
+/**
+ * The walker standing on this cell, or null — the NEAREST one, and how far away
+ * they are.
+ *
+ * Nearest rather than first match, and the distance reported rather than
+ * discarded, for `nearestWithinReach`'s reason and so that fire can rank a peep
+ * standing dead centre on this cell against a boat claiming it from two cells
+ * offshore (plugins/fire/server/entityFuel.ts).
+ */
+function burnableWalkerAt(x: number, y: number): { id: number; distanceCells: number } | null {
+  const nearest = nearestWithinReach(allWalkerStates(), x, y, FIRE_CELL_REACH, (walker) => walker);
+  return nearest === null
+    ? null
+    : { id: nearest.item.id, distanceCells: nearest.distanceCells };
 }
 
 /** Where this walker is now — null once they are gone. */

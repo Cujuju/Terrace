@@ -562,11 +562,10 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
     blaze.size < FIRE_CELL_CAP &&
     fuelAt(request.x, request.y) !== null;
 
-  const standing = entityFuelAt(request.x, request.y);
-  const entityCatches =
-    standing !== null &&
-    !entityBlaze.isBurning(standing.source.name, standing.id) &&
-    entityBlaze.size < FIRE_ENTITY_CAP;
+  const standing = entityFuelAt(request.x, request.y, (sourceName, id) =>
+    entityBlaze.isBurning(sourceName, id),
+  );
+  const entityCatches = standing !== null && entityBlaze.size < FIRE_ENTITY_CAP;
 
   if (!cellCatches && !entityCatches) return;
   if (!chargeMana(world, player.id, IGNITE_MANA_COST)) return;

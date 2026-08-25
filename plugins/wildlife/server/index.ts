@@ -318,11 +318,12 @@ export const plugin: TerracePlugin = {
     registerWildlifeFuel({
       name: WILDLIFE_PLUGIN_NAME,
       entityAt: (x: number, y: number) => {
-        const entity = burnableEntityAt(x, y);
-        if (entity === null) return null;
+        const found = burnableEntityAt(x, y);
+        if (found === null) return null;
         return {
-          id: entity.id,
+          id: found.entity.id,
           fuel: { burnSeconds: WILDLIFE_BURN_SECONDS, height: WILDLIFE_FUEL_HEIGHT },
+          distanceCells: found.distanceCells,
         };
       },
       positionOf: entityPosition,
