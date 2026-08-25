@@ -37,12 +37,16 @@ import {
 } from './events.ts';
 import {
   advanceFleet,
+  boatPosition,
   boatStates,
+  burnBoats,
+  burnableBoatAt,
   forgetVillage,
   rememberVillage,
   resetFleet,
   type KrakenTarget,
 } from './fleet.ts';
+import { loadFireBridge, registerBoatsFuel } from './fire-bridge.ts';
 import { loadBoats, saveBoats } from './persistence.ts';
 
 /**
@@ -119,8 +123,62 @@ const persistence: PersistenceSlice = {
   },
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Fire
+//
+// A boat is timber and pitch and it moves, so it registers into fire's ENTITY
+// registry (plugins/fire/server/entityFuel.ts) alongside the animals and the
+// peeps. It is also the only flammable thing in the game that is not standing
+// on the ground, and that costs nothing: an entity flame is drawn at the pose
+// its owner publishes, and this plugin's client draws hulls at the waterline.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a burning boat stays afloat, in simulated seconds.
+ *
+ * Longer than a creature's 8 s and shorter than a building's 30: a hull is more
+ * to consume than an animal and less than a town, and the number is chosen so
+ * that a burning boat is a thing you WATCH — long enough for it to keep rowing,
+ * for the fleet to scatter around it, and for the player to see it go down
+ * where it went down.
+ */
+export const BOATS_BURN_SECONDS = 16;
+
+/**
+ * Flame size for a burning boat, in world units.
+ *
+ * A hull is 0.9 world units long (fleet.ts's BOAT_PERSONAL_SPACE_CELLS note)
+ * with a mast above it; 1.2 makes the fire read from the shore, which is where
+ * whoever lit it is standing.
+ */
+export const BOATS_FUEL_HEIGHT = 1.2;
+
+/** These burned to the waterline. */
+function boatsBurnedOut(ids: readonly number[]): void {
+  burnBoats(ids);
+}
+
 export const plugin: TerracePlugin = {
   name: BOATS_PLUGIN_NAME,
+
+  onWorldCreate(): void {
+    // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
+    // started, not awaited, buffered and replayed if fire has not resolved yet.
+    loadFireBridge();
+    registerBoatsFuel({
+      name: BOATS_PLUGIN_NAME,
+      entityAt: (x: number, y: number) => {
+        const boat = burnableBoatAt(x, y);
+        if (boat === null) return null;
+        return {
+          id: boat.id,
+          fuel: { burnSeconds: BOATS_BURN_SECONDS, height: BOATS_FUEL_HEIGHT },
+        };
+      },
+      positionOf: boatPosition,
+      onBurnedOut: boatsBurnedOut,
+    });
+  },
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
