@@ -20,7 +20,7 @@ import {
   chunkIndexOfCell,
   chunksPerEdge,
   chunkIndex,
-  extractChunkHeights,
+  extractChunkPayload,
   isChunkUnlocked,
   type CellDiff,
   type ChunkPayload,
@@ -63,9 +63,12 @@ export function filterDiffToUnlocked(
   return visible;
 }
 
-/** One chunk's heights in wire shape. Callers must check the mask first. */
+/**
+ * One chunk's terrain in wire shape — heights plus any layered columns.
+ * Callers must check the mask first.
+ */
 export function chunkPayloadOf(terrain: MaskedTerrain, cx: number, cy: number): ChunkPayload {
-  return { cx, cy, heights: extractChunkHeights(terrain.map, cx, cy) };
+  return extractChunkPayload(terrain.map, cx, cy);
 }
 
 /**
