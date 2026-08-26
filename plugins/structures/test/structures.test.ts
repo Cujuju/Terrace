@@ -1463,7 +1463,15 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
     expect(hasNearbyFarmland(world, 20, 20)).toBe(true);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
-    expect(outcome.born).toHaveLength(0);
+    // NOT "nothing at all is born" any more (2026-08-25, the board topology).
+    // (19, 20) — buildable, one cell west of the unbuildable notch the farm's
+    // pool carves — has two live neighbours AND three wall slots, and under
+    // life.ts's phantom wall neighbours (1/3 each) that reaches the birth
+    // threshold exactly. That is the anti-starvation rule doing precisely what
+    // it was measured to do, and it is a DIFFERENT cell and a different rule
+    // from the card-28 fed birth this test pins. What must stay true is that
+    // the candidate BESIDE THE FARMLAND is not born, on any path.
+    expect(outcome.born.some((cell) => cell.x === 20 && cell.y === 20)).toBe(false);
   });
 
   it('the identical board with exactly 2 live neighbours does NOT birth without farmland nearby — the boost, isolated', () => {
