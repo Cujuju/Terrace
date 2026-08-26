@@ -23,6 +23,17 @@ export type { Player };
  * message type with that plugin's name, so two plugins cannot collide on a wire
  * name and no plugin can forge a core message.
  */
+/**
+ * A sibling plugin's server module namespace, exactly as Node imported it —
+ * the value `WorldApi.sibling` hands back.
+ *
+ * `unknown` values, deliberately: this is the compatibility surface between
+ * two independently-deletable folders, and the consumer is the only thing that
+ * knows which members it needs. Typing it as anything narrower here would
+ * assert across a seam core cannot check.
+ */
+export type SiblingModule = Readonly<Record<string, unknown>>;
+
 export interface WorldApi {
   /** Cells per world edge. */
   readonly worldSize: number;
@@ -281,6 +292,47 @@ export interface WorldApi {
    * key means.
    */
   setting(key: string): string | undefined;
+
+  /**
+   * THE SERVER MODULE OF ANOTHER PLUGIN RUNNING IN THIS SESSION, or null when
+   * there is none (host-mediated sibling lookup, issue #196).
+   *
+   * WHY THE HOST ANSWERS THIS. A plugin that needs another used to reach for
+   * `import('../../<name>/server/index.ts')`. That specifier binds to a module
+   * URL rather than to "the plugin running as <name> HERE", with two
+   * consequences: a sibling reloaded under a new URL would leave every
+   * consumer feeding the old module, silently; and a sibling the operator
+   * DISABLED for this world still answered, because its module is resident
+   * either way. The host is the only thing that knows which plugins are
+   * actually running, so the host is what a consumer must ask.
+   *
+   * THE GUARANTEES, which are the old bridge pattern's first two rules moved
+   * from every callsite into one place:
+   *   - IT NEVER THROWS FOR AN ABSENT SIBLING. A plugin folder the
+   *     self-hoster deleted resolves to null; it is not a boot failure and
+   *     not an error to catch.
+   *   - IT ANSWERS SYNCHRONOUSLY AND COMPLETELY, whatever the load order.
+   *     Every plugin's module is imported before any host exists, so a plugin
+   *     may look up a sibling that sorts after it — from `onWorldCreate`, on
+   *     the first tick, anywhere — and get it.
+   *   - A SIBLING NOT ENABLED FOR THIS WORLD IS null, exactly like one that is
+   *     not installed. Enablement is per-world; a consumer must see the world
+   *     the operator configured, not the process's module map.
+   *
+   * WHAT STAYS WITH THE CALLER, and cannot move here:
+   *   - BUFFER, DO NOT DROP. Core has no idea what a consumer wanted to tell
+   *     a sibling, so a consumer that may run before it holds one records its
+   *     desired state and replays it once it does.
+   *   - DUCK-TYPE THE MODULE. What comes back is the sibling's module
+   *     namespace verbatim. A folder can exist and export the wrong thing (an
+   *     older build, someone's fork); only the consumer knows which members it
+   *     needs, and a missing one degrades exactly like a missing folder.
+   *
+   * Like every other member but `setting`, this is unreachable once the world
+   * has closed — a stale module-scope view must not reach a live sibling
+   * either (issue #164).
+   */
+  sibling(name: string): SiblingModule | null;
 }
 
 /** Context handed to onIntent alongside the intent itself. */
@@ -621,4 +673,14 @@ export interface LoadedPlugin {
    * needs a fresh bundle. Nothing simulates differently because of it.
    */
   readonly version: string;
+  /**
+   * THE ENTRY MODULE'S NAMESPACE, as imported — the value siblings receive
+   * from `WorldApi.sibling` (issue #196).
+   *
+   * Held here rather than re-imported on demand because the host must be the
+   * single holder of module identity: one import at discovery, one object every
+   * consumer of this plugin is handed, so "which build of <name> is running"
+   * has exactly one answer per session.
+   */
+  readonly exports: SiblingModule;
 }

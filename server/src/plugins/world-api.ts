@@ -15,7 +15,7 @@ import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import { applyServerSculpt } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
-import type { WorldApi } from './types.ts';
+import type { SiblingModule, WorldApi } from './types.ts';
 
 /**
  * The sculpt options every plugin terraform runs, via WorldApi.sculpt.
@@ -104,11 +104,22 @@ export type PluginSettings = Readonly<Record<string, string>>;
 /** A world nobody has configured: every `setting` read answers undefined. */
 export const NO_PLUGIN_SETTINGS: PluginSettings = Object.freeze({});
 
+/**
+ * How a view answers `WorldApi.sibling`: the host's map from plugin name to
+ * the module of the plugin RUNNING AS that name in this session, narrowed to
+ * the enabled set. Null for every name the host is not running.
+ */
+export type SiblingResolver = (name: string) => SiblingModule | null;
+
+/** A view with no siblings to offer — a host of one, and every test that is. */
+export const NO_SIBLINGS: SiblingResolver = () => null;
+
 export function createWorldApi(
   world: World,
   listener: TerrainChangeListener & ChunkUnlockListener & WorldEventListener,
   pluginName: string,
   settings: PluginSettings = NO_PLUGIN_SETTINGS,
+  resolveSibling: SiblingResolver = NO_SIBLINGS,
 ): RevocableWorldApi {
   let binding: WorldApiBinding | null = { world, listener };
 
@@ -261,6 +272,14 @@ export function createWorldApi(
       // whereas throwing here would punish a plugin for asking, in its own
       // close hook, which rule it had been running.
       return Object.hasOwn(settings, key) ? settings[key] : undefined;
+    },
+    sibling(name: string): SiblingModule | null {
+      // GATED ON `bound`, unlike `setting`: a sibling's module is a live thing
+      // to talk to, not this view's captured configuration, so a plugin
+      // holding a stale view must not be able to reach one after its world
+      // went away — the same rule that makes every other member throw there.
+      bound('sibling');
+      return resolveSibling(name);
     },
     emitEvent(type: string, payload: unknown): void {
       // Namespaced exactly like broadcast/sendTo, and for the same reason: the

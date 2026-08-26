@@ -19,6 +19,7 @@ import {
   ALLOW,
   type IntentVerdict,
   type LoadedPlugin,
+  type SiblingModule,
   type TerracePlugin,
   type WorldApi,
 } from './types.ts';
@@ -27,6 +28,7 @@ import {
   type ChunkUnlockListener,
   type PluginSettings,
   type RevocableWorldApi,
+  type SiblingResolver,
   type WorldEventListener,
   createWorldApi,
   namespacedMessageType,
@@ -134,6 +136,17 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     settingsByPlugin: Readonly<Record<string, PluginSettings>> = {},
   ) {
     this.world = world;
+    // THE SESSION'S MODULE MAP, built before any view exists, from the ENABLED
+    // set only: `WorldApi.sibling` answers "who is running as <name> here",
+    // and a plugin the operator switched off for this world is not running —
+    // even though its module is as resident as everyone else's (issue #196).
+    const siblingModules = new Map<string, SiblingModule>();
+    for (const loaded of plugins) {
+      const { name } = loaded.plugin;
+      if (enabledNames !== undefined && !enabledNames.has(name)) continue;
+      siblingModules.set(name, loaded.exports);
+    }
+    const resolveSibling: SiblingResolver = (name) => siblingModules.get(name) ?? null;
     // The WorldApi handed to a plugin routes edits back through this host, so
     // a plugin's own sculpt notifies every plugin (including itself) exactly
     // like a player's would.
@@ -148,6 +161,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
         this,
         name,
         Object.hasOwn(settingsByPlugin, name) ? settingsByPlugin[name] : NO_PLUGIN_SETTINGS,
+        resolveSibling,
       );
       return { loaded, api: revocable.api, revoke: revocable.revoke };
     });

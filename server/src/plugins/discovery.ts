@@ -159,7 +159,16 @@ async function loadPlugin(
     );
   }
 
-  return { plugin, directory, entryPath, version: pluginVersionStamp(versions, directory) };
+  return {
+    plugin,
+    directory,
+    entryPath,
+    version: pluginVersionStamp(versions, directory),
+    // The namespace this import produced, held for the host's sibling lookup
+    // (issue #196): one import per plugin per process, and every consumer of
+    // this plugin is handed THIS object.
+    exports: module,
+  };
 }
 
 /**
