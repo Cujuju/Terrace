@@ -35,6 +35,17 @@ export const CA_GENERATIONS_PER_TIER = 3;
  * Under B3/S23, any cell that is alive after a step survived the S rule,
  * which only keeps a cell alive with EXACTLY 2 or 3 live neighbours — those
  * are the only two values a living cell's own neighbour count can ever take.
+ *
+ * STILL TRUE UNDER THE BOARD TOPOLOGY (2026-08-25, life.ts's phantom wall
+ * neighbours and per-landmass wrap). `neighborCount` is now an EFFECTIVE
+ * count — whole live-neighbour equivalents, floor(scaled / WALL_PHANTOM_
+ * DENOMINATOR), where a wall contributes a fraction of one and a wrapped-in
+ * cell contributes its real live/dead state. The argument below is unchanged
+ * because the WINDOW is unchanged: survival is scaled [2D, 4D), so every
+ * survivor's effective count is in [2, 4), i.e. exactly 2 or 3, exactly as
+ * before. A phantom fraction can move a cell ACROSS the survival threshold —
+ * that is the whole point of it — but it can never hand a survivor an
+ * effective count of 1 or 4.
  * A threshold of 2 would therefore pass almost every survivor (no
  * differentiation at all), and anything above 3 could never fire (no
  * surviving cell can have 4+ neighbours — it would have died of
