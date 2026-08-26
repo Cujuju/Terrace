@@ -15,6 +15,7 @@ import {
   POPULOUS_GROWTH_PER_STEP,
   POPULOUS_POPULATION_AFTER_EMIT,
   POPULOUS_TIER_BY_FLAT_NEIGHBORS,
+  POPULOUS_TIER_CLIMB_PER_STEP,
   populousTierFor,
   stepPopulous,
   type PopulousCellRecord,
@@ -130,21 +131,31 @@ describe('the tier table', () => {
 });
 
 describe('tier follows the flat, buildable ground around a house', () => {
-  it('gives a house with all eight neighbours buildable the top tier', () => {
-    const live = boardOf([[10, 10]]);
-    const result = stepPopulous(world, live, contextExcept([]));
-    expect(result.nextLive.get(key(10, 10))!.tier).toBe(populousTierFor(8, MAX_TIER));
+  it('climbs one tier per step toward the top tier on a perfect site', () => {
+    let live = boardOf([[10, 10]]);
+    const ctx = contextExcept([]);
+    const top = populousTierFor(8, MAX_TIER);
+    for (let expected = POPULOUS_TIER_CLIMB_PER_STEP; expected <= top; expected += POPULOUS_TIER_CLIMB_PER_STEP) {
+      const result = stepPopulous(world, live, ctx);
+      live = result.nextLive;
+      expect(live.get(key(10, 10))!.tier).toBe(Math.min(top, expected));
+    }
+    // And holds there: nothing left to climb, nothing on the wire.
+    const settled = stepPopulous(world, live, ctx);
+    expect(settled.nextLive.get(key(10, 10))!.tier).toBe(top);
+    expect(settled.upgraded).toEqual([]);
   });
 
-  it('gives a house on a spit of land a low tier', () => {
+  it('gives a house on a spit of land a low tier, and stops there', () => {
     // Only (11, 10) is buildable beside it: one flat Moore neighbour.
     const blocked: Array<readonly [number, number]> = [];
     for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1]]) {
       blocked.push([10 + dx, 10 + dy]);
     }
-    const live = boardOf([[10, 10]]);
-    const result = stepPopulous(world, live, contextExcept(blocked));
-    expect(result.nextLive.get(key(10, 10))!.tier).toBe(populousTierFor(1, MAX_TIER));
+    let live = boardOf([[10, 10]]);
+    const ctx = contextExcept(blocked);
+    for (let step = 0; step < MAX_TIER + 1; step++) live = stepPopulous(world, live, ctx).nextLive;
+    expect(live.get(key(10, 10))!.tier).toBe(populousTierFor(1, MAX_TIER));
   });
 
   it('DOWN-tiers a house when the ground around it closes up', () => {
@@ -171,9 +182,9 @@ describe('tier follows the flat, buildable ground around a house', () => {
 
 describe('population', () => {
   it('grows by a fixed amount per step until the tier capacity is reached', () => {
-    let live = boardOf([[10, 10]]);
     const ctx = contextExcept([]);
     const tier = populousTierFor(8, MAX_TIER);
+    let live = boardOf([[10, 10]], { age: 0, tier, population: 0 });
     const capacity = POPULOUS_CAPACITY_BY_TIER[tier];
 
     for (let step = 1; step < capacity; step++) {
@@ -185,9 +196,11 @@ describe('population', () => {
   });
 
   it('emits exactly one settler when it fills, and resets', () => {
-    let live = boardOf([[10, 10]]);
     const ctx = contextExcept([]);
     const tier = populousTierFor(8, MAX_TIER);
+    // Already at its site's tier, so the capacity in play is one fixed number
+    // rather than the sliding one a house still climbing would have.
+    let live = boardOf([[10, 10]], { age: 0, tier, population: 0 });
     const capacity = POPULOUS_CAPACITY_BY_TIER[tier];
     const stepsToFill = Math.ceil(capacity / POPULOUS_GROWTH_PER_STEP);
 
@@ -387,8 +400,8 @@ describe('the plugin', () => {
 // inside one another.
 
 describe('buildings never stand within the separation of one another', () => {
-  /** Enough steps that every cell has long since reached its terrain tier. */
-  const STEPS = 4;
+  /** Enough steps that every cell has long since climbed to its terrain tier. */
+  const STEPS = Math.ceil(MAX_TIER / POPULOUS_TIER_CLIMB_PER_STEP) + 1;
 
   it('promotes exactly one cell of a 2×2 homestead, and keeps all four alive', () => {
     const ctx = contextExcept([]); // wide open flat ground: every cell earns the top tier
