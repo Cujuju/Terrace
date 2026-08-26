@@ -22,12 +22,7 @@ import {
   stepGeneration,
   type LiveCellRecord,
 } from '../server/life.ts';
-import {
-  computeLandmassLabels,
-  invalidateLandmassLabels,
-  landmassLabelsFor,
-  wrappedNeighborIndex,
-} from '../server/topology.ts';
+import { computeLandmassLabels, wrappedNeighborIndex } from '../server/topology.ts';
 import { isBuildableCell, type StructuresWorld } from '../server/suitability.ts';
 import { worldWithTerrain } from './support/world.ts';
 
@@ -57,6 +52,21 @@ function rectWorld(
     }
     return SEA_HEIGHT;
   });
+}
+
+/**
+ * Uniform dry land whose LOCKED set the caller may move between generations —
+ * the one input to isBuildableCell that changes without any terrain diff.
+ */
+function unlockableWorld(size: number, locked: ReadonlySet<number>): StructuresWorld {
+  const w = worldWithTerrain(size, () => LAND_HEIGHT);
+  return {
+    worldSize: w.size,
+    chunksPerEdge: w.chunksPerEdge,
+    heightAt: (x, y) => w.heightAt(x, y),
+    isChunkUnlocked: (cx, cy) => w.isChunkUnlocked(cx, cy),
+    isCellUnlocked: (x, y) => !locked.has(structureKey(x, y)) && w.isCellUnlocked(x, y),
+  };
 }
 
 function boardOf(cells: ReadonlyArray<readonly [number, number]>): Map<number, LiveCellRecord> {
@@ -208,21 +218,54 @@ describe('landmass labelling', () => {
     expect(labels.boxes[0]).toEqual({ minX: 10, maxX: 11, minY: 10, maxY: 11 });
   });
 
-  it('is a pure function of the terrain, and the cache serves the same object', () => {
+  it('is a pure function of the terrain: the same world labels identically twice', () => {
     const world = rectWorld(48, [[2, 2, 13, 13]]);
-    invalidateLandmassLabels();
-    const first = landmassLabelsFor(world);
-    expect(landmassLabelsFor(world)).toBe(first); // cache hit, same instance
-    invalidateLandmassLabels();
-    const second = landmassLabelsFor(world);
-    expect(second).not.toBe(first); // recomputed
-    // …but identical, because the terrain did not move.
+    const first = computeLandmassLabels(world);
+    const second = computeLandmassLabels(world);
+    expect(second).not.toBe(first); // a fresh labelling every call — no cache
+    // …and identical, because the terrain did not move.
     expect(second.count).toBe(first.count);
     for (let y = 0; y < world.worldSize; y++) {
       for (let x = 0; x < world.worldSize; x++) {
         expect(second.labelAt(x, y)).toBe(first.labelAt(x, y));
       }
     }
+  });
+
+  /**
+   * THE STALE-LABEL BUG (F1). isBuildableCell depends on three things that can
+   * move: the terrain, the UNLOCKED set, and another plugin's reservations.
+   * Only the first of those produces a CellDiff, so a labelling that is
+   * invalidated by terrain alone can disagree with isBuildableCell about a
+   * cell that just unlocked — and an unlabelled cell is a cell
+   * wrappedNeighborIndex refuses to answer for at all (label -1 returns -1 on
+   * every one of its eight slots), so it can never be born and a live cell
+   * standing there would survive forever on a board that says it is nowhere.
+   *
+   * The fix is that there is no cross-generation labelling to go stale: every
+   * sweep labels the world it is about to scan.
+   */
+  it('sees a cell that UNLOCKS between two generations, with no terrain diff', () => {
+    const SIZE = 32;
+    const locked = new Set<number>([structureKey(11, 11)]);
+    const world = unlockableWorld(SIZE, locked);
+
+    // An L-triomino on open ground: each of its three cells has exactly 2 live
+    // neighbours (so all three survive, generation after generation), and the
+    // square's fourth corner has exactly 3 — born the moment it is allowed to be.
+    let live: ReadonlyMap<number, LiveCellRecord> = boardOf([[10, 10], [11, 10], [10, 11]]);
+
+    const first = stepGeneration(world, live);
+    expect(first.born).toEqual([]); // (11,11) is locked ground: not buildable
+    live = first.nextLive;
+    expect(live.size).toBe(3);
+
+    // THE ONLY THING THAT MOVES. No height changes anywhere, so nothing
+    // reports a terrain diff — the sole signal the old cache listened to.
+    locked.clear();
+
+    const second = stepGeneration(world, live);
+    expect(second.born).toEqual([{ x: 11, y: 11, tier: 0 }]);
   });
 });
 
@@ -347,7 +390,6 @@ describe('a lone plateau under the new topology', () => {
 
   it('stays alive for all 50 with phantom walls and per-landmass wrap', () => {
     const world = rectWorld(SIZE, [ISLAND]);
-    invalidateLandmassLabels();
     let live: ReadonlyMap<number, LiveCellRecord> = boardOf(SEED);
     for (let g = 0; g < GENERATIONS; g++) {
       live = stepGeneration(world, live).nextLive;

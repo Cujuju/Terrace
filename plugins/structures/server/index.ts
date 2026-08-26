@@ -77,7 +77,6 @@ import {
   generationChunksPerTick,
   type LiveCellRecord,
 } from './life.ts';
-import { invalidateLandmassLabels } from './topology.ts';
 import {
   STRUCTURES_MODEL_LIFE,
   STRUCTURES_MODEL_POPULOUS,
@@ -548,11 +547,12 @@ let fuelWorld: WorldApi | null = null;
 function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (diff.length === 0) return;
 
-  // The CA's board TOPOLOGY is a function of the terrain (topology.ts): an
-  // edit can join two headlands, split one, or drown a landmass outright, so
-  // the cached labelling is dropped here and rebuilt on the next lookup. One
-  // call, at the one place the server learns the ground moved.
-  invalidateLandmassLabels();
+  // NOTHING TO INVALIDATE. The CA's board TOPOLOGY is a function of the
+  // terrain (topology.ts) — an edit can join two headlands, split one, or
+  // drown a landmass outright — but the labelling is computed fresh by every
+  // sweep rather than cached across generations, so an edit is picked up by
+  // the next generation with no notification from here. See
+  // computeLandmassLabels for why the cache this once dropped had to go.
 
   const demolished: Array<{ x: number; y: number }> = [];
   for (const cell of diff) {
