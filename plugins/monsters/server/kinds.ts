@@ -474,33 +474,39 @@ export const KRAKEN_FOOTPRINT_CELLS = cellsAcross(7);
  * Horizontal extent of the modelled body, in world units: shoulder to shoulder,
  * including the arms that hang either side of them (client/yeti-anatomy.ts).
  *
- * 0.901..., against the sea kinds' seven, and the gap is the point rather than
- * an accident of modelling. Cthulhu and the kraken are gods that rise out of an
+ * 1.203, against the sea kinds' seven, and the gap is the point rather than an
+ * accident of modelling. Cthulhu and the kraken are gods that rise out of an
  * ocean; the yeti is an ANIMAL, and as of the owner's 2026-08-22 and 2026-08-24
- * decisions a SMALL one — under a fifth of the five world units he was, which is
- * the client's YETI_SCALE showing up on this side of the wire. The client half
- * states the same number as YETI_WIDTH_CELLS (client/yeti-anatomy.ts) and a test
- * fails the day the two disagree, so a rescale has to touch both.
+ * decisions a SMALL one — still under a quarter of the five world units he was.
+ * The client half states the same number and a test fails the day the two
+ * disagree, so a change to the model has to touch both.
  *
- * THE LITERAL IS UNROUND ON PURPOSE. Over there it is 5 × YETI_SCALE, and
- * YETI_SCALE is solved for the owner's ceiling of two peep-heights rather than
- * picked — so this is that product written out to the last digit that round-trips
- * through a double, which is what lets the pinning test compare with `toBe`
- * instead of a tolerance. Do not tidy it; re-derive it.
+ * THE LITERAL IS UNROUND ON PURPOSE. Over there it is SOLVED — the client walks
+ * the widest variant's own masses, limbs and horns, in every pose the gait can
+ * take, and takes the furthest from the axis (client/yeti-anatomy.ts,
+ * solveBounds) — so this is that answer written out to the last digit that
+ * round-trips through a double, which is what lets the pinning test compare with
+ * `toBe` instead of a tolerance. Do not tidy it; re-derive it.
  *
- * ONE FOOTPRINT FOR ALL FOUR VARIANTS (2026-08-26). The client half now states
- * a width per variant and this is pinned to the WIDEST of them
+ * ONE FOOTPRINT FOR ALL FOUR VARIANTS (2026-08-26). The client half states a
+ * width per variant and this is pinned to the WIDEST of them
  * (YETI_WIDEST_VARIANT_WIDTH_CELLS) — see that constant for why the server
  * steers the broadest body rather than the rolled one: the look-ahead and the
  * minimum lair are both decided before a variant exists, and a footprint that
  * under-stated the widest yeti would walk that one's shoulder into a cliff its
  * centre point cleared.
  *
- * His minimum lair below is DERIVED from this number, so shrinking him shrinks
- * what he needs to live on by the square — which is the owner's intent: he is no
- * longer the biggest thing on the mountain and no longer asks for a mountain.
+ * IT WENT UP A THIRD WHEN THE FOUR BODIES LANDED, from 0.901 to 1.203, and the
+ * reason is the SILVERBACK: he is a knuckle-walker with a gorilla's shoulders
+ * and the widest stance of the four, where the single body this replaced was a
+ * narrow upright. The other three come in at or under the old number (ram
+ * 0.969, fanged 0.901, ibex 0.667). His minimum lair below is DERIVED from
+ * this, so it rises with the square — 29 snow cells to 52 — which is still
+ * inside the connected snowfield the 2026-08-23 reachability amendment was
+ * measured against (79 cells), and it is the SIZE moving rather than the
+ * divisor, which is what that amendment asked for.
  */
-export const YETI_FOOTPRINT_CELLS = cellsAcross(0.9011627906976745);
+export const YETI_FOOTPRINT_CELLS = cellsAcross(1.2031547978277752);
 
 /**
  * Cells in the smallest snowfield the yeti will accept as a lair, as a multiple

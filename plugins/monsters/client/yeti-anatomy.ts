@@ -1,14 +1,13 @@
-// The yeti silhouette, as numbers. The sibling of ./anatomy.ts (Cthulhu's) and
-// ./kraken-anatomy.ts, and it keeps their contract exactly:
+// The yeti silhouette, as numbers — FOUR of them since 2026-08-26. The sibling
+// of ./anatomy.ts (Cthulhu's) and ./kraken-anatomy.ts, and it keeps their
+// contract exactly:
 //
 //   * every dimension of the model lives here rather than inside the builder,
 //     because the placement maths needs some of them and a node test can read
 //     them without importing three (design §8 — no headless GL rig);
 //   * UNITS are WORLD UNITS. HEIGHT_WORLD_SCALE maps one terrace band to one
 //     world unit, so a number here is simultaneously world units across the
-//     board and terrace bands of height. (It said "cells" until the 2026-08-21
-//     re-sample cut a cell to a quarter of a world unit; the numbers never
-//     moved, and cellsAcross() is what converts them for the server's half.)
+//     board and terrace bands of height.
 //   * FRAME: the model faces +X. The origin is the PIVOT — and for this one that
 //     is BETWEEN THE FEET, ON THE GROUND, because he is a walker: the client
 //     places his origin at the terrain height under him, where the two swimmers
@@ -20,35 +19,45 @@
 // can be checked by adding two numbers, which is what its test does.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHAT MAKES HIM NOT A THIRD SEA HORROR
+// WHY THIS FILE IS A BODY-BUILDER AND NOT A LIST OF CONSTANTS ANY MORE
 //
-// Cthulhu is a FIGURE, bilateral and hidden — 61% of him under the water at
-// rest. The kraken is RADIAL and low-slung, a crown of arms lying on the sea.
-// Both are things that rise out of somewhere you cannot follow them.
+// It was a hundred and fifty exported lengths describing ONE animal, and the
+// owner's 2026-08-26 decision is that a yeti is one of four bodies the server
+// rolls between. Four copies of that list is four places to forget something;
+// four sets of overrides on a shared list is worse, because the interesting
+// numbers (where the head sits, how far a hand reaches) are then DERIVED from
+// the overrides and cannot be read at all.
 //
-// The yeti is an ANIMAL, and every choice here says so. He is the only one whose
-// whole body is visible, because he stands ON the ground rather than in it; he
-// is by far the smallest and the narrowest — 1.24 world units tall and 0.90
-// across, against the kraken's 8-by-7 and Cthulhu's 10.9-by-7 (owner decisions,
-// 2026-08-22 and 2026-08-24; YETI_SCALE is the only place that size lives, and
-// every figure in the prose below is stated at his ORIGINAL size, as the
-// literals are);
-// his mass is in his SHOULDERS and his silhouette is a hunched biped
-// with arms that hang below his hips. He is white on white, so the modelling
-// that has to work hardest is the SHADING — a snow-coloured mass in sunlight has
-// no contrast of its own, which is why the shade variation here is the largest
-// of the three creatures — and, since 2026-08-24, why his coat is the one
-// TEXTURED surface in this plugin (see YETI_FUR_TEXTURE_FREQUENCY).
+// So the animal is described here as a SPEC — the proportions the owner argued
+// about — and `yetiParts` turns a spec into the list of masses, limbs and swept
+// tapers the body is actually made of. Two things then read that list:
 //
-// At a hundred cells the three read as a standing man, a spider on the water,
-// and an ape on a ridge. That is the distance the silhouettes have to hold at.
+//   * the SOLVER below, which is plain arithmetic over the parts and answers
+//     the two questions the rest of the codebase asks — how tall is he (so the
+//     scale can be solved for the owner's ceiling) and how far does he reach
+//     (so the server can steer him past a cliff);
+//   * ./yeti.ts, which turns the same list into geometry.
+//
+// That is the whole reason the parts are data rather than three calls: a bound
+// derived from a DIFFERENT description of the body than the one that gets built
+// is not a bound, it is a hope. Every previous version of this file solved the
+// scale against five hand-copied numbers and stated the width as a literal, and
+// both had to be re-checked by hand every time a mass moved.
+//
+// WHAT MAKES HIM NOT A THIRD SEA HORROR. Cthulhu is a FIGURE, bilateral and
+// hidden. The kraken is RADIAL and low-slung. The yeti is an ANIMAL: he stands
+// ON the ground, he is by far the smallest, and his silhouette is a hunched
+// biped with arms that hang below his hips. He is white on white, so the
+// modelling that has to work hardest is the EDGE — which is why his coat is the
+// one textured surface in this plugin and, since 2026-08-26, the one with fur
+// SHELLS standing off it (../client/geometry.ts, furStrandAlphaTexture).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The wire contract is this plugin's own (../protocol.ts) and carries no three,
 // no node builtins — the one import this numbers file is allowed, and only for
 // the variant NAMES, so the per-variant table below cannot fall out of step
 // with the set the server may send.
-import type { YetiVariant } from '../protocol.ts';
+import { YETI_VARIANTS, type YetiVariant } from '../protocol.ts';
 
 /**
  * A PEEP'S OVERALL HEIGHT, world units — the ruler the owner measures this
@@ -63,893 +72,1683 @@ export const PEEP_HEIGHT_WORLD_UNITS = 0.62;
 
 /**
  * How many peeps tall he is allowed to be. OWNER CEILING, 2026-08-24: "no more
- * than two times taller than one of the peeps", and YETI_SCALE below is solved
- * for it rather than guessed at, so the rule is in the code and not in a
- * comment. He is taken to the ceiling exactly — he is still the mountain's
- * monster and the biggest thing a settlement will meet on foot.
+ * than two times taller than one of the peeps".
+ *
+ * EVERY VARIANT IS SOLVED TO IT SEPARATELY, and to its own highest point: the
+ * ibex's horn tips are the top of that animal, the silverback's crest is the top
+ * of his. A single scale shared between the four would have put whichever
+ * variant carries the most on its head over the ceiling, silently, with every
+ * proportion in its spec still looking right. See YETI_VARIANT_METRICS.
  */
-const YETI_HEIGHT_IN_PEEPS = 2;
+export const YETI_HEIGHT_IN_PEEPS = 2;
+
+/** Ground to the highest point of ANY variant: the owner's ceiling, exactly. */
+export const YETI_TOTAL_HEIGHT = PEEP_HEIGHT_WORLD_UNITS * YETI_HEIGHT_IN_PEEPS;
+
+// ── The frame ────────────────────────────────────────────────────────────────
 
 /**
- * The FULL-SIZE figures the scale is solved against — every length in this file
- * is written at full size and passed through `scaled()`, so the solve has to
- * happen up here, before the scale exists.
+ * A point on the animal, in his own frame: FORWARD is +X (the way he faces),
+ * HEIGHT is +Y from the ground between his feet, LATERAL is +Z (his left).
  *
- * THE HIGHEST POINT ON HIM IS A HORN TIP, not the crown of his head (owner,
- * 2026-08-24: "he needs horns"). That is the whole reason these five constants
- * are hoisted above YETI_SCALE and the horn section below re-uses them rather
- * than restating them: the ceiling the owner set is on the ANIMAL, and an
- * animal's height is the top of whatever sticks up furthest. Solving against
- * the skull and then planting horns above it would have quietly put him at two
- * and a third peeps — which is precisely the failure the solve exists to make
- * impossible.
- *
- * DERIVED, not restated: the total is built from the head and horn figures that
- * actually define it, so a literal 6.88 can never drift out of step with the
- * geometry. The tip RADIUS is in it because a horn is a tube, not a line — its
- * apex is half a hair above the centre-line point the curve ends on.
+ * Named rather than a bare triple because the last two rebuilds of this model
+ * both cost an afternoon to a transposed axis. A number called `lateral` cannot
+ * be quietly used as a depth.
  */
-const FULL_SIZE_HEAD_CENTER_HEIGHT = 5.55;
-const FULL_SIZE_HEAD_HEIGHT = 1.5;
-const FULL_SIZE_HEAD_TOP = FULL_SIZE_HEAD_CENTER_HEIGHT + FULL_SIZE_HEAD_HEIGHT / 2;
-const FULL_SIZE_HORN_TIP_HEIGHT = 6.85;
-const FULL_SIZE_HORN_TIP_RADIUS = 0.03;
-/**
- * The fur carve's depth, hoisted for the same reason the horn figures are: a
- * length further down the file (YETI_HAUNCH_RADIUS) is SOLVED against it, and a
- * const cannot be read before it is initialised. The exported
- * YETI_FUR_WRINKLE_DEPTH below is this number, scaled; the argument for the
- * value is with it, in the skin-detail section.
- */
-const FULL_SIZE_FUR_WRINKLE_DEPTH = 0.12;
-const FULL_SIZE_TOTAL_HEIGHT = FULL_SIZE_HORN_TIP_HEIGHT + FULL_SIZE_HORN_TIP_RADIUS;
-
-/**
- * THE SIZE OF THE ANIMAL, as a factor on every length below.
- *
- * SOLVED, not chosen: it is whatever puts the top of him — a horn tip — exactly
- * on YETI_HEIGHT_IN_PEEPS peeps. 0.1802, down from the 0.25 of the 2026-08-22
- * quarter-size decision, which stood him at 1.575 world units, two and a half
- * peeps. He is now 1.24 to the horns and 1.135 to the crown of his head.
- *
- * Every LENGTH in this file is written at its original full-size figure and
- * passed through `scaled()`, so the whole silhouette record still reads in the
- * proportions its prose argues for and one number here is the animal's size.
- * What that prose calls "5 cells wide" and "6.3 tall" is now 0.90 and 1.135
- * world units — the RATIOS it justifies are all unchanged, because a uniform
- * scale preserves every one of them.
- *
- * WHAT DOES NOT PASS THROUGH IT, and why each is right:
- *   * ANGLES and FRACTIONS (the swings, the lean, the head scan, the eye bulge,
- *     the tuft variation, the shade variation) are dimensionless — a scaled
- *     model rotates through the same angles.
- *   * The two spatial FREQUENCIES divide by it instead (`scaledFrequency`), so
- *     the same NUMBER of wrinkles runs across a body a fifth the size. The
- *     carve is sampled at position × frequency, so scaling the two inversely
- *     reproduces the old surface exactly, smaller.
- *   * YETI_AMBLE_HZ and YETI_LEG_SWING_RADIANS are RATIOS of scaled quantities
- *     (speed over stride, stride over leg) and fall out unchanged on their own.
- *     That is the whole reason his gait survives this: his stride shrinks with
- *     his legs and the server's walk speed shrinks with him, so his feet still
- *     travel at exactly the rate the ground passes under them.
- *
- * WHEN THIS MOVES, THE SERVER MOVES WITH IT. YETI_FOOTPRINT_CELLS and
- * YETI_AMBLE_SPEED_CELLS_PER_SECOND (server/kinds.ts) are this scale's shadow
- * on the other side of the wire, restated as world-unit literals and pinned to
- * these by tests.
- */
-export const YETI_SCALE =
-  (PEEP_HEIGHT_WORLD_UNITS * YETI_HEIGHT_IN_PEEPS) / FULL_SIZE_TOTAL_HEIGHT;
-
-/** A length, written at full size and delivered at the size he actually is. */
-function scaled(fullSizeWorldUnits: number): number {
-  return fullSizeWorldUnits * YETI_SCALE;
+export interface YetiPoint {
+  readonly forward: number;
+  readonly height: number;
+  readonly lateral: number;
 }
 
 /**
- * A spatial frequency — cycles per world unit — written at full size. It scales
- * INVERSELY, so a feature keeps its size relative to the animal rather than its
- * size in the world. See YETI_SCALE.
+ * The animated handles, and the only ones. Every part of the body is authored
+ * in exactly one of these spaces; ./yeti.ts hangs the matching Group off the rig
+ * and the gait drives them by name.
+ *
+ * `upper` and `head` are authored in RIG space (their joints sit at the origin),
+ * which is what keeps one continuous noise field running from hip to brow — the
+ * head still yaws, about the vertical axis through the body, which is where a
+ * scan happens on an animal whose head is carried between its shoulders. The
+ * four limb joints are the exception, exactly as the kraken's arms are: each
+ * hangs off a joint and its parts are authored in that joint's space.
  */
-function scaledFrequency(fullSizeCyclesPerWorldUnit: number): number {
-  return fullSizeCyclesPerWorldUnit / YETI_SCALE;
+export type YetiJoint = 'upper' | 'head' | 'leg' | 'ankle' | 'arm';
+
+/** Which surface a part is made of — one material each, in ./yeti.ts. */
+export type YetiSurface =
+  | 'coat'
+  | 'saddle'
+  | 'hide'
+  | 'face'
+  | 'nose'
+  | 'maw'
+  | 'eye'
+  | 'glint'
+  | 'horn'
+  | 'ivory';
+
+/**
+ * How finely a part is tessellated, as a CLASS rather than a segment count: the
+ * counts themselves belong to the builder (./yeti.ts owns the resolution knob,
+ * this file owns the shape), but which parts deserve them is an anatomical
+ * judgement — a skull is looked at, a knuckle is not.
+ */
+export type YetiPartSize =
+  | 'trunk'
+  | 'head'
+  | 'feature'
+  | 'limb'
+  /** A ball buried in the end of a limb, closing a bend. Never seen whole. */
+  | 'joint'
+  | 'digit'
+  | 'horn';
+
+/** How far out a part's fur shells stand, and how many there are. */
+export interface YetiShells {
+  /** Outward push of the OUTERMOST shell, as a fraction of the part's radius. */
+  readonly length: number;
+  readonly layers: number;
+}
+
+interface YetiPartCommon {
+  readonly joint: YetiJoint;
+  /** +1 his left, -1 his right; 0 for a part on the centre line. */
+  readonly side: number;
+  readonly surface: YetiSurface;
+  readonly size: YetiPartSize;
+  /** Null for a bare surface — hide, horn, ivory, eye. */
+  readonly shells: YetiShells | null;
+}
+
+/** A rounded mass: the trunk, the skull, a cheek, a toe. */
+export interface YetiMassPart extends YetiPartCommon {
+  readonly kind: 'mass';
+  readonly center: YetiPoint;
+  /** Semi-axes, not diameters — a radius per axis. */
+  readonly radii: YetiPoint;
+  /** Rotation about the LATERAL axis, radians: the chest's tilt into the hunch. */
+  readonly tilt: number;
+}
+
+/** A segment between two joints: a thigh, a forearm, a neck. */
+export interface YetiLimbPart extends YetiPartCommon {
+  readonly kind: 'limb';
+  readonly from: YetiPoint;
+  readonly to: YetiPoint;
+  readonly rootRadius: number;
+  readonly tipRadius: number;
+}
+
+/** A curved taper: a horn, a fang, a finger. */
+export interface YetiSweepPart extends YetiPartCommon {
+  readonly kind: 'sweep';
+  readonly path: readonly YetiPoint[];
+  readonly rootRadius: number;
+  readonly tipRadius: number;
+  /** Exponent on the taper: >1 keeps a horn thick for longer before it points. */
+  readonly taperPower: number;
+}
+
+export type YetiPart = YetiMassPart | YetiLimbPart | YetiSweepPart;
+
+/** Where a joint sits, in the space of its parent joint. */
+export interface YetiJointRest {
+  readonly leg: YetiPoint;
+  readonly ankle: YetiPoint;
+  readonly arm: YetiPoint;
+}
+
+/** A whole body: its parts, and where its joints rest. */
+export interface YetiBody {
+  readonly parts: readonly YetiPart[];
+  readonly joints: YetiJointRest;
+}
+
+// ── The spec: the proportions of one variant ─────────────────────────────────
+
+/** The head, whose three radii most other features on the face are stated in. */
+export interface YetiSkull {
+  readonly forward: number;
+  readonly height: number;
+  readonly lateral: number;
+}
+
+export interface YetiArmSpec {
+  readonly upper: number;
+  readonly fore: number;
+  /** How far forward of straight-down each segment hangs, radians. */
+  readonly upperForward: number;
+  readonly foreForward: number;
+  readonly elbowFlare: number;
+  readonly wristFlare: number;
+  readonly shoulderRadius: number;
+  readonly elbowRadius: number;
+  readonly wristRadius: number;
+}
+
+export interface YetiLegSpec {
+  readonly thigh: number;
+  readonly shin: number;
+  readonly thighForward: number;
+  readonly shinForward: number;
+  readonly kneeFlare: number;
+  readonly hipRadius: number;
+  readonly kneeRadius: number;
+  readonly ankleRadius: number;
+  readonly footLength: number;
+  readonly footWidth: number;
+  readonly footHeight: number;
+}
+
+/** Which horns a variant wears, if any. See the three recipes below. */
+export type YetiHornStyle = 'none' | 'ram' | 'ibex' | 'stub';
+
+/**
+ * ONE VARIANT'S BODY, in the units the four were designed and approved in —
+ * roughly two units tall, which is the studio the owner reviewed the concepts
+ * in. Nothing here is world units; `YETI_VARIANT_METRICS` solves the factor that
+ * makes each of them exactly two peeps tall.
+ */
+export interface YetiVariantSpec {
+  readonly coat: number;
+  /** The pile's own shadow — what the innermost shell is tinted towards. */
+  readonly underTint: number;
+  readonly skin: number;
+  readonly faceColor: number;
+  /** A lighter mass across the back, or 0 for a variant without one. */
+  readonly saddle: number;
+  /** Depth of the fur CARVE, relative to the base coat (1 is the base). */
+  readonly shag: number;
+  /** Outward push of the outermost shell, as a fraction of a part's radius. */
+  readonly coatLength: number;
+  readonly shellLayers: number;
+
+  readonly hipHeight: number;
+  readonly shoulderHeight: number;
+  /** Radians the spine leans forward. The whole difference between an ape and a man. */
+  readonly hunch: number;
+  readonly hipRadii: YetiPoint;
+  readonly bellyRadii: YetiPoint;
+  /** How far the belly hangs forward of the spine. */
+  readonly bellyOut: number;
+  readonly chestRadii: YetiPoint;
+  readonly chestOut: number;
+  readonly shoulderHalfSpan: number;
+  readonly shoulderRadius: number;
+
+  readonly neckLength: number;
+  readonly neckRadius: number;
+  /** Radians the neck drops FURTHER forward than the hunch already carries it. */
+  readonly headDrop: number;
+  readonly headForward: number;
+  readonly skull: YetiSkull;
+  /** A sagittal crest, as a fraction of the skull's height. 0 for none. */
+  readonly crest: number;
+  /** Width of the bare face plate, as a fraction of the skull's. */
+  readonly faceWidth: number;
+  /** How far the muzzle stands out of the face, in skull depths. */
+  readonly muzzleOut: number;
+  /** True for a furred muzzle, false for bare skin over it. */
+  readonly muzzleFur: boolean;
+  /** Length of the upper fangs. 0 for a variant without them. */
+  readonly fangs: number;
+  readonly horns: YetiHornStyle;
+
+  readonly arm: YetiArmSpec;
+  readonly leg: YetiLegSpec;
+  readonly stanceHalfWidth: number;
+  /** Fingers per hand, beside the thumb. */
+  readonly fingers: number;
+  /**
+   * KNUCKLE-WALKING: the fists rest on the ground, and the forearm's forward
+   * reach is SOLVED for it rather than posed by eye — see `yetiParts`.
+   */
+  readonly knuckle: boolean;
 }
 
 /**
- * Widest horizontal extent: how far the model may reach from its own vertical
- * axis, doubled.
+ * The base body every variant is stated as a change to.
  *
- * The same 0.901 world units — 3.6 cells — the SERVER knows as
- * YETI_FOOTPRINT_CELLS (server/kinds.ts), where it sets the steering look-ahead
- * so the body never walks into a cliff the centre point cleared, and from which
- * the minimum size of his snowfield is derived. The two are pinned to each other
- * by a test rather than by an import: the server half must not depend on the
- * client half (it runs in a process that never loads three), so the honest
- * arrangement is one number in each place plus a test that fails the day they
- * disagree. When YETI_SCALE moves, BOTH have to.
- *
- * THE BINDING CONSTRAINT IS A HAND, and it is only binding while he is MOVING:
- * static, the widest thing on him is a hand at 2.04 full-size units from the
- * axis, against the 2.5 half-footprint. The idle animation swings the arms
- * fore-and-aft and leans the upper body side to side, and the worst combination
- * of the two puts a hand 2.36 out. Both figures are pinned by tests — as
- * FRACTIONS of the half-footprint, so they survive a rescale and still fail on a
- * swing amplitude retuned for looks, which is exactly how a limb ends up inside
- * a cliff the server's probe said was clear.
+ * These are the concept study's numbers (the four renders the owner approved on
+ * 2026-08-26), restated here as one named field each. They are not a variant on
+ * their own: nothing renders this spec, and the four below each override enough
+ * of it to be a different animal.
  */
-export const YETI_WIDTH_CELLS = scaled(5);
+const BASE_SPEC: YetiVariantSpec = {
+  coat: 0xdcdfdc,
+  underTint: 0x6a7480,
+  skin: 0x3a3339,
+  faceColor: 0x45393c,
+  saddle: 0,
+  shag: 1,
+  coatLength: 0.09,
+  shellLayers: 3,
+
+  hipHeight: 0.86,
+  shoulderHeight: 1.62,
+  hunch: 0.22,
+  hipRadii: { forward: 0.3, height: 0.24, lateral: 0.36 },
+  bellyRadii: { forward: 0.34, height: 0.42, lateral: 0.4 },
+  bellyOut: 0.04,
+  chestRadii: { forward: 0.4, height: 0.4, lateral: 0.5 },
+  chestOut: 0.02,
+  shoulderHalfSpan: 0.46,
+  shoulderRadius: 0.22,
+
+  neckLength: 0.12,
+  neckRadius: 0.18,
+  headDrop: 0.35,
+  headForward: 0.06,
+  skull: { forward: 0.28, height: 0.3, lateral: 0.26 },
+  crest: 0,
+  faceWidth: 0.62,
+  muzzleOut: 0.35,
+  muzzleFur: false,
+  fangs: 0,
+  horns: 'none',
+
+  arm: {
+    upper: 0.62,
+    fore: 0.62,
+    // A REAL ELBOW, which the owner's third note asks for: the two angles are
+    // measured from straight down, so a forearm that hangs at nearly the upper
+    // arm's angle is one straight tube with a lump in it — which is what the
+    // arms were. The upper arm leads forward and the forearm drops back under
+    // it, and the difference between the two IS the bend.
+    upperForward: 0.22,
+    foreForward: 0.02,
+    elbowFlare: 0.08,
+    wristFlare: 0.04,
+    shoulderRadius: 0.16,
+    elbowRadius: 0.13,
+    wristRadius: 0.11,
+  },
+  leg: {
+    thigh: 0.42,
+    shin: 0.36,
+    thighForward: 0.12,
+    shinForward: 0.08,
+    kneeFlare: 0.02,
+    hipRadius: 0.17,
+    kneeRadius: 0.13,
+    ankleRadius: 0.11,
+    footLength: 0.42,
+    footWidth: 0.15,
+    footHeight: 0.09,
+  },
+  stanceHalfWidth: 0.24,
+  fingers: 4,
+  knuckle: false,
+};
 
 /**
- * The widest extent of EACH variant (2026-08-26), keyed by the name on the
- * wire.
+ * THE FOUR BODIES the server rolls between (../protocol.ts, YETI_VARIANTS).
  *
- * ALL FOUR ARE THE SAME NUMBER TODAY, on purpose and only for now: the variants
- * are plumbed before their bodies exist (Phase A), so every entry is
- * YETI_WIDTH_CELLS and the four look identical. The table exists anyway rather
- * than being deferred, because the thing it protects is a CONTRACT, not a
- * model: the server steers one footprint for all yetis (YETI_FOOTPRINT_CELLS,
- * server/kinds.ts), and the day one variant's horns or shoulders reach further
- * than another's, the server's single number has to be the WIDEST of them or
- * that variant walks its shoulder into a cliff its centre point cleared. With
- * the table here, filling in a real width is editing one row and re-running the
- * pin test; without it, it is discovering the contract from a rendering bug.
+ * Each is one of the concepts the owner picked out of the 2026-08-26 study, and
+ * the thesis of each is why it is here rather than a fifth grey ape:
+ *
+ *   * SILVERBACK — mass, not height. Gorilla proportions, a deep hunch, and
+ *     hands rolled into knuckle-walking fists that carry the front of him. The
+ *     pale saddle gives the shoulders a second read at a hundred cells. He is
+ *     the widest of the four, which is why the server's footprint is his.
+ *   * RAM — keeps the owner's horns, grown the way horn actually grows: a
+ *     keratin sheath curling out and down from bosses on the skull. A curl sits
+ *     INSIDE the head's silhouette, so it never competes with the brow for the
+ *     skyline, and (owner, on the first attempt) it must not reach the
+ *     shoulders — see `ramHornPath`.
+ *   * IBEX — the other way to keep horns: tall sweeps that ARE the skyline, on a
+ *     leaner, more upright animal that stands up straight to carry them. The
+ *     horn tip is the top of this one, so the scale solve has to include it.
+ *   * FANGED — keeps the owner's fangs, drops the horns to two stubs. Canines
+ *     over a real lip on a wide jaw: the jaw is what makes fangs believable, so
+ *     the head is broader through the cheeks and the muzzle is furred.
+ */
+export const YETI_VARIANT_SPECS: Readonly<Record<YetiVariant, YetiVariantSpec>> = {
+  silverback: {
+    ...BASE_SPEC,
+    coat: 0x5c6068,
+    underTint: 0x1e2024,
+    skin: 0x26232a,
+    faceColor: 0x2c2830,
+    saddle: 0xd9dde0,
+    shag: 0.89,
+    coatLength: 0.07,
+    hunch: 0.52,
+    headDrop: 0.55,
+    hipHeight: 0.8,
+    shoulderHeight: 1.5,
+    chestRadii: { forward: 0.46, height: 0.4, lateral: 0.58 },
+    shoulderHalfSpan: 0.52,
+    shoulderRadius: 0.26,
+    skull: { forward: 0.27, height: 0.27, lateral: 0.24 },
+    crest: 0.55,
+    knuckle: true,
+    arm: {
+      ...BASE_SPEC.arm,
+      upper: 0.7,
+      fore: 0.7,
+      // On a knuckle-walker the forearm's angle is SOLVED (see `knuckle`), so
+      // only the upper arm's is a choice: the more vertical it hangs, the
+      // further the forearm has to reach forward to put the fist on the ground
+      // and the more the elbow reads as an elbow.
+      upperForward: 0.15,
+      foreForward: 0.35,
+      shoulderRadius: 0.19,
+      elbowRadius: 0.16,
+      wristRadius: 0.13,
+    },
+    leg: { ...BASE_SPEC.leg, thigh: 0.38, shin: 0.32, hipRadius: 0.19 },
+    stanceHalfWidth: 0.27,
+  },
+  ram: {
+    ...BASE_SPEC,
+    coat: 0xdcdfdc,
+    underTint: 0x6a7480,
+    skin: 0x3a3339,
+    faceColor: 0x45393c,
+    shag: 1.11,
+    coatLength: 0.1,
+    horns: 'ram',
+    fangs: 0.06,
+    muzzleFur: true,
+    skull: { forward: 0.29, height: 0.3, lateral: 0.27 },
+  },
+  ibex: {
+    ...BASE_SPEC,
+    coat: 0xe2e1da,
+    underTint: 0x7a7266,
+    skin: 0x2b2628,
+    faceColor: 0x342c2e,
+    shag: 0.78,
+    coatLength: 0.07,
+    horns: 'ibex',
+    hunch: 0.1,
+    headDrop: 0.15,
+    hipHeight: 0.8,
+    shoulderHeight: 1.5,
+    chestRadii: { forward: 0.34, height: 0.4, lateral: 0.42 },
+    bellyRadii: { forward: 0.28, height: 0.42, lateral: 0.34 },
+    shoulderHalfSpan: 0.4,
+    shoulderRadius: 0.18,
+    skull: { forward: 0.26, height: 0.28, lateral: 0.22 },
+    neckLength: 0.18,
+    arm: {
+      ...BASE_SPEC.arm,
+      upper: 0.56,
+      fore: 0.56,
+      shoulderRadius: 0.13,
+      elbowRadius: 0.11,
+      wristRadius: 0.09,
+    },
+    leg: {
+      ...BASE_SPEC.leg,
+      thigh: 0.4,
+      shin: 0.36,
+      hipRadius: 0.14,
+      kneeRadius: 0.11,
+      ankleRadius: 0.09,
+      footWidth: 0.13,
+    },
+  },
+  fanged: {
+    ...BASE_SPEC,
+    coat: 0xe6e2d6,
+    underTint: 0x8a7b66,
+    skin: 0x3b3236,
+    faceColor: 0x4b3d40,
+    shag: 1.11,
+    coatLength: 0.1,
+    faceWidth: 0.7,
+    muzzleFur: true,
+    fangs: 0.11,
+    horns: 'stub',
+    skull: { forward: 0.3, height: 0.3, lateral: 0.3 },
+    muzzleOut: 0.4,
+    hunch: 0.26,
+  },
+};
+
+// ── Colour and finish, shared by all four ────────────────────────────────────
+
+/** The inside of the mouth: darker and WARMER than any bare skin on him. */
+export const YETI_MAW_COLOR = 0x241416;
+/** The nose pad, on every variant. Wet black, not the face's slate. */
+export const YETI_NOSE_COLOR = 0x1c1a1c;
+/** The eye's own dark shell, so it is a socket and not a floating dot. */
+export const YETI_EYE_COLOR = 0x0c0e12;
+/**
+ * A cold glint, and the only pale thing on the face.
+ *
+ * It is a SEPARATE bead in front of the eye rather than an emissive on it, which
+ * is what makes an eye read as wet: a catchlight is a reflection of the sky at
+ * one point on a ball, and an eye that glows all over is a lamp. It takes the
+ * ivory material, so it costs no draw call of its own.
+ */
+export const YETI_GLINT_COLOR = 0xcfe6f5;
+/**
+ * A trace of emission under the eye — dim, and not illumination. A white animal
+ * against white snow is a silhouette with nothing to fix the eye on, and this is
+ * what stops the socket going pure black under the brow ridge.
+ */
+export const YETI_EYE_EMISSIVE = 0x16283a;
+/** Old ivory: fangs, claws and the glint. Weathered bone, not a dentist's white. */
+export const YETI_IVORY_COLOR = 0xf2ead8;
+/** Weathered keratin. Warm, where the bare skin is cold — see the ram's horns. */
+export const YETI_HORN_COLOR = 0x6b5c4b;
+/** The ibex's are older and darker; the fanged one's stubs darker still. */
+export const YETI_IBEX_HORN_COLOR = 0x54473a;
+export const YETI_STUB_HORN_COLOR = 0x3c332c;
+
+/**
+ * SKIN DETAIL. Same fields as the other two anatomies and the same inward-only
+ * rule: the carve may never push a vertex outward, or YETI_TOTAL_HEIGHT and the
+ * width below stop being bounds. (The fur SHELLS do stand outward — they are
+ * geometry, not a carve, and the solver counts them.)
+ *
+ * STATED AS FRACTIONS OF HIS HEIGHT rather than as lengths, because that is the
+ * only comparison that was ever meant: an absolute depth says nothing across
+ * animals of different sizes, and it is what let a rescale silently coarsen this
+ * coat once already. 1.7% of his height at 14.4 cycles across it is the same
+ * surface the 2026-08-24 pass landed, restated so it cannot drift.
+ */
+const FUR_WRINKLE_DEPTH_OF_HEIGHT = 0.01744;
+const SKIN_WRINKLE_DEPTH_OF_HEIGHT = 0.00581;
+const WRINKLE_CYCLES_PER_HEIGHT = 17.888;
+const SHADE_CYCLES_PER_HEIGHT = 6.192;
+/**
+ * Fur tiles down his standing height. Times the FUR_STRAND_COUNT strands a tile
+ * carries, that is about a hundred and eighty strands from sole to crown — the
+ * count that reads as fur at the distance he is actually seen from.
+ */
+const FUR_TILES_PER_HEIGHT = 6.88;
+
+export const YETI_FUR_WRINKLE_DEPTH = FUR_WRINKLE_DEPTH_OF_HEIGHT * YETI_TOTAL_HEIGHT;
+export const YETI_SKIN_WRINKLE_DEPTH = SKIN_WRINKLE_DEPTH_OF_HEIGHT * YETI_TOTAL_HEIGHT;
+export const YETI_WRINKLE_FREQUENCY = WRINKLE_CYCLES_PER_HEIGHT / YETI_TOTAL_HEIGHT;
+export const YETI_SHADE_FREQUENCY = SHADE_CYCLES_PER_HEIGHT / YETI_TOTAL_HEIGHT;
+export const YETI_FUR_TEXTURE_FREQUENCY = FUR_TILES_PER_HEIGHT / YETI_TOTAL_HEIGHT;
+/** ±22%, the largest of the three creatures: a white mass in sunlight has no
+ *  contrast of its own, and this is what stops him reading as a paper cut-out. */
+export const YETI_SHADE_VARIATION = 0.22;
+/**
+ * How much finer a SHELL's strands are than the shade tile's, as a whole number
+ * of them per strand.
+ *
+ * The shade tile is painted on a lit surface and is read as texture; a shell is
+ * read as SHAPE, one tuft at a time against the sky and against the bare face
+ * plate — and at the shade tile's own pitch those tufts are wide enough to look
+ * like scratches drawn across the mask rather than like hair over a brow. Three
+ * to one, an integer, so a shell's partings still fall on the tile's every third
+ * strand instead of beating against them.
+ */
+export const YETI_SHELL_STRAND_FACTOR = 3;
+
+/**
+ * How dark the innermost shell is tinted towards the variant's under-tint, and
+ * how that fades outward. The bottom of a pile is in its own shadow; the tips
+ * are in the sun.
+ */
+export const YETI_SHELL_UNDERTINT_STRENGTH = 0.35;
+
+// ── The horns ────────────────────────────────────────────────────────────────
+//
+// Every horn is a path plus a root and tip radius, stated in SKULL RADII so it
+// grows with the head it is on rather than being a prop of fixed size that fits
+// one of the four. All three leave a boss on the skull (a mass merged into the
+// head, in `yetiParts`) and root INSIDE it: a tube whose opening is visible is
+// what an inserted prop looks like, which is the note the owner gave the last
+// pair of horns.
+
+/** Root and tip radius of a horn, in skull radii. */
+const HORN_ROOT_IN_SKULL = 0.26;
+const IBEX_HORN_ROOT_IN_SKULL = 0.22;
+const STUB_HORN_ROOT_IN_SKULL = 0.2;
+const HORN_TIP_RADIUS = 0.012;
+const IBEX_HORN_TIP_RADIUS = 0.01;
+
+function point(forward: number, height: number, lateral: number): YetiPoint {
+  return { forward, height, lateral };
+}
+
+/**
+ * THE RAM'S CURL: out, up, back, down and forward again, ending beside the
+ * cheek.
+ *
+ * SIZED TO THE SKULL, which is the whole reason it is written as a factor: the
+ * owner rejected a first version whose tips reached the shoulders. A curl scaled
+ * by the head can only ever end beside the head — the lowest point on the path
+ * is stated at the boss's own height minus a fifth of a skull, so the tip is
+ * level with the cheek whatever size the head is.
+ */
+function ramHornPath(skull: YetiSkull, side: number): readonly YetiPoint[] {
+  const curl = skull.lateral;
+  const lateral0 = side * skull.lateral * 0.5;
+  const height0 = skull.height * 0.55;
+  const forward0 = -skull.forward * 0.1;
+  return [
+    point(forward0, height0 - 0.02 * curl, lateral0),
+    point(forward0 - 0.33 * curl, height0 + 0.33 * curl, lateral0 + side * 0.19 * curl),
+    point(forward0 - 0.7 * curl, height0 + 0.15 * curl, lateral0 + side * 0.52 * curl),
+    point(forward0 - 0.52 * curl, height0 - 0.37 * curl, lateral0 + side * 0.74 * curl),
+    point(forward0 + 0.07 * curl, height0 - 0.56 * curl, lateral0 + side * 0.74 * curl),
+    point(forward0 + 0.44 * curl, height0 - 0.3 * curl, lateral0 + side * 0.81 * curl),
+  ];
+}
+
+/** THE IBEX'S SWEEP: up and back, and it is the top of that animal. */
+function ibexHornPath(skull: YetiSkull, side: number): readonly YetiPoint[] {
+  const lateral0 = side * skull.lateral * 0.4;
+  const height0 = skull.height * 0.7;
+  const forward0 = -skull.forward * 0.05;
+  return [
+    point(forward0, height0 - 0.04, lateral0),
+    point(forward0 - 0.12, height0 + 0.25, lateral0 + side * 0.05),
+    point(forward0 - 0.35, height0 + 0.5, lateral0 + side * 0.12),
+    point(forward0 - 0.6, height0 + 0.62, lateral0 + side * 0.2),
+  ];
+}
+
+/** THE FANGED ONE'S STUBS: two short cones, well under the crown. */
+function stubHornPath(skull: YetiSkull, side: number): readonly YetiPoint[] {
+  const lateral0 = side * skull.lateral * 0.5;
+  const height0 = skull.height * 0.62;
+  return [
+    point(0, height0 - 0.04, lateral0),
+    point(-0.04, height0 + 0.14, lateral0 + side * 0.06),
+    point(-0.1, height0 + 0.24, lateral0 + side * 0.12),
+  ];
+}
+
+/** The colour of a style's horn, and how thick it leaves the boss. */
+function hornFinish(style: YetiHornStyle): { color: number; rootInSkull: number; tip: number } {
+  if (style === 'ibex') {
+    return { color: YETI_IBEX_HORN_COLOR, rootInSkull: IBEX_HORN_ROOT_IN_SKULL, tip: IBEX_HORN_TIP_RADIUS };
+  }
+  if (style === 'stub') {
+    return { color: YETI_STUB_HORN_COLOR, rootInSkull: STUB_HORN_ROOT_IN_SKULL, tip: HORN_TIP_RADIUS };
+  }
+  return { color: YETI_HORN_COLOR, rootInSkull: HORN_ROOT_IN_SKULL, tip: HORN_TIP_RADIUS };
+}
+
+/** Which of the three the anatomy calls for; 'none' emits nothing. */
+export function yetiHornColor(style: YetiHornStyle): number {
+  return hornFinish(style).color;
+}
+
+// ── Building a body out of a spec ────────────────────────────────────────────
+
+/** The two sides, in a fixed order. +1 is the model's left. */
+const SIDES = [1, -1] as const;
+
+/**
+ * How the brow, the face plate, the muzzle and the jaw sit on a skull, as
+ * fractions of its radii.
+ *
+ * THIS IS THE FACE THE OWNER ASKED FOR, 2026-08-26: "one head mass, a brow
+ * ridge, a bare-skin face plate recessed under the brow, a muzzle, nose pad, a
+ * thin mouth line, jaw; eyes deep under the brow with a small glint." The
+ * version it replaces was eight separate ellipsoids poking through the fur —
+ * cheeks, ears and a mouth disc among them — and the reason that reads as a pile
+ * of balls rather than as a face is that none of them was RECESSED: a face is a
+ * plate set back under a brow, and everything on it is measured from that plate.
+ */
+const BROW_HEIGHT_IN_SKULL = 0.25;
+const BROW_FORWARD_IN_SKULL = 0.72;
+const BROW_RADII_IN_SKULL = { forward: 0.3, height: 0.22, lateral: 0.85 };
+/**
+ * THE PLATE STANDS PROUD OF THE COAT, for the reason the eyes do: a bare face is
+ * a place where the fur STOPS, and a plate set under the shells is a dark patch
+ * with white strands lying across it — which rendered as scratches on the mask.
+ * Far enough forward that its own surface clears the outermost shell, and still
+ * behind the brow ridge above it.
+ */
+const FACE_PLATE_FORWARD_IN_SKULL = 0.8;
+const FACE_PLATE_HEIGHT_IN_SKULL = -0.12;
+const FACE_PLATE_DEPTH_IN_SKULL = 0.28;
+const FACE_PLATE_HEIGHT_RADIUS_IN_SKULL = 0.62;
+const MUZZLE_HEIGHT_IN_SKULL = -0.28;
+const MUZZLE_RADII_IN_SKULL = { forward: 0.42, height: 0.36, lateral: 0.5 };
+const NOSE_RADII_IN_SKULL = { forward: 0.13, height: 0.14, lateral: 0.26 };
+const MOUTH_RADII_IN_SKULL = { forward: 0.16, height: 0.045, lateral: 0.36 };
+const JAW_RADII_IN_SKULL = { forward: 0.36, height: 0.24, lateral: 0.42 };
+const EYE_RADII_IN_SKULL = { forward: 0.1, height: 0.11, lateral: 0.12 };
+const EYE_LATERAL_IN_SKULL = 0.34;
+const EYE_HEIGHT_IN_SKULL = 0.06;
+/**
+ * The catchlight: SMALL, and off-centre. A bead the size of the pupil in the
+ * middle of the eye is a cartoon eye; a reflection of the sky sits high and
+ * outboard on the ball, which is where a viewer reads "wet" from.
+ */
+const GLINT_RADIUS_IN_SKULL = 0.028;
+const GLINT_HEIGHT_IN_SKULL = 0.13;
+const GLINT_LATERAL_IN_SKULL = 0.38;
+/**
+ * How far in front of the face plate an eye and its glint sit, in skull depths.
+ *
+ * THE EYE HAS TO CLEAR THE COAT, not just the skin. The shells stand the fur off
+ * the skull by up to `coatLength`, so an eye set flush with the plate — where
+ * the first pass put it — is looked at THROUGH three layers of alpha-tested
+ * hair, and what renders is a dark patch with white strands lying across it. It
+ * still has to sit UNDER the brow, whose own ridge reaches further forward
+ * again, which is what keeps it a deep-set eye rather than a bulging one.
+ */
+const EYE_FORWARD_IN_SKULL = 0.24;
+const GLINT_FORWARD_IN_SKULL = 0.32;
+/** The crest, and the mane-less shoulder saddle, in their own terms. */
+const CREST_HEIGHT_IN_SKULL = 0.7;
+const CREST_RADII_IN_SKULL = { forward: 0.6, lateral: 0.55 };
+/**
+ * THE SADDLE, and why it is broad and shallow rather than a mass of its own.
+ *
+ * It is the silverback's second read at a hundred cells: a band of pale hair
+ * ACROSS the back, which is what a silverback's saddle is. Stated deep enough to
+ * cover the spine and wide enough to reach both shoulder blades, and shallow in
+ * the fore-aft axis so it sits ON the back instead of bulging out of the flank —
+ * which is what the first pass rendered, a white egg on his side.
+ */
+const SADDLE_LENGTH_OF_TORSO = 0.34;
+const SADDLE_DROP_OF_TORSO = 0.1;
+const SADDLE_WIDTH_OF_CHEST = 1.02;
+const SADDLE_DEPTH_OF_CHEST = 0.36;
+/**
+ * How far BEHIND the chest's own centre the saddle sits, in chest depths.
+ *
+ * Stated against the chest and not against the shoulder, which is where the
+ * first pass measured it from: on a deep hunch the shoulder is a long way
+ * forward of the back, so the saddle ended up buried inside the chest with only
+ * a corner of it showing over the flank — a white egg on his side. At 0.85 its
+ * centre is just inside the chest's back surface and the mass stands proud of
+ * the spine, which is where a silverback's saddle is.
+ */
+const SADDLE_BEHIND_CHEST = 0.85;
+const SADDLE_COAT_LENGTH = 0.7;
+
+/** How far in front of the muzzle a fang hangs, in skull depths. */
+const FANG_FORWARD_IN_SKULL = 0.34;
+
+/** How long the coat is on the head and on the arms, against the body's. */
+const HEAD_COAT_LENGTH = 0.8;
+const ARM_COAT_LENGTH = 1.3;
+const CREST_COAT_LENGTH = 1.1;
+const MUZZLE_COAT_LENGTH = 0.5;
+const JAW_COAT_LENGTH = 0.9;
+const BROW_COAT_LENGTH = 1.3;
+
+/** Digits: how they fan, how far they curl, and how big a claw-less tip is. */
+const FINGER_SPREAD_IN_WRIST = 0.55;
+const FINGER_ROOT_RADIUS_IN_WRIST = 0.24;
+const FINGER_TIP_RADIUS_IN_WRIST = 0.14;
+const FINGER_CURL_WALKING = 1;
+const FINGER_CURL_HANGING = 0.45;
+const THUMB_RADIUS_IN_WRIST = 0.25;
+const TOE_COUNT = 5;
+const TOE_SPREAD_IN_FOOT = 0.42;
+const TOE_RADII_IN_FOOT = { forward: 0.14, height: 0.36, lateral: 0.2 };
+/** A joint ball is a hair inside its limb's end ring, so no bend can open. */
+const JOINT_BALL_IN_LIMB = 0.98;
+
+function scalePoint(p: YetiPoint, k: number): YetiPoint {
+  return { forward: p.forward * k, height: p.height * k, lateral: p.lateral * k };
+}
+
+/**
+ * THE ANIMAL, as a list of parts. One pass, in the order a body is built: trunk,
+ * head, face, arms, legs.
+ *
+ * Everything is in the spec's own units and every limb part is already in ITS
+ * JOINT'S space, so ./yeti.ts can hand a part straight to a joint's mesh and the
+ * solver can put it back in rig space by adding one offset.
+ */
+export function yetiParts(spec: YetiVariantSpec): YetiBody {
+  const parts: YetiPart[] = [];
+  const coatShells = (length: number): YetiShells => ({
+    length: spec.coatLength * length,
+    layers: spec.shellLayers,
+  });
+
+  const torsoLength = spec.shoulderHeight - spec.hipHeight;
+  const shoulderForward = Math.sin(spec.hunch) * torsoLength;
+  const shoulderHeight = spec.hipHeight + Math.cos(spec.hunch) * torsoLength;
+
+  const coat = (
+    joint: YetiJoint,
+    side: number,
+    center: YetiPoint,
+    radii: YetiPoint,
+    size: YetiPartSize,
+    options: { surface?: YetiSurface; coatLength?: number; tilt?: number } = {},
+  ): void => {
+    parts.push({
+      kind: 'mass',
+      joint,
+      side,
+      surface: options.surface ?? 'coat',
+      size,
+      shells: coatShells(options.coatLength ?? 1),
+      center,
+      radii,
+      tilt: options.tilt ?? 0,
+    });
+  };
+
+  const bare = (
+    joint: YetiJoint,
+    side: number,
+    surface: YetiSurface,
+    center: YetiPoint,
+    radii: YetiPoint,
+    size: YetiPartSize,
+  ): void => {
+    parts.push({ kind: 'mass', joint, side, surface, size, shells: null, center, radii, tilt: 0 });
+  };
+
+  /** A furred segment plus the two joint balls that close its ends. */
+  const limb = (
+    joint: YetiJoint,
+    side: number,
+    from: YetiPoint,
+    to: YetiPoint,
+    rootRadius: number,
+    tipRadius: number,
+    coatLength: number,
+  ): void => {
+    parts.push({
+      kind: 'limb',
+      joint,
+      side,
+      surface: 'coat',
+      size: 'limb',
+      shells: coatShells(coatLength),
+      from,
+      to,
+      rootRadius,
+      tipRadius,
+    });
+    for (const [at, radius] of [
+      [from, rootRadius],
+      [to, tipRadius],
+    ] as const) {
+      parts.push({
+        kind: 'mass',
+        joint,
+        side,
+        surface: 'coat',
+        size: 'joint',
+        shells: null,
+        center: at,
+        radii: {
+          forward: radius * JOINT_BALL_IN_LIMB,
+          height: radius * JOINT_BALL_IN_LIMB,
+          lateral: radius * JOINT_BALL_IN_LIMB,
+        },
+        tilt: 0,
+      });
+    }
+  };
+
+  // ── The trunk ──────────────────────────────────────────────────────────────
+  coat('upper', 0, point(0, spec.hipHeight, 0), spec.hipRadii, 'trunk');
+  const midHeight = spec.hipHeight + torsoLength * 0.45;
+  const midForward = Math.sin(spec.hunch) * torsoLength * 0.45;
+  coat(
+    'upper',
+    0,
+    point(midForward + spec.bellyOut, midHeight, 0),
+    { ...spec.bellyRadii, height: torsoLength * 0.55 },
+    'trunk',
+  );
+  coat(
+    'upper',
+    0,
+    point(
+      shoulderForward + spec.chestOut,
+      shoulderHeight - spec.chestRadii.height * 0.35,
+      0,
+    ),
+    spec.chestRadii,
+    'trunk',
+    { tilt: spec.hunch },
+  );
+  for (const side of SIDES) {
+    coat(
+      'upper',
+      side,
+      point(shoulderForward, shoulderHeight, side * spec.shoulderHalfSpan),
+      {
+        forward: spec.shoulderRadius,
+        height: spec.shoulderRadius * 0.9,
+        lateral: spec.shoulderRadius,
+      },
+      'trunk',
+    );
+  }
+  if (spec.saddle !== 0) {
+    coat(
+      'upper',
+      0,
+      point(
+        shoulderForward + spec.chestOut - spec.chestRadii.forward * SADDLE_BEHIND_CHEST,
+        shoulderHeight - torsoLength * SADDLE_DROP_OF_TORSO,
+        0,
+      ),
+      {
+        forward: spec.chestRadii.forward * SADDLE_DEPTH_OF_CHEST,
+        height: torsoLength * SADDLE_LENGTH_OF_TORSO,
+        lateral: spec.chestRadii.lateral * SADDLE_WIDTH_OF_CHEST,
+      },
+      'trunk',
+      { surface: 'saddle', coatLength: SADDLE_COAT_LENGTH },
+    );
+  }
+
+  // ── Neck and head ──────────────────────────────────────────────────────────
+  //
+  // THE NECK IS THE OWNER'S FIRST NOTE (2026-08-26): the head centre used to sit
+  // BELOW the shoulder mass, which is not a low-slung head, it is no neck at
+  // all. It sits on a short thick column ahead of the shoulders now, and
+  // `headDrop` is what carries it forward rather than sinking it.
+  const skull = spec.skull;
+  const headHeight =
+    shoulderHeight + spec.neckLength * Math.cos(spec.hunch + spec.headDrop);
+  const headForward =
+    shoulderForward + spec.neckLength * Math.sin(spec.hunch + spec.headDrop) + spec.headForward;
+  limb(
+    'head',
+    0,
+    point(shoulderForward, shoulderHeight, 0),
+    point(headForward, headHeight, 0),
+    spec.neckRadius,
+    spec.neckRadius * 0.9,
+    1,
+  );
+  coat('head', 0, point(headForward, headHeight, 0), skull, 'head', {
+    coatLength: HEAD_COAT_LENGTH,
+  });
+  if (spec.crest !== 0) {
+    coat(
+      'head',
+      0,
+      point(
+        headForward - skull.forward * 0.15,
+        headHeight + skull.height * CREST_HEIGHT_IN_SKULL,
+        0,
+      ),
+      {
+        forward: skull.forward * CREST_RADII_IN_SKULL.forward,
+        height: skull.height * spec.crest,
+        lateral: skull.lateral * CREST_RADII_IN_SKULL.lateral,
+      },
+      'head',
+      { coatLength: CREST_COAT_LENGTH },
+    );
+  }
+  coat(
+    'head',
+    0,
+    point(
+      headForward + skull.forward * BROW_FORWARD_IN_SKULL,
+      headHeight + skull.height * BROW_HEIGHT_IN_SKULL,
+      0,
+    ),
+    {
+      forward: skull.forward * BROW_RADII_IN_SKULL.forward,
+      height: skull.height * BROW_RADII_IN_SKULL.height,
+      lateral: skull.lateral * BROW_RADII_IN_SKULL.lateral,
+    },
+    'feature',
+    { coatLength: BROW_COAT_LENGTH },
+  );
+
+  // ── The face, all of it measured from the plate ────────────────────────────
+  const faceForward = headForward + skull.forward * 0.78;
+  bare(
+    'head',
+    0,
+    'face',
+    point(
+      headForward + skull.forward * FACE_PLATE_FORWARD_IN_SKULL,
+      headHeight + skull.height * FACE_PLATE_HEIGHT_IN_SKULL,
+      0,
+    ),
+    {
+      forward: skull.forward * FACE_PLATE_DEPTH_IN_SKULL,
+      height: skull.height * FACE_PLATE_HEIGHT_RADIUS_IN_SKULL,
+      lateral: skull.lateral * spec.faceWidth,
+    },
+    'feature',
+  );
+
+  const muzzleHeight = headHeight + skull.height * MUZZLE_HEIGHT_IN_SKULL;
+  const muzzleForward = faceForward + skull.forward * spec.muzzleOut;
+  const muzzleRadii = {
+    forward: skull.forward * MUZZLE_RADII_IN_SKULL.forward,
+    height: skull.height * MUZZLE_RADII_IN_SKULL.height,
+    lateral: skull.lateral * MUZZLE_RADII_IN_SKULL.lateral,
+  };
+  const muzzleCenter = point(muzzleForward - skull.forward * 0.1, muzzleHeight, 0);
+  if (spec.muzzleFur) {
+    coat('head', 0, muzzleCenter, muzzleRadii, 'feature', { coatLength: MUZZLE_COAT_LENGTH });
+  } else {
+    bare('head', 0, 'face', muzzleCenter, muzzleRadii, 'feature');
+  }
+  bare(
+    'head',
+    0,
+    'nose',
+    point(muzzleForward + skull.forward * 0.3, muzzleHeight + skull.height * 0.1, 0),
+    {
+      forward: skull.forward * NOSE_RADII_IN_SKULL.forward,
+      height: skull.height * NOSE_RADII_IN_SKULL.height,
+      lateral: skull.lateral * NOSE_RADII_IN_SKULL.lateral,
+    },
+    'feature',
+  );
+  bare(
+    'head',
+    0,
+    'maw',
+    point(muzzleForward + skull.forward * 0.2, muzzleHeight - skull.height * 0.2, 0),
+    {
+      forward: skull.forward * MOUTH_RADII_IN_SKULL.forward,
+      height: skull.height * MOUTH_RADII_IN_SKULL.height,
+      lateral: skull.lateral * MOUTH_RADII_IN_SKULL.lateral,
+    },
+    'feature',
+  );
+  const jawCenter = point(
+    muzzleForward - skull.forward * 0.22,
+    muzzleHeight - skull.height * 0.36,
+    0,
+  );
+  const jawRadii = {
+    forward: skull.forward * JAW_RADII_IN_SKULL.forward,
+    height: skull.height * JAW_RADII_IN_SKULL.height,
+    lateral: skull.lateral * JAW_RADII_IN_SKULL.lateral,
+  };
+  if (spec.muzzleFur) {
+    coat('head', 0, jawCenter, jawRadii, 'feature', { coatLength: JAW_COAT_LENGTH });
+  } else {
+    bare('head', 0, 'face', jawCenter, jawRadii, 'feature');
+  }
+
+  for (const side of SIDES) {
+    bare(
+      'head',
+      side,
+      'eye',
+      point(
+        faceForward + skull.forward * EYE_FORWARD_IN_SKULL,
+        headHeight + skull.height * EYE_HEIGHT_IN_SKULL,
+        side * skull.lateral * EYE_LATERAL_IN_SKULL,
+      ),
+      {
+        forward: skull.forward * EYE_RADII_IN_SKULL.forward,
+        height: skull.height * EYE_RADII_IN_SKULL.height,
+        lateral: skull.lateral * EYE_RADII_IN_SKULL.lateral,
+      },
+      'feature',
+    );
+    const glint = skull.lateral * GLINT_RADIUS_IN_SKULL;
+    bare(
+      'head',
+      side,
+      'glint',
+      point(
+        faceForward + skull.forward * GLINT_FORWARD_IN_SKULL,
+        headHeight + skull.height * GLINT_HEIGHT_IN_SKULL,
+        side * skull.lateral * GLINT_LATERAL_IN_SKULL,
+      ),
+      point(glint, glint, glint),
+      'digit',
+    );
+  }
+
+  if (spec.fangs !== 0) {
+    for (const side of SIDES) {
+      const lateral = side * skull.lateral * 0.22;
+      // FORWARD OF THE LIP, not level with it. The jaw below is furred on the
+      // two variants that have fangs and its shells stand a tenth of a skull
+      // proud of it, so a canine rooted flush with the muzzle is a canine inside
+      // a beard: the first pass had exactly that, and neither fanged variant
+      // showed a tooth.
+      const forward = muzzleForward + skull.forward * FANG_FORWARD_IN_SKULL;
+      const height = muzzleHeight - skull.height * 0.16;
+      parts.push({
+        kind: 'sweep',
+        joint: 'head',
+        side,
+        surface: 'ivory',
+        size: 'digit',
+        shells: null,
+        path: [
+          point(forward - 0.02, height + 0.02, lateral),
+          point(forward + 0.01, height - spec.fangs * 0.6, lateral * 1.05),
+          point(forward + 0.02, height - spec.fangs, lateral * 1.1),
+        ],
+        rootRadius: skull.lateral * 0.09,
+        tipRadius: 0.004,
+        taperPower: 1,
+      });
+    }
+  }
+
+  if (spec.horns !== 'none') {
+    const finish = hornFinish(spec.horns);
+    for (const side of SIDES) {
+      const path =
+        spec.horns === 'ram'
+          ? ramHornPath(skull, side)
+          : spec.horns === 'ibex'
+            ? ibexHornPath(skull, side)
+            : stubHornPath(skull, side);
+      // THE BOSS: a fur-covered swelling of the skull that the horn is the
+      // continuation of, merged into the head's own surface. Without it a horn
+      // is a tube pushed through a ball, which is what an inserted prop is.
+      const root = path[0]!;
+      coat(
+        'head',
+        side,
+        point(headForward + root.forward, headHeight + root.height, root.lateral),
+        {
+          forward: skull.forward * 0.22,
+          height: skull.height * 0.16,
+          lateral: skull.lateral * 0.24,
+        },
+        'feature',
+      );
+      parts.push({
+        kind: 'sweep',
+        joint: 'head',
+        side,
+        surface: 'horn',
+        size: 'horn',
+        shells: null,
+        path: path.map((p) =>
+          point(headForward + p.forward, headHeight + p.height, p.lateral),
+        ),
+        rootRadius: skull.lateral * finish.rootInSkull,
+        tipRadius: finish.tip,
+        taperPower: spec.horns === 'ram' ? 0.8 : 0.9,
+      });
+    }
+  }
+
+  // ── The arms ───────────────────────────────────────────────────────────────
+  //
+  // upper arm → elbow → forearm, with a real bend at the elbow: the owner's
+  // third note was that these were straight tubes.
+  const arm = spec.arm;
+  const armJoint = point(
+    shoulderForward,
+    shoulderHeight - spec.shoulderRadius * 0.15,
+    spec.shoulderHalfSpan,
+  );
+  for (const side of SIDES) {
+    const shoulder = point(0, 0, 0);
+    const elbow = point(
+      arm.upper * Math.sin(arm.upperForward),
+      -arm.upper * Math.cos(arm.upperForward),
+      side * arm.elbowFlare,
+    );
+    let wristHeight = elbow.height - arm.fore * Math.cos(arm.foreForward);
+    let wristForward = elbow.forward + arm.fore * Math.sin(arm.foreForward);
+    if (spec.knuckle) {
+      // KNUCKLE-WALKING: the fist rests on the ground, so the forearm's forward
+      // reach is whatever a right triangle of the forearm's own length leaves
+      // once the drop to ground level is taken out. Posed by eye, this is the
+      // pose that floats a hand or drives it through the snow the moment any
+      // other number in the spec moves.
+      const groundHeight = arm.wristRadius * 1.1 - armJoint.height;
+      const drop = Math.min(arm.fore * 0.98, elbow.height - groundHeight);
+      wristHeight = elbow.height - drop;
+      wristForward = elbow.forward + Math.sqrt(Math.max(0, arm.fore * arm.fore - drop * drop));
+    }
+    const wrist = point(wristForward, wristHeight, elbow.lateral + side * arm.wristFlare);
+
+    limb('arm', side, shoulder, elbow, arm.shoulderRadius, arm.elbowRadius, ARM_COAT_LENGTH);
+    limb('arm', side, elbow, wrist, arm.elbowRadius, arm.wristRadius, ARM_COAT_LENGTH);
+
+    // The hand: a bare palm, four fingers and a thumb. Rolled under into a fist
+    // on a knuckle-walker, hanging open otherwise.
+    const curl = spec.knuckle ? FINGER_CURL_WALKING : FINGER_CURL_HANGING;
+    bare(
+      'arm',
+      side,
+      'hide',
+      point(
+        wrist.forward + arm.wristRadius * 0.3,
+        wrist.height - arm.wristRadius * 0.6,
+        wrist.lateral,
+      ),
+      {
+        forward: arm.wristRadius * 1.5,
+        height: arm.wristRadius * 0.75,
+        lateral: arm.wristRadius * 1.25,
+      },
+      'limb',
+    );
+    const middle = (spec.fingers - 1) / 2;
+    for (let finger = 0; finger < spec.fingers; finger++) {
+      const lateral =
+        wrist.lateral + side * (finger - middle) * arm.wristRadius * FINGER_SPREAD_IN_WRIST;
+      const rootForward = wrist.forward + arm.wristRadius * 1.5;
+      const rootHeight = wrist.height - arm.wristRadius * 0.75;
+      parts.push({
+        kind: 'sweep',
+        joint: 'arm',
+        side,
+        surface: 'hide',
+        size: 'digit',
+        shells: null,
+        path: [
+          point(rootForward, rootHeight, lateral),
+          point(
+            rootForward + arm.wristRadius * 0.55 * (1 - curl * 0.6),
+            rootHeight - arm.wristRadius * 0.5 * curl,
+            lateral,
+          ),
+          point(
+            rootForward + arm.wristRadius * 0.75 * (1 - curl * 0.7),
+            rootHeight - arm.wristRadius * 1.05 * curl,
+            lateral,
+          ),
+        ],
+        rootRadius: arm.wristRadius * FINGER_ROOT_RADIUS_IN_WRIST,
+        tipRadius: arm.wristRadius * FINGER_TIP_RADIUS_IN_WRIST,
+        taperPower: 1,
+      });
+    }
+    const thumb = arm.wristRadius * THUMB_RADIUS_IN_WRIST;
+    bare(
+      'arm',
+      side,
+      'hide',
+      point(
+        wrist.forward + arm.wristRadius * 0.7,
+        wrist.height - arm.wristRadius * 0.5,
+        wrist.lateral + side * arm.wristRadius * 1.15,
+      ),
+      { forward: thumb * 2, height: thumb, lateral: thumb },
+      'digit',
+    );
+  }
+
+  // ── The legs ───────────────────────────────────────────────────────────────
+  //
+  // thigh → knee → shin, with the haunch mass that holds the leg into the hips,
+  // and a plantigrade foot whose sole is FLAT: it is the surface the client's
+  // placement maths puts on the ground.
+  const leg = spec.leg;
+  const legJoint = point(0, spec.hipHeight - spec.hipRadii.height * 0.15, spec.stanceHalfWidth);
+  for (const side of SIDES) {
+    const hip = point(0, 0, 0);
+    const knee = point(
+      leg.thigh * Math.sin(leg.thighForward),
+      -leg.thigh * Math.cos(leg.thighForward),
+      side * leg.kneeFlare,
+    );
+    const ankle = point(
+      knee.forward - leg.shin * Math.sin(leg.shinForward),
+      knee.height - leg.shin * Math.cos(leg.shinForward),
+      knee.lateral,
+    );
+    // The haunch, centred on the joint's own origin — which is the whole trick:
+    // a body centred on the pivot is unmoved by a rotation about it, so the
+    // limb's root ring is swallowed identically at every point of the stride.
+    coat(
+      'leg',
+      side,
+      point(0, -leg.thigh * 0.2, 0),
+      {
+        forward: leg.hipRadius * 1.5,
+        height: leg.thigh * 0.55,
+        lateral: leg.hipRadius * 1.45,
+      },
+      'trunk',
+    );
+    limb('leg', side, hip, knee, leg.hipRadius, leg.kneeRadius, 1);
+    limb('leg', side, knee, ankle, leg.kneeRadius, leg.ankleRadius, 1);
+
+    // In ANKLE space: the sole sits on the ground plane, so the foot's own
+    // height is measured from there rather than from the ankle.
+    const soleHeight = leg.footHeight / 2 - (legJoint.height + ankle.height);
+    bare(
+      'ankle',
+      side,
+      'hide',
+      point(leg.footLength * 0.28, soleHeight, 0),
+      {
+        forward: leg.footLength * 0.55,
+        height: leg.footHeight / 2,
+        lateral: leg.footWidth,
+      },
+      'limb',
+    );
+    const middleToe = (TOE_COUNT - 1) / 2;
+    for (let toe = 0; toe < TOE_COUNT; toe++) {
+      const spread = toe - middleToe;
+      bare(
+        'ankle',
+        side,
+        'hide',
+        point(
+          leg.footLength * 0.78 - Math.abs(spread) * leg.footLength * 0.06,
+          soleHeight - leg.footHeight / 2 + leg.footHeight * 0.38,
+          side * spread * leg.footWidth * TOE_SPREAD_IN_FOOT,
+        ),
+        {
+          forward: leg.footLength * TOE_RADII_IN_FOOT.forward,
+          height: leg.footHeight * TOE_RADII_IN_FOOT.height,
+          lateral: leg.footWidth * TOE_RADII_IN_FOOT.lateral,
+        },
+        'digit',
+      );
+    }
+    // Fur over the top of the foot, so the ankle is not a bare stump.
+    coat(
+      'ankle',
+      side,
+      point(
+        leg.footLength * 0.05,
+        soleHeight + leg.footHeight / 2 + leg.ankleRadius * 0.3,
+        0,
+      ),
+      {
+        forward: leg.ankleRadius * 1.3,
+        height: leg.ankleRadius * 0.6,
+        lateral: leg.ankleRadius * 1.1,
+      },
+      'limb',
+    );
+  }
+
+  // The ankle's rest offset inside the LEG's space. Stated for his left side,
+  // as the other two joints are; the builder and the solver mirror it.
+  const ankleJoint = point(
+    leg.thigh * Math.sin(leg.thighForward) - leg.shin * Math.sin(leg.shinForward),
+    -(leg.thigh * Math.cos(leg.thighForward) + leg.shin * Math.cos(leg.shinForward)),
+    leg.kneeFlare,
+  );
+
+  return { parts, joints: { leg: legJoint, ankle: ankleJoint, arm: armJoint } };
+}
+
+// ── The solver: how tall, and how wide ───────────────────────────────────────
+
+/**
+ * The lean, in radians — ~3°, one roll per gait cycle. It is here rather than in
+ * the gait block below because the WIDTH solve needs it: a roll about the
+ * forward axis is the one thing in the animation that can push a shoulder or a
+ * hand further from the axis than the rest pose does.
+ *
+ * IT IS APPLIED TO THE UPPER BODY ONLY — never to the whole model — which is a
+ * placement decision: rolling the rig would take the outer foot below the ground
+ * plane the client just placed him on, every cycle, forever.
+ */
+export const YETI_LEAN_RADIANS = 0.05;
+
+/**
+ * One STEP, as a fraction of the leg that takes it. Humans stride about half a
+ * leg; a heavy short-legged animal picking its way over snow takes less.
+ *
+ * THE STRIDE IS PER VARIANT because the four have different legs — a length
+ * shared between them would have one of them skating — but the ANGLE that comes
+ * out of it is not: half a step over a leg is this fraction over two, whatever
+ * the leg. That the swing falls out scale-free is the sign the derivation is the
+ * right way round.
+ */
+const STEP_OF_LEG_LENGTH = 0.39;
+
+/**
+ * Peak swing of a leg either side of vertical, in radians. DERIVED from the
+ * stride above: 11°.
+ *
+ * WHY THE ANIMATION PLAYS EVEN WHEN HE IS STANDING STILL. The wire carries no
+ * gait flag — deliberately, see protocol.ts — so this cycle runs off elapsed
+ * time whatever he is doing. At 11° that reads as an animal shifting its weight
+ * from foot to foot when stationary and as a walk when he is travelling, which
+ * is the honest best a gait with no gait signal can do. An amplitude tuned for a
+ * convincing WALK (25–30°, as a human's) would have made a stationary yeti look
+ * like he was marching on the spot.
+ */
+export const YETI_LEG_SWING_RADIANS = Math.asin(STEP_OF_LEG_LENGTH / 2);
+
+/**
+ * Arm swing, as a fraction of the leg's. Arms swing opposite the leg on the same
+ * side — that is what a contralateral gait is — and less far, because his are
+ * heavy and hang from a shoulder doing most of the work of holding him up.
+ */
+export const YETI_ARM_SWING_FRACTION = 0.7;
+export const YETI_ARM_SWING_RADIANS = YETI_LEG_SWING_RADIANS * YETI_ARM_SWING_FRACTION;
+
+/** A part's extreme in each axis, in its joint's space, shells included. */
+interface PartBound {
+  readonly topHeight: number;
+  readonly lateral: number;
+  /** How far fore or aft of its joint the part reaches — what a swing trades
+   *  for height, and therefore what the lean can then trade for width. */
+  readonly forwardExtent: number;
+}
+
+function boundOf(part: YetiPart): PartBound {
+  const grow = part.shells === null ? 1 : 1 + part.shells.length;
+  let topHeight = -Infinity;
+  let lateral = 0;
+  let forwardExtent = 0;
+  const consider = (at: YetiPoint, radius: YetiPoint): void => {
+    topHeight = Math.max(topHeight, at.height + radius.height);
+    lateral = Math.max(lateral, Math.abs(at.lateral) + radius.lateral);
+    forwardExtent = Math.max(forwardExtent, Math.abs(at.forward) + radius.forward);
+  };
+  if (part.kind === 'mass') {
+    // A tilt about the lateral axis mixes forward into height, and the exact
+    // extent of the turned ellipsoid is its SUPPORT in that direction — not the
+    // hypotenuse of the two radii, which is what the first pass used and which
+    // is wrong by enough to matter: on the deep-hunched silverback it made a
+    // tilted chest the tallest thing on the animal and shrank the whole body by
+    // 5% to keep a chest that is nowhere near his crown under the ceiling.
+    const height =
+      part.tilt === 0
+        ? part.radii.height
+        : Math.hypot(
+            part.radii.height * Math.cos(part.tilt),
+            part.radii.forward * Math.sin(part.tilt),
+          );
+    consider(part.center, scalePoint({ ...part.radii, height }, grow));
+  } else if (part.kind === 'limb') {
+    const root = part.rootRadius * grow;
+    const tip = part.tipRadius * grow;
+    consider(part.from, point(root, root, root));
+    consider(part.to, point(tip, tip, tip));
+  } else {
+    const radius = Math.max(part.rootRadius, part.tipRadius) * grow;
+    for (const at of part.path) consider(at, point(radius, radius, radius));
+  }
+  return { topHeight, lateral, forwardExtent };
+}
+
+/** Where a joint rests in RIG space — what a part's own bound is measured from. */
+function jointOrigin(body: YetiBody, part: YetiPart): YetiPoint {
+  if (part.joint === 'leg') {
+    return point(body.joints.leg.forward, body.joints.leg.height, part.side * body.joints.leg.lateral);
+  }
+  if (part.joint === 'ankle') {
+    return point(
+      body.joints.leg.forward + body.joints.ankle.forward,
+      body.joints.leg.height + body.joints.ankle.height,
+      part.side * (body.joints.leg.lateral + body.joints.ankle.lateral),
+    );
+  }
+  if (part.joint === 'arm') {
+    return point(body.joints.arm.forward, body.joints.arm.height, part.side * body.joints.arm.lateral);
+  }
+  return point(0, 0, 0);
+}
+
+/**
+ * The two bounds the rest of the codebase asks this file for, in the spec's own
+ * units: how high the animal reaches, and how far from its axis.
+ *
+ * THE HEIGHT is the rest pose's, because the only thing the gait does to it is
+ * the BOB, which lifts the whole animal off a ground plane rather than growing
+ * him.
+ *
+ * THE WIDTH IS A BOUND OVER EVERY POSE THE GAIT CAN TAKE, not the rest pose's
+ * width, and it is built out of the two rotations that exist:
+ *
+ *   * a SWING about the lateral axis, which trades a part's forward reach for
+ *     height (an arm swung forward is a hand held higher);
+ *   * the LEAN about the forward axis, which then trades that height for lateral
+ *     reach — the one motion on this animal that can put a hand outside the
+ *     square the server probed.
+ *
+ * Both are taken at their peaks at once, which the animation never actually does
+ * — the lean is a cosine and the swing a sine of the same wave, so they are a
+ * quarter cycle apart — making this a strict upper bound rather than a measured
+ * worst case. The LEGS are excluded from the lean for the reason
+ * YETI_LEAN_RADIANS gives: it is applied above the hips only.
+ */
+function solveBounds(body: YetiBody): { apex: number; reach: number } {
+  let apex = 0;
+  let reach = 0;
+  for (const part of body.parts) {
+    const bound = boundOf(part);
+    const origin = jointOrigin(body, part);
+    apex = Math.max(apex, origin.height + bound.topHeight);
+    const lateral = Math.abs(origin.lateral) + bound.lateral;
+    if (part.joint === 'leg' || part.joint === 'ankle') {
+      reach = Math.max(reach, lateral);
+      continue;
+    }
+    const swing = part.joint === 'arm' ? YETI_ARM_SWING_RADIANS : 0;
+    const swungTop =
+      origin.height +
+      bound.topHeight * Math.cos(swing) +
+      bound.forwardExtent * Math.sin(swing);
+    reach = Math.max(
+      reach,
+      lateral * Math.cos(YETI_LEAN_RADIANS) + swungTop * Math.sin(YETI_LEAN_RADIANS),
+    );
+  }
+  return { apex, reach };
+}
+
+// ── The gait, shared by all four ─────────────────────────────────────────────
+
+/**
+ * The server's amble speed, restated (server/kinds.ts,
+ * YETI_AMBLE_SPEED_CELLS_PER_SECOND) and pinned to it by a test — world units
+ * per second, where the server's copy is cells per second.
+ *
+ * WRITTEN OUT RATHER THAN DERIVED, unlike everything else in this block, and the
+ * pin is why: the two halves compare with `toBe`, and a product of his height
+ * and a rounded fraction lands a bit or two away from the literal over there. It
+ * works out at 6.5% of his height per second — he covers his own width in about
+ * eleven seconds, whichever body was rolled, which is the comparison that
+ * justified the number (owner decision, 2026-08-22: a speed is a LENGTH per
+ * second, so a smaller animal is a slower one).
+ */
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = 0.08110465116279071;
+
+/**
+ * Vertical bob, as a fraction of his height: one per STEP, twice per cycle.
+ *
+ * IT ONLY EVER LIFTS — the same inward-only discipline the carve keeps, at the
+ * other end of the model: the client puts his origin exactly on the ground, so a
+ * bob that went negative would sink his feet into the snow half of every step.
+ */
+const BOB_OF_HEIGHT = 0.00872;
+export const YETI_BOB_CELLS = BOB_OF_HEIGHT * YETI_TOTAL_HEIGHT;
+
+/**
+ * The head scans on its own unrelated clock, so the two motions never lock into
+ * a pattern a player can feel repeating. 0.09 Hz is an eleven-second sweep;
+ * ±0.14 rad (8°) is a look, not a search.
+ */
+export const YETI_HEAD_SCAN_HZ = 0.09;
+export const YETI_HEAD_SCAN_RADIANS = 0.14;
+
+// ── What one variant works out to, in world units ────────────────────────────
+
+/**
+ * Everything about one variant that is not a part: the scale that puts it on the
+ * owner's ceiling, the bounds that fall out of it, and the gait derived from its
+ * own legs.
+ */
+export interface YetiMetrics {
+  /** The factor from spec units to world units. SOLVED, never chosen. */
+  readonly scale: number;
+  /** Ground to the highest point of THIS variant — the ceiling, exactly. */
+  readonly totalHeight: number;
+  /** How far this body may reach from its own axis, in any pose. */
+  readonly reachFromAxis: number;
+  /** Twice the above: what the server steers as a footprint. */
+  readonly width: number;
+  /** Half-extent of the ground his FEET cover — what ./placement.ts samples. */
+  readonly footGroundHalfExtent: number;
+
+  readonly hipHeight: number;
+  readonly headCenterHeight: number;
+  /** The skull's largest semi-axis — what a head-shot is framed on. */
+  readonly headRadius: number;
+  readonly hipsWidth: number;
+  readonly legLength: number;
+  readonly handHeight: number;
+
+  /** Rest offsets of the animated joints, world units. */
+  readonly legJoint: YetiPoint;
+  readonly ankleHeight: number;
+  readonly armJoint: YetiPoint;
+
+  /** Ground covered by one full gait cycle (two steps). */
+  readonly strideCells: number;
+  /** Gait cycles per second: speed over stride, so his feet never skate. */
+  readonly ambleHz: number;
+  readonly legSwingRadians: number;
+  readonly armSwingRadians: number;
+}
+
+function metricsOf(spec: YetiVariantSpec): YetiMetrics {
+  const body = yetiParts(spec);
+  const { apex, reach } = solveBounds(body);
+  const scale = YETI_TOTAL_HEIGHT / apex;
+
+  const torsoLength = spec.shoulderHeight - spec.hipHeight;
+  const headHeight =
+    spec.hipHeight +
+    Math.cos(spec.hunch) * torsoLength +
+    spec.neckLength * Math.cos(spec.hunch + spec.headDrop);
+  // The ankle, in the leg joint's space: the shin's far end.
+  const ankleDrop =
+    spec.leg.thigh * Math.cos(spec.leg.thighForward) +
+    spec.leg.shin * Math.cos(spec.leg.shinForward);
+  const legLength = ankleDrop * scale;
+  const strideCells = 2 * STEP_OF_LEG_LENGTH * legLength;
+  // The hand, at rest: the wrist's drop below the shoulder joint.
+  const handDrop =
+    spec.arm.upper * Math.cos(spec.arm.upperForward) +
+    spec.arm.fore * Math.cos(spec.arm.foreForward);
+  const legJoint = scalePoint(body.joints.leg, scale);
+
+  return {
+    scale,
+    totalHeight: apex * scale,
+    reachFromAxis: reach * scale,
+    width: 2 * reach * scale,
+    footGroundHalfExtent: (spec.stanceHalfWidth + spec.leg.footWidth) * scale,
+    hipHeight: spec.hipHeight * scale,
+    headCenterHeight: headHeight * scale,
+    headRadius:
+      Math.max(spec.skull.forward, spec.skull.height, spec.skull.lateral) * scale,
+    hipsWidth: 2 * spec.hipRadii.lateral * scale,
+    legLength,
+    handHeight: (spec.shoulderHeight - spec.shoulderRadius * 0.15 - handDrop) * scale,
+    legJoint,
+    ankleHeight: legJoint.height - legLength,
+    armJoint: scalePoint(body.joints.arm, scale),
+    strideCells,
+    ambleHz: YETI_AMBLE_SPEED_CELLS_PER_SECOND / strideCells,
+    legSwingRadians: YETI_LEG_SWING_RADIANS,
+    armSwingRadians: YETI_ARM_SWING_RADIANS,
+  };
+}
+
+/** One solved body per variant, built once at module load. */
+export const YETI_VARIANT_METRICS: Readonly<Record<YetiVariant, YetiMetrics>> = {
+  silverback: metricsOf(YETI_VARIANT_SPECS.silverback),
+  ram: metricsOf(YETI_VARIANT_SPECS.ram),
+  ibex: metricsOf(YETI_VARIANT_SPECS.ibex),
+  fanged: metricsOf(YETI_VARIANT_SPECS.fanged),
+};
+
+/**
+ * The parts of one variant, IN WORLD UNITS — what ./yeti.ts builds. Solved once
+ * per variant at module load, from the same description the bounds came from.
+ */
+export function yetiWorldParts(variant: YetiVariant): YetiBody {
+  const body = yetiParts(YETI_VARIANT_SPECS[variant]);
+  const scale = YETI_VARIANT_METRICS[variant].scale;
+  const scaleRadii = (p: YetiPoint): YetiPoint => scalePoint(p, scale);
+  return {
+    parts: body.parts.map((part): YetiPart => {
+      if (part.kind === 'mass') {
+        return { ...part, center: scaleRadii(part.center), radii: scaleRadii(part.radii) };
+      }
+      if (part.kind === 'limb') {
+        return {
+          ...part,
+          from: scaleRadii(part.from),
+          to: scaleRadii(part.to),
+          rootRadius: part.rootRadius * scale,
+          tipRadius: part.tipRadius * scale,
+        };
+      }
+      return {
+        ...part,
+        path: part.path.map(scaleRadii),
+        rootRadius: part.rootRadius * scale,
+        tipRadius: part.tipRadius * scale,
+      };
+    }),
+    joints: {
+      leg: scaleRadii(body.joints.leg),
+      ankle: scaleRadii(body.joints.ankle),
+      arm: scaleRadii(body.joints.arm),
+    },
+  };
+}
+
+// ── The contract with the server ─────────────────────────────────────────────
+
+/**
+ * The widest extent of EACH variant, keyed by the name on the wire.
+ *
+ * DERIVED, not stated: it is the solver's answer over that variant's own parts,
+ * so a mass that moves changes this number without anybody remembering to.
  *
  * WHY ONE FOOTPRINT AND NOT FOUR ON THE WIRE. The server's footprint feeds the
- * steering look-ahead and the minimum lair size — both of which are decided
- * before and independently of which body was rolled — and a per-variant lair
- * requirement would mean a snowfield that can host a yeti only if the dice
- * agree. One conservative number (the widest) keeps every variant's steering
- * honest and every qualifying mountain habitable.
+ * steering look-ahead and the minimum lair size — both decided before and
+ * independently of which body was rolled — and a per-variant lair requirement
+ * would mean a snowfield that can host a yeti only if the dice agree. One
+ * conservative number (the widest) keeps every variant's steering honest and
+ * every qualifying mountain habitable.
  */
 export const YETI_VARIANT_WIDTH_CELLS: Readonly<Record<YetiVariant, number>> = {
-  silverback: YETI_WIDTH_CELLS,
-  ram: YETI_WIDTH_CELLS,
-  ibex: YETI_WIDTH_CELLS,
-  fanged: YETI_WIDTH_CELLS,
+  silverback: YETI_VARIANT_METRICS.silverback.width,
+  ram: YETI_VARIANT_METRICS.ram.width,
+  ibex: YETI_VARIANT_METRICS.ibex.width,
+  fanged: YETI_VARIANT_METRICS.fanged.width,
 };
 
 /**
  * The broadest variant there is — the number the SERVER's YETI_FOOTPRINT_CELLS
  * is pinned to.
  *
- * Derived with a max over the table rather than restated, so it cannot be left
- * behind when a Phase B model turns out wider than the placeholder: the pin
- * test then fails against the server's literal, which is exactly the moment
- * somebody must decide whether to widen the server's footprint or narrow the
- * model.
+ * A max over the table rather than a restatement, so it cannot be left behind
+ * when a model turns out wider than the one before it: the pin test then fails
+ * against the server's literal, which is exactly the moment somebody must decide
+ * whether to widen the server's footprint or narrow the model.
  */
 export const YETI_WIDEST_VARIANT_WIDTH_CELLS = Math.max(
-  ...Object.values(YETI_VARIANT_WIDTH_CELLS),
+  ...YETI_VARIANTS.map((variant) => YETI_VARIANT_WIDTH_CELLS[variant]),
 );
 
-// ── The stance: feet, legs, hips ─────────────────────────────────────────────
-
-/**
- * FEET: broad flat pads, and the only part of the model that touches the
- * ground.
- *
- * The centre height is exactly half the rise, so the SOLE sits exactly on the
- * origin plane — which is the plane the client places at the terrain height
- * under him. That relationship is the walker's equivalent of the two swimmers'
- * waterline bite, and it is why the feet are finished with the SMOOTH skin (no
- * carve): the stated extents of a carved surface are still bounds, but a dent in
- * the sole would lift the one surface the placement maths trusts to be flat.
- */
-export const YETI_FOOT_LENGTH = scaled(1.2);
-export const YETI_FOOT_RISE = scaled(0.42);
-export const YETI_FOOT_WIDTH = scaled(0.8);
-/** How far ahead of the ankle a foot's centre sits — he is a plantigrade. */
-export const YETI_FOOT_FORWARD = scaled(0.16);
-export const YETI_FOOT_CENTER_HEIGHT = YETI_FOOT_RISE / 2;
-
-/**
- * Lateral offset of a hip, an ankle and therefore a foot, from the axis.
- *
- * 0.62 — a wide stance for a body this heavy, and narrow enough that the two
- * feet do not touch (their half-widths are 0.4, so there are 0.44 cells of
- * daylight between them).
- */
-export const YETI_STANCE_HALF_WIDTH = scaled(0.62);
-
-/**
- * LEGS: short and thick, and the reason the whole animal reads as heavy. The hip
- * sits at 39% of his total height, where a human's is at 52%: short legs under a
- * deep chest is the proportion that says "built for cold and for climbing".
- */
-export const YETI_HIP_HEIGHT = scaled(2.45);
-export const YETI_ANKLE_HEIGHT = scaled(0.38);
-export const YETI_LEG_ROOT_RADIUS = scaled(0.52);
-export const YETI_LEG_ANKLE_RADIUS = scaled(0.34);
-/** The knee: a slight forward break, so a leg is a limb and not a post. */
-export const YETI_KNEE_HEIGHT = scaled(1.35);
-export const YETI_KNEE_FORWARD = scaled(0.18);
-/** Straight-line hip-to-ankle distance — what the gait's swing is derived from. */
-export const YETI_LEG_LENGTH = YETI_HIP_HEIGHT - YETI_ANKLE_HEIGHT;
-
-/**
- * HAUNCH: the thigh mass at the top of the leg, and the reason the leg is
- * attached to anything.
- *
- * OWNER, 2026-08-24: "fix the legs because they also do not bind correctly to
- * the body, the geometry is still open." He is describing a hole and there was
- * one. The leg is a swept tube whose root ring sits ON the hip joint, at
- * YETI_STANCE_HALF_WIDTH (0.62) from the axis with a radius of 0.52 — so its
- * outer edge is 1.14 from the axis while the HIPS ellipsoid only reaches 1.05.
- * A quarter of the ring stood outside the body with nothing behind it, and
- * because a tapered tube was capped at the tip and open at the root, what showed
- * through that quarter was the inside of the leg.
- *
- * A THIGH IS WIDER THAN A PELVIS, on an ape and on him, so the answer is not to
- * narrow the leg or widen the hips — it is the mass that is missing. The haunch
- * is an ellipsoid merged into the LEG's own surface and centred exactly on the
- * hip joint, which is the whole trick: a body centred on the pivot is unmoved by
- * a rotation about that pivot, so the root ring is swallowed identically at
- * every point of the stride rather than at the neutral pose only. It overlaps
- * the hips from z = -0.10 out to 1.05 — no gap can open between them — and its
- * top stays under the hips' own top, so it thickens the thigh without giving him
- * a second pair of shoulders.
- *
- * THE RADIUS IS SOLVED, not chosen: the ring it must contain has radius
- * YETI_LEG_ROOT_RADIUS, and the smallest half-extent here has to exceed that by
- * the fur carve (FULL_SIZE_FUR_WRINKLE_DEPTH, which pulls the surface inward,
- * toward the ring) plus slack for the tessellation falling inside the ideal
- * ellipsoid. See YETI_HAUNCH_CLEARANCE.
- */
-const YETI_HAUNCH_CLEARANCE = scaled(0.08);
-export const YETI_HAUNCH_RADIUS =
-  YETI_LEG_ROOT_RADIUS + scaled(FULL_SIZE_FUR_WRINKLE_DEPTH) + YETI_HAUNCH_CLEARANCE;
-/** Taller than it is wide: a haunch, not a ball bearing. The two horizontal
- *  extents are the solved minimum; the vertical one is free to be longer. */
-export const YETI_HAUNCH_LENGTH = 2 * YETI_HAUNCH_RADIUS;
-export const YETI_HAUNCH_WIDTH = 2 * YETI_HAUNCH_RADIUS;
-export const YETI_HAUNCH_RISE = scaled(1.72);
-
-/** HIPS: a mass of their own under the torso, so the waist is not a pinch. */
-export const YETI_HIPS_CENTER_HEIGHT = scaled(2.6);
-export const YETI_HIPS_LENGTH = scaled(1.9);
-export const YETI_HIPS_HEIGHT = scaled(1.5);
-export const YETI_HIPS_WIDTH = scaled(2.1);
-
-// ── The mass: torso, shoulders ───────────────────────────────────────────────
-
-/**
- * TORSO: a deep barrel, taller than it is long and longer than it is wide, so
- * the chest reads as a chest from the side AND from the front.
- */
-export const YETI_TORSO_CENTER_HEIGHT = scaled(3.85);
-export const YETI_TORSO_LENGTH = scaled(2.2);
-export const YETI_TORSO_HEIGHT = scaled(2.9);
-export const YETI_TORSO_WIDTH = scaled(2.5);
-export const YETI_TORSO_TOP = YETI_TORSO_CENTER_HEIGHT + YETI_TORSO_HEIGHT / 2;
-
-/**
- * BELLY: a low, forward swell hung under the front of the chest.
- *
- * A barrel torso and a hip mass with nothing between them gives him a waist he
- * should not have — the one place the old silhouette read as two balls stacked
- * rather than as one animal. This fills the front of that gap and only the
- * front: it is offset forward, so it deepens the CHEST LINE seen from the side
- * without widening him seen from the front, which is the axis the footprint
- * bound lives on.
- */
-export const YETI_BELLY_FORWARD = scaled(0.34);
-export const YETI_BELLY_HEIGHT = scaled(3.25);
-export const YETI_BELLY_LENGTH = scaled(2);
-export const YETI_BELLY_RISE = scaled(1.7);
-export const YETI_BELLY_WIDTH = scaled(2.2);
-
-/**
- * SHOULDERS: two masses set high and wide on the torso — the widest solid part
- * of him, and the whole reason the head reads as small.
- *
- * They are what an ape's trapezius does to a silhouette: the neck disappears,
- * the head sits BETWEEN the shoulders rather than above them, and the animal
- * looks like it could pull a tree over.
- */
-export const YETI_SHOULDER_HEIGHT = scaled(4.75);
-export const YETI_SHOULDER_HALF_SPAN = scaled(1.18);
-export const YETI_SHOULDER_LENGTH = scaled(1.5);
-export const YETI_SHOULDER_RISE = scaled(1.3);
-export const YETI_SHOULDER_WIDTH = scaled(1.5);
-
-// ── The head ─────────────────────────────────────────────────────────────────
-
-/**
- * HEAD: small for the body, carried low and forward between the shoulders. Its
- * top is the highest point on the model, which is what YETI_TOTAL_HEIGHT is.
- */
-export const YETI_HEAD_CENTER_HEIGHT = scaled(FULL_SIZE_HEAD_CENTER_HEIGHT);
-export const YETI_HEAD_LENGTH = scaled(1.6);
-export const YETI_HEAD_HEIGHT = scaled(FULL_SIZE_HEAD_HEIGHT);
-export const YETI_HEAD_WIDTH = scaled(1.45);
-export const YETI_HEAD_TOP = YETI_HEAD_CENTER_HEIGHT + YETI_HEAD_HEIGHT / 2;
-
-/** BROW: a heavy ridge over the eyes. Without it the face is a snowball. */
-export const YETI_BROW_FORWARD = scaled(0.52);
-export const YETI_BROW_HEIGHT = scaled(5.78);
-export const YETI_BROW_LENGTH = scaled(0.55);
-export const YETI_BROW_RISE = scaled(0.34);
-export const YETI_BROW_WIDTH = scaled(1.3);
-
-// ── The face ─────────────────────────────────────────────────────────────────
-//
-// REBUILT 2026-08-24, owner: "fix the mouth — it looks more like a walrus with
-// fangs than a snow creature".
-//
-// THE WALRUS WAS THE COLOUR, NOT THE SHAPE. The whole snout used to be one
-// ellipsoid of YETI_SKIN_COLOR — a single dark blob the width of the head with
-// two tusks under it, which is a walrus however it is proportioned. A snow ape's
-// face is FURRED; the only bare skin on it is a nose pad and the inside of the
-// mouth. So the muzzle below is fur now, and the dark is spent on two small
-// features instead of one large one.
-//
-// AND THE FACE HAS PARTS. A muzzle alone cannot read as a face at any distance:
-// what makes one is the relationship between a brow, a cheek, a nose and a jaw.
-// Each is a small mass here, all of them merged into the head's one surface so
-// the fur field runs across the whole face and none of them costs a draw call.
-
-/** MUZZLE: furred, pushed forward and DOWN under the brow. Shorter and narrower
- *  than the blob it replaces — the length is in the JAW below it now. */
-export const YETI_MUZZLE_FORWARD = scaled(0.66);
-export const YETI_MUZZLE_HEIGHT = scaled(5.36);
-export const YETI_MUZZLE_LENGTH = scaled(0.9);
-export const YETI_MUZZLE_RISE = scaled(0.58);
-export const YETI_MUZZLE_WIDTH = scaled(0.78);
-
-/** NOSE PAD: bare skin, and now the ONLY dark mass on the upper face. Proud of
- *  the muzzle's front so it catches its own highlight. */
-export const YETI_NOSE_FORWARD = scaled(1.02);
-export const YETI_NOSE_HEIGHT = scaled(5.46);
-export const YETI_NOSE_LENGTH = scaled(0.3);
-export const YETI_NOSE_RISE = scaled(0.24);
-export const YETI_NOSE_WIDTH = scaled(0.36);
-
-/**
- * MOUTH: a dark slot between the muzzle and the jaw — wide, and almost flat.
- *
- * It is the feature that does the most work for the least geometry. A gap
- * between two pale masses is a shadow a viewer has to guess at; a dark mass
- * filling that gap is a MOUTH, and it is what the fangs hang out of rather than
- * out of the middle of a snout.
- *
- * PULLED BACK AND SHRUNK, 2026-08-24. Owner: "what is the black ellipse under
- * the mouth of the yeti." It WAS the mouth, and the question is the bug report:
- * at 0.8 long and 0.7 wide, centred 0.78 forward, the slot reached 1.18 from the
- * axis while the muzzle above it stops at 1.11 and the jaw below it at 0.99. It
- * was the most forward thing on his face. A flat pancake that protrudes past
- * both masses it is meant to sit BETWEEN does not read as a gap between them —
- * every camera above the horizon looks down onto its whole top surface, and a
- * horizontal black disc stuck on the front of a white face is exactly what he
- * saw. So the extents are now smaller than the muzzle's and the jaw's in both
- * horizontal axes and the centre is back at 0.6, which leaves only the wedge
- * where the two masses genuinely part — the mouth line — showing dark. The RISE
- * is unchanged, because thinness was never the problem.
- */
-export const YETI_MOUTH_FORWARD = scaled(0.6);
-export const YETI_MOUTH_HEIGHT = scaled(5.06);
-export const YETI_MOUTH_LENGTH = scaled(0.62);
-export const YETI_MOUTH_RISE = scaled(0.14);
-export const YETI_MOUTH_WIDTH = scaled(0.62);
-
-/**
- * JAW: a furred lower jaw, set BACK from the muzzle's front.
- *
- * The recession is the point and it is an ape's, not a man's: the upper lip
- * overhangs the chin, which is what puts the fangs in front of the jaw where
- * they can be seen instead of inside it where they cannot.
- */
-export const YETI_JAW_FORWARD = scaled(0.56);
-export const YETI_JAW_HEIGHT = scaled(4.88);
-export const YETI_JAW_LENGTH = scaled(0.86);
-export const YETI_JAW_RISE = scaled(0.44);
-export const YETI_JAW_WIDTH = scaled(0.7);
-
-/** CHEEKS: a pair of pads under the eyes. Without them the face is a snout
- *  stuck on a sphere; with them the eye sits in something. */
-export const YETI_CHEEK_FORWARD = scaled(0.44);
-export const YETI_CHEEK_HEIGHT = scaled(5.4);
-export const YETI_CHEEK_OFFSET = scaled(0.42);
-export const YETI_CHEEK_LENGTH = scaled(0.52);
-export const YETI_CHEEK_RISE = scaled(0.44);
-export const YETI_CHEEK_WIDTH = scaled(0.38);
-
-/** EARS: small and set low and back, half-buried in the fur. A cold-climate
- *  animal has small ears; big ones would also fight the horns for the skyline. */
-export const YETI_EAR_FORWARD = scaled(-0.12);
-export const YETI_EAR_HEIGHT = scaled(5.6);
-export const YETI_EAR_OFFSET = scaled(0.64);
-export const YETI_EAR_LENGTH = scaled(0.24);
-export const YETI_EAR_RISE = scaled(0.44);
-export const YETI_EAR_WIDTH = scaled(0.2);
-
-/**
- * EYES: small, set deep under the brow, and the only part of him that emits.
- *
- * Proportionally TINY next to the kraken's lamps (0.14 against 0.42) and that is
- * the point: a lamp is a thing looking for you in the dark, a glint is a thing
- * that has already seen you. The emission is dim and cold rather than bright,
- * because the job it does is not illumination — it is that a white animal
- * against white snow at a hundred cells is a silhouette with nothing to fix the
- * eye on, and two dark sockets with a spark in them are where a player's
- * attention lands.
- */
-export const YETI_EYE_RADIUS = scaled(0.16);
-export const YETI_EYE_FORWARD = scaled(0.62);
-export const YETI_EYE_HEIGHT = scaled(5.66);
-export const YETI_EYE_OFFSET = scaled(0.35);
-/** How far outside the skin an eye's centre sits, as a fraction of its radius. */
-export const YETI_EYE_BULGE = 0.35;
-
-// ── The horns ────────────────────────────────────────────────────────────────
-
-/**
- * HORNS: a swept pair rising off the brow ridge, back and out, tapering to a
- * point. Owner request, 2026-08-24 — "he needs fangs and he needs horns".
- *
- * THEY ARE THE TOP OF HIM, and the file is built around that fact: the tip
- * height and tip radius are hoisted to the top of this file so YETI_SCALE can be
- * solved against them (see FULL_SIZE_TOTAL_HEIGHT). Horns added under a scale
- * solved for the skull would have broken the owner's ceiling by a third of a
- * peep, silently, with every number in the file still looking right.
- *
- * WHY SWEPT BACK AND NOT UP. Straight vertical horns on a hunched biped read as
- * a costume; the animal's whole line is forward-and-down, from the shoulder mass
- * through the low-carried head, and a horn that continues that line past the
- * skull extends the silhouette instead of contradicting it. The curve also puts
- * the widest part of the horn — YETI_HORN_MID_OFFSET, out past the ears — where
- * a viewer looking at him head-on can see BOTH horns clear of the skull, which a
- * back-swept pair in the sagittal plane would not do.
- *
- * HOW THEY ARE STITCHED ON, and it took two goes. The first pair started just
- * under the skin at 0.96 of the head ellipsoid's radius, which is enough that no
- * GAP can open — and it still read as two objects inserted into a ball (owner,
- * 2026-08-24: "I don't think they're physically stitched to the head"). A tube
- * that pushes through a surface without disturbing it is exactly what an
- * inserted prop looks like; a real horn grows out of a PEDICLE, a swelling of
- * the skull that the horn is the continuation of.
- *
- * So there are three things holding it on now, and each does a different job:
- *   * the BOSS below — a fur-covered lump merged into the head's own surface, so
- *     the skull bulges up to meet the horn instead of being pierced by it;
- *   * a root sunk to the CENTRE of that boss rather than to just under the skin,
- *     so the tube's opening is buried in solid geometry from every angle;
- *   * an EMERGENCE point between root and mid, wide and close to the boss, which
- *     makes the horn leave the head thick and flare into the taper instead of
- *     starting at its final thickness the moment it clears the fur.
- *
- * THEY MOVED TO THE CROWN, 2026-08-24. Owner: "move the horns to the top of the
- * head instead of the forehead." The boss sat at 0.30 forward and 0.54 out, on
- * the upper front corner of the skull — over the BROW, which is a forehead horn
- * and reads as a helmet strapped on. It is on the centre line now (0 forward)
- * and higher (6.10 against 5.86), with the pair drawn in toward each other, so
- * both bosses swell out of the top of the skull the way a bovid's pedicles do.
- *
- * THE SINK DEPTH IS PRESERVED THROUGH THE MOVE, and that is the part worth
- * checking when these numbers are next touched: the old boss sat at 0.94 of the
- * head ellipsoid's radius, deep enough that it merges into the skull instead of
- * balancing on it, and the new one is at 0.93. Move a boss without re-deriving
- * that fraction and it either floats off the crown or vanishes inside it.
- *
- * MID AND TIP DID NOT MOVE. The sweep back and out is what the paragraph above
- * argues for and the owner accepted; only where the horn LEAVES him changed. It
- * also means YETI_HORN_TIP_HEIGHT is untouched, so YETI_SCALE — which is solved
- * against it — does not move, and neither does anything on the server.
- *
- * Every figure is stated FULL SIZE from the axis, as everything in this file is.
- */
-export const YETI_HORN_BOSS_FORWARD = scaled(0);
-export const YETI_HORN_BOSS_HEIGHT = scaled(6.1);
-export const YETI_HORN_BOSS_OFFSET = scaled(0.42);
-export const YETI_HORN_BOSS_LENGTH = scaled(0.58);
-export const YETI_HORN_BOSS_RISE = scaled(0.34);
-export const YETI_HORN_BOSS_WIDTH = scaled(0.56);
-export const YETI_HORN_ROOT_FORWARD = scaled(0);
-export const YETI_HORN_ROOT_HEIGHT = scaled(6.01);
-export const YETI_HORN_ROOT_OFFSET = scaled(0.35);
-export const YETI_HORN_EMERGE_FORWARD = scaled(-0.05);
-export const YETI_HORN_EMERGE_HEIGHT = scaled(6.22);
-export const YETI_HORN_EMERGE_OFFSET = scaled(0.58);
-export const YETI_HORN_MID_FORWARD = scaled(-0.15);
-export const YETI_HORN_MID_HEIGHT = scaled(6.45);
-export const YETI_HORN_MID_OFFSET = scaled(0.92);
-export const YETI_HORN_TIP_FORWARD = scaled(-0.62);
-export const YETI_HORN_TIP_HEIGHT = scaled(FULL_SIZE_HORN_TIP_HEIGHT);
-export const YETI_HORN_TIP_OFFSET = scaled(0.8);
-export const YETI_HORN_ROOT_RADIUS = scaled(0.29);
-/** Radius where the horn clears the boss — still fat, already tapering. */
-export const YETI_HORN_EMERGE_RADIUS = scaled(0.22);
-export const YETI_HORN_TIP_RADIUS = scaled(FULL_SIZE_HORN_TIP_RADIUS);
-/** How far from the axis the horns reach at their widest — a bound on his width. */
-export const YETI_HORN_REACH = YETI_HORN_MID_OFFSET;
-/**
- * Weathered horn: a warm dark brown-grey.
- *
- * It is the SECOND dark mass on a white animal, after the bare skin, and it is
- * deliberately not the same one. The muzzle, hands and feet are cold slate
- * (YETI_SKIN_COLOR); horn is keratin and reads warm, and the two darks sitting
- * next to each other on the same head are what stop the face becoming one black
- * smudge at the distance the silhouette has to hold at.
- */
-export const YETI_HORN_COLOR = 0x6e5d4b;
-
-// ── The fangs ────────────────────────────────────────────────────────────────
-
-/**
- * FANGS: a pair of upper canines hanging out of the MOUTH. Owner request,
- * 2026-08-24; shortened and moved the same day, with the mouth rebuild.
- *
- * THE FIRST PAIR WERE TUSKS. They were rooted in the middle of the old dark
- * snout and dropped 0.4 units clear of it, which — next to a snout that was one
- * dark blob — is a walrus and was called one. These are half that length, they
- * root in YETI_MOUTH (the dark slot between muzzle and jaw), and they hang in
- * front of the RECEDING chin rather than beside it. That is a canine showing
- * over a lip, which is the thing a fanged animal actually looks like.
- *
- * THEY ROOT ABOVE THE MOUTH AND END BELOW IT, which is not where a tooth grows
- * from but is what makes one visible. Rooted inside the dark slot, they were
- * invisible from any camera above the horizon — the muzzle overhangs them and
- * dark-on-dark hides the rest. Crossing the slot instead puts ivory against the
- * one black band on the face, and the eye finds it from any angle.
- *
- * IVORY ON DARK, which is why they read at all. Everything pale on this animal
- * is pale-on-pale — white fur against white snow — and needs a broken edge to
- * carry. The fangs are the exception: they hang off the darkest mass on him, so
- * their contrast is the highest anywhere on the model.
- */
-export const YETI_FANG_ROOT_RADIUS = scaled(0.11);
-export const YETI_FANG_TIP_RADIUS = scaled(0.01);
-
-/**
- * HOW DEEP THE ROOT IS BURIED, as a fraction of the muzzle's half-extent on
- * each axis. Owner, 2026-08-24: "the fangs do not intersect the face they
- * float."
- *
- * He was right and the fangs were only just inside the muzzle: the old root sat
- * at 0.915 of the muzzle ellipsoid's radius, which leaves 0.025 units of solid
- * fur between the root and the surface — against a root RADIUS of 0.11 and a
- * fur carve (YETI_FUR_WRINKLE_DEPTH) that pulls that surface a further 0.12
- * inward. The flat cap the tube starts with was therefore outside the muzzle,
- * in open air over the dark mouth, and that cap is what reads as a floating
- * tooth. A tube is buried when you cannot see the end of it; nothing about the
- * old numbers made that true.
- *
- * THE RULE, and it is a rule rather than a tuning: the root must sit deeper
- * inside the muzzle than YETI_FANG_ROOT_RADIUS + YETI_FUR_WRINKLE_DEPTH = 0.23
- * full-size units, measured to the muzzle surface, in EVERY direction — because
- * the carve can take the surface toward the root from any of them. The
- * fractions below put the clearance at 0.27 outward (±Z), 0.26 downward (−Y)
- * and 0.38 forward (+X), all of them over the bar with room for the tessellation
- * to fall short of the ideal ellipsoid.
- *
- * The MID and TIP points did not move. The visible fang — the ivory that
- * crosses the dark mouth and hangs in front of the receding chin — is exactly
- * the one the owner accepted; all that changed is where, out of sight, it
- * begins.
- */
-const FANG_ROOT_IN_MUZZLE_FORWARD = 0.1;
-const FANG_ROOT_IN_MUZZLE_RISE = -0.05;
-const FANG_ROOT_IN_MUZZLE_OUT = 0.3;
-
-export const YETI_FANG_ROOT_FORWARD =
-  YETI_MUZZLE_FORWARD + (FANG_ROOT_IN_MUZZLE_FORWARD * YETI_MUZZLE_LENGTH) / 2;
-export const YETI_FANG_ROOT_HEIGHT =
-  YETI_MUZZLE_HEIGHT + (FANG_ROOT_IN_MUZZLE_RISE * YETI_MUZZLE_RISE) / 2;
-export const YETI_FANG_ROOT_OFFSET = (FANG_ROOT_IN_MUZZLE_OUT * YETI_MUZZLE_WIDTH) / 2;
-export const YETI_FANG_MID_FORWARD = scaled(0.94);
-export const YETI_FANG_MID_HEIGHT = scaled(4.95);
-export const YETI_FANG_MID_OFFSET = scaled(0.28);
-export const YETI_FANG_TIP_FORWARD = scaled(1.02);
-export const YETI_FANG_TIP_HEIGHT = scaled(4.62);
-export const YETI_FANG_TIP_OFFSET = scaled(0.3);
-/** Old ivory — bone that has been out in the weather, not a dentist's white. */
-export const YETI_FANG_COLOR = 0xf6f1e2;
-
-// ── The arms ─────────────────────────────────────────────────────────────────
-
-/**
- * ARMS: long, hanging well below the hips, and jointed at a shoulder set inside
- * the shoulder mass so no gap can open between limb and body.
- *
- * The hand ends at height 1.9 — below YETI_HIP_HEIGHT (2.45) — which is the one
- * proportion that makes a biped read as an APE rather than as a man in a suit.
- * Every reach below is stated from the AXIS, so the footprint test is a sum.
- */
-export const YETI_SHOULDER_JOINT_HEIGHT = scaled(4.6);
-export const YETI_SHOULDER_JOINT_HALF_SPAN = scaled(1.32);
-/** Drop and flare of the elbow, from the shoulder joint. */
-export const YETI_ARM_ELBOW_DROP = scaled(1.45);
-export const YETI_ARM_ELBOW_FLARE = scaled(0.22);
-export const YETI_ARM_ELBOW_FORWARD = scaled(0.1);
-/** Drop and flare of the wrist, from the shoulder joint. */
-export const YETI_ARM_HAND_DROP = scaled(2.7);
-export const YETI_ARM_HAND_FLARE = scaled(0.3);
-export const YETI_ARM_HAND_FORWARD = scaled(0.25);
-export const YETI_ARM_ROOT_RADIUS = scaled(0.42);
-export const YETI_ARM_TIP_RADIUS = scaled(0.3);
-/** Height of a hand above the ground, and its distance from the axis. */
-export const YETI_HAND_HEIGHT = YETI_SHOULDER_JOINT_HEIGHT - YETI_ARM_HAND_DROP;
-export const YETI_HAND_REACH = YETI_SHOULDER_JOINT_HALF_SPAN + YETI_ARM_HAND_FLARE;
-/** HANDS: bare skin, and big — a fist he walks on when the slope steepens. */
-export const YETI_HAND_RADIUS = scaled(0.42);
-
-/**
- * FINGERS AND TOES: three short tapered digits on each hand and each foot.
- *
- * Added 2026-08-24 with the resolution pass (owner: "it does not need to look
- * simple"). THREE, not five: at this size five digits on a 0.42-radius fist
- * merge into a fringe, and three separated by a real gap is what still reads as
- * a hand rather than as a lumpy ball. The same count on the feet, for the same
- * reason and so the two ends of him match.
- *
- * They are authored in the HAND's and the FOOT's own space and merged into those
- * geometries, so they cost no draw call and no joint — they do not articulate,
- * which is honest: nothing in the gait would drive them.
- *
- * THE TOE LENGTH IS BOUNDED, and by something real. The client samples the
- * ground under him over YETI_FOOT_GROUND_HALF_EXTENT (1.02 from the axis), and
- * a toe that reached past that would put part of a foot outside the square the
- * placement maths measured. 0.90 plus a 0.10 tip is exactly 1.00.
- */
-export const YETI_DIGIT_COUNT = 3;
-/** Lateral spacing between digit centres, on the hand and on the foot. */
-export const YETI_DIGIT_SPACING = scaled(0.2);
-export const YETI_FINGER_ROOT_FORWARD = scaled(0.1);
-export const YETI_FINGER_ROOT_HEIGHT = scaled(-0.16);
-export const YETI_FINGER_TIP_FORWARD = scaled(0.3);
-export const YETI_FINGER_TIP_HEIGHT = scaled(-0.56);
-export const YETI_FINGER_ROOT_RADIUS = scaled(0.14);
-export const YETI_FINGER_TIP_RADIUS = scaled(0.08);
-export const YETI_TOE_ROOT_FORWARD = scaled(0.5);
-export const YETI_TOE_TIP_FORWARD = scaled(0.9);
-export const YETI_TOE_ROOT_RADIUS = scaled(0.15);
-export const YETI_TOE_TIP_RADIUS = scaled(0.1);
-
-// ── The whole ────────────────────────────────────────────────────────────────
-
-/**
- * Total modelled height, ground to the highest point on him — 1.24 world units,
- * against the kraken's 8 and Cthulhu's 10.9, and still taller than he is wide.
- *
- * THE HIGHEST POINT IS A HORN TIP, not YETI_HEAD_TOP, which is where this used
- * to point and would now be a lie by nine hundredths of a unit. The apex of a
- * tapered tube is its end point plus its end radius.
- *
- * IT IS THE NUMBER YETI_SCALE IS SOLVED FOR, so it is exactly
- * YETI_HEIGHT_IN_PEEPS peeps and cannot drift off that ceiling: a change to the
- * horn or the head moves the SCALE, not this total.
- *
- * He is the SMALLEST of the three by a wide margin and the only one you see all
- * of. The two rulers a player has for him are the PEEP that walks up the valley
- * to him — he is twice one, which is the owner's ceiling — and the wildlife
- * grazer on his hillside, a quarter of a world unit long, against which he is
- * still five times over.
- */
-export const YETI_TOTAL_HEIGHT = YETI_HORN_TIP_HEIGHT + YETI_HORN_TIP_RADIUS;
+/** Kept for the callers that ask "how wide is a yeti" with no variant in hand. */
+export const YETI_WIDTH_CELLS = YETI_WIDEST_VARIANT_WIDTH_CELLS;
 
 /**
  * Half-extent of the ground his FEET cover, in WORLD UNITS — what the client
  * samples terrain over to decide which band he stands on (./placement.ts).
  *
- * IT WAS NAMED `..._CELLS` AND IT WAS NOT CELLS. Everything in this file has
- * been world units since the 2026-08-21 re-sample cut a cell to a quarter of
- * one, and ./placement.ts adds this straight to a CELL coordinate — so the
- * walker sampled a quarter of the ground his feet actually cover, and a foot
- * could overhang a riser he then stood below. The conversion belongs at that
- * boundary and now happens there (`cellsAcross`, the one conversion every
- * physical distance in this codebase is supposed to go through); the name here
- * says which side of it this number is on, which is the part that let the bug
- * hide for a day.
+ * THE WIDEST VARIANT'S, for the same reason the footprint is: placement runs off
+ * a rule looked up by KIND, before a variant is in hand, and the safe direction
+ * to err in is standing a fraction too high rather than clipping a riser.
  *
- * DERIVED from the stance and the foot, not chosen: the outer edge of a foot is
- * exactly the stance offset plus half a foot's width, 1.02 full-size units. It
- * is the FEET and not the body, and that distinction is the whole content of the
- * number: a walker stands on what it steps on. Sampling the shoulders instead
- * (1.93) would have him ride up onto every band his elbow overhangs.
- *
- * The fore-and-aft extent is smaller (0.76), so the square this describes
- * is a slight over-estimate in that axis — deliberately, because the failure it
- * guards against is a body clipping a riser and the safe direction to err in is
- * standing a fraction too high.
+ * It is the FEET and not the body, and that distinction is the whole content of
+ * the number: a walker stands on what it steps on. Sampling the shoulders
+ * instead would have him ride up onto every band his elbow overhangs.
  */
-export const YETI_FOOT_GROUND_HALF_EXTENT = YETI_STANCE_HALF_WIDTH + YETI_FOOT_WIDTH / 2;
-
-// ── Colour ───────────────────────────────────────────────────────────────────
-
-/**
- * Snow tones, and they are chosen against the TERRAIN he stands on rather than
- * against each other: the client's palette draws band 9 and above as 0xf2f4f6,
- * a near-white. An animal painted the same value would vanish into it.
- *
- * So the fur sits a step DARKER than the snow (0xe4ebf2 against 0xf2f4f6) and
- * the shaded parts — belly, limbs — a long way darker still, which is what makes
- * him a shape rather than a hole in the ground. What used to separate his head
- * from his shoulders was a COLLAR of lighter fur locks; the owner had that
- * removed on 2026-08-24, and the job it did is now the fur texture's — a broken
- * surface reads as an edge everywhere at once, which a collar only did at the
- * neck. Cross-referenced against the palette and not imported, for the reason the snow
- * line itself is (server/habitat.ts).
- */
-export const YETI_FUR_COLOR = 0xe4ebf2;
-export const YETI_UNDERFUR_COLOR = 0xb6c2d1;
-/**
- * Bare skin: the NOSE PAD, hands and feet. Dark slate.
- *
- * It said "muzzle" until 2026-08-24 and that was the walrus: the whole snout in
- * this colour is a single dark mass the width of the head. The muzzle is furred
- * now and this is spent on a nose the size of a thumbnail, which is how much
- * bare skin a cold-climate animal's face actually has.
- */
-export const YETI_SKIN_COLOR = 0x4b4a52;
-/**
- * The inside of the mouth. Darker and WARMER than the slate of the bare skin —
- * a mouth is a hole with blood behind it, and the two darks read as two
- * different materials rather than as one shadow with a bite out of it.
- */
-export const YETI_MAW_COLOR = 0x2a1f22;
-/** The eye's own dark shell, so it is a socket and not a floating dot. */
-export const YETI_EYE_COLOR = 0x14161c;
-/**
- * A cold glint. Deliberately dim — see YETI_EYE_RADIUS.
- *
- * DIMMED AGAIN 2026-08-24, with the eye made a LIT sphere rather than an
- * unshaded one. Unshaded is what a light source is, and it was drawing the eye
- * as a flat disc of solid blue pasted onto the face: no terminator, no
- * highlight, nothing to say it was a ball in a socket. A yeti's eye is not a
- * lamp — it is a wet dark eye that catches the sky — so it takes the same
- * lighting as the rest of him and keeps a trace of emission underneath, which
- * is what stops it going pure black under the brow ridge.
- */
-export const YETI_EYE_EMISSIVE = 0x16283a;
-
-/**
- * SKIN DETAIL. Same fields as the other two anatomies and the same inward-only
- * rule: the carve may never push a vertex outward, or YETI_TOTAL_HEIGHT and
- * YETI_WIDTH_CELLS stop being bounds.
- *
- * The carve is DEEPER and much higher-frequency than either sea creature's
- * RELATIVE TO THE BODY IT IS ON — 0.12 at 2.6 cycles per unit on a 6.3-unit
- * animal, against the kraken's 0.07 at 1.4 on an 8-unit one. Relative is the
- * only fair comparison, and now the only one a test can make: YETI_SCALE takes
- * the depth to 0.022 and the frequency to 14.4, which is the SAME surface five
- * times smaller. That is the
- * difference between skin and FUR: skin is a smooth surface with wrinkles in it,
- * fur is a surface that is broken everywhere, and the only tool this workshop
- * has for that is a fine, deep carve. The shade variation is the largest of the
- * three for the reason at the top of this file — a white mass in sunlight has no
- * contrast of its own, and ±22% is what stops him reading as a paper cut-out.
- */
-export const YETI_FUR_WRINKLE_DEPTH = scaled(FULL_SIZE_FUR_WRINKLE_DEPTH);
-export const YETI_SKIN_WRINKLE_DEPTH = scaled(0.04);
-export const YETI_WRINKLE_FREQUENCY = scaledFrequency(2.6);
-export const YETI_SHADE_VARIATION = 0.22;
-export const YETI_SHADE_FREQUENCY = scaledFrequency(0.9);
-
-/**
- * THE COAT, in fur tiles per world unit. See geometry.ts, furShadeTexture().
- *
- * WHY THERE IS A TEXTURE AT ALL, when the paragraph above argues for the carve.
- * Owner, on the renders of 2026-08-24: "Yeah, that does not render his fur — I
- * think you need to add a texture for the fur, not geometry." He is right, and
- * the paragraph above is where it went wrong: the carve is the finest tool the
- * workshop HAD, not a tool fine enough for hair. 0.12 units deep at 2.6 cycles
- * per unit puts about sixteen dents across his chest. Sixteen dents is a
- * quilted bedspread. Hair on an animal this size is hundreds of strands across
- * the same chest, and a vertex per strand is a five-figure triangle bill for one
- * coat. The carve stays — it is what breaks his SILHOUETTE, which a texture
- * cannot do — and the strands are now texels on top of it.
- *
- * One tile per full-size unit, times the 26 strands a tile carries
- * (FUR_STRAND_COUNT), is 26 strands per unit and about a hundred and sixty down
- * his standing height. That is the count that reads as fur at the distance he is
- * actually seen from: fewer and the eye resolves individual locks and he looks
- * combed; many more and the strands fall below a pixel, mip down to their own
- * average, and the coat goes back to being flat paint.
- *
- * It divides by YETI_SCALE like the other two frequencies, and for the same
- * reason — the coat belongs to the animal, so his strands must not get finer
- * when he does.
- */
-export const YETI_FUR_TEXTURE_FREQUENCY = scaledFrequency(1);
-
-// ── The gait ─────────────────────────────────────────────────────────────────
-
-/**
- * The server's amble speed, restated (server/kinds.ts,
- * YETI_AMBLE_SPEED_CELLS_PER_SECOND) and pinned to it by a test.
- *
- * IT GOES THROUGH YETI_SCALE, because a speed is a LENGTH per second (owner
- * decision, 2026-08-22): a shrunken animal that kept the full-size 0.45 would
- * cross its own body proportionally faster than it used to, which is what
- * scurrying looks like. At 0.0811 he covers his own width in the same eleven
- * seconds he always did, and is still slower than the grazer he shares the
- * hillside with — the two comparisons that justified 0.45 in the first place.
- *
- * It is here because the GAIT IS DERIVED FROM IT: a walk animation whose stride
- * rate has nothing to do with how fast the thing actually travels is the
- * skating-feet bug, and the only way to not have it is for the two numbers to be
- * related on purpose. Restated rather than imported for the usual reason — the
- * client half must not pull the server half into its bundle.
- */
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = scaled(0.45);
-
-/**
- * Ground covered by one full gait cycle (two steps), in cells.
- *
- * 1.6 — two steps of 0.8, which is 39% of his 2.07-unit leg. That is a walk:
- * humans stride about half a leg length, and a heavy short-legged animal picking
- * its way over snow takes shorter steps than that.
- *
- * Both figures are FULL SIZE and both go through YETI_SCALE, so the 39% — the
- * only part of this that is a gait decision rather than a dimension — is what
- * actually survives. YETI_AMBLE_HZ and YETI_LEG_SWING_RADIANS below are ratios
- * of scaled quantities and come out identical at any scale.
- */
-export const YETI_STRIDE_CELLS = scaled(1.6);
-
-/**
- * Gait cycles per second, DERIVED: speed over stride length. 0.28 Hz — a
- * three-and-a-half-second cycle — so his feet travel at exactly the rate the
- * server moves him and never skate.
- */
-export const YETI_AMBLE_HZ = YETI_AMBLE_SPEED_CELLS_PER_SECOND / YETI_STRIDE_CELLS;
-
-/**
- * Peak swing of a leg either side of vertical, in radians. DERIVED from the
- * stride: half a step of 0.8 cells is 0.4 cells of foot travel each way, over a
- * 2.07-cell leg, so the angle is asin(0.4 / 2.07) = 0.195 rad ≈ 11°.
- *
- * WHY THE ANIMATION PLAYS EVEN WHEN HE IS STANDING STILL. The wire carries no
- * gait flag — deliberately, see protocol.ts, "the client can SEE that the thing
- * is not moving" — so this cycle runs off elapsed time whatever he is doing. At
- * 11° and 0.28 Hz that reads as an animal shifting its weight from foot to foot
- * when stationary and as a walk when he is travelling, which is the honest best
- * a gait with no gait signal can do. A stride amplitude tuned for a convincing
- * WALK (25–30°, as a human's is) would have made a stationary yeti look like he
- * was marching on the spot.
- */
-export const YETI_LEG_SWING_RADIANS = Math.asin(
-  YETI_STRIDE_CELLS / 2 / 2 / YETI_LEG_LENGTH,
+export const YETI_FOOT_GROUND_HALF_EXTENT = Math.max(
+  ...YETI_VARIANTS.map((variant) => YETI_VARIANT_METRICS[variant].footGroundHalfExtent),
 );
-
-/**
- * Arm swing, as a fraction of the leg's. Arms swing opposite the leg on the same
- * side — that is what a contralateral gait is — and less far, because his are
- * heavy and hang from a shoulder that is doing most of the work of holding him
- * up. 0.7 is enough that the counter-swing is legible at a distance.
- */
-export const YETI_ARM_SWING_FRACTION = 0.7;
-export const YETI_ARM_SWING_RADIANS = YETI_LEG_SWING_RADIANS * YETI_ARM_SWING_FRACTION;
-
-/**
- * Side-to-side lean of the upper body, in radians. ~3°, one lean per gait cycle,
- * a quarter-cycle behind the legs so he leans over the foot that is planted.
- *
- * IT IS APPLIED TO THE UPPER BODY ONLY — never to the whole model — and that is
- * a placement decision rather than an anatomical one: rolling the rig would take
- * the outer foot 0.05 cells below the ground plane the client just placed him
- * on, every cycle, forever. Nothing above the hips can intersect terrain, so the
- * lean is free there.
- */
-export const YETI_LEAN_RADIANS = 0.05;
-
-/**
- * Vertical bob of the whole body, in cells: one per STEP, so twice per gait
- * cycle.
- *
- * IT ONLY EVER LIFTS. The same inward-only discipline the wrinkle carve keeps,
- * for the same reason at the other end of the model: the client puts his origin
- * exactly on the ground, so a bob that went negative would sink his feet into
- * the snow half of every step. Written as (1 - cos)/2, which is 0 at rest and
- * never below it.
- */
-export const YETI_BOB_CELLS = scaled(0.06);
-
-/**
- * The head scans: a slow yaw either side of forward, at its own unrelated rate.
- *
- * 0.09 Hz is an eleven-second sweep — nothing like the gait, and deliberately
- * not a multiple of it, so the two never lock into a pattern a player can feel
- * repeating. ±0.14 rad (8°) is a look, not a search.
- */
-export const YETI_HEAD_SCAN_HZ = 0.09;
-export const YETI_HEAD_SCAN_RADIANS = 0.14;

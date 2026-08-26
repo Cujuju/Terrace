@@ -480,47 +480,222 @@ const FUR_PROGRAM_KEY = 'monster-fur-triplanar';
  * on the surface; it runs the strands along Z, and it only ever covers the tops
  * of the shoulders and the skull.
  */
+/**
+ * The triplanar sampler, as GLSL, shared by the two injections below.
+ *
+ * Both of them ask the same question of the same kind of tile — "what is under
+ * this fragment, in the surface's own object space?" — and differ only in what
+ * they DO with the answer: the shade tile multiplies it into the colour, the
+ * strand tile tests it against a threshold and throws the fragment away. Written
+ * once here so the two can never disagree about where a strand is, which is the
+ * whole reason a shell sits over the coat it belongs to rather than beside it.
+ */
+const TRIPLANAR_VERTEX_DECLARATIONS = `
+varying vec3 vFurPosition;
+varying vec3 vFurNormal;`;
+const TRIPLANAR_VERTEX_ASSIGNMENTS = `
+vFurPosition = transformed;
+vFurNormal = objectNormal;`;
+const TRIPLANAR_FRAGMENT_DECLARATIONS = `
+uniform sampler2D furMap;
+uniform float furFrequency;
+varying vec3 vFurPosition;
+varying vec3 vFurNormal;`;
+/** Leaves the tile's red channel in `furSample`, blended over the three planes. */
+const TRIPLANAR_FRAGMENT_SAMPLE = `
+  vec3 furAxis = pow(abs(normalize(vFurNormal)), vec3(${FUR_BLEND_SHARPNESS}.0));
+  furAxis /= max(furAxis.x + furAxis.y + furAxis.z, 1e-5);
+  vec3 furAt = vFurPosition * furFrequency;
+  float furSample =
+      texture2D(furMap, vec2(furAt.z, furAt.y)).r * furAxis.x
+    + texture2D(furMap, vec2(furAt.x, furAt.z)).r * furAxis.y
+    + texture2D(furMap, vec2(furAt.x, furAt.y)).r * furAxis.z;`;
+
+/** Injects the varyings both fur programs read. */
+function injectTriplanarVaryings(shader: { vertexShader: string; fragmentShader: string }): void {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', `#include <common>${TRIPLANAR_VERTEX_DECLARATIONS}`)
+    .replace('#include <begin_vertex>', `#include <begin_vertex>${TRIPLANAR_VERTEX_ASSIGNMENTS}`);
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <common>',
+    `#include <common>${TRIPLANAR_FRAGMENT_DECLARATIONS}`,
+  );
+}
+
 function applyFurShader(material: MeshLambertMaterial, texture: Texture, frequency: number): void {
   material.customProgramCacheKey = () => FUR_PROGRAM_KEY;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.furMap = { value: texture };
     shader.uniforms.furFrequency = { value: frequency };
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-varying vec3 vFurPosition;
-varying vec3 vFurNormal;`,
-      )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-vFurPosition = transformed;
-vFurNormal = objectNormal;`,
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-uniform sampler2D furMap;
-uniform float furFrequency;
-varying vec3 vFurPosition;
-varying vec3 vFurNormal;`,
-      )
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
+    injectTriplanarVaryings(shader);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
 {
-  vec3 furAxis = pow(abs(normalize(vFurNormal)), vec3(${FUR_BLEND_SHARPNESS}.0));
-  furAxis /= max(furAxis.x + furAxis.y + furAxis.z, 1e-5);
-  vec3 furAt = vFurPosition * furFrequency;
-  float furShade =
-      texture2D(furMap, vec2(furAt.z, furAt.y)).r * furAxis.x
-    + texture2D(furMap, vec2(furAt.x, furAt.z)).r * furAxis.y
-    + texture2D(furMap, vec2(furAt.x, furAt.y)).r * furAxis.z;
-  diffuseColor.rgb *= furShade;
+${TRIPLANAR_FRAGMENT_SAMPLE}
+  diffuseColor.rgb *= furSample;
 }`,
-      );
+    );
+  };
+}
+
+// ── The fur shells ───────────────────────────────────────────────────────────
+//
+// WHAT A SHELL IS FOR, and why the shade tile above cannot do it. The tile
+// paints hair ONTO a surface; it leaves the surface where it was, so the animal
+// still ends at a smooth ellipsoid edge and every silhouette — the one thing a
+// white animal on white snow is read by — is a clean curve with hair drawn
+// inside it. Owner, 2026-08-26, on the model that had only the tile: the coat
+// has to break the OUTLINE. A shell does that the way every real-time coat since
+// Lengyel has: the furred mass is drawn again a few times, each copy pushed
+// outward about its own centre, each with more of the strand tile cut away, so
+// what stands proud of the body is a field of tapering tufts rather than a
+// bigger ellipsoid.
+//
+// THE COST IS ONE DRAW CALL PER LAYER and it is bought deliberately: the layers
+// differ in a shader constant, so they cannot merge with each other or with the
+// coat (client/src/render/rigSkin.ts keys a merge on customProgramCacheKey), and
+// the monster budget can afford it for exactly one reason —
+// MAX_LIVING_MONSTERS_PER_KIND is 1.
+
+/**
+ * How sharply a strand's core stands out of the tile.
+ *
+ * The tile stores a strand's STRENGTH, not its colour: 1 down the middle of a
+ * hair, 0 in the parting beside it. Each shell keeps only what is stronger than
+ * its own threshold, so a high exponent here — a narrow core — is what makes the
+ * outer shells keep a few thin tips where the inner ones keep a nearly solid
+ * sheet. At 1 the field is a cosine and every layer is the same striped sheet at
+ * a different size, which reads as a stack of shrink-wraps.
+ */
+const FUR_STRAND_SHARPNESS = 2.2;
+/**
+ * How much strands differ in LENGTH, and the two frequencies that decide which
+ * ones are long.
+ *
+ * Without it every hair in the coat dies at the same shell and the coat has a
+ * hard, flat top edge — a crew cut. The frequencies are deliberately not
+ * multiples of the strand count, so the long hairs scatter over the tile instead
+ * of falling into stripes of their own.
+ */
+const FUR_STRAND_LENGTH_SPREAD = 0.55;
+const FUR_STRAND_LENGTH_ALONG = 5;
+const FUR_STRAND_LENGTH_ACROSS = 3;
+
+/**
+ * The strand tile: an ALPHA field over the same strand pitch the shade tile
+ * uses, so a shell's hairs stand exactly where the coat's partings say they do.
+ *
+ * Periodic on the tile for the reason furShadeTexture() gives — every frequency
+ * is a whole number of cycles across it — and, like that one, computed rather
+ * than loaded and free of Math.random.
+ */
+export function furStrandAlphaTexture(): DataTexture {
+  const data = new Uint8Array(FUR_TEXTURE_SIZE * FUR_TEXTURE_SIZE * FUR_TEXEL_BYTES);
+  for (let row = 0; row < FUR_TEXTURE_SIZE; row++) {
+    const along = row / FUR_TEXTURE_SIZE;
+    for (let column = 0; column < FUR_TEXTURE_SIZE; column++) {
+      const across = column / FUR_TEXTURE_SIZE;
+      let wander = across;
+      for (const wave of FUR_WARP_WAVES) {
+        wander +=
+          wave.amplitude *
+          Math.cos(TWO_PI * (wave.across * across + wave.along * along) + wave.phase);
+      }
+      // 1 down the centre of a strand, 0 in the parting between two.
+      const core = 0.5 + 0.5 * Math.cos(TWO_PI * FUR_STRAND_COUNT * wander);
+      // How far out this particular strand reaches, which is what stops the
+      // whole coat ending at one height.
+      const length =
+        1 -
+        FUR_STRAND_LENGTH_SPREAD *
+          (0.5 -
+            0.5 *
+              Math.cos(
+                TWO_PI * (FUR_STRAND_LENGTH_ALONG * along + FUR_STRAND_LENGTH_ACROSS * across),
+              ));
+      const strength = Math.pow(core, FUR_STRAND_SHARPNESS) * length;
+      const byte = Math.round(Math.min(1, Math.max(0, strength)) * FUR_CHANNEL_MAX);
+      const texel = (row * FUR_TEXTURE_SIZE + column) * FUR_TEXEL_BYTES;
+      data[texel] = byte;
+      data[texel + 1] = byte;
+      data[texel + 2] = byte;
+      data[texel + 3] = FUR_CHANNEL_MAX;
+    }
+  }
+  const texture = new DataTexture(data, FUR_TEXTURE_SIZE, FUR_TEXTURE_SIZE, RGBAFormat);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  // NO MIPMAPS, unlike the shade tile, and the difference is what the two are
+  // for. A mipmap averages a strand and its parting together; on a value that is
+  // then THRESHOLDED that average is a coat that dissolves with distance —
+  // every shell vanishing at once as the mip level rises. Linear minification
+  // keeps the test meaningful at every range.
+  texture.minFilter = LinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * The lowest and the widest strand strength a shell will keep.
+ *
+ * The innermost layer sits just off the skin and keeps nearly everything, so it
+ * reads as a dense pile; the outermost keeps only the strongest cores of the
+ * longest strands, which is a scatter of tips. Between them the coat thins out
+ * the way a real one does.
+ */
+const SHELL_ALPHA_THRESHOLD_BASE = 0.16;
+const SHELL_ALPHA_THRESHOLD_RANGE = 0.52;
+
+/** The program key prefix; the layer is appended — see applyShellShader. */
+const SHELL_PROGRAM_KEY = 'monster-fur-shell';
+
+/**
+ * Makes a material draw one shell layer: the strand tile, sampled triplanar,
+ * thresholded, and the fragment thrown away below it.
+ *
+ * THE THRESHOLD IS A SHADER CONSTANT, not `material.alphaTest`, for a reason
+ * that is not style: three's alpha test reads `diffuseColor.a`, which is fed by
+ * an `alphaMap` sampled through UVs, and there are no UVs here — `positionsOnly`
+ * strips them and `organicSurface` merges a dozen primitives whose UVs would not
+ * agree anyway (see applyFurShader for the same argument). The test therefore
+ * has to happen where the triplanar sample is, which is in the injected source.
+ *
+ * IT IS ALSO WHAT KEEPS THE LAYERS APART. Baking merges two parts whose
+ * materials are interchangeable, and colour is carried per vertex — so three
+ * shells identical but for a threshold would otherwise become ONE surface drawn
+ * at one threshold. The layer goes into customProgramCacheKey, which is the
+ * declaration three itself uses for "this material is a different program", and
+ * which rigSkin.ts reads when it decides what may share a draw call.
+ *
+ * DISCARD, NOT TRANSPARENCY. An alpha-tested shell writes depth and needs no
+ * sorting; three transparent layers at the same distance from the camera have no
+ * correct order, and the one they get is an accident of scene-graph order.
+ */
+function applyShellShader(
+  material: MeshLambertMaterial,
+  texture: Texture,
+  frequency: number,
+  threshold: number,
+  layer: number,
+  layers: number,
+): void {
+  const key = `${SHELL_PROGRAM_KEY}-${layer}-of-${layers}`;
+  material.customProgramCacheKey = () => key;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.furMap = { value: texture };
+    shader.uniforms.furFrequency = { value: frequency };
+    injectTriplanarVaryings(shader);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+{
+${TRIPLANAR_FRAGMENT_SAMPLE}
+  if (furSample < ${threshold.toFixed(4)}) discard;
+}`,
+    );
   };
 }
 
@@ -798,6 +973,27 @@ export interface ModelWorkshop {
   keepRig<T extends RigBlueprint>(blueprint: T): T;
   lambert(color: number, options?: LambertOptions): MeshLambertMaterial;
   /**
+   * One layer of a fur shell — the coat's OUTLINE, where `lambert`'s
+   * furFrequency is the coat's shading. See applyShellShader.
+   *
+   * `layer` runs 1..`layers`, outward: layer 1 sits closest to the skin and
+   * keeps the most hair. The caller owns the two things this cannot know — how
+   * far out to push the copy, and what colour a hair at that depth is (an inner
+   * layer is in the pile's own shadow) — because both are properties of the
+   * ANIMAL, not of the toolkit.
+   *
+   * The frequency is a parameter for exactly the reason LambertOptions.
+   * furFrequency is: a strand's size belongs to the creature, and this one must
+   * match the shade tile's on the same body or the shells stand off the
+   * partings.
+   */
+  shellMaterial(
+    color: number,
+    layer: number,
+    layers: number,
+    furFrequency: number,
+  ): MeshLambertMaterial;
+  /**
    * THE FINISHING PASS, and the reason a model reads as one creature.
    *
    * Merge the parts into a single geometry, weld the coincident vertices the
@@ -828,6 +1024,12 @@ export function createWorkshop(): ModelWorkshop {
    * texture can be drawn together, two sampling identical copies cannot.
    */
   let furTexture: DataTexture | undefined;
+  /**
+   * The one strand tile every shell layer of every kind samples. Lazy and
+   * shared for the same two reasons the shade tile above is — nothing but a
+   * furred creature pays for it, and a merge keys on texture IDENTITY.
+   */
+  let strandTexture: DataTexture | undefined;
 
   function keepGeometry<T extends BufferGeometry>(geometry: T): T {
     geometries.push(geometry);
@@ -875,6 +1077,29 @@ export function createWorkshop(): ModelWorkshop {
       return keepMaterial(material);
     },
 
+    shellMaterial(
+      color: number,
+      layer: number,
+      layers: number,
+      furFrequency: number,
+    ): MeshLambertMaterial {
+      if (strandTexture === undefined) strandTexture = furStrandAlphaTexture();
+      const material = new MeshLambertMaterial({
+        color,
+        flatShading: false,
+        vertexColors: true,
+      });
+      applyShellShader(
+        material,
+        strandTexture,
+        furFrequency,
+        SHELL_ALPHA_THRESHOLD_BASE + (layer / layers) * SHELL_ALPHA_THRESHOLD_RANGE,
+        layer,
+        layers,
+      );
+      return keepMaterial(material);
+    },
+
     organicSurface(parts: BufferGeometry[], skin: SkinFinish): BufferGeometry {
       const merged = mergeGeometries(parts);
       for (const part of parts) part.dispose();
@@ -897,6 +1122,8 @@ export function createWorkshop(): ModelWorkshop {
       // one of them may free it — and dies here with the workshop that made it.
       furTexture?.dispose();
       furTexture = undefined;
+      strandTexture?.dispose();
+      strandTexture = undefined;
       rigs.length = 0;
       geometries.length = 0;
       materials.length = 0;
