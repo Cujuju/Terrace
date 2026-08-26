@@ -28,7 +28,10 @@ import type { MessageSink } from '../net/message-sink.ts';
 import type { WorldPluginSetting, WorldSwitchStatus } from '@terrace/shared';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
+import { rebindBuildIdentity } from '../build-identity.ts';
 import { logError, logInfo, logWarn } from '../log.ts';
+import type { LoadedPlugin } from '../plugins/types.ts';
+import { reimportPlugin } from '../plugins/reload.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlockForToken } from './initial-unlock.ts';
 import {
@@ -100,6 +103,37 @@ export type PluginToggleRefusal =
  * installed but declares no such key, or does not accept that value for it.
  */
 export type PluginSettingRefusal = PluginToggleRefusal | 'unknownSetting';
+
+/**
+ * Why one plugin could not be reloaded in place (issue #198).
+ *
+ * ONE FAILURE NAME FOR ALL FOUR FAILING STEPS — import, onWorldCreate,
+ * persistence.load, probe tick. They are told apart in the LOG, where the
+ * operator can act on the difference; on the wire they are the same fact, and
+ * the one that matters: the new code was rejected and the old build is still
+ * running. A refusal vocabulary that enumerated a plugin's internal failure
+ * modes would be core learning what a plugin's steps mean.
+ */
+export type PluginReloadRefusal =
+  | 'unknownPlugin'
+  | 'noWorldLoaded'
+  | 'switchInProgress'
+  | 'reloadFailed';
+
+/** What a successful reload produced: the stamp the new build is running as. */
+export interface PluginReloadOutcome {
+  readonly version: string;
+}
+
+/**
+ * Where a reload gave up, for the log. Not a wire vocabulary — see
+ * PluginReloadRefusal.
+ */
+type ReloadFailureStep =
+  | 'opening the world'
+  | 'restoring its slice or onWorldCreate'
+  | 'persistence.load (it refused its saved data)'
+  | 'the probe tick';
 
 /** What a successful toggle did. `reopened` is false when nothing changed. */
 export interface PluginToggleOutcome {
@@ -297,7 +331,7 @@ export class WorldManager {
 
   /** Every plugin this server has discovered, whether or not a world runs it. */
   get installedPluginNames(): readonly string[] {
-    return this.deps.plugins.map((loaded) => loaded.plugin.name);
+    return this.deps.plugins.list.map((loaded) => loaded.plugin.name);
   }
 
   /**
@@ -309,7 +343,7 @@ export class WorldManager {
    */
   get installedPluginVersions(): Record<string, string> {
     const versions: Record<string, string> = {};
-    for (const loaded of this.deps.plugins) versions[loaded.plugin.name] = loaded.version;
+    for (const loaded of this.deps.plugins.list) versions[loaded.plugin.name] = loaded.version;
     return versions;
   }
 
@@ -378,7 +412,7 @@ export class WorldManager {
     if (!this.deps.registry.has(worldId)) return null;
     const stored = this.storedSettings(worldId);
     const listing: WorldPluginSetting[] = [];
-    for (const { plugin } of this.deps.plugins) {
+    for (const { plugin } of this.deps.plugins.list) {
       for (const declaration of plugin.settings ?? []) {
         listing.push({
           plugin: plugin.name,
@@ -412,7 +446,7 @@ export class WorldManager {
     value: string,
   ): PluginToggleOutcome | PluginSettingRefusal {
     if (!this.deps.registry.has(worldId)) return 'unknownWorld';
-    const declaring = this.deps.plugins.find((loaded) => loaded.plugin.name === pluginName);
+    const declaring = this.deps.plugins.find(pluginName);
     if (declaring === undefined) return 'unknownPlugin';
     const declaration = declaring.plugin.settings?.find((candidate) => candidate.key === key);
     if (declaration === undefined) return 'unknownSetting';
@@ -431,6 +465,140 @@ export class WorldManager {
       `plugin "${pluginName}" setting "${key}" is now "${value}" for world "${worldId}"`,
       `could not record plugin "${pluginName}" setting "${key}" for world "${worldId}"`,
     );
+  }
+
+  /**
+   * RELOADS ONE PLUGIN'S SERVER CODE IN PLACE (issue #198, Option B) — the new
+   * module runs the live world without the process restarting.
+   *
+   * THE PROMISE: either the new module is running everywhere, or the old one
+   * still is. There is no third outcome, and the four steps below are each a
+   * place the new code can be found unfit:
+   *
+   *   1. IMPORT — a syntax error or a throw at module scope. Nothing has been
+   *      installed yet, so there is nothing to undo.
+   *   2. RESTORE + onWorldCreate — the world is rebuilt over the new module.
+   *      Both are wrapped by `PluginHost.safely`, so neither throws out to
+   *      here; the host's fault COUNT for this plugin is what says it failed.
+   *   3. persistence.load REFUSED — the slice is parked and the plugin is
+   *      running with no state (host.isSliceParked). An operator asked to
+   *      update a plugin, not to empty it, so this is a failure like the rest.
+   *   4. THE PROBE TICK — one real simulation step, because a plugin that
+   *      throws on every tick has not been exercised by anything above.
+   *
+   * ROLLBACK IS THE SAME MACHINERY AS THE SWAP: the old LoadedPlugin goes back
+   * in its slot and the world is opened again over it, which replays
+   * `restorePersistence` + `worldCreate` and so restores the old module's state
+   * from the slice — the reason a half-updated process is not expressible here.
+   *
+   * THE OLD MODULE IS NOT FREED. Node's module map has no eviction, so every
+   * reload leaks one plugin's subtree for the life of the process; see
+   * plugins/reload.ts and DESIGN's known residual for the measured number.
+   */
+  async reloadPlugin(name: string): Promise<PluginReloadOutcome | PluginReloadRefusal> {
+    const previous = this.deps.plugins.find(name);
+    if (previous === undefined) return 'unknownPlugin';
+    const refusal = this.reloadPrecondition();
+    if (refusal !== null) return refusal;
+
+    let replacement: LoadedPlugin;
+    try {
+      replacement = await reimportPlugin(this.deps.config.pluginsDir, previous.directory);
+    } catch (error) {
+      logError(`reloading plugin "${name}" failed at import; it keeps its previous build`, error);
+      return 'reloadFailed';
+    }
+    if (replacement.plugin.name !== name) {
+      // A module that renamed itself is not a new build of this plugin: its
+      // slice key, its message namespace and its sibling name would all move at
+      // once, and nothing in the world would find it.
+      logError(
+        `reloading plugin "${name}" failed: plugins/${previous.directory} now calls itself ` +
+          `"${replacement.plugin.name}". It keeps its previous build.`,
+      );
+      return 'reloadFailed';
+    }
+
+    // RE-CHECKED AFTER THE AWAIT — the only yield in this method. A switch can
+    // have been announced, or the world unloaded, while the import ran.
+    const afterImport = this.reloadPrecondition();
+    if (afterImport !== null) return afterImport;
+    const id = this.activeId;
+    if (id === null) return 'noWorldLoaded';
+
+    const failure = this.installAndProbe(id, replacement);
+    if (failure === null) {
+      logInfo(`plugin "${name}" reloaded in place as v${replacement.version}`);
+      return { version: replacement.version };
+    }
+
+    logError(
+      `reloading plugin "${name}" failed at ${failure} — rolling back to v${previous.version}`,
+    );
+    const rolledBack = this.installAndProbe(id, previous, true);
+    if (rolledBack !== null) {
+      // The build that was running a moment ago now fails too, which means the
+      // failure is not the new module's. Stated rather than retried: the world
+      // is whatever the last open left, and the operator needs to see this.
+      logError(`rolling plugin "${name}" back to v${previous.version} also failed at ${rolledBack}`);
+    }
+    return 'reloadFailed';
+  }
+
+  /** The two states in which no reload may start (or continue after an await). */
+  private reloadPrecondition(): PluginReloadRefusal | null {
+    if (this.session === null) return 'noWorldLoaded';
+    if (this.pending !== null) return 'switchInProgress';
+    return null;
+  }
+
+  /**
+   * Puts one build of a plugin in the installed set, rebuilds the live world
+   * over it, and takes one real tick. Returns null when the plugin came up
+   * clean, or the step it failed at.
+   *
+   * THE IDENTITY IS REBOUND BEFORE THE WORLD IS OPENED, not after: `openInto`
+   * hands every connected player a fresh join snapshot, and that snapshot is
+   * the only place the build identity a client keys its one-shot page reload on
+   * is ever stated (net/join-snapshot.ts). Rebinding afterwards would send the
+   * OLD identity with the reload's own snapshot and leave every open page on the
+   * old client half until something else happened to re-snapshot it.
+   *
+   * `rollingBack` only shapes the log: on the way back there is no probe result
+   * anybody can act on, but a failure there is still worth stating.
+   */
+  private installAndProbe(
+    id: string,
+    build: LoadedPlugin,
+    rollingBack = false,
+  ): ReloadFailureStep | null {
+    const name = build.plugin.name;
+    this.deps.plugins.replace(build);
+    rebindBuildIdentity(this.deps.plugins.list);
+
+    try {
+      this.openInto(id);
+    } catch (error) {
+      logError(`opening world "${id}" over ${rollingBack ? 'the old' : 'the new'} plugin failed`, error);
+      return 'opening the world';
+    }
+
+    const session = this.session;
+    // Cannot be null — `openInto` returned without throwing — but the type says
+    // it can, and inventing a non-null assertion here would be the one place in
+    // this file that lies about the session.
+    if (session === null) return 'opening the world';
+
+    if (session.host.faultCount(name) > 0) return 'restoring its slice or onWorldCreate';
+    if (session.host.isSliceParked(name)) return 'persistence.load (it refused its saved data)';
+
+    // ONE REAL TICK, at the server's own tick period, because nothing above
+    // runs the plugin's simulation and a plugin that throws every tick would
+    // otherwise be installed as a silent no-op. It is a genuine step: the world
+    // clock advances by it, exactly as if the tick loop had reached it first.
+    session.host.tick(1 / this.deps.config.tickHz);
+    if (session.host.faultCount(name) > 0) return 'the probe tick';
+    return null;
   }
 
   /** This world's stored settings, flattened to `<plugin>/<key>` -> value. */
