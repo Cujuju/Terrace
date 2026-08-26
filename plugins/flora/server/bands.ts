@@ -50,7 +50,8 @@
 // below produce. Re-run that check if the ramp is ever re-authored.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BAND_HEIGHT, bandOf, quantizeToBand } from '@terrace/shared';
+import { BAND_HEIGHT, bandOf, isWater, quantizeToBand } from '@terrace/shared';
+import type { FringeSpecies } from '../protocol.ts';
 
 /**
  * Height at which the client's land ramp reaches snow — bandColors.ts's
@@ -155,4 +156,59 @@ export function isPlantableCell(world: FloraWorld, x: number, y: number): boolea
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (!world.isCellUnlocked(x, y)) return false;
   return isGreenBand(world.heightAt(x, y));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FRINGE WINDOWS (GH #192, #194) — the two height ranges on either side of
+// the green one, and the only other place in this plugin that reads the ramp.
+//
+// They live HERE, next to the window they are defined against, rather than in
+// ../protocol.ts. The client never asks this question: the species rides the
+// wire as its own list (../protocol.ts's fringe section says why), so nothing
+// outside the server half needs to know where reeds stop and heather starts.
+// That is what keeps the palette coupling this module's header documents to a
+// single file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * First height that no longer carries heather — EXCLUSIVE, and one ramp anchor
+ * above where the green window ends.
+ *
+ * ONE ANCHOR, not up to the snow line. Heather's job is to stop the ground
+ * looking dead the moment the grass gives out; carrying it to the snow line
+ * would put scrub on the pale high rock, which reads as the meadow failing to
+ * stop rather than as a treeline. One anchor is the transition band itself —
+ * dark exposed rock through rock — and above it the world is meant to be bare.
+ *
+ * DERIVED from the green window's own top rather than written as 448, so it
+ * follows the ramp exactly as FLORA_GREEN_MAX_HEIGHT does. Re-deriving the
+ * spacing from the window is arithmetic on two constants defined above, not a
+ * second copy of the ramp's geometry.
+ */
+export const FLORA_HEATHER_MAX_HEIGHT =
+  FLORA_GREEN_MAX_HEIGHT + LAND_RAMP_ANCHOR_SPACING;
+
+/**
+ * Which fringe species — if any — the ground at this height carries.
+ *
+ * TESTED AGAINST THE BAND FLOOR for isGreenBand's reason (it is what the
+ * renderer colours) with ONE exception, and the exception is load-bearing: the
+ * wetness test is `isWater` on the RAW height. A cell whose raw height is a
+ * unit or two above the sea quantises to a band floor of exactly SEA_LEVEL, and
+ * that cell is dry land the ramp paints as wet beach sand — the precise strip
+ * reeds exist for. Testing the floor there would call the whole shoreline water
+ * and grow nothing at all.
+ *
+ * Reeds get everything dry below the green window rather than a window of their
+ * own: their real bound is the shore test in ./fringe.ts, and a second height
+ * bound underneath it would be a constant that never binds.
+ */
+export function fringeSpeciesForHeight(height: number): FringeSpecies | null {
+  if (isWater(height)) return null;
+  const bandFloor = quantizeToBand(height);
+  if (bandFloor < FLORA_GREEN_MIN_HEIGHT) return 'reed';
+  if (bandFloor >= FLORA_GREEN_MAX_HEIGHT && bandFloor < FLORA_HEATHER_MAX_HEIGHT) {
+    return 'heather';
+  }
+  return null;
 }

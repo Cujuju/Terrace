@@ -782,8 +782,11 @@ if (
 //             for ten times the objects; still under a tenth of wildlife's
 //             budget. Fog of war caps what a real client pays at the ground it
 //             has actually unlocked, which early on is almost none of this.
-//   geometry  two InstancedMeshes (client/grassModels.ts), so TWO draw calls
-//             whatever the count, and 40 960 × GRASS_BLADES_PER_TUFT ≈ 205k
+//   geometry  three InstancedMeshes (client/grassModels.ts) since the
+//             wildflowers landed, so THREE draw calls whatever the count — the
+//             third adds at most FLORA_GRASS_CAP × 10 triangles and 2.6 MB of
+//             matrices, and no wire traffic at all (see WILDFLOWERS below).
+//             40 960 × GRASS_BLADES_PER_TUFT ≈ 205k
 //             blade instances at FIVE triangles each ≈ 1.0M triangles at the
 //             absolute cap — which the terrain's own 1024 chunk meshes dwarf,
 //             and which is what the flat-ribbon blade buys (see
@@ -1136,5 +1139,489 @@ if (
 ) {
   throw new RangeError(
     `a grass tuft of ${GRASS_TUFT_CLUSTER_CELL_SPAN} cells reaches past ${GRASS_TUFT_MAX_REACH_CELLS} cells and could overhang a terrace lip`,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WILDFLOWERS (GH #190) — THE ONE ADDITION IN THIS PLUGIN THAT COSTS NOTHING ON
+// THE WIRE.
+//
+// A flowering tuft is not a new population. It is not a new cell list, not a new
+// cap, not a new message pair — it is ONE MORE ROLL off the grass hash the
+// server already sends the cell for. The server does not know or care which
+// tufts flower; the client asks grassFlowerOf about a cell it already has, and
+// the answer is a pure function of that cell's coordinates.
+//
+// THAT IS THE WHOLE DESIGN CONSTRAINT, and it is what decides everything below.
+// Because the roll is derived rather than transmitted:
+//
+//   * the two halves cannot disagree — there is nothing to disagree ABOUT;
+//   * a keepalive re-send cannot re-colour a meadow, for grassCoversCell's own
+//     reason (the same coordinates give the same answer forever), which is what
+//     stops flowers strobing every time somebody digs nearby;
+//   * adding it costs one geometry and one InstancedMesh, and nothing else.
+//
+// WHERE THE BLOSSOM SITS, and why that is also free. The blossom geometry is
+// authored in the BLADE's local space, at the blade's own tip — so a flowering
+// blade's blossom instance reuses that blade's instance matrix exactly, with no
+// second transform to compute and no way for the flower to drift off the stem
+// it grows on. The per-blade height roll scales the blade and its blossom by the
+// identical factor, so a taller blade carries its flower higher and nothing
+// else changes. See client/grassModels.ts, which builds it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Share of tufts, out of 256, that carry a blossom.
+ *
+ * A MINORITY BY DESIGN. Flowers read as flowers because most of the meadow is
+ * not flowering: at a half or a third the field becomes a flowerbed, which is a
+ * planting, and this ground is not planted. A sixth is the largest share that
+ * still leaves plain green as the thing the eye calls the meadow — and because
+ * the roll is per TUFT and a tuft is one cell in GRASS_CELLS_PER_TUFT, the
+ * realised density on the ground is a sixth of an already-thinned population.
+ */
+export const GRASS_FLOWERING_SHARE_OF_256 = 42;
+
+/** What a flowering tuft's blossom needs, beyond the blade it grows on. */
+export interface GrassFlower {
+  /** Which blade of the tuft carries it, in [0, GRASS_BLADES_PER_TUFT). */
+  readonly bladeIndex: number;
+  /** Which colour, as a roll in [0, 255] — the client owns the palette, not this file. */
+  readonly tintRoll: number;
+}
+
+/**
+ * A fourth mix of the cell hash, for the flower rolls.
+ *
+ * A SEPARATE MIX rather than more bit slices of grassHash, for
+ * grassBladeHash's own reason: grassHash's low byte already decides whether the
+ * cell carries a tuft AT ALL, and its other slices are spent on scale and yaw.
+ * Slicing what is left would correlate flowering with tuft size — every flower
+ * on a big tuft, or none of them — which is the exact artefact the salted
+ * re-avalanche exists to prevent. 0x2f1c8ad3 is an odd constant unrelated to
+ * the other three.
+ */
+const GRASS_FLOWER_ROLL_SALT = 0x2f1c8ad3;
+
+function grassFlowerHash(x: number, y: number): number {
+  let h = (grassHash(x, y) ^ GRASS_FLOWER_ROLL_SALT) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x9e3779b1);
+  return (h ^ (h >>> 15)) >>> 0;
+}
+
+/**
+ * Does the tuft at (x, y) flower, and if so, how? Null for the large majority
+ * of tufts.
+ *
+ * PURE AND DETERMINISTIC, exactly like grassCoversCell and for the identical
+ * reason — see this section's header.
+ */
+export function grassFlowerOf(x: number, y: number): GrassFlower | null {
+  const hash = grassFlowerHash(x, y);
+  if ((hash & 0xff) >= GRASS_FLOWERING_SHARE_OF_256) return null;
+  return {
+    // Modulo of a full byte by a small blade count: the bias is at most one
+    // blade in 256 and it is a choice of which stem a flower grows on, which is
+    // not a quantity anything measures.
+    bladeIndex: ((hash >>> 8) & 0xff) % GRASS_BLADES_PER_TUFT,
+    tintRoll: (hash >>> 16) & 0xff,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FRINGE — SHORE REEDS (GH #192) AND ALPINE HEATHER (GH #194), ONE
+// POPULATION.
+//
+// Everything above the green window is bare rock and everything below it is
+// bare sand. Two species fill those two edges: reeds on the wet ground at the
+// waterline, heather on the first rock bands under the snow line.
+//
+// THEY ARE ONE POPULATION AND NOT TWO, WHICH IS THE ONLY INTERESTING DECISION
+// HERE. Trees, crops and grass are three separate fields because they are three
+// separate MECHANISMS — different eligibility, different cadence, different
+// occupancy rules, different caps, and each one exists for a different reason.
+// Reeds and heather are one mechanism with a height test that has two answers:
+// same survey, same cadence, same occupancy, same cap, same wire. Giving each
+// its own field would be four more constants, another cursor, another credit
+// and another message pair to say something one species roll already says — the
+// "same shape, different contract" trap read backwards. The rule this plugin
+// keeps is: a second FIELD when the mechanism differs, a second SPECIES when
+// only the answer does.
+//
+// THE SPECIES RIDES THE WIRE, AS ONE LIST PER SPECIES, and the alternative was
+// tried first and rejected on a concrete fact rather than on taste.
+//
+// The tempting version is to send two integers per plant like every other
+// population here and let the client DERIVE the species from the cell's own
+// height — the height it must already know to stand the plant on the ground.
+// That derivation is not available to it. `ClientPluginCtx.terrainHeightAt`
+// returns a WORLD-space Y (band floor × HEIGHT_WORLD_SCALE), not a heightmap
+// height, and HEIGHT_WORLD_SCALE lives in client/src/config.ts — a module the
+// plugin halves deliberately do not import, because it reads `import.meta.env`
+// and would drag Vite into the server and the test runner (plugins/mana's
+// env.d.ts and plugins/weather's sky.ts are two existing records of that trap).
+// Recovering the height would mean restating the scale factor inside this
+// plugin, which is the duplicated-terrain-math mistake `shared/` exists to
+// prevent, to save one array header on a message that already carries thousands
+// of integers.
+//
+// So the wire carries the answer instead of the inputs to it: `reeds` and
+// `heather`, two flat coordinate lists in one message, and the client's only
+// job is to draw what it is told. Withering needs no such split — a cell is
+// removed by key, and a client that holds the key knows which list it is in.
+//
+// THE ARITHMETIC, at FLORA_FRINGE_CAP on a fully revealed 512² world:
+//
+//   wire      8192 × 6 B ≈ 49 KB for a full snapshot, split across the two
+//             per-species lists — a fifth of the meadow's 246 KB, on the same
+//             join / keepalive / unlock paths.
+//   geometry  FOUR InstancedMeshes (two species × base and tip tone), so four
+//             draw calls whatever the count. Instances are allocated per
+//             species at the cap × that species' blade count, which is a hard
+//             guarantee rather than a shared pool: 8192 × 3 reed blades and
+//             8192 × 6 heather sprigs ≈ 74k matrices ≈ 9 MB of GPU buffer, a
+//             third of what the meadow already allocates.
+//
+// WHAT IS DELIBERATELY NOT HERE: the fringe is not fuel. Grass, crops and trees
+// register with fire (server/fire-bridge.ts); reeds and heather do not, so a
+// fire reaching the waterline or the snow line stops there. That is an explicit
+// punt, not an oversight — heather in particular is famously flammable, and
+// making it burn means sizing a burn time and a flame height and re-checking
+// the percolation argument FLORA_GRASS_BURN_SECONDS records. It is tracked
+// separately rather than smuggled in here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Server → client, the WHOLE fringe (`flora:fringe`). Replaces the receiver's list. */
+export const FLORA_FRINGE_MESSAGE = 'fringe';
+
+/** Server → client, what changed since the last message (`flora:fringeChanges`). */
+export const FLORA_FRINGE_CHANGES_MESSAGE = 'fringeChanges';
+
+/**
+ * The two things that grow on the fringe. A string union rather than an enum:
+ * `shared/` bans enums for type-stripping, and this plugin keeps that rule so a
+ * type can move between the two without a syntax question.
+ */
+export type FringeSpecies = 'reed' | 'heather';
+
+/**
+ * How far from a fringe cell the server looks for water before it will put a
+ * REED there, in cells. Heather has no such test.
+ *
+ * THREE CELLS, which is 0.75 world units since the 2026-08-21 re-sample. A
+ * one-cell test draws a hairline that reads as an outline around the water
+ * rather than as a stand of reeds; much past three and the reeds detach from the
+ * water and become beach scrub, which is a different plant (GH #193) and should
+ * look like one. It is a Chebyshev radius — a square ring test, matching
+ * farmland.ts's own shore sweep — because a reed bed does not care which
+ * diagonal the water lies on.
+ */
+export const FRINGE_REED_SHORE_RADIUS_CELLS = 3;
+
+/**
+ * How many eligible cells there are, on average, per plant — GRASS_CELLS_PER_TUFT's
+ * framing, once per species because the two grow at genuinely different
+ * densities.
+ *
+ * REEDS ARE DENSE. Their eligible ground is already a strip a few cells wide
+ * along the water, so a sparse roll over it gives a handful of stems rather than
+ * a bed. HEATHER IS SPARSE: its eligible ground is every rock cell in a whole
+ * ramp anchor, and mountainside scrub that covered it at meadow density would
+ * read as the grass simply carrying on over the rock, which is the one thing
+ * this species exists to avoid.
+ */
+export const FRINGE_REED_CELLS_PER_PLANT = 2;
+export const FRINGE_HEATHER_CELLS_PER_PLANT = 4;
+
+/** The two thinning thresholds out of 256 — derived, so they cannot drift from the densities above. */
+export const FRINGE_REED_SHARE_OF_256 = Math.round(256 / FRINGE_REED_CELLS_PER_PLANT);
+export const FRINGE_HEATHER_SHARE_OF_256 = Math.round(256 / FRINGE_HEATHER_CELLS_PER_PLANT);
+
+/**
+ * Hard ceiling on standing fringe plants.
+ *
+ * A GEOMETRY number first, exactly as FLORA_GRASS_CAP is, and a quarter of that
+ * one: the fringe's eligible ground is two narrow height windows where the
+ * meadow's is the whole green ramp, and its instance buffers are allocated per
+ * species at the cap (see the section header's 9 MB).
+ *
+ * MEASURED, not assumed — surveying the shipped world `frostwick-hollows` (512²,
+ * all 262 144 cells) against the real predicates gives:
+ *
+ *   water            236 180 cells  90.10%
+ *   green ramp        10 846 cells   4.14%   (matches FLORA_GRASS_CAP's own
+ *                                             independent measurement exactly)
+ *   reed ground        5 270 cells   2.01%  → 2 651 plants after thinning
+ *   heather ground       544 cells   0.21%  →   138 plants after thinning
+ *                                              ─────
+ *                                              2 789 plants, 34% of this cap
+ *
+ * So the cap does NOT bind on the world we ship, with a factor of three in hand
+ * — which is the point, since the number that has to be safe is the worst case
+ * rather than the measured one. Two things about that measurement are worth
+ * carrying forward: reeds are the population that matters (they are 95% of the
+ * fringe, because shoreline is what this worldgen makes), and heather is nearly
+ * absent on a world this low — 544 cells of rock in its window. Heather will
+ * read as a mountain plant, seen only on worlds that actually have mountains,
+ * and that is the intended outcome rather than a density that needs raising.
+ *
+ * Past the cap the fringe stops appearing on the newest ground swept, which is
+ * FLORA_GRASS_CAP's own named residual and reads the same way.
+ */
+export const FLORA_FRINGE_CAP = 8192;
+
+/** A cell holding one fringe plant. The cell IS its identity — TreeCell's contract. */
+export interface FringeCell {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Shares FLORA_CELL_KEY_STRIDE with the other three populations — cropKey's reason. */
+export function fringeKey(x: number, y: number): number {
+  return y * FLORA_CELL_KEY_STRIDE + x;
+}
+
+export function fringeCellOf(key: number): FringeCell {
+  return { x: key % FLORA_CELL_KEY_STRIDE, y: Math.floor(key / FLORA_CELL_KEY_STRIDE) };
+}
+
+/** Cells → the flat `[x0, y0, x1, y1, …]` wire form. */
+export function packFringeCells(cells: Iterable<FringeCell>): number[] {
+  const packed: number[] = [];
+  for (const cell of cells) packed.push(cell.x, cell.y);
+  return packed;
+}
+
+/** Defensive parse of a flat coordinate list, capped at FLORA_FRINGE_CAP. */
+export function parseFringeCells(value: unknown): FringeCell[] | null {
+  if (!Array.isArray(value)) return null;
+  const cells: FringeCell[] = [];
+  for (let i = 0; i + 1 < value.length; i += 2) {
+    if (cells.length >= FLORA_FRINGE_CAP) break;
+    const x = value[i];
+    const y = value[i + 1];
+    if (!isCellCoordinate(x) || !isCellCoordinate(y)) continue;
+    cells.push({ x, y });
+  }
+  return cells;
+}
+
+/** `flora:fringe` — the receiver's whole fringe, ONE FLAT LIST PER SPECIES. */
+export interface FloraFringePayload {
+  readonly reeds: readonly number[];
+  readonly heather: readonly number[];
+}
+
+/**
+ * `flora:fringeChanges` — what to add, by species, and what to remove.
+ *
+ * `withered` is NOT split by species, and that asymmetry is the point: a cell
+ * is removed by key, and the receiver already knows which species it had.
+ * Splitting it would be a second list carrying information the receiver cannot
+ * fail to have.
+ */
+export interface FloraFringeChangesPayload {
+  readonly reeds: readonly number[];
+  readonly heather: readonly number[];
+  readonly withered: readonly number[];
+}
+
+/** One parsed fringe payload — the cells this receiver should now hold, by species. */
+export interface FringeBySpecies {
+  readonly reed: FringeCell[];
+  readonly heather: FringeCell[];
+}
+
+/**
+ * Defensive parse of the two per-species lists.
+ *
+ * EACH LIST IS CAPPED SEPARATELY at FLORA_FRINGE_CAP, so a hostile payload
+ * carrying two full lists yields at most twice the cap. That is deliberate and
+ * bounded: the client's per-species instance buffers are each sized at the cap,
+ * so neither can overrun, and the drawing loop stops at the cap across both
+ * species anyway (client/fringeModels.ts). The alternative — a running total
+ * across both lists — would make a long `reeds` list silently truncate a valid
+ * `heather` one, which is a worse failure than drawing a bounded surplus.
+ */
+function parseFringeBySpecies(value: {
+  reeds?: unknown;
+  heather?: unknown;
+}): FringeBySpecies | null {
+  const reed = parseFringeCells(value.reeds ?? []);
+  const heather = parseFringeCells(value.heather ?? []);
+  if (reed === null || heather === null) return null;
+  return { reed, heather };
+}
+
+export function parseFringePayload(payload: unknown): FringeBySpecies | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  return parseFringeBySpecies(payload as { reeds?: unknown; heather?: unknown });
+}
+
+export function parseFringeChangesPayload(
+  payload: unknown,
+): { sprouted: FringeBySpecies; withered: FringeCell[] } | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const message = payload as { reeds?: unknown; heather?: unknown; withered?: unknown };
+  const sprouted = parseFringeBySpecies(message);
+  const withered = parseFringeCells(message.withered ?? []);
+  if (sprouted === null || withered === null) return null;
+  return { sprouted, withered };
+}
+
+/**
+ * Salt for the fringe rolls — GRASS_ROLL_SALT's job for this population.
+ *
+ * A fringe plant and a tuft of grass can never share a cell (their height
+ * windows are disjoint by construction), so this salt is not preventing an
+ * artefact anybody could see today. It is here because the day somebody widens
+ * a window is not the day they should discover that two populations were sharing
+ * a hash. 0x6b43a9f5 is odd and unrelated to the other four.
+ */
+const FRINGE_ROLL_SALT = 0x6b43a9f5;
+
+function fringeHash(x: number, y: number): number {
+  let h = (hashCell(x, y) ^ FRINGE_ROLL_SALT) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x2545f491);
+  return (h ^ (h >>> 15)) >>> 0;
+}
+
+/**
+ * Does the thinning roll put a plant of `species` on this cell?
+ *
+ * Takes the species rather than the height so the caller — which has already
+ * resolved the species to decide eligibility at all — does not resolve it twice.
+ */
+export function fringeCoversCell(x: number, y: number, species: FringeSpecies): boolean {
+  const share = species === 'reed' ? FRINGE_REED_SHARE_OF_256 : FRINGE_HEATHER_SHARE_OF_256;
+  return (fringeHash(x, y) & 0xff) < share;
+}
+
+/** Uniform scale bounds applied to a whole fringe plant — grassVariation's shape and spread. */
+export const FRINGE_SCALE_MIN = 0.75;
+export const FRINGE_SCALE_MAX = 1.25;
+
+export interface FringeVariation {
+  readonly scale: number;
+  readonly yaw: number;
+}
+
+/** The deterministic variation for the plant at (x, y) — grassVariation, restated. */
+export function fringeVariation(x: number, y: number): FringeVariation {
+  const hash = fringeHash(x, y);
+  const scaleRoll = (hash >>> 8) & 0xff;
+  const yawRoll = (hash >>> 16) & (YAW_DIVISOR - 1);
+  return {
+    scale: FRINGE_SCALE_MIN + (scaleRoll / 0xff) * (FRINGE_SCALE_MAX - FRINGE_SCALE_MIN),
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+  };
+}
+
+/**
+ * The footprint bound, and it lands on half a cell for GRASS_TUFT_MAX_REACH_CELLS'
+ * reason: fringe plants sit one per cell on the cell lattice, so each may claim
+ * half the distance to its neighbour and no two can ever overlap. The named
+ * residual is the meadow's too — a blade tip may lean up to
+ * (reach − CONTOUR_CELL_CENTRE_GUARD) past a terrace lip.
+ */
+export const FRINGE_MAX_REACH_CELLS = 0.5;
+
+/** The square a plant's stems are planted in — GRASS_TUFT_CLUSTER_CELL_SPAN's derivation. */
+export const FRINGE_CLUSTER_CELL_SPAN =
+  FRINGE_MAX_REACH_CELLS / (SQUARE_CIRCUMRADIUS_PER_EDGE * FRINGE_SCALE_MAX);
+
+/**
+ * How many stems each species carries, and how far from the plant's crown they
+ * are planted as a fraction of the cluster span.
+ *
+ * REEDS ARE FEW AND TIGHT — three tall stems standing almost together is what a
+ * reed reads as, and spreading them turns one plant into three. HEATHER IS MANY
+ * AND WIDE: it is a low mound, and the mound is made of the count. Both are odd,
+ * for GRASS_BLADE_OFFSETS' reason — an even ring in a top-down camera reads as
+ * the lattice it came from.
+ */
+const FRINGE_REED_STEM_COUNT = 3;
+const FRINGE_HEATHER_STEM_COUNT = 7;
+const FRINGE_REED_STEM_RADIUS_IN_SPANS = 0.12;
+const FRINGE_HEATHER_STEM_RADIUS_IN_SPANS = 0.28;
+
+function ringOffsets(count: number, radius: number): ReadonlyArray<readonly [number, number]> {
+  return Array.from({ length: count }, (_unused, index): readonly [number, number] => {
+    const angle = (TWO_PI * index) / count;
+    return [radius * Math.sin(angle), radius * Math.cos(angle)];
+  });
+}
+
+export const FRINGE_REED_STEM_OFFSETS = ringOffsets(
+  FRINGE_REED_STEM_COUNT,
+  FRINGE_REED_STEM_RADIUS_IN_SPANS,
+);
+
+export const FRINGE_HEATHER_STEM_OFFSETS = ringOffsets(
+  FRINGE_HEATHER_STEM_COUNT,
+  FRINGE_HEATHER_STEM_RADIUS_IN_SPANS,
+);
+
+/** The stem lattice for one species — the client's single lookup. */
+export function fringeStemOffsets(
+  species: FringeSpecies,
+): ReadonlyArray<readonly [number, number]> {
+  return species === 'reed' ? FRINGE_REED_STEM_OFFSETS : FRINGE_HEATHER_STEM_OFFSETS;
+}
+
+/**
+ * The most stems any one species carries — what the client sizes the WORST of
+ * its instance buffers from, so a species gaining a stem cannot silently
+ * overrun one.
+ */
+export const FRINGE_MAX_STEMS_PER_PLANT = Math.max(
+  FRINGE_REED_STEM_COUNT,
+  FRINGE_HEATHER_STEM_COUNT,
+);
+
+/** How much shorter or taller than its plant one stem may be, as a fraction. */
+export const FRINGE_STEM_HEIGHT_SPREAD = 0.3;
+
+/** How far a stem may wander off its lattice point, as a fraction of the cluster span. */
+export const FRINGE_STEM_JITTER_IN_SPANS = 0.05;
+
+/** GrassBladeVariation, restated for a fringe stem. */
+export interface FringeStemVariation {
+  readonly yaw: number;
+  readonly height: number;
+  readonly jitterX: number;
+  readonly jitterZ: number;
+}
+
+function fringeStemHash(x: number, y: number, index: number): number {
+  let h = fringeHash(x, y);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (index + 1), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** The deterministic variation for stem `index` of the plant at (x, y). */
+export function fringeStemVariation(x: number, y: number, index: number): FringeStemVariation {
+  const hash = fringeStemHash(x, y, index);
+  const yawRoll = hash & (YAW_DIVISOR - 1);
+  const heightRoll = (hash >>> 16) & 0xff;
+  const jitterXRoll = (hash >>> 8) & (JITTER_DIVISOR - 1);
+  const jitterZRoll = (hash >>> 24) & (JITTER_DIVISOR - 1);
+  const centred = (roll: number): number => (roll / (JITTER_DIVISOR - 1)) * 2 - 1;
+  return {
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+    height: 1 + centred(heightRoll) * FRINGE_STEM_HEIGHT_SPREAD,
+    jitterX: centred(jitterXRoll) * FRINGE_STEM_JITTER_IN_SPANS,
+    jitterZ: centred(jitterZRoll) * FRINGE_STEM_JITTER_IN_SPANS,
+  };
+}
+
+/** The tuft lattice check, a second time — every input is a constant, so it holds always or never. */
+if (
+  FRINGE_CLUSTER_CELL_SPAN * FRINGE_SCALE_MAX * SQUARE_CIRCUMRADIUS_PER_EDGE >
+  FRINGE_MAX_REACH_CELLS + Number.EPSILON
+) {
+  throw new RangeError(
+    `a fringe plant of ${FRINGE_CLUSTER_CELL_SPAN} cells reaches past ${FRINGE_MAX_REACH_CELLS} cells and could overhang a terrace lip`,
   );
 }
