@@ -200,7 +200,7 @@ function simulate(world: WorldApi, dt: number): void {
   const birds = birdStates();
   world.broadcastVisible(
     WILDLIFE_ENTITIES_MESSAGE,
-    entityStates(),
+    entityStates(world.worldSize),
     (entity) => ({ x: entity.x, y: entity.y }),
     (visibleHabitat) => ({ entities: [...visibleHabitat, ...birds] }),
   );

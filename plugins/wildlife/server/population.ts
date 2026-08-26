@@ -75,6 +75,7 @@ import {
   type WildlifeEntityState,
   type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
+  roundBroadcastCell,
   roundBroadcastPosition,
   sizeClassAt,
   sizeClassIndex,
@@ -937,13 +938,23 @@ export function advancePopulation(world: HabitatWorld, dt: number): void {
 
 // ── Wire ────────────────────────────────────────────────────────────────────────
 
-/** The broadcast payload's entity list: cell-space floats at wire precision. */
-export function entityStates(): WildlifeEntityState[] {
+/**
+ * The broadcast payload's entity list: cell-space floats at wire precision.
+ *
+ * `worldSize` is taken so positions can be bounded to the map on the way out
+ * (protocol's roundBroadcastCell): a creature within half a quantum of the far
+ * edge is legally inside the world but rounds to `worldSize`, and the host's
+ * visibility filter turns every broadcast position back into a chunk index and
+ * throws on an off-map one (issue #180). Habitat creatures are always on the
+ * map by construction — the movement veto and the habitat sweep both say so —
+ * so this bounds the WIRE FORM only, and never moves a creature.
+ */
+export function entityStates(worldSize: number): WildlifeEntityState[] {
   return entities.map((entity) => ({
     id: entity.id,
     species: entity.species,
-    x: roundBroadcastPosition(entity.x),
-    y: roundBroadcastPosition(entity.y),
+    x: roundBroadcastCell(entity.x, worldSize),
+    y: roundBroadcastCell(entity.y, worldSize),
     heading: roundBroadcastPosition(entity.heading),
     // The class INDEX, not its name — one msgpack byte instead of seven.
     // `schoolId` is deliberately absent: see the field's note on WildlifeEntity.
