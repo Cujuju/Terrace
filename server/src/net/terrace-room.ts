@@ -8,6 +8,10 @@
 //  - Client<{ userData, auth, messages }> replaced Client<UserData, AuthData>;
 //  - onMessage(type, cb) supports MULTIPLE handlers per type and returns an
 //    unbind function (0.17 change — re-registering no longer replaces);
+//  - onMessage('*', cb) is supported and its callback takes (client, type,
+//    message): Room.d.ts:437 declares the overload, and Room.mjs `_onMessage`
+//    (lines 994-1000) emits to '*' ONLY when no handler is registered for the
+//    incoming type, falling back to `__no_message_handler` when neither exists;
 //  - onLeave's second parameter is a close `code`, not `consented`;
 //  - message payloads are encoded with MsgPack by the transport, so we hand it
 //    plain protocol objects and never serialize by hand.
@@ -23,13 +27,12 @@
 //   1. NOTHING IS CAPTURED. Every handler below reaches the world via
 //      `this.manager` at call time. A handler that closed over a World would
 //      keep sculpting the world the operator just left.
-//   2. PLUGIN HANDLERS ARE REGISTERED BY TYPE, RESOLVED PER MESSAGE. The set
-//      of plugin message types is fixed at boot (the plugin set is), so the
-//      registration can happen once; WHICH host answers depends on which world
-//      is loaded, so the lookup happens per message — see
-//      PluginHost.messageTypesFor.
+//   2. PLUGIN MESSAGES ARE ROUTED PER MESSAGE, BY NOBODY'S LIST (issue #197).
+//      One Colyseus wildcard registration covers every `<plugin>:<type>`; both
+//      WHICH host answers and WHETHER the type exists at all are asked of the
+//      live host as each message arrives — see net/plugin-message-routing.ts.
 
-import { Room, type Client } from '@colyseus/core';
+import { CloseCode, ErrorCode, Room, isDevMode, type Client } from '@colyseus/core';
 import {
   validateRestorePointsRequest,
   validateRollbackRequest,
@@ -54,6 +57,7 @@ import type { ServerRestartService } from '../restart.ts';
 import type { WorldAdminService } from '../world/world-admin.ts';
 import type { WorldManager } from '../world/world-manager.ts';
 import { buildJoinSnapshot } from './join-snapshot.ts';
+import { isPluginMessageType, routePluginMessage } from './plugin-message-routing.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
 
 /** The matchmaking name clients join. Agreed with the Phase 1 client agent. */
@@ -96,6 +100,14 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
 ] as const;
 
 /**
+ * What the client is told about a message type no handler claims — worded as
+ * Colyseus words it (@colyseus/core 0.17.50 Room.mjs line 96), because this is
+ * the framework's own rejection, reproduced rather than replaced. See
+ * TerraceRoom.rejectUnregisteredMessage.
+ */
+const UNREGISTERED_MESSAGE_REASON_PREFIX = 'room onMessage for ';
+
+/**
  * Server → client message map. The Colyseus message name is the payload's own
  * `type` literal from shared/src/protocol.ts, and the payload is the whole
  * protocol object — one name, one shape, no server-only wrapper to drift.
@@ -129,12 +141,6 @@ export interface RoomContext {
   readonly admin: WorldAdminService;
   /** Owns the restart countdown and the exit sequence. */
   readonly restart: ServerRestartService;
-  /**
-   * Namespaced plugin message types, from PluginHost.messageTypesFor. Passed
-   * in rather than read off a host because the room is created before — and
-   * may exist without — any world being loaded.
-   */
-  readonly pluginMessageTypes: readonly string[];
 }
 
 /**
@@ -296,19 +302,27 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       });
     }
 
-    // Namespaced plugin handlers. Registered once by TYPE at create; the
-    // handler is resolved per message against whichever host is current, so a
-    // world switch cannot leave a message going to the previous world's
-    // plugins (see this file's header).
-    for (const type of this.context.pluginMessageTypes) {
-      this.onMessage(type, (client: TerraceClient, payload: unknown) => {
-        const player = client.userData?.player;
-        if (!player) return;
-        const handler = this.context.manager.current?.host.handlerFor(type);
-        if (handler === undefined) return;
-        handler(player, payload);
-      });
-    }
+    // Namespaced plugin messages. ONE wildcard registration for all of them,
+    // because the deliverable set must not be snapshotted here (issue #197):
+    // the room outlives every world AND every plugin reload, so both the host
+    // that answers and the types it claims are asked for per message — see
+    // net/plugin-message-routing.ts.
+    //
+    // The wildcard cannot swallow a core message: Colyseus reaches '*' only
+    // for a type with no handler of its own, and every core type above is
+    // registered by name (see this file's header).
+    this.onMessage('*', (client: TerraceClient, type: string | number, payload: unknown) => {
+      if (!isPluginMessageType(type)) {
+        this.rejectUnregisteredMessage(client, type);
+        return;
+      }
+      const player = client.userData?.player;
+      // As for sculpt: a message can arrive between the socket opening and
+      // onJoin completing, and without a player there is nobody to attribute
+      // it to.
+      if (!player) return;
+      routePluginMessage(() => this.context.manager.current?.host ?? null, player, type, payload);
+    });
 
     const session = this.context.manager.current;
     logInfo(
@@ -316,6 +330,27 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         ? `room "${ROOM_NAME}" created (no world loaded)`
         : `room "${ROOM_NAME}" created (world ${session.world.size}²)`,
     );
+  }
+
+  /**
+   * What a message type nobody registered gets: exactly what Colyseus itself
+   * would have done before the wildcard above existed.
+   *
+   * A '*' handler REPLACES the framework's `__no_message_handler` fallback
+   * (@colyseus/core 0.17.50 Room.mjs lines 994-1000: '*' is consulted first,
+   * and the fallback only when there is no '*'), so registering the wildcard
+   * would silently turn a hostile or broken client's unknown-type spam from a
+   * disconnect into a free no-op. This keeps that behaviour rather than
+   * relaxing it as a side effect of issue #197: an error in dev mode so the
+   * developer sees the typo, a disconnect otherwise (Room.mjs lines 94-103).
+   */
+  private rejectUnregisteredMessage(client: TerraceClient, type: string | number): void {
+    const reason = `${UNREGISTERED_MESSAGE_REASON_PREFIX}"${type}" not registered.`;
+    if (isDevMode) {
+      client.error(ErrorCode.INVALID_PAYLOAD, reason);
+    } else {
+      client.leave(CloseCode.WITH_ERROR, reason);
+    }
   }
 
   /**

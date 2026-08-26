@@ -34,7 +34,6 @@ import { logError, logInfo, logWarn } from './log.ts';
 import { openWorlds } from './boot/open-worlds.ts';
 import { WorldRegistry } from './persistence/world-registry.ts';
 import { discoverPlugins } from './plugins/discovery.ts';
-import { PluginHost } from './plugins/host.ts';
 import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
@@ -221,15 +220,10 @@ async function main(): Promise<void> {
   }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
 
   // Bind before define(): a room can be created as soon as the server listens.
-  // The plugin message TYPES are computed once here, from the plugin set,
-  // because the room outlives every world and must register handlers without
-  // one — see PluginHost.messageTypesFor.
-  bindRoomContext({
-    manager,
-    admin,
-    restart,
-    pluginMessageTypes: PluginHost.messageTypesFor(plugins),
-  });
+  // No plugin message types travel with the context: the room routes every
+  // `<plugin>:<type>` through the live host per message (issue #197), so there
+  // is nothing here to go stale when a plugin's message set changes.
+  bindRoomContext({ manager, admin, restart });
   // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
   // (@colyseus/core ServerOptions.greet, default true).
   const serverOptions: ServerOptions = { greet: false };
