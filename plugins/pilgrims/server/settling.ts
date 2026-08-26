@@ -151,6 +151,16 @@ const HOMESTEAD_MIN_CELLS = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The cell a settler's site ring is centred on — the building that sent it
+ * out. A temple (`Settling.advance`) or a house (`Settling.emitFrom`); the
+ * scan needs nothing else about it.
+ */
+interface SettleOrigin {
+  readonly x: number;
+  readonly y: number;
+}
+
 /** A candidate homestead: the block's anchor, and the cell a settler walks to. */
 interface SettleSite {
   readonly x: number;
@@ -185,6 +195,13 @@ function doorOf(temple: BridgedTemple): { x: number; y: number } {
  * walk to is not a site; the scan is the right place to say so, and saying it
  * here also deletes the pick-then-plan-then-bail sequence from all three.
  *
+ * THE RING IS CENTRED ON AN ORIGIN, not on the temple: a settler walks out of
+ * whatever building sent it, and under a growth model where HOUSES send
+ * settlers out (structures' STRUCTURES_MODEL=populous, via `emitSettlerFrom`)
+ * that building is a house. Nothing else about the choice changes — the same
+ * distances, the same bearings, the same two ground tests — so the temple's
+ * settlers and a house's settlers cannot pick sites by two different rules.
+ *
  * A RING SCAN, not a survey of the county: bearings in a fixed order starting
  * from one the roll picks, and along each bearing the distances from the
  * minimum out to the maximum, nearest first. That is cheap, it is the same
@@ -217,7 +234,7 @@ function doorOf(temple: BridgedTemple): { x: number; y: number } {
  */
 function scanSettleSites<T>(
   world: PilgrimWorld,
-  temple: BridgedTemple,
+  origin: SettleOrigin,
   roll: number,
   plan: (site: SettleSite) => T | null,
 ): { site: SettleSite; planned: T } | null {
@@ -235,8 +252,8 @@ function scanSettleSites<T>(
       // before it walks to the edge of its range.
       const distance =
         SETTLE_MIN_DISTANCE_CELLS + (span * d) / Math.max(1, SETTLE_DISTANCE_STEPS - 1);
-      const anchorX = Math.floor(temple.x + cos * distance);
-      const anchorY = Math.floor(temple.y + sin * distance);
+      const anchorX = Math.floor(origin.x + cos * distance);
+      const anchorY = Math.floor(origin.y + sin * distance);
       if (!isBlockSettleable(world, anchorX, anchorY)) continue;
 
       const site: SettleSite = {
@@ -309,6 +326,23 @@ interface Settler {
   /** The homestead's anchor cell — the block runs +1 in x and y from it. */
   siteX: number;
   siteY: number;
+  /**
+   * The building this settler walked out of, and the centre of the ring every
+   * RETRY re-scans (see retryOrRetire). Kept on the settler rather than looked
+   * up again because the sender may be a house, which this plugin cannot ask
+   * about after the fact.
+   */
+  readonly origin: SettleOrigin;
+  /**
+   * Does this settler's existence depend on the temple still standing?
+   *
+   * TRUE for a temple's own dispatch: a settler whose temple was razed
+   * mid-walk retires rather than carrying on founding that temple's county,
+   * which is the behaviour this plugin has always had. FALSE for one a HOUSE
+   * emitted — its sender is structures' business, not this plugin's, and the
+   * temple it never came out of has nothing to say about it.
+   */
+  readonly boundToTemple: boolean;
   /** Sites tried so far, including the one being walked to. */
   attempts: number;
   stuckSeconds: number;
@@ -469,7 +503,13 @@ export class Settling {
     temple: BridgedTemple | null,
     epoch: number,
   ): void {
-    if (temple === null || settler.attempts >= SETTLER_SITE_ATTEMPTS) {
+    if (settler.attempts >= SETTLER_SITE_ATTEMPTS) {
+      this.settlers.delete(settler.id);
+      return;
+    }
+    // See Settler.boundToTemple: only the temple's own people go home when the
+    // temple is gone.
+    if (settler.boundToTemple && temple === null) {
       this.settlers.delete(settler.id);
       return;
     }
@@ -480,7 +520,7 @@ export class Settling {
     // sequence is.
     const found = scanSettleSites(
       world,
-      temple,
+      settler.origin,
       hashCell(epoch, settler.id + settler.attempts),
       (candidate) => planRoute(world, settler.x, settler.y, candidate.goalX, candidate.goalY),
     );
@@ -531,11 +571,75 @@ export class Settling {
       goalY: site.goalY,
       siteX: site.x,
       siteY: site.y,
+      origin: { x: temple.x, y: temple.y },
+      boundToTemple: true,
       attempts: 1,
       stuckSeconds: 0,
       route,
       routeIndex: 0,
     });
+  }
+
+  /**
+   * SEND ONE SETTLER OUT OF THE BUILDING AT (x, y) — the structures-facing
+   * surface (owner brief, 2026-08-25: under STRUCTURES_MODEL=populous a house
+   * that fills up emits a settler, who founds the next house).
+   *
+   * THE SAME SETTLER AS THE TEMPLE'S, deliberately and to the letter: the same
+   * population and the same cap (SETTLERS_CAP), the same site scan, the same
+   * two ground tests, the same walk, the same founding on arrival, the same
+   * retries. Only the ring's centre differs. A second walker population for
+   * houses would be a second copy of the walk rule, the model set and the wire
+   * — the duplication this file's header exists to refuse.
+   *
+   * NOT ON THE TEMPLE'S EPOCH CLOCK: this is not a dispatch, it is a request
+   * from another plugin that already has its own cadence (structures' growth
+   * interval). The temple's own epoch is untouched, so a world with both a
+   * temple and populous houses runs the two senders independently.
+   *
+   * DETERMINISTIC without an rng, like everything else here: the bearing comes
+   * from the emitting cell hashed against the settler's own id, and the id
+   * sequence is deterministic.
+   *
+   * Returns whether anyone came out. FALSE IS ORDINARY — the crowd is at its
+   * cap, or nowhere in this building's county is both reachable and buildable.
+   */
+  emitFrom(world: PilgrimWorld, x: number, y: number): boolean {
+    if (this.settlers.size >= SETTLERS_CAP) return false;
+
+    const origin: SettleOrigin = { x, y };
+    // The centre of the emitting cell, not its corner: a settler steps out
+    // into the middle of the ground its house stands on.
+    const startX = x + 0.5;
+    const startY = y + 0.5;
+
+    const id = this.ids.allocate();
+    const found = scanSettleSites(world, origin, hashCell(hashCell(x, y), id), (candidate) =>
+      planRoute(world, startX, startY, candidate.goalX, candidate.goalY),
+    );
+    if (found === null) return false;
+    const { site, planned: route } = found;
+
+    this.settlers.set(id, {
+      id,
+      // The emitting house's own district, the same derivation the temple's
+      // settlers use — a house's people are its neighbourhood's folk.
+      race: settlementRace(x, y),
+      x: startX,
+      y: startY,
+      heading: Math.atan2(site.goalY - startY, site.goalX - startX),
+      goalX: site.goalX,
+      goalY: site.goalY,
+      siteX: site.x,
+      siteY: site.y,
+      origin,
+      boundToTemple: false,
+      attempts: 1,
+      stuckSeconds: 0,
+      route,
+      routeIndex: 0,
+    });
+    return true;
   }
 
   /** Wire rows for the broadcast, insertion (spawn) order. */
