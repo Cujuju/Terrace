@@ -143,13 +143,14 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       // for a change that is invisible on a swimmer anyway (no sea kind has
       // variants).
       container.remove(existing.model.root);
+      const rebuilt = models.create(monster.kind, monster.variant);
       views.set(id, {
-        model: models.create(monster.kind, monster.variant),
+        model: rebuilt,
         dread: existing.dread,
         phase: existing.phase,
         variant: monster.variant,
       });
-      container.add(views.get(id)!.model.root);
+      container.add(rebuilt.root);
       continue;
     }
     const model = models.create(monster.kind, monster.variant);
