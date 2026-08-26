@@ -10,6 +10,7 @@
 // exporting a TerracePlugin — preferably as `export const plugin`.
 
 import { readdir, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_NAME_PATTERN } from '@terrace/shared';
@@ -42,6 +43,29 @@ export class PluginLoadError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = 'PluginLoadError';
+  }
+}
+
+/**
+ * Whether a plugins/ entry is a directory, FOLLOWING SYMLINKS (issue #182).
+ * readdir's Dirent reports a symlinked plugin as a symlink, not a directory,
+ * so `isDirectory()` alone dropped it without a word and a self-hoster who
+ * symlinked a plugin in got the silently plugin-less world discoverPlugins'
+ * policy exists to rule out. Following the link is safe here: plugins/ is
+ * operator-controlled and everything in it is already code the server runs.
+ *
+ * A dangling link or a link loop fails `stat` (ENOENT / ELOOP); that is a
+ * malformed plugin and aborts boot like any other, rather than being skipped.
+ */
+async function isPluginDirectory(root: string, entry: Dirent): Promise<boolean> {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return (await stat(join(root, entry.name))).isDirectory();
+  } catch (error) {
+    throw new PluginLoadError(`plugins/${entry.name}: symlink cannot be followed`, {
+      cause: error,
+    });
   }
 }
 
@@ -146,7 +170,10 @@ export async function discoverPlugins(pluginsDir: string): Promise<LoadedPlugin[
   let directories: string[];
   try {
     const entries = await readdir(root, { withFileTypes: true });
-    directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    directories = [];
+    for (const entry of entries) {
+      if (await isPluginDirectory(root, entry)) directories.push(entry.name);
+    }
   } catch (error) {
     // ENOENT (directory genuinely absent) is the one expected failure — core
     // runs fine with no plugins. Anything else (EACCES on a misconfigured
