@@ -107,6 +107,24 @@ export interface World extends TerrainSink {
    */
   graspSpanBand(pick: TerrainRayPick | null): number | null;
   /**
+   * The band a CARVE starting at this pick cuts from — `SculptIntent`'s
+   * `spanBand` for the one tool that needs it on ordinary ground too.
+   *
+   * THE SAME DERIVATION AS `graspSpanBand`, WITHOUT ITS ONE-SPAN SHORTCUT, and
+   * that difference is the whole reason it is a second method. `graspSpanBand`
+   * says nothing about a column of one span because every other tool moves
+   * that column's only surface whatever band is named. A carve does not move a
+   * surface: it removes a range, and the range has to start SOMEWHERE, so a
+   * carve into a virgin cliff face — the very first cut of any tunnel, when no
+   * layered column exists anywhere in the world — needs the band the ray
+   * actually struck. Folding this into `graspSpanBand` instead would put a
+   * `spanBand` on every stamp and smooth intent over ordinary ground, which is
+   * exactly the byte-identity step 4.3 was built to keep.
+   *
+   * Null only when there is no pick or no world yet.
+   */
+  carveBand(pick: TerrainRayPick | null): number | null;
+  /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
    * anything standing on the ground belongs. Cells in never-received chunks
@@ -163,6 +181,26 @@ export function createWorld(viewport: Viewport): World {
   let framedWorldSize = 0;
   /** One-shot timer armed for the moment the oldest prediction expires. */
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * The band a ray AIMED AT, as a number: the one derivation `graspSpanBand`
+   * and `carveBand` share, written once so the two can never disagree about
+   * which layer the player is pointing at. What differs between them is only
+   * WHEN they ask it — see their docs on the World interface.
+   */
+  const bandOfPick = (pick: TerrainRayPick): number | null => {
+    if (mirror === null) return null;
+    // A riser hit names the lip the ray actually struck — the same rounding
+    // `highlightLayerEdge` uses, and for the same reason: the lip of band k
+    // lies AT k·BAND_HEIGHT, so the nearest lip to a height is the nearest
+    // multiple. A horizontal face (a tread, or a cave roof seen from below)
+    // has no stack to disambiguate, so the band of the span the march itself
+    // reported is the answer.
+    if (pick.hitRiser) {
+      return Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+    }
+    return bandOf(spanCapHeight(spanAt(mirror.map, pick.x, pick.y, pick.spanIndex)));
+  };
 
   const clearExpiryTimer = (): void => {
     if (expiryTimer !== null) {
@@ -476,16 +514,12 @@ export function createWorld(viewport: Viewport): World {
       // thing it could have moved anyway. This is what keeps every stroke on
       // ordinary terrain byte-identical to before the field existed.
       if (spanCount(mirror.map, pick.x, pick.y) < 2) return null;
-      // WHICH span, said as a band. A riser hit names the lip the ray actually
-      // struck — the same rounding `highlightLayerEdge` uses, and for the same
-      // reason: the lip of band k lies AT k·BAND_HEIGHT, so the nearest lip to
-      // a height is the nearest multiple. A horizontal face (a tread, or a
-      // cave roof seen from below) has no stack to disambiguate, so the band of
-      // the span the march itself reported is the answer.
-      if (pick.hitRiser) {
-        return Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
-      }
-      return bandOf(spanCapHeight(spanAt(mirror.map, pick.x, pick.y, pick.spanIndex)));
+      // WHICH span, said as a band — the shared derivation.
+      return bandOfPick(pick);
+    },
+    carveBand(pick: TerrainRayPick | null): number | null {
+      if (pick === null) return null;
+      return bandOfPick(pick);
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;

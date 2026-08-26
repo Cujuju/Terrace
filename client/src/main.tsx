@@ -105,6 +105,7 @@ const sculptInput = createSculptInput({
   // lip under the cursor, so what is lit up is exactly what a press grabs.
   grabbableLip: (pick) => world.highlightLayerEdge(pick),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
+  carveBand: (pick) => world.carveBand(pick),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
   // frame instead of a round trip later; the world reconciles it against the

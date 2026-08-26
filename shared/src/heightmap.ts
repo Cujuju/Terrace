@@ -40,7 +40,9 @@ export {
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
 import {
+  canCarveBandAt,
   canSpreadBandToSpan,
+  carveRange,
   columnCoversBand,
   highestCeilingBelow,
   isSpanDrawn,
@@ -135,8 +137,20 @@ function clampHeight(h: number): number {
  *              never which bands exist, so the vertical stays entirely the
  *              stamp's. See `applyDragRegion` for the region's exact shape and
  *              `DragPull` for what the wire carries.
+ * - `carve`  — REMOVES MATERIAL, AND ONLY REMOVES IT (owner decision
+ *              2026-08-24, issue #129 plan D6). The one tool that can open a
+ *              second span in a column and so the only way a player — rather
+ *              than a fixture — can build an arch or a tunnel. Every other
+ *              tool moves a surface; this one cuts a fixed block of bands out
+ *              of the brush footprint, at the band the stroke has hold of, and
+ *              leaves whatever is above it standing as a roof. Direction is
+ *              always lower: a carve intent carrying `dir: 1` is REJECTED by
+ *              the validator (protocol.ts) rather than reinterpreted, because
+ *              "add material to the underside of a roof" is not a gesture this
+ *              game has. See `applyCarve` for the cut and `canCarveBandAt`
+ *              (columns.ts) for the rule that says where a player may make it.
  */
-export type SculptTool = 'stamp' | 'smooth' | 'drag';
+export type SculptTool = 'stamp' | 'smooth' | 'drag' | 'carve';
 
 /**
  * How the brush distributes its amount ACROSS its footprint.
@@ -155,7 +169,36 @@ export type SculptTool = 'stamp' | 'smooth' | 'drag';
 export type SculptProfile = 'soft' | 'hard';
 
 /** Every valid tool, in wire/UI order. Validation and the HUD both read this. */
-export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag'];
+export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
+
+/**
+ * How many terrace bands ONE carve stroke removes from each footprint cell.
+ *
+ * DERIVED FROM `isGapDrawn`, NOT CHOSEN. The value is the SMALLEST band count
+ * for which a first cut through solid ground leaves an opening the renderer
+ * actually draws — anything smaller is a hole nobody can see, which
+ * `canonicaliseColumn` then closes again (columns.ts), so the stroke would
+ * cost mana and change nothing.
+ *
+ * The derivation, from `spanUndersideHeight`: a span's underside hangs ONE
+ * band below its lowest filled band, so an opening of one band puts the roof's
+ * underside at exactly the floor's cap — `isGapDrawn` is false and there is no
+ * gap. Two bands is the first that clears it. Measured, at BAND_HEIGHT = 16,
+ * by cutting into a solid column capped at band 10 (2026-08-25):
+ *
+ *   1 band  → spans [-1536, 160)              — one span; the cut closed itself
+ *   2 bands → [-1536, 64), [96, 160)          — cap 64, underside 80, drawn
+ *   3 bands → [-1536, 64), [112, 160)         — cap 64, underside 96, drawn
+ *
+ * THE PREDICATE IS THE AUTHORITY. If `spanUndersideHeight` or `isGapDrawn`
+ * ever changes, re-run that cut and move this number to whatever the new
+ * smallest drawn opening is — never the other way round.
+ *
+ * A DEEPER TUNNEL IS MORE STROKES, not a bigger number here. This is the
+ * minimum a single click can usefully do; repeated clicks deepen the cut, the
+ * same way repeated stamps stack a spire.
+ */
+export const CARVE_BANDS_PER_STROKE = 2;
 
 /** Every valid profile, in wire/UI order. */
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
@@ -1500,8 +1543,10 @@ function applyDragRegion(
  *   map edges    — a brush overhanging the border loses the cells outside it.
  *                  Same argument: the intent is identical, so the price is.
  *   relaxation   — the `smooth` tool's gradient-limit spill moves further
- *                  terrain still, and is DELIBERATELY FREE. `tool` is therefore
- *                  not a parameter here at all. This preserves exactly what the
+ *                  terrain still, and is DELIBERATELY FREE. `tool` is a
+ *                  parameter (the carve below is priced differently), but the
+ *                  three BRUSH tools all price identically through it — the
+ *                  spill costs nothing. This preserves exactly what the
  *                  flat per-sculpt price did before volume pricing (it ignored
  *                  the spill too), and it is the honest answer: the spill's size
  *                  depends on the terrain that is already there, so charging for
@@ -1540,8 +1585,37 @@ function applyDragRegion(
 export function sculptDisplacementUnits(
   radius: number,
   profile: SculptProfile,
+  tool: SculptTool,
 ): number {
   assertBrushRadius(radius);
+
+  // THE CARVE HAS NO CONE, so it is not priced by one (plan D6/P3: a free tool
+  // beside three charged ones is an exploit, not an omission). It removes a
+  // fixed block — every footprint cell, CARVE_BANDS_PER_STROKE bands deep — so
+  // its nominal volume is exactly that block, and it is a function of the
+  // radius alone. `profile` does not reach the carve at all, which is why it
+  // does not reach its price either.
+  //
+  // The same five exclusions the doc above lists still apply, and the same
+  // way: a carve refused by `canCarveBandAt` on every cell of its footprint
+  // moves nothing and is priced in full, for the reason `clamping` gives — a
+  // stroke that moves less because of the terrain it landed on is the same
+  // request, not a cheaper one. What it must NOT do is depend on that terrain,
+  // because the mana plugin gates the intent on the client before the server
+  // has seen it and both must reach the same integer.
+  //
+  // `tool` IS A PARAMETER, and required, precisely so this cannot be
+  // forgotten: pricing a stroke now demands saying which tool it is, rather
+  // than defaulting to the brush arithmetic and silently under-charging a
+  // carve. The other three tools price identically to each other — the
+  // `smooth` spill stays deliberately free, as the doc above sets out.
+  if (tool === 'carve') {
+    let cells = 0;
+    forEachFootprintOffset(radius, () => {
+      cells++;
+    });
+    return cells * CARVE_BANDS_PER_STROKE * BAND_HEIGHT;
+  }
 
   let units = 0;
   // The footprint comes from the one iterator applyBrush uses, and the delta
@@ -1982,6 +2056,84 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
   return diff;
 }
 
+/**
+ * THE CARVE (plan D6, issue #129 step 4.7): every footprint cell loses the
+ * range `[spanBand · BAND_HEIGHT, (spanBand + CARVE_BANDS_PER_STROKE) ·
+ * BAND_HEIGHT)`, and whatever stood above it stays standing as a roof.
+ *
+ * WHAT THE CUT LEAVES, stated once because every rule below refers to it. The
+ * lower piece keeps its ceiling at `spanBand · BAND_HEIGHT`, so the cell is
+ * STILL SOLID at the grasped band — that band's cap becomes the tunnel FLOOR,
+ * level with the lip the player pointed at. The upper piece floors at
+ * `(spanBand + CARVE_BANDS_PER_STROKE) · BAND_HEIGHT`, so it is solid again
+ * from there up. The bands that change hands are therefore the ones STRICTLY
+ * BETWEEN the two — `spanBand + 1 … spanBand + CARVE_BANDS_PER_STROKE − 1`,
+ * which at the shipped constant is the single band `spanBand + 1`.
+ *
+ * THE ANTI-CHEAT RULE IS `canCarveBandAt`, ASKED OF EXACTLY THOSE BANDS. Air
+ * spreads the way material does: a cell may be opened at a band only where a
+ * neighbour is already open at it (columns.ts). Asking it of the bands the cut
+ * actually opens — rather than of the grasped band, which the cut leaves solid
+ * — is what makes the tunnel walk inward: the low ground outside a cliff is
+ * open at the face's opened band, which admits the face cell; the cut makes
+ * THAT cell open at the same band, which admits the next one in. All of the
+ * opened bands must be admitted, not merely one: the tighter direction, and
+ * the one that stays right if CARVE_BANDS_PER_STROKE ever moves.
+ *
+ * The same rule is where "on flat ground a carve is refused" comes from, and
+ * it is a consequence rather than a special case: on flat ground capped at
+ * band C every neighbour is solid at every band up to C, and a carve that
+ * removes anything at all has to open a band at or below C. Carve is refused
+ * exactly where plain lowering is the tool that means what the player wants.
+ *
+ * EVERY CELL IS JUDGED AGAINST THE MAP AS IT STOOD BEFORE THE STROKE, which is
+ * why the admissible cells are collected before any of them is cut. Cutting as
+ * we walk would let a cell opened by this very intent admit its neighbour
+ * inside the same intent, and the footprint would hollow out in one click —
+ * the precise thing "one cell per intent, outward from air that is really
+ * there" forbids. Iteration order is the footprint iterator's fixed scan, so
+ * server and client collect the same cells in the same order.
+ */
+function applyCarve(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  spanBand: number,
+  changed: Set<number>,
+): void {
+  const lo = spanBand * BAND_HEIGHT;
+  const hi = (spanBand + CARVE_BANDS_PER_STROKE) * BAND_HEIGHT;
+
+  const admitted: number[] = [];
+  forEachFootprintCell(map, cx, cy, radius, (i) => {
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    // Nothing here to remove: the cut would rewrite the column to itself and
+    // put a no-op row in the diff. Any overlap at all with [lo, hi) does take
+    // material away, so an overlapping column always genuinely changes.
+    let overlaps = false;
+    const count = spanCount(map, x, y);
+    for (let k = 0; k < count; k++) {
+      const span = spanAt(map, x, y, k);
+      if (span.floor < hi && lo < span.ceiling) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (!overlaps) return;
+    for (let band = spanBand + 1; band < spanBand + CARVE_BANDS_PER_STROKE; band++) {
+      if (!canCarveBandAt(map, x, y, band)) return;
+    }
+    admitted.push(i);
+  });
+
+  for (const i of admitted) {
+    carveRange(map, cellX(map.size, i), cellY(map.size, i), lo, hi);
+    changed.add(i);
+  }
+}
+
 export function applySculpt(
   map: Heightmap,
   cx: number,
@@ -2038,6 +2190,35 @@ export function applySculpt(
   // edit than the sender predicted, and desync the prediction for a round trip
   // (the same argument protocol.ts's validator makes for rejecting an unknown
   // tool outright).
+  // THE CARVE IS ITS OWN EDIT TOO, and dispatched here for the same three
+  // reasons the drag is: it shares this entry point so the server pipeline,
+  // the prediction store and the preview cannot pick different branches; it
+  // shares none of the per-cell amount, because it removes a fixed block of
+  // bands rather than moving a surface by a delta; and it comes BEFORE the
+  // band guard below, which asks about spreading MATERIAL and has nothing to
+  // say about removing it (`canCarveBandAt` is the carve's whole rule and it
+  // is asked per cell, inside).
+  //
+  // A CARVE WITH NO GRASP IS A NO-OP, exactly as a drag with no band is. The
+  // grasp is not a refinement of this tool, it IS the tool's target: without a
+  // band there is no range to remove, and falling back to the topmost span
+  // would cut at the column's cap, which on ordinary ground removes nothing
+  // and on a roof would cut the roof the player is standing under.
+  //
+  // ONLY EVER LOWERS. The validator rejects a carve intent carrying `dir: 1`
+  // outright (protocol.ts) rather than reinterpreting it, so a positive amount
+  // can only reach here from a plugin calling applySculpt directly; it is a
+  // no-op rather than a raise, because "add material to the underside of a
+  // roof" is not a thing this tool can express. Zero is a no-op for the reason
+  // a zero-amount drag is: a stroke with no direction has none to invent.
+  if (tool === 'carve') {
+    const carveChanged = new Set<number>();
+    if (spanBand !== null && amount < 0) {
+      applyCarve(map, cx, cy, radius, spanBand, carveChanged);
+    }
+    return diffOf(map, carveChanged);
+  }
+
   if (tool === 'drag') {
     const dragChanged = new Set<number>();
     if (targetBand !== null && amount !== 0) {
