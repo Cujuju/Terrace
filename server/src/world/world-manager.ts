@@ -78,6 +78,22 @@ export interface WorldManagerDeps extends SessionDeps {
 /** Why a load could not even be attempted. Widened into WorldAdminRefusal. */
 export type LoadRefusal = 'unknownWorld' | 'alreadyActive' | 'switchInProgress' | 'failed';
 
+/** Why the live world could not be rebuilt in place (issue #166). */
+export type ReopenRefusal = 'noWorldLoaded' | 'switchInProgress' | 'failed';
+
+/** Why a plugin could not be switched on or off for a world (issue #165). */
+export type PluginToggleRefusal =
+  | 'unknownWorld'
+  | 'unknownPlugin'
+  | 'switchInProgress'
+  | 'failed';
+
+/** What a successful toggle did. `reopened` is false when nothing changed. */
+export interface PluginToggleOutcome {
+  /** Whether the live world was torn down and rebuilt to apply the change. */
+  readonly reopened: boolean;
+}
+
 /** A switch that has been announced and is counting down. */
 interface PendingSwitch {
   readonly toId: string;
@@ -219,6 +235,121 @@ export class WorldManager {
 
     this.announceSwitch(id, countdown, requesterId ?? null);
     return { mode: 'countdown', secondsRemaining: countdown };
+  }
+
+  /**
+   * Reopens the world that is already live, so it comes back up under whatever
+   * its file now says (issue #166).
+   *
+   * `requestLoad` refuses the live id with `alreadyActive`, and that refusal is
+   * right for an OPERATOR pressing "load" on the world they are standing in —
+   * it would be a swap to nowhere. It is wrong for the thing this method does,
+   * where the id is deliberately the same and the point is the rebuild: the
+   * session is what holds the plugin host, so a per-world plugin change only
+   * takes effect by building a new session.
+   *
+   * IMMEDIATE, NEVER COUNTED DOWN, decided 2026-08-25 (issue #166): `openInto`
+   * carries every connected player across without dropping a socket and hands
+   * them a fresh join snapshot, so the world they are in does not change and
+   * nobody is disconnected. The visible cost is a re-snapshot, not a loss of
+   * place — and an announced countdown for a swap that takes nobody anywhere
+   * would tell players to brace for something that never happens. The
+   * countdown stays where it earns its keep: switching to a DIFFERENT world.
+   *
+   * Refuses while a switch is counting down: that switch is about to replace
+   * this world entirely, and rebuilding the one it is leaving is wasted work
+   * whose failure (guarantee 4 — nothing loaded) would abort it for nothing.
+   */
+  reopen(): true | ReopenRefusal {
+    if (this.session === null) return 'noWorldLoaded';
+    if (this.pending !== null) return 'switchInProgress';
+    const id = this.session.id;
+    try {
+      this.openInto(id);
+    } catch (error) {
+      logError(`reopening world "${id}" failed`, error);
+      return 'failed';
+    }
+    return true;
+  }
+
+  /** Every plugin this server has discovered, whether or not a world runs it. */
+  get installedPluginNames(): readonly string[] {
+    return this.deps.plugins.map((loaded) => loaded.plugin.name);
+  }
+
+  /**
+   * Which plugins a world has switched off, or null when there is no such
+   * world. Reads the world's own file, so it answers for worlds that are not
+   * loaded as readily as for the one that is.
+   */
+  disabledPluginsFor(worldId: string): readonly string[] | null {
+    if (!this.deps.registry.has(worldId)) return null;
+    if (this.session?.id === worldId) return this.session.store.disabledPlugins();
+    const store = this.deps.registry.openStore(worldId, this.deps.config.snapshotRetention);
+    try {
+      return store.disabledPlugins();
+    } finally {
+      store.close();
+    }
+  }
+
+  /**
+   * Switches a plugin on or off FOR ONE WORLD, and — if that world is live —
+   * reopens it so the change is in effect (issues #165, #166).
+   *
+   * The server-side entry point for #168's admin command/panel. Persist first,
+   * reopen second: the file is the record, and a reopen that fails must not
+   * leave the operator's decision unrecorded (they can load the world again to
+   * get it). A plugin nobody installed is refused rather than written, so a
+   * typo cannot leave a permanent row disabling a plugin that never existed.
+   */
+  setPluginEnabled(
+    worldId: string,
+    pluginName: string,
+    enabled: boolean,
+  ): PluginToggleOutcome | PluginToggleRefusal {
+    if (!this.deps.registry.has(worldId)) return 'unknownWorld';
+    if (!this.installedPluginNames.includes(pluginName)) return 'unknownPlugin';
+
+    const live = this.session?.id === worldId;
+    if (live && this.pending !== null) return 'switchInProgress';
+
+    const alreadyDisabled = this.disabledPluginsFor(worldId)?.includes(pluginName) ?? false;
+    // Nothing to write and — crucially — nothing to reopen: a second click on
+    // a toggle that is already where it is being put must not cost every
+    // player a re-snapshot.
+    if (alreadyDisabled === !enabled) return { reopened: false };
+
+    try {
+      if (live) {
+        // The live session already holds this file open; writing through its
+        // own store keeps one connection on it rather than racing a second.
+        this.session?.store.setPluginEnabled(pluginName, enabled);
+      } else {
+        const store = this.deps.registry.openStore(worldId, this.deps.config.snapshotRetention);
+        try {
+          store.setPluginEnabled(pluginName, enabled);
+        } finally {
+          store.close();
+        }
+      }
+    } catch (error) {
+      logError(`could not record plugin "${pluginName}" for world "${worldId}"`, error);
+      return 'failed';
+    }
+
+    logInfo(
+      `plugin "${pluginName}" is now ${enabled ? 'enabled' : 'disabled'} for world "${worldId}"`,
+    );
+    if (!live) return { reopened: false };
+
+    const reopened = this.reopen();
+    // `noWorldLoaded` cannot happen — `live` says a session exists and nothing
+    // yields the thread between the two — but it is not a toggle refusal, so
+    // it is reported as the failure it would be if it ever did.
+    if (reopened !== true) return reopened === 'noWorldLoaded' ? 'failed' : reopened;
+    return { reopened: true };
   }
 
   /** Calls off a counting-down switch. Returns false when none was running. */
