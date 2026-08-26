@@ -108,25 +108,52 @@ const CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CHANGES_MESSAGE}`;
 const CROPS_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROPS_MESSAGE}`;
 const CROP_CHANGES_WIRE_TYPE = `${FLORA_PLUGIN_NAME}:${FLORA_CROP_CHANGES_MESSAGE}`;
 
+/** The middle of the green window — a band that is green but is neither edge. */
+const GREEN_MID_BAND = Math.floor((FLORA_MIN_BAND + FLORA_MAX_BAND) / 2);
+
 /**
- * Bands laid out in vertical stripes, one band per 8-column stripe, cycling 0…7.
- * Every band this plugin cares about is present, and each is a solid block big
- * enough to hold a stand of trees.
+ * The bands this fixture world is striped with, in column order: one stripe per
+ * entry, left to right.
+ *
+ * Written as an explicit table rather than as the band indices 0…N because the
+ * green window is a HEIGHT window (bands.ts), not a small band index — it spans
+ * fourteen bands, and striping one column-block per band from zero would need a
+ * world four times this one's width for ground no assertion here looks at. What
+ * the contracts below actually need is both edges of the window, its middle,
+ * and ineligible ground on both sides of it.
  */
-const STRIPE_WIDTH = cellsAcross(8);
-const STRIPE_BANDS = 8;
+const STRIPE_BANDS: readonly number[] = [
+  FLORA_MIN_BAND - 3,
+  FLORA_MIN_BAND - 2,
+  FLORA_MIN_BAND - 1,
+  FLORA_MIN_BAND,
+  GREEN_MID_BAND,
+  FLORA_MAX_BAND,
+  FLORA_MAX_BAND + 1,
+  FLORA_MAX_BAND + 2,
+];
+
+/** Stripe width, so that the stripes tile the world exactly once. */
+const STRIPE_WIDTH = Math.floor(WORLD_SIZE / STRIPE_BANDS.length);
 
 function stripedHeight(x: number, _y: number): number {
-  return (Math.floor(x / STRIPE_WIDTH) % STRIPE_BANDS) * BAND_HEIGHT;
+  const stripe = Math.floor(x / STRIPE_WIDTH) % STRIPE_BANDS.length;
+  return STRIPE_BANDS[stripe] * BAND_HEIGHT;
 }
 
 /** A column that is squarely inside the given band's stripe. */
 function columnInBand(band: number): number {
-  return band * STRIPE_WIDTH + Math.floor(STRIPE_WIDTH / 2);
+  const stripe = STRIPE_BANDS.indexOf(band);
+  if (stripe < 0) throw new Error(`band ${band} is not one of the fixture world's stripes`);
+  return stripe * STRIPE_WIDTH + Math.floor(STRIPE_WIDTH / 2);
 }
 
-/** Green cells in the striped world: three stripes, full height. */
-const GREEN_CELLS = (FLORA_MAX_BAND - FLORA_MIN_BAND + 1) * STRIPE_WIDTH * WORLD_SIZE;
+/** The striped bands that are green, and the ones that are not. */
+const GREEN_STRIPE_BANDS = STRIPE_BANDS.filter((band) => isGreenBand(band * BAND_HEIGHT));
+const BARE_STRIPE_BANDS = STRIPE_BANDS.filter((band) => !isGreenBand(band * BAND_HEIGHT));
+
+/** Green cells in the striped world: every green stripe, full height. */
+const GREEN_CELLS = GREEN_STRIPE_BANDS.length * STRIPE_WIDTH * WORLD_SIZE;
 
 const LOCKED_CHUNK_ROW = 0;
 function isChunkLocked(_cx: number, cy: number): boolean {
@@ -193,7 +220,7 @@ function fixedRng(value: number): FloraRng {
 
 describe('band eligibility', () => {
   it('accepts exactly the palette\'s green bands', () => {
-    for (let band = -4; band <= 9; band++) {
+    for (let band = FLORA_MIN_BAND - 4; band <= FLORA_MAX_BAND + 4; band++) {
       const expected = band >= FLORA_MIN_BAND && band <= FLORA_MAX_BAND;
       expect(isGreenBand(band * BAND_HEIGHT)).toBe(expected);
       // Anywhere inside the band, not just on its floor.
@@ -225,10 +252,10 @@ describe('band eligibility', () => {
 
   it('refuses sand, soil and rock', () => {
     const world = floraView(worldWithTerrain(WORLD_SIZE, stripedHeight));
-    for (const band of [0, 1, 2, 6, 7]) {
+    for (const band of BARE_STRIPE_BANDS) {
       expect(isPlantableCell(world, columnInBand(band), CHUNK_SIZE)).toBe(false);
     }
-    for (let band = FLORA_MIN_BAND; band <= FLORA_MAX_BAND; band++) {
+    for (const band of GREEN_STRIPE_BANDS) {
       expect(isPlantableCell(world, columnInBand(band), CHUNK_SIZE)).toBe(true);
     }
   });
