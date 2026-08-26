@@ -30,6 +30,9 @@ import type {
   WorldListRequestMessage,
   WorldLoadRequestMessage,
   WorldPinRequestMessage,
+  WorldPluginListMessage,
+  WorldPluginListRequestMessage,
+  WorldPluginSetRequestMessage,
   WorldPurgeRequestMessage,
   WorldRenameRequestMessage,
   WorldSwitchCancelRequestMessage,
@@ -135,6 +138,15 @@ export const MSG_WORLD_PURGE: WorldPurgeRequestMessage['type'] = 'worldPurge';
 
 /** Client → server: pin (or unpin) a restore point against retention. */
 export const MSG_WORLD_PIN: WorldPinRequestMessage['type'] = 'worldPin';
+
+/** Client → server: which plugins does one world run, and which are off? */
+export const MSG_WORLD_PLUGIN_LIST: WorldPluginListRequestMessage['type'] = 'worldPluginList';
+
+/** Server → the requesting client: one world's installed/disabled plugins. */
+export const MSG_WORLD_PLUGIN_LISTING: WorldPluginListMessage['type'] = 'worldPluginListing';
+
+/** Client → server: run (or stop running) one plugin in one world. */
+export const MSG_WORLD_PLUGIN_SET: WorldPluginSetRequestMessage['type'] = 'worldPluginSet';
 
 /** Client → server: call off a counting-down switch. */
 export const MSG_WORLD_SWITCH_CANCEL: WorldSwitchCancelRequestMessage['type'] =

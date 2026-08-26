@@ -72,6 +72,25 @@ const [pendingSwitch, setPendingSwitch] = createSignal<WorldSwitchStatus | null>
  */
 const [worldLoaded, setWorldLoaded] = createSignal(true);
 
+/**
+ * The plugin enablement the server last reported, for ONE world.
+ *
+ * One world at a time, not a map keyed by world id, because the panel asks
+ * about the world whose row the operator opened — a cache of every world's
+ * plugins would be a set of answers nothing on screen is asking, going stale
+ * the moment another operator toggles something.
+ */
+export interface WorldPlugins {
+  /** The world these lists describe. */
+  readonly id: string;
+  /** Every plugin installed on this server. */
+  readonly installed: readonly string[];
+  /** Those of `installed` this world does not run. */
+  readonly disabled: readonly string[];
+}
+
+const [worldPlugins, setWorldPlugins] = createSignal<WorldPlugins | null>(null);
+
 const [worldFeedback, setWorldFeedback] = createSignal<WorldFeedback>({ kind: 'idle' });
 
 /** The world-admin key, for this tab only. See this file's header. */
@@ -90,6 +109,7 @@ export {
   worldFeedback,
   worldLoaded,
   worldPanelOpen,
+  worldPlugins,
   worlds,
 };
 
@@ -120,6 +140,31 @@ export function applyWorldListing(message: {
   // without waiting for a snapshot to arrive.
   if (message.activeId !== null) setWorldLoaded(true);
   setWorldFeedback({ kind: 'listed' });
+}
+
+/**
+ * Applies one world's plugin lists from the server. Called by the network layer.
+ *
+ * A refusal clears the lists rather than leaving the previous world's on
+ * screen, on applyWorldListing's rule: an operator must not toggle against a
+ * set the server has not just confirmed.
+ */
+export function applyWorldPluginListing(message: {
+  id: string;
+  installed: string[];
+  disabled: string[];
+  refused?: WorldAdminRefusal;
+}): void {
+  if (message.refused !== undefined) {
+    setWorldPlugins(null);
+    setWorldFeedback({ kind: 'refused', action: 'setPlugin', reason: message.refused });
+    return;
+  }
+  setWorldPlugins({
+    id: message.id,
+    installed: message.installed,
+    disabled: message.disabled,
+  });
 }
 
 /** Applies an action receipt from the server. Called by the network layer. */

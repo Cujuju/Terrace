@@ -41,6 +41,7 @@ import {
   type TerrainDiffMessage,
   type WorldAdminResultMessage,
   type WorldListMessage,
+  type WorldPluginListMessage,
   type WorldSwitchNoticeMessage,
   type WorldUnloadedMessage,
 } from '@terrace/shared';
@@ -85,6 +86,8 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
   'worldUnarchive',
   'worldPurge',
   'worldPin',
+  'worldPluginList',
+  'worldPluginSet',
   'worldSwitchCancel',
 ] as const;
 
@@ -102,6 +105,7 @@ export interface TerraceServerMessages {
   rollbackResult: RollbackResultMessage;
   worldListing: WorldListMessage;
   worldAdminResult: WorldAdminResultMessage;
+  worldPluginListing: WorldPluginListMessage;
   worldSwitchNotice: WorldSwitchNoticeMessage;
   worldUnloaded: WorldUnloadedMessage;
   [pluginMessage: string]: unknown;
@@ -252,8 +256,23 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
           return;
         }
 
+        if (request.type === 'worldPluginList') {
+          client.send(
+            'worldPluginListing',
+            this.context.admin.plugins(client.sessionId, request.key, request.id),
+          );
+          return;
+        }
+
         const result = this.context.admin.handle(client.sessionId, request);
         client.send('worldAdminResult', result);
+        // A toggle changed the very lists the plugin panel is showing, so the
+        // fresh set rides along on success for the same reason the world
+        // listing does below — and only on success, so a refusal never becomes
+        // an oracle for which plugins this server runs.
+        if (result.ok && request.type === 'worldPluginSet') {
+          client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
+        }
         // A successful action changed what the panel is showing, so the fresh
         // listing rides along rather than making the client ask for it. Only
         // on success, and only for a client that just proved it holds the key

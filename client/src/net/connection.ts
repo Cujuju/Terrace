@@ -44,6 +44,7 @@ import type {
   WorldAdminRequestMessage,
   WorldAdminResultMessage,
   WorldListMessage,
+  WorldPluginListMessage,
   WorldSwitchNoticeMessage,
   WorldUnloadedMessage,
 } from '@terrace/shared';
@@ -62,6 +63,7 @@ import {
   MSG_TERRAIN_DIFF,
   MSG_WORLD_ADMIN_RESULT,
   MSG_WORLD_LISTING,
+  MSG_WORLD_PLUGIN_LISTING,
   MSG_WORLD_SWITCH_NOTICE,
   MSG_WORLD_UNLOADED,
 } from './messageNames.ts';
@@ -134,6 +136,8 @@ export interface OperatorSink {
  */
 export interface WorldAdminSink {
   onWorldListing(msg: WorldListMessage): void;
+  /** One world's installed/disabled plugins, answering a `worldPluginList`. */
+  onWorldPluginListing(msg: WorldPluginListMessage): void;
   onWorldAdminResult(msg: WorldAdminResultMessage): void;
   onWorldSwitchNotice(msg: WorldSwitchNoticeMessage): void;
   onWorldUnloaded(msg: WorldUnloadedMessage): void;
@@ -288,6 +292,9 @@ export function connect(options: ConnectionOptions): Connection {
     // passed; with no world-admin sink the answers are dropped.
     joined.onMessage<WorldListMessage>(MSG_WORLD_LISTING, (msg) => {
       options.worldAdmin?.onWorldListing(msg);
+    });
+    joined.onMessage<WorldPluginListMessage>(MSG_WORLD_PLUGIN_LISTING, (msg) => {
+      options.worldAdmin?.onWorldPluginListing(msg);
     });
     joined.onMessage<WorldAdminResultMessage>(MSG_WORLD_ADMIN_RESULT, (msg) => {
       options.worldAdmin?.onWorldAdminResult(msg);

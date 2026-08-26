@@ -792,6 +792,8 @@ export type WorldAdminRefusal =
   | 'confirmationMismatch'
   /** Another switch is already counting down; cancel it first. */
   | 'switchInProgress'
+  /** No plugin of that name is installed on this server. */
+  | 'unknownPlugin'
   /** Refused because it would archive the live world; unload or switch first. */
   | 'worldIsActive'
   /** It was attempted and threw. Nothing was destroyed — see the server log. */
@@ -808,7 +810,8 @@ export type WorldAdminAction =
   | 'unarchive'
   | 'purge'
   | 'pin'
-  | 'cancelSwitch';
+  | 'cancelSwitch'
+  | 'setPlugin';
 
 /** Client → server: "list every world you have". Answered to the sender only. */
 export interface WorldListRequestMessage {
@@ -918,6 +921,37 @@ export interface WorldPinRequestMessage {
   pinned: boolean;
 }
 
+/**
+ * Client → server: "which plugins does this world run, and which are off?".
+ *
+ * A SEPARATE REQUEST FROM `worldList`, not a field on the world summary: the
+ * disabled set is read out of each world's own file, so folding it into the
+ * listing would open every world on disk to answer a question the operator
+ * asks about one of them.
+ */
+export interface WorldPluginListRequestMessage {
+  type: 'worldPluginList';
+  key: string;
+  id: string;
+}
+
+/**
+ * Client → server: "run (or stop running) this plugin in this world".
+ *
+ * Applies to ANY world, not only the live one — the enabled set lives in the
+ * world file, so a world that is merely sitting on disk can be configured
+ * before it is ever loaded. When the world IS live the server reopens it, which
+ * carries every connected player across without dropping a socket (issue #166).
+ */
+export interface WorldPluginSetRequestMessage {
+  type: 'worldPluginSet';
+  key: string;
+  id: string;
+  /** Installed plugin name; see PLUGIN_NAME_PATTERN. */
+  plugin: string;
+  enabled: boolean;
+}
+
 /** Client → server: "call off the switch that is counting down". */
 export interface WorldSwitchCancelRequestMessage {
   type: 'worldSwitchCancel';
@@ -936,6 +970,27 @@ export interface WorldListMessage {
   /** Present while a switch is counting down. */
   pending?: WorldSwitchStatus;
   /** Present INSTEAD of a useful listing when the request was refused. */
+  refused?: WorldAdminRefusal;
+}
+
+/**
+ * Server → the requesting client only: one world's plugin enablement.
+ *
+ * `installed` is every plugin this SERVER has discovered; `disabled` is the
+ * subset this WORLD does not run. The disabled set is sent rather than the
+ * enabled one because that is what the world file records — a plugin installed
+ * after the world was last opened is enabled in it without anything having been
+ * written (see snapshot-store.ts, issue #165).
+ */
+export interface WorldPluginListMessage {
+  type: 'worldPluginListing';
+  /** The world these lists describe. */
+  id: string;
+  /** Every plugin installed on this server, in load order. */
+  installed: string[];
+  /** Those of `installed` this world has switched off. */
+  disabled: string[];
+  /** Present INSTEAD of useful lists when the request was refused. */
   refused?: WorldAdminRefusal;
 }
 
@@ -996,6 +1051,8 @@ export type WorldAdminRequestMessage =
   | WorldUnarchiveRequestMessage
   | WorldPurgeRequestMessage
   | WorldPinRequestMessage
+  | WorldPluginListRequestMessage
+  | WorldPluginSetRequestMessage
   | WorldSwitchCancelRequestMessage;
 
 /**
@@ -1034,6 +1091,34 @@ export function validateWorldId(value: unknown): string | null {
 }
 
 /**
+ * Longest plugin name the protocol will carry.
+ *
+ * A plugin name is a directory name and a message namespace, never prose, so
+ * the bound only has to sit past any plausible one; it exists so a megabyte of
+ * string cannot be handed to a regular expression.
+ */
+export const MAX_PLUGIN_NAME_LENGTH = 64;
+
+/**
+ * Characters a plugin name may contain: lowercase alphanumerics with inner
+ * dashes.
+ *
+ * SHARED RATHER THAN SERVER-ONLY because the name is a MESSAGE NAMESPACE
+ * (`<plugin>:<type>`) and a snapshot key, which makes it protocol. Boot
+ * validates every discovered plugin against it (server plugins/discovery.ts)
+ * and the validator below checks every one that arrives off the wire.
+ */
+export const PLUGIN_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Validates an untrusted plugin name; null when it could not be one. */
+export function validatePluginName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > MAX_PLUGIN_NAME_LENGTH) return null;
+  if (!PLUGIN_NAME_PATTERN.test(value)) return null;
+  return value;
+}
+
+/**
  * Validates an untrusted world name; null when it could not be one.
  *
  * Trims, unlike the key validator: a name is a label a human typed, and
@@ -1054,9 +1139,9 @@ export function validateWorldName(value: unknown): string | null {
 /**
  * Validates any inbound world-management message; null if malformed.
  *
- * ONE VALIDATOR FOR ELEVEN MESSAGES, deliberately: every one of them carries
- * the operator key and is refused the same way, so splitting them into eleven
- * near-identical functions would be eleven places for the key check to drift.
+ * ONE VALIDATOR FOR THIRTEEN MESSAGES, deliberately: every one of them carries
+ * the operator key and is refused the same way, so splitting them into thirteen
+ * near-identical functions would be thirteen places for the key check to drift.
  * The per-action fields are checked in the one switch below.
  */
 export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessage | null {
@@ -1141,6 +1226,20 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
         return null;
       }
       return { type: 'worldPurge', key, id, confirmName: m.confirmName };
+    }
+
+    case 'worldPluginList': {
+      const id = validateWorldId(m.id);
+      if (id === null) return null;
+      return { type: 'worldPluginList', key, id };
+    }
+
+    case 'worldPluginSet': {
+      const id = validateWorldId(m.id);
+      const plugin = validatePluginName(m.plugin);
+      if (id === null || plugin === null) return null;
+      if (typeof m.enabled !== 'boolean') return null;
+      return { type: 'worldPluginSet', key, id, plugin, enabled: m.enabled };
     }
 
     case 'worldPin': {
