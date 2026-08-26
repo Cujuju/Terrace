@@ -10,6 +10,10 @@
   --status-connecting: #e0b64a;
   --status-reconnecting: #e0b64a;
   --status-offline: #7d8894;
+  --plugin-on-bg: rgba(90, 196, 122, 0.22);
+  --plugin-on-border: rgba(90, 196, 122, 0.55);
+  --plugin-off-bg: rgba(200, 80, 70, 0.22);
+  --plugin-off-border: rgba(200, 80, 70, 0.55);
 }
 
 html,
@@ -948,6 +952,20 @@ button.world-header {
 .chart-button.danger {
   border-color: rgba(200, 80, 70, 0.8);
   color: rgb(240, 170, 160);
+}
+
+/* Per-world plugin toggles (WorldManager.tsx): the state is the colour, so a
+   row of sixteen reads at a glance without parsing each label's "on"/"off".
+   Translucent so the panel's ground still shows through, and the same green
+   and red the HUD already uses for "connected" and for the discard button. */
+.plugin-toggle.on {
+  background: var(--plugin-on-bg);
+  border-color: var(--plugin-on-border);
+}
+
+.plugin-toggle.off {
+  background: var(--plugin-off-bg);
+  border-color: var(--plugin-off-border);
 }
 
 .restore-refusal {

@@ -390,8 +390,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                           return (
                             <button
                               type="button"
-                              class="chart-button"
-                              classList={{ open: !isDisabled() }}
+                              class="chart-button plugin-toggle"
+                              classList={{ on: !isDisabled(), off: isDisabled() }}
                               title={
                                 isDisabled()
                                   ? `Run “${pluginName}” in this world.`
