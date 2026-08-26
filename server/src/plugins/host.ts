@@ -10,10 +10,11 @@
 //      substrate — it stays up even when something built on it does not.
 
 import type { CellDiff, SculptIntent } from '@terrace/shared';
-import { logError, logInfo } from '../log.ts';
+import { logError, logInfo, logWarn } from '../log.ts';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
+import { readSlice, wrapSlice } from './slice-envelope.ts';
 import {
   ALLOW,
   type IntentVerdict,
@@ -98,6 +99,23 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    * toggle to put it back and nothing that could ever read it again.
    */
   private dormantSlices: Record<string, unknown> = {};
+  /**
+   * Plugin names whose slice key THE HOST OWNS for this session, so the plugin
+   * itself contributes nothing to a snapshot for it.
+   *
+   * THE ONE-WRITER RULE. A slice key has exactly one writer per session, and
+   * parking makes the host that writer. `dormantSlices` alone cannot do this
+   * for an ENABLED plugin: `collectPersistence` seeds the record from the
+   * dormant map and then writes `slices[name] = data` for every enabled plugin,
+   * so a parked plugin's own (empty) save would overwrite the parked bytes at
+   * the very next snapshot — DEFAULT_SNAPSHOT_INTERVAL_S later, i.e. about a
+   * minute — which is the exact erasure parking exists to prevent.
+   *
+   * Populated by `restorePersistence` for a slice written by a NEWER build than
+   * this one, and for a slice the plugin itself refused. Recomputed from
+   * scratch on every restore, like `dormantSlices` and for the same reason.
+   */
+  private writeSuppressed: Set<string> = new Set();
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
 
@@ -458,20 +476,27 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     return handlers;
   }
 
-  /** Plugin slices for a snapshot, keyed by plugin name. */
+  /**
+   * Plugin slices for a snapshot, keyed by plugin name, each wrapped in the
+   * host's `{ v, data }` envelope (see slice-envelope.ts).
+   */
   collectPersistence(): Record<string, unknown> {
     // Disabled plugins' slices ride along untouched — see `dormantSlices`.
     // Copied rather than mutated so a save can never edit the record a later
-    // save has to re-emit.
+    // save has to re-emit. Parked slices are in here too, VERBATIM: whatever
+    // shape they were stored in, enveloped or not, is what goes back out.
     const slices: Record<string, unknown> = { ...this.dormantSlices };
     for (const { loaded } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.persistence) continue;
+      // THE ONE-WRITER RULE (see `writeSuppressed`): a parked plugin does not
+      // get to write over the bytes the host is holding for it.
+      if (this.writeSuppressed.has(plugin.name)) continue;
       const data = this.safely(plugin, 'persistence.save', () => plugin.persistence?.save());
       // A plugin that failed to serialize is omitted rather than persisted as
       // undefined: on restore it simply sees no slice, which is the same state
       // it gets on first ever boot.
-      if (data !== undefined) slices[plugin.name] = data;
+      if (data !== undefined) slices[plugin.name] = wrapSlice(plugin.persistence.version, data);
     }
     return slices;
   }
@@ -485,9 +510,10 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     const installed = new Set(this.installedPluginNames);
     const enabled = new Set(this.pluginNames);
     // Recomputed from scratch on every restore — a rollback replays this with
-    // an older snapshot's slices, and the dormant set must then describe THAT
+    // an older snapshot's slices, and these two sets must then describe THAT
     // snapshot rather than being the union of every restore so far.
     this.dormantSlices = {};
+    this.writeSuppressed = new Set();
     for (const name of Object.keys(slices)) {
       if (!installed.has(name)) {
         logInfo(`snapshot contains data for plugin "${name}", which is not installed — ignored`);
@@ -502,11 +528,51 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
 
     for (const { loaded } of this.entries) {
       const { plugin } = loaded;
-      if (!plugin.persistence) continue;
+      const slice = plugin.persistence;
+      if (!slice) continue;
       if (!Object.hasOwn(slices, plugin.name)) continue;
-      this.safely(plugin, 'persistence.load', () =>
-        plugin.persistence?.load(slices[plugin.name]),
+
+      const stored = readSlice(slices[plugin.name]);
+      // DOWNGRADE: these bytes were written by a build ahead of this one, so
+      // this build cannot know what is in them. Park rather than load — the
+      // alternative every versioned plugin used to implement was "come up
+      // empty", which the next snapshot then wrote over the real state.
+      if (stored.version > slice.version) {
+        this.park(plugin.name, slices[plugin.name]);
+        logWarn(
+          `plugin "${plugin.name}" has saved data from a newer build ` +
+            `(version ${stored.version}; this build writes ${slice.version}). ` +
+            'It is being kept exactly as it is and this plugin is running with no ' +
+            'saved state — put the newer build back to use it again.',
+        );
+        continue;
+      }
+
+      const outcome = this.safely(plugin, 'persistence.load', () =>
+        slice.load(stored.data, stored.version),
       );
+      // A plugin that REFUSED, or that THREW (safely returns undefined only for
+      // a throw or a void return — a refusal is the only truthy outcome), is in
+      // the same position as a downgrade: it has no state, and its bytes must
+      // survive rather than be overwritten by the empty save that follows.
+      if (outcome === 'refuse') {
+        this.park(plugin.name, slices[plugin.name]);
+        logWarn(
+          `plugin "${plugin.name}" refused its saved data (written under version ` +
+            `${stored.version}). It is being kept exactly as it is and this plugin ` +
+            'is running with no saved state.',
+        );
+      }
     }
+  }
+
+  /**
+   * Holds one plugin's stored bytes VERBATIM and takes its slice key over for
+   * the session — the two halves of parking, which only make sense together
+   * (see `writeSuppressed`).
+   */
+  private park(name: string, stored: unknown): void {
+    this.dormantSlices[name] = stored;
+    this.writeSuppressed.add(name);
   }
 }

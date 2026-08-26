@@ -48,6 +48,7 @@ function counterPlugin(): TerracePlugin {
       pluginValue = staged;
     },
     persistence: {
+      version: 1,
       save(): unknown {
         return { value: pluginValue };
       },

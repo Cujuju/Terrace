@@ -327,9 +327,46 @@ export type PluginMessageHandler = (
  * so "what a fresh boot from this snapshot would produce" is the whole
  * contract to hold to. See server/src/world/rollback.ts.
  */
+export type SliceLoadOutcome = void | 'refuse';
+
 export interface PersistenceSlice {
+  /**
+   * WHICH VERSION OF THIS PLUGIN'S FORMAT `save()` WRITES. Integer ≥ 1,
+   * required — the host stamps it into the stored envelope (`{ v, data }`, see
+   * slice-envelope.ts), so a plugin that never versioned its own format has a
+   * version anyway, and a plugin whose stored version is AHEAD of this number
+   * is parked instead of being handed bytes it cannot read.
+   *
+   * Bump it when `save()`'s shape changes in a way `load()` cannot read
+   * blind — and then teach `load` to migrate the version before it.
+   */
+  readonly version: number;
   save(): unknown;
-  load(data: unknown): void;
+  /**
+   * Restores what `save()` produced. `fromVersion` is the version the stored
+   * bytes were written under, so a plugin can migrate across any number of
+   * versions rather than only the one before this.
+   *
+   * RETURN `'refuse'` FOR BYTES THIS BUILD CANNOT READ. The host then PARKS the
+   * slice: it is re-emitted verbatim by every save for the rest of the session
+   * and this plugin runs stateless. That is the alternative to what every
+   * versioned plugin used to do on an unrecognised version — return its own
+   * empty state, which the next snapshot then wrote over the real one, erasing
+   * the town / the forest / the chronicle about a minute later.
+   *
+   * A PRE-ENVELOPE VALUE ARRIVES AS `fromVersion: 1`, because that is all the
+   * host can know about bytes that carry no version (slice-envelope.ts). A
+   * plugin whose own format IS self-describing — six in this repo write a
+   * version inside `data` — must therefore prefer its OWN field when the data
+   * has one and use `fromVersion` only as the fallback: the envelope is
+   * authoritative for data the envelope wrote, and the plugin's field is
+   * authoritative for data that predates the envelope. Getting this backwards
+   * would run a v1 migration over a v3 slice on the first boot after the
+   * envelope landed, which is the one way this contract can destroy a world.
+   *
+   * RE-RUNNABLE, NOT ONCE-PER-PROCESS — see the type's own doc comment above.
+   */
+  load(data: unknown, fromVersion: number): SliceLoadOutcome;
 }
 
 /**

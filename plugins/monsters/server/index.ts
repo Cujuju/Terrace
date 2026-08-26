@@ -71,6 +71,7 @@ import type { CellDiff, SculptIntent } from '@terrace/shared';
 import type {
   IntentVerdict,
   PersistenceSlice,
+  SliceLoadOutcome,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -83,7 +84,7 @@ import {
   roundBroadcastPosition,
 } from '../protocol.ts';
 import { advanceLurking } from './lurk.ts';
-import { loadMonsters, saveMonsters } from './persistence.ts';
+import { MONSTERS_SLICE_VERSION, loadMonsters, saveMonsters } from './persistence.ts';
 import { RAISE_BLOCKED_REASON, reachesProtectedGround } from './protection.ts';
 import {
   advanceSummoning,
@@ -276,12 +277,38 @@ function guardGround(intent: SculptIntent): IntentVerdict | void {
   }
 }
 
+/**
+ * The version a stored blob SAYS it was written under, or undefined when it
+ * says nothing.
+ *
+ * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
+ * host's `{ v, data }` envelope is authoritative for everything written since
+ * it existed — but every byte written BEFORE it carries no envelope and reaches
+ * `load` as version 1, and this plugin's own format was already past that.
+ * Trusting the host's 1 over this field would run a version-1 migration over a
+ * version-3 slice on the first boot after the envelope landed, which is the
+ * one way this contract can destroy a world.
+ */
+function selfDescribedSliceVersion(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const version = (data as { version?: unknown }).version;
+  return Number.isSafeInteger(version) ? (version as number) : undefined;
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return saveMonsters();
   },
-  load(data: unknown): void {
+  version: MONSTERS_SLICE_VERSION,
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
+    // REFUSE, DO NOT ERASE, monsters from a newer build. loadMonsters treats an
+    // unknown version as "no monsters and no cooldowns", which the next snapshot
+    // would make permanent. v3/v2/v1 are all still read and migrated below.
+    if ((selfDescribedSliceVersion(data) ?? fromVersion) > MONSTERS_SLICE_VERSION) {
+      return 'refuse';
+    }
     loadMonsters(data);
+    return undefined;
   },
 };
 
