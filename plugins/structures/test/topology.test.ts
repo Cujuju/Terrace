@@ -22,7 +22,12 @@ import {
   stepGeneration,
   type LiveCellRecord,
 } from '../server/life.ts';
-import { computeLandmassLabels, wrappedNeighborIndex } from '../server/topology.ts';
+import {
+  computeLandmassLabels,
+  wrappedNeighborIndex,
+  type LandmassBox,
+  type LandmassLabels,
+} from '../server/topology.ts';
 import { isBuildableCell, type StructuresWorld } from '../server/suitability.ts';
 import { worldWithTerrain } from './support/world.ts';
 
@@ -466,4 +471,174 @@ describe('the tier gate counts real live Moore neighbours, not phantoms', () => 
     const outcome = stepGeneration(world, live);
     expect(outcome.upgraded).toContainEqual({ x: 4, y: 12, tier: 1 });
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (f) THE WRAP IS A LOOKUP, NOT A SCAN.
+//
+// The original wrap walked a row or a column of the landmass's bounding box
+// per neighbour slot, so one generation cost O(coastline × worldSize) — worse
+// on a comb or a ring, where the box is large and the land in it is thin. The
+// labelling now carries, per landmass and per line, the first two and last two
+// positions that landmass occupies, which is everything the inward scan could
+// ever have returned.
+//
+// THIS TEST IS THE PROOF OF EQUIVALENCE, and it is written as one: the inward
+// scan is reproduced below, verbatim in behaviour, and the shipped lookup must
+// agree with it on every buildable cell of every fixture in this file, for all
+// eight steps. It is not asserting a NEW answer — it is asserting that there
+// is no new answer.
+
+const MOORE_STEPS: ReadonlyArray<readonly [number, number]> = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0],           [1, 0],
+  [-1, 1],  [0, 1],  [1, 1],
+];
+
+/** The pre-2026-08-25 inward row scan, kept here as the reference answer. */
+function scanRowReference(
+  labels: LandmassLabels,
+  label: number,
+  box: LandmassBox,
+  y: number,
+  step: number,
+  selfIndex: number,
+): number {
+  const width = box.maxX - box.minX + 1;
+  const start = step > 0 ? box.minX : box.maxX;
+  for (let i = 0; i < width; i++) {
+    const x = start + i * step;
+    if (labels.labelAt(x, y) !== label) continue;
+    const index = y * labels.worldSize + x;
+    if (index === selfIndex) continue;
+    return index;
+  }
+  return -1;
+}
+
+/** Its transpose. */
+function scanColumnReference(
+  labels: LandmassLabels,
+  label: number,
+  box: LandmassBox,
+  x: number,
+  step: number,
+  selfIndex: number,
+): number {
+  const height = box.maxY - box.minY + 1;
+  const start = step > 0 ? box.minY : box.maxY;
+  for (let i = 0; i < height; i++) {
+    const y = start + i * step;
+    if (labels.labelAt(x, y) !== label) continue;
+    const index = y * labels.worldSize + x;
+    if (index === selfIndex) continue;
+    return index;
+  }
+  return -1;
+}
+
+/** The diagonal corner case — unchanged in the shipped code, mirrored here. */
+function scanDiagonalReference(
+  labels: LandmassLabels,
+  label: number,
+  box: LandmassBox,
+  stepX: number,
+  stepY: number,
+  selfIndex: number,
+): number {
+  const width = box.maxX - box.minX + 1;
+  const height = box.maxY - box.minY + 1;
+  const span = width < height ? width : height;
+  const startX = stepX > 0 ? box.minX : box.maxX;
+  const startY = stepY > 0 ? box.minY : box.maxY;
+  for (let i = 0; i < span; i++) {
+    const x = startX + i * stepX;
+    const y = startY + i * stepY;
+    if (labels.labelAt(x, y) !== label) continue;
+    const index = y * labels.worldSize + x;
+    if (index === selfIndex) continue;
+    return index;
+  }
+  return -1;
+}
+
+/** wrappedNeighborIndex as it was written, over the scans above. */
+function wrappedNeighborIndexReference(
+  labels: LandmassLabels,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+): number {
+  const label = labels.labelAt(x, y);
+  if (label < 0) return -1;
+
+  const size = labels.worldSize;
+  const nx = x + dx;
+  const ny = y + dy;
+  if (labels.labelAt(nx, ny) === label) return ny * size + nx;
+
+  const box = labels.boxes[label]!;
+  const selfIndex = y * size + x;
+
+  if (dx !== 0 && ny >= box.minY && ny <= box.maxY) {
+    const wrapped = scanRowReference(labels, label, box, ny, dx, selfIndex);
+    if (wrapped >= 0) return wrapped;
+  }
+  if (dy !== 0 && nx >= box.minX && nx <= box.maxX) {
+    const wrapped = scanColumnReference(labels, label, box, nx, dy, selfIndex);
+    if (wrapped >= 0) return wrapped;
+  }
+  if (dx !== 0 && dy !== 0) {
+    const wrapped = scanDiagonalReference(labels, label, box, dx, dy, selfIndex);
+    if (wrapped >= 0) return wrapped;
+  }
+  return -1;
+}
+
+describe('the wrap lookup agrees with the inward scan it replaced', () => {
+  const FIXTURES: ReadonlyArray<readonly [string, StructuresWorld]> = [
+    ['one square plateau', rectWorld(32, [[2, 2, 21, 21]])],
+    ['a diagonal isthmus', rectWorld(48, [[8, 8, 12, 12], [9, 9, 13, 13]])],
+    ['two separate islands', rectWorld(48, [[2, 2, 13, 13], [30, 30, 43, 43]])],
+    // A COMB: a long spine with teeth, so each landmass's bounding box is far
+    // bigger than the land in it — the shape the scan was worst on, and the
+    // one most likely to expose a difference between the two implementations.
+    [
+      'a comb',
+      rectWorld(64, [
+        [4, 4, 59, 12],
+        [8, 12, 16, 40],
+        [24, 12, 32, 40],
+        [40, 12, 48, 40],
+      ]),
+    ],
+    // A RING: a landmass whose bounding box centre is not on it at all, so a
+    // wrap can enter a row the origin's own column never touches.
+    [
+      'a ring',
+      rectWorld(64, [
+        [6, 6, 45, 14],
+        [6, 6, 14, 45],
+        [37, 6, 45, 45],
+        [6, 37, 45, 45],
+      ]),
+    ],
+    ['a one-cell-wide spit', rectWorld(32, [[10, 4, 14, 27]])],
+  ];
+
+  for (const [name, world] of FIXTURES) {
+    it(`is identical on ${name}, for every cell and every step`, () => {
+      const labels = computeLandmassLabels(world);
+      const cells = buildableCells(world);
+      expect(cells.length).toBeGreaterThan(0); // the fixture is not empty
+      for (const [x, y] of cells) {
+        for (const [dx, dy] of MOORE_STEPS) {
+          expect(wrappedNeighborIndex(labels, x, y, dx, dy)).toBe(
+            wrappedNeighborIndexReference(labels, x, y, dx, dy),
+          );
+        }
+      }
+    });
+  }
 });

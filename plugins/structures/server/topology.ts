@@ -32,6 +32,9 @@
 //      comes back in at that landmass's OPPOSITE edge, so a glider crossing a
 //      headland re-enters the headland instead of falling into the sea. Each
 //      connected component of buildable ground is its own little torus.
+//      CONSTANT TIME per slot: the labelling carries, per landmass and per
+//      line, where that landmass starts and stops (AxisExtents), so a wrap is
+//      two array reads rather than a walk along the bounding box.
 //
 // WHY PER-LANDMASS AND NOT PER-WORLD. Wrapping at the WORLD's edge would join
 // two settlements that a player can see are a thousand cells apart, and would
@@ -78,6 +81,20 @@ export interface LandmassLabels {
   readonly boxes: readonly LandmassBox[];
   /** Label at (x, y), or -1 for wall, water, locked ground and out of bounds. */
   labelAt(x: number, y: number): number;
+  /**
+   * WHERE A LANDMASS RE-ENTERS ROW `y`, travelling in direction `step`
+   * (+1 east, -1 west): the row-major index of the cell of `label` nearest the
+   * edge the traveller comes in at, skipping `skipIndex`, or -1 if the
+   * landmass does not reach that row (or reaches it only at `skipIndex`).
+   *
+   * O(1) — see the extents below. This replaced an inward scan of the whole
+   * bounding-box row, which cost O(worldSize) per neighbour slot and was worst
+   * on exactly the shapes the wrap exists for: a comb or a ring, where the box
+   * is large and the land in it is thin.
+   */
+  rowEntry(label: number, y: number, step: number, skipIndex: number): number;
+  /** rowEntry's transpose: where the landmass re-enters column `x`. */
+  columnEntry(label: number, x: number, step: number, skipIndex: number): number;
 }
 
 /** Sentinel label for "not buildable ground at all". */
@@ -97,6 +114,86 @@ const FLOOD_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [-1, 1],  [0, 1],  [1, 1],
 ];
 
+/**
+ * WHERE A LANDMASS STARTS AND STOPS ALONG EVERY LINE IT TOUCHES — the first
+ * two and the last two positions it occupies on each row (and, in the second
+ * instance, each column) of its own bounding box.
+ *
+ * WHY TWO AT EACH END RATHER THAN ONE. The wrap must never hand a cell back to
+ * itself (see wrappedNeighborIndex's "A CELL IS NEVER ITS OWN NEIGHBOUR"), and
+ * the only step that can re-enter on the very cell it left is one that did not
+ * change the line being scanned — a purely horizontal step scanning its own
+ * row, a purely vertical one scanning its own column. Such a cell is by
+ * definition the extreme cell at whichever end that scan starts from, so the
+ * RUNNER-UP is the only other answer the old inward scan could ever have
+ * produced. Two per end is therefore not a heuristic depth; it is exactly the
+ * information the scan could yield, and nothing more.
+ *
+ * ONE FLAT SLICE PER LANDMASS rather than four small arrays each: a real world
+ * is a scatter of many small landmasses (topology.ts's header), and eight
+ * typed-array allocations per landmass per generation is churn for nothing.
+ * `offsets[label]` is where that landmass's lines begin; the line's own slot is
+ * `offsets[label] + (line - box.min)`.
+ */
+interface AxisExtents {
+  readonly offsets: Int32Array;
+  readonly first: Int32Array;
+  readonly second: Int32Array;
+  readonly last: Int32Array;
+  readonly penultimate: Int32Array;
+}
+
+/** Allocates the slices, `spans[label]` lines long each, all empty. */
+function emptyExtents(spans: readonly number[]): AxisExtents {
+  const offsets = new Int32Array(spans.length);
+  let total = 0;
+  for (let label = 0; label < spans.length; label++) {
+    offsets[label] = total;
+    total += spans[label]!;
+  }
+  return {
+    offsets,
+    first: new Int32Array(total).fill(NO_LANDMASS),
+    second: new Int32Array(total).fill(NO_LANDMASS),
+    last: new Int32Array(total).fill(NO_LANDMASS),
+    penultimate: new Int32Array(total).fill(NO_LANDMASS),
+  };
+}
+
+/**
+ * Notes that `label` occupies `position` on `line`.
+ *
+ * MUST BE CALLED IN ASCENDING `position` ORDER for a given line — the caller's
+ * single row-major pass guarantees it on both axes (x rises within a row; y
+ * rises across rows, which for a fixed column is the same statement). That is
+ * what lets "the two smallest" and "the two largest" be maintained without
+ * sorting or a second pass.
+ */
+function recordExtent(extents: AxisExtents, label: number, line: number, position: number): void {
+  const slot = extents.offsets[label]! + line;
+  if (extents.first[slot]! < 0) extents.first[slot] = position;
+  else if (extents.second[slot]! < 0) extents.second[slot] = position;
+  if (extents.last[slot]! >= 0) extents.penultimate[slot] = extents.last[slot]!;
+  extents.last[slot] = position;
+}
+
+/**
+ * The position the traveller meets first on `line`, and the one behind it —
+ * `[nearest, runnerUp]`, either of which may be -1 for "nobody". `step > 0`
+ * enters from the low end, `step < 0` from the high end.
+ */
+function extentsOn(
+  extents: AxisExtents,
+  label: number,
+  line: number,
+  step: number,
+): readonly [number, number] {
+  const slot = extents.offsets[label]! + line;
+  return step > 0
+    ? [extents.first[slot]!, extents.second[slot]!]
+    : [extents.last[slot]!, extents.penultimate[slot]!];
+}
+
 // Plain fields and an explicit constructor body — parameter properties are not
 // erasable syntax, and this plugin's server half is loaded through Node's type
 // stripping (see tsconfig.json's erasableSyntaxOnly).
@@ -104,11 +201,21 @@ class Labelling implements LandmassLabels {
   readonly worldSize: number;
   readonly boxes: readonly LandmassBox[];
   private readonly cells: Int32Array;
+  private readonly rows: AxisExtents;
+  private readonly columns: AxisExtents;
 
-  constructor(worldSize: number, cells: Int32Array, boxes: readonly LandmassBox[]) {
+  constructor(
+    worldSize: number,
+    cells: Int32Array,
+    boxes: readonly LandmassBox[],
+    rows: AxisExtents,
+    columns: AxisExtents,
+  ) {
     this.worldSize = worldSize;
     this.cells = cells;
     this.boxes = boxes;
+    this.rows = rows;
+    this.columns = columns;
   }
 
   get count(): number {
@@ -118,6 +225,28 @@ class Labelling implements LandmassLabels {
   labelAt(x: number, y: number): number {
     if (x < 0 || y < 0 || x >= this.worldSize || y >= this.worldSize) return NO_LANDMASS;
     return this.cells[y * this.worldSize + x]!;
+  }
+
+  rowEntry(label: number, y: number, step: number, skipIndex: number): number {
+    const box = this.boxes[label];
+    if (box === undefined || y < box.minY || y > box.maxY) return NO_LANDMASS;
+    const [nearest, runnerUp] = extentsOn(this.rows, label, y - box.minY, step);
+    if (nearest < 0) return NO_LANDMASS;
+    const index = y * this.worldSize + nearest;
+    if (index !== skipIndex) return index;
+    if (runnerUp < 0) return NO_LANDMASS;
+    return y * this.worldSize + runnerUp;
+  }
+
+  columnEntry(label: number, x: number, step: number, skipIndex: number): number {
+    const box = this.boxes[label];
+    if (box === undefined || x < box.minX || x > box.maxX) return NO_LANDMASS;
+    const [nearest, runnerUp] = extentsOn(this.columns, label, x - box.minX, step);
+    if (nearest < 0) return NO_LANDMASS;
+    const index = nearest * this.worldSize + x;
+    if (index !== skipIndex) return index;
+    if (runnerUp < 0) return NO_LANDMASS;
+    return runnerUp * this.worldSize + x;
   }
 }
 
@@ -154,7 +283,7 @@ export function computeLandmassLabels(world: StructuresWorld): LandmassLabels {
   const size = world.worldSize;
   const cells = new Int32Array(size * size).fill(NO_LANDMASS);
   const boxes: LandmassBox[] = [];
-  if (size <= 0) return new Labelling(size, cells, boxes);
+  if (size <= 0) return new Labelling(size, cells, boxes, emptyExtents([]), emptyExtents([]));
 
   // Which cells are buildable at all, resolved once up front: the fill below
   // revisits a cell's neighbours several times, and isBuildableCell is a
@@ -201,58 +330,26 @@ export function computeLandmassLabels(world: StructuresWorld): LandmassLabels {
     }
   }
 
-  return new Labelling(size, cells, boxes);
+  // ONE MORE ROW-MAJOR PASS, for the wrap's O(1) lookups (AxisExtents). Both
+  // axes are filled from this single pass: x rises within a row, and for any
+  // fixed column y rises from one row to the next, so `recordExtent`'s
+  // ascending-position requirement holds for rows and columns alike.
+  const rows = emptyExtents(boxes.map((box) => box.maxY - box.minY + 1));
+  const columns = emptyExtents(boxes.map((box) => box.maxX - box.minX + 1));
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const label = cells[y * size + x]!;
+      if (label === NO_LANDMASS) continue;
+      const box = boxes[label]!;
+      recordExtent(rows, label, y - box.minY, x);
+      recordExtent(columns, label, x - box.minX, y);
+    }
+  }
+
+  return new Labelling(size, cells, boxes, rows, columns);
 }
 
 // ── The wrap ─────────────────────────────────────────────────────────────────
-
-/**
- * Scans one row of a landmass from an edge of its bounding box inward, and
- * returns the first cell index belonging to `label` that is not `selfIndex`.
- * `step` is the direction of TRAVEL (so a step east re-enters travelling east,
- * from the western edge), and the scan is bounded by the box's width, which is
- * why this can never walk the whole map for a small island.
- */
-function scanRow(
-  labels: LandmassLabels,
-  label: number,
-  box: LandmassBox,
-  y: number,
-  step: number,
-  selfIndex: number,
-): number {
-  const width = box.maxX - box.minX + 1;
-  const start = step > 0 ? box.minX : box.maxX;
-  for (let i = 0; i < width; i++) {
-    const x = start + i * step;
-    if (labels.labelAt(x, y) !== label) continue;
-    const index = y * labels.worldSize + x;
-    if (index === selfIndex) continue;
-    return index;
-  }
-  return -1;
-}
-
-/** scanRow's transpose: one column, from the box's opposite edge inward. */
-function scanColumn(
-  labels: LandmassLabels,
-  label: number,
-  box: LandmassBox,
-  x: number,
-  step: number,
-  selfIndex: number,
-): number {
-  const height = box.maxY - box.minY + 1;
-  const start = step > 0 ? box.minY : box.maxY;
-  for (let i = 0; i < height; i++) {
-    const y = start + i * step;
-    if (labels.labelAt(x, y) !== label) continue;
-    const index = y * labels.worldSize + x;
-    if (index === selfIndex) continue;
-    return index;
-  }
-  return -1;
-}
 
 /**
  * The corner case, literally: a DIAGONAL step that left the landmass on both
@@ -298,11 +395,21 @@ function scanDiagonal(
  *      by construction on L too — so this case failing means, exactly, "that
  *      neighbour is wall".
  *   2. Wrap along X (only if the step moved in X), keeping the stepped-to row:
- *      re-enter from the box's opposite vertical edge.
+ *      re-enter from the box's opposite vertical edge. `rowEntry`, O(1).
  *   3. Wrap along Y (only if the step moved in Y), keeping the stepped-to
- *      column.
+ *      column. `columnEntry`, O(1).
  *   4. For a diagonal step where neither single-axis wrap found anything, the
  *      opposite corner (scanDiagonal).
+ *
+ * CASE 4 IS STILL A SCAN, and stays one. There is no O(1) answer for it: the
+ * extents describe rows and columns, and a diagonal is neither, so answering
+ * it in constant time would need a third index keyed on every diagonal of
+ * every landmass — more memory than the whole labelling, to serve the rarest
+ * case there is. Downgrading it to a wall instead was considered and rejected:
+ * it would change the board, not just its cost, and the equivalence this
+ * refactor is worth anything for is exactness. It remains bounded by the
+ * SHORTER side of the bounding box, and it is reached only when a diagonal
+ * step found nothing on either axis — an outright corner exit.
  *
  * X BEFORE Y IS ARBITRARY BUT FIXED, and it only ever decides between two
  * cells that are both legitimate re-entries for the same diagonal step. What
@@ -336,12 +443,12 @@ export function wrappedNeighborIndex(
   const box = labels.boxes[label]!;
   const selfIndex = y * size + x;
 
-  if (dx !== 0 && ny >= box.minY && ny <= box.maxY) {
-    const wrapped = scanRow(labels, label, box, ny, dx, selfIndex);
+  if (dx !== 0) {
+    const wrapped = labels.rowEntry(label, ny, dx, selfIndex);
     if (wrapped >= 0) return wrapped;
   }
-  if (dy !== 0 && nx >= box.minX && nx <= box.maxX) {
-    const wrapped = scanColumn(labels, label, box, nx, dy, selfIndex);
+  if (dy !== 0) {
+    const wrapped = labels.columnEntry(label, nx, dy, selfIndex);
     if (wrapped >= 0) return wrapped;
   }
   if (dx !== 0 && dy !== 0) {
