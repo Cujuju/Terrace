@@ -12,6 +12,7 @@ import {
 } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
+  SETTLERS_CAP,
   WALKERS_WIRE_CAP,
   WANDERERS_CAP,
   parseEntitiesPayload,
@@ -45,6 +46,7 @@ import {
   WANDER_RANGE_CELLS,
   Wandering,
 } from '../server/wandering.ts';
+import { SETTLER_SITE_ATTEMPTS, Settling } from '../server/settling.ts';
 import {
   STRUCTURES_UNAVAILABLE_WARNING,
   applyBlessedCells,
@@ -767,5 +769,93 @@ describe('walkers keep out of each other (the 2026-08-20 crowding)', () => {
     expect(closest).toBeGreaterThanOrEqual(WALKER_PERSONAL_SPACE_CELLS * 2 - 2 * stepCells);
     // And they are still visibly apart, not merely non-identical.
     expect(closest).toBeGreaterThan(WALKER_PERSONAL_SPACE_CELLS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A HOUSE SENDS SOMEBODY OUT (Settling.emitFrom).
+//
+// The second entry point into the settler population, added for the Populous
+// growth model: a house that fills up asks for a walker, where before only a
+// temple's dispatch epoch did. It is deliberately THE SAME SETTLER — same cap,
+// same site scan, same walk — so what needs asserting is the ways it can
+// refuse, and the ONE field that differs.
+
+describe('a house sends a settler out (Settling.emitFrom)', () => {
+  const HOUSE_X = 40;
+  const HOUSE_Y = 40;
+
+  beforeEach(() => {
+    // No structures plugin: canFoundStructureAt degrades to "yes" (a settler
+    // walks and finds out on arrival) and foundStructureAt honestly says no
+    // house went up. That is exactly the arrival-failure path this suite wants.
+    resetStructuresBridge();
+  });
+
+  it('respects SETTLERS_CAP — the temple’s cap, not a second one', () => {
+    const world = islandWorld();
+    const settling = new Settling();
+    for (let i = 0; i < SETTLERS_CAP; i++) {
+      expect(settling.emitFrom(world, HOUSE_X, HOUSE_Y)).toBe(true);
+    }
+    expect(settling.states().length).toBe(SETTLERS_CAP);
+    expect(settling.emitFrom(world, HOUSE_X, HOUSE_Y)).toBe(false);
+    expect(settling.states().length).toBe(SETTLERS_CAP);
+  });
+
+  it('refuses, without spending a walker, when there is nowhere to settle', () => {
+    // Open sea from edge to edge: the ring scan finds no candidate, and there
+    // is no route to one either. FALSE IS ORDINARY here — the house keeps its
+    // people (the caller has already emptied it; see populous' own note).
+    const drowned: PilgrimWorld = {
+      worldSize: cellsAcross(128),
+      heightAt: () => SEA_LEVEL - BAND_HEIGHT,
+    };
+    const settling = new Settling();
+    expect(settling.emitFrom(drowned, HOUSE_X, HOUSE_Y)).toBe(false);
+    expect(settling.states()).toEqual([]);
+  });
+
+  it('is NOT bound to the temple: no temple is not a reason to go home', () => {
+    // boundToTemple is read in exactly ONE place (retryOrRetire): a settler
+    // that IS bound gives up the moment its arrival fails with no temple
+    // standing, while one that is not spends its SETTLER_SITE_ATTEMPTS like
+    // anybody else. With structures absent every arrival fails, so that branch
+    // is reached for certain.
+    //
+    // THE DISCRIMINATOR IS AN A/B, not a survival count — a bare "it lived a
+    // while" would pass whatever the flag said. Two identical runs, differing
+    // only in whether a temple is standing: for an UNBOUND settler the temple
+    // is irrelevant and the two runs must last exactly as long as each other.
+    // Bind them and the null-temple run collapses to a single attempt.
+    //
+    // The board is filled to SETTLERS_CAP first and the measurement stops at
+    // the FIRST retirement, which is the last moment at which the two runs are
+    // provably comparable: a temple may not dispatch while the crowd is at its
+    // cap, so up to that tick the standing temple has changed nothing at all
+    // about the world — unless the flag says it should have.
+    const world = islandWorld();
+    const TEMPLE = { x: HOUSE_X, y: HOUSE_Y };
+
+    const ticksUntilFirstRetirement = (temple: typeof TEMPLE | null): number => {
+      const settling = new Settling();
+      for (let i = 0; i < SETTLERS_CAP; i++) {
+        expect(settling.emitFrom(world, HOUSE_X, HOUSE_Y)).toBe(true);
+      }
+      const limit = Math.round(1200 / TICK);
+      for (let tick = 1; tick <= limit; tick++) {
+        settling.advance(world, temple, TICK);
+        if (settling.states().length < SETTLERS_CAP) return tick;
+      }
+      return limit;
+    };
+
+    const withoutTemple = ticksUntilFirstRetirement(null);
+    const withTemple = ticksUntilFirstRetirement(TEMPLE);
+    // Somebody did eventually give up — otherwise the comparison is vacuous.
+    expect(withoutTemple).toBeLessThan(Math.round(1200 / TICK));
+    // …and at exactly the same moment either way: the missing temple was not
+    // a reason for a house's settler to stop trying.
+    expect(withoutTemple).toBe(withTemple);
   });
 });
