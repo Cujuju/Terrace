@@ -95,6 +95,12 @@ export interface SculptInputOptions {
    */
   graspSpanBand: (pick: TerrainRayPick | null) => number | null;
   /**
+   * The band a CARVE cuts from at this pick (World.carveBand) — the same
+   * derivation `graspSpanBand` uses, but answered for an ordinary column too,
+   * because the first cut of any tunnel is made into unlayered rock.
+   */
+  carveBand: (pick: TerrainRayPick | null) => number | null;
+  /**
    * Emits one intent, and reports whether it went out — false when a client
    * plugin vetoed it (out of mana) or the socket was not ready.
    *
@@ -157,6 +163,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     worldSize,
     grabbableLip,
     graspSpanBand,
+    carveBand,
     send,
   } = options;
 
@@ -428,6 +435,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // which the shared math treats as a no-op — a message, and a mana charge,
     // for an edit that was never going to happen.
     if (brushTool() === 'drag' && strokeGrab === null) return;
+    // A CARVE ONLY EVER LOWERS (plan D6). The raise chord is not "carve
+    // upward", it is nothing at all: the shared validator rejects a carve
+    // intent carrying `dir: 1` with the whole intent, so emitting one would
+    // spend a seq and a mana gate on a message the server drops on the floor.
+    // Refused here so the HUD's mode indicator still reads honestly (setSculptMode
+    // above has already run) while nothing goes out.
+    if (brushTool() === 'carve' && sculptDirection(action) > 0) return;
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
       // Too shallow a ray, or off the world: hold the pull where it was rather
@@ -455,7 +469,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // WHICH SPAN THIS STROKE HAS HOLD OF, omitted entirely on an ordinary
     // column so an unlayered world's intents are byte-identical to before the
     // field existed (World.graspSpanBand returns null there).
-    const spanBand = graspSpanBand(cell);
+    //
+    // THE CARVE IS THE ONE TOOL THAT ALWAYS NAMES A BAND, ordinary column or
+    // not: the band is not a refinement of where it acts, it IS where it acts,
+    // and a carve that named none would be a no-op in the shared math. So it
+    // asks `carveBand`, the same derivation without the one-span shortcut —
+    // and it is only ever this tool that does, which is what leaves every
+    // other stroke over unlayered ground byte-identical.
+    const spanBand = brushTool() === 'carve' ? carveBand(cell) : graspSpanBand(cell);
     // tool/profile are read (not captured) per intent, so switching the HUD
     // toggles mid-stroke takes effect on the very next repeat.
     send({

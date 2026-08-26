@@ -118,6 +118,7 @@ const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Moves exactly the ground under the brush — spires, pits and sheer cliffs.',
   smooth: 'Drags neighbouring terrain along, like pulling fabric — blends shapes.',
   drag: 'Grab the edge of a terrace and push it about with the cursor — extends a level without changing which levels exist.',
+  carve: 'Cuts a tunnel into the land and leaves the roof standing — start at a cliff face and work inward. Lowers only, and only where open air already reaches.',
 };
 
 // The `hard` title states the level fill (shared/heightmap.ts,
@@ -141,6 +142,7 @@ const TOOL_LABEL: Record<SculptTool, string> = {
   stamp: 'Stamp',
   smooth: 'Smooth',
   drag: 'Pull',
+  carve: 'Carve',
 };
 
 const PROFILE_LABEL: Record<SculptProfile, string> = {

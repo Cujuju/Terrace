@@ -12,7 +12,7 @@ import { sculptManaCost } from '../pricing.ts';
 // plugin-local state, would mean two sources of truth for "what brush is the
 // player holding" and a way for them to disagree, which is exactly the drift the
 // single shared pricing function exists to prevent.
-import { brushProfile, brushRadius } from '../../../client/src/state/hudState.ts';
+import { brushProfile, brushRadius, brushTool } from '../../../client/src/state/hudState.ts';
 
 export interface ManaPool {
   readonly balance: number;
@@ -118,16 +118,17 @@ export function recordDenial(): void {
  * It is the same function on the same inputs the gate below uses, one line
  * apart, so what the player is shown is what they will be charged.
  *
- * `brushTool` is DELIBERATELY NOT READ. Only radius and profile price a sculpt
- * — the stamp/smooth choice changes how far the edit spills, and that spill is
- * free by design (see sculptDisplacementUnits in shared/src/heightmap.ts).
- * Subscribing to a signal that cannot change the answer would invite a future
- * reader to believe it does.
+ * `brushTool` IS READ, and only because of the carve. The stamp/smooth/pull
+ * choice cannot change the answer — the relaxation spill those tools differ by
+ * is free by design (see sculptDisplacementUnits in shared/src/heightmap.ts) —
+ * but `carve` removes a fixed block of bands rather than a brush cone and
+ * prices as that block, so the gauge would show the wrong number for it if the
+ * signal were not read. Reactive, like every other read here.
  */
 export function currentBrushCost(): number {
   const pool = manaPool();
   if (pool === null) return 0;
-  return sculptManaCost(pool.manaPerBandCell, brushRadius(), brushProfile());
+  return sculptManaCost(pool.manaPerBandCell, brushRadius(), brushProfile(), brushTool());
 }
 
 /** The pool's live balance, or null when no economy has been declared. */
@@ -168,10 +169,12 @@ export function gateLocalSculpt(intent: SculptIntent): boolean {
   const pool = manaPool();
   if (pool === null) return true;
 
+  const options = sculptOptionsOf(intent);
   const cost = sculptManaCost(
     pool.manaPerBandCell,
     intent.radius,
-    sculptOptionsOf(intent).profile,
+    options.profile,
+    options.tool,
   );
 
   // The balance AS IT STANDS, regen included — not the number the last push
