@@ -673,7 +673,7 @@ describe('mana regen configuration', () => {
     // A fresh unlocked chunk here is flat (no relief at all), so it seeds no
     // spring and the waterfall aura's multiplier is neutral — see
     // waterfallAuraMultiplierFor's own test coverage for the non-neutral case.
-    const api = createWorldApi(harness.world, harness.host, 'mana');
+    const api = createWorldApi(harness.world, harness.host, 'mana').api;
     expect(manaRegenFor(api, PLAYER.id)).toBe(configured * 2);
     expect(manaRegenFor(api, 'never-seen')).toBe(configured); // no perk: world rate
 
@@ -689,7 +689,7 @@ describe('mana regen configuration', () => {
     const configured = 8;
     process.env[MANA_REGEN_ENV] = String(configured);
     const harness = boot();
-    const api = createWorldApi(harness.world, harness.host, 'mana');
+    const api = createWorldApi(harness.world, harness.host, 'mana').api;
 
     // World.riverNetwork() throttles its own recompute to at most once per
     // RIVER_RECOMPUTE_INTERVAL_MS of REAL time (server/src/world/world.ts —

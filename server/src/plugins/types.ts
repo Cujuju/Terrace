@@ -318,6 +318,29 @@ export interface TerracePlugin {
   /** World is ready — already restored from a snapshot if one existed. */
   onWorldCreate?(world: WorldApi): void;
 
+  /**
+   * The world is being unloaded — the symmetric counterpart of onWorldCreate,
+   * called once by `closeSession` after the final snapshot has been written
+   * (issue #167). A plugin that stashed anything belonging to this world
+   * (most of all a WorldApi at module scope) drops it here.
+   *
+   * CALLED ON EVERY INSTALLED PLUGIN, INCLUDING ONE NOT ENABLED FOR THIS
+   * WORLD, because the plugin that most needs to hear the close is exactly
+   * the one that stopped participating and so never ran onWorldCreate again.
+   * A plugin therefore cannot assume its own onWorldCreate ran for the world
+   * being closed — this hook must tolerate having nothing to release.
+   *
+   * `world` IS STILL LIVE FOR THE DURATION OF THIS CALL and dead immediately
+   * after: the host revokes every WorldApi it handed out as soon as the
+   * fan-out returns (issue #164), and any later use of one throws. So read
+   * what you need here; never keep the reference.
+   *
+   * BELT AND SUSPENDERS, NOT THE FIX. Nothing breaks if a plugin does not
+   * implement it — revocation already makes a stale reference harmless. This
+   * hook exists so a plugin can also release its OWN derived state.
+   */
+  onWorldClose?(world: WorldApi): void;
+
   /** Fixed-rate sim step. `dt` is the constant tick period in seconds. */
   onTick?(world: WorldApi, dt: number): void;
 
