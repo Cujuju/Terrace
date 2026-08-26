@@ -1243,20 +1243,20 @@ export const plugin: TerracePlugin = {
     forest.replaceAll(restoredCells);
     restoredCells = [];
 
-    // THE CROSS-PLUGIN DEPENDENCY PATTERN (structures-bridge.ts): started, not
-    // awaited — this hook is synchronous, and the bridge resolves (or degrades
-    // to "no structures") in the background while the rest of this plugin keeps
-    // working. Every occupiedCells() query until then simply sees an empty
-    // occupied set, same as a world with no structures plugin installed at all.
-    void loadStructuresBridge();
+    // THE CROSS-PLUGIN DEPENDENCY PATTERN (structures-bridge.ts): one
+    // synchronous question to the host — who is running as structures in this
+    // world? A world where the answer is "nobody", because the folder is gone
+    // or the operator switched it off, degrades to an empty occupied set, and
+    // every occupiedCells() query simply sees no buildings.
+    loadStructuresBridge(world);
 
     // The same pattern, pointing the other way (./fire-bridge.ts's header):
-    // flora TELLS fire what of its own can burn. Started here and not awaited;
-    // the registration is buffered and replayed if fire has not resolved yet,
-    // so the forest is flammable from the moment fire exists rather than from
-    // whenever the import happens to land.
+    // flora TELLS fire what of its own can burn. Resolved through the host, so
+    // the forest is flammable exactly when fire is running in this world — and
+    // is not when the operator has switched fire off. The registration is
+    // still buffered and replayed by the bridge.
     fuelWorld = world;
-    loadFireBridge();
+    loadFireBridge(world);
     registerFloraFuel({
       name: FLORA_PLUGIN_NAME,
       fuelAt: floraFuelAt,

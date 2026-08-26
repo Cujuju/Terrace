@@ -147,15 +147,16 @@ function simulate(world: WorldApi, dt: number): void {
 export const plugin: TerracePlugin = {
   name: PILGRIMS_PLUGIN_NAME,
 
-  onWorldCreate(): void {
-    // Rule 2 of the bridge pattern: kick the loads off, do not await them.
-    void loadMonstersBridge();
-    void loadStructuresBridge();
-    void loadTemplesBridge();
+  onWorldCreate(world: WorldApi): void {
+    // The bridge pattern, host-mediated: each of these is one synchronous
+    // question about who is running as that plugin in THIS world.
+    loadMonstersBridge(world);
+    loadStructuresBridge(world);
+    loadTemplesBridge(world);
     // The same pattern pointing the other way (./fire-bridge.ts): this plugin
-    // TELLS fire that its walkers can burn, buffered and replayed if fire has
-    // not resolved yet.
-    loadFireBridge();
+    // TELLS fire that its walkers can burn, buffered and replayed by the
+    // bridge; the host says whether fire is running here at all.
+    loadFireBridge(world);
     registerPilgrimsFuel({
       name: PILGRIMS_PLUGIN_NAME,
       entityAt: (x: number, y: number) => {

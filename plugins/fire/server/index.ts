@@ -850,12 +850,13 @@ export const plugin: TerracePlugin = {
     restoredEntities = [];
 
     // THE CROSS-PLUGIN DEPENDENCY PATTERN, read-direction (./weather-bridge.ts):
-    // started, not awaited. Until it resolves — and forever, on a world with no
-    // weather plugin — the air is still and spread is isotropic.
-    loadWeatherBridge();
-    // The economy, on the same terms: until it resolves — and forever, on a
-    // world with no mana plugin — lighting a fire is free (./mana-bridge.ts).
-    loadManaBridge();
+    // the host says who is running as weather in THIS world. On a world with no
+    // weather plugin — or one where the operator switched it off — the air is
+    // still and spread is isotropic.
+    loadWeatherBridge(world);
+    // The economy, on the same terms: on a world with no mana plugin running,
+    // lighting a fire is free (./mana-bridge.ts).
+    loadManaBridge(world);
 
     // ANNOUNCE WHAT WAS RESTORED, unconditionally — including "nothing"
     // (bug, 2026-08-24). This hook runs again on a live world when an operator

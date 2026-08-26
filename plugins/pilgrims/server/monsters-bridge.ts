@@ -6,6 +6,8 @@
 // DEGRADED BEHAVIOUR when monsters is absent: nothing ever settles, so no
 // pilgrimages ever start — true by definition. One warning, once.
 
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+
 /** One living monster, structurally typed (never imported). */
 export interface BridgedMonsterState {
   readonly id: number;
@@ -19,60 +21,62 @@ export interface MonstersApi {
   monsterStates(): BridgedMonsterState[];
 }
 
-export type MonstersModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_MONSTERS_MODULE_LOADER: MonstersModuleLoader = () =>
-  import('../../monsters/server/index.ts');
+/**
+ * The name the host knows monsters by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196). The host hands back the plugin RUNNING
+ * as `monsters` in this session, so a monsters that is absent OR disabled for
+ * this world resolves to null; the old dynamic import bound to a module
+ * URL, and therefore answered from the process's module map either way.
+ */
+const MONSTERS_PLUGIN_NAME = 'monsters';
 
 export const MONSTERS_UNAVAILABLE_WARNING =
   '[pilgrims] monsters plugin not available — nothing to pilgrimage to';
 
-let loadModule: MonstersModuleLoader = DEFAULT_MONSTERS_MODULE_LOADER;
 let monstersApi: MonstersApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
-function asMonstersApi(module: unknown): MonstersApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<MonstersApi>;
-  if (typeof candidate.monsterStates !== 'function') return null;
-  return candidate as MonstersApi;
+function asMonstersApi(module: SiblingModule | null): MonstersApi | null {
+  if (module === null) return null;
+  if (typeof module.monsterStates !== 'function') return null;
+  return module as unknown as MonstersApi;
 }
 
-function warnUnavailable(error?: unknown): void {
+function warnUnavailable(): void {
   if (warned) return;
   warned = true;
-  if (error === undefined) console.warn(MONSTERS_UNAVAILABLE_WARNING);
-  else console.warn(MONSTERS_UNAVAILABLE_WARNING, error);
-}
-
-/** Starts (once) the load. Always resolves — absence is an outcome, not an error. */
-export function loadMonstersBridge(): Promise<void> {
-  if (loadPromise !== null) return loadPromise;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      const resolved = asMonstersApi(module);
-      if (resolved === null) {
-        warnUnavailable();
-        return;
-      }
-      monstersApi = resolved;
-    })
-    .catch((error: unknown) => {
-      warnUnavailable(error);
-    });
-
-  return loadPromise;
-}
-
-/** Resolves when the load has settled, whichever way. Test/boot-order seam. */
-export function monstersBridgeReady(): Promise<void> {
-  return loadPromise ?? Promise.resolve();
+  console.warn(MONSTERS_UNAVAILABLE_WARNING);
 }
 
 /**
- * The living monsters right now, or none while monsters is absent/loading.
+ * Resolves monsters through the host, from onWorldCreate.
+ *
+ * SYNCHRONOUS, AND THERE IS NOTHING LEFT TO AWAIT. The old rule 2 (start the
+ * import, do not await it) and the promise it returned existed because module
+ * resolution is asynchronous; the host's lookup is not, and it answers whatever
+ * the load order — so the sibling is either in hand when this returns or is not
+ * running in this world at all.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a monsters the operator has just enabled must be
+ * picked up then. The warning still happens at most once.
+ */
+export function loadMonstersBridge(world: WorldApi): void {
+  const resolved = asMonstersApi(world.sibling(MONSTERS_PLUGIN_NAME));
+  if (resolved === null) {
+    // CLEARED, not left standing: this runs again on every reopen, and a
+    // sibling that WAS running and is not any more (the operator disabled it)
+    // must stop being reachable through a stale reference here.
+    monstersApi = null;
+    warnUnavailable();
+    return;
+  }
+  monstersApi = resolved;
+}
+
+/**
+ * The living monsters right now, or none when monsters is not running here.
  * Entries are re-validated structurally on every poll: the bridge trusts the
  * module's SHAPE once, but a fork could still hand back malformed rows.
  */
@@ -92,15 +96,8 @@ export function bridgedMonsters(): BridgedMonsterState[] {
   return valid;
 }
 
-/** Test seam: swaps the loader. Pass null to restore the real one. */
-export function setMonstersModuleLoader(loader: MonstersModuleLoader | null): void {
-  loadModule = loader ?? DEFAULT_MONSTERS_MODULE_LOADER;
-}
-
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetMonstersBridge(): void {
-  loadModule = DEFAULT_MONSTERS_MODULE_LOADER;
   monstersApi = null;
-  loadPromise = null;
   warned = false;
 }

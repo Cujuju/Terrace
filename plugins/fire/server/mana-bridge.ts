@@ -16,30 +16,34 @@
 // alternative (refuse the action when there is no economy) would make deleting
 // mana silently delete a mechanic that has nothing to do with it.
 
-import type { WorldApi } from '../../../server/src/plugins/types.ts';
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of mana this plugin uses — one debit, and nothing else. */
 export interface ManaSpendApi {
   spendMana(world: WorldApi, playerId: string, amount: number): boolean;
 }
 
-export type ManaModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_MANA_MODULE_LOADER: ManaModuleLoader = () => import('../../mana/server/index.ts');
+/**
+ * The name the host knows mana by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196): the host hands back the plugin RUNNING as
+ * `mana` in this session, so a mana that is absent OR disabled for this world
+ * resolves to null, where the old import answered from the module map either
+ * way.
+ */
+const MANA_PLUGIN_NAME = 'mana';
 
 export const MANA_UNAVAILABLE_WARNING =
   '[fire] mana plugin not available — lighting a fire will cost nothing';
 
-let loadModule: ManaModuleLoader = DEFAULT_MANA_MODULE_LOADER;
 let manaApi: ManaSpendApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
-function asManaApi(module: unknown): ManaSpendApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<ManaSpendApi>;
-  if (typeof candidate.spendMana !== 'function') return null;
-  return candidate as ManaSpendApi;
+/** Duck-types the sibling's module namespace into the API we need (rule 4). */
+function asManaApi(module: SiblingModule | null): ManaSpendApi | null {
+  if (module === null) return null;
+  if (typeof module.spendMana !== 'function') return null;
+  return module as unknown as ManaSpendApi;
 }
 
 function warnOnce(): void {
@@ -48,19 +52,17 @@ function warnOnce(): void {
   console.warn(MANA_UNAVAILABLE_WARNING);
 }
 
-/** Starts the load (rule 2: from onWorldCreate, NOT awaited). */
-export function loadManaBridge(): void {
-  if (loadPromise !== null) return;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      manaApi = asManaApi(module);
-      if (manaApi === null) warnOnce();
-    })
-    .catch(() => {
-      manaApi = null;
-      warnOnce();
-    });
+/**
+ * Resolves mana through the host, from onWorldCreate.
+ *
+ * NOTHING IS IN FLIGHT ANY MORE: the old rule 2 (start the import, do not await
+ * it) existed because module resolution is asynchronous, and the host's lookup
+ * is not. Re-resolved on every call, so a mana the operator has just enabled is
+ * picked up on the reopen; `warnOnce` keeps an absent one to a single line.
+ */
+export function loadManaBridge(world: WorldApi): void {
+  manaApi = asManaApi(world.sibling(MANA_PLUGIN_NAME));
+  if (manaApi === null) warnOnce();
 }
 
 /**
@@ -76,10 +78,8 @@ export function chargeMana(world: WorldApi, playerId: string, amount: number): b
   return manaApi.spendMana(world, playerId, amount);
 }
 
-/** Test seam: forgets the load and the warning. */
-export function resetManaBridge(loader: ManaModuleLoader = DEFAULT_MANA_MODULE_LOADER): void {
-  loadModule = loader;
+/** Test seam: forgets the resolved sibling and the warning. */
+export function resetManaBridge(): void {
   manaApi = null;
-  loadPromise = null;
   warned = false;
 }

@@ -4,7 +4,12 @@
 
 import { createChunkMask, createHeightmap, chunkIndex, unlockChunk } from '@terrace/shared';
 import type { MessageSink } from '../../src/net/message-sink.ts';
-import type { LoadedPlugin, SiblingModule, TerracePlugin } from '../../src/plugins/types.ts';
+import type {
+  LoadedPlugin,
+  SiblingModule,
+  TerracePlugin,
+  WorldApi,
+} from '../../src/plugins/types.ts';
 import { World } from '../../src/world/world.ts';
 
 export interface RecordedMessage {
@@ -104,6 +109,32 @@ export function asLoadedPluginExporting(
   exports: SiblingModule,
 ): LoadedPlugin {
   return { ...asLoadedPlugin(plugin), exports };
+}
+
+/**
+ * A WorldApi that answers exactly one thing: `sibling(name)` (issue #196).
+ *
+ * How a plugin suite stands in for a sibling plugin without installing one —
+ * the ported bridges take a WorldApi only to ask that one question, so this is
+ * the whole of what they need. EVERY OTHER MEMBER THROWS, deliberately: a
+ * bridge that reached past the lookup into the world would be doing something
+ * this stub cannot honestly stand in for, and should fail loudly rather than
+ * silently see an empty world.
+ *
+ * `exports` is what the lookup answers with — pass null for "that plugin is
+ * not running here", which is both the absent and the disabled case.
+ */
+export function worldWithSibling(name: string, exports: SiblingModule | null): WorldApi {
+  return new Proxy({} as WorldApi, {
+    get(_target, property): unknown {
+      if (property === 'sibling') {
+        return (asked: string): SiblingModule | null => (asked === name ? exports : null);
+      }
+      throw new Error(
+        `this test world answers only WorldApi.sibling, not WorldApi.${String(property)}`,
+      );
+    },
+  });
 }
 
 /**

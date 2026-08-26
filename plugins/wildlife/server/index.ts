@@ -430,12 +430,13 @@ const persistence: PersistenceSlice = {
 export const plugin: TerracePlugin = {
   name: WILDLIFE_PLUGIN_NAME,
 
-  onWorldCreate(): void {
+  onWorldCreate(world: WorldApi): void {
     // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
-    // started, not awaited, and the registration is buffered and replayed if
-    // fire has not resolved yet. This plugin needs no world of its own here —
-    // every callback below answers from the population, not from the map.
-    loadFireBridge();
+    // the host answers who is running as fire here, and the registration is
+    // still buffered and replayed by the bridge. The world is taken only to
+    // ask that question — every callback below answers from the population,
+    // not from the map.
+    loadFireBridge(world);
     registerWildlifeFuel({
       name: WILDLIFE_PLUGIN_NAME,
       entityAt: (x: number, y: number) => {

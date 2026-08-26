@@ -23,6 +23,7 @@ import {
   RecordingSink,
   asLoadedPlugin,
   grantTokenEveryUnlockedChunk,
+  worldWithSibling,
 } from '../../../server/test/support/harness.ts';
 import {
   CROP_PLOT_CLUSTER_CELL_SPAN,
@@ -80,12 +81,7 @@ import {
 } from '../server/index.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from '../server/persistence.ts';
 import { FLORA_STABILITY_SECONDS, StabilityMap } from '../server/stability.ts';
-import {
-  loadStructuresBridge,
-  resetStructuresBridge,
-  setStructuresModuleLoader,
-  structuresBridgeReady,
-} from '../server/structures-bridge.ts';
+import { loadStructuresBridge, resetStructuresBridge } from '../server/structures-bridge.ts';
 import { worldWithTerrain } from './support/world.ts';
 
 /**
@@ -613,22 +609,23 @@ describe('structure occupancy — buildings always win', () => {
     expect(harness.sink.ofType(CHANGES_WIRE_TYPE)).toHaveLength(0);
   });
 
-  it('clears a pre-existing overlap on the first completed survey after the structures bridge resolves', async () => {
+  it('clears a pre-existing overlap on the first completed survey after structures resolves', () => {
     const harness = boot(() => false);
     advance(harness, FLORA_STABILITY_SECONDS + FLORA_SURVEY_INTERVAL_SECONDS * 10);
     const victim = standingTrees()[0];
     expect(victim).toBeDefined();
 
-    // Simulates a building that already stood over this tree before flora
-    // ever checked — boot() started the real (default) loader, which never
-    // resolves inside a synchronous test body; resetStructuresBridge discards
-    // it so this fake loader is the one the next call resolves against.
+    // Simulates a building that already stood over this tree before flora ever
+    // checked. boot() resolved the bridge against a host with no structures in
+    // it; this re-resolves it against one that has a structures reporting a
+    // building on the tree's cell, which is what a reopen with structures newly
+    // enabled looks like.
     resetStructuresBridge();
-    setStructuresModuleLoader(() =>
-      Promise.resolve({ standingStructures: () => [{ x: victim.x, y: victim.y }] }),
+    loadStructuresBridge(
+      worldWithSibling('structures', {
+        standingStructures: () => [{ x: victim.x, y: victim.y }],
+      }),
     );
-    void loadStructuresBridge();
-    await structuresBridgeReady();
 
     // The cull phase only runs on the tick that completes a sweep — the same
     // shape as "fells restored trees that no longer stand on green ground"

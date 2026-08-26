@@ -4,6 +4,7 @@
 // deliberately testable without a server (see pilgrimage.ts's header).
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { worldWithSibling } from '../../../server/test/support/harness.ts';
 import {
   BAND_HEIGHT,
   LAND_WALKER_MAX_GRADIENT_PER_CELL,
@@ -53,15 +54,11 @@ import {
   bridgedStructures,
   loadStructuresBridge,
   resetStructuresBridge,
-  setStructuresModuleLoader,
-  structuresBridgeReady,
 } from '../server/structures-bridge.ts';
 import {
   bridgedMonsters,
   loadMonstersBridge,
   resetMonstersBridge,
-  setMonstersModuleLoader,
-  monstersBridgeReady,
 } from '../server/monsters-bridge.ts';
 
 /** A flat, dry island world: land above sea everywhere except a border moat. */
@@ -572,52 +569,50 @@ describe('the bridges', () => {
     vi.restoreAllMocks();
   });
 
-  it('degrades to an empty world and warns once when structures is missing', async () => {
+  it('degrades to an empty world and warns once when structures is not running', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    setStructuresModuleLoader(() => Promise.reject(new Error('ERR_MODULE_NOT_FOUND')));
-    void loadStructuresBridge();
-    void loadStructuresBridge(); // second call must not double-load or double-warn
-    await structuresBridgeReady();
+    // Null is both cases at once: no structures folder, and a structures the
+    // operator disabled for this world (issue #196).
+    const world = worldWithSibling('structures', null);
+    loadStructuresBridge(world);
+    loadStructuresBridge(world); // a reopen must not double-warn
     expect(bridgedStructures()).toEqual([]);
     expect(applyBlessedCells([1])).toBeUndefined(); // buffered, no throw
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(STRUCTURES_UNAVAILABLE_WARNING, expect.any(Error));
+    expect(warn).toHaveBeenCalledWith(STRUCTURES_UNAVAILABLE_WARNING);
   });
 
-  it('rejects a module of the wrong shape the same way', async () => {
+  it('rejects a module of the wrong shape the same way', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    setStructuresModuleLoader(() => Promise.resolve({ somethingElse: true }));
-    void loadStructuresBridge();
-    await structuresBridgeReady();
+    loadStructuresBridge(worldWithSibling('structures', { somethingElse: true }));
     expect(bridgedStructures()).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('replays the buffered blessed set into a late-arriving structures', async () => {
+  it('replays the buffered blessed set into a structures that starts later', () => {
     const seen: Array<readonly number[]> = [];
-    let release: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    setStructuresModuleLoader(async () => {
-      await gate;
-      return {
+    // First session: no structures running here at all.
+    loadStructuresBridge(worldWithSibling('structures', null));
+    applyBlessedCells([42, 43]);
+    expect(seen).toEqual([]);
+
+    // The operator enables structures and the world reopens: onWorldCreate
+    // runs again, and the claim made while there was nobody to make it to is
+    // replayed exactly once (rule 3).
+    loadStructuresBridge(
+      worldWithSibling('structures', {
         standingStructures: () => [],
         setBlessedStructureCells: (keys: readonly number[]) => {
           seen.push(keys);
         },
-      };
-    });
-    void loadStructuresBridge();
-    applyBlessedCells([42, 43]); // before the module resolves
-    release?.();
-    await structuresBridgeReady();
-    expect(seen).toEqual([[42, 43]]); // rule 3: buffered, replayed once
+      }),
+    );
+    expect(seen).toEqual([[42, 43]]);
   });
 
-  it('polls monsters through the bridge and re-validates rows structurally', async () => {
-    setMonstersModuleLoader(() =>
-      Promise.resolve({
+  it('polls monsters through the bridge and re-validates rows structurally', () => {
+    loadMonstersBridge(
+      worldWithSibling('monsters', {
         monsterStates: () => [
           { id: 1, kind: 'kraken', x: 3, y: 4 },
           { id: 'bad', kind: 'kraken', x: 0, y: 0 }, // dropped
@@ -625,16 +620,12 @@ describe('the bridges', () => {
         ],
       }),
     );
-    void loadMonstersBridge();
-    await monstersBridgeReady();
     expect(bridgedMonsters()).toEqual([{ id: 1, kind: 'kraken', x: 3, y: 4 }]);
   });
 
-  it('degrades monsters to an empty list when the plugin is missing', async () => {
+  it('degrades monsters to an empty list when the plugin is not running', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    setMonstersModuleLoader(() => Promise.reject(new Error('ERR_MODULE_NOT_FOUND')));
-    void loadMonstersBridge();
-    await monstersBridgeReady();
+    loadMonstersBridge(worldWithSibling('monsters', null));
     expect(bridgedMonsters()).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(1);
   });

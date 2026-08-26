@@ -266,15 +266,15 @@ export const plugin: TerracePlugin = {
   name: TEMPLES_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
-    // Started, never awaited — the bridge pattern's second rule. A press that
-    // arrives before it resolves is settler-checked as "allowed", which is the
-    // same answer a world without pilgrims gets (pilgrims-bridge's header).
-    void loadPilgrimsBridge();
-    // The same rule, the other direction: started, never awaited. The claim
-    // published below is buffered by the bridge until this lands, which is
-    // what protects the ground under a RESTORED temple from the first
-    // generation (structures-bridge.ts's header).
-    void loadStructuresBridge();
+    // Resolved through the host — the bridge pattern's first two rules are now
+    // its guarantees. A press on a world where no pilgrims is running is
+    // settler-checked as "allowed" (pilgrims-bridge's header).
+    loadPilgrimsBridge(world);
+    // The same, the other direction. The claim published below is buffered by
+    // the bridge whenever no structures is running here, which is what protects
+    // the ground under a RESTORED temple from the first generation once one is
+    // (structures-bridge.ts's header).
+    loadStructuresBridge(world);
 
     // RE-VALIDATE ON LOAD, structures' footprint-prune rule (its
     // onWorldCreate) for the same reason: a snapshot restored onto a smaller

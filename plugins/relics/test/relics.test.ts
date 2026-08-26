@@ -9,11 +9,17 @@ import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
+import type { SiblingModule } from '../../../server/src/plugins/types.ts';
 import {
   RecordingSink,
   asLoadedPlugin,
+  asLoadedPluginExporting,
+  worldWithSibling,
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
+// The WHOLE mana module, because that is what the host hands relics through
+// WorldApi.sibling — the same object, not a re-import (issue #196).
+import * as manaModule from '../../mana/server/index.ts';
 import {
   MANA_CAPACITY,
   MANA_COST_PER_MIN_RADIUS_SCULPT,
@@ -38,11 +44,9 @@ import {
 } from '../protocol.ts';
 import {
   MANA_UNAVAILABLE_WARNING,
-  type ManaModuleLoader,
   isManaAvailable,
-  manaBridgeReady,
+  loadManaBridge,
   resetManaBridge,
-  setManaModuleLoader,
 } from '../server/mana-bridge.ts';
 import {
   AZURE_HEART_COST_MULTIPLIER,
@@ -111,17 +115,35 @@ interface Harness {
  * (directories sorted: mana, relics) and walks the same boot sequence
  * server/src/index.ts does — restorePersistence, then worldCreate.
  */
-function boot(options: { manaLoader?: ManaModuleLoader; slices?: Record<string, unknown> } = {}): Harness {
+function boot(
+  options: {
+    /**
+     * What the host hands relics when it asks for `mana` — the real module by
+     * default. A suite passes something else to stand in for an older mana, or
+     * a fork, that does not export the perk API.
+     */
+    readonly manaExports?: SiblingModule;
+    /** False for a world where mana is installed but switched off (#196). */
+    readonly manaEnabled?: boolean;
+    readonly slices?: Record<string, unknown>;
+  } = {},
+): Harness {
   resetManaState();
   resetRelicsState();
   resetManaBridge();
-  if (options.manaLoader !== undefined) setManaModuleLoader(options.manaLoader);
 
   const world = worldWithUnlockedChunks(WORLD_SIZE, unlockedChunksExcept(LOCKED_CHUNK));
   const sink = new RecordingSink();
   world.setSink(sink);
 
-  const host = new PluginHost(world, [manaPlugin, relicsPlugin].map(asLoadedPlugin));
+  const host = new PluginHost(
+    world,
+    [
+      asLoadedPluginExporting(manaPlugin, options.manaExports ?? manaModule),
+      asLoadedPlugin(relicsPlugin),
+    ],
+    options.manaEnabled === false ? new Set(['relics']) : undefined,
+  );
   if (options.slices !== undefined) host.restorePersistence(options.slices);
   host.worldCreate();
 
@@ -489,7 +511,6 @@ describe('relics plugin', () => {
   describe('mana perks — the cross-plugin dependency', () => {
     it('halves the holder’s sculpt cost through mana’s perk API', async () => {
       harness = boot();
-      await manaBridgeReady();
       expect(isManaAvailable()).toBe(true);
       // Since mana prices sculpts by displaced volume, the perk scales the RATE
       // (mana per band-cell) rather than a per-sculpt constant — so that is what
@@ -506,7 +527,6 @@ describe('relics plugin', () => {
 
     it('doubles the holder’s regeneration', async () => {
       harness = boot();
-      await manaBridgeReady();
 
       collectSkill(harness, 'spring-of-aether');
       expect(manaPerkOf(PLAYER.id).regenMultiplier).toBe(SPRING_OF_AETHER_REGEN_MULTIPLIER);
@@ -514,7 +534,6 @@ describe('relics plugin', () => {
 
     it('composes both perks multiplicatively', async () => {
       harness = boot();
-      await manaBridgeReady();
 
       collectSkill(harness, 'azure-heart');
       collectSkill(harness, 'spring-of-aether');
@@ -527,7 +546,6 @@ describe('relics plugin', () => {
 
     it('clears the perk when the player leaves', async () => {
       harness = boot();
-      await manaBridgeReady();
       collectSkill(harness, 'azure-heart');
       expect(manaPerBandCellFor(PLAYER.id)).toBeLessThan(MANA_PER_BAND_CELL);
 
@@ -543,7 +561,6 @@ describe('relics plugin', () => {
 
     it('buys the holder more sculpts, through the real intent pipeline', async () => {
       harness = boot();
-      await manaBridgeReady();
       collectSkill(harness, 'azure-heart');
 
       // At half price the pool affords strictly more sculpts than a full pool
@@ -566,11 +583,9 @@ describe('relics plugin', () => {
   describe('graceful degradation when mana is absent', () => {
     it('still collects perk relics, logs once, and changes no prices', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      // Exactly what Node throws when a self-hoster deletes plugins/mana.
-      harness = boot({
-        manaLoader: () => Promise.reject(new Error("Cannot find module '../../mana/server/index.ts'")),
-      });
-      await manaBridgeReady();
+      // Mana INSTALLED BUT SWITCHED OFF for this world — which the host answers
+      // exactly as it answers a deleted plugins/mana folder: null (#196).
+      harness = boot({ manaEnabled: false });
 
       expect(isManaAvailable()).toBe(false);
 
@@ -580,8 +595,8 @@ describe('relics plugin', () => {
       // The skills are still granted and still shown — relics does not know or
       // care whether an economy exists to modify.
       expect(skillsOf(PLAYER.id)).toEqual(['azure-heart', 'spring-of-aether']);
-      // …and mana (which is loaded in this process, just not reachable through
-      // the bridge) was never told anything.
+      // …and mana (whose module is as resident as ever, just not running in
+      // this world) was never told anything.
       expect(manaPerkOf(PLAYER.id)).toEqual({
         costMultiplier: NEUTRAL_MANA_MULTIPLIER,
         regenMultiplier: NEUTRAL_MANA_MULTIPLIER,
@@ -594,8 +609,7 @@ describe('relics plugin', () => {
     it('degrades the same way when the module loads but lacks the perk API', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       // An older mana, or a fork: the folder is there, the API is not.
-      harness = boot({ manaLoader: () => Promise.resolve({ plugin: { name: 'mana' } }) });
-      await manaBridgeReady();
+      harness = boot({ manaExports: { plugin: { name: 'mana' } } });
 
       expect(isManaAvailable()).toBe(false);
       collectSkill(harness, 'azure-heart');
@@ -603,25 +617,18 @@ describe('relics plugin', () => {
       expect(warn).toHaveBeenCalledTimes(1);
     });
 
-    it('replays perks granted before a slow mana import finished', async () => {
-      // The load is started in onWorldCreate and deliberately not awaited, so a
-      // relic collected in the first milliseconds of a world must not be lost.
-      // Definite-assignment: the executor runs synchronously, so `release` is
-      // assigned before the next statement, but TS cannot see that.
-      let release!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const realMana = await import('../../mana/server/index.ts');
-
-      harness = boot({ manaLoader: () => gate.then(() => realMana) });
+    it('replays perks granted while no mana was running, once one is', () => {
+      // Rule 3 (buffer, don't drop) is the caller's job and outlives a session:
+      // a perk granted on a world with mana switched off must reach the mana of
+      // the world that has it switched on, without the player collecting again.
+      harness = boot({ manaEnabled: false });
       collectSkill(harness, 'azure-heart');
-      // Still buffered: the import has not resolved.
       expect(isManaAvailable()).toBe(false);
       expect(manaPerBandCellFor(PLAYER.id)).toBe(MANA_PER_BAND_CELL);
 
-      release();
-      await manaBridgeReady();
+      // The reopen: onWorldCreate runs again, and this time the host has a mana
+      // to hand back.
+      loadManaBridge(worldWithSibling('mana', manaModule));
 
       expect(isManaAvailable()).toBe(true);
       expect(manaPerBandCellFor(PLAYER.id)).toBe(

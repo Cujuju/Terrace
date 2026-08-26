@@ -14,27 +14,28 @@
 // DEGRADED BEHAVIOUR when fire is absent: animals do not burn. One warning,
 // once.
 
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+
 /** The slice of fire this plugin uses — one function, deliberately. */
 export interface FireFuelApi {
   registerEntityFuel(source: unknown): void;
 }
 
-/** Loads the fire module. Swappable so tests can exercise the absent path. */
-export type FireModuleLoader = () => Promise<unknown>;
-
-/** The real loader — the sibling plugin folder, since plugins are folders in v1. */
-const DEFAULT_FIRE_MODULE_LOADER: FireModuleLoader = () => import('../../fire/server/index.ts');
+/**
+ * The name the host knows fire by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH, and that is the whole of this phase: the host hands back
+ * the plugin RUNNING as `fire` in this session, so a fire that is disabled
+ * here (or absent) resolves to null instead of answering from the module map
+ * (issue #196).
+ */
+const FIRE_PLUGIN_NAME = 'fire';
 
 export const FIRE_UNAVAILABLE_WARNING =
   '[wildlife] fire plugin not available — animals will not burn';
 
-let loadModule: FireModuleLoader = DEFAULT_FIRE_MODULE_LOADER;
-
-/** The resolved API, or null while loading / after a failed load. */
+/** The resolved API, or null when fire is not running in this session. */
 let fireApi: FireFuelApi | null = null;
-
-/** In-flight (or settled) load. Non-null once loadFireBridge has been called. */
-let loadPromise: Promise<void> | null = null;
 
 /** True once the "fire is missing" warning has been emitted. */
 let warned = false;
@@ -47,12 +48,11 @@ let warned = false;
  */
 let pendingSource: unknown = null;
 
-/** Duck-types a loaded module into the API we need (rule 4). */
-function asFireApi(module: unknown): FireFuelApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<FireFuelApi>;
-  if (typeof candidate.registerEntityFuel !== 'function') return null;
-  return candidate as FireFuelApi;
+/** Duck-types the sibling's module namespace into the API we need (rule 4). */
+function asFireApi(module: SiblingModule | null): FireFuelApi | null {
+  if (module === null) return null;
+  if (typeof module.registerEntityFuel !== 'function') return null;
+  return module as unknown as FireFuelApi;
 }
 
 function warnOnce(): void {
@@ -61,23 +61,27 @@ function warnOnce(): void {
   console.warn(FIRE_UNAVAILABLE_WARNING);
 }
 
-/** Starts the load (rule 2: called from onWorldCreate, NOT awaited). */
-export function loadFireBridge(): void {
-  if (loadPromise !== null) return;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      fireApi = asFireApi(module);
-      if (fireApi === null) {
-        warnOnce();
-        return;
-      }
-      if (pendingSource !== null) fireApi.registerEntityFuel(pendingSource);
-    })
-    .catch(() => {
-      fireApi = null;
-      warnOnce();
-    });
+/**
+ * Resolves fire through the host, from onWorldCreate.
+ *
+ * NOTHING IS IN FLIGHT ANY MORE. The old rule 2 (start the import, do not
+ * await it) existed because module resolution is asynchronous; the host's
+ * lookup is not, and answers whatever the load order, so the sibling is
+ * either in hand when this returns or is not running at all. Whatever
+ * registration is pending is replayed here.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a fire the operator has just enabled for this world
+ * must be picked up then. `warnOnce` keeps a permanently absent fire to one
+ * line however often that happens.
+ */
+export function loadFireBridge(world: WorldApi): void {
+  fireApi = asFireApi(world.sibling(FIRE_PLUGIN_NAME));
+  if (fireApi === null) {
+    warnOnce();
+    return;
+  }
+  if (pendingSource !== null) fireApi.registerEntityFuel(pendingSource);
 }
 
 /**
@@ -89,11 +93,9 @@ export function registerWildlifeFuel(source: unknown): void {
   if (fireApi !== null) fireApi.registerEntityFuel(source);
 }
 
-/** Test seam: forgets the load, the buffer and the warning. */
-export function resetFireBridge(loader: FireModuleLoader = DEFAULT_FIRE_MODULE_LOADER): void {
-  loadModule = loader;
+/** Test seam: forgets the resolved sibling, the buffer and the warning. */
+export function resetFireBridge(): void {
   fireApi = null;
-  loadPromise = null;
   warned = false;
   pendingSource = null;
 }

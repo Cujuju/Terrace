@@ -19,61 +19,65 @@
 // again. Replaying it later would put somebody on the road on behalf of a
 // house that may no longer be standing.
 
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+
 /** The slice of pilgrims this plugin uses — deliberately one function. */
 export interface PilgrimsApi {
   emitSettlerFrom(x: number, y: number): boolean;
 }
 
-export type PilgrimsModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_PILGRIMS_MODULE_LOADER: PilgrimsModuleLoader = () =>
-  import('../../pilgrims/server/index.ts');
+/**
+ * The name the host knows pilgrims by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196). The host hands back the plugin RUNNING
+ * as `pilgrims` in this session, so a pilgrims that is absent OR disabled for
+ * this world resolves to null; the old dynamic import bound to a module
+ * URL, and therefore answered from the process's module map either way.
+ */
+const PILGRIMS_PLUGIN_NAME = 'pilgrims';
 
 export const PILGRIMS_UNAVAILABLE_WARNING =
   '[populous] pilgrims plugin not available — houses will fill up but nobody walks out';
 
-let loadModule: PilgrimsModuleLoader = DEFAULT_PILGRIMS_MODULE_LOADER;
 let pilgrimsApi: PilgrimsApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
-function asPilgrimsApi(module: unknown): PilgrimsApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<PilgrimsApi>;
-  if (typeof candidate.emitSettlerFrom !== 'function') return null;
-  return candidate as PilgrimsApi;
+function asPilgrimsApi(module: SiblingModule | null): PilgrimsApi | null {
+  if (module === null) return null;
+  if (typeof module.emitSettlerFrom !== 'function') return null;
+  return module as unknown as PilgrimsApi;
 }
 
-function warnUnavailable(error?: unknown): void {
+function warnUnavailable(): void {
   if (warned) return;
   warned = true;
-  if (error === undefined) console.warn(PILGRIMS_UNAVAILABLE_WARNING);
-  else console.warn(PILGRIMS_UNAVAILABLE_WARNING, error);
+  console.warn(PILGRIMS_UNAVAILABLE_WARNING);
 }
 
-/** Starts (once) the load. Always resolves — absence is an outcome, not an error. */
-export function loadPilgrimsBridge(): Promise<void> {
-  if (loadPromise !== null) return loadPromise;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      const resolved = asPilgrimsApi(module);
-      if (resolved === null) {
-        warnUnavailable();
-        return;
-      }
-      pilgrimsApi = resolved;
-    })
-    .catch((error: unknown) => {
-      warnUnavailable(error);
-    });
-
-  return loadPromise;
-}
-
-/** Resolves when the load has settled, whichever way. Test/boot-order seam. */
-export function pilgrimsBridgeReady(): Promise<void> {
-  return loadPromise ?? Promise.resolve();
+/**
+ * Resolves pilgrims through the host, from onWorldCreate.
+ *
+ * SYNCHRONOUS, AND THERE IS NOTHING LEFT TO AWAIT. The old rule 2 (start the
+ * import, do not await it) and the promise it returned existed because module
+ * resolution is asynchronous; the host's lookup is not, and it answers whatever
+ * the load order — so the sibling is either in hand when this returns or is not
+ * running in this world at all.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a pilgrims the operator has just enabled must be
+ * picked up then. The warning still happens at most once.
+ */
+export function loadPilgrimsBridge(world: WorldApi): void {
+  const resolved = asPilgrimsApi(world.sibling(PILGRIMS_PLUGIN_NAME));
+  if (resolved === null) {
+    // CLEARED, not left standing: this runs again on every reopen, and a
+    // sibling that WAS running and is not any more (the operator disabled it)
+    // must stop being reachable through a stale reference here.
+    pilgrimsApi = null;
+    warnUnavailable();
+    return;
+  }
+  pilgrimsApi = resolved;
 }
 
 /**
@@ -88,15 +92,8 @@ export function emitSettlerFrom(x: number, y: number): boolean {
   return pilgrimsApi?.emitSettlerFrom(x, y) ?? false;
 }
 
-/** Test seam: swaps the loader. Pass null to restore the real one. */
-export function setPilgrimsModuleLoader(loader: PilgrimsModuleLoader | null): void {
-  loadModule = loader ?? DEFAULT_PILGRIMS_MODULE_LOADER;
-}
-
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetPilgrimsBridge(): void {
-  loadModule = DEFAULT_PILGRIMS_MODULE_LOADER;
   pilgrimsApi = null;
-  loadPromise = null;
   warned = false;
 }
