@@ -25,7 +25,8 @@
 // and it can be called off during the count.
 
 import type { MessageSink } from '../net/message-sink.ts';
-import type { WorldSwitchStatus } from '@terrace/shared';
+import type { WorldPluginSetting, WorldSwitchStatus } from '@terrace/shared';
+import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
 import { logError, logInfo, logWarn } from '../log.ts';
 import type { Player } from '../player.ts';
@@ -88,10 +89,26 @@ export type PluginToggleRefusal =
   | 'switchInProgress'
   | 'failed';
 
+/**
+ * Why a plugin setting could not be recorded (per-world plugin settings). The
+ * toggle's refusals plus the one only a settings change can hit: the plugin is
+ * installed but declares no such key, or does not accept that value for it.
+ */
+export type PluginSettingRefusal = PluginToggleRefusal | 'unknownSetting';
+
 /** What a successful toggle did. `reopened` is false when nothing changed. */
 export interface PluginToggleOutcome {
   /** Whether the live world was torn down and rebuilt to apply the change. */
   readonly reopened: boolean;
+}
+
+/**
+ * A stored setting's lookup key: the plugin and the key it declared, which
+ * together are the row's primary key in the world file. One function, so the
+ * two halves are never joined two different ways.
+ */
+function settingRowKey(plugin: string, key: string): string {
+  return `${plugin}/${key}`;
 }
 
 /** A switch that has been announced and is counting down. */
@@ -298,11 +315,11 @@ export class WorldManager {
    * Switches a plugin on or off FOR ONE WORLD, and — if that world is live —
    * reopens it so the change is in effect (issues #165, #166).
    *
-   * The server-side entry point for #168's admin command/panel. Persist first,
-   * reopen second: the file is the record, and a reopen that fails must not
-   * leave the operator's decision unrecorded (they can load the world again to
-   * get it). A plugin nobody installed is refused rather than written, so a
-   * typo cannot leave a permanent row disabling a plugin that never existed.
+   * The server-side entry point for #168's admin command/panel. A plugin
+   * nobody installed is refused rather than written, so a typo cannot leave a
+   * permanent row disabling a plugin that never existed. Everything after that
+   * decision — persist, then reopen — is `applyWorldConfiguration`'s, which
+   * this shares with the settings path below.
    */
   setPluginEnabled(
     worldId: string,
@@ -312,42 +329,153 @@ export class WorldManager {
     if (!this.deps.registry.has(worldId)) return 'unknownWorld';
     if (!this.installedPluginNames.includes(pluginName)) return 'unknownPlugin';
 
-    const live = this.session?.id === worldId;
-    if (live && this.pending !== null) return 'switchInProgress';
-
     const alreadyDisabled = this.disabledPluginsFor(worldId)?.includes(pluginName) ?? false;
     // Nothing to write and — crucially — nothing to reopen: a second click on
     // a toggle that is already where it is being put must not cost every
     // player a re-snapshot.
     if (alreadyDisabled === !enabled) return { reopened: false };
 
-    try {
-      if (live) {
-        // The live session already holds this file open; writing through its
-        // own store keeps one connection on it rather than racing a second.
-        this.session?.store.setPluginEnabled(pluginName, enabled);
-      } else {
-        const store = this.deps.registry.openStore(worldId, this.deps.config.snapshotRetention);
-        try {
-          store.setPluginEnabled(pluginName, enabled);
-        } finally {
-          store.close();
-        }
+    return this.applyWorldConfiguration(
+      worldId,
+      (store) => {
+        store.setPluginEnabled(pluginName, enabled);
+      },
+      `plugin "${pluginName}" is now ${enabled ? 'enabled' : 'disabled'} for world "${worldId}"`,
+      `could not record plugin "${pluginName}" for world "${worldId}"`,
+    );
+  }
+
+  /**
+   * The settings the installed plugins declare, with the value in force for
+   * one world (per-world plugin settings, 2026-08-25).
+   *
+   * THE DECLARATION IS THE SPINE, not the stored rows: a key nothing declares
+   * any more is not offered, and a declared key a world has never chosen is
+   * offered with the plugin's own default in it, so the panel always shows
+   * what is actually running rather than an empty box.
+   *
+   * Null when there is no such world, matching `disabledPluginsFor`.
+   */
+  pluginSettingsFor(worldId: string): WorldPluginSetting[] | null {
+    if (!this.deps.registry.has(worldId)) return null;
+    const stored = this.storedSettings(worldId);
+    const listing: WorldPluginSetting[] = [];
+    for (const { plugin } of this.deps.plugins) {
+      for (const declaration of plugin.settings ?? []) {
+        listing.push({
+          plugin: plugin.name,
+          key: declaration.key,
+          values: [...declaration.values],
+          value: stored[settingRowKey(plugin.name, declaration.key)] ?? declaration.defaultValue,
+        });
       }
+    }
+    return listing;
+  }
+
+  /**
+   * Records one plugin setting FOR ONE WORLD, and — if that world is live —
+   * reopens it so the plugin comes back up under the new value.
+   *
+   * VALIDATED AGAINST THE DECLARING PLUGIN, never against a list in core: the
+   * plugin says which keys it has and which values each takes
+   * (PluginSettingDeclaration), and anything outside that is refused
+   * ('unknownSetting') exactly as a plugin nobody installed is. That is what
+   * keeps `life | populous` structures' vocabulary rather than the protocol's.
+   *
+   * A REOPEN IS HOW A SETTING TAKES EFFECT, not a live re-read: a plugin reads
+   * its settings once, in `onWorldCreate`, so the value cannot move under a
+   * running tick. The reopen carries every connected player across (#166).
+   */
+  setPluginSetting(
+    worldId: string,
+    pluginName: string,
+    key: string,
+    value: string,
+  ): PluginToggleOutcome | PluginSettingRefusal {
+    if (!this.deps.registry.has(worldId)) return 'unknownWorld';
+    const declaring = this.deps.plugins.find((loaded) => loaded.plugin.name === pluginName);
+    if (declaring === undefined) return 'unknownPlugin';
+    const declaration = declaring.plugin.settings?.find((candidate) => candidate.key === key);
+    if (declaration === undefined) return 'unknownSetting';
+    if (!declaration.values.includes(value)) return 'unknownSetting';
+
+    // Already what it is being set to: nothing to write, and nothing to reopen
+    // — the same rule the toggle keeps, for the same reason.
+    const stored = this.storedSettings(worldId);
+    if (stored[settingRowKey(pluginName, key)] === value) return { reopened: false };
+
+    return this.applyWorldConfiguration(
+      worldId,
+      (store) => {
+        store.setPluginSetting(pluginName, key, value);
+      },
+      `plugin "${pluginName}" setting "${key}" is now "${value}" for world "${worldId}"`,
+      `could not record plugin "${pluginName}" setting "${key}" for world "${worldId}"`,
+    );
+  }
+
+  /** This world's stored settings, flattened to `<plugin>/<key>` -> value. */
+  private storedSettings(worldId: string): Record<string, string> {
+    const rows =
+      this.session?.id === worldId
+        ? this.session.store.pluginSettings()
+        : this.withStore(worldId, (store) => store.pluginSettings());
+    const flat: Record<string, string> = {};
+    for (const row of rows) flat[settingRowKey(row.plugin, row.key)] = row.value;
+    return flat;
+  }
+
+  /** Runs `read` against a world that is not the live one, closing the file after. */
+  private withStore<T>(worldId: string, read: (store: SnapshotStore) => T): T {
+    const store = this.deps.registry.openStore(worldId, this.deps.config.snapshotRetention);
+    try {
+      return read(store);
+    } finally {
+      store.close();
+    }
+  }
+
+  /**
+   * PERSIST FIRST, REOPEN SECOND — the one shape every per-world configuration
+   * change has (enablement, settings, and whatever comes next).
+   *
+   * The file is the record, and a reopen that fails must not leave the
+   * operator's decision unrecorded — they can load the world again to get it.
+   * A world that is merely on disk needs no reopen at all; the live one is
+   * rebuilt so the change is actually in effect, carrying every connected
+   * player across (#166).
+   *
+   * Refuses while a switch is counting down, for `reopen`'s reason: that
+   * switch is about to replace this world entirely, so rebuilding the one it
+   * is leaving is wasted work whose failure would abort it for nothing.
+   */
+  private applyWorldConfiguration(
+    worldId: string,
+    write: (store: SnapshotStore) => void,
+    appliedLog: string,
+    failureLog: string,
+  ): PluginToggleOutcome | PluginToggleRefusal {
+    const live = this.session?.id === worldId;
+    if (live && this.pending !== null) return 'switchInProgress';
+
+    try {
+      // The live session already holds this file open; writing through its own
+      // store keeps one connection on it rather than racing a second.
+      if (live && this.session !== null) write(this.session.store);
+      else this.withStore(worldId, write);
     } catch (error) {
-      logError(`could not record plugin "${pluginName}" for world "${worldId}"`, error);
+      logError(failureLog, error);
       return 'failed';
     }
 
-    logInfo(
-      `plugin "${pluginName}" is now ${enabled ? 'enabled' : 'disabled'} for world "${worldId}"`,
-    );
+    logInfo(appliedLog);
     if (!live) return { reopened: false };
 
     const reopened = this.reopen();
     // `noWorldLoaded` cannot happen — `live` says a session exists and nothing
-    // yields the thread between the two — but it is not a toggle refusal, so
-    // it is reported as the failure it would be if it ever did.
+    // yields the thread between the two — but it is not a configuration
+    // refusal, so it is reported as the failure it would be if it ever did.
     if (reopened !== true) return reopened === 'noWorldLoaded' ? 'failed' : reopened;
     return { reopened: true };
   }

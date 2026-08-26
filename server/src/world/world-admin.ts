@@ -114,8 +114,8 @@ export class WorldAdminService {
   /**
    * Answers every world-management action other than listing.
    *
-   * ONE ENTRY POINT FOR ELEVEN ACTIONS, so the gate check exists once. The
-   * switch below runs only after the key has been accepted.
+   * ONE ENTRY POINT FOR EVERY ACTION BUT THE TWO LISTINGS, so the gate check
+   * exists once. The switch below runs only after the key has been accepted.
    */
   handle(clientId: string, request: WorldAdminRequestMessage): WorldAdminResultMessage {
     const action = actionOf(request);
@@ -147,16 +147,18 @@ export class WorldAdminService {
     };
   }
 
-  /** One world's plugin enablement, as the panel sees it. */
+  /** One world's plugin enablement and settings, as the panel sees it. */
   pluginListing(worldId: string): WorldPluginListMessage {
     const { manager } = this.deps;
     const disabled = manager.disabledPluginsFor(worldId);
-    if (disabled === null) return refusedPlugins(worldId, 'unknownWorld');
+    const settings = manager.pluginSettingsFor(worldId);
+    if (disabled === null || settings === null) return refusedPlugins(worldId, 'unknownWorld');
     return {
       type: 'worldPluginListing',
       id: worldId,
       installed: [...manager.installedPluginNames],
       disabled: [...disabled],
+      settings,
     };
   }
 
@@ -209,6 +211,14 @@ export class WorldAdminService {
 
       case 'worldPluginSet':
         return this.setPlugin(request.id, request.plugin, request.enabled);
+
+      case 'worldPluginConfigure':
+        return this.configurePlugin(
+          request.id,
+          request.plugin,
+          request.setting,
+          request.value,
+        );
 
       case 'worldSwitchCancel':
         return this.deps.manager.cancelSwitch()
@@ -395,6 +405,25 @@ export class WorldAdminService {
   }
 
   /**
+   * Records one plugin setting for one world.
+   *
+   * THE MANAGER OWNS THE WHOLE ACT, exactly as it does for enablement: it is
+   * the holder of the installed plugins and therefore of their declarations,
+   * which are what a key and a value are checked against. This method only
+   * widens its refusal into the operator's vocabulary.
+   */
+  private configurePlugin(
+    id: string,
+    plugin: string,
+    setting: string,
+    value: string,
+  ): WorldAdminResultMessage {
+    const outcome = this.deps.manager.setPluginSetting(id, plugin, setting, value);
+    if (typeof outcome === 'string') return fail('configurePlugin', outcome);
+    return { type: 'worldAdminResult', action: 'configurePlugin', ok: true, id };
+  }
+
+  /**
    * Pins or unpins a restore point in the LIVE world.
    *
    * Only the live world, because pinning is a judgement about a moment the
@@ -438,6 +467,8 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
     case 'worldPluginList':
     case 'worldPluginSet':
       return 'setPlugin';
+    case 'worldPluginConfigure':
+      return 'configurePlugin';
     case 'worldSwitchCancel':
       return 'cancelSwitch';
   }
@@ -445,7 +476,14 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
 
 /** One shape for every refused plugin listing, matching `fail`'s role. */
 function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPluginListMessage {
-  return { type: 'worldPluginListing', id: worldId, installed: [], disabled: [], refused };
+  return {
+    type: 'worldPluginListing',
+    id: worldId,
+    installed: [],
+    disabled: [],
+    settings: [],
+    refused,
+  };
 }
 
 /** One shape for every refusal, so no call site invents its own. */

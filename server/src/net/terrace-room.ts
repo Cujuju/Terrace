@@ -88,6 +88,7 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
   'worldPin',
   'worldPluginList',
   'worldPluginSet',
+  'worldPluginConfigure',
   'worldSwitchCancel',
 ] as const;
 
@@ -270,7 +271,10 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         // fresh set rides along on success for the same reason the world
         // listing does below — and only on success, so a refusal never becomes
         // an oracle for which plugins this server runs.
-        if (result.ok && request.type === 'worldPluginSet') {
+        if (
+          result.ok &&
+          (request.type === 'worldPluginSet' || request.type === 'worldPluginConfigure')
+        ) {
           client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
         }
         // A successful action changed what the panel is showing, so the fresh
