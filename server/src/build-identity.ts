@@ -55,6 +55,30 @@ export const UNKNOWN_BUILD_IDENTITY = 'unknown';
 let identity: string = UNKNOWN_BUILD_IDENTITY;
 
 /**
+ * The client manifest this process was booted with, held so the identity can be
+ * recomputed without reading the dist again.
+ *
+ * The BUNDLE cannot change under a running process — it is served from disk as
+ * it was at boot, and a new one arrives only with a restart — so re-reading it
+ * on a plugin reload would be a file read that can only produce what is already
+ * here.
+ */
+let clientManifest: string = NO_CLIENT_DIST;
+
+/** The digest, from the two things it is made of. See this file's header. */
+function digestOf(plugins: readonly LoadedPlugin[]): string {
+  const hash = createHash('sha256');
+  hash.update(`server:${SERVER_VERSION}\n`);
+  // Load order is deterministic (discovery sorts directories), so the digest is
+  // too — the same tree on two machines must produce the same identity.
+  for (const loaded of plugins) {
+    hash.update(`plugin:${loaded.plugin.name}:${loaded.version}\n`);
+  }
+  hash.update(`client:${clientManifest}\n`);
+  return hash.digest('hex').slice(0, BUILD_IDENTITY_LENGTH);
+}
+
+/**
  * Computes the identity and binds it for the process.
  *
  * A PROCESS-WIDE BINDING, on bindRoomContext's precedent and for its reason:
@@ -72,7 +96,6 @@ export function initBuildIdentity(args: {
     throw new Error('initBuildIdentity() called twice — boot order bug');
   }
 
-  let clientManifest = NO_CLIENT_DIST;
   try {
     // index.html rather than the asset files: its script/link URLs already
     // carry every asset's content hash, so one small read covers the whole
@@ -83,16 +106,28 @@ export function initBuildIdentity(args: {
     // Unbuilt or unreadable; both mean "this process serves no client bundle".
   }
 
-  const hash = createHash('sha256');
-  hash.update(`server:${SERVER_VERSION}\n`);
-  // Load order is deterministic (discovery sorts directories), so the digest is
-  // too — the same tree on two machines must produce the same identity.
-  for (const loaded of args.plugins) {
-    hash.update(`plugin:${loaded.plugin.name}:${loaded.version}\n`);
-  }
-  hash.update(`client:${clientManifest}\n`);
+  identity = digestOf(args.plugins);
+  return identity;
+}
 
-  identity = hash.digest('hex').slice(0, BUILD_IDENTITY_LENGTH);
+/**
+ * Recomputes the identity after a plugin was RE-IMPORTED in this process
+ * (issue #198), and returns the new value.
+ *
+ * WHY THE BOOT-TIME BINDING IS NOT THE WHOLE STORY ANY MORE. The identity was a
+ * boot constant because the code a client plays against could only change with
+ * a restart. An in-process reload breaks that assumption in exactly one way — a
+ * plugin's stamp moves — and a client whose page is running the old plugin's
+ * client half has to hear about it, which it does through the join snapshot the
+ * reload's reopen already sends every player (see world-manager.ts). Without
+ * this call the server would be on new code and every open page on old.
+ *
+ * SEPARATE FROM `initBuildIdentity`, whose double-call throw is a real boot-order
+ * guard worth keeping: this is a deliberate, operator-triggered rebind, and
+ * saying so at the call site is the point.
+ */
+export function rebindBuildIdentity(plugins: readonly LoadedPlugin[]): string {
+  identity = digestOf(plugins);
   return identity;
 }
 

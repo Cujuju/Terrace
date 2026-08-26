@@ -32,6 +32,7 @@ import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildThumbnail } from '../persistence/thumbnail.ts';
 import type { WorldRegistry } from '../persistence/world-registry.ts';
 import { PluginHost } from '../plugins/host.ts';
+import type { InstalledPlugins } from '../plugins/installed.ts';
 import type { LoadedPlugin } from '../plugins/types.ts';
 import { archFixtureRequested, carveArchFixture } from './arch-fixture.ts';
 import { RollbackService } from './rollback.ts';
@@ -53,7 +54,12 @@ export interface WorldSession {
 export interface SessionDeps {
   readonly config: ServerConfig;
   readonly registry: WorldRegistry;
-  readonly plugins: readonly LoadedPlugin[];
+  /**
+   * THE INSTALLED SET, ASKED EACH TIME A SESSION IS BUILT — an object, not the
+   * array it used to be, so that a plugin re-imported in this process (issue
+   * #198) is the one the NEXT session runs. See plugins/installed.ts.
+   */
+  readonly plugins: InstalledPlugins;
 }
 
 /**
@@ -154,7 +160,8 @@ function pluginSettingsByPlugin(store: SnapshotStore): Record<string, Record<str
  * is exactly the behaviour that costs people their maps.
  */
 export function openSession(deps: SessionDeps, id: string): WorldSession {
-  const { config, registry, plugins } = deps;
+  const { config, registry } = deps;
+  const plugins = deps.plugins.list;
   const store = registry.openStore(id, config.snapshotRetention);
 
   let world: World;

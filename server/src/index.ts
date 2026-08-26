@@ -34,6 +34,7 @@ import { logError, logInfo, logWarn } from './log.ts';
 import { openWorlds } from './boot/open-worlds.ts';
 import { WorldRegistry } from './persistence/world-registry.ts';
 import { discoverPlugins } from './plugins/discovery.ts';
+import { InstalledPlugins } from './plugins/installed.ts';
 import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
@@ -126,13 +127,16 @@ async function main(): Promise<void> {
   );
 
   // Plugins load before any world so a load failure costs nothing but a boot.
-  const plugins = await discoverPlugins(config.pluginsDir);
+  // THE INSTALLED SET, held in an object rather than the array discovery
+  // returns: one plugin of it can be replaced in place by a reload (#198), and
+  // everything downstream asks this object rather than keeping a copy.
+  const plugins = new InstalledPlugins(await discoverPlugins(config.pluginsDir));
 
   // Bound before any world opens, because a join snapshot carries it and a
   // client can join as soon as the room exists. Reads the built client's
   // manifest, so it must come after nothing in particular — the dist is on
   // disk or it is not.
-  const identity = initBuildIdentity({ plugins, clientDistPath: config.clientDistPath });
+  const identity = initBuildIdentity({ plugins: plugins.list, clientDistPath: config.clientDistPath });
   logInfo(`build identity ${identity} (core, plugins and the served client bundle)`);
 
   const registry = new WorldRegistry(config.worldsDir);

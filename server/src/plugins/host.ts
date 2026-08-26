@@ -118,6 +118,22 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    * scratch on every restore, like `dormantSlices` and for the same reason.
    */
   private writeSuppressed: Set<string> = new Set();
+  /**
+   * How many hook calls have THROWN, per plugin name, over this host's life.
+   *
+   * WHY A COUNT EXISTS AT ALL. `safely` turns a throwing plugin into a logged
+   * skip, which is rule 2 of this file and must stay that way — but it also
+   * means a caller cannot tell a plugin that worked from one that failed every
+   * hook. The in-process reload (issue #198) is the caller that has to: a new
+   * module whose `onWorldCreate` or first tick throws must be rolled back for
+   * the old one rather than left running as a silent no-op. Nothing else reads
+   * this, and nothing simulates differently because of it.
+   *
+   * Per HOST, so it starts at zero for every session — which is what lets the
+   * reload read "faults since this world was built" without a reset call
+   * somebody could forget.
+   */
+  private readonly faults = new Map<string, number>();
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
 
@@ -189,9 +205,28 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     try {
       return call();
     } catch (error) {
+      this.faults.set(plugin.name, (this.faults.get(plugin.name) ?? 0) + 1);
       logError(`plugin "${plugin.name}" threw in ${hook}`, error);
       return undefined;
     }
+  }
+
+  /** How many of one plugin's hooks have thrown in this world. See `faults`. */
+  faultCount(name: string): number {
+    return this.faults.get(name) ?? 0;
+  }
+
+  /**
+   * Whether this host is holding one plugin's saved bytes instead of the plugin
+   * having loaded them — a downgrade or a refusal (see `park`).
+   *
+   * Read by the reload (issue #198), for which a refused slice is a failure
+   * rather than a state to run in: the new module would come up with none of
+   * the world's state, and the operator asked to update a plugin, not to empty
+   * it.
+   */
+  isSliceParked(name: string): boolean {
+    return this.writeSuppressed.has(name);
   }
 
   /** Called once at boot, after any snapshot has been restored. */

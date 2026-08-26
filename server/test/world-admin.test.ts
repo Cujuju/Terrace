@@ -20,6 +20,7 @@ import { WorldRegistry } from '../src/persistence/world-registry.ts';
 import { ServerRestartService } from '../src/restart.ts';
 import { OPERATOR_MAX_FAILED_ATTEMPTS, OPERATOR_LOCKOUT_MS } from '../src/world/operator-gate.ts';
 import { WorldAdminService } from '../src/world/world-admin.ts';
+import { InstalledPlugins } from '../src/plugins/installed.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
 
 /**
@@ -61,7 +62,7 @@ function setUp(worldAdminKey: string | null = KEY): void {
   root = mkdtempSync(join(tmpdir(), 'terrace-admin-'));
   registry = new WorldRegistry(join(root, 'worlds'));
   const config = makeConfig(registry.worldsDir, worldAdminKey);
-  manager = new WorldManager({ config, registry, plugins: [], switchCountdownS: 0 });
+  manager = new WorldManager({ config, registry, plugins: new InstalledPlugins([]), switchCountdownS: 0 });
   // A restart service with inert hooks: these tests are about the gate and the
   // world actions, and a real one would exit the test runner.
   const restart = new ServerRestartService({
