@@ -382,6 +382,16 @@ export function validateSculptIntent(
   // come from heightmap.ts, so adding a tool cannot leave the validator behind.
   const { tool, profile } = m;
   if (tool !== undefined && !SCULPT_TOOLS.includes(tool as SculptTool)) return null;
+  // A CARVE ONLY EVER LOWERS (plan D6). The tool removes material and has no
+  // meaning in the other direction — "add material to the underside of a roof"
+  // is not a gesture this game has — so `dir: 1` beside it is not a legal
+  // intent that happens to do nothing. REJECTED WITH THE WHOLE INTENT rather
+  // than flipped to -1, which is the same call this validator already makes
+  // for an unknown tool: silently reinterpreting an intent applies a
+  // differently-shaped edit than its sender predicted and desyncs that
+  // prediction for a full round trip. A client whose HUD offers Carve simply
+  // does not emit the raise chord for it (client/src/input/sculptInput.ts).
+  if (tool === 'carve' && dir === 1) return null;
   if (profile !== undefined && !SCULPT_PROFILES.includes(profile as SculptProfile)) {
     return null;
   }

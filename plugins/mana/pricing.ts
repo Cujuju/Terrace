@@ -15,11 +15,18 @@
 // shapes on the wire; this describes the arithmetic behind one of its fields.
 
 import { BAND_HEIGHT, sculptDisplacementUnits } from '@terrace/shared';
-import type { SculptProfile } from '@terrace/shared';
+import type { SculptProfile, SculptTool } from '@terrace/shared';
 
 /**
  * What one sculpt intent costs, given the (already perk-adjusted) rate its
  * payer is charged at.
+ *
+ * TOOL IS AN ARGUMENT BECAUSE ONE TOOL IS PRICED DIFFERENTLY. Three of the four
+ * price by the brush cone and are indistinguishable here; `carve` removes a
+ * fixed block of bands and prices as that block (see sculptDisplacementUnits).
+ * It is required rather than defaulted so a caller cannot omit it and quietly
+ * charge a carve at brush rates — which is the free-tool exploit P3 of the
+ * step-4 plan names.
  *
  * THE MODEL (owner-settled 2026-08-14: "define the cost of sculpting in terms of
  * mana"): a sculpt costs mana in proportion to the terrain volume its brush
@@ -51,6 +58,9 @@ export function sculptManaCost(
   manaPerBandCell: number,
   radius: number,
   profile: SculptProfile,
+  tool: SculptTool,
 ): number {
-  return Math.ceil((manaPerBandCell * sculptDisplacementUnits(radius, profile)) / BAND_HEIGHT);
+  return Math.ceil(
+    (manaPerBandCell * sculptDisplacementUnits(radius, profile, tool)) / BAND_HEIGHT,
+  );
 }

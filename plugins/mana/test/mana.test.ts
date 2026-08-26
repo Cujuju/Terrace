@@ -139,7 +139,7 @@ const POINT_STAMPS_PER_POOL = Math.floor(MANA_CAPACITY / POINT_COST);
  * tuning, which is why it is derived here rather than written down.
  */
 const MAX_RADIUS_HARD_FOOTPRINT_CELLS =
-  sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard') / BAND_HEIGHT;
+  sculptDisplacementUnits(MAX_BRUSH_RADIUS, 'hard', 'stamp') / BAND_HEIGHT;
 
 /** The same footprint as GROUND: square world units, the unit prices are in. */
 const MAX_RADIUS_HARD_FOOTPRINT_WORLD_UNITS =
@@ -404,7 +404,7 @@ describe('mana perks', () => {
       for (const profile of SCULPT_PROFILES) {
         const intent: SculptIntent = { ...POINT_INTENT, radius, profile };
         expect(manaCostFor(PLAYER.id, intent)).toBe(
-          sculptManaCost(MANA_PER_BAND_CELL * 0.5, radius, profile),
+          sculptManaCost(MANA_PER_BAND_CELL * 0.5, radius, profile, 'stamp'),
         );
         // Half price, to within the single rounding-up step.
         expect(manaCostFor(PLAYER.id, intent) * 2).toBeGreaterThanOrEqual(
@@ -1057,7 +1057,7 @@ describe('the price of a sculpt', () => {
 
     // The widest SOFT brush lands proportionally between the two, by volume
     // alone.
-    const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft');
+    const softPlateau = sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp');
     expect(softPlateau).toBeGreaterThan(MANA_COST_PER_MIN_RADIUS_SCULPT);
     expect(softPlateau).toBeLessThan(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
 
@@ -1075,7 +1075,7 @@ describe('the price of a sculpt', () => {
         // than by calling the pricing helper the implementation calls: this test
         // is the independent statement of the formula.
         const expected = Math.ceil(
-          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, profile)) / BAND_HEIGHT,
+          (MANA_PER_BAND_CELL * sculptDisplacementUnits(radius, profile, 'stamp')) / BAND_HEIGHT,
         );
         expect(manaCostFor(PLAYER.id, intent)).toBe(expected);
       }
@@ -1088,7 +1088,7 @@ describe('the price of a sculpt', () => {
     // sculptOptionsOf is the one place that decides what absent means.
     const bare: SculptIntent = { type: 'sculpt', x: 1, y: 1, radius: 3, dir: 1 };
     expect(manaCostFor(PLAYER.id, bare)).toBe(
-      sculptManaCost(MANA_PER_BAND_CELL, 3, sculptOptionsOf(bare).profile),
+      sculptManaCost(MANA_PER_BAND_CELL, 3, sculptOptionsOf(bare).profile, sculptOptionsOf(bare).tool),
     );
   });
 

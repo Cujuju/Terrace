@@ -666,12 +666,22 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     `${radius}|${tool}|${profile}`;
   for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
     for (const tool of SCULPT_TOOLS) {
-      // THE PULL HAS NO FOOTPRINT TO CACHE. It is drawn as the bare crosshair
-      // in every state (see update below), so building a ring, a skirt and a
-      // cell grid for it would be a third of this eager cache that nothing can
-      // ever display. Skipped here rather than filtered at the draw site so
-      // the cache holds exactly what is drawable.
-      if (tool === 'drag') continue;
+      // THE PULL AND THE CARVE HAVE NO FOOTPRINT TO CACHE. Both are drawn as
+      // the bare crosshair in every state (see update below), so building a
+      // ring, a skirt and a cell grid for either would be part of this eager
+      // cache that nothing can ever display. Skipped here rather than filtered
+      // at the draw site so the cache holds exactly what is drawable.
+      //
+      // The PULL has no footprint at all. The CARVE has one, but not one this
+      // cache can answer for: `oneClickMark` runs the real sculpt on FLAT
+      // GROUND, and flat ground is precisely where `canCarveBandAt` refuses
+      // every cell (columns.ts) — so the honest flat-ground mark for a carve
+      // is empty, and a ring drawn from it would promise a footprint the tool
+      // will not deliver. Which cells a carve takes depends on where the open
+      // air beside them is, which is terrain the flat-ground premise cannot
+      // express; the crosshair under-promises instead, exactly as it does for
+      // the pull.
+      if (tool === 'drag' || tool === 'carve') continue;
       for (const profile of SCULPT_PROFILES) {
         geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
       }
@@ -820,7 +830,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       //
       // Returning before the lookup also means the pull pointer costs nothing
       // to draw, however the HUD's radius happens to be set.
-      if (hover.grabbable || brush.tool === 'drag') {
+      if (hover.grabbable || brush.tool === 'drag' || brush.tool === 'carve') {
         material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
         const grabLift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
         crosshair.position.set(hover.x * CELL_WORLD_SIZE, grabLift, hover.y * CELL_WORLD_SIZE);
