@@ -28,6 +28,7 @@ import {
   type WorldAdminRequestMessage,
   type WorldAdminResultMessage,
   type WorldListMessage,
+  type WorldPluginListMessage,
 } from '@terrace/shared';
 import type { ServerConfig } from '../config.ts';
 import { MAX_WORLD_SIZE, MIN_WORLD_SIZE } from '../config.ts';
@@ -94,10 +95,27 @@ export class WorldAdminService {
   }
 
   /**
+   * Answers a plugin-enablement request for ONE world.
+   *
+   * Its own entry point rather than a `handle` action for the same reason
+   * `list` has one: it answers with a LISTING, not a receipt, and folding a
+   * second response shape into WorldAdminResultMessage would make every caller
+   * of `handle` check which one it got.
+   *
+   * A refusal answers with empty lists and the reason, never a silence — see
+   * `list` for why.
+   */
+  plugins(clientId: string, key: string, worldId: string): WorldPluginListMessage {
+    const refusal = this.gate.authorize(clientId, key);
+    if (refusal !== null) return refusedPlugins(worldId, refusal);
+    return this.pluginListing(worldId);
+  }
+
+  /**
    * Answers every world-management action other than listing.
    *
-   * ONE ENTRY POINT FOR TEN ACTIONS, so the gate check exists once. The switch
-   * below runs only after the key has been accepted.
+   * ONE ENTRY POINT FOR ELEVEN ACTIONS, so the gate check exists once. The
+   * switch below runs only after the key has been accepted.
    */
   handle(clientId: string, request: WorldAdminRequestMessage): WorldAdminResultMessage {
     const action = actionOf(request);
@@ -126,6 +144,19 @@ export class WorldAdminService {
       archived: registry.listArchived(),
       activeId,
       ...(pending !== null ? { pending } : {}),
+    };
+  }
+
+  /** One world's plugin enablement, as the panel sees it. */
+  pluginListing(worldId: string): WorldPluginListMessage {
+    const { manager } = this.deps;
+    const disabled = manager.disabledPluginsFor(worldId);
+    if (disabled === null) return refusedPlugins(worldId, 'unknownWorld');
+    return {
+      type: 'worldPluginListing',
+      id: worldId,
+      installed: [...manager.installedPluginNames],
+      disabled: [...disabled],
     };
   }
 
@@ -170,6 +201,14 @@ export class WorldAdminService {
 
       case 'worldPin':
         return this.pin(request.pointId, request.pinned);
+
+      case 'worldPluginList':
+        // Handled by plugins() above; reaching here means a caller routed a
+        // plugin listing through handle(). Answer honestly, as worldList does.
+        return fail('setPlugin', 'failed');
+
+      case 'worldPluginSet':
+        return this.setPlugin(request.id, request.plugin, request.enabled);
 
       case 'worldSwitchCancel':
         return this.deps.manager.cancelSwitch()
@@ -340,6 +379,22 @@ export class WorldAdminService {
   }
 
   /**
+   * Switches one plugin on or off for one world.
+   *
+   * THE MANAGER OWNS THE WHOLE ACT, because enabling a plugin is not a setting
+   * — it is a property of the session that runs it. `setPluginEnabled` writes
+   * the world file and, when that world is the live one, reopens it so the new
+   * plugin set is actually in effect; every player is carried across without
+   * dropping a socket (issue #166). This method only widens its refusal into
+   * the operator's vocabulary.
+   */
+  private setPlugin(id: string, plugin: string, enabled: boolean): WorldAdminResultMessage {
+    const outcome = this.deps.manager.setPluginEnabled(id, plugin, enabled);
+    if (typeof outcome === 'string') return fail('setPlugin', outcome);
+    return { type: 'worldAdminResult', action: 'setPlugin', ok: true, id };
+  }
+
+  /**
    * Pins or unpins a restore point in the LIVE world.
    *
    * Only the live world, because pinning is a judgement about a moment the
@@ -380,9 +435,17 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
       return 'purge';
     case 'worldPin':
       return 'pin';
+    case 'worldPluginList':
+    case 'worldPluginSet':
+      return 'setPlugin';
     case 'worldSwitchCancel':
       return 'cancelSwitch';
   }
+}
+
+/** One shape for every refused plugin listing, matching `fail`'s role. */
+function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPluginListMessage {
+  return { type: 'worldPluginListing', id: worldId, installed: [], disabled: [], refused };
 }
 
 /** One shape for every refusal, so no call site invents its own. */

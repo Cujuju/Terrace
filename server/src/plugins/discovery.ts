@@ -12,6 +12,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { PLUGIN_NAME_PATTERN } from '@terrace/shared';
 import { logInfo, logWarn } from '../log.ts';
 import type { LoadedPlugin, TerracePlugin } from './types.ts';
 
@@ -29,8 +30,12 @@ export const PLUGIN_EXPORT_NAME = 'plugin';
  * Plugin names are message namespaces and snapshot keys, so they are restricted
  * to lowercase alphanumerics and inner dashes — no separators (':'), no case
  * ambiguity, no whitespace.
+ *
+ * DEFINED IN shared/, not here: the world panel sends a plugin name over the
+ * wire (issue #168) and the same pattern has to validate it there, and a rule
+ * about a protocol namespace written down twice is a rule that drifts.
  */
-export const PLUGIN_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export { PLUGIN_NAME_PATTERN };
 
 /** Thrown for any malformed plugin; boot aborts (see discoverPlugins). */
 export class PluginLoadError extends Error {

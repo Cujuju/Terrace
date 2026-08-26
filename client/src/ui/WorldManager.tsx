@@ -37,6 +37,7 @@ import {
   setWorldPanelOpen,
   worldAdminKey,
   worldFeedback,
+  worldPlugins,
   worlds,
 } from '../state/worldsState.ts';
 
@@ -102,6 +103,8 @@ function refusalText(reason: WorldAdminRefusal): string {
       return 'The name you typed does not match the world’s name. Nothing was deleted.';
     case 'switchInProgress':
       return 'A world switch is already counting down. Cancel it first.';
+    case 'unknownPlugin':
+      return 'This server has no plugin by that name any more. Reopen the plugin list.';
     case 'worldIsActive':
       return 'That world is loaded right now. Switch to another world (or unload) first.';
     case 'noWorldLoaded':
@@ -120,6 +123,8 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
   // Which archived world's purge form is open, and what has been typed into it.
   const [purgingId, setPurgingId] = createSignal<string | null>(null);
   const [purgeConfirm, setPurgeConfirm] = createSignal('');
+  // Which world's plugin list is expanded, by id; null when none is.
+  const [pluginsForId, setPluginsForId] = createSignal<string | null>(null);
   // Which world is being renamed, and to what.
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [renameTo, setRenameTo] = createSignal('');
@@ -139,6 +144,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
     setArmedArchiveId(null);
     setPurgingId(null);
     setRenamingId(null);
+    setPluginsForId(null);
     setListedAtMs(Date.now());
     send({ type: 'worldList', key: worldAdminKey() });
   };
@@ -303,6 +309,26 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                     Duplicate
                   </button>
 
+                  {/* Opening the list ASKS the server for it rather than
+                      reading anything the listing carried: the disabled set
+                      lives in each world's own file, and the panel should not
+                      make the server open every world to answer about one. */}
+                  <button
+                    type="button"
+                    class="chart-button"
+                    title="Choose which plugins this world runs."
+                    onClick={() => {
+                      if (pluginsForId() === world.id) {
+                        setPluginsForId(null);
+                        return;
+                      }
+                      setPluginsForId(world.id);
+                      send({ type: 'worldPluginList', key: worldAdminKey(), id: world.id });
+                    }}
+                  >
+                    Plugins
+                  </button>
+
                   {/* Archive arms, then commits — see this file's header. The
                       live world cannot be archived at all, so it is not offered. */}
                   <Show when={world.id !== activeWorldId()}>
@@ -335,6 +361,63 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                     </Show>
                   </Show>
                 </div>
+
+                {/* Rendered only once the server's answer is IN and is about
+                    THIS world, so a toggle is never offered against another
+                    world's plugin set left over on screen. */}
+                <Show when={pluginsForId() === world.id && worldPlugins()?.id === world.id}>
+                  <div class="restore-row-main">
+                    <p class="hud-hint">
+                      Terrain a disabled plugin sculpted stays sculpted — it is in
+                      the heightmap, and switching the plugin off does not put it
+                      back. Disabling frees no memory either: the plugin’s module
+                      stays loaded and its saved state is frozen, not freed, which
+                      is what lets re-enabling pick up exactly where it left off.
+                    </p>
+                    <Show when={world.id === activeWorldId()}>
+                      <p class="hud-hint">
+                        Toggling the world you are in reopens it: everyone is
+                        re-snapshotted where they stand, and nobody is disconnected.
+                      </p>
+                    </Show>
+                    <div class="restore-row-actions">
+                      <For each={worldPlugins()?.installed ?? []}>
+                        {(pluginName) => {
+                          // Accessors, never a const holding the read: the lists
+                          // are replaced by the server's answer to every toggle.
+                          const isDisabled = (): boolean =>
+                            worldPlugins()?.disabled.includes(pluginName) ?? false;
+                          return (
+                            <button
+                              type="button"
+                              class="chart-button"
+                              classList={{ open: !isDisabled() }}
+                              title={
+                                isDisabled()
+                                  ? `Run “${pluginName}” in this world.`
+                                  : `Stop running “${pluginName}” in this world.`
+                              }
+                              onClick={() =>
+                                send({
+                                  type: 'worldPluginSet',
+                                  key: worldAdminKey(),
+                                  id: world.id,
+                                  plugin: pluginName,
+                                  enabled: isDisabled(),
+                                })
+                              }
+                            >
+                              {pluginName} — {isDisabled() ? 'off' : 'on'}
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </div>
+                    <Show when={(worldPlugins()?.installed.length ?? 0) === 0}>
+                      <p class="hud-hint">This server has no plugins installed.</p>
+                    </Show>
+                  </div>
+                </Show>
 
                 <Show when={renamingId() === world.id}>
                   <form
@@ -524,6 +607,8 @@ function doneText(done: { action: string; id: string | null; archivedPath: strin
       return 'Restore point pinned.';
     case 'cancelSwitch':
       return 'The switch was called off.';
+    case 'setPlugin':
+      return 'That world’s plugin set was changed.';
     default:
       return 'Done.';
   }

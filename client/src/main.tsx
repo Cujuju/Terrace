@@ -24,6 +24,7 @@ import { applyRestorePointList, applyRollbackResult } from './state/rollbackStat
 import {
   applyWorldAdminResult,
   applyWorldListing,
+  applyWorldPluginListing,
   applyWorldSwitchNotice,
   setWorldLoaded,
 } from './state/worldsState.ts';
@@ -80,6 +81,7 @@ const connection = connect({
   // because it is gated by a separate key — see WorldAdminSink.
   worldAdmin: {
     onWorldListing: (msg) => applyWorldListing(msg),
+    onWorldPluginListing: (msg) => applyWorldPluginListing(msg),
     onWorldAdminResult: (msg) => applyWorldAdminResult(msg),
     onWorldSwitchNotice: (msg) => applyWorldSwitchNotice(msg),
     // The server has closed its world. The banner says so until a snapshot
