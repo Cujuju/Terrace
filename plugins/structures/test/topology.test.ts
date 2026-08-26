@@ -13,9 +13,10 @@
 //       hard-walled B3/S23 stays populated under the new topology.
 
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL } from '@terrace/shared';
 import { structureKey } from '../protocol.ts';
 import {
+  GenerationSurvey,
   WALL_PHANTOM_DENOMINATOR,
   WALL_PHANTOM_NUMERATOR,
   scaledNeighborCount,
@@ -24,12 +25,19 @@ import {
 } from '../server/life.ts';
 import {
   computeLandmassLabels,
+  computeLandmassLabelsFromBuildable,
   wrappedNeighborIndex,
   type LandmassBox,
   type LandmassLabels,
 } from '../server/topology.ts';
 import { isBuildableCell, type StructuresWorld } from '../server/suitability.ts';
 import { worldWithTerrain } from './support/world.ts';
+
+/** A skipIndex that is never a real cell — "no cell is excluded from this lookup". */
+const NO_SKIP = -1;
+
+/** One chunk per tick: the finest budget `GenerationSurvey.advance` accepts. */
+const ONE_CHUNK_BUDGET = 1;
 
 const LAND_BAND = 4;
 const LAND_HEIGHT = LAND_BAND * BAND_HEIGHT;
@@ -641,4 +649,130 @@ describe('the wrap lookup agrees with the inward scan it replaced', () => {
       }
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (e) LABELS FROM THE SWEEP'S OWN BITMAP — the board is surveyed ONCE per
+//     generation, not twice. The labelling used to be taken with a whole-board
+//     isBuildableCell prepass on the single tick a sweep starts, while the
+//     scan beside it — which asks isBuildableCell exactly the same question
+//     about exactly the same cells — was amortised across the whole
+//     generation. The prepass is now gone: scanChunk records its own answers
+//     into a bitmap, and the flood fill runs over that bitmap when the sweep
+//     completes, producing the labelling the NEXT sweep reads.
+//
+//     Two promises, one per test below: the bitmap-fed labelling is the SAME
+//     labelling (nothing about the topology changes, only when it is built),
+//     and no tick of a warm sweep ever costs more than its own chunk.
+
+describe('labels built from the sweep bitmap', () => {
+  const SIZE = 64;
+  // Three separated islands, so the labelling under test has more than one
+  // component and more than one bounding box to get wrong.
+  const ISLANDS: ReadonlyArray<readonly [number, number, number, number]> = [
+    [2, 2, 21, 21],
+    [30, 4, 45, 19],
+    [8, 40, 15, 55],
+  ];
+
+  /** The board's buildability as a row-major bitmap — what scanChunk records. */
+  function buildableBitmap(world: StructuresWorld): Uint8Array {
+    const bitmap = new Uint8Array(world.worldSize * world.worldSize);
+    for (let y = 0; y < world.worldSize; y++) {
+      for (let x = 0; x < world.worldSize; x++) {
+        if (isBuildableCell(world, x, y)) bitmap[y * world.worldSize + x] = 1;
+      }
+    }
+    return bitmap;
+  }
+
+  it('equals the labelling computed from the world for the same board', () => {
+    const world = rectWorld(SIZE, ISLANDS);
+    const fromWorld = computeLandmassLabels(world);
+    const fromBitmap = computeLandmassLabelsFromBuildable(SIZE, buildableBitmap(world));
+
+    expect(fromBitmap.worldSize).toBe(fromWorld.worldSize);
+    expect(fromBitmap.count).toBe(fromWorld.count);
+    expect(fromBitmap.count).toBe(ISLANDS.length); // the fixture really is three boards
+    expect(fromBitmap.boxes).toEqual(fromWorld.boxes);
+
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        expect(fromBitmap.labelAt(x, y)).toBe(fromWorld.labelAt(x, y));
+      }
+    }
+
+    // The wrap's O(1) extents too, not just the labels they are derived from:
+    // both ends of every line of every landmass, and the runner-up each end
+    // falls back to when the nearest entry is the cell that left (skipIndex).
+    for (let label = 0; label < fromWorld.count; label++) {
+      for (let line = 0; line < SIZE; line++) {
+        for (const step of [1, -1]) {
+          const row = fromWorld.rowEntry(label, line, step, NO_SKIP);
+          expect(fromBitmap.rowEntry(label, line, step, NO_SKIP)).toBe(row);
+          expect(fromBitmap.rowEntry(label, line, step, row)).toBe(
+            fromWorld.rowEntry(label, line, step, row),
+          );
+          const column = fromWorld.columnEntry(label, line, step, NO_SKIP);
+          expect(fromBitmap.columnEntry(label, line, step, NO_SKIP)).toBe(column);
+          expect(fromBitmap.columnEntry(label, line, step, column)).toBe(
+            fromWorld.columnEntry(label, line, step, column),
+          );
+        }
+      }
+    }
+  });
+
+  it('costs one chunk on every tick of a warm sweep, the first tick included', () => {
+    // isBuildableCell asks isCellUnlocked exactly once, and nothing else in
+    // this plugin does, so counting that call counts buildability surveys.
+    let surveys = 0;
+    const base = rectWorld(SIZE, ISLANDS);
+    const world: StructuresWorld = {
+      ...base,
+      isCellUnlocked: (x, y) => {
+        surveys++;
+        return base.isCellUnlocked(x, y);
+      },
+    };
+    const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
+    const cellsPerSweep = SIZE * SIZE;
+    const cellsPerChunk = CHUNK_SIZE * CHUNK_SIZE;
+    // An empty board: no cell has any live neighbour, so no survival, birth or
+    // farmland check runs and the only buildability surveys in the sweep are
+    // scanChunk's own one-per-cell wall test.
+    const empty = new Map<number, LiveCellRecord>();
+
+    // THE FIRST SWEEP OF A FRESH WORLD still labels from the world — there is
+    // no previous sweep to have left a bitmap — so it surveys the board twice.
+    const survey = new GenerationSurvey();
+    let ticks = 0;
+    let outcome = survey.advance(world, empty, ONE_CHUNK_BUDGET);
+    while (outcome === null) {
+      ticks++;
+      outcome = survey.advance(world, empty, ONE_CHUNK_BUDGET);
+    }
+    ticks++;
+    expect(ticks).toBe(totalChunks);
+    expect(surveys).toBe(2 * cellsPerSweep);
+
+    // THE SECOND SWEEP labels from the first's bitmap, so its opening tick
+    // pays for its own chunk and nothing more.
+    const beforeFirstTick = surveys;
+    expect(survey.advance(world, empty, ONE_CHUNK_BUDGET)).toBeNull();
+    expect(surveys - beforeFirstTick).toBe(cellsPerChunk);
+
+    const beforeSecondTick = surveys;
+    expect(survey.advance(world, empty, ONE_CHUNK_BUDGET)).toBeNull();
+    expect(surveys - beforeSecondTick).toBe(cellsPerChunk);
+
+    // And the sweep as a whole surveys the board exactly once.
+    const afterFirstSweep = beforeFirstTick;
+    let remaining = totalChunks - 2;
+    while (remaining > 0) {
+      survey.advance(world, empty, ONE_CHUNK_BUDGET);
+      remaining--;
+    }
+    expect(surveys - afterFirstSweep).toBe(cellsPerSweep);
+  });
 });
