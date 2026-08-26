@@ -361,6 +361,46 @@ export const STRUCTURE_SURVEY_RADIUS_CELLS = Math.ceil(
 export const STRUCTURE_SURVEYED_GROUND_RADIUS =
   (STRUCTURE_SURVEY_RADIUS_CELLS + 0.5) * CELL_WORLD_SIZE;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// A BUILDING'S KEEP-CLEAR GROUND (owner, 2026-08-26: "buildings do not spawn
+// on top of each other, with the exception of the teepees" — teepees may
+// overlap teepees, nothing may overlap a building).
+//
+// WHY A SEPARATION RULE HAD TO EXIST AT ALL. A cell is a quarter of a world
+// unit; every structure model is up to a whole world unit across — four cells
+// — and the CA's survival rule (B3/S23) is defined over cells ONE apart. So
+// every cluster the CA keeps alive is, by construction, a pile of
+// interpenetrating models. Measured 2026-08-26: the camp reaches 0.454 wu
+// radially, the longhouse 0.518, against a 0.25 wu cell. The simulation unit
+// and the model's footprint differ by 4×, and no amount of tuning inside the
+// CA's own rules closes that gap — the rule below is what closes it.
+//
+// The minimum distance, in CELLS (Chebyshev), between a structure at tier ≥ 1
+// and ANY other structure. Read at three places, all of them placements:
+// server/life.ts's birth rule and its teepee→building tier gate, its
+// placePatternAt (the seeder and the stir), and index.ts's canFoundStructure
+// (a settler moving in). A building that spawns CLEARS this square of the
+// teepees standing in it, and thereafter nothing may be placed inside it.
+//
+// TEEPEES ARE EXEMPT OF EACH OTHER, deliberately: tents cluster — a camp is
+// many tents on adjoining cells — and the CA needs dense Moore neighbourhoods
+// to work at all. The rule is about a BUILDING's ground only.
+//
+// DERIVED, NOT TUNED: a model at max variation scale, yawed to its worst
+// case, sweeps at most STRUCTURE_SURVEYED_GROUND_RADIUS from its origin —
+// that is exactly the bound test/models.test.ts enforces. Two structures
+// therefore cannot touch once their origins are 2 × that radius apart,
+// converted through cellsAcross() so the number stays correct at any sampling
+// density (2 × 0.625 wu = 5 cells today). CEILED because cellsAcross returns
+// world units × WORLD_UNIT_CELLS and has no obligation to land on a whole
+// cell: a fractional bound compared with `<=` would silently round the
+// keep-clear square DOWN — the under-conservative direction — the next time
+// the sampling density moves.
+// ─────────────────────────────────────────────────────────────────────────────
+export const STRUCTURE_SEPARATION_CELLS = Math.ceil(
+  cellsAcross(STRUCTURE_SURVEYED_GROUND_RADIUS * 2),
+);
+
 /** The two settler races. Order is meaningful: index = the race hash bit. */
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 

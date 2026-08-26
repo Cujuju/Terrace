@@ -526,10 +526,17 @@ describe('applySculpt — the stamp tool', () => {
     applySculpt(high, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
     expect(heightAt(high, 8, 8)).toBe(MAX_HEIGHT);
 
+    // THE BOTTOM OF THE WORLD IS BEDROCK_FLOOR + 1, not BEDROCK_FLOOR (issue
+    // #129 step 4.4): the brushes write through moveSpanCeiling now, and a
+    // column whose only span is emptied would be a column with no span at all,
+    // which setColumn refuses. The remnant is a sixteenth of a band, so the
+    // band, the drawn height and the picking march are unchanged — see
+    // BEDROCK_REMNANT in columns.ts.
     const low = createHeightmap(16);
     low.cells.fill(MIN_HEIGHT + 1);
     applySculpt(low, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
-    expect(heightAt(low, 8, 8)).toBe(MIN_HEIGHT);
+    expect(heightAt(low, 8, 8)).toBe(MIN_HEIGHT + 1);
+    expect(quantizeToBand(heightAt(low, 8, 8))).toBe(MIN_HEIGHT);
   });
 });
 
@@ -757,10 +764,13 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     expect(applySculpt(atTop, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([]);
     expect(atTop.cells.every((h) => h === MAX_HEIGHT)).toBe(true);
 
+    // Bottoms out one unit above the floor, for the reason the stamp test above
+    // states: the world's lowest column still has a span in it.
     const nearFloor = createHeightmap(16);
     nearFloor.cells.fill(MIN_HEIGHT + 1);
     applySculpt(nearFloor, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(nearFloor, 8, 8)).toBe(MIN_HEIGHT);
+    expect(heightAt(nearFloor, 8, 8)).toBe(MIN_HEIGHT + 1);
+    expect(quantizeToBand(heightAt(nearFloor, 8, 8))).toBe(MIN_HEIGHT);
 
     const atFloor = createHeightmap(16);
     atFloor.cells.fill(MIN_HEIGHT);

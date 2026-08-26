@@ -39,7 +39,12 @@ export {
 
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
-import { spanIndexCoveringBand } from './columns.ts';
+import {
+  moveSpanCeiling,
+  spanAt,
+  spanCount,
+  spanIndexCoveringBand,
+} from './columns.ts';
 import {
   bandOf,
   cellIndex,
@@ -298,6 +303,56 @@ export function canSpreadBandTo(
 // the same one twice changes nothing the second time, so a dropped intent
 // costs a frame rather than the rest of the stroke.
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE GRASP — which span of a column a stroke is working on, and the only two
+// operations a brush performs on one (issue #129, step 4.4).
+//
+// Every brush used to read `map.cells[i]` and write it back, which is exactly
+// right for a column of one span and silently wrong for a column of several:
+// `cells[i]` is the TOPMOST ceiling, so a stroke that had hold of a cave floor
+// would read the roof's height, move it, and flatten the cave doing it. These
+// two functions are what make "a sculpt moves exactly one span, and every other
+// span in the column is left byte-untouched" (plan D4) a fact about the code
+// rather than a rule each tool has to remember.
+//
+// ON AN UNLAYERED WORLD THEY ARE THE OLD CODE. `spanBand === null` resolves to
+// the topmost span, which on a one-span column is span 0, whose ceiling IS
+// `cells[i]`; and `moveSpanCeiling` on a lone span writes `cells[i]` and
+// nothing else (columns.ts's setColumn deletes the side-table entry). That
+// identity is what step 4.4 is verified against.
+
+/**
+ * Which span of cell `i` this stroke has hold of, or null when it has none
+ * there — a cell the grasped band passes clean through, which the brush skips
+ * rather than treating as ground at some other level.
+ *
+ * `spanBand === null` means the topmost span: no band was named, so the stroke
+ * has hold of the surface, which is what every stroke before this field existed
+ * meant and what a plugin terraform still means.
+ */
+function graspedSpanIndex(map: Heightmap, i: number, spanBand: number | null): number | null {
+  const x = cellX(map.size, i);
+  const y = cellY(map.size, i);
+  if (spanBand === null) return spanCount(map, x, y) - 1;
+  return spanIndexCoveringBand(map, x, y, spanBand);
+}
+
+/** The ceiling of the grasped span — what the brush moves. */
+function graspedCeiling(map: Heightmap, i: number, k: number): number {
+  return spanAt(map, cellX(map.size, i), cellY(map.size, i), k).ceiling;
+}
+
+/**
+ * Writes the grasped span's ceiling back through the one primitive that owns
+ * merge, split and canonical form. Raising into the span above merges them and
+ * keeps the UPPER ceiling (filling under a roof cannot push the roof up);
+ * lowering a non-bottom span to its own floor removes it and its opening joins
+ * the one below. Neither rule is decided here — see columns.ts.
+ */
+function writeGraspedCeiling(map: Heightmap, i: number, k: number, ceiling: number): void {
+  moveSpanCeiling(map, cellX(map.size, i), cellY(map.size, i), k, ceiling);
+}
+
 /** Caller-supplied sculpt options; every field defaults when absent. */
 export interface SculptOptions {
   readonly tool?: SculptTool;
@@ -542,6 +597,7 @@ function anchoredTargetHeight(
   cy: number,
   raising: boolean,
   targetBand: number | null = null,
+  spanBand: number | null = null,
 ): number {
   // THE DRAG CASE (`anchor: 'band'`, 2026-08-23). The player grabbed a lip, so
   // the level is that band's own floor — NOT one band off whatever happens to
@@ -550,9 +606,18 @@ function anchoredTargetHeight(
   // already is, not a separate choice, and fillTowardTarget/applyBrush already
   // leave cells at or past the target alone.
   if (targetBand !== null) return clampHeight(targetBand * BAND_HEIGHT);
-  return clampHeight(
-    (bandOf(map.cells[cellIndex(map, cx, cy)]) + (raising ? 1 : -1)) * BAND_HEIGHT,
-  );
+  // The CENTRE'S GRASPED ceiling, not the column's topmost one: a stroke with
+  // hold of a cave floor anchors to the floor it is standing on, not to the
+  // roof over it. Identical on a one-span column, where the two are the same
+  // number.
+  const centre = cellIndex(map, cx, cy);
+  const k = graspedSpanIndex(map, centre, spanBand);
+  // No span at the grasped band under the cursor: the stroke has nothing to
+  // anchor to. Callers guard this case before writing (applySculpt's whole-
+  // stroke refusal, and each brush's own resolve-or-skip), so the value only
+  // has to be one that moves nothing.
+  const here = k === null ? map.cells[centre]! : graspedCeiling(map, centre, k);
+  return clampHeight((bandOf(here) + (raising ? 1 : -1)) * BAND_HEIGHT);
 }
 
 /**
@@ -601,6 +666,7 @@ export function applyBrush(
   profile: SculptProfile = LIBRARY_DEFAULT_SCULPT_OPTIONS.profile,
   anchor: SculptAnchor = LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor,
   targetBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand,
+  spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
 
@@ -617,14 +683,20 @@ export function applyBrush(
   // has no direction to anchor and writes nothing anyway.
   const raising = amount > 0;
   const anchored = anchor !== 'free' && amount !== 0;
-  const target = anchored ? anchoredTargetHeight(map, cx, cy, raising, targetBand) : 0;
+  const target = anchored ? anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand) : 0;
 
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
   forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
     const delta = brushDelta(amount, radius, dist, profile);
     if (delta === 0) return;
-    const before = map.cells[i];
+    // WHICH SPAN THIS CELL OFFERS THE STROKE. Null is a cell the grasped band
+    // passes clean through — open air at that level — and it is SKIPPED, not
+    // filled: treating a void as ground at some other height is relaxation
+    // inventing terrain, the failure the plan calls out under D4.
+    const k = graspedSpanIndex(map, i, spanBand);
+    if (k === null) return;
+    const before = graspedCeiling(map, i, k);
     if (anchored && (raising ? before >= target : before <= target)) return;
     let moved = before + delta;
     if (anchored) {
@@ -634,7 +706,7 @@ export function applyBrush(
     }
     const h = clampHeight(moved);
     if (h !== before) {
-      map.cells[i] = h;
+      writeGraspedCeiling(map, i, k, h);
       changed.add(i);
     }
   });
@@ -711,6 +783,7 @@ export function applyLevelFillBrush(
   changed: Set<number>,
   anchor: SculptAnchor = LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor,
   targetBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand,
+  spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
 ): void {
   assertBrushArgs(map, cx, cy, radius, amount);
   // A zero-amount sculpt moves nothing and has no direction to fill in; without
@@ -729,8 +802,8 @@ export function applyLevelFillBrush(
     // ANCHORED: the level the player pointed at ('clicked') or grabbed
     // ('band'), read before any write — the same derivation the other two
     // anchored call sites use.
-    const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand);
-    fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight);
+    const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
+    fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
     return;
   }
 
@@ -741,7 +814,11 @@ export function applyLevelFillBrush(
     // are not part of this world, so they cannot hold back a fill in it.
     let surveyed = false;
     forEachFootprintCell(map, cx, cy, radius, (i) => {
-      const band = bandOf(map.cells[i]);
+      // Surveyed on the GRASPED span, and a cell the grasp passes through is
+      // not surveyed at all — an opening is not a low place to be filled from.
+      const k = graspedSpanIndex(map, i, spanBand);
+      if (k === null) return;
+      const band = bandOf(graspedCeiling(map, i, k));
       if (!surveyed) {
         extremeBand = band;
         surveyed = true;
@@ -762,7 +839,7 @@ export function applyLevelFillBrush(
   // BAND_HEIGHT 64) is MAX_HEIGHT + BAND_HEIGHT, i.e. off the map's range, and
   // the same one band below MIN_HEIGHT.
   const targetHeight = clampHeight((extremeBand + (raising ? 1 : -1)) * BAND_HEIGHT);
-  fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight);
+  fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
 }
 
 /**
@@ -780,9 +857,12 @@ function fillTowardTarget(
   changed: Set<number>,
   raising: boolean,
   targetHeight: number,
+  spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
 ): void {
   forEachFootprintCell(map, cx, cy, radius, (i) => {
-    const h = map.cells[i];
+    const k = graspedSpanIndex(map, i, spanBand);
+    if (k === null) return;
+    const h = graspedCeiling(map, i, k);
     // Already at or past the level being filled: untouched. This is what stops
     // the brush from starting the next level while this one is unfinished.
     if (raising ? h >= targetHeight : h <= targetHeight) return;
@@ -799,7 +879,7 @@ function fillTowardTarget(
     // outside [MIN_HEIGHT, MAX_HEIGHT] — whatever it was handed.
     const clamped = clampHeight(next);
     if (clamped !== h) {
-      map.cells[i] = clamped;
+      writeGraspedCeiling(map, i, k, clamped);
       changed.add(i);
     }
   });
@@ -1841,7 +1921,7 @@ export function applySculpt(
   // is the one thing the drag tool is defined not to do.
   const anchoredSmooth = tool === 'smooth' && anchor !== 'free' && amount !== 0;
   const anchorTarget = anchoredSmooth
-    ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand)
+    ? anchoredTargetHeight(map, cx, cy, amount > 0, targetBand, spanBand)
     : 0;
   // The one dispatch in the sculpt path. Both branches are integer-only over the
   // same footprint, and both sides of the prediction contract reach them through
@@ -1851,13 +1931,22 @@ export function applySculpt(
   // reaches both branches — it decides where the fill/ceiling level comes
   // from (the clicked cell for players, the old derivations for the library).
   if (profile === 'hard') {
-    applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand);
+    applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
   } else {
-    applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand);
+    applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
   }
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.
-  if (tool === 'smooth') {
+  //
+  // RELAXATION IS HELD BACK FROM A GRASPED SPAN UNTIL STEP 4.6, and this is a
+  // refusal rather than an omission. Every write below still goes straight to
+  // `map.cells[i]`, i.e. to the column's TOPMOST ceiling, so running it after a
+  // brush that had hold of a cave floor would move the roof instead — undoing
+  // the guarantee the brush above was just rebuilt to make. The relaxation pass
+  // needs its own notion of a layer-consistent neighbour (plan D4) before it
+  // can be let near a layered column; a smooth stroke on one is a plain stamp
+  // in the meantime, which moves the right span and stops there.
+  if (tool === 'smooth' && spanBand === null) {
     // The footprint set serves two masters, built by forEachFootprintCell —
     // the same offset→bounds-check→index step every brush runs, shared so the
     // agreement is structural (see forEachFootprintOffset's doc):

@@ -439,6 +439,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
     const cell = hoverTarget();
     if (cell === null) return;
+    // AN UNDERSIDE HIT REFUSES A RAISE (plan D4). A horizontal face BELOW the
+    // span's own cap is the roof of a cave seen from underneath, and there is
+    // no gesture in this game that means "add material to the bottom of a
+    // roof" — so the stroke is not emitted at all rather than being sent and
+    // silently reinterpreted as thickening the roof upward.
+    //
+    // REFUSED HERE, IN THE CLIENT, because this is where the fact lives: which
+    // FACE a ray met is a property of that ray and of the camera, not of the
+    // world, so the server cannot re-derive it and the intent deliberately does
+    // not carry it (it would be an unverifiable claim on the wire). Lowering an
+    // underside is a carve, and belongs to the carve tool (D6).
+    const underside = !cell.hitRiser && cell.hitY < cell.surfaceY;
+    if (underside && sculptDirection(action) > 0) return;
     // WHICH SPAN THIS STROKE HAS HOLD OF, omitted entirely on an ordinary
     // column so an unlayered world's intents are byte-identical to before the
     // field existed (World.graspSpanBand returns null there).
