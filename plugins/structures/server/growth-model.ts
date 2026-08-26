@@ -100,6 +100,18 @@ export interface GrowthStepResult {
   readonly born: StructureCell[];
   readonly upgraded: StructureCell[];
   readonly died: Array<{ x: number; y: number }>;
+  /**
+   * The cells this step wants somebody sent OUT of — reported, never acted on
+   * by the step itself, and delivered to `GrowthModel.afterSwap` once the
+   * board has been swapped in.
+   *
+   * A STEP THAT CANNOT ACT IS A STEP THAT CAN BE TESTED, AND REPEATED. The
+   * effect of an emission depends on another plugin's state (pilgrims may be
+   * absent, or at its settler cap), so a step that performed one would stop
+   * being a pure function of the board it was handed. Empty is the ordinary
+   * case and the CA's permanent one.
+   */
+  readonly emitted: ReadonlyArray<{ x: number; y: number }>;
 }
 
 /**
@@ -150,6 +162,23 @@ export interface GrowthModel {
     live: ReadonlyMap<number, BoardCellRecord>,
     ctx: GrowthContext,
   ): GrowthStepResult;
+  /**
+   * The model's side effects, run AFTER the step's board has been swapped in,
+   * broadcast and announced — never during `step`.
+   *
+   * WHY AFTER, AND WHY THIS IS A SEPARATE CALL AT ALL. An emission leaves this
+   * plugin: populous asks pilgrims to put a walker on the road out of a house
+   * that filled up, and that walker's arrival founds the next house. Run from
+   * inside `step`, it observes the board the step is REPLACING — the house it
+   * is walking out of may be one this very step demolished, and the ground it
+   * is walking toward is judged against a generation that no longer exists by
+   * the time it gets there. Everything downstream of an emission must see the
+   * generation that actually happened, so the call waits for the swap.
+   *
+   * OPTIONAL: a model with no side effects (the shape most of them have) says
+   * nothing, rather than being made to write an empty method.
+   */
+  afterSwap?(emitted: ReadonlyArray<{ x: number; y: number }>): void;
 }
 
 let registered: GrowthModel | null = null;

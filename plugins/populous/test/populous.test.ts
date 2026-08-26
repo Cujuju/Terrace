@@ -128,7 +128,7 @@ describe('the tier table', () => {
 describe('tier follows the flat, buildable ground around a house', () => {
   it('gives a house with all eight neighbours buildable the top tier', () => {
     const live = boardOf([[10, 10]]);
-    const { result } = stepPopulous(world, live, contextExcept([]));
+    const result = stepPopulous(world, live, contextExcept([]));
     expect(result.nextLive.get(key(10, 10))!.tier).toBe(populousTierFor(8, MAX_TIER));
   });
 
@@ -139,7 +139,7 @@ describe('tier follows the flat, buildable ground around a house', () => {
       blocked.push([10 + dx, 10 + dy]);
     }
     const live = boardOf([[10, 10]]);
-    const { result } = stepPopulous(world, live, contextExcept(blocked));
+    const result = stepPopulous(world, live, contextExcept(blocked));
     expect(result.nextLive.get(key(10, 10))!.tier).toBe(populousTierFor(1, MAX_TIER));
   });
 
@@ -148,7 +148,7 @@ describe('tier follows the flat, buildable ground around a house', () => {
     const blocked: Array<readonly [number, number]> = [
       [9, 9], [10, 9], [11, 9], [9, 10], [11, 10], [9, 11],
     ];
-    const { result } = stepPopulous(world, live, contextExcept(blocked));
+    const result = stepPopulous(world, live, contextExcept(blocked));
     const after = result.nextLive.get(key(10, 10))!;
     expect(after.tier).toBe(populousTierFor(2, MAX_TIER));
     expect(after.tier).toBeLessThan(MAX_TIER);
@@ -159,7 +159,7 @@ describe('tier follows the flat, buildable ground around a house', () => {
 
   it('never births a house from neighbour count alone', () => {
     const live = boardOf([[10, 10], [11, 10], [10, 11]]);
-    const { result } = stepPopulous(world, live, contextExcept([]));
+    const result = stepPopulous(world, live, contextExcept([]));
     expect(result.born).toEqual([]);
     expect(result.nextLive.size).toBe(3);
   });
@@ -173,9 +173,9 @@ describe('population', () => {
     const capacity = POPULOUS_CAPACITY_BY_TIER[tier];
 
     for (let step = 1; step < capacity; step++) {
-      const { result, emitted } = stepPopulous(world, live, ctx);
+      const result = stepPopulous(world, live, ctx);
       live = result.nextLive;
-      expect(emitted).toEqual([]);
+      expect(result.emitted).toEqual([]);
       expect(live.get(key(10, 10))!.population).toBe(step * POPULOUS_GROWTH_PER_STEP);
     }
   });
@@ -190,7 +190,7 @@ describe('population', () => {
     let emissions = 0;
     for (let step = 0; step < stepsToFill; step++) {
       const outcome = stepPopulous(world, live, ctx);
-      live = outcome.result.nextLive;
+      live = outcome.nextLive;
       emissions += outcome.emitted.length;
       if (outcome.emitted.length > 0) {
         expect(outcome.emitted).toEqual([{ x: 10, y: 10 }]);
@@ -213,7 +213,7 @@ describe('population', () => {
 describe('houses die only from the terrain', () => {
   it('removes a house whose own cell is no longer buildable', () => {
     const live = boardOf([[10, 10], [30, 30]]);
-    const { result } = stepPopulous(world, live, contextExcept([[10, 10]]));
+    const result = stepPopulous(world, live, contextExcept([[10, 10]]));
     expect(result.died).toEqual([{ x: 10, y: 10 }]);
     expect(result.nextLive.has(key(10, 10))).toBe(false);
     expect(result.nextLive.has(key(30, 30))).toBe(true);
@@ -222,15 +222,15 @@ describe('houses die only from the terrain', () => {
   it('leaves a lone house standing forever — there is no loneliness rule', () => {
     let live = boardOf([[10, 10]]);
     const ctx = contextExcept([]);
-    for (let step = 0; step < 50; step++) live = stepPopulous(world, live, ctx).result.nextLive;
+    for (let step = 0; step < 50; step++) live = stepPopulous(world, live, ctx).nextLive;
     expect(live.has(key(10, 10))).toBe(true);
   });
 
   it('a dead house emits nobody, even with a full population', () => {
     const capacity = POPULOUS_CAPACITY_BY_TIER[0];
     const live = boardOf([[10, 10]], { age: 0, tier: 0, population: capacity });
-    const { result, emitted } = stepPopulous(world, live, contextExcept([[10, 10]]));
-    expect(emitted).toEqual([]);
+    const result = stepPopulous(world, live, contextExcept([[10, 10]]));
+    expect(result.emitted).toEqual([]);
     expect(result.died).toEqual([{ x: 10, y: 10 }]);
   });
 });
@@ -246,14 +246,14 @@ describe('determinism', () => {
       let live = boardOf(cells);
       const log: unknown[] = [];
       for (let step = 0; step < 12; step++) {
-        const { result, emitted } = stepPopulous(world, live, ctx);
+        const result = stepPopulous(world, live, ctx);
         live = result.nextLive;
         log.push({
           live: [...live.entries()].sort((a, b) => a[0] - b[0]),
           born: result.born,
           upgraded: result.upgraded,
           died: result.died,
-          emitted,
+          emitted: result.emitted,
         });
       }
       return JSON.stringify(log);
@@ -266,8 +266,8 @@ describe('determinism', () => {
     const forward: Array<readonly [number, number]> = [[1, 1], [2, 1], [3, 1]];
     const reversed = [...forward].reverse();
     const ctx = contextExcept([]);
-    const a = stepPopulous(world, boardOf(forward), ctx).result;
-    const b = stepPopulous(world, boardOf(reversed), ctx).result;
+    const a = stepPopulous(world, boardOf(forward), ctx);
+    const b = stepPopulous(world, boardOf(reversed), ctx);
     expect(JSON.stringify(a.upgraded)).toBe(JSON.stringify(b.upgraded));
     expect([...a.nextLive.keys()]).toEqual([...b.nextLive.keys()]);
   });
@@ -334,7 +334,12 @@ describe('the plugin', () => {
       tier,
       population: capacity - POPULOUS_GROWTH_PER_STEP,
     });
-    live = model.step(world, live, ctx).nextLive;
+    const outcome = model.step(world, live, ctx);
+    // NOTHING HAS BEEN ASKED YET — the step only reports (structures calls the
+    // hook back once it has swapped the board in; see GrowthModel.afterSwap).
+    expect(asked).toEqual([]);
+    model.afterSwap(outcome.emitted);
+    live = outcome.nextLive;
 
     expect(asked).toEqual([{ x: 10, y: 10 }]);
     expect(live.get(key(10, 10))!.population).toBe(POPULOUS_POPULATION_AFTER_EMIT);
@@ -347,7 +352,11 @@ describe('the plugin', () => {
     const model = growthModelForTest();
     const ctx = contextExcept([]);
     let live: ReadonlyMap<number, PopulousCellRecord> = boardOf([[10, 10]]);
-    for (let step = 0; step < 30; step++) live = model.step(world, live, ctx).nextLive;
+    for (let step = 0; step < 30; step++) {
+      const outcome = model.step(world, live, ctx);
+      model.afterSwap(outcome.emitted);
+      live = outcome.nextLive;
+    }
     // The board is untouched by the missing plugin — the house still stands.
     expect(live.has(key(10, 10))).toBe(true);
   });
@@ -374,7 +383,7 @@ describe('buildings never stand within the separation of one another', () => {
       [11, 11],
     ]);
     for (let step = 0; step < STEPS; step++) {
-      live = stepPopulous(world, live, ctx).result.nextLive;
+      live = stepPopulous(world, live, ctx).nextLive;
     }
 
     // NOBODY IS DEMOLISHED. Populous deaths are terrain-only by design, so the
@@ -394,8 +403,8 @@ describe('buildings never stand within the separation of one another', () => {
     // A camp's capacity is the slowest on the ladder, so run long enough that
     // even the held cell has filled it.
     for (let step = 0; step < POPULOUS_CAPACITY_BY_TIER[0] + 1; step++) {
-      const { result, emitted } = stepPopulous(world, live, ctx);
-      for (const cell of emitted) emitters.add(key(cell.x, cell.y));
+      const result = stepPopulous(world, live, ctx);
+      for (const cell of result.emitted) emitters.add(key(cell.x, cell.y));
       live = result.nextLive;
     }
     expect(emitters.has(key(11, 10))).toBe(true);
@@ -409,10 +418,10 @@ describe('buildings never stand within the separation of one another', () => {
     );
     const a = stepPopulous(world, forwards, ctx);
     const b = stepPopulous(world, backwards, ctx);
-    expect([...a.result.nextLive.entries()].sort((l, r) => l[0] - r[0])).toEqual(
-      [...b.result.nextLive.entries()].sort((l, r) => l[0] - r[0]),
+    expect([...a.nextLive.entries()].sort((l, r) => l[0] - r[0])).toEqual(
+      [...b.nextLive.entries()].sort((l, r) => l[0] - r[0]),
     );
-    expect(a.result.upgraded).toEqual(b.result.upgraded);
+    expect(a.upgraded).toEqual(b.upgraded);
     expect(a.emitted).toEqual(b.emitted);
   });
 
@@ -423,13 +432,13 @@ describe('buildings never stand within the separation of one another', () => {
     // key order keeps its building; the earlier one yields.
     const ctx = contextExcept([]);
     const live = boardOf([[10, 10], [11, 10]], { age: 9, tier: MAX_TIER, population: 0 });
-    const { result } = stepPopulous(world, live, ctx);
+    const result = stepPopulous(world, live, ctx);
     expect(result.nextLive.get(key(10, 10))!.tier).toBe(0);
     expect(result.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
 
     // …and it STAYS that way, rather than oscillating.
     const again = stepPopulous(world, result.nextLive, ctx);
-    expect(again.result.nextLive.get(key(10, 10))!.tier).toBe(0);
-    expect(again.result.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
+    expect(again.nextLive.get(key(10, 10))!.tier).toBe(0);
+    expect(again.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
   });
 });
