@@ -36,22 +36,33 @@ import {
   FLORA_FOREST_MESSAGE,
   FLORA_GRASS_MESSAGE,
   FLORA_GRASS_CHANGES_MESSAGE,
+  FLORA_FRINGE_MESSAGE,
+  FLORA_FRINGE_CHANGES_MESSAGE,
   FLORA_PLUGIN_NAME,
   cropKey,
+  fringeCellOf,
+  fringeKey,
   grassKey,
   parseChangesPayload,
   parseCropChangesPayload,
   parseCropsPayload,
   parseForestPayload,
+  parseFringeChangesPayload,
+  parseFringePayload,
   parseGrassChangesPayload,
   parseGrassPayload,
   treeKey,
   type CropCell,
+  type FringeBySpecies,
+  type FringeCell,
+  type FringeSpecies,
   type GrassCell,
   type TreeCell,
 } from '../protocol.ts';
 import { createCropModels, type CropModels } from './cropModels.ts';
 import { cropPlacementsFor } from './cropPlacement.ts';
+import { createFringeModels, type FringeModels } from './fringeModels.ts';
+import { fringePlacementsFor } from './fringePlacement.ts';
 import { createGrassModels, type GrassModels } from './grassModels.ts';
 import { grassPlacementsFor } from './grassPlacement.ts';
 import { createFloraModels, type FloraModels } from './models.ts';
@@ -80,6 +91,7 @@ export const FLORA_GROUND_RETRY_SECONDS = 0.5;
 let models: FloraModels | null = null;
 let cropModels: CropModels | null = null;
 let grassModels: GrassModels | null = null;
+let fringeModels: FringeModels | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 /** Withdraws this plugin's aimable objects from the host's pick set. */
 let unmarkPickable: Array<() => void> = [];
@@ -94,6 +106,14 @@ const crops = new Map<number, CropCell>();
 /** Standing grass tufts by packed cell key — the same map, a third time. */
 const grass = new Map<number, GrassCell>();
 
+/**
+ * Standing fringe plants by packed cell key — the same map a fourth time, with
+ * a VALUE this time: the species, which the other three populations have no
+ * equivalent of. Keyed by cell, which is what lets a species change arrive as a
+ * bare sprout with no matching wither (server/fringe.ts's advance says why).
+ */
+const fringe = new Map<number, FringeSpecies>();
+
 /** Trees whose ground was unknown at the last rebuild, and the retry clock. */
 let pendingGround = 0;
 let sinceRetrySeconds = 0;
@@ -103,6 +123,9 @@ let pendingCropGround = 0;
 
 /** Tufts whose ground was unknown at the last rebuild. Third map, third counter, same clock. */
 let pendingGrassGround = 0;
+
+/** Fringe plants whose ground was unknown at the last rebuild. Fourth map, fourth counter, same clock. */
+let pendingFringeGround = 0;
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
@@ -134,6 +157,23 @@ function rebuildGrass(ctx: ClientPluginCtx): void {
   sinceRetrySeconds = 0;
 }
 
+/**
+ * REBUILDS ARE WHOLESALE HERE TOO, for rebuildGrass' reasons and at a quarter
+ * of its worst case: FLORA_FRINGE_CAP × FRINGE_MAX_STEMS_PER_PLANT is under
+ * 60k matrices against the meadow's ≈ 205k.
+ */
+function rebuildFringe(ctx: ClientPluginCtx): void {
+  if (fringeModels === null) return;
+  const plants = Array.from(
+    fringe,
+    ([key, species]): readonly [FringeCell, FringeSpecies] => [fringeCellOf(key), species],
+  );
+  const result = fringePlacementsFor(plants, (x, y) => ctx.terrainHeightAt(x, y));
+  fringeModels.apply(result.placements);
+  pendingFringeGround = result.pendingGround;
+  sinceRetrySeconds = 0;
+}
+
 function rebuildCrops(ctx: ClientPluginCtx): void {
   if (cropModels === null) return;
   const result = cropPlacementsFor(crops.values(), (x, y) => ctx.terrainHeightAt(x, y));
@@ -162,6 +202,13 @@ function replaceGrass(cells: readonly GrassCell[]): void {
   for (const cell of cells) grass.set(grassKey(cell.x, cell.y), cell);
 }
 
+/** replaceGrass' contract for the fringe: the two per-species lists ARE the whole state. */
+function replaceFringe(bySpecies: FringeBySpecies): void {
+  fringe.clear();
+  for (const cell of bySpecies.reed) fringe.set(fringeKey(cell.x, cell.y), 'reed');
+  for (const cell of bySpecies.heather) fringe.set(fringeKey(cell.x, cell.y), 'heather');
+}
+
 /**
  * Applies one delta. Fells are processed BEFORE growths so that a message which
  * (impossibly today, but cheaply guarded) lists the same cell in both ends up
@@ -185,6 +232,17 @@ function applyGrassChanges(sprouted: readonly GrassCell[], withered: readonly Gr
   for (const cell of sprouted) grass.set(grassKey(cell.x, cell.y), cell);
 }
 
+/**
+ * The same, a fourth time. Withers first for applyChanges' reason, and a sprout
+ * OVERWRITES rather than inserts — which is what makes a species change a
+ * one-sided delta.
+ */
+function applyFringeChanges(sprouted: FringeBySpecies, withered: readonly FringeCell[]): void {
+  for (const cell of withered) fringe.delete(fringeKey(cell.x, cell.y));
+  for (const cell of sprouted.reed) fringe.set(fringeKey(cell.x, cell.y), 'reed');
+  for (const cell of sprouted.heather) fringe.set(fringeKey(cell.x, cell.y), 'heather');
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: FLORA_PLUGIN_NAME,
 
@@ -194,9 +252,11 @@ export const clientPlugin: TerraceClientPlugin = {
     trees.clear();
     crops.clear();
     grass.clear();
+    fringe.clear();
     pendingGround = 0;
     pendingCropGround = 0;
     pendingGrassGround = 0;
+    pendingFringeGround = 0;
     sinceRetrySeconds = 0;
 
     models = createFloraModels();
@@ -222,6 +282,13 @@ export const clientPlugin: TerraceClientPlugin = {
     // of grass instead of on the terrain. markPickable is opt-in precisely so
     // that a plugin can say "this is scenery, not part of the solid world",
     // which is exactly what grass is: you dig THROUGH it, not at it.
+
+    fringeModels = createFringeModels();
+    ctx.layer.add(fringeModels.root);
+    // DELIBERATELY NOT PICKABLE either, for grass's reason and one more of its
+    // own: reeds stand exactly where a player aims when shaping a coastline, so
+    // making them pickable would put a ribbon between the cursor and the one
+    // piece of ground the fringe exists to decorate.
 
     unsubscribeMessages = [
       ctx.onMessage(FLORA_FOREST_MESSAGE, (payload) => {
@@ -272,15 +339,39 @@ export const clientPlugin: TerraceClientPlugin = {
         applyGrassChanges(changes.sprouted, changes.withered);
         rebuildGrass(ctx);
       }),
+
+      // The fringe, on its own message pair — same shape a fourth time, with
+      // the per-species payload the other three have no equivalent of.
+      ctx.onMessage(FLORA_FRINGE_MESSAGE, (payload) => {
+        const bySpecies = parseFringePayload(payload);
+        if (bySpecies === null) return;
+        replaceFringe(bySpecies);
+        rebuildFringe(ctx);
+      }),
+
+      ctx.onMessage(FLORA_FRINGE_CHANGES_MESSAGE, (payload) => {
+        const changes = parseFringeChangesPayload(payload);
+        if (changes === null) return;
+        applyFringeChanges(changes.sprouted, changes.withered);
+        rebuildFringe(ctx);
+      }),
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
-      if (pendingGround === 0 && pendingCropGround === 0 && pendingGrassGround === 0) return;
+      if (
+        pendingGround === 0 &&
+        pendingCropGround === 0 &&
+        pendingGrassGround === 0 &&
+        pendingFringeGround === 0
+      ) {
+        return;
+      }
       sinceRetrySeconds += dt;
       if (sinceRetrySeconds < FLORA_GROUND_RETRY_SECONDS) return;
       if (pendingGround !== 0) rebuild(ctx);
       if (pendingCropGround !== 0) rebuildCrops(ctx);
       if (pendingGrassGround !== 0) rebuildGrass(ctx);
+      if (pendingFringeGround !== 0) rebuildFringe(ctx);
     });
   },
 
@@ -295,10 +386,15 @@ export const clientPlugin: TerraceClientPlugin = {
     trees.clear();
     crops.clear();
     grass.clear();
+    fringe.clear();
     pendingGround = 0;
     pendingCropGround = 0;
     pendingGrassGround = 0;
+    pendingFringeGround = 0;
     sinceRetrySeconds = 0;
+
+    fringeModels?.dispose();
+    fringeModels = null;
 
     grassModels?.dispose();
     grassModels = null;

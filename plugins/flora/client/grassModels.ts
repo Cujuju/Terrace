@@ -5,12 +5,16 @@
 // instancing, not per-object meshes" argument, which applies identically here
 // and is not restated.
 //
-// TWO DRAW CALLS FOR THE WHOLE MEADOW, exactly as a wheat field takes two:
+// THREE DRAW CALLS FOR THE WHOLE MEADOW — two for the grass, exactly as a wheat
+// field takes two, and one for every flower in it whatever its colour:
 //
-//   blades  the lower two thirds of every blade, merged into ONE geometry
-//           under the deep green
-//   tips    the top third, under a lighter, sun-bleached green — the second
-//           tone that does for a blade what EAR_COLOR does for a stalk
+//   blades    the lower two thirds of every blade, merged into ONE geometry
+//             under the deep green
+//   tips      the top third, under a lighter, sun-bleached green — the second
+//             tone that does for a blade what EAR_COLOR does for a stalk
+//   blossoms  the wildflowers (GH #190), white geometry tinted per instance —
+//             see the WILDFLOWERS block below for why that is one call and not
+//             one per colour
 //
 // WHY A RIBBON AND NOT A BOX. A crop stalk is a culm — a round stem — so
 // cropModels.ts's wheat is built from cylinders. A blade of grass is a flat
@@ -33,8 +37,10 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  Color,
   DoubleSide,
   Group,
+  InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   MeshLambertMaterial,
@@ -51,6 +57,7 @@ import {
   GRASS_SCALE_MAX,
   GRASS_TUFT_CLUSTER_CELL_SPAN,
   grassBladeVariation,
+  grassFlowerOf,
 } from '../protocol.ts';
 
 /** One crop CELL's worth of world units — the unit every dimension below speaks. */
@@ -139,6 +146,77 @@ const BLADE_ARCH_RADIANS = 0.7;
  */
 const BLADE_TAPER_EXPONENT = 1.6;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WILDFLOWERS (GH #190). One more geometry, one more InstancedMesh, and no new
+// wire traffic at all — ../protocol.ts's wildflower section is the record of
+// why, and none of that argument is restated here.
+//
+// THE BLOSSOM IS AUTHORED IN BLADE-LOCAL SPACE, at the blade's own tip, which
+// is the whole trick: a flowering blade's blossom reuses that blade's instance
+// matrix verbatim. No second transform, no way for the flower to drift off its
+// stem, and the per-blade height roll carries the flower up with the tip it
+// sits on because it scales the identical local coordinates.
+//
+// ONE DRAW CALL FOR EVERY COLOUR. The petals are white geometry tinted per
+// instance through InstancedMesh's instanceColor, so a meadow with five flower
+// colours in it still costs exactly one more draw call than a meadow with none.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The flower palette. Tinted per instance, so the length of this list is free —
+ * what it costs is legibility, and five is about where a meadow stops reading
+ * as "wildflowers" and starts reading as confetti.
+ *
+ * Chosen against the meadow rather than in isolation, exactly as BLADE_COLOR is
+ * chosen against the land ramp: every one of these is high-value and low-green,
+ * because what has to survive at distance — once a single blossom is a pixel or
+ * two — is VALUE contrast against the green, not hue.
+ */
+const FLOWER_COLORS: readonly number[] = [
+  0xf2e9c4, // cream
+  0xe8c25a, // buttercup
+  0xd98ab0, // pink campion
+  0x9d8ad6, // harebell violet
+  0xe0704f, // poppy
+];
+
+/**
+ * How far a blossom's petals reach from the tip they grow on, in CELLS.
+ *
+ * AN EIGHTH of the blade's own length, which makes a flower head a quarter of
+ * the plant across — roughly a real one's proportion, and about three pixels at
+ * the game's closest zoom, which is the same "can it actually be seen" bar the
+ * blade's own width had to clear (see BLADE_BASE_WIDTH_IN_CELLS, and the
+ * screenshot that forced it).
+ *
+ * BOUNDED BY THE FOOTPRINT, and it is the binding constraint here rather than a
+ * formality. Every unit of this is horizontal reach at the far end of an
+ * already-leaning blade, so it stacks on top of the arch, the planting radius
+ * and the jitter — and assertBladeFitsTuft checks the BLOSSOM's reach, not just
+ * the blade's. A first version at a FIFTH of the blade length was measured, by
+ * running that assert against the built geometry, at 0.712 cluster spans
+ * against a bound of 0.707: it threw at model construction and would have taken
+ * the whole meadow with it. An eighth lands at 0.646, which is margin rather
+ * than a near miss.
+ */
+const BLOSSOM_RADIUS_IN_CELLS = BLADE_LENGTH_IN_CELLS / 8;
+
+/**
+ * Where a petal starts, as a fraction of that radius — the flower's eye. Above
+ * zero so the petals read as separate petals rather than as a solid disc.
+ */
+const BLOSSOM_EYE_FRACTION = 0.3;
+
+/** Petals per blossom. Five, for the reason GRASS_BLADE_COUNT is five: an odd ring has no top-down alignment. */
+const BLOSSOM_PETAL_COUNT = 5;
+
+/**
+ * How much of its own angular share each petal fills, in [0, 1]. Under one so
+ * neighbouring petals do not touch, which is what stops the head reading as a
+ * disc with notches cut in it.
+ */
+const BLOSSOM_PETAL_FILL = 0.62;
+
 /**
  * Half the diagonal of a unit square — restated from protocol.ts's own
  * SQUARE_CIRCUMRADIUS_PER_EDGE (which is module-private there) because this
@@ -180,6 +258,13 @@ interface BladeGeometries {
   readonly tip: BufferGeometry;
   /** The furthest the built blade reaches from its own root, horizontally, in CELLS. */
   readonly horizontalReachInCells: number;
+  /**
+   * Where the blade ENDS, in the blade's own local space — the point a blossom
+   * is authored around. Taken from the built spine rather than re-derived from
+   * BLADE_ARCH_RADIANS, so a change to the arch moves the flower with the tip
+   * instead of leaving it hanging in the air.
+   */
+  readonly tipCentre: Vector3;
 }
 
 /** A flat, non-indexed triangle soup from a plain number list. */
@@ -259,6 +344,58 @@ function buildBlade(): BladeGeometries {
     blade: triangleSoup(basePositions),
     tip: triangleSoup(tipPositions),
     horizontalReachInCells: horizontalReach / CELL_WORLD_SIZE,
+    tipCentre: centres[BLADE_SEGMENTS]!.clone(),
+  };
+}
+
+/** One blossom, and how far it reaches from the blade's root. */
+interface BlossomGeometry {
+  readonly geometry: BufferGeometry;
+  /** The furthest any petal reaches from the BLADE's root, horizontally, in CELLS. */
+  readonly horizontalReachInCells: number;
+}
+
+/**
+ * Builds a flower head around `tipCentre`, in the blade's own local space.
+ *
+ * The petals lie in the horizontal plane. That is a deliberate simplification
+ * rather than a shortcut: this game's camera looks down at the ground from a
+ * fixed pitch, so a horizontal head is the orientation that presents its full
+ * area to the player at every yaw — and a head tilted to follow the blade's own
+ * lean would present an ellipse that thins to nothing at half the compass
+ * points, for two more transforms per instance and no visible gain.
+ *
+ * Each petal is a quad — an inner edge at the eye and an outer edge at the rim —
+ * so a blossom is BLOSSOM_PETAL_COUNT × 2 triangles.
+ */
+function buildBlossom(tipCentre: Vector3): BlossomGeometry {
+  const outer = cells(BLOSSOM_RADIUS_IN_CELLS);
+  const inner = outer * BLOSSOM_EYE_FRACTION;
+  const half = ((Math.PI * 2) / BLOSSOM_PETAL_COUNT) * BLOSSOM_PETAL_FILL * 0.5;
+
+  const positions: number[] = [];
+  const at = (radius: number, angle: number): Vector3 =>
+    new Vector3(
+      tipCentre.x + radius * Math.cos(angle),
+      tipCentre.y,
+      tipCentre.z + radius * Math.sin(angle),
+    );
+
+  for (let i = 0; i < BLOSSOM_PETAL_COUNT; i++) {
+    const centre = ((Math.PI * 2) * i) / BLOSSOM_PETAL_COUNT;
+    const i0 = at(inner, centre - half);
+    const i1 = at(inner, centre + half);
+    const o0 = at(outer, centre - half);
+    const o1 = at(outer, centre + half);
+    for (const point of [i0, o0, o1, i0, o1, i1]) {
+      positions.push(point.x, point.y, point.z);
+    }
+  }
+
+  return {
+    geometry: triangleSoup(positions),
+    horizontalReachInCells:
+      (Math.hypot(tipCentre.x, tipCentre.z) + outer) / CELL_WORLD_SIZE,
   };
 }
 
@@ -296,18 +433,42 @@ function lambert(color: number): MeshLambertMaterial {
 
 export function createGrassModels(): GrassModels {
   const built = buildBlade();
-  assertBladeFitsTuft(built.horizontalReachInCells);
+  const blossom = buildBlossom(built.tipCentre);
+  // The BLOSSOM's reach, not the blade's: a flower head sits at the far end of
+  // an already-leaning blade, so it is the thing that decides whether a tuft
+  // can overhang its cell. Checked against the built geometry, not an estimate
+  // of it — assertBladeFitsTuft's own contract.
+  assertBladeFitsTuft(Math.max(built.horizontalReachInCells, blossom.horizontalReachInCells));
 
-  const geometries: BufferGeometry[] = [built.blade, built.tip];
-  const materials: Material[] = [lambert(BLADE_COLOR), lambert(TIP_COLOR)];
+  const geometries: BufferGeometry[] = [built.blade, built.tip, blossom.geometry];
+  // The blossom material is WHITE and carries no colour of its own: every
+  // flower's colour arrives per instance through instanceColor below, which is
+  // what keeps five colours at one draw call.
+  const materials: Material[] = [lambert(BLADE_COLOR), lambert(TIP_COLOR), lambert(0xffffff)];
 
   const bladeCapacity = FLORA_GRASS_CAP * GRASS_BLADES_PER_TUFT;
   const blades = new InstancedMesh(built.blade, materials[0], bladeCapacity);
   const tips = new InstancedMesh(built.tip, materials[1], bladeCapacity);
 
-  const meshes = [blades, tips];
+  // ONE BLOSSOM PER TUFT AT MOST, so the cap is the tuft cap rather than the
+  // blade cap — a hard guarantee that needs no headroom constant and no
+  // "skipped because the buffer was full" residual. It costs 40 960 × 64 B
+  // ≈ 2.6 MB of matrices next to the meadow's own ≈ 26 MB, which is why the
+  // guarantee is worth more than the saving would be.
+  const blossoms = new InstancedMesh(blossom.geometry, materials[2], FLORA_GRASS_CAP);
+  blossoms.instanceColor = new InstancedBufferAttribute(
+    new Float32Array(FLORA_GRASS_CAP * 3),
+    3,
+  );
+
+  const meshes = [blades, tips, blossoms];
   blades.name = 'flora:grass-blades';
   tips.name = 'flora:grass-tips';
+  blossoms.name = 'flora:grass-blossoms';
+
+  // Resolved once, at build: the palette is a list of literals, so turning it
+  // into Colors per instance per rebuild would be pure garbage.
+  const flowerColors = FLOWER_COLORS.map((hex) => new Color(hex));
 
   const root = new Group();
   root.name = 'flora:grass';
@@ -332,10 +493,15 @@ export function createGrassModels(): GrassModels {
     apply(placements: readonly GrassPlacement[]): void {
       let tuftCount = 0;
       let bladeCount = 0;
+      let blossomCount = 0;
 
       for (const placement of placements) {
         if (tuftCount >= FLORA_GRASS_CAP) break;
         tuftCount++;
+
+        // Which blade — if any — of this tuft carries a flower. Derived from
+        // the cell, never sent (../protocol.ts's wildflower section).
+        const flower = grassFlowerOf(placement.cellX, placement.cellY);
 
         position.set(placement.x, placement.groundY, placement.z);
         tuftRotation.setFromAxisAngle(UP, placement.yaw);
@@ -372,11 +538,27 @@ export function createGrassModels(): GrassModels {
           matrix.compose(bladePosition, bladeRotation, bladeScale);
           blades.setMatrixAt(bladeCount, matrix);
           tips.setMatrixAt(bladeCount++, matrix);
+
+          // THE SAME MATRIX, not a second one built from the same parts: the
+          // blossom's geometry is authored in this blade's local space, so
+          // reusing the transform is what guarantees the flower sits on the
+          // stem rather than merely near it.
+          if (flower !== null && flower.bladeIndex === index) {
+            blossoms.setMatrixAt(blossomCount, matrix);
+            const color =
+              flowerColors[Math.floor((flower.tintRoll / 256) * flowerColors.length)]!;
+            blossoms.setColorAt(blossomCount++, color);
+          }
         }
       }
 
       blades.count = bladeCount;
       tips.count = bladeCount;
+      blossoms.count = blossomCount;
+      // setColorAt writes through instanceColor, which carries its own dirty
+      // flag — the instanceMatrix flag below does not cover it, and without
+      // this every flower renders in whatever colour it had last rebuild.
+      if (blossoms.instanceColor !== null) blossoms.instanceColor.needsUpdate = true;
 
       for (const mesh of meshes) {
         mesh.instanceMatrix.needsUpdate = true;

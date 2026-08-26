@@ -99,12 +99,17 @@ import {
   FLORA_PLUGIN_NAME,
   FLORA_GRASS_MESSAGE,
   FLORA_GRASS_CHANGES_MESSAGE,
+  FLORA_FRINGE_MESSAGE,
+  FLORA_FRINGE_CHANGES_MESSAGE,
   packCropCells,
+  packFringeCells,
   packGrassCells,
   packTreeCells,
   grassKey,
   treeKey,
   type CropCell,
+  type FringeCell,
+  type FringeSpecies,
   type GrassCell,
   type TreeCell,
 } from '../protocol.ts';
@@ -118,6 +123,7 @@ import {
 } from './forest.ts';
 import { CropField, cropSurveyChunksPerTick } from './crops.ts';
 import { GrassField, grassSurveyChunksPerTick } from './grass.ts';
+import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
@@ -161,6 +167,15 @@ const cropField = new CropField();
 const grassField = new GrassField();
 
 /**
+ * The fringe (GH #192, #194) — reeds at the waterline and heather on the rock.
+ * A FOURTH independent object for the same reason the third is: its own
+ * predicate, its own cap, its own survey. What it is NOT is a fifth: the two
+ * species share one field, which ../protocol.ts's fringe section argues at
+ * length.
+ */
+const fringeField = new FringeField();
+
+/**
  * Null until onWorldCreate: the record is sized from the world edge, which is
  * not known before then. Every path that touches it therefore checks — which
  * doubles as the guard for "a hook fired before the world existed".
@@ -201,6 +216,14 @@ let cropScanCredit = 0;
  * other two keep.
  */
 let grassScanCredit = 0;
+
+/**
+ * Fractional chunks owed to the fringe survey — the fourth independent budget,
+ * for the fourth independent sweep (fringe.ts's
+ * FRINGE_SURVEY_INTERVAL_SECONDS), on the same "restated, not shared" rule the
+ * other three keep.
+ */
+let fringeScanCredit = 0;
 
 /**
  * Trees restored from a snapshot, held until onWorldCreate.
@@ -425,6 +448,113 @@ function refreshUnlockedChunkGrass(world: WorldApi, token: string, cx: number, c
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Fringe wire (GH #192, #194) — the grass wire above, restated a third time.
+// Same fog-of-war rule and the same skipEmpty justification: a reed never moves
+// once it stands, so one invisible to a player now was equally invisible at
+// every earlier moment it could have been announced.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A plant's own cell — what `WorldApi.broadcastVisible` gates visibility by. */
+function fringePosition(cell: FringeCell): { x: number; y: number } {
+  return { x: cell.x, y: cell.y };
+}
+
+/**
+ * The two per-species lists one payload carries, built from whatever subset of
+ * the plants a given player can actually see.
+ *
+ * ONE HELPER FOR EVERY SEND, because there are four of them (keepalive, join,
+ * chunk unlock, survey delta) and the split is the one thing they must all
+ * agree on. A per-callsite `filter(p => p.species === 'reed')` in four places is
+ * exactly the duplication that lets the fifth callsite get it wrong.
+ */
+function packBySpecies(plants: readonly FringePlant[]): {
+  reeds: number[];
+  heather: number[];
+} {
+  const reeds: FringeCell[] = [];
+  const heather: FringeCell[] = [];
+  for (const plant of plants) {
+    (plant.species === 'reed' ? reeds : heather).push(plant.cell);
+  }
+  return { reeds: packFringeCells(reeds), heather: packFringeCells(heather) };
+}
+
+function broadcastFringe(world: WorldApi): void {
+  world.broadcastVisible(
+    FLORA_FRINGE_MESSAGE,
+    fringeField.plants(),
+    (plant) => fringePosition(plant.cell),
+    (visible) => packBySpecies(visible),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/**
+ * One change, tagged with which half of a `flora:fringeChanges` delta it belongs
+ * to. A sprout carries its species; a wither does not need one (../protocol.ts's
+ * FloraFringeChangesPayload says why), so the field is nullable rather than two
+ * separate tagged types.
+ */
+interface TaggedFringeChange {
+  readonly kind: 'sprouted' | 'withered';
+  readonly cell: FringeCell;
+  readonly species: FringeSpecies | null;
+}
+
+function broadcastFringeChanges(
+  world: WorldApi,
+  sprouted: readonly FringePlant[],
+  withered: readonly FringeCell[],
+): void {
+  if (sprouted.length === 0 && withered.length === 0) return;
+
+  const tagged: TaggedFringeChange[] = [
+    ...sprouted.map(
+      (plant): TaggedFringeChange => ({
+        kind: 'sprouted',
+        cell: plant.cell,
+        species: plant.species,
+      }),
+    ),
+    ...withered.map((cell): TaggedFringeChange => ({ kind: 'withered', cell, species: null })),
+  ];
+  world.broadcastVisible(
+    FLORA_FRINGE_CHANGES_MESSAGE,
+    tagged,
+    (change) => fringePosition(change.cell),
+    (visible) => ({
+      ...packBySpecies(
+        visible.flatMap((c): FringePlant[] =>
+          c.kind === 'sprouted' && c.species !== null
+            ? [{ cell: c.cell, species: c.species }]
+            : [],
+        ),
+      ),
+      withered: packFringeCells(visible.filter((c) => c.kind === 'withered').map((c) => c.cell)),
+    }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/** refreshUnlockedChunkGrass, restated for the fringe (issue #18's mechanism). */
+function refreshUnlockedChunkFringe(world: WorldApi, token: string, cx: number, cy: number): void {
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const inChunk: FringePlant[] = [];
+  for (const plant of fringeField.plants()) {
+    const { x, y } = plant.cell;
+    if (x >= x0 && x < x0 + CHUNK_SIZE && y >= y0 && y < y0 + CHUNK_SIZE) inChunk.push(plant);
+  }
+  if (inChunk.length === 0) return;
+
+  const payload = { ...packBySpecies(inChunk), withered: [] };
+  for (const player of world.players()) {
+    if (player.token === token) world.sendTo(player.id, FLORA_FRINGE_CHANGES_MESSAGE, payload);
+  }
+}
+
 /**
  * THE TARGETED-REFRESH PATH (issue #18). `broadcastForest`'s keepalive is a
  * 60 s REPAIR cadence (see FLORA_KEEPALIVE_SECONDS), not a sync mechanism —
@@ -510,8 +640,15 @@ function occupiedCells(): OccupancyPredicate {
 }
 
 /**
- * What grass yields to: buildings AND crops, but NOT trees (owner, 2026-08-24:
- * grass grows under trees). Built on top of the structure occupancy the other
+ * What the two GROUND-COVER populations — the meadow and the fringe — yield to:
+ * buildings AND crops, but NOT trees (owner, 2026-08-24: grass grows under
+ * trees).
+ *
+ * ONE PREDICATE FOR BOTH, not one per field. The two populations can never
+ * share a cell (their height windows are disjoint), so what would be gained by
+ * splitting it is two identical Sets built twice per tick. If the fringe ever
+ * needs a rule of its own, it gets its own function then — what it must not do
+ * is start life as a copy of this one. Built on top of the structure occupancy the other
  * two surveys already use, so "a building was founded this tick" reaches all
  * three sweeps identically — the difference is only the extra crop term.
  *
@@ -519,7 +656,7 @@ function occupiedCells(): OccupancyPredicate {
  * crop field is capped at FLORA_CROP_CAP (2048), so this Set costs at most
  * ~2560 inserts against a sweep that visits tens of thousands of cells.
  */
-function grassOccupiedCells(): OccupancyPredicate {
+function groundCoverOccupiedCells(): OccupancyPredicate {
   const occupied = new Set<number>();
   for (const cell of bridgedStructures()) occupied.add(grassKey(cell.x, cell.y));
   for (const cell of cropField.cells()) occupied.add(grassKey(cell.x, cell.y));
@@ -588,14 +725,27 @@ function simulate(world: WorldApi, dt: number): void {
   const grassBudget = Math.floor(grassScanCredit);
   if (grassBudget > 0) {
     grassScanCredit -= grassBudget;
-    const outcome = grassField.advance(world, grassOccupiedCells(), grassBudget);
+    const outcome = grassField.advance(world, groundCoverOccupiedCells(), grassBudget);
     if (outcome !== null) broadcastGrassChanges(world, outcome.sprouted, outcome.withered);
+  }
+
+  // The fringe survey (GH #192, #194) — the fourth budget and cursor, over the
+  // fourth predicate (fringe.ts). It runs after the crop survey for the grass
+  // survey's own reason: it shares that predicate, so the ground it stages is
+  // the ground that yields to the crops which exist right now.
+  fringeScanCredit = Math.min(fringeScanCredit + fringeSurveyChunksPerTick(world, dt), totalChunks);
+  const fringeBudget = Math.floor(fringeScanCredit);
+  if (fringeBudget > 0) {
+    fringeScanCredit -= fringeBudget;
+    const outcome = fringeField.advance(world, groundCoverOccupiedCells(), fringeBudget);
+    if (outcome !== null) broadcastFringeChanges(world, outcome.sprouted, outcome.withered);
   }
 
   if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) {
     broadcastForest(world);
     broadcastCrops(world);
     broadcastGrass(world);
+    broadcastFringe(world);
   }
 }
 
@@ -628,6 +778,7 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
   const uprooted: GrassCell[] = [];
+  const strippedFringe: FringeCell[] = [];
   for (const cell of diff) {
     stability.markChanged(cell.x, cell.y, simSeconds);
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
@@ -644,11 +795,17 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
     // the honest outcome: you turned the ground over, and it grew back.
     const uprootedCell = grassField.reactToEdit(cell.x, cell.y);
     if (uprootedCell !== null) uprooted.push(uprootedCell);
+    // The fringe goes with the dug cell too, same rule. Its own NEIGHBOUR
+    // residual — a reed whose water was drained several cells away — is named
+    // in fringe.ts's reactToEdit and is not something this pass can see.
+    const strippedCell = fringeField.reactToEdit(cell.x, cell.y);
+    if (strippedCell !== null) strippedFringe.push(strippedCell);
   }
 
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
   broadcastGrassChanges(world, [], uprooted);
+  broadcastFringeChanges(world, [], strippedFringe);
 }
 
 /**
@@ -681,6 +838,7 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
   const uprooted: GrassCell[] = [];
+  const strippedFringe: FringeCell[] = [];
   const clearCell = (x: number, y: number): void => {
     if (forest.fell(x, y)) felled.push({ x, y });
     const witheredCell = cropField.reactToEdit(x, y);
@@ -689,6 +847,10 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
     // grass is NOT exempt from occupancy the way it is from trees.
     const uprootedCell = grassField.reactToEdit(x, y);
     if (uprootedCell !== null) uprooted.push(uprootedCell);
+    // A building has a floor over the fringe too — the same one place it is not
+    // exempt from occupancy.
+    const strippedCell = fringeField.reactToEdit(x, y);
+    if (strippedCell !== null) strippedFringe.push(strippedCell);
   };
   for (const cell of occupation.seeded) clearCell(cell.x, cell.y);
   for (const cell of occupation.upgraded) clearCell(cell.x, cell.y);
@@ -696,6 +858,7 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
   broadcastGrassChanges(world, [], uprooted);
+  broadcastFringeChanges(world, [], strippedFringe);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -917,6 +1080,8 @@ export const plugin: TerracePlugin = {
     // inert at boot; kept for symmetry with broadcastForest and to cover a
     // future restart-without-reconnect path cleanly.
     broadcastCrops(world);
+    // The fringe, likewise empty at boot and sent for the same symmetry.
+    broadcastFringe(world);
     // The meadow is empty here for crops.ts's own reason — nothing is
     // persisted, the first survey populates it from this world's heightmap —
     // so this is inert at boot and kept for the same symmetry.
@@ -981,12 +1146,24 @@ export const plugin: TerracePlugin = {
       (visible) => ({ grass: packGrassCells(visible) }),
       { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
     );
+
+    // The fringe, same join-time treatment. Smaller than the meadow by the
+    // ratio of their caps (protocol.ts's fringe arithmetic), and gated by the
+    // same fog of war.
+    world.broadcastVisible(
+      FLORA_FRINGE_MESSAGE,
+      fringeField.plants(),
+      (plant) => fringePosition(plant.cell),
+      (visible) => packBySpecies(visible),
+      { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
+    );
   },
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
     refreshUnlockedChunk(world, token, cx, cy);
     refreshUnlockedChunkCrops(world, token, cx, cy);
     refreshUnlockedChunkGrass(world, token, cx, cy);
+    refreshUnlockedChunkFringe(world, token, cx, cy);
   },
 
   persistence,
@@ -1031,6 +1208,16 @@ export function currentGrassField(): GrassField {
   return grassField;
 }
 
+/** The standing fringe plants, in no particular order. */
+export function standingFringe(): readonly FringeCell[] {
+  return fringeField.cells();
+}
+
+/** The live fringe, for suites that need to assert on its own maths. */
+export function currentFringeField(): FringeField {
+  return fringeField;
+}
+
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetFloraState(): void {
   stability = null;
@@ -1038,11 +1225,13 @@ export function resetFloraState(): void {
   forest.replaceAll([]);
   cropField.clear();
   grassField.clear();
+  fringeField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
   scanCredit = 0;
   cropScanCredit = 0;
   grassScanCredit = 0;
+  fringeScanCredit = 0;
   restoredCells = [];
 }
