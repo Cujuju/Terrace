@@ -39,6 +39,7 @@ export {
 
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
+import { spanIndexCoveringBand } from './columns.ts';
 import {
   bandOf,
   cellIndex,
@@ -310,6 +311,11 @@ export interface SculptOptions {
    * the footprint survey instead.
    */
   readonly targetBand?: number | null;
+  /**
+   * The band at which the stroke has hold of the column — see the resolved
+   * form below. Absent and null both mean the topmost span.
+   */
+  readonly spanBand?: number | null;
 }
 
 /** Sculpt options with nothing left to default — what the math actually runs. */
@@ -325,6 +331,18 @@ export interface ResolvedSculptOptions {
    * the footprint survey instead.
    */
   readonly targetBand: number | null;
+  /**
+   * The band at which the stroke has hold of the column — WHICH SPAN it is
+   * working on, for a cell that holds more than one. Null means the topmost
+   * span, which is every column in an unlayered world and the surface every
+   * tool has always moved.
+   *
+   * A BAND, NOT A SPAN INDEX, all the way in: the index is resolved from the
+   * map at apply time (`spanIndexCoveringBand`), so the two replicas resolve
+   * the same number against their own terrain instead of trusting a position
+   * in a list. See SculptIntent.spanBand in protocol.ts.
+   */
+  readonly spanBand: number | null;
 }
 
 /**
@@ -353,6 +371,9 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // No band to fill toward: only the 'band' anchor reads this, and the
   // library default is not it.
   targetBand: null,
+  // No span named — the topmost one. Every pre-2026-08-25 caller meant exactly
+  // this, and a plugin terraform still does: a plugin sculpts the surface.
+  spanBand: null,
 };
 
 /**
@@ -1720,6 +1741,26 @@ export function applySculpt(
   const spill = options?.spill ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spill;
   const anchor = options?.anchor ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.anchor;
   const targetBand = options?.targetBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.targetBand;
+  const spanBand = options?.spanBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand;
+
+  // THE GRASP IS RESOLVED HERE, ONCE, BEFORE ANY TOOL RUNS (issue #129, step
+  // 4.3). A stroke that names a band names a SPAN of the centre column, and
+  // this is the only place that turns one into the other — both replicas run
+  // it, against their own map, so neither can be told which span to move.
+  //
+  // A BAND NO SPAN COVERS MAKES THE WHOLE STROKE A NO-OP rather than falling
+  // back to the topmost span. Silently moving a different span than the sender
+  // grasped would apply a differently-shaped edit than it predicted and desync
+  // the prediction for a round trip — the same argument protocol.ts's validator
+  // makes for rejecting an unknown tool outright instead of defaulting it.
+  //
+  // It is not read again below, because no tool addresses a span yet: step 4.3
+  // is the ADDRESSING, deliberately with no behaviour change, and steps 4.4-4.6
+  // are the tools that act on it. What it already does is refuse a stroke whose
+  // grasp is gone — the case a layered world can produce today.
+  if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
+    return [];
+  }
 
   // THE DRAG IS ITS OWN EDIT, NOT A BRUSH VARIANT (owner decision 2026-08-24).
   // It shares this entry point on purpose — the server pipeline, the client's

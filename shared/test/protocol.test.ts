@@ -128,8 +128,8 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null });
-    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null });
+    expect(sculptOptionsOf(base)).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null });
+    expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual({ tool: 'stamp', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null });
   });
 
   it('honours whatever the intent DID name, and defaults only the rest', () => {
@@ -139,6 +139,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
+      spanBand: null,
     });
     expect(sculptOptionsOf({ ...base, profile: 'hard' })).toEqual({
       tool: 'stamp',
@@ -146,6 +147,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
+      spanBand: null,
     });
     expect(sculptOptionsOf({ ...base, tool: 'smooth', profile: 'hard' })).toEqual({
       tool: 'smooth',
@@ -153,6 +155,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
+      spanBand: null,
     });
   });
 });

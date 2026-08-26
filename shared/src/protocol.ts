@@ -61,6 +61,30 @@ export interface SculptIntent {
    */
   targetBand?: number;
   /**
+   * THE GRASP (2026-08-25, issue #129 step 4.3): the terrace band at which
+   * this stroke has hold of the column — which SPAN of a layered cell the
+   * player is working on, named by a band rather than by an index.
+   *
+   * The server resolves band → span from ITS OWN heightmap, through
+   * `spanIndexCoveringBand`, and a band that no span covers makes the whole
+   * stroke a no-op. So this is safe for exactly the reason `targetBand` above
+   * is: the number names a place in the world the player aimed at, never a
+   * position in server state.
+   *
+   * NOT INTERCHANGEABLE WITH `targetBand`, and a drag carries both. `spanBand`
+   * is where the hand is; `targetBand` is where the material goes.
+   *
+   * Optional: ABSENT MEANS THE TOPMOST SPAN, which is what every intent in
+   * existence means today and what every plugin `WorldApi.sculpt` call means.
+   *
+   * *Rejected: send `TerrainRayPick.spanIndex` itself.* It is a position in a
+   * list whose length is server state — one carve by another player between
+   * the pick and the apply shifts every index above it, so the same message
+   * would mean a different span on each replica, and every index in range is
+   * structurally valid so no validator catches it.
+   */
+  spanBand?: number;
+  /**
    * Client-chosen correlation id, echoed back on the server's ANSWER to this
    * intent — SculptAppliedMessage when it was applied, SculptDeniedMessage
    * when a plugin denied it — so the sender can retire the exact client-side
@@ -100,6 +124,9 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   // A stamp by default: no band grabbed, so nothing to drag toward. An intent
   // that carries one flips the anchor to 'band' in sculptOptionsOf below.
   targetBand: null,
+  // No span named, which means the topmost one — the only span an unlayered
+  // world has, and the surface every tool has always moved.
+  spanBand: null,
   // Player sculpts are always locked to the clicked cell's level (owner
   // decision 2026-08-19: the brush periphery must never climb past the level
   // the player pointed at). Not a wire field, same argument as `spill`.
@@ -134,6 +161,11 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // getting the drag anchor. The two cannot be desynchronised.
     anchor: intent.targetBand !== undefined ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
     targetBand: intent.targetBand ?? null,
+    // The grasp travels through the same single normalisation both replicas
+    // run, for the same lockstep reason everything else here does. Absent is
+    // null, and null is resolved to the topmost span by the terrain math —
+    // never here, which has no map to resolve against.
+    spanBand: intent.spanBand ?? null,
   };
 }
 
@@ -372,6 +404,21 @@ export function validateSculptIntent(
     return null;
   }
 
+  // spanBand is optional and, when present, must be a band this world could
+  // hold — the same structural check targetBand gets, and for the same reason:
+  // it says the number is a band, not that a span is there. WHICH span it names
+  // is terrain, re-derived from the server's own heightmap by
+  // spanIndexCoveringBand inside the shared math.
+  const { spanBand } = m;
+  if (
+    spanBand !== undefined &&
+    (!Number.isInteger(spanBand) ||
+      (spanBand as number) < MIN_BAND ||
+      (spanBand as number) > MAX_BAND)
+  ) {
+    return null;
+  }
+
   return {
     type: 'sculpt',
     x: x as number,
@@ -381,6 +428,7 @@ export function validateSculptIntent(
     ...(tool !== undefined ? { tool: tool as SculptTool } : {}),
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
+    ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
   };
 }
