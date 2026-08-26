@@ -21,7 +21,7 @@ import {
   type PopulousContext,
   type PopulousWorld,
 } from '../server/model.ts';
-import { growthModelForTest, isPopulousSelected } from '../server/index.ts';
+import { growthModelForTest, plugin as populousPlugin } from '../server/index.ts';
 import {
   loadStructuresBridge,
   registerGrowthModel,
@@ -290,10 +290,22 @@ describe('the plugin', () => {
     resetPilgrimsBridge();
   });
 
-  it('is inert unless this deployment selected it', () => {
-    expect(isPopulousSelected({})).toBe(false);
-    expect(isPopulousSelected({ STRUCTURES_MODEL: 'life' })).toBe(false);
-    expect(isPopulousSelected({ STRUCTURES_MODEL: 'populous' })).toBe(true);
+  it('offers its model on every open and takes it back when the world closes', async () => {
+    // WHICH RULE A WORLD RUNS IS STRUCTURES' SETTING, not this plugin's env
+    // gate any more (per-world plugin settings, 2026-08-25): this plugin
+    // registers wherever it runs, and the slot is emptied on close so the next
+    // world cannot inherit a rule it never chose.
+    const registered: unknown[] = [];
+    setStructuresModuleLoader(async () => ({
+      setGrowthModel: (m: unknown) => registered.push(m),
+    }));
+
+    populousPlugin.onWorldCreate?.(undefined as never);
+    await structuresBridgeReady();
+    expect(registered).toEqual([growthModelForTest()]);
+
+    populousPlugin.onWorldClose?.(undefined as never);
+    expect(registered).toEqual([growthModelForTest(), null]);
   });
 
   it('registers its model with structures, even when structures resolves late', async () => {

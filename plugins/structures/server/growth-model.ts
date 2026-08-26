@@ -38,6 +38,22 @@ import type { StructuresWorld } from './suitability.ts';
  */
 export const STRUCTURES_MODEL_ENV = 'STRUCTURES_MODEL';
 
+/**
+ * The per-world setting that picks the model (per-world plugin settings,
+ * 2026-08-25) — the key this plugin declares to the host, and the one an
+ * operator's `worldPluginConfigure` names.
+ *
+ * PER WORLD FIRST, ENVIRONMENT AS THE DEFAULT. A world with no row runs
+ * whatever STRUCTURES_MODEL said at boot, so nothing about an existing
+ * deployment changes; a world with a row runs that, read once at
+ * `onWorldCreate` and changed only by a reopen, which replays restore +
+ * worldCreate. The comment this replaced said a world may not change model
+ * mid-life because its board would have "a history no single rule explains" —
+ * that is now the operator's decision to make, per world and on the record,
+ * rather than a rule enforced by having no way to say otherwise.
+ */
+export const STRUCTURES_MODEL_SETTING_KEY = 'model';
+
 /** Today's Conway CA (./life.ts). The default: an unset variable changes nothing. */
 export const STRUCTURES_MODEL_LIFE = 'life';
 
@@ -46,10 +62,20 @@ export const STRUCTURES_MODEL_POPULOUS = 'populous';
 
 export type StructuresModel = typeof STRUCTURES_MODEL_LIFE | typeof STRUCTURES_MODEL_POPULOUS;
 
-const STRUCTURES_MODELS: readonly StructuresModel[] = [
+/**
+ * Every model this plugin will run, in the order the panel offers them.
+ * Exported because it IS the declared value set of the `model` setting — one
+ * list, so the validator, the panel and this file's own parser cannot drift.
+ */
+export const STRUCTURES_MODELS: readonly StructuresModel[] = [
   STRUCTURES_MODEL_LIFE,
   STRUCTURES_MODEL_POPULOUS,
 ];
+
+/** Is this string one of the models above? The setting path's own check. */
+export function isStructuresModel(value: string): value is StructuresModel {
+  return (STRUCTURES_MODELS as readonly string[]).includes(value);
+}
 
 /**
  * Reads and validates STRUCTURES_MODEL, server/src/config.ts's `readInteger`
@@ -66,7 +92,7 @@ const STRUCTURES_MODELS: readonly StructuresModel[] = [
 export function readStructuresModel(env: NodeJS.ProcessEnv): StructuresModel {
   const raw = env[STRUCTURES_MODEL_ENV]?.trim();
   if (raw === undefined || raw === '') return STRUCTURES_MODEL_LIFE;
-  if ((STRUCTURES_MODELS as readonly string[]).includes(raw)) return raw as StructuresModel;
+  if (isStructuresModel(raw)) return raw;
   throw new Error(
     `${STRUCTURES_MODEL_ENV} must be one of ${STRUCTURES_MODELS.join(' | ')}, got ${raw}`,
   );
