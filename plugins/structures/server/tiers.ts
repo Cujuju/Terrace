@@ -1,13 +1,18 @@
 // TIER PROGRESSION — pure maths, so the tests can assert it without a world.
 //
 // A live cell's tier is no longer a pure function of its age (that was the
-// pre-Game-of-Life design; see git history). It now needs BOTH conditions the
-// owner asked for, checked fresh every generation:
+// pre-Game-of-Life design; see git history). It needs age, plus a NEIGHBOUR
+// condition whose scope the keep-clear rule (2026-08-26, life.ts) narrowed:
 //
-//   * SURVIVING GENERATIONS — `age` must have reached the next tier's
-//     threshold (CA_GENERATIONS_PER_TIER per step, same shape as before);
-//   * LIVE NEIGHBOURS — the cell's Moore-neighbourhood count THIS generation
-//     must be at or above STRUCTURE_UPGRADE_MIN_NEIGHBORS.
+//   * TIER 0 → TIER 1 (teepee becomes a building): BOTH surviving
+//     generations AND live neighbours are required, as before.
+//   * TIER ≥ 1: age alone advances a standing building. The density gate no
+//     longer applies, because it CANNOT — a building has no neighbours by
+//     construction (founding it cleared its own square; nothing may be
+//     placed back inside). Leaving the gate on would strand every standing
+//     building at tier 1 forever and silently remove four of the six tiers
+//     from the game. "Dense cores become towns" still holds where it was
+//     meant to: reaching tier 1 in the first place is what required density.
 //
 // A cell that is old enough but under-neighboured does NOT downgrade — it
 // simply stops advancing until a later generation where both hold at once.
@@ -52,6 +57,11 @@ export const CA_GENERATIONS_PER_TIER = 3;
  * look like a design decision while actually being an unreachable tier. If
  * that ever needs revisiting, it is a rule about the CA's neighbourhood
  * (Moore vs. a larger radius) before it is a rule about this constant.
+ *
+ * SCOPE NARROWED 2026-08-26 (keep-clear rule, see maybeAdvanceTier): this
+ * gate now applies ONLY to the teepee→building step (tier 0 → 1). A standing
+ * building has no neighbours by construction, so gating later tiers on it
+ * would strand every town at tier 1 forever.
  */
 export const STRUCTURE_UPGRADE_MIN_NEIGHBORS = 3;
 
@@ -65,20 +75,29 @@ function ageThresholdFor(nextTier: number): number {
 }
 
 /**
- * Advances a cell by AT MOST ONE tier for this generation. Both conditions —
- * age-eligibility and this generation's neighbour count — are required
- * simultaneously; failing either leaves `tier` exactly as it was (no
- * downgrade, ever). Called once per surviving cell, per completed generation
- * (life.ts), with `neighborCount` the Moore-neighbour count that generation's
- * step already computed for the B3/S23 rule — free reuse, not a second pass.
+ * Advances a cell by AT MOST ONE tier for this generation. Called once per
+ * surviving cell, per completed generation (life.ts), with `neighborCount`
+ * the Moore-neighbour count that generation's step already computed for the
+ * B3/S23 rule — free reuse, not a second pass.
+ *
+ * THE DENSITY GATE APPLIES ONLY TO THE 0→1 STEP (forced by life.ts's
+ * keep-clear rules): once `tier >= 1` the STRUCTURE_UPGRADE_MIN_NEIGHBORS
+ * test is skipped entirely. A standing building has no neighbours BY
+ * CONSTRUCTION — founding it demolished its keep-clear square, and nothing
+ * may be born or placed back inside — so requiring density of it would make
+ * tiers 2–5 unreachable and quietly delete four of the six tiers. Age alone
+ * advances what already stands; the density requirement did its work at the
+ * moment of founding, deciding which teepee clusters earn their first
+ * building at all.
  *
  * `blessed` (pilgrim routes, owner decision 2026-08-19) waives ONLY the
- * neighbour gate — the age schedule stands. The neighbour rule exists to
- * split dense cores from sparse frontier cells (see its comment above), and a
- * pilgrim route is precisely a reason for a sparse frontier cell to prosper
- * anyway: the road brings what the neighbourhood lacks. Waiving age too would
- * make blessing an instant promotion, which is a different (and rejected)
- * mechanic — prosperity is still earned in survived generations.
+ * neighbour gate — the age schedule stands, and only for the step it ever
+ * gated (0→1). The neighbour rule exists to split dense cores from sparse
+ * frontier cells (see its comment above), and a pilgrim route is precisely a
+ * reason for a sparse frontier cell to prosper anyway: the road brings what
+ * the neighbourhood lacks. Waiving age too would make blessing an instant
+ * promotion, which is a different (and rejected) mechanic — prosperity is
+ * still earned in survived generations.
  */
 export function maybeAdvanceTier(
   age: number,
@@ -88,6 +107,7 @@ export function maybeAdvanceTier(
 ): number {
   if (tier >= MAX_STRUCTURE_TIER) return tier;
   if (age < ageThresholdFor(tier + 1)) return tier;
+  if (tier >= 1) return tier + 1;
   if (!blessed && neighborCount < STRUCTURE_UPGRADE_MIN_NEIGHBORS) return tier;
   return tier + 1;
 }

@@ -71,6 +71,7 @@ import { resetReservations } from './reservations.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
+import { hasBuildingWithinSeparation } from './clearance.ts';
 import { loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
 
 /**
@@ -612,6 +613,15 @@ export function foundStructure(world: StructuresWorld, x: number, y: number): bo
 export function canFoundStructure(world: StructuresWorld, x: number, y: number): boolean {
   if (live.size >= STRUCTURES_CAP) return false;
   if (live.has(structureKey(x, y))) return false;
+  // KEEP-CLEAR (2026-08-26): a settler may not move in inside a standing
+  // building's reserved square. The predicate is clearance.ts's own, not a
+  // local restatement — the same "one predicate, not a second opinion" rule
+  // that keeps this function on isBuildableCell keeps it on
+  // hasBuildingWithinSeparation, so founding can never disagree with the CA's
+  // birth gate or placePatternAt about where a building's ground ends. A
+  // teepee founded beside another TEEPEE remains legal: the predicate looks
+  // for tier > 0 only.
+  if (hasBuildingWithinSeparation(live, world, x, y)) return false;
   return isBuildableCell(world, x, y);
 }
 
