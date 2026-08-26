@@ -16,16 +16,17 @@ import type { World } from './world.ts';
 /**
  * Edge length, in chunks, of the square unlocked at the centre of a fresh
  * world. Owner decision 2026-08-19: 80×80 WORLD UNITS, ~39% of the old
- * full-Populous-map start. Deliberately small: the static genesis profile
- * inside it stops mattering once most of the world is earned by sculpting
- * (per-player creep, #17). Eighty, not sixty-four, because five neighbourhoods
- * is the smallest span whose genesis geometry stays clean: shelf one
- * neighbourhood (span/4, floored), remainder 4 splits symmetrically, and the
- * slope ring sits strictly inside with a uniform one-neighbourhood deep frame
- * around it. Four neighbourhoods leaves an off-centre shelf and a ring
- * touching the square's edge. Known consequence: the deep frame is below a
- * whale's habitat need, so whales first appear once territory creeps outward,
- * not on day one.
+ * full-Populous-map start. Deliberately small: what genesis puts inside it
+ * stops mattering once most of the world is earned by sculpting (per-player
+ * creep, #17). Eighty, not sixty-four, because five neighbourhoods was the
+ * smallest span the fixed shelf/slope profile of the day divided cleanly.
+ *
+ * THE SPAN OUTLIVED THAT PROFILE (2026-08-25) and is now load-bearing for a
+ * different reason: its AREA is the entire habitat budget of day one, and the
+ * guarantees genesis makes inside it — two islands, the fish schools' shallow
+ * water, the whale pair's deep water — only just fit in 102 400 cells. See
+ * GENESIS_MIN_STARTER_ISLANDS in genesis.ts for that arithmetic before
+ * changing this number in either direction.
  *
  * COUNTED IN CHUNKS AND DERIVED SINCE 2026-08-21, because the unlock square is
  * a size on the GROUND and a chunk stopped being one: the re-sample took a
@@ -46,8 +47,8 @@ export interface InitialUnlockFootprint {
 /**
  * The starter region's geometry, as one function.
  *
- * Exported because world genesis has to place its shallow shelf CONCENTRIC with
- * this square (see World.createFresh), and a second copy of "centred by
+ * Exported because world genesis makes every one of its day-one guarantees
+ * INSIDE this square (see genesis.ts), and a second copy of "centred by
  * flooring, clamped to the world" is exactly the kind of duplicated contract
  * that agrees today and drifts tomorrow. The unlock loop below reads it too, so
  * there is one definition and no derived restatement of it anywhere.

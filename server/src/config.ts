@@ -3,8 +3,9 @@
 // is validated at boot so a typo fails fast with an actionable message rather
 // than corrupting a world hours later.
 
-import { CHUNK_SIZE, DEFAULT_WORLD_SIZE } from '@terrace/shared';
+import { CHUNK_SIZE, DEFAULT_WORLD_SIZE, NEIGHBOURHOOD_CELLS } from '@terrace/shared';
 import { SNAPSHOT_RETENTION } from './persistence/snapshot-store.ts';
+import { INITIAL_UNLOCK_CHUNK_SPAN } from './world/initial-unlock.ts';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { logWarn } from './log.ts';
@@ -33,13 +34,38 @@ export const DEFAULT_DB_PATH = './data/world.db';
 export const DEFAULT_WORLDS_DIR = './data/worlds';
 
 /**
- * Cells-per-edge bounds for a world. The floor is one chunk, because a world
- * smaller than the unit every mask and reveal operation works in has cells no
- * player could ever be granted. The ceiling is Int16 arithmetic meeting
- * memory: 4096² is 32 MB of heightmap, already far past the design's 512²
- * target, and a snapshot of it is a 32 MB synchronous write.
+ * Cells-per-edge bounds for a world.
+ *
+ * THE FLOOR IS DERIVED, and it moved on 2026-08-25 (issue #181). It used to be
+ * one CHUNK — "smaller than the unit every mask operation works in" — which was
+ * true about masks and silently false about terrain: at WORLD_SIZE=256 the
+ * 20-chunk starter unlock footprint clamps to the whole map, so genesis had no
+ * outside to draw and the world booted as an unbroken ocean with nothing in it
+ * (the bug reported as #181).
+ *
+ * So the floor is now what genesis actually needs:
+ *
+ *     starter footprint span  (INITIAL_UNLOCK_CHUNK_SPAN chunks, in cells)
+ *   + one NEIGHBOURHOOD ring on EVERY side
+ *   = 320 + 2 × 64 = 448 cells, i.e. 112 world units
+ *
+ * A NEIGHBOURHOOD ring, and not a ring of the coarsest noise octave, which was
+ * the first derivation and is wrong: that octave's lattice is four
+ * neighbourhoods, so it would put the floor at 832 cells — 208 world units —
+ * and forbid the 128-world-unit map the design itself calls "the
+ * Populous-proven playable minimum". A neighbourhood is the unit of ground the
+ * game measures everything else in, so a ring of one is the smallest margin
+ * that is a PLACE rather than a fringe, and it leaves the documented small map
+ * bootable. It is a whole number of chunks by construction — both terms are
+ * multiples of CHUNK_SIZE — so it never fights the multiple-of-CHUNK_SIZE rule
+ * below.
+ *
+ * THE CEILING is Int16 arithmetic meeting memory: 4096² is 32 MB of heightmap,
+ * already far past the design's 512² target, and a snapshot of it is a 32 MB
+ * synchronous write.
  */
-export const MIN_WORLD_SIZE = CHUNK_SIZE;
+export const MIN_WORLD_SIZE =
+  INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE + 2 * NEIGHBOURHOOD_CELLS;
 export const MAX_WORLD_SIZE = 4096;
 
 /**
