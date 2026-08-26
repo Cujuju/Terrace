@@ -34,6 +34,7 @@ import type { ServerConfig } from '../config.ts';
 import { MAX_WORLD_SIZE, MIN_WORLD_SIZE } from '../config.ts';
 import { logError, logInfo } from '../log.ts';
 import type { WorldRegistry } from '../persistence/world-registry.ts';
+import type { ServerRestartService } from '../restart.ts';
 import { generateWorldName } from './world-name.ts';
 import { OperatorGate } from './operator-gate.ts';
 import { snapshotIfDirty } from './session.ts';
@@ -44,6 +45,12 @@ export interface WorldAdminDeps {
   readonly manager: WorldManager;
   readonly registry: WorldRegistry;
   readonly config: ServerConfig;
+  /**
+   * Owns the exit sequence for `serverRestart`. Required rather than optional:
+   * a service that answers the restart action with "unavailable" would be a
+   * refusal nothing can act on, and the boot path always has one.
+   */
+  readonly restart: ServerRestartService;
   /** Injectable clock, for the lockout tests. See OperatorGateOptions. */
   readonly now?: () => number;
 }
@@ -219,6 +226,9 @@ export class WorldAdminService {
           request.setting,
           request.value,
         );
+
+      case 'serverRestart':
+        return this.restartServer();
 
       case 'worldSwitchCancel':
         return this.deps.manager.cancelSwitch()
@@ -424,6 +434,23 @@ export class WorldAdminService {
   }
 
   /**
+   * Restarts the server process, so code that changed on disk becomes live.
+   *
+   * THE SERVICE OWNS THE WHOLE ACT, for `setPlugin`'s reason: the exit sequence
+   * is a property of the process, not of any world, and its one correct order
+   * is stated in exactly one place (server/src/restart.ts). This method only
+   * widens the refusal into the operator's vocabulary.
+   *
+   * NOT GATED ON A WORLD BEING LOADED. A server with no world still has code
+   * to update, and the restart is how it gets it.
+   */
+  private restartServer(): WorldAdminResultMessage {
+    const outcome = this.deps.restart.request();
+    if (typeof outcome === 'string') return fail('restart', outcome);
+    return { type: 'worldAdminResult', action: 'restart', ok: true };
+  }
+
+  /**
    * Pins or unpins a restore point in the LIVE world.
    *
    * Only the live world, because pinning is a judgement about a moment the
@@ -469,6 +496,8 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
       return 'setPlugin';
     case 'worldPluginConfigure':
       return 'configurePlugin';
+    case 'serverRestart':
+      return 'restart';
     case 'worldSwitchCancel':
       return 'cancelSwitch';
   }

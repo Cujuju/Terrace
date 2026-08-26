@@ -40,6 +40,7 @@ import type {
   SculptAppliedMessage,
   SculptDeniedMessage,
   SculptIntent,
+  ServerRestartNoticeMessage,
   TerrainDiffMessage,
   WorldAdminRequestMessage,
   WorldAdminResultMessage,
@@ -59,6 +60,7 @@ import {
   MSG_SCULPT,
   MSG_SCULPT_APPLIED,
   MSG_SCULPT_DENIED,
+  MSG_SERVER_RESTART_NOTICE,
   MSG_SNAPSHOT,
   MSG_TERRAIN_DIFF,
   MSG_WORLD_ADMIN_RESULT,
@@ -141,6 +143,12 @@ export interface WorldAdminSink {
   onWorldAdminResult(msg: WorldAdminResultMessage): void;
   onWorldSwitchNotice(msg: WorldSwitchNoticeMessage): void;
   onWorldUnloaded(msg: WorldUnloadedMessage): void;
+  /**
+   * The server process is about to restart. Unsolicited, at every client, for
+   * `onWorldSwitchNotice`'s reason: somebody who never pressed anything is
+   * about to lose the server for a few seconds and has to be told.
+   */
+  onServerRestartNotice(msg: ServerRestartNoticeMessage): void;
 }
 
 export interface ConnectionOptions {
@@ -304,6 +312,9 @@ export function connect(options: ConnectionOptions): Connection {
     });
     joined.onMessage<WorldUnloadedMessage>(MSG_WORLD_UNLOADED, (msg) => {
       options.worldAdmin?.onWorldUnloaded(msg);
+    });
+    joined.onMessage<ServerRestartNoticeMessage>(MSG_SERVER_RESTART_NOTICE, (msg) => {
+      options.worldAdmin?.onServerRestartNotice(msg);
     });
 
     // Plugin routing. Plugin messages are namespaced `<plugin>:<type>` by the

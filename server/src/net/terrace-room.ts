@@ -38,6 +38,7 @@ import {
   type JoinSnapshotMessage,
   type RestorePointListMessage,
   type RollbackResultMessage,
+  type ServerRestartNoticeMessage,
   type TerrainDiffMessage,
   type WorldAdminResultMessage,
   type WorldListMessage,
@@ -49,6 +50,7 @@ import { logInfo } from '../log.ts';
 import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
 import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
+import type { ServerRestartService } from '../restart.ts';
 import type { WorldAdminService } from '../world/world-admin.ts';
 import type { WorldManager } from '../world/world-manager.ts';
 import { buildJoinSnapshot } from './join-snapshot.ts';
@@ -89,6 +91,7 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
   'worldPluginList',
   'worldPluginSet',
   'worldPluginConfigure',
+  'serverRestart',
   'worldSwitchCancel',
 ] as const;
 
@@ -108,6 +111,7 @@ export interface TerraceServerMessages {
   worldAdminResult: WorldAdminResultMessage;
   worldPluginListing: WorldPluginListMessage;
   worldSwitchNotice: WorldSwitchNoticeMessage;
+  serverRestartNotice: ServerRestartNoticeMessage;
   worldUnloaded: WorldUnloadedMessage;
   [pluginMessage: string]: unknown;
 }
@@ -123,6 +127,8 @@ export interface RoomContext {
   readonly manager: WorldManager;
   /** Owns the world-admin key and every world-management action. */
   readonly admin: WorldAdminService;
+  /** Owns the restart countdown and the exit sequence. */
+  readonly restart: ServerRestartService;
   /**
    * Namespaced plugin message types, from PluginHost.messageTypesFor. Passed
    * in rather than read off a host because the room is created before — and
@@ -169,11 +175,16 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
 
     // Hand the manager this room's transport and roster. It re-attaches the
     // sink to every world it loads from here on.
+    const sink = this.createSink();
     this.context.manager.attachRoom({
-      sink: this.createSink(),
+      sink,
       clientCount: () => this.clients.length,
       players: () => this.roster(),
     });
+    // The restart needs the same two things for the same reason the switch
+    // does — somebody to warn, and a count that decides whether to warn at all
+    // — and neither exists before a room does.
+    this.context.restart.attachRoom({ sink, clientCount: () => this.clients.length });
 
     this.onMessage(SCULPT_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
       const player = client.userData?.player;
@@ -397,6 +408,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // Detach the world from a room that no longer exists, so any later
     // broadcast (e.g. from a plugin tick) is a no-op instead of a throw.
     this.context.manager.detachRoom(NULL_SINK);
+    this.context.restart.detachRoom();
   }
 
   /** Everyone connected, as the manager's roster. See RoomBridge.players. */

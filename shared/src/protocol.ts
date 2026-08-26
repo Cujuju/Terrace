@@ -814,6 +814,13 @@ export type WorldAdminRefusal =
   | 'unknownSetting'
   /** Refused because it would archive the live world; unload or switch first. */
   | 'worldIsActive'
+  /**
+   * A restart is already announced and counting down. There is no cancel for
+   * it (unlike a world switch): the process is going down either way, so a
+   * second press is told the first one is still in hand rather than being
+   * allowed to restart the countdown and postpone it indefinitely.
+   */
+  | 'restartInProgress'
   /** It was attempted and threw. Nothing was destroyed — see the server log. */
   | 'failed';
 
@@ -830,7 +837,8 @@ export type WorldAdminAction =
   | 'pin'
   | 'cancelSwitch'
   | 'setPlugin'
-  | 'configurePlugin';
+  | 'configurePlugin'
+  | 'restart';
 
 /** Client → server: "list every world you have". Answered to the sender only. */
 export interface WorldListRequestMessage {
@@ -997,6 +1005,31 @@ export interface WorldPluginConfigureRequestMessage {
   value: string;
 }
 
+/**
+ * Client → server: "restart this server process".
+ *
+ * THE UPDATE BUTTON. A new version of a plugin's (or core's) code is on disk
+ * and the operator wants it live; the process is the unit of code identity in
+ * Node (the ESM module map has no eviction), so a restart is how new code
+ * arrives — see docs/plans/plugin-hot-unload.md §3.1. Nothing is lost by it:
+ * the shutdown path writes the final snapshot, the active pointer is left
+ * alone so the same world comes back, and every client reconnects silently
+ * with its territory intact.
+ *
+ * GATED BY THE SAME KEY, AND IN THE SAME UNION, as every other world-admin
+ * action — it is the operator's process, and the blast radius (a few seconds
+ * of downtime, nothing destroyed) sits below `worldPurge`'s. It carries no id
+ * because it is not about one world: whichever world is live comes back.
+ *
+ * Whether the process actually returns is the SUPERVISOR's business, not the
+ * protocol's: the server exits with a distinguished code and docker,
+ * systemd or run_server.py brings it back.
+ */
+export interface ServerRestartRequestMessage {
+  type: 'serverRestart';
+  key: string;
+}
+
 /** Client → server: "call off the switch that is counting down". */
 export interface WorldSwitchCancelRequestMessage {
   type: 'worldSwitchCancel';
@@ -1100,6 +1133,28 @@ export interface WorldSwitchNoticeMessage {
 }
 
 /**
+ * Server → EVERY client: the server process is about to restart.
+ *
+ * THE SWITCH NOTICE'S SHAPE, for the switch notice's reason: with the operator
+ * alone there is nobody to warn and the restart is immediate; the moment
+ * somebody else is connected, taking the server out from under them mid-sculpt
+ * is hostile, so it is announced and counted down first.
+ *
+ * `secondsRemaining: 0` means "now" — sent both as the terminal message of a
+ * countdown and as the only message of an unannounced restart, so a client
+ * never has to tell those two apart. There is no `cancelled` counterpart:
+ * unlike a world switch, a restart has no cancel action (see
+ * 'restartInProgress').
+ *
+ * A client's own response is a page reload once the server is back, and only
+ * if the build it comes back on differs — see the client's reload gate.
+ */
+export interface ServerRestartNoticeMessage {
+  type: 'serverRestartNotice';
+  secondsRemaining: number;
+}
+
+/**
  * Server → EVERY client: there is no world loaded right now.
  *
  * Sent on unload, so a client stops rendering a world the server has closed.
@@ -1124,6 +1179,7 @@ export type WorldAdminRequestMessage =
   | WorldPluginListRequestMessage
   | WorldPluginSetRequestMessage
   | WorldPluginConfigureRequestMessage
+  | ServerRestartRequestMessage
   | WorldSwitchCancelRequestMessage;
 
 /**
@@ -1259,6 +1315,12 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
 
     case 'worldSwitchCancel':
       return { type: 'worldSwitchCancel', key };
+
+    // No fields beyond the key: a restart is not about a world, and the code
+    // the process comes back on is whatever is on disk — nothing a client
+    // could name.
+    case 'serverRestart':
+      return { type: 'serverRestart', key };
 
     case 'worldCreate': {
       const request: WorldCreateRequestMessage = { type: 'worldCreate', key };

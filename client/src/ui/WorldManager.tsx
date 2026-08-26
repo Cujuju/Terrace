@@ -103,6 +103,8 @@ function refusalText(reason: WorldAdminRefusal): string {
       return 'The name you typed does not match the world’s name. Nothing was deleted.';
     case 'switchInProgress':
       return 'A world switch is already counting down. Cancel it first.';
+    case 'restartInProgress':
+      return 'A restart is already under way. There is nothing to cancel — wait for the server to come back.';
     case 'unknownPlugin':
       return 'This server has no plugin by that name any more. Reopen the plugin list.';
     case 'unknownSetting':
@@ -122,6 +124,9 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
   // Which world is armed for archiving, by id; null when nothing is armed.
   // Local to the panel: a property of this operator's current look at it.
   const [armedArchiveId, setArmedArchiveId] = createSignal<string | null>(null);
+  // Whether the restart button has been armed. Local to this look at the
+  // panel, exactly as `armedArchiveId` is.
+  const [armedRestart, setArmedRestart] = createSignal(false);
   // Which archived world's purge form is open, and what has been typed into it.
   const [purgingId, setPurgingId] = createSignal<string | null>(null);
   const [purgeConfirm, setPurgeConfirm] = createSignal('');
@@ -147,6 +152,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
     setPurgingId(null);
     setRenamingId(null);
     setPluginsForId(null);
+    setArmedRestart(false);
     setListedAtMs(Date.now());
     send({ type: 'worldList', key: worldAdminKey() });
   };
@@ -233,6 +239,47 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
             </div>
           )}
         </Show>
+
+        {/* RESTART — the update button. Armed then committed, like Archive,
+            because it interrupts everyone on the server; unlike Archive it
+            destroys nothing, so the second press is not styled as a danger.
+            It lives beside the tabs rather than in a world's row on purpose:
+            it is a property of the PROCESS, not of any one world. */}
+        <div class="restore-key-row">
+          <span class="status-label">
+            Restart the server to pick up plugin or core code that changed on
+            disk. The live world is saved first and comes back; everyone
+            reconnects by themselves.
+          </span>
+          <Show
+            when={armedRestart()}
+            fallback={
+              <button
+                type="button"
+                class="chart-button"
+                title="Restart the server process so new code becomes live."
+                disabled={worldAdminKey() === ''}
+                onClick={() => setArmedRestart(true)}
+              >
+                Restart server
+              </button>
+            }
+          >
+            <button
+              type="button"
+              class="chart-button"
+              onClick={() => {
+                setArmedRestart(false);
+                send({ type: 'serverRestart', key: worldAdminKey() });
+              }}
+            >
+              Restart now
+            </button>
+            <button type="button" class="chart-button" onClick={() => setArmedRestart(false)}>
+              Cancel
+            </button>
+          </Show>
+        </div>
 
         <div class="restore-key-row">
           <button
@@ -662,6 +709,10 @@ function doneText(done: { action: string; id: string | null; archivedPath: strin
       return 'The switch was called off.';
     case 'setPlugin':
       return 'That world’s plugin set was changed.';
+    case 'configurePlugin':
+      return 'That world’s plugin setting was changed.';
+    case 'restart':
+      return 'The server is restarting. It will come back on the code that is on disk now.';
     default:
       return 'Done.';
   }

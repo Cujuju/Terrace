@@ -44,8 +44,12 @@ import {
 const MILLISECONDS_PER_SECOND = 1000;
 
 /**
- * Connected clients above which a switch is announced and counted down rather
- * than applied at once.
+ * Connected clients above which an operator action that interrupts everybody is
+ * announced and counted down rather than applied at once.
+ *
+ * EXPORTED because the restart (server/src/restart.ts) makes the same decision
+ * for the same reason, and a second `1` written down beside a second copy of
+ * this comment is one of them drifting later.
  *
  * ONE, not zero: the operator who pressed the button is themselves a connected
  * client, and counting down at them — while they watch the panel they just
@@ -53,7 +57,7 @@ const MILLISECONDS_PER_SECOND = 1000;
  * somebody who did not press the button is about to lose their view, and that
  * is exactly who the announcement is for.
  */
-const CLIENTS_ABOVE_WHICH_TO_ANNOUNCE = 1;
+export const CLIENTS_ABOVE_WHICH_TO_ANNOUNCE = 1;
 
 /** What the manager needs from the Colyseus room, without importing Colyseus. */
 export interface RoomBridge {

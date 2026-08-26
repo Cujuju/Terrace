@@ -19,7 +19,7 @@
 // broke" is a capitulation. This states a fact and gets out of the way.
 
 import { Show, type JSX } from 'solid-js';
-import { pendingSwitch, worldLoaded } from '../state/worldsState.ts';
+import { pendingRestartSeconds, pendingSwitch, worldLoaded } from '../state/worldsState.ts';
 
 export function WorldSwitchBanner(): JSX.Element {
   return (
@@ -32,10 +32,23 @@ export function WorldSwitchBanner(): JSX.Element {
         )}
       </Show>
 
+      {/* A RESTART, which is not a world event at all: the process is going
+          down and coming back. Stated plainly, with no retry offered, for this
+          file's reason — the client reconnects by itself and there is nothing
+          for the player to do. Zero seconds reads as "now", which is what both
+          the end of a countdown and an unannounced restart send. */}
+      <Show when={pendingRestartSeconds() !== null}>
+        <div class="world-banner" role="status" aria-live="polite">
+          {pendingRestartSeconds() === 0
+            ? 'The server is restarting — you will be reconnected.'
+            : `The server restarts in ${pendingRestartSeconds()}s — you will be reconnected.`}
+        </div>
+      </Show>
+
       {/* Suppressed while a switch is counting down: during those seconds the
           two banners would say "no world" and "moving to a world" at once, and
           the countdown is the one that tells the player what is happening. */}
-      <Show when={!worldLoaded() && pendingSwitch() === null}>
+      <Show when={!worldLoaded() && pendingSwitch() === null && pendingRestartSeconds() === null}>
         <div class="world-banner" role="status" aria-live="polite">
           No world is loaded on this server.
         </div>

@@ -41,7 +41,11 @@ import {
 } from './terrain/mirror.ts';
 import { HEIGHT_WORLD_SCALE } from './config.ts';
 import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
-import { setPendingSwitch, setWorldLoaded } from './state/worldsState.ts';
+import {
+  setPendingRestartSeconds,
+  setPendingSwitch,
+  setWorldLoaded,
+} from './state/worldsState.ts';
 import {
   createPredictionStore,
   type PredictionStore,
@@ -342,6 +346,11 @@ export function createWorld(viewport: Viewport): World {
       // after the server's secondsRemaining: 0 notice has already cleared it,
       // making this a no-op — see worldsState.applyWorldSwitchNotice.
       setPendingSwitch(null);
+      // Same, for a restart: the server is demonstrably back, so whatever
+      // "restarting" notice is on screen has been overtaken by events. There
+      // is no terminal message that could clear it instead — the restart's own
+      // last word is sent as the process goes down.
+      setPendingRestartSeconds(null);
       // Build identity travels with world identity, and matters on a REJOIN
       // for the same reason: the server may have been restarted onto a new
       // commit while this client's bundle stayed put — which is exactly the

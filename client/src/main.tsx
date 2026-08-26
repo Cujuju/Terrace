@@ -26,6 +26,7 @@ import {
   applyWorldListing,
   applyWorldPluginListing,
   applyWorldSwitchNotice,
+  setPendingRestartSeconds,
   setWorldLoaded,
 } from './state/worldsState.ts';
 import { createBrushPreview } from './render/brushPreview.ts';
@@ -87,6 +88,9 @@ const connection = connect({
     // The server has closed its world. The banner says so until a snapshot
     // arrives, which is what marks a world loaded again (see world.ts).
     onWorldUnloaded: () => setWorldLoaded(false),
+    // The process is going down. The banner says so; the reconnect and the
+    // one-shot reload that follow are the connection layer's own business.
+    onServerRestartNotice: (msg) => setPendingRestartSeconds(msg.secondsRemaining),
   },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),

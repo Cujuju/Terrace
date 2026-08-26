@@ -32,8 +32,11 @@ import type {
   WorldPinRequestMessage,
   WorldPluginListMessage,
   WorldPluginListRequestMessage,
+  WorldPluginConfigureRequestMessage,
   WorldPluginSetRequestMessage,
   WorldPurgeRequestMessage,
+  ServerRestartNoticeMessage,
+  ServerRestartRequestMessage,
   WorldRenameRequestMessage,
   WorldSwitchCancelRequestMessage,
   WorldSwitchNoticeMessage,
@@ -147,6 +150,17 @@ export const MSG_WORLD_PLUGIN_LISTING: WorldPluginListMessage['type'] = 'worldPl
 
 /** Client → server: run (or stop running) one plugin in one world. */
 export const MSG_WORLD_PLUGIN_SET: WorldPluginSetRequestMessage['type'] = 'worldPluginSet';
+
+/** Client → server: run one plugin in one world with this setting. */
+export const MSG_WORLD_PLUGIN_CONFIGURE: WorldPluginConfigureRequestMessage['type'] =
+  'worldPluginConfigure';
+
+/** Client → server: restart the server process so new code becomes live. */
+export const MSG_SERVER_RESTART: ServerRestartRequestMessage['type'] = 'serverRestart';
+
+/** Server → every client: the process is about to restart (0 = now). */
+export const MSG_SERVER_RESTART_NOTICE: ServerRestartNoticeMessage['type'] =
+  'serverRestartNotice';
 
 /** Client → server: call off a counting-down switch. */
 export const MSG_WORLD_SWITCH_CANCEL: WorldSwitchCancelRequestMessage['type'] =

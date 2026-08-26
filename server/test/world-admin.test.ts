@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHUNK_SIZE, validateWorldAdminRequest } from '@terrace/shared';
 import type { ServerConfig } from '../src/config.ts';
 import { WorldRegistry } from '../src/persistence/world-registry.ts';
+import { ServerRestartService } from '../src/restart.ts';
 import { OPERATOR_MAX_FAILED_ATTEMPTS, OPERATOR_LOCKOUT_MS } from '../src/world/operator-gate.ts';
 import { WorldAdminService } from '../src/world/world-admin.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
@@ -54,7 +55,15 @@ function setUp(worldAdminKey: string | null = KEY): void {
   registry = new WorldRegistry(join(root, 'worlds'));
   const config = makeConfig(registry.worldsDir, worldAdminKey);
   manager = new WorldManager({ config, registry, plugins: [], switchCountdownS: 0 });
-  admin = new WorldAdminService({ manager, registry, config, now: () => now });
+  // A restart service with inert hooks: these tests are about the gate and the
+  // world actions, and a real one would exit the test runner.
+  const restart = new ServerRestartService({
+    shutdown: () => Promise.resolve(),
+    exit: () => {},
+    countdownS: 0,
+    defer: () => {},
+  });
+  admin = new WorldAdminService({ manager, registry, config, restart, now: () => now });
 }
 
 beforeEach(() => {
