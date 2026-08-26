@@ -3755,3 +3755,49 @@ for the owner's dev loop is, and it is why the client's one-shot reload matters:
 twenty seconds is long enough that a stale page would otherwise be noticed and
 manually refreshed. Two things would move it if it ever needs moving: Colyseus's
 shutdown wait, and where the repo lives.
+
+### Decisions made 2026-08-26 (fire is reacted to: flee, and smoke)
+
+Fire has been wired as a SOURCE of events since 2026-08-24 and not at all as
+something other plugins react to (issue #184). Two owner decisions close that,
+and one closes a balance question deferred twice.
+
+**Everything near a fire panics, and a burning thing panics hardest.** Both
+halves, not one: bystanders near a new ignition startle, and an individual that
+is itself alight gets a SUSTAINED panic lasting as long as it burns — not the
+2.5 s `FLEE_DURATION_SECONDS` burst that sculpting produces. The two arrive by
+different channels on purpose. A bystander learns from the new `fire:ignited`
+world event, batched per tick exactly as `weather:strikes` is; the plugin that
+OWNS a burning creature learns from the fuel source's existing
+`onIgnited?.([ids])` callback, which already tells it which of its own entities
+caught. Matching a broadcast event against your own positions to discover that
+one of them is yours would be re-deriving an answer the registry already has.
+
+**The balance question is answered: let it spread — that is the drama.**
+DESIGN.md § "(fire that walks)" deferred "a panicking animal towing a spread
+front through a forest" on 2026-08-24, and 2026-08-25 made it sharper by having
+a burning individual light the cell it stands on. A panicking burning animal is
+therefore a FIRE VECTOR, deliberately and without mitigation: its ignition is
+not suppressed while panicked, its speed is not reduced, its panic is not
+shortened. A wood going up because one torched deer ran into it is the intended
+outcome, not a bug to tune away.
+
+**Peeps are in scope, so the seam ships with two subscribers.** Pilgrims have
+no equivalent of `startleNear` and one is written for them. Peep movement is
+goal-driven, so panic must interrupt that pathing and hand it back — the two
+primitives mirror each other in shape only, since the plugins are forbidden
+from importing each other.
+
+**Smoke keeps its own decay and OUTLIVES the flame (#185).** It is the one fire
+visual NOT derived from `fireIntensity(age, burn)`: a burned-out fire still
+smokes, and that lasting signature — "a fire happened here" — is the whole
+feature. #185 is about an ESTABLISHED fire reading at DISTANCE, distinct from
+#135's catching fire reading close up. A ground scar was considered as the
+after-the-fact signature instead and rejected: it is a separate concern, not a
+substitute for smoke. Smoke's lifetime is client-owned, keyed by the fire's
+stable `key` and never by holding a `FireInstance` across frames; the residual
+is that a client joining after a fire died sees no smoke for it, which is
+accepted rather than paid for with server state. The flame's budget rules in
+`plugins/fire/client/flames/types.ts` bind smoke unchanged — a plume per fire
+done naively breaks the draw-call rule and is disqualified however good it
+looks.
