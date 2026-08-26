@@ -34,7 +34,6 @@
 import { CA_SEED_PATTERNS_PER_ARRIVAL, attemptSeed, stepGeneration } from '../../server/life.ts';
 import type { LiveCellRecord, PhantomWallWeight } from '../../server/life.ts';
 import { isBuildableCell, type StructuresWorld } from '../../server/suitability.ts';
-import { invalidateLandmassLabels } from '../../server/topology.ts';
 import { structureKey } from '../../protocol.ts';
 import { createStructuresRng } from '../../server/rng.ts';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL } from '@terrace/shared';
@@ -93,7 +92,6 @@ function run(
   phantom: PhantomWallWeight,
   buildable: number,
 ): Run {
-  invalidateLandmassLabels();
   let live: ReadonlyMap<number, LiveCellRecord> = new Map(
     seedCells.map(([x, y]) => [structureKey(x, y), { age: 0, tier: 0 }] as const),
   );

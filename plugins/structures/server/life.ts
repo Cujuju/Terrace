@@ -73,7 +73,7 @@ import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasNearbyFarmland } from './farmland.ts';
-import { landmassLabelsFor, wrappedNeighborIndex, type LandmassLabels } from './topology.ts';
+import { computeLandmassLabels, wrappedNeighborIndex, type LandmassLabels } from './topology.ts';
 import {
   hasBuildingWithinSeparation,
   livingCellsWithinSeparation,
@@ -522,19 +522,24 @@ export class GenerationSurvey {
   private board: ReadonlyMap<number, LiveCellRecord> | null = null;
 
   /**
-   * The board's TOPOLOGY for this sweep (topology.ts), taken at the same
-   * moment `board` is and held for the same reason: the neighbour lookup must
-   * be a pure function of the generation being scanned, so the chunk scanned
-   * last must see the same coastline the chunk scanned first did.
+   * The board's TOPOLOGY for this sweep (topology.ts), computed FRESH when
+   * the sweep starts, at the same moment `board` is taken and for the same
+   * reason: the neighbour lookup must be a pure function of the generation
+   * being scanned, so the chunk scanned last must see the same coastline the
+   * chunk scanned first did.
    *
-   * IT IS ALSO THE COST CEILING. Labelling is a whole-board pass; taken once
-   * per sweep it costs exactly what the sweep itself already costs, once per
-   * generation. Read live instead, a player dragging a sculpt brush would
-   * invalidate it several times a second and pay for a full relabel on every
-   * tick of the stroke. A terrain edit therefore reaches the topology at the
-   * NEXT generation — the same bounded lag this file's header already
-   * documents and accepts for a neighbour's buildability, and far shorter
-   * than the demolition path, which is instant and unaffected.
+   * ONE SWEEP, ONE LABELLING, NEVER SHARED WITH THE NEXT. There is no cache
+   * behind this — see computeLandmassLabels' own comment for why an
+   * invalidate-on-terrain cache was wrong (unlock and reservations move
+   * `isBuildableCell` without a terrain diff, and an unlabelled cell is one
+   * the wrap refuses to answer for at all). The cost is one whole-board pass
+   * per generation, i.e. per CA_GENERATION_INTERVAL_SECONDS, paid alongside
+   * the sweep that was already touching every cell.
+   *
+   * A terrain edit therefore reaches the topology at the NEXT generation —
+   * the same bounded lag this file's header already documents and accepts for
+   * a neighbour's buildability, and far shorter than the demolition path,
+   * which is instant and unaffected.
    */
   private labels: LandmassLabels | null = null;
 
@@ -782,15 +787,15 @@ export class GenerationSurvey {
     // of the change.
     if (this.board === null) {
       this.board = new Map(live);
-      // The coastline this generation is judged against, taken at the same
-      // instant as the board — see `labels`' own comment.
-      this.labels = landmassLabelsFor(world);
+      // The coastline this generation is judged against, labelled at the same
+      // instant the board is taken — see `labels`' own comment.
+      this.labels = computeLandmassLabels(world);
     }
     const board = this.board;
     // `??` rather than a non-null assertion: the two are always set together
     // directly above, and if that ever stops being true this recomputes rather
     // than throwing in the middle of a generation.
-    const labels = this.labels ?? landmassLabelsFor(world);
+    const labels = this.labels ?? computeLandmassLabels(world);
 
     while (budget > 0 && this.cursor < totalChunks) {
       this.scanChunk(

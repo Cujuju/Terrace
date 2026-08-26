@@ -124,10 +124,27 @@ class Labelling implements LandmassLabels {
 /**
  * Labels every connected component of buildable ground, 8-connected.
  *
- * ONE FULL BOARD PASS. `isBuildableCell` is called exactly once per cell —
- * the same budget GenerationSurvey's own sweep already spends every
- * generation, which is why the caller may treat this as free at survey
- * cadence and must not treat it as free per tick (see landmassLabelsFor).
+ * ONE FULL BOARD PASS, ONCE PER GENERATION, AND NOTHING IS CACHED ACROSS
+ * GENERATIONS. `isBuildableCell` is called exactly once per cell — the same
+ * budget GenerationSurvey's own sweep already spends every generation anyway,
+ * so labelling at survey cadence at most doubles a cost the sweep was already
+ * paying, on a 15 s clock (life.ts's CA_GENERATION_INTERVAL_SECONDS). That is
+ * the whole price of the guarantee below, and it is deliberate.
+ *
+ * WHY NO CACHE (2026-08-25). A cache here has to be invalidated by everything
+ * `isBuildableCell` reads, and it reads THREE moving things: the terrain, the
+ * UNLOCKED set, and another plugin's reservations (reservations.ts). Only the
+ * first announces itself, as a CellDiff — so an invalidate-on-terrain cache
+ * silently disagreed with `isBuildableCell` about every cell that unlocked or
+ * was released from a reservation, and a cell the labelling calls NO_LANDMASS
+ * is not merely mis-weighted: `wrappedNeighborIndex` returns -1 for ALL EIGHT
+ * of its slots (it refuses an unlabelled origin outright), so such a cell can
+ * never be born, and one that is somehow alive there keeps every neighbour
+ * count it is part of wrong for as long as the cache stands. The board's
+ * shape is cheap; being wrong about it is not.
+ *
+ * The caller must still not treat this as free PER TICK — it is a whole-board
+ * pass, and GenerationSurvey takes it exactly once, when a sweep begins.
  *
  * The fill is an explicit stack rather than recursion: a landmass can be the
  * whole map, and a recursive fill over a quarter of a million cells is a stack
@@ -185,46 +202,6 @@ export function computeLandmassLabels(world: StructuresWorld): LandmassLabels {
   }
 
   return new Labelling(size, cells, boxes);
-}
-
-// ── The cache ────────────────────────────────────────────────────────────────
-
-let cached: { readonly world: StructuresWorld; readonly labels: LandmassLabels } | null = null;
-
-/**
- * The board's labelling, computed at most once per terrain edit.
- *
- * INVALIDATED BY TERRAIN, NOT BY TIME. The labelling is a pure function of
- * `isBuildableCell` over the whole board, and the only thing that ordinarily
- * moves it is a sculpt — so index.ts's `onTerrainChanged` drops it, and it is
- * rebuilt lazily on the next lookup. The cache is keyed on the WORLD OBJECT
- * too, so a second world (a test's fresh fixture, a restored snapshot) can
- * never be served the first one's coastline even if nobody invalidated.
- *
- * RESIDUAL, NAMED. Two other inputs to `isBuildableCell` can move without a
- * terrain diff: a chunk unlocking, and another plugin reserving cells
- * (reservations.ts — a temple's footprint). Neither invalidates this cache, so
- * until the next sculpt the labelling can disagree with `isBuildableCell` on
- * those cells. The blast radius is bounded and cannot corrupt the board: the
- * labelling is used ONLY to classify a cell's NEIGHBOURS, never to decide
- * whether a cell may live — scanChunk still asks `isBuildableCell` directly —
- * so the worst case is that one neighbour of one cell is counted as a phantom
- * wall (worth WALL_PHANTOM_NUMERATOR/WALL_PHANTOM_DENOMINATOR of a neighbour)
- * when it should have been counted as dead ground, or vice versa. No structure
- * can be born on forbidden ground because of it.
- */
-export function landmassLabelsFor(world: StructuresWorld): LandmassLabels {
-  if (cached !== null && cached.world === world && cached.labels.worldSize === world.worldSize) {
-    return cached.labels;
-  }
-  const labels = computeLandmassLabels(world);
-  cached = { world, labels };
-  return labels;
-}
-
-/** Drops the cached labelling; the next lookup rebuilds it. */
-export function invalidateLandmassLabels(): void {
-  cached = null;
 }
 
 // ── The wrap ─────────────────────────────────────────────────────────────────
