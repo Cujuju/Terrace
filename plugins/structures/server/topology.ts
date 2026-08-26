@@ -251,14 +251,17 @@ class Labelling implements LandmassLabels {
 }
 
 /**
- * Labels every connected component of buildable ground, 8-connected.
+ * Labels every connected component of buildable ground, 8-connected, asking
+ * `isBuildableCell` about every cell itself.
  *
- * ONE FULL BOARD PASS, ONCE PER GENERATION, AND NOTHING IS CACHED ACROSS
- * GENERATIONS. `isBuildableCell` is called exactly once per cell — the same
- * budget GenerationSurvey's own sweep already spends every generation anyway,
- * so labelling at survey cadence at most doubles a cost the sweep was already
- * paying, on a 15 s clock (life.ts's CA_GENERATION_INTERVAL_SECONDS). That is
- * the whole price of the guarantee below, and it is deliberate.
+ * THE SLOW ENTRY POINT, AND NO LONGER THE ONE THE SWEEP USES PER GENERATION.
+ * The whole-board `isBuildableCell` prepass below IS the cost of labelling —
+ * the flood fill over the resulting bitmap is cheap — and GenerationSurvey's
+ * own chunk scan already asks `isBuildableCell` the same question about the
+ * same cells, amortised across the generation. So the sweep feeds its own
+ * answers to `computeLandmassLabelsFromBuildable` instead, and this function
+ * remains for the callers that have no such bitmap to hand: the FIRST sweep of
+ * a fresh survey (life.ts's `advance`) and the tests.
  *
  * WHY NO CACHE (2026-08-25). A cache here has to be invalidated by everything
  * `isBuildableCell` reads, and it reads THREE moving things: the terrain, the
@@ -273,27 +276,48 @@ class Labelling implements LandmassLabels {
  * shape is cheap; being wrong about it is not.
  *
  * The caller must still not treat this as free PER TICK — it is a whole-board
- * pass, and GenerationSurvey takes it exactly once, when a sweep begins.
- *
- * The fill is an explicit stack rather than recursion: a landmass can be the
- * whole map, and a recursive fill over a quarter of a million cells is a stack
- * overflow, not an algorithm.
+ * pass, and nothing amortises it.
  */
 export function computeLandmassLabels(world: StructuresWorld): LandmassLabels {
   const size = world.worldSize;
-  const cells = new Int32Array(size * size).fill(NO_LANDMASS);
-  const boxes: LandmassBox[] = [];
-  if (size <= 0) return new Labelling(size, cells, boxes, emptyExtents([]), emptyExtents([]));
-
   // Which cells are buildable at all, resolved once up front: the fill below
   // revisits a cell's neighbours several times, and isBuildableCell is a
   // whole footprint survey (suitability.ts) rather than an array read.
-  const buildable = new Uint8Array(size * size);
+  const buildable = new Uint8Array(Math.max(0, size * size));
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       if (isBuildableCell(world, x, y)) buildable[y * size + x] = 1;
     }
   }
+  return computeLandmassLabelsFromBuildable(size, buildable);
+}
+
+/**
+ * THE FLOOD FILL ITSELF — the only one in this file, and the entry point for a
+ * caller that already knows which cells are buildable: `buildable[y * size + x]`
+ * non-zero means buildable, and the array must be exactly `size * size` long,
+ * laid out row-major in the same board indexing `LandmassLabels` uses.
+ *
+ * `computeLandmassLabels` above is this function plus a prepass, so the two can
+ * never disagree about what a landmass is — the whole reason there is one
+ * implementation rather than two.
+ *
+ * THE BITMAP IS THE CALLER'S SNAPSHOT OF BUILDABILITY, AND ITS AGE IS THE
+ * CALLER'S PROBLEM. This function has no access to the world and cannot check
+ * the bitmap against it; GenerationSurvey's own header states the lag it
+ * accepts by feeding one gathered across a whole sweep.
+ *
+ * The fill is an explicit stack rather than recursion: a landmass can be the
+ * whole map, and a recursive fill over a quarter of a million cells is a stack
+ * overflow, not an algorithm.
+ */
+export function computeLandmassLabelsFromBuildable(
+  size: number,
+  buildable: Uint8Array,
+): LandmassLabels {
+  const cells = new Int32Array(Math.max(0, size * size)).fill(NO_LANDMASS);
+  const boxes: LandmassBox[] = [];
+  if (size <= 0) return new Labelling(size, cells, boxes, emptyExtents([]), emptyExtents([]));
 
   const stack: number[] = [];
   for (let y0 = 0; y0 < size; y0++) {
