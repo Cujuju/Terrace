@@ -127,6 +127,7 @@ export const MANA_COST_PER_MIN_RADIUS_SCULPT = sculptManaCost(
   MANA_PER_BAND_CELL,
   POINT_BRUSH_RADIUS_CELLS,
   'soft',
+  'stamp',
 );
 
 /**
@@ -142,6 +143,7 @@ export const MANA_COST_PER_MAX_RADIUS_HARD_SCULPT = sculptManaCost(
   MANA_PER_BAND_CELL,
   MAX_BRUSH_RADIUS,
   'hard',
+  'stamp',
 );
 
 /**
@@ -725,10 +727,12 @@ export function manaPerBandCellFor(playerId: string): number {
  * radius-3 soft is ceil(34.5) = 35 — "about half", never free.
  */
 export function manaCostFor(playerId: string, intent: SculptIntent): number {
+  const options = sculptOptionsOf(intent);
   return sculptManaCost(
     manaPerBandCellFor(playerId),
     intent.radius,
-    sculptOptionsOf(intent).profile,
+    options.profile,
+    options.tool,
   );
 }
 

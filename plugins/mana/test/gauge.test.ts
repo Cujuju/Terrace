@@ -174,14 +174,14 @@ describe('current-brush cost', () => {
       // Radius alone.
       setBrushRadius(MAX_BRUSH_RADIUS);
       expect(currentBrushCost()).toBe(
-        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft'),
+        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp'),
       );
 
       // Profile alone — same radius, sheer edges, more rock.
       setBrushProfile('hard');
       expect(currentBrushCost()).toBe(MANA_COST_PER_MAX_RADIUS_HARD_SCULPT);
       expect(currentBrushCost()).toBeGreaterThan(
-        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft'),
+        sculptManaCost(MANA_PER_BAND_CELL, MAX_BRUSH_RADIUS, 'soft', 'stamp'),
       );
 
       // And back down again: nothing here is sticky. BOTH dials have to go
