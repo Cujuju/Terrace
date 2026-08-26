@@ -649,6 +649,23 @@ interface ContourLevel {
    */
   skirtSelfLit: number;
   /**
+   * Colour and lighting of the CEILING triangle that closes this slab off from
+   * below — a roof's underside, the surface you see standing inside a cave or
+   * under an arch.
+   *
+   * Almost always the skirt's own, because a roof's underside is the same cut
+   * face its sides are. The exception is a FLOODED roof: water is a pure
+   * function of the column (design Q3 as extended 2026-08-24 — a cavity at or
+   * below sea level is always flooded, there are no air pockets), so an
+   * underside at or under the waterline is a submerged surface and has to take
+   * the seabed derivation, exactly like band 0's seabed cap and every skirt
+   * below the waterline already do. It is chosen the same way they are — by
+   * running the palette's own regime predicate over the height the surface
+   * actually sits at — rather than by a second rule about spans.
+   */
+  ceilingColor: Rgb;
+  ceilingSelfLit: number;
+  /**
    * Null for band boundaries, which interpolate the raw heights (biased by
    * CONTOUR_SAMPLE_CLEARANCE). The waterline overrides it with
    * SHORE_EDGE_CROSSING, because there is no height gradient across it to
@@ -706,6 +723,18 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
     const bordered =
       isSeabedPaletteIndex(paletteIndex) &&
       skirtDrop > SEABED_RISER_BORDER_WORLD_HEIGHT;
+    // The HEIGHT the underside sits at, mirroring the undersideY line below
+    // one-for-one: the band under this one, or this band itself at the bottom
+    // of the stack, where there is no slab.
+    const undersideHeight = (k === lowestBand ? k : k - 1) * BAND_HEIGHT;
+    const undersideIndex = bandPaletteIndex(undersideHeight);
+    // Submerged undersides take the seabed derivation for the height they are
+    // at; dry ones stay their own slab's cut face, unchanged. The switch is the
+    // palette's regime predicate — the same one skirtSelfLit and the underwater
+    // riser border key off — not a new rule about spans.
+    const ceilingIndex = isSeabedPaletteIndex(undersideIndex)
+      ? undersideIndex
+      : paletteIndex;
     levels.push({
       threshold: k * BAND_HEIGHT,
       sampleBand: k,
@@ -719,6 +748,8 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
         ? palettes.top[bandPaletteIndex((k - 1) * BAND_HEIGHT)]
         : null,
       skirtSelfLit: selfLitFor(paletteIndex),
+      ceilingColor: palettes.cliff[ceilingIndex],
+      ceilingSelfLit: selfLitFor(ceilingIndex),
       crossingOverride: null,
       loops: [],
     });
@@ -744,6 +775,12 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
         // height anyway).
         skirtBorderColor: null,
         skirtSelfLit: selfLitFor(shoreIndex),
+        // Inert: the waterline is a colour boundary on flat ground, and the
+        // ceiling pass skips it outright (see planChunkCaps). Kept equal to the
+        // skirt so the field is never a second, divergent statement of what
+        // this level is.
+        ceilingColor: palettes.cliff[shoreIndex],
+        ceilingSelfLit: selfLitFor(shoreIndex),
         crossingOverride: SHORE_EDGE_CROSSING,
         loops: [],
       });
@@ -1440,7 +1477,7 @@ export function writeChunkVertexData(
       let merged = polygon.outer;
       for (const hole of polygon.holes) merged = bridgeHole(merged, hole);
       earClip(merged, (a, b, c) => {
-        emitCeilingTriangle(a, b, c, level.undersideY, level.skirtColor, level.skirtSelfLit);
+        emitCeilingTriangle(a, b, c, level.undersideY, level.ceilingColor, level.ceilingSelfLit);
         ceilingEmitted++;
       });
     }
