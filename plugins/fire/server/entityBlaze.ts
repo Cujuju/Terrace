@@ -57,6 +57,25 @@ const NO_BURNOUTS: ReadonlyMap<string, number[]> = new Map();
 export class EntityBlaze {
   private readonly burning = new Map<string, BurningEntity>();
 
+  /**
+   * Where each newly-caught individual WAS STANDING when it caught, for every
+   * one caught since this was last drained — ./blaze.ts's `ignitedSinceDrain`,
+   * same contract and same reason, applied to the registry that moves.
+   *
+   * A POSITION AND NOT AN IDENTITY, and this is the half of the seam that is
+   * easy to get wrong. The plugin that OWNS the creature is told which of its
+   * own individuals caught, through `onIgnited` below; that is a private answer
+   * to a private question. What goes out to the world is where the flame
+   * appeared, because a bystander's question is "what do I run away from" and
+   * "pilgrims' walker 12" is not an answer to it (../protocol.ts's
+   * FIRE_IGNITED_EVENT).
+   *
+   * Recorded at the moment of ignition rather than looked up later for the
+   * obvious reason: by the next tick it has moved, and by the tick after that
+   * its owner may not have it at all.
+   */
+  private ignitedSinceDrain: Array<{ readonly x: number; readonly y: number }> = [];
+
   get size(): number {
     return this.burning.size;
   }
@@ -112,6 +131,13 @@ export class EntityBlaze {
       ageSeconds: 0,
     };
     this.burning.set(key, entity);
+    // WHERE IT ACTUALLY STANDS, not the cell that was aimed at: the registry
+    // arbitrates by distance and may hand back something up to its own reach
+    // away from (x, y) (./entityFuel.ts's nearest-wins rule), so the aimed cell
+    // is the wrong point to tell the world a fire started at. Falling back to
+    // it when the source cannot say is honest — it has just answered `entityAt`
+    // for this cell, so the two are within that source's reach of each other.
+    this.ignitedSinceDrain.push(found.source.positionOf(found.id) ?? { x, y });
     found.source.onIgnited?.([found.id]);
     return toState(entity);
   }
@@ -160,6 +186,10 @@ export class EntityBlaze {
       ageSeconds: 0,
     };
     this.burning.set(key, entity);
+    // The candidate's own position, which the spread sweep has just read off
+    // its owner (./entityFuel.ts's FlammableIndividual) — the same number
+    // `positionOf` would answer, without a second lookup that could disagree.
+    this.ignitedSinceDrain.push({ x: candidate.x, y: candidate.y });
     source.onIgnited?.([id]);
     return toState(entity);
   }
@@ -314,6 +344,8 @@ export class EntityBlaze {
    */
   restore(entities: Iterable<FireEntityState>): void {
     this.burning.clear();
+    // The pending announcements go with the set they described — see `clear`.
+    this.ignitedSinceDrain = [];
     for (const entity of entities) {
       if (this.burning.size >= FIRE_ENTITY_CAP) break;
       if (entity.burnSeconds <= 0) continue;
@@ -329,9 +361,22 @@ export class EntityBlaze {
     }
   }
 
-  /** Forgets everything, telling nobody. The rollback / reset path. */
+  /** Every ignition since the last call, and forgets them. ./blaze.ts's
+   *  `takeIgnited`, same contract: drained so nothing is announced twice. */
+  takeIgnited(): Array<{ readonly x: number; readonly y: number }> {
+    const drained = this.ignitedSinceDrain;
+    this.ignitedSinceDrain = [];
+    return drained;
+  }
+
+  /**
+   * Forgets everything, telling nobody. The rollback / reset path.
+   *
+   * The pending ignitions go too — ./blaze.ts's `clear` states why.
+   */
   clear(): void {
     this.burning.clear();
+    this.ignitedSinceDrain = [];
   }
 }
 

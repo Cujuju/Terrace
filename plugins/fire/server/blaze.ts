@@ -63,6 +63,25 @@ const NOTHING_STOPPED: readonly FuelCell[] = [];
 export class Blaze {
   private readonly burning = new Map<number, BurningCell>();
 
+  /**
+   * Where a fire started, for every fire started since this was last drained —
+   * the raw material of the `fire:ignited` world event (../protocol.ts).
+   *
+   * KEPT HERE, AT THE POINT A FIRE IS CREATED, rather than assembled by the
+   * callers. There are two callers today (a torch or a bolt through
+   * ../server/index.ts's igniteAt, and a spreading front through
+   * ./spread.ts) and every one of them already discards the returned state on
+   * some path; a third would announce nothing and nobody would notice for as
+   * long as it took somebody to wonder why the animals had stopped running.
+   * `ignite` is the ONE place a cell fire exists that did not exist before, so
+   * it is the one place the announcement can be owed from.
+   *
+   * An ARRAY, appended in ignition order — which is `spreadOnce`'s fixed roll
+   * order — because this event's consumers are sim code and a Map's incidental
+   * iteration order has no business reaching them (design § determinism).
+   */
+  private ignitedSinceDrain: Array<{ readonly x: number; readonly y: number }> = [];
+
   /** How many cells are alight. The cap is checked against this. */
   get size(): number {
     return this.burning.size;
@@ -101,6 +120,7 @@ export class Blaze {
       ageSeconds: 0,
     };
     this.burning.set(key, cell);
+    this.ignitedSinceDrain.push({ x, y });
     found.source.onIgnited?.([{ x, y }]);
     return toState(cell);
   }
@@ -170,6 +190,8 @@ export class Blaze {
    */
   restore(fires: Iterable<FireCellState & { readonly sourceName: string }>): void {
     this.burning.clear();
+    // The pending announcements go with the set they described — see `clear`.
+    this.ignitedSinceDrain = [];
     for (const fire of fires) {
       if (this.burning.size >= FIRE_CELL_CAP) break;
       if (fire.burnSeconds <= 0) continue;
@@ -192,9 +214,30 @@ export class Blaze {
     return out;
   }
 
-  /** Forgets everything, telling nobody. The rollback / reset path. */
+  /**
+   * Every ignition since the last call, and forgets them.
+   *
+   * DRAINED rather than read, so an announcement can never be made twice: the
+   * caller (../server/index.ts) batches a tick's worth and emits one event, and
+   * a second emit of the same list would startle the world twice for one fire.
+   */
+  takeIgnited(): Array<{ readonly x: number; readonly y: number }> {
+    const drained = this.ignitedSinceDrain;
+    this.ignitedSinceDrain = [];
+    return drained;
+  }
+
+  /**
+   * Forgets everything, telling nobody. The rollback / reset path.
+   *
+   * The pending ignitions go too. A rollback un-happens whatever lit them, and
+   * announcing a fire that the world no longer contains would be the same
+   * defect as a restore announcing its restored set (monsters' rule: a restore
+   * is not an event in the sim).
+   */
   clear(): void {
     this.burning.clear();
+    this.ignitedSinceDrain = [];
   }
 }
 
