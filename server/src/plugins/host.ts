@@ -23,6 +23,7 @@ import {
 } from './types.ts';
 import {
   type ChunkUnlockListener,
+  type RevocableWorldApi,
   type WorldEventListener,
   createWorldApi,
   namespacedMessageType,
@@ -49,9 +50,30 @@ export const MAX_WORLD_EVENT_DEPTH = 4;
 interface PluginEntry {
   readonly loaded: LoadedPlugin;
   readonly api: WorldApi;
+  /** Unbinds this entry's view from the World; see RevocableWorldApi. */
+  readonly revoke: () => void;
 }
 
 export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, WorldEventListener {
+  /**
+   * EVERY INSTALLED PLUGIN, enabled or not — the set the close path fans out
+   * over and the set whose views get revoked.
+   *
+   * Separate from `entries` (the ENABLED subset, below) for issue #167's
+   * reason: the plugin that most needs to hear its world close is the one
+   * being disabled for the next world, and that is exactly the one a fan-out
+   * over the enabled subset would skip.
+   */
+  private readonly installed: readonly PluginEntry[];
+  /**
+   * The plugins that participate in this world: every hook below iterates
+   * THIS list, in load order.
+   *
+   * Identical to `installed` today, because every discovered plugin is
+   * enabled. Per-world enablement (#165) narrows it by passing `enabledNames`
+   * to the constructor — and because the close path reads `installed`
+   * instead, narrowing it cannot silently drop the close fan-out.
+   */
   private readonly entries: readonly PluginEntry[];
   /** The world this host drives — its clock advances on every tick(). */
   private readonly world: World;
@@ -60,19 +82,38 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
 
-  constructor(world: World, plugins: readonly LoadedPlugin[]) {
+  /**
+   * `plugins` is the INSTALLED set; `enabledNames`, when given, names the
+   * subset that participates in this world (absent = all of them, which is
+   * the only case that exists until #165 lands).
+   */
+  constructor(world: World, plugins: readonly LoadedPlugin[], enabledNames?: ReadonlySet<string>) {
     this.world = world;
     // The WorldApi handed to a plugin routes edits back through this host, so
     // a plugin's own sculpt notifies every plugin (including itself) exactly
     // like a player's would.
-    this.entries = plugins.map((loaded) => ({
-      loaded,
-      api: createWorldApi(world, this, loaded.plugin.name),
-    }));
+    //
+    // Built for every INSTALLED plugin, disabled ones included: a view costs a
+    // closure, and it is what lets `closeWorld` hand a disabled plugin the
+    // same argument its `onWorldCreate` counterpart would have taken.
+    this.installed = plugins.map((loaded) => {
+      const revocable: RevocableWorldApi = createWorldApi(world, this, loaded.plugin.name);
+      return { loaded, api: revocable.api, revoke: revocable.revoke };
+    });
+    this.entries =
+      enabledNames === undefined
+        ? this.installed
+        : this.installed.filter((entry) => enabledNames.has(entry.loaded.plugin.name));
   }
 
+  /** Names of the plugins participating in this world, in load order. */
   get pluginNames(): readonly string[] {
     return this.entries.map((entry) => entry.loaded.plugin.name);
+  }
+
+  /** Names of every INSTALLED plugin, enabled or not, in load order. */
+  get installedPluginNames(): readonly string[] {
+    return this.installed.map((entry) => entry.loaded.plugin.name);
   }
 
   /**
@@ -95,6 +136,36 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
       if (!plugin.onWorldCreate) continue;
       this.safely(plugin, 'onWorldCreate', () => plugin.onWorldCreate?.(api));
     }
+  }
+
+  /**
+   * The counterpart of `worldCreate`, called once by `closeSession` as the
+   * world stops being loaded — a plugin's chance to drop whatever it holds of
+   * this world (issue #167).
+   *
+   * OVER EVERY INSTALLED PLUGIN, not just the enabled ones: see `installed`.
+   * The view handed over is still live, so a plugin may read the world one
+   * last time; `revokeApis` runs strictly after this returns.
+   */
+  closeWorld(): void {
+    for (const { loaded, api } of this.installed) {
+      const { plugin } = loaded;
+      if (!plugin.onWorldClose) continue;
+      this.safely(plugin, 'onWorldClose', () => plugin.onWorldClose?.(api));
+    }
+  }
+
+  /**
+   * Unbinds every view this host handed out from the World (issue #164), so a
+   * plugin that stashed one at module scope pins a small stub rather than a
+   * whole heightmap. Any later use of one of those views throws — see
+   * createWorldApi.
+   *
+   * Called by `closeSession` AFTER `closeWorld`, and never before: a plugin's
+   * own close hook is allowed to read the world it is losing.
+   */
+  revokeApis(): void {
+    for (const { revoke } of this.installed) revoke();
   }
 
   /**
@@ -375,7 +446,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    * plugin must not brick an existing world.
    */
   restorePersistence(slices: Record<string, unknown>): void {
-    const installed = new Set(this.pluginNames);
+    const installed = new Set(this.installedPluginNames);
     for (const name of Object.keys(slices)) {
       if (!installed.has(name)) {
         logInfo(`snapshot contains data for plugin "${name}", which is not installed — ignored`);
