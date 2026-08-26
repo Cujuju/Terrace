@@ -27,14 +27,9 @@ import {
   loadStructuresBridge,
   registerGrowthModel,
   resetStructuresBridge,
-  setStructuresModuleLoader,
-  structuresBridgeReady,
 } from '../server/structures-bridge.ts';
-import {
-  loadPilgrimsBridge,
-  resetPilgrimsBridge,
-  setPilgrimsModuleLoader,
-} from '../server/pilgrims-bridge.ts';
+import { loadPilgrimsBridge, resetPilgrimsBridge } from '../server/pilgrims-bridge.ts';
+import { worldWithSibling } from '../../../server/test/support/harness.ts';
 
 const WORLD_SIZE = 64;
 const MAX_TIER = 5;
@@ -292,9 +287,9 @@ describe('determinism', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The plugin wiring: what registers where, and what happens when the plugins
-// it talks to are not there. Both bridges are driven through their loader test
-// seams, so no sibling plugin is imported and the whole file still passes with
-// structures and pilgrims deleted.
+// it talks to are not there. Both bridges are driven through a stub world whose
+// sibling lookup answers with a fake module, so no sibling plugin is imported
+// and the whole file still passes with structures and pilgrims deleted.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the plugin', () => {
@@ -303,55 +298,53 @@ describe('the plugin', () => {
     resetPilgrimsBridge();
   });
 
-  it('offers its model on every open and takes it back when the world closes', async () => {
+  it('offers its model on every open and takes it back when the world closes', () => {
     // WHICH RULE A WORLD RUNS IS STRUCTURES' SETTING, not this plugin's env
     // gate any more (per-world plugin settings, 2026-08-25): this plugin
     // registers wherever it runs, and the slot is emptied on close so the next
     // world cannot inherit a rule it never chose.
     const registered: unknown[] = [];
-    setStructuresModuleLoader(async () => ({
+    const world = worldWithSibling('structures', {
       setGrowthModel: (m: unknown) => registered.push(m),
-    }));
+    });
 
-    populousPlugin.onWorldCreate?.(undefined as never);
-    await structuresBridgeReady();
+    populousPlugin.onWorldCreate?.(world);
     expect(registered).toEqual([growthModelForTest()]);
 
-    populousPlugin.onWorldClose?.(undefined as never);
+    populousPlugin.onWorldClose?.(world);
     expect(registered).toEqual([growthModelForTest(), null]);
   });
 
-  it('registers its model with structures, even when structures resolves late', async () => {
+  it('registers its model with a structures that only starts running later', () => {
     const registered: unknown[] = [];
-    setStructuresModuleLoader(async () => ({
-      setGrowthModel: (m: unknown) => registered.push(m),
-    }));
 
-    // Registered BEFORE the bridge resolves — rule 3 of the bridge pattern.
+    // Registered while no structures is running — rule 3 of the bridge pattern.
+    loadStructuresBridge(worldWithSibling('structures', null));
     registerGrowthModel(growthModelForTest());
     expect(registered).toEqual([]);
 
-    await loadStructuresBridge();
-    await structuresBridgeReady();
+    // The reopen that switches structures on replays it.
+    loadStructuresBridge(
+      worldWithSibling('structures', { setGrowthModel: (m: unknown) => registered.push(m) }),
+    );
     expect(registered).toEqual([growthModelForTest()]);
   });
 
-  it('loads with structures absent rather than throwing', async () => {
-    setStructuresModuleLoader(async () => ({}));
+  it('loads with structures absent rather than throwing', () => {
     registerGrowthModel(growthModelForTest());
-    await loadStructuresBridge();
-    await structuresBridgeReady(); // no throw is the assertion
+    loadStructuresBridge(worldWithSibling('structures', {})); // no throw is the assertion
   });
 
-  it('sends a settler out of the house that filled, through pilgrims', async () => {
+  it('sends a settler out of the house that filled, through pilgrims', () => {
     const asked: Array<{ x: number; y: number }> = [];
-    setPilgrimsModuleLoader(async () => ({
-      emitSettlerFrom: (x: number, y: number) => {
-        asked.push({ x, y });
-        return true;
-      },
-    }));
-    await loadPilgrimsBridge();
+    loadPilgrimsBridge(
+      worldWithSibling('pilgrims', {
+        emitSettlerFrom: (x: number, y: number) => {
+          asked.push({ x, y });
+          return true;
+        },
+      }),
+    );
 
     const model = growthModelForTest();
     const ctx = contextExcept([]);
@@ -374,9 +367,8 @@ describe('the plugin', () => {
     expect(live.get(key(10, 10))!.population).toBe(POPULOUS_POPULATION_AFTER_EMIT);
   });
 
-  it('houses fill up and nobody walks out when pilgrims is absent', async () => {
-    setPilgrimsModuleLoader(async () => ({}));
-    await loadPilgrimsBridge();
+  it('houses fill up and nobody walks out when pilgrims is absent', () => {
+    loadPilgrimsBridge(worldWithSibling('pilgrims', {}));
 
     const model = growthModelForTest();
     const ctx = contextExcept([]);

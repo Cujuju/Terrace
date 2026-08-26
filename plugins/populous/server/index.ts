@@ -35,7 +35,7 @@
 // readings of one choice is exactly the drift the env gate used to risk.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { TerracePlugin } from '../../../server/src/plugins/types.ts';
+import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   stepPopulous,
   type PopulousCellRecord,
@@ -98,14 +98,15 @@ const model = {
 export const plugin: TerracePlugin = {
   name: POPULOUS_PLUGIN_NAME,
 
-  onWorldCreate(): void {
-    // Rule 2 of the bridge pattern: kick the loads off, do not await them.
-    // The model is buffered inside the structures bridge and registered the
-    // moment that plugin resolves; structures itself does nothing at all until
-    // then (its board simply does not change), so there is no window in which
-    // a half-configured world runs the wrong rule.
-    void loadStructuresBridge();
-    void loadPilgrimsBridge();
+  onWorldCreate(world: WorldApi): void {
+    // The bridge pattern, host-mediated (structures-bridge.ts): each lookup is
+    // synchronous, so the model reaches structures before this hook returns
+    // when structures is running here at all — there is no window in which a
+    // half-configured world runs the wrong rule. The model stays buffered in
+    // the bridge for the case where it is not, and is registered on the reopen
+    // that switches structures on.
+    loadStructuresBridge(world);
+    loadPilgrimsBridge(world);
     registerGrowthModel(model);
     console.info(POPULOUS_REGISTERED_MESSAGE);
   },

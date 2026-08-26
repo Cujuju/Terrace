@@ -1,6 +1,6 @@
 // populous → structures, via THE CROSS-PLUGIN DEPENDENCY PATTERN
 // (plugins/relics/server/mana-bridge.ts — read its header; this file follows
-// its four rules to the letter: dynamic import, started-not-awaited,
+// its four rules to the letter: ask the host by name, resolve synchronously,
 // buffer-don't-drop, duck-type the module).
 //
 // WHAT THIS PLUGIN NEEDS FROM STRUCTURES: one function. `setGrowthModel(model)`
@@ -16,65 +16,69 @@
 // BUFFER, DON'T DROP (rule 3): the model is registered into a structures module
 // that finishes loading after this plugin's onWorldCreate has already run.
 
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+
 /** The slice of structures this plugin uses — deliberately one function. */
 export interface StructuresGrowthApi {
   setGrowthModel(model: unknown): void;
 }
 
-export type StructuresModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_STRUCTURES_MODULE_LOADER: StructuresModuleLoader = () =>
-  import('../../structures/server/index.ts');
+/**
+ * The name the host knows structures by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196). The host hands back the plugin RUNNING
+ * as `structures` in this session, so a structures that is absent OR disabled for
+ * this world resolves to null; the old dynamic import bound to a module
+ * URL, and therefore answered from the process's module map either way.
+ */
+const STRUCTURES_PLUGIN_NAME = 'structures';
 
 export const STRUCTURES_UNAVAILABLE_WARNING =
   '[populous] structures plugin not available (or too old for the growth-model seam) — nothing to grow';
 
-let loadModule: StructuresModuleLoader = DEFAULT_STRUCTURES_MODULE_LOADER;
 let structuresApi: StructuresGrowthApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
 /** The model this plugin wants registered — rule 3's buffer. */
 let desiredModel: unknown = null;
 
-function asStructuresGrowthApi(module: unknown): StructuresGrowthApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<StructuresGrowthApi>;
-  if (typeof candidate.setGrowthModel !== 'function') return null;
-  return candidate as StructuresGrowthApi;
+function asStructuresGrowthApi(module: SiblingModule | null): StructuresGrowthApi | null {
+  if (module === null) return null;
+  if (typeof module.setGrowthModel !== 'function') return null;
+  return module as unknown as StructuresGrowthApi;
 }
 
-function warnUnavailable(error?: unknown): void {
+function warnUnavailable(): void {
   if (warned) return;
   warned = true;
-  if (error === undefined) console.warn(STRUCTURES_UNAVAILABLE_WARNING);
-  else console.warn(STRUCTURES_UNAVAILABLE_WARNING, error);
+  console.warn(STRUCTURES_UNAVAILABLE_WARNING);
 }
 
-/** Starts (once) the load. Always resolves — absence is an outcome, not an error. */
-export function loadStructuresBridge(): Promise<void> {
-  if (loadPromise !== null) return loadPromise;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      const resolved = asStructuresGrowthApi(module);
-      if (resolved === null) {
-        warnUnavailable();
-        return;
-      }
-      structuresApi = resolved;
-      if (desiredModel !== null) resolved.setGrowthModel(desiredModel);
-    })
-    .catch((error: unknown) => {
-      warnUnavailable(error);
-    });
-
-  return loadPromise;
-}
-
-/** Resolves when the load has settled, whichever way. Test/boot-order seam. */
-export function structuresBridgeReady(): Promise<void> {
-  return loadPromise ?? Promise.resolve();
+/**
+ * Resolves structures through the host, from onWorldCreate.
+ *
+ * SYNCHRONOUS, AND THERE IS NOTHING LEFT TO AWAIT. The old rule 2 (start the
+ * import, do not await it) and the promise it returned existed because module
+ * resolution is asynchronous; the host's lookup is not, and it answers whatever
+ * the load order — so the sibling is either in hand when this returns or is not
+ * running in this world at all.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a structures the operator has just enabled must be
+ * picked up then. The warning still happens at most once.
+ */
+export function loadStructuresBridge(world: WorldApi): void {
+  const resolved = asStructuresGrowthApi(world.sibling(STRUCTURES_PLUGIN_NAME));
+  if (resolved === null) {
+    // CLEARED, not left standing: this runs again on every reopen, and a
+    // sibling that WAS running and is not any more (the operator disabled it)
+    // must stop being reachable through a stale reference here.
+    structuresApi = null;
+    warnUnavailable();
+    return;
+  }
+  structuresApi = resolved;
+  if (desiredModel !== null) resolved.setGrowthModel(desiredModel);
 }
 
 /** Records and forwards the model this plugin wants driving the board. */
@@ -98,16 +102,9 @@ export function clearGrowthModel(): void {
   structuresApi?.setGrowthModel(null);
 }
 
-/** Test seam: swaps the loader. Pass null to restore the real one. */
-export function setStructuresModuleLoader(loader: StructuresModuleLoader | null): void {
-  loadModule = loader ?? DEFAULT_STRUCTURES_MODULE_LOADER;
-}
-
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetStructuresBridge(): void {
-  loadModule = DEFAULT_STRUCTURES_MODULE_LOADER;
   structuresApi = null;
-  loadPromise = null;
   warned = false;
   desiredModel = null;
 }

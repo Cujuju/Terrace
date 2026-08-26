@@ -168,10 +168,12 @@ function boatsBurnedOut(ids: readonly number[]): void {
 export const plugin: TerracePlugin = {
   name: BOATS_PLUGIN_NAME,
 
-  onWorldCreate(): void {
+  onWorldCreate(world: WorldApi): void {
     // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
-    // started, not awaited, buffered and replayed if fire has not resolved yet.
-    loadFireBridge();
+    // the host answers who is running as fire in this session, so a fire that
+    // is absent or disabled here is null rather than a module that answers
+    // anyway. The registration is still buffered and replayed by the bridge.
+    loadFireBridge(world);
     registerBoatsFuel({
       name: BOATS_PLUGIN_NAME,
       entityAt: (x: number, y: number) => {

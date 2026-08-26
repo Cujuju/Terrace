@@ -16,6 +16,8 @@
 // who removed the temples plugin removed the building, not a working pilgrims
 // plugin.
 
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+
 /** Where the temple stands, structurally typed (never imported). */
 export interface BridgedTemple {
   readonly x: number;
@@ -44,56 +46,58 @@ export interface TemplesApi {
   standingTemple(): BridgedTemple | null;
 }
 
-export type TemplesModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_TEMPLES_MODULE_LOADER: TemplesModuleLoader = () =>
-  import('../../temples/server/index.ts');
+/**
+ * The name the host knows temples by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196). The host hands back the plugin RUNNING
+ * as `temples` in this session, so a temples that is absent OR disabled for
+ * this world resolves to null; the old dynamic import bound to a module
+ * URL, and therefore answered from the process's module map either way.
+ */
+const TEMPLES_PLUGIN_NAME = 'temples';
 
 export const TEMPLES_UNAVAILABLE_WARNING =
   '[pilgrims] temples plugin not available — no temple means no settlers';
 
-let loadModule: TemplesModuleLoader = DEFAULT_TEMPLES_MODULE_LOADER;
 let templesApi: TemplesApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
-function asTemplesApi(module: unknown): TemplesApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<TemplesApi>;
-  if (typeof candidate.standingTemple !== 'function') return null;
-  return candidate as TemplesApi;
+function asTemplesApi(module: SiblingModule | null): TemplesApi | null {
+  if (module === null) return null;
+  if (typeof module.standingTemple !== 'function') return null;
+  return module as unknown as TemplesApi;
 }
 
-function warnUnavailable(error?: unknown): void {
+function warnUnavailable(): void {
   if (warned) return;
   warned = true;
-  if (error === undefined) console.warn(TEMPLES_UNAVAILABLE_WARNING);
-  else console.warn(TEMPLES_UNAVAILABLE_WARNING, error);
+  console.warn(TEMPLES_UNAVAILABLE_WARNING);
 }
 
-/** Starts (once) the load. Always resolves — absence is an outcome, not an error. */
-export function loadTemplesBridge(): Promise<void> {
-  if (loadPromise !== null) return loadPromise;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      const resolved = asTemplesApi(module);
-      if (resolved === null) {
-        warnUnavailable();
-        return;
-      }
-      templesApi = resolved;
-    })
-    .catch((error: unknown) => {
-      warnUnavailable(error);
-    });
-
-  return loadPromise;
-}
-
-/** Resolves when the load has settled, whichever way. Test/boot-order seam. */
-export function templesBridgeReady(): Promise<void> {
-  return loadPromise ?? Promise.resolve();
+/**
+ * Resolves temples through the host, from onWorldCreate.
+ *
+ * SYNCHRONOUS, AND THERE IS NOTHING LEFT TO AWAIT. The old rule 2 (start the
+ * import, do not await it) and the promise it returned existed because module
+ * resolution is asynchronous; the host's lookup is not, and it answers whatever
+ * the load order — so the sibling is either in hand when this returns or is not
+ * running in this world at all.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a temples the operator has just enabled must be
+ * picked up then. The warning still happens at most once.
+ */
+export function loadTemplesBridge(world: WorldApi): void {
+  const resolved = asTemplesApi(world.sibling(TEMPLES_PLUGIN_NAME));
+  if (resolved === null) {
+    // CLEARED, not left standing: this runs again on every reopen, and a
+    // sibling that WAS running and is not any more (the operator disabled it)
+    // must stop being reachable through a stale reference here.
+    templesApi = null;
+    warnUnavailable();
+    return;
+  }
+  templesApi = resolved;
 }
 
 /**
@@ -105,15 +109,8 @@ export function bridgedTemple(): BridgedTemple | null {
   return templesApi?.standingTemple() ?? null;
 }
 
-/** Test seam: swaps the loader. Pass null to restore the real one. */
-export function setTemplesModuleLoader(loader: TemplesModuleLoader | null): void {
-  loadModule = loader ?? DEFAULT_TEMPLES_MODULE_LOADER;
-}
-
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetTemplesBridge(): void {
-  loadModule = DEFAULT_TEMPLES_MODULE_LOADER;
   templesApi = null;
-  loadPromise = null;
   warned = false;
 }

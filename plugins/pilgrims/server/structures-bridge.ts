@@ -21,6 +21,8 @@
 // once. A self-hoster who removed the structures plugin removed towns, not a
 // working pilgrims plugin.
 
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+
 /** One standing structure, structurally typed (never imported). */
 export interface BridgedStructureCell {
   readonly x: number;
@@ -62,17 +64,20 @@ export interface StructuresApi {
   canFoundStructure?(world: unknown, x: number, y: number): boolean;
 }
 
-export type StructuresModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_STRUCTURES_MODULE_LOADER: StructuresModuleLoader = () =>
-  import('../../structures/server/index.ts');
+/**
+ * The name the host knows structures by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196). The host hands back the plugin RUNNING
+ * as `structures` in this session, so a structures that is absent OR disabled for
+ * this world resolves to null; the old dynamic import bound to a module
+ * URL, and therefore answered from the process's module map either way.
+ */
+const STRUCTURES_PLUGIN_NAME = 'structures';
 
 export const STRUCTURES_UNAVAILABLE_WARNING =
   '[pilgrims] structures plugin not available — no settlements means no pilgrimages';
 
-let loadModule: StructuresModuleLoader = DEFAULT_STRUCTURES_MODULE_LOADER;
 let structuresApi: StructuresApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
 /**
@@ -81,48 +86,47 @@ let warned = false;
  */
 let desiredBlessedKeys: readonly number[] = [];
 
-function asStructuresApi(module: unknown): StructuresApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<StructuresApi>;
-  if (typeof candidate.standingStructures !== 'function') return null;
-  if (typeof candidate.setBlessedStructureCells !== 'function') return null;
-  return candidate as StructuresApi;
+function asStructuresApi(module: SiblingModule | null): StructuresApi | null {
+  if (module === null) return null;
+  if (typeof module.standingStructures !== 'function') return null;
+  if (typeof module.setBlessedStructureCells !== 'function') return null;
+  return module as unknown as StructuresApi;
 }
 
-function warnUnavailable(error?: unknown): void {
+function warnUnavailable(): void {
   if (warned) return;
   warned = true;
-  if (error === undefined) console.warn(STRUCTURES_UNAVAILABLE_WARNING);
-  else console.warn(STRUCTURES_UNAVAILABLE_WARNING, error);
+  console.warn(STRUCTURES_UNAVAILABLE_WARNING);
 }
 
-/** Starts (once) the load. Always resolves — absence is an outcome, not an error. */
-export function loadStructuresBridge(): Promise<void> {
-  if (loadPromise !== null) return loadPromise;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      const resolved = asStructuresApi(module);
-      if (resolved === null) {
-        warnUnavailable();
-        return;
-      }
-      structuresApi = resolved;
-      resolved.setBlessedStructureCells(desiredBlessedKeys);
-    })
-    .catch((error: unknown) => {
-      warnUnavailable(error);
-    });
-
-  return loadPromise;
+/**
+ * Resolves structures through the host, from onWorldCreate.
+ *
+ * SYNCHRONOUS, AND THERE IS NOTHING LEFT TO AWAIT. The old rule 2 (start the
+ * import, do not await it) and the promise it returned existed because module
+ * resolution is asynchronous; the host's lookup is not, and it answers whatever
+ * the load order — so the sibling is either in hand when this returns or is not
+ * running in this world at all.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a structures the operator has just enabled must be
+ * picked up then. The warning still happens at most once.
+ */
+export function loadStructuresBridge(world: WorldApi): void {
+  const resolved = asStructuresApi(world.sibling(STRUCTURES_PLUGIN_NAME));
+  if (resolved === null) {
+    // CLEARED, not left standing: this runs again on every reopen, and a
+    // sibling that WAS running and is not any more (the operator disabled it)
+    // must stop being reachable through a stale reference here.
+    structuresApi = null;
+    warnUnavailable();
+    return;
+  }
+  structuresApi = resolved;
+  resolved.setBlessedStructureCells(desiredBlessedKeys);
 }
 
-/** Resolves when the load has settled, whichever way. Test/boot-order seam. */
-export function structuresBridgeReady(): Promise<void> {
-  return loadPromise ?? Promise.resolve();
-}
-
-/** The standing towns, or an empty world while structures is absent/loading. */
+/** The standing towns, or an empty world when structures is not running here. */
 export function bridgedStructures(): BridgedStructureCell[] {
   return structuresApi?.standingStructures() ?? [];
 }
@@ -165,16 +169,9 @@ export function applyBlessedCells(keys: readonly number[]): void {
   structuresApi?.setBlessedStructureCells(keys);
 }
 
-/** Test seam: swaps the loader. Pass null to restore the real one. */
-export function setStructuresModuleLoader(loader: StructuresModuleLoader | null): void {
-  loadModule = loader ?? DEFAULT_STRUCTURES_MODULE_LOADER;
-}
-
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetStructuresBridge(): void {
-  loadModule = DEFAULT_STRUCTURES_MODULE_LOADER;
   structuresApi = null;
-  loadPromise = null;
   warned = false;
   desiredBlessedKeys = [];
 }

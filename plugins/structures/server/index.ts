@@ -786,11 +786,11 @@ export const plugin: TerracePlugin = {
     restoredLastSeedDay = -1;
 
     // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
-    // started, not awaited. The registration is buffered and replayed if fire
-    // has not resolved yet, so the town is flammable from the moment fire
-    // exists rather than from whenever the import happens to land.
+    // resolved through the host, so the town is flammable exactly when fire is
+    // running in this world. The registration is still buffered and replayed
+    // by the bridge.
     fuelWorld = world;
-    loadFireBridge();
+    loadFireBridge(world);
     registerStructuresFuel({
       name: STRUCTURES_PLUGIN_NAME,
       fuelAt: structuresFuelAt,

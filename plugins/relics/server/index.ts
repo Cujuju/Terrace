@@ -645,11 +645,12 @@ export const plugin: TerracePlugin = {
   name: 'relics',
 
   onWorldCreate(world: WorldApi): void {
-    // CROSS-PLUGIN DEPENDENCY (see mana-bridge.ts for the full pattern). Kicked
-    // off, deliberately not awaited: every plugin hook is synchronous, and a
-    // perk granted before the import settles is buffered and replayed by the
-    // bridge. A missing mana plugin resolves this promise just the same.
-    void loadManaBridge();
+    // CROSS-PLUGIN DEPENDENCY (see mana-bridge.ts for the full pattern). One
+    // synchronous question to the host: is a mana running in this world? A perk
+    // granted while none is stays buffered in the bridge and is replayed to the
+    // mana of a later session. A missing mana plugin and one the operator
+    // disabled here are the same answer.
+    loadManaBridge(world);
 
     // Persistence has already been restored by the host at this point
     // (server/src/index.ts: restorePersistence, then worldCreate), so this both

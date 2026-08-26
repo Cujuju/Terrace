@@ -13,41 +13,37 @@
 // means a plugin that catches fire says so itself, and `fire` never changes.
 //
 // RULE 3 ("buffer, don't drop") THEREFORE LANDS HERE, and it is load-bearing:
-// the registration is desired state. If the dynamic import has not resolved
-// when flora's world is created — the ordinary case, since the import is
-// started and not awaited — the source is held and replayed the moment the
-// module arrives. Without that, whether the forest could burn would depend on
-// module-resolution timing.
+// the registration is desired state. It is recorded whether or not fire is in
+// hand and replayed the moment one is — which covers a registration made
+// before this bridge resolves, and a fire the operator only switches on for a
+// later session.
 //
 // DEGRADED BEHAVIOUR when fire is absent: trees do not burn. One warning is
 // logged, once. A self-hoster who deleted the fire plugin deleted fire, not a
 // working forest.
+
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of fire this plugin uses — one function, deliberately. */
 export interface FireFuelApi {
   registerFuel(source: unknown): void;
 }
 
-/** Loads the fire module. Swappable so tests can exercise the absent path. */
-export type FireModuleLoader = () => Promise<unknown>;
-
 /**
- * The real loader. Relative to this file, resolving to the sibling plugin
- * folder — a bare dynamic import rather than a package name because plugins
- * are folders on disk in v1 (see mana-bridge.ts's header).
+ * The name the host knows fire by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH, and that is the whole of this phase: the host hands back
+ * the plugin RUNNING as `fire` in this session, so a fire that is disabled
+ * here (or absent) resolves to null instead of answering from the module map
+ * (issue #196).
  */
-const DEFAULT_FIRE_MODULE_LOADER: FireModuleLoader = () => import('../../fire/server/index.ts');
+const FIRE_PLUGIN_NAME = 'fire';
 
 export const FIRE_UNAVAILABLE_WARNING =
   '[flora] fire plugin not available — trees and crops will not burn';
 
-let loadModule: FireModuleLoader = DEFAULT_FIRE_MODULE_LOADER;
-
-/** The resolved API, or null while loading / after a failed load. */
+/** The resolved API, or null when fire is not running in this session. */
 let fireApi: FireFuelApi | null = null;
-
-/** In-flight (or settled) load. Non-null once loadFireBridge has been called. */
-let loadPromise: Promise<void> | null = null;
 
 /** True once the "fire is missing" warning has been emitted. */
 let warned = false;
@@ -60,12 +56,11 @@ let warned = false;
  */
 let pendingSource: unknown = null;
 
-/** Duck-types a loaded module into the API we need (rule 4). */
-function asFireApi(module: unknown): FireFuelApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<FireFuelApi>;
-  if (typeof candidate.registerFuel !== 'function') return null;
-  return candidate as FireFuelApi;
+/** Duck-types the sibling's module namespace into the API we need (rule 4). */
+function asFireApi(module: SiblingModule | null): FireFuelApi | null {
+  if (module === null) return null;
+  if (typeof module.registerFuel !== 'function') return null;
+  return module as unknown as FireFuelApi;
 }
 
 function warnOnce(): void {
@@ -75,25 +70,26 @@ function warnOnce(): void {
 }
 
 /**
- * Starts the load (rule 2: called from onWorldCreate, NOT awaited) and replays
- * whatever registration is pending once it settles.
+ * Resolves fire through the host, from onWorldCreate.
+ *
+ * NOTHING IS IN FLIGHT ANY MORE. The old rule 2 (start the import, do not
+ * await it) existed because module resolution is asynchronous; the host's
+ * lookup is not, and answers whatever the load order, so the sibling is
+ * either in hand when this returns or is not running at all. Whatever
+ * registration is pending is replayed here.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a fire the operator has just enabled for this world
+ * must be picked up then. `warnOnce` keeps a permanently absent fire to one
+ * line however often that happens.
  */
-export function loadFireBridge(): void {
-  if (loadPromise !== null) return;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      fireApi = asFireApi(module);
-      if (fireApi === null) {
-        warnOnce();
-        return;
-      }
-      if (pendingSource !== null) fireApi.registerFuel(pendingSource);
-    })
-    .catch(() => {
-      fireApi = null;
-      warnOnce();
-    });
+export function loadFireBridge(world: WorldApi): void {
+  fireApi = asFireApi(world.sibling(FIRE_PLUGIN_NAME));
+  if (fireApi === null) {
+    warnOnce();
+    return;
+  }
+  if (pendingSource !== null) fireApi.registerFuel(pendingSource);
 }
 
 /**
@@ -105,11 +101,9 @@ export function registerFloraFuel(source: unknown): void {
   if (fireApi !== null) fireApi.registerFuel(source);
 }
 
-/** Test seam: forgets the load, the buffer and the warning. */
-export function resetFireBridge(loader: FireModuleLoader = DEFAULT_FIRE_MODULE_LOADER): void {
-  loadModule = loader;
+/** Test seam: forgets the resolved sibling, the buffer and the warning. */
+export function resetFireBridge(): void {
   fireApi = null;
-  loadPromise = null;
   warned = false;
   pendingSource = null;
 }

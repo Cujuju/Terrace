@@ -14,10 +14,13 @@
 //   and there never will be; `fire` asking weather for it adds nothing to
 //   weather and costs one file here.
 //
-// DEGRADED BEHAVIOUR when weather is absent (or too old to export the wind):
+// DEGRADED BEHAVIOUR when weather is absent, disabled here, or too old to
+// export the wind:
 // the world is CALM — spread is isotropic, exactly as it would be on a windless
 // day. One warning is logged, once. That is the right failure mode: a
 // self-hoster who removed the weather plugin removed weather, not fire.
+
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /**
  * The slice of weather this plugin uses: the wind that carries a fire, and the
@@ -36,12 +39,15 @@ export interface WeatherWindApi {
   precipitationAt?(x: number, y: number): number;
 }
 
-/** Loads the weather module. Swappable so tests can exercise the absent path. */
-export type WeatherModuleLoader = () => Promise<unknown>;
-
-/** Relative to this file, resolving to the sibling plugin folder (rule 1). */
-const DEFAULT_WEATHER_MODULE_LOADER: WeatherModuleLoader = () =>
-  import('../../weather/server/index.ts');
+/**
+ * The name the host knows weather by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196): the host hands back the plugin RUNNING as
+ * `weather` in this session, so a weather that is absent OR disabled for this
+ * world resolves to null, where the old import answered from the module map
+ * either way.
+ */
+const WEATHER_PLUGIN_NAME = 'weather';
 
 export const WEATHER_UNAVAILABLE_WARNING =
   '[fire] weather plugin not available — fire will spread as if the air were still';
@@ -54,17 +60,14 @@ export const WEATHER_UNAVAILABLE_WARNING =
  */
 export const CALM: { readonly heading: number; readonly speed: number } = { heading: 0, speed: 0 };
 
-let loadModule: WeatherModuleLoader = DEFAULT_WEATHER_MODULE_LOADER;
 let weatherApi: WeatherWindApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
-/** Duck-types a loaded module into the API we need (rule 4). */
-function asWeatherApi(module: unknown): WeatherWindApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<WeatherWindApi>;
-  if (typeof candidate.currentWind !== 'function') return null;
-  return candidate as WeatherWindApi;
+/** Duck-types the sibling's module namespace into the API we need (rule 4). */
+function asWeatherApi(module: SiblingModule | null): WeatherWindApi | null {
+  if (module === null) return null;
+  if (typeof module.currentWind !== 'function') return null;
+  return module as unknown as WeatherWindApi;
 }
 
 function warnOnce(): void {
@@ -73,24 +76,22 @@ function warnOnce(): void {
   console.warn(WEATHER_UNAVAILABLE_WARNING);
 }
 
-/** Starts the load (rule 2: from onWorldCreate, NOT awaited). */
-export function loadWeatherBridge(): void {
-  if (loadPromise !== null) return;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      weatherApi = asWeatherApi(module);
-      if (weatherApi === null) warnOnce();
-    })
-    .catch(() => {
-      weatherApi = null;
-      warnOnce();
-    });
+/**
+ * Resolves weather through the host, from onWorldCreate.
+ *
+ * NOTHING IS IN FLIGHT ANY MORE: the old rule 2 (start the import, do not await
+ * it) existed because module resolution is asynchronous, and the host's lookup
+ * is not. Re-resolved on every call, so a weather the operator has just enabled
+ * is picked up on the reopen; `warnOnce` keeps an absent one to a single line.
+ */
+export function loadWeatherBridge(world: WorldApi): void {
+  weatherApi = asWeatherApi(world.sibling(WEATHER_PLUGIN_NAME));
+  if (weatherApi === null) warnOnce();
 }
 
 /**
- * The wind right now, or CALM while the bridge is loading or absent. Callers
- * never branch on "is it loaded yet".
+ * The wind right now, or CALM when no weather is running here. Callers
+ * never branch on whether there is one.
  *
  * Read fresh on every spread tick rather than cached: the wind veers
  * continuously (weather/server/systems.ts's bounded random walk), and a fire
@@ -108,9 +109,9 @@ export function currentWind(): { readonly heading: number; readonly speed: numbe
 }
 
 /**
- * How wet cell (x, y) is, in [0, 1]. Zero — bone dry — while the bridge is
- * loading, when weather is absent, and when the installed weather is too old to
- * answer. Callers never branch on any of that.
+ * How wet cell (x, y) is, in [0, 1]. Zero — bone dry — when no weather is
+ * running here, and when the installed weather is too old to answer. Callers
+ * never branch on any of that.
  */
 export function precipitationAt(x: number, y: number): number {
   if (weatherApi === null || weatherApi.precipitationAt === undefined) return 0;
@@ -122,10 +123,8 @@ export function precipitationAt(x: number, y: number): number {
   return Math.min(1, Math.max(0, wetness));
 }
 
-/** Test seam: forgets the load and the warning. */
-export function resetWeatherBridge(loader: WeatherModuleLoader = DEFAULT_WEATHER_MODULE_LOADER): void {
-  loadModule = loader;
+/** Test seam: forgets the resolved sibling and the warning. */
+export function resetWeatherBridge(): void {
   weatherApi = null;
-  loadPromise = null;
   warned = false;
 }

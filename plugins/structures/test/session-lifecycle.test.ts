@@ -23,13 +23,13 @@ import {
   RecordingSink,
   asLoadedPlugin,
   grantTokenEveryUnlockedChunk,
+  worldWithSibling,
 } from '../../../server/test/support/harness.ts';
 import type { Player } from '../../../server/src/player.ts';
 import {
   bridgedStructures,
   loadStructuresBridge,
   resetStructuresBridge,
-  setStructuresModuleLoader,
 } from '../../flora/server/structures-bridge.ts';
 import { STRUCTURES_CHANGES_MESSAGE, STRUCTURES_PLUGIN_NAME, structureKey } from '../protocol.ts';
 import {
@@ -158,7 +158,7 @@ describe('a closed world leaves nothing behind in this plugin', () => {
     setStructuresModel(STRUCTURES_MODEL_LIFE);
   });
 
-  it('answers a sibling’s bridge with an empty board once the world it was disabled in reopens', async () => {
+  it('answers a sibling’s bridge with an empty board once the world it was disabled in reopens', () => {
     const world = worldWithTerrain(WORLD_SIZE, OPEN_TERRAIN);
 
     const running = openOn(world, true, sliceWithOneHouse());
@@ -172,8 +172,7 @@ describe('a closed world leaves nothing behind in this plugin', () => {
 
     // flora's real bridge, pointed at this module rather than re-importing it,
     // so the identity it duck-types is the very module the host just closed.
-    setStructuresModuleLoader(async () => structuresExports);
-    await loadStructuresBridge();
+    loadStructuresBridge(worldWithSibling(STRUCTURES_PLUGIN_NAME, structuresExports));
     expect(bridgedStructures()).toEqual([]);
 
     closeOn(withoutStructures);

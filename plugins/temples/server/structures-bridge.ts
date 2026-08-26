@@ -1,7 +1,7 @@
 // temples → structures, via THE CROSS-PLUGIN DEPENDENCY PATTERN
 // (plugins/relics/server/mana-bridge.ts — read its header; this file follows
-// its four rules: dynamic import, started-not-awaited, buffer-don't-drop,
-// duck-type the module).
+// its four rules: ask the host by name, resolve synchronously,
+// buffer-don't-drop, duck-type the module).
 //
 // WHAT THIS PLUGIN NEEDS FROM STRUCTURES:
 //   * setReservedStructureCells(cells) — "do not grow a house on this ground"
@@ -18,74 +18,78 @@
 //
 // BUFFER, DON'T DROP (rule 3), and here it is load-bearing rather than
 // ceremonial: a world restored with a temple already standing asserts its
-// claim during onWorldCreate, which is very likely BEFORE the dynamic import
-// of structures has resolved. The desired claim is remembered and replayed
-// into the module the moment it lands, so the ground under a restored temple
-// is protected from the first generation rather than from whenever the import
-// happened to finish.
+// claim during onWorldCreate, which may run before this bridge has been
+// resolved — and, on a world where structures is switched on later, before
+// there is any structures to claim ground with. The desired claim is
+// remembered and replayed the moment one is in hand, so the ground under a
+// restored temple is protected from the first generation.
 //
 // DEGRADED BEHAVIOUR when structures is absent: nothing to reserve, because
 // there are no settlements to keep off the ground. One warning, once.
+
+import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of structures this plugin uses — one function. */
 export interface StructuresReservationApi {
   setReservedStructureCells(cells: readonly number[]): void;
 }
 
-export type StructuresModuleLoader = () => Promise<unknown>;
-
-const DEFAULT_STRUCTURES_MODULE_LOADER: StructuresModuleLoader = () =>
-  import('../../structures/server/index.ts');
+/**
+ * The name the host knows structures by — the key `WorldApi.sibling` answers to.
+ *
+ * A NAME, NOT A PATH (issue #196). The host hands back the plugin RUNNING
+ * as `structures` in this session, so a structures that is absent OR disabled for
+ * this world resolves to null; the old dynamic import bound to a module
+ * URL, and therefore answered from the process's module map either way.
+ */
+const STRUCTURES_PLUGIN_NAME = 'structures';
 
 export const STRUCTURES_UNAVAILABLE_WARNING =
   '[temples] structures plugin not available — no settlements means nothing to keep off the temple';
 
-let loadModule: StructuresModuleLoader = DEFAULT_STRUCTURES_MODULE_LOADER;
 let structuresApi: StructuresReservationApi | null = null;
-let loadPromise: Promise<void> | null = null;
 let warned = false;
 
 /** The claim as last asserted — rule 3's buffer. Empty means "nothing claimed". */
 let desiredReservedCells: readonly number[] = [];
 
-function asStructuresApi(module: unknown): StructuresReservationApi | null {
-  if (typeof module !== 'object' || module === null) return null;
-  const candidate = module as Partial<StructuresReservationApi>;
-  if (typeof candidate.setReservedStructureCells !== 'function') return null;
-  return candidate as StructuresReservationApi;
+function asStructuresApi(module: SiblingModule | null): StructuresReservationApi | null {
+  if (module === null) return null;
+  if (typeof module.setReservedStructureCells !== 'function') return null;
+  return module as unknown as StructuresReservationApi;
 }
 
-function warnUnavailable(error?: unknown): void {
+function warnUnavailable(): void {
   if (warned) return;
   warned = true;
-  if (error === undefined) console.warn(STRUCTURES_UNAVAILABLE_WARNING);
-  else console.warn(STRUCTURES_UNAVAILABLE_WARNING, error);
+  console.warn(STRUCTURES_UNAVAILABLE_WARNING);
 }
 
-/** Starts (once) the load. Always resolves — absence is an outcome, not an error. */
-export function loadStructuresBridge(): Promise<void> {
-  if (loadPromise !== null) return loadPromise;
-
-  loadPromise = loadModule()
-    .then((module) => {
-      const resolved = asStructuresApi(module);
-      if (resolved === null) {
-        warnUnavailable();
-        return;
-      }
-      structuresApi = resolved;
-      resolved.setReservedStructureCells(desiredReservedCells);
-    })
-    .catch((error: unknown) => {
-      warnUnavailable(error);
-    });
-
-  return loadPromise;
-}
-
-/** Resolves when the load has settled, whichever way. Test/boot-order seam. */
-export function structuresBridgeReady(): Promise<void> {
-  return loadPromise ?? Promise.resolve();
+/**
+ * Resolves structures through the host, from onWorldCreate.
+ *
+ * SYNCHRONOUS, AND THERE IS NOTHING LEFT TO AWAIT. The old rule 2 (start the
+ * import, do not await it) and the promise it returned existed because module
+ * resolution is asynchronous; the host's lookup is not, and it answers whatever
+ * the load order — so the sibling is either in hand when this returns or is not
+ * running in this world at all.
+ *
+ * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
+ * and on a rollback, and a structures the operator has just enabled must be
+ * picked up then. The warning still happens at most once.
+ */
+export function loadStructuresBridge(world: WorldApi): void {
+  const resolved = asStructuresApi(world.sibling(STRUCTURES_PLUGIN_NAME));
+  if (resolved === null) {
+    // CLEARED, not left standing: this runs again on every reopen, and a
+    // sibling that WAS running and is not any more (the operator disabled it)
+    // must stop being reachable through a stale reference here.
+    structuresApi = null;
+    warnUnavailable();
+    return;
+  }
+  structuresApi = resolved;
+  resolved.setReservedStructureCells(desiredReservedCells);
 }
 
 /**
@@ -97,16 +101,9 @@ export function reserveStructureGround(cells: readonly number[]): void {
   structuresApi?.setReservedStructureCells(cells);
 }
 
-/** Test seam: swaps the loader. Pass null to restore the real one. */
-export function setStructuresModuleLoader(loader: StructuresModuleLoader | null): void {
-  loadModule = loader ?? DEFAULT_STRUCTURES_MODULE_LOADER;
-}
-
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetStructuresBridge(): void {
-  loadModule = DEFAULT_STRUCTURES_MODULE_LOADER;
   structuresApi = null;
-  loadPromise = null;
   warned = false;
   desiredReservedCells = [];
 }
