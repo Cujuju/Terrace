@@ -127,7 +127,7 @@ async function shoot(ws, urlBase, name, query, outDir) {
         'Runtime.evaluate',
         {
           expression:
-            'window.__previewReady === true ? {calls: window.__previewDrawCalls, columns: window.__previewSmokeColumns} : null',
+            'window.__previewReady === true ? {calls: window.__previewDrawCalls, columns: window.__previewSmokeColumns, cameraDistance: window.__previewCameraDistance} : null',
           returnByValue: true,
         },
         sessionId,
@@ -149,7 +149,13 @@ async function shoot(ws, urlBase, name, query, outDir) {
   const path = join(outDir, `${name}.png`);
   writeFileSync(path, Buffer.from(shot.data, 'base64'));
   await rpc(ws, 'Target.closeTarget', { targetId }).catch(() => {});
-  console.log(`${path}  drawCalls=${stats.calls}  smokeColumns=${stats.columns}  ${url}`);
+  // The camera distance is reported in WORLD UNITS because smoke's strength is
+  // a function of exactly that, and ?dist is a multiplier of a fitted distance
+  // nobody can read off a picture.
+  console.log(
+    `${path}  drawCalls=${stats.calls}  smokeColumns=${stats.columns}` +
+      `  cameraDistance=${stats.cameraDistance?.toFixed(1)}  ${url}`,
+  );
 }
 
 const argv = process.argv.slice(2);
