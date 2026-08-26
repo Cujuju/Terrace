@@ -101,7 +101,15 @@ import type {
 import { WILDLIFE_ENTITIES_MESSAGE, WILDLIFE_PLUGIN_NAME } from '../protocol.ts';
 import { WILDLIFE_POPULATION_CAP, type HabitatWorld } from './census.ts';
 import { MAX_BIRDS_ALOFT, advanceFlocks, birdStates, resetFlocks } from './flocks.ts';
-import { FLEE_DURATION_SECONDS, advanceMovement, startleNear } from './movement.ts';
+import {
+  FLEE_DURATION_SECONDS,
+  FLEE_SPEED_MULTIPLIER,
+  advanceMovement,
+  panicIndividuals,
+  startleNear,
+} from './movement.ts';
+import { SPECIES_PROFILES } from './species.ts';
+import { FIRE_IGNITED_EVENT_NAME, parseIgnitedPositions } from './fire-event.ts';
 import { WILDLIFE_SLICE_VERSION, loadPopulation, savePopulation } from './persistence.ts';
 import {
   advancePopulation,
@@ -144,6 +152,40 @@ export const BROADCAST_ENTITY_CEILING = WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOF
  * suspiciously exact geometric boundary at the edge of the diff.
  */
 export const FLEE_RADIUS_CELLS = MAX_BRUSH_RADIUS * 3;
+
+/**
+ * How far a NEW FLAME is felt, in cells from where it appeared.
+ *
+ * DELIBERATELY NOT `FLEE_RADIUS_CELLS` ABOVE, which is a fact about a brush: it
+ * is three times the sculpt tool's reach because that is roughly how far the
+ * noise and shadow of somebody reshaping the ground carries. A wildfire is not
+ * a sculpt, and sizing an animal's reaction to fire by the width of a tool the
+ * fire has nothing to do with would be a coincidence pretending to be a reason.
+ *
+ * WHAT THIS IS INSTEAD: one panic burst. A startled creature runs at
+ * FLEE_SPEED_MULTIPLIER for FLEE_DURATION_SECONDS and then calms, so the
+ * distance it covers in a single flight is the one distance the reaction
+ * actually has to work with. Setting the alarm to exactly that gives the
+ * invariant worth having — EVERY ANIMAL THE ALARM REACHES CAN PUT THE WHOLE
+ * ALARM RADIUS BEHIND IT BEFORE IT CALMS DOWN. A wider alarm would panic
+ * animals that could not clear it, which reads as a herd sprinting for no
+ * visible reason and stopping still inside the danger; a narrower one would
+ * leave animals standing calmly within a run of the flames.
+ *
+ * Measured on the GRAZER, the slowest thing that walks on the ground fire burns
+ * (fish flee three times as far, and are not going to be near a fire in the
+ * first place), so the invariant holds for every land animal rather than for
+ * the average one: 6.4 cells/s × 3 × 2.5 s = 48 cells, twelve world units.
+ *
+ * It lands on the same 48 cells FLEE_RADIUS_CELLS does. That is an arithmetic
+ * coincidence of two unrelated derivations, and writing this as that constant
+ * would tie a fire's reach to the brush's — so the day the brush grows, the
+ * animals would start noticing fires further off for no reason anybody could
+ * name.
+ */
+export const FIRE_STARTLE_RADIUS_CELLS = Math.round(
+  SPECIES_PROFILES.grazer.cruiseSpeedCellsPerSecond * FLEE_SPEED_MULTIPLIER * FLEE_DURATION_SECONDS,
+);
 
 /** Ticks since boot, for the broadcast cadence. */
 let tickCount = 0;
@@ -299,6 +341,57 @@ function wildlifeBurnedOut(ids: readonly number[]): void {
 }
 
 /**
+ * These just caught fire — the OWNER'S half of the reaction to fire, and the
+ * counterpart of `reactToFire` below.
+ *
+ * TWO HOOKS, AND BOTH ARE NEEDED, because they answer different questions. The
+ * `fire:ignited` world event says something SOMEWHERE caught and is how a
+ * bystander learns to run; this callback says something OF THIS PLUGIN'S caught
+ * and is how the creature itself learns it is alight. Trying to serve the
+ * second from the first would mean matching an event position back against this
+ * plugin's own animals and guessing which of them the fire meant — which is the
+ * question fire has already answered, exactly, by calling this.
+ *
+ * The panic lasts the whole burn (movement.ts's `panicIndividuals`), so a
+ * burning grazer bolts for as long as it is alive rather than calming down a
+ * third of the way through its death.
+ *
+ * AND IT SPREADS THE FIRE, which is the point and not a side effect (owner,
+ * 2026-08-26). A panicking animal at three times cruise speed sets light to
+ * every cell it crosses (plugins/fire/server/spread.ts's
+ * SELF_AND_NEIGHBOUR_OFFSETS), which is the drama the balance question deferred
+ * on 2026-08-24 was about. It is settled: nothing here suppresses it, slows it
+ * or shortens it.
+ */
+function wildlifeIgnited(ids: readonly number[]): void {
+  panicIndividuals(ids, WILDLIFE_BURN_SECONDS);
+}
+
+/**
+ * THE REACTIVE PATH, FIRE (issue #184): something, somewhere, caught — startle
+ * whatever is standing near it.
+ *
+ * BY NAME, NEVER BY IMPORT (server/src/plugins/types.ts's emitEvent doc, and
+ * ./fire-event.ts's header): fire's plugin name is the whole of the coupling,
+ * exactly as a wire message namespace is, and a world with no fire plugin
+ * simply never sees this event.
+ *
+ * EVERY IGNITION IN THE BATCH IS ITS OWN ALARM rather than one alarm at the
+ * batch's centroid — the opposite of `reactToTerrain` above, deliberately. A
+ * sculpt's diff is one connected blob and its mean is inside it; a tick's
+ * ignitions are not one thing at all (a spreading front's far edge, a bolt
+ * across the valley, an animal alight somewhere else entirely), and their mean
+ * can easily be a place where nothing is burning. So each is applied in turn,
+ * in the order fire listed them, which is fire's own fixed roll order.
+ */
+function reactToFire(payload: unknown): void {
+  const ignited = parseIgnitedPositions(payload);
+  if (ignited === null) return;
+
+  for (const at of ignited) startleNear(at.x, at.y, FIRE_STARTLE_RADIUS_CELLS);
+}
+
+/**
  * The version a stored blob SAYS it was written under, or undefined when it
  * says nothing.
  *
@@ -370,6 +463,7 @@ export const plugin: TerracePlugin = {
         }
       },
       onBurnedOut: wildlifeBurnedOut,
+      onIgnited: wildlifeIgnited,
       // A creature's id survives a restore: ./persistence.ts saves the
       // population AND the id counter (nextEntityIdValue), so the animal that
       // was on fire is the animal that comes back on fire.
@@ -383,6 +477,11 @@ export const plugin: TerracePlugin = {
 
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     reactToTerrain(world, diff);
+  },
+
+  onWorldEvent(_world: WorldApi, event: string, payload: unknown): void {
+    if (event !== FIRE_IGNITED_EVENT_NAME) return;
+    reactToFire(payload);
   },
 
   persistence,
