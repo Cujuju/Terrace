@@ -834,7 +834,16 @@ export function startleNear(centerX: number, centerY: number, radius: number): n
     if (dx * dx + dy * dy > radiusSquared) continue;
 
     if (dx !== 0 || dy !== 0) entity.heading = Math.atan2(dy, dx);
-    entity.fleeSecondsRemaining = FLEE_DURATION_SECONDS;
+    // NEVER SHORTENS AN EXISTING PANIC, on `panicIndividuals`' rule below and
+    // for a failure that was MEASURED, not imagined (in-world, 2026-08-26: a
+    // torched grazer bolted for 2.5 s of its 8 s burn and then grazed the rest
+    // of its death away at cruise speed). A burning individual is at distance
+    // ZERO from the `fire:ignited` position its own ignition announces, so the
+    // bystander startle always reaches it — a plain assignment here cut the
+    // burn-long panic `panicIndividuals` had just set back down to the sculpt
+    // burst. `fleeSecondsRemaining` has two writers and both must refuse to
+    // shorten, or the shorter one silently wins whenever they coincide.
+    entity.fleeSecondsRemaining = Math.max(entity.fleeSecondsRemaining, FLEE_DURATION_SECONDS);
     startled++;
   }
   return startled;
