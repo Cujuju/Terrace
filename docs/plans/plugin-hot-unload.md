@@ -52,6 +52,12 @@ Short answer:
   Nothing reads the plugin's `package.json` — `plugins/structures/package.json`
   says `"version": "0.1.0"` and every plugin says the same; no version reaches
   the process.
+- **The installed set was captured for the life of the process. FIXED
+  2026-08-26 (issue #198, Phase 4 step 16).** It is now an `InstalledPlugins`
+  object (`server/src/plugins/installed.ts`) whose slots can be replaced in
+  load order, asked afresh every time a session is built — which is what makes
+  a reload reach the next world at all. The three captures below were the
+  reason it could not.
 - The `LoadedPlugin[]` is captured for the life of the process in three places:
   `WorldManager.deps.plugins` (`server/src/index.ts:131-136`,
   `world-manager.ts:114`), `bindRoomContext({ pluginMessageTypes:
@@ -1130,13 +1136,35 @@ readiness DESIGN §3.5)**
     pre-fix build disconnected the client with Colyseus's unregistered-type
     close (4002) instead.
 
-**Phase 4 — only on owner request: Option B proper**
+**Phase 4 — Option B proper (owner said proceed, 2026-08-26)**
 
-16. Generation-tagged loader hook for `pluginsDir`; `WorldManager` installed
-    set becomes replaceable; `worldPluginReload` action with rollback-to-old
-    on import/worldCreate/`persistence.load`/probe-tick failure; client
-    reloads on a per-plugin stamp change; leak documented with the per-reload
-    number measured on the rig.
+16. DONE 2026-08-26 (issue #198). The resolve hook is STATELESS — the
+    generation and the plugin's own real root travel in the URL
+    (`plugins/reload-hooks.ts`), so it can be registered lazily at the first
+    reload instead of before every plugin import, and it re-imports the
+    plugin's subtree without dragging core (which several plugins import by
+    relative path) in with it. The installed set became an object
+    (`plugins/installed.ts`) whose slots are replaceable in load order;
+    `WorldManager.reloadPlugin` re-imports, reopens the live world over the new
+    module and takes one probe tick, and rolls back to the old `LoadedPlugin`
+    on failure at any of import / restore+`onWorldCreate` /
+    `persistence.load` / the probe tick. Two of those failures are throws the
+    host swallows, so `PluginHost` now counts per-plugin faults. The stamp
+    gains a `-reload.<n>` marker and the build identity is rebound BEFORE the
+    reopen, so the join snapshot that reopen sends carries the new identity and
+    the client's existing one-shot reload fires.
+
+    Verified on an isolated rig (port 2604, own plugins dir, `--expose-gc`):
+    editing the SECOND file of a two-file plugin and pressing reload changed
+    its answer `v1` → `v2` with no restart and moved the build identity; a
+    build that throws at module scope was refused `reloadFailed` and left the
+    old module answering. LEAK, measured over 20 reloads of `structures` (the
+    largest plugin, symlinked into the rig, heap after two forced GCs):
+    **≈0.66 MB heapUsed and ≈3.3 MB RSS per reload**; a two-file toy plugin
+    cost 17–33 KB per reload. Recorded in DESIGN as the known residual.
+
+    Contract test: `server/test/plugin-reload.test.ts` — a real plugin
+    directory, imported for real, with one case per failing step.
 
 ---
 
