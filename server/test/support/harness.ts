@@ -74,7 +74,14 @@ export function worldWithUnlockedChunks(
 
 /** Wraps a plugin object as if discovery had loaded it from plugins/<name>. */
 export function asLoadedPlugin(plugin: TerracePlugin): LoadedPlugin {
-  return { plugin, directory: plugin.name, entryPath: `<test>/${plugin.name}/server/index.ts` };
+  return {
+    plugin,
+    directory: plugin.name,
+    entryPath: `<test>/${plugin.name}/server/index.ts`,
+    // A fixed stamp: a test's plugin has no directory on disk to derive one
+    // from, and a stable value keeps a listing assertion from depending on git.
+    version: '0.0.0+test',
+  };
 }
 
 /**

@@ -968,6 +968,18 @@ button.world-header {
   border-color: var(--plugin-off-border);
 }
 
+/* The build stamp beside a toggle (WorldManager.tsx). It answers "is the code
+   I just edited live?" and is never something to act on, so it is dimmed and
+   set smaller than the plugin name it trails — the on/off colour must stay the
+   thing the eye lands on. Monospace because the tail is a hash and a hash is
+   read character by character. */
+.plugin-version {
+  margin-left: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75em;
+  opacity: 0.65;
+}
+
 /* A declared plugin setting (WorldManager.tsx): its label and its select on
    one line, so a plugin's knob reads as belonging to the toggle row above it
    rather than as another action of its own. The label carries the plugin and

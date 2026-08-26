@@ -166,6 +166,7 @@ export class WorldAdminService {
       installed: [...manager.installedPluginNames],
       disabled: [...disabled],
       settings,
+      versions: manager.installedPluginVersions,
     };
   }
 
@@ -511,6 +512,7 @@ function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPlugi
     installed: [],
     disabled: [],
     settings: [],
+    versions: {},
     refused,
   };
 }

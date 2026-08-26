@@ -574,4 +574,14 @@ export interface LoadedPlugin {
   readonly directory: string;
   /** Absolute path of the server entry module that was imported. */
   readonly entryPath: string;
+  /**
+   * WHICH BUILD OF THIS PLUGIN IS RUNNING — `<package version>+<derived>`, see
+   * plugin-version.ts for the format and how it is derived.
+   *
+   * DIAGNOSTIC AND BUILD IDENTITY, never a gameplay input: it tells an operator
+   * that the code they just edited is live, and it is one of the inputs to the
+   * build identity a client compares across a restart to decide whether it
+   * needs a fresh bundle. Nothing simulates differently because of it.
+   */
+  readonly version: string;
 }
