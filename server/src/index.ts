@@ -29,6 +29,7 @@ import {
   DEFAULT_WORLD_ADMIN_KEY,
   type ServerConfig,
 } from './config.ts';
+import { initBuildIdentity } from './build-identity.ts';
 import { logError, logInfo, logWarn } from './log.ts';
 import { openWorlds } from './boot/open-worlds.ts';
 import { WorldRegistry } from './persistence/world-registry.ts';
@@ -127,6 +128,13 @@ async function main(): Promise<void> {
 
   // Plugins load before any world so a load failure costs nothing but a boot.
   const plugins = await discoverPlugins(config.pluginsDir);
+
+  // Bound before any world opens, because a join snapshot carries it and a
+  // client can join as soon as the room exists. Reads the built client's
+  // manifest, so it must come after nothing in particular — the dist is on
+  // disk or it is not.
+  const identity = initBuildIdentity({ plugins, clientDistPath: config.clientDistPath });
+  logInfo(`build identity ${identity} (core, plugins and the served client bundle)`);
 
   const registry = new WorldRegistry(config.worldsDir);
   const manager = new WorldManager({

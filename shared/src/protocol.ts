@@ -312,6 +312,28 @@ export interface JoinSnapshotMessage {
    */
   serverVersion?: string;
   /**
+   * WHICH BUILD THIS CLIENT IS PLAYING AGAINST — a digest over core's stamp,
+   * every plugin's stamp, and the served client bundle's asset manifest
+   * (server build-identity.ts).
+   *
+   * WHAT IT IS FOR, and why `serverVersion` cannot do it: a client compares
+   * this against the one it joined under and reloads the page ONCE if it
+   * differs, which is how a new client bundle actually reaches a browser after
+   * an operator restart. `serverVersion` is a git-HEAD stamp, so it is
+   * byte-identical across a restart that picked up an uncommitted edit and is
+   * the constant `'unversioned'` wherever there is no `.git` — it would fail to
+   * fire in both cases the reload exists for.
+   *
+   * IT MUST NOT CHANGE WHEN NOTHING CHANGED. A restart that picked up no edit
+   * carries the same identity, and the client leaves the page alone; a world
+   * switch and a rollback re-send this message unchanged for the same reason.
+   *
+   * Optional and additive like `worldName`: absent means "server too old to
+   * say", which a client treats as "leave the page alone" — never as an
+   * identity that could differ from the next one.
+   */
+  buildIdentity?: string;
+  /**
    * The plugins this world is actually RUNNING, by name, in the server's load
    * order — the enabled subset of what the server has installed (per-world
    * plugin enablement, 2026-08-25). Core states a fact about its own

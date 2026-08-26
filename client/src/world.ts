@@ -41,6 +41,7 @@ import {
 } from './terrain/mirror.ts';
 import { HEIGHT_WORLD_SCALE } from './config.ts';
 import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
+import { noteBuildIdentity } from './net/buildReload.ts';
 import {
   setPendingRestartSeconds,
   setPendingSwitch,
@@ -356,6 +357,12 @@ export function createWorld(viewport: Viewport): World {
       // commit while this client's bundle stayed put — which is exactly the
       // skew the watermark exists to expose.
       setServerVersion(msg.serverVersion);
+      // AND THE RELOAD DECISION, which is a different question from the
+      // watermark's: the watermark asks "are these two halves in step?", this
+      // asks "is the code the server came back on different from the code this
+      // page is running?" — and only the second one may navigate. Keyed on
+      // buildIdentity, never on serverVersion; see net/buildReload.ts.
+      noteBuildIdentity(msg.buildIdentity);
 
       const fresh = resetWorld(msg.worldSize);
       // Through the prediction store like every authoritative message, so the
