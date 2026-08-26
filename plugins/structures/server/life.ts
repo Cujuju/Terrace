@@ -753,7 +753,7 @@ export class GenerationSurvey {
           // survives/birthed decisions above never consult it (blessings.ts).
           let tier = maybeAdvanceTier(age, current.tier, liveNeighbors, isBlessedStructureCell(key));
           // THE TEEPEE→BUILDING STEP IS REFUSED when another building already
-          // stands within STRUCTURE_SEPARATION_CELLS — on the board or staged
+          // stands within STRUCTURE_SEPARATION_WORLD_UNITS — on the board or staged
           // mid-sweep, same as the birth gate above. This is the PHYSICAL
           // footprint rule (two buildings may not interpenetrate), not a
           // prosperity gate: blessing waives the NEIGHBOUR requirement in
@@ -774,7 +774,7 @@ export class GenerationSurvey {
             tier = current.tier;
           } else if (current.tier === 0 && tier > current.tier) {
             // The step succeeded: A NEW BUILDING CLEARS ITS SQUARE. Every
-            // teepee within STRUCTURE_SEPARATION_CELLS is demolished — see
+            // teepee within STRUCTURE_SEPARATION_WORLD_UNITS is demolished — see
             // clearKeepClearSquare for why both the board and the staged set
             // are walked, and how each demolished cell reaches `died`.
             this.clearKeepClearSquare(world, live, x, y);
@@ -1034,7 +1034,7 @@ export function placePatternAt(
     const y = anchorY + dy;
     if (live.has(structureKey(x, y)) || !isBuildableCell(world, x, y)) return null;
     // KEEP-CLEAR (2026-08-26): a pattern is refused if ANY of its cells has a
-    // building within STRUCTURE_SEPARATION_CELLS — every cell of the pattern
+    // building within STRUCTURE_SEPARATION_WORLD_UNITS — every cell of the pattern
     // would be a standing structure the moment it lands. The predicate lives
     // in clearance.ts so this path and the CA's birth/tier gates cannot
     // disagree about where a building's ground ends.
@@ -1277,7 +1277,7 @@ export function attemptStir(
       if (live.has(structureKey(nx, ny))) continue; // ignite only — never overlap a live cell
       if (!isBuildableCell(world, nx, ny)) continue;
       // KEEP-CLEAR (2026-08-26): a spark is a NEW PLACEMENT like any other,
-      // so it may not land inside a standing building's reserved square —
+      // so it may not land inside a standing building's reserved ground —
       // the same predicate the CA's birth rule and placePatternAt use.
       if (hasBuildingWithinSeparation(live, world, nx, ny)) continue;
       candidates.push([nx, ny]);
