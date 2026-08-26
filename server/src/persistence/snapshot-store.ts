@@ -330,9 +330,39 @@ const TOKEN_MASKS_DDL = `
     token       TEXT    NOT NULL,
     mask        BLOB    NOT NULL,
     PRIMARY KEY (snapshot_id, token)
-  )
+  );
 `;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DISABLED_PLUGINS TABLE (issue #165, 2026-08-25). Which plugins this world
+// does NOT run. A property of the WORLD, so it lives in the world's own file —
+// the registry has no index to put it in on purpose (see world-registry.ts,
+// "THE FILES ARE THE TRUTH"), and a per-world setting kept outside the world
+// would be lost by the copy/archive/restore paths that move only the file.
+//
+// THE DISABLED SET, NOT THE ENABLED SET, and that polarity is the contract:
+// the default for a world is "run every installed plugin", so a world that has
+// never been touched has no rows here, and a plugin installed LATER is enabled
+// everywhere without a migration. Storing the enabled set instead would make
+// every existing world silently refuse every new plugin.
+//
+// NOT KEYED BY SNAPSHOT, unlike plugin_slices: rolling the terrain back to
+// last Tuesday must not also re-enable a plugin the operator turned off since.
+// SNAPSHOT_SCHEMA_VERSION does not move, for the same reason it did not for
+// token_masks — a new table is invisible to an older build, and no rows reads
+// as "nothing disabled", which is exactly the legacy behaviour.
+const DISABLED_PLUGINS_DDL = `
+  CREATE TABLE IF NOT EXISTS disabled_plugins (
+    plugin TEXT NOT NULL PRIMARY KEY
+  );
+`;
+
+// Each fragment interpolated below terminates its OWN statement with a
+// semicolon, so a new one can always be appended. Without that, whichever
+// fragment happens to be last is the only one that parses, and adding the next
+// breaks the schema at boot with "syntax error near CREATE". (The note lives
+// here rather than inside the template because `//` is not a SQL comment —
+// SQLite reads it as an expression and fails on the slash.)
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS snapshots (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,6 +387,8 @@ const SCHEMA_DDL = `
   );
 
   ${TOKEN_MASKS_DDL}
+
+  ${DISABLED_PLUGINS_DDL}
 `;
 
 /**
@@ -406,6 +438,9 @@ export class SnapshotStore {
   private readonly selectLatestThumbnail: Statement;
   private readonly setLatestThumbnailStatement: Statement;
   private readonly countPinnedStatement: Statement;
+  private readonly selectDisabledPlugins: Statement;
+  private readonly insertDisabledPlugin: Statement;
+  private readonly deleteDisabledPlugin: Statement;
 
   /**
    * How many snapshots survive a write. Held per-store rather than read from
@@ -478,6 +513,14 @@ export class SnapshotStore {
       `SELECT COUNT(*) AS n FROM snapshots WHERE ${PINNED_COLUMN} = 1`,
     );
     this.countAll = db.prepare('SELECT COUNT(*) AS n FROM snapshots');
+    this.selectDisabledPlugins = db.prepare('SELECT plugin FROM disabled_plugins');
+    // OR IGNORE / plain DELETE so both writes are idempotent: disabling a
+    // plugin that is already disabled must be a no-op, not a constraint error
+    // an operator's second click turns into a failed toggle.
+    this.insertDisabledPlugin = db.prepare(
+      'INSERT OR IGNORE INTO disabled_plugins (plugin) VALUES (?)',
+    );
+    this.deleteDisabledPlugin = db.prepare('DELETE FROM disabled_plugins WHERE plugin = ?');
   }
 
   /**
@@ -865,6 +908,26 @@ export class SnapshotStore {
   setPinned(id: number, pinned: boolean): boolean {
     const result = this.setPinnedStatement.run(pinned ? 1 : 0, id);
     return result.changes > 0;
+  }
+
+  /**
+   * Plugins this world does not run. Empty for every world nobody has
+   * disabled anything in — see DISABLED_PLUGINS_DDL for why it is the
+   * disabled set that is stored rather than the enabled one.
+   *
+   * Names are returned as written, WITHOUT being checked against what this
+   * build has installed: a plugin that is temporarily absent from `plugins/`
+   * must keep its "off" flag rather than coming back enabled the first time
+   * the world is opened without it.
+   */
+  disabledPlugins(): string[] {
+    return (this.selectDisabledPlugins.all() as { plugin: string }[]).map((row) => row.plugin);
+  }
+
+  /** Records whether this world runs `plugin`. Idempotent in both directions. */
+  setPluginEnabled(plugin: string, enabled: boolean): void {
+    if (enabled) this.deleteDisabledPlugin.run(plugin);
+    else this.insertDisabledPlugin.run(plugin);
   }
 
   /** How many restore points are pinned, i.e. exempt from retention. */

@@ -79,6 +79,23 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   private readonly world: World;
   /** Lazily-built message-type index; see handlerFor. */
   private handlersByType: Map<string, (player: Player, payload: unknown) => void> | null = null;
+  /**
+   * Snapshot slices belonging to plugins that are INSTALLED BUT DISABLED for
+   * this world, captured at restore and re-emitted verbatim by every save.
+   *
+   * WITHOUT THIS, DISABLING A PLUGIN DESTROYS ITS STATE. `collectPersistence`
+   * asks the ENABLED plugins for their slices, so a disabled plugin
+   * contributes nothing and the very next snapshot is written without the
+   * chronicle/forest/village it had — turning a reversible toggle into an
+   * irreversible erasure one save later. Carrying the bytes through untouched
+   * is what makes "disable, look around, re-enable" restore what was there.
+   *
+   * Only INSTALLED plugins are held. A slice whose plugin this build does not
+   * have at all keeps the older behaviour (logged and dropped in
+   * `restorePersistence`): its owner is gone from the build, so there is no
+   * toggle to put it back and nothing that could ever read it again.
+   */
+  private dormantSlices: Record<string, unknown> = {};
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
 
@@ -427,7 +444,10 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
 
   /** Plugin slices for a snapshot, keyed by plugin name. */
   collectPersistence(): Record<string, unknown> {
-    const slices: Record<string, unknown> = {};
+    // Disabled plugins' slices ride along untouched — see `dormantSlices`.
+    // Copied rather than mutated so a save can never edit the record a later
+    // save has to re-emit.
+    const slices: Record<string, unknown> = { ...this.dormantSlices };
     for (const { loaded } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.persistence) continue;
@@ -447,10 +467,21 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
    */
   restorePersistence(slices: Record<string, unknown>): void {
     const installed = new Set(this.installedPluginNames);
+    const enabled = new Set(this.pluginNames);
+    // Recomputed from scratch on every restore — a rollback replays this with
+    // an older snapshot's slices, and the dormant set must then describe THAT
+    // snapshot rather than being the union of every restore so far.
+    this.dormantSlices = {};
     for (const name of Object.keys(slices)) {
       if (!installed.has(name)) {
         logInfo(`snapshot contains data for plugin "${name}", which is not installed — ignored`);
+        continue;
       }
+      if (enabled.has(name)) continue;
+      // Installed but switched off for this world: hold the bytes so the next
+      // save writes them back unchanged (see `dormantSlices`).
+      this.dormantSlices[name] = slices[name];
+      logInfo(`plugin "${name}" is disabled here; its saved data is being kept as-is`);
     }
 
     for (const { loaded } of this.entries) {
