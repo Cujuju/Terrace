@@ -436,6 +436,11 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                           // are replaced by the server's answer to every toggle.
                           const isDisabled = (): boolean =>
                             worldPlugins()?.disabled.includes(pluginName) ?? false;
+                          // Which build of this plugin the server loaded, or ''
+                          // from a server too old to say. An accessor, not a
+                          // const, for the reason above it: the listing is
+                          // replaced by the answer to every toggle.
+                          const stamp = (): string => worldPlugins()?.versions[pluginName] ?? '';
                           return (
                             <button
                               type="button"
@@ -457,6 +462,13 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                               }
                             >
                               {pluginName} — {isDisabled() ? 'off' : 'on'}
+                              {/* The build, in small type: it answers "is the
+                                  code I just edited live?" and is never
+                                  something to act on, so it must not compete
+                                  with the on/off state beside it. */}
+                              <Show when={stamp() !== ''}>
+                                <span class="plugin-version"> v{stamp()}</span>
+                              </Show>
                             </button>
                           );
                         }}

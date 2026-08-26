@@ -109,6 +109,14 @@ export interface WorldPlugins {
    * mean, and nothing here may grow a list of them.
    */
   readonly settings: readonly WorldPluginSetting[];
+  /**
+   * Which build of each installed plugin the server loaded, by name.
+   *
+   * Shown beside each toggle so an operator who updated a plugin and restarted
+   * can see the new code is live. Empty from a server too old to say, which the
+   * panel renders as nothing rather than as a version.
+   */
+  readonly versions: Readonly<Record<string, string>>;
 }
 
 const [worldPlugins, setWorldPlugins] = createSignal<WorldPlugins | null>(null);
@@ -178,6 +186,7 @@ export function applyWorldPluginListing(message: {
   installed: string[];
   disabled: string[];
   settings: WorldPluginSetting[];
+  versions?: Record<string, string>;
   refused?: WorldAdminRefusal;
 }): void {
   if (message.refused !== undefined) {
@@ -190,6 +199,9 @@ export function applyWorldPluginListing(message: {
     installed: message.installed,
     disabled: message.disabled,
     settings: message.settings,
+    // Absent from a server built before per-plugin stamps existed; empty means
+    // "not stated", which the panel shows as nothing at all.
+    versions: message.versions ?? {},
   });
 }
 

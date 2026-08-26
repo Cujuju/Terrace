@@ -301,6 +301,19 @@ export class WorldManager {
   }
 
   /**
+   * Which BUILD of each installed plugin this process loaded, by name.
+   *
+   * A PROPERTY OF THE PROCESS, NOT OF A WORLD — read off the discovered set, so
+   * it is the same answer whichever world the panel is asking about, and a
+   * disabled plugin still has one (its module is loaded either way).
+   */
+  get installedPluginVersions(): Record<string, string> {
+    const versions: Record<string, string> = {};
+    for (const loaded of this.deps.plugins) versions[loaded.plugin.name] = loaded.version;
+    return versions;
+  }
+
+  /**
    * Which plugins a world has switched off, or null when there is no such
    * world. Reads the world's own file, so it answers for worlds that are not
    * loaded as readily as for the one that is.

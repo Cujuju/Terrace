@@ -15,6 +15,11 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_NAME_PATTERN } from '@terrace/shared';
 import { logInfo, logWarn } from '../log.ts';
+import {
+  createPluginVersionContext,
+  pluginVersionStamp,
+  type PluginVersionContext,
+} from './plugin-version.ts';
 import type { LoadedPlugin, TerracePlugin } from './types.ts';
 
 /**
@@ -125,7 +130,11 @@ function selectPluginExport(module: Record<string, unknown>, entryPath: string):
   );
 }
 
-async function loadPlugin(pluginsDir: string, directory: string): Promise<LoadedPlugin | null> {
+async function loadPlugin(
+  pluginsDir: string,
+  directory: string,
+  versions: PluginVersionContext,
+): Promise<LoadedPlugin | null> {
   const pluginDir = join(pluginsDir, directory);
   const entryPath = await findServerEntry(pluginDir);
   if (entryPath === null) {
@@ -150,7 +159,7 @@ async function loadPlugin(pluginsDir: string, directory: string): Promise<Loaded
     );
   }
 
-  return { plugin, directory, entryPath };
+  return { plugin, directory, entryPath, version: pluginVersionStamp(versions, directory) };
 }
 
 /**
@@ -190,11 +199,15 @@ export async function discoverPlugins(pluginsDir: string): Promise<LoadedPlugin[
 
   directories.sort();
 
+  // Gathered once for the whole pass — one git scan rather than one per plugin
+  // (see createPluginVersionContext).
+  const versions = createPluginVersionContext(root);
+
   const loaded: LoadedPlugin[] = [];
   const seenNames = new Map<string, string>();
 
   for (const directory of directories) {
-    const result = await loadPlugin(root, directory);
+    const result = await loadPlugin(root, directory, versions);
     if (result === null) continue;
 
     const previousDirectory = seenNames.get(result.plugin.name);
@@ -211,6 +224,11 @@ export async function discoverPlugins(pluginsDir: string): Promise<LoadedPlugin[
     logWarn(`no plugins loaded from ${root} — core ships no game mechanics of its own`);
   } else {
     logInfo(`loaded ${loaded.length} plugin(s): ${loaded.map((p) => p.plugin.name).join(', ')}`);
+    // ONE LINE PER PLUGIN, with its stamp: the log is where an operator who
+    // just updated a plugin confirms the new code is the code that booted.
+    for (const entry of loaded) {
+      logInfo(`plugin "${entry.plugin.name}" v${entry.version}`);
+    }
   }
   return loaded;
 }

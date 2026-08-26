@@ -1093,6 +1093,20 @@ export interface WorldPluginListMessage {
    * this world. Empty when no installed plugin declares one.
    */
   settings: WorldPluginSetting[];
+  /**
+   * Which BUILD of each installed plugin is running, keyed by plugin name —
+   * `<package version>+<derived>` (server plugins/plugin-version.ts).
+   *
+   * WHY THE OPERATOR NEEDS IT: after updating one plugin and restarting, this
+   * is how they confirm the code they edited is the code that booted. Every
+   * installed plugin has an entry, disabled ones included: a disabled plugin's
+   * module is still loaded, and "which version is on disk" is a question about
+   * the server, not about this world.
+   *
+   * DIAGNOSTIC, like `serverVersion` on the join snapshot — core attaches no
+   * mechanic to it.
+   */
+  versions: Record<string, string>;
   /** Present INSTEAD of useful lists when the request was refused. */
   refused?: WorldAdminRefusal;
 }
