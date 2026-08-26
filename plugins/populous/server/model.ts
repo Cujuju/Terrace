@@ -195,6 +195,29 @@ export const POPULOUS_POPULATION_AFTER_EMIT = 0;
 const CLEARANCE_REFUSED_TIER = 0;
 
 /**
+ * How many tiers a house may CLIMB in one generation.
+ *
+ * 1 — a house grows one size at a time toward the tier its ground earns,
+ * rather than jumping straight there (owner, 2026-08-26, after watching a
+ * fresh homestead go camp → top tier in a single 15-second generation: the
+ * earned tier is a fact about the site, but the building on it is meant to be
+ * seen going up). Upward only: losing ground or being refused clearance still
+ * takes effect at once, because those are the ground and the board saying no,
+ * not a house being built. With POPULOUS_TIER_BY_FLAT_NEIGHBORS six rungs
+ * long, a perfect site tops out five generations after founding.
+ */
+export const POPULOUS_TIER_CLIMB_PER_STEP = 1;
+
+/**
+ * The tier a house holds this step, given the one it earns from its ground and
+ * the one it came in with: at most POPULOUS_TIER_CLIMB_PER_STEP above the
+ * current tier, and never above earned. A drop is returned as-is.
+ */
+export function rampedTier(current: number, earned: number): number {
+  return Math.min(earned, current + POPULOUS_TIER_CLIMB_PER_STEP);
+}
+
+/**
  * The tier a house earns from `flatNeighbors` flat neighbours, clamped to the
  * live board's ceiling. One definition, so the step and its tests cannot
  * disagree about the ladder.
@@ -321,7 +344,7 @@ export function stepPopulous(
       ctx.hasBuildingWithinSeparation(nextLive, x, y) ||
       ctx.hasBuildingWithinSeparation(undecided, x, y);
     const earned = populousTierFor(flatNeighborsAround(world, ctx, x, y), ctx.maxTier);
-    const tier = obstructed ? CLEARANCE_REFUSED_TIER : earned;
+    const tier = obstructed ? CLEARANCE_REFUSED_TIER : rampedTier(record.tier, earned);
     if (tier !== record.tier) upgraded.push({ x, y, tier });
 
     // GROW, THEN CHECK — so a house that has just been promoted into a
