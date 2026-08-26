@@ -840,6 +840,58 @@ export function startleNear(centerX: number, centerY: number, radius: number): n
   return startled;
 }
 
+/**
+ * REACTIVE PATH, THE SECOND ONE: puts these individuals into a panic that lasts
+ * `seconds`, without moving them and without pointing them anywhere.
+ *
+ * FOR A CREATURE THAT IS ITSELF ON FIRE (../server/index.ts's fuel
+ * registration), which is a different reaction from `startleNear` above in the
+ * two ways that matter:
+ *
+ *   * THERE IS NO "AWAY". A startled bystander runs from a place; an animal
+ *     that is alight carries the fire with it, so it keeps the heading it had
+ *     and bolts. Panic already suppresses the idle meander (`advanceEntity`),
+ *     so what this produces is a straight, fast run rather than the wandering
+ *     of a calm grazer — which is the read the design asks for: "the number is
+ *     how long the player watches it run before it drops".
+ *   * IT LASTS AS LONG AS THE BURN, not FLEE_DURATION_SECONDS. A sculpt is an
+ *     instant and the panic that follows it is a burst; being on fire is a
+ *     condition, and an animal that calmed down two and a half seconds into an
+ *     eight-second death would walk the rest of it at a grazing pace.
+ *
+ * WHY THE WHOLE BURN IS SET ONCE RATHER THAN REFRESHED EVERY TICK, decided
+ * against the alternative rather than by default. Refreshing would need this
+ * plugin to hold its own "which of mine are alight" set, and fire announces
+ * only two of a burning individual's four endings to the owner: it says when
+ * one burned to death, and says NOTHING when rain puts it out or when the fire
+ * is dropped because the animal died of something else (plugins/fire/server/
+ * entityBlaze.ts's four endings). A set fed by those announcements would leak,
+ * and a leaked entry here is an animal that panics forever. Setting the burn
+ * once needs no set at all: the countdown is the burn, it expires on its own,
+ * and the only divergence — an animal the rain saved keeps running for the rest
+ * of what would have been its life — is both harmless and honest, because it
+ * has in fact just been on fire.
+ *
+ * `fleeSecondsRemaining` therefore stays the ONE definition of the panic state
+ * (see `isFleeing`); this adds no second flag that could disagree with it.
+ */
+export function panicIndividuals(ids: readonly number[], seconds: number): number {
+  if (seconds <= 0) return 0;
+
+  let panicked = 0;
+  // Iterated over the POPULATION rather than over `ids`, so the order of work
+  // is the population's fixed order and not the caller's list — the same
+  // discipline every other loop in this file keeps (design § determinism).
+  for (const entity of livingEntities()) {
+    if (!ids.includes(entity.id)) continue;
+    // NEVER SHORTENS an existing panic: an animal startled a moment ago and set
+    // alight now must not have its flight cut back to the shorter of the two.
+    entity.fleeSecondsRemaining = Math.max(entity.fleeSecondsRemaining, seconds);
+    panicked++;
+  }
+  return panicked;
+}
+
 /** Reads the flee state, so its meaning stays defined in exactly one file. */
 export function isFleeing(entity: WildlifeEntity): boolean {
   return entity.fleeSecondsRemaining > 0;
