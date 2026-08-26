@@ -117,6 +117,13 @@ export function monsterStates(): MonsterState[] {
     x: roundBroadcastPosition(monster.x),
     y: roundBroadcastPosition(monster.y),
     heading: roundBroadcastPosition(monster.heading),
+    // The variant rides along UNROUNDED and unconditional: it is a name, not a
+    // measurement, and it is spread rather than assigned so a kind that has
+    // none puts no key on the wire at all (see MonsterState.variant). It never
+    // changes over a monster's life, so re-sending it every second is a handful
+    // of bytes for the property that a client which joined mid-life needs most
+    // — there is no other message that would ever tell it which yeti this is.
+    ...(monster.variant === undefined ? {} : { variant: monster.variant }),
   }));
 }
 

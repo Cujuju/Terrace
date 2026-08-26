@@ -63,6 +63,72 @@ export const MONSTER_KINDS = ['kraken', 'cthulhu', 'yeti'] as const;
 
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
+/**
+ * THE YETI'S VARIANTS: four different animals wearing one KIND (owner decision,
+ * 2026-08-26).
+ *
+ * WHY ONE KIND AND NOT FOUR. Everything the server does with a monster is
+ * driven by its PROFILE (server/kinds.ts) — habitat, lair size, summon rate,
+ * banishability, speed, footprint — and all four of these are the same animal
+ * on every one of those axes: the same snowfield qualifies them, the same
+ * shovel drives them off, they amble at the same pace. Four kinds would have
+ * been four identical profile rows plus a per-kind SLOT each (summoning.ts),
+ * which would quietly turn "one yeti in the world" into "four yetis in the
+ * world, one of each look" — a gameplay change nobody asked for, smuggled in as
+ * a modelling decision. A variant is what this actually is: a choice of BODY,
+ * made once at summon time, that the renderer reads and the simulation does
+ * not.
+ *
+ * ORDERED, and the order is load-bearing exactly once: the FIRST entry is the
+ * default a missing variant resolves to (see parseMonstersPayload). Reordering
+ * therefore changes what a version-skewed client draws, and nothing else.
+ */
+export const YETI_VARIANTS = ['silverback', 'ram', 'ibex', 'fanged'] as const;
+
+export type YetiVariant = (typeof YETI_VARIANTS)[number];
+
+/**
+ * What a yeti is when nobody said which yeti.
+ *
+ * Named rather than written as `YETI_VARIANTS[0]` at each of the three places
+ * that need it (the wire parse, the snapshot read-back, the client's model
+ * lookup), because those three must agree by construction: a build in which the
+ * renderer's fallback and the parser's fallback drift apart is a build where a
+ * yeti's look depends on which layer noticed the gap first.
+ */
+export const DEFAULT_YETI_VARIANT: YetiVariant = YETI_VARIANTS[0];
+
+export function isYetiVariant(value: unknown): value is YetiVariant {
+  return (YETI_VARIANTS as readonly string[]).includes(value as string);
+}
+
+/**
+ * The variant a monster of this kind should carry, given whatever arrived in
+ * the `variant` field — from the wire, or from a snapshot row.
+ *
+ * ONE FUNCTION FOR BOTH READERS, on purpose. The wire parse and the persistence
+ * read-back are two independent defensive parsers over the same field, and the
+ * version-skew rule below is a decision about the FIELD, not about either
+ * transport; stating it twice is how the two come to disagree.
+ *
+ * THE RULE: a yeti whose variant is missing or unrecognised is still a yeti.
+ * It resolves to DEFAULT_YETI_VARIANT rather than causing the entry to be
+ * dropped, because the two skews this has to survive both produce exactly that
+ * field — an older server that predates variants sends none, and a newer one
+ * sends a name this bundle has never heard of. In both cases the honest render
+ * is "some yeti", and the alternative — dropping the entry — would make a
+ * client that is merely out of date show an EMPTY mountain, which is this
+ * plugin's despawn signal. A wrong coat is a cosmetic error for one client
+ * session; a missing monster is a lie about the world.
+ *
+ * Non-yeti kinds get `undefined`: the sea kinds have no variants, and writing
+ * one onto them would put a field on the wire that means nothing.
+ */
+export function yetiVariantOf(kind: MonsterKind, raw: unknown): YetiVariant | undefined {
+  if (kind !== 'yeti') return undefined;
+  return isYetiVariant(raw) ? raw : DEFAULT_YETI_VARIANT;
+}
+
 // Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts).
 // Five plugins each carried a byte-identical copy of this rounding, and the
 // copies are how issue #180 shipped: the bounded form did not exist, so nothing
@@ -92,6 +158,17 @@ export interface MonsterState {
   readonly y: number;
   /** Radians; the monster moves toward (cos heading, sin heading) in cell space. */
   readonly heading: number;
+  /**
+   * WHICH yeti (2026-08-26). Present for `kind: 'yeti'`, absent for the sea
+   * kinds — they have exactly one body each, and an always-undefined field on
+   * them would invite a renderer to branch on something that never varies.
+   *
+   * OPTIONAL rather than required-with-a-default so the ABSENCE stays
+   * representable on the wire: that is what an older server sends, and
+   * parseMonstersPayload is the one place that decision is resolved (see
+   * yetiVariantOf).
+   */
+  readonly variant?: YetiVariant;
 }
 
 export interface MonstersStatePayload {
@@ -116,6 +193,11 @@ function isFiniteNumber(value: unknown): value is number {
  * malformed entries are dropped individually; a payload that is not a list at
  * all yields null so the caller can ignore the message entirely.
  *
+ * AN UNKNOWN VARIANT IS NOT AN UNKNOWN KIND, and is deliberately NOT dropped —
+ * see yetiVariantOf for the argument. The difference is what the client can
+ * still honestly draw: nothing at all for a kind it has no model for, and a
+ * yeti for a yeti whose coat it does not recognise.
+ *
  * An EMPTY list is a valid parse (it is the despawn signal), which is exactly
  * why "not a list" has to be reported as null rather than as an empty result.
  */
@@ -132,13 +214,25 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
     if (!isMonsterKind(entry.kind)) continue;
     if (!isFiniteNumber(entry.x) || !isFiniteNumber(entry.y)) continue;
     if (!isFiniteNumber(entry.heading)) continue;
-    parsed.push({
-      id: entry.id,
-      kind: entry.kind,
-      x: entry.x,
-      y: entry.y,
-      heading: entry.heading,
-    });
+    const variant = yetiVariantOf(entry.kind, entry.variant);
+    parsed.push(
+      variant === undefined
+        ? {
+            id: entry.id,
+            kind: entry.kind,
+            x: entry.x,
+            y: entry.y,
+            heading: entry.heading,
+          }
+        : {
+            id: entry.id,
+            kind: entry.kind,
+            x: entry.x,
+            y: entry.y,
+            heading: entry.heading,
+            variant,
+          },
+    );
   }
   return parsed;
 }

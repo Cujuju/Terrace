@@ -488,6 +488,14 @@ export const KRAKEN_FOOTPRINT_CELLS = cellsAcross(7);
  * through a double, which is what lets the pinning test compare with `toBe`
  * instead of a tolerance. Do not tidy it; re-derive it.
  *
+ * ONE FOOTPRINT FOR ALL FOUR VARIANTS (2026-08-26). The client half now states
+ * a width per variant and this is pinned to the WIDEST of them
+ * (YETI_WIDEST_VARIANT_WIDTH_CELLS) — see that constant for why the server
+ * steers the broadest body rather than the rolled one: the look-ahead and the
+ * minimum lair are both decided before a variant exists, and a footprint that
+ * under-stated the widest yeti would walk that one's shoulder into a cliff its
+ * centre point cleared.
+ *
  * His minimum lair below is DERIVED from this number, so shrinking him shrinks
  * what he needs to live on by the square — which is the owner's intent: he is no
  * longer the biggest thing on the mountain and no longer asks for a mountain.

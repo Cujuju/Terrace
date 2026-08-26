@@ -59,6 +59,7 @@
 // Render kit, reached the same way client/src/plugins/registry.ts reaches this
 // plugin — by path. See that module's header for why it lives there.
 import { bakeRig, instantiateRig } from '../../../client/src/render/rigSkin.ts';
+import type { YetiVariant } from '../protocol.ts';
 import { CatmullRomCurve3, Group, Mesh, SphereGeometry, Vector3 } from 'three';
 import {
   NOISE_CHANNEL_TENTACLE,
@@ -355,12 +356,21 @@ const YETI_BARE_SKIN = yetiSkin(YETI_SKIN_WRINKLE_DEPTH);
 const YETI_SMOOTH_SKIN = yetiSkin(0);
 
 /**
- * Builds the shared yeti geometry and returns the per-instance constructor.
+ * Builds the shared yeti geometry and returns ONE CONSTRUCTOR PER VARIANT.
  *
  * Everything expensive happens ONCE, when the plugin attaches: the returned
- * function only assembles Meshes over geometries that already exist.
+ * functions only assemble Meshes over geometries that already exist.
+ *
+ * A RECORD RATHER THAN A FUNCTION TAKING A VARIANT (2026-08-26), because the
+ * variants differ in their GEOMETRY, and geometry is built here, at attach —
+ * a `create(variant)` would either branch inside the per-instance path (paying
+ * the choice on every summon) or hide four blueprints behind one signature. A
+ * total record over YetiVariant also makes the compiler the thing that notices
+ * a fifth variant, at the one place that has to answer for it.
  */
-export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
+export function createYetiFactory(
+  workshop: ModelWorkshop,
+): Readonly<Record<YetiVariant, () => MonsterModel>> {
   const { segments, keepGeometry, lambert, organicSurface } = workshop;
 
   // ── Shared materials ───────────────────────────────────────────────────────
@@ -911,7 +921,7 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
   const ankleJointIndices = authored.ankles.map((joint) => blueprint.jointIndex(joint));
   const armJointIndices = authored.armJoints.map((joint) => blueprint.jointIndex(joint));
 
-  return function createYeti(): MonsterModel {
+  function createYeti(): MonsterModel {
     const instance = instantiateRig(blueprint);
     const rig = instance.joints[rigJoint]!;
     const upper = instance.joints[upperJoint]!;
@@ -957,5 +967,32 @@ export function createYetiFactory(workshop: ModelWorkshop): () => MonsterModel {
           Math.sin(seconds * YETI_HEAD_SCAN_HZ * TWO_PI + phase) * YETI_HEAD_SCAN_RADIANS;
       },
     };
+  }
+
+  // ── THE PHASE B SEAM ────────────────────────────────────────────────────────
+  //
+  // FOUR ROWS, ONE BODY, FOR NOW. Phase A (2026-08-26) plumbed the variant end
+  // to end — the server rolls one, the wire carries it, the client looks it up
+  // — before any of the four bodies existed, so every row here is the ONE yeti
+  // this file builds and all four render identically. That is the intended
+  // intermediate state, not an oversight: the plumbing is testable on its own,
+  // and a model landing later is then a change to exactly one row.
+  //
+  // WHAT PHASE B DOES TO THIS BLOCK: each variant gets its own authoring pass
+  // and its own baked blueprint, and its row points at that variant's
+  // constructor. The shared workshop, the shared materials and the rig above
+  // stay shared — what differs between the four is masses and horns, not the
+  // toolkit.
+  //
+  // WRITTEN OUT rather than built by mapping over YETI_VARIANTS, so it is a
+  // TOTAL record the compiler checks: the day a fifth variant is added to the
+  // protocol this file fails to compile until it is given a body, where a
+  // mapped construction would have silently returned undefined for it at
+  // runtime — the same argument the server's emptyKindStates makes.
+  return {
+    silverback: createYeti,
+    ram: createYeti,
+    ibex: createYeti,
+    fanged: createYeti,
   };
 }

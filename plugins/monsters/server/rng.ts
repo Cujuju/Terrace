@@ -103,3 +103,31 @@ export function hashToIndex(seed: number, count: number): number {
   h ^= h >>> HASH_MIX_SHIFT_A;
   return (h >>> 0) % count;
 }
+
+/**
+ * A uniformly-distributed index in [0, count), drawn from the random source.
+ *
+ * THE THIRD KIND OF CHOICE, and it needed a name of its own because it is
+ * neither of the two above: `rollEvent` answers "did it happen?", `hashToIndex`
+ * answers "which of these N?" REPRODUCIBLY from a seed the caller already has,
+ * and this answers "which of these N?" when there is no such seed — the pick is
+ * a fresh coin, not a function of the world (the yeti's variant, summoning.ts).
+ *
+ * IT GOES THROUGH hashToIndex RATHER THAN THROUGH `floor(random() * count)`,
+ * for the test seam's sake. `setMonsterRandomSource` is what makes this
+ * plugin's behaviour reproducible in CI, and the sources a suite installs are
+ * deliberately trivial — a constant, a short cycle, a linear ramp. Scaling such
+ * a source directly onto a small range makes it degenerate (a constant 0.5
+ * source picks the same index for every count, forever); putting the murmur3
+ * finalizer between the two means neighbouring draws land far apart, so a
+ * seeded suite still exercises more than one branch. It costs four integer ops
+ * per summon.
+ *
+ * The multiplier is 2³² because that is hashToIndex's input width: anything
+ * smaller would feed the mixer a fraction of its domain.
+ */
+const RANDOM_SEED_RANGE = 2 ** 32;
+
+export function randomIndex(count: number): number {
+  return hashToIndex(Math.floor(monsterRandom() * RANDOM_SEED_RANGE), count);
+}

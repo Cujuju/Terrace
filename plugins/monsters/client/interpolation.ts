@@ -11,12 +11,20 @@
 // Pure logic: no three, no DOM, no clock. Time only enters through `advance(dt)`,
 // which is what makes the whole thing testable in a node environment.
 
-import type { MonsterKind, MonsterState } from '../protocol.ts';
+import type { MonsterKind, MonsterState, YetiVariant } from '../protocol.ts';
 
 /** A monster's pose for one frame. */
 export interface InterpolatedMonster {
   readonly id: number;
   readonly kind: MonsterKind;
+  /**
+   * Carried through UNINTERPOLATED, obviously — it is a name, and it never
+   * changes over one monster's life. It rides here rather than being looked up
+   * from the raw list because this map is what the render path reconciles
+   * against, and a renderer that had to consult two sources to build one model
+   * is a renderer that can build it from a stale half.
+   */
+  readonly variant?: YetiVariant;
   readonly x: number;
   readonly y: number;
   readonly heading: number;
@@ -164,6 +172,7 @@ export class MonsterInterpolator {
       poses.set(monster.id, {
         id: monster.id,
         kind: monster.kind,
+        variant: monster.variant,
         x: lerp(start.x, monster.x, t),
         y: lerp(start.y, monster.y, t),
         heading: lerpAngle(start.heading, monster.heading, t),

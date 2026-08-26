@@ -12,7 +12,13 @@
 // banished one gets it back early for free. Persisting the slots AND the
 // cooldowns makes a restart invisible to the singleton.
 
-import { MONSTER_KINDS, isMonsterKind, type MonsterKind } from '../protocol.ts';
+import {
+  MONSTER_KINDS,
+  isMonsterKind,
+  yetiVariantOf,
+  type MonsterKind,
+  type YetiVariant,
+} from '../protocol.ts';
 import type { HabitatRegimeId } from './habitat.ts';
 import {
   type Monster,
@@ -48,6 +54,21 @@ import {
  * guessed: a cooldown only ever exists for a BANISHABLE kind, and each v2
  * habitat contains exactly one — water's is the kraken (Cthulhu cannot be
  * banished and so can never have written a cooldown), land's is the yeti.
+ *
+ * NOT BUMPED 3 → 4 for the yeti's VARIANT (2026-08-26), and that is the
+ * documented exception rather than an oversight. The two bumps above were both
+ * forced by a field CHANGING MEANING — a scalar cooldown becoming a map, a
+ * habitat key becoming a kind key — where a v-old value read by v-new logic
+ * would have to be reinterpreted, and the honest place for a reinterpretation
+ * is a migration. `variant` changes nothing that already exists: it is a new
+ * optional key on the monster row, every other field means exactly what it
+ * meant, and a v3 row written before variants existed reads back correctly by
+ * the ONE rule the wire already uses for the same gap — a yeti with no variant
+ * is DEFAULT_YETI_VARIANT (see yetiVariantOf). Bumping would have cost a
+ * migration path, a v3 shape kept for reading, and two more branches in
+ * loadMonsters, all to express "the field was absent" — which the absent field
+ * already expresses. A rollback is equally quiet: an older build reads the row,
+ * ignores a key it does not know, and gets the world it expects.
  */
 export const MONSTERS_SLICE_VERSION = 3;
 
@@ -69,6 +90,17 @@ interface PersistedMonster {
   readonly x: number;
   readonly y: number;
   readonly heading: number;
+  /**
+   * WHICH yeti (2026-08-26). Absent for the sea kinds, and absent from every
+   * row written before this field existed — see MONSTERS_SLICE_VERSION for why
+   * that absence needed no version bump.
+   *
+   * It IS persisted rather than re-rolled on boot, because a restart must be
+   * invisible to the world (the reason this whole slice exists): a player who
+   * left a horned yeti on his mountain and came back to a fanged one would have
+   * been shown a new monster wearing the old one's id and position.
+   */
+  readonly variant?: YetiVariant;
 }
 
 interface MonstersSlice {
@@ -115,6 +147,9 @@ export function saveMonsters(): MonstersSlice {
       x: monster.x,
       y: monster.y,
       heading: monster.heading,
+      // Spread, so a kind with no variant writes no key — the same shape a
+      // pre-variant row has, which is what keeps the absence meaningful.
+      ...(monster.variant === undefined ? {} : { variant: monster.variant }),
     })),
     cooldownSeconds: cooldowns,
   };
@@ -130,6 +165,11 @@ function parsePersistedMonster(raw: unknown): Monster | null {
   if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) return null;
   if (!Number.isFinite(entry.heading)) return null;
 
+  // A yeti row with no variant — every row written before 2026-08-26 — resolves
+  // to the default here, by the same one rule the wire parse uses. Sea kinds
+  // get undefined and so keep no key.
+  const variant = yetiVariantOf(entry.kind, entry.variant);
+
   return {
     id: entry.id as number,
     kind: entry.kind,
@@ -137,6 +177,7 @@ function parsePersistedMonster(raw: unknown): Monster | null {
     y: entry.y as number,
     heading: entry.heading as number,
     idle: false,
+    ...(variant === undefined ? {} : { variant }),
   };
 }
 
