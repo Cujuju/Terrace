@@ -20,9 +20,8 @@
 import {
   BAND_HEIGHT,
   BEDROCK_FLOOR,
-  cellIndex,
-  heightAt,
   quantizeToBand,
+  SEA_LEVEL,
   setColumn,
   type Heightmap,
   type Span,
@@ -52,6 +51,22 @@ const MOUND_RIM_BANDS = 7;
  * a fraction of the mound's radius — squared, since the ellipse test is. */
 const MOUND_CREST_EDGE_SQUARED = 0.5 * 0.5;
 const MOUND_SHOULDER_EDGE_SQUARED = 0.8 * 0.8;
+
+/**
+ * How far above sea level the mound's base — and so the tunnel FLOOR — sits,
+ * in bands.
+ *
+ * NOT ZERO, and not the terrain's own height. Genesis defines the world's
+ * middle as the coastal shelf, and the shelf is FRESH_SHELF_DEPTH_BELOW_SEA
+ * (four bands) UNDER the sea, so a mound based on the ground it stands on puts
+ * its whole opening underwater — measured 2026-08-25 on four fresh worlds at
+ * three sizes: tunnel floor -64, roof underside +16, sea level 0, and the arch
+ * read as a terraced islet with no visible mouth. A fixture nobody can look
+ * through cannot do the one job it exists for, so it stands on its own plinth:
+ * one band of dry floor under the opening, which is what puts the mouth, the
+ * bore and the roof's underside all above the waterline.
+ */
+const MOUND_BASE_BANDS_ABOVE_SEA = 1;
 
 /**
  * Headroom under the roof, in bands — the number the step-3 eyes-on pass moved
@@ -140,8 +155,19 @@ export function carveArchFixture(map: Heightmap): number {
 
   // The whole mound stands on ONE base height, quantized to a band boundary: a
   // roof that followed the terrain would tilt, and the question this fixture
-  // asks is about the underside's shading, not about a sloped ceiling.
-  const base = quantizeToBand(heightAt(map, centreX, centreZ));
+  // asks is about the underside's shading, not about a sloped ceiling. That
+  // base is measured from SEA LEVEL, not from the ground here — see
+  // MOUND_BASE_BANDS_ABOVE_SEA for why the ground is the wrong datum.
+  const base = quantizeToBand(SEA_LEVEL + MOUND_BASE_BANDS_ABOVE_SEA * BAND_HEIGHT);
+  // The two things the per-cell guard below no longer has to re-check, stated
+  // once where they can actually be reasoned about: the plinth stands on rock,
+  // and it is below the opening it carries.
+  if (base <= BEDROCK_FLOOR || TUNNEL_OPENING_BANDS <= 0) {
+    throw new Error(
+      `arch fixture: a base of ${base} cannot carry an opening of ` +
+        `${TUNNEL_OPENING_BANDS} band(s) above bedrock (${BEDROCK_FLOOR})`,
+    );
+  }
   let layered = 0;
 
   for (let dz = -MOUND_RADIUS_Z_CELLS; dz <= MOUND_RADIUS_Z_CELLS; dz++) {
@@ -154,24 +180,26 @@ export function carveArchFixture(map: Heightmap): number {
       if (x < 0 || z < 0 || x >= map.size || z >= map.size) continue;
 
       const moundTop = base + bands * BAND_HEIGHT;
-      const ground = map.cells[cellIndex(map, x, z)]!;
+      // The tunnel's FLOOR is the plinth, not the cell's own terrain: a floor
+      // that followed the seabed would dip below the waterline exactly where
+      // the mouth is, and would tilt for the same reason the roof must not.
       const roofFloor = base + TUNNEL_OPENING_BANDS * BAND_HEIGHT;
 
       let spans: readonly Span[];
       if (
         insideTunnel(dx, dz) &&
-        // A tunnel needs a floor below its opening and a roof above it. Where
-        // the terrain has risen into the opening, or the mound is too low here
-        // to leave any roof, the cell stays solid — a hole with no roof over it
-        // is not an arch, it is a gap in the mound. A floor AT bedrock is the
-        // same refusal: the span below the opening would be empty, and a column
-        // standing on nothing is not what this fixture is testing.
-        ground > BEDROCK_FLOOR &&
-        ground < roofFloor &&
+        // A tunnel needs a roof over it: where the mound is too low here to
+        // leave any, the cell stays solid, because a hole with no roof over it
+        // is not an arch, it is a gap in the mound. This is the ONE condition
+        // left of the three this guard once had — the floor is now the plinth,
+        // so "the floor stands on something" (base > BEDROCK_FLOOR) and "the
+        // floor is below the opening" (base < roofFloor) are properties of the
+        // constants above rather than of a cell, and are asserted once, before
+        // the walk, instead of re-tested 1700 times inside it.
         roofFloor < moundTop
       ) {
         spans = [
-          { floor: BEDROCK_FLOOR, ceiling: ground },
+          { floor: BEDROCK_FLOOR, ceiling: base },
           { floor: roofFloor, ceiling: moundTop },
         ];
         layered++;
