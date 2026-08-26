@@ -21,21 +21,33 @@ import {
   WORLD_UNIT_CELLS,
 } from './constants.ts';
 
-/**
- * The world grid. `cells` is row-major, index = y * size + x, and holds the
- * CEILING OF EACH COLUMN'S TOPMOST SOLID SPAN — the walkable surface, which is
- * what it has always held and what `heightAt` returns.
- *
- * `columnSpans` is the sparse side table of the rare column that holds more
- * than one span (an overhang, an arch, a cave roof); a cell absent from it is
- * solid from the bottom of the world up to `cells[i]`. See columns.ts for the
- * model, the encoding and the determinism rule that goes with the table.
- */
-export interface Heightmap {
-  readonly size: number;
-  readonly cells: Int16Array;
-  readonly columnSpans: Map<number, Int16Array>;
-}
+// THE GRID ITSELF LIVES IN grid.ts, the leaf both this module and columns.ts
+// sit on (see that file's header for the cycle this split settles). Re-exported
+// here — rather than left for callers to import from a second place — so every
+// module that has always said `from './heightmap.ts'` still can, and
+// `@terrace/shared` exports exactly the names it always did.
+export {
+  bandOf,
+  cellIndex,
+  cellX,
+  cellY,
+  createHeightmap,
+  inBounds,
+  quantizeToBand,
+  type Heightmap,
+} from './grid.ts';
+
+// Used by the terrain math below, which is why they are imported as well as
+// re-exported: a re-export is not a binding in this module's own scope.
+import {
+  bandOf,
+  cellIndex,
+  cellX,
+  cellY,
+  inBounds,
+  quantizeToBand,
+  type Heightmap,
+} from './grid.ts';
 
 /**
  * One changed cell, as broadcast to clients after an applied edit.
@@ -56,39 +68,6 @@ export interface CellDiff {
   spans?: number[];
 }
 
-/** Allocates a flat (all-zero = sea-level shoreline) world up front. */
-export function createHeightmap(size: number): Heightmap {
-  if (!Number.isInteger(size) || size <= 0) {
-    throw new RangeError(`world size must be a positive integer, got ${size}`);
-  }
-  return { size, cells: new Int16Array(size * size), columnSpans: new Map() };
-}
-
-export function inBounds(map: Heightmap, x: number, y: number): boolean {
-  return x >= 0 && y >= 0 && x < map.size && y < map.size;
-}
-
-export function cellIndex(map: Heightmap, x: number, y: number): number {
-  return y * map.size + x;
-}
-
-/**
- * Inverse of cellIndex for the row-major layout above, split into two
- * allocation-free halves because decomposition runs in per-cell hot loops
- * (smooth's bounding box, the wire diff, client prediction). These take the
- * bare size rather than the map so call sites that hold only a size — the
- * client's prediction journal — can share the one layout fact (#14).
- */
-export function cellX(size: number, i: number): number {
-  return i % size;
-}
-
-export function cellY(size: number, i: number): number {
-  // Subtracting the remainder first keeps this exact integer division —
-  // integer-only per the determinism contract, no float floor involved.
-  return (i - (i % size)) / size;
-}
-
 export function heightAt(map: Heightmap, x: number, y: number): number {
   return map.cells[cellIndex(map, x, y)];
 }
@@ -96,15 +75,6 @@ export function heightAt(map: Heightmap, x: number, y: number): number {
 /** Static sea (design decision Q3): water is derived, never simulated. */
 export function isWater(h: number): boolean {
   return h <= SEA_LEVEL;
-}
-
-/**
- * Terrace band index of a height. Floor division so negative (underwater)
- * heights band correctly: bandOf(-1) === -1, not 0 — otherwise the first
- * band below sea level would render as land.
- */
-export function bandOf(h: number): number {
-  return Math.floor(h / BAND_HEIGHT);
 }
 
 /**
@@ -125,11 +95,6 @@ export const MAX_BAND = bandOf(MAX_HEIGHT);
  * DERIVED, so it cannot fall behind a change to either limit.
  */
 export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
-
-/** Height snapped down to its band floor — what terraced rendering draws. */
-export function quantizeToBand(h: number): number {
-  return bandOf(h) * BAND_HEIGHT;
-}
 
 function clampHeight(h: number): number {
   return h > MAX_HEIGHT ? MAX_HEIGHT : h < MIN_HEIGHT ? MIN_HEIGHT : h;
@@ -1730,12 +1695,11 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
     // The span list is attached only when there IS one, so a diff for an
     // ordinary column is byte-identical to what this has always produced.
     //
-    // Read straight off the side table this module owns rather than through
-    // columns.ts's `packColumnSpans`, which is the same one line: heightmap.ts
-    // is what columns.ts imports, and importing back would put a cycle between
-    // the two modules the whole determinism contract rests on. Reading BY CELL
-    // INDEX is what columns.ts's header licenses; iterating the table is what
-    // it forbids, and nothing here iterates it.
+    // Read BY CELL INDEX off the side table, which is what columns.ts's header
+    // licenses; iterating the table is what it forbids, and nothing here
+    // iterates it. (This used to carry a note about not importing columns.ts at
+    // all, because the two modules would have formed a cycle. They no longer
+    // can — the grid they both need is grid.ts, a leaf under both.)
     const packed = map.columnSpans.get(i);
     const h = map.cells[i]!;
     diff.push(packed === undefined ? { x, y, h } : { x, y, h, spans: Array.from(packed) });

@@ -32,7 +32,7 @@
 // BY CELL INDEX, and walk the world in grid order when you need every column.
 
 import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
-import { cellIndex, cellX, cellY, quantizeToBand, type Heightmap } from './heightmap.ts';
+import { cellIndex, cellX, cellY, quantizeToBand, type Heightmap } from './grid.ts';
 
 /**
  * The floor of the bottom span of an uncarved column — the bottom of the world,
