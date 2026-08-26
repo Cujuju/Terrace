@@ -140,7 +140,7 @@ describe('WorldApi.freshwater', () => {
       notifyWorldEvent: () => {},
     };
     // Built BEFORE any river exists — the ordering that catches a snapshot.
-    const api = createWorldApi(world, listener, 'test');
+    const api = createWorldApi(world, listener, 'test').api;
     expect(api.freshwater.at(SPRING.x, SPRING.y)).toBe('none');
 
     world.applySculpt(SPRING.x, SPRING.y, 1, 4 * BAND_HEIGHT, STAMP);
@@ -167,7 +167,7 @@ describe('WorldApi.freshwater', () => {
       notifyChunkUnlockedForToken: () => {},
       notifyWorldEvent: () => {},
     };
-    const api = createWorldApi(world, listener, 'test');
+    const api = createWorldApi(world, listener, 'test').api;
 
     // A river cell that is DRY GROUND well clear of the waterline — so the only
     // thing that can refuse it is the freshwater axis, not the ground class and

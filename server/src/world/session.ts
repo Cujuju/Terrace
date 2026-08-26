@@ -8,11 +8,13 @@
 // out access through getters.
 //
 // WHY THE HOST IS PART OF THE SESSION AND NOT THE PROCESS. `createWorldApi`
-// closes over a specific World instance, so a PluginHost is permanently bound
-// to the world it was built for. Rebuilding the host per session is therefore
-// not a choice but a consequence — and it is the SAFE consequence: the
-// alternative (a mutable world reference inside the API) would let a plugin
-// observe the world changing underneath it in the middle of a tick.
+// binds a view to one specific World instance, so a PluginHost is permanently
+// bound to the world it was built for. Rebuilding the host per session is
+// therefore not a choice but a consequence — and it is the SAFE consequence:
+// a view that could be RE-POINTED at another world would let a plugin observe
+// the world changing underneath it in the middle of a tick. (Since issue #164
+// that binding lives in a mutable cell, but the only move it can make is to
+// null: `closeSession` revokes, nothing ever re-points.)
 //
 // PLUGIN MODULES ARE STILL PROCESS-WIDE, AND THAT IS THE CONSTRAINT THIS WHOLE
 // DESIGN IS SHAPED BY. Every server plugin keeps its state at module scope
@@ -191,6 +193,16 @@ export function closeSession(session: WorldSession): boolean {
     saved = snapshotIfDirty(session);
   } finally {
     session.store.close();
+    // THE WORLD STOPS EXISTING FOR PLUGINS HERE, in this order and only this
+    // order (issues #167 then #164):
+    //   1. tell every INSTALLED plugin its world is closing, while its view
+    //      still works, so it can drop what it derived from this world;
+    //   2. revoke every view, so a plugin that kept one anyway pins a stub
+    //      rather than the heightmap and is told loudly if it uses it.
+    // In the `finally`, because a snapshot that failed to write must not
+    // leave the outgoing world reachable through some plugin's stale field.
+    session.host.closeWorld();
+    session.host.revokeApis();
   }
   return saved;
 }
