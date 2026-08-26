@@ -30,6 +30,7 @@ import signal as signal_module
 import sqlite3
 import subprocess
 import sys
+import time
 from urllib.request import pathname2url
 
 # Server configuration - validated at boot by server/src/config.ts.
@@ -122,6 +123,32 @@ WATCH_SUFFIXES = (".ts", ".tsx", ".js", ".mjs", ".json")
 # Seconds between checks of the control flags and (when watching) the source
 # tree while the stack is up. Short enough that a keypress feels immediate.
 CONTROL_POLL_INTERVAL_S = 0.25
+
+# THE EXIT CODE THAT MEANS "RESTART ME", not "I crashed".
+#
+# The in-game Restart button (world-admin `serverRestart`) writes the final
+# snapshot and then exits with this code; a supervisor is expected to bring the
+# process straight back, which is how new plugin/core code becomes live (Node's
+# ESM module map has no eviction, so the process is the unit of code identity).
+# docker (`restart: unless-stopped`) and systemd (`Restart=always`) already do
+# that for any exit; this script did not restart on ANY code, so the branch
+# below is new rather than a reclassification.
+#
+# THE SOURCE OF TRUTH IS server/src/restart.ts's TERRACE_RESTART_EXIT_CODE.
+# It is restated here rather than imported because this is Python and that is
+# TypeScript; 75 is EX_TEMPFAIL from sysexits.h ("temporary failure, retry"),
+# chosen because it collides with nothing a supervisor already reads - 0 clean,
+# 1 boot failure, 2 shell misuse, 128+N a signalled death.
+TERRACE_RESTART_EXIT_CODE = 75
+
+# LOOP GUARD for the branch above. A plugin that throws at import exits 1, not
+# 75, so it does not spin here - but a plugin that throws AFTER the restart
+# service is reachable, or an operator holding the button, can. Three restarts
+# inside one minute means each process lived under ~20 seconds on average,
+# which is not a dev loop: it is something failing immediately, and the honest
+# response is to stop and hand the code back so a human sees it.
+TERRACE_RESTART_MAX_BURST = 3
+TERRACE_RESTART_BURST_WINDOW_S = 60
 
 # Repo root = directory holding this script; server/client live beside it.
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -303,6 +330,13 @@ def start_control_reader(state) -> threading.Thread:
     Keys (case-insensitive):
       q / k - quit the whole stack
       r     - restart the client and the server
+
+    OVERLAPS WITH THE IN-GAME RESTART BUTTON, deliberately. This key restarts
+    BOTH halves from the terminal; the button (world-admin `serverRestart`,
+    exit code TERRACE_RESTART_EXIT_CODE) restarts the SERVER only and is
+    reachable by an admin who is not at this terminal, gives connected players
+    a countdown notice first, and works in docker and systemd where there is no
+    terminal at all. Neither replaces the other.
 
     Runs as a daemon thread so it can never keep the interpreter alive after
     main returns; EOF (stdin closed, e.g. nohup) just ends the thread and
@@ -528,6 +562,10 @@ def main(watch: bool) -> int:
                   f"(poll every {WATCH_POLL_INTERVAL_S}s) - server restarts on change",
                   flush=True)
         snapshot = watch_snapshot() if watch else None
+        # Monotonic timestamps of the restarts honoured so far, newest last.
+        # time.monotonic() rather than time.time(): a wall-clock jump (NTP,
+        # a laptop waking) must not widen or collapse the burst window.
+        restart_times = []
 
         # ONE loop for watched and unwatched runs alike: either way we sit in a
         # short wait timeout and wake to check the keyboard flags, so q/r work
@@ -538,6 +576,35 @@ def main(watch: bool) -> int:
                 return 0
             try:
                 code = server.wait(timeout=CONTROL_POLL_INTERVAL_S)
+                if code == TERRACE_RESTART_EXIT_CODE:
+                    # ASKED FOR, not a crash. The server has already written
+                    # its final snapshot and released the port; relaunch it and
+                    # leave the client alone - Vite is a separate process whose
+                    # sources did not change, and reaping it would cost the
+                    # operator their browser session for nothing.
+                    children.remove(server)
+                    now = time.monotonic()
+                    restart_times = [
+                        t for t in restart_times
+                        if now - t < TERRACE_RESTART_BURST_WINDOW_S
+                    ]
+                    if len(restart_times) >= TERRACE_RESTART_MAX_BURST:
+                        print(f"[run_server] server asked to restart "
+                              f"{len(restart_times) + 1} times in under "
+                              f"{TERRACE_RESTART_BURST_WINDOW_S}s - giving up so the "
+                              f"failure is visible instead of spinning", flush=True)
+                        return code
+                    restart_times.append(now)
+                    print("[run_server] server asked to restart (exit "
+                          f"{TERRACE_RESTART_EXIT_CODE}) - relaunching it; "
+                          "the client dev server is left running", flush=True)
+                    # Re-snapshot AFTER the shutdown, for the --watch path's
+                    # reason: the shutdown snapshot's own file writes belong to
+                    # the run about to start, not to another restart.
+                    snapshot = watch_snapshot() if watch else None
+                    server = spawn_server(env)
+                    children.append(server)
+                    continue
                 # The server exited on its own (crash, pnpm failure). Do not
                 # outlive it pretending nothing happened.
                 return code
