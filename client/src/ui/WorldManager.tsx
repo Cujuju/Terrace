@@ -105,6 +105,8 @@ function refusalText(reason: WorldAdminRefusal): string {
       return 'A world switch is already counting down. Cancel it first.';
     case 'unknownPlugin':
       return 'This server has no plugin by that name any more. Reopen the plugin list.';
+    case 'unknownSetting':
+      return 'That plugin does not offer that setting, or does not accept that value. Reopen the plugin list.';
     case 'worldIsActive':
       return 'That world is loaded right now. Switch to another world (or unload) first.';
     case 'noWorldLoaded':

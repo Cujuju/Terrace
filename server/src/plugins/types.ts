@@ -342,17 +342,22 @@ export interface PersistenceSlice {
  * `life | populous` is structures' vocabulary; core only ever sees a list of
  * strings and the one currently in force.
  *
- * WHY NOT A DEFAULT HERE TOO. The default is whatever the plugin already used
- * before it declared anything — a shipped constant, an environment variable —
- * and it may be decided at load time (structures' STRUCTURES_MODEL is fatal on
- * a typo, which a declaration read per world could not be). So absence of a
- * row means "ask the plugin", not "take the first value".
+ * THE DEFAULT IS THE PLUGIN'S, AND IT IS DECLARED RATHER THAN INFERRED. A
+ * world with no row runs whatever the plugin already ran before anybody
+ * configured anything — a shipped constant, an environment variable — which is
+ * not necessarily `values[0]`, and which the operator has to be shown or the
+ * panel would offer an empty control for a world that is plainly running
+ * something. Declared at module load, so a deployment-level default (an env
+ * var whose typo must be fatal at boot) is decided exactly once, where it can
+ * still take the process down.
  */
 export interface PluginSettingDeclaration {
   /** Stable, lowercase, dash-separated — the same shape a plugin name has. */
   readonly key: string;
   /** Every value this key accepts. A value outside it is refused off the wire. */
   readonly values: readonly string[];
+  /** In force where the world file has no row. Must be one of `values`. */
+  readonly defaultValue: string;
 }
 
 export interface TerracePlugin {

@@ -804,6 +804,14 @@ export type WorldAdminRefusal =
   | 'switchInProgress'
   /** No plugin of that name is installed on this server. */
   | 'unknownPlugin'
+  /**
+   * The plugin is installed but declares no such setting, or does not accept
+   * that value for it. Its own declaration is the authority — core knows what
+   * a key MEANS to nobody — so this is the same class of refusal as a plugin
+   * name nothing answers to, told apart because the operator needs to know
+   * WHICH half of the pair was wrong.
+   */
+  | 'unknownSetting'
   /** Refused because it would archive the live world; unload or switch first. */
   | 'worldIsActive'
   /** It was attempted and threw. Nothing was destroyed — see the server log. */
@@ -821,7 +829,8 @@ export type WorldAdminAction =
   | 'purge'
   | 'pin'
   | 'cancelSwitch'
-  | 'setPlugin';
+  | 'setPlugin'
+  | 'configurePlugin';
 
 /** Client → server: "list every world you have". Answered to the sender only. */
 export interface WorldListRequestMessage {
@@ -962,6 +971,32 @@ export interface WorldPluginSetRequestMessage {
   enabled: boolean;
 }
 
+/**
+ * Client → server: "run this plugin with this setting, in this world".
+ *
+ * THE DECLARING PLUGIN IS THE AUTHORITY on which keys exist and which values
+ * each one takes (server plugins/types.ts's PluginSettingDeclaration). This
+ * message carries strings; the server refuses a key or a value that plugin
+ * never declared exactly as it refuses a plugin nobody installed, so no
+ * vocabulary of any plugin's is written down in core or on the wire.
+ *
+ * Applies to ANY world, live or merely on disk — the setting lives in the
+ * world file — and when the world IS live the server reopens it so the change
+ * is in effect, carrying every connected player across (issue #166), the same
+ * shape `worldPluginSet` has.
+ */
+export interface WorldPluginConfigureRequestMessage {
+  type: 'worldPluginConfigure';
+  key: string;
+  id: string;
+  /** Installed plugin name; see PLUGIN_NAME_PATTERN. */
+  plugin: string;
+  /** A key that plugin declared; see PLUGIN_SETTING_TOKEN_PATTERN. */
+  setting: string;
+  /** One of the values that plugin declared for `setting`. */
+  value: string;
+}
+
 /** Client → server: "call off the switch that is counting down". */
 export interface WorldSwitchCancelRequestMessage {
   type: 'worldSwitchCancel';
@@ -984,6 +1019,26 @@ export interface WorldListMessage {
 }
 
 /**
+ * One plugin setting as the panel sees it: who declared it, what it accepts,
+ * and what this world is running.
+ *
+ * THE PANEL RENDERS THIS GENERICALLY — a control per row, labelled by `key`,
+ * offering `values`. It must not learn what any of these strings mean; that a
+ * settlement model can be `life` or `populous` is structures' declaration
+ * travelling through, not a list core keeps.
+ *
+ * `value` is the EFFECTIVE one: the world's row when it has one, otherwise the
+ * plugin's own default, so the control always shows what is actually running
+ * rather than an empty box for an unconfigured world.
+ */
+export interface WorldPluginSetting {
+  plugin: string;
+  key: string;
+  values: string[];
+  value: string;
+}
+
+/**
  * Server → the requesting client only: one world's plugin enablement.
  *
  * `installed` is every plugin this SERVER has discovered; `disabled` is the
@@ -1000,6 +1055,11 @@ export interface WorldPluginListMessage {
   installed: string[];
   /** Those of `installed` this world has switched off. */
   disabled: string[];
+  /**
+   * Every setting the installed plugins declare, with the value in force for
+   * this world. Empty when no installed plugin declares one.
+   */
+  settings: WorldPluginSetting[];
   /** Present INSTEAD of useful lists when the request was refused. */
   refused?: WorldAdminRefusal;
 }
@@ -1063,6 +1123,7 @@ export type WorldAdminRequestMessage =
   | WorldPinRequestMessage
   | WorldPluginListRequestMessage
   | WorldPluginSetRequestMessage
+  | WorldPluginConfigureRequestMessage
   | WorldSwitchCancelRequestMessage;
 
 /**
@@ -1129,6 +1190,33 @@ export function validatePluginName(value: unknown): string | null {
 }
 
 /**
+ * Longest a setting key or one of its values may be on the wire.
+ *
+ * Both are identifiers a plugin author wrote into a declaration, never prose,
+ * so one bound past any plausible one covers both — its job is to keep a
+ * megabyte of string away from the regular expression below, exactly as
+ * MAX_PLUGIN_NAME_LENGTH does for a plugin name.
+ */
+export const MAX_PLUGIN_SETTING_TOKEN_LENGTH = 64;
+
+/**
+ * The shape of a setting key and of a setting value: the plugin-name shape,
+ * restated for the same reason it holds there — these strings are stored as
+ * SQLite keys and rendered into a panel, so lowercase alphanumerics with inner
+ * dashes keeps them free of anything a store, a log line or a label has to
+ * escape. A plugin whose vocabulary needs prose wants a label, not a value.
+ */
+export const PLUGIN_SETTING_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Validates an untrusted setting key or value; null when it could not be one. */
+export function validatePluginSettingToken(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > MAX_PLUGIN_SETTING_TOKEN_LENGTH) return null;
+  if (!PLUGIN_SETTING_TOKEN_PATTERN.test(value)) return null;
+  return value;
+}
+
+/**
  * Validates an untrusted world name; null when it could not be one.
  *
  * Trims, unlike the key validator: a name is a label a human typed, and
@@ -1149,9 +1237,9 @@ export function validateWorldName(value: unknown): string | null {
 /**
  * Validates any inbound world-management message; null if malformed.
  *
- * ONE VALIDATOR FOR THIRTEEN MESSAGES, deliberately: every one of them carries
- * the operator key and is refused the same way, so splitting them into thirteen
- * near-identical functions would be thirteen places for the key check to drift.
+ * ONE VALIDATOR FOR EVERY WORLD-ADMIN MESSAGE, deliberately: every one of them
+ * carries the operator key and is refused the same way, so splitting them into
+ * a function apiece would be that many places for the key check to drift.
  * The per-action fields are checked in the one switch below.
  */
 export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessage | null {
@@ -1250,6 +1338,19 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
       if (id === null || plugin === null) return null;
       if (typeof m.enabled !== 'boolean') return null;
       return { type: 'worldPluginSet', key, id, plugin, enabled: m.enabled };
+    }
+
+    case 'worldPluginConfigure': {
+      const id = validateWorldId(m.id);
+      const plugin = validatePluginName(m.plugin);
+      const setting = validatePluginSettingToken(m.setting);
+      const value = validatePluginSettingToken(m.value);
+      if (id === null || plugin === null || setting === null || value === null) return null;
+      // WELL-FORMED IS ALL THIS LAYER CAN SAY. Whether the plugin declares this
+      // key, and whether it accepts this value, is a question only the plugin's
+      // own declaration answers — checked by the server (world-manager.ts) and
+      // refused as 'unknownSetting'. Shared code cannot know: it has no plugins.
+      return { type: 'worldPluginConfigure', key, id, plugin, setting, value };
     }
 
     case 'worldPin': {
