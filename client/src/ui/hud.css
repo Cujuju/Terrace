@@ -968,6 +968,15 @@ button.world-header {
   border-color: var(--plugin-off-border);
 }
 
+/* A declared plugin setting (WorldManager.tsx): its label and its select on
+   one line, so a plugin's knob reads as belonging to the toggle row above it
+   rather than as another action of its own. The label carries the plugin and
+   key; the panel knows nothing else about either. */
+.plugin-setting {
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
 .restore-refusal {
   margin: 0;
   color: rgb(240, 170, 160);
