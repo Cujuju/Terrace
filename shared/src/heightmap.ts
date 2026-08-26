@@ -40,10 +40,18 @@ export {
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
 import {
+  canSpreadBandToSpan,
+  columnCoversBand,
+  highestCeilingBelow,
+  isSpanDrawn,
   moveSpanCeiling,
+  readSpans,
   spanAt,
   spanCount,
+  spanIndexBelowBand,
   spanIndexCoveringBand,
+  spansHaveCapAtBand,
+  type Span,
 } from './columns.ts';
 import {
   bandOf,
@@ -251,6 +259,12 @@ export type SculptAnchor = 'clicked' | 'free' | 'band';
  *
  * Reads the map only; the caller decides what to do with a false answer (both
  * brushes treat it as "this stroke moves nothing").
+ *
+ * "STANDS AT IT" MEANS SOLID AT THAT BAND, NOT TOPMOST SURFACE ABOVE IT (issue
+ * #129, step 4.5, plan D5). The test used to be `cells[n] >= threshold`, which
+ * a neighbour with a cave running under it satisfies while having no material
+ * at the band — a terrace could creep out of a roof's shadow. The span form is
+ * strictly tighter and identical on one-span columns; see `canSpreadBandToSpan`.
  */
 export function canSpreadBandTo(
   map: Heightmap,
@@ -258,17 +272,7 @@ export function canSpreadBandTo(
   cy: number,
   band: number,
 ): boolean {
-  const threshold = band * BAND_HEIGHT;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const nx = cx + dx;
-      const ny = cy + dy;
-      if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
-      if (map.cells[cellIndex(map, nx, ny)]! >= threshold) return true;
-    }
-  }
-  return false;
+  return canSpreadBandToSpan(map, cx, cy, band);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -944,10 +948,10 @@ const DRAG_TREAD_TOLERANCE_CELLS = 1;
  * never pushing lips; it was building them.
  *
  * So the crowding is read from the map as it stands NOW, and the entitlement
- * from the map as it stood BEFORE — `heightBefore`, which reports the recorded
- * pre-edit height for anything this intent has touched and the live height for
- * everything else. A level that was not there before this pull cannot be
- * pushed by it.
+ * from the map as it stood BEFORE — `hadCapAtBandBefore`, which answers from
+ * the recorded pre-edit column for anything this intent has touched and from
+ * the live column for everything else. A level that was not there before this
+ * pull cannot be pushed by it.
  *
  * SEEDED BY WHAT MOVED, NEVER BY THE TERRAIN AT LARGE. Stated as a property of
  * the map — "bands within `tolerance` cells of each other may differ by at most
@@ -966,7 +970,7 @@ function pushLowerLayers(
   map: Heightmap,
   raisedAtBand: number[],
   topBand: number,
-  heightBefore: (index: number) => number,
+  hadCapAtBandBefore: (index: number, band: number) => boolean,
   record: (index: number) => void,
   changed: Set<number>,
 ): void {
@@ -983,6 +987,9 @@ function pushLowerLayers(
    * cascade walks the whole way down again. What the rule means to ask is
    * whether there is a STEP at this level being crowded, and a step at band j
    * is ground standing at band j, not ground towering over it.
+   *
+   * In spans (step 4.5): a span whose CAP is at band j. A layered column can
+   * hold such a step under a roof, and the roof above it does not count.
    */
   const treadWasNear = (cx: number, cy: number, band: number): boolean => {
     for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
@@ -990,7 +997,7 @@ function pushLowerLayers(
         const x = cx + dx;
         const y = cy + dy;
         if (!inBounds(map, x, y)) continue;
-        if (bandOf(heightBefore(cellIndex(map, x, y))) === band) return true;
+        if (hadCapAtBandBefore(cellIndex(map, x, y), band)) return true;
       }
     }
     return false;
@@ -1015,7 +1022,8 @@ function pushLowerLayers(
           const i = cellIndex(map, x, y);
           if (seen.has(i)) continue;
           seen.add(i);
-          if (map.cells[i]! >= level) continue;
+          // Solid at this band already — nothing here to push.
+          if (columnCoversBand(map, x, y, band)) continue;
           // Clause 2: only a step that was already here may be pushed.
           if (!treadWasNear(x, y, band)) continue;
           candidates.push(i);
@@ -1033,10 +1041,14 @@ function pushLowerLayers(
     while (filledThisPass) {
       filledThisPass = false;
       for (const i of candidates) {
-        if (map.cells[i]! >= level) continue;
-        if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), band)) continue;
+        const x = cellX(map.size, i);
+        const y = cellY(map.size, i);
+        // The span the fill lands on: null once this band is solid here.
+        const k = spanIndexBelowBand(map, x, y, band);
+        if (k === null) continue;
+        if (!canSpreadBandTo(map, x, y, band)) continue;
         record(i);
-        map.cells[i] = level;
+        moveSpanCeiling(map, x, y, k, level);
         changed.add(i);
         raised.push(i);
         filledThisPass = true;
@@ -1208,8 +1220,11 @@ function retreatHeightAt(
       const nx = cx + dx;
       const ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
-      const h = map.cells[cellIndex(map, nx, ny)]!;
-      if (h >= floor) continue;
+      // The neighbour's ground AT THIS LEVEL — its highest ceiling under the
+      // band, not its top surface (step 4.5): beside a lip that is a cave
+      // floor, the roof over that floor is not ground the lip can fall to.
+      const h = highestCeilingBelow(map, nx, ny, floor);
+      if (h === null) continue;
       if (best === null || h > best) best = h;
     }
   }
@@ -1286,10 +1301,26 @@ function applyDragRegion(
    * everything absent, which is correct precisely because absent means
    * untouched.
    */
-  const priorHeights = new Map<number, number>();
-  const heightBefore = (i: number): number => priorHeights.get(i) ?? map.cells[i]!;
+  //
+  // In spans since step 4.5: what is recorded is the whole column, because the
+  // question the cascade asks of it — "did a step stand at band j here?" — is
+  // about a span's cap, and on a layered column that span may not be the top.
+  const priorSpans = new Map<number, readonly Span[]>();
   const record = (i: number): void => {
-    if (!priorHeights.has(i)) priorHeights.set(i, map.cells[i]!);
+    if (!priorSpans.has(i)) priorSpans.set(i, readSpans(map, cellX(map.size, i), cellY(map.size, i)));
+  };
+  const hadCapAtBandBefore = (i: number, band: number): boolean => {
+    const prior = priorSpans.get(i);
+    if (prior !== undefined) return spansHaveCapAtBand(prior, band);
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    // Live and untouched: walk the column in place rather than copying it —
+    // this runs once per cell of the cascade's window.
+    const count = spanCount(map, x, y);
+    for (let k = 0; k < count; k++) {
+      if (bandOf(spanAt(map, x, y, k).ceiling) === band) return true;
+    }
+    return false;
   };
 
   // The footprint, collected once. The offsets come from the one iterator
@@ -1343,14 +1374,29 @@ function applyDragRegion(
     while (cutThisPass) {
       cutThisPass = false;
       for (const i of disc) {
+        const x = cellX(map.size, i);
+        const y = cellY(map.size, i);
         // Not this band's ground: higher land the retreat leaves standing,
-        // lower land it has already exposed, or a level it never owned.
-        if (bandOf(map.cells[i]!) !== targetBand) continue;
-        const exposed = retreatHeightAt(map, cellX(map.size, i), cellY(map.size, i), targetBand);
+        // lower land it has already exposed, or a level it never owned. In
+        // spans: the span solid at the grabbed band must also CAP there — a
+        // span that towers over the band is not its lip (step 4.5).
+        const k = spanIndexCoveringBand(map, x, y, targetBand);
+        if (k === null) continue;
+        const span = spanAt(map, x, y, k);
+        if (bandOf(span.ceiling) !== targetBand) continue;
+        const exposed = retreatHeightAt(map, x, y, targetBand);
         // Interior of the plateau — nothing lower beside it, so the band does
         // not end here and there is no lip at this cell to pull in.
         if (exposed === null) continue;
-        map.cells[i] = exposed;
+        // A DRAG NEVER REMOVES A ROOF (plan D4). A span above the bottom one
+        // that would fall below its own floor, or thin out past drawing, is
+        // left standing: the ground beside it is under it, not beside it. The
+        // bottom span keeps the old rule to the letter — it floors at the
+        // bottom of the world and cannot be removed, only emptied.
+        if (k > 0 && (exposed <= span.floor || !isSpanDrawn({ floor: span.floor, ceiling: exposed }))) {
+          continue;
+        }
+        moveSpanCeiling(map, x, y, k, exposed);
         changed.add(i);
         cutThisPass = true;
       }
@@ -1367,13 +1413,18 @@ function applyDragRegion(
   while (filledThisPass) {
     filledThisPass = false;
     for (const i of disc) {
-      const h = map.cells[i]!;
-      // Already at or above the band: the lip itself, land an earlier pass
-      // took, or higher ground the pull leaves standing.
-      if (h >= targetHeight) continue;
-      if (!canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), targetBand)) continue;
+      const x = cellX(map.size, i);
+      const y = cellY(map.size, i);
+      // Already solid at the band: the lip itself, land an earlier pass took,
+      // or higher ground the pull leaves standing. Otherwise `k` is the span
+      // the fill lands on — the one whose gap holds the band (plan D4), so
+      // under a roof the fill goes into the opening and may weld to the roof,
+      // and the roof itself never moves.
+      const k = spanIndexBelowBand(map, x, y, targetBand);
+      if (k === null) continue;
+      if (!canSpreadBandTo(map, x, y, targetBand)) continue;
       record(i);
-      map.cells[i] = targetHeight;
+      moveSpanCeiling(map, x, y, k, targetHeight);
       changed.add(i);
       raised.push(i);
       filledThisPass = true;
@@ -1384,7 +1435,7 @@ function applyDragRegion(
   // levels beneath it give ground too once it crowds them — see
   // pushLowerLayers. Seeded with this intent's own cells, so a pull that moved
   // nothing cascades nothing.
-  if (raised.length > 0) pushLowerLayers(map, raised, targetBand, heightBefore, record, changed);
+  if (raised.length > 0) pushLowerLayers(map, raised, targetBand, hadCapAtBandBefore, record, changed);
 }
 
 /**
