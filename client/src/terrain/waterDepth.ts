@@ -31,9 +31,10 @@ import {
   SEA_COLUMN_BANDS,
   SEA_LEVEL,
   chunksPerEdge,
+  seabedHeight,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE } from '../config.ts';
-import { sampleHeight, type TerrainMirror } from './mirror.ts';
+import { type TerrainMirror } from './mirror.ts';
 
 /**
  * Alpha at zero water-column depth — the waterline itself, and any cell right
@@ -523,10 +524,22 @@ export const WATER_SPECULAR_FACTOR_DEFAULT_BYTE = depthSpecularFactorByte(0);
  * render/frontierFog.ts): a stroke that dirties a handful of chunks costs a
  * few thousand byte writes, not a world-sized rescan.
  *
- * Reads through `sampleHeight` (not sampleRenderHeight): the depth texture is
+ * Reads through `seabedHeight` (not sampleRenderHeight): the depth texture is
  * a fact about the water column, which exists whether or not a chunk has
  * been revealed to THIS client, so it takes the raw mirror value the same
  * way picking and prediction do.
+ *
+ * AMENDMENT (2026-08-25, layered columns): the raw value it wants is the
+ * SEABED, not the surface. `heightAt` reports the topmost ceiling, so a column
+ * with a roof arching over a flooded gap would report the roof — dry land — and
+ * the sea would vanish from under its own arch. `seabedHeight` (shared/src/
+ * columns.ts) answers the question this loop is actually asking: what does the
+ * water column bottom out on here. For every one-span column it returns exactly
+ * what `sampleHeight` returned, so nothing changes on unlayered terrain.
+ *
+ * Chunk indices come from `chunksPerEdge`, which rejects a world size that is
+ * not a whole number of chunks, so every (x, y) below is in bounds and needs
+ * none of `sampleHeight`'s border clamping.
  *
  * AMENDMENT (2026-08-20, specular suppression): `specularOut`, an optional
  * second row-major byte buffer of the exact same layout, receives
@@ -554,7 +567,7 @@ export function writeWaterDepthTexels(
     for (let y = y0; y < y0 + CHUNK_SIZE; y++) {
       const row = y * worldSize;
       for (let x = x0; x < x0 + CHUNK_SIZE; x++) {
-        const height = sampleHeight(mirror, x, y);
+        const height = seabedHeight(mirror.map, x, y);
         const depth = waterDepthWorldUnits(height);
         // Height, not depth, for the alpha: only the height distinguishes dry
         // band-0 land (no sea drawn over it) from water at zero depth (a thin
