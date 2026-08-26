@@ -184,6 +184,24 @@ export const plugin: TerracePlugin = {
     });
   },
 
+  /**
+   * EVERY WALKER BELONGS TO ONE WORLD (issue #167). This plugin persists
+   * nothing by settled design, so a close is the end of every journey in it:
+   * the three sims, the id allocator and the WorldApi this module stashes for
+   * the structures-facing `emitSettlerFrom` all go.
+   *
+   * THE BLESSING IS RELEASED THROUGH THE BRIDGE FIRST, and the order matters:
+   * `applyBlessedCells([])` clears this plugin's buffered claim AND pushes the
+   * empty set into structures, so the town this world's routes were prospering
+   * is not left blessed by a pilgrimage that no longer exists. Structures'
+   * own close does the same from its side; this half is what makes the claim
+   * disappear even when structures is not the plugin being closed.
+   */
+  onWorldClose(): void {
+    applyBlessedCells([]);
+    resetPilgrimsState();
+  },
+
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
   },

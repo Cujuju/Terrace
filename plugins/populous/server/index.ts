@@ -40,7 +40,11 @@ import {
   type PopulousWorld,
 } from './model.ts';
 import { emitSettlerFrom, loadPilgrimsBridge } from './pilgrims-bridge.ts';
-import { loadStructuresBridge, registerGrowthModel } from './structures-bridge.ts';
+import {
+  clearGrowthModel,
+  loadStructuresBridge,
+  registerGrowthModel,
+} from './structures-bridge.ts';
 
 /** This plugin's name, and its message namespace. See PLUGIN_NAME_PATTERN. */
 export const POPULOUS_PLUGIN_NAME = 'populous';
@@ -114,6 +118,20 @@ export const plugin: TerracePlugin = {
     void loadPilgrimsBridge();
     registerGrowthModel(model);
     console.info(POPULOUS_ACTIVE_MESSAGE);
+  },
+
+  /**
+   * THE RULE IS UNREGISTERED WITH THE WORLD IT WAS CHOSEN FOR (issue #167).
+   *
+   * The growth-model slot is one slot, last writer wins, and it lives in the
+   * structures MODULE — not in a session. Left filled, this plugin would keep
+   * driving the board of the NEXT world opened in this process even when that
+   * world did not select it, which is precisely the swap this seam exists to
+   * make an explicit, per-world choice. Registration happens in onWorldCreate
+   * on every open, so clearing here costs the selected case nothing.
+   */
+  onWorldClose(): void {
+    clearGrowthModel();
   },
 };
 

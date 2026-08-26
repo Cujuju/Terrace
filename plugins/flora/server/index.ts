@@ -1092,6 +1092,18 @@ export const plugin: TerracePlugin = {
     simulate(world, dt);
   },
 
+  /**
+   * THE FOREST BELONGS TO ITS WORLD (issue #167). The final snapshot has
+   * already been written when this runs, so dropping everything here costs
+   * nothing and closes two holes at once: the WorldApi this module stashes for
+   * fire's callbacks (`fuelWorld`) stops pinning a closed world's heightmap,
+   * and a world reopened WITHOUT this plugin cannot leave the last one's trees
+   * standing in a module the next session never re-enters.
+   */
+  onWorldClose(): void {
+    resetFloraState();
+  },
+
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     reactToTerrain(world, diff);
   },
