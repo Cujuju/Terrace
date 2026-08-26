@@ -47,6 +47,24 @@ export interface Span {
   readonly ceiling: number;
 }
 
+/**
+ * The thinnest column the world can hold: `[BEDROCK_FLOOR, BEDROCK_FLOOR + 1)`.
+ *
+ * A COLUMN IS NEVER EMPTY (`setColumn` throws on a column with no span), and a
+ * player digging can always reach the bottom of the world — `clampHeight` has
+ * always let a stroke put `cells[i]` at MIN_HEIGHT, which is what "dug out all
+ * the way down" has always looked like. Those two facts collide at exactly one
+ * height, and this is where they are reconciled: a column lowered to or past
+ * the floor keeps this span rather than ceasing to exist.
+ *
+ * INVISIBLE, AND THAT IS THE POINT. One height unit is a sixteenth of a band,
+ * so `bandOf(BEDROCK_FLOOR + 1) === bandOf(BEDROCK_FLOOR)`: the renderer, the
+ * picking march and every band test see the same bottom-of-the-world they saw
+ * before. It is the ONLY span exempt from the no-invisible-solid rule below,
+ * because the alternative is not "no sliver" but "no column".
+ */
+const BEDROCK_REMNANT: Span = { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + 1 };
+
 /** Flattened entries are [floor, ceiling] pairs; this is the stride. */
 const SPAN_STRIDE = 2;
 
@@ -449,6 +467,15 @@ function readSpans(map: Heightmap, x: number, y: number): Span[] {
  * Both rules only ever make spans taller or fewer, so one pass reaches the
  * fixed point: a merge cannot un-draw a span, and a drop cannot un-draw the gap
  * that swallows it.
+ *
+ * AND A THIRD RULE, WHICH IS ABOUT THE WORLD RATHER THAN ABOUT DRAWING: the
+ * result is never the empty column. Digging a plain column to the bottom of the
+ * world is a legal stroke that predates spans entirely — `clampHeight` puts
+ * `cells[i]` at MIN_HEIGHT and the ground is gone — and expressed in spans it
+ * empties the only span there is. Without this clause that stroke reaches
+ * `setColumn` with nothing to store and throws, i.e. a player digging to the
+ * floor of the world would take the apply path down with them. See
+ * BEDROCK_REMNANT for why the span it lands on is invisible.
  */
 function canonicaliseColumn(spans: readonly Span[]): Span[] {
   const out: Span[] = [];
@@ -462,7 +489,7 @@ function canonicaliseColumn(spans: readonly Span[]): Span[] {
     }
     out.push(span);
   }
-  return out;
+  return out.length === 0 ? [BEDROCK_REMNANT] : out;
 }
 
 /**
