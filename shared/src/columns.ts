@@ -337,6 +337,66 @@ export function spanIndexCoveringBand(
 }
 
 /**
+ * The span a fill TO band `band` lands on — the one whose gap above holds that
+ * band: the highest span whose ceiling lies below the band's threshold. `null`
+ * when the column is already solid there, so there is nothing to fill.
+ *
+ * This is how the drag resolves the receiving span (plan D4): raising this
+ * span's ceiling to the threshold puts material in the opening, and if that
+ * reaches the span above the two weld (`moveSpanCeiling`), which is a sealed
+ * cave rather than a deleted one. On a one-span column it is span 0 whenever
+ * `cells[i] < band · BAND_HEIGHT`, exactly the cell the old fill would write.
+ */
+export function spanIndexBelowBand(
+  map: Heightmap,
+  x: number,
+  y: number,
+  band: number,
+): number | null {
+  if (columnCoversBand(map, x, y, band)) return null;
+  const threshold = band * BAND_HEIGHT;
+  let below: number | null = null;
+  const count = spanCount(map, x, y);
+  for (let k = 0; k < count; k++) {
+    if (spanAt(map, x, y, k).ceiling < threshold) below = k;
+  }
+  return below;
+}
+
+/**
+ * The highest ceiling of this column that lies strictly below `threshold`, or
+ * `null` when no span of it does — "the ground beside a lip", read at the
+ * level the lip stands at rather than at the column's top. On a one-span
+ * column it is `cells[i]` when that is below the threshold and `null` otherwise.
+ */
+export function highestCeilingBelow(
+  map: Heightmap,
+  x: number,
+  y: number,
+  threshold: number,
+): number | null {
+  let best: number | null = null;
+  const count = spanCount(map, x, y);
+  for (let k = 0; k < count; k++) {
+    const { ceiling } = spanAt(map, x, y, k);
+    if (ceiling < threshold) best = ceiling;
+  }
+  return best;
+}
+
+/**
+ * Whether some span of this column has its CAP at exactly band `band` — a
+ * step standing at that level, as distinct from a column that merely towers
+ * over it. `spans` is passed in so a caller can ask it of a column as it stood
+ * before an edit; pass `readSpans`' result for the live column.
+ */
+export function spansHaveCapAtBand(spans: readonly Span[], band: number): boolean {
+  const cap = band * BAND_HEIGHT;
+  for (const span of spans) if (spanCapHeight(span) === cap) return true;
+  return false;
+}
+
+/**
  * Whether any span of this column fills band `band` — solid at that level.
  *
  * The same question `spanIndexCoveringBand` answers, asked without caring which
@@ -436,8 +496,8 @@ export function anyColumnLayered(
 // band on every cell in the world. Callers that reach past the sculpt tools are
 // on notice: the RangeError is the contract.
 
-/** A column's spans as a mutable array, ascending, for the passes below. */
-function readSpans(map: Heightmap, x: number, y: number): Span[] {
+/** A column's spans as a fresh mutable array, ascending — a snapshot, not a view. */
+export function readSpans(map: Heightmap, x: number, y: number): Span[] {
   const count = spanCount(map, x, y);
   const spans: Span[] = [];
   for (let k = 0; k < count; k++) spans.push(spanAt(map, x, y, k));
