@@ -7,6 +7,7 @@ export * from './heightmap.ts';
 export * from './columns.ts';
 export * from './chunks.ts';
 export * from './protocol.ts';
+export * from './wire.ts';
 export * from './rivers.ts';
 export * from './freshwater.ts';
 export * from './traversal.ts';

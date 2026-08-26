@@ -267,20 +267,17 @@ export const VILLAGE_PATROL_RANGE_CELLS = cellsAcross(64);
 // Wire encoding and validation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Decimal places kept on broadcast cell coordinates. Same value and same
- * reasoning as monsters' and wildlife's MONSTER_POSITION_DECIMALS: 1/100 of a
- * cell is far below what any camera distance resolves, and it makes the
- * payload's encoded size bounded.
- */
-export const BOAT_POSITION_DECIMALS = 2;
-
-const POSITION_QUANTUM = 10 ** BOAT_POSITION_DECIMALS;
-
-/** Rounds a cell-space coordinate to the broadcast precision. */
-export function roundBroadcastPosition(value: number): number {
-  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
-}
+// Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts).
+// Five plugins each carried a byte-identical copy of this rounding, and the
+// copies are how issue #180 shipped: the bounded form did not exist, so nothing
+// stopped a rounded coordinate from leaving the map, and fixing it in one
+// plugin left the other four exposed. Re-exported here so this file stays the
+// one wire contract this plugin's server and client halves both import.
+export {
+  BROADCAST_POSITION_DECIMALS,
+  roundBroadcastCell,
+  roundBroadcastPosition,
+} from '@terrace/shared';
 
 /**
  * Defensive bound on the broadcast list.

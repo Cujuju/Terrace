@@ -46,6 +46,7 @@ import {
   KRAKEN_SINKS_BOAT_EVERY_SECONDS,
   KRAKEN_WOUND_HEAL_PER_SECOND,
   VILLAGE_PATROL_RANGE_CELLS,
+  roundBroadcastCell,
   roundBroadcastPosition,
   type BoatState,
 } from '../protocol.ts';
@@ -848,13 +849,20 @@ export function burnBoats(ids: readonly number[]): number {
   return before - boats.length;
 }
 
-export function boatStates(): BoatState[] {
+/**
+ * `worldSize` bounds the rounded position to the map (shared's
+ * roundBroadcastCell): a boat legally moored within half a quantum of the far
+ * shore rounds to `worldSize`, and the host's visibility filter turns every
+ * broadcast position back into a chunk index and throws on an off-map one
+ * (issue #180). It bounds the WIRE FORM only — the sim's boat never moves.
+ */
+export function boatStates(worldSize: number): BoatState[] {
   return boats.map((boat) => ({
     id: boat.id,
     // Rounded on the way OUT only: the sim keeps full precision, and the wire
     // carries the hundredth of a cell a camera can actually resolve.
-    x: roundBroadcastPosition(boat.x),
-    y: roundBroadcastPosition(boat.y),
+    x: roundBroadcastCell(boat.x, worldSize),
+    y: roundBroadcastCell(boat.y, worldSize),
     heading: roundBroadcastPosition(boat.heading),
     fighting: boat.fighting,
   }));

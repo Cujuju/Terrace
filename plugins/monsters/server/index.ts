@@ -61,7 +61,7 @@
 //     Halving to 0.5 Hz would put the nominal window at the clamp with no
 //     headroom for jitter, and the monster would start snapping.
 //
-// Positions are rounded to MONSTER_POSITION_DECIMALS (1/100 cell) on the way out.
+// Positions are rounded to BROADCAST_POSITION_DECIMALS (1/100 cell) on the way out.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CellDiff, SculptIntent } from '@terrace/shared';
@@ -79,6 +79,7 @@ import {
   MONSTERS_STATE_MESSAGE,
   isMonsterKind,
   type MonsterState,
+  roundBroadcastCell,
   roundBroadcastPosition,
 } from '../protocol.ts';
 import { advanceLurking } from './lurk.ts';
@@ -199,9 +200,22 @@ function simulate(world: WorldApi, dt: number): void {
   // whatever they used to see left their view (see WorldApi.broadcastVisible's
   // doc comment; monsters' own header above already documents the "empty
   // list ~20 B" case this reuses unchanged).
+  // BOUNDED TO THE MAP HERE, not inside monsterStates(): that function is also
+  // the cross-plugin query pilgrims reads through its monsters bridge, and the
+  // bridge has no world to bound against (it only ever takes distances from
+  // what it is given, so an unbounded hundredth of a cell is nothing to it).
+  // The wire is the half that cares: a monster legally standing within half a
+  // quantum of the far edge rounds to `worldSize`, which is not a cell, and
+  // broadcastVisible turns every position it is handed back into a chunk index
+  // and throws on an off-map one (issue #180).
+  const onTheMap = monsterStates().map((monster) => ({
+    ...monster,
+    x: roundBroadcastCell(monster.x, world.worldSize),
+    y: roundBroadcastCell(monster.y, world.worldSize),
+  }));
   world.broadcastVisible(
     MONSTERS_STATE_MESSAGE,
-    monsterStates(),
+    onTheMap,
     (monster) => ({ x: monster.x, y: monster.y }),
     (visible) => ({ monsters: visible }),
   );
