@@ -398,7 +398,17 @@ function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: n
 
   const burned: Array<{ x: number; y: number }> = [];
   for (const cell of cells) {
-    if (live.delete(structureKey(cell.x, cell.y))) burned.push({ x: cell.x, y: cell.y });
+    const key = structureKey(cell.x, cell.y);
+    if (!live.delete(key)) continue;
+    // AND TELL THE SWEEP. Deleting from `live` alone is not enough: a
+    // generation sweep spans many ticks and reads a SNAPSHOT of the board it
+    // took when it started (life.ts's GenerationSurvey), so a house that
+    // burns down mid-sweep is still standing in that snapshot and gets staged
+    // straight back into the next generation — and since buildings became
+    // permanent (2026-08-26) a resurrected building never dies again. See
+    // `evict`'s own comment for why the snapshot is not edited instead.
+    survey.evict(key);
+    burned.push({ x: cell.x, y: cell.y });
   }
   if (burned.length === 0) return;
 
@@ -424,9 +434,14 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 
   const demolished: Array<{ x: number; y: number }> = [];
   for (const cell of diff) {
-    if (live.delete(structureKey(cell.x, cell.y))) {
-      demolished.push({ x: cell.x, y: cell.y });
-    }
+    const key = structureKey(cell.x, cell.y);
+    if (!live.delete(key)) continue;
+    // The sweep is told too, for the reason structuresBurnedOut gives above:
+    // an in-flight generation is reading a snapshot that still holds this
+    // house, and would otherwise carry it into the next generation on ground
+    // the player just dug away.
+    survey.evict(key);
+    demolished.push({ x: cell.x, y: cell.y });
   }
   broadcastChanges(world, [], [], demolished);
 

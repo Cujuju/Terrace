@@ -278,12 +278,30 @@ export class GenerationSurvey {
   private cursor = 0;
   private readonly staged = new Map<number, LiveCellRecord>();
   /**
-   * Keys demolished EARLIER THIS SWEEP by a new building clearing its
-   * keep-clear square (see scanChunk's teepee→building step). A cell on this
-   * set must be skipped for BOTH survival and birth when its chunk is scanned
-   * later in the sweep — it is already gone; re-staging it would resurrect a
-   * teepee inside a building's reserved ground mid-generation. Cleared with
-   * the sweep in resetSweep.
+   * CELLS THAT DIED MID-SWEEP, from either of the two directions the swept
+   * `board` cannot see. A key on this set is skipped for BOTH survival and
+   * birth when its chunk is scanned later in the sweep, and un-staged if its
+   * chunk was scanned earlier. Cleared with the sweep in resetSweep.
+   *
+   *   * A NEW BUILDING CLEARED ITS KEEP-CLEAR SQUARE (scanChunk's
+   *     teepee→building step): re-staging one of those cells would resurrect
+   *     a teepee inside a building's reserved ground mid-generation.
+   *   * SOMETHING OUTSIDE THIS SWEEP DELETED THE CELL — a town that burned
+   *     down (index.ts's structuresBurnedOut) or ground dug out from under a
+   *     house (reactToTerrain), both of which delete straight from the live
+   *     map and broadcast the loss, on a tick this sweep does not control.
+   *     They reach the sweep through `evict` below.
+   *
+   * THE SECOND SOURCE IS THE DELETE-SHAPED HALF OF THE 2026-08-24 BUG. That
+   * fix gave the sweep a private snapshot so an outside WRITE could not be
+   * half-seen; the snapshot by construction also preserves an outside
+   * DELETE's victim, which then gets staged straight back into the next
+   * generation. Until 2026-08-26 that mostly self-healed — a resurrected cell
+   * faced S23 again and usually died the generation after — but buildings are
+   * now permanent (see scanChunk's `survives`), so a resurrected BUILDING
+   * never dies: it stands forever on ground the client was told it lost, and
+   * holds its whole keep-clear square against every future placement. A
+   * snapshot that survives outside writes has to survive outside deletes too.
    */
   private readonly demolishedThisSweep = new Set<number>();
   /**
@@ -291,6 +309,29 @@ export class GenerationSurvey {
    * the ONLY board `scanChunk` reads. Null between sweeps.
    */
   private board: ReadonlyMap<number, LiveCellRecord> | null = null;
+
+  /**
+   * TELLS AN ACTIVE SWEEP THAT A CELL IS GONE — the eviction half of the
+   * board snapshot's contract, called by every path that deletes a live cell
+   * from outside this sweep (index.ts: structuresBurnedOut, reactToTerrain).
+   *
+   * The snapshot itself is deliberately NOT edited. Its whole purpose is that
+   * every chunk of one sweep reasons about the SAME generation — neighbour
+   * counts included — so a chunk scanned at second 3 and one scanned at
+   * second 12 cannot disagree about how crowded a neighbourhood was. Removing
+   * the cell from `board` mid-sweep would reintroduce exactly that split
+   * view. The cell therefore still COUNTS as a neighbour for the generation
+   * it was alive at the start of, and simply does not survive into the next
+   * one — the same bounded, one-generation lag life.ts's header already names
+   * for a cell whose neighbour was sculpted.
+   *
+   * Idempotent, and safe to call between sweeps: a key evicted while no sweep
+   * is running is cleared by the next resetSweep before that sweep begins.
+   */
+  evict(key: number): void {
+    this.staged.delete(key);
+    this.demolishedThisSweep.add(key);
+  }
 
   private resetSweep(): void {
     this.cursor = 0;
@@ -368,13 +409,16 @@ export class GenerationSurvey {
         if (!isBuildableCell(world, x, y)) continue;
 
         const key = structureKey(x, y);
-        // KEEP-CLEAR SUPPRESSION: a cell demolished earlier this sweep (a new
-        // building cleared its square) is skipped for BOTH survival and birth
-        // — it is already rubble; staging it would resurrect a teepee inside
-        // a building's reserved ground. Chunks are scanned in fixed row-major
-        // order, so this is what makes the clear bite cells the sweep has not
-        // reached yet; earlier ones were already un-staged by
-        // clearKeepClearSquare directly.
+        // MID-SWEEP DEATH SUPPRESSION: a cell that died earlier this sweep —
+        // cleared by a new building's keep-clear square, or burned down or
+        // sculpted away from outside (see demolishedThisSweep) — is skipped
+        // for BOTH survival and birth. It is already rubble, and the swept
+        // board still holds it: staging it would resurrect either a teepee
+        // inside a building's reserved ground or a house the client has
+        // already been told it lost. Chunks are scanned in fixed row-major
+        // order, so this is what makes a mid-sweep death bite cells the sweep
+        // has not reached yet; earlier ones were un-staged directly, by
+        // clearKeepClearSquare or by evict.
         if (this.demolishedThisSweep.has(key)) continue;
 
         const current = live.get(key);
