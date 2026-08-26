@@ -16,6 +16,9 @@
 //   <package version>+env.<stamp>            no git; TERRACE_VERSION is the basis
 //   <package version>+boot.<nonce>           no git and no TERRACE_VERSION
 //
+// Any of the four may carry a trailing `-reload.<n>` when the plugin has been
+// re-imported in this process (issue #198) — see RELOAD_STAMP_MARKER.
+//
 // THE TREE HASH, NOT THE LAST COMMIT THAT TOUCHED THE DIRECTORY. `git rev-parse
 // HEAD:./` inside a plugin gives the hash of that directory's TREE OBJECT,
 // which is a hash of its CONTENT: two checkouts with identical plugin bytes
@@ -205,4 +208,33 @@ export function pluginVersionStamp(context: PluginVersionContext, directory: str
   }
 
   return `${version}+boot.${BOOT_NONCE}`;
+}
+
+/**
+ * Marker appended to the stamp of a plugin that was RE-IMPORTED in this process
+ * (issue #198), with the reload's generation.
+ *
+ * WHY THE CONTENT STAMP ALONE IS NOT ENOUGH. A reload replaces a module, and the
+ * client's one-shot page reload fires on a build identity built from these
+ * stamps — so the identity has to move whenever the running code does. The
+ * content stamp moves only when git can SEE the change: a deployment with no
+ * .git (docker, a tarball self-host) stamps every plugin `+boot.<nonce>`, which
+ * is fixed for the life of the process, and there an operator who edited a
+ * plugin and reloaded it would get a server on new code and clients on old.
+ * The generation says what the content digest cannot: this is not the module
+ * that was imported before.
+ */
+const RELOAD_STAMP_MARKER = 'reload';
+
+/**
+ * The stamp for a plugin directory as re-imported under `generation` — the
+ * ordinary content-derived stamp with the reload marker on the end, in the same
+ * `-<marker>.<value>` shape as the dirty marker beside it.
+ */
+export function reloadedVersionStamp(
+  context: PluginVersionContext,
+  directory: string,
+  generation: number,
+): string {
+  return `${pluginVersionStamp(context, directory)}-${RELOAD_STAMP_MARKER}.${generation}`;
 }

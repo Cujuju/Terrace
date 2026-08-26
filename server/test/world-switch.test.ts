@@ -24,6 +24,7 @@ import type { ServerConfig } from '../src/config.ts';
 import { WorldRegistry } from '../src/persistence/world-registry.ts';
 import type { LoadedPlugin, TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import type { Player } from '../src/player.ts';
+import { InstalledPlugins } from '../src/plugins/installed.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
 import { RecordingSink, asLoadedPlugin } from './support/harness.ts';
 
@@ -62,7 +63,7 @@ let staged = 0;
 
 let root: string;
 let registry: WorldRegistry;
-let plugins: readonly LoadedPlugin[];
+let plugins: InstalledPlugins;
 let config: ServerConfig;
 
 function makeConfig(worldsDir: string): ServerConfig {
@@ -91,7 +92,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'terrace-switch-'));
   registry = new WorldRegistry(join(root, 'worlds'));
   config = makeConfig(registry.worldsDir);
-  plugins = [asLoadedPlugin(counterPlugin())];
+  plugins = new InstalledPlugins([asLoadedPlugin(counterPlugin())]);
   pluginValue = 0;
   staged = 0;
   worldCreateCalls = 0;

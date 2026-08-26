@@ -82,8 +82,14 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-/** First existing server entry inside a plugin directory, or null. */
-async function findServerEntry(pluginDir: string): Promise<string | null> {
+/**
+ * First existing server entry inside a plugin directory, or null.
+ *
+ * EXPORTED for the in-process reload (issue #198), which resolves the entry of
+ * ONE plugin the same way boot resolved it. A second copy of the candidate
+ * order is a second thing to keep in step.
+ */
+export async function findServerEntry(pluginDir: string): Promise<string | null> {
   for (const candidate of PLUGIN_SERVER_ENTRY_CANDIDATES) {
     const path = join(pluginDir, candidate);
     if (await fileExists(path)) return path;
@@ -130,6 +136,27 @@ function selectPluginExport(module: Record<string, unknown>, entryPath: string):
   );
 }
 
+/**
+ * The plugin object a loaded module offers, checked.
+ *
+ * EXPORTED for the in-process reload (issue #198): a re-imported module has to
+ * clear exactly the same bar as one imported at boot — the right export, and a
+ * name that is a legal message namespace — and a second implementation of that
+ * bar is how a reload would come to accept what boot would have rejected.
+ */
+export function pluginFromModule(
+  module: Record<string, unknown>,
+  entryPath: string,
+): TerracePlugin {
+  const plugin = selectPluginExport(module, entryPath);
+  if (!PLUGIN_NAME_PATTERN.test(plugin.name)) {
+    throw new PluginLoadError(
+      `${entryPath}: plugin name "${plugin.name}" must match ${PLUGIN_NAME_PATTERN}`,
+    );
+  }
+  return plugin;
+}
+
 async function loadPlugin(
   pluginsDir: string,
   directory: string,
@@ -152,12 +179,7 @@ async function loadPlugin(
     throw new PluginLoadError(`failed to import ${entryPath}`, { cause: error });
   }
 
-  const plugin = selectPluginExport(module, entryPath);
-  if (!PLUGIN_NAME_PATTERN.test(plugin.name)) {
-    throw new PluginLoadError(
-      `${entryPath}: plugin name "${plugin.name}" must match ${PLUGIN_NAME_PATTERN}`,
-    );
-  }
+  const plugin = pluginFromModule(module, entryPath);
 
   return {
     plugin,
