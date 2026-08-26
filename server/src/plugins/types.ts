@@ -257,6 +257,30 @@ export interface WorldApi {
    * different version or absent entirely.
    */
   emitEvent(type: string, payload: unknown): void;
+
+  /**
+   * THIS WORLD'S VALUE FOR ONE OF THIS PLUGIN'S OWN DECLARED SETTINGS, or
+   * undefined when the world has never been configured with one (per-world
+   * plugin settings, 2026-08-25).
+   *
+   * ONLY THIS PLUGIN'S ROWS ARE REACHABLE THROUGH IT. The host hands each view
+   * the settings recorded under that view's plugin name and nothing else, so a
+   * setting is a conversation between one plugin and the operator rather than
+   * a shared namespace siblings can read each other out of — the same rule the
+   * message namespace and the persistence slice already live under.
+   *
+   * READ IT IN `onWorldCreate`, ONCE. The value is fixed for the life of a
+   * session: changing it persists the row and REOPENS the world, which replays
+   * restore + worldCreate, so a plugin that reads it at the top of its session
+   * can never observe it changing mid-tick. A plugin that re-read it every tick
+   * would be reading a value that cannot move, at a cost that can.
+   *
+   * `undefined` means "this world has no opinion", NOT "the default is empty":
+   * the default belongs to the plugin (a shipped constant, an environment
+   * variable, whatever it already used), because core does not know what any
+   * key means.
+   */
+  setting(key: string): string | undefined;
 }
 
 /** Context handed to onIntent alongside the intent itself. */
@@ -308,12 +332,43 @@ export interface PersistenceSlice {
   load(data: unknown): void;
 }
 
+/**
+ * ONE SETTING A PLUGIN OFFERS THE OPERATOR, per world.
+ *
+ * A CLOSED SET OF VALUES, not free text, and that is the whole reason this
+ * declaration exists rather than a bare key/value store: it is what lets core
+ * validate a value off the wire (world-manager.ts) and render a control for it
+ * (the world panel) WITHOUT knowing a single thing about what the key means.
+ * `life | populous` is structures' vocabulary; core only ever sees a list of
+ * strings and the one currently in force.
+ *
+ * WHY NOT A DEFAULT HERE TOO. The default is whatever the plugin already used
+ * before it declared anything — a shipped constant, an environment variable —
+ * and it may be decided at load time (structures' STRUCTURES_MODEL is fatal on
+ * a typo, which a declaration read per world could not be). So absence of a
+ * row means "ask the plugin", not "take the first value".
+ */
+export interface PluginSettingDeclaration {
+  /** Stable, lowercase, dash-separated — the same shape a plugin name has. */
+  readonly key: string;
+  /** Every value this key accepts. A value outside it is refused off the wire. */
+  readonly values: readonly string[];
+}
+
 export interface TerracePlugin {
   /**
    * Unique, stable identifier. Also the message namespace, so it is restricted
    * to lowercase alphanumerics and dashes (see PLUGIN_NAME_PATTERN).
    */
   readonly name: string;
+
+  /**
+   * The per-world settings this plugin offers, if any (2026-08-25). Read by
+   * the host to validate an operator's choice and to tell the world panel what
+   * to render; the values themselves reach the plugin through
+   * `WorldApi.setting`.
+   */
+  readonly settings?: readonly PluginSettingDeclaration[];
 
   /** World is ready — already restored from a snapshot if one existed. */
   onWorldCreate?(world: WorldApi): void;

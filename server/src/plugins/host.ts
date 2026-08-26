@@ -22,7 +22,9 @@ import {
   type WorldApi,
 } from './types.ts';
 import {
+  NO_PLUGIN_SETTINGS,
   type ChunkUnlockListener,
+  type PluginSettings,
   type RevocableWorldApi,
   type WorldEventListener,
   createWorldApi,
@@ -102,9 +104,17 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   /**
    * `plugins` is the INSTALLED set; `enabledNames`, when given, names the
    * subset that participates in this world (absent = all of them, which is
-   * the only case that exists until #165 lands).
+   * the only case that exists until #165 lands). `settingsByPlugin` is this
+   * world's plugin_settings rows GROUPED BY PLUGIN — each view is handed its
+   * own plugin's group and no other's (see WorldApi.setting); a plugin with no
+   * rows, and a world nobody has configured, both read as "no settings".
    */
-  constructor(world: World, plugins: readonly LoadedPlugin[], enabledNames?: ReadonlySet<string>) {
+  constructor(
+    world: World,
+    plugins: readonly LoadedPlugin[],
+    enabledNames?: ReadonlySet<string>,
+    settingsByPlugin: Readonly<Record<string, PluginSettings>> = {},
+  ) {
     this.world = world;
     // The WorldApi handed to a plugin routes edits back through this host, so
     // a plugin's own sculpt notifies every plugin (including itself) exactly
@@ -114,7 +124,13 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     // closure, and it is what lets `closeWorld` hand a disabled plugin the
     // same argument its `onWorldCreate` counterpart would have taken.
     this.installed = plugins.map((loaded) => {
-      const revocable: RevocableWorldApi = createWorldApi(world, this, loaded.plugin.name);
+      const { name } = loaded.plugin;
+      const revocable: RevocableWorldApi = createWorldApi(
+        world,
+        this,
+        name,
+        Object.hasOwn(settingsByPlugin, name) ? settingsByPlugin[name] : NO_PLUGIN_SETTINGS,
+      );
       return { loaded, api: revocable.api, revoke: revocable.revoke };
     });
     this.entries =

@@ -93,10 +93,22 @@ export interface RevocableWorldApi {
   revoke(): void;
 }
 
+/**
+ * The world-file rows recorded for ONE plugin, keyed by setting key.
+ *
+ * Handed in already narrowed to the plugin this view belongs to — see
+ * `WorldApi.setting` for why a view can never see a sibling's rows.
+ */
+export type PluginSettings = Readonly<Record<string, string>>;
+
+/** A world nobody has configured: every `setting` read answers undefined. */
+export const NO_PLUGIN_SETTINGS: PluginSettings = Object.freeze({});
+
 export function createWorldApi(
   world: World,
   listener: TerrainChangeListener & ChunkUnlockListener & WorldEventListener,
   pluginName: string,
+  settings: PluginSettings = NO_PLUGIN_SETTINGS,
 ): RevocableWorldApi {
   let binding: WorldApiBinding | null = { world, listener };
 
@@ -240,6 +252,15 @@ export function createWorldApi(
 
         live.world.sendRawTo(player.id, wireType, buildPayload(visible));
       }
+    },
+    setting(key: string): string | undefined {
+      // NOT GATED ON `bound`, deliberately, and it is the only member that is
+      // not: a setting is the world's CONFIGURATION, captured when this view
+      // was built, not a read of the World the view can outlive. Answering it
+      // after a close costs nothing and reads nothing that has gone away —
+      // whereas throwing here would punish a plugin for asking, in its own
+      // close hook, which rule it had been running.
+      return Object.hasOwn(settings, key) ? settings[key] : undefined;
     },
     emitEvent(type: string, payload: unknown): void {
       // Namespaced exactly like broadcast/sendTo, and for the same reason: the
