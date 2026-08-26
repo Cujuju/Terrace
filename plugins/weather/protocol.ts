@@ -58,14 +58,15 @@ export const WEATHER_KINDS = ['rain', 'storm', 'snow', 'fog'] as const;
 
 export type WeatherKind = (typeof WEATHER_KINDS)[number];
 
-/**
- * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — four
- * orders of magnitude finer than the smallest system (24 cells across), far
- * below what any camera distance in this game can resolve, and it makes the
- * payload's encoded size bounded and exactly assertable in a test. Same value
- * and same reasoning as the wildlife and monsters plugins'.
- */
-export const WEATHER_POSITION_DECIMALS = 2;
+// Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts).
+// Five plugins each carried a byte-identical copy of this rounding; see that
+// file for why it moved (issue #180). Re-exported here so this file stays the
+// one wire contract this plugin's server and client halves both import.
+//
+// The UNBOUNDED form only: a system's centre is a cloud front's, and it is born
+// and dies well outside the map by design, exactly like wildlife's birds. There
+// is no cell for shared's `roundBroadcastCell` to keep it inside of.
+export { BROADCAST_POSITION_DECIMALS, roundBroadcastPosition } from '@terrace/shared';
 
 /**
  * Decimal places kept on broadcast intensity, which is a fraction in [0, 1]
@@ -76,13 +77,7 @@ export const WEATHER_POSITION_DECIMALS = 2;
  */
 export const WEATHER_INTENSITY_DECIMALS = 3;
 
-const POSITION_QUANTUM = 10 ** WEATHER_POSITION_DECIMALS;
 const INTENSITY_QUANTUM = 10 ** WEATHER_INTENSITY_DECIMALS;
-
-/** Rounds a cell-space coordinate (or a cells-per-second velocity) for the wire. */
-export function roundBroadcastPosition(value: number): number {
-  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
-}
 
 /** Rounds an intensity for the wire and clamps it into [0, 1]. */
 export function roundBroadcastIntensity(value: number): number {

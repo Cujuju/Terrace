@@ -143,18 +143,17 @@ export function isSettlerRace(value: unknown): value is SettlerRace {
 // Wire shape
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Decimal places kept on broadcast cell coordinates — wildlife's choice
- * (1/100 cell), for the same "bounded payload, exactly assertable" reasons.
- */
-export const PILGRIMS_POSITION_DECIMALS = 2;
-
-const POSITION_QUANTUM = 10 ** PILGRIMS_POSITION_DECIMALS;
-
-/** Rounds a cell-space coordinate to the broadcast precision. */
-export function roundBroadcastPosition(value: number): number {
-  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
-}
+// Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts).
+// Five plugins each carried a byte-identical copy of this rounding, and the
+// copies are how issue #180 shipped: the bounded form did not exist, so nothing
+// stopped a rounded coordinate from leaving the map, and fixing it in one
+// plugin left the other four exposed. Re-exported here so this file stays the
+// one wire contract this plugin's server and client halves both import.
+export {
+  BROADCAST_POSITION_DECIMALS,
+  roundBroadcastCell,
+  roundBroadcastPosition,
+} from '@terrace/shared';
 
 /** One walker (pilgrim or wanderer), as it appears on the wire. */
 export interface PilgrimEntityState {

@@ -52,7 +52,7 @@ import { dayOfSimMillis, worldAgeDays } from '@terrace/shared';
  * BANDWIDTH IS TRIVIAL AND NOT WHAT PICKS THIS NUMBER: the payload is one key,
  * `phase` — msgpack encodes it as ~7 B for the key string plus a 9 B float64
  * (not exactly representable in binary, same reasoning as weather's
- * WEATHER_POSITION_DECIMALS) plus a 1 B map header, ≈17 B, plus ~20 B of
+ * BROADCAST_POSITION_DECIMALS) plus a 1 B map header, ≈17 B, plus ~20 B of
  * message-type and Colyseus framing ≈ 37 B per broadcast. At this interval
  * that is 37 B ⁄ 5 s ≈ 7.4 B/s per client — under half of weather's already-
  * negligible clear-sky idle cost (20 B/s).

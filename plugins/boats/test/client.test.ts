@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOATS_PAYLOAD_CAP,
-  BOAT_POSITION_DECIMALS,
+  BROADCAST_POSITION_DECIMALS,
   parseBoatsPayload,
   roundBroadcastPosition,
   type BoatState,
@@ -48,7 +48,7 @@ describe('the boats:state wire contract', () => {
 
   it('rounds broadcast positions to the documented precision', () => {
     expect(roundBroadcastPosition(1.23456)).toBe(1.23);
-    expect(BOAT_POSITION_DECIMALS).toBe(2);
+    expect(BROADCAST_POSITION_DECIMALS).toBe(2);
   });
 });
 

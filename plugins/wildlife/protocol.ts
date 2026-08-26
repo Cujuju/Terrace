@@ -138,47 +138,17 @@ export function sizeClassIndex(sizeClass: WildlifeSizeClass): number {
   return WILDLIFE_SIZE_CLASSES.indexOf(sizeClass);
 }
 
-/**
- * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — roughly
- * 280× finer than the smallest creature (a fish is 0.7 WORLD UNITS long,
- * cellsAcross(0.7) = 2.8 cells) and far below what any camera distance in this
- * game can resolve, so it costs nothing visible. It buys a payload whose encoded size is bounded and,
- * more usefully, one that a test can assert on exactly.
- */
-export const WILDLIFE_POSITION_DECIMALS = 2;
-
-const POSITION_QUANTUM = 10 ** WILDLIFE_POSITION_DECIMALS;
-
-/** Rounds a cell-space coordinate to the broadcast precision. */
-export function roundBroadcastPosition(value: number): number {
-  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
-}
-
-/**
- * The same rounding, kept INSIDE a `worldSize`-cell map.
- *
- * ROUNDING IS NOT ORDER-PRESERVING WITH RESPECT TO THE MAP EDGE, and that is
- * the whole reason this exists (issue #180). A creature standing legally at
- * x = 255.9987 on a 256-cell world — floor 255, a real cell — rounds to exactly
- * 256.00, which is not a cell at all. Any recipient that turns a broadcast
- * coordinate back into a cell or a chunk (the host's own visibility filter does
- * exactly that, and bounds-checks by contract) is then handed an off-map
- * position for a creature that never left the map.
- *
- * So the bound belongs HERE, on the conversion to wire coordinates, rather than
- * on each caller that later divides one by a chunk size: half a quantum of
- * rounding error must not be able to move a creature off the world. The
- * clamp target is the largest value this precision can express that still
- * floors to the last cell.
- *
- * Positions only, never headings — an angle has no map to be inside of.
- */
-export function roundBroadcastCell(value: number, worldSize: number): number {
-  const rounded = roundBroadcastPosition(value);
-  if (rounded < 0) return 0;
-  const lastRepresentableInside = worldSize - 1 / POSITION_QUANTUM;
-  return rounded > lastRepresentableInside ? lastRepresentableInside : rounded;
-}
+// Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts).
+// Five plugins each carried a byte-identical copy of this rounding, and the
+// copies are how issue #180 shipped: the bounded form did not exist, so nothing
+// stopped a rounded coordinate from leaving the map, and fixing it in one
+// plugin left the other four exposed. Re-exported here so this file stays the
+// one wire contract this plugin's server and client halves both import.
+export {
+  BROADCAST_POSITION_DECIMALS,
+  roundBroadcastCell,
+  roundBroadcastPosition,
+} from '@terrace/shared';
 
 /** One creature, as it appears on the wire. */
 export interface WildlifeEntityState {

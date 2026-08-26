@@ -83,7 +83,7 @@
 // units), so the fastest thing in the world still needs no cadence of its own. Halving the
 // rate halves the steady-state cost of the most expensive thing this plugin
 // does, and the remaining budget is what lets a self-hoster on a home connection
-// run ~10 players. Positions are rounded to WILDLIFE_POSITION_DECIMALS (1/100
+// run ~10 players. Positions are rounded to BROADCAST_POSITION_DECIMALS (1/100
 // cell) on the way out — roughly 280× finer than the smallest creature (a fish
 // is 0.7 world units, i.e. 2.8 cells, long).
 // ─────────────────────────────────────────────────────────────────────────────

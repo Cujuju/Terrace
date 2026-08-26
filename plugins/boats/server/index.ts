@@ -109,7 +109,7 @@ function simulate(world: WorldApi, dt: number): void {
   // could see have left its view. Monsters' own broadcast, unchanged.
   world.broadcastVisible(
     BOATS_STATE_MESSAGE,
-    boatStates(),
+    boatStates(world.worldSize),
     (boat) => ({ x: boat.x, y: boat.y }),
     (visible) => ({ boats: visible }),
   );

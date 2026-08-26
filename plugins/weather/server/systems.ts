@@ -643,7 +643,7 @@ export function advanceWeather(world: WeatherWorld, dt: number): void {
  *
  * Every system carries the SAME velocity today, and that redundancy is paid for
  * knowingly: see the note on WeatherSystemState.vx. Positions, radii and
- * velocities are rounded to WEATHER_POSITION_DECIMALS and intensity to
+ * velocities are rounded to BROADCAST_POSITION_DECIMALS and intensity to
  * WEATHER_INTENSITY_DECIMALS on the way out, which is what makes the payload's
  * encoded size bounded and exactly assertable.
  */

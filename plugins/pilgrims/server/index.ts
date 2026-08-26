@@ -20,6 +20,7 @@ import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.
 import {
   PILGRIMS_ENTITIES_MESSAGE,
   PILGRIMS_PLUGIN_NAME,
+  roundBroadcastCell,
   roundBroadcastPosition,
 } from '../protocol.ts';
 import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
@@ -121,8 +122,13 @@ function simulate(world: WorldApi, dt: number): void {
         id: p.id,
         kind: p.kind,
         race: p.race,
-        x: roundBroadcastPosition(p.x),
-        y: roundBroadcastPosition(p.y),
+        // Bounded to the map, not merely rounded: a walker legally standing
+        // within half a quantum of the far edge rounds to `worldSize`, which
+        // is not a cell (issue #180). `positionOf` above floors the LIVE
+        // position and so was never exposed, but the wire is read by consumers
+        // that do turn a coordinate back into a cell.
+        x: roundBroadcastCell(p.x, world.worldSize),
+        y: roundBroadcastCell(p.y, world.worldSize),
         heading: roundBroadcastPosition(p.heading),
       })),
     }),

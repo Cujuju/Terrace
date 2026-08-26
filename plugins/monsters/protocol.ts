@@ -63,21 +63,17 @@ export const MONSTER_KINDS = ['kraken', 'cthulhu', 'yeti'] as const;
 
 export type MonsterKind = (typeof MONSTER_KINDS)[number];
 
-/**
- * Decimal places kept on broadcast cell coordinates. 1/100 of a cell — three
- * orders of magnitude finer than the monster itself (Cthulhu spans ~11 cells),
- * far below what any camera distance can resolve, and it makes the payload's
- * encoded size bounded and exactly assertable in a test. Same value and same
- * reasoning as the wildlife plugin's.
- */
-export const MONSTER_POSITION_DECIMALS = 2;
-
-const POSITION_QUANTUM = 10 ** MONSTER_POSITION_DECIMALS;
-
-/** Rounds a cell-space coordinate to the broadcast precision. */
-export function roundBroadcastPosition(value: number): number {
-  return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
-}
+// Broadcast coordinate precision lives in @terrace/shared (shared/src/wire.ts).
+// Five plugins each carried a byte-identical copy of this rounding, and the
+// copies are how issue #180 shipped: the bounded form did not exist, so nothing
+// stopped a rounded coordinate from leaving the map, and fixing it in one
+// plugin left the other four exposed. Re-exported here so this file stays the
+// one wire contract this plugin's server and client halves both import.
+export {
+  BROADCAST_POSITION_DECIMALS,
+  roundBroadcastCell,
+  roundBroadcastPosition,
+} from '@terrace/shared';
 
 /**
  * One monster, as it appears on the wire.
