@@ -15,6 +15,7 @@
 import type { JoinSnapshotMessage } from '@terrace/shared';
 import type { PluginHost } from '../plugins/host.ts';
 import type { World } from '../world/world.ts';
+import { buildIdentity } from '../build-identity.ts';
 import { SERVER_VERSION } from '../version.ts';
 
 /**
@@ -45,6 +46,10 @@ export function buildJoinSnapshot(
     worldName: world.name,
     difficulty: world.difficulty,
     serverVersion: SERVER_VERSION,
+    // Build identity is what a client keys its one-shot page reload on, and it
+    // is deliberately NOT serverVersion — see JoinSnapshotMessage.buildIdentity
+    // and server/src/build-identity.ts for why that stamp cannot do this job.
+    buildIdentity: buildIdentity(),
     // The ENABLED subset, not everything installed: this is what the client
     // host mounts against, and a client half whose server half is not running
     // would sit there sending messages nothing answers.

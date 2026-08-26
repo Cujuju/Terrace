@@ -110,6 +110,25 @@ FROM base AS server
 
 ENV NODE_ENV=production
 
+# BUILD IDENTITY FOR AN IMAGE THAT SHIPS NO `.git`.
+#
+# server/src/version.ts derives SERVER_VERSION from git and the per-plugin
+# stamps (plugins/plugin-version.ts) derive from a plugin directory's git tree
+# hash. Neither can work here: the image has no repository. TERRACE_VERSION is
+# the documented override for both, and writing it into the image's environment
+# is what makes it survive to run time — an ARG alone would not.
+#
+# Set it to something that changes when the code does, e.g.
+#   docker compose build --build-arg TERRACE_VERSION=$(git rev-parse --short HEAD)
+# (compose passes it through from the environment; see docker-compose.yml).
+#
+# LEFT UNSET IS SAFE, NOT SILENT. version.ts degrades to 'unversioned' and the
+# plugin stamps degrade to a per-BOOT nonce, which makes every restart look like
+# a new build and reloads open pages. Conservative rather than wrong — and in
+# docker a restart usually IS a redeploy, so it is rarely a false alarm.
+ARG TERRACE_VERSION
+ENV TERRACE_VERSION=${TERRACE_VERSION}
+
 # Copied wholesale because pnpm's layout is symlink-based
 # (server/node_modules/@terrace/shared -> ../../shared) and those links must
 # land intact. `pnpm deploy` is deliberately NOT used: it would materialise

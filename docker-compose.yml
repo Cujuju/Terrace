@@ -19,6 +19,15 @@ services:
     build:
       context: .
       target: server
+      args:
+        # BAKED INTO THE IMAGE'S ENVIRONMENT (see the Dockerfile's server
+        # stage). The image ships no `.git`, so this is the only thing the
+        # server's version stamp and the per-plugin build stamps can derive
+        # from. Set it to something that moves when the code does:
+        #   TERRACE_VERSION=$(git rev-parse --short HEAD) docker compose up --build
+        # Unset, the stamps fall back to a per-boot value: every restart looks
+        # like a new build and open pages reload. Conservative, not wrong.
+        TERRACE_VERSION: ${TERRACE_VERSION:-}
     environment:
       # Cells per world edge. Must be a multiple of 16 (the chunk size). 512
       # wants a mid-size box; 128 is Populous-proven playable on a small VPS.
