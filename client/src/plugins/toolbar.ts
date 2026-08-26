@@ -131,3 +131,18 @@ export function clearPluginTools(): void {
   selectTool(SCULPT_TOOL_ID);
   setPluginTools([]);
 }
+
+/**
+ * Drops the tools one plugin registered, leaving every other plugin's alone —
+ * what unmounting a single plugin needs.
+ *
+ * Deselects FIRST when the held tool is one of this plugin's, for the reason
+ * clearPluginTools states: a tool holding a placement ghost has to be told to
+ * drop it while it still exists to be told.
+ */
+export function removePluginTools(pluginName: string): void {
+  const owned = pluginTools().filter((tool) => tool.pluginName === pluginName);
+  if (owned.length === 0) return;
+  if (owned.some((tool) => tool.id === activeToolId())) selectTool(SCULPT_TOOL_ID);
+  setPluginTools((tools) => tools.filter((tool) => tool.pluginName !== pluginName));
+}

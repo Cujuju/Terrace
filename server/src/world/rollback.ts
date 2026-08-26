@@ -255,11 +255,11 @@ export class RollbackService {
 
   /** Sends every connected player a fresh snapshot of the rewound world. */
   private announceToAll(): void {
-    const { world } = this.deps;
+    const { world, host } = this.deps;
     for (const player of world.players()) {
       // Per-token, so the anti-cheat rule that a client is only ever sent its
       // own territory survives the rollback — see buildJoinSnapshot.
-      world.sendTo(player.id, buildJoinSnapshot(world, player.token));
+      world.sendTo(player.id, buildJoinSnapshot(world, host, player.token));
     }
   }
 

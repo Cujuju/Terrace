@@ -54,6 +54,20 @@ export function clearPluginHudPanels(): void {
 }
 
 /**
+ * Drops the panels one plugin registered, leaving every other plugin's alone —
+ * what unmounting a single plugin needs (the server stopped running its server
+ * half, so its HUD must go with it). A no-op for a plugin that registered
+ * none.
+ */
+export function removePluginHudPanels(pluginName: string): void {
+  setPluginHudPanels((panels) =>
+    panels.some((panel) => panel.pluginName === pluginName)
+      ? panels.filter((panel) => panel.pluginName !== pluginName)
+      : panels,
+  );
+}
+
+/**
  * The world-header action: ONE plugin may claim the top-centre world banner
  * as its entry point (owner move, 2026-08-19: the chronicle left its info-
  * panel row for the banner). Core renders the claimant's icon to the right of
@@ -98,6 +112,16 @@ export function claimWorldHeaderAction(action: WorldHeaderAction): void {
 /** Test seam / rejoin hygiene, mirroring clearPluginHudPanels. */
 export function clearWorldHeaderAction(): void {
   setWorldHeaderAction(null);
+}
+
+/**
+ * Releases the banner if — and ONLY if — this plugin is the one holding it.
+ * Unmounting a plugin that lost the claim must not evict the winner, and the
+ * banner going back to an inert title card is the right result when the
+ * claimant itself stops running.
+ */
+export function releaseWorldHeaderAction(pluginName: string): void {
+  if (worldHeaderAction()?.pluginName === pluginName) setWorldHeaderAction(null);
 }
 
 /**

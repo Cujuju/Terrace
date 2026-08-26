@@ -470,7 +470,10 @@ export class WorldManager {
     // broadcast or unlock chunks, and a client must already be sized for the
     // new world before that arrives.
     for (const player of players) {
-      incoming.world.sendTo(player.id, buildJoinSnapshot(incoming.world, player.token));
+      incoming.world.sendTo(
+        player.id,
+        buildJoinSnapshot(incoming.world, incoming.host, player.token),
+      );
     }
     for (const player of players) {
       incoming.host.playerJoined(player);

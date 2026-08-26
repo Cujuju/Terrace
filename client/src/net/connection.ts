@@ -152,6 +152,17 @@ export interface ConnectionOptions {
    * host routes these to the plugin that owns the namespace.
    */
   onPluginMessage?: (type: string, payload: unknown) => void;
+  /**
+   * Receives JoinSnapshotMessage.livePlugins on every snapshot — the plugin
+   * set the server is actually running. `undefined` when the server did not
+   * say (too old to announce); the client plugin host treats that as "leave
+   * what is mounted alone".
+   *
+   * Separate from the terrain sink because a plugin set is not terrain: it is
+   * routed off the same message only because a plugin toggle reopens the world
+   * and a reopen is what re-sends that message.
+   */
+  onLivePlugins?: (names: readonly string[] | undefined) => void;
   /** Overridable for tests / alternate deployments. */
   serverUrl?: string;
   roomName?: string;
@@ -243,6 +254,10 @@ export function connect(options: ConnectionOptions): Connection {
     // rather than letting it throw out of this handler.
     joined.onMessage<JoinSnapshotMessage>(MSG_SNAPSHOT, (msg) => {
       options.sink.onSnapshot(msg);
+      // AFTER the terrain: a plugin mounting on this message must find the
+      // world it is being mounted over already sized and filled, exactly as
+      // the server sends the snapshot before it runs onPlayerJoin.
+      options.onLivePlugins?.(msg.livePlugins);
     });
     joined.onMessage<ChunkUnlockMessage>(MSG_CHUNK_UNLOCK, (msg) => {
       options.sink.onChunkUnlock(msg);

@@ -346,7 +346,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // World IDENTITY rides along with the geometry: the name and the difficulty
     // rating are both constant for the life of the world, so the join snapshot
     // is the only message that ever needs to carry them (design 2026-08-14).
-    const snapshot = buildJoinSnapshot(session.world, player.token);
+    const snapshot = buildJoinSnapshot(session.world, session.host, player.token);
     client.send('snapshot', snapshot);
 
     // Only AFTER the snapshot: a plugin's onPlayerJoin may broadcast or unlock

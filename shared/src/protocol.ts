@@ -311,6 +311,23 @@ export interface JoinSnapshotMessage {
    * absent means "server too old to say", never a default.
    */
   serverVersion?: string;
+  /**
+   * The plugins this world is actually RUNNING, by name, in the server's load
+   * order — the enabled subset of what the server has installed (per-world
+   * plugin enablement, 2026-08-25). Core states a fact about its own
+   * configuration here; it attaches no mechanic to the names and does not know
+   * what any of them do, so this stays as un-gamey as `difficulty` (design
+   * §3.5).
+   *
+   * It rides the snapshot because a toggle REOPENS the live world, and a
+   * reopen already re-sends this message to every connected player — so the
+   * announcement and the world it describes can never disagree.
+   *
+   * Optional and additive like `worldName`: absent means "server too old to
+   * say", and a client that receives nothing must leave whatever it has
+   * running alone rather than reading absence as "no plugins are live".
+   */
+  livePlugins?: readonly string[];
 }
 
 /**

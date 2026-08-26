@@ -88,6 +88,11 @@ const connection = connect({
   },
   onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
   onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
+  // Per-world plugin enablement: the snapshot names the plugins the server is
+  // running, and the host mounts/unmounts to match. A toggle reopens the world,
+  // which re-sends the snapshot, so this is also how a toggle reaches a client
+  // that never asked for anything.
+  onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
 });
 
 const sculptInput = createSculptInput({
