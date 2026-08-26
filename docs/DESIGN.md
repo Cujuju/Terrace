@@ -3639,3 +3639,116 @@ and enough rolls to hand the fire to a neighbouring tuft or to the tree it grows
 under. A stale comment in `grass.ts` claiming the thinning rejects ~71% of green
 cells was corrected to ~60% — it was never true of the shipped threshold, and
 the difference is load-bearing now that the number decides percolation.
+
+### Decisions made 2026-08-25 (archipelago genesis, and MIN_WORLD_SIZE, #181)
+
+**Supersedes:** the 2026-08-19 starter-profile decision (the fixed shelf/slope
+inside the unlock square) and the exact day-one habitat census the wildlife
+plugin asserted against it. The 2026-08-19 kraken-trench guarantee survives
+unchanged in its rule; only where the AREA half of it is enforced moved.
+
+**The owner's report.** "New worlds should not have just a single starter
+square; they should have islands — not just a single island. They should also
+have some random trenches, and the depth of the sea should vary."
+
+**One noise field, edge to edge.** The fixed shelf/slope/abyss profile inside
+the starter unlock square is gone, and with it the clamp that pinned that square
+to deep water. Genesis is now five octaves of integer value noise at
+256/128/64/32/16-cell lattice spacings, each at half the amplitude of the one
+before it, summed (not averaged — averaging shrinks relief by the same factor it
+shrinks any variance, and measured, it left land on 1.2% of a fresh world's
+cells) and clamped to the amplitude limits. The per-world `baseline` and
+`roughness` draws survive and still mean what they meant, so a flat world stays
+reachable; the roughness draw is square-rooted, which leaves every value
+possible and drops P(roughness < 0.2) from 20% to 4% — a fifth of all worlds
+having no relief was not "it's OK to create flat worlds", it was the archipelago
+failing to appear. The wander is symmetric about the baseline rather than drawn
+from the (lopsided) amplitude range, so the baseline is the height the world
+actually averages. Everything is still integer band offsets, exact band floors,
+fixed RNG draw order, pure in `(size, seed)`.
+
+**Three guarantee passes, all on the 2026-08-19 trench-pass contract**
+(derived from `(size, seed)` by integer arithmetic with no further RNG draws,
+fixed iteration order, every tie broken by a total order, a no-op where the
+noise already qualified):
+
+1. **Islands.** The starter square holds at least `GENESIS_MIN_STARTER_ISLANDS`
+   separate landmasses of `GENESIS_MIN_ISLAND_CELLS` each. Short of that,
+   terraced islands are raised at seed-ordered sites on a 3×3 grid inside the
+   square: a Euclidean cone whose flanks fall one band per `BAND_HEIGHT /
+   MAX_STEP` cells (relaxation-safe, like the trench walls, so a smooth stroke
+   cannot slump them) with its coastline displaced by the finest noise octave —
+   a square Chebyshev cone rendered as a ziggurat and a plain circle rendered as
+   a monument, so the wobble is not decoration.
+2. **Habitat minima, replacing the exact census.** The square must hold
+   `GENESIS_MIN_STARTER_SHALLOW_CELLS` of shallow water (the fish schools
+   `FISH_SCHOOLS_ON_FRESH_SHELF` asks for) and `GENESIS_MIN_STARTER_DEEP_CELLS`
+   of deep (two whales), both restated core-side and pinned from the plugin side
+   exactly as `FRESH_SEABED_DEPTH_BELOW_SEA` already was. Where it falls short,
+   the square is RESCALED rather than repainted: sort its repairable cells by
+   height, decide by rank which must be deep, shallow and land, and remap each
+   group monotonically into its class's band window. Order is preserved, so the
+   square comes out as the landscape the noise drew with its waterline moved.
+   (Two earlier versions are buried in that function's comment and both are why:
+   flat per-class writes made two enormous plates, and per-class mirrors made
+   fractured shards.) Ties break on distance from a seed-chosen anchor, because
+   on a calm world the tie-break IS the selection and a hash of the cell index
+   produces per-cell speckle.
+3. **Trenches.** The kraken-qualifying trench is unchanged in rule. Its AREA
+   half moved into the habitat pass — the trench can only lower cells that are
+   already deep, so it cannot make a fragmented ocean into a lair-sized one, and
+   2 of 48 probe seeds drew exactly that. The habitat pass therefore also
+   requires one connected deep basin of `GENESIS_TRENCH_MIN_BASIN_CELLS`, and
+   falls back to selecting the deep group by distance (a disc, connected by
+   construction) when the terrain's own hollows will not supply one. On top,
+   every world gets `GENESIS_EXTRA_TRENCH_MIN..MAX` (1–3) extra capsule trenches
+   at seed-chosen basins, anchors and axes — the owner's "some random trenches".
+
+**THE ARITHMETIC THAT CAPS THE ISLANDS AT TWO, and it is a real conflict worth
+recording.** The starter square is 102 400 cells. Two whales want 64 000 of them
+deep (62.5%) and one fish school wants 32 000 shallow (31%), leaving 6 400 for
+land. An island cannot be raised without a skirt — relaxation-safe flanks take
+64 cells of run to reach the seabed — so each one turns ~17 000 cells of deep
+water into shallow. Three islands force ~51 000 shallow plus their land against
+a 64 000-cell deep minimum in a 102 400-cell square: over 118 000, and no
+arrangement of terrain satisfies it. Two fit. The owner asked for "islands, not
+just a single island" and two is that; a third becomes possible the moment the
+whale density or the starter square's size moves, both of which are owner
+decisions. The same arithmetic is why a land-rich seed sees its starter square
+substantially rescaled: the deep minimum alone claims most of it.
+
+**MIN_WORLD_SIZE, issue #181.** `WORLD_SIZE=256` booted an all-ocean world,
+because the 20-chunk starter unlock footprint clamped to the whole map and
+genesis had no outside left to draw. The floor was one CHUNK — true about masks,
+silently false about terrain. It is now derived: the starter footprint span plus
+one NEIGHBOURHOOD ring on every side, 320 + 2 × 64 = 448 cells (112 world
+units), a whole number of chunks by construction. A ring of the COARSEST noise
+octave was the first derivation and is wrong — that lattice is four
+neighbourhoods, so it would have put the floor at 208 world units and forbidden
+the 128-world-unit map this document calls the Populous-proven playable minimum.
+Below the floor the boot fails through the existing config validation.
+
+**Tests moved from geometry to guarantees.** `server/test/fresh-world.test.ts`,
+`plugins/wildlife/test/wildlife.test.ts` and
+`plugins/monsters/test/monsters.test.ts` no longer assert cell-for-cell shelf
+positions or exact habitat totals; they assert the guarantees above, plus what
+was always the point — every height an exact band floor inside
+`[MIN_HEIGHT, MAX_HEIGHT]`, reproducible from a seed, different across seeds,
+and never without deep water somewhere. Wildlife's day-one census now expects
+land and grazers, which a fresh world has never had before.
+
+**Rejected alternatives.**
+* *Keep the fixed starter profile and put islands only outside it.* The starter
+  square is the entire world a player can touch on day one, so an island the
+  player cannot walk to is scenery. It also preserves precisely the "single
+  starter square" the owner complained about.
+* *Stamp a fixed archipelago template into every starter square.* Deterministic
+  and two lines shorter, and every world would wear the same islands in the same
+  places — the defect this change exists to fix.
+* *Float simplex/Perlin noise.* Better-looking gradients, and it puts
+  accumulated float error into the one part of the codebase whose whole contract
+  is that identical inputs give identical outputs. Integer value noise with
+  integer bilinear weights keeps genesis on the same footing as the rest of the
+  terrain math.
+* *Bias the noise so land is likelier instead of guaranteeing islands.* Cheapest
+  of all and it guarantees nothing; a guarantee you have to re-check is not one.

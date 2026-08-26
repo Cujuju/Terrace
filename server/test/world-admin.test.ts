@@ -15,13 +15,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHUNK_SIZE, validateWorldAdminRequest } from '@terrace/shared';
-import type { ServerConfig } from '../src/config.ts';
+import { MIN_WORLD_SIZE, type ServerConfig } from '../src/config.ts';
 import { WorldRegistry } from '../src/persistence/world-registry.ts';
 import { OPERATOR_MAX_FAILED_ATTEMPTS, OPERATOR_LOCKOUT_MS } from '../src/world/operator-gate.ts';
 import { WorldAdminService } from '../src/world/world-admin.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
 
-const WORLD_SIZE = CHUNK_SIZE * 4;
+/**
+ * The smallest world this server will boot (issue #181, 2026-08-25). It used to
+ * be CHUNK_SIZE * 4 — four chunks a side — which stopped being a legal world
+ * when MIN_WORLD_SIZE was derived from what genesis actually needs. Every world
+ * created here goes through the same size validation a real operator's does, so
+ * the fixture has to be a size that validation accepts.
+ */
+const WORLD_SIZE = MIN_WORLD_SIZE;
 const KEY = 'admin-key-long-enough';
 const CLIENT = 'connection-1';
 

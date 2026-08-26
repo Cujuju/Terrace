@@ -18,17 +18,16 @@ import {
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { Player } from '../../../server/src/player.ts';
-import { INITIAL_UNLOCK_CHUNK_SPAN } from '../../../server/src/world/initial-unlock.ts';
 import {
   FRESH_SEABED_BANDS_BELOW_SEA,
   FRESH_SEABED_HEIGHT,
   FRESH_SHELF_BANDS_BELOW_SEA,
   FRESH_SHELF_HEIGHT,
-  FRESH_SLOPE_BANDS_BELOW_SEA,
-  FRESH_SLOPE_HEIGHT,
-  World,
-  freshGenesisProfile,
-} from '../../../server/src/world/world.ts';
+  GENESIS_MIN_ISLAND_CELLS,
+  GENESIS_MIN_STARTER_DEEP_CELLS,
+  GENESIS_MIN_STARTER_SHALLOW_CELLS,
+} from '../../../server/src/world/genesis.ts';
+import { World } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
   asLoadedPlugin,
@@ -330,59 +329,78 @@ describe('a fresh world as habitat', () => {
     expect(habitatOf(FRESH_SEABED_HEIGHT)).toBe('deep');
   });
 
-  it('keeps the shelf and the slope ring on the SHALLOW side of that threshold', () => {
+  it('keeps the shallows genesis manufactures on the SHALLOW side of that threshold', () => {
     // The other half of the same contract, and the reason a fresh world has
-    // coastal life: both inshore terraces must classify as shallow, or the
-    // shelf is just more abyss and fish have nowhere to be.
+    // coastal life: the depth genesis writes when it has to make shallow water
+    // must classify as shallow, or that water is just more abyss and fish have
+    // nowhere to be.
     expect(FRESH_SHELF_BANDS_BELOW_SEA).toBeLessThan(DEEP_WATER_BANDS_BELOW_SEA);
-    expect(FRESH_SLOPE_BANDS_BELOW_SEA).toBeLessThan(DEEP_WATER_BANDS_BELOW_SEA);
     expect(habitatOf(FRESH_SHELF_HEIGHT)).toBe('shallow');
-    expect(habitatOf(FRESH_SLOPE_HEIGHT)).toBe('shallow');
   });
 
-  it('offers both shallow and deep habitat inside the starter region, and no land', () => {
+  it('is asked for exactly the habitat this plugin needs on day one', () => {
+    // THE RESTATEMENT PINS (2026-08-25). Genesis used to lay a fixed shelf and
+    // this file asserted the EXACT cell counts that geometry produced. The
+    // owner replaced the geometry with guarantees, so core now promises MINIMA
+    // — and, unable to import this plugin, it restates the needs those minima
+    // come from. This is the plugin side of that agreement: if either side is
+    // retuned alone, THIS fails, rather than a fresh world quietly losing its
+    // fish or its whales.
+    expect(GENESIS_MIN_STARTER_SHALLOW_CELLS).toBe(
+      FISH_SCHOOLS_ON_FRESH_SHELF *
+        profileOf('fish').groupSize *
+        profileOf('fish').habitatCellsPerIndividual,
+    );
+    // Two whales — the pair the 2026-08-21 whale retune sized day one for, not
+    // a whole WHALE_POD_SIZE pod.
+    expect(GENESIS_MIN_STARTER_DEEP_CELLS).toBe(
+      2 * profileOf('whale').habitatCellsPerIndividual,
+    );
+    expect(GENESIS_MIN_STARTER_DEEP_CELLS).toBeLessThan(
+      WHALE_POD_SIZE * profileOf('whale').habitatCellsPerIndividual,
+    );
+    // And the island bar: genesis will not count a landmass as an island unless
+    // a founding population could live on it.
+    expect(GENESIS_MIN_ISLAND_CELLS).toBe(MIN_FOUNDING_HABITAT_CELLS);
+  });
+
+  it('offers shallow water, deep water AND islands inside the starter region', () => {
     const world = World.createFresh(WORLD_SIZE);
     const census = takeCensus(habitatView(world));
 
-    expect(census.cellsByHabitat.shallow).toBeGreaterThan(0);
-    expect(census.cellsByHabitat.deep).toBeGreaterThan(0);
-    // No land until somebody raises an island — the honest consequence of a
-    // world that starts as an ocean.
-    expect(census.cellsByHabitat.land).toBe(0);
-
-    // The day-one split, derived from the genesis geometry rather than restated
-    // as two magic totals: shallow is the shelf box grown by the ring width on
-    // every side, and it sits wholly inside the starter square, so everything
-    // else the census can see is open sea.
-    const { shelfMinCell, shelfMaxCell, slopeWidthCells } = freshGenesisProfile(WORLD_SIZE);
-    const shallowEdgeCells = shelfMaxCell - shelfMinCell + 1 + 2 * slopeWidthCells;
-    const starterCells = (INITIAL_UNLOCK_CHUNK_SPAN * CHUNK_SIZE) ** 2;
-
-    expect(census.cellsByHabitat.shallow).toBe(shallowEdgeCells * shallowEdgeCells);
-    expect(census.cellsByHabitat.deep).toBe(starterCells - census.cellsByHabitat.shallow);
-    // Sanity on the numbers those formulas produce today. The starter square is
-    // 80 world units either side of 2026-08-21 (initial-unlock.ts derives its
-    // chunk count so the re-sample could not shrink it), so these are the SAME
-    // ground the 2 304 / 4 096 of the previous line-up described — sixteen times
-    // the cells over it.
-    expect(census.cellsByHabitat.shallow).toBe(36864);
-    expect(census.cellsByHabitat.deep).toBe(65536);
+    // THE DAY-ONE CONTRACT SINCE 2026-08-25, as minima rather than as the two
+    // exact totals a fixed shelf used to produce. Genesis guarantees at least
+    // this much of each class inside the starter square whatever the seed did;
+    // a given world may have more.
+    expect(census.cellsByHabitat.shallow).toBeGreaterThanOrEqual(
+      GENESIS_MIN_STARTER_SHALLOW_CELLS,
+    );
+    expect(census.cellsByHabitat.deep).toBeGreaterThanOrEqual(GENESIS_MIN_STARTER_DEEP_CELLS);
+    // Land, and enough of it to live on — the owner's "they should have islands,
+    // not just a single island". Before this change a fresh world had NO land
+    // anywhere a player could reach, and grazers had to wait for somebody to
+    // raise an island by hand.
+    expect(census.cellsByHabitat.land).toBeGreaterThanOrEqual(MIN_FOUNDING_HABITAT_CELLS);
   });
 
-  it('spawns fish, deep-sea creatures AND whales on a fresh world — no grazers', () => {
+  it('spawns fish, deep-sea creatures, whales AND grazers on a fresh world', () => {
     const harness = bootOn(World.createFresh(WORLD_SIZE));
     tick(harness, ticksFor(SETTLE_SECONDS));
 
     const counts = countsBySpecies();
     expect(counts.fish).toBeGreaterThanOrEqual(1);
     expect(counts.deepsea).toBeGreaterThanOrEqual(1);
-    // 4 096 square world units of open sea against a 2 000-unit density
-    // (dropped from 5 000 on 2026-08-21) asks for two whales on day one, so at
-    // least one has to be alive after the settle. It is a partial pod — see the
-    // target assertion below, and WHALE_POD_SIZE for why three is a pod.
+    // Genesis guarantees the starter square holds the deep water two whales
+    // need (GENESIS_MIN_STARTER_DEEP_CELLS), so at least one has to be alive
+    // after the settle. It is a partial pod — see the target assertion below,
+    // and WHALE_POD_SIZE for why three is a pod.
     expect(counts.whale).toBeGreaterThanOrEqual(1);
-    // No land exists yet, so this one cannot be anywhere.
-    expect(counts.grazer).toBe(0);
+    // AND GRAZERS, which is new on 2026-08-25. Until the archipelago pass a
+    // fresh world had no land anywhere a player could reach, so this line read
+    // `toBe(0)` and the honest comment beside it was "nobody lives here until
+    // somebody raises an island by hand". Genesis now guarantees islands in the
+    // starter square, so the land species has a home on day one.
+    expect(counts.grazer).toBeGreaterThanOrEqual(1);
 
     // Every creature is in its own habitat and inside the starter unlock — not
     // scattered over the locked remainder of the ocean.
@@ -514,28 +532,25 @@ describe('population targets', () => {
       );
     }
 
-    // Day one after the 2026-08-21 whale retune: 5 fish, 2 deep-sea creatures,
-    // 2 whales, 0 grazers.
+    // Day one, AS MINIMA rather than as four exact numbers (2026-08-25). The
+    // fixed starter shelf that made them exact is gone; genesis now guarantees
+    // at least the habitat each of these needs, and a given seed may give more.
     //
-    // The fish figure is the VISIBLE-DENSITY contract, and it is asserted as the
-    // relation it was chosen for rather than as the number 10: a fresh shelf must
-    // hold FISH_SCHOOLS_ON_FRESH_SHELF complete schools, because one blob of fish
-    // is not recognisable as a school and the old density could not even hold
-    // one whole group.
-    expect(targets.fish).toBe(FISH_SCHOOLS_ON_FRESH_SHELF * profileOf('fish').groupSize);
-    expect(targets.fish).toBe(5);
+    // The fish figure is the VISIBLE-DENSITY contract: a fresh shelf must hold
+    // FISH_SCHOOLS_ON_FRESH_SHELF complete schools, because one blob of fish is
+    // not recognisable as a school and the old density could not even hold one
+    // whole group.
+    expect(targets.fish).toBeGreaterThanOrEqual(
+      FISH_SCHOOLS_ON_FRESH_SHELF * profileOf('fish').groupSize,
+    );
     expect(targets.deepsea).toBeGreaterThanOrEqual(2);
     // The 2026-08-14 "2–3 whales immediately" goal, restored 2026-08-21 by
-    // halving the density rather than by growing the starter square back: 4 096
-    // square world units of open sea over a 2 000-unit density is two.
-    expect(targets.whale).toBe(2);
-    // A PARTIAL pod, and deliberately so: the day-one square is one expansion
-    // short of a whole one, and the alternative was making whales the second
-    // most common animal in a fully revealed world (see species.ts).
-    expect(targets.whale).toBeLessThan(profileOf('whale').groupSize);
-    // Grazers have no habitat until someone raises an island. Honest
-    // consequence of a world that starts as an ocean.
-    expect(targets.grazer).toBe(0);
+    // halving the density rather than by growing the starter square back, and
+    // now written into genesis itself as GENESIS_MIN_STARTER_DEEP_CELLS.
+    expect(targets.whale).toBeGreaterThanOrEqual(2);
+    // Grazers, on the islands genesis guarantees — see the census test above
+    // for what changed and why.
+    expect(targets.grazer).toBeGreaterThanOrEqual(1);
   });
 
   it('scales every species down proportionally rather than truncating one', () => {
