@@ -802,6 +802,31 @@ export function burnableBoatAt(x: number, y: number): { id: number; distanceCell
     : { id: nearest.item.id, distanceCells: nearest.distanceCells };
 }
 
+/**
+ * Every boat afloat, for fire's SPREAD sweep — id, where it is, and how much
+ * hull there is around that point.
+ *
+ * A GENERATOR OVER THE LIVE ARRAY, not a copy: this is asked once per spread
+ * step for as long as anything in the world is burning, and `boatStates()` —
+ * the other way to enumerate the fleet — allocates an array and rounds every
+ * coordinate for the wire, neither of which spread wants.
+ *
+ * The radius is FIRE_REACH_CELLS, the same half-hull a torch answers for: "how
+ * much boat is there around this point" is one fact, and letting spread and the
+ * torch disagree about it is how a boat becomes easier to light by accident
+ * than on purpose.
+ */
+export function* flammableBoats(): Generator<{
+  id: number;
+  x: number;
+  y: number;
+  radiusCells: number;
+}> {
+  for (const boat of boats) {
+    yield { id: boat.id, x: boat.x, y: boat.y, radiusCells: FIRE_REACH_CELLS };
+  }
+}
+
 /** Where this boat is now, in fractional cell space — null once it is gone. */
 export function boatPosition(id: number): { x: number; y: number } | null {
   const boat = boats.find((candidate) => candidate.id === id);

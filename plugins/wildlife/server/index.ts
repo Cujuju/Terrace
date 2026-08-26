@@ -105,6 +105,7 @@ import { loadPopulation, savePopulation } from './persistence.ts';
 import {
   advancePopulation,
   burnableEntityAt,
+  flammableCreatures,
   despawnInvalidHabitat,
   entityPosition,
   entityStates,
@@ -327,6 +328,20 @@ export const plugin: TerracePlugin = {
         };
       },
       positionOf: entityPosition,
+      // What a nearby flame can reach — a grazer in a burning meadow catches,
+      // and then runs (../server/entityBlaze.ts advances a fire that walks).
+      flammable: function* () {
+        for (const creature of flammableCreatures()) {
+          yield {
+            sourceName: WILDLIFE_PLUGIN_NAME,
+            id: creature.id,
+            fuel: { burnSeconds: WILDLIFE_BURN_SECONDS, height: WILDLIFE_FUEL_HEIGHT },
+            x: creature.x,
+            y: creature.y,
+            radiusCells: creature.radiusCells,
+          };
+        }
+      },
       onBurnedOut: wildlifeBurnedOut,
       // A creature's id survives a restore: ./persistence.ts saves the
       // population AND the id counter (nextEntityIdValue), so the animal that

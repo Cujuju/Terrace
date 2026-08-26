@@ -28,7 +28,11 @@
 // bandOf, one integer hash. That is cheaper than crops' own isFarmlandPlot
 // (which walks a tread ring and a shore ring) and cheaper than the forest's
 // (which additionally consults a 1 MB stability map), and the roll rejects
-// ~71% of green cells before anything is staged. UNMEASURED as of writing —
+// ~60% of green cells before anything is staged (FLORA_GRASS_SHARE_OF_256 is
+// 102 out of 256; this line said ~71% until 2026-08-25, which was never true of
+// the shipped threshold — and the difference matters now that grass is fuel,
+// because 0.398 is just UNDER the eight-neighbour percolation threshold and
+// 0.29 is comfortably under it). UNMEASURED as of writing —
 // the honest statement is that it is bounded above by the crop sweep's
 // measured 2.43ms full-512² worst case, since it does strictly less work per
 // cell, and it is amortised over GRASS_SURVEY_INTERVAL_SECONDS the same way.

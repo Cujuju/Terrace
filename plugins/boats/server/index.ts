@@ -41,6 +41,7 @@ import {
   boatStates,
   burnBoats,
   burnableBoatAt,
+  flammableBoats,
   forgetVillage,
   rememberVillage,
   resetFleet,
@@ -177,6 +178,21 @@ export const plugin: TerracePlugin = {
         };
       },
       positionOf: boatPosition,
+      // What a nearby flame can reach (../../fire/server/entityFuel.ts's
+      // `flammable`). A boat is the case that motivated the radius: a hull is
+      // several cells of dry timber, so a fire on the pier beside it is on it.
+      flammable: function* () {
+        for (const boat of flammableBoats()) {
+          yield {
+            sourceName: BOATS_PLUGIN_NAME,
+            id: boat.id,
+            fuel: { burnSeconds: BOATS_BURN_SECONDS, height: BOATS_FUEL_HEIGHT },
+            x: boat.x,
+            y: boat.y,
+            radiusCells: boat.radiusCells,
+          };
+        }
+      },
       onBurnedOut: boatsBurnedOut,
       // A boat's id survives a restore: ./persistence.ts saves the fleet AND
       // `nextBoatId`, so hull 7 in a restored world is the same hull that was

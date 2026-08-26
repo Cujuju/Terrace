@@ -845,6 +845,37 @@ export function burnableEntityAt(
   return nearest === null ? null : { entity: nearest.item, distanceCells: nearest.distanceCells };
 }
 
+/**
+ * A CREATURE IS A POINT for spread's purposes — see pilgrims' own
+ * WALKER_BODY_RADIUS_CELLS for why this is not FIRE_CELL_REACH.
+ */
+const CREATURE_BODY_RADIUS_CELLS = 0;
+
+/**
+ * Every creature that could catch fire, one at a time, for fire's spread sweep.
+ *
+ * LAND ONLY, the same filter `burnableEntityAt` applies and for the same
+ * reason: a fire that reaches across a shore and sets a fish alight is not a
+ * mechanic anybody asked for. A GENERATOR rather than a filtered array because
+ * this runs once a second for as long as the world is burning.
+ */
+export function* flammableCreatures(): Generator<{
+  id: number;
+  x: number;
+  y: number;
+  radiusCells: number;
+}> {
+  for (const entity of entities) {
+    if (profileOf(entity.species).habitat !== 'land') continue;
+    yield {
+      id: entity.id,
+      x: entity.x,
+      y: entity.y,
+      radiusCells: CREATURE_BODY_RADIUS_CELLS,
+    };
+  }
+}
+
 /** Where this creature is now, in fractional cell space — null once it is gone. */
 export function entityPosition(id: number): { x: number; y: number } | null {
   const entity = entities.find((candidate) => candidate.id === id);

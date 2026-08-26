@@ -21,7 +21,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { FIRE_ENTITY_CAP, fireEntityKey, isBurnedOut, type FireEntityState } from '../protocol.ts';
-import { entityFuelAt, entityFuelSource, type EntityFuelSource } from './entityFuel.ts';
+import {
+  entityFuelAt,
+  entityFuelSource,
+  type EntityFuelSource,
+  type FlammableIndividual,
+} from './entityFuel.ts';
 
 /** A burning individual as the server holds it. */
 interface BurningEntity {
@@ -109,6 +114,96 @@ export class EntityBlaze {
     this.burning.set(key, entity);
     found.source.onIgnited?.([found.id]);
     return toState(entity);
+  }
+
+  /**
+   * Lights ONE NAMED INDIVIDUAL, if there is room under the cap.
+   *
+   * THE SPREAD COUNTERPART OF `igniteAtCell`, and the difference between them
+   * is which question was asked. A torch asks about a CELL and the registry
+   * decides who was meant (./entityFuel.ts's arbitration); a flame reaching a
+   * boat has already picked the boat, because ../server/spread.ts ranked every
+   * candidate by distance to decide it was in reach at all. Routing spread
+   * through `igniteAtCell` would throw that answer away and re-ask a cell
+   * question, which is how a fire would end up lighting the neighbour of the
+   * thing it actually reached.
+   *
+   * Returns null when nothing caught — the cap is full, it is already alight,
+   * or the source has since let go of the id.
+   */
+  igniteIndividual(candidate: FlammableIndividual): FireEntityState | null {
+    if (this.burning.size >= FIRE_ENTITY_CAP) return null;
+
+    const { sourceName, id, fuel } = candidate;
+    const key = fireEntityKey(sourceName, id);
+    if (this.burning.has(key)) return null;
+
+    const source = entityFuelSource(sourceName);
+    if (source === null) return null;
+
+    // THE FUEL COMES WITH THE CANDIDATE rather than being looked up again: the
+    // same sweep that decided this thing was in reach already carries what
+    // burning it amounts to, and a second lookup would be a second chance for
+    // the two to disagree.
+    if (fuel.burnSeconds <= 0) return null;
+
+    // It must still be THERE. `flammable()` is swept once at the top of the
+    // spread step and the rolls happen after it, so this is the window in which
+    // an animal can die between being offered and being lit.
+    if (source.positionOf(id) === null) return null;
+
+    const entity: BurningEntity = {
+      sourceName,
+      id,
+      fuelHeight: fuel.height,
+      burnSeconds: fuel.burnSeconds,
+      ageSeconds: 0,
+    };
+    this.burning.set(key, entity);
+    source.onIgnited?.([id]);
+    return toState(entity);
+  }
+
+  /**
+   * Everything alight that can be a SOURCE of spread: where it is now, and how
+   * far through its burn it is.
+   *
+   * Separate from `positions()` because that one answers "where is it" for rain
+   * and this one has to carry the clock as well — ../server/spread.ts's
+   * SpreadSource is position AND age, since a fire too young or too spent to
+   * throw sparks is not a source at all. Skips the ones whose owner has let go,
+   * exactly as `positions()` does.
+   */
+  burningWithAge(): Array<{
+    sourceName: string;
+    id: number;
+    x: number;
+    y: number;
+    ageSeconds: number;
+    burnSeconds: number;
+  }> {
+    const found: Array<{
+      sourceName: string;
+      id: number;
+      x: number;
+      y: number;
+      ageSeconds: number;
+      burnSeconds: number;
+    }> = [];
+    for (const entity of this.burning.values()) {
+      const source = entityFuelSource(entity.sourceName);
+      const at = source?.positionOf(entity.id) ?? null;
+      if (at === null) continue;
+      found.push({
+        sourceName: entity.sourceName,
+        id: entity.id,
+        x: at.x,
+        y: at.y,
+        ageSeconds: entity.ageSeconds,
+        burnSeconds: entity.burnSeconds,
+      });
+    }
+    return found;
   }
 
   /**
