@@ -11,10 +11,9 @@
 //     suitability.ts's isBuildableCell, which is exactly the same predicate
 //     the wall test) is dead THIS GENERATION, unconditionally — it can never
 //     be born into, whatever its neighbour count says, and if it were
-//     somehow alive it dies. It still COUNTS as a dead neighbour for the
-//     cells around it, which is the ordinary behaviour of a dead cell; a
-//     wall needs no special-case in the neighbour count, only in whether it
-//     can itself be alive.
+//     somehow alive it dies. What it counts AS, for the cells around it, is
+//     no longer "a dead cell": see BOARD TOPOLOGY below. A wall still needs
+//     no special case in whether it can itself be alive.
 //   * Otherwise, standard B3/S23: a dead buildable cell with exactly 3 live
 //     neighbours is born; a live cell with 2 or 3 live neighbours survives;
 //     anything else dies (under- or over-population). ONE EXCEPTION — card
@@ -30,9 +29,30 @@
 //     reading; every step builds a fresh next-generation map and only swaps
 //     it in once the whole board has been evaluated (see GenerationSurvey).
 //
-// Pure B3/S23 on a bounded board dies out or freezes into still lifes; that
-// is accepted, and even thematic (a stable block is a settled town — see
-// tiers.ts) — SEEDING (below) is what keeps a world from going quiet forever.
+// ─────────────────────────────────────────────────────────────────────────────
+// BOARD TOPOLOGY — WHY THE RULE ALONE WAS NOT ENOUGH.
+//
+// Pure B3/S23 on THIS board dies out or freezes, and not because bounded Life
+// is like that: because ~95% of a real Terrace world is wall (measured,
+// snapshot 345 — 19 of 429 unlocked chunks held any buildable cell at all), so
+// almost every buildable cell sits on a coastline and is permanently
+// under-neighboured. attemptSeed and attemptStir (below) were written to push
+// against that from outside the rule; they remain, as BACKSTOPS. The starvation
+// itself is fixed where it happens, in who counts as whose neighbour:
+//
+//   * PHANTOM WALL NEIGHBOURS — a wall neighbour is worth
+//     WALL_PHANTOM_NUMERATOR/WALL_PHANTOM_DENOMINATOR of a live one instead of
+//     zero. Counted in integer units of 1/D and compared against B3/S23's own
+//     thresholds scaled by D, so nothing about the rule moves; see
+//     scaledNeighborCount and the measured table on WALL_PHANTOM_NUMERATOR.
+//   * PER-LANDMASS WRAP — a step off the edge of a connected component of
+//     buildable ground re-enters that component at its opposite edge, so a
+//     glider crossing a headland stays on the headland. topology.ts owns it.
+//
+// Both are neighbour LOOKUP rules. B3/S23's thresholds, the farmland B2
+// exception and tiers.ts's neighbour gate are all untouched, and the wall test
+// in scanChunk is still the sole authority on where a structure may stand — no
+// topology rule can put one on water.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // TERRAIN EDITS ARE NOT A CA EVENT. A live cell whose OWN ground is edited is
@@ -53,6 +73,7 @@ import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasNearbyFarmland } from './farmland.ts';
+import { landmassLabelsFor, wrappedNeighborIndex, type LandmassLabels } from './topology.ts';
 import type { StructuresRng } from './rng.ts';
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
@@ -71,6 +92,15 @@ import type { StructuresRng } from './rng.ts';
 export const CA_GENERATION_INTERVAL_SECONDS = 15;
 
 /**
+ * A BACKSTOP SINCE THE TOPOLOGY REWRITE, NOT THE MECHANISM. Seeding used to be
+ * how a board that had starved against its own coastline got a population
+ * again; boundary starvation is now fixed in the neighbour count itself (see
+ * BOARD TOPOLOGY in this file's header), so the Monday arrival is what it says
+ * on the tin and nothing more — repopulation of a world that has genuinely
+ * gone empty. Kept, deliberately: a board CAN still empty (a sculpt that
+ * drowns the last plateau, a snapshot restored onto a smaller world), and the
+ * topology cannot create life from none.
+ *
  * SETTLERS ARRIVE ON MONDAYS, AND ONLY WHEN THERE IS NO ONE LEFT (owner,
  * 2026-08-23: "the settlement seeder only runs once per seven in-game days if
  * the entire colony has been wiped out … it seeds on a Monday. Like the world
@@ -220,20 +250,189 @@ const MOORE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [-1, 1],  [0, 1],  [1, 1],
 ];
 
-function countLiveNeighbors(
+// ── The scaled neighbour count ───────────────────────────────────────────────
+
+/**
+ * Units one WALL neighbour is worth, over WALL_PHANTOM_DENOMINATOR.
+ *
+ * ONE THIRD OF A LIVE NEIGHBOUR, measured rather than picked.
+ * `test/support/phantomFractionSweep.ts` runs THIS module's own rule — the
+ * fraction is its only variable — over two fixtures shaped like the live
+ * world, eight real Monday arrivals each, 200 generations, with seeding and
+ * stirring switched OFF so the rule is what is being measured:
+ *
+ *   LONE PLATEAU (one island, 144 buildable cells)
+ *     fraction   mean  final   fill   died  froze  froze@
+ *        0/4     14.0    9.6   6.7%    0/8    4/8     87
+ *        1/8     14.0    9.6   6.7%    0/8    4/8     87
+ *        1/6     14.0    9.6   6.7%    0/8    4/8     87
+ *        1/5     12.7    7.6   5.3%    0/8    6/8     83
+ *        1/4      9.8    5.8   4.0%    1/8    6/8     56
+ *        2/7      9.8    5.8   4.0%    1/8    6/8     56
+ *        1/3     37.1   31.4  21.8%    0/8    0/8      —
+ *        3/8     37.1   31.4  21.8%    0/8    0/8      —
+ *        1/2     41.2   41.6  28.9%    0/8    0/8      —
+ *
+ *   ARCHIPELAGO (five plateaus, 1389 buildable cells): the same three
+ *   regimes — 3.2% fill and one run in eight frozen up to 2/7, 13.3% fill and
+ *   nothing frozen at 1/3 and 3/8, 13.9% at 1/2.
+ *
+ * READ THE TABLE AS THREE REGIMES, NOT NINE NUMBERS, because that is what it
+ * is. What the arithmetic actually cares about is `walls × fraction`: a cell
+ * with w dead-end slots is lifted across a threshold only once w × N/D reaches
+ * a whole neighbour. A cell on a STRAIGHT coast has three dead-end slots, a
+ * cell on a corner five — so every fraction below 1/5 changes nothing at all
+ * (0/4 through 1/6 are identical rows), fractions in [1/5, 1/3) reach corners
+ * only, and 1/3 is the exact point at which an ordinary coastline is worth one
+ * neighbour. 2/7 and 3/8 are in the table to pin that boundary: 2/7 is
+ * bit-identical to 1/4, 3/8 to 1/3.
+ *
+ * THE CHOICE RULE, FIXED BEFORE THE NUMBERS WERE READ: the smallest fraction
+ * that keeps a lone plateau ALIVE — a population that neither dies out nor
+ * stops changing — without saturating it. 1/3 is the smallest row with 0/8
+ * dead and 0/8 frozen, and it leaves 78% of the island's buildable ground
+ * empty, so it is a settlement pattern and not a paved island. Below it the
+ * corner-only fractions are not merely weaker but WORSE than no phantom at
+ * all (1/4: six runs in eight frozen, one dead — a corner lifted over the
+ * OVERPOPULATION ceiling loses the cell that was anchoring the pattern), which
+ * is exactly the sort of result a guessed constant would have shipped unseen.
+ * Above it, 1/2 buys 7 more percent of fill for a coastline that starts
+ * behaving like a live neighbour on two slots instead of three.
+ *
+ * WHY A FRACTION AT ALL, RATHER THAN A SECOND RULE FOR EDGE CELLS. A rule like
+ * "a cell with five or more walls survives on one neighbour" is the same idea
+ * with a cliff in it: it fires or it does not, and it needs its own threshold
+ * constant tuned against B3/S23's. A fractional wall changes the SAME arithmetic
+ * continuously — a cell hemmed in by five walls needs less company than one
+ * hemmed in by three, automatically, with no second table to keep in sync.
+ *
+ * THE PRICE, NAMED. At 1/3 a coastal cell with three dead-end slots and three
+ * live neighbours scores 3 + 3×3 = 12 = 4D and dies of OVERPOPULATION where
+ * classic S23 would have kept it. That is not a bug in the fraction, it is the
+ * fraction meaning what it says — the cliff crowds you as well as keeping you
+ * company — and it is the direct consequence of the deliberate decision not to
+ * move B3/S23's thresholds. It costs the coastline its densest still lifes,
+ * which is precisely why nothing freezes in the 1/3 rows.
+ */
+export const WALL_PHANTOM_NUMERATOR = 1;
+
+/**
+ * The denominator every neighbour count in this module is expressed in: a live
+ * neighbour is worth exactly WALL_PHANTOM_DENOMINATOR units, a wall neighbour
+ * WALL_PHANTOM_NUMERATOR units, and B3/S23's thresholds are the classic ones
+ * multiplied through by it (see survivesAt / bornAt below).
+ *
+ * 3 — the smallest denominator that can express the measured 1/3, kept as its
+ * own named constant rather than folded into the thresholds so the whole count
+ * stays INTEGER. That is the determinism contract, not a style preference:
+ * identical inputs must give identical outputs on server and client, and a
+ * third of a neighbour in floating point cannot promise that, while 1 in units
+ * of 3 can. The largest value any count can reach is
+ * 8 × WALL_PHANTOM_DENOMINATOR = 24, nowhere near an integer limit.
+ */
+export const WALL_PHANTOM_DENOMINATOR = 3;
+
+/**
+ * The fraction as one value, so the sweep that MEASURED it can run the real
+ * rule with a different one instead of re-implementing the rule. Every
+ * shipping call site takes the default.
+ */
+export interface PhantomWallWeight {
+  readonly numerator: number;
+  readonly denominator: number;
+}
+
+export const WALL_PHANTOM_WEIGHT: PhantomWallWeight = {
+  numerator: WALL_PHANTOM_NUMERATOR,
+  denominator: WALL_PHANTOM_DENOMINATOR,
+};
+
+/**
+ * B3/S23, restated in scaled units. Both intervals are half-open [lo, hi):
+ *
+ *   * SURVIVE when the scaled count is in [2D, 4D) — classic "2 or 3", since
+ *     with no walls in reach the count is exactly D × live.
+ *   * BE BORN when it is in [3D, 4D) — classic "exactly 3".
+ *
+ * The upper bound is SHARED deliberately: overpopulation is one threshold in
+ * Life, not two, and a cell that is too crowded to be born into is too crowded
+ * to survive in.
+ */
+function survivesAt(scaled: number, denominator: number): boolean {
+  return scaled >= 2 * denominator && scaled < 4 * denominator;
+}
+
+function bornAt(scaled: number, denominator: number): boolean {
+  return scaled >= 3 * denominator && scaled < 4 * denominator;
+}
+
+/**
+ * Card 28's exception, in scaled units: a dead cell NEAR FARMLAND is also born
+ * at an effective TWO neighbours — [2D, 3D), i.e. exactly the band that
+ * survival accepts and ordinary birth does not. Unchanged in meaning; only the
+ * units moved.
+ */
+function fedBornAt(scaled: number, denominator: number): boolean {
+  return scaled >= 2 * denominator && scaled < 3 * denominator;
+}
+
+/**
+ * The count every rule above is applied to. EACH of the eight Moore slots
+ * contributes exactly one of three things — never two, so nothing here can
+ * double count:
+ *
+ *   * WALL_PHANTOM_DENOMINATOR, if the slot DELIVERS A LIVE CELL. Directly,
+ *     or — when the direct neighbour is wall — through topology.ts's
+ *     per-landmass wrap, which is how a glider crossing a headland arrives
+ *     from the far side instead of being lost at sea.
+ *   * WALL_PHANTOM_NUMERATOR, if the slot is a WALL that delivered nobody.
+ *     This is the phantom: a cliff or a shoreline is not company, but it is
+ *     not the howling void a plain zero makes it either, and it is why a
+ *     six-walled coastal cell needs less live company to survive than an
+ *     inland one.
+ *   * Nothing, if the slot is ordinary buildable ground that happens to be
+ *     dead — a vacant plot is vacant.
+ *
+ * A LIVE CELL ALWAYS OUTRANKS THE PHANTOM. The two are alternatives for one
+ * slot, in that order, so the arithmetic can never claim a wall is worth more
+ * than the neighbour behind it, and the count is still bounded by
+ * 8 × WALL_PHANTOM_DENOMINATOR exactly as the classic count is bounded by 8.
+ *
+ * WALL IS READ FROM THE LABELLING, NOT FROM isBuildableCell. The flood fill is
+ * 8-connected, so any buildable Moore neighbour of a labelled cell carries a
+ * label too: "no label" and "wall" are the same statement, at one array read
+ * instead of a whole footprint survey. (scanChunk still asks isBuildableCell
+ * itself about the cell under evaluation — see its comment there.)
+ *
+ * PURE IN THE CURRENT GENERATION: `live` is the sweep's own snapshot of the
+ * board (GenerationSurvey's `board`) and `labels` is a function of the terrain
+ * alone. Nothing here can observe another cell's NEXT state.
+ *
+ * Exported for the topology suite, which asserts the arithmetic directly
+ * rather than inferring it from births and deaths.
+ */
+export function scaledNeighborCount(
   live: ReadonlyMap<number, LiveCellRecord>,
-  world: StructuresWorld,
+  labels: LandmassLabels,
   x: number,
   y: number,
+  phantom: PhantomWallWeight = WALL_PHANTOM_WEIGHT,
 ): number {
-  let count = 0;
+  const size = labels.worldSize;
+  let scaled = 0;
   for (const [ox, oy] of MOORE_OFFSETS) {
-    const nx = x + ox;
-    const ny = y + oy;
-    if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) continue;
-    if (live.has(structureKey(nx, ny))) count++;
+    const index = wrappedNeighborIndex(labels, x, y, ox, oy);
+    if (index >= 0) {
+      const ny = (index / size) | 0;
+      const nx = index - ny * size;
+      if (live.has(structureKey(nx, ny))) {
+        scaled += phantom.denominator;
+        continue;
+      }
+    }
+    if (labels.labelAt(x + ox, y + oy) < 0) scaled += phantom.numerator;
   }
-  return count;
+  return scaled;
 }
 
 /** What one completed generation changed. */
@@ -271,6 +470,18 @@ export interface GenerationOutcome {
  * (see `advance`).
  */
 export class GenerationSurvey {
+  /**
+   * The wall fraction this survey counts with. Defaulted at every shipping
+   * call site; the only caller that passes anything else is the sweep that
+   * measured the default (test/support/phantomFractionSweep.ts), which needs
+   * to run THIS code rather than a copy of it.
+   */
+  private readonly phantom: PhantomWallWeight;
+
+  constructor(phantom: PhantomWallWeight = WALL_PHANTOM_WEIGHT) {
+    this.phantom = phantom;
+  }
+
   private cursor = 0;
   private readonly staged = new Map<number, LiveCellRecord>();
   /**
@@ -279,15 +490,34 @@ export class GenerationSurvey {
    */
   private board: ReadonlyMap<number, LiveCellRecord> | null = null;
 
+  /**
+   * The board's TOPOLOGY for this sweep (topology.ts), taken at the same
+   * moment `board` is and held for the same reason: the neighbour lookup must
+   * be a pure function of the generation being scanned, so the chunk scanned
+   * last must see the same coastline the chunk scanned first did.
+   *
+   * IT IS ALSO THE COST CEILING. Labelling is a whole-board pass; taken once
+   * per sweep it costs exactly what the sweep itself already costs, once per
+   * generation. Read live instead, a player dragging a sculpt brush would
+   * invalidate it several times a second and pay for a full relabel on every
+   * tick of the stroke. A terrain edit therefore reaches the topology at the
+   * NEXT generation — the same bounded lag this file's header already
+   * documents and accepts for a neighbour's buildability, and far shorter
+   * than the demolition path, which is instant and unaffected.
+   */
+  private labels: LandmassLabels | null = null;
+
   private resetSweep(): void {
     this.cursor = 0;
     this.staged.clear();
     this.board = null;
+    this.labels = null;
   }
 
   private scanChunk(
     world: StructuresWorld,
     live: ReadonlyMap<number, LiveCellRecord>,
+    labels: LandmassLabels,
     cx: number,
     cy: number,
   ): void {
@@ -302,12 +532,24 @@ export class GenerationSurvey {
         // matter what, so the (up to) eight neighbour lookups below are
         // skipped entirely for it — the majority of a typical world (open
         // water) never pays for neighbour counting at all.
+        //
+        // STILL THE SOLE AUTHORITY on where a structure may stand: the
+        // topology rules below change only who counts as whose NEIGHBOUR,
+        // never this. A landmass labelling that has drifted out of date
+        // (topology.ts names the two ways it can) cannot birth a house on
+        // water, because this line is not asking it.
         if (!isBuildableCell(world, x, y)) continue;
 
         const key = structureKey(x, y);
         const current = live.get(key);
-        const neighborCount = countLiveNeighbors(live, world, x, y);
-        const survives = current !== undefined && (neighborCount === 2 || neighborCount === 3);
+        const scaled = scaledNeighborCount(live, labels, x, y, this.phantom);
+        // The count tiers.ts reasons in: whole live-neighbour equivalents,
+        // floored. Survivors have this in [2, 4) by construction — the same
+        // window S23 always gave it — so STRUCTURE_UPGRADE_MIN_NEIGHBORS's
+        // "3 is the only threshold that splits survivors" argument is
+        // untouched by the phantom fraction. Integer division, no float.
+        const neighborCount = Math.floor(scaled / this.phantom.denominator);
+        const survives = current !== undefined && survivesAt(scaled, this.phantom.denominator);
         // Card 28 ("Terrace Farming"): a dead cell with exactly 2 live
         // neighbours — one short of ordinary B3 — is ALSO born if it is near
         // farmland. Checked only for this one neighbour count: 3 already
@@ -319,8 +561,11 @@ export class GenerationSurvey {
         // AT MOST once per dead cell, and only for the subset that already
         // has 2 live neighbours — see farmland.ts's own cost note.
         const fedBirth =
-          current === undefined && neighborCount === 2 && hasNearbyFarmland(world, x, y);
-        const birthed = current === undefined && (neighborCount === 3 || fedBirth);
+          current === undefined &&
+          fedBornAt(scaled, this.phantom.denominator) &&
+          hasNearbyFarmland(world, x, y);
+        const birthed =
+          current === undefined && (bornAt(scaled, this.phantom.denominator) || fedBirth);
         if (!survives && !birthed) continue;
 
         if (current !== undefined) {
@@ -364,11 +609,26 @@ export class GenerationSurvey {
     // header. Taken on the tick the sweep starts and read by every chunk of
     // it; the caller's map may change underneath without the CA seeing half
     // of the change.
-    if (this.board === null) this.board = new Map(live);
+    if (this.board === null) {
+      this.board = new Map(live);
+      // The coastline this generation is judged against, taken at the same
+      // instant as the board — see `labels`' own comment.
+      this.labels = landmassLabelsFor(world);
+    }
     const board = this.board;
+    // `??` rather than a non-null assertion: the two are always set together
+    // directly above, and if that ever stops being true this recomputes rather
+    // than throwing in the middle of a generation.
+    const labels = this.labels ?? landmassLabelsFor(world);
 
     while (budget > 0 && this.cursor < totalChunks) {
-      this.scanChunk(world, board, this.cursor % world.chunksPerEdge, Math.floor(this.cursor / world.chunksPerEdge));
+      this.scanChunk(
+        world,
+        board,
+        labels,
+        this.cursor % world.chunksPerEdge,
+        Math.floor(this.cursor / world.chunksPerEdge),
+      );
       this.cursor++;
       budget--;
     }
@@ -426,8 +686,9 @@ export class GenerationSurvey {
 export function stepGeneration(
   world: StructuresWorld,
   live: ReadonlyMap<number, LiveCellRecord>,
+  phantom: PhantomWallWeight = WALL_PHANTOM_WEIGHT,
 ): GenerationOutcome {
-  const survey = new GenerationSurvey();
+  const survey = new GenerationSurvey(phantom);
   const result = survey.advance(world, live, world.chunksPerEdge * world.chunksPerEdge);
   // A positive budget covering every chunk always finishes in the one call
   // above — see the non-null return analysis in advance's own doc.
@@ -688,6 +949,15 @@ export function attemptSeed(
 // 2026-08-19) ─────────────────────────────────────────────────────────────
 
 /**
+ * A BACKSTOP SINCE THE TOPOLOGY REWRITE, NOT THE MECHANISM — same demotion
+ * attemptSeed's own comment records, for the same reason. The freeze this was
+ * written against was mostly boundary starvation wearing a still life's
+ * clothes: a coastal pattern with nowhere to grow into collapses to the one
+ * block that fits and stops. Phantom walls and per-landmass wrap remove that
+ * cause (see this file's BOARD TOPOLOGY header). What they do NOT remove is
+ * genuine convergence — a large open plateau really can settle into still
+ * lifes, exactly as Life on open ground does — so the spark stays.
+ *
  * Pure B3/S23 on a bounded board eventually converges into still lifes (a
  * lone 2×2 block, most often — see this file's header) — accepted and even
  * thematic when it happens once, but a world with several settlements, each
