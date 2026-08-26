@@ -31,7 +31,7 @@
 // anything but an error message, and nothing outside here may either: read it
 // BY CELL INDEX, and walk the world in grid order when you need every column.
 
-import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT } from './constants.ts';
+import { BAND_HEIGHT, MAX_HEIGHT, MIN_HEIGHT, SEA_LEVEL } from './constants.ts';
 import { cellIndex, cellX, cellY, quantizeToBand, type Heightmap } from './grid.ts';
 
 /**
@@ -98,6 +98,53 @@ export function spanAt(map: Heightmap, x: number, y: number, k: number): Span {
 /** The span carrying the walkable surface: its ceiling is `heightAt(map, x, y)`. */
 export function topSpan(map: Heightmap, x: number, y: number): Span {
   return spanAt(map, x, y, spanCount(map, x, y) - 1);
+}
+
+/**
+ * THE SEABED UNDER A LAYERED COLUMN — the height the sea's floor is drawn and
+ * measured at, which is NOT `heightAt` once a column has more than one span.
+ *
+ * Q3 EXTENDED (docs/DESIGN.md; owner, 2026-08-24). Water is a pure function of
+ * the column: water exists at (x, y, h) iff `h <= SEA_LEVEL` AND the column is
+ * not solid at h. There are no air pockets — a cavity at or below sea level is
+ * always flooded — so the water column at a cell runs from SEA_LEVEL down to
+ * the first solid thing beneath it, and that is what this returns.
+ *
+ * The walk finds `k`, the lowest span whose ceiling clears the waterline, and
+ * answers one of three ways:
+ *   * no such span — every span is submerged, so the topmost ceiling IS the
+ *     seabed. That is `cells[i]`, i.e. plain sea.
+ *   * span k is solid AT the waterline (`floor <= SEA_LEVEL`) — there is no
+ *     water at this cell at all, and the answer is its ceiling, which is
+ *     necessarily above SEA_LEVEL and so reads as "dry" to every caller.
+ *   * span k floats above the waterline — the waterline sits in the gap under
+ *     it, which is flooded, so the seabed is the cap that closes that gap from
+ *     below: span k−1's ceiling.
+ *
+ * FOR EVERY ONE-SPAN COLUMN THIS IS EXACTLY `heightAt`. Land takes the second
+ * branch (floor is BEDROCK_FLOOR, so it is solid at the waterline) and sea
+ * takes the first; both return `cells[i]`. That identity is what lets water
+ * consumers switch to this function wholesale with nothing changing on the
+ * 99% case.
+ *
+ * Integer-only and iteration-free over the sparse table (spans are read by
+ * index), per the determinism contract at the top of this file.
+ */
+export function seabedHeight(map: Heightmap, x: number, y: number): number {
+  const count = spanCount(map, x, y);
+  for (let k = 0; k < count; k++) {
+    const span = spanAt(map, x, y, k);
+    if (span.ceiling <= SEA_LEVEL) continue;
+    // Solid across the waterline: dry ground, no water column here.
+    if (span.floor <= SEA_LEVEL) return span.ceiling;
+    // Air at the waterline. The cap below the gap is the seabed — unless this
+    // IS the bottom span, in which case nothing solid lies under the water at
+    // all and the sea floors out on the bottom of the world. (Only reachable
+    // by carving the bedrock span's floor away; an uncarved bottom span sits
+    // on BEDROCK_FLOOR and takes the branch above.)
+    return k === 0 ? BEDROCK_FLOOR : spanAt(map, x, y, k - 1).ceiling;
+  }
+  return map.cells[cellIndex(map, x, y)]!;
 }
 
 /**
