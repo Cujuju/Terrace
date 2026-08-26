@@ -10,18 +10,24 @@
 // (@terrace/shared's farmland.ts — the predicate is shared terrain math, not
 // this plugin's), where crops currently stand (./crops.ts) and where grass
 // currently stands (./grass.ts), and what
-// survives a restart (./persistence.ts — neither crops nor grass do; see
-// crops.ts's header) — and publishes it on SIX namespaced messages (a
-// snapshot and a delta per population); the client half under ../client draws
-// all three.
+// survives a restart (./persistence.ts — only the forest does; see crops.ts's
+// header) — and publishes it on TEN namespaced messages (a snapshot and a
+// delta per population); the client half under ../client draws all five.
 //
-// TREES, CROPS AND GRASS ARE THREE INDEPENDENT POPULATIONS, not three views of
-// one mechanism: different eligibility predicate, different cap, different
-// growth model (stochastic-with-a-hazard for trees, purely deterministic for
-// crops and grass — see crops.ts and grass.ts), different wire messages.
-// Everywhere below that forest.ts's machinery is mirrored for crops.ts and
-// grass.ts, it is mirrored DELIBERATELY — the three are meant to read as the
-// same house pattern applied three times, not as one shared abstraction.
+// THE FIVE ARE INDEPENDENT POPULATIONS, not five views of one mechanism:
+// different eligibility predicate, different cap, different growth model
+// (stochastic-with-a-hazard for trees, purely deterministic for crops, grass
+// and the fringe — see crops.ts, grass.ts and fringe.ts), different wire
+// messages. Everywhere below that forest.ts's machinery is mirrored for the
+// others, it is mirrored DELIBERATELY — they are meant to read as the same
+// house pattern applied five times, not as one shared abstraction.
+//
+// THE FIFTH IS NOT LIKE THE OTHER FOUR (GH #195). Trees, crops, grass and the
+// fringe are all answers to "what does this cell's terrain deserve", re-derived
+// by a rolling survey. STUMPS are a RESIDUE: nothing about a cell's height says
+// whether a tree burned on it, so the list is appended to by an event (a fire
+// running its course — see THE FLAMMABLE PATH below) and emptied by a clock
+// (./stumps.ts), with no survey, no cursor and no chunk budget anywhere in it.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT THIS PLUGIN IS, NEXT TO THE OTHER TWO THAT DRAW THINGS IN THE WORLD.
@@ -102,16 +108,21 @@ import {
   FLORA_GRASS_CHANGES_MESSAGE,
   FLORA_FRINGE_MESSAGE,
   FLORA_FRINGE_CHANGES_MESSAGE,
+  FLORA_STUMP_MESSAGE,
+  FLORA_STUMP_CHANGES_MESSAGE,
   packCropCells,
   packFringeCells,
   packGrassCells,
+  packStumpCells,
   packTreeCells,
   grassKey,
+  stumpKey,
   treeKey,
   type CropCell,
   type FringeCell,
   type FringeSpecies,
   type GrassCell,
+  type StumpCell,
   type TreeCell,
 } from '../protocol.ts';
 import {
@@ -126,6 +137,7 @@ import { CropField, cropSurveyChunksPerTick } from './crops.ts';
 import { GrassField, grassSurveyChunksPerTick } from './grass.ts';
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
+import { StumpField } from './stumps.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
 import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
@@ -175,6 +187,14 @@ const grassField = new GrassField();
  * length.
  */
 const fringeField = new FringeField();
+
+/**
+ * The stumps a fire left behind (GH #195). A FIFTH object, and the first that
+ * is not a survey at all: nothing about a cell's terrain says whether a tree
+ * burned on it, so this list is appended to by an event and emptied by a clock
+ * (./stumps.ts) rather than re-derived from the heightmap like the four above.
+ */
+const stumpField = new StumpField();
 
 /**
  * Null until onWorldCreate: the record is sized from the world edge, which is
@@ -556,6 +576,90 @@ function refreshUnlockedChunkFringe(world: WorldApi, token: string, cx: number, 
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Stumps wire (GH #195) — the fifth population's own message pair, on the wire
+// shape the other four already use. Same fog-of-war rule, and FLORA_SKIP_EMPTY
+// is safe here for the same reason it is safe for a tree: a stump never moves
+// once it is left, so one invisible to a player now was equally invisible at
+// every earlier moment it could have been announced.
+//
+// The delta's two halves are `left` and `rotted` rather than a grown/felled
+// pair, because for this population they are genuinely different events with
+// different causes — a fire finishing, and a clock running out — and naming
+// them after the mechanism is what stops the decay tick reading as a fell.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A stump's own cell — what `WorldApi.broadcastVisible` gates visibility by. */
+function stumpPosition(cell: StumpCell): { x: number; y: number } {
+  return { x: cell.x, y: cell.y };
+}
+
+function broadcastStumps(world: WorldApi): void {
+  world.broadcastVisible(
+    FLORA_STUMP_MESSAGE,
+    stumpField.cells(),
+    stumpPosition,
+    (visible) => ({ stumps: packStumpCells(visible) }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/** One cell tagged with which half of a `flora:stumpChanges` delta it belongs to. */
+interface TaggedStumpChange {
+  readonly kind: 'left' | 'rotted';
+  readonly cell: StumpCell;
+}
+
+function broadcastStumpChanges(
+  world: WorldApi,
+  left: readonly StumpCell[],
+  rotted: readonly StumpCell[],
+): void {
+  if (left.length === 0 && rotted.length === 0) return;
+
+  const tagged: TaggedStumpChange[] = [
+    ...left.map((cell): TaggedStumpChange => ({ kind: 'left', cell })),
+    ...rotted.map((cell): TaggedStumpChange => ({ kind: 'rotted', cell })),
+  ];
+  world.broadcastVisible(
+    FLORA_STUMP_CHANGES_MESSAGE,
+    tagged,
+    (change) => stumpPosition(change.cell),
+    (visible) => ({
+      left: packStumpCells(visible.filter((c) => c.kind === 'left').map((c) => c.cell)),
+      rotted: packStumpCells(visible.filter((c) => c.kind === 'rotted').map((c) => c.cell)),
+    }),
+    FLORA_SKIP_EMPTY,
+  );
+}
+
+/**
+ * refreshUnlockedChunkFringe, restated for the stumps (issue #18's mechanism).
+ *
+ * Sent as a `left` delta and not a `flora:stumps` snapshot for
+ * refreshUnlockedChunk's reason: the snapshot REPLACES the client's whole list,
+ * which would erase every other chunk's scars. `left` is additive, and "this
+ * stump, which already existed, is now yours to see" is exactly what it means —
+ * the stump's rot deadline lives only on the server, so nothing about the
+ * client's copy depends on when it learned about it.
+ */
+function refreshUnlockedChunkStumps(world: WorldApi, token: string, cx: number, cy: number): void {
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const inChunk: StumpCell[] = [];
+  for (const cell of stumpField.cells()) {
+    if (cell.x >= x0 && cell.x < x0 + CHUNK_SIZE && cell.y >= y0 && cell.y < y0 + CHUNK_SIZE) {
+      inChunk.push(cell);
+    }
+  }
+  if (inChunk.length === 0) return;
+
+  const payload = { left: packStumpCells(inChunk), rotted: [] };
+  for (const player of world.players()) {
+    if (player.token === token) world.sendTo(player.id, FLORA_STUMP_CHANGES_MESSAGE, payload);
+  }
+}
+
 /**
  * THE TARGETED-REFRESH PATH (issue #18). `broadcastForest`'s keepalive is a
  * 60 s REPAIR cadence (see FLORA_KEEPALIVE_SECONDS), not a sync mechanism —
@@ -623,27 +727,49 @@ function chunksPerTick(world: WorldApi, dt: number): number {
 }
 
 /**
- * The cells a structure occupies RIGHT NOW, as an OccupancyPredicate closure
- * over a freshly built Set of flora's own tree keys (protocol.ts's treeKey —
- * NOT structures' STRUCTURES_CELL_KEY_STRIDE, a different plugin's private
- * encoding this one must never assume matches its own).
+ * The cells a structure occupies RIGHT NOW — AND the cells a stump still holds
+ * (GH #195) — as an OccupancyPredicate closure over a freshly built Set of
+ * flora's own tree keys (protocol.ts's treeKey — NOT structures'
+ * STRUCTURES_CELL_KEY_STRIDE, a different plugin's private encoding this one
+ * must never assume matches its own).
+ *
+ * A STUMP HOLDS ITS CELL UNTIL IT ROTS, and that is the whole reason stumps
+ * appear in a predicate named for structures rather than in a decoration list
+ * the surveys never see. Fire leaves the ground undisturbed, so it resets no
+ * stability clock (floraBurnedOut) — without this term the very next survey
+ * after a burn could plant a full-grown tree directly on top of its own stump,
+ * which is both absurd to look at and the exact thing FLORA_STUMP_ROT_SECONDS
+ * is timed against (stumps.ts derives it from FLORA_STABILITY_SECONDS so that
+ * the scar outlives the regrowth clock rather than racing it).
  *
  * Rebuilt on every call rather than cached: `bridgedStructures()` returns at
- * most STRUCTURES_CAP (512) cells, so building the Set costs at most 512
- * inserts — negligible against the survey work it gates — and a fresh read
- * means a structure founded THIS tick is excluded from the very next chunk
- * scanned, not from whichever sweep happens to start next.
+ * most STRUCTURES_CAP (512) cells and the stump list is capped at
+ * FLORA_STUMP_CAP (4096), so building the Set costs at most ~4600 inserts —
+ * still negligible against a sweep that visits 5 200 cells per tick — and a
+ * fresh read means a structure founded (or a tree burned) THIS tick is
+ * excluded from the very next chunk scanned, not from whichever sweep happens
+ * to start next.
  */
 function occupiedCells(): OccupancyPredicate {
   const occupied = new Set<number>();
   for (const cell of bridgedStructures()) occupied.add(treeKey(cell.x, cell.y));
+  for (const cell of stumpField.cells()) occupied.add(treeKey(cell.x, cell.y));
   return (x: number, y: number): boolean => occupied.has(treeKey(x, y));
 }
 
 /**
  * What the two GROUND-COVER populations — the meadow and the fringe — yield to:
- * buildings AND crops, but NOT trees (owner, 2026-08-24: grass grows under
- * trees).
+ * buildings, crops AND stumps, but NOT trees (owner, 2026-08-24: grass grows
+ * under trees).
+ *
+ * A STUMP IS HERE AND A TREE IS NOT, which is not a contradiction: grass under
+ * a tree is a meadow with a tree in it, and grass around a stump is a burn scar
+ * with the burn hidden. Fire scorches the tuft on the cell it takes the tree
+ * from (floraBurnedOut), and without this term the very next grass survey — at
+ * most 5 s later — would put it straight back and swallow the stump, which
+ * stands 0.15 world units against a blade's 0.125. So the bare cell lasts
+ * exactly as long as the stump does, and the meadow closing back over it is
+ * what "the world healed" looks like.
  *
  * ONE PREDICATE FOR BOTH, not one per field. The two populations can never
  * share a cell (their height windows are disjoint), so what would be gained by
@@ -653,14 +779,16 @@ function occupiedCells(): OccupancyPredicate {
  * two surveys already use, so "a building was founded this tick" reaches all
  * three sweeps identically — the difference is only the extra crop term.
  *
- * Rebuilt per call for occupiedCells' own reason, with one extra bound: the
- * crop field is capped at FLORA_CROP_CAP (2048), so this Set costs at most
- * ~2560 inserts against a sweep that visits tens of thousands of cells.
+ * Rebuilt per call for occupiedCells' own reason, with two extra bounds: the
+ * crop field is capped at FLORA_CROP_CAP (2048) and the stumps at
+ * FLORA_STUMP_CAP (4096), so this Set costs at most ~6656 inserts against a
+ * sweep that visits tens of thousands of cells.
  */
 function groundCoverOccupiedCells(): OccupancyPredicate {
   const occupied = new Set<number>();
   for (const cell of bridgedStructures()) occupied.add(grassKey(cell.x, cell.y));
   for (const cell of cropField.cells()) occupied.add(grassKey(cell.x, cell.y));
+  for (const cell of stumpField.cells()) occupied.add(grassKey(cell.x, cell.y));
   return (x: number, y: number): boolean => occupied.has(grassKey(x, y));
 }
 
@@ -742,11 +870,20 @@ function simulate(world: WorldApi, dt: number): void {
     if (outcome !== null) broadcastFringeChanges(world, outcome.sprouted, outcome.withered);
   }
 
+  // THE DECAY TICK (GH #195) — the one population advanced by a clock instead
+  // of by a sweep, so it is checked every tick rather than on a chunk budget.
+  // It costs one Map iteration bounded by FLORA_STUMP_CAP and returns nothing
+  // at all on the overwhelming majority of ticks (stumps.ts's advanceDecay);
+  // on a world with no stumps standing it is a single size check.
+  const rotted = stumpField.advanceDecay(simSeconds);
+  if (rotted.length > 0) broadcastStumpChanges(world, [], rotted);
+
   if (simSeconds - lastKeepaliveSeconds >= FLORA_KEEPALIVE_SECONDS) {
     broadcastForest(world);
     broadcastCrops(world);
     broadcastGrass(world);
     broadcastFringe(world);
+    broadcastStumps(world);
   }
 }
 
@@ -780,6 +917,7 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   const withered: CropCell[] = [];
   const uprooted: GrassCell[] = [];
   const strippedFringe: FringeCell[] = [];
+  const clearedStumps: StumpCell[] = [];
   for (const cell of diff) {
     stability.markChanged(cell.x, cell.y, simSeconds);
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
@@ -801,12 +939,18 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
     // in fringe.ts's reactToEdit and is not something this pass can see.
     const strippedCell = fringeField.reactToEdit(cell.x, cell.y);
     if (strippedCell !== null) strippedFringe.push(strippedCell);
+    // A stump on a dug cell goes with it. The ground it was rooted in has just
+    // moved, and unlike the four living populations there is no survey that
+    // would ever put it back — which is the point: the player cleared it.
+    const clearedStump = stumpField.reactToEdit(cell.x, cell.y);
+    if (clearedStump !== null) clearedStumps.push(clearedStump);
   }
 
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
   broadcastGrassChanges(world, [], uprooted);
   broadcastFringeChanges(world, [], strippedFringe);
+  broadcastStumpChanges(world, [], clearedStumps);
 }
 
 /**
@@ -840,6 +984,7 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   const withered: CropCell[] = [];
   const uprooted: GrassCell[] = [];
   const strippedFringe: FringeCell[] = [];
+  const clearedStumps: StumpCell[] = [];
   const clearCell = (x: number, y: number): void => {
     if (forest.fell(x, y)) felled.push({ x, y });
     const witheredCell = cropField.reactToEdit(x, y);
@@ -852,6 +997,12 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
     // exempt from occupancy.
     const strippedCell = fringeField.reactToEdit(x, y);
     if (strippedCell !== null) strippedFringe.push(strippedCell);
+    // The building's floor goes over the stump too — a settlement clears the
+    // burnt ground it is founded on. occupiedCells() already refuses to plant
+    // a TREE on a stump, so this is the other half of the same rule for the
+    // one thing that does not consult it.
+    const clearedStump = stumpField.reactToEdit(x, y);
+    if (clearedStump !== null) clearedStumps.push(clearedStump);
   };
   for (const cell of occupation.seeded) clearCell(cell.x, cell.y);
   for (const cell of occupation.upgraded) clearCell(cell.x, cell.y);
@@ -860,6 +1011,7 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   broadcastCropChanges(world, [], withered);
   broadcastGrassChanges(world, [], uprooted);
   broadcastFringeChanges(world, [], strippedFringe);
+  broadcastStumpChanges(world, [], clearedStumps);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -990,7 +1142,14 @@ function floraFuelAt(x: number, y: number): { burnSeconds: number; height: numbe
  *
  * Stability is NOT reset, for onStructuresChanges' reason: fire changes no
  * height, so the ground was never disturbed. A burned-out cell is as stable as
- * it was, and flora's ordinary survey recolonizes it on the usual schedule.
+ * it was, and flora's ordinary survey recolonizes it on the usual schedule —
+ * but not immediately, because of the stump this leaves.
+ *
+ * THE ONLY PLACE A STUMP IS EVER CREATED (GH #195), and only where a TREE
+ * actually fell: `forest.fell` returning true is the proof that something with
+ * a trunk stood here, so a burn that consumed only grass or only a crop leaves
+ * nothing behind. ../protocol.ts's stump section holds the argument for why
+ * this is the one removal path of four that leaves a residue.
  */
 function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number }[]): void {
   const world = fuelWorld;
@@ -999,8 +1158,13 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
   const scorched: GrassCell[] = [];
+  const stumps: StumpCell[] = [];
   for (const cell of cells) {
-    if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
+    if (forest.fell(cell.x, cell.y)) {
+      felled.push({ x: cell.x, y: cell.y });
+      const stump = stumpField.leave(cell.x, cell.y, simSeconds);
+      if (stump !== null) stumps.push(stump);
+    }
     const witheredCell = cropField.reactToEdit(cell.x, cell.y);
     if (witheredCell !== null) withered.push(witheredCell);
     // ALL THREE ARE ASKED, not just the one that answered `floraFuelAt`: grass
@@ -1014,6 +1178,7 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
   if (scorched.length > 0) broadcastGrassChanges(world, [], scorched);
+  broadcastStumpChanges(world, stumps, []);
 }
 
 /**
@@ -1114,6 +1279,11 @@ export const plugin: TerracePlugin = {
     // persisted, the first survey populates it from this world's heightmap —
     // so this is inert at boot and kept for the same symmetry.
     broadcastGrass(world);
+    // The stumps, empty at boot for a STRONGER reason than the three above: no
+    // survey will ever populate them either, because a stump is the record of
+    // an event and nothing is persisted (../protocol.ts's stump section). The
+    // first stump of a session is left by the first fire of that session.
+    broadcastStumps(world);
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -1197,6 +1367,18 @@ export const plugin: TerracePlugin = {
       (visible) => packBySpecies(visible),
       { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
     );
+
+    // The stumps, same join-time treatment. Ordinarily empty, and empty costs
+    // nothing to send under FLORA_SKIP_EMPTY — but a player joining a world
+    // that is on fire, or that burned in the last FLORA_STUMP_ROT_SECONDS,
+    // must see the scars rather than wait out a keepalive for them.
+    world.broadcastVisible(
+      FLORA_STUMP_MESSAGE,
+      stumpField.cells(),
+      stumpPosition,
+      (visible) => ({ stumps: packStumpCells(visible) }),
+      { ...FLORA_SKIP_EMPTY, onlyPlayerId: player.id },
+    );
   },
 
   onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
@@ -1204,6 +1386,7 @@ export const plugin: TerracePlugin = {
     refreshUnlockedChunkCrops(world, token, cx, cy);
     refreshUnlockedChunkGrass(world, token, cx, cy);
     refreshUnlockedChunkFringe(world, token, cx, cy);
+    refreshUnlockedChunkStumps(world, token, cx, cy);
   },
 
   persistence,
@@ -1258,6 +1441,16 @@ export function currentFringeField(): FringeField {
   return fringeField;
 }
 
+/** The standing stumps (GH #195), in no particular order. */
+export function standingStumps(): readonly StumpCell[] {
+  return stumpField.cells();
+}
+
+/** The live stump field, for suites that need to assert on its own clock. */
+export function currentStumpField(): StumpField {
+  return stumpField;
+}
+
 /** Drops all accumulated state so a suite can start from zero. */
 export function resetFloraState(): void {
   stability = null;
@@ -1266,6 +1459,7 @@ export function resetFloraState(): void {
   cropField.clear();
   grassField.clear();
   fringeField.clear();
+  stumpField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
   simSeconds = 0;
   lastKeepaliveSeconds = 0;

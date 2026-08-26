@@ -57,9 +57,19 @@ import { FLORA_TREE_CAP, type FloraTreeKind } from '../protocol.ts';
 // clearly narrower than the cell it stands in, so a stand of trees never hides
 // the terrace edges the renderer exists to show.
 
-const TRUNK_HEIGHT = 0.45;
+/**
+ * EXPORTED for ./stumpModels.ts alongside TRUNK_BOTTOM_RADIUS below: a stump is
+ * a FRACTION of this, so retuning the tree retunes what fire leaves of it.
+ */
+export const TRUNK_HEIGHT = 0.45;
 const TRUNK_TOP_RADIUS = 0.055;
-const TRUNK_BOTTOM_RADIUS = 0.085;
+/**
+ * EXPORTED for ./stumpModels.ts (GH #195), which is the one other module that
+ * has to agree with this number: a stump is the bottom of a trunk, so a stump
+ * drawn at any other radius reads as a rock rather than as the remains of the
+ * tree that stood there. Promoted from a local const on the ≥2-modules rule.
+ */
+export const TRUNK_BOTTOM_RADIUS = 0.085;
 /** Five sides. A trunk is three pixels wide at play distance; six would be waste. */
 const TRUNK_SEGMENTS = 5;
 
@@ -94,7 +104,8 @@ const BROADLEAF_CROWN_CENTRE_Y = TRUNK_HEIGHT + BROADLEAF_CROWN_RADIUS * BROADLE
  * the brightest of them and darker than the darkest, or a tree on band 3 reads
  * as a bump and a tree on band 5 disappears entirely.
  */
-const TRUNK_COLOR = 0x5a4632;
+/** EXPORTED for ./stumpModels.ts, which chars this exact colour rather than picking its own brown. */
+export const TRUNK_COLOR = 0x5a4632;
 const CONIFER_CROWN_COLOR = 0x24503a;
 const BROADLEAF_CROWN_COLOR = 0x3d6b2c;
 
