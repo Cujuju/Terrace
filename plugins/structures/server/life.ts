@@ -439,6 +439,37 @@ export function scaledNeighborCount(
   return scaled;
 }
 
+/**
+ * HOW MANY OF (x, y)'S EIGHT MOORE NEIGHBOURS ARE REALLY THERE AND REALLY
+ * ALIVE — the plain grid, and nothing else: no per-landmass wrap, no phantom
+ * wall fraction, off-board slots simply skipped (the same clamp
+ * countLiveNeighbors always used, and the one clearance.ts matches).
+ *
+ * NOT THE SAME NUMBER AS scaledNeighborCount, AND DELIBERATELY SO. That count
+ * answers "how crowded does this cell FEEL", which is what B3/S23 is applied
+ * to and what the topology rules exist to bend. This one answers "who is
+ * actually standing next door", which is the only question
+ * STRUCTURE_UPGRADE_MIN_NEIGHBORS was ever asking — see tiers.ts. Dividing
+ * the scaled count by the denominator to recover the second from the first
+ * cannot work: three phantom walls and one live neighbour both come to one
+ * whole unit, and a cliff is not a neighbour.
+ */
+function liveMooreNeighbors(
+  live: ReadonlyMap<number, LiveCellRecord>,
+  worldSize: number,
+  x: number,
+  y: number,
+): number {
+  let count = 0;
+  for (const [ox, oy] of MOORE_OFFSETS) {
+    const nx = x + ox;
+    const ny = y + oy;
+    if (nx < 0 || ny < 0 || nx >= worldSize || ny >= worldSize) continue;
+    if (live.has(structureKey(nx, ny))) count++;
+  }
+  return count;
+}
+
 /** What one completed generation changed. */
 export interface GenerationOutcome {
   readonly nextLive: Map<number, LiveCellRecord>;
@@ -664,12 +695,6 @@ export class GenerationSurvey {
 
         const current = live.get(key);
         const scaled = scaledNeighborCount(live, labels, x, y, this.phantom);
-        // The count tiers.ts reasons in: whole live-neighbour equivalents,
-        // floored. Survivors have this in [2, 4) by construction — the same
-        // window S23 always gave it — so STRUCTURE_UPGRADE_MIN_NEIGHBORS's
-        // "3 is the only threshold that splits survivors" argument is
-        // untouched by the phantom fraction. Integer division, no float.
-        const neighborCount = Math.floor(scaled / this.phantom.denominator);
         // BUILDINGS ARE PERMANENT (keep-clear rule, 2026-08-26): a cell with
         // tier > 0 survives regardless of its neighbour count, though it is
         // still killed by the isBuildableCell wall test above (sculpting,
@@ -719,9 +744,14 @@ export class GenerationSurvey {
 
         if (current !== undefined) {
           const age = current.age + 1;
+          // THE TIER GATE IS FED REAL COMPANY, NOT THE SCALED COUNT. A second,
+          // cheap pass over the same eight slots — paid only for cells that
+          // actually survived, so it costs less than the count above it does.
+          // See liveMooreNeighbors for why it cannot be derived from `scaled`.
+          const liveNeighbors = liveMooreNeighbors(live, world.worldSize, x, y);
           // Blessing (pilgrim routes) is read at the tier gate ONLY — the
           // survives/birthed decisions above never consult it (blessings.ts).
-          let tier = maybeAdvanceTier(age, current.tier, neighborCount, isBlessedStructureCell(key));
+          let tier = maybeAdvanceTier(age, current.tier, liveNeighbors, isBlessedStructureCell(key));
           // THE TEEPEE→BUILDING STEP IS REFUSED when another building already
           // stands within STRUCTURE_SEPARATION_CELLS — on the board or staged
           // mid-sweep, same as the birth gate above. This is the PHYSICAL
