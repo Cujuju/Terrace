@@ -22,7 +22,7 @@ import {
   STRUCTURES_CAP,
 } from '../protocol.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, type StructuresRng } from './rng.ts';
-import type { LiveCellRecord } from './life.ts';
+import type { BoardCellRecord } from './growth-model.ts';
 
 /**
  * Schema version of this plugin's persistence slice.
@@ -40,6 +40,19 @@ interface StoredLiveCell {
   readonly y: number;
   readonly age: number;
   readonly tier: number;
+  /**
+   * The people living there — the growth-model seam's per-cell population
+   * (./growth-model.ts's BoardCellRecord).
+   *
+   * ADDITIVE AND OPTIONAL RATHER THAN A VERSION BUMP: a slice written before
+   * populations existed carries no such field, and reads back as a house with
+   * nobody in it yet — which is exactly what an unpopulated house is. Bumping
+   * the version instead would have refused every existing world's slice
+   * outright (see loadStructures) and demolished every standing settlement to
+   * add a counter. The Conway CA never writes it, so under the default model
+   * this field is absent from every row and costs the snapshot nothing.
+   */
+  readonly population?: number;
 }
 
 export interface StructuresSlice {
@@ -58,7 +71,7 @@ export interface StructuresSlice {
 }
 
 export function saveStructures(
-  live: ReadonlyMap<number, LiveCellRecord>,
+  live: ReadonlyMap<number, BoardCellRecord>,
   generation: number,
   rng: StructuresRng,
   lastSeedDay: number,
@@ -66,7 +79,11 @@ export function saveStructures(
   const stored: StoredLiveCell[] = [];
   for (const [key, record] of live) {
     const cell = cellOfKey(key);
-    stored.push({ x: cell.x, y: cell.y, age: record.age, tier: record.tier });
+    stored.push(
+      record.population === undefined
+        ? { x: cell.x, y: cell.y, age: record.age, tier: record.tier }
+        : { x: cell.x, y: cell.y, age: record.age, tier: record.tier, population: record.population },
+    );
   }
   return {
     version: STRUCTURES_SLICE_VERSION,
@@ -78,7 +95,7 @@ export function saveStructures(
 }
 
 export interface RestoredStructures {
-  readonly live: Map<number, LiveCellRecord>;
+  readonly live: Map<number, BoardCellRecord>;
   readonly generation: number;
   readonly rngState: number;
   readonly lastSeedDay: number;
@@ -120,17 +137,26 @@ export function loadStructures(data: unknown): RestoredStructures {
   const legacy = slice.version === 1;
   if (slice.version !== STRUCTURES_SLICE_VERSION && !legacy) return empty;
 
-  const live = new Map<number, LiveCellRecord>();
+  const live = new Map<number, BoardCellRecord>();
   if (Array.isArray(slice.live)) {
     for (const entry of slice.live) {
       if (live.size >= STRUCTURES_CAP) break;
       if (typeof entry !== 'object' || entry === null) continue;
-      const { x, y, age, tier } = entry as Partial<StoredLiveCell>;
+      const { x, y, age, tier, population } = entry as Partial<StoredLiveCell>;
       if (!isNonNegativeInteger(x) || !isNonNegativeInteger(y) || !isNonNegativeInteger(age)) continue;
       if (!isStructureTier(tier)) continue;
       const key = structureKey(x, y);
       if (live.has(key)) continue; // hand-edited duplicate: first entry wins
-      live.set(key, { age, tier });
+      // ABSENT STAYS ABSENT, rather than being materialised as a zero: a row
+      // written by the Conway CA has no population and must read back as the
+      // record the CA itself writes, byte for byte. The one consumer that
+      // cares reads `population ?? 0` (./growth-model.ts's BoardCellRecord),
+      // so "missing" and "nobody lives here yet" are already the same fact to
+      // it. A malformed value is dropped the same way.
+      live.set(
+        key,
+        isNonNegativeInteger(population) ? { age, tier, population } : { age, tier },
+      );
     }
   }
 
