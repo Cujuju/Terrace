@@ -225,9 +225,13 @@ describe('STRUCTURES_MODEL=populous', () => {
         const board = new Map<number, BoardCellRecord>([
           [structureKey(20, 20), { age: 0, tier: 1 }],
         ]);
+        // The rule is RADIAL AND STRICT (protocol.ts, STRUCTURE_SEPARATION_
+        // CELLS_SQUARED): at exactly the separation the discs are tangent, and
+        // tangent is not overlapping — so the scan bound itself is the first
+        // FREE cell, and one cell inside it is the last held one.
         answered = {
-          near: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS, 20),
-          far: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS + 1, 20),
+          near: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS - 1, 20),
+          far: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS, 20),
         };
         return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
       },
