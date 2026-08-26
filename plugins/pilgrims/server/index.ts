@@ -45,6 +45,19 @@ let pilgrimage = new Pilgrimage(walkerIds);
 let wandering = new Wandering(walkerIds);
 let settling = new Settling(walkerIds);
 
+/**
+ * The live world, stashed on every tick for `emitSettlerFrom` — which is
+ * called from ANOTHER plugin's clock rather than from one of this plugin's own
+ * hooks, and so is handed no world of its own. structures keeps its own
+ * `fuelWorld` for the identical reason, and this is the same seam: the sim
+ * needs a world to plan a route across, and the caller has no way to give it
+ * one that would be namespaced to this plugin.
+ *
+ * Null until the first tick, which makes an emission before the world is
+ * running an ordinary "nobody came out" rather than a crash.
+ */
+let lastWorld: WorldApi | null = null;
+
 /** The last blessed set pushed, for change detection (order-insensitive). */
 let lastBlessedKeys: readonly number[] = [];
 
@@ -56,6 +69,7 @@ function sameKeySet(a: readonly number[], b: readonly number[]): boolean {
 }
 
 function simulate(world: WorldApi, dt: number): void {
+  lastWorld = world;
   const settlements = bridgedStructures();
 
   // EACH SIM STEERS AROUND THE OTHER'S WALKERS (owner, 2026-08-20: "they tend
@@ -273,9 +287,30 @@ function pilgrimsBurnedOut(ids: readonly number[]): void {
   }
 }
 
+/**
+ * SEND ONE SETTLER OUT OF THE BUILDING AT (x, y) — THE STRUCTURES-FACING
+ * SURFACE (owner brief, 2026-08-25). Under structures' populous growth model a
+ * house that fills up sends its people out to found the next one, and this is
+ * how it asks; that plugin duck-types this off this module through its own
+ * dynamic-import bridge, exactly as this plugin reaches structures.
+ *
+ * ONE WALKER POPULATION, NOT TWO: the settler this creates is the temple's
+ * settler in every respect except where its site ring is centred — same cap,
+ * same site scan, same walk, same founding, same wire (see Settling.emitFrom).
+ *
+ * Returns whether anyone came out. FALSE IS ORDINARY: the world has not
+ * ticked yet, the settler crowd is at SETTLERS_CAP, or nowhere in that
+ * building's county is both reachable and buildable.
+ */
+export function emitSettlerFrom(x: number, y: number): boolean {
+  if (lastWorld === null) return false;
+  return settling.emitFrom(lastWorld, x, y);
+}
+
 /** Test seam: drops all accumulated state so a suite can start from zero. */
 export function resetPilgrimsState(): void {
   tickCount = 0;
+  lastWorld = null;
   walkerIds = new WalkerIdAllocator();
   pilgrimage = new Pilgrimage(walkerIds);
   wandering = new Wandering(walkerIds);

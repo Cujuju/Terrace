@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // NO DOM, unlike structures' and flora's tsconfigs: this plugin has no
+    // client half (see server/index.ts's header — it owns no wire message of
+    // its own), so nothing here may reach a browser type.
+    "lib": ["ES2022"],
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
+    // nested workspace package; these sources read process.env, so the types
+    // are named explicitly (matches structures).
+    "types": ["node"],
+    // The server loads this plugin's TypeScript through Node 24's type
+    // STRIPPING (CLAUDE.md's hard rule) — no parameter properties, enums or
+    // namespaces anywhere under server/.
+    "erasableSyntaxOnly": true
+  },
+  "include": ["server", "test"]
+}

@@ -6,6 +6,15 @@
 // plugin wiring — the clock, the wire, and the persistence slice.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// WHICH RULE GROWS THE TOWN IS A DEPLOYMENT CHOICE (./growth-model.ts).
+// STRUCTURES_MODEL picks it, once, at plugin load: `life` (the default,
+// described below) runs the Conway CA; any other registered model is handed
+// the whole board on the same interval and its outcome is applied through the
+// same swap, the same delta and the same persistence write. EVERYTHING ELSE
+// ON THIS PAGE IS THE SAME EITHER WAY — the board, the wire, the tiers, the
+// fog of war, the reactive demolition and every downstream consumer.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // THE TWO PATHS.
 //
 // THE CA is polled: every CA_GENERATION_INTERVAL_SECONDS the whole board
@@ -50,6 +59,7 @@ import {
   STRUCTURES_ALL_MESSAGE,
   STRUCTURES_CHANGES_MESSAGE,
   STRUCTURES_CAP,
+  MAX_STRUCTURE_TIER,
   STRUCTURES_PLUGIN_NAME,
   cellOfKey,
   packCells,
@@ -58,6 +68,7 @@ import {
   type StructureCell,
 } from '../protocol.ts';
 import {
+  CA_GENERATION_INTERVAL_SECONDS,
   shouldSeed,
   CA_STIR_PROBABILITY_PER_GENERATION,
   GenerationSurvey,
@@ -67,6 +78,15 @@ import {
   type LiveCellRecord,
 } from './life.ts';
 import { invalidateLandmassLabels } from './topology.ts';
+import {
+  STRUCTURES_MODEL_LIFE,
+  STRUCTURES_MODEL_POPULOUS,
+  growthModel,
+  readStructuresModel,
+  type BoardCellRecord,
+  type GrowthContext,
+  type StructuresModel,
+} from './growth-model.ts';
 import { resetBlessings } from './blessings.ts';
 import { resetReservations } from './reservations.ts';
 import { loadStructures, saveStructures } from './persistence.ts';
@@ -83,14 +103,25 @@ import { loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
  */
 export const STRUCTURES_KEEPALIVE_SECONDS = 60;
 
+/**
+ * Logged once when this deployment is configured for a growth model that no
+ * installed plugin ever registered — a settlement world where nothing is ever
+ * built. Named so a suite can assert on it rather than on a string literal.
+ */
+export const NO_GROWTH_MODEL_WARNING =
+  '[structures] configured for a non-default growth model, but none was registered — the board will not change';
+
 // ── Mutable module state ─────────────────────────────────────────────────────
 // Module-level singletons with a reset seam, matching every other plugin's
 // shape here. No world-readiness null-guard is needed anymore — the current
 // plugin contract hands every hook its own WorldApi directly (issue #15), so
 // there is no "did onWorldCreate run yet" stash to check.
 
-/** The board: cellKey → {age, tier}. Swapped wholesale on every generation. */
-let live: Map<number, LiveCellRecord> = new Map();
+/**
+ * The board: cellKey → {age, tier, population?}. Swapped wholesale on every
+ * generation, by whichever model is driving (see ./growth-model.ts).
+ */
+let live: Map<number, BoardCellRecord> = new Map();
 
 /** Completed generations since the world began — persisted, diagnostic. */
 let generation = 0;
@@ -109,6 +140,21 @@ let generation = 0;
  */
 let lastSeedDay = -1;
 let restoredLastSeedDay = -1;
+
+/**
+ * WHICH GROWTH MODEL THIS DEPLOYMENT RUNS, read ONCE, when this module is
+ * imported — i.e. when the host loads the plugin, which is the moment a bad
+ * value must be fatal (see readStructuresModel). Never re-read: a world that
+ * changed settlement models halfway through its life would have a board whose
+ * history no single rule explains.
+ */
+let selectedModel: StructuresModel = readStructuresModel(process.env);
+
+/** Simulated seconds at the last growth-model step — the populous path's clock. */
+let lastGrowthSeconds = 0;
+
+/** Whether the "configured for a model that never registered" line has been logged. */
+let warnedNoGrowthModel = false;
 
 let survey = new GenerationSurvey();
 let rng: StructuresRng = createStructuresRng(STRUCTURES_RNG_DEFAULT_SEED);
@@ -133,7 +179,7 @@ let scanCredit = 0;
 let pendingFounded: StructureCell[] = [];
 
 /** Restored from a snapshot, held until onWorldCreate — flora's identical seam. */
-let restoredLive: Map<number, LiveCellRecord> = new Map();
+let restoredLive: Map<number, BoardCellRecord> = new Map();
 let restoredGeneration = 0;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -252,34 +298,11 @@ function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: nu
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * THE SIM STEP. Fixed order, once per host tick:
- *
- *   1. advance the clock;
- *   2. advance the CA sweep by this tick's share of the board. On the tick
- *      that completes it: swap in the new generation, maybe seed a fresh
- *      pattern AND/OR stir a few sparks next to an existing settlement onto
- *      the RESULT (so a just-placed seed or spark is evaluated by B3/S23
- *      starting next generation, never the one that just ran — life.ts's
- *      attemptSeed and attemptStir doc comments), and broadcast everything
- *      that changed;
- *   3. keepalive, on its own independent cadence.
+ * THE CONWAY PATH (STRUCTURES_MODEL=life, the default) — unchanged behaviour,
+ * lifted out of `simulate` verbatim when the growth-model seam was added so
+ * the two models sit side by side rather than interleaved.
  */
-function simulate(world: WorldApi, dt: number): void {
-  simSeconds += dt;
-
-  // Outside foundings first, on their own: they are already in `live` (see
-  // foundStructure), so all that is owed is the delta. Sent as its OWN
-  // broadcast rather than folded into the generation's below, because a
-  // generation completes at most every CA_GENERATION_INTERVAL_SECONDS and a
-  // settler that has just walked into its new house must not wait fifteen
-  // seconds to be given one.
-  if (pendingFounded.length > 0) {
-    const founded = pendingFounded;
-    pendingFounded = [];
-    broadcastChanges(world, founded, [], []);
-    world.emitEvent('changes', { cause: 'settled', seeded: founded, upgraded: [], died: [] });
-  }
-
+function advanceLife(world: WorldApi, dt: number): void {
   const totalChunks = world.chunksPerEdge * world.chunksPerEdge;
   scanCredit = Math.min(scanCredit + generationChunksPerTick(world, dt), totalChunks);
   const budget = Math.floor(scanCredit);
@@ -339,6 +362,98 @@ function simulate(world: WorldApi, dt: number): void {
       }
     }
   }
+
+}
+
+/**
+ * THE REGISTERED-MODEL PATH (STRUCTURES_MODEL=populous, and any future model).
+ *
+ * ON THE SAME CADENCE AS A CA GENERATION, and deliberately the same constant:
+ * whatever grows the town, it grows it at the rhythm this world's players have
+ * learned. The CA amortises its sweep across ticks because a whole-board pass
+ * is expensive; a registered model is handed the board whole and steps it in
+ * one call, so a plain seconds accumulator is all this needs — the same float
+ * clock the keepalive runs on, where drift is invisible (see `simSeconds`).
+ *
+ * NO SEEDING AND NO STIRRING. Both exist to keep a CELLULAR AUTOMATON from
+ * dying out or freezing (life.ts's attemptSeed and attemptStir doc comments);
+ * a model with no birth-by-neighbour rule has neither failure mode, and
+ * sprinkling unrequested houses into its board would be this plugin
+ * overruling the model it was told to run.
+ *
+ * NO MODEL REGISTERED YET is an ordinary state, not an error: the model's
+ * plugin loads asynchronously and may not be installed at all. The board
+ * simply does not change, and one line says so.
+ */
+function advanceGrowthModel(world: WorldApi): void {
+  if (simSeconds - lastGrowthSeconds < CA_GENERATION_INTERVAL_SECONDS) return;
+  lastGrowthSeconds = simSeconds;
+
+  const model = growthModel();
+  if (model === null) {
+    if (!warnedNoGrowthModel) {
+      warnedNoGrowthModel = true;
+      console.warn(NO_GROWTH_MODEL_WARNING);
+    }
+    return;
+  }
+
+  const ctx: GrowthContext = {
+    isBuildable: (x: number, y: number) => isBuildableCell(world, x, y),
+    maxTier: MAX_STRUCTURE_TIER,
+    cap: STRUCTURES_CAP,
+  };
+  const outcome = model.step(world, live, ctx);
+
+  // THE SAME APPLY PATH THE CA'S OWN OUTCOME TAKES — same swap, same delta,
+  // same event — which is the whole contract of the seam (./growth-model.ts).
+  live = outcome.nextLive;
+  generation++;
+  broadcastChanges(world, outcome.born, outcome.upgraded, outcome.died);
+  if (outcome.born.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
+    world.emitEvent('changes', {
+      cause: 'generation',
+      seeded: outcome.born,
+      upgraded: outcome.upgraded,
+      died: outcome.died,
+    });
+  }
+}
+
+/**
+ * THE SIM STEP. Fixed order, once per host tick:
+ *
+ *   1. advance the clock;
+ *   2. advance the CA sweep by this tick's share of the board. On the tick
+ *      that completes it: swap in the new generation, maybe seed a fresh
+ *      pattern AND/OR stir a few sparks next to an existing settlement onto
+ *      the RESULT (so a just-placed seed or spark is evaluated by B3/S23
+ *      starting next generation, never the one that just ran — life.ts's
+ *      attemptSeed and attemptStir doc comments), and broadcast everything
+ *      that changed;
+ *   3. keepalive, on its own independent cadence.
+ */
+function simulate(world: WorldApi, dt: number): void {
+  simSeconds += dt;
+
+  // Outside foundings first, on their own: they are already in `live` (see
+  // foundStructure), so all that is owed is the delta. Sent as its OWN
+  // broadcast rather than folded into the generation's below, because a
+  // generation completes at most every CA_GENERATION_INTERVAL_SECONDS and a
+  // settler that has just walked into its new house must not wait fifteen
+  // seconds to be given one.
+  if (pendingFounded.length > 0) {
+    const founded = pendingFounded;
+    pendingFounded = [];
+    broadcastChanges(world, founded, [], []);
+    world.emitEvent('changes', { cause: 'settled', seeded: founded, upgraded: [], died: [] });
+  }
+
+  // WHICH RULE GROWS THE TOWN (./growth-model.ts). One branch, taken on every
+  // tick for the life of the world, because `selectedModel` is read once at
+  // load and never changes.
+  if (selectedModel === STRUCTURES_MODEL_LIFE) advanceLife(world, dt);
+  else advanceGrowthModel(world);
 
   if (simSeconds - lastKeepaliveSeconds >= STRUCTURES_KEEPALIVE_SECONDS) broadcastAll(world);
 }
@@ -642,9 +757,35 @@ export function standingStructures(): StandingStructure[] {
   return cells;
 }
 
-/** The live board's raw records (age AND tier), for suites asserting on the CA's own state. */
-export function currentLive(): ReadonlyMap<number, LiveCellRecord> {
+/** The live board's raw records (age, tier AND population), for suites asserting on the board's own state. */
+export function currentLive(): ReadonlyMap<number, BoardCellRecord> {
   return live;
+}
+
+/**
+ * THE GROWTH-MODEL-FACING SURFACE (./growth-model.ts). A model plugin
+ * duck-types this off this module through its own dynamic-import bridge — the
+ * same direction and the same pattern pilgrims already uses here, and the
+ * reason this plugin needs no knowledge of any model plugin's existence.
+ */
+export { setGrowthModel } from './growth-model.ts';
+
+/** Which growth model this process is running. Diagnostic, and a test seam's read side. */
+export function structuresModel(): StructuresModel {
+  return selectedModel;
+}
+
+/**
+ * TEST SEAM ONLY: overrides the model this process read from the environment.
+ *
+ * Deliberately NOT reset by `resetStructuresState` — a suite sets the mode
+ * once for a whole describe block and boots several worlds inside it, and a
+ * reset that silently put the mode back would make every one of those worlds
+ * run the wrong model. The real server never calls this: its mode is read once
+ * at load and cannot change (see `selectedModel`).
+ */
+export function setStructuresModel(model: StructuresModel): void {
+  selectedModel = model;
 }
 
 export function currentGeneration(): number {
@@ -654,6 +795,8 @@ export function currentGeneration(): number {
 export function resetStructuresState(): void {
   live = new Map();
   generation = 0;
+  lastGrowthSeconds = 0;
+  warnedNoGrowthModel = false;
   survey = new GenerationSurvey();
   resetBlessings();
   resetReservations();
