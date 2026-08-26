@@ -33,10 +33,10 @@ import {
   GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA,
   GENESIS_TRENCH_MIN_BASIN_CELLS,
   GENESIS_TRENCH_QUALIFYING_BANDS_BELOW_SEA,
-  World,
   buildFreshGenesisTerrain,
   freshGenesisHeightAt,
-} from '../../../server/src/world/world.ts';
+} from '../../../server/src/world/genesis.ts';
+import { World } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
   asLoadedPlugin,
@@ -1469,7 +1469,7 @@ describe('kraken bar at the natural ocean floor (owner-decided 2026-08-19)', () 
    * existed (the trench is the only term added to `freshGenesisHeightAt`).
    */
   function untrenchedWorldHeights(size: number, seed: number): Int16Array {
-    const terrain = { ...buildFreshGenesisTerrain(size, seed), trench: null };
+    const terrain = { ...buildFreshGenesisTerrain(size, seed), trenches: [] };
     const heights = new Int16Array(size * size);
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) heights[y * size + x] = freshGenesisHeightAt(terrain, x, y);
