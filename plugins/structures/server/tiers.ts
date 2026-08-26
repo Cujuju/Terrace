@@ -37,42 +37,59 @@ export const CA_GENERATIONS_PER_TIER = 3;
  * generation to be allowed to advance a tier.
  *
  * 3 — NOT 2, and this is load-bearing rather than an arbitrary middle value.
- * Under B3/S23, any cell that is alive after a step survived the S rule,
- * which only keeps a cell alive with EXACTLY 2 or 3 live neighbours — those
- * are the only two values a living cell's own neighbour count can ever take.
+ * It was originally derived from hard-walled B3/S23, where a cell that is
+ * alive after a step survived the S rule and therefore had EXACTLY 2 or 3 live
+ * neighbours: 2 would have passed every survivor and 4 could never fire, so 3
+ * was the only threshold that separated them at all. The board topology has
+ * since widened that window (below), so the derivation is history rather than
+ * proof — but the value it produced is still the right one, for the reason
+ * given below.
  *
- * STILL TRUE UNDER THE BOARD TOPOLOGY (2026-08-25, life.ts's phantom wall
- * neighbours and per-landmass wrap). `neighborCount` is now an EFFECTIVE
- * count — whole live-neighbour equivalents, floor(scaled / WALL_PHANTOM_
- * DENOMINATOR), where a wall contributes a fraction of one and a wrapped-in
- * cell contributes its real live/dead state. The argument below is unchanged
- * because the WINDOW is unchanged: survival is scaled [2D, 4D), so every
- * survivor's effective count is in [2, 4), i.e. exactly 2 or 3, exactly as
- * before. A phantom fraction can move a cell ACROSS the survival threshold —
- * that is the whole point of it — but it can never hand a survivor an
- * effective count of 1 or 4.
- * A threshold of 2 would therefore pass almost every survivor (no
- * differentiation at all), and anything above 3 could never fire (no
- * surviving cell can have 4+ neighbours — it would have died of
- * overpopulation instead). 3 is the ONLY threshold that splits survivors into
- * two meaningfully different groups: dense, mutually-supporting still-life
- * cores (a block's four cells each keep exactly 3 neighbours forever) advance
- * every eligible generation, while sparser oscillator members (a blinker's
- * centre cell has exactly 2, always — see the test suite) never do. That is
- * the "isolated frontier shacks stay shacks; dense stable cores become towns"
- * shape the owner asked for, and it falls out of the CA's own arithmetic
- * rather than a second, independently-tuned number.
+ * WHAT THE COUNT IS, EXACTLY (corrected 2026-08-25). `neighborCount` is the
+ * number of REAL live cells among the eight plain-grid Moore neighbours —
+ * life.ts's liveMooreNeighbors. It is NOT the board topology's scaled count,
+ * and it is not that count divided by WALL_PHANTOM_DENOMINATOR either. That
+ * division was wrong and shipped briefly: three phantom walls come to the same
+ * one whole unit a single live neighbour does, so a lone coastal teepee
+ * propped up by cliff face read as company it did not have, and a shack on a
+ * headland promoted itself on the strength of the sea.
+ *
+ * SO THE WINDOW ARGUMENT NO LONGER HOLDS, AND IS NOT CLAIMED. Under hard walls
+ * every survivor had exactly 2 or 3 live neighbours, because those are the
+ * only counts S23 keeps. Under the topology a cell survives on scaled units in
+ * [2D, 4D), and phantom walls can make up any part of that — so a SURVIVING
+ * teepee's real count can be anything from 0 (all its support was coastline)
+ * to 3. The threshold is therefore no longer "the only value that splits the
+ * survivors"; it is a floor on REAL density, and cells kept alive by their own
+ * shoreline sit below it. That is the same design the constant was chosen for
+ * — isolated frontier shacks stay shacks, dense mutually-supporting cores
+ * become towns — reached by asking the question directly instead of inferring
+ * it from a survival window that the topology has since widened. A block's
+ * four cells each keep exactly 3 real neighbours forever and advance every
+ * eligible generation; a blinker's centre cell has exactly 2, always, and
+ * never does.
+ *
+ * 4 OR MORE STILL CANNOT FIRE for a teepee: 4 real live neighbours is 4D
+ * scaled with no phantom help, which is overpopulation, so such a cell is
+ * already dead. 3 remains the top of the usable range.
  *
  * NOT SCALED WITH TIER, for the same reason: every step beyond this one would
- * ask for a neighbour count no living cell can ever present, which would only
- * look like a design decision while actually being an unreachable tier. If
+ * ask for a real live-neighbour count no living cell can ever present, which
+ * would only look like a design decision while actually being an unreachable
+ * tier. If
  * that ever needs revisiting, it is a rule about the CA's neighbourhood
  * (Moore vs. a larger radius) before it is a rule about this constant.
  *
  * SCOPE NARROWED 2026-08-26 (keep-clear rule, see maybeAdvanceTier): this
- * gate now applies ONLY to the teepee→building step (tier 0 → 1). A standing
- * building has no neighbours by construction, so gating later tiers on it
- * would strand every town at tier 1 forever.
+ * gate now applies ONLY to the teepee→building step (tier 0 → 1). THIS IS THE
+ * CURRENT CONTRACT, stated plainly rather than argued around: a standing
+ * building's entire Moore ring lies inside its own keep-clear square, which
+ * founding it emptied and nothing may re-enter, so its real live count is 0
+ * and stays 0. If the gate applied to tier >= 1, no building could ever
+ * advance except a blessed one — every town would stand at tier 1 forever and
+ * four of the six tiers would be unreachable. So the gate discriminates among
+ * TEEPEES and nothing else. "Dense cores become towns" is decided entirely at
+ * the 0 -> 1 step; past it, tier is a function of age alone.
  */
 export const STRUCTURE_UPGRADE_MIN_NEIGHBORS = 3;
 
@@ -88,8 +105,11 @@ function ageThresholdFor(nextTier: number): number {
 /**
  * Advances a cell by AT MOST ONE tier for this generation. Called once per
  * surviving cell, per completed generation (life.ts), with `neighborCount`
- * the Moore-neighbour count that generation's step already computed for the
- * B3/S23 rule — free reuse, not a second pass.
+ * the number of REAL live cells among the cell's eight plain-grid Moore
+ * neighbours (life.ts's liveMooreNeighbors) — its own small pass, NOT the
+ * topology-scaled count the B3/S23 rule is applied to. See
+ * STRUCTURE_UPGRADE_MIN_NEIGHBORS above for why the two cannot be the same
+ * number.
  *
  * THE DENSITY GATE APPLIES ONLY TO THE 0→1 STEP (forced by life.ts's
  * keep-clear rules): once `tier >= 1` the STRUCTURE_UPGRADE_MIN_NEIGHBORS

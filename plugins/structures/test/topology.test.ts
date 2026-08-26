@@ -75,6 +75,16 @@ function boardOf(cells: ReadonlyArray<readonly [number, number]>): Map<number, L
   return live;
 }
 
+/** A board whose cells are already old enough to be tier-eligible. */
+function agedBoardOf(
+  cells: ReadonlyArray<readonly [number, number]>,
+  age: number,
+): Map<number, LiveCellRecord> {
+  const live = new Map<number, LiveCellRecord>();
+  for (const [x, y] of cells) live.set(structureKey(x, y), { age, tier: 0 });
+  return live;
+}
+
 /** Every buildable cell of a world, row-major. */
 function buildableCells(world: StructuresWorld): Array<readonly [number, number]> {
   const cells: Array<readonly [number, number]> = [];
@@ -398,5 +408,62 @@ describe('a lone plateau under the new topology', () => {
     // Alive, and not saturated into "every cell is a house" either.
     const buildable = buildableCells(world).length;
     expect(live.size).toBeLessThan(buildable);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (e) THE TIER GATE'S ARGUMENT (F3) — what STRUCTURE_UPGRADE_MIN_NEIGHBORS is
+// actually counting once the board has a topology.
+//
+// The gate exists to tell a DENSE core from a sparse frontier cell, so the
+// number it is handed has to be real live company. A phantom wall is not
+// company (it is the absence of it, priced so the coastline does not starve),
+// and a wrapped-in cell is company for the SURVIVAL rule's purposes without
+// being a Moore neighbour anybody could point at. Feeding the gate the scaled
+// count divided by the denominator conflated all three: three walls read as
+// one whole neighbour.
+
+describe('the tier gate counts real live Moore neighbours, not phantoms', () => {
+  const SIZE = 32;
+  const PLATEAU: readonly [number, number, number, number] = [2, 2, 21, 21];
+  /** Comfortably past every tier's age threshold, so only the gate can refuse. */
+  const OLD_ENOUGH = 10;
+
+  it('refuses a teepee with 2 live neighbours and 3 wall slots', () => {
+    // (4,12) is on the western edge of the buildable rectangle [4,19]²: its
+    // three western Moore slots are wall. The wrap sends each of them to the
+    // landmass's far edge, where nobody is home, so each contributes one
+    // phantom unit — scaled 2·D + 3·N = 9, which divided by D is 3, exactly
+    // the gate's threshold. It has two neighbours.
+    const world = rectWorld(SIZE, [PLATEAU]);
+    const labels = computeLandmassLabels(world);
+    const live = agedBoardOf([[4, 11], [4, 12], [4, 13]], OLD_ENOUGH);
+    expect(scaledNeighborCount(live, labels, 4, 12)).toBe(
+      2 * WALL_PHANTOM_DENOMINATOR + 3 * WALL_PHANTOM_NUMERATOR,
+    );
+
+    const outcome = stepGeneration(world, live);
+    expect(outcome.upgraded).toEqual([]);
+    expect(outcome.nextLive.get(structureKey(4, 12))!.tier).toBe(0);
+  });
+
+  it('advances a teepee with 3 live neighbours even though it is on a coastline', () => {
+    // The same plateau with a two-cell spur at x = 1, which makes (3,12)
+    // buildable while leaving (3,11) and (3,13) wall: (4,12) now has exactly
+    // TWO wall slots, so three live neighbours still leave it under the
+    // overpopulation ceiling (3·D + 2·N = 11 < 4·D).
+    const world = rectWorld(SIZE, [PLATEAU, [1, 10, 1, 14]]);
+    expect(isBuildableCell(world, 3, 12)).toBe(true);
+    expect(isBuildableCell(world, 3, 11)).toBe(false);
+    expect(isBuildableCell(world, 3, 13)).toBe(false);
+
+    const labels = computeLandmassLabels(world);
+    const live = agedBoardOf([[4, 11], [4, 12], [4, 13], [5, 12]], OLD_ENOUGH);
+    expect(scaledNeighborCount(live, labels, 4, 12)).toBe(
+      3 * WALL_PHANTOM_DENOMINATOR + 2 * WALL_PHANTOM_NUMERATOR,
+    );
+
+    const outcome = stepGeneration(world, live);
+    expect(outcome.upgraded).toContainEqual({ x: 4, y: 12, tier: 1 });
   });
 });
