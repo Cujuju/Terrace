@@ -401,7 +401,11 @@ function advanceGrowthModel(world: WorldApi): void {
   const ctx: GrowthContext = {
     isBuildable: (x: number, y: number) => isBuildableCell(world, x, y),
     maxTier: MAX_STRUCTURE_TIER,
-    cap: STRUCTURES_CAP,
+    // The keep-clear rule, from its one home (clearance.ts) — the same
+    // predicate the CA's own scan asks, so the two models cannot disagree
+    // about what "too close" means.
+    hasBuildingWithinSeparation: (cells, x: number, y: number) =>
+      hasBuildingWithinSeparation(cells, world, x, y),
   };
   const outcome = model.step(world, live, ctx);
 
