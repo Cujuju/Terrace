@@ -4,7 +4,7 @@
 
 import { createChunkMask, createHeightmap, chunkIndex, unlockChunk } from '@terrace/shared';
 import type { MessageSink } from '../../src/net/message-sink.ts';
-import type { LoadedPlugin, TerracePlugin } from '../../src/plugins/types.ts';
+import type { LoadedPlugin, SiblingModule, TerracePlugin } from '../../src/plugins/types.ts';
 import { World } from '../../src/world/world.ts';
 
 export interface RecordedMessage {
@@ -72,16 +72,38 @@ export function worldWithUnlockedChunks(
   return World.restore(size, cells, mask, difficulty, TEST_WORLD_NAME);
 }
 
-/** Wraps a plugin object as if discovery had loaded it from plugins/<name>. */
+/**
+ * Wraps a plugin object as if discovery had loaded it from plugins/<name>.
+ *
+ * DELIBERATELY UNARY, so it stays usable as `[...].map(asLoadedPlugin)` — a
+ * second optional parameter would silently receive map's index. A test that
+ * needs the plugin to export something siblings can find uses
+ * `asLoadedPluginExporting` instead.
+ */
 export function asLoadedPlugin(plugin: TerracePlugin): LoadedPlugin {
   return {
     plugin,
+    // Nothing to offer a sibling: a plugin defined inline in a test has no
+    // module namespace, and the suites that need one say so explicitly.
+    exports: {},
     directory: plugin.name,
     entryPath: `<test>/${plugin.name}/server/index.ts`,
     // A fixed stamp: a test's plugin has no directory on disk to derive one
     // from, and a stable value keeps a listing assertion from depending on git.
     version: '0.0.0+test',
   };
+}
+
+/**
+ * The same wrapper, with the module namespace `WorldApi.sibling` hands to
+ * consumers of this plugin (issue #196) — how a suite stands in for a sibling
+ * plugin's server module without importing the real folder.
+ */
+export function asLoadedPluginExporting(
+  plugin: TerracePlugin,
+  exports: SiblingModule,
+): LoadedPlugin {
+  return { ...asLoadedPlugin(plugin), exports };
 }
 
 /**
