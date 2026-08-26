@@ -90,6 +90,8 @@ export interface PopulousStepResult {
   readonly born: PopulousStructureCell[];
   readonly upgraded: PopulousStructureCell[];
   readonly died: Array<{ x: number; y: number }>;
+  /** The cells that want a settler sent out. Acted on after the board swap. */
+  readonly emitted: ReadonlyArray<{ x: number; y: number }>;
 }
 
 /**
@@ -239,7 +241,9 @@ function flatNeighborsAround(
 
 /**
  * ONE STEP OF THE MODEL. Pure: nothing outside the returned value changes, and
- * the settlers this step wants sent are REPORTED rather than sent (see header).
+ * the settlers this step wants sent are REPORTED, in `emitted`, rather than
+ * sent — ../server/index.ts does that from structures' post-swap hook (see
+ * this file's header, and structures' GrowthModel.afterSwap).
  *
  * The board is walked in ascending key order — not the map's insertion order —
  * so `died`, `upgraded` and `emitted` come back in the same order on every
@@ -281,7 +285,7 @@ export function stepPopulous(
   world: PopulousWorld,
   live: ReadonlyMap<number, PopulousCellRecord>,
   ctx: PopulousContext,
-): { result: PopulousStepResult; emitted: Array<{ x: number; y: number }> } {
+): PopulousStepResult {
   const nextLive = new Map<number, PopulousCellRecord>();
   const upgraded: PopulousStructureCell[] = [];
   const died: Array<{ x: number; y: number }> = [];
@@ -349,5 +353,5 @@ export function stepPopulous(
     nextLive.set(key, { age: record.age + 1, tier, population });
   }
 
-  return { result: { nextLive, born: [], upgraded, died }, emitted };
+  return { nextLive, born: [], upgraded, died, emitted };
 }

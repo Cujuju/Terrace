@@ -144,7 +144,7 @@ function stubModel(): GrowthModel & {
         nextLive.set(key, { age: 0, tier: 1, population: 7 });
         born.push({ x: 20, y: 20, tier: 1 });
       }
-      return { nextLive, born, upgraded: [], died: [] };
+      return { nextLive, born, upgraded: [], died: [], emitted: [] };
     },
   };
 }
@@ -214,12 +214,48 @@ describe('STRUCTURES_MODEL=populous', () => {
           near: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS, 20),
           far: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS + 1, 20),
         };
-        return { nextLive: new Map(live), born: [], upgraded: [], died: [] };
+        return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
       },
     });
     const harness = boot();
     advance(harness, CA_GENERATION_INTERVAL_SECONDS * 1.5);
     expect(answered).toEqual({ near: true, far: false });
+  });
+
+  /**
+   * WHERE A MODEL'S SIDE EFFECTS HAPPEN (F4). A model that wants somebody sent
+   * out of a house reports the cell and this plugin calls back AFTER the board
+   * has been swapped in — so whatever the emission reaches (pilgrims, and
+   * through it a settler who may found the next house) observes the generation
+   * that just completed, never the one it replaced.
+   */
+  it('runs the post-swap hook against the swapped board', () => {
+    const CELL = structureKey(21, 21);
+    let observed: { onBoard: boolean; generation: number; emitted: number } | null = null;
+    setGrowthModel({
+      name: 'emitter',
+      step(_world, live): GrowthStepResult {
+        const nextLive = new Map<number, BoardCellRecord>(live);
+        nextLive.set(CELL, { age: 0, tier: 2, population: 0 });
+        return {
+          nextLive,
+          born: [{ x: 21, y: 21, tier: 2 }],
+          upgraded: [],
+          died: [],
+          emitted: [{ x: 21, y: 21 }],
+        };
+      },
+      afterSwap(emitted): void {
+        observed = {
+          onBoard: currentLive().has(CELL),
+          generation: currentGeneration(),
+          emitted: emitted.length,
+        };
+      },
+    });
+    const harness = boot();
+    advance(harness, CA_GENERATION_INTERVAL_SECONDS * 1.5);
+    expect(observed).toEqual({ onBoard: true, generation: 1, emitted: 1 });
   });
 
   it('does not seed or stir — no house appears without a model', () => {

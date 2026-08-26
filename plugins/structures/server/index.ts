@@ -422,6 +422,11 @@ function advanceGrowthModel(world: WorldApi): void {
       died: outcome.died,
     });
   }
+
+  // LAST, AND DELIBERATELY SO — see GrowthModel.afterSwap. The model's side
+  // effects reach the rest of the world only once the generation they belong
+  // to is the one standing: board swapped, deltas on the wire, event raised.
+  model.afterSwap?.(outcome.emitted);
 }
 
 /**

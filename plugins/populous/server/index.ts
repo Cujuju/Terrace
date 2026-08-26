@@ -67,11 +67,12 @@ export function isPopulousSelected(env: NodeJS.ProcessEnv = process.env): boolea
  * it deliberately does not perform itself: asking pilgrims to put the settlers
  * it reported on the road.
  *
- * IN THIS ORDER, and it matters: the board is stepped first and the emissions
- * are made afterwards, so a settler cannot be sent from a house that the very
- * same step demolished. `stepPopulous` already refuses to emit from a house it
- * killed; doing the walking afterwards means nothing in the step can observe a
- * half-applied board either.
+ * THE WALKING HAPPENS IN `afterSwap`, NOT IN `step`, and that is structures'
+ * contract rather than this plugin's preference (see its GrowthModel doc): the
+ * step reports the cells, structures swaps the board in, broadcasts it, and
+ * only then calls back. So a settler is never sent from a house the same step
+ * demolished, and the walker — whose arrival founds the next house — is
+ * created against the generation that actually stands, not the one it replaced.
  *
  * A REFUSED EMISSION IS DROPPED, NOT RETRIED. See ./pilgrims-bridge.ts: the
  * house has already been reset to an empty population by the step, so a
@@ -88,9 +89,10 @@ const model = {
     live: ReadonlyMap<number, PopulousCellRecord>,
     ctx: PopulousContext,
   ): PopulousStepResult {
-    const { result, emitted } = stepPopulous(world, live, ctx);
+    return stepPopulous(world, live, ctx);
+  },
+  afterSwap(emitted: ReadonlyArray<{ x: number; y: number }>): void {
     for (const cell of emitted) emitSettlerFrom(cell.x, cell.y);
-    return result;
   },
 };
 
