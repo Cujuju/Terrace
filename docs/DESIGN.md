@@ -3563,3 +3563,79 @@ included) every step threw away its remainder: fires spread ~10% slower than
 their stated rates, and by an amount that depended on `TICK_HZ`. Fixing it
 shifts the shipped feel by about that much, accepted by the owner as the price
 of the rates meaning what they say.
+
+### Decisions made 2026-08-25 (fire spreads to everything)
+
+Owner: *"fire should spread across wheat, grass, boats, buildings — anything
+that gets close enough to another fire should catch fire."*
+
+**Spread is a question about distance, not about registries.** `spreadOnce`
+used to read `blaze.fires()` and light cells through `blaze.ignite`, so both
+ends of every spread were cells. Fire therefore could not cross between the two
+fuel registries in either direction — a wildfire burned up to a moored boat and
+stopped, a burning boat sat in a reed bed and lit nothing, and a boat alight
+beside its neighbour left that neighbour untouched. Nothing about a flame
+justified any of it; what decided it was which registry the owning plugin
+happened to register in. A step now takes SOURCES (everything alight, cell or
+individual) and TARGETS (everything flammable in reach, cell or individual) and
+applies the same one product to all four combinations.
+
+**`spreadRate` is keyed on a fractional offset.** The flat 1/√2 diagonal factor
+is gone, replaced by `1/d` floored at one cell (`SPREAD_MIN_DISTANCE_CELLS`),
+which is the same number wherever the old one applied — 1 cardinally, 1/√2 at a
+corner — and is defined for a boat standing at (12.4, 9.9). `SPREAD_REACH_CELLS`
+is √2, the corner distance of the eight-neighbourhood the file always used, so
+cell-to-cell spread is unchanged *by construction* rather than by assertion.
+Verified: a cardinal step is still exactly `BASE_SPREAD_RATE_PER_SECOND`.
+
+**`EntityFuelSource.flammable()` is a second query, not a reuse of `entityAt`.**
+`entityAt` is the *torch's* question ("of yours, which did the player aim at?")
+and the contract promises sources it is asked only at ignition — pilgrims
+answers it by building three arrays and spreading them. Spread asks "what is
+near a flame" of a world with up to `FIRE_CELL_CAP` cells alight, every
+`SPREAD_INTERVAL_SECONDS`; routing that through `entityAt` would be
+O(burning × individuals) and would allocate the whole walker list 400 times a
+second. `flammable()` is swept ONCE per step, so the cost is O(individuals).
+Absent, a source can still be lit by torch and by lightning but cannot catch
+from a nearby fire — the same degradation an absent cell source takes.
+
+**Reach is edge-to-centre.** `FlammableIndividual.radiusCells` lets a two-cell
+hull catch from further out than a walker standing at a point; walkers and
+creatures declare 0, which is deliberately NOT their torch reach (that is the
+half-cell *box* a click covers, and reusing it would let a walker catch from
+further away than the ground they stand on).
+
+**A burning individual lights the cell it stands on**, which a burning cell
+obviously does not need to. That is what makes a fire that walks interesting: a
+burning animal crossing dry grass starts a wildfire behind it.
+
+**Grass is fuel now**, reversing the 2026-08-24 decision. That decision's
+reasoning was right about the consequence and wrong about the magnitude, and the
+correction is measured rather than argued (256² bed, 20 trials per point,
+2026-08-25):
+
+- At the shipped thinning — `FLORA_GRASS_SHARE_OF_256`/256 ≈ **0.398** — a
+  meadow fire stays a local scorch at EVERY burn time tested (2 s → 1 cell,
+  22 s → 26 cells mean / 204 max) and in a full gale. 0.398 sits just under the
+  ~0.407 site-percolation threshold of the eight-neighbour lattice, so a meadow
+  has no spanning cluster and fire cannot cross it.
+- A SOLID bed of the same fuel runs away above 5 s — tens of thousands of cells,
+  never self-extinguishing. That is the firestorm the old comment feared; it is
+  unreachable at the shipped density, and that is the whole reason grass could
+  be registered.
+- **The lever is therefore density, not burn time.** `GRASS_CELLS_PER_TUFT` is
+  the number to change if meadow fires should run, and crossing 0.407 flips the
+  world from local scorches to unstoppable ones with very little in between.
+
+Two hypotheses were tested and **rejected** on the way, recorded so they are not
+re-tried: that `FLORA_GRASS_BURN_SECONDS` is the meadow's brake (it is not —
+density is), and that `SPREAD_INTERVAL_SECONDS = 1` under-samples short-lived
+fuel (it does not — `happensWithin` is exponential and cadence-neutral, and a
+3 s burn still spends 2.5 s above `SPREAD_MIN_INTENSITY`; measured at cadences
+from 1 s down to 0.1 s with no material difference).
+
+`FLORA_GRASS_BURN_SECONDS = 3`: a flash, ordered grass < crop (4) < tree (22),
+and enough rolls to hand the fire to a neighbouring tuft or to the tree it grows
+under. A stale comment in `grass.ts` claiming the thinning rejects ~71% of green
+cells was corrected to ~60% — it was never true of the shipped threshold, and
+the difference is load-bearing now that the number decides percolation.

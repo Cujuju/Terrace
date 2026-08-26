@@ -18,8 +18,12 @@
 //              what makes a fire read as alive rather than as a circle.
 //   SLOPE      fire runs uphill. On a terraced world this is the term the
 //              player can actually see, and it is why the terrain matters.
-//   DIAGONAL   a diagonal neighbour is √2 further away, so it catches at
-//              1/√2 the rate. Without it a fire spreads as a square.
+//   DISTANCE   fire falls off with how far it has to reach. A cardinal
+//              neighbour is 1 cell away and gets the rate whole; a diagonal is
+//              √2 away and gets 1/√2 of it. Without this a fire spreads as a
+//              square. It is a DISTANCE term rather than a diagonal flag
+//              because a thing that moves does not stand on the lattice — see
+//              SPREAD_MIN_DISTANCE_CELLS.
 //   WET        rain on the ground ahead. The same number that puts fires out
 //              (./index.ts) also stops them starting, so a front walking into a
 //              squall slows before it dies rather than marching on and then
@@ -30,14 +34,57 @@
 // rock, a dug trench and a ploughed field all stop a fire for the same reason
 // and through the same code path. THE FIREBREAK IS NOT A FEATURE — it is what
 // is left when you decline to write a special case.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// WHAT BURNS IS A QUESTION ABOUT DISTANCE, NOT ABOUT REGISTRIES.
+//
+// This file used to read `blaze.fires()` and light cells through `blaze.ignite`,
+// which meant both ends of every spread were cells. Fire therefore could not
+// cross between the two fuel registries in either direction: a wildfire burned
+// up to a moored boat and stopped, a burning boat sat in a reed bed and lit
+// nothing, and a boat alight beside its neighbour in a packed fleet left that
+// neighbour untouched. Nothing about a flame justified any of that — the fuel
+// was in reach in every case. What decided it was WHICH REGISTRY THE OWNING
+// PLUGIN HAPPENED TO REGISTER IN (../server/fuel.ts for things that hold still,
+// ../server/entityFuel.ts for things that do not).
+//
+// So a spread step now takes SOURCES — everything alight, cell or individual —
+// and TARGETS — everything flammable near one, cell or individual — and applies
+// the SAME product above to all four combinations. `spreadRate` is keyed on a
+// fractional offset rather than an integer cell step, which is what lets a
+// thing standing at (12.4, 9.9) be a first-class end of a spread.
+//
+// THE LATTICE IS NOT LOST BY THIS. At the integer steps a cell fire actually
+// takes, the distance term reproduces the old diagonal factor exactly (1 at a
+// cardinal neighbour, 1/√2 at a corner) and SPREAD_REACH_CELLS is the corner
+// distance itself, so cell-to-cell behaviour is unchanged BY CONSTRUCTION
+// rather than by assertion.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BAND_HEIGHT } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
-import { fireIntensity, type FireCellState } from '../protocol.ts';
+import { fireIntensity, type FireCellState, type FireEntityState } from '../protocol.ts';
 import type { Blaze } from './blaze.ts';
+import type { EntityBlaze } from './entityBlaze.ts';
+import { entityFuelSources, type FlammableIndividual } from './entityFuel.ts';
 import { happensWithin } from './rng.ts';
 import { currentWind, precipitationAt } from './weather-bridge.ts';
+
+/**
+ * One end of a spread: something alight, wherever it is and however far through
+ * its burn it is.
+ *
+ * A CELL AND AN INDIVIDUAL BOTH SATISFY THIS, which is the point — it is the
+ * only thing `spreadRate` needs to know about what is burning, so neither
+ * registry has to be named anywhere in the arithmetic.
+ */
+export interface SpreadSource {
+  /** Fractional cell space; a cell passes its own integer coordinates. */
+  readonly x: number;
+  readonly y: number;
+  readonly ageSeconds: number;
+  readonly burnSeconds: number;
+}
 
 /**
  * Simulated seconds between spread evaluations.
@@ -141,8 +188,57 @@ export const SLOPE_CLAMP_BANDS = 2;
  */
 export const WET_SPREAD_PENALTY = 0.9;
 
-/** 1/√2 — a diagonal neighbour is that much further away. See the header. */
-const DIAGONAL_RATE_FACTOR = Math.SQRT1_2;
+/**
+ * How far a flame reaches at all, in cells.
+ *
+ * √2 IS NOT A TUNING CHOICE — it is the distance to the corner of the
+ * eight-neighbourhood this file has always used, so adopting it as the reach
+ * leaves cell-to-cell spread bit-for-bit what it was while giving things that
+ * stand off the lattice a reach defined in the same terms. A target further
+ * than this is not a candidate at all and is never rolled for.
+ */
+export const SPREAD_REACH_CELLS = Math.SQRT2;
+
+/**
+ * The distance at which the rate is quoted whole — one cell, because
+ * BASE_SPREAD_RATE_PER_SECOND is defined as the chance of setting a given
+ * ADJACENT cell alight.
+ *
+ * It is a FLOOR on the divisor, not a minimum distance: two things can stand a
+ * tenth of a cell apart, and without this the 1/d term would quietly multiply
+ * the base rate tenfold for a crowd. Nothing burns faster than adjacent.
+ */
+export const SPREAD_MIN_DISTANCE_CELLS = 1;
+
+/**
+ * The distance term: 1/d, floored at one cell.
+ *
+ * Replaces the flat 1/√2 diagonal factor this file used to carry, and is the
+ * same number wherever that one applied — d = 1 cardinally, d = √2 at a corner.
+ * Stated as a distance because a boat two-fifths of a cell off a burning pier
+ * is a real case and "is it diagonal?" has no answer for it.
+ */
+function distanceFactor(distanceCells: number): number {
+  return SPREAD_MIN_DISTANCE_CELLS / Math.max(SPREAD_MIN_DISTANCE_CELLS, distanceCells);
+}
+
+/**
+ * The cell a fractional position stands on.
+ *
+ * ROUNDING, not flooring, and it is not a style choice: a cell is the square of
+ * side 1 CENTRED on its integer coordinates, which is what the client's own
+ * pick does (client/src/terrain/picking.ts) and what @terrace/shared's
+ * `nearestWithinReach` is written against. Flooring would offset every lookup
+ * by half a cell and put a thing's height and rain reading one cell away from
+ * where it is standing.
+ *
+ * Needed because `WorldApi.heightAt` and the weather bridge both index a grid:
+ * handed 12.4 they do not interpolate, so the caller has to say which cell it
+ * means.
+ */
+function cellOf(value: number): number {
+  return Math.round(value);
+}
 
 /** The eight neighbours, in a fixed order so a seeded run is reproducible. */
 const NEIGHBOUR_OFFSETS: readonly (readonly [number, number])[] = [
@@ -191,70 +287,219 @@ function slopeFactor(fromHeight: number, toHeight: number): number {
 }
 
 /**
- * Chance per second that this fire sets the cell one step away at (dx, dy)
- * alight. Exported because it is the whole mechanic — a test that asserts on
- * spread should assert on this, not on the outcome of a hundred rolls.
+ * How fierce a thing that is alight is right now, or 0 if it is too early or
+ * too late in its burn to throw sparks.
+ *
+ * ONE DEFINITION FOR BOTH REGISTRIES: a burning boat and a burning tree are the
+ * same clock (../protocol.ts's fireIntensity), so the gate that gives a fire a
+ * front applies to both without either knowing about the other.
+ */
+function spreadingIntensity(source: SpreadSource): number {
+  const intensity = fireIntensity(source.ageSeconds, source.burnSeconds);
+  return intensity < SPREAD_MIN_INTENSITY ? 0 : intensity;
+}
+
+/**
+ * Chance per second that a fire at `from` sets whatever is at `to` alight.
+ *
+ * Both ends are in FRACTIONAL CELL SPACE — the space things that move are
+ * steered in — so a cell simply passes its integer coordinates. Exported
+ * because it is the whole mechanic: a test that asserts on spread should assert
+ * on this, not on the outcome of a hundred rolls.
+ *
+ * `gapCells` is how much of the distance is not flame-to-fuel: a target with a
+ * two-cell hull is reached when the flame is two cells from its CENTRE, so the
+ * caller subtracts the target's own radius and the rate is quoted on what is
+ * left. Zero for a cell, which has no radius to speak of.
  */
 export function spreadRate(
   world: WorldApi,
-  fire: FireCellState,
-  dx: number,
-  dy: number,
+  from: SpreadSource,
+  to: { readonly x: number; readonly y: number },
   wind: { readonly heading: number; readonly speed: number },
+  gapCells?: number,
 ): number {
-  const intensity = fireIntensity(fire.ageSeconds, fire.burnSeconds);
-  if (intensity < SPREAD_MIN_INTENSITY) return 0;
+  const intensity = spreadingIntensity(from);
+  if (intensity === 0) return 0;
 
-  const distanceFactor = dx !== 0 && dy !== 0 ? DIAGONAL_RATE_FACTOR : 1;
-  // The wetness of the TARGET cell, not of the burning one: what matters is
-  // whether the thing about to catch is wet, and a fire under a squall's edge
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const gap = gapCells ?? Math.hypot(dx, dy);
+  if (gap > SPREAD_REACH_CELLS) return 0;
+
+  // The wetness of the TARGET, not of the burning thing: what matters is
+  // whether what is about to catch is wet, and a fire under a squall's edge
   // should still light the dry ground behind it.
-  const wetFactor = 1 - WET_SPREAD_PENALTY * precipitationAt(fire.x + dx, fire.y + dy);
+  const wetFactor = 1 - WET_SPREAD_PENALTY * precipitationAt(cellOf(to.x), cellOf(to.y));
   return (
     BASE_SPREAD_RATE_PER_SECOND *
     intensity *
     windFactor(dx, dy, wind.heading, wind.speed) *
-    slopeFactor(world.heightAt(fire.x, fire.y), world.heightAt(fire.x + dx, fire.y + dy)) *
-    distanceFactor *
+    slopeFactor(
+      world.heightAt(cellOf(from.x), cellOf(from.y)),
+      world.heightAt(cellOf(to.x), cellOf(to.y)),
+    ) *
+    distanceFactor(gap) *
     wetFactor
   );
 }
 
 /**
- * One spread step. Returns the cells that caught, for the caller to broadcast.
+ * What one spread step set alight, in both registries.
  *
- * THE SNAPSHOT IS TAKEN FIRST, deliberately: `blaze.fires()` is read once and
- * the newly lit cells are not themselves rolled for in this same step. Without
- * that, a fire would race across the world in a single step in whatever order
- * the map happened to iterate — the classic cellular-automaton bug where the
- * update order becomes the physics.
- *
- * A cell already alight is skipped before the roll rather than after, so a fire
- * surrounded by fire spends no randomness at all — which is what keeps the cost
- * of a large burn proportional to its PERIMETER rather than its area.
+ * TWO LISTS BECAUSE THEY ARE BROADCAST SEPARATELY (../protocol.ts has a cell
+ * message and an entity message), not because the mechanic distinguishes them.
  */
-export function spreadOnce(world: WorldApi, blaze: Blaze, dt: number): FireCellState[] {
-  const wind = currentWind();
-  const sources = blaze.fires();
-  const caught: FireCellState[] = [];
+export interface SpreadResult {
+  readonly cells: FireCellState[];
+  readonly entities: FireEntityState[];
+}
 
-  for (const fire of sources) {
-    for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
-      const x = fire.x + dx;
-      const y = fire.y + dy;
-      if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) continue;
-      if (blaze.isBurning(x, y)) continue;
+/** The eight neighbours plus the cell itself — what a burning INDIVIDUAL can
+ * light on the ground. Its own cell is included and a cell fire's is not,
+ * because a cell fire is already burning where it stands and a walking one is
+ * not: a burning animal crossing dry grass sets the grass under it alight,
+ * which is the whole reason a fire that walks is interesting. */
+const SELF_AND_NEIGHBOUR_OFFSETS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  ...NEIGHBOUR_OFFSETS,
+];
 
-      const rate = spreadRate(world, fire, dx, dy, wind);
-      if (rate <= 0) continue;
-      if (!happensWithin(rate, dt)) continue;
-
-      // May still decline: nothing flammable there, or the world is already
-      // burning at FIRE_CELL_CAP. Both are ordinary answers — see Blaze.ignite.
-      const lit = blaze.ignite(x, y);
-      if (lit !== null) caught.push(lit);
+/**
+ * Everything flammable that is standing around right now, gathered ONCE.
+ *
+ * THE COST MODEL IS THE REASON THIS EXISTS rather than a call to
+ * `entityFuelAt` per burning cell. That function is the TORCH's question ("of
+ * yours, which did the player aim at?") and ./entityFuel.ts promises sources it
+ * is asked only at ignition — pilgrims answers it by building three arrays and
+ * spreading them, which is fine once per torch and ruinous four hundred times a
+ * second. One sweep per source per step is O(individuals); the alternative is
+ * O(burning × individuals).
+ */
+function flammableNow(): FlammableIndividual[] {
+  const found: FlammableIndividual[] = [];
+  for (const source of entityFuelSources()) {
+    // A source that does not implement this cannot catch by spread — only by
+    // torch or by lightning. Degrading here rather than throwing is ./fuel.ts's
+    // stance: a registry that half the plugins have not caught up with yet
+    // still runs, it just carries less fuel.
+    if (source.flammable === undefined) continue;
+    for (const individual of source.flammable()) {
+      if (individual.fuel.burnSeconds <= 0) continue;
+      if (!Number.isFinite(individual.x) || !Number.isFinite(individual.y)) continue;
+      found.push(individual);
     }
   }
+  return found;
+}
 
-  return caught;
+/**
+ * Rolls one source against every individual in reach of it.
+ *
+ * The gap is measured EDGE TO CENTRE — the individual's own radius is taken off
+ * the distance — so a two-cell hull catches from further out than a walker
+ * does. That is what "close enough" means for things with a size, and it is the
+ * reason `FlammableIndividual` carries a radius at all.
+ */
+function spreadToIndividuals(
+  world: WorldApi,
+  entityBlaze: EntityBlaze,
+  from: SpreadSource,
+  candidates: readonly FlammableIndividual[],
+  wind: { readonly heading: number; readonly speed: number },
+  dt: number,
+  caught: FireEntityState[],
+): void {
+  for (const candidate of candidates) {
+    if (entityBlaze.isBurning(candidate.sourceName, candidate.id)) continue;
+
+    const gap = Math.max(
+      0,
+      Math.hypot(candidate.x - from.x, candidate.y - from.y) - candidate.radiusCells,
+    );
+    if (gap > SPREAD_REACH_CELLS) continue;
+
+    const rate = spreadRate(world, from, candidate, wind, gap);
+    if (rate <= 0) continue;
+    if (!happensWithin(rate, dt)) continue;
+
+    // May still decline — the entity cap is full, or something took it in the
+    // meantime. An ordinary answer, exactly as Blaze.ignite's null is.
+    const lit = entityBlaze.igniteIndividual(candidate);
+    if (lit !== null) caught.push(lit);
+  }
+}
+
+/** Rolls one source against the cells around a position. */
+function spreadToCells(
+  world: WorldApi,
+  blaze: Blaze,
+  from: SpreadSource,
+  origin: { readonly x: number; readonly y: number },
+  offsets: readonly (readonly [number, number])[],
+  wind: { readonly heading: number; readonly speed: number },
+  dt: number,
+  caught: FireCellState[],
+): void {
+  for (const [dx, dy] of offsets) {
+    const x = cellOf(origin.x) + dx;
+    const y = cellOf(origin.y) + dy;
+    if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) continue;
+    if (blaze.isBurning(x, y)) continue;
+
+    const rate = spreadRate(world, from, { x, y }, wind);
+    if (rate <= 0) continue;
+    if (!happensWithin(rate, dt)) continue;
+
+    // May still decline: nothing flammable there, or the world is already
+    // burning at FIRE_CELL_CAP. Both are ordinary answers — see Blaze.ignite.
+    const lit = blaze.ignite(x, y);
+    if (lit !== null) caught.push(lit);
+  }
+}
+
+/**
+ * One spread step, across both registries.
+ *
+ * THE SNAPSHOTS ARE TAKEN FIRST, deliberately: `blaze.fires()`, the burning
+ * individuals and the flammable sweep are each read once, and nothing lit
+ * during this step is itself rolled for in it. Without that, a fire would race
+ * across the world in a single step in whatever order the maps happened to
+ * iterate — the classic cellular-automaton bug where the update order becomes
+ * the physics.
+ *
+ * THE ORDER OF THE ROLLS IS FIXED — cells against cells, cells against
+ * individuals, then individuals against both, each in its collection's own
+ * stable order — because the rolls come off one seeded stream (./rng.ts) and a
+ * replay that draws them in a different order is a different fire.
+ *
+ * A thing already alight is skipped BEFORE the roll rather than after, so a
+ * fire surrounded by fire spends no randomness at all — which is what keeps the
+ * cost of a large burn proportional to its PERIMETER rather than its area.
+ */
+export function spreadOnce(
+  world: WorldApi,
+  blaze: Blaze,
+  entityBlaze: EntityBlaze,
+  dt: number,
+): SpreadResult {
+  const wind = currentWind();
+  const cellSources = blaze.fires();
+  const entitySources = entityBlaze.burningWithAge();
+  const candidates = flammableNow();
+
+  const cells: FireCellState[] = [];
+  const entities: FireEntityState[] = [];
+
+  for (const fire of cellSources) {
+    spreadToCells(world, blaze, fire, fire, NEIGHBOUR_OFFSETS, wind, dt, cells);
+    spreadToIndividuals(world, entityBlaze, fire, candidates, wind, dt, entities);
+  }
+
+  for (const fire of entitySources) {
+    spreadToCells(world, blaze, fire, fire, SELF_AND_NEIGHBOUR_OFFSETS, wind, dt, cells);
+    spreadToIndividuals(world, entityBlaze, fire, candidates, wind, dt, entities);
+  }
+
+  return { cells, entities };
 }

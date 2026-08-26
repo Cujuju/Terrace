@@ -139,6 +139,20 @@ export const plugin: TerracePlugin = {
         };
       },
       positionOf: walkerPosition,
+      // What a nearby flame can reach — a walker who strays into a burning
+      // wood catches, which is the whole reason to run from one.
+      flammable: function* () {
+        for (const walker of allWalkers()) {
+          yield {
+            sourceName: PILGRIMS_PLUGIN_NAME,
+            id: walker.id,
+            fuel: { burnSeconds: PILGRIMS_BURN_SECONDS, height: PILGRIMS_FUEL_HEIGHT },
+            x: walker.x,
+            y: walker.y,
+            radiusCells: WALKER_BODY_RADIUS_CELLS,
+          };
+        }
+      },
       onBurnedOut: pilgrimsBurnedOut,
       // DELIBERATELY NOT DECLARED (the default is false). This plugin has no
       // PersistenceSlice by settled design — journeys are re-derived from the
@@ -198,6 +212,30 @@ const FIRE_CELL_REACH = 0.5;
 /** Every walker this plugin has, across all three journeys. */
 function allWalkerStates(): Array<{ id: number; x: number; y: number }> {
   return [...pilgrimage.states(), ...wandering.states(), ...settling.states()];
+}
+
+/**
+ * A WALKER HAS NO BODY WORTH MODELLING, so fire measures its reach to the point
+ * they stand on (../../fire/server/entityFuel.ts's FlammableIndividual).
+ *
+ * NOT `FIRE_CELL_REACH`, which is a different quantity that happens to be a
+ * number too: that one is the half-cell BOX a torch click covers, and reusing
+ * it here would quietly let a walker catch from half a cell further away than
+ * the ground they are standing on does.
+ */
+const WALKER_BODY_RADIUS_CELLS = 0;
+
+/**
+ * Every walker, one at a time, for fire's spread sweep.
+ *
+ * A GENERATOR rather than `allWalkerStates()` because this is asked while
+ * anything in the world is burning, and that function builds three arrays and
+ * spreads them into a fourth on every call.
+ */
+function* allWalkers(): Generator<{ id: number; x: number; y: number }> {
+  yield* pilgrimage.states();
+  yield* wandering.states();
+  yield* settling.states();
 }
 
 /**

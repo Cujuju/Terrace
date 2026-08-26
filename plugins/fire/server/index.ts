@@ -879,7 +879,13 @@ export const plugin: TerracePlugin = {
       // precisely what handing the elapsed interval to the rate arithmetic is
       // supposed to prevent.
       drenched = [...drenched, ...suppressWithRain(SPREAD_INTERVAL_SECONDS)];
-      ignited = [...ignited, ...spreadOnce(world, blaze, SPREAD_INTERVAL_SECONDS)];
+      // BOTH REGISTRIES IN ONE STEP: a flame reaches whatever is near it, and
+      // whether that is a cell or something walking is not the flame's business
+      // (./spread.ts's header). A caught individual is a change to the entity
+      // set exactly as a torched one is, so it rides the same broadcast.
+      const spread = spreadOnce(world, blaze, entityBlaze, SPREAD_INTERVAL_SECONDS);
+      ignited = [...ignited, ...spread.cells];
+      if (spread.entities.length > 0) entitiesChanged = true;
       spreadDebtSeconds -= SPREAD_INTERVAL_SECONDS;
     }
 

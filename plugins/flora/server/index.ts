@@ -746,19 +746,63 @@ export const FLORA_TREE_FUEL_HEIGHT = 1.5;
 export const FLORA_CROP_FUEL_HEIGHT = 0.35;
 
 /**
+ * How long a tuft of grass burns. A FLASH, shorter than a crop's — a tuft is
+ * less than a stand of grain, and the ordering grass < crop < tree is the whole
+ * of the reasoning. 3 s buys it ~2.5 spread rolls (see below), which is enough
+ * to hand the fire to a neighbouring tuft or to the tree it grows under.
+ *
+ * THIS NUMBER IS NOT THE MEADOW'S BRAKE, and an earlier draft of this comment
+ * said it was. Measured 2026-08-25 on a 256² bed, 20 trials per point: what
+ * bounds a grass fire is the meadow's own SPARSENESS, not its burn time. Grass
+ * is thinned to FLORA_GRASS_SHARE_OF_256/256 ≈ 0.398 of eligible cells, which
+ * sits just under the ~0.407 site-percolation threshold of the eight-neighbour
+ * lattice this spread uses — so a meadow has no spanning cluster and a fire in
+ * one cannot cross it, at ANY burn time:
+ *
+ *     burn      2s    3s    4s    6s   10s   22s
+ *     cells      1     2     2     3     4    26   (mean, still air)
+ *     cells      1     2     2     3     5    29   (mean, full gale)
+ *
+ * A SOLID bed of the same fuel runs away above 5 s (tens of thousands of cells,
+ * never self-extinguishing), which is the firestorm the old "grass is not fuel"
+ * comment feared — it is unreachable at the shipped thinning, and that is why
+ * grass could be registered at all.
+ *
+ * SO THE LEVER IS DENSITY, NOT THIS. If a meadow fire should run, the number to
+ * change is GRASS_CELLS_PER_TUFT (../protocol.ts) — and crossing 0.407 flips
+ * the world from local scorches to unstoppable ones with very little in
+ * between, so it wants measuring rather than nudging.
+ */
+export const FLORA_GRASS_BURN_SECONDS = 3;
+
+/**
+ * Flame size for grass. Ankle-high — well under a crop's knee-high 0.35, so a
+ * grass fire reads as a bright line running through the meadow rather than as a
+ * field of small bonfires.
+ */
+export const FLORA_GRASS_FUEL_HEIGHT = 0.15;
+
+/**
  * What burns at this cell.
  *
- * GRASS IS NOT FUEL, and that is a decision rather than an omission (owner has
- * not asked for it, 2026-08-24). Grass covers roughly a third of every green
- * cell in the world, so registering it would give fire a continuous fuel bed
- * from one coast to the other and turn every stray torch into a world-ending
- * firestorm — a gameplay change, not a fidelity one. Add it when the burn
- * mechanic is designed to want it, not because the hook exists.
+ * GRASS IS FUEL AS OF 2026-08-25 (owner: "fire should spread across wheat,
+ * grass, boats, buildings — anything that gets close enough"). This comment
+ * used to say the opposite, and the reasoning it gave was sound about the
+ * CONSEQUENCE and wrong about whether the consequence was wanted: grass is a
+ * CONTINUOUS bed and warned that a torch in a meadow would then have a path to
+ * the horizon. Measured (FLORA_GRASS_BURN_SECONDS's table), it does not: the
+ * thinning puts grass just under the lattice's percolation threshold, so a
+ * meadow fire stays a local scorch and the firestorm was never reachable. What
+ * the old comment got right is that the consequence would be structural if the
+ * meadow were denser — which is why the density, not the burn time, is the
+ * number that carries the warning now.
  *
- * Trees are checked before crops for no deeper reason than that a cell cannot
- * hold both: flora plants at most one FLAMMABLE thing per cell (grass, which
- * may share a cell with a tree, is exactly why that sentence now needs the
- * qualifier).
+ * THE ORDER IS TALLEST FIRST, and here it carries meaning rather than being
+ * arbitrary: grass GROWS UNDER TREES (../server/grass.ts), so a cell really can
+ * hold both, and the answer has to be the tree — it is the taller flame, the
+ * longer burn, and the thing a player would say was on fire. Trees before crops
+ * remains the case that cannot arise, since flora will not plant a crop under a
+ * tree.
  */
 function floraFuelAt(x: number, y: number): { burnSeconds: number; height: number } | null {
   if (forest.has(x, y)) {
@@ -766,6 +810,9 @@ function floraFuelAt(x: number, y: number): { burnSeconds: number; height: numbe
   }
   if (cropField.has(x, y)) {
     return { burnSeconds: FLORA_CROP_BURN_SECONDS, height: FLORA_CROP_FUEL_HEIGHT };
+  }
+  if (grassField.has(x, y)) {
+    return { burnSeconds: FLORA_GRASS_BURN_SECONDS, height: FLORA_GRASS_FUEL_HEIGHT };
   }
   return null;
 }
@@ -787,14 +834,22 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
 
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
+  const scorched: GrassCell[] = [];
   for (const cell of cells) {
     if (forest.fell(cell.x, cell.y)) felled.push({ x: cell.x, y: cell.y });
     const witheredCell = cropField.reactToEdit(cell.x, cell.y);
     if (witheredCell !== null) withered.push(witheredCell);
+    // ALL THREE ARE ASKED, not just the one that answered `floraFuelAt`: grass
+    // shares its cell with a tree, so a burn that consumed the tree took the
+    // tuft under it with it. Asking only the tallest would leave grass standing
+    // in the middle of a burn scar.
+    const scorchedCell = grassField.reactToEdit(cell.x, cell.y);
+    if (scorchedCell !== null) scorched.push(scorchedCell);
   }
 
   broadcastChanges(world, [], felled);
   broadcastCropChanges(world, [], withered);
+  if (scorched.length > 0) broadcastGrassChanges(world, [], scorched);
 }
 
 /**

@@ -29,6 +29,24 @@ export interface EntityFuel {
 }
 
 /**
+ * One thing that could catch fire, as offered to SPREAD.
+ *
+ * Carries its own `sourceName` because ./spread.ts pools every source's
+ * candidates into one list before ranking them by distance — the owner has to
+ * survive that flattening or the winner cannot be lit.
+ */
+export interface FlammableIndividual {
+  readonly sourceName: string;
+  readonly id: number;
+  readonly fuel: EntityFuel;
+  /** Fractional cell space, the same space `positionOf` answers in. */
+  readonly x: number;
+  readonly y: number;
+  /** Half-extent in cells; 0 for something modelled as a point. */
+  readonly radiusCells: number;
+}
+
+/**
  * One plugin's declaration of which of its MOVING things can burn.
  *
  * Everything here is called from inside `fire`'s own tick or hook, on the
@@ -85,6 +103,32 @@ export interface EntityFuelSource {
 
   /** Optional: these just caught. For a source that wants to react (panic, flee). */
   onIgnited?(ids: readonly number[]): void;
+
+  /**
+   * Every individual of this source that could catch fire right now, and where
+   * it is — what SPREAD asks, as opposed to what a torch asks.
+   *
+   * WHY THIS IS NOT `entityAt` (cost, and it is not a small difference). A
+   * torch asks about one cell, once, when the player clicks. Spread asks "what
+   * is near a flame" of a world with up to FIRE_CELL_CAP cells alight, every
+   * SPREAD_INTERVAL_SECONDS. Asking `entityAt` per burning cell would be
+   * O(burning × individuals) — and pilgrims answers `entityAt` by building
+   * three arrays and spreading them, so it would allocate the whole walker list
+   * four hundred times a second. This is asked ONCE PER SPREAD STEP and the
+   * ranking is ../server/spread.ts's, which is what makes the cost O(
+   * individuals) instead.
+   *
+   * ABSENT MEANS "MINE CANNOT CATCH FROM A NEARBY FIRE" — they can still be lit
+   * by a torch and by lightning, which go through `entityAt`. That is the same
+   * degradation ./fuel.ts takes for an absent source: less fuel in the world,
+   * never a broken step.
+   *
+   * `radiusCells` is how big the individual is, so reach can be measured to its
+   * EDGE rather than to its centre: a boat is several cells of hull and catches
+   * from further out than a walker standing at a point. Zero is honest for
+   * anything that has no size worth modelling.
+   */
+  flammable?(): Iterable<FlammableIndividual>;
 
   /**
    * Whether an id means THE SAME INDIVIDUAL after a restart or a rollback.
