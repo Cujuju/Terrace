@@ -375,12 +375,29 @@ export const STRUCTURE_SURVEYED_GROUND_RADIUS =
 // and the model's footprint differ by 4×, and no amount of tuning inside the
 // CA's own rules closes that gap — the rule below is what closes it.
 //
-// The minimum distance, in CELLS (Chebyshev), between a structure at tier ≥ 1
-// and ANY other structure. Read at three places, all of them placements:
-// server/life.ts's birth rule and its teepee→building tier gate, its
-// placePatternAt (the seeder and the stir), and index.ts's canFoundStructure
-// (a settler moving in). A building that spawns CLEARS this square of the
-// teepees standing in it, and thereafter nothing may be placed inside it.
+// STATED IN WORLD UNITS, BECAUSE THAT IS WHAT IT IS (owner, 2026-08-26: "if
+// buildings take up an entire world unit, it would make more sense to do the
+// calculation in world units instead of quarter cells"). How far apart two
+// models must stand is a fact about MODELS — their reach is measured in world
+// units, in a file that has never heard of a cell. Cells are only how the
+// board is indexed. So the separation is a world-unit length, and the cell
+// arithmetic below is the index-space shadow of it, never the definition.
+//
+// The rule: no structure may be PLACED within STRUCTURE_SEPARATION_WORLD_UNITS
+// of a structure at tier ≥ 1, measured as a EUCLIDEAN distance between
+// origins. Read at four places, all of them placements: server/life.ts's
+// birth rule and its teepee→building tier gate, its placePatternAt (the
+// seeder) and attemptStir, and index.ts's canFoundStructure (a settler moving
+// in). A building that spawns CLEARS this ground of the teepees standing in
+// it, and thereafter nothing may be placed inside it.
+//
+// EUCLIDEAN, NOT CHEBYSHEV — corrected 2026-08-26, having shipped as a square
+// first. A model sweeps a DISC (that is what a yaw roll makes of it), so two
+// models overlap exactly when their origins are closer than the sum of their
+// radii — a radial test. Reserving the enclosing SQUARE instead also reserved
+// its corners, which stand √2 further out than the rule needs: 120 cells held
+// against 68, 43% of the ground taken for nothing, and buildings pushed to
+// 2.12 wu apart diagonally when 1.25 is the honest bound.
 //
 // TEEPEES ARE EXEMPT OF EACH OTHER, deliberately: tents cluster — a camp is
 // many tents on adjoining cells — and the CA needs dense Moore neighbourhoods
@@ -388,17 +405,45 @@ export const STRUCTURE_SURVEYED_GROUND_RADIUS =
 //
 // DERIVED, NOT TUNED: a model at max variation scale, yawed to its worst
 // case, sweeps at most STRUCTURE_SURVEYED_GROUND_RADIUS from its origin —
-// that is exactly the bound test/models.test.ts enforces. Two structures
-// therefore cannot touch once their origins are 2 × that radius apart,
-// converted through cellsAcross() so the number stays correct at any sampling
-// density (2 × 0.625 wu = 5 cells today). CEILED because cellsAcross returns
-// world units × WORLD_UNIT_CELLS and has no obligation to land on a whole
-// cell: a fractional bound compared with `<=` would silently round the
-// keep-clear square DOWN — the under-conservative direction — the next time
-// the sampling density moves.
+// exactly the bound test/models.test.ts enforces. Two structures therefore
+// cannot overlap once their origins are 2 × that radius apart. The half-cell
+// already inside that radius IS the safety margin, which is why the test
+// below is a strict `<`: at exactly the separation the two worst-case discs
+// are tangent, and tangent is not overlapping.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How far apart two structures must stand, in WORLD UNITS — the rule itself,
+ * and the only form of it that is a statement about the models. 1.25 today.
+ */
+export const STRUCTURE_SEPARATION_WORLD_UNITS = STRUCTURE_SURVEYED_GROUND_RADIUS * 2;
+
+/**
+ * The same length in cells, SQUARED — the number the test actually compares
+ * against, so a placement check is `dx * dx + dy * dy < this` over integer
+ * cell offsets: no square root, no float on the left-hand side, one fixed
+ * double on the right, and therefore the same answer on every machine (the
+ * determinism rule in CLAUDE.md).
+ *
+ * NOT ROUNDED, unlike the scan bound below. This is the rule; rounding it
+ * either way would move the rule rather than the loop that hunts for it.
+ */
+export const STRUCTURE_SEPARATION_CELLS_SQUARED =
+  cellsAcross(STRUCTURE_SEPARATION_WORLD_UNITS) ** 2;
+
+/**
+ * How far the search for a nearby building has to look, in whole cells — the
+ * bounding box around the disc, and NOTHING else. A cell outside this box
+ * cannot be within the separation; a cell inside it still has to pass the
+ * squared-distance test above.
+ *
+ * CEILED because cellsAcross returns world units × WORLD_UNIT_CELLS and has
+ * no obligation to land on a whole cell (5 exactly, today). Rounding a scan
+ * bound DOWN would skip cells the rule covers; rounding it up only costs a
+ * few lookups that then fail the real test.
+ */
 export const STRUCTURE_SEPARATION_CELLS = Math.ceil(
-  cellsAcross(STRUCTURE_SURVEYED_GROUND_RADIUS * 2),
+  cellsAcross(STRUCTURE_SEPARATION_WORLD_UNITS),
 );
 
 /** The two settler races. Order is meaningful: index = the race hash bit. */
