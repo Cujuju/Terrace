@@ -23,6 +23,7 @@ import { createSignal } from 'solid-js';
 import type {
   WorldAdminAction,
   WorldAdminRefusal,
+  WorldPluginSetting,
   WorldSummary,
   WorldSwitchStatus,
 } from '@terrace/shared';
@@ -87,6 +88,14 @@ export interface WorldPlugins {
   readonly installed: readonly string[];
   /** Those of `installed` this world does not run. */
   readonly disabled: readonly string[];
+  /**
+   * Every setting the installed plugins DECLARE, with the value in force here.
+   *
+   * Rendered generically — a control per row, labelled by its key, offering
+   * its own values. Nothing in the client knows what any of these strings
+   * mean, and nothing here may grow a list of them.
+   */
+  readonly settings: readonly WorldPluginSetting[];
 }
 
 const [worldPlugins, setWorldPlugins] = createSignal<WorldPlugins | null>(null);
@@ -153,6 +162,7 @@ export function applyWorldPluginListing(message: {
   id: string;
   installed: string[];
   disabled: string[];
+  settings: WorldPluginSetting[];
   refused?: WorldAdminRefusal;
 }): void {
   if (message.refused !== undefined) {
@@ -164,6 +174,7 @@ export function applyWorldPluginListing(message: {
     id: message.id,
     installed: message.installed,
     disabled: message.disabled,
+    settings: message.settings,
   });
 }
 

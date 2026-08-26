@@ -415,6 +415,57 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                         }}
                       </For>
                     </div>
+                    {/* WHAT EACH PLUGIN OFFERS, RENDERED FROM ITS OWN
+                        DECLARATION. One select per declared key, its options
+                        the values that plugin declared. Nothing here names a
+                        plugin, a key or a value: `life | populous` is
+                        structures' vocabulary arriving over the wire, and a
+                        list of it in core is exactly what this panel must not
+                        grow. */}
+                    <For each={worldPlugins()?.settings ?? []}>
+                      {(setting) => (
+                        <label class="restore-row-actions plugin-setting">
+                          <span class="hud-hint">
+                            {setting.plugin} — {setting.key}
+                          </span>
+                          <select
+                            class="chart-button"
+                            // An accessor at the point of use, never a const:
+                            // the listing is replaced by the server's answer to
+                            // every change, and a frozen read would leave the
+                            // control showing the value before last.
+                            value={
+                              worldPlugins()?.settings.find(
+                                (row) => row.plugin === setting.plugin && row.key === setting.key,
+                              )?.value ?? setting.value
+                            }
+                            onChange={(event) =>
+                              send({
+                                type: 'worldPluginConfigure',
+                                key: worldAdminKey(),
+                                id: world.id,
+                                plugin: setting.plugin,
+                                setting: setting.key,
+                                value: event.currentTarget.value,
+                              })
+                            }
+                          >
+                            <For each={setting.values}>
+                              {(value) => <option value={value}>{value}</option>}
+                            </For>
+                          </select>
+                        </label>
+                      )}
+                    </For>
+                    <Show when={(worldPlugins()?.settings.length ?? 0) > 0}>
+                      <p class="hud-hint">
+                        Changing a setting reopens the world it belongs to, the same
+                        way a toggle does. A settlement grown under one rule is then
+                        judged by the next one — swapping back to the cellular
+                        automaton will demolish most of what the other rule built,
+                        which is what “swap” means here.
+                      </p>
+                    </Show>
                     <Show when={(worldPlugins()?.installed.length ?? 0) === 0}>
                       <p class="hud-hint">This server has no plugins installed.</p>
                     </Show>
