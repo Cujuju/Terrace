@@ -89,6 +89,12 @@ export interface SculptInputOptions {
    */
   grabbableLip: (pick: TerrainRayPick | null) => number | null;
   /**
+   * The band this PICK has hold of — the intent's `spanBand`, or null for the
+   * topmost span (World.graspSpanBand). Null on every ordinary column, so an
+   * unlayered world puts nothing new on the wire.
+   */
+  graspSpanBand: (pick: TerrainRayPick | null) => number | null;
+  /**
    * Emits one intent, and reports whether it went out — false when a client
    * plugin vetoed it (out of mana) or the socket was not ready.
    *
@@ -150,6 +156,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     terrainHeightAt,
     worldSize,
     grabbableLip,
+    graspSpanBand,
     send,
   } = options;
 
@@ -432,6 +439,10 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
     const cell = hoverTarget();
     if (cell === null) return;
+    // WHICH SPAN THIS STROKE HAS HOLD OF, omitted entirely on an ordinary
+    // column so an unlayered world's intents are byte-identical to before the
+    // field existed (World.graspSpanBand returns null there).
+    const spanBand = graspSpanBand(cell);
     // tool/profile are read (not captured) per intent, so switching the HUD
     // toggles mid-stroke takes effect on the very next repeat.
     send({
@@ -442,6 +453,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       dir: sculptDirection(action),
       tool: brushTool(),
       profile: brushProfile(),
+      ...(spanBand !== null ? { spanBand } : {}),
       seq: nextSeq++,
     });
   };
@@ -480,6 +492,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // legal cell of the disc.
       profile: brushProfile(),
       targetBand: band,
+      // NO `spanBand` HERE YET, and that is a decision rather than an
+      // oversight. A pull's x/y is the CURSOR cell, not the cell whose lip is
+      // in the player's grasp, so a grasp derived here would name a span of the
+      // wrong column — and the shared math's whole-stroke guard would then
+      // no-op legitimate pulls over layered ground. The pull's grasp travels as
+      // `targetBand` plus the per-cell neighbour rule inside applyDragRegion,
+      // which is where the span-aware form belongs (plan step 4.5, D5).
       seq: nextSeq++,
     });
     // A dropped intent leaves lastDragTo alone, so the very next pointermove

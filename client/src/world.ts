@@ -14,9 +14,13 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_WORLD_SIZE,
+  bandOf,
   cellIndex,
   chunkIndex,
   quantizeToBand,
+  spanAt,
+  spanCapHeight,
+  spanCount,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -87,6 +91,21 @@ export interface World extends TerrainSink {
    * plan-view distance cannot answer. See the derivation in the implementation.
    */
   highlightLayerEdge(pick: TerrainRayPick | null): number | null;
+  /**
+   * The band a stroke starting at this PICK has hold of — `SculptIntent`'s
+   * `spanBand`, or null to mean the topmost span.
+   *
+   * NULL FOR EVERY ORDINARY COLUMN, which is the whole of why step 4.3 changes
+   * no behaviour: a column of one span has one surface, the server already
+   * moves it, and naming it would only be a chance for the two sides to
+   * disagree. The field appears on the wire exactly when the cell picked holds
+   * more than one span.
+   *
+   * Derived here rather than asked of the caller, for the reason
+   * `highlightLayerEdge` gives above: two callers deriving the same aim two
+   * ways is how they end up grabbing different layers.
+   */
+  graspSpanBand(pick: TerrainRayPick | null): number | null;
   /**
    * World-space Y of the RENDERED terrain surface at cell (x, y): the
    * band-quantised height the terrain mesh actually draws, which is where
@@ -450,6 +469,23 @@ export function createWorld(viewport: Viewport): World {
           ? null
           : Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
       return layerEdges?.highlightAt(pick, preferBand) ?? null;
+    },
+    graspSpanBand(pick: TerrainRayPick | null): number | null {
+      if (pick === null || mirror === null) return null;
+      // One span, one surface: say nothing, and the server moves the only
+      // thing it could have moved anyway. This is what keeps every stroke on
+      // ordinary terrain byte-identical to before the field existed.
+      if (spanCount(mirror.map, pick.x, pick.y) < 2) return null;
+      // WHICH span, said as a band. A riser hit names the lip the ray actually
+      // struck — the same rounding `highlightLayerEdge` uses, and for the same
+      // reason: the lip of band k lies AT k·BAND_HEIGHT, so the nearest lip to
+      // a height is the nearest multiple. A horizontal face (a tread, or a
+      // cave roof seen from below) has no stack to disambiguate, so the band of
+      // the span the march itself reported is the answer.
+      if (pick.hitRiser) {
+        return Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+      }
+      return bandOf(spanCapHeight(spanAt(mirror.map, pick.x, pick.y, pick.spanIndex)));
     },
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;

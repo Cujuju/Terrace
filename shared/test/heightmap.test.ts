@@ -437,6 +437,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       spill: 'free',
       anchor: 'free',
       targetBand: null,
+      spanBand: null,
     });
   });
 
@@ -1829,7 +1830,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     for (let run = 0; run < 2; run++) {
       const map = createHeightmap(48);
       for (let i = 0; i < map.cells.length; i++) map.cells[i] = ((i * 37) % 9 - 4) * BAND_HEIGHT;
-      const wire: SculptOptions = { tool: 'smooth', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null };
+      const wire: SculptOptions = { tool: 'smooth', profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null };
       applySculpt(map, 24, 24, 3, DEFAULT_SCULPT_AMOUNT, wire);
       applySculpt(map, 26, 23, 4, -DEFAULT_SCULPT_AMOUNT, wire);
       applySculpt(map, 24, 24, 2, DEFAULT_SCULPT_AMOUNT, wire);
