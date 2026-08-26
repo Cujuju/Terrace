@@ -95,6 +95,7 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
   'worldPluginList',
   'worldPluginSet',
   'worldPluginConfigure',
+  'worldPluginReload',
   'serverRestart',
   'worldSwitchCancel',
 ] as const;
@@ -279,6 +280,22 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
             'worldPluginListing',
             this.context.admin.plugins(client.sessionId, request.key, request.id),
           );
+          return;
+        }
+
+        // THE ONE ACTION THAT AWAITS (issue #198): a reload imports code, so it
+        // cannot be answered on this turn of the event loop. Its receipt and
+        // the refreshed listings are sent from the promise, in the same order
+        // and for the same reasons as the synchronous path below.
+        if (request.type === 'worldPluginReload') {
+          void this.context.admin
+            .reloadPlugin(client.sessionId, request)
+            .then((reloaded) => {
+              client.send('worldAdminResult', reloaded);
+              if (!reloaded.ok) return;
+              client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
+              client.send('worldListing', this.context.admin.listing());
+            });
           return;
         }
 

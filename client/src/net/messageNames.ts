@@ -33,6 +33,7 @@ import type {
   WorldPluginListMessage,
   WorldPluginListRequestMessage,
   WorldPluginConfigureRequestMessage,
+  WorldPluginReloadRequestMessage,
   WorldPluginSetRequestMessage,
   WorldPurgeRequestMessage,
   ServerRestartNoticeMessage,
@@ -154,6 +155,10 @@ export const MSG_WORLD_PLUGIN_SET: WorldPluginSetRequestMessage['type'] = 'world
 /** Client → server: run one plugin in one world with this setting. */
 export const MSG_WORLD_PLUGIN_CONFIGURE: WorldPluginConfigureRequestMessage['type'] =
   'worldPluginConfigure';
+
+/** Client → server: re-import one plugin's server code without a restart. */
+export const MSG_WORLD_PLUGIN_RELOAD: WorldPluginReloadRequestMessage['type'] =
+  'worldPluginReload';
 
 /** Client → server: restart the server process so new code becomes live. */
 export const MSG_SERVER_RESTART: ServerRestartRequestMessage['type'] = 'serverRestart';
