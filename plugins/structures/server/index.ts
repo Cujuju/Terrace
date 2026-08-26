@@ -760,7 +760,7 @@ export function canFoundStructure(world: StructuresWorld, x: number, y: number):
   if (live.size >= STRUCTURES_CAP) return false;
   if (live.has(structureKey(x, y))) return false;
   // KEEP-CLEAR (2026-08-26): a settler may not move in inside a standing
-  // building's reserved square. The predicate is clearance.ts's own, not a
+  // building's reserved ground. The predicate is clearance.ts's own, not a
   // local restatement — the same "one predicate, not a second opinion" rule
   // that keeps this function on isBuildableCell keeps it on
   // hasBuildingWithinSeparation, so founding can never disagree with the CA's
