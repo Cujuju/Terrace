@@ -107,6 +107,8 @@ function refusalText(reason: WorldAdminRefusal): string {
       return 'A restart is already under way. There is nothing to cancel — wait for the server to come back.';
     case 'unknownPlugin':
       return 'This server has no plugin by that name any more. Reopen the plugin list.';
+    case 'reloadFailed':
+      return 'That plugin’s new code was rejected — the build that was running still is. The server log says which step failed.';
     case 'unknownSetting':
       return 'That plugin does not offer that setting, or does not accept that value. Reopen the plugin list.';
     case 'worldIsActive':
@@ -442,6 +444,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                           // replaced by the answer to every toggle.
                           const stamp = (): string => worldPlugins()?.versions[pluginName] ?? '';
                           return (
+                            <>
                             <button
                               type="button"
                               class="chart-button plugin-toggle"
@@ -470,6 +473,30 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                                 <span class="plugin-version"> v{stamp()}</span>
                               </Show>
                             </button>
+                            {/* RE-IMPORT THIS PLUGIN'S SERVER CODE (issue
+                                #198). Its own control rather than a modifier on
+                                the toggle beside it: the toggle is about THIS
+                                world, a reload is about the whole server, and
+                                one button that did either depending on how it
+                                was clicked is how an operator reloads a plugin
+                                they meant to switch off. The page reloads
+                                itself afterwards — the build identity moves. */}
+                            <button
+                              type="button"
+                              class="chart-button plugin-reload"
+                              title={`Re-import “${pluginName}”’s server code without restarting. If the new code fails, the build that is running stays.`}
+                              onClick={() =>
+                                send({
+                                  type: 'worldPluginReload',
+                                  key: worldAdminKey(),
+                                  id: world.id,
+                                  plugin: pluginName,
+                                })
+                              }
+                            >
+                              reload
+                            </button>
+                            </>
                           );
                         }}
                       </For>

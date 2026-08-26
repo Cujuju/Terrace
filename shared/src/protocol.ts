@@ -827,6 +827,14 @@ export type WorldAdminRefusal =
   /** No plugin of that name is installed on this server. */
   | 'unknownPlugin'
   /**
+   * The plugin's new code was rejected and the build that was running still is
+   * (issue #198). One name for every step a reload can fail at — the import,
+   * the plugin's onWorldCreate, its refusal of its own saved data, or a throw
+   * on the first tick — because they are the same fact to an operator: nothing
+   * changed, and the server log says which step and why.
+   */
+  | 'reloadFailed'
+  /**
    * The plugin is installed but declares no such setting, or does not accept
    * that value for it. Its own declaration is the authority — core knows what
    * a key MEANS to nobody — so this is the same class of refusal as a plugin
@@ -860,6 +868,7 @@ export type WorldAdminAction =
   | 'cancelSwitch'
   | 'setPlugin'
   | 'configurePlugin'
+  | 'reloadPlugin'
   | 'restart';
 
 /** Client → server: "list every world you have". Answered to the sender only. */
@@ -1025,6 +1034,35 @@ export interface WorldPluginConfigureRequestMessage {
   setting: string;
   /** One of the values that plugin declared for `setting`. */
   value: string;
+}
+
+/**
+ * Client → server: "re-import this plugin's server code, without restarting".
+ *
+ * THE UPDATE BUTTON FOR ONE PLUGIN (issue #198, Option B). The server drops the
+ * plugin's old module for a freshly imported one and rebuilds the live world
+ * over it, carrying every connected player across exactly as an enablement
+ * change does. If the new code fails to import, throws while the world is being
+ * built, refuses its own saved data, or throws on its first tick, the old build
+ * is put back and the answer is 'reloadFailed' — there is no half-updated state.
+ *
+ * A PROCESS-WIDE ACT, unlike `worldPluginSet` and `worldPluginConfigure`: a
+ * plugin's module is loaded once for the whole server, so a reload changes the
+ * code EVERY world runs. `id` is carried only so the refreshed plugin listing
+ * comes back for the world whose panel asked, and the server's own answer does
+ * not depend on it — the world that is rebuilt is whichever one is live.
+ *
+ * NOT A REPLACEMENT FOR `serverRestart`: it updates the SERVER half only. A
+ * plugin's client half is compiled into the bundle, so the page reloads itself
+ * when the build identity moves — which it does on every successful reload.
+ */
+export interface WorldPluginReloadRequestMessage {
+  type: 'worldPluginReload';
+  key: string;
+  /** The world whose plugin panel asked; see this interface's doc comment. */
+  id: string;
+  /** Installed plugin name; see PLUGIN_NAME_PATTERN. */
+  plugin: string;
 }
 
 /**
@@ -1215,6 +1253,7 @@ export type WorldAdminRequestMessage =
   | WorldPluginListRequestMessage
   | WorldPluginSetRequestMessage
   | WorldPluginConfigureRequestMessage
+  | WorldPluginReloadRequestMessage
   | ServerRestartRequestMessage
   | WorldSwitchCancelRequestMessage;
 
@@ -1428,6 +1467,13 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
       const id = validateWorldId(m.id);
       if (id === null) return null;
       return { type: 'worldPluginList', key, id };
+    }
+
+    case 'worldPluginReload': {
+      const id = validateWorldId(m.id);
+      const plugin = validatePluginName(m.plugin);
+      if (id === null || plugin === null) return null;
+      return { type: 'worldPluginReload', key, id, plugin };
     }
 
     case 'worldPluginSet': {

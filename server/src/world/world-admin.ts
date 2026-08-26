@@ -29,6 +29,7 @@ import {
   type WorldAdminResultMessage,
   type WorldListMessage,
   type WorldPluginListMessage,
+  type WorldPluginReloadRequestMessage,
 } from '@terrace/shared';
 import type { ServerConfig } from '../config.ts';
 import { MAX_WORLD_SIZE, MIN_WORLD_SIZE } from '../config.ts';
@@ -116,6 +117,37 @@ export class WorldAdminService {
     const refusal = this.gate.authorize(clientId, key);
     if (refusal !== null) return refusedPlugins(worldId, refusal);
     return this.pluginListing(worldId);
+  }
+
+  /**
+   * Re-imports one plugin's server code in place (issue #198).
+   *
+   * ITS OWN ENTRY POINT rather than a `handle` action, for one reason: it is
+   * the only world-management action that AWAITS. Every other action is
+   * synchronous by construction — that is what makes a world swap a moment
+   * nothing can observe half-done (world-manager.ts guarantee 2) — and turning
+   * `handle` into a promise to accommodate one import would put an await in
+   * front of fifteen actions that have no use for it.
+   *
+   * The gate runs first here exactly as it does in `handle` (rule 1).
+   */
+  async reloadPlugin(
+    clientId: string,
+    request: WorldPluginReloadRequestMessage,
+  ): Promise<WorldAdminResultMessage> {
+    const refusal = this.gate.authorize(clientId, request.key);
+    if (refusal !== null) return fail('reloadPlugin', refusal);
+
+    try {
+      const outcome = await this.deps.manager.reloadPlugin(request.plugin);
+      if (typeof outcome === 'string') return fail('reloadPlugin', outcome);
+      return { type: 'worldAdminResult', action: 'reloadPlugin', ok: true, id: request.id };
+    } catch (error) {
+      // The manager contains every failure the plugin itself can produce, so a
+      // throw out of it is core's own — the same class `handle` catches.
+      logError(`reloading plugin "${request.plugin}" failed`, error);
+      return fail('reloadPlugin', 'failed');
+    }
   }
 
   /**
@@ -216,6 +248,11 @@ export class WorldAdminService {
         // Handled by plugins() above; reaching here means a caller routed a
         // plugin listing through handle(). Answer honestly, as worldList does.
         return fail('setPlugin', 'failed');
+
+      case 'worldPluginReload':
+        // Handled by reloadPlugin() below; reaching here means a caller routed
+        // a reload through handle(). Answer honestly, as worldList does.
+        return fail('reloadPlugin', 'failed');
 
       case 'worldPluginSet':
         return this.setPlugin(request.id, request.plugin, request.enabled);
@@ -495,6 +532,8 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
     case 'worldPluginList':
     case 'worldPluginSet':
       return 'setPlugin';
+    case 'worldPluginReload':
+      return 'reloadPlugin';
     case 'worldPluginConfigure':
       return 'configurePlugin';
     case 'serverRestart':
