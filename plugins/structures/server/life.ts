@@ -53,6 +53,10 @@ import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasNearbyFarmland } from './farmland.ts';
+import {
+  hasBuildingWithinSeparation,
+  livingCellsWithinSeparation,
+} from './clearance.ts';
 import type { StructuresRng } from './rng.ts';
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
@@ -274,6 +278,15 @@ export class GenerationSurvey {
   private cursor = 0;
   private readonly staged = new Map<number, LiveCellRecord>();
   /**
+   * Keys demolished EARLIER THIS SWEEP by a new building clearing its
+   * keep-clear square (see scanChunk's teepee→building step). A cell on this
+   * set must be skipped for BOTH survival and birth when its chunk is scanned
+   * later in the sweep — it is already gone; re-staging it would resurrect a
+   * teepee inside a building's reserved ground mid-generation. Cleared with
+   * the sweep in resetSweep.
+   */
+  private readonly demolishedThisSweep = new Set<number>();
+  /**
    * The generation being scanned — a copy taken when the sweep starts, and
    * the ONLY board `scanChunk` reads. Null between sweeps.
    */
@@ -282,7 +295,57 @@ export class GenerationSurvey {
   private resetSweep(): void {
     this.cursor = 0;
     this.staged.clear();
+    this.demolishedThisSweep.clear();
     this.board = null;
+  }
+
+  /**
+   * DEMOLISHES every live, non-building cell within the keep-clear square of
+   * a building that has JUST been founded at (x, y) — the sweep-side half of
+   * the 2026-08-26 rule that a building never shares its ground: without the
+   * clear, the teepees standing where the building now rises would survive
+   * indefinitely as overlapping models (survival deliberately never consults
+   * clearance — see clearance.ts's header — so nothing else would ever remove
+   * them).
+   *
+   * Two sources are walked, because a sweep spans many chunks and "live"
+   * means something slightly different for each:
+   *
+   *   * the swept BOARD — cells alive last generation, including ones already
+   *     staged earlier in this sweep (un-staged here so they drop out of the
+   *     outcome's swap); and
+   *   * cells STAGED but not yet on the board — births from earlier chunks of
+   *     this same sweep, which would otherwise slip through having passed the
+   *     birth gate before this square had any building in it.
+   *
+   * Both walks go through livingCellsWithinSeparation, which refuses to
+   * return buildings: a building never demolishes another building. Every
+   * demolished cell lands in `died` automatically — board-live ones because
+   * they are absent from `staged` at outcome time (advance computes `died`
+   * from exactly that difference), staged-born ones because they were never
+   * broadcast as founded in the first place (births only reach the wire at
+   * sweep completion), so there is simply nothing to announce for them.
+   *
+   * Keys land in demolishedThisSweep so chunks scanned LATER in this sweep
+   * skip these cells outright (scanChunk's suppression check).
+   */
+  private clearKeepClearSquare(
+    world: StructuresWorld,
+    live: ReadonlyMap<number, LiveCellRecord>,
+    x: number,
+    y: number,
+  ): void {
+    // The swept board first — the ordinary case: teepees standing where the
+    // building now rises.
+    for (const key of livingCellsWithinSeparation(live, world, x, y)) {
+      this.staged.delete(key);
+      this.demolishedThisSweep.add(key);
+    }
+    // Then this sweep's own earlier births, which are in `staged` alone.
+    for (const key of livingCellsWithinSeparation(this.staged, world, x, y)) {
+      this.staged.delete(key);
+      this.demolishedThisSweep.add(key);
+    }
   }
 
   private scanChunk(
@@ -305,9 +368,33 @@ export class GenerationSurvey {
         if (!isBuildableCell(world, x, y)) continue;
 
         const key = structureKey(x, y);
+        // KEEP-CLEAR SUPPRESSION: a cell demolished earlier this sweep (a new
+        // building cleared its square) is skipped for BOTH survival and birth
+        // — it is already rubble; staging it would resurrect a teepee inside
+        // a building's reserved ground. Chunks are scanned in fixed row-major
+        // order, so this is what makes the clear bite cells the sweep has not
+        // reached yet; earlier ones were already un-staged by
+        // clearKeepClearSquare directly.
+        if (this.demolishedThisSweep.has(key)) continue;
+
         const current = live.get(key);
         const neighborCount = countLiveNeighbors(live, world, x, y);
-        const survives = current !== undefined && (neighborCount === 2 || neighborCount === 3);
+        // BUILDINGS ARE PERMANENT (keep-clear rule, 2026-08-26): a cell with
+        // tier > 0 survives regardless of its neighbour count, though it is
+        // still killed by the isBuildableCell wall test above (sculpting,
+        // water, a temple reservation) — that path is unchanged and must stay:
+        // losing one's GROUND remains fatal whatever stands on it.
+        //
+        // WHY THE EXEMPTION IS FORCED, NOT A LOYALTY BONUS: a building now
+        // stands ALONE by construction — founding it demolished everything in
+        // its keep-clear square, and nothing may be placed back inside — so
+        // under ordinary S23 it would have 0 neighbours the moment it spawned,
+        // die of underpopulation instantly, and every building in the game
+        // would live exactly one generation. The exemption is what makes the
+        // keep-clear rule and the CA describable by the same simulation.
+        const survives =
+          current !== undefined &&
+          (current.tier > 0 || neighborCount === 2 || neighborCount === 3);
         // Card 28 ("Terrace Farming"): a dead cell with exactly 2 live
         // neighbours — one short of ordinary B3 — is ALSO born if it is near
         // farmland. Checked only for this one neighbour count: 3 already
@@ -320,14 +407,54 @@ export class GenerationSurvey {
         // has 2 live neighbours — see farmland.ts's own cost note.
         const fedBirth =
           current === undefined && neighborCount === 2 && hasNearbyFarmland(world, x, y);
-        const birthed = current === undefined && (neighborCount === 3 || fedBirth);
+        let birthed = current === undefined && (neighborCount === 3 || fedBirth);
+        // NO BIRTH INSIDE A BUILDING'S SQUARE (keep-clear rule, 2026-08-26):
+        // checked against the swept board AND against cells staged earlier in
+        // this sweep — a building founded mid-sweep reserves its square at the
+        // moment it forms, not at the next generation boundary. Without this
+        // gate the cleared ring would simply refill on the very next
+        // generation, since survival never consults clearance.
+        if (
+          birthed &&
+          (hasBuildingWithinSeparation(live, world, x, y) ||
+            hasBuildingWithinSeparation(this.staged, world, x, y))
+        ) {
+          birthed = false;
+        }
         if (!survives && !birthed) continue;
 
         if (current !== undefined) {
           const age = current.age + 1;
           // Blessing (pilgrim routes) is read at the tier gate ONLY — the
           // survives/birthed decisions above never consult it (blessings.ts).
-          const tier = maybeAdvanceTier(age, current.tier, neighborCount, isBlessedStructureCell(key));
+          let tier = maybeAdvanceTier(age, current.tier, neighborCount, isBlessedStructureCell(key));
+          // THE TEEPEE→BUILDING STEP IS REFUSED when another building already
+          // stands within STRUCTURE_SEPARATION_CELLS — on the board or staged
+          // mid-sweep, same as the birth gate above. This is the PHYSICAL
+          // footprint rule (two buildings may not interpenetrate), not a
+          // prosperity gate: blessing waives the NEIGHBOUR requirement in
+          // tiers.ts's maybeAdvanceTier, never this check. The refused cell
+          // keeps surviving as a teepee and may retry once the obstruction is
+          // gone; which candidate wins when two qualify in one generation is
+          // decided deterministically by this scan's fixed row-major order.
+          // TIER 0 ONLY: a standing building advancing 1→2→… needs no check —
+          // it cleared its square at birth, and grandfathered saves' adjacent
+          // old buildings must still be allowed to age onward (the owner
+          // declined retroactive reconciliation).
+          if (
+            current.tier === 0 &&
+            tier > current.tier &&
+            (hasBuildingWithinSeparation(live, world, x, y) ||
+              hasBuildingWithinSeparation(this.staged, world, x, y))
+          ) {
+            tier = current.tier;
+          } else if (current.tier === 0 && tier > current.tier) {
+            // The step succeeded: A NEW BUILDING CLEARS ITS SQUARE. Every
+            // teepee within STRUCTURE_SEPARATION_CELLS is demolished — see
+            // clearKeepClearSquare for why both the board and the staged set
+            // are walked, and how each demolished cell reaches `died`.
+            this.clearKeepClearSquare(world, live, x, y);
+          }
           this.staged.set(key, { age, tier });
         } else {
           // The population cap throttles BIRTHS ONLY. Every survivor was
@@ -381,14 +508,48 @@ export class GenerationSurvey {
     // after this one — the same "evaluated starting next generation, never the
     // one that just ran" rule attemptSeed and attemptStir keep. Nor are they
     // reported as born: the founding path broadcast them when it happened.
+    //
+    // EXCEPT ONTO GROUND A BUILDING TOOK WHILE THEY WERE APPEARING. The
+    // carry is the one path into the next generation that never passed
+    // through scanChunk, so it is also the one path clearKeepClearSquare
+    // cannot reach: that walks the swept board and the staged set, and a
+    // mid-sweep founding is in NEITHER. Without this guard a settler who
+    // moved in at 17:00:03 onto ground a building claimed at 17:00:07 would
+    // be carried straight into the next generation standing inside that
+    // building — the exact overlap the keep-clear rule exists to make
+    // impossible, arriving through the one door the rule does not watch.
+    // The cell is dropped and REPORTED DEAD rather than dropped silently,
+    // because `foundStructure` already broadcast it as founded: the client
+    // is holding a structure that no longer exists, and `died` is how this
+    // plugin says so. It cannot be reported by the board-difference loop
+    // below, which only knows cells that were on the swept board.
+    //
+    // ASKED AGAINST `staged`, NOT AGAINST demolishedThisSweep: that set holds
+    // the cells the clear actually FOUND, and a mid-sweep founding is
+    // invisible to it by the same absence that makes this guard necessary.
+    // `staged` at this point is the next generation entire — every building
+    // that survived the sweep and every one founded during it — so it is the
+    // one board that can answer "is this cell inside a building's square?"
+    // for ground claimed at any point in the sweep.
+    const carriedOntoClaimedGround: number[] = [];
     for (const [key, record] of live) {
       if (board.has(key) || this.staged.has(key)) continue;
+      const cell = cellOfKey(key);
+      if (hasBuildingWithinSeparation(this.staged, world, cell.x, cell.y)) {
+        carriedOntoClaimedGround.push(key);
+        continue;
+      }
       this.staged.set(key, record);
     }
 
     const born: StructureCell[] = [];
     const upgraded: StructureCell[] = [];
     const died: Array<{ x: number; y: number }> = [];
+
+    for (const key of carriedOntoClaimedGround) {
+      const cell = cellOfKey(key);
+      died.push({ x: cell.x, y: cell.y });
+    }
 
     for (const [key, record] of this.staged) {
       // Against the SWEPT board, never against `live`: a cell carried in above
@@ -532,6 +693,12 @@ export function placePatternAt(
     const x = anchorX + dx;
     const y = anchorY + dy;
     if (live.has(structureKey(x, y)) || !isBuildableCell(world, x, y)) return null;
+    // KEEP-CLEAR (2026-08-26): a pattern is refused if ANY of its cells has a
+    // building within STRUCTURE_SEPARATION_CELLS — every cell of the pattern
+    // would be a standing structure the moment it lands. The predicate lives
+    // in clearance.ts so this path and the CA's birth/tier gates cannot
+    // disagree about where a building's ground ends.
+    if (hasBuildingWithinSeparation(live, world, x, y)) return null;
     placed.push({ x, y, tier: 0 });
   }
   return placed;
@@ -760,6 +927,10 @@ export function attemptStir(
       if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) continue;
       if (live.has(structureKey(nx, ny))) continue; // ignite only — never overlap a live cell
       if (!isBuildableCell(world, nx, ny)) continue;
+      // KEEP-CLEAR (2026-08-26): a spark is a NEW PLACEMENT like any other,
+      // so it may not land inside a standing building's reserved square —
+      // the same predicate the CA's birth rule and placePatternAt use.
+      if (hasBuildingWithinSeparation(live, world, nx, ny)) continue;
       candidates.push([nx, ny]);
     }
     if (candidates.length > 0) break;

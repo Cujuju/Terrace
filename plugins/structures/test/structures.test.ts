@@ -281,18 +281,49 @@ describe('footprint fit (the model cannot overhang a terrace edge or the waterli
 });
 
 describe('B3/S23 correctness on open ground', () => {
-  it('a block (still life) never changes', () => {
+  it('a block holds as an ordinary still life until its first cell earns tier 1, which founds a building and demolishes the rest', () => {
     const world = openWorld();
     let live = boardOf([[10, 10], [11, 10], [10, 11], [11, 11]]);
     const before = keysOf(live);
 
-    for (let gen = 0; gen < 5; gen++) {
+    // Ordinary B3/S23 for as long as no cell is old enough to found a
+    // building: the block is a perfect still life — nothing born, nothing
+    // dead, nobody promoted.
+    for (let gen = 1; gen < CA_GENERATIONS_PER_TIER; gen++) {
       const outcome = stepGeneration(world, live);
       expect(outcome.born).toHaveLength(0);
       expect(outcome.died).toHaveLength(0);
+      expect(outcome.upgraded).toHaveLength(0);
       live = outcome.nextLive;
     }
     expect(keysOf(live)).toEqual(before);
+
+    // ...until the tier window opens. CHANGED 2026-08-26 (keep-clear rule,
+    // clearance.ts): this test used to assert the block stayed a still life
+    // FOREVER — "four settled houses". Under the new rule the block's FIRST
+    // cell in row-major order clears the founding bar (age threshold met,
+    // exactly STRUCTURE_UPGRADE_MIN_NEIGHBORS live neighbours) and becomes a
+    // BUILDING, whose keep-clear square DEMOLISHES the other three teepees:
+    // a dense cluster is now how a town STARTS, not four models standing
+    // through each other permanently. The founder reports as `upgraded` (a
+    // tier change); the demolished three as `died`, so broadcastChanges
+    // removes them on the client.
+    const outcome = stepGeneration(world, live);
+    expect(outcome.upgraded).toEqual([{ x: 10, y: 10, tier: 1 }]);
+    expect(outcome.died.map((c) => `${c.x},${c.y}`).sort()).toEqual(['10,11', '11,10', '11,11']);
+    expect(keysOf(outcome.nextLive)).toEqual(new Set([structureKey(10, 10)]));
+    expect(outcome.nextLive.get(structureKey(10, 10))!.tier).toBe(1);
+    live = outcome.nextLive;
+
+    // And then it is permanent: a lone building survives whatever its
+    // neighbour count, generation after generation.
+    for (let gen = 0; gen < 5; gen++) {
+      const quiet = stepGeneration(world, live);
+      expect(quiet.born).toHaveLength(0);
+      expect(quiet.died).toHaveLength(0);
+      live = quiet.nextLive;
+    }
+    expect(live.size).toBe(1);
   });
 
   it('a blinker oscillates with period 2', () => {
@@ -312,13 +343,34 @@ describe('B3/S23 correctness on open ground', () => {
     expect(step1.died.map((c) => `${c.x},${c.y}`).sort()).toEqual(['11,10', '9,10']);
   });
 
-  it('a glider translates diagonally by (1, 1) every 4 generations', () => {
+  it('a glider translates by pure B3/S23 only until one of its cells is old enough to found a building', () => {
     const world = openWorld();
     let live = boardOf([[11, 10], [12, 11], [10, 12], [11, 12], [12, 12]]);
-    for (let step = 0; step < 4; step++) live = stepGeneration(world, live).nextLive;
 
-    const translated = boardOf([[12, 11], [13, 12], [11, 13], [12, 13], [13, 13]]);
-    expect(keysOf(live)).toEqual(keysOf(translated));
+    // CHANGED 2026-08-26 (keep-clear rule, clearance.ts): this used to be a
+    // pure-B3/S23 claim — "translates diagonally by (1, 1) every 4
+    // generations" — and that is false now BY CONSTRUCTION: a glider cell
+    // that survives CA_GENERATIONS_PER_TIER consecutive generations has
+    // earned the founding bar (age + STRUCTURE_UPGRADE_MIN_NEIGHBORS), and a
+    // founding building demolishes everything in its square. What still holds
+    // — and is pinned here — is that the CA keeps ordinary B3/S23 for the
+    // generations BEFORE any cell qualifies: two steps in, the glider is
+    // exactly where Conway puts it.
+    for (let step = 0; step < CA_GENERATIONS_PER_TIER - 1; step++) {
+      live = stepGeneration(world, live).nextLive;
+    }
+    const midFlight = boardOf([[12, 11], [10, 12], [12, 12], [11, 13], [12, 13]]);
+    expect(keysOf(live)).toEqual(keysOf(midFlight));
+
+    // Third generation: (12, 12) has now survived all three (age meets the
+    // threshold) with exactly STRUCTURE_UPGRADE_MIN_NEIGHBORS live
+    // neighbours, so it founds a building and its keep-clear square
+    // demolishes the other four cells.
+    const outcome = stepGeneration(world, live);
+    expect(outcome.upgraded).toEqual([{ x: 12, y: 12, tier: 1 }]);
+    expect(outcome.born).toHaveLength(0);
+    expect(outcome.died).toHaveLength(4);
+    expect(keysOf(outcome.nextLive)).toEqual(new Set([structureKey(12, 12)]));
   });
 
   it('an isolated single cell dies of underpopulation', () => {
@@ -416,7 +468,7 @@ describe('tier progression: age AND neighbour density', () => {
     expect(maybeAdvanceTier(1_000_000, MAX_STRUCTURE_TIER, 8)).toBe(MAX_STRUCTURE_TIER);
   });
 
-  it('a dense still-life core (block) ages into higher tiers than an equally old, sparser oscillator', () => {
+  it('a dense core founds a building that out-ages an equally old, sparser oscillator', () => {
     const world = openWorld();
     // Far enough apart that neither pattern's neighbourhood ever sees the
     // other.
@@ -428,18 +480,24 @@ describe('tier progression: age AND neighbour density', () => {
     const generations = CA_GENERATIONS_PER_TIER * 2 + 1; // enough for 2 upgrade windows
     for (let gen = 0; gen < generations; gen++) live = stepGeneration(world, live).nextLive;
 
-    // Every block cell has exactly 3 neighbours every generation (the other
-    // three cells of the block) and therefore keeps qualifying for the
-    // neighbour gate every window.
-    for (const [x, y] of [[10, 10], [11, 10], [10, 11], [11, 11]] as const) {
-      const record = live.get(structureKey(x, y));
-      expect(record).toBeDefined();
-      expect(record!.tier).toBeGreaterThan(0);
+    // CHANGED 2026-08-26 (keep-clear rule, clearance.ts): the old contract —
+    // "every block cell has exactly 3 neighbours and each climbs the ladder"
+    // — is gone. At the FIRST tier window the block's first cell in row-major
+    // order clears the founding bar, becomes a BUILDING, and its keep-clear
+    // square DEMOLISHES the other three teepees. What remains then advances on
+    // AGE ALONE (tiers.ts: the neighbour gate applies only to the 0→1 step,
+    // because a building has no neighbours by construction). The dense core
+    // still beats the sparse one — but by founding a town, not by
+    // out-neighbouring it.
+    expect(live.get(structureKey(10, 10))!.tier).toBeGreaterThan(0);
+    for (const [x, y] of [[11, 10], [10, 11], [11, 11]] as const) {
+      expect(live.has(structureKey(x, y))).toBe(false); // demolished with its square
     }
 
-    // The blinker's CENTRE cell survives every generation but always has
-    // exactly 2 neighbours — never enough to clear
-    // STRUCTURE_UPGRADE_MIN_NEIGHBORS (3) — so it stays at tier 0 forever.
+    // The blinker's CENTRE cell survives every generation but never reaches
+    // tier 1 at all: it always has exactly 2 neighbours — below
+    // STRUCTURE_UPGRADE_MIN_NEIGHBORS, which the 0→1 founding step still
+    // requires (blessing aside) — so it stays a tier-0 teepee forever.
     const blinkerCentreKeys = [structureKey(40, 10), structureKey(41, 10), structureKey(42, 10)];
     const survivingCentre = blinkerCentreKeys
       .map((key) => live.get(key))
