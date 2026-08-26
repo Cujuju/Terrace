@@ -553,9 +553,16 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     // required"). The 5 000 figure was chosen against a 128-chunk starter square
     // and outlived it: the square shrank on 2026-08-19 to 4 096 square world
     // units of open sea, so 4 096/5 000 = 0 and a fresh world had no whales at
-    // all. At 2 000 a fresh world opens with a PAIR — an adult and a calf, the
-    // pod that fits — and the third member joins as soon as territory creep adds
-    // 2 000 more units of open sea.
+    // all.
+    //
+    // A PAIR ON DAY ONE IS NO LONGER PROMISED (owner, 2026-08-26). Genesis
+    // guaranteed the starter square held deep water for two whales for one day,
+    // and paid for it by reserving 62.5% of that square — which meant rescaling
+    // most of it on most seeds, and looked like a rectangle on the map. The
+    // guarantee is gone; the density is not. A fresh world whose seed drew an
+    // abyss in the starter square still opens with whales, one whose seed drew
+    // shallows gets them when territory creep reaches deep water. That is
+    // progression, and it is the same answer the kraken has always had.
     //
     // 2 000 rather than the 1 365 that would fit a whole WHALE_POD_SIZE pod on
     // day one, because the same density also decides how many whales a fully
