@@ -145,17 +145,6 @@ const MOORE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
 export const POPULOUS_TIER_BY_FLAT_NEIGHBORS: readonly number[] = [0, 0, 1, 2, 2, 3, 4, 4, 5];
 
 /**
- * The highest tier this table names. 5 — structures' MAX_STRUCTURE_TIER at the
- * time of writing, restated for the same reason every cross-plugin constant
- * here is, and used ONLY as this module's own self-consistency bound: the tier
- * a house actually gets is clamped to the ceiling the LIVE structures build
- * reports (`PopulousContext.maxTier`), so a structures with fewer tiers than
- * this table assumes is served correctly rather than handed a tier its client
- * cannot draw.
- */
-export const POPULOUS_MAX_TIER_FALLBACK = 5;
-
-/**
  * People a house gains per step, at every tier.
  *
  * 1, and deliberately flat: the tier ladder already decides how fast a house

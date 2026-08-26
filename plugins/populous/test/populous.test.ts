@@ -13,7 +13,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   POPULOUS_CAPACITY_BY_TIER,
   POPULOUS_GROWTH_PER_STEP,
-  POPULOUS_MAX_TIER_FALLBACK,
   POPULOUS_POPULATION_AFTER_EMIT,
   POPULOUS_TIER_BY_FLAT_NEIGHBORS,
   populousTierFor,
@@ -120,7 +119,12 @@ describe('the tier table', () => {
   });
 
   it('has a capacity for every tier the ceiling can reach', () => {
-    expect(POPULOUS_CAPACITY_BY_TIER.length).toBe(POPULOUS_MAX_TIER_FALLBACK + 1);
+    // DERIVED FROM THE LADDER ITSELF, not from a restated ceiling: the
+    // capacity table must cover every tier the tier table can actually
+    // produce, whatever that top tier happens to be.
+    expect(POPULOUS_CAPACITY_BY_TIER.length).toBe(
+      Math.max(...POPULOUS_TIER_BY_FLAT_NEIGHBORS) + 1,
+    );
     for (const capacity of POPULOUS_CAPACITY_BY_TIER) expect(capacity).toBeGreaterThan(0);
   });
 });
@@ -202,7 +206,7 @@ describe('population', () => {
 
   it('a bigger house sends people out sooner than a smaller one', () => {
     // The whole point of the ladder: capacity falls as tier rises.
-    for (let tier = 1; tier <= POPULOUS_MAX_TIER_FALLBACK; tier++) {
+    for (let tier = 1; tier < POPULOUS_CAPACITY_BY_TIER.length; tier++) {
       expect(POPULOUS_CAPACITY_BY_TIER[tier]).toBeLessThanOrEqual(
         POPULOUS_CAPACITY_BY_TIER[tier - 1],
       );
