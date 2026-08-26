@@ -3838,6 +3838,45 @@ left reachable through a stale reference.
 to encode "plugins are folders on disk" is now a plugin NAME, so where a
 sibling's code lives stopped being a bridge's business.
 
+### Decisions made 2026-08-26 (one plugin's code reloads in place, #198)
+
+`worldPluginReload` re-imports ONE plugin's server code into the running
+process and rebuilds the live world over it, carrying every connected player
+across exactly as an enablement change does. Admin-key gated, like every other
+world-management action.
+
+**Either the new module runs everywhere, or the old one still does.** Four
+steps can reject a build — the import, the plugin's `onWorldCreate` (with the
+slice restore before it), its own refusal of its saved data, and one real probe
+tick — and any of them puts the previous `LoadedPlugin` back and opens the world
+again over it, which replays that module's state from the slice. Two of those
+four throws are swallowed by the host's `safely` (a broken plugin must not take
+the world down), so the host now COUNTS its per-plugin faults: without a count
+"it did not throw" would be read as "it works".
+
+**The re-import is cache-busted by a generation carried in the URL.** Node's
+module map has no eviction, so a stateless resolve hook copies the generation
+tag from a parent URL onto every child it resolves INSIDE that plugin's own real
+directory — the subtree comes back fresh, and core (which several plugins import
+by relative path) is never re-imported alongside it.
+
+**KNOWN RESIDUAL — the reload leaks, measured.** The previous generation's
+module namespaces stay reachable through the module map and can never be
+collected. On the rig (2026-08-26, `~/.terrace-plugtest-p4`, 20 reloads of
+`structures`, the largest plugin, heap read after two forced GCs): **≈0.66 MB of
+heapUsed and ≈3.3 MB of RSS per reload**. A two-file toy plugin cost 17–33 KB
+per reload over two runs. That is dev-loop scale, not production scale — 100
+reloads of the largest plugin is ~66 MB — and it is why `serverRestart` remains
+the recommended way to update a plugin and this is the button beside it, not
+instead of it.
+
+**The client half still needs the page.** A plugin's client code is compiled
+into the bundle, so a successful reload rebinds the build identity (the plugin
+stamp it is derived from moves — with a `-reload.<n>` marker, because a
+deployment with no git stamps every plugin identically for the life of the
+process) and the join snapshot the reopen already sends fires the client's
+existing one-shot page reload.
+
 ### Decisions made 2026-08-25/26 (archipelago genesis, and MIN_WORLD_SIZE, #181)
 
 **Supersedes:** the 2026-08-19 starter-profile decision (the fixed shelf/slope
