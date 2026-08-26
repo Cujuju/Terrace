@@ -290,6 +290,23 @@ export const plugin: TerracePlugin = {
     broadcastState(world);
   },
 
+  /**
+   * THE TEMPLE STOPS STANDING WHEN ITS WORLD CLOSES (issue #167). The building
+   * is already in the snapshot by the time this runs, so it comes back on the
+   * next open; what must not survive is the module's copy of it, which a
+   * reopen into a world WITHOUT this plugin would otherwise leave claiming
+   * ground in structures forever.
+   *
+   * THE CLAIM IS RELEASED FIRST, through the same one function that asserts it
+   * (`publishClaim` with no temple), so the release travels the bridge's own
+   * buffer-and-forward path rather than a second, hand-written one.
+   */
+  onWorldClose(): void {
+    temple = null;
+    publishClaim();
+    resetTemplesState();
+  },
+
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
     reactToTerrain(world, diff);
   },

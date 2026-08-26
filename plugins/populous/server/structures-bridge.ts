@@ -83,6 +83,21 @@ export function registerGrowthModel(model: unknown): void {
   structuresApi?.setGrowthModel(model);
 }
 
+/**
+ * UNREGISTERS THIS PLUGIN'S MODEL — the buffer emptied AND the slot cleared,
+ * in that order, so a late-resolving load cannot put the model back after the
+ * world it belonged to has closed.
+ *
+ * WHY IT IS NOT `resetStructuresBridge` (the test seam): that one also drops
+ * the resolved module and the injected loader, which would make every close
+ * re-import structures and would silently undo a suite's loader. What a close
+ * owes is the REGISTRATION, not the connection.
+ */
+export function clearGrowthModel(): void {
+  desiredModel = null;
+  structuresApi?.setGrowthModel(null);
+}
+
 /** Test seam: swaps the loader. Pass null to restore the real one. */
 export function setStructuresModuleLoader(loader: StructuresModuleLoader | null): void {
   loadModule = loader ?? DEFAULT_STRUCTURES_MODULE_LOADER;

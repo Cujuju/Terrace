@@ -599,10 +599,49 @@ const persistence: PersistenceSlice = {
   },
 };
 
+/**
+ * EVERYTHING THIS PLUGIN HOLDS THAT BELONGS TO ONE SESSION RATHER THAN TO ONE
+ * BOARD — cleared at the top of every `onWorldCreate`, which is the only
+ * moment a new session's simulation begins.
+ *
+ * WHY IT EXISTS (plan §2.3 Phase S0). Plugin modules outlive a world: a reopen
+ * (a plugin toggle, a rollback, a world switch) builds a new host over THIS
+ * module, and until now the clocks, the in-flight CA sweep and the queue of
+ * outside foundings all carried the previous session's values into the new
+ * one. Concretely, a founding made while this plugin was DISABLED — through
+ * the pilgrims-facing surface, which a sibling's bridge can still reach —
+ * survived in `pendingFounded` and was broadcast as a house on the first tick
+ * after the plugin was switched back on, against a board that does not hold
+ * it.
+ *
+ * THE CLOCK PAIR IS RESET TOGETHER, and that is load-bearing rather than
+ * tidiness: `advanceGrowthModel` gates on `simSeconds - lastGrowthSeconds`, so
+ * zeroing the mark while the accumulator still carried the whole process's
+ * uptime would step a generation on the very first tick after every reopen —
+ * a cadence discontinuity that does not exist today. Both terms go to zero,
+ * which restarts the interval from the moment the world opened.
+ *
+ * NOT HERE, deliberately: `live`, `generation`, `rngState`, `restoredLive`,
+ * `restoredGeneration` and `restoredLastSeedDay` — all of them are written by
+ * `persistence.load`, which the host runs BEFORE `onWorldCreate`, so clearing
+ * them here would throw away the very snapshot that was just restored.
+ */
+function resetSessionState(): void {
+  survey = new GenerationSurvey();
+  scanCredit = 0;
+  simSeconds = 0;
+  lastGrowthSeconds = 0;
+  lastKeepaliveSeconds = 0;
+  warnedNoGrowthModel = false;
+  pendingFounded = [];
+}
+
 export const plugin: TerracePlugin = {
   name: STRUCTURES_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
+    resetSessionState();
+
     // Any snapshot has already been restored by the time this runs, so the
     // board here is either empty (fresh world) or the persisted one. Cells
     // outside this world (a snapshot restored onto a smaller WORLD_SIZE) are
@@ -657,6 +696,23 @@ export const plugin: TerracePlugin = {
     // No players are connected yet — this is only so a client already
     // listening at boot is not left empty for up to a keepalive.
     broadcastAll(world);
+  },
+
+  /**
+   * THE BOARD STOPS EXISTING WHEN ITS WORLD DOES (issue #167, plan §1.9
+   * finding 3).
+   *
+   * The final snapshot has already been written by the time this runs (see
+   * `closeSession`), so nothing is lost — and what is dropped here is exactly
+   * what a sibling would otherwise keep reading. flora, pilgrims and temples
+   * hold this MODULE, not this plugin's enrolment in a session: their bridges
+   * resolve the module URL once and keep answering from it, so a board left
+   * standing here is a town that refuses trees, takes settlers and hands out
+   * houses in a world nobody ticks or persists. An empty board is the honest
+   * answer to every one of those questions once this world is gone.
+   */
+  onWorldClose(): void {
+    resetStructuresState();
   },
 
   onTick(world: WorldApi, dt: number): void {
@@ -827,19 +883,28 @@ export function currentGeneration(): number {
   return generation;
 }
 
+/**
+ * EVERYTHING THIS MODULE HOLDS, dropped: the session-scoped half
+ * (`resetSessionState`) plus the board itself and what was derived from it.
+ *
+ * TWO CALLERS, AND THEY WANT THE SAME THING. A suite starting from zero, and
+ * `onWorldClose` — the world is going away, so the board goes with it (see
+ * that hook for why a board that outlives its world is a ghost its siblings
+ * keep talking to). It is no longer a test-only seam.
+ */
 export function resetStructuresState(): void {
+  resetSessionState();
   live = new Map();
   generation = 0;
-  lastGrowthSeconds = 0;
-  warnedNoGrowthModel = false;
-  survey = new GenerationSurvey();
+  lastSeedDay = -1;
   resetBlessings();
   resetReservations();
   rng = createStructuresRng(STRUCTURES_RNG_DEFAULT_SEED);
-  simSeconds = 0;
-  lastKeepaliveSeconds = 0;
-  scanCredit = 0;
   restoredLive = new Map();
   restoredGeneration = 0;
-  pendingFounded = [];
+  restoredLastSeedDay = -1;
+  // The world stashed for the fire registry's callbacks (see `fuelWorld`).
+  // Held at module scope and assigned only in onWorldCreate, so this is
+  // exactly the reference issue #164 exists to stop pinning a heightmap.
+  fuelWorld = null;
 }
