@@ -35,6 +35,7 @@ import {
   closeSession,
   createWorldFile,
   openSession,
+  releaseSession,
   snapshotIfDirty,
   type SessionDeps,
   type WorldSession,
@@ -564,10 +565,17 @@ export class WorldManager {
     // STEP 3 — from here the outgoing world is gone. `this.session` is cleared
     // FIRST so that if step 4 throws, the process is left with no world loaded
     // rather than with a session whose store has been closed underneath it.
+    //
+    // THROUGH `releaseSession`, NOT A BARE `store.close()`: the plugins have to
+    // be told their world is going and their views have to be revoked, exactly
+    // as on the unload path (see that function — this line closing only the
+    // file is the defect it was extracted to make unrepeatable). The save is
+    // step 2's rather than the release's because only here may a failed save
+    // ABORT the whole switch.
     this.session = null;
     if (outgoing !== null) {
       try {
-        outgoing.store.close();
+        releaseSession(outgoing);
       } catch (error) {
         logWarn(`closing world "${outgoing.id}" reported: ${String(error)}`);
       }

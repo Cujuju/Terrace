@@ -238,19 +238,42 @@ export function closeSession(session: WorldSession): boolean {
   try {
     saved = snapshotIfDirty(session);
   } finally {
+    // In the `finally`, because a snapshot that failed to write must not leave
+    // the outgoing world reachable through some plugin's stale field.
+    releaseSession(session);
+  }
+  return saved;
+}
+
+/**
+ * THE WORLD STOPS EXISTING — file closed, plugins told, views revoked.
+ *
+ * SPLIT OUT OF `closeSession` BECAUSE THERE ARE TWO CLOSE PATHS AND ONLY ONE
+ * OF THEM USED TO TELL THE PLUGINS (found on the rig, 2026-08-25). `unload`
+ * and `shutdown` go through `closeSession`; a world SWITCH or REOPEN goes
+ * through `WorldManager.openInto`, which saves the outgoing world itself —
+ * because it must ABORT the switch when that save fails, which `closeSession`
+ * cannot express — and then used to close the store and nothing else. So every
+ * `onWorldClose` in the repo was skipped on the one path a per-world plugin
+ * change actually takes, and every WorldApi handed out to the outgoing world
+ * stayed bound to it. One function, called by both paths, is the fix: a close
+ * path that forgets the plugins is no longer expressible.
+ *
+ * THE ORDER IS THE CONTRACT (issues #167 then #164):
+ *   1. tell every INSTALLED plugin its world is closing, while its view still
+ *      works, so it can drop what it derived from this world;
+ *   2. revoke every view, so a plugin that kept one anyway pins a stub rather
+ *      than the heightmap and is told loudly if it uses it.
+ * The store is closed first and in a `try`, so a file handle that refuses to
+ * close cannot cost the plugins their notification.
+ */
+export function releaseSession(session: WorldSession): void {
+  try {
     session.store.close();
-    // THE WORLD STOPS EXISTING FOR PLUGINS HERE, in this order and only this
-    // order (issues #167 then #164):
-    //   1. tell every INSTALLED plugin its world is closing, while its view
-    //      still works, so it can drop what it derived from this world;
-    //   2. revoke every view, so a plugin that kept one anyway pins a stub
-    //      rather than the heightmap and is told loudly if it uses it.
-    // In the `finally`, because a snapshot that failed to write must not
-    // leave the outgoing world reachable through some plugin's stale field.
+  } finally {
     session.host.closeWorld();
     session.host.revokeApis();
   }
-  return saved;
 }
 
 /**
