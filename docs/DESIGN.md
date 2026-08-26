@@ -3801,3 +3801,39 @@ accepted rather than paid for with server state. The flame's budget rules in
 `plugins/fire/client/flames/types.ts` bind smoke unchanged — a plume per fire
 done naively breaks the draw-call rule and is disqualified however good it
 looks.
+
+### Decisions made 2026-08-26 (a plugin asks the host for its sibling)
+
+Every cross-plugin bridge used to reach for its sibling with
+`import('../../<name>/server/index.ts')` (the pattern relics→mana established,
+16 files). That specifier binds to a MODULE URL, not to "the plugin running as
+`<name>` in this session", and issue #196 closes the two things that follow
+from it: a sibling reloaded under a new URL would leave every consumer feeding
+the old module with nothing thrown and nothing logged, and a sibling the
+operator DISABLED for a world went on answering, because its module is resident
+either way.
+
+**The host is now the only holder of module identity.** `WorldApi.sibling(name)`
+hands back the server module of the plugin running as `name` here, or null. A
+plugin that is not installed, and one that is installed but switched off for
+this world, are the same null — which is what makes toggling `structures`
+itself safe, and what Phase S's model selector depends on. Discovery keeps each
+plugin's imported namespace on its `LoadedPlugin` and the host narrows the map
+to the enabled set per session; the view is revoked with every other member
+when the world closes.
+
+**Two of the bridge pattern's four rules became host guarantees; two stayed
+with the caller.** The host guarantees the lookup never throws for an absent
+sibling and answers synchronously whatever the load order — so
+`DEFAULT_*_MODULE_LOADER`, the loader test seams and the `*BridgeReady`
+promises are gone, and `plugins/` contains no `import('../../…')` at all.
+Buffer-don't-drop and duck-typing stay in each bridge: core cannot know what a
+consumer wanted to say to a sibling, nor which members of it that consumer
+needs. Each bridge re-resolves on every `onWorldCreate`, so a sibling enabled
+between sessions is picked up on the reopen and the buffered desired state is
+replayed into it — and a sibling that stopped running is cleared rather than
+left reachable through a stale reference.
+
+**This is also the npm-plugin step (§3.5).** The one line per bridge that used
+to encode "plugins are folders on disk" is now a plugin NAME, so where a
+sibling's code lives stopped being a bridge's business.
