@@ -14,13 +14,9 @@
 // the fragment shader, and the flicker from the same noise function the vertex
 // shader warps with, evaluated at a different scale.
 //
-// THE NOISE. Cheap 2D value noise — hash the four lattice corners, smoothstep
-// between them. Two octaves, because one octave is a slow wobble and three costs
-// more than the silhouette gains at this size on screen. It is fed
-// (heightAlongPlume × frequency − time × speed, perInstanceSeed): scrolling the
-// FIRST axis downward with time is what makes the deformation travel UP the
-// plume, which is the single thing that makes a warped cone read as fire rather
-// than as jelly.
+// THE NOISE lives in ../valueNoiseGlsl.ts — it was private to this file until
+// ../smoke.ts needed the identical function for the identical reason. See that
+// module for what it is and the scroll convention both stages share.
 //
 // BUDGET: one InstancedMesh, one draw call for the world, whatever is burning.
 
@@ -37,6 +33,7 @@ import {
   Vector3,
 } from 'three';
 import { FIRE_FLAME_INSTANCE_CAP } from '../../protocol.ts';
+import { VALUE_NOISE_GLSL } from '../valueNoiseGlsl.ts';
 import type { FireInstance, FlameRenderer, FlameRendererBuilder } from './types.ts';
 
 // ── The sleeve ────────────────────────────────────────────────────────────
@@ -147,32 +144,6 @@ function unitFromSeed(seed: number, salt: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
 }
 
-/**
- * The shared noise, injected into both stages. `vnoise` is bilinear value noise;
- * `fnoise` is two octaves of it, which is what gives the plume both a slow lean
- * and a fine gutter without a second noise function.
- */
-const NOISE_GLSL = /* glsl */ `
-  float hash21(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-  }
-
-  float vnoise(vec2 p) {
-    vec2 cell = floor(p);
-    vec2 f = fract(p);
-    vec2 smoothed = f * f * (3.0 - 2.0 * f);
-    float a = hash21(cell);
-    float b = hash21(cell + vec2(1.0, 0.0));
-    float c = hash21(cell + vec2(0.0, 1.0));
-    float d = hash21(cell + vec2(1.0, 1.0));
-    return mix(mix(a, b, smoothed.x), mix(c, d, smoothed.x), smoothed.y) * 2.0 - 1.0;
-  }
-
-  float fnoise(vec2 p) {
-    return vnoise(p) * 0.65 + vnoise(p * 2.17 + 11.3) * 0.35;
-  }
-`;
-
 const PLUME_VERTEX_SHADER = /* glsl */ `
   uniform float uTime;
 
@@ -186,7 +157,7 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
   varying float vIntensity;
   varying float vPresence;
 
-  ${NOISE_GLSL}
+  ${VALUE_NOISE_GLSL}
 
   void main() {
     // The sleeve is authored with its foot at y = 0 and unit height, so
@@ -235,7 +206,7 @@ const PLUME_FRAGMENT_SHADER = /* glsl */ `
   varying float vIntensity;
   varying float vPresence;
 
-  ${NOISE_GLSL}
+  ${VALUE_NOISE_GLSL}
 
   void main() {
     // Colour by height: white-hot at the fuel, orange through the body, dark

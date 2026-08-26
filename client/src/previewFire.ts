@@ -18,6 +18,19 @@
 //                           function of intensity, so photographing it needs
 //                           intensity to be the axis that moves.
 //   ?t=<seconds>            animation time to capture at (default 0)
+//   ?burn=<seconds>         run a REAL fire of this length instead of a frozen
+//                           intensity: every tree ignites at t=0, its intensity
+//                           comes from fireIntensity(t, burn), and it LEAVES THE
+//                           BURNING SET once t passes burn. Added for smoke
+//                           (plugins/fire/client/smoke.ts), which is the one
+//                           fire visual that outlives the fire — photographing
+//                           it needs a fire that can actually end, which a
+//                           harness that applies one frozen set never gave.
+//                           Overrides ?i, as ?i overrides the scene.
+//   ?dist=<multiplier>      scale the fitted camera distance (default 1). Smoke
+//                           is a DISTANCE signature and deliberately thins as
+//                           the camera nears, so both ends of that have to be
+//                           photographable from the same scene.
 //
 // WHY THE TREES ARE HERE. A flame in an empty frame is judged as an ornament.
 // The question actually being asked is "does this look like that tree is on
@@ -57,6 +70,8 @@ import {
 } from 'three';
 import { createFloraModels, type TreePlacement } from '../../plugins/flora/client/models.ts';
 import { SHIPPED_FLAMES } from '../../plugins/fire/client/flames/index.ts';
+import { createFireSmoke } from '../../plugins/fire/client/smoke.ts';
+import { fireIntensity } from '../../plugins/fire/protocol.ts';
 import type { FireInstance } from '../../plugins/fire/client/flames/types.ts';
 
 // ── Lighting rig, copied from previewCrops.ts / render/scene.ts ───────────
@@ -116,8 +131,23 @@ const SETTLE_FRAME_COUNT = 3;
 // ── The animation clock ───────────────────────────────────────────────────
 /** Fixed step the animation is advanced by. 60 Hz: the frame rate it is authored for. */
 const ANIMATION_STEP_SECONDS = 1 / 60;
-/** Guard on ?t, so a fat-fingered URL cannot spin for minutes before capturing. */
-const MAX_PREVIEW_SECONDS = 30;
+/**
+ * Guard on ?t, so a fat-fingered URL cannot spin for minutes before capturing.
+ *
+ * RAISED from 30 for smoke: SMOKE_AFTERLIFE_SECONDS is 30 on its own, on top of
+ * a tree's 22-second burn, so the frame in which the last column finally retires
+ * lies past t = 52 — and a harness that cannot reach the end of the thing it is
+ * photographing cannot answer the only question that matters about it, which is
+ * whether it ever goes away.
+ */
+const MAX_PREVIEW_SECONDS = 90;
+/**
+ * Bounds on ?dist, as multiples of the fitted framing distance. Below 0.35 the
+ * camera is inside the crown; above 12 a 1.5-unit tree is a handful of pixels,
+ * which is past the point where any picture of it settles anything.
+ */
+const MIN_CAMERA_DISTANCE_MULTIPLIER = 0.35;
+const MAX_CAMERA_DISTANCE_MULTIPLIER = 12;
 
 // ── The burning scene ─────────────────────────────────────────────────────
 /** One tree standing in the preview, and how fiercely it is alight. */
@@ -180,6 +210,30 @@ function readIntensityOverride(params: URLSearchParams): number | null {
   return requested;
 }
 
+/**
+ * The burn length every fire in the scene runs on, or null for the frozen
+ * intensities the harness has always used. Out-of-range and unparseable both
+ * mean "stay frozen", so a typo photographs the scene rather than silently a
+ * world where nothing is alight.
+ */
+function readBurnSeconds(params: URLSearchParams): number | null {
+  const raw = params.get('burn');
+  if (raw === null) return null;
+  const requested = Number.parseFloat(raw);
+  if (!Number.isFinite(requested) || requested <= 0) return null;
+  return requested;
+}
+
+/** Camera distance as a multiple of the fitted framing distance. */
+function readDistanceMultiplier(params: URLSearchParams): number {
+  const requested = Number.parseFloat(params.get('dist') ?? '');
+  if (!Number.isFinite(requested)) return 1;
+  return Math.min(
+    Math.max(requested, MIN_CAMERA_DISTANCE_MULTIPLIER),
+    MAX_CAMERA_DISTANCE_MULTIPLIER,
+  );
+}
+
 function readScene(params: URLSearchParams): SceneName {
   return params.get('scene') === 'stand' ? 'stand' : 'single';
 }
@@ -230,14 +284,15 @@ function buildGround(
 }
 
 /** Points `camera` at a box, with headroom for the flame above the trees. */
-function frameCameraOn(camera: PerspectiveCamera, box: Box3): void {
+function frameCameraOn(camera: PerspectiveCamera, box: Box3, distanceMultiplier: number): void {
   box.max.y += FRAMING_HEADROOM;
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
 
   const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
-  const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2);
+  const distance =
+    ((radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2)) * distanceMultiplier;
 
   camera.position.copy(center).addScaledVector(CAMERA_DIRECTION.clone().normalize(), distance);
   camera.lookAt(center);
@@ -249,6 +304,8 @@ function main(): void {
   const sceneName = readScene(params);
   const intensityOverride = readIntensityOverride(params);
   const previewSeconds = readTime(params);
+  const burnSeconds = readBurnSeconds(params);
+  const distanceMultiplier = readDistanceMultiplier(params);
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const scene = new Scene();
@@ -278,11 +335,13 @@ function main(): void {
   flora.apply(placements);
   scene.add(flora.root);
 
-  // …and one fire per tree, sized to the tree it is consuming.
+  // …and one fire per tree, sized to the tree it is consuming. Allocated ONCE
+  // and rewritten in place per step: the key is what a renderer remembers a fire
+  // by (plugins/fire/client/flames/types.ts), and it must not change between two
+  // steps of the same run or smoke would treat every frame as a fresh fire.
   const fires: FireInstance[] = trees.map((tree, index) => ({
-    // The preview redraws from scratch each time, so the index IS a stable
-    // identity for the life of a drawn set — nothing here holds a fire across
-    // one (./plugins/fire/client/flames/types.ts's key).
+    // The preview draws one fixed set of trees, so the index is a stable
+    // identity for the whole run.
     key: index + 1,
     x: tree.x,
     z: tree.z,
@@ -291,13 +350,41 @@ function main(): void {
     intensity: intensityOverride ?? tree.intensity,
     // The renderers drive phase from `seed`, not from age; age is passed
     // through honestly all the same so a look that used it would work.
-    ageSeconds: previewSeconds,
+    ageSeconds: 0,
     seed: tree.seed,
   }));
 
+  /**
+   * Who is ALIGHT at time `t`, and how fiercely.
+   *
+   * With no ?burn the answer never changes — every tree stays at its frozen
+   * intensity forever, which is what this harness has always photographed. With
+   * ?burn it is a real fire on the shipped curve: every tree ignited at t = 0,
+   * and a tree whose age has passed `burn` is simply NOT IN THE LIST, exactly as
+   * an extinguished fire is not in the plugin's (plugins/fire/client/index.ts).
+   * That absence is the whole thing smoke is written against.
+   */
+  const live: FireInstance[] = [];
+  function burningAt(t: number): readonly FireInstance[] {
+    live.length = 0;
+    for (const fire of fires) {
+      const mutable = fire as { intensity: number; ageSeconds: number };
+      mutable.ageSeconds = t;
+      if (burnSeconds === null) {
+        live.push(fire);
+        continue;
+      }
+      if (t >= burnSeconds) continue;
+      mutable.intensity = fireIntensity(t, burnSeconds);
+      live.push(fire);
+    }
+    return live;
+  }
+
   const flames = SHIPPED_FLAMES();
-  document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}${intensityOverride === null ? '' : ` — i=${intensityOverride}`}`;
-  flames.apply(fires);
+  const smoke = createFireSmoke();
+  document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}${intensityOverride === null ? '' : ` — i=${intensityOverride}`}${burnSeconds === null ? '' : ` — burn=${burnSeconds}`}${distanceMultiplier === 1 ? '' : ` — dist=${distanceMultiplier}`}`;
+  scene.add(smoke.root);
   scene.add(flames.root);
 
   const camera = new PerspectiveCamera(
@@ -315,14 +402,21 @@ function main(): void {
 
   // Frame on the trees (the flame's own root has no meaningful bounds until it
   // has been updated, and half the candidates disable frustum culling anyway).
-  frameCameraOn(camera, new Box3().setFromObject(flora.root));
+  frameCameraOn(camera, new Box3().setFromObject(flora.root), distanceMultiplier);
 
-  // Advance to exactly ?t in fixed steps. The first call is at elapsed 0 —
-  // several candidates place their instances only in `update`, so a capture at
-  // t=0 with no update at all would photograph an empty scene.
+  // Advance to exactly ?t in fixed steps, APPLYING AND UPDATING at every one.
+  // The old loop applied a frozen set once and only stepped `update`; smoke
+  // cannot be photographed that way, because what it draws depends on which
+  // fires it was handed on each of the steps in between — a column's whole
+  // lifetime is integrated out of that history, not read off the final frame.
   const steps = Math.round(previewSeconds / ANIMATION_STEP_SECONDS);
   for (let step = 0; step <= steps; step++) {
-    flames.update(ANIMATION_STEP_SECONDS, step * ANIMATION_STEP_SECONDS);
+    const t = step * ANIMATION_STEP_SECONDS;
+    const burning = burningAt(t);
+    flames.apply(burning);
+    flames.update(ANIMATION_STEP_SECONDS, t);
+    smoke.apply(burning);
+    smoke.update(ANIMATION_STEP_SECONDS, t);
   }
 
   let framesRendered = 0;
@@ -332,6 +426,17 @@ function main(): void {
     if (framesRendered < SETTLE_FRAME_COUNT) {
       requestAnimationFrame(renderFrame);
     } else {
+      // Published alongside the ready flag because the flame's budget rule is a
+      // FIXED SMALL DRAW-CALL COUNT (plugins/fire/client/flames/types.ts), and a
+      // claim about draw calls that is not read off the renderer is a guess. A
+      // screenshot driver reads this in the same evaluate that confirms
+      // readiness, so every picture comes with its own cost.
+      (
+        window as unknown as { __previewDrawCalls: number; __previewSmokeColumns: number }
+      ).__previewDrawCalls = renderer.info.render.calls;
+      (
+        window as unknown as { __previewDrawCalls: number; __previewSmokeColumns: number }
+      ).__previewSmokeColumns = smoke.drawnCount;
       (window as unknown as { __previewReady: boolean }).__previewReady = true;
     }
   }
@@ -339,6 +444,7 @@ function main(): void {
 
   window.addEventListener('pagehide', () => {
     flames.dispose();
+    smoke.dispose();
     flora.dispose();
     for (const geometry of geometries) geometry.dispose();
     for (const material of materials) material.dispose();

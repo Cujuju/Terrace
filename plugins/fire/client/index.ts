@@ -48,6 +48,15 @@
 // life (./flames/ribbonsToPlume.ts) with nothing here needing to know; and it
 // is what will let the look be re-tuned later without touching a line of the
 // sim. See ./flames/types.ts for the budget rules any look must keep.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// SMOKE IS NOT ONE OF THOSE LOOKS (./smoke.ts). Every flame renderer is a
+// function of what is burning RIGHT NOW, which is why one interface and one
+// instance list serve all of them. Smoke is a function of what burned — it keeps
+// its own decay and goes on drawing a fire this file has already dropped — so it
+// sits alongside the flame rather than inside it, and this file's frame callback
+// is where the difference is visible: smoke's clock is advanced on frames the
+// flame's is not.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type {
@@ -75,6 +84,7 @@ import { TorchIcon } from './TorchIcon.tsx';
 import { createFireLights, type FireLights } from './fireLights.ts';
 import { createTorchMarker, type TorchMarker } from './torchMarker.ts';
 import { SHIPPED_FLAMES } from './flames/index.ts';
+import { createFireSmoke, type FireSmoke } from './smoke.ts';
 import type { FireInstance, FlameRenderer } from './flames/types.ts';
 
 /**
@@ -101,6 +111,7 @@ interface LocalFire {
 }
 
 let flames: FlameRenderer | null = null;
+let smoke: FireSmoke | null = null;
 let lights: FireLights | null = null;
 let marker: TorchMarker | null = null;
 
@@ -189,21 +200,39 @@ function resolveGround(ctx: ClientPluginCtx): void {
   sinceRetrySeconds = 0;
 }
 
-function addFire(ctx: ClientPluginCtx, cell: FireCellState): void {
+function addFire(ctx: ClientPluginCtx, cell: FireCellState, inheritedKey?: number): void {
   const fire: LocalFire = {
     cell,
     groundY: null,
     ageSeconds: cell.ageSeconds,
-    drawKey: nextDrawKey++,
+    drawKey: inheritedKey ?? nextDrawKey++,
   };
   adoptGround(ctx, fire);
   fires.set(fireKey(cell.x, cell.y), fire);
 }
 
+/**
+ * Takes the keepalive snapshot: the whole burning set replaces the whole
+ * burning set, and the server's ages win outright.
+ *
+ * THE DRAW KEY SURVIVES THE REPLACEMENT, exactly as it does on the entity
+ * snapshot above — and for a reason that only became visible when something
+ * finally remembered a fire between frames. `key` is contracted to be stable
+ * for as long as the fire burns (./flames/types.ts), and this message arrives
+ * every FIRE_KEEPALIVE_SECONDS (10 s) during a burn that can last 22. Minting a
+ * fresh key here would present a still-burning tree to ./smoke.ts as a fire
+ * that had died and a different fire that had just caught, several times per
+ * burn: the column over it would start retiring while a second column climbed
+ * from nothing in the same spot. Nothing had noticed before because the light
+ * pool re-ranks from scratch every frame, so a re-keyed fire cost it a frame.
+ */
 function replaceAll(ctx: ClientPluginCtx, cells: readonly FireCellState[]): void {
+  const previous = new Map(fires);
   fires.clear();
   pendingGround = 0;
-  for (const cell of cells) addFire(ctx, cell);
+  for (const cell of cells) {
+    addFire(ctx, cell, previous.get(fireKey(cell.x, cell.y))?.drawKey);
+  }
 }
 
 /**
@@ -347,6 +376,13 @@ export const clientPlugin: TerraceClientPlugin = {
     flames = SHIPPED_FLAMES();
     ctx.layer.add(flames.root);
 
+    // Smoke is a SIBLING of the flame, not one of its looks: it keeps its own
+    // lifetime and goes on drawing fires this map has already forgotten
+    // (./smoke.ts). That is why it is built here rather than inside the flame
+    // compositor, and why it is handed the same instance list separately.
+    smoke = createFireSmoke();
+    ctx.layer.add(smoke.root);
+
     lights = createFireLights();
     ctx.layer.add(lights.root);
 
@@ -446,7 +482,7 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
-      if (flames === null || lights === null) return;
+      if (flames === null || smoke === null || lights === null) return;
 
       elapsedSeconds += dt;
 
@@ -481,11 +517,18 @@ export const clientPlugin: TerraceClientPlugin = {
       // the world. The renderer now reports what it is drawing
       // (./flames/types.ts's drawnCount), so "nothing is burning" is not
       // treated as "nothing is drawn" until it actually is.
+      // SMOKE OUTLIVES THE FIRE, so "nothing is burning" is emphatically not
+      // "nothing is drawn" — the frame the world stops burning is the frame
+      // smoke's whole reason for existing begins. Its clock is therefore
+      // advanced here, on precisely the frames the flame's is not, until its
+      // last column has retired and it too reports nothing drawn.
       if (fires.size === 0 && entityFires.size === 0) {
         lights.darken();
-        if (flames.drawnCount > 0) {
+        if (flames.drawnCount > 0 || smoke.drawnCount > 0) {
           instances.length = 0;
           flames.apply(instances);
+          smoke.apply(instances);
+          smoke.update(dt, elapsedSeconds);
         }
         return;
       }
@@ -507,6 +550,10 @@ export const clientPlugin: TerraceClientPlugin = {
       // intensity moves continuously, so "what changed" is "all of it".
       flames.apply(instances);
       flames.update(dt, elapsedSeconds);
+      // The SAME list, and the same keys: what smoke does with it is decide
+      // which of its columns are still being fed (./smoke.ts's `apply`).
+      smoke.apply(instances);
+      smoke.update(dt, elapsedSeconds);
       lights.update(instances, dt);
     });
   },
@@ -534,6 +581,8 @@ export const clientPlugin: TerraceClientPlugin = {
     // is the GPU memory behind the flame geometry, so that is released here.
     flames?.dispose();
     flames = null;
+    smoke?.dispose();
+    smoke = null;
     lights = null;
     marker?.dispose();
     marker = null;
