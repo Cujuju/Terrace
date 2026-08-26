@@ -58,14 +58,22 @@ Short answer:
   PluginHost.messageTypesFor(plugins) })` (`index.ts:192-196`), and — per
   session — `PluginHost.installed` / `PluginHost.entries`
   (`server/src/plugins/host.ts:67-77, 116-123`).
-- **Message types are fixed at boot.** The Colyseus room registers one
-  `onMessage` per namespaced type at room create from the boot-time list
-  (`server/src/net/terrace-room.ts:288-295`); the handler is resolved per
-  message via `host.handlerFor` (`host.ts:419-425`). A reloaded plugin that
-  ADDS a message type would never receive it; one that REMOVES a type leaves
-  a dead registration. Colyseus `onMessage('*')` exists (unverified against
-  0.17.50 in this session; the room header at `terrace-room.ts:9` documents
-  multiple handlers per type, not the wildcard).
+- **Message types were fixed at boot. FIXED 2026-08-26 (issue #197, Phase 3
+  step 15).** The Colyseus room used to register one `onMessage` per namespaced
+  type at room create from the boot-time list; a reloaded plugin that ADDED a
+  message type would never receive it, and one that REMOVED a type left a dead
+  registration. It now registers a single `onMessage('*')` and asks the live
+  host per message (`server/src/net/plugin-message-routing.ts`), so nothing
+  about plugin messages is snapshotted at boot.
+  `onMessage('*')` is VERIFIED present in @colyseus/core 0.17.50: the overload
+  `onMessage(messageType: '*', callback: (client, type, message) => void)` is
+  declared at `build/Room.d.ts:437`, and `_onMessage` (`build/Room.mjs:994-1000`)
+  emits to `'*'` only when no handler is registered for the incoming type,
+  falling back to `__no_message_handler` (`Room.mjs:94-103`: `client.error` in
+  dev mode, `client.leave(CloseCode.WITH_ERROR)` otherwise) when there is no
+  `'*'` either. The room therefore reproduces that rejection itself for any
+  non-namespaced type, so an unknown core type still degrades as it always did;
+  a namespaced type nobody claims is dropped in silence, as before.
 - **Per-session views are already revocable.** `createWorldApi` holds the
   World in a mutable cell; `closeSession` runs `host.closeWorld()` then
   `host.revokeApis()` (`server/src/world/session.ts:212-230`,
@@ -1113,9 +1121,14 @@ readiness DESIGN §3.5)**
 
 **Phase 3 — room routing not fixed at boot (Option B prerequisite 2)**
 
-15. Verify Colyseus 0.17.50 wildcard `onMessage`; route `<plugin>:<type>` per
-    message through `handlerFor`. Verify: a plugin message type added after
-    room create is delivered on the rig.
+15. DONE 2026-08-26 (issue #197). Colyseus 0.17.50's wildcard `onMessage`
+    verified from source (§1.1); `<plugin>:<type>` routed per message through
+    `handlerFor` by `net/plugin-message-routing.ts`. Verified on an isolated
+    rig (port 2603, own plugins dir): a plugin whose `messages` map was EMPTY
+    at boot and gained `ping` on its second `onWorldCreate` — long after room
+    create — had `lateping:ping` delivered and answered; the same rig on the
+    pre-fix build disconnected the client with Colyseus's unregistered-type
+    close (4002) instead.
 
 **Phase 4 — only on owner request: Option B proper**
 
