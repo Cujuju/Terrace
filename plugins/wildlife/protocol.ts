@@ -154,6 +154,32 @@ export function roundBroadcastPosition(value: number): number {
   return Math.round(value * POSITION_QUANTUM) / POSITION_QUANTUM;
 }
 
+/**
+ * The same rounding, kept INSIDE a `worldSize`-cell map.
+ *
+ * ROUNDING IS NOT ORDER-PRESERVING WITH RESPECT TO THE MAP EDGE, and that is
+ * the whole reason this exists (issue #180). A creature standing legally at
+ * x = 255.9987 on a 256-cell world — floor 255, a real cell — rounds to exactly
+ * 256.00, which is not a cell at all. Any recipient that turns a broadcast
+ * coordinate back into a cell or a chunk (the host's own visibility filter does
+ * exactly that, and bounds-checks by contract) is then handed an off-map
+ * position for a creature that never left the map.
+ *
+ * So the bound belongs HERE, on the conversion to wire coordinates, rather than
+ * on each caller that later divides one by a chunk size: half a quantum of
+ * rounding error must not be able to move a creature off the world. The
+ * clamp target is the largest value this precision can express that still
+ * floors to the last cell.
+ *
+ * Positions only, never headings — an angle has no map to be inside of.
+ */
+export function roundBroadcastCell(value: number, worldSize: number): number {
+  const rounded = roundBroadcastPosition(value);
+  if (rounded < 0) return 0;
+  const lastRepresentableInside = worldSize - 1 / POSITION_QUANTUM;
+  return rounded > lastRepresentableInside ? lastRepresentableInside : rounded;
+}
+
 /** One creature, as it appears on the wire. */
 export interface WildlifeEntityState {
   /** Stable for the creature's whole life; the client keys interpolation by it. */
