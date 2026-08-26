@@ -305,20 +305,36 @@ const GENESIS_NOISE_MAX_BAND_OFFSET = GENESIS_NOISE_MAX_HEIGHT_ABOVE_SEA / BAND_
  * octave amplitudes — ONE HALF, i.e. a square root, which skews the draw toward
  * rough.
  *
- * WHY IT IS NOT 1 (a uniform draw). Roughness is the dial between "flat sea"
- * and "full relief", and drawn uniformly it puts a FIFTH of all worlds below
- * 0.2 — measured over 200 seeds — where the field's whole relief is a few bands
- * and the only land in the world is what the island pass raised. That is a
- * fresh world with no archipelago in it, which is the defect this change
- * exists to fix, repeated on 20% of worlds.
- *
- * A SQUARE ROOT rather than a floor under the draw, and that distinction is the
- * design choice: a floor would make the owner's flat world (2026-08-18, "it's
- * OK to create flat worlds") unreachable, whereas a skew leaves every roughness
- * in [0, 1) possible and simply makes the calm end rare — P(roughness < 0.2)
- * falls from 20% to 4%. Every world remains a draw, and no world is forbidden.
+ * WHY IT IS NOT 1 (a uniform draw). Roughness is the dial between "calm sea"
+ * and "full relief", and drawn uniformly it puts a FIFTH of all worlds in the
+ * bottom fifth of the range — measured over 200 seeds — where the field's whole
+ * relief is a few bands and the only land in the world is what the island pass
+ * raised. That is a fresh world with no archipelago in it, which is the defect
+ * this change exists to fix, repeated on 20% of worlds.
  */
 const GENESIS_ROUGHNESS_SKEW_EXPONENT = 1 / 2;
+
+/**
+ * The least relief any fresh world may have, as a fraction of the noise
+ * amplitude — and the end of "it's OK to create flat worlds" (owner,
+ * 2026-08-18), retired by the owner's own later decisions.
+ *
+ * DERIVED, not chosen: it is the roughness at which the COARSE OCTAVE ALONE
+ * spans the distance from the deep-water line to sea level. Below that no lift
+ * of the field can satisfy both of genesis's whole-world guarantees at once,
+ * because they sit on opposite sides of that distance — a world flatter than
+ * this either has no dry land (GENESIS_MIN_LAND_PERCENT) or no basin deep
+ * enough for a kraken (2026-08-19, owner-ratified), and lifting the field to
+ * fix one breaks the other. A genuinely featureless world can keep neither
+ * promise, so genesis stopped drawing one.
+ *
+ * The world at this floor is still very calm: gentle relief, a shallow sea, one
+ * basin. It is "flat" in the sense the owner meant and no longer flat in the
+ * sense that leaves a player nothing.
+ */
+const GENESIS_MIN_ROUGHNESS =
+  FRESH_SEABED_BANDS_BELOW_SEA /
+  ((GENESIS_NOISE_MAX_BAND_OFFSET - GENESIS_NOISE_MIN_BAND_OFFSET) / 2);
 
 const GENESIS_BASELINE_CEILING_DIVISOR = 4;
 const GENESIS_BASELINE_MIN_BAND_OFFSET = -FRESH_SEABED_BANDS_BELOW_SEA;
@@ -340,6 +356,11 @@ interface GenesisNoiseOctave {
 export interface GenesisNoiseField {
   /** The band offset a perfectly calm world would be flat at, everywhere. */
   readonly baselineBandOffset: number;
+  /**
+   * Whole bands the land pass lifted the whole field by — zero on a world whose
+   * own noise already cleared GENESIS_MIN_LAND_PERCENT. See the land pass.
+   */
+  readonly landLiftBands: number;
   readonly octaves: readonly GenesisNoiseOctave[];
 }
 
@@ -353,11 +374,12 @@ export interface GenesisNoiseField {
  *   3. every lattice point of every octave, octaves in GENESIS_NOISE_OCTAVES
  *      order, points row-major within each.
  *
- * ROUGHNESS AND BASELINE, TOGETHER. `roughness`, in [0, 1), scales how far
- * every lattice point may wander from `baseline`: at 1 the coarse octave alone
- * spans the full amplitude, and at 0 every point of every octave is exactly
- * zero — a flat world at the baseline — both ends of the SAME continuum rather
- * than a special-cased flat mode bolted on beside the noise.
+ * ROUGHNESS AND BASELINE, TOGETHER. `roughness`, in
+ * [GENESIS_MIN_ROUGHNESS, 1), scales how far every lattice point may wander
+ * from `baseline`: at 1 the coarse octave alone spans the full amplitude, and
+ * at the floor it spans just enough for the world to keep both of genesis's
+ * whole-world guarantees — one continuum, with a floor under it rather than a
+ * special-cased calm mode bolted on beside the noise.
  *
  * `baseline` is drawn PER WORLD and is why this is two draws rather than one.
  * An earlier version collapsed roughness toward the noise range's own zero
@@ -381,7 +403,9 @@ function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseFi
   const baselineBandOffset = Math.round(
     GENESIS_BASELINE_MIN_BAND_OFFSET + rng() * baselineSpan,
   );
-  const roughness = Math.pow(rng(), GENESIS_ROUGHNESS_SKEW_EXPONENT);
+  const roughness =
+    GENESIS_MIN_ROUGHNESS +
+    (1 - GENESIS_MIN_ROUGHNESS) * Math.pow(rng(), GENESIS_ROUGHNESS_SKEW_EXPONENT);
 
   const octaves = GENESIS_NOISE_OCTAVES.map(({ spacingCells, amplitudeDivisor }) => {
     const amplitude = (halfSpan * roughness) / amplitudeDivisor;
@@ -398,7 +422,7 @@ function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseFi
     return { spacingCells, bandOffsets, cols };
   });
 
-  return { baselineBandOffset, octaves };
+  return { baselineBandOffset, landLiftBands: 0, octaves };
 }
 
 /**
@@ -429,8 +453,23 @@ function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number 
 }
 
 /**
- * The whole field's band offset at one cell: the baseline plus every octave's
- * wander, clamped to the amplitude limits.
+ * The field's UNCLAMPED band sum at one cell: the baseline, the land pass's
+ * lift, and every octave's wander.
+ *
+ * Exposed separately from the clamped form because the land pass reasons about
+ * the whole world at every candidate lift at once (a histogram, and one flood
+ * fill per candidate), and it can only do that on values the amplitude clamp
+ * has not already folded together.
+ */
+function genesisNoiseRawBandAt(field: GenesisNoiseField, x: number, y: number): number {
+  let bands = field.baselineBandOffset + field.landLiftBands;
+  for (const octave of field.octaves) bands += octaveBandAt(octave, x, y);
+  return bands;
+}
+
+/**
+ * The whole field's band offset at one cell — the raw sum, clamped to the
+ * amplitude limits.
  *
  * THE CLAMP IS ON THE SUM, not on the octaves, which is what makes the limits
  * mean what they say: no cell of a fresh world is ever more than
@@ -439,10 +478,16 @@ function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number 
  * also gives a very rough world flat-topped mesas and flat-floored abyssal
  * plains where the sum runs past a limit, which reads as terrain rather than as
  * clipping precisely because the world is terraced anyway.
+ *
+ * It never moves a value ACROSS sea level or across the seabed line, both of
+ * which lie strictly inside the amplitude range — which is what lets the land
+ * pass classify cells from the raw sums alone.
  */
 function genesisNoiseBandAt(field: GenesisNoiseField, x: number, y: number): number {
-  let bands = field.baselineBandOffset;
-  for (const octave of field.octaves) bands += octaveBandAt(octave, x, y);
+  return clampNoiseBand(genesisNoiseRawBandAt(field, x, y));
+}
+
+function clampNoiseBand(bands: number): number {
   if (bands > GENESIS_NOISE_MAX_BAND_OFFSET) return GENESIS_NOISE_MAX_BAND_OFFSET;
   if (bands < GENESIS_NOISE_MIN_BAND_OFFSET) return GENESIS_NOISE_MIN_BAND_OFFSET;
   return bands;
@@ -455,18 +500,25 @@ function genesisNoiseBandAt(field: GenesisNoiseField, x: number, y: number): num
 // all seeds would hand a new player an unbroken sheet of water and a bill of
 // several hundred sculpts before anything could stand on it.
 //
-// THE PASS. Count the separate islands the noise already drew inside the
-// starter square. If there are fewer than GENESIS_MIN_STARTER_ISLANDS of them
-// at GENESIS_MIN_ISLAND_CELLS or more, raise terraced islands at seed-chosen
-// anchors until there are — re-surveying after each one, so the count the pass
-// stops on is the count the world really has, not the count it intended.
+// THE PASS. Measure the island-sized land the noise already drew inside the
+// starter square. If it is short of GENESIS_MIN_STARTER_LAND_CELLS, LIFT the
+// field around the shallowest candidate site and measure again — so the number
+// the pass stops on is the land the world really has, not the land it
+// intended.
 //
-// REJECTED ALTERNATIVE 1: bias the noise so land is likelier. Cheapest of all
-// and it guarantees nothing — a guarantee you have to re-check is not one — and
-// it would drown the flat-world case the owner explicitly asked to keep.
+// IT LIFTS THE FIELD; IT DOES NOT STAMP A SHAPE. The lift is added to the
+// noise's band offset before the waterline is applied, so the island's coast is
+// where the seed's own terrain crosses sea level once raised — see
+// islandLiftBandsAt for why maxing a cone over the finished height instead is
+// what produced the discs-with-haloes the owner rejected on 2026-08-26.
+//
+// REJECTED ALTERNATIVE 1: bias the noise so land is likelier. That is the LAND
+// PASS below, and it is a different guarantee: it fixes the world's land
+// FRACTION, and cannot promise that any of that land is inside the square the
+// player starts in.
 // REJECTED ALTERNATIVE 2: stamp a fixed archipelago template into every starter
-// square. Deterministic, but every world would wear the same three islands in
-// the same three places, which is the defect this whole change exists to fix.
+// square. Deterministic, but every world would wear the same islands in the
+// same places, which is the defect this whole change exists to fix.
 // REJECTED ALTERNATIVE 3: raise islands ANYWHERE in the world rather than in
 // the starter square. Prettier on a map and useless on day one: only unlocked
 // cells are reachable, so an island the player cannot walk to is scenery.
@@ -474,26 +526,14 @@ function genesisNoiseBandAt(field: GenesisNoiseField, x: number, y: number): num
 /**
  * How many separate islands a fresh world's starter square must contain.
  *
- * TWO, and this is a CEILING IMPOSED BY ARITHMETIC rather than a taste
- * judgement — the owner's brief proposed three. The starter square is
- * INITIAL_UNLOCK_CHUNK_SPAN chunks a side (102 400 cells at the shipped
- * geometry) and the day-one habitat minima below already claim 96 000 of them
- * (32 000 shallow + 64 000 deep). An island cannot be raised without a skirt:
- * its flanks descend at GENESIS_TERRACE_WALL_CELLS_PER_BAND, so getting from
- * the summit down to the seabed takes 64 cells of run on every side and turns
- * ~17 000 cells of deep water into shallow. Three islands would force ~51 000
- * cells of shallow plus their own land, against a deep-water minimum of 64 000
- * in a square of 102 400: the sum is over 118 000 and there is no arrangement
- * of the terrain that satisfies it. Two islands force at most 5 832 of land
- * (GENESIS_ISLAND_MAX_LAND_CELLS apiece) beside 32 000 shallow and 64 000 deep
- * — 101 832 — which fits.
+ * TWO — from the owner's words, "islands, not just a single island".
  *
- * Two is also exactly what the owner asked for in words — "islands, not just a
- * single island". A third becomes possible the moment either the whale's
- * density or the starter square's size moves; both are owner decisions, so this
- * constant states the arithmetic rather than quietly picking a side of it.
+ * It multiplies GENESIS_MIN_ISLAND_CELLS to give GENESIS_MIN_STARTER_LAND_CELLS,
+ * which is what the pass actually measures; see that constant for why the
+ * guarantee counts LAND rather than counting landmasses.
  */
 export const GENESIS_MIN_STARTER_ISLANDS = 2;
+
 
 /**
  * How much land a landmass needs before genesis counts it as an island, in
@@ -514,17 +554,43 @@ export const GENESIS_MIN_STARTER_ISLANDS = 2;
 export const GENESIS_MIN_ISLAND_CELLS = (NEIGHBOURHOOD_CELLS / 2) * (NEIGHBOURHOOD_CELLS / 2);
 
 /**
- * How high a raised island stands above sea level, in height units — 64, four
- * bands.
+ * How much usable land the starter square must hold, in cells: room for
+ * GENESIS_MIN_STARTER_ISLANDS islands, counted only over landmasses that are
+ * themselves at least GENESIS_MIN_ISLAND_CELLS.
  *
- * Four terraces is a hill you can see from across the starter square and read
- * as land, not as a sandbar that vanishes at the first smooth stroke. It is
- * also a QUARTER of the noise field's own ceiling, so a manufactured island
- * never out-tops the terrain the seed drew: the guarantee is a floor under the
- * world, never the most dramatic thing in it.
+ * COUNTING LAND RATHER THAN LANDMASSES, and the reason is that a landmass count
+ * is not something a lift can deliver. Genesis raises islands by lifting the
+ * field; on a seed whose starter square is one continent, every extra lift
+ * joins that continent and the count never moves — measured, the pass burned
+ * all nine of its sites and still reported one landmass. Counting land instead
+ * terminates, and it asks the question that matters: has the player got enough
+ * ground to build on, in pieces big enough to be worth building on. Whether
+ * that arrives as two islands or one coastline is the seed's business, and the
+ * "not just a single island" half of the owner's request is answered by the
+ * whole map — the land pass and the noise put islands across all of it.
+ *
+ * The per-landmass floor is what stops a scatter of rocks counting: a hundred
+ * one-cell islets are not a place to live, which is the same judgement
+ * GENESIS_MIN_ISLAND_CELLS already encodes.
  */
-const GENESIS_ISLAND_PEAK_HEIGHT_ABOVE_SEA = GENESIS_NOISE_MAX_HEIGHT_ABOVE_SEA / 4;
-const GENESIS_ISLAND_PEAK_BANDS = GENESIS_ISLAND_PEAK_HEIGHT_ABOVE_SEA / BAND_HEIGHT;
+export const GENESIS_MIN_STARTER_LAND_CELLS =
+  GENESIS_MIN_STARTER_ISLANDS * GENESIS_MIN_ISLAND_CELLS;
+
+/**
+ * How far above sea level a raised island's summit is LIFTED TO, in bands.
+ *
+ * DERIVED, not chosen: the lift falls one band per
+ * GENESIS_TERRACE_WALL_CELLS_PER_BAND cells, so on ground of uniform depth an
+ * island of summit height P encloses a disc of radius `P * WALL`. This is the
+ * smallest P whose disc clears GENESIS_MIN_ISLAND_CELLS, plus one band of
+ * margin for the fact that real ground is not uniform — the noise the island is
+ * lifted out of slopes, so the coastline is never a circle and the area moves
+ * with it.
+ */
+const GENESIS_ISLAND_PEAK_BANDS =
+  Math.ceil(
+    Math.sqrt(GENESIS_MIN_ISLAND_CELLS / Math.PI) / GENESIS_TERRACE_WALL_CELLS_PER_BAND,
+  ) + 1;
 
 /**
  * Radius of a raised island's flat summit, in cells — two world units, so the
@@ -532,91 +598,67 @@ const GENESIS_ISLAND_PEAK_BANDS = GENESIS_ISLAND_PEAK_HEIGHT_ABOVE_SEA / BAND_HE
  *
  * Small on purpose. The summit is a place to put the first building, not the
  * island; almost all of an island's area comes from the terraced flanks below
- * it. Widening it is the cheapest way to grow the island, which is exactly why
- * it is pinned to a unit of ground rather than tuned: see
- * GENESIS_ISLAND_MAX_LAND_CELLS for the budget it has to fit inside.
+ * it.
  */
 const GENESIS_ISLAND_PLATEAU_RADIUS_CELLS = 2 * WORLD_UNIT_CELLS;
 
 /**
- * How far an island's coastline wanders in or out from a perfect circle, in
- * cells — ONE BAND'S WORTH OF RUN.
+ * The most bands genesis will lift a site by — enough to raise a summit out of
+ * the DEEPEST ground the amplitude range allows, so every candidate site can
+ * become an island however deep the water over it.
  *
- * WITHOUT IT AN ISLAND LOOKS BUILT, NOT BORN. A terraced cone of constant
- * radius renders as a ziggurat: a squared-off, concentric staircase that reads
- * as somebody's monument sitting in the sea, which is precisely the "world
- * object that does not belong on the ground it sits on" the fidelity bar
- * rejects. The wobble is taken from the FINEST NOISE OCTAVE at the same cell
- * (see islandCoastWobbleCells), so an island's coast is drawn by the same hand
- * as the coastlines around it, at the same scale, rather than by a jitter of
- * its own.
+ * IT CAPS THE LIFT; IT DOES NOT REJECT THE SITE. An uncapped lift on abyssal
+ * ground would raise a mountain three hundred cells across whose flanks are the
+ * only thing for miles — the "world object that does not belong on the ground it
+ * sits on" the fidelity bar refuses — and it would also run past
+ * GENESIS_ISLAND_REACH_CELLS, which is derived from this and is what makes the
+ * per-cell bounding-box reject correct.
  *
- * ONE BAND OF RUN because that is the smallest displacement that moves a
- * terrace edge a whole terrace, and because the bound it puts on the island's
- * radius is what keeps GENESIS_ISLAND_MIN_LAND_CELLS above the bar the survey
- * counts against. On a perfectly flat world the finest octave is zero
- * everywhere and the island degenerates to a clean circular atoll — still not a
- * square, and still the honest picture of a world with no relief in it.
+ * Capping rather than dropping is a correction, and so is the size of the cap.
+ * Dropping unaffordable sites left one seed in twenty with a single candidate,
+ * so the pass raised one island and had nowhere else to try; capping at the
+ * seabed depth then left nine sites that all failed to break the surface,
+ * because the ground under them was abyss. At this value a site always CAN
+ * become an island, and the cost of a large lift is paid only where it has to
+ * be: sites are tried shallowest-first (see `genesisIslandSites`), so the
+ * gentlest ground in the square is always used first.
  */
-const GENESIS_ISLAND_COAST_WOBBLE_CELLS = GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+const GENESIS_ISLAND_MAX_LIFT_BANDS =
+  GENESIS_ISLAND_PEAK_BANDS - GENESIS_NOISE_MIN_BAND_OFFSET;
 
 /**
- * Radius of a raised island's DRY LAND, in cells, before the coast wobble.
- *
- * Derived from the terrace geometry, not chosen: the summit is
- * GENESIS_ISLAND_PEAK_BANDS bands up and the flanks lose one band per
- * GENESIS_TERRACE_WALL_CELLS_PER_BAND cells, so the last cell still above sea
- * level sits `PEAK_BANDS * WALL - 1` cells beyond the summit's edge — 23.
- */
-const GENESIS_ISLAND_LAND_RADIUS_CELLS =
-  GENESIS_ISLAND_PLATEAU_RADIUS_CELLS +
-  GENESIS_ISLAND_PEAK_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND -
-  1;
-
-/**
- * Bounds on the land area of one raised island, in cells. Both are DISC areas
- * bounded by integers — 3 r² below π r² and 4 r² above it — taken at the
- * radius the wobble can shrink the island to and grow it to respectively, so
- * both hold whatever the noise does to the coast.
- *
- * THEY ARE WHAT MAKES THE TWO GUARANTEES COMPATIBLE, and both directions are
- * load-bearing:
- *   * the MINIMUM (1 083) must clear GENESIS_MIN_ISLAND_CELLS (1 024), or the
- *     pass would raise islands its own survey then refuses to count and would
- *     work through its whole slot list on every world;
- *   * GENESIS_MIN_STARTER_ISLANDS × the MAXIMUM (2 916) must fit in the land
- *     the starter square has left after both habitat minima — see
- *     GENESIS_MIN_STARTER_ISLANDS for that sum.
- * Both hold with margin; widening the summit by one more world unit breaks the
- * second.
- */
-export const GENESIS_ISLAND_MIN_LAND_CELLS =
-  3 * (GENESIS_ISLAND_LAND_RADIUS_CELLS - GENESIS_ISLAND_COAST_WOBBLE_CELLS) ** 2;
-export const GENESIS_ISLAND_MAX_LAND_CELLS =
-  4 * (GENESIS_ISLAND_LAND_RADIUS_CELLS + GENESIS_ISLAND_COAST_WOBBLE_CELLS) ** 2;
-
-/**
- * How far a raised island reaches in total, in cells: the distance at which its
- * flanks have descended all the way to the seabed and stop being able to raise
- * anything, plus the wobble. A bounding-box reject, so it is an upper bound and
- * not a shape.
+ * How far a raised island's lift reaches at all, in cells: the distance at
+ * which the largest permitted lift has fallen back to zero. A bounding-box
+ * reject, so it is an upper bound and not a shape.
  */
 const GENESIS_ISLAND_REACH_CELLS =
   GENESIS_ISLAND_PLATEAU_RADIUS_CELLS +
-  (GENESIS_ISLAND_PEAK_BANDS + FRESH_SEABED_BANDS_BELOW_SEA) *
-    GENESIS_TERRACE_WALL_CELLS_PER_BAND +
-  GENESIS_ISLAND_COAST_WOBBLE_CELLS;
+  GENESIS_ISLAND_MAX_LIFT_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND;
 
 /**
- * Anchor slots per axis inside the starter square — a 3 × 3 grid, so nine
- * candidate island sites.
+ * A lower bound on the land one raised island encloses, in cells — a disc of
+ * radius `PEAK_BANDS * WALL` with π bounded below by 3.
  *
- * THREE because of what has to fit between them: two islands whose LAND touches
- * would be one island to the survey, so slots have to be further apart than one
- * island's land diameter. At the shipped starter span the grid pitch is 91
- * cells against a land diameter of at most 55, leaving 36 cells of water
- * between neighbouring sites — comfortably separate without the sites being so
- * far apart that they only ever land in the square's corners.
+ * It must clear GENESIS_MIN_ISLAND_CELLS or the pass would raise islands its
+ * own survey then refuses to count, and would work through its whole site list
+ * on every world. Stated as a bound rather than as an exact area because the
+ * area is NOT exact any more: an island is a lift applied to the seed's own
+ * terrain, so its coast follows that terrain's contours and its size moves with
+ * them. The guarantee does not rest on this number — the pass re-surveys and
+ * tries another site — it is here so a change to the geometry that would make
+ * the pass structurally useless fails a test instead.
+ */
+export const GENESIS_ISLAND_MIN_LAND_CELLS =
+  3 * (GENESIS_ISLAND_PEAK_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND) ** 2;
+
+/**
+ * Candidate sites per axis inside the starter square — a 3 × 3 grid, so nine.
+ *
+ * THREE because of what has to fit between them: two islands whose land touches
+ * would be one island to the survey, so sites have to be further apart than one
+ * island's land diameter. At the shipped starter span the pitch is 92 cells
+ * against a typical land diameter of 48, which leaves open water between
+ * neighbouring sites without pushing them into the square's corners.
  *
  * NINE SITES FOR TWO ISLANDS, deliberately: the pass re-surveys after every
  * island it raises, and a site that lands on top of land the noise already drew
@@ -624,74 +666,63 @@ const GENESIS_ISLAND_REACH_CELLS =
  */
 const GENESIS_ISLAND_SLOTS_PER_AXIS = 3;
 
-/** One island genesis decided to raise: a summit anchor, in cell coordinates. */
+/**
+ * One island genesis decided to raise: where its summit is, and how many bands
+ * the field has to be lifted there to put that summit above water.
+ *
+ * The lift is stored rather than recomputed because it depends on the noise at
+ * the anchor, and `freshGenesisHeightAt` must stay a pure function of
+ * `(terrain, x, y)` that never re-derives the field it is already evaluating.
+ */
 export interface GenesisIsland {
   readonly anchorX: number;
   readonly anchorY: number;
+  readonly liftBands: number;
 }
 
 /**
- * How many cells the coastline is pushed out (negative) or pulled in (positive)
- * at one cell, from the finest noise octave.
+ * The islands' contribution at one cell, IN BANDS AND BEFORE THE WATERLINE IS
+ * APPLIED — this is added to the noise's own band offset, not maximed over the
+ * finished height.
  *
- * SCALED THE WAY A SLOPE SCALES: a bump of one band displaces a natural
- * shoreline by GENESIS_TERRACE_WALL_CELLS_PER_BAND cells, so that is the
- * conversion, clamped to GENESIS_ISLAND_COAST_WOBBLE_CELLS. Read raw, the
- * finest octave carries barely a band of relief and moved the coast by a cell —
- * invisible, and the island still rendered as a perfect circle.
+ * THAT DISTINCTION IS THE WHOLE POINT (owner review, 2026-08-26). Taking the
+ * maximum of the terrain and a cone stamps the cone: its coastline is the
+ * cone's own contour, so it renders as a disc with a halo, no matter how the
+ * cone is jittered. ADDING the lift to the field instead moves the field's own
+ * contour lines — the resulting coast is where `noise + lift` crosses sea
+ * level, which follows the seed's terrain and comes out as ragged as everything
+ * around it. Two islands lifted by the same amount on different ground are
+ * different shapes, which is what "noise-shaped, not stamped" means.
  *
- * The octave is drawn on a quarter-neighbourhood lattice and bilinearly
- * interpolated, so the displacement varies smoothly over sixteen cells rather
- * than per cell: a coastline, not a fringe.
- */
-function islandCoastWobbleCells(field: GenesisNoiseField, x: number, y: number): number {
-  const finest = field.octaves[field.octaves.length - 1]!;
-  const bands = octaveBandAt(finest, x, y) * GENESIS_TERRACE_WALL_CELLS_PER_BAND;
-  if (bands > GENESIS_ISLAND_COAST_WOBBLE_CELLS) return GENESIS_ISLAND_COAST_WOBBLE_CELLS;
-  if (bands < -GENESIS_ISLAND_COAST_WOBBLE_CELLS) return -GENESIS_ISLAND_COAST_WOBBLE_CELLS;
-  return bands;
-}
-
-/**
- * The islands' contribution to one cell: full peak within the summit plateau,
- * then one band lower per GENESIS_TERRACE_WALL_CELLS_PER_BAND cells of radius
- * beyond it, with the coast wobble added to the radius.
+ * The falloff is terraced at GENESIS_TERRACE_WALL_CELLS_PER_BAND, the steepest
+ * run the relaxation invariant calls stable, so a smooth stroke cannot slump
+ * the island the guarantee rests on. Overlapping lifts take the larger rather
+ * than summing: two sites close together should make one island, not a tower.
  *
  * A EUCLIDEAN radius, with the single `Math.sqrt` floored on the spot — the
  * same "integer-only, or an exactly-specified IEEE op with an immediate floor"
- * rule the trench walls follow. A Chebyshev (square) radius was what this
- * started as and it is exactly wrong here: it draws a squared-off ziggurat,
- * which is the artificial look the wobble exists to break.
- *
- * GENESIS RAISES, NEVER LOWERS, so an island laid over ground the noise already
- * put higher leaves it alone. That is what keeps the pass from gouging a
- * terrace into an existing hillside, and it is why the pass has to re-survey
- * rather than assume each island it raises is a new one.
+ * rule the trench walls follow.
  */
-function raisedByIslands(
-  terrain: FreshGenesisTerrain,
+function islandLiftBandsAt(
+  islands: readonly GenesisIsland[],
   x: number,
   y: number,
-  base: number,
 ): number {
-  let height = base;
-  for (const island of terrain.islands) {
+  let lift = 0;
+  for (const island of islands) {
     const dx = x - island.anchorX;
     const dy = y - island.anchorY;
     if (dx > GENESIS_ISLAND_REACH_CELLS || dx < -GENESIS_ISLAND_REACH_CELLS) continue;
     if (dy > GENESIS_ISLAND_REACH_CELLS || dy < -GENESIS_ISLAND_REACH_CELLS) continue;
 
-    const radius =
-      Math.floor(Math.sqrt(dx * dx + dy * dy)) + islandCoastWobbleCells(terrain.noise, x, y);
+    const radius = Math.floor(Math.sqrt(dx * dx + dy * dy));
     const beyondPlateau = radius - GENESIS_ISLAND_PLATEAU_RADIUS_CELLS;
     const bands =
-      GENESIS_ISLAND_PEAK_BANDS -
+      island.liftBands -
       (beyondPlateau > 0 ? Math.floor(beyondPlateau / GENESIS_TERRACE_WALL_CELLS_PER_BAND) : 0);
-
-    const wanted = clampHeight(bands * BAND_HEIGHT);
-    if (wanted > height) height = wanted;
+    if (bands > lift) lift = bands;
   }
-  return height;
+  return lift;
 }
 
 /** One connected landmass inside the starter square, as the island survey saw it. */
@@ -758,164 +789,157 @@ function surveyStarterLandmasses(
 }
 
 /**
- * The nine candidate anchors inside the starter square, in the order this
- * world's seed wants to use them.
+ * The nine candidate sites inside the starter square, in the order this world
+ * will try them, each carrying the lift its own ground needs.
  *
- * The grid itself is fixed geometry (see GENESIS_ISLAND_SLOTS_PER_AXIS); only
- * the ORDER is seed-derived, by an avalanche of (slot index, seed) sorted
- * ascending with the slot index as the final tie-break. That is a total order,
- * so two worlds of the same size and seed always try the same sites in the same
- * sequence, and two different seeds essentially never do.
+ * ORDERED SHALLOWEST GROUND FIRST, which is both the cheapest and the most
+ * honest rule: an island wants to be where the sea floor already comes closest
+ * to the surface, the lift it needs there is smallest, and a small lift
+ * disturbs the least terrain around it. The seed still decides everything —
+ * WHICH site is shallowest is a property of the field the seed drew — and an
+ * avalanche of (site index, seed) breaks ties so a flat starter square, where
+ * every site sits on identical ground, does not always pick the same corner.
+ *
+ * Sites needing more than GENESIS_ISLAND_MAX_LIFT_BANDS are dropped, unless
+ * that would leave nothing to try, in which case the shallowest survives: a
+ * world whose starter square is all abyss gets its islands rather than an
+ * exception.
  */
-function genesisIslandSlots(terrain: FreshGenesisTerrain, seed: number): GenesisIsland[] {
+function genesisIslandSites(terrain: FreshGenesisTerrain, seed: number): GenesisIsland[] {
   const span = terrain.unlockMaxCell - terrain.unlockMinCell + 1;
-  // Inset by the land radius so an island's dry land stays inside the square it
-  // is being raised for; a slot on a tiny world can still overlap its
+  // Inset by the reach of a typical island so its land stays inside the square
+  // it is being raised for; a site on a tiny world can still overlap its
   // neighbours, which the re-survey loop then simply reads as "no new island".
   const inset = Math.min(
-    GENESIS_ISLAND_LAND_RADIUS_CELLS + GENESIS_ISLAND_COAST_WOBBLE_CELLS,
+    GENESIS_ISLAND_PEAK_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND,
     Math.floor((span - 1) / 2),
   );
   const usable = span - 2 * inset;
   const pitch = Math.max(1, Math.floor(usable / GENESIS_ISLAND_SLOTS_PER_AXIS));
 
-  const slots: { island: GenesisIsland; index: number; score: number }[] = [];
+  const sites: { island: GenesisIsland; index: number; score: number }[] = [];
   for (let sy = 0; sy < GENESIS_ISLAND_SLOTS_PER_AXIS; sy++) {
     for (let sx = 0; sx < GENESIS_ISLAND_SLOTS_PER_AXIS; sx++) {
       const index = sy * GENESIS_ISLAND_SLOTS_PER_AXIS + sx;
-      slots.push({
-        island: {
-          anchorX: terrain.unlockMinCell + inset + sx * pitch + (pitch >> 1),
-          anchorY: terrain.unlockMinCell + inset + sy * pitch + (pitch >> 1),
-        },
+      const anchorX = terrain.unlockMinCell + inset + sx * pitch + (pitch >> 1);
+      const anchorY = terrain.unlockMinCell + inset + sy * pitch + (pitch >> 1);
+      // The lift that puts THIS site's summit GENESIS_ISLAND_PEAK_BANDS above
+      // sea level, given the ground the noise put under it. At least one band,
+      // so a site already above water still gains a summit rather than nothing.
+      const ground = genesisNoiseBandAt(terrain.noise, anchorX, anchorY);
+      const liftBands = Math.min(
+        GENESIS_ISLAND_MAX_LIFT_BANDS,
+        Math.max(1, GENESIS_ISLAND_PEAK_BANDS - ground),
+      );
+      sites.push({
+        island: { anchorX, anchorY, liftBands },
         index,
         score: genesisMix(index, seed),
       });
     }
   }
 
-  slots.sort((a, b) => a.score - b.score || a.index - b.index);
-  return slots.map((slot) => slot.island);
-}
-
-// ── The habitat pass ─────────────────────────────────────────────────────────
-//
-// THE PROBLEM. The wildlife plugin's day-one census only counts UNLOCKED cells,
-// so the starter square IS the habitat budget of a new world. The fixed profile
-// this change removes split that budget by construction and the plugin's tests
-// asserted the exact split. Left to the noise alone, a seed can hand a world an
-// all-shallow starter square (no whales, no deep-sea creatures) or an all-abyss
-// one (no fish).
-//
-// THE PASS. Count shallow and deep cells in the starter square. If either is
-// short of the minimum the plugin needs, RESCALE the square: sort its cells by
-// height, decide by rank which of them must be deep, shallow and land, and
-// remap each of those three groups monotonically into the band window its class
-// occupies. The square comes out as the landscape the noise drew with its
-// waterline moved, not as terrain replaced. See planGenesisHabitatRepair.
-//
-// WHAT IT NEVER TOUCHES: land belonging to a counted island (see the island
-// pass), so repairing habitat cannot un-do the island guarantee. It also never
-// WRITES land — every height it writes lands inside one of the two water
-// windows — so it cannot invent an island either.
-//
-// FEASIBILITY IS PROVEN, not hoped for. The protected land is at most
-// GENESIS_MIN_STARTER_ISLANDS islands' worth (see
-// genesisStarterIslandProtectionBudget) and the two minima are clamped to the
-// cells left over (see genesisHabitatTargets), so the two rank boundaries
-// always fall inside the list they index.
-//
-// REJECTED ALTERNATIVE: keep the exact-census contract by keeping a fixed
-// shelf. That is the thing the owner asked to remove, and the reason it was
-// ever exact is that a test asserted a number rather than a need.
-
-/**
- * How much shallow water the starter square must hold, in cells.
- *
- * A DELIBERATE RESTATEMENT of the wildlife plugin's own arithmetic — core must
- * not import a plugin, so the numbers are stated here and the AGREEMENT is
- * pinned from the plugin side (plugins/wildlife/test/wildlife.test.ts), exactly
- * as FRESH_SEABED_DEPTH_BELOW_SEA's relation to that plugin is.
- *
- * The need being restated: FISH_SCHOOLS_ON_FRESH_SHELF (1) complete school of
- * `groupSize` (5) fish, at the fish density of 400 square world units each. One
- * school and not one fish, because a school is a thing you recognise by seeing
- * more than one of them.
- */
-const GENESIS_FISH_SCHOOLS_ON_FRESH_SHELF = 1;
-const GENESIS_FISH_SCHOOL_SIZE = 5;
-const GENESIS_SHALLOW_CELLS_PER_FISH = cellsOverArea(400);
-export const GENESIS_MIN_STARTER_SHALLOW_CELLS =
-  GENESIS_FISH_SCHOOLS_ON_FRESH_SHELF * GENESIS_FISH_SCHOOL_SIZE * GENESIS_SHALLOW_CELLS_PER_FISH;
-
-/**
- * How much deep water the starter square must hold, in cells — the same
- * restatement arrangement as the shallow minimum above.
- *
- * The need: TWO whales, at the whale density of 2 000 square world units each.
- * Two, not a whole WHALE_POD_SIZE pod, because two is the pair the 2026-08-21
- * whale retune deliberately sized day one for; the third joins as territory
- * creeps outward.
- *
- * THIS IS THE LARGEST SINGLE CLAIM ON THE STARTER SQUARE — 64 000 of its
- * 102 400 cells, 62.5% — and it is what caps GENESIS_MIN_STARTER_ISLANDS at
- * two. Anyone retuning the whale density should read that constant's comment
- * before deciding it is only a wildlife change.
- */
-const GENESIS_WHALES_ON_FRESH_SEA = 2;
-const GENESIS_DEEP_CELLS_PER_WHALE = cellsOverArea(2000);
-export const GENESIS_MIN_STARTER_DEEP_CELLS =
-  GENESIS_WHALES_ON_FRESH_SEA * GENESIS_DEEP_CELLS_PER_WHALE;
-
-/**
- * The most land the habitat pass will protect for ONE island, in cells.
- *
- * Everything the starter square is not obliged to give the two habitat minima
- * is land budget, split evenly between the islands the guarantee counts. At the
- * shipped geometry that is (102 400 - 96 000) / 2 = 3 200 cells apiece, against
- * a raised island's own 1 521 — so a raised island always fits, and a NATURAL
- * landmass is only counted toward the island guarantee (and therefore only
- * protected) if it is small enough to fit too. A continent filling the starter
- * square is not; it is left to the repair to drown, and the pass raises its own
- * islands on what remains.
- *
- * Without that cap the two guarantees would contradict each other on exactly
- * the seeds where land is plentiful: protecting a 90 000-cell landmass leaves
- * nowhere to put 64 000 cells of deep water.
- */
-function genesisStarterIslandProtectionBudget(terrain: FreshGenesisTerrain): number {
-  const span = terrain.unlockMaxCell - terrain.unlockMinCell + 1;
-  const spare =
-    span * span - GENESIS_MIN_STARTER_SHALLOW_CELLS - GENESIS_MIN_STARTER_DEEP_CELLS;
-  return Math.max(
-    GENESIS_MIN_ISLAND_CELLS,
-    Math.floor(spare / GENESIS_MIN_STARTER_ISLANDS),
+  sites.sort(
+    (a, b) => a.island.liftBands - b.island.liftBands || a.score - b.score || a.index - b.index,
   );
+  return sites.map((site) => site.island);
+}
+
+// ── The land pass ────────────────────────────────────────────────────────────
+//
+// THE PROBLEM. Whether a fresh world has any dry land at all is a property of
+// the seed, and a calm or low-baseline draw produces an unbroken sheet of
+// water. Measured over the suite's own seed sample before this pass existed,
+// half of them came out at 1.4% land — which was ENTIRELY the islands the
+// guarantee pass had raised. That is not "it's OK to create flat worlds"
+// (owner, 2026-08-18); that is the archipelago failing to appear.
+//
+// THE PASS, in one number: a whole-band LIFT applied to the noise field's
+// baseline, chosen as the smallest that puts GENESIS_MIN_LAND_PERCENT of the
+// world's cells above sea level. It is a monotone shift of the whole field, so
+// nothing is stamped, no shape is invented, and every contour the seed drew is
+// exactly where it was — the water is simply lower against it. A world that
+// already has enough land is lifted by zero and is byte-identical to what the
+// noise drew.
+//
+// IT IS COMPUTED FROM A HISTOGRAM, not by trial and error: the land count at
+// lift k is the number of cells whose UNCLAMPED band sum is at least 1 - k, so
+// one pass over the field answers the question for every k at once. The clamp
+// in `genesisNoiseBandAt` cannot disturb that — it only pulls values toward
+// zero from outside the amplitude range, and never across sea level.
+//
+// REJECTED ALTERNATIVE 1: stamp extra islands until the fraction is met. That
+// is the disc-stamping the owner rejected, applied to the whole map.
+// REJECTED ALTERNATIVE 2: raise the baseline's DRAW RANGE so land is likelier.
+// Cheaper still, and it guarantees nothing while also removing the low-baseline
+// deep-ocean worlds the sea's depth variation comes from.
+
+/**
+ * The least dry land a fresh world may have, as a percentage of its cells.
+ *
+ * EIGHT PER CENT. Earth is 29%, and a world of ISLANDS rather than continents
+ * belongs well below that; the floor is set by what a player must be able to
+ * find rather than by what looks generous. At 8% the default 512-world-unit map
+ * carries roughly 340 000 cells of land — about two hundred islands of
+ * GENESIS_MIN_ISLAND_CELLS — so wherever the reveal takes a player there is
+ * land within sailing distance, and 92% of the map is still the ocean the
+ * game's water mechanics need.
+ *
+ * IT IS A FLOOR, NOT A TARGET: a seed that drew 40% land keeps it.
+ */
+export const GENESIS_MIN_LAND_PERCENT = 8;
+
+/** Per cent → cells, in integer arithmetic. */
+function genesisMinLandCells(size: number): number {
+  return Math.ceil((size * size * GENESIS_MIN_LAND_PERCENT) / 100);
 }
 
 /**
- * The shallow and deep cell counts this world's starter square is actually held
- * to, given how many of its cells are protected island land.
+ * Chooses this world's land lift, in whole bands, from the unclamped band sums
+ * the noise drew.
  *
- * At every size the project ships these ARE the two minima. They are clamped —
- * and clamped PROPORTIONALLY, in the ratio the minima themselves stand in —
- * only for a world below MIN_WORLD_SIZE, which config.ts refuses to boot and
- * only a direct `World.createFresh` call (a test, in practice) can reach. The
- * proportional clamp is what keeps such a world from losing one habitat class
- * entirely: splitting the ratio leaves both alive and both small, where a
- * priority order would leave one at zero and bring back the 2026-08-14 bug of
- * deep-water wildlife with nowhere to live.
+ * THE LAND FLOOR sets the lift: the smallest k for which at least
+ * `genesisMinLandCells` cells reach band 1. Smallest, because every extra band
+ * of lift is sea floor the player did not ask to lose.
+ *
+ * THE KRAKEN DOES NOT COMPETE WITH IT, and an earlier version of this function
+ * had them competing — it walked the lift back down until a lair-sized basin
+ * appeared, which cost the land floor on the very seeds that needed it most.
+ * The two guarantees pull in opposite directions on ONE dial, so they cannot
+ * share one; the basin has its own pass now (see `genesisBasins`), and this
+ * function answers only the land question.
  */
-function genesisHabitatTargets(
-  terrain: FreshGenesisTerrain,
-  protectedCells: number,
-): { shallow: number; deep: number } {
-  const span = terrain.unlockMaxCell - terrain.unlockMinCell + 1;
-  const wanted = GENESIS_MIN_STARTER_SHALLOW_CELLS + GENESIS_MIN_STARTER_DEEP_CELLS;
-  const budget = Math.min(span * span - protectedCells, wanted);
-  if (budget <= 0) return { shallow: 0, deep: 0 };
-  const shallow = Math.floor((budget * GENESIS_MIN_STARTER_SHALLOW_CELLS) / wanted);
-  return { shallow, deep: budget - shallow };
+function genesisLandLiftBands(raw: Int16Array, size: number): number {
+  // Histogram of unclamped band sums, offset so index 0 is the deepest value
+  // the amplitude range plus a full baseline can reach. Anything beyond either
+  // end is clamped into it, which is safe: those cells are unambiguously land
+  // or unambiguously sea at every lift this function considers.
+  const floorBand = GENESIS_NOISE_MIN_BAND_OFFSET + GENESIS_BASELINE_MIN_BAND_OFFSET;
+  const ceilingBand = GENESIS_NOISE_MAX_BAND_OFFSET - GENESIS_BASELINE_MIN_BAND_OFFSET;
+  const buckets = new Int32Array(ceilingBand - floorBand + 1);
+  for (let index = 0; index < raw.length; index++) {
+    let bands = raw[index]!;
+    if (bands < floorBand) bands = floorBand;
+    else if (bands > ceilingBand) bands = ceilingBand;
+    buckets[bands - floorBand] += 1;
+  }
+
+  const wanted = genesisMinLandCells(size);
+  const maxLift = -floorBand;
+  let land = 0;
+  let lift = maxLift;
+  // Walk the histogram down from the top: after adding bucket b, `land` is the
+  // number of cells at band >= b, which is exactly the land count at lift 1 - b.
+  for (let bands = ceilingBand; bands > floorBand; bands--) {
+    land += buckets[bands - floorBand]!;
+    if (land >= wanted) {
+      lift = 1 - bands;
+      break;
+    }
+  }
+  if (lift < 0) lift = 0;
+
+  return lift;
 }
 
 // ── The trench pass ──────────────────────────────────────────────────────────
@@ -1038,15 +1062,14 @@ export const GENESIS_EXTRA_TRENCH_MIN = 1;
 export const GENESIS_EXTRA_TRENCH_MAX = 3;
 
 /**
- * Salts that keep every seed-derived choice in genesis — the habitat repair's
- * anchor on each axis, and which basin / which anchor inside it / which axis a
+ * Salts that keep every seed-derived choice in genesis — where the basin pass
+ * drops its floor, and which basin / which anchor inside it / which axis a
  * trench takes — from ever agreeing with another by accident. They are
  * arbitrary distinct constants and nothing but distinctness is asked of them;
  * they are named rather than inlined so a new derivation cannot silently reuse
  * one.
  */
-const GENESIS_REPAIR_ANCHOR_X_SALT = 0x11;
-const GENESIS_REPAIR_ANCHOR_Y_SALT = 0x12;
+const GENESIS_BASIN_SITE_SALT = 0x21;
 const GENESIS_TRENCH_COUNT_SALT = 0x01;
 const GENESIS_TRENCH_BASIN_SALT = 0x100;
 const GENESIS_TRENCH_AXIS_SALT = 0x200;
@@ -1381,6 +1404,163 @@ function deepenedByTrenches(
   return height;
 }
 
+// ── The basin pass ───────────────────────────────────────────────────────────
+//
+// THE PROBLEM. The monsters plugin's kraken needs one CONNECTED region of open
+// ocean of GENESIS_TRENCH_MIN_BASIN_CELLS, and the trench pass below cannot
+// supply it: a trench only ever LOWERS cells that are already deep, so it can
+// deepen an ocean but never merge a fragmented one into a lair. Measured over
+// the monsters suite's 48 probe seeds, 22 of them drew a world whose oceans
+// were all too small — an island-rich map is a map of small seas.
+//
+// THE PASS. If no ocean is lair-sized, DROP the field around the lowest cell
+// the world has, by the same terraced lift the island pass uses and with its
+// sign reversed. Because the drop is added to the field's band offset rather
+// than written over its heights, the basin's outline is the seed's own terrain
+// pushed under the deep-water line — the bathymetric mirror of an island, and
+// not a stamped disc.
+//
+// IT COSTS LAND, and the land pass is asked again afterwards: dropping a
+// basin's worth of field can push a world back under GENESIS_MIN_LAND_PERCENT,
+// so the lift is topped up until it is not. Raising the lift cannot undo the
+// basin — the field is clamped to the amplitude range BEFORE the drop is
+// applied, so every extra band of lift stops at the ceiling while the drop goes
+// on from there.
+
+/**
+ * Radius of the basin's lair-sized floor, in cells, and how many bands the
+ * field is dropped at its centre to get one.
+ *
+ * BOTH ARE DERIVED. The radius is the smallest disc whose area clears
+ * GENESIS_TRENCH_MIN_BASIN_CELLS, plus one band's run of margin for the fact
+ * that the terraced falloff quantises the edge. The drop is what guarantees the
+ * whole of that disc lands below the deep-water line WHATEVER the terrain under
+ * it: the falloff loses one band per GENESIS_TERRACE_WALL_CELLS_PER_BAND cells,
+ * so at the rim it has given up `radius / WALL` bands, and it starts from a
+ * field that the amplitude clamp holds at no more than
+ * GENESIS_NOISE_MAX_BAND_OFFSET.
+ */
+const GENESIS_BASIN_RADIUS_CELLS =
+  Math.ceil(Math.sqrt(GENESIS_TRENCH_MIN_BASIN_CELLS / Math.PI)) +
+  GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+const GENESIS_BASIN_DROP_BANDS =
+  Math.ceil(GENESIS_BASIN_RADIUS_CELLS / GENESIS_TERRACE_WALL_CELLS_PER_BAND) +
+  FRESH_SEABED_BANDS_BELOW_SEA +
+  GENESIS_NOISE_MAX_BAND_OFFSET;
+
+/** How far the basin's drop reaches at all, in cells — a bounding-box reject. */
+const GENESIS_BASIN_REACH_CELLS =
+  GENESIS_BASIN_DROP_BANDS * GENESIS_TERRACE_WALL_CELLS_PER_BAND;
+
+/** One basin genesis had to drop: where its floor is centred. */
+export interface GenesisBasin {
+  readonly anchorX: number;
+  readonly anchorY: number;
+}
+
+/**
+ * The basins' contribution at one cell, in bands, as a POSITIVE number to be
+ * subtracted. Overlapping basins take the deepest rather than summing, for the
+ * same reason overlapping islands take the tallest: two anchors close together
+ * should make one basin, not a shaft.
+ */
+function basinDropBandsAt(
+  basins: readonly GenesisBasin[],
+  x: number,
+  y: number,
+): number {
+  let drop = 0;
+  for (const basin of basins) {
+    const dx = x - basin.anchorX;
+    const dy = y - basin.anchorY;
+    if (dx > GENESIS_BASIN_REACH_CELLS || dx < -GENESIS_BASIN_REACH_CELLS) continue;
+    if (dy > GENESIS_BASIN_REACH_CELLS || dy < -GENESIS_BASIN_REACH_CELLS) continue;
+
+    const radius = Math.floor(Math.sqrt(dx * dx + dy * dy));
+    const bands =
+      GENESIS_BASIN_DROP_BANDS - Math.floor(radius / GENESIS_TERRACE_WALL_CELLS_PER_BAND);
+    if (bands > drop) drop = bands;
+  }
+  return drop;
+}
+
+/**
+ * Does this heightmap already contain an ocean big enough to be a kraken lair?
+ *
+ * FOUR-NEIGHBOUR, matching the trench pass's own survey and the monsters
+ * plugin's lair survey — a diagonal pinch is not water a seven-cell-wide animal
+ * swims through, and if the three disagreed genesis could promise a basin the
+ * plugin then splits in half.
+ */
+function hasLairSizedOcean(heights: Int16Array, size: number): boolean {
+  const visited = new Uint8Array(heights.length);
+  const stack: number[] = [];
+  for (let start = 0; start < heights.length; start++) {
+    if (visited[start] === 1 || heights[start]! > FRESH_SEABED_HEIGHT) continue;
+    let cells = 0;
+    visited[start] = 1;
+    stack.push(start);
+    while (stack.length > 0) {
+      const index = stack.pop()!;
+      cells++;
+      const x = index % size;
+      const y = (index - x) / size;
+      if (x > 0) pushOceanNeighbour(heights, visited, stack, index - 1);
+      if (x + 1 < size) pushOceanNeighbour(heights, visited, stack, index + 1);
+      if (y > 0) pushOceanNeighbour(heights, visited, stack, index - size);
+      if (y + 1 < size) pushOceanNeighbour(heights, visited, stack, index + size);
+    }
+    if (cells >= GENESIS_TRENCH_MIN_BASIN_CELLS) return true;
+  }
+  return false;
+}
+
+/**
+ * Where to drop this world's basin: the lowest cell it has, ties broken by an
+ * avalanche of (cell index, seed) and then by the index itself.
+ *
+ * THE LOWEST CELL, because that is where the world's water already is — the
+ * basin deepens the sea the seed drew rather than flooding a valley the seed
+ * meant to be dry. The seeded tie-break matters for the same reason the trench
+ * pass needs one: a calm world's sea floor is a plateau of identical heights,
+ * and "lowest index" would put every such world's basin in the same corner.
+ */
+function genesisBasinSite(heights: Int16Array, size: number, seed: number): GenesisBasin {
+  let bestIndex = 0;
+  let bestHeight = Number.POSITIVE_INFINITY;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < heights.length; index++) {
+    const height = heights[index]!;
+    if (height > bestHeight) continue;
+    const score = genesisMix(index, seed + GENESIS_BASIN_SITE_SALT);
+    if (height < bestHeight || score < bestScore) {
+      bestHeight = height;
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  const x = bestIndex % size;
+  const y = (bestIndex - x) / size;
+  // HELD A FULL RADIUS CLEAR OF THE MAP EDGE. The world's lowest cell is very
+  // often on one, and a basin centred there is a half-disc — measured, 20 000
+  // cells against the 36 864 the lair needs, and five of the monsters suite's
+  // 48 probe seeds failed on exactly that. The pull-in costs nothing: every
+  // cell within the radius of the chosen one is ocean too, or the world would
+  // have had a lair-sized one already.
+  return {
+    anchorX: keepBasinInside(x, size),
+    anchorY: keepBasinInside(y, size),
+  };
+}
+
+/** Pulls one basin coordinate far enough from the edge for its floor to fit. */
+function keepBasinInside(coordinate: number, size: number): number {
+  if (size <= 2 * GENESIS_BASIN_RADIUS_CELLS) return size >> 1;
+  if (coordinate < GENESIS_BASIN_RADIUS_CELLS) return GENESIS_BASIN_RADIUS_CELLS;
+  const highest = size - 1 - GENESIS_BASIN_RADIUS_CELLS;
+  return coordinate > highest ? highest : coordinate;
+}
+
 // ── Putting genesis together ─────────────────────────────────────────────────
 
 /**
@@ -1389,10 +1569,18 @@ function deepenedByTrenches(
  * a pure function of `(terrain, x, y)` — no RNG state, no world lookups.
  *
  * The four fields are also the four LAYERS, applied in exactly this order: the
- * noise underneath, the islands raised on it, the trenches cut into what is
- * left of the ocean, and the habitat repairs written over the top. Later layers
- * can only affect cells earlier ones left in a class they are allowed to touch,
- * which is what makes each guarantee survive the passes after it.
+ * noise field (already carrying the land pass's lift), the basin dropped out of
+ * it, the islands lifted out of it, and the trenches cut into what is left of
+ * the ocean. Only the last one works on heights; the middle two are band
+ * offsets applied before the waterline, which is what keeps a raised island's
+ * coast and a dropped basin's outline on the seed's own contours instead of on
+ * stamped circles.
+ *
+ * THE AMPLITUDE CLAMP SITS BETWEEN THE NOISE AND THE PASSES, not after them.
+ * That is what makes the basin's depth provable — it starts from a field that
+ * can be no higher than GENESIS_NOISE_MAX_BAND_OFFSET, so a fixed drop is
+ * enough whatever the seed drew, and topping up the land lift afterwards cannot
+ * undo it.
  */
 export interface FreshGenesisTerrain {
   readonly size: number;
@@ -1400,60 +1588,35 @@ export interface FreshGenesisTerrain {
   readonly unlockMinCell: number;
   readonly unlockMaxCell: number;
   readonly noise: GenesisNoiseField;
+  /** The kraken's basin, where the world's own oceans were all too small. */
+  readonly basins: readonly GenesisBasin[];
   /** Islands the pass had to raise — empty when the noise already had enough. */
   readonly islands: readonly GenesisIsland[];
   /** The kraken guarantee (0 or 1 of them) followed by the extras. */
   readonly trenches: readonly GenesisTrench[];
-  /** Cell index → height, for the starter cells the habitat pass had to fix. */
-  readonly habitatOverrides: ReadonlyMap<number, number>;
 }
 
-/**
- * Genesis height of one cell, with the four layers applied in order.
- *
- * THE HABITAT OVERRIDE SITS UNDER THE TRENCHES, not over them, and that
- * ordering is load-bearing in both directions: a trench may still deepen a cell
- * the habitat pass wrote (it was written as open ocean, and deepening open
- * ocean cannot change its class), while a trench can never raise one back into
- * the shallows. Put the override last instead and a trench anchored on a
- * repaired cell would have its own floor overwritten, which is the one thing
- * the kraken guarantee cannot survive.
- */
+/** Genesis height of one cell, with the four layers applied in order. */
 export function freshGenesisHeightAt(
   terrain: FreshGenesisTerrain,
   x: number,
   y: number,
 ): number {
-  let base: number | undefined;
-  if (terrain.habitatOverrides.size > 0) {
-    base = terrain.habitatOverrides.get(y * terrain.size + x);
-  }
-  if (base === undefined) {
-    const noise = clampHeight(genesisNoiseBandAt(terrain.noise, x, y) * BAND_HEIGHT);
-    base = raisedByIslands(terrain, x, y, noise);
-  }
-  return deepenedByTrenches(terrain.trenches, x, y, base);
-}
-
-/** Renders a whole terrain into a fresh Int16Array — the surveys' input. */
-function renderGenesisField(terrain: FreshGenesisTerrain): Int16Array {
-  const { size } = terrain;
-  const heights = new Int16Array(size * size);
-  for (let y = 0; y < size; y++) {
-    const row = y * size;
-    for (let x = 0; x < size; x++) heights[row + x] = freshGenesisHeightAt(terrain, x, y);
-  }
-  return heights;
+  const bands =
+    clampNoiseBand(genesisNoiseRawBandAt(terrain.noise, x, y)) +
+    islandLiftBandsAt(terrain.islands, x, y) -
+    basinDropBandsAt(terrain.basins, x, y);
+  return deepenedByTrenches(terrain.trenches, x, y, clampHeight(bands * BAND_HEIGHT));
 }
 
 /**
- * Re-renders every cell the island and habitat passes can reach — the starter
- * square, grown by GENESIS_ISLAND_REACH_CELLS on every side.
+ * Re-renders every cell the island pass can reach — the starter square, grown
+ * by GENESIS_ISLAND_REACH_CELLS on every side.
  *
- * GROWN, and not just the square: an island anchored near the square's edge
- * runs its skirt out past that edge, so re-rendering the square alone would
- * leave the world-wide height buffer disagreeing with `freshGenesisHeightAt`
- * exactly where the trench survey then reads it.
+ * GROWN, and not just the square: an island near the square's edge lifts ground
+ * past that edge, so re-rendering the square alone would leave the world-wide
+ * height buffer disagreeing with `freshGenesisHeightAt` exactly where the
+ * trench survey then reads it.
  */
 function renderStarterNeighbourhood(terrain: FreshGenesisTerrain, into: Int16Array): void {
   const { size } = terrain;
@@ -1470,372 +1633,143 @@ function renderStarterNeighbourhood(terrain: FreshGenesisTerrain, into: Int16Arr
  * in genesis that touches the RNG or `Math.random` — call it exactly once per
  * world, the way `World.createFresh` does.
  *
- * FOUR PHASES, and the order is the contract:
+ * THREE PHASES, and the order is the contract:
  *
- *   1. The noise field, which is the ONLY consumer of the RNG. A given seed
- *      therefore draws the same field regardless of which passes exist.
- *   2. The island pass, which raises land and so must run before anything that
- *      counts habitat.
- *   3. The habitat pass, which repairs shallow/deep counts and is forbidden
- *      from touching the islands' land.
- *   4. The trench pass, which only ever lowers cells that are ALREADY deep
- *      water and therefore cannot move a single habitat classification the
- *      pass before it just fixed.
+ *   1. The noise field, which is the ONLY consumer of the RNG, followed
+ *      immediately by the LAND PASS — a single whole-band lift folded into that
+ *      field. Folding it in rather than layering it on top is what keeps the
+ *      rest of genesis reading one field instead of two.
+ *   2. The ISLAND PASS, which lifts the field further around seed-chosen sites
+ *      inside the starter square until the square really has its islands.
+ *   3. The TRENCH PASS, which only ever lowers cells that are ALREADY deep
+ *      water, so it can move no cell's shallow/deep classification and cannot
+ *      gouge a canyon across an island.
+ *
+ * ONE FULL EVALUATION OF THE NOISE, and that is deliberate: the land pass needs
+ * the unclamped band sums for its histogram, so it keeps them, and every height
+ * before the islands is arithmetic on that array rather than a second sweep
+ * through five octaves of bilinear interpolation.
  */
 export function buildFreshGenesisTerrain(size: number, seed: number): FreshGenesisTerrain {
   const { startChunk, spanChunks } = initialUnlockFootprint(size);
   const unlockMinCell = startChunk * CHUNK_SIZE;
   const rng = mulberry32Rng(seed);
+  const drawn = buildGenesisNoiseField(size, rng);
+
+  // The one full evaluation of the noise. Every height genesis needs before the
+  // islands is arithmetic on this array rather than a second sweep through five
+  // octaves of bilinear interpolation.
+  const raw = new Int16Array(size * size);
+  for (let y = 0; y < size; y++) {
+    const row = y * size;
+    for (let x = 0; x < size; x++) raw[row + x] = genesisNoiseRawBandAt(drawn, x, y);
+  }
+
+  let landLiftBands = genesisLandLiftBands(raw, size);
+  let basins: readonly GenesisBasin[] = [];
+  let heights = renderNoiseAndBasins(raw, size, landLiftBands, basins);
+
+  if (!hasLairSizedOcean(heights, size)) {
+    basins = [genesisBasinSite(heights, size, seed)];
+    heights = renderNoiseAndBasins(raw, size, landLiftBands, basins);
+
+    // The basin drowned land the land floor was counting on. Top the lift back
+    // up — bounded, because each round is a whole-world sweep, and terminating
+    // because the basin's reach is bounded and everything outside it rises.
+    const wanted = genesisMinLandCells(size);
+    for (
+      let round = 0;
+      round < GENESIS_LAND_TOPUP_ROUNDS && countLand(heights) < wanted;
+      round++
+    ) {
+      landLiftBands++;
+      heights = renderNoiseAndBasins(raw, size, landLiftBands, basins);
+    }
+  }
 
   const bare: FreshGenesisTerrain = {
     size,
     unlockMinCell,
     unlockMaxCell: unlockMinCell + spanChunks * CHUNK_SIZE - 1,
-    noise: buildGenesisNoiseField(size, rng),
+    noise: { ...drawn, landLiftBands },
+    basins,
     islands: [],
     trenches: [],
-    habitatOverrides: new Map<number, number>(),
   };
 
-  const heights = renderGenesisField(bare);
-
-  // THE ISLAND AND HABITAT PASSES RUN TOGETHER, in a loop, because neither can
-  // be checked without the other having run. Islands must be raised BEFORE the
-  // habitat counts are repaired (an island converts thousands of deep cells to
-  // shallow, and reserving for that up front does not fit inside the starter
-  // square — see GENESIS_MIN_STARTER_ISLANDS), while the island guarantee can
-  // only be VERIFIED on the field the repair leaves behind, since the repair is
-  // free to drown any land it did not have to protect.
-  //
-  // So: stage the islands raised so far, repair habitat around them, look at
-  // the result, and if the starter square still has too few islands, add the
-  // next candidate site and do it again. The loop is bounded by the number of
-  // sites, terminates on the guarantee rather than on an intention, and is a
-  // byte-for-byte no-op on the first iteration when the noise already qualified
-  // (no islands staged, no repairs needed).
+  // THE ISLAND LOOP RE-SURVEYS rather than counting what it planned: lifting
+  // ground next to ground the noise already had above water produces one bigger
+  // island, not two, so the only honest way to know whether the guarantee is
+  // met is to look. It stops when it runs out of sites, which is the degenerate
+  // case a world below MIN_WORLD_SIZE can reach — as much island as fits, and
+  // no exception, on the same reasoning as the trench pass's own fallback.
   let islands: readonly GenesisIsland[] = [];
-  let sited = 0;
-  const sites = genesisIslandSlots(bare, seed);
-  let repaired: FreshGenesisTerrain;
-  for (;;) {
-    const staged: FreshGenesisTerrain = { ...bare, islands };
-    renderStarterNeighbourhood(staged, heights);
-    repaired = {
-      ...staged,
-      habitatOverrides: planGenesisHabitatRepair(
-        staged,
-        heights,
-        seed,
-        genesisGuardedLand(staged, heights),
-      ),
-    };
-    if (repaired.habitatOverrides.size > 0) renderStarterNeighbourhood(repaired, heights);
-
-    if (countStarterIslands(repaired, heights) >= GENESIS_MIN_STARTER_ISLANDS) break;
-    // Out of sites: the degenerate case a world below MIN_WORLD_SIZE can reach.
-    // It gets as many islands as fit and no exception, on the same reasoning as
-    // the trench pass's own degenerate fallback.
-    if (sited >= sites.length) break;
-    islands = [...islands, sites[sited++]!];
+  let used = 0;
+  const sites = genesisIslandSites(bare, seed);
+  let raised: FreshGenesisTerrain = bare;
+  while (starterIslandLandCells(raised, heights) < GENESIS_MIN_STARTER_LAND_CELLS) {
+    if (used >= sites.length) break;
+    islands = [...islands, sites[used++]!];
+    raised = { ...bare, islands };
+    renderStarterNeighbourhood(raised, heights);
   }
 
-  return { ...repaired, trenches: planGenesisTrenches(heights, size, seed) };
+  return { ...raised, trenches: planGenesisTrenches(heights, size, seed) };
 }
 
-/** Landmasses in the starter square big enough to count as islands. */
-function countStarterIslands(terrain: FreshGenesisTerrain, heights: Int16Array): number {
-  return surveyStarterLandmasses(terrain, heights).filter(
-    (mass) => mass.cells >= GENESIS_MIN_ISLAND_CELLS,
-  ).length;
+/**
+ * How many times the land lift may be topped up after a basin is dropped.
+ *
+ * FOUR. Each round is a whole-world sweep, and each one raises every cell
+ * outside the basin by a whole band — 64 height units of coastline — so a world
+ * that is still short after four is one whose land the basin genuinely took,
+ * and another band would be flooding the map to satisfy a floor. Bounded rather
+ * than open-ended because a `while` here would be a whole-world loop with no
+ * proof of termination in the one place genesis must never hang: world boot.
+ */
+const GENESIS_LAND_TOPUP_ROUNDS = 4;
+
+/**
+ * The heightmap as it stands after the noise, the land lift and the basins —
+ * everything before the islands, which is all the basin and land passes need to
+ * see. Pure arithmetic on the band sums already in hand.
+ */
+function renderNoiseAndBasins(
+  raw: Int16Array,
+  size: number,
+  landLiftBands: number,
+  basins: readonly GenesisBasin[],
+): Int16Array {
+  const heights = new Int16Array(raw.length);
+  for (let index = 0; index < raw.length; index++) {
+    const x = index % size;
+    const y = (index - x) / size;
+    const bands =
+      clampNoiseBand(raw[index]! + landLiftBands) - basinDropBandsAt(basins, x, y);
+    heights[index] = clampHeight(bands * BAND_HEIGHT);
+  }
+  return heights;
 }
 
-/** Every cell one raised island holds above sea level, by its own geometry alone. */
-function genesisIslandLandCells(terrain: FreshGenesisTerrain, island: GenesisIsland): number[] {
-  const { size } = terrain;
-  const reach = GENESIS_ISLAND_LAND_RADIUS_CELLS + GENESIS_ISLAND_COAST_WOBBLE_CELLS;
-  const alone: FreshGenesisTerrain = { ...terrain, islands: [island] };
-  const cells: number[] = [];
-  for (let y = Math.max(0, island.anchorY - reach); y <= Math.min(size - 1, island.anchorY + reach); y++) {
-    for (let x = Math.max(0, island.anchorX - reach); x <= Math.min(size - 1, island.anchorX + reach); x++) {
-      if (raisedByIslands(alone, x, y, MIN_HEIGHT) > SEA_LEVEL) cells.push(y * size + x);
-    }
+/** Dry cells in a whole heightmap. */
+function countLand(heights: Int16Array): number {
+  let land = 0;
+  for (const height of heights) if (height > SEA_LEVEL) land++;
+  return land;
+}
+
+/**
+ * Cells of land in the starter square that sit in a landmass big enough to
+ * count as an island — the number the guarantee is measured against.
+ */
+function starterIslandLandCells(terrain: FreshGenesisTerrain, heights: Int16Array): number {
+  let cells = 0;
+  for (const mass of surveyStarterLandmasses(terrain, heights)) {
+    if (mass.cells >= GENESIS_MIN_ISLAND_CELLS) cells += mass.cells;
   }
   return cells;
 }
 
-/**
- * The land the island guarantee rests on — the cells the habitat repair may
- * never touch.
- *
- * RAISED ISLANDS ARE GUARDED UNCONDITIONALLY, and that is the fix for the way
- * this first went wrong: they were guarded only if the survey happened to
- * COUNT them, so on a land-rich seed (where every raised island merged into the
- * one oversized landmass the survey refuses to count) nothing was guarded at
- * all, the repair drowned the lot, and the starter square came out with a
- * single island after the pass had raised nine.
- *
- * NATURAL landmasses make up the remainder of the quota, and only while they
- * fit the per-island protection budget: a continent filling the starter square
- * cannot be guarded without leaving nowhere to put the deep water, so it is
- * left to the repair to drown and the pass raises its own islands instead.
- */
-function genesisGuardedLand(terrain: FreshGenesisTerrain, heights: Int16Array): Set<number> {
-  const guarded = new Set<number>();
-  for (const island of terrain.islands) {
-    for (const index of genesisIslandLandCells(terrain, island)) guarded.add(index);
-  }
-
-  let counted = terrain.islands.length;
-  if (counted >= GENESIS_MIN_STARTER_ISLANDS) return guarded;
-
-  const budget = genesisStarterIslandProtectionBudget(terrain);
-  for (const mass of surveyStarterLandmasses(terrain, heights)) {
-    if (counted >= GENESIS_MIN_STARTER_ISLANDS) break;
-    if (mass.cells < GENESIS_MIN_ISLAND_CELLS || mass.cells > budget) continue;
-    // A landmass a raised island is part of is that island, not a second one.
-    if (mass.indices.some((index) => guarded.has(index))) continue;
-    for (const index of mass.indices) guarded.add(index);
-    counted++;
-  }
-  return guarded;
-}
-
-/**
- * Runs the habitat pass, returning the cell overrides it had to write (empty
- * when the starter square already held both minima).
- *
- * IT IS A MONOTONE RESCALE OF THE STARTER SQUARE, not a per-cell conversion,
- * and that is the whole design. Sort the square's repairable cells by height;
- * the lowest `deep` of them must end up as deep water, the next `shallow` as
- * shallow, and everything above that stays land. Each of those three groups is
- * then remapped LINEARLY AND MONOTONICALLY into the band window its class
- * occupies, so no two cells ever swap order: the starter square comes out as
- * the same landscape the noise drew, with its waterline moved and its relief
- * re-scaled. Which is exactly what "the depth of the sea should vary" asks for.
- *
- * TWO EARLIER VERSIONS ARE BURIED HERE, and both are why this one looks like
- * terrain.
- *   * FLAT WRITES. The first version wrote every deepened cell to
- *     FRESH_SEABED_HEIGHT and every shoaled one to FRESH_SHELF_HEIGHT. The deep
- *     minimum alone is 62.5% of the starter square, so on a land-rich seed the
- *     square came out as two enormous flat plates — the featureless starter
- *     region this whole change exists to abolish, rebuilt by the pass meant to
- *     be invisible.
- *   * PER-CLASS MIRRORS. The second kept each converted set's relief but
- *     mirrored the two sets into their windows independently, so they disagreed
- *     at the boundary and the square came out as fractured shards. Order across
- *     the WHOLE square, not within each half of it, is what makes a landscape.
- *
- * TIES BREAK ON DISTANCE FROM A SEED-CHOSEN ANCHOR. On a CALM world every cell
- * ties at one height, so the tie-break IS the whole selection — and breaking it
- * on a hash of the cell index (which is what this did first) scatters the
- * repair as per-cell speckle, a starter square of alternating shallow and deep
- * cells, which is not terrain at all. Distance from one anchor makes the deep
- * group a BASIN around that anchor and the shallow group a SHELF around it,
- * both contiguous, both somewhere the seed chose. On a world with real relief
- * the height term dominates and this never comes up.
- *
- * GUARDED CELLS ARE NOT IN THE SORT AT ALL: the island guarantee's land keeps
- * its exact height, so no rescale can drown it.
- */
-function planGenesisHabitatRepair(
-  terrain: FreshGenesisTerrain,
-  heights: Int16Array,
-  seed: number,
-  guarded: ReadonlySet<number>,
-): Map<number, number> {
-  const { size, unlockMinCell: lo, unlockMaxCell: hi } = terrain;
-  const targets = genesisHabitatTargets(terrain, guarded.size);
-
-  const repairable: number[] = [];
-  const alreadyDeep: number[] = [];
-  let shallowCount = 0;
-  let deepCount = 0;
-  for (let y = lo; y <= hi; y++) {
-    const row = y * size;
-    for (let x = lo; x <= hi; x++) {
-      const index = row + x;
-      const height = heights[index]!;
-      if (height <= FRESH_SEABED_HEIGHT) {
-        deepCount++;
-        alreadyDeep.push(index);
-      } else if (height <= SEA_LEVEL) {
-        shallowCount++;
-      }
-      if (!guarded.has(index)) repairable.push(index);
-    }
-  }
-
-  // The deep water must also be IN ONE PIECE, not merely present: the monsters
-  // plugin's kraken needs a single connected basin of
-  // GENESIS_TRENCH_MIN_BASIN_CELLS, and the trench pass that guarantees its
-  // DEPTH can only ever lower cells that are already deep — it cannot make a
-  // fragmented ocean into a big one. So the area half of that guarantee belongs
-  // here, where the deep set is decided. (Measured before this check existed: 2
-  // of 48 probe seeds drew a starter square with plenty of deep water in four
-  // separate basins, none big enough to be a lair.)
-  const basin = Math.min(GENESIS_TRENCH_MIN_BASIN_CELLS, targets.deep);
-  if (
-    shallowCount >= targets.shallow &&
-    deepCount >= targets.deep &&
-    largestConnectedCount(alreadyDeep, terrain) >= basin
-  ) {
-    return new Map<number, number>();
-  }
-
-  const anchorX = lo + (genesisMix(seed, GENESIS_REPAIR_ANCHOR_X_SALT) % (hi - lo + 1));
-  const anchorY = lo + (genesisMix(seed, GENESIS_REPAIR_ANCHOR_Y_SALT) % (hi - lo + 1));
-  const distanceSquared = (index: number): number => {
-    const x = index % size;
-    const dx = x - anchorX;
-    const dy = (index - x) / size - anchorY;
-    return dx * dx + dy * dy;
-  };
-  repairable.sort(
-    (a, b) =>
-      heights[a]! - heights[b]! || distanceSquared(a) - distanceSquared(b) || a - b,
-  );
-
-  // The two rank boundaries. Both fit: genesisHabitatTargets clamps their sum
-  // to the number of repairable cells there are.
-  const deepEnd = targets.deep;
-  const shallowEnd = deepEnd + targets.shallow;
-
-  // THE FALLBACK, and it is a shape change rather than a nudge, so it fires
-  // only when it must: if the lowest `deep` cells of the square are spread over
-  // several basins, re-rank by DISTANCE FROM THE ANCHOR instead, which selects
-  // a disc — connected by construction, and therefore a lair. The square's
-  // relief still survives inside it (the rescale below is unchanged and still
-  // monotone in height); what is lost is that the basin follows the terrain's
-  // own hollows rather than a circle around a seed-chosen point.
-  if (largestConnectedCount(repairable.slice(0, deepEnd), terrain) < basin) {
-    repairable.sort(
-      (a, b) =>
-        distanceSquared(a) - distanceSquared(b) || heights[a]! - heights[b]! || a - b,
-    );
-  }
-
-  const overrides = new Map<number, number>();
-  rescaleIntoBandWindow(
-    repairable.slice(0, deepEnd),
-    heights,
-    overrides,
-    GENESIS_NOISE_MIN_BAND_OFFSET,
-    -FRESH_SEABED_BANDS_BELOW_SEA,
-  );
-  rescaleIntoBandWindow(
-    repairable.slice(deepEnd, shallowEnd),
-    heights,
-    overrides,
-    -(FRESH_SEABED_BANDS_BELOW_SEA - 1),
-    -1,
-  );
-  return overrides;
-}
-
-/**
- * Cells in the largest 4-connected component of one set, measured inside the
- * starter square.
- *
- * FOUR-NEIGHBOUR, matching the ocean survey and the monsters plugin's own lair
- * survey: a diagonal pinch is not water a seven-cell-wide animal swims through,
- * and if the two disagreed genesis could hand the kraken a basin its own
- * admission test then splits in half.
- *
- * Measured inside the square only, which is CONSERVATIVE rather than exact: a
- * basin that runs out past the square's edge is bigger than this says, never
- * smaller, so a guarantee built on this number cannot be over-sold.
- */
-function largestConnectedCount(
-  cells: readonly number[],
-  terrain: FreshGenesisTerrain,
-): number {
-  const { size, unlockMinCell: lo, unlockMaxCell: hi } = terrain;
-  const span = hi - lo + 1;
-  const member = new Uint8Array(span * span);
-  for (const index of cells) {
-    const x = index % size;
-    member[((index - x) / size - lo) * span + (x - lo)] = 1;
-  }
-
-  const visited = new Uint8Array(span * span);
-  const stack: number[] = [];
-  let largest = 0;
-  for (let start = 0; start < member.length; start++) {
-    if (visited[start] === 1 || member[start] === 0) continue;
-    let count = 0;
-    visited[start] = 1;
-    stack.push(start);
-    while (stack.length > 0) {
-      const local = stack.pop()!;
-      count++;
-      const ly = (local / span) | 0;
-      const lx = local - ly * span;
-      if (lx > 0) pushMember(member, visited, stack, local - 1);
-      if (lx + 1 < span) pushMember(member, visited, stack, local + 1);
-      if (ly > 0) pushMember(member, visited, stack, local - span);
-      if (ly + 1 < span) pushMember(member, visited, stack, local + span);
-    }
-    if (count > largest) largest = count;
-  }
-  return largest;
-}
-
-function pushMember(
-  member: Uint8Array,
-  visited: Uint8Array,
-  stack: number[],
-  local: number,
-): void {
-  if (visited[local] === 1 || member[local] === 0) return;
-  visited[local] = 1;
-  stack.push(local);
-}
-
-/**
- * Remaps one rank-ordered group of cells linearly onto a band window, lowest
- * height to the window's floor and highest to its ceiling.
- *
- * MONOTONE INCREASING, which is the property the whole pass rests on: cells
- * keep their order, so every ridge stays a ridge and every hollow a hollow —
- * the group is re-scaled vertically, not rearranged. Computed entirely in
- * BANDS, so every height it writes is an exact band floor by construction, and
- * a cell the remap does not actually move is left out of the override map
- * rather than written back unchanged.
- *
- * The degenerate case is honest: a group whose cells all tie at one height (a
- * genuinely flat starter square) has no relief to preserve, and every cell goes
- * to the window's CEILING — the smallest move that still satisfies the target.
- */
-function rescaleIntoBandWindow(
-  cells: readonly number[],
-  heights: Int16Array,
-  into: Map<number, number>,
-  windowLowBands: number,
-  windowHighBands: number,
-): void {
-  if (cells.length === 0) return;
-
-  let lowest = Number.POSITIVE_INFINITY;
-  let highest = Number.NEGATIVE_INFINITY;
-  for (const index of cells) {
-    const bands = heights[index]! / BAND_HEIGHT;
-    if (bands < lowest) lowest = bands;
-    if (bands > highest) highest = bands;
-  }
-
-  const spread = highest - lowest;
-  const windowSpan = windowHighBands - windowLowBands;
-  for (const index of cells) {
-    const bands = heights[index]! / BAND_HEIGHT;
-    const mapped =
-      spread === 0
-        ? windowHighBands
-        : windowLowBands + Math.floor(((bands - lowest) * windowSpan) / spread);
-    const height = mapped * BAND_HEIGHT;
-    if (height !== heights[index]!) into.set(index, height);
-  }
-}
 
 /**
  * Last-resort fallback for the deep-water guarantee: forces the world's lowest
