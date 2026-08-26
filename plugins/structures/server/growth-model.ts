@@ -114,8 +114,31 @@ export interface GrowthContext {
   isBuildable(x: number, y: number): boolean;
   /** protocol.ts's MAX_STRUCTURE_TIER — the highest tier the client can draw. */
   readonly maxTier: number;
-  /** protocol.ts's STRUCTURES_CAP — the most cells the board may ever hold. */
-  readonly cap: number;
+  /**
+   * clearance.ts's hasBuildingWithinSeparation, bound to the live world: does
+   * any BUILDING (`tier > 0`) other than (x, y) itself stand within
+   * STRUCTURE_SEPARATION_CELLS of it?
+   *
+   * HANDED IN BECAUSE IT IS A RULE ABOUT THIS BOARD, NOT ABOUT A MODEL. "Two
+   * buildings may not interpenetrate; teepees may cluster" is the owner's
+   * decision about what a settlement looks like (clearance.ts's header), and
+   * it happened to be enforced only inside the Conway CA's own scan — so the
+   * first model to arrive without that scan (plugins/populous) produced four
+   * top-tier buildings standing inside one another on a 2×2 homestead. A model
+   * that restated the separation, or the tier > 0 reading, would be a second
+   * opinion waiting to drift; a model that could not ask at all would be
+   * unable to obey a rule it is nonetheless bound by.
+   *
+   * `cells` is a parameter rather than the live board so a model can ask the
+   * question of the HALF-DECIDED board it is in the middle of building, which
+   * is the only way a step that decides many cells at once can keep them from
+   * all claiming the same ground.
+   */
+  hasBuildingWithinSeparation(
+    cells: ReadonlyMap<number, BoardCellRecord>,
+    x: number,
+    y: number,
+  ): boolean;
 }
 
 /** A replaceable settlement-growth rule. Called once per generation interval. */

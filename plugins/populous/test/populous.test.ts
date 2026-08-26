@@ -46,6 +46,34 @@ function key(x: number, y: number): number {
 
 const world: PopulousWorld = { worldSize: WORLD_SIZE };
 
+/**
+ * structures' STRUCTURE_SEPARATION_CELLS, restated — this plugin's tests may
+ * no more import that plugin than the plugin itself may. 5 is what protocol.ts
+ * derives today; the exact value is not what any test below asserts, only that
+ * two buildings inside it cannot both stand.
+ */
+const SEPARATION = 5;
+
+/**
+ * The clearance predicate structures supplies through the context, implemented
+ * here exactly as clearance.ts implements it: Chebyshev SEPARATION, (x, y)
+ * itself excluded, buildings only (`tier > 0`) — teepees and camps may cluster.
+ */
+function separationCheck(
+  cells: ReadonlyMap<number, PopulousCellRecord>,
+  x: number,
+  y: number,
+): boolean {
+  for (let dy = -SEPARATION; dy <= SEPARATION; dy++) {
+    for (let dx = -SEPARATION; dx <= SEPARATION; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const record = cells.get(key(x + dx, y + dy));
+      if (record !== undefined && record.tier > 0) return true;
+    }
+  }
+  return false;
+}
+
 /** Everything in-bounds is buildable unless it is in `blocked`. */
 function contextExcept(blocked: ReadonlyArray<readonly [number, number]>): PopulousContext {
   const denied = new Set(blocked.map(([x, y]) => key(x, y)));
@@ -55,6 +83,7 @@ function contextExcept(blocked: ReadonlyArray<readonly [number, number]>): Popul
       if (x < 0 || y < 0 || x >= WORLD_SIZE || y >= WORLD_SIZE) return false;
       return !denied.has(key(x, y));
     },
+    hasBuildingWithinSeparation: separationCheck,
   };
 }
 
@@ -321,5 +350,86 @@ describe('the plugin', () => {
     for (let step = 0; step < 30; step++) live = model.step(world, live, ctx).nextLive;
     // The board is untouched by the missing plugin — the house still stands.
     expect(live.has(key(10, 10))).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLEARANCE (F2). structures' keep-clear rule is a property of the BOARD, not
+// of the Conway CA that happened to be enforcing it: under the CA, scanChunk
+// refuses the teepee→building step inside another building's square and
+// clearKeepClearSquare empties it. This model ran neither, so a pilgrims 2×2
+// homestead on open ground became four adjacent top-tier buildings standing
+// inside one another.
+
+describe('buildings never stand within the separation of one another', () => {
+  /** Enough steps that every cell has long since reached its terrain tier. */
+  const STEPS = 4;
+
+  it('promotes exactly one cell of a 2×2 homestead, and keeps all four alive', () => {
+    const ctx = contextExcept([]); // wide open flat ground: every cell earns the top tier
+    let live: ReadonlyMap<number, PopulousCellRecord> = boardOf([
+      [10, 10],
+      [11, 10],
+      [10, 11],
+      [11, 11],
+    ]);
+    for (let step = 0; step < STEPS; step++) {
+      live = stepPopulous(world, live, ctx).result.nextLive;
+    }
+
+    // NOBODY IS DEMOLISHED. Populous deaths are terrain-only by design, so the
+    // three that may not build are HELD at tier 0 — camps — not removed.
+    expect(live.size).toBe(4);
+    const buildings = [...live.entries()].filter(([, record]) => record.tier > 0);
+    expect(buildings.length).toBe(1);
+    // The FIRST cell in ascending key order wins; that is the whole tie-break.
+    expect(buildings[0][0]).toBe(key(10, 10));
+    expect(live.get(key(10, 10))!.tier).toBe(populousTierFor(8, MAX_TIER));
+  });
+
+  it('still fills and emits from the cells it held at tier 0', () => {
+    const ctx = contextExcept([]);
+    let live: ReadonlyMap<number, PopulousCellRecord> = boardOf([[10, 10], [11, 10]]);
+    const emitters = new Set<number>();
+    // A camp's capacity is the slowest on the ladder, so run long enough that
+    // even the held cell has filled it.
+    for (let step = 0; step < POPULOUS_CAPACITY_BY_TIER[0] + 1; step++) {
+      const { result, emitted } = stepPopulous(world, live, ctx);
+      for (const cell of emitted) emitters.add(key(cell.x, cell.y));
+      live = result.nextLive;
+    }
+    expect(emitters.has(key(11, 10))).toBe(true);
+  });
+
+  it('is deterministic: insertion order of the board cannot change the outcome', () => {
+    const ctx = contextExcept([]);
+    const forwards = boardOf([[10, 10], [11, 10], [10, 11], [11, 11]]);
+    const backwards = new Map(
+      [...boardOf([[10, 10], [11, 10], [10, 11], [11, 11]]).entries()].reverse(),
+    );
+    const a = stepPopulous(world, forwards, ctx);
+    const b = stepPopulous(world, backwards, ctx);
+    expect([...a.result.nextLive.entries()].sort((l, r) => l[0] - r[0])).toEqual(
+      [...b.result.nextLive.entries()].sort((l, r) => l[0] - r[0]),
+    );
+    expect(a.result.upgraded).toEqual(b.result.upgraded);
+    expect(a.emitted).toEqual(b.emitted);
+  });
+
+  it('does not collapse an already-overlapping pair into two camps', () => {
+    // Both cells arrive as buildings — a board written before this rule, or a
+    // save from one. Holding BOTH at 0 (checking against the previous board
+    // wholesale) would make them flip camp/building forever. The later cell in
+    // key order keeps its building; the earlier one yields.
+    const ctx = contextExcept([]);
+    const live = boardOf([[10, 10], [11, 10]], { age: 9, tier: MAX_TIER, population: 0 });
+    const { result } = stepPopulous(world, live, ctx);
+    expect(result.nextLive.get(key(10, 10))!.tier).toBe(0);
+    expect(result.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
+
+    // …and it STAYS that way, rather than oscillating.
+    const again = stepPopulous(world, result.nextLive, ctx);
+    expect(again.result.nextLive.get(key(10, 10))!.tier).toBe(0);
+    expect(again.result.nextLive.get(key(11, 10))!.tier).toBe(MAX_TIER);
   });
 });

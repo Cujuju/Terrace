@@ -22,6 +22,7 @@ import type { Player } from '../../../server/src/player.ts';
 import {
   STRUCTURES_CHANGES_MESSAGE,
   STRUCTURES_PLUGIN_NAME,
+  STRUCTURE_SEPARATION_CELLS,
   parseStructureCells,
   structureKey,
 } from '../protocol.ts';
@@ -193,6 +194,32 @@ describe('STRUCTURES_MODEL=populous', () => {
       (changes[changes.length - 1].payload as { founded: number[] }).founded,
     );
     expect(founded).toContainEqual({ x: 20, y: 20, tier: 1 });
+  });
+
+  /**
+   * THE KEEP-CLEAR RULE REACHES EVERY MODEL, not just the CA that used to be
+   * the only thing enforcing it (F2). The seam hands the predicate over; this
+   * asserts the one the model receives really is clearance.ts's, answering
+   * about STRUCTURE_SEPARATION_CELLS rather than about adjacency or nothing.
+   */
+  it('hands the model this plugin’s own keep-clear predicate', () => {
+    let answered: { near: boolean; far: boolean } | null = null;
+    setGrowthModel({
+      name: 'clearance-probe',
+      step(_world, live, ctx: GrowthContext): GrowthStepResult {
+        const board = new Map<number, BoardCellRecord>([
+          [structureKey(20, 20), { age: 0, tier: 1 }],
+        ]);
+        answered = {
+          near: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS, 20),
+          far: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS + 1, 20),
+        };
+        return { nextLive: new Map(live), born: [], upgraded: [], died: [] };
+      },
+    });
+    const harness = boot();
+    advance(harness, CA_GENERATION_INTERVAL_SECONDS * 1.5);
+    expect(answered).toEqual({ near: true, far: false });
   });
 
   it('does not seed or stir — no house appears without a model', () => {
