@@ -558,10 +558,11 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 
   // NOTHING TO INVALIDATE. The CA's board TOPOLOGY is a function of the
   // terrain (topology.ts) — an edit can join two headlands, split one, or
-  // drown a landmass outright — but the labelling is computed fresh by every
-  // sweep rather than cached across generations, so an edit is picked up by
-  // the next generation with no notification from here. See
-  // computeLandmassLabels for why the cache this once dropped had to go.
+  // drown a landmass outright — but the labelling is rebuilt by every sweep
+  // out of that sweep's own buildability survey rather than cached across
+  // generations, so an edit is picked up within two generations with no
+  // notification from here (GenerationSurvey's `labels` states that lag; see
+  // computeLandmassLabels for why the cache this once dropped had to go).
 
   const demolished: Array<{ x: number; y: number }> = [];
   for (const cell of diff) {

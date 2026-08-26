@@ -61,7 +61,12 @@
 // whose NEIGHBOUR is edited (which can, via isBuildableCell's flatness test,
 // silently break ITS OWN buildability without its own height moving) is left
 // alone until the next generation notices — at most CA_GENERATION_INTERVAL_
-// SECONDS later. That lag is a named, accepted residual: every generation is
+// SECONDS later. (The board's TOPOLOGY — who counts as whose neighbour — lags
+// one generation further still, because a sweep is labelled from the previous
+// sweep's own buildability survey rather than from a second survey of its own;
+// see GenerationSurvey's `labels`. Neither lag can place a structure: the wall
+// test in scanChunk asks isBuildableCell live.) That lag is a named, accepted
+// residual: every generation is
 // already a full, fresh recomputation of buildability for the whole board, so
 // unlike the pre-CA design (which had no periodic full recheck at all) this
 // is a short, bounded wait for a self-correcting mechanism that already runs
@@ -73,7 +78,12 @@ import { isBlessedStructureCell } from './blessings.ts';
 import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasNearbyFarmland } from './farmland.ts';
-import { computeLandmassLabels, wrappedNeighborIndex, type LandmassLabels } from './topology.ts';
+import {
+  computeLandmassLabels,
+  computeLandmassLabelsFromBuildable,
+  wrappedNeighborIndex,
+  type LandmassLabels,
+} from './topology.ts';
 import {
   hasBuildingWithinSeparation,
   livingCellsWithinSeparation,
@@ -553,26 +563,53 @@ export class GenerationSurvey {
   private board: ReadonlyMap<number, LiveCellRecord> | null = null;
 
   /**
-   * The board's TOPOLOGY for this sweep (topology.ts), computed FRESH when
-   * the sweep starts, at the same moment `board` is taken and for the same
-   * reason: the neighbour lookup must be a pure function of the generation
-   * being scanned, so the chunk scanned last must see the same coastline the
-   * chunk scanned first did.
+   * The board's TOPOLOGY (topology.ts) this sweep judges neighbours against.
+   * FIXED FOR THE WHOLE SWEEP, exactly as `board` is and for the same reason:
+   * the neighbour lookup must be a pure function of one generation, so the
+   * chunk scanned last must see the same coastline the chunk scanned first
+   * did. It is never rebuilt mid-sweep.
    *
-   * ONE SWEEP, ONE LABELLING, NEVER SHARED WITH THE NEXT. There is no cache
-   * behind this — see computeLandmassLabels' own comment for why an
-   * invalidate-on-terrain cache was wrong (unlock and reservations move
-   * `isBuildableCell` without a terrain diff, and an unlabelled cell is one
-   * the wrap refuses to answer for at all). The cost is one whole-board pass
-   * per generation, i.e. per CA_GENERATION_INTERVAL_SECONDS, paid alongside
-   * the sweep that was already touching every cell.
+   * BUILT FROM THE PREVIOUS SWEEP'S OWN BUILDABILITY ANSWERS, not from a
+   * whole-board survey of its own (issue #179). Labelling costs one
+   * `isBuildableCell` per cell, and `scanChunk` was already spending exactly
+   * that on exactly those cells — but spread across the generation, while the
+   * labelling took it all on the single tick a sweep began (59–671 ms at world
+   * size 2048, stalling every plugin every CA_GENERATION_INTERVAL_SECONDS).
+   * So `scanChunk` now records what it finds into `buildableThisSweep`, and
+   * the cheap half — the flood fill — runs over that bitmap when the sweep
+   * completes, producing the labelling the NEXT sweep reads. The board is
+   * surveyed once per generation instead of twice, and no tick costs more
+   * than its own chunk.
    *
-   * A terrain edit therefore reaches the topology at the NEXT generation —
-   * the same bounded lag this file's header already documents and accepts for
-   * a neighbour's buildability, and far shorter than the demolition path,
-   * which is instant and unaffected.
+   * THE FIRST SWEEP OF A FRESH SURVEY LABELS FROM THE WORLD. There is no
+   * previous bitmap then, and "no labelling" is not a usable stand-in: an
+   * unlabelled cell is one `wrappedNeighborIndex` refuses to answer for at
+   * all, so an empty labelling would read as eight phantom walls for every
+   * cell on the board and change the rule for a whole generation. Paying the
+   * prepass once, at startup, keeps the very first generation identical to
+   * what it always was. (`stepGeneration` builds a fresh survey per call, so
+   * every single-shot CA test takes this path too.)
+   *
+   * THE LAG THIS BUYS. The labelling a sweep uses describes buildability as
+   * the PREVIOUS sweep found it, cell by cell, as that sweep reached each
+   * cell. So a terrain edit reaches the topology within two generations
+   * rather than one — the same bounded, self-correcting lag this file's
+   * header already documents and accepts for a neighbour's buildability, one
+   * generation longer. It cannot put a structure anywhere: `scanChunk`'s wall
+   * test asks `isBuildableCell` live and remains the sole authority on where
+   * a structure may stand. There is still no cache — see
+   * computeLandmassLabels' own comment for why an invalidate-on-terrain one
+   * was wrong — and the demolition path is instant and unaffected.
    */
   private labels: LandmassLabels | null = null;
+
+  /**
+   * WHAT `scanChunk` FOUND BUILDABLE THIS SWEEP, row-major over the whole
+   * board (`y * worldSize + x`, the labelling's own indexing). Filled a chunk
+   * at a time as the sweep advances, consumed by the flood fill when it
+   * completes, and dropped with the sweep in resetSweep. Null between sweeps.
+   */
+  private buildableThisSweep: Uint8Array | null = null;
 
   /**
    * TELLS AN ACTIVE SWEEP THAT A CELL IS GONE — the eviction half of the
@@ -597,12 +634,17 @@ export class GenerationSurvey {
     this.demolishedThisSweep.add(key);
   }
 
+  /**
+   * Drops everything scoped to ONE sweep. `labels` is deliberately NOT among
+   * it: the labelling a completed sweep produced is the next sweep's input
+   * (see the field's own comment), so it must outlive the sweep that built it.
+   */
   private resetSweep(): void {
     this.cursor = 0;
     this.staged.clear();
     this.demolishedThisSweep.clear();
     this.board = null;
-    this.labels = null;
+    this.buildableThisSweep = null;
   }
 
   /**
@@ -658,6 +700,7 @@ export class GenerationSurvey {
     world: StructuresWorld,
     live: ReadonlyMap<number, LiveCellRecord>,
     labels: LandmassLabels,
+    buildable: Uint8Array,
     cx: number,
     cy: number,
   ): void {
@@ -678,7 +721,15 @@ export class GenerationSurvey {
         // never this. A landmass labelling that has drifted out of date
         // (topology.ts names the two ways it can) cannot birth a house on
         // water, because this line is not asking it.
-        if (!isBuildableCell(world, x, y)) continue;
+        //
+        // AND IT IS ALSO THE SURVEY THE NEXT GENERATION'S LABELLING IS BUILT
+        // FROM — recorded here rather than gathered again by a second
+        // whole-board pass (see `labels`). Recorded for EVERY cell, buildable
+        // or not, before the wall test returns: an unrecorded cell would read
+        // as water to the flood fill.
+        const isBuildable = isBuildableCell(world, x, y);
+        buildable[y * world.worldSize + x] = isBuildable ? 1 : 0;
+        if (!isBuildable) continue;
 
         const key = structureKey(x, y);
         // MID-SWEEP DEATH SUPPRESSION: a cell that died earlier this sweep —
@@ -815,23 +866,32 @@ export class GenerationSurvey {
     // header. Taken on the tick the sweep starts and read by every chunk of
     // it; the caller's map may change underneath without the CA seeing half
     // of the change.
+    const cellCount = world.worldSize * world.worldSize;
     if (this.board === null) {
       this.board = new Map(live);
-      // The coastline this generation is judged against, labelled at the same
-      // instant the board is taken — see `labels`' own comment.
-      this.labels = computeLandmassLabels(world);
     }
     const board = this.board;
-    // `??` rather than a non-null assertion: the two are always set together
-    // directly above, and if that ever stops being true this recomputes rather
-    // than throwing in the middle of a generation.
-    const labels = this.labels ?? computeLandmassLabels(world);
+    // The coastline this generation is judged against — the previous sweep's,
+    // carried across resetSweep. Rebuilt from the world only when there is no
+    // usable one: the first sweep of a fresh survey, or (defensively) after a
+    // world resize, which would leave a labelling indexed for another board.
+    if (this.labels === null || this.labels.worldSize !== world.worldSize) {
+      this.labels = computeLandmassLabels(world);
+    }
+    const labels = this.labels;
+    // Allocated on the sweep's first tick (resetSweep dropped the last one),
+    // and re-allocated on the same resize guard the labelling uses.
+    if (this.buildableThisSweep === null || this.buildableThisSweep.length !== cellCount) {
+      this.buildableThisSweep = new Uint8Array(cellCount);
+    }
+    const buildable = this.buildableThisSweep;
 
     while (budget > 0 && this.cursor < totalChunks) {
       this.scanChunk(
         world,
         board,
         labels,
+        buildable,
         this.cursor % world.chunksPerEdge,
         Math.floor(this.cursor / world.chunksPerEdge),
       );
@@ -908,6 +968,11 @@ export class GenerationSurvey {
       const cell = cellOfKey(key);
       died.push({ x: cell.x, y: cell.y });
     }
+
+    // THE NEXT GENERATION'S TOPOLOGY, from the survey this sweep just did.
+    // The flood fill alone, with no isBuildableCell in it — the reason the
+    // labelling no longer stalls the tick it lands on (see `labels`).
+    this.labels = computeLandmassLabelsFromBuildable(world.worldSize, buildable);
 
     const nextLive = new Map(this.staged);
     this.resetSweep();
