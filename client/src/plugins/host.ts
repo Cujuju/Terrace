@@ -15,8 +15,13 @@ import type { FramePhase, Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
-import { addPluginHudPanel, claimWorldHeaderAction } from './hudPanels.ts';
-import { addPluginTool, clearPluginTools } from './toolbar.ts';
+import {
+  addPluginHudPanel,
+  claimWorldHeaderAction,
+  releaseWorldHeaderAction,
+  removePluginHudPanels,
+} from './hudPanels.ts';
+import { addPluginTool, removePluginTools } from './toolbar.ts';
 import type { ClientPluginCtx, MoverPose, TerraceClientPlugin } from './types.ts';
 
 export interface ClientPluginHost {
@@ -34,6 +39,16 @@ export interface ClientPluginHost {
    * cannot sculpt at all.
    */
   allowLocalIntent(intent: SculptIntent): boolean;
+  /**
+   * Reconciles what is mounted against the plugin set the server says it is
+   * running (JoinSnapshotMessage.livePlugins): plugins no longer live are
+   * unmounted, newly live ones are mounted, and the rest are left untouched —
+   * so a toggle of one plugin costs one plugin's teardown, not the whole HUD's.
+   *
+   * `undefined` means the server did not say (too old to announce), and
+   * everything compiled in stays mounted — absence is not "nothing is live".
+   */
+  syncLivePlugins(liveNames: readonly string[] | undefined): void;
   dispose(): void;
 }
 
@@ -52,8 +67,23 @@ export function createClientPluginHost(
 
   /** `<plugin>:<type>` → subscribed handlers, across all plugins. */
   const handlers = new Map<string, Set<(payload: unknown) => void>>();
-  const layers: Group[] = [];
-  const unregisterFns: (() => void)[] = [];
+
+  /** One mounted plugin: its scene layer and everything to undo on unmount. */
+  interface MountedPlugin {
+    readonly plugin: TerraceClientPlugin;
+    readonly layer: Group;
+    /**
+     * The unregister closure of every registration this plugin made through
+     * its ctx, in registration order. Each is the SAME closure the plugin was
+     * handed, and every one of them is idempotent (a Set delete, a splice
+     * guarded by indexOf), so a plugin that already cleaned up in its own
+     * dispose() and the host running these are not in conflict.
+     */
+    readonly undo: (() => void)[];
+  }
+
+  /** Mounted plugins by name. */
+  const mounted = new Map<string, MountedPlugin>();
 
   const canvas = viewport.renderer.domElement;
 
@@ -222,14 +252,34 @@ export function createClientPluginHost(
     cancelled: boolean;
   }
 
-  for (const plugin of plugins) {
+  /**
+   * Builds one plugin's ctx, runs its attach(), and records everything that
+   * has to be undone if it is later unmounted.
+   *
+   * Registration order is the order plugins are mounted in, which is what the
+   * first-claim-wins hooks (canvas presses, the world-header action) arbitrate
+   * by. A plugin mounted LATE by a live-set change therefore joins at the back
+   * of those queues rather than at its registry position — the only way it
+   * could take a claim from a plugin already holding one would be to evict it,
+   * and a plugin arriving must not disturb one that is already running.
+   */
+  const mountPlugin = (plugin: TerraceClientPlugin): void => {
+    const undo: (() => void)[] = [];
+    /**
+     * Records a registration's unregister closure and hands it back to the
+     * plugin unchanged — so unmounting undoes registrations the plugin never
+     * cleaned up itself, without taking the closure away from one that does.
+     */
+    const track = (unregister: () => void): (() => void) => {
+      undo.push(unregister);
+      return unregister;
+    };
     const deferredFrameHandlers: DeferredFrameHandler[] = [];
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
     // Into the scene, NOT terrainGroup: the sculpt raycaster must never see a
     // plugin's meshes as terrain (input/sculptInput.ts picks terrain only).
     viewport.scene.add(layer);
-    layers.push(layer);
 
     const ctx: ClientPluginCtx = {
       layer,
@@ -243,7 +293,12 @@ export function createClientPluginHost(
           handlers.set(key, set);
         }
         set.add(handler);
-        return () => set.delete(handler);
+        return track(() => {
+          set.delete(handler);
+          // The key goes with the last subscriber: routeMessage's lookup must
+          // not keep finding an empty Set for a plugin that is gone.
+          if (set.size === 0) handlers.delete(key);
+        });
       },
       send(type, payload) {
         deps.connection().sendPlugin(`${plugin.name}:${type}`, payload);
@@ -258,11 +313,11 @@ export function createClientPluginHost(
         // published a pose lookup during it, or the 'draw' phase if it did not.
         const deferred: DeferredFrameHandler = { handler, unregister: null, cancelled: false };
         deferredFrameHandlers.push(deferred);
-        return () => {
+        return track(() => {
           deferred.cancelled = true;
           deferred.unregister?.();
           deferred.unregister = null;
-        };
+        });
       },
       registerHudPanel(
         component: Component,
@@ -295,10 +350,10 @@ export function createClientPluginHost(
       },
       onCanvasPress(handler) {
         pressHandlers.push(handler);
-        return () => {
+        return track(() => {
           const i = pressHandlers.indexOf(handler);
           if (i !== -1) pressHandlers.splice(i, 1);
-        };
+        });
       },
       pickTerrainCell,
       pickWorldCell,
@@ -309,23 +364,23 @@ export function createClientPluginHost(
         // OWN name, so a second call is the same plugin replacing its own
         // lookup (a re-attach), never a rival claiming someone else's.
         moverLookups.set(plugin.name, lookup);
-        return () => {
+        return track(() => {
           if (moverLookups.get(plugin.name) === lookup) moverLookups.delete(plugin.name);
-        };
+        });
       },
       markPickable(object: Object3D): () => void {
         if (!pickableObjects.includes(object)) pickableObjects.push(object);
-        return () => {
+        return track(() => {
           const index = pickableObjects.indexOf(object);
           if (index !== -1) pickableObjects.splice(index, 1);
-        };
+        });
       },
       onLocalIntent(handler) {
         localIntentHandlers.push(handler);
-        return () => {
+        return track(() => {
           const i = localIntentHandlers.indexOf(handler);
           if (i !== -1) localIntentHandlers.splice(i, 1);
-        };
+        });
       },
       setSkyRig(state: SkyRigState) {
         if (skyRigClaimant === null) skyRigClaimant = plugin.name;
@@ -359,15 +414,59 @@ export function createClientPluginHost(
       const phase: FramePhase = moverLookups.has(plugin.name) ? 'pose' : 'draw';
       for (const deferred of deferredFrameHandlers) {
         if (deferred.cancelled) continue;
-        const unregister = viewport.onFrame(deferred.handler, phase);
-        deferred.unregister = unregister;
-        unregisterFns.push(unregister);
+        deferred.unregister = viewport.onFrame(deferred.handler, phase);
       }
       deferredFrameHandlers.length = 0;
     } catch (error) {
       console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
     }
-  }
+
+    // Recorded even when attach threw: a plugin that failed half-way through
+    // may still have registered things, and those are exactly what an unmount
+    // has to be able to take back.
+    mounted.set(plugin.name, { plugin, layer, undo });
+  };
+
+  /**
+   * Tears one plugin back down: its tools, its HUD, its own dispose(), every
+   * registration it made, and its scene layer. Silent no-op for a plugin that
+   * is not mounted, so the diff below can call it without checking twice.
+   */
+  const unmountPlugin = (name: string): void => {
+    const entry = mounted.get(name);
+    if (entry === undefined) return;
+    mounted.delete(name);
+
+    // The toolbar FIRST, for the reason dispose() has always given: dropping a
+    // held tool deselects it, and a tool tearing down its placement ghost must
+    // do it while its own layer is still in the scene.
+    removePluginTools(name);
+    removePluginHudPanels(name);
+    releaseWorldHeaderAction(name);
+
+    try {
+      entry.plugin.dispose?.();
+    } catch (error) {
+      console.error(`[terrace] client plugin "${name}" threw in dispose`, error);
+    }
+    for (const unregister of entry.undo) {
+      try {
+        unregister();
+      } catch (error) {
+        console.error(`[terrace] client plugin "${name}" threw unregistering`, error);
+      }
+    }
+    entry.layer.clear();
+    viewport.scene.remove(entry.layer);
+
+    // The sky goes back up for grabs only if THIS plugin was holding it; the
+    // rig itself keeps whatever look it was last given, because core has no
+    // state to restore it to (see setSkyRig).
+    if (skyRigClaimant === name) skyRigClaimant = null;
+    skyRigRefusals.delete(name);
+  };
+
+  for (const plugin of plugins) mountPlugin(plugin);
 
   return {
     allowLocalIntent(intent: SculptIntent): boolean {
@@ -393,23 +492,29 @@ export function createClientPluginHost(
       }
     },
 
-    dispose(): void {
-      // The toolbar FIRST, before any plugin is disposed: dropping the tools
-      // deselects whichever was held, and a tool tearing down its placement
-      // ghost must do it while its own layer is still in the scene.
-      clearPluginTools();
+    syncLivePlugins(liveNames: readonly string[] | undefined): void {
+      // A server too old to announce its set says nothing about it, and
+      // nothing is what this must then change.
+      if (liveNames === undefined) return;
+      const live = new Set(liveNames);
+
+      // Down before up: a plugin leaving frees its single-claimant hooks (the
+      // sky rig, the world-header banner) in the same pass that a plugin
+      // arriving might want them.
+      for (const name of [...mounted.keys()]) {
+        if (!live.has(name)) unmountPlugin(name);
+      }
+      // Over `plugins`, not over `liveNames`: the client mounts what it has
+      // compiled in, and a name it does not recognise is a plugin whose server
+      // half runs without a client half — which is legitimate (see
+      // routeMessage) and not an error.
       for (const plugin of plugins) {
-        try {
-          plugin.dispose?.();
-        } catch (error) {
-          console.error(`[terrace] client plugin "${plugin.name}" threw in dispose`, error);
-        }
+        if (live.has(plugin.name) && !mounted.has(plugin.name)) mountPlugin(plugin);
       }
-      for (const unregister of unregisterFns) unregister();
-      for (const layer of layers) {
-        layer.clear();
-        viewport.scene.remove(layer);
-      }
+    },
+
+    dispose(): void {
+      for (const name of [...mounted.keys()]) unmountPlugin(name);
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,
       });
