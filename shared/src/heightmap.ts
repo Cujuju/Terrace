@@ -50,6 +50,8 @@ import {
   spanCount,
   spanIndexBelowBand,
   spanIndexCoveringBand,
+  spanLowestBandHeight,
+  spanUndersideHeight,
   spansHaveCapAtBand,
   type Span,
 } from './columns.ts';
@@ -339,6 +341,32 @@ function graspedSpanIndex(map: Heightmap, i: number, spanBand: number | null): n
   const y = cellY(map.size, i);
   if (spanBand === null) return spanCount(map, x, y) - 1;
   return spanIndexCoveringBand(map, x, y, spanBand);
+}
+
+/**
+ * THE LAYER-CONSISTENT SPAN of cell `i` for a stroke that has hold of
+ * `spanBand` — the span the relaxation pass reads as "this cell's height" and
+ * writes as this cell's ground (issue #129, step 4.6, plan D4). Three cases:
+ *
+ * - the column is SOLID at the band: that span;
+ * - the band lies ABOVE the column's top: the top span — the ground under
+ *   open sky, which is what MAX_STEP has always been a statement about;
+ * - the band lies in a GAP under a roof: `null`, the open-neighbour exclusion.
+ *   There is no ground at that level to relax against, and reading the floor
+ *   beneath the air (or any stand-in height) would make an artificial cliff
+ *   for relaxation to fill — the ledge slumping into the tunnel mouth.
+ *
+ * `spanBand === null` is the surface, so the top span everywhere; on an
+ * unlayered world every case resolves to span 0 and this is `cells[i]`.
+ */
+function layerSpanIndex(map: Heightmap, i: number, spanBand: number | null): number | null {
+  const x = cellX(map.size, i);
+  const y = cellY(map.size, i);
+  const top = spanCount(map, x, y) - 1;
+  if (spanBand === null) return top;
+  const k = spanIndexCoveringBand(map, x, y, spanBand);
+  if (k !== null) return k;
+  return spanBand * BAND_HEIGHT > spanAt(map, x, y, top).ceiling ? top : null;
 }
 
 /** The ceiling of the grasped span — what the brush moves. */
@@ -1594,17 +1622,25 @@ function movePair(
   loIdx: number,
   e: number,
   boundsOf: SpillBoundsOf | null,
+  spanCaps: ReadonlyMap<number, SpillBand> | null,
 ): boolean {
   let drop = e >> 1;
   let rise = e - drop;
-  if (boundsOf !== null) {
-    const hiBand = boundsOf(hiIdx);
-    const loBand = boundsOf(loIdx);
+  if (boundsOf !== null || spanCaps !== null) {
+    const hiBand = boundsOf === null ? null : boundsOf(hiIdx);
+    const loBand = boundsOf === null ? null : boundsOf(loIdx);
     // How much of each half actually fits inside its side's band. A capture
     // happens before a cell's first move, and every later move stays inside
     // the captured band, so these can never be negative.
-    const dropCap = hiBand === null ? drop : Math.min(drop, cells[hiIdx] - hiBand.lo);
-    const riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[loIdx]);
+    let dropCap = hiBand === null ? drop : Math.min(drop, cells[hiIdx] - hiBand.lo);
+    let riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[loIdx]);
+    // A LAYERED CELL'S SPAN BOUNDS (step 4.6), intersected with the above: its
+    // span may not thin past drawing, and may not close the gap to the span
+    // over it. Same coupled clamping, so a capped side never orphans a half.
+    const hiSpan = spanCaps === null ? undefined : spanCaps.get(hiIdx);
+    const loSpan = spanCaps === null ? undefined : spanCaps.get(loIdx);
+    if (hiSpan !== undefined) dropCap = Math.min(dropCap, cells[hiIdx] - hiSpan.lo);
+    if (loSpan !== undefined) riseCap = Math.min(riseCap, loSpan.hi - cells[loIdx]);
     if (dropCap < drop || riseCap < rise) {
       const t = Math.min(dropCap, riseCap);
       drop = t;
@@ -1634,19 +1670,99 @@ function relaxPair(
   j: number,
   changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
+  layer: LayerView | null,
 ): boolean {
+  // Open-neighbour exclusion (step 4.6): a cell with no ground at the grasped
+  // level is not in the relaxation at all — neither moved nor leaned on.
+  if (layer !== null && (layer.excluded[i] === 1 || layer.excluded[j] === 1)) return false;
+  const spanCaps = layer === null ? null : layer.spanCaps;
   const d = cells[i] - cells[j];
   let moved = false;
   if (d > MAX_STEP) {
-    moved = movePair(cells, i, j, d - MAX_STEP, boundsOf);
+    moved = movePair(cells, i, j, d - MAX_STEP, boundsOf, spanCaps);
   } else if (d < -MAX_STEP) {
-    moved = movePair(cells, j, i, -d - MAX_STEP, boundsOf);
+    moved = movePair(cells, j, i, -d - MAX_STEP, boundsOf, spanCaps);
   }
   if (moved) {
     changed.add(i);
     changed.add(j);
   }
   return moved;
+}
+
+/**
+ * THE HEIGHTS RELAXATION WORKS ON, for a stroke over a layered world (issue
+ * #129, step 4.6). `heights[i]` is the ceiling of cell i's layer-consistent
+ * span (`layerSpanIndex`), `excluded[i]` is 1 where there is none, and
+ * `spanCaps` bounds every LAYERED cell's span so the pass can move it without
+ * changing what the column is: never thinner than drawn, never welded to the
+ * span above.
+ *
+ * WHY A VIEW AND NOT `map.cells`: relaxation is one Int16Array's arithmetic,
+ * tuned and verified pass for pass, and on an unlayered surface stroke it
+ * still runs on `map.cells` itself with no view built — that path is byte-
+ * identical to before this existed. Only a stroke that grasps a band, or a
+ * world holding a layered column, pays for the copy; it is then written back
+ * through `moveSpanCeiling`, once per changed column, by `commitLayerView`.
+ *
+ * WHY THE GAP IS NEVER CLOSED HERE, though a stamp or drag may close it (D4):
+ * the view holds the height the arithmetic reasoned with, and a merge would
+ * replace it with the roof's ceiling — the whole roof's thickness appearing
+ * in one write that every neighbour was relaxed against a smaller number.
+ * Relaxation inventing height is the failure this pass is not allowed to
+ * have; welding stays a deliberate stroke's job.
+ */
+interface LayerView {
+  readonly heights: Int16Array;
+  readonly excluded: Uint8Array;
+  readonly spanCaps: ReadonlyMap<number, SpillBand>;
+}
+
+function buildLayerView(map: Heightmap, spanBand: number | null): LayerView {
+  const heights = map.cells.slice();
+  const excluded = new Uint8Array(map.cells.length);
+  const spanCaps = new Map<number, SpillBand>();
+  // Unlayered columns resolve to span 0 in every case, whose ceiling is
+  // `cells[i]` already; only layered columns need resolving.
+  for (const i of map.columnSpans.keys()) {
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    const k = layerSpanIndex(map, i, spanBand);
+    if (k === null) {
+      excluded[i] = 1;
+      continue;
+    }
+    const span = spanAt(map, x, y, k);
+    heights[i] = span.ceiling;
+    const isTop = k === spanCount(map, x, y) - 1;
+    spanCaps.set(i, {
+      lo: spanLowestBandHeight(span),
+      // The highest ceiling that still leaves a DRAWN gap under the span
+      // above (`isGapDrawn`: cap strictly below the roof's underside).
+      hi: isTop ? MAX_HEIGHT : spanUndersideHeight(spanAt(map, x, y, k + 1)) - 1,
+    });
+  }
+  return { heights, excluded, spanCaps };
+}
+
+/**
+ * Writes the relaxed view back. Each column is written once and resolved
+ * against the map as it still stands, so the span index is the one the view
+ * was built from. Unlayered columns take the height directly — relaxation
+ * moves a cell toward a neighbour that is itself in range, so this is the
+ * same write `moveSpanCeiling` on a lone span would make.
+ */
+function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | null, changed: ReadonlySet<number>): void {
+  for (const i of changed) {
+    if (view.excluded[i] === 1) continue;
+    if (!map.columnSpans.has(i)) {
+      map.cells[i] = view.heights[i]!;
+      continue;
+    }
+    const k = layerSpanIndex(map, i, spanBand);
+    if (k === null) continue;
+    moveSpanCeiling(map, cellX(map.size, i), cellY(map.size, i), k, view.heights[i]!);
+  }
 }
 
 /**
@@ -1708,11 +1824,17 @@ export function smooth(
   bboxSeed?: ReadonlySet<number>,
   spillFree?: ReadonlySet<number>,
   anchorBounds?: ReadonlyMap<number, SpillBand>,
+  spanBand: number | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
 
-  const { size, cells } = map;
+  const { size } = map;
+  // Layered strokes relax a VIEW of the grasped layer and commit it after
+  // (see LayerView); a surface stroke over an unlayered world is the original
+  // in-place pass on `map.cells`, untouched.
+  const layer = spanBand === null && map.columnSpans.size === 0 ? null : buildLayerView(map, spanBand);
+  const cells = layer === null ? map.cells : layer.heights;
 
   let boundsOf: SpillBoundsOf | null = null;
   if (spillFree !== undefined || anchorBounds !== undefined) {
@@ -1767,14 +1889,15 @@ export function smooth(
       for (let x = minX; x <= maxX; x++) {
         const i = row + x;
         // Each pair visited once, via its "forward" (right/down) neighbor.
-        if (x < maxX && relaxPair(cells, i, i + 1, changed, boundsOf)) changedThisPass = true;
-        if (y < maxY && relaxPair(cells, i, i + size, changed, boundsOf)) changedThisPass = true;
+        if (x < maxX && relaxPair(cells, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
+        if (y < maxY && relaxPair(cells, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
       }
     }
 
     if (!changedThisPass) break;
     adjustingPasses++;
   }
+  if (layer !== null) commitLayerView(map, layer, spanBand, changed);
   return adjustingPasses;
 }
 
@@ -1989,15 +2112,12 @@ export function applySculpt(
   // 'stamp' is the ABSENCE of the relaxation pass, not a variant of it: the
   // footprint is the entire extent of the edit, so a spire stays a spire.
   //
-  // RELAXATION IS HELD BACK FROM A GRASPED SPAN UNTIL STEP 4.6, and this is a
-  // refusal rather than an omission. Every write below still goes straight to
-  // `map.cells[i]`, i.e. to the column's TOPMOST ceiling, so running it after a
-  // brush that had hold of a cave floor would move the roof instead — undoing
-  // the guarantee the brush above was just rebuilt to make. The relaxation pass
-  // needs its own notion of a layer-consistent neighbour (plan D4) before it
-  // can be let near a layered column; a smooth stroke on one is a plain stamp
-  // in the meantime, which moves the right span and stops there.
-  if (tool === 'smooth' && spanBand === null) {
+  //
+  // ON A GRASPED SPAN (step 4.6) the relaxation works the layer the stroke has
+  // hold of — `smooth` builds a view of that layer's ceilings, excludes cells
+  // open at that level, and writes back through `moveSpanCeiling` — so the
+  // roof over a cave floor is never the thing that moves (plan D4).
+  if (tool === 'smooth') {
     // The footprint set serves two masters, built by forEachFootprintCell —
     // the same offset→bounds-check→index step every brush runs, shared so the
     // agreement is structural (see forEachFootprintOffset's doc):
@@ -2086,7 +2206,11 @@ export function applySculpt(
       const clickedIndex = cellIndex(map, cx, cy);
       anchorBounds = new Map<number, SpillBand>();
       for (const i of footprint as Set<number>) {
-        const h = map.cells[i];
+        // The grasped layer's height, not the column's top: on a cave floor the
+        // top is the roof, and bounding that would bound the wrong span.
+        const k = layerSpanIndex(map, i, spanBand);
+        if (k === null) continue;
+        const h = graspedCeiling(map, i, k);
         if (raising ? h > anchorTarget : h < anchorTarget) {
           anchorBounds.set(i, { lo: h, hi: h });
         } else {
@@ -2105,6 +2229,7 @@ export function applySculpt(
       changed.size === 0 ? footprint : undefined,
       spill === 'banded' ? footprint : undefined,
       anchorBounds,
+      spanBand,
     );
   }
 
