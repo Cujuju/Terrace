@@ -95,6 +95,28 @@ export function snapshotIfDirty(session: WorldSession): boolean {
 }
 
 /**
+ * Which of the installed plugins THIS world runs (issue #165).
+ *
+ * The world file stores what is switched OFF, so the answer is "everything
+ * installed, minus that" — a world nobody has configured runs every plugin,
+ * and a plugin added to `plugins/` after the fact is live in every existing
+ * world without anyone having to opt each one in. See DISABLED_PLUGINS_DDL.
+ *
+ * Read HERE rather than passed in by the caller, so every path that opens a
+ * world — boot, an operator load, a plugin-toggle reopen, a test — gets the
+ * same answer from the same place and none of them can forget to ask.
+ */
+function enabledPluginNames(
+  store: SnapshotStore,
+  plugins: readonly LoadedPlugin[],
+): ReadonlySet<string> {
+  const disabled = new Set(store.disabledPlugins());
+  return new Set(
+    plugins.map((loaded) => loaded.plugin.name).filter((name) => !disabled.has(name)),
+  );
+}
+
+/**
  * Opens a world that already has a file, and brings its plugins up to the
  * state they were in when it was last closed.
  *
@@ -161,7 +183,7 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
     throw error;
   }
 
-  const host = new PluginHost(world, plugins);
+  const host = new PluginHost(world, plugins, enabledPluginNames(store, plugins));
   // Restore first, then announce — see this function's doc comment.
   host.restorePersistence(pluginSlices);
   host.worldCreate();
