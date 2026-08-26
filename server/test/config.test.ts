@@ -15,6 +15,7 @@ import {
   MAX_WORLD_DIFFICULTY,
   MIN_ROLLBACK_KEY_LENGTH,
   MIN_WORLD_DIFFICULTY,
+  MIN_WORLD_SIZE,
   loadConfig,
 } from '../src/config.ts';
 import { SNAPSHOT_RETENTION } from '../src/persistence/snapshot-store.ts';
@@ -36,7 +37,7 @@ describe('loadConfig', () => {
 
   it('reads overrides', () => {
     const config = loadConfig({
-      WORLD_SIZE: '128',
+      WORLD_SIZE: String(MIN_WORLD_SIZE),
       PORT: '3000',
       TICK_HZ: '20',
       SNAPSHOT_INTERVAL_S: '5',
@@ -44,7 +45,7 @@ describe('loadConfig', () => {
       DB_PATH: '/tmp/other.db',
     });
     expect(config).toMatchObject({
-      worldSize: 128,
+      worldSize: MIN_WORLD_SIZE,
       port: 3000,
       tickHz: 20,
       snapshotIntervalS: 5,
@@ -54,8 +55,20 @@ describe('loadConfig', () => {
   });
 
   it('rejects a WORLD_SIZE that is not a multiple of the chunk size', () => {
-    expect(() => loadConfig({ WORLD_SIZE: String(CHUNK_SIZE * 4 + 1) })).toThrow(ConfigError);
-    expect(() => loadConfig({ WORLD_SIZE: '100' })).toThrow(/multiple of CHUNK_SIZE/);
+    const offByOne = String(MIN_WORLD_SIZE + CHUNK_SIZE + 1);
+    expect(() => loadConfig({ WORLD_SIZE: offByOne })).toThrow(ConfigError);
+    expect(() => loadConfig({ WORLD_SIZE: offByOne })).toThrow(/multiple of CHUNK_SIZE/);
+  });
+
+  it('rejects a WORLD_SIZE too small for genesis to draw a world in (issue #181)', () => {
+    // The bug: WORLD_SIZE=256 booted an unbroken ocean, because the starter
+    // unlock footprint clamped to the whole map and genesis had no outside
+    // left to draw. The floor is now derived from that footprint — see
+    // MIN_WORLD_SIZE — and the boot refuses rather than shipping the empty
+    // world.
+    expect(() => loadConfig({ WORLD_SIZE: '256' })).toThrow(ConfigError);
+    expect(() => loadConfig({ WORLD_SIZE: '256' })).toThrow(/must be between/);
+    expect(() => loadConfig({ WORLD_SIZE: String(MIN_WORLD_SIZE) })).not.toThrow();
   });
 
   it('rejects non-integers, junk and out-of-range values', () => {
