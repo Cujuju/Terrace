@@ -116,9 +116,15 @@ function simulate(world: WorldApi, dt: number): void {
 }
 
 const persistence: PersistenceSlice = {
+  // VERSION 1, AND IT HAS ALWAYS BEEN 1: this slice's format has never changed,
+  // and the host's envelope is what finally gives it a number to say so with
+  // (server plugins/slice-envelope.ts). Nothing about the stored shape moves.
+  version: 1,
   save(): unknown {
     return saveBoats();
   },
+  // `fromVersion` is unread: 1 is the only version there has ever been, and the
+  // host parks anything higher before this is called.
   load(data: unknown): void {
     loadBoats(data);
   },

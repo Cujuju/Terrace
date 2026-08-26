@@ -68,6 +68,7 @@ function counterPlugin(): TerracePlugin & { value: number } {
     name: 'counter',
     value: 0,
     persistence: {
+      version: 1,
       save(): unknown {
         return { value: plugin.value };
       },

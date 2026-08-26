@@ -2338,7 +2338,10 @@ describe('birds are not habitat fauna', () => {
     expect(birdStates().length).toBeGreaterThan(0);
 
     const slices = harness.host.collectPersistence();
-    const slice = slices.wildlife as { entities: Array<{ species: string }> };
+    // Through the host's slice envelope (`{ v, data }`, server
+    // plugins/slice-envelope.ts): the stored value is the envelope now, and
+    // this plugin's own shape is inside it.
+    const slice = (slices.wildlife as { data: { entities: Array<{ species: string }> } }).data;
     // A crossing is not world state: nothing about it survives the snapshot.
     expect(slice.entities.some((entity) => entity.species === 'bird')).toBe(false);
 

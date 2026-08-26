@@ -59,6 +59,7 @@ import type {
   IntentCtx,
   IntentVerdict,
   PersistenceSlice,
+  SliceLoadOutcome,
   Player,
   TerracePlugin,
   WorldApi,
@@ -595,6 +596,24 @@ function loadSlice(data: unknown): void {
   respawns = uniqueRespawns;
 }
 
+/**
+ * The version a stored blob SAYS it was written under, or undefined when it
+ * says nothing.
+ *
+ * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
+ * host's `{ v, data }` envelope is authoritative for everything written since
+ * it existed — but every byte written BEFORE it carries no envelope and reaches
+ * `load` as version 1, and this plugin's own format was already past that.
+ * Trusting the host's 1 over this field would run a version-1 migration over a
+ * version-1 slice on the first boot after the envelope landed, which is the
+ * one way this contract can destroy a world.
+ */
+function selfDescribedSliceVersion(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const version = (data as { version?: unknown }).version;
+  return Number.isSafeInteger(version) ? (version as number) : undefined;
+}
+
 const persistence: PersistenceSlice = {
   save(): RelicsSlice {
     return {
@@ -605,8 +624,16 @@ const persistence: PersistenceSlice = {
       respawns: respawns.map((entry) => [entry.skill, entry.remainingS] as const),
     };
   },
-  load(data: unknown): void {
+  version: RELICS_SLICE_VERSION,
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
+    // REFUSE, DO NOT ERASE, relics from a newer build: loadSlice answers an
+    // unknown version by keeping nothing — relics and the relic RNG both gone
+    // one snapshot later. The host parks it instead.
+    if ((selfDescribedSliceVersion(data) ?? fromVersion) > RELICS_SLICE_VERSION) {
+      return 'refuse';
+    }
     loadSlice(data);
+    return undefined;
   },
 };
 

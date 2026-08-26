@@ -87,6 +87,7 @@ import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
 // same arrangement mana, reveal, relics and wildlife use.
 import type {
   PersistenceSlice,
+  SliceLoadOutcome,
   Player,
   TerracePlugin,
   WorldApi,
@@ -125,7 +126,7 @@ import { CropField, cropSurveyChunksPerTick } from './crops.ts';
 import { GrassField, grassSurveyChunksPerTick } from './grass.ts';
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
-import { loadForestSlice, saveForest } from './persistence.ts';
+import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
 import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
 import { parseStructuresOccupation } from './structures-event.ts';
@@ -1026,14 +1027,41 @@ let fuelWorld: WorldApi | null = null;
 // The plugin
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The version a stored blob SAYS it was written under, or undefined when it
+ * says nothing.
+ *
+ * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
+ * host's `{ v, data }` envelope is authoritative for everything written since
+ * it existed — but every byte written BEFORE it carries no envelope and reaches
+ * `load` as version 1, and this plugin's own format was already past that.
+ * Trusting the host's 1 over this field would run a version-1 migration over a
+ * version-1 slice on the first boot after the envelope landed, which is the
+ * one way this contract can destroy a world.
+ */
+function selfDescribedSliceVersion(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const version = (data as { version?: unknown }).version;
+  return Number.isSafeInteger(version) ? (version as number) : undefined;
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return saveForest(forest, rng);
   },
-  load(data: unknown): void {
+  version: FLORA_SLICE_VERSION,
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
+    // REFUSE, DO NOT ERASE, a forest from a newer build. loadForestSlice
+    // answers an unknown version with the EMPTY forest, and the next snapshot
+    // would then write that empty forest over every tree in the world — as
+    // destructive as structures demolishing the town. The host parks it.
+    if ((selfDescribedSliceVersion(data) ?? fromVersion) > FLORA_SLICE_VERSION) {
+      return 'refuse';
+    }
     const restored = loadForestSlice(data);
     restoredCells = restored.cells;
     rng = createFloraRng(restored.rngState);
+    return undefined;
   },
 };
 

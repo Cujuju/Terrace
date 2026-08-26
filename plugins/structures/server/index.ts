@@ -52,6 +52,7 @@
 import { CHUNK_SIZE, dayOfSimMillis, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
+  SliceLoadOutcome,
   Player,
   TerracePlugin,
   WorldApi,
@@ -92,7 +93,7 @@ import {
 } from './growth-model.ts';
 import { resetBlessings } from './blessings.ts';
 import { resetReservations } from './reservations.ts';
-import { loadStructures, saveStructures } from './persistence.ts';
+import { STRUCTURES_SLICE_VERSION, loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasBuildingWithinSeparation } from './clearance.ts';
@@ -597,16 +598,43 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
 // The plugin
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The version a stored blob SAYS it was written under, or undefined when it
+ * says nothing.
+ *
+ * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
+ * host's `{ v, data }` envelope is authoritative for everything written since
+ * it existed — but every byte written BEFORE it carries no envelope and reaches
+ * `load` as version 1, and this plugin's own format was already past that.
+ * Trusting the host's 1 over this field would run a version-1 migration over a
+ * version-2 slice on the first boot after the envelope landed, which is the
+ * one way this contract can destroy a world.
+ */
+function selfDescribedSliceVersion(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const version = (data as { version?: unknown }).version;
+  return Number.isSafeInteger(version) ? (version as number) : undefined;
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return saveStructures(live, generation, rng, lastSeedDay);
   },
-  load(data: unknown): void {
+  version: STRUCTURES_SLICE_VERSION,
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
+    // REFUSE, DO NOT DEMOLISH, a board from a newer build. loadStructures
+    // answers an unknown version with the EMPTY board, and the next snapshot
+    // would write that over the settlement — the town demolished about a minute
+    // after a downgrade. v1 is still read and migrated below.
+    if ((selfDescribedSliceVersion(data) ?? fromVersion) > STRUCTURES_SLICE_VERSION) {
+      return 'refuse';
+    }
     const restored = loadStructures(data);
     restoredLive = restored.live;
     restoredGeneration = restored.generation;
     restoredLastSeedDay = restored.lastSeedDay;
     rng = createStructuresRng(restored.rngState);
+    return undefined;
   },
 };
 

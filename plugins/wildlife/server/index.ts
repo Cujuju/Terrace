@@ -94,6 +94,7 @@ import { MAX_BRUSH_RADIUS, type CellDiff } from '@terrace/shared';
 // same arrangement the mana and reveal plugins use.
 import type {
   PersistenceSlice,
+  SliceLoadOutcome,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -101,7 +102,7 @@ import { WILDLIFE_ENTITIES_MESSAGE, WILDLIFE_PLUGIN_NAME } from '../protocol.ts'
 import { WILDLIFE_POPULATION_CAP, type HabitatWorld } from './census.ts';
 import { MAX_BIRDS_ALOFT, advanceFlocks, birdStates, resetFlocks } from './flocks.ts';
 import { FLEE_DURATION_SECONDS, advanceMovement, startleNear } from './movement.ts';
-import { loadPopulation, savePopulation } from './persistence.ts';
+import { WILDLIFE_SLICE_VERSION, loadPopulation, savePopulation } from './persistence.ts';
 import {
   advancePopulation,
   burnableEntityAt,
@@ -297,13 +298,39 @@ function wildlifeBurnedOut(ids: readonly number[]): void {
   killEntities(ids);
 }
 
+/**
+ * The version a stored blob SAYS it was written under, or undefined when it
+ * says nothing.
+ *
+ * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
+ * host's `{ v, data }` envelope is authoritative for everything written since
+ * it existed — but every byte written BEFORE it carries no envelope and reaches
+ * `load` as version 1, and this plugin's own format was already past that.
+ * Trusting the host's 1 over this field would run a version-1 migration over a
+ * version-1 slice on the first boot after the envelope landed, which is the
+ * one way this contract can destroy a world.
+ */
+function selfDescribedSliceVersion(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const version = (data as { version?: unknown }).version;
+  return Number.isSafeInteger(version) ? (version as number) : undefined;
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return savePopulation();
   },
-  load(data: unknown): void {
+  version: WILDLIFE_SLICE_VERSION,
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
+    // REFUSE, DO NOT ERASE, a population from a newer build: loadPopulation
+    // keeps no entities for an unknown version, and the next snapshot would
+    // make "every animal in the world is gone" the saved truth.
+    if ((selfDescribedSliceVersion(data) ?? fromVersion) > WILDLIFE_SLICE_VERSION) {
+      return 'refuse';
+    }
     loadPopulation(data);
     resetFlocks();
+    return undefined;
   },
 };
 

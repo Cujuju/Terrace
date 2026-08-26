@@ -242,9 +242,14 @@ function isPersistedTemple(value: unknown): value is TempleCell {
 }
 
 const persistence: PersistenceSlice = {
+  // VERSION 1, AND IT HAS ALWAYS BEEN 1 — see boats' slice for why the number
+  // appears now. `{ temple: {x, y} | null }` has never had another shape.
+  version: 1,
   save(): unknown {
     return { temple: temple === null ? null : { x: temple.x, y: temple.y } };
   },
+  // `fromVersion` is unread: 1 is the only version, and the host parks anything
+  // higher before this is called.
   load(data: unknown): void {
     // REPLACE, never merge — the re-runnable contract PersistenceSlice
     // states: load()+onWorldCreate() run again on a live world when an

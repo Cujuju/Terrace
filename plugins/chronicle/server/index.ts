@@ -36,6 +36,7 @@ import {
 } from '@terrace/shared';
 import type {
   PersistenceSlice,
+  SliceLoadOutcome,
   Player,
   TerracePlugin,
   WorldApi,
@@ -386,6 +387,24 @@ function onMonsterDeparted(world: WorldApi, payload: unknown): void {
 
 // ── Persistence ──────────────────────────────────────────────────────────────
 
+/**
+ * The version a stored blob SAYS it was written under, or undefined when it
+ * says nothing.
+ *
+ * WHY THIS PLUGIN STILL READS ITS OWN FIELD (see PersistenceSlice.load). The
+ * host's `{ v, data }` envelope is authoritative for everything written since
+ * it existed — but every byte written BEFORE it carries no envelope and reaches
+ * `load` as version 1, and this plugin's own format was already past that.
+ * Trusting the host's 1 over this field would run a version-1 migration over a
+ * version-2 slice on the first boot after the envelope landed, which is the
+ * one way this contract can destroy a world.
+ */
+function selfDescribedSliceVersion(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const version = (data as { v?: unknown }).v;
+  return Number.isSafeInteger(version) ? (version as number) : undefined;
+}
+
 const persistence: PersistenceSlice = {
   save(): unknown {
     return {
@@ -401,8 +420,16 @@ const persistence: PersistenceSlice = {
       toldToday: [...toldToday],
     };
   },
-  load(data: unknown): void {
-    if (typeof data !== 'object' || data === null) return;
+  version: CHRONICLE_SLICE_VERSION,
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
+    // REFUSE, DO NOT ERASE, a chronicle from a newer build. Returning early
+    // here used to mean "come up with no history", which the next snapshot then
+    // wrote over the real chronicle — the world's only record of itself, gone a
+    // minute after a downgrade. The host parks it instead.
+    if ((selfDescribedSliceVersion(data) ?? fromVersion) > CHRONICLE_SLICE_VERSION) {
+      return 'refuse';
+    }
+    if (typeof data !== 'object' || data === null) return undefined;
     const slice = data as {
       v?: unknown;
       simMillis?: unknown;
@@ -414,7 +441,7 @@ const persistence: PersistenceSlice = {
     };
     // v1 is migrated, not refused: its entries are the world's only history.
     const legacy = slice.v === 1;
-    if (slice.v !== CHRONICLE_SLICE_VERSION && !legacy) return;
+    if (slice.v !== CHRONICLE_SLICE_VERSION && !legacy) return undefined;
 
     const parsedEntries = parseEntries({ entries: slice.entries });
     const millis =
@@ -441,6 +468,7 @@ const persistence: PersistenceSlice = {
         ? slice.toldToday.filter((k): k is string => typeof k === 'string')
         : [],
     };
+    return undefined;
   },
 };
 

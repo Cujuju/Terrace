@@ -684,10 +684,17 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
  * a nearly-spent fire a fresh full life.
  */
 const persistence: PersistenceSlice = {
+  // VERSION 1, AND IT HAS ALWAYS BEEN 1 — see boats' slice for why the number
+  // appears now: the host's envelope gives an unversioned format a version
+  // without changing the stored shape. Every field below is read defensively,
+  // which is what made living without one survivable until now.
+  version: 1,
   save(): unknown {
     return { fires: blaze.entries(), entities: entityBlaze.entities() };
   },
 
+  // `fromVersion` is unread: 1 is the only version, and the host parks anything
+  // higher before this is called.
   load(data: unknown): void {
     restoredFires = [];
     restoredEntities = [];

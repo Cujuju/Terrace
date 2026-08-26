@@ -501,8 +501,11 @@ describe('PluginHost', () => {
     const plugin: TerracePlugin = {
       name: 'kept',
       persistence: {
+        version: 1,
         save: () => ({ n: 1 }),
-        load: (data) => loaded.push(data),
+        load: (data) => {
+          loaded.push(data);
+        },
       },
     };
 
@@ -513,7 +516,8 @@ describe('PluginHost', () => {
       host.restorePersistence({ kept: { n: 5 }, removed: { whatever: true } }),
     ).not.toThrow();
     expect(loaded).toEqual([{ n: 5 }]);
-    expect(host.collectPersistence()).toEqual({ kept: { n: 1 } });
+    // Enveloped by the host on the way out — see plugins/slice-envelope.ts.
+    expect(host.collectPersistence()).toEqual({ kept: { v: 1, data: { n: 1 } } });
   });
 });
 
