@@ -2657,12 +2657,18 @@ describe('the yeti in the high Alps', () => {
     );
 
     // THE SPEED IS PINNED TO HIS OWN BODY, which is what "an amble" actually
-    // means and the only form of it that a rescale cannot quietly break: at his
-    // full size 0.45 cells/s took eleven seconds to carry him his own five-unit
-    // width, and at a quarter of everything it still does. An absolute figure
-    // here would have passed unchanged through the 2026-08-22 rescale while the
-    // animal it described started scurrying.
-    const AMBLE_SECONDS_PER_BODY_WIDTH = 11;
+    // means and the only form of it that a rescale cannot quietly break: an
+    // absolute figure here would have passed unchanged through the 2026-08-22
+    // rescale while the animal it described started scurrying.
+    //
+    // FIFTEEN SECONDS, NOT ELEVEN, SINCE 2026-08-26, and he did not slow down:
+    // the RULER got wider. The footprint is the broadest of four bodies now, and
+    // the broadest is a knuckle-walking silverback a third wider than the single
+    // upright it replaced, while the speed — which is stated against his HEIGHT,
+    // and every variant is the same two peeps tall — did not move. The
+    // assertion is kept rather than dropped because what it catches is a SPEED
+    // retuned on its own, which is still exactly as wrong as it was.
+    const AMBLE_SECONDS_PER_BODY_WIDTH = 15;
     expect(YETI_FOOTPRINT_CELLS / YETI_AMBLE_SPEED_CELLS_PER_SECOND).toBeCloseTo(
       AMBLE_SECONDS_PER_BODY_WIDTH,
       0,

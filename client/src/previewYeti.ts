@@ -49,12 +49,7 @@ import {
 } from 'three';
 import { DEFAULT_YETI_VARIANT, isYetiVariant } from '../../plugins/monsters/protocol.ts';
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
-import {
-  YETI_HEAD_CENTER_HEIGHT,
-  YETI_HIPS_WIDTH,
-  YETI_HIP_HEIGHT,
-  YETI_TOTAL_HEIGHT,
-} from '../../plugins/monsters/client/yeti-anatomy.ts';
+import { YETI_VARIANT_METRICS } from '../../plugins/monsters/client/yeti-anatomy.ts';
 import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
 
 // ── Lighting rig, copied from previewPilgrims.ts / render/scene.ts ──────────
@@ -97,7 +92,7 @@ const CAMERA_VIEWS = {
   iso: new Vector3(0.7, 0.35, 0.7),
   side: new Vector3(0.02, 0.05, 1),
   front: new Vector3(1, 0.15, 0.08),
-  face: new Vector3(1, 0.55, 0.35),
+  face: new Vector3(1, 0.28, 0.32),
   hips: new Vector3(0.85, 0.3, 0.6),
   scale: new Vector3(0.55, 0.22, 0.9),
 } as const;
@@ -114,6 +109,18 @@ const CAMERA_VIEWS = {
  * shot is finished; one that only survives the close-ups is not.
  */
 const SCALE_VIEW_PULLBACK = 3.2;
+
+/**
+ * How much of the head the head-shot holds, in skull radii.
+ *
+ * FRAMED ON THE SKULL, not on the distance from the head to the top of the
+ * animal, which is what it used to be: that distance is most of a HORN on two of
+ * the four, so the same shot was a close-up of the fanged one's crown and a
+ * full-body of the ibex. The skull is the one thing all four have the same
+ * amount of, and 2.4 of its radii holds the whole head, the horns and the top of
+ * the shoulders.
+ */
+const FACE_VIEW_MARGIN = 2.4;
 
 type CameraView = keyof typeof CAMERA_VIEWS;
 
@@ -202,18 +209,22 @@ const camera = new PerspectiveCamera(
 // that view is the face, and a box fitted to the model would put it in the
 // middle distance with the feet.
 const box = new Box3().setFromObject(subject);
+// THE FRAMING IS THE ROLLED VARIANT'S OWN. The four differ in where the head
+// sits and how tall they stand to their own highest point, so a head-shot framed
+// on a shared figure would put the ibex's face at the bottom of the frame.
+const metrics = YETI_VARIANT_METRICS[variant];
 const center =
   view === 'face'
-    ? new Vector3(0, YETI_HEAD_CENTER_HEIGHT, 0)
+    ? new Vector3(0, metrics.headCenterHeight, 0)
     : view === 'hips'
-      ? new Vector3(0, YETI_HIP_HEIGHT, 0)
+      ? new Vector3(0, metrics.hipHeight, 0)
       : box.getCenter(new Vector3());
 const size = box.getSize(new Vector3());
 const radius =
   view === 'face'
-    ? YETI_TOTAL_HEIGHT - YETI_HEAD_CENTER_HEIGHT
+    ? metrics.headRadius * FACE_VIEW_MARGIN
     : view === 'hips'
-      ? YETI_HIPS_WIDTH
+      ? metrics.hipsWidth
       : Math.max(size.x, size.y, size.z) * 0.5;
 
 const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;

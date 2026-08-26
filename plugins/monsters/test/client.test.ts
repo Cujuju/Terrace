@@ -119,40 +119,23 @@ import {
   walkerGroundWorldY,
 } from '../client/placement.ts';
 import {
-  YETI_AMBLE_HZ,
+  PEEP_HEIGHT_WORLD_UNITS,
   YETI_AMBLE_SPEED_CELLS_PER_SECOND as YETI_MODEL_AMBLE_SPEED,
-  YETI_ARM_HAND_DROP,
-  YETI_ARM_HAND_FLARE,
-  YETI_ARM_HAND_FORWARD,
   YETI_ARM_SWING_RADIANS,
   YETI_BOB_CELLS,
-  YETI_FOOT_CENTER_HEIGHT,
   YETI_FOOT_GROUND_HALF_EXTENT,
-  YETI_FOOT_RISE,
-  YETI_FOOT_WIDTH,
   YETI_FUR_WRINKLE_DEPTH,
-  YETI_HAND_HEIGHT,
-  YETI_HAND_RADIUS,
-  YETI_HAND_REACH,
-  YETI_HEAD_TOP,
-  YETI_HIP_HEIGHT,
+  YETI_HEIGHT_IN_PEEPS,
   YETI_LEAN_RADIANS,
-  YETI_LEG_LENGTH,
   YETI_LEG_SWING_RADIANS,
   YETI_SHADE_VARIATION,
-  YETI_SHOULDER_HALF_SPAN,
-  YETI_SHOULDER_JOINT_HALF_SPAN,
-  YETI_SHOULDER_JOINT_HEIGHT,
-  YETI_SHOULDER_WIDTH,
-  YETI_STANCE_HALF_WIDTH,
-  YETI_STRIDE_CELLS,
-  YETI_TORSO_WIDTH,
-  PEEP_HEIGHT_WORLD_UNITS,
-  YETI_HORN_TIP_HEIGHT,
-  YETI_HORN_TIP_RADIUS,
   YETI_TOTAL_HEIGHT,
+  YETI_VARIANT_METRICS,
+  YETI_VARIANT_SPECS,
+  YETI_VARIANT_WIDTH_CELLS,
   YETI_WIDEST_VARIANT_WIDTH_CELLS,
   YETI_WIDTH_CELLS,
+  yetiWorldParts,
 } from '../client/yeti-anatomy.ts';
 import {
   CTHULHU_FOOTPRINT_CELLS,
@@ -756,33 +739,35 @@ describe('the yeti is placed on the ground, not in the water', () => {
   it('samples the FEET, which are narrower than the body', () => {
     // A walker stands on what it steps on. Sampling the shoulders would have him
     // ride up onto every band his elbow overhangs.
-    expect(YETI_FOOT_GROUND_HALF_EXTENT).toBeGreaterThanOrEqual(
-      YETI_STANCE_HALF_WIDTH + YETI_FOOT_WIDTH / 2,
-    );
+    //
+    // ONE HALF-EXTENT FOR FOUR BODIES, and it is the WIDEST of their stances:
+    // placement is looked up by KIND, before a variant is in hand, and the safe
+    // direction to err in is standing a fraction too high.
+    for (const variant of ['silverback', 'ram', 'ibex', 'fanged'] as const) {
+      const spec = YETI_VARIANT_SPECS[variant];
+      const metrics = YETI_VARIANT_METRICS[variant];
+      const outerEdge = (spec.stanceHalfWidth + spec.leg.footWidth) * metrics.scale;
+      expect(YETI_FOOT_GROUND_HALF_EXTENT).toBeGreaterThanOrEqual(outerEdge);
+    }
     expect(YETI_FOOT_GROUND_HALF_EXTENT).toBeLessThan(YETI_WIDTH_CELLS / 2);
-  });
-
-  it('puts the sole exactly on the origin plane', () => {
-    // The walker's equivalent of the swimmers' waterline bite: the client places
-    // the origin at the terrain height, so the bottom of the foot has to BE the
-    // origin's height, or he hovers.
-    expect(YETI_FOOT_CENTER_HEIGHT - YETI_FOOT_RISE / 2).toBe(0);
   });
 });
 
 describe('the yeti silhouette', () => {
-  const halfFootprint = YETI_WIDTH_CELLS / 2;
+  // FOUR BODIES, ONE SET OF RULES (2026-08-26). Everything below used to be
+  // asserted of the one animal this plugin built; it is asserted of each of the
+  // four now, because the contract was never about that animal — it is about
+  // what any yeti has to be for the server's steering, the client's placement
+  // and the owner's size ceiling to hold. A variant that breaks one of these
+  // fails here rather than by walking its shoulder into a cliff.
+  const VARIANTS = ['silverback', 'ram', 'ibex', 'fanged'] as const;
 
-  it('agrees with the server about how wide he is', () => {
+  it('agrees with the server about how wide the widest of them is', () => {
     // Same arrangement as the other two kinds': the server steers by its own
     // copy of this number, the client half must not be imported by the server,
-    // so the two are pinned to each other here.
-    // Against the WIDEST VARIANT since 2026-08-26: the server steers one
-    // footprint for every yeti, so the number it steers has to cover the
-    // broadest body that can be rolled (see YETI_VARIANT_WIDTH_CELLS). All four
-    // are YETI_WIDTH_CELLS until Phase B gives them their own bodies, so this
-    // is the same assertion it was — and it is the one that fails the day a
-    // variant outgrows the server's literal.
+    // so the two are pinned to each other here. Against the WIDEST VARIANT,
+    // because the server steers ONE footprint for every yeti and the look-ahead
+    // is decided before the dice are rolled.
     expect(cellsAcross(YETI_WIDEST_VARIANT_WIDTH_CELLS)).toBe(YETI_FOOTPRINT_CELLS);
     // ...and he is NARROWER than the sea horrors, on purpose: he is an animal,
     // and his minimum snowfield is derived from this number.
@@ -790,91 +775,145 @@ describe('the yeti silhouette', () => {
     expect(YETI_FOOTPRINT_CELLS).toBeLessThan(KRAKEN_FOOTPRINT_CELLS);
   });
 
-  it('is the smallest of the three, and still taller than he is wide', () => {
-    // Size ordering by each animal's own magnitude axis: the yeti stands under
-    // Cthulhu's height and inside the kraken's spread. (Height-vs-height
-    // against the kraken stopped meaning anything on 2026-08-19, when the
-    // kraken traded its physically-wrong tower for a low, broad surfaced
-    // body — its bigness is its 7-cell crown, not its stature.)
-    expect(YETI_TOTAL_HEIGHT).toBeLessThan(KRAKEN_WIDTH_CELLS);
-    expect(YETI_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
-    expect(YETI_TOTAL_HEIGHT).toBeGreaterThan(YETI_WIDTH_CELLS);
-    // THE HIGHEST POINT IS A HORN TIP, as of the owner's 2026-08-24 request, and
-    // the total is measured to the apex of that tube — its end point plus its
-    // end radius. It pointed at YETI_HEAD_TOP until the horns existed.
-    expect(YETI_TOTAL_HEIGHT).toBe(YETI_HORN_TIP_HEIGHT + YETI_HORN_TIP_RADIUS);
-    // ...and the skull is genuinely under it, which is the thing that would
-    // silently stop being true if a horn were ever shortened.
-    expect(YETI_HEAD_TOP).toBeLessThan(YETI_TOTAL_HEIGHT);
-  });
-
-  it('is exactly the owner\'s ceiling of two peeps, and knows a peep\'s real height', () => {
-    // THE RESTATEMENT, PINNED. yeti-anatomy.ts states a peep's height rather
-    // than importing it — a monster must not pull the pilgrims plugin's model
-    // module into its bundle for one number — which is only safe while this
-    // fails the day the two drift apart. Same arrangement, same reason, as the
-    // server/client footprint pin above.
-    expect(PEEP_HEIGHT_WORLD_UNITS).toBe(PILGRIM_HEIGHT);
-    // And the ceiling itself (owner, 2026-08-24: "no more than two times taller
-    // than one of the peeps"). YETI_SCALE is SOLVED for this, so it holds to the
-    // last bit rather than approximately.
-    expect(YETI_TOTAL_HEIGHT).toBeLessThanOrEqual(2 * PILGRIM_HEIGHT);
-    expect(YETI_TOTAL_HEIGHT).toBeCloseTo(2 * PILGRIM_HEIGHT, 10);
-  });
-
-  it('hangs its hands below its hips — the one proportion that says APE', () => {
-    expect(YETI_HAND_HEIGHT).toBeLessThan(YETI_HIP_HEIGHT);
-  });
-
-  it('keeps the shoulders inside the footprint', () => {
-    expect(YETI_SHOULDER_HALF_SPAN + YETI_SHOULDER_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
-    expect(YETI_TORSO_WIDTH / 2).toBeLessThanOrEqual(halfFootprint);
-  });
-
-  it('keeps a hand inside it — the binding constraint, standing still', () => {
-    expect(YETI_HAND_REACH + YETI_HAND_RADIUS).toBeLessThanOrEqual(halfFootprint);
-    // ...and it really is the widest thing on him.
-    expect(YETI_HAND_REACH + YETI_HAND_RADIUS).toBeGreaterThan(
-      YETI_SHOULDER_HALF_SPAN + YETI_SHOULDER_WIDTH / 2,
+  it('takes the widest as a real maximum over the four, not one of them', () => {
+    // The failure this guards is a Phase-B model that outgrows the variant the
+    // pin above happened to be written against: the max has to be over the
+    // TABLE, so the day any body widens, the pin fails rather than the steering.
+    for (const variant of VARIANTS) {
+      expect(YETI_VARIANT_WIDTH_CELLS[variant]).toBeLessThanOrEqual(
+        YETI_WIDEST_VARIANT_WIDTH_CELLS,
+      );
+    }
+    expect(Math.max(...VARIANTS.map((v) => YETI_VARIANT_WIDTH_CELLS[v]))).toBe(
+      YETI_WIDEST_VARIANT_WIDTH_CELLS,
     );
   });
 
-  it('keeps a hand inside it while the gait is running, too', () => {
-    // Written the way the builder computes it: the arm swings about its shoulder
-    // joint in the fore-aft plane, then the LEAN rolls the whole upper body
-    // about the rig's origin. Both are taken at their peaks at once, which the
-    // animation never actually does — the lean is a cosine and the swing a sine
-    // of the same wave, so they are a quarter cycle apart — making this a strict
-    // upper bound on a measured worst case of 2.15 cells.
-    const swung = {
-      x:
-        YETI_ARM_HAND_DROP * Math.sin(YETI_ARM_SWING_RADIANS) +
-        YETI_ARM_HAND_FORWARD * Math.cos(YETI_ARM_SWING_RADIANS),
-      y:
-        YETI_SHOULDER_JOINT_HEIGHT -
-        (YETI_ARM_HAND_DROP * Math.cos(YETI_ARM_SWING_RADIANS) -
-          YETI_ARM_HAND_FORWARD * Math.sin(YETI_ARM_SWING_RADIANS)),
-      z: YETI_SHOULDER_JOINT_HALF_SPAN + YETI_ARM_HAND_FLARE,
-    };
-    // The lean can only push the outboard hand further out by |y|·sin(lean).
-    const leaned =
-      swung.z * Math.cos(YETI_LEAN_RADIANS) + swung.y * Math.sin(YETI_LEAN_RADIANS);
-    const reach = Math.hypot(swung.x, leaned) + YETI_HAND_RADIUS;
+  it('stands every variant on the owner\'s ceiling of exactly two peeps', () => {
+    // THE RESTATEMENT, PINNED. yeti-anatomy.ts states a peep's height rather
+    // than importing it — a monster must not pull the pilgrims plugin's model
+    // module into its bundle for one number — which is only safe while this
+    // fails the day the two drift apart.
+    expect(PEEP_HEIGHT_WORLD_UNITS).toBe(PILGRIM_HEIGHT);
+    expect(YETI_HEIGHT_IN_PEEPS).toBe(2);
+    // And the ceiling itself (owner, 2026-08-24: "no more than two times taller
+    // than one of the peeps"). Each variant's SCALE is solved for it — against
+    // that variant's own highest point, which is a horn tip on one and a crest
+    // on another — so it holds to the last bit rather than approximately.
+    for (const variant of VARIANTS) {
+      const metrics = YETI_VARIANT_METRICS[variant];
+      expect(metrics.totalHeight).toBeLessThanOrEqual(YETI_HEIGHT_IN_PEEPS * PILGRIM_HEIGHT);
+      expect(metrics.totalHeight).toBeCloseTo(YETI_TOTAL_HEIGHT, 10);
+    }
+  });
 
-    expect(reach).toBeLessThanOrEqual(halfFootprint);
+  it('solves that scale against the WHOLE animal, horns included', () => {
+    // The bug this pins is the one the file is built to make impossible: a scale
+    // solved against the skull, with horns then planted above it, puts the
+    // animal over the ceiling silently. Every part of every variant — masses,
+    // limbs, swept horns and the fur shells that stand off all of them — has to
+    // be under the total, and one of them has to REACH it.
+    for (const variant of VARIANTS) {
+      const { scale, totalHeight } = YETI_VARIANT_METRICS[variant];
+      let apex = 0;
+      for (const part of yetiWorldParts(variant).parts) {
+        if (part.joint !== 'head' && part.joint !== 'upper') continue;
+        const grow = part.shells === null ? 1 : 1 + part.shells.length;
+        if (part.kind === 'mass') {
+          // The support of the ellipsoid in +Y, tilt included — a chest turned
+          // into the hunch reaches higher than its own vertical radius.
+          const height = Math.hypot(
+            part.radii.height * Math.cos(part.tilt),
+            part.radii.forward * Math.sin(part.tilt),
+          );
+          apex = Math.max(apex, part.center.height + height * grow);
+        } else if (part.kind === 'sweep') {
+          for (const at of part.path) {
+            apex = Math.max(apex, at.height + Math.max(part.rootRadius, part.tipRadius));
+          }
+        }
+      }
+      expect(apex).toBeLessThanOrEqual(totalHeight + 1e-9);
+      expect(apex).toBeCloseTo(totalHeight, 6);
+      expect(scale).toBeGreaterThan(0);
+    }
+  });
+
+  it('is the smallest of the three kinds, and taller than it is wide', () => {
+    // Size ordering by each animal's own magnitude axis: the yeti stands under
+    // Cthulhu's height and inside the kraken's spread.
+    expect(YETI_TOTAL_HEIGHT).toBeLessThan(KRAKEN_WIDTH_CELLS);
+    expect(YETI_TOTAL_HEIGHT).toBeLessThan(CTHULHU_TOTAL_HEIGHT);
+    // EVERY body, the knuckle-walking silverback included — he is the one this
+    // can fail on, because a gorilla build spends its size sideways.
+    for (const variant of VARIANTS) {
+      expect(YETI_VARIANT_WIDTH_CELLS[variant]).toBeLessThan(YETI_TOTAL_HEIGHT);
+    }
+  });
+
+  it('keeps every part of every variant inside the footprint it steers', () => {
+    // The reason the width is SOLVED rather than stated: it has to bound the
+    // masses, the limbs, the horns and the fur shells, in the worst pose the
+    // gait can reach. Re-derived here from the parts themselves — the rest-pose
+    // lateral extent, which the solver only ever adds the lean to.
+    for (const variant of VARIANTS) {
+      const body = yetiWorldParts(variant);
+      const halfFootprint = YETI_WIDEST_VARIANT_WIDTH_CELLS / 2;
+      for (const part of body.parts) {
+        const origin =
+          part.joint === 'arm'
+            ? body.joints.arm
+            : part.joint === 'leg' || part.joint === 'ankle'
+              ? body.joints.leg
+              : { forward: 0, height: 0, lateral: 0 };
+        const grow = part.shells === null ? 1 : 1 + part.shells.length;
+        let lateral = 0;
+        if (part.kind === 'mass') {
+          lateral = Math.abs(part.center.lateral) + part.radii.lateral * grow;
+        } else if (part.kind === 'limb') {
+          lateral =
+            Math.max(Math.abs(part.from.lateral), Math.abs(part.to.lateral)) +
+            Math.max(part.rootRadius, part.tipRadius) * grow;
+        } else {
+          for (const at of part.path) {
+            lateral = Math.max(lateral, Math.abs(at.lateral) + part.rootRadius);
+          }
+        }
+        expect(Math.abs(origin.lateral) + lateral).toBeLessThanOrEqual(halfFootprint);
+      }
+    }
+  });
+
+  it('hangs its hands below its hips — the one proportion that says APE', () => {
+    for (const variant of VARIANTS) {
+      const metrics = YETI_VARIANT_METRICS[variant];
+      expect(metrics.handHeight).toBeLessThan(metrics.hipHeight);
+    }
+    // ...and the knuckle-walker's fists are ON the ground, which is what that
+    // spec flag means and the one thing a posed-by-eye arm gets wrong.
+    expect(YETI_VARIANT_SPECS.silverback.knuckle).toBe(true);
+    expect(YETI_VARIANT_METRICS.silverback.handHeight).toBeLessThan(
+      YETI_VARIANT_METRICS.silverback.legLength / 3,
+    );
+  });
+
+  it('stands every variant on its soles, with the ankle over the foot', () => {
+    // The walker's equivalent of the swimmers' waterline bite: the client places
+    // the origin at the terrain height, so the sole has to BE that height. The
+    // ankle sits half a foot above it — never below, which would put the joint
+    // through the snow.
+    for (const variant of VARIANTS) {
+      const metrics = YETI_VARIANT_METRICS[variant];
+      const soleToAnkle = YETI_VARIANT_SPECS[variant].leg.footHeight * metrics.scale;
+      expect(metrics.ankleHeight).toBeGreaterThan(0);
+      expect(metrics.ankleHeight).toBeLessThanOrEqual(soleToAnkle);
+    }
   });
 
   it('wears fur rather than skin: a deeper carve and the strongest mottle', () => {
-    // A white mass in sunlight has no contrast of its own, which is why he needs
-    // the largest shade variation of the three, and fur is a surface that is
-    // broken everywhere, which is why the carve is the deepest.
-    //
     // THE CARVE IS COMPARED RELATIVE TO THE BODY IT IS ON, as a fraction of the
-    // creature's height, and that is the only comparison that was ever meant:
-    // an absolute depth says nothing across animals of different sizes, and
-    // since the 2026-08-22 rescale took the yeti to a quarter of the other two
-    // it says the opposite of the truth. His 0.03 on a 1.575-unit body is a far
-    // coarser surface than the kraken's 0.07 on an 8-unit one.
+    // creature's height, and that is the only comparison that was ever meant: an
+    // absolute depth says nothing across animals of different sizes.
     const relativeCarve = (depth: number, height: number): number => depth / height;
     expect(relativeCarve(YETI_FUR_WRINKLE_DEPTH, YETI_TOTAL_HEIGHT)).toBeGreaterThan(
       relativeCarve(KRAKEN_MANTLE_WRINKLE_DEPTH, KRAKEN_WIDTH_CELLS),
@@ -886,39 +925,61 @@ describe('the yeti silhouette', () => {
     // scale-free and compares directly.
     expect(YETI_SHADE_VARIATION).toBeGreaterThan(KRAKEN_SHADE_VARIATION);
   });
+
+  it('gives each variant the coat, horns and fangs its concept was picked for', () => {
+    // The four are a DECISION (owner, 2026-08-26), not four random tunings, and
+    // these are the four one-line theses. A variant that quietly loses its horns
+    // is a variant that has stopped being the one that was chosen.
+    expect(YETI_VARIANT_SPECS.silverback.saddle).not.toBe(0);
+    expect(YETI_VARIANT_SPECS.silverback.horns).toBe('none');
+    expect(YETI_VARIANT_SPECS.ram.horns).toBe('ram');
+    expect(YETI_VARIANT_SPECS.ibex.horns).toBe('ibex');
+    expect(YETI_VARIANT_SPECS.fanged.horns).toBe('stub');
+    expect(YETI_VARIANT_SPECS.fanged.fangs).toBeGreaterThan(YETI_VARIANT_SPECS.ram.fangs);
+    expect(YETI_VARIANT_SPECS.ibex.hunch).toBeLessThan(YETI_VARIANT_SPECS.silverback.hunch);
+  });
 });
 
 describe('the yeti gait', () => {
+  const VARIANTS = ['silverback', 'ram', 'ibex', 'fanged'] as const;
+
   it('derives its rate from the speed the server actually moves him at', () => {
     // The skating-feet bug is a walk cycle whose rate has nothing to do with how
     // fast the thing travels. The client half restates the server's speed rather
     // than importing it (the bundle must not pull the server in); this is the
     // test that says the two are meant to be the same number.
-    // Through the conversion: the model's speed is world units per second and
-    // the server's is cells per second (2026-08-21 — they were the same number
-    // while a cell was a world unit).
     expect(cellsAcross(YETI_MODEL_AMBLE_SPEED)).toBe(YETI_AMBLE_SPEED_CELLS_PER_SECOND);
-    expect(cellsAcross(YETI_AMBLE_HZ * YETI_STRIDE_CELLS)).toBeCloseTo(
-      YETI_AMBLE_SPEED_CELLS_PER_SECOND,
-      10,
-    );
+    // PER VARIANT, since the four have different legs and therefore different
+    // strides: each one's cycle rate times its own stride has to come back to
+    // the one speed the server moves any yeti at.
+    for (const variant of VARIANTS) {
+      const metrics = YETI_VARIANT_METRICS[variant];
+      expect(cellsAcross(metrics.ambleHz * metrics.strideCells)).toBeCloseTo(
+        YETI_AMBLE_SPEED_CELLS_PER_SECOND,
+        10,
+      );
+    }
   });
 
-  it('takes a short step, and derives the swing angle from it', () => {
+  it('takes a short step, and derives one swing angle from all four', () => {
     // A heavy short-legged animal picking its way over snow strides well under
-    // half its leg length.
-    expect(YETI_STRIDE_CELLS / 2).toBeLessThan(YETI_LEG_LENGTH / 2);
-    expect(Math.sin(YETI_LEG_SWING_RADIANS) * YETI_LEG_LENGTH).toBeCloseTo(
-      YETI_STRIDE_CELLS / 4,
-      10,
-    );
+    // half its leg length — and because the stride is a FRACTION of the leg, the
+    // angle comes out identical for every body, which is the sign the
+    // derivation runs the right way round.
+    for (const variant of VARIANTS) {
+      const metrics = YETI_VARIANT_METRICS[variant];
+      expect(metrics.strideCells / 2).toBeLessThan(metrics.legLength / 2);
+      expect(Math.sin(YETI_LEG_SWING_RADIANS) * metrics.legLength).toBeCloseTo(
+        metrics.strideCells / 4,
+        10,
+      );
+      expect(metrics.legSwingRadians).toBe(YETI_LEG_SWING_RADIANS);
+    }
   });
 
   it('reads as a weight shift rather than a march when he is standing still', () => {
     // The wire carries no gait flag — deliberately (protocol.ts) — so the cycle
-    // runs whatever he is doing. Under 15° is the amplitude that survives that;
-    // a convincing WALK (25–30°, as a human's) would make a stationary yeti look
-    // like he was marching on the spot.
+    // runs whatever he is doing. Under 15° is the amplitude that survives that.
     expect(YETI_LEG_SWING_RADIANS).toBeLessThan(0.26);
     expect(YETI_ARM_SWING_RADIANS).toBeLessThan(YETI_LEG_SWING_RADIANS);
   });
@@ -930,7 +991,13 @@ describe('the yeti gait', () => {
     // maths depends on; the amplitudes are pinned here so a retune cannot
     // quietly make either of them two-sided.
     expect(YETI_BOB_CELLS).toBeGreaterThan(0);
-    expect(YETI_BOB_CELLS).toBeLessThan(YETI_FOOT_RISE);
+    for (const variant of VARIANTS) {
+      // Smaller than the shallowest foot on any of the four, so a lift can never
+      // be read as the animal hovering.
+      const footHeight =
+        YETI_VARIANT_SPECS[variant].leg.footHeight * YETI_VARIANT_METRICS[variant].scale;
+      expect(YETI_BOB_CELLS).toBeLessThan(footHeight);
+    }
     expect(YETI_LEAN_RADIANS).toBeGreaterThan(0);
   });
 });
