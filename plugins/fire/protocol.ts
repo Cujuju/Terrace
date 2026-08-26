@@ -284,6 +284,58 @@ export function parseCells(value: unknown): Array<{ x: number; y: number }> | nu
  */
 export const FIRE_BURNED_EVENT = 'burned';
 
+/**
+ * Plugin → plugin (`fire:ignited`, via WorldApi.emitEvent), once per TICK IN
+ * WHICH ANYTHING CAUGHT: where every new fire started, this tick.
+ *
+ * THE OPENING BRACKET TO `fire:burned` ABOVE, and the two are deliberately
+ * asymmetric in cadence because the questions they answer are. A wildfire ENDS
+ * once, so its close is one event carrying a total. A wildfire STARTS over and
+ * over — every cell the front reaches is an ignition — so an event per ignition
+ * would be a fan-out storm on the exact tick the sim is already busiest, and it
+ * would press on the host's emit depth guard (server/src/plugins/types.ts's
+ * MAX_WORLD_EVENT_DEPTH) for no gain to any listener. Batched per tick, on
+ * weather's `strikes` precedent — which this plugin consumes as a LIST of
+ * struck cells for the same reason (./server/strike-event.ts).
+ *
+ * EVERY WAY A FIRE STARTS IS IN HERE — a player's torch, a lightning bolt, a
+ * flame reaching the next cell, a flame reaching something that walks, and a
+ * burning animal setting light to the ground it is standing on. The list is
+ * assembled inside ./server/blaze.ts and ./server/entityBlaze.ts, at the two
+ * points a fire is actually created, so a future cause of fire cannot be added
+ * without appearing here.
+ *
+ * A BURNING INDIVIDUAL ANNOUNCES ITS POSITION, not its identity: the audience
+ * is plugins that want to know where to run away FROM, and "wildlife's animal
+ * 12 caught" is useless to a plugin that is not wildlife. The plugin that owns
+ * the creature learns which of ITS OWN individuals caught through the fuel
+ * registry's `onIgnited` callback instead (./server/entityFuel.ts), which is a
+ * private answer to a different question and does not belong on a world event.
+ *
+ * NOT a client message. Every new fire already went out as a `fire:changes`
+ * ignition delta or in the `fire:entities` set; nothing on screen needs this.
+ * The audience is other SERVER plugins — wildlife and pilgrims, today, which
+ * startle what is standing near a new flame.
+ */
+export const FIRE_IGNITED_EVENT = 'ignited';
+
+/**
+ * How many numbers one ignition occupies in `FireIgnitedPayload.ignited`: an
+ * x and a y, flat, as `packCells` does it on the wire.
+ *
+ * FRACTIONAL, unlike the wire's cell coordinates. A cell ignition is at its
+ * cell's integer coordinates, but a creature stands wherever it stands, and
+ * rounding it to a cell would move the thing a listener is being told to run
+ * away from by up to half a cell in each axis — small, and pointless, since
+ * this event never leaves the process and pays nothing to carry a float.
+ */
+export const FIRE_IGNITED_STRIDE = 2;
+
+/** `fire:ignited` — flat `[x0, y0, x1, y1, …]`, in fractional cell space. */
+export interface FireIgnitedPayload {
+  readonly ignited: readonly number[];
+}
+
 /** `fire:fires` — the receiver's whole burning set. */
 export interface FireFiresPayload {
   readonly fires: readonly number[];

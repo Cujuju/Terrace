@@ -44,6 +44,13 @@
 // Both causes arrive through `igniteAt`, which is the ONE place a fire is ever
 // created — so the cap, the fuel lookup and the broadcast exist once and a new
 // cause of fire cannot forget one of them.
+//
+// AND FIRE IS SOMETHING TO BE REACTED TO, not only a thing that reacts. Every
+// ignition, from whatever cause, is announced as `fire:ignited` (../protocol.ts,
+// and `inIgnitionBatch` below) so that the plugins that own the creatures in the
+// world can startle what is standing near a new flame. Until that event existed
+// this plugin emitted one line at the END of a wildfire and nothing else, and a
+// herd would graze calmly beside a wall of flame (issue #184).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
@@ -64,6 +71,7 @@ import {
   FIRE_ENTITIES_MESSAGE,
   FIRE_FIRES_MESSAGE,
   FIRE_IGNITE_MESSAGE,
+  FIRE_IGNITED_EVENT,
   FIRE_PLUGIN_NAME,
   parseIgnitePayload,
   fireEntityKey,
@@ -401,6 +409,64 @@ function refreshUnlockedChunk(world: WorldApi, token: string, cx: number, cy: nu
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// ANNOUNCING THAT SOMETHING CAUGHT
+//
+// `fire:burned` says a wildfire is over. This says one began, and it is what
+// lets any other plugin react to fire at all — before it, this plugin was wired
+// as a source of one end-of-episode line and nothing else, so an animal could
+// graze beside a wall of flame (issue #184).
+//
+// ONE EVENT PER BATCH, NOT PER IGNITION (../protocol.ts's FIRE_IGNITED_EVENT
+// carries the reasoning). A batch is one entry into this plugin from outside:
+// a tick, a torch message, a volley of bolts. `inIgnitionBatch` wraps each of
+// them and flushes only as the OUTERMOST one unwinds, so the nested calls a
+// torch makes (a cell and the animal standing on it) still produce exactly one
+// event, and an ignition can never escape unannounced by taking a path nobody
+// remembered to flush.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Nesting depth of `inIgnitionBatch`. The flush happens at 0. */
+let ignitionBatchDepth = 0;
+
+/**
+ * Emits everything that caught since the last flush, if anything did.
+ *
+ * BOTH REGISTRIES INTO ONE LIST, cells first then individuals, which is a fixed
+ * order rather than an incidental one: the consumers are sim code, and a list
+ * whose order depended on which map happened to be drained first would make an
+ * identical world tick differently on a replay (design § determinism).
+ */
+function announceIgnitions(world: WorldApi): void {
+  const cells = blaze.takeIgnited();
+  const entities = entityBlaze.takeIgnited();
+  if (cells.length === 0 && entities.length === 0) return;
+
+  const ignited: number[] = [];
+  for (const at of cells) ignited.push(at.x, at.y);
+  for (const at of entities) ignited.push(at.x, at.y);
+  world.emitEvent(FIRE_IGNITED_EVENT, { ignited });
+}
+
+/**
+ * Runs `body`, then announces whatever it set alight — once, however many
+ * fires that was and however many nested ignite calls it took.
+ *
+ * The flush is in a `finally` so a throw partway through a tick still tells the
+ * world about the fires that DID start before it: they are alight either way,
+ * and a swallowed announcement would leave the world calmly grazing beside
+ * them until the next batch happened to catch up.
+ */
+function inIgnitionBatch<T>(world: WorldApi, body: () => T): T {
+  ignitionBatchDepth++;
+  try {
+    return body();
+  } finally {
+    ignitionBatchDepth--;
+    if (ignitionBatchDepth === 0) announceIgnitions(world);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // The public server-side surface — how anything in the world starts a fire.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -418,11 +484,13 @@ export function igniteAt(x: number, y: number): boolean {
   const world = currentWorld;
   if (world === null) return false;
 
-  const fire = blaze.ignite(x, y);
-  if (fire === null) return false;
+  return inIgnitionBatch(world, () => {
+    const fire = blaze.ignite(x, y);
+    if (fire === null) return false;
 
-  broadcastChanges(world, [fire], []);
-  return true;
+    broadcastChanges(world, [fire], []);
+    return true;
+  });
 }
 
 /**
@@ -438,11 +506,13 @@ export function igniteEntityAt(x: number, y: number): boolean {
   const world = currentWorld;
   if (world === null) return false;
 
-  const fire = entityBlaze.igniteAtCell(x, y);
-  if (fire === null) return false;
+  return inIgnitionBatch(world, () => {
+    const fire = entityBlaze.igniteAtCell(x, y);
+    if (fire === null) return false;
 
-  broadcastEntities(world);
-  return true;
+    broadcastEntities(world);
+    return true;
+  });
 }
 
 /**
@@ -665,8 +735,12 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
   if (!cellCatches && !entityCatches) return;
   if (!chargeMana(world, player.id, IGNITE_MANA_COST)) return;
 
-  if (cellCatches) igniteAt(request.x, request.y);
-  if (entityCatches) igniteEntityAt(request.x, request.y);
+  // ONE BATCH FOR THE PAIR: the wood and the animal standing in it caught from
+  // one click, at one place, and the world should hear about it once.
+  inIgnitionBatch(world, () => {
+    if (cellCatches) igniteAt(request.x, request.y);
+    if (entityCatches) igniteEntityAt(request.x, request.y);
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -796,131 +870,13 @@ export const plugin: TerracePlugin = {
     broadcastEntities(world);
   },
 
+  /**
+   * ONE BATCH PER TICK. A spreading front lights many cells and may light
+   * several creatures in the same step, and every one of them is the same
+   * moment of the same fire — see `inIgnitionBatch`.
+   */
   onTick(world: WorldApi, dt: number): void {
-    simSeconds += dt;
-
-    // A world with nothing alight costs two comparisons per tick. Everything
-    // below — the advance, the keepalive, the empty snapshot FIRE_SEND_EMPTY
-    // exists for — is work that only a burning world pays for.
-    //
-    // BELT AND SUSPENDERS ON THE EPISODE: `extinguishAt` already closes it at
-    // the moment it empties the set, and this catches any future path that
-    // empties it without saying so. `endEpisode` is a no-op when nothing was
-    // consumed, so a quiet world still pays only the comparisons.
-    if (blaze.size === 0 && entityBlaze.size === 0) {
-      if (episodeConsumed > 0) endEpisode(world);
-      lastKeepaliveSeconds = simSeconds;
-      return;
-    }
-
-    const { burnedOut, stopped } = blaze.advance(dt);
-
-    // CONSUME THE FUEL BEFORE ANYTHING SPREADS. This order is load-bearing, not
-    // tidiness (found by a headless run, 2026-08-24): `advance` has just taken
-    // the burned-out cells out of the burning set, so until their source is told
-    // to destroy what was there, the registry still answers "there is a tree
-    // here" for a cell that is now neither burning nor standing. Spreading first
-    // let a neighbour RE-LIGHT the cell that had just burned to nothing — 47 of
-    // 256 trees in a test wood burned twice, and every one of those second fires
-    // reported another tree consumed that never existed.
-    //
-    // Each finished fire goes back to the plugin whose stuff it consumed; that
-    // source destroys what was there and broadcasts its own change. This plugin
-    // never touches another plugin's state.
-    if (burnedOut.size > 0) {
-      for (const source of fuelSources()) {
-        const cells = burnedOut.get(source.name);
-        if (cells === undefined || cells.length === 0) continue;
-        source.onBurnedOut(cells);
-        // The episode counts what was actually CONSUMED, not what stopped
-        // burning: a fire the rain saved took nothing, and a chronicle line
-        // claiming otherwise would be a lie about a forest that is still there.
-        episodeConsumed += cells.length;
-        episodeOrigin ??= cells[0]!;
-      }
-    }
-
-    // THE WALKING FIRES, advanced on the same clock as the cells and routed the
-    // same way: each source is told which of ITS individuals died of it and
-    // destroys them itself, and this plugin touches nobody else's state.
-    //
-    // AFTER the cell burnouts above, for that block's own reason applied to
-    // creatures: a source asked to destroy an animal has to be asked while it
-    // still has it, and it must not be asked twice.
-    const walking = entityBlaze.advance(dt);
-    let entitiesChanged = walking.changed;
-    if (walking.burnedOut.size > 0) {
-      for (const [sourceName, ids] of walking.burnedOut) {
-        const source = entityFuelSource(sourceName);
-        if (source === null || ids.length === 0) continue;
-        source.onBurnedOut(ids);
-        // NOT counted into the wildfire episode: the episode is a story about
-        // how much of the WORLD burned (chronicle's "a fire took forty trees"),
-        // and folding animals into that count would make the sentence a lie
-        // about trees. What burning livestock deserves is its own line, which
-        // is a chronicle change, not a change to this counter.
-      }
-    }
-    if (suppressEntitiesWithRain(dt) > 0) entitiesChanged = true;
-
-    // SPREAD, on its own cadence. Accumulated rather than run every tick, and
-    // capped at one interval so a stalled or resumed server cannot bank an
-    // unbounded debt and then spread the fire across the world in one step —
-    // flora's scanCredit is capped for the same reason.
-    spreadDebtSeconds = Math.min(spreadDebtSeconds + dt, MAX_SPREAD_DEBT_SECONDS);
-    let ignited: FireCellState[] = [];
-    let drenched: FuelCell[] = [];
-    while (spreadDebtSeconds >= SPREAD_INTERVAL_SECONDS) {
-      // RAIN BEFORE SPREAD, so a fire the rain has just put out does not get to
-      // throw one last spark on its way out. The two share a cadence because
-      // they are two halves of one question — where is the fire a second from
-      // now — and evaluating them on different clocks would let a fire spread
-      // from a cell it was extinguished on.
-      // THE INTERVAL, NOT THE DEBT, is what the rate functions are charged —
-      // and the remainder is CARRIED rather than dropped (bug, 2026-08-24).
-      // `dt` at the shipped 10 Hz is 0.1, which is not representable in binary:
-      // ten of them sum to 0.9999999999999999, so the step fired on the
-      // eleventh tick having covered 1.1 s, was charged 1.0 s, and threw the
-      // rest away. Fires spread and rain suppressed ~10% slower than their
-      // stated per-second rates, and by an amount that depended on TICK_HZ —
-      // precisely what handing the elapsed interval to the rate arithmetic is
-      // supposed to prevent.
-      drenched = [...drenched, ...suppressWithRain(SPREAD_INTERVAL_SECONDS)];
-      // BOTH REGISTRIES IN ONE STEP: a flame reaches whatever is near it, and
-      // whether that is a cell or something walking is not the flame's business
-      // (./spread.ts's header). A caught individual is a change to the entity
-      // set exactly as a torched one is, so it rides the same broadcast.
-      const spread = spreadOnce(world, blaze, entityBlaze, SPREAD_INTERVAL_SECONDS);
-      ignited = [...ignited, ...spread.cells];
-      if (spread.entities.length > 0) entitiesChanged = true;
-      spreadDebtSeconds -= SPREAD_INTERVAL_SECONDS;
-    }
-
-    const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
-    if (ignited.length > 0 || ended.length > 0) broadcastChanges(world, ignited, ended);
-    // THE WHOLE SET on any change (../protocol.ts): a burning herd is small
-    // enough that a delta would save bytes nobody is short of, and a full set
-    // cannot leave a client drawing a flame on an animal that stopped burning.
-    if (entitiesChanged) broadcastEntities(world);
-
-    // The world just stopped burning: whatever that fire was, it is over.
-    if (blaze.size === 0) endEpisode(world);
-
-    if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) {
-      broadcastSnapshot(world);
-    }
-
-    // THE WALKING FIRES RE-ANCHOR ON THEIR OWN, FASTER CADENCE — see
-    // ENTITY_REPAIRS_PER_BURN. They used to share the cell keepalive, which is
-    // longer than a creature burns, so the one repair that could have told a
-    // player about an animal that walked into their view was scheduled for
-    // after the animal was dead.
-    if (
-      entityBlaze.size > 0 &&
-      simSeconds - lastEntityBroadcastSeconds >= entityRepairIntervalSeconds()
-    ) {
-      broadcastEntities(world);
-    }
+    inIgnitionBatch(world, () => tick(world, dt));
   },
 
   /**
@@ -942,7 +898,7 @@ export const plugin: TerracePlugin = {
     extinguishAt(diff);
   },
 
-  onWorldEvent(_world: WorldApi, event: string, payload: unknown): void {
+  onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
     // By-name subscription (server/src/plugins/types.ts's emitEvent doc
     // comment): weather's plugin name is the coupling, exactly like a wire
     // message namespace — never an import of weather's code. A world with no
@@ -950,7 +906,9 @@ export const plugin: TerracePlugin = {
     if (event !== 'weather:strikes') return;
     const struck = parseStruckCells(payload);
     if (struck === null) return;
-    igniteStruckCells(struck);
+    // ONE BATCH FOR THE WHOLE VOLLEY — a squall lands several bolts in one
+    // event and they are one weather moment, not eight.
+    inIgnitionBatch(world, () => igniteStruckCells(struck));
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
@@ -996,4 +954,137 @@ export function resetFireState(): void {
   restoredEntities = [];
   blaze.clear();
   entityBlaze.clear();
+}
+
+
+/**
+ * THE SIM STEP, lifted out of the plugin object so that `onTick` is nothing
+ * but the ignition batch this whole step has to run inside — see
+ * `inIgnitionBatch`. Nothing else about it changed.
+ */
+function tick(world: WorldApi, dt: number): void {
+  simSeconds += dt;
+
+  // A world with nothing alight costs two comparisons per tick. Everything
+  // below — the advance, the keepalive, the empty snapshot FIRE_SEND_EMPTY
+  // exists for — is work that only a burning world pays for.
+  //
+  // BELT AND SUSPENDERS ON THE EPISODE: `extinguishAt` already closes it at
+  // the moment it empties the set, and this catches any future path that
+  // empties it without saying so. `endEpisode` is a no-op when nothing was
+  // consumed, so a quiet world still pays only the comparisons.
+  if (blaze.size === 0 && entityBlaze.size === 0) {
+    if (episodeConsumed > 0) endEpisode(world);
+    lastKeepaliveSeconds = simSeconds;
+    return;
+  }
+
+  const { burnedOut, stopped } = blaze.advance(dt);
+
+  // CONSUME THE FUEL BEFORE ANYTHING SPREADS. This order is load-bearing, not
+  // tidiness (found by a headless run, 2026-08-24): `advance` has just taken
+  // the burned-out cells out of the burning set, so until their source is told
+  // to destroy what was there, the registry still answers "there is a tree
+  // here" for a cell that is now neither burning nor standing. Spreading first
+  // let a neighbour RE-LIGHT the cell that had just burned to nothing — 47 of
+  // 256 trees in a test wood burned twice, and every one of those second fires
+  // reported another tree consumed that never existed.
+  //
+  // Each finished fire goes back to the plugin whose stuff it consumed; that
+  // source destroys what was there and broadcasts its own change. This plugin
+  // never touches another plugin's state.
+  if (burnedOut.size > 0) {
+    for (const source of fuelSources()) {
+      const cells = burnedOut.get(source.name);
+      if (cells === undefined || cells.length === 0) continue;
+      source.onBurnedOut(cells);
+      // The episode counts what was actually CONSUMED, not what stopped
+      // burning: a fire the rain saved took nothing, and a chronicle line
+      // claiming otherwise would be a lie about a forest that is still there.
+      episodeConsumed += cells.length;
+      episodeOrigin ??= cells[0]!;
+    }
+  }
+
+  // THE WALKING FIRES, advanced on the same clock as the cells and routed the
+  // same way: each source is told which of ITS individuals died of it and
+  // destroys them itself, and this plugin touches nobody else's state.
+  //
+  // AFTER the cell burnouts above, for that block's own reason applied to
+  // creatures: a source asked to destroy an animal has to be asked while it
+  // still has it, and it must not be asked twice.
+  const walking = entityBlaze.advance(dt);
+  let entitiesChanged = walking.changed;
+  if (walking.burnedOut.size > 0) {
+    for (const [sourceName, ids] of walking.burnedOut) {
+      const source = entityFuelSource(sourceName);
+      if (source === null || ids.length === 0) continue;
+      source.onBurnedOut(ids);
+      // NOT counted into the wildfire episode: the episode is a story about
+      // how much of the WORLD burned (chronicle's "a fire took forty trees"),
+      // and folding animals into that count would make the sentence a lie
+      // about trees. What burning livestock deserves is its own line, which
+      // is a chronicle change, not a change to this counter.
+    }
+  }
+  if (suppressEntitiesWithRain(dt) > 0) entitiesChanged = true;
+
+  // SPREAD, on its own cadence. Accumulated rather than run every tick, and
+  // capped at one interval so a stalled or resumed server cannot bank an
+  // unbounded debt and then spread the fire across the world in one step —
+  // flora's scanCredit is capped for the same reason.
+  spreadDebtSeconds = Math.min(spreadDebtSeconds + dt, MAX_SPREAD_DEBT_SECONDS);
+  let ignited: FireCellState[] = [];
+  let drenched: FuelCell[] = [];
+  while (spreadDebtSeconds >= SPREAD_INTERVAL_SECONDS) {
+    // RAIN BEFORE SPREAD, so a fire the rain has just put out does not get to
+    // throw one last spark on its way out. The two share a cadence because
+    // they are two halves of one question — where is the fire a second from
+    // now — and evaluating them on different clocks would let a fire spread
+    // from a cell it was extinguished on.
+    // THE INTERVAL, NOT THE DEBT, is what the rate functions are charged —
+    // and the remainder is CARRIED rather than dropped (bug, 2026-08-24).
+    // `dt` at the shipped 10 Hz is 0.1, which is not representable in binary:
+    // ten of them sum to 0.9999999999999999, so the step fired on the
+    // eleventh tick having covered 1.1 s, was charged 1.0 s, and threw the
+    // rest away. Fires spread and rain suppressed ~10% slower than their
+    // stated per-second rates, and by an amount that depended on TICK_HZ —
+    // precisely what handing the elapsed interval to the rate arithmetic is
+    // supposed to prevent.
+    drenched = [...drenched, ...suppressWithRain(SPREAD_INTERVAL_SECONDS)];
+    // BOTH REGISTRIES IN ONE STEP: a flame reaches whatever is near it, and
+    // whether that is a cell or something walking is not the flame's business
+    // (./spread.ts's header). A caught individual is a change to the entity
+    // set exactly as a torched one is, so it rides the same broadcast.
+    const spread = spreadOnce(world, blaze, entityBlaze, SPREAD_INTERVAL_SECONDS);
+    ignited = [...ignited, ...spread.cells];
+    if (spread.entities.length > 0) entitiesChanged = true;
+    spreadDebtSeconds -= SPREAD_INTERVAL_SECONDS;
+  }
+
+  const ended = drenched.length > 0 ? [...stopped, ...drenched] : stopped;
+  if (ignited.length > 0 || ended.length > 0) broadcastChanges(world, ignited, ended);
+  // THE WHOLE SET on any change (../protocol.ts): a burning herd is small
+  // enough that a delta would save bytes nobody is short of, and a full set
+  // cannot leave a client drawing a flame on an animal that stopped burning.
+  if (entitiesChanged) broadcastEntities(world);
+
+  // The world just stopped burning: whatever that fire was, it is over.
+  if (blaze.size === 0) endEpisode(world);
+
+  if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) {
+    broadcastSnapshot(world);
+  }
+
+  // THE WALKING FIRES RE-ANCHOR ON THEIR OWN, FASTER CADENCE — see
+  // ENTITY_REPAIRS_PER_BURN. They used to share the cell keepalive, which is
+  // longer than a creature burns, so the one repair that could have told a
+  // player about an animal that walked into their view was scheduled for
+  // after the animal was dead.
+  if (
+    entityBlaze.size > 0 &&
+    simSeconds - lastEntityBroadcastSeconds >= entityRepairIntervalSeconds()
+  ) {
+    broadcastEntities(world);
+  }
 }
