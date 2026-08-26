@@ -357,6 +357,49 @@ const DISABLED_PLUGINS_DDL = `
   );
 `;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PLUGIN_SETTINGS TABLE (per-world plugin settings, 2026-08-25). One row per
+// (plugin, key) a world has been configured with — structures' growth model is
+// the first, and every future settlement rule is a value of that same key
+// rather than a table of its own.
+//
+// BESIDE disabled_plugins, AND NOT KEYED BY SNAPSHOT, for exactly its reasons:
+// this is operator configuration, a property of the WORLD rather than of a
+// moment in it, so it lives in the world's own file (the registry has no index
+// to put it in — world-registry.ts, "THE FILES ARE THE TRUTH") and a rollback
+// to last Tuesday must not silently put the settlement model back to whatever
+// it was then. Same polarity argument too: a world with no row runs the
+// deployment's default, so an existing world needs no migration and a setting
+// added later is absent everywhere until somebody chooses it.
+//
+// VALUES ARE TEXT, and the set a key accepts is the declaring PLUGIN's, never
+// this table's: core has no vocabulary for what `model = populous` means and
+// must not grow one. The admin path validates a value against the declaration
+// before it is ever written (see world-manager.ts).
+//
+// SNAPSHOT_SCHEMA_VERSION does not move, for the reason it did not for
+// token_masks or disabled_plugins — a new table is invisible to an older
+// build's queries, and no rows reads as "nothing configured", which is exactly
+// the pre-existing behaviour.
+/**
+ * One row of `plugin_settings`: a plugin, a key it declared, and the value
+ * this world was configured with.
+ */
+export interface PluginSettingRow {
+  readonly plugin: string;
+  readonly key: string;
+  readonly value: string;
+}
+
+const PLUGIN_SETTINGS_DDL = `
+  CREATE TABLE IF NOT EXISTS plugin_settings (
+    plugin TEXT NOT NULL,
+    key    TEXT NOT NULL,
+    value  TEXT NOT NULL,
+    PRIMARY KEY (plugin, key)
+  );
+`;
+
 // Each fragment interpolated below terminates its OWN statement with a
 // semicolon, so a new one can always be appended. Without that, whichever
 // fragment happens to be last is the only one that parses, and adding the next
@@ -389,6 +432,8 @@ const SCHEMA_DDL = `
   ${TOKEN_MASKS_DDL}
 
   ${DISABLED_PLUGINS_DDL}
+
+  ${PLUGIN_SETTINGS_DDL}
 `;
 
 /**
@@ -441,6 +486,9 @@ export class SnapshotStore {
   private readonly selectDisabledPlugins: Statement;
   private readonly insertDisabledPlugin: Statement;
   private readonly deleteDisabledPlugin: Statement;
+  private readonly selectPluginSettings: Statement;
+  private readonly selectPluginSetting: Statement;
+  private readonly upsertPluginSetting: Statement;
 
   /**
    * How many snapshots survive a write. Held per-store rather than read from
@@ -521,6 +569,22 @@ export class SnapshotStore {
       'INSERT OR IGNORE INTO disabled_plugins (plugin) VALUES (?)',
     );
     this.deleteDisabledPlugin = db.prepare('DELETE FROM disabled_plugins WHERE plugin = ?');
+    // OLDEST-TO-NEWEST is meaningless here, so the order is the one thing a
+    // caller can rely on: plugin then key, so a listing reads the same way
+    // twice running and a diff of two worlds' configuration lines up.
+    this.selectPluginSettings = db.prepare(
+      'SELECT plugin, key, value FROM plugin_settings ORDER BY plugin ASC, key ASC',
+    );
+    this.selectPluginSetting = db.prepare(
+      'SELECT value FROM plugin_settings WHERE plugin = ? AND key = ?',
+    );
+    // UPSERT so writing a setting twice is a no-op rather than a constraint
+    // error — the same idempotence disabled_plugins' two writes have, for the
+    // same reason: an operator's second click must not fail.
+    this.upsertPluginSetting = db.prepare(
+      `INSERT INTO plugin_settings (plugin, key, value) VALUES (?, ?, ?)
+         ON CONFLICT(plugin, key) DO UPDATE SET value = excluded.value`,
+    );
   }
 
   /**
@@ -922,6 +986,31 @@ export class SnapshotStore {
    */
   disabledPlugins(): string[] {
     return (this.selectDisabledPlugins.all() as { plugin: string }[]).map((row) => row.plugin);
+  }
+
+  /**
+   * Every per-plugin setting this world has been configured with, in a stable
+   * (plugin, key) order. Empty for a world nobody has configured — see
+   * PLUGIN_SETTINGS_DDL for why absence means "the deployment default".
+   *
+   * Returned as stored, WITHOUT being checked against what this build declares,
+   * for disabledPlugins' reason: a plugin temporarily absent from `plugins/`
+   * must keep the choice made for it rather than having it dropped the first
+   * time the world is opened without it.
+   */
+  pluginSettings(): PluginSettingRow[] {
+    return this.selectPluginSettings.all() as PluginSettingRow[];
+  }
+
+  /** One setting's value, or undefined when this world has never set it. */
+  pluginSetting(plugin: string, key: string): string | undefined {
+    const row = this.selectPluginSetting.get(plugin, key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  /** Records one plugin setting for this world. Idempotent. */
+  setPluginSetting(plugin: string, key: string, value: string): void {
+    this.upsertPluginSetting.run(plugin, key, value);
   }
 
   /** Records whether this world runs `plugin`. Idempotent in both directions. */

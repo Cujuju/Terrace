@@ -117,6 +117,25 @@ function enabledPluginNames(
 }
 
 /**
+ * This world's plugin settings, grouped by the plugin that declared them
+ * (per-world plugin settings, 2026-08-25).
+ *
+ * GROUPED HERE, IN THE ONE PLACE A SESSION IS BUILT, for the same reason
+ * `enabledPluginNames` is read here: every path that opens a world — boot, an
+ * operator load, a reopen after a toggle or a setting change, a test — gets
+ * the same answer from the same place, and none of them can forget to ask.
+ * The host narrows each group to the plugin it belongs to; see
+ * `WorldApi.setting`.
+ */
+function pluginSettingsByPlugin(store: SnapshotStore): Record<string, Record<string, string>> {
+  const grouped: Record<string, Record<string, string>> = {};
+  for (const row of store.pluginSettings()) {
+    (grouped[row.plugin] ??= {})[row.key] = row.value;
+  }
+  return grouped;
+}
+
+/**
  * Opens a world that already has a file, and brings its plugins up to the
  * state they were in when it was last closed.
  *
@@ -183,7 +202,12 @@ export function openSession(deps: SessionDeps, id: string): WorldSession {
     throw error;
   }
 
-  const host = new PluginHost(world, plugins, enabledPluginNames(store, plugins));
+  const host = new PluginHost(
+    world,
+    plugins,
+    enabledPluginNames(store, plugins),
+    pluginSettingsByPlugin(store),
+  );
   // Restore first, then announce — see this function's doc comment.
   host.restorePersistence(pluginSlices);
   host.worldCreate();
