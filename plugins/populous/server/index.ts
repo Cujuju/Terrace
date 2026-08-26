@@ -21,14 +21,18 @@
 // model set, one wire, exactly as pilgrims' own settling.ts insists.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// INERT UNLESS SELECTED. STRUCTURES_MODEL=populous turns this plugin on; under
-// any other value (including the default) it logs one line and registers
-// nothing, so an installed-but-unselected plugin costs a world nothing but the
-// import. The variable is READ HERE TOO rather than asked of structures: this
-// plugin must build and run with structures deleted, so it may not import that
-// plugin's constants — the restate-don't-import rule every cross-plugin value
-// in this repo lives under. The two readings cannot disagree about anything
-// except a value structures would already have refused to boot on.
+// OFFERED, NOT SELF-SELECTING (per-world plugin settings, 2026-08-25). This
+// plugin registers its rule into the growth-model seam whenever it is running
+// in a world, and structures runs the registered rule only where THAT plugin's
+// own `model` setting says so. Registering is cheap and idempotent — one slot,
+// last writer wins — so an offer nobody takes up costs a world nothing.
+//
+// WHY THE CHOICE IS NOT READ HERE. It is structures' setting, and a plugin can
+// only read settings recorded under its OWN name (WorldApi.setting), which is
+// the same wall the message namespace and the persistence slice already stand
+// behind. This plugin must also build and run with structures deleted, so it
+// may not import that plugin's key or its values to ask about them. Two
+// readings of one choice is exactly the drift the env gate used to risk.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { TerracePlugin } from '../../../server/src/plugins/types.ts';
@@ -49,22 +53,13 @@ import {
 /** This plugin's name, and its message namespace. See PLUGIN_NAME_PATTERN. */
 export const POPULOUS_PLUGIN_NAME = 'populous';
 
-/** Restated, not imported — see this file's header. structures owns the name. */
-export const STRUCTURES_MODEL_ENV = 'STRUCTURES_MODEL';
-
-/** The one value of that variable that makes this plugin the active model. */
-export const STRUCTURES_MODEL_POPULOUS = 'populous';
-
-export const POPULOUS_INACTIVE_MESSAGE =
-  `[populous] ${STRUCTURES_MODEL_ENV} is not "${STRUCTURES_MODEL_POPULOUS}" — this plugin is inert`;
-
-export const POPULOUS_ACTIVE_MESSAGE =
-  '[populous] registered as the structures growth model';
-
-/** Is this deployment configured to run this model? Read once, at world create. */
-export function isPopulousSelected(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[STRUCTURES_MODEL_ENV]?.trim() === STRUCTURES_MODEL_POPULOUS;
-}
+/**
+ * Logged once per world this plugin runs in. It says OFFERED rather than
+ * ACTIVE on purpose: whether the board is actually grown by this rule is
+ * structures' answer, and that plugin logs which model the world is running.
+ */
+export const POPULOUS_REGISTERED_MESSAGE =
+  '[populous] growth model registered — it drives the board in worlds set to it';
 
 /**
  * THE REGISTERED MODEL — the pure step (./model.ts) plus the one side effect
@@ -104,11 +99,6 @@ export const plugin: TerracePlugin = {
   name: POPULOUS_PLUGIN_NAME,
 
   onWorldCreate(): void {
-    if (!isPopulousSelected()) {
-      console.info(POPULOUS_INACTIVE_MESSAGE);
-      return;
-    }
-
     // Rule 2 of the bridge pattern: kick the loads off, do not await them.
     // The model is buffered inside the structures bridge and registered the
     // moment that plugin resolves; structures itself does nothing at all until
@@ -117,7 +107,7 @@ export const plugin: TerracePlugin = {
     void loadStructuresBridge();
     void loadPilgrimsBridge();
     registerGrowthModel(model);
-    console.info(POPULOUS_ACTIVE_MESSAGE);
+    console.info(POPULOUS_REGISTERED_MESSAGE);
   },
 
   /**

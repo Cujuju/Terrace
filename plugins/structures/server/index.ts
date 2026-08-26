@@ -6,9 +6,10 @@
 // plugin wiring — the clock, the wire, and the persistence slice.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHICH RULE GROWS THE TOWN IS A DEPLOYMENT CHOICE (./growth-model.ts).
-// STRUCTURES_MODEL picks it, once, at plugin load: `life` (the default,
-// described below) runs the Conway CA; any other registered model is handed
+// WHICH RULE GROWS THE TOWN IS A PER-WORLD CHOICE (./growth-model.ts).
+// The `model` setting picks it, once, when the world opens — STRUCTURES_MODEL
+// is the deployment's default for a world that has never been configured:
+// `life` (described below) runs the Conway CA; any other registered model is handed
 // the whole board on the same interval and its outcome is applied through the
 // same swap, the same delta and the same persistence write. EVERYTHING ELSE
 // ON THIS PAGE IS THE SAME EITHER WAY — the board, the wire, the tiers, the
@@ -78,9 +79,12 @@ import {
   type LiveCellRecord,
 } from './life.ts';
 import {
+  STRUCTURES_MODELS,
   STRUCTURES_MODEL_LIFE,
   STRUCTURES_MODEL_POPULOUS,
+  STRUCTURES_MODEL_SETTING_KEY,
   growthModel,
+  isStructuresModel,
   readStructuresModel,
   type BoardCellRecord,
   type GrowthContext,
@@ -142,13 +146,20 @@ let lastSeedDay = -1;
 let restoredLastSeedDay = -1;
 
 /**
- * WHICH GROWTH MODEL THIS DEPLOYMENT RUNS, read ONCE, when this module is
- * imported — i.e. when the host loads the plugin, which is the moment a bad
- * value must be fatal (see readStructuresModel). Never re-read: a world that
- * changed settlement models halfway through its life would have a board whose
- * history no single rule explains.
+ * THE DEPLOYMENT'S DEFAULT MODEL, read ONCE, when this module is imported —
+ * i.e. when the host loads the plugin, which is the moment a bad value must be
+ * fatal (see readStructuresModel). It is what a world that has never been
+ * configured runs, and the value the declaration below offers as the default.
  */
-let selectedModel: StructuresModel = readStructuresModel(process.env);
+let defaultModel: StructuresModel = readStructuresModel(process.env);
+
+/**
+ * WHICH MODEL *THIS WORLD* RUNS — the `model` setting if it has one, otherwise
+ * the deployment default above. Read once per session, in `onWorldCreate`, and
+ * fixed for the life of that session: the only way it moves is a reopen, which
+ * replays restore + worldCreate, so no tick can ever observe it changing.
+ */
+let selectedModel: StructuresModel = defaultModel;
 
 /** Simulated seconds at the last growth-model step — the populous path's clock. */
 let lastGrowthSeconds = 0;
@@ -459,8 +470,8 @@ function simulate(world: WorldApi, dt: number): void {
   }
 
   // WHICH RULE GROWS THE TOWN (./growth-model.ts). One branch, taken on every
-  // tick for the life of the world, because `selectedModel` is read once at
-  // load and never changes.
+  // tick for the life of the session, because `selectedModel` is read once at
+  // world create and cannot change under a running world.
   if (selectedModel === STRUCTURES_MODEL_LIFE) advanceLife(world, dt);
   else advanceGrowthModel(world);
 
@@ -626,6 +637,38 @@ const persistence: PersistenceSlice = {
  * `persistence.load`, which the host runs BEFORE `onWorldCreate`, so clearing
  * them here would throw away the very snapshot that was just restored.
  */
+/**
+ * WHICH MODEL THIS SESSION RUNS, from the world's own setting.
+ *
+ * A STORED VALUE THIS BUILD DOES NOT KNOW IS NOT FATAL, unlike the same typo
+ * in the environment, and the asymmetry is deliberate: the environment is read
+ * at boot, where a refusal costs one restart and stops a whole deployment
+ * running the wrong rule; a world file is read while the server is live and
+ * may name a model an older build has never heard of (an operator rolling a
+ * server back). Refusing there would take a world down over a value it can
+ * simply not honour yet — so the default runs and one line says so.
+ */
+function sessionModel(world: WorldApi): StructuresModel {
+  const chosen = world.setting(STRUCTURES_MODEL_SETTING_KEY);
+  if (chosen === undefined) return defaultModel;
+  if (isStructuresModel(chosen)) return chosen;
+  console.warn(unknownModelWarning(chosen));
+  return defaultModel;
+}
+
+/** Said once per open, so the log answers "which rule is this world running?". */
+export function structuresModelMessage(model: StructuresModel): string {
+  return `[structures] growth model for this world: ${model}`;
+}
+
+/** Said instead when the world file names a model this build does not have. */
+export function unknownModelWarning(stored: string): string {
+  return (
+    `[structures] this world is set to growth model "${stored}", which this build ` +
+    `does not have — running "${defaultModel}" instead`
+  );
+}
+
 function resetSessionState(): void {
   survey = new GenerationSurvey();
   scanCredit = 0;
@@ -639,8 +682,41 @@ function resetSessionState(): void {
 export const plugin: TerracePlugin = {
   name: STRUCTURES_PLUGIN_NAME,
 
+  /**
+   * THE ONE KNOB THIS PLUGIN OFFERS AN OPERATOR: which rule grows the town.
+   * Every future settlement rule is a value here rather than a plugin of its
+   * own — the board, the wire, the tiers and the slice are the same under all
+   * of them (./growth-model.ts), so a rule is a value, not an installation.
+   *
+   * The declared default is the DEPLOYMENT's (STRUCTURES_MODEL, read at load),
+   * which is what a world with no row of its own actually runs.
+   *
+   * ACCEPTED RESIDUAL, stated where the feature lives (plan §2.3 step 6).
+   * SWAPPING THE MODEL IS SAFE: it does not toggle this plugin, the reopen
+   * replays restore + worldCreate, and the session-scoped reset at the top of
+   * that hook means the incoming rule inherits no clock, sweep or queue from
+   * the outgoing one. TOGGLING THIS PLUGIN ITSELF is a different matter and is
+   * only fully safe after Phase 2 (host-mediated sibling lookup): flora,
+   * pilgrims and temples reach this MODULE through dynamic-import bridges, so
+   * while it is switched off they still resolve it. Closing the world now
+   * empties the board (onWorldClose), which is what makes their answers honest
+   * — but a sibling can still call in DURING a world this plugin is not part
+   * of, and only the host-mediated lookup can answer that with `null`.
+   */
+  settings: [
+    {
+      key: STRUCTURES_MODEL_SETTING_KEY,
+      values: STRUCTURES_MODELS,
+      defaultValue: defaultModel,
+    },
+  ],
+
   onWorldCreate(world: WorldApi): void {
     resetSessionState();
+    // THE ONE READ OF THE SETTING, at the one moment a session begins. See
+    // `selectedModel`; the branch in `simulate` is taken from it every tick.
+    selectedModel = sessionModel(world);
+    console.info(structuresModelMessage(selectedModel));
 
     // Any snapshot has already been restored by the time this runs, so the
     // board here is either empty (fresh world) or the persisted one. Cells
@@ -867,15 +943,19 @@ export function structuresModel(): StructuresModel {
 }
 
 /**
- * TEST SEAM ONLY: overrides the model this process read from the environment.
+ * TEST SEAM ONLY: overrides the model this process read from the environment,
+ * i.e. the DEFAULT every world without a `model` row of its own then runs —
+ * and, so a suite that never opens a world still sees it, this session's model
+ * too.
  *
  * Deliberately NOT reset by `resetStructuresState` — a suite sets the mode
  * once for a whole describe block and boots several worlds inside it, and a
  * reset that silently put the mode back would make every one of those worlds
- * run the wrong model. The real server never calls this: its mode is read once
- * at load and cannot change (see `selectedModel`).
+ * run the wrong model. The real server never calls this: its default is read
+ * once at load, and a world's own choice comes from the setting.
  */
 export function setStructuresModel(model: StructuresModel): void {
+  defaultModel = model;
   selectedModel = model;
 }
 
