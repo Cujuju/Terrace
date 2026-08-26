@@ -349,6 +349,9 @@ export interface Pilgrim {
   goalY: number;
   lingerSeconds: number;
   stuckSeconds: number;
+  /** See PanickingWalker — the fire reaction, shared by all three walker sims. */
+  panicSecondsRemaining: number;
+  panicHeading: number;
   /** The planned route to `goalX`/`goalY` (see `advanceWalker`), or null when
    *  none exists / none has been planned — the walker then falls back to
    *  stepWalker's direct local avoidance for this leg. Never on the wire. */
@@ -503,6 +506,216 @@ export function advanceWalker(
   return result.progressed;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// PANIC — the walker's reaction to fire (issue #184).
+//
+// A peep is not a grazer: an animal wanders, so a startled one simply turns and
+// runs and there is nothing to put back afterwards. A walker is GOING SOMEWHERE
+// — a leg, a goal, a planned route and an index into it — and a panic that
+// trampled any of that would leave a pilgrim who had bolted from a fire walking
+// backwards along a route it was no longer standing on.
+//
+// So panic INTERRUPTS the journey and never edits it. While it lasts, the goal
+// machinery in all three sims is skipped entirely and the walker runs; when it
+// ends, the ONE thing that has genuinely gone stale — the planned route, which
+// started from a place the walker is no longer at — is replanned from where it
+// now stands to the goal it always had. The leg, the linger, the visit, the
+// attempt count and the goal itself are untouched, so the journey resumes as
+// the same journey.
+//
+// ONE PRIMITIVE, THREE SIMS, and every one of them must call it at the TOP of
+// its per-walker loop — before the linger/visit branch, because a pilgrim
+// standing still watching a monster is exactly the walker most in need of being
+// told the world is on fire.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Multiplier on walking speed while panicking.
+ *
+ * ×3, wildlife's FLEE_SPEED_MULTIPLIER — restated rather than imported, as
+ * every cross-plugin number here is, because a plugin must build with the
+ * others deleted. Not tuned apart from an animal's for the reason the burn
+ * times are not (design, 2026-08-24 on peeps: same size, same sort of thing,
+ * and a player who has learned one has learned the other): ×3 is the difference
+ * between "walking" and "running" at a glance, on a peep exactly as on a grazer.
+ */
+export const WALKER_PANIC_SPEED_MULTIPLIER = 3;
+
+/**
+ * How long a BYSTANDER's panic lasts, in simulated seconds — a walker who saw
+ * a fire start nearby, as opposed to one who is on fire.
+ *
+ * 2.5 s, wildlife's FLEE_DURATION_SECONDS and restated for the same reason as
+ * the multiplier above. It is the length of a burst that reads as a reaction
+ * rather than a change of plan: long enough to see the crowd scatter, short
+ * enough that the road is orderly again before the player has finished
+ * watching the fire.
+ */
+export const WALKER_PANIC_SECONDS = 2.5;
+
+/**
+ * How far a NEW FLAME is felt, in cells from where it appeared.
+ *
+ * ONE PANIC BURST, exactly: a walker runs at WALKER_PANIC_SPEED_MULTIPLIER for
+ * WALKER_PANIC_SECONDS and then calms, so the distance covered in a single
+ * flight is the only distance the reaction actually has to work with. Sizing
+ * the alarm to it buys the invariant worth having — every walker the alarm
+ * reaches can put the whole alarm radius behind it before it calms — and at
+ * PILGRIM_WALK_SPEED_CELLS_PER_SECOND that is 2 × 3 × 2.5 = 15 cells, just
+ * under four world units.
+ *
+ * SMALLER THAN THE ANIMALS' ALARM, and knowingly. Wildlife derives its radius
+ * the same way and gets 48 cells, because a grazer runs three times as fast as
+ * a person walks; the number differs because the thing it measures is what the
+ * reactor can DO about a fire, not how big the fire is. Copying the animals'
+ * 48 here — quite apart from being unimportable — would panic walkers who
+ * could not clear it, which on screen is a person jogging on the spot beside a
+ * fire and then stopping, still beside it.
+ *
+ * A walker who is still inside the alarm when a spreading fire lights its next
+ * cell is simply startled again, which is the correct behaviour and needs no
+ * rule of its own: they keep running while the fire keeps coming.
+ */
+export const FIRE_STARTLE_RADIUS_CELLS = Math.round(
+  PILGRIM_WALK_SPEED_CELLS_PER_SECOND * WALKER_PANIC_SPEED_MULTIPLIER * WALKER_PANIC_SECONDS,
+);
+
+/**
+ * A walker that can panic — every walker in this plugin, across all three sims.
+ *
+ * `panicHeading` is meaningful only while `panicSecondsRemaining` is positive;
+ * there is deliberately no separate "is panicking" flag, so the countdown stays
+ * the single definition of the state (wildlife keeps `fleeSecondsRemaining` as
+ * the one definition of its own, for the same reason).
+ */
+export interface PanickingWalker extends RoutedWalker {
+  readonly id: number;
+  stuckSeconds: number;
+  panicSecondsRemaining: number;
+  panicHeading: number;
+}
+
+/**
+ * Runs one panicking walker for a tick. TRUE when it panicked — the caller's
+ * cue to skip everything else it would have done with this walker.
+ *
+ * THE PANIC RUNS THROUGH `stepWalker` LIKE ANY OTHER STEP, so a terrified peep
+ * is still refused water, an unclimbable riser and another walker's body: panic
+ * changes where they want to go, never what the ground will let them do. The
+ * speed-up is applied by handing the step a LONGER `dt` rather than by a second
+ * speed constant, which keeps the distance the separation sweep reasons about
+ * and the distance actually travelled the same expression — the property
+ * `stepWalker` documents as the reason it computes `stepCells` once.
+ *
+ * The run target is a point one whole burst ahead along the panic heading, so
+ * the walker is steering at open ground rather than at a destination it could
+ * "arrive" at mid-panic.
+ */
+export function panicStep(
+  world: PilgrimWorld,
+  walker: PanickingWalker,
+  dt: number,
+  occupants: readonly Occupant[] = [],
+): boolean {
+  if (walker.panicSecondsRemaining <= 0) return false;
+
+  walker.panicSecondsRemaining = Math.max(0, walker.panicSecondsRemaining - dt);
+  stepWalker(
+    world,
+    walker,
+    dt * WALKER_PANIC_SPEED_MULTIPLIER,
+    walker.x + Math.cos(walker.panicHeading) * FIRE_STARTLE_RADIUS_CELLS,
+    walker.y + Math.sin(walker.panicHeading) * FIRE_STARTLE_RADIUS_CELLS,
+    occupants,
+  );
+
+  if (walker.panicSecondsRemaining <= 0) {
+    // THE JOURNEY, HANDED BACK. The route is the only part of it the panic
+    // invalidated — it was planned from somewhere this walker has just run away
+    // from — so it is replanned from here to the goal that never changed. A
+    // null plan is the ordinary "no route, steer directly" fallback this
+    // plugin already has (see Pilgrim.route), not a failure.
+    walker.route = planRoute(world, walker.x, walker.y, walker.goalX, walker.goalY);
+    walker.routeIndex = 0;
+    // They were running, not stuck. Charging a panic to the give-up clock would
+    // retire a walker for having survived a fire.
+    walker.stuckSeconds = 0;
+  }
+  return true;
+}
+
+/**
+ * Startles every walker within `radius` cells of (centerX, centerY) and points
+ * it directly away, for WALKER_PANIC_SECONDS. Returns how many.
+ *
+ * A walker standing exactly on the centre keeps the heading it had — wildlife's
+ * `startleNear` rule and its reason: there is no "away" from a point you are
+ * on, and inventing a random direction would read as a glitch.
+ */
+export function startleWalkersNear(
+  walkers: Iterable<PanickingWalker>,
+  centerX: number,
+  centerY: number,
+  radius: number,
+): number {
+  const radiusSquared = radius * radius;
+  let startled = 0;
+
+  for (const walker of walkers) {
+    const dx = walker.x - centerX;
+    const dy = walker.y - centerY;
+    if (dx * dx + dy * dy > radiusSquared) continue;
+
+    if (dx !== 0 || dy !== 0) walker.panicHeading = Math.atan2(dy, dx);
+    else walker.panicHeading = walker.heading;
+    walker.panicSecondsRemaining = Math.max(walker.panicSecondsRemaining, WALKER_PANIC_SECONDS);
+    startled++;
+  }
+  return startled;
+}
+
+/**
+ * Puts these walkers into a panic lasting `seconds`, with no direction to it —
+ * they bolt the way they were already facing. Returns how many.
+ *
+ * FOR A WALKER WHO IS THEMSELF ALIGHT (../server/index.ts's fuel registration),
+ * which differs from `startleWalkersNear` in exactly the two ways that matter:
+ * there is no "away" from a fire you are carrying, and the panic lasts the
+ * whole burn rather than a burst, because being on fire is a condition and not
+ * an instant.
+ *
+ * WHY THE WHOLE BURN IS SET ONCE RATHER THAN REFRESHED WHILE IT BURNS. A
+ * refresh would need this plugin to keep its own "which of mine are alight"
+ * set, and fire announces only one of a burning individual's four endings to
+ * the owner — it says when one burned to death, and says nothing when rain puts
+ * it out or when the fire is dropped because the walker was removed by
+ * something else (plugins/fire/server/entityBlaze.ts's four endings). Such a
+ * set would leak, and a leaked entry is a person who runs forever. The
+ * countdown needs no set: it expires on its own, and the one divergence — a
+ * walker the rain saved keeps running for the rest of what would have been
+ * their life — is honest, because they have just been on fire.
+ */
+export function panicWalkers(
+  walkers: Iterable<PanickingWalker>,
+  ids: readonly number[],
+  seconds: number,
+): number {
+  if (seconds <= 0) return 0;
+
+  let panicked = 0;
+  // Iterated over the WALKERS rather than over `ids`, so the order of work is
+  // this plugin's own fixed walker order and not the caller's list.
+  for (const walker of walkers) {
+    if (!ids.includes(walker.id)) continue;
+    walker.panicHeading = walker.heading;
+    // NEVER SHORTENS an existing panic: a walker startled a moment ago and set
+    // alight now must not have their flight cut back to the shorter of the two.
+    walker.panicSecondsRemaining = Math.max(walker.panicSecondsRemaining, seconds);
+    panicked++;
+  }
+  return panicked;
+}
+
 /** Squared distance to the current goal. */
 function goalDistanceSq(pilgrim: Pilgrim): number {
   const dx = pilgrim.goalX - pilgrim.x;
@@ -603,6 +816,8 @@ export class Pilgrimage {
           goalY: viewpoint.y,
           lingerSeconds: 0,
           stuckSeconds: 0,
+          panicSecondsRemaining: 0,
+          panicHeading: 0,
           route,
           routeIndex: 0,
         });
@@ -622,6 +837,12 @@ export class Pilgrimage {
     const ownCrowd = walkerOccupants(own);
 
     for (const pilgrim of this.pilgrims.values()) {
+      // PANIC FIRST, ABOVE THE LINGER BRANCH. A pilgrim standing still watching
+      // a monster is the walker most in need of being told the world is on
+      // fire, and it is the one the linger branch would otherwise `continue`
+      // past without ever looking (see the PANIC section's header).
+      if (panicStep(world, pilgrim, dt, crowdAround(pilgrim, own, ownCrowd, occupants))) continue;
+
       if (pilgrim.leg === 'lingering') {
         pilgrim.lingerSeconds += dt;
         // Face the beast while it is watched — the monster may drift.
@@ -725,7 +946,7 @@ export class Pilgrimage {
    *  `Occupant` rows the OTHER sim steers around (see index.ts). Exposed as
    *  the moving slice alone: nothing outside this file has business with a
    *  pilgrim's leg, route or blessing. */
-  walkers(): readonly MovingWalker[] {
+  walkers(): readonly PanickingWalker[] {
     return [...this.pilgrims.values()];
   }
 

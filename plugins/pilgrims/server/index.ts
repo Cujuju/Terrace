@@ -27,7 +27,16 @@ import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
 import { applyBlessedCells, bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
 import { bridgedTemple, loadTemplesBridge } from './temples-bridge.ts';
 import { loadFireBridge, registerPilgrimsFuel } from './fire-bridge.ts';
-import { Pilgrimage, WalkerIdAllocator, walkerOccupants } from './pilgrimage.ts';
+import { FIRE_IGNITED_EVENT_NAME, parseIgnitedPositions } from './fire-event.ts';
+import {
+  FIRE_STARTLE_RADIUS_CELLS,
+  Pilgrimage,
+  WalkerIdAllocator,
+  panicWalkers,
+  startleWalkersNear,
+  walkerOccupants,
+  type PanickingWalker,
+} from './pilgrimage.ts';
 import { Settling, canDispatchSettler } from './settling.ts';
 import { Wandering } from './wandering.ts';
 
@@ -174,6 +183,7 @@ export const plugin: TerracePlugin = {
         }
       },
       onBurnedOut: pilgrimsBurnedOut,
+      onIgnited: pilgrimsIgnited,
       // DELIBERATELY NOT DECLARED (the default is false). This plugin has no
       // PersistenceSlice by settled design — journeys are re-derived from the
       // world, and WalkerIdAllocator restarts at 1 every process — so walker 7
@@ -204,6 +214,11 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
+  },
+
+  onWorldEvent(_world: WorldApi, event: string, payload: unknown): void {
+    if (event !== FIRE_IGNITED_EVENT_NAME) return;
+    reactToFire(payload);
   },
 };
 
@@ -296,6 +311,70 @@ function burnableWalkerAt(x: number, y: number): { id: number; distanceCells: nu
 function walkerPosition(id: number): { x: number; y: number } | null {
   const walker = allWalkerStates().find((candidate) => candidate.id === id);
   return walker === undefined ? null : { x: walker.x, y: walker.y };
+}
+
+/**
+ * EVERY WALKER THIS PLUGIN HAS, as the live objects rather than the wire rows —
+ * what the two panic paths below mutate.
+ *
+ * `states()` is deliberately not used for this: it builds COPIES for the
+ * broadcast, and a panic written into a copy would be discarded silently. The
+ * order is the same fixed one the wire uses (pilgrims, wanderers, settlers), so
+ * the work happens in a defined order rather than an incidental one.
+ */
+function* allWalkerObjects(): Generator<PanickingWalker> {
+  yield* pilgrimage.walkers();
+  yield* wandering.walkers();
+  yield* settling.walkers();
+}
+
+/**
+ * THE REACTIVE PATH, FIRE (issue #184): something, somewhere, caught — scatter
+ * whoever is standing near it.
+ *
+ * BY NAME, NEVER BY IMPORT (server/src/plugins/types.ts's emitEvent doc, and
+ * ./fire-event.ts's header): fire's plugin name is the whole of the coupling,
+ * and a world with no fire plugin simply never sees this event.
+ *
+ * EVERY IGNITION IN THE BATCH IS ITS OWN ALARM rather than one alarm at the
+ * batch's centroid. A tick's ignitions are not one thing — a spreading front's
+ * far edge, a bolt across the valley, someone alight somewhere else entirely —
+ * and their mean can easily be a place where nothing is burning at all. Each is
+ * applied in turn, in the order fire listed them, which is fire's own fixed
+ * roll order.
+ */
+function reactToFire(payload: unknown): void {
+  const ignited = parseIgnitedPositions(payload);
+  if (ignited === null) return;
+
+  for (const at of ignited) {
+    startleWalkersNear(allWalkerObjects(), at.x, at.y, FIRE_STARTLE_RADIUS_CELLS);
+  }
+}
+
+/**
+ * These walkers just caught fire — the OWNER'S half of the reaction, and the
+ * counterpart of `reactToFire` above.
+ *
+ * TWO HOOKS, AND BOTH ARE NEEDED, because they answer different questions. The
+ * `fire:ignited` world event says something SOMEWHERE caught, which is how a
+ * bystander learns to run. This callback says something OF THIS PLUGIN'S
+ * caught, which is how the person learns they are alight. Serving the second
+ * from the first would mean matching an event position back against this
+ * plugin's own walkers and guessing which of them the fire meant — a question
+ * fire has already answered, exactly, by calling this.
+ *
+ * The panic lasts the whole burn (pilgrimage.ts's `panicWalkers`), so a burning
+ * peep runs for as long as they are alive instead of calming down a third of
+ * the way through their death.
+ *
+ * AND IT SPREADS THE FIRE, which is the point and not a side effect (owner,
+ * 2026-08-26): a panicking peep at three times walking speed sets light to
+ * every cell they cross (plugins/fire/server/spread.ts's
+ * SELF_AND_NEIGHBOUR_OFFSETS). Nothing here suppresses, slows or shortens it.
+ */
+function pilgrimsIgnited(ids: readonly number[]): void {
+  panicWalkers(allWalkerObjects(), ids, PILGRIMS_BURN_SECONDS);
 }
 
 /**

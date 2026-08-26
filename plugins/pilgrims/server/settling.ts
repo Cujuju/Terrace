@@ -45,9 +45,11 @@ import {
   WalkerIdAllocator,
   advanceWalker,
   isWalkableCell,
+  panicStep,
   planRoute,
   walkerOccupants,
   type MovingWalker,
+  type PanickingWalker,
   type PilgrimWorld,
 } from './pilgrimage.ts';
 import { canFoundStructureAt, foundStructureAt } from './structures-bridge.ts';
@@ -346,6 +348,9 @@ interface Settler {
   /** Sites tried so far, including the one being walked to. */
   attempts: number;
   stuckSeconds: number;
+  /** See pilgrimage.ts's PanickingWalker — the fire reaction, all three sims. */
+  panicSecondsRemaining: number;
+  panicHeading: number;
   /** See pilgrimage.ts's Pilgrim.route — same contract, same fallback. */
   route: RouteCell[] | null;
   routeIndex: number;
@@ -442,6 +447,13 @@ export class Settling {
     const ownCrowd = walkerOccupants(own);
 
     for (const settler of this.settlers.values()) {
+      // PANIC FIRST — pilgrimage.ts's PANIC section states the rule. A settler
+      // has no standing-still leg to skip, but the ordering is the same one in
+      // all three sims deliberately: panic is checked before anything reads the
+      // journey, so no sim can advance a goal a panicking walker is not
+      // pursuing this tick.
+      if (panicStep(world, settler, dt, crowd(settler, own, ownCrowd, occupants))) continue;
+
       const progressed = advanceWalker(
         world,
         settler,
@@ -575,6 +587,8 @@ export class Settling {
       boundToTemple: true,
       attempts: 1,
       stuckSeconds: 0,
+      panicSecondsRemaining: 0,
+      panicHeading: 0,
       route,
       routeIndex: 0,
     });
@@ -636,6 +650,8 @@ export class Settling {
       boundToTemple: false,
       attempts: 1,
       stuckSeconds: 0,
+      panicSecondsRemaining: 0,
+      panicHeading: 0,
       route,
       routeIndex: 0,
     });
@@ -663,7 +679,7 @@ export class Settling {
   }
 
   /** See Pilgrimage.walkers() — same contract, same caller (index.ts). */
-  walkers(): readonly MovingWalker[] {
+  walkers(): readonly PanickingWalker[] {
     return [...this.settlers.values()];
   }
 

@@ -35,9 +35,11 @@ import {
   WalkerIdAllocator,
   advanceWalker,
   isWalkableCell,
+  panicStep,
   planRoute,
   walkerOccupants,
   type MovingWalker,
+  type PanickingWalker,
   type PilgrimWorld,
 } from './pilgrimage.ts';
 import type { SettlerRace } from '../protocol.ts';
@@ -160,6 +162,9 @@ interface Wanderer {
   goalY: number;
   visitSeconds: number;
   stuckSeconds: number;
+  /** See pilgrimage.ts's PanickingWalker — the fire reaction, all three sims. */
+  panicSecondsRemaining: number;
+  panicHeading: number;
   /** See pilgrimage.ts's Pilgrim.route — same contract, same fallback. */
   route: RouteCell[] | null;
   routeIndex: number;
@@ -217,6 +222,11 @@ export class Wandering {
     const ownCrowd = walkerOccupants(own);
 
     for (const wanderer of this.wanderers.values()) {
+      // PANIC FIRST, above the visit branch — pilgrimage.ts's PANIC section
+      // states the rule and the reason: a walker standing still in a town is
+      // the one the branch below would `continue` past without ever looking.
+      if (panicStep(world, wanderer, dt, crowd(wanderer, own, ownCrowd, occupants))) continue;
+
       if (wanderer.leg === 'visiting') {
         wanderer.visitSeconds += dt;
         if (wanderer.visitSeconds >= WANDERER_VISIT_SECONDS) {
@@ -352,6 +362,8 @@ export class Wandering {
         goalY,
         visitSeconds: 0,
         stuckSeconds: 0,
+        panicSecondsRemaining: 0,
+        panicHeading: 0,
         route,
         routeIndex: 0,
       });
@@ -386,7 +398,7 @@ export class Wandering {
   }
 
   /** See Pilgrimage.walkers() — same contract, same caller (index.ts). */
-  walkers(): readonly MovingWalker[] {
+  walkers(): readonly PanickingWalker[] {
     return [...this.wanderers.values()];
   }
 
