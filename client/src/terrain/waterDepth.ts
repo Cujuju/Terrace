@@ -62,16 +62,22 @@ export const WATER_MIN_ALPHA = 0.1;
 export const WATER_MAX_ALPHA = 0.55;
 
 /**
- * World-unit water-column depth at which the curve reaches WATER_MAX_ALPHA.
- * Pinned to the bottom of the ORDINARY sea column (shared's SEA_COLUMN_BANDS,
- * 16 bands) rather than to the world's true floor (MIN_HEIGHT, 24 bands
- * further down through the Deep Strata crust). Two consequences, both
- * intended:
+ * World-unit water-column depth at the bottom of the ORDINARY sea column
+ * (shared's SEA_COLUMN_BANDS, 64 bands) rather than the world's true floor
+ * (MIN_HEIGHT, 32 bands further down through the Deep Strata crust).
  *
- *   - every depth an unmodified genesis ocean or an everyday dig reaches gets
- *     the full richening curve, so "a shelf reads as a shelf and a trench
- *     reads as a trench" holds exactly where players spend most of their
- *     time;
+ * NO LONGER WHERE ALPHA SATURATES (corrected 2026-08-25 — see
+ * WATER_ALPHA_SATURATION_WORLD_UNITS just below, which took that job over
+ * after the band counts in this comment turned out to be wrong by 4x and the
+ * ocean was rendering at a fifth of its intended strength). What it still
+ * marks, unchanged, is the boundary of the WATER_MAX_ALPHA plateau and the
+ * start of both the deep-strata down-ramp and specular suppression. Two
+ * consequences, both intended:
+ *
+ *   - every depth an unmodified genesis ocean or an everyday dig reaches sits
+ *     at or before this boundary, so "a shelf reads as a shelf and a trench
+ *     reads as a trench" is settled by the alpha ramp above it and never by
+ *     the deep-strata ramp below;
  *   - every depth PAST it (basalt, obsidian, the lava floor) rides the same
  *     flat WATER_MAX_ALPHA ceiling rather than climbing toward opaque. This
  *     produces a visible kink in the curve exactly at the sea column's floor
@@ -83,6 +89,47 @@ export const WATER_MAX_ALPHA = 0.55;
  */
 export const WATER_DEPTH_SATURATION_WORLD_UNITS =
   SEA_COLUMN_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
+
+/**
+ * CORRECTION (2026-08-25). The depth at which ALPHA reaches WATER_MAX_ALPHA.
+ * Split out of WATER_DEPTH_SATURATION_WORLD_UNITS above, which alpha used to
+ * share with the specular curve, because the two constants answer different
+ * questions and only one of them is about the sea column's floor.
+ *
+ * THE BUG. The comment above claims the shared constant means "every depth an
+ * unmodified genesis ocean or an everyday dig reaches gets the full richening
+ * curve", and it named SEA_COLUMN_BANDS as "16 bands". SEA_COLUMN_BANDS is
+ * 64. So the ramp that was supposed to be spent across the ocean was spent
+ * across a depth five times deeper than any ocean, and measurement (below) put
+ * essentially the whole sea on its first fifth: ordinary open water rendered
+ * at alpha 0.18 out of a designed 0.1-0.55 range. The sea's own colour, and
+ * every painted band on it (render/water/waterBands.ts), therefore arrived at
+ * roughly a fifth of the strength they were tuned to, and an A/B that hid the
+ * water plane entirely was nearly indistinguishable from one that drew it —
+ * the seabed's palette was doing essentially all the work.
+ *
+ * MEASURED, not reasoned — the discipline the shade ramp above had to learn
+ * three times. Live world frostwick-hollows, 2026-08-25, 4.67M water cells
+ * (94% of the map), depth in bands:
+ *
+ *     p25 11    p50 12    p75 12    p95 14    p99 21    max 96
+ *
+ * 59% of all water sits in band 12 alone. Pinned to the measured p95, so the
+ * ramp is spent across the depths water actually occupies and the ordinary
+ * ocean lands in the rich part of the range rather than its first fifth. Past
+ * p95 is trench, and a trench riding the WATER_MAX_ALPHA plateau is the
+ * behaviour the plateau was always for.
+ *
+ * WHY THE SPECULAR BOUNDARY DID NOT MOVE WITH IT. depthToSpecularFactor keeps
+ * WATER_DEPTH_SATURATION_WORLD_UNITS: its flatness across the ENTIRE ordinary
+ * sea column is a shipped correction (the 2026-08-20 milky-water fix), and the
+ * contract it keeps is that ordinary sea must not lose its sheen. Starting
+ * suppression at p95 instead would strip the sheen from open water — the exact
+ * regression that fix exists to prevent. Two questions, two constants.
+ */
+const WATER_ALPHA_SATURATION_BANDS = 14;
+export const WATER_ALPHA_SATURATION_WORLD_UNITS =
+  WATER_ALPHA_SATURATION_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 
 /**
  * AMENDMENT (2026-08-20, Deep Strata milky-water follow-up). The plateau
@@ -170,10 +217,15 @@ export function waterDepthWorldUnits(height: number): number {
  */
 export function depthToWaterAlpha(depthWorldUnits: number): number {
   if (depthWorldUnits <= 0) return WATER_MIN_ALPHA;
-  if (depthWorldUnits <= WATER_DEPTH_SATURATION_WORLD_UNITS) {
-    const t = depthWorldUnits / WATER_DEPTH_SATURATION_WORLD_UNITS;
+  // The up-ramp is spent across the depths water actually occupies, not across
+  // the sea column's full 64 bands — see WATER_ALPHA_SATURATION_WORLD_UNITS.
+  if (depthWorldUnits <= WATER_ALPHA_SATURATION_WORLD_UNITS) {
+    const t = depthWorldUnits / WATER_ALPHA_SATURATION_WORLD_UNITS;
     return WATER_MIN_ALPHA + (WATER_MAX_ALPHA - WATER_MIN_ALPHA) * t;
   }
+  // The plateau, unchanged in meaning: from wherever alpha saturates down to
+  // the sea column's floor, every depth rides the WATER_MAX_ALPHA ceiling.
+  if (depthWorldUnits <= WATER_DEPTH_SATURATION_WORLD_UNITS) return WATER_MAX_ALPHA;
   if (depthWorldUnits >= WATER_DEPTH_FLOOR_WORLD_UNITS) return WATER_DEEP_STRATA_ALPHA;
   const t =
     (depthWorldUnits - WATER_DEPTH_SATURATION_WORLD_UNITS) /
