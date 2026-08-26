@@ -58,10 +58,25 @@ const CHANGES_WIRE_TYPE = `${STRUCTURES_PLUGIN_NAME}:${STRUCTURES_CHANGES_MESSAG
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
 
 describe(`${STRUCTURES_MODEL_ENV} validation`, () => {
-  it('is what this module wired itself to at load', () => {
-    // The mode is read from the environment ONCE, when the plugin module is
-    // imported — this asserts the wiring, before any test below overrides it.
-    expect(structuresModel()).toBe(readStructuresModel(process.env));
+  it('is read from the environment ONCE, at module load, and never re-read', () => {
+    // The old form of this test compared structuresModel() to
+    // readStructuresModel(process.env) — the same pure function over the same
+    // input the module itself had already applied, so it could only ever
+    // agree. What the module actually promises is that the value is FIXED at
+    // load: a world may not change settlement model under a running server
+    // (index.ts's `selectedModel`), and that is what this asserts.
+    const wired = structuresModel();
+    const previous = process.env[STRUCTURES_MODEL_ENV];
+    process.env[STRUCTURES_MODEL_ENV] = STRUCTURES_MODEL_POPULOUS;
+    try {
+      expect(structuresModel()).toBe(wired);
+    } finally {
+      if (previous === undefined) delete process.env[STRUCTURES_MODEL_ENV];
+      else process.env[STRUCTURES_MODEL_ENV] = previous;
+    }
+    // And the suite runs with the variable unset, so the wired value is the
+    // default — the setting under which every OTHER file's tests were written.
+    expect(wired).toBe(STRUCTURES_MODEL_LIFE);
   });
 
   it('defaults to the Conway CA when unset or blank', () => {
@@ -258,9 +273,31 @@ describe('STRUCTURES_MODEL=populous', () => {
     expect(observed).toEqual({ onBoard: true, generation: 1, emitted: 1 });
   });
 
-  it('does not seed or stir — no house appears without a model', () => {
+  it('does not seed or stir: under this model, houses come only from the model', () => {
+    // WITH A MODEL REGISTERED, and one that plants nothing. The old form of
+    // this test registered NO model at all, so the empty board it asserted was
+    // just advanceGrowthModel's early return — it would have passed even if
+    // this plugin seeded on every generation, because it never reached the
+    // code that would have done so.
+    //
+    // The CA's own anti-starvation backstops (attemptSeed's Monday arrival,
+    // attemptStir's spark) must not fire under a registered model: a model
+    // with no birth-by-neighbour rule has neither failure mode, and sprinkling
+    // unrequested houses into its board would be this plugin overruling the
+    // model it was told to run.
+    const inert: GrowthModel = {
+      name: 'inert',
+      step(_world, live): GrowthStepResult {
+        return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
+      },
+    };
+    setGrowthModel(inert);
     const harness = boot();
-    advance(harness, CA_GENERATION_INTERVAL_SECONDS * 4);
+    // Several generation intervals: under the CA path each of these ticks is
+    // where seeding and stirring would be attempted. Under this path that code
+    // is never reached at all, which is the property being asserted.
+    advance(harness, CA_GENERATION_INTERVAL_SECONDS * 8);
+    expect(currentGeneration()).toBeGreaterThan(0); // the model really did run
     expect(currentLive().size).toBe(0);
   });
 });
