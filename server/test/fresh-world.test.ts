@@ -6,6 +6,13 @@
 // depth has nothing to classify. That is how deep-water wildlife came to have
 // nowhere to live (owner report, 2026-08-14).
 //
+// 2026-08-26 — THE DAY-ONE HABITAT MINIMA ARE GONE. The owner dropped the
+// whale-pair guarantee: forcing 62.5% of the starter square to be deep water
+// meant rescaling most of that square on most seeds, which showed up in a render
+// as a hard-edged rectangle. Whales now arrive with territory creep, and genesis
+// promises land instead — a world-wide land fraction, and islands in the starter
+// square shaped by the seed's own noise.
+//
 // 2026-08-25 — THE GUARANTEES REPLACED THE GEOMETRY. Genesis used to be a
 // STATED PROFILE inside the starter square: a fixed shelf, a fixed slope ring,
 // a clamped abyss, all of it identical in every world ever generated, and this
@@ -16,10 +23,10 @@
 //
 // What replaces it is a CONTRACT, and it is what this file now holds:
 //
+//   * LAND — at least GENESIS_MIN_LAND_PERCENT of the whole map is dry;
 //   * ISLANDS — the starter square contains at least GENESIS_MIN_STARTER_ISLANDS
-//     separate landmasses of GENESIS_MIN_ISLAND_CELLS or more;
-//   * HABITAT — it holds at least GENESIS_MIN_STARTER_SHALLOW_CELLS of shallow
-//     water and GENESIS_MIN_STARTER_DEEP_CELLS of deep;
+//     separate landmasses of GENESIS_MIN_ISLAND_CELLS or more, and they are
+//     lifted out of the seed's own terrain rather than stamped on top of it;
 //   * TRENCHES — every world gets between GENESIS_EXTRA_TRENCH_MIN and
 //     1 + GENESIS_EXTRA_TRENCH_MAX of them, and different seeds get different
 //     ones;
@@ -45,12 +52,12 @@ import {
   FRESH_SHELF_HEIGHT,
   GENESIS_EXTRA_TRENCH_MAX,
   GENESIS_EXTRA_TRENCH_MIN,
-  GENESIS_ISLAND_MAX_LAND_CELLS,
   GENESIS_ISLAND_MIN_LAND_CELLS,
   GENESIS_MIN_ISLAND_CELLS,
-  GENESIS_MIN_STARTER_DEEP_CELLS,
+  GENESIS_MIN_LAND_PERCENT,
   GENESIS_MIN_STARTER_ISLANDS,
-  GENESIS_MIN_STARTER_SHALLOW_CELLS,
+  GENESIS_MIN_STARTER_LAND_CELLS,
+  GENESIS_TRENCH_MIN_BASIN_CELLS,
   GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA,
   GENESIS_TRENCH_QUALIFYING_HEIGHT,
   buildFreshGenesisTerrain,
@@ -100,30 +107,20 @@ const SEEDS = Array.from({ length: 20 }, (_, i) => i * 104729 + 1); // 104729 is
  */
 const WORLD_GENERATION_TIMEOUT_MS = 240_000;
 
+/**
+ * The coarsest genesis noise lattice, in cells — four neighbourhoods.
+ *
+ * Restated here rather than imported because genesis keeps it private: it is an
+ * implementation detail of the field everywhere except in the seam test below,
+ * which needs a whole period of it to compare like with like.
+ */
+const COARSEST_LATTICE_SPACING_CELLS = NEIGHBOURHOOD_CELLS * 4;
+
 /** The starter unlock square's inclusive cell bounds. */
 function starterBounds(size: number): { lo: number; hi: number } {
   const { startChunk, spanChunks } = initialUnlockFootprint(size);
   const lo = startChunk * CHUNK_SIZE;
   return { lo, hi: lo + spanChunks * CHUNK_SIZE - 1 };
-}
-
-/**
- * Counts shallow and deep cells inside the starter square — the same
- * classification `groundOf` uses, restated in three lines rather than imported
- * through the wildlife plugin core is forbidden to depend on.
- */
-function starterHabitat(heights: Int16Array, size: number): { shallow: number; deep: number } {
-  const { lo, hi } = starterBounds(size);
-  let shallow = 0;
-  let deep = 0;
-  for (let y = lo; y <= hi; y++) {
-    for (let x = lo; x <= hi; x++) {
-      const height = heights[y * size + x]!;
-      if (height <= FRESH_SEABED_HEIGHT) deep++;
-      else if (height <= SEA_LEVEL) shallow++;
-    }
-  }
-  return { shallow, deep };
 }
 
 /**
@@ -170,6 +167,33 @@ function starterIslandSizes(heights: Int16Array, size: number): number[] {
   }
 
   return sizes.sort((a, b) => b - a);
+}
+
+/** Cells in the 8-connected landmass containing (x, y); 0 if that cell is water. */
+function landmassAreaAt(heights: Int16Array, size: number, x: number, y: number): number {
+  if (heights[y * size + x]! <= SEA_LEVEL) return 0;
+  const seen = new Uint8Array(size * size);
+  const stack = [y * size + x];
+  seen[y * size + x] = 1;
+  let cells = 0;
+  while (stack.length > 0) {
+    const index = stack.pop()!;
+    cells++;
+    const cx = index % size;
+    const cy = (index - cx) / size;
+    for (let oy = -1; oy <= 1; oy++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        const nx = cx + ox;
+        const ny = cy + oy;
+        if ((ox === 0 && oy === 0) || nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        const neighbour = ny * size + nx;
+        if (seen[neighbour] === 1 || heights[neighbour]! <= SEA_LEVEL) continue;
+        seen[neighbour] = 1;
+        stack.push(neighbour);
+      }
+    }
+  }
+  return cells;
 }
 
 /** Renders one terrain to a plain array — used to compare layers against each other. */
@@ -318,15 +342,18 @@ describe('the whole field', () => {
 // stand on it, and that is what the fixed shelf used to prevent by fiat.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the island pass', () => {
-  it('puts at least GENESIS_MIN_STARTER_ISLANDS islands in every starter square', () => {
+  it('puts GENESIS_MIN_STARTER_LAND_CELLS of island in every starter square', () => {
+    // COUNTED AS LAND, not as landmasses, and that is the guarantee's own shape
+    // — see GENESIS_MIN_STARTER_LAND_CELLS. Only landmasses at or above
+    // GENESIS_MIN_ISLAND_CELLS count, so a scatter of rocks does not.
     for (const size of [WORLD_SIZE, MIN_WORLD_SIZE]) {
-      const short: { seed: number; sizes: number[] }[] = [];
+      const short: { seed: number; cells: number }[] = [];
       for (const seed of SEEDS) {
         const heights = World.createFresh(size, undefined, undefined, seed).map.cells;
-        const islands = starterIslandSizes(heights, size).filter(
-          (cells) => cells >= GENESIS_MIN_ISLAND_CELLS,
-        );
-        if (islands.length < GENESIS_MIN_STARTER_ISLANDS) short.push({ seed, sizes: islands });
+        const cells = starterIslandSizes(heights, size)
+          .filter((island) => island >= GENESIS_MIN_ISLAND_CELLS)
+          .reduce((sum, island) => sum + island, 0);
+        if (cells < GENESIS_MIN_STARTER_LAND_CELLS) short.push({ seed, cells });
       }
       expect({ size, short }).toEqual({ size, short: [] });
     }
@@ -344,79 +371,115 @@ describe('the island pass', () => {
 
   it('raises islands big enough for its own survey to count them', () => {
     // The geometry has to clear the bar it is measured against, or the pass
-    // would raise land it then refuses to count and loop to the end of its
-    // slot list every time.
+    // would raise land it then refuses to count and would work through its whole
+    // site list on every world.
     expect(GENESIS_ISLAND_MIN_LAND_CELLS).toBeGreaterThanOrEqual(GENESIS_MIN_ISLAND_CELLS);
   });
 
-  it('leaves room for both habitat minima beside the islands it raises', () => {
-    // THE ARITHMETIC THAT CAPS GENESIS_MIN_STARTER_ISLANDS AT TWO, stated as an
-    // assertion so a future change to any of the four numbers fails here rather
-    // than producing a starter square that cannot satisfy its own contract.
-    const { lo, hi } = starterBounds(WORLD_SIZE);
-    const footprint = (hi - lo + 1) ** 2;
-    expect(
-      GENESIS_MIN_STARTER_ISLANDS * GENESIS_ISLAND_MAX_LAND_CELLS +
-        GENESIS_MIN_STARTER_SHALLOW_CELLS +
-        GENESIS_MIN_STARTER_DEEP_CELLS,
-    ).toBeLessThanOrEqual(footprint);
-  });
+  it('lifts the terrain rather than stamping a shape on it', () => {
+    // THE 2026-08-26 REGRESSION, pinned. Islands used to be the MAXIMUM of the
+    // terrain and a cone, which puts the cone's own contour on the map: a disc
+    // with a halo, whatever the cone is jittered with. Lifting the field instead
+    // means the island is the terrain, raised — so two islands lifted by the
+    // same amount on different ground must come out different sizes, which a
+    // stamp can never do.
+    const areas = new Set<number>();
+    for (const seed of SEEDS) {
+      const terrain = buildFreshGenesisTerrain(WORLD_SIZE, seed);
+      if (terrain.islands.length === 0) continue;
+      const heights = World.createFresh(WORLD_SIZE, undefined, undefined, seed).map.cells;
+      for (const island of terrain.islands) {
+        // The landmass the anchor sits in — the island as the map really has it.
+        areas.add(landmassAreaAt(heights, WORLD_SIZE, island.anchorX, island.anchorY));
+      }
+    }
+    expect(areas.size).toBeGreaterThan(2);
+  }, WORLD_GENERATION_TIMEOUT_MS);
+
+  it('leaves no seam at the starter square edge', () => {
+    // Nothing in genesis may be shaped like the unlock footprint: a player
+    // looking at the map must not be able to see where their territory ends.
+    // The 2026-08-25 habitat rescale drew exactly that rectangle, which is what
+    // the owner rejected on 2026-08-26.
+    //
+    // MEASURED AGAINST COLUMNS OF THE SAME LATTICE PHASE, which is the whole
+    // subtlety. Bilinear interpolation makes the height gradient change at every
+    // lattice boundary, so the average step across ANY column that is a multiple
+    // of the octave spacings is larger than across its neighbours — and the
+    // footprint edge is one of those columns. Comparing it with the column
+    // beside it therefore fails on terrain that has no seam at all (measured: 7
+    // against 2, on a world genesis had not touched inside the square). Comparing
+    // it with columns a whole coarse-lattice period away puts it against the same
+    // phase, so anything left over is the footprint's own doing.
+    const period = COARSEST_LATTICE_SPACING_CELLS;
+    const meanStepAcrossColumn = (cells: Int16Array, column: number, lo: number, hi: number) => {
+      let total = 0;
+      for (let y = lo; y <= hi; y++) {
+        total += Math.abs(cells[y * WORLD_SIZE + column]! - cells[y * WORLD_SIZE + column - 1]!);
+      }
+      return total / (hi - lo + 1);
+    };
+
+    for (const seed of SEEDS.slice(0, 6)) {
+      const cells = World.createFresh(WORLD_SIZE, undefined, undefined, seed).map.cells;
+      const { lo, hi } = starterBounds(WORLD_SIZE);
+      const edge = meanStepAcrossColumn(cells, lo, lo, hi);
+      const samePhase =
+        (meanStepAcrossColumn(cells, lo - period, lo, hi) +
+          meanStepAcrossColumn(cells, lo + period, lo, hi)) /
+        2;
+      // `+ 1` on both sides so a flat coastline (both zero) compares equal.
+      expect(edge + 1).toBeLessThanOrEqual(2 * (samePhase + 1));
+    }
+  }, WORLD_GENERATION_TIMEOUT_MS);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE HABITAT GUARANTEE (owner, 2026-08-25 — replaces the exact census)
+// THE LAND GUARANTEE (owner, 2026-08-26)
 //
-// The wildlife plugin's day-one census only counts UNLOCKED cells, so the
-// starter square IS the habitat budget of a new world. Until today the fixed
-// shelf split that budget by construction and the plugin asserted the exact
-// split; now genesis promises MINIMA and the plugin asserts its own needs
-// against them.
+// Whether a fresh world had any dry land at all used to be a property of the
+// seed: half the suite's sample came out at 1.4% land, all of it islands the
+// guarantee pass had raised. The land pass fixes the world's land FRACTION with
+// a single whole-band lift of the noise field — a monotone shift, so nothing is
+// stamped and every contour the seed drew stays where it was.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('the habitat pass', () => {
-  it('gives every starter square both minima', () => {
+describe('the land pass', () => {
+  it('leaves no world below GENESIS_MIN_LAND_PERCENT dry land', () => {
     for (const size of [WORLD_SIZE, MIN_WORLD_SIZE]) {
-      const short: { seed: number; shallow: number; deep: number }[] = [];
+      const short: { seed: number; percent: number }[] = [];
       for (const seed of SEEDS) {
-        const heights = World.createFresh(size, undefined, undefined, seed).map.cells;
-        const { shallow, deep } = starterHabitat(heights, size);
-        if (shallow < GENESIS_MIN_STARTER_SHALLOW_CELLS || deep < GENESIS_MIN_STARTER_DEEP_CELLS) {
-          short.push({ seed, shallow, deep });
+        const cells = World.createFresh(size, undefined, undefined, seed).map.cells;
+        let land = 0;
+        for (const h of cells) if (h > SEA_LEVEL) land++;
+        const percent = (100 * land) / (size * size);
+        if (land < Math.ceil((size * size * GENESIS_MIN_LAND_PERCENT) / 100)) {
+          short.push({ seed, percent });
         }
       }
       expect({ size, short }).toEqual({ size, short: [] });
     }
   }, WORLD_GENERATION_TIMEOUT_MS);
 
-  it('repairs only where the noise fell short', () => {
-    const repairs = SEEDS.map(
-      (seed) => buildFreshGenesisTerrain(WORLD_SIZE, seed).habitatOverrides.size,
-    );
-    expect(repairs.some((count) => count > 0)).toBe(true);
+  it('lifts nothing on a world whose own noise already had the land', () => {
+    // The no-op half of the contract. A seed that drew plenty of land must be
+    // byte-identical to what the noise alone produced.
+    const lifts = SEEDS.map((seed) => buildFreshGenesisTerrain(WORLD_SIZE, seed).noise.landLiftBands);
+    expect(lifts.some((lift) => lift === 0)).toBe(true);
+    expect(lifts.every((lift) => Number.isInteger(lift) && lift >= 0)).toBe(true);
   }, WORLD_GENERATION_TIMEOUT_MS);
 
-  it('never writes dry land — it repairs water counts, it does not invent islands', () => {
-    for (const seed of SEEDS.slice(0, 6)) {
-      const { habitatOverrides } = buildFreshGenesisTerrain(WORLD_SIZE, seed);
-      for (const height of habitatOverrides.values()) {
-        expect(height).toBeLessThanOrEqual(SEA_LEVEL);
-        expect(height).toBeGreaterThanOrEqual(MIN_HEIGHT);
-        expect(height % BAND_HEIGHT === 0).toBe(true);
-      }
-    }
-  }, WORLD_GENERATION_TIMEOUT_MS);
-
-  it('keeps the relief of what it repairs — it does not flatten the starter square', () => {
-    // The bathtub regression, pinned. The first version of the repair wrote one
-    // height per class, so a land-rich seed came out as two enormous plates —
-    // the featureless starter region this change exists to abolish, rebuilt by
-    // the pass meant to be invisible. Any seed whose repair is large enough to
-    // matter must produce many distinct heights, not two.
-    const large = SEEDS.map((seed) => buildFreshGenesisTerrain(WORLD_SIZE, seed))
-      .filter((terrain) => terrain.habitatOverrides.size >= GENESIS_MIN_STARTER_DEEP_CELLS)
-      .slice(0, 4);
-    expect(large.length).toBeGreaterThan(0);
-    for (const terrain of large) {
-      expect(new Set(terrain.habitatOverrides.values()).size).toBeGreaterThan(2);
+  it('never floods the map to reach the floor', () => {
+    // A land FLOOR, not a target: the pass lifts by the SMALLEST whole band that
+    // clears it, so a world it had to lift still keeps an ocean — and not just
+    // any ocean, but one big enough for the kraken, which the basin pass
+    // guarantees separately. Asserted as that basin rather than as "half the map
+    // is water", because a seed is perfectly entitled to draw a land-heavy world
+    // and several of the sample do.
+    for (const seed of SEEDS.slice(0, 8)) {
+      const cells = World.createFresh(WORLD_SIZE, undefined, undefined, seed).map.cells;
+      let water = 0;
+      for (const h of cells) if (h <= SEA_LEVEL) water++;
+      expect(water).toBeGreaterThanOrEqual(GENESIS_TRENCH_MIN_BASIN_CELLS);
     }
   }, WORLD_GENERATION_TIMEOUT_MS);
 });
