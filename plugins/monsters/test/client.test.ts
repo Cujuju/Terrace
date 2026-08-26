@@ -151,6 +151,7 @@ import {
   YETI_HORN_TIP_HEIGHT,
   YETI_HORN_TIP_RADIUS,
   YETI_TOTAL_HEIGHT,
+  YETI_WIDEST_VARIANT_WIDTH_CELLS,
   YETI_WIDTH_CELLS,
 } from '../client/yeti-anatomy.ts';
 import {
@@ -776,7 +777,13 @@ describe('the yeti silhouette', () => {
     // Same arrangement as the other two kinds': the server steers by its own
     // copy of this number, the client half must not be imported by the server,
     // so the two are pinned to each other here.
-    expect(cellsAcross(YETI_WIDTH_CELLS)).toBe(YETI_FOOTPRINT_CELLS);
+    // Against the WIDEST VARIANT since 2026-08-26: the server steers one
+    // footprint for every yeti, so the number it steers has to cover the
+    // broadest body that can be rolled (see YETI_VARIANT_WIDTH_CELLS). All four
+    // are YETI_WIDTH_CELLS until Phase B gives them their own bodies, so this
+    // is the same assertion it was — and it is the one that fails the day a
+    // variant outgrows the server's literal.
+    expect(cellsAcross(YETI_WIDEST_VARIANT_WIDTH_CELLS)).toBe(YETI_FOOTPRINT_CELLS);
     // ...and he is NARROWER than the sea horrors, on purpose: he is an animal,
     // and his minimum snowfield is derived from this number.
     expect(YETI_FOOTPRINT_CELLS).toBeLessThan(CTHULHU_FOOTPRINT_CELLS);

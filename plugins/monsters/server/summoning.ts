@@ -116,7 +116,12 @@
 // still drives him off, and his threshold is why lairCollapseCells exists.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
+import {
+  MONSTER_KINDS,
+  YETI_VARIANTS,
+  type MonsterKind,
+  type YetiVariant,
+} from '../protocol.ts';
 import {
   EMPTY_LAIR_SURVEY,
   HABITAT_REGIMES,
@@ -138,7 +143,7 @@ import {
   profileOf,
   summonRatePerSecond,
 } from './kinds.ts';
-import { hashToIndex, monsterRandom, rollEvent } from './rng.ts';
+import { hashToIndex, monsterRandom, randomIndex, rollEvent } from './rng.ts';
 
 /** A living monster. Mutable — the lurk step writes it in place. */
 export interface Monster {
@@ -152,6 +157,17 @@ export interface Monster {
   heading: number;
   /** True during an idle beat: it holds position and simply watches. */
   idle: boolean;
+  /**
+   * WHICH yeti, chosen once at summon time and then fixed for life (2026-08-26).
+   * Undefined for every other kind — see YetiVariant in ../protocol.ts.
+   *
+   * READONLY, and that is the whole behavioural rule: nothing in the sim reads
+   * it (the profile owns speed, footprint and habitat, and all four variants
+   * share one profile), and nothing may rewrite it — a monster whose body
+   * changed under a watching player would be a new animal wearing an old id,
+   * which is precisely what the client's interpolation keys off.
+   */
+  readonly variant?: YetiVariant;
 }
 
 /**
@@ -358,13 +374,40 @@ export function invalidateSurvey(): void {
  *
  * Returns the monster, or null if it refused.
  */
+/**
+ * WHICH BODY THIS ARRIVAL WEARS, for a kind that has more than one.
+ *
+ * Uniform over the variants, drawn through the plugin's random source — so it
+ * is reproducible under `setMonsterRandomSource` (./rng.ts) like every other
+ * decision this module makes, and unpredictable in a real world like the
+ * arrival roll that just fired.
+ *
+ * NOT DERIVED FROM THE MONSTER'S ID or from the terrain, deliberately, and that
+ * is the difference between this pick and the summon CELL's (see summonCellIn,
+ * which is seeded by nextMonsterId because a cell must be reproducible from the
+ * world state for the arrival tests to be writable). A variant has no such
+ * requirement, and hashing the id would make the sequence of looks a fixed
+ * cycle every world replays in the same order — the second yeti a player ever
+ * meets would always be the same one.
+ *
+ * Undefined for kinds with no variants, which is what the wire and the
+ * renderer both expect from them.
+ */
+function variantFor(kind: MonsterKind): YetiVariant | undefined {
+  if (kind !== 'yeti') return undefined;
+  return YETI_VARIANTS[randomIndex(YETI_VARIANTS.length)];
+}
+
 function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster | null {
   const state = stateOf(profile.kind);
   if (livingCountOfKind(profile.kind) >= MAX_LIVING_MONSTERS_PER_KIND) return null;
 
+  const variant = variantFor(profile.kind);
+
   state.living = {
     id: nextMonsterId++,
     kind: profile.kind,
+    ...(variant === undefined ? {} : { variant }),
     // Cell centre: the survey reports a cell, and a monster placed on the corner
     // of one would be half a cell off from the ground the survey vouched for.
     x: cellX + 0.5,

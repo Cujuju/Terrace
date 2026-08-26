@@ -20,7 +20,7 @@
 // megabytes of vertex data, so the alternative would trade a fixed, invisible
 // cost at load for a visible hitch at the exact moment a monster arrives.
 
-import type { MonsterKind } from '../protocol.ts';
+import { DEFAULT_YETI_VARIANT, type MonsterKind, type YetiVariant } from '../protocol.ts';
 import { createCthulhuFactory } from './cthulhu.ts';
 import { createWorkshop } from './geometry.ts';
 import { createKrakenFactory } from './kraken.ts';
@@ -34,7 +34,16 @@ export type { MonsterModel } from './geometry.ts';
 import type { MonsterModel } from './geometry.ts';
 
 export interface MonsterModels {
-  create(kind: MonsterKind): MonsterModel;
+  /**
+   * The model for one monster. `variant` is the yeti's body (../protocol.ts);
+   * it is IGNORED by every other kind, which has exactly one.
+   *
+   * OPTIONAL, and what fills the gap is DEFAULT_YETI_VARIANT — the same
+   * constant the wire parse and the snapshot read-back fall back to, so a
+   * caller with no variant to offer (the preview harnesses, a payload from a
+   * server that predates variants) gets the same animal all three ways.
+   */
+  create(kind: MonsterKind, variant?: YetiVariant): MonsterModel;
   /** Frees every shared geometry and material. Call once, at plugin dispose. */
   dispose(): void;
 }
@@ -43,14 +52,23 @@ export interface MonsterModels {
 export function createMonsterModels(): MonsterModels {
   const workshop = createWorkshop();
 
-  const constructors: Readonly<Record<MonsterKind, () => MonsterModel>> = {
+  /**
+   * The single-bodied kinds. Typed over MonsterKind MINUS the yeti rather than
+   * over all of it, so the yeti cannot be given a variant-blind constructor
+   * here by accident — the exclusion is what makes the compiler ask for the
+   * table below.
+   */
+  const constructors: Readonly<Record<Exclude<MonsterKind, 'yeti'>, () => MonsterModel>> = {
     cthulhu: createCthulhuFactory(workshop),
     kraken: createKrakenFactory(workshop),
-    yeti: createYetiFactory(workshop),
   };
 
+  /** One constructor per yeti variant — four rows, four bodies (Phase B). */
+  const yetiConstructors = createYetiFactory(workshop);
+
   return {
-    create(kind) {
+    create(kind, variant) {
+      if (kind === 'yeti') return yetiConstructors[variant ?? DEFAULT_YETI_VARIANT]();
       return constructors[kind]();
     },
     dispose() {

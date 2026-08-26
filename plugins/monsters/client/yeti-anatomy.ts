@@ -44,6 +44,12 @@
 // and an ape on a ridge. That is the distance the silhouettes have to hold at.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The wire contract is this plugin's own (../protocol.ts) and carries no three,
+// no node builtins — the one import this numbers file is allowed, and only for
+// the variant NAMES, so the per-variant table below cannot fall out of step
+// with the set the server may send.
+import type { YetiVariant } from '../protocol.ts';
+
 /**
  * A PEEP'S OVERALL HEIGHT, world units — the ruler the owner measures this
  * animal against.
@@ -172,6 +178,49 @@ function scaledFrequency(fullSizeCyclesPerWorldUnit: number): number {
  * a cliff the server's probe said was clear.
  */
 export const YETI_WIDTH_CELLS = scaled(5);
+
+/**
+ * The widest extent of EACH variant (2026-08-26), keyed by the name on the
+ * wire.
+ *
+ * ALL FOUR ARE THE SAME NUMBER TODAY, on purpose and only for now: the variants
+ * are plumbed before their bodies exist (Phase A), so every entry is
+ * YETI_WIDTH_CELLS and the four look identical. The table exists anyway rather
+ * than being deferred, because the thing it protects is a CONTRACT, not a
+ * model: the server steers one footprint for all yetis (YETI_FOOTPRINT_CELLS,
+ * server/kinds.ts), and the day one variant's horns or shoulders reach further
+ * than another's, the server's single number has to be the WIDEST of them or
+ * that variant walks its shoulder into a cliff its centre point cleared. With
+ * the table here, filling in a real width is editing one row and re-running the
+ * pin test; without it, it is discovering the contract from a rendering bug.
+ *
+ * WHY ONE FOOTPRINT AND NOT FOUR ON THE WIRE. The server's footprint feeds the
+ * steering look-ahead and the minimum lair size — both of which are decided
+ * before and independently of which body was rolled — and a per-variant lair
+ * requirement would mean a snowfield that can host a yeti only if the dice
+ * agree. One conservative number (the widest) keeps every variant's steering
+ * honest and every qualifying mountain habitable.
+ */
+export const YETI_VARIANT_WIDTH_CELLS: Readonly<Record<YetiVariant, number>> = {
+  silverback: YETI_WIDTH_CELLS,
+  ram: YETI_WIDTH_CELLS,
+  ibex: YETI_WIDTH_CELLS,
+  fanged: YETI_WIDTH_CELLS,
+};
+
+/**
+ * The broadest variant there is — the number the SERVER's YETI_FOOTPRINT_CELLS
+ * is pinned to.
+ *
+ * Derived with a max over the table rather than restated, so it cannot be left
+ * behind when a Phase B model turns out wider than the placeholder: the pin
+ * test then fails against the server's literal, which is exactly the moment
+ * somebody must decide whether to widen the server's footprint or narrow the
+ * model.
+ */
+export const YETI_WIDEST_VARIANT_WIDTH_CELLS = Math.max(
+  ...Object.values(YETI_VARIANT_WIDTH_CELLS),
+);
 
 // ── The stance: feet, legs, hips ─────────────────────────────────────────────
 

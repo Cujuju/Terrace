@@ -29,6 +29,7 @@ import {
   MONSTERS_PLUGIN_NAME,
   MONSTERS_STATE_MESSAGE,
   parseMonstersPayload,
+  type YetiVariant,
 } from '../protocol.ts';
 import { createDread, type Dread } from './atmosphere.ts';
 import { dreadSpecOf } from './dread.ts';
@@ -75,6 +76,17 @@ interface MonsterView {
   readonly dread: Dread | null;
   /** Fixed at creation from the id — never recomputed per frame. */
   readonly phase: number;
+  /**
+   * WHICH BODY this view was built from (2026-08-26), or undefined for a kind
+   * that has only one.
+   *
+   * Recorded rather than re-derived because the model cannot be asked: a
+   * MonsterModel is a root and an animate(), and nothing in it remembers which
+   * constructor made it. The reconcile compares this against the sampled state
+   * so a monster whose variant CHANGED under a live id is rebuilt rather than
+   * left wearing the old body — see reconcileViews.
+   */
+  readonly variant: YetiVariant | undefined;
 }
 
 /**
@@ -114,8 +126,33 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
   if (models === null || container === null) return;
 
   for (const [id, monster] of sampled) {
-    if (views.has(id)) continue;
-    const model = models.create(monster.kind);
+    const existing = views.get(id);
+    if (existing !== undefined) {
+      if (existing.variant === monster.variant) continue;
+      // A LIVE ID WHOSE BODY CHANGED. The server never does this — a variant is
+      // chosen once at summon and is readonly for the monster's life
+      // (server/summoning.ts) — so this is the belt-and-suspenders half of that
+      // rule rather than a mechanic: the one way it can fire in practice is a
+      // client that was watching a yeti through a server upgrade, where the
+      // pre-variant payload defaulted him and the post-upgrade one names the
+      // body he actually has. Rebuilding is the only correct answer available
+      // here, and it costs what an arrival costs.
+      //
+      // The DREAD is deliberately untouched: it is a function of the KIND's
+      // placement, not of the body, and tearing it down would blink the weather
+      // for a change that is invisible on a swimmer anyway (no sea kind has
+      // variants).
+      container.remove(existing.model.root);
+      views.set(id, {
+        model: models.create(monster.kind, monster.variant),
+        dread: existing.dread,
+        phase: existing.phase,
+        variant: monster.variant,
+      });
+      container.add(views.get(id)!.model.root);
+      continue;
+    }
+    const model = models.create(monster.kind, monster.variant);
     container.add(model.root);
     // Each swimmer's weather is derived from its OWN anatomy (dreadSpecOf —
     // 2026-08-19: a bank authored for Cthulhu's 2.4-cell eye height sat over
@@ -124,7 +161,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
     const spec = dreadSpecOf(monster.kind);
     const dread = spec !== null ? createDread(spec) : null;
     if (dread !== null) container.add(dread.root);
-    views.set(id, { model, dread, phase: id * PHASE_RADIANS_PER_ID });
+    views.set(id, { model, dread, phase: id * PHASE_RADIANS_PER_ID, variant: monster.variant });
   }
 
   for (const [id, view] of views) {

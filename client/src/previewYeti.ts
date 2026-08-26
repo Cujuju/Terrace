@@ -7,6 +7,16 @@
 //   ?t=<seconds>                       — frozen animation time; defaults to 0
 //   ?peep=<0|1>                        — force the peep off/on; by default he
 //                                        is present in every view but "face"
+//   ?variant=<silverback|ram|ibex|fanged>
+//                                      — WHICH yeti (2026-08-26); defaults to
+//                                        the first, which is what an
+//                                        unrecognised value falls back to as
+//                                        well. The four are one body until
+//                                        Phase B gives them their own, so this
+//                                        currently changes nothing on screen —
+//                                        it exists so the four are reviewable
+//                                        the moment they differ, in the same
+//                                        studio and at the same framings.
 //
 // THE PEEP IS THE POINT. This animal's size is stated as a RATIO — the owner's
 // 2026-08-24 ceiling is "no more than two times taller than one of the peeps" —
@@ -37,6 +47,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { DEFAULT_YETI_VARIANT, isYetiVariant } from '../../plugins/monsters/protocol.ts';
 import { createMonsterModels } from '../../plugins/monsters/client/models.ts';
 import {
   YETI_HEAD_CENTER_HEIGHT,
@@ -112,6 +123,10 @@ const view: CameraView =
   viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
 const timeParam = Number(query.get('t') ?? '0');
 const seconds = Number.isFinite(timeParam) ? timeParam : 0;
+const variantParam = query.get('variant');
+// The same fallback the wire parse and the snapshot read-back use: an
+// unrecognised name is "some yeti", never an empty studio.
+const variant = isYetiVariant(variantParam) ? variantParam : DEFAULT_YETI_VARIANT;
 const peepParam = query.get('peep');
 const showPeep = peepParam === null ? view !== 'face' && view !== 'hips' : peepParam === '1';
 
@@ -142,7 +157,7 @@ scene.add(sun);
 const subject = new Group();
 
 const monsters = createMonsterModels();
-const yeti = monsters.create('yeti');
+const yeti = monsters.create('yeti', variant);
 yeti.animate(seconds, 0);
 subject.add(yeti.root);
 
