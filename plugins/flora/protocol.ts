@@ -1625,3 +1625,198 @@ if (
     `a fringe plant of ${FRINGE_CLUSTER_CELL_SPAN} cells reaches past ${FRINGE_MAX_REACH_CELLS} cells and could overhang a terrace lip`,
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STUMPS (GH #195) — the fifth population, and the first that is a RESIDUE
+// rather than a crop of the ground.
+//
+// The other four are all answers to "what does this cell's terrain deserve":
+// re-derivable from the heightmap at any moment, which is why three of them
+// persist nothing and the fourth persists only because a forest is the record
+// of something the player did. A stump is not derivable from anything. It is
+// the mark left by an EVENT — a fire that finished burning the tree standing
+// here — and the only way to know it is there is to have been told.
+//
+// ONE CAUSE, DELIBERATELY (owner, 2026-08-26). Four things remove a standing
+// tree today, and only one of them leaves anything behind:
+//
+//   fire burned out   → A STUMP. The tree was destroyed where it stood; its
+//                       ground was never touched and its cell is still free.
+//   sculpt            → nothing. The ground itself moved, so the tree was
+//                       uprooted, not cut — and sculpting is the player's main
+//                       verb, so a stump per felled tree would litter the
+//                       meadow after every edit.
+//   building seeded   → nothing. The structure's floor is on that cell now;
+//                       a stump would be inside it.
+//   survey cull       → nothing. The cull fires when the ground stopped being
+//                       able to hold a tree at all (it went to water, to rock,
+//                       under a building) — there is nowhere for a stump to be.
+//
+// So a stump means exactly one thing wherever a player sees one: fire came
+// through here. That legibility is the feature; a stump from every cause would
+// be scenery.
+//
+// A LIFETIME, NOT A CAP DISCIPLINE. Stumps rot (FLORA_STUMP_ROT_SECONDS) and
+// the list is emptied by the passage of time rather than by pressure against
+// FLORA_STUMP_CAP — which is what keeps a burn scar an event the world heals
+// from rather than a permanent monument. The cap is a bound, not a mechanism.
+//
+// NOT PERSISTED, matching crops, grass and the fringe and for a stronger
+// reason than any of them: a stump is a countdown, and a restart that restored
+// one would have to restore its remaining seconds too or silently reset every
+// scar in the world to a full lifetime. Losing them is honest — they were
+// going to rot anyway, and a fire nobody was connected to see is a fire that
+// left no impression.
+//
+// THE ARITHMETIC, at FLORA_STUMP_CAP on a 512² world, following the tree
+// arithmetic at the top of this file exactly:
+//
+//   full snapshot   4096 × 6 B                      = 24 KB, ONCE, at join
+//   keepalive       24 KB / 60 s                     = 400 B/s ≈ 3.2 kbit/s
+//
+// And that is the CAP, not the expectation: the cap is only reachable if the
+// entire forest burns down inside one rot window. The steady state on a world
+// that is not on fire is an empty list and no message at all
+// (FLORA_SKIP_EMPTY).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Server → client, the WHOLE stump list. Replaces the receiver's list. */
+export const FLORA_STUMP_MESSAGE = 'stumps';
+
+/** Server → client, a delta: stumps LEFT by a burn, stumps that have ROTTED away. */
+export const FLORA_STUMP_CHANGES_MESSAGE = 'stumpChanges';
+
+/**
+ * The most stumps that can stand at once.
+ *
+ * FLORA_TREE_CAP exactly, and derived from it rather than chosen: a stump is
+ * the remains of a tree, at most one tree ever stands on a cell, and a stump
+ * holds its cell against replanting until it rots (server/index.ts's
+ * occupiedCells) — so the standing forest and the stumps left by burning it
+ * down cannot both exceed the tree cap at the same moment. Sizing this
+ * independently would be inventing a second bound for a quantity the first one
+ * already bounds.
+ */
+export const FLORA_STUMP_CAP = FLORA_TREE_CAP;
+
+/**
+ * A cell holding one stump. TreeCell's contract exactly — the cell is the
+ * identity, so there is no id here either, and "the stump at that cell" is
+ * unambiguous because the tree that left it was unambiguous.
+ */
+export interface StumpCell {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Cell → integer key. treeKey's encoding, restated for this population's own map. */
+export function stumpKey(x: number, y: number): number {
+  return y * FLORA_CELL_KEY_STRIDE + x;
+}
+
+/** Integer key → cell. The exact inverse of stumpKey. */
+export function stumpCellOf(key: number): StumpCell {
+  return { x: key % FLORA_CELL_KEY_STRIDE, y: Math.floor(key / FLORA_CELL_KEY_STRIDE) };
+}
+
+/** Cells → the flat wire form. packTreeCells' encoding and its byte argument. */
+export function packStumpCells(cells: Iterable<StumpCell>): number[] {
+  const packed: number[] = [];
+  for (const cell of cells) packed.push(cell.x, cell.y);
+  return packed;
+}
+
+/** Defensive parse of a flat coordinate list — parseTreeCells, capped at this population's own cap. */
+export function parseStumpCells(value: unknown): StumpCell[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const cells: StumpCell[] = [];
+  for (let i = 0; i + 1 < value.length; i += 2) {
+    if (cells.length >= FLORA_STUMP_CAP) break;
+    const x = value[i];
+    const y = value[i + 1];
+    if (!isCellCoordinate(x) || !isCellCoordinate(y)) continue;
+    cells.push({ x, y });
+  }
+  return cells;
+}
+
+/** `flora:stumps` — the receiver's whole stump list. */
+export interface FloraStumpsPayload {
+  readonly stumps: readonly number[];
+}
+
+/** `flora:stumpChanges` — what a burn left, and what has rotted away. */
+export interface FloraStumpChangesPayload {
+  readonly left: readonly number[];
+  readonly rotted: readonly number[];
+}
+
+export function parseStumpsPayload(payload: unknown): StumpCell[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  return parseStumpCells((payload as { stumps?: unknown }).stumps);
+}
+
+export function parseStumpChangesPayload(
+  payload: unknown,
+): { left: StumpCell[]; rotted: StumpCell[] } | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const message = payload as { left?: unknown; rotted?: unknown };
+  // An absent half is an empty half — parseChangesPayload's own rule, and it
+  // earns its keep here: a decay tick that rots stumps with nothing new burning
+  // sends only `rotted`, so `left` is genuinely absent in ordinary traffic.
+  const left = parseStumpCells(message.left ?? []);
+  const rotted = parseStumpCells(message.rotted ?? []);
+  if (left === null || rotted === null) return null;
+  return { left, rotted };
+}
+
+/**
+ * Uniform scale bounds for a stump.
+ *
+ * NARROWER than the tree spread it comes from (0.78–1.25) on purpose. A stump
+ * is a cross-section near the ground, where a tree's trunk varies least, and
+ * the tree that stood here is already gone — so a stump twice the width of its
+ * neighbour would read as a different kind of object rather than as the same
+ * object at a different size.
+ */
+export const FLORA_STUMP_SCALE_MIN = 0.85;
+export const FLORA_STUMP_SCALE_MAX = 1.15;
+
+export interface StumpVariation {
+  readonly scale: number;
+  readonly yaw: number;
+}
+
+/**
+ * The deterministic variation for the stump at (x, y).
+ *
+ * Salted off hashCell rather than reusing treeVariation's rolls directly: the
+ * yaw a stump is drawn at must NOT match the yaw the tree that stood there was
+ * drawn at, because a stump's whole silhouette is the splintered break across
+ * its top and reusing the tree's roll would line every stump's break up with
+ * the crown that is no longer there.
+ */
+const STUMP_ROLL_SALT = 0x51ab7d29;
+
+export function stumpVariation(x: number, y: number): StumpVariation {
+  let hash = (hashCell(x, y) ^ STUMP_ROLL_SALT) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 16), 0x9e3779b1);
+  hash = (hash ^ (hash >>> 15)) >>> 0;
+
+  const scaleRoll = (hash >>> 8) & 0xff;
+  const yawRoll = (hash >>> 16) & (YAW_DIVISOR - 1);
+  return {
+    scale:
+      FLORA_STUMP_SCALE_MIN + (scaleRoll / 0xff) * (FLORA_STUMP_SCALE_MAX - FLORA_STUMP_SCALE_MIN),
+    yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
+  };
+}
+
+/**
+ * The footprint bound — GRASS_TUFT_MAX_REACH_CELLS' half-cell rule, for the
+ * same reason: stumps sit one per cell on the cell lattice, so each may claim
+ * half the distance to its neighbour and no two can overlap. The client's model
+ * checks its built radius against this (client/stumpModels.ts).
+ */
+export const STUMP_MAX_REACH_CELLS = 0.5;

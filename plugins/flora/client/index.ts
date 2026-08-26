@@ -1,10 +1,12 @@
-// flora — client half. Draws whatever the server's forest, crop and grass
-// messages say is standing, and nothing else.
+// flora — client half. Draws whatever the server's forest, crop, grass, fringe
+// and stump messages say is standing, and nothing else.
 //
-// It holds no authority: it never plants, never fells, never predicts. A tree
-// does not move and does not animate, so unlike wildlife there is nothing to
-// interpolate between messages either — which is exactly why the server can send
-// deltas instead of a stream (see ../protocol.ts).
+// It holds no authority: it never plants, never fells, never predicts, and it
+// runs no clock of its own — not even for the stumps, which are the one thing
+// here with a lifetime (see `stumps` below). A tree does not move and does not
+// animate, so unlike wildlife there is nothing to interpolate between messages
+// either — which is exactly why the server can send deltas instead of a stream
+// (see ../protocol.ts).
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHEN THE SCENE IS REBUILT, AND WHY THAT IS ALL OF IT.
@@ -38,6 +40,8 @@ import {
   FLORA_GRASS_CHANGES_MESSAGE,
   FLORA_FRINGE_MESSAGE,
   FLORA_FRINGE_CHANGES_MESSAGE,
+  FLORA_STUMP_MESSAGE,
+  FLORA_STUMP_CHANGES_MESSAGE,
   FLORA_PLUGIN_NAME,
   cropKey,
   fringeCellOf,
@@ -51,12 +55,16 @@ import {
   parseFringePayload,
   parseGrassChangesPayload,
   parseGrassPayload,
+  parseStumpChangesPayload,
+  parseStumpsPayload,
+  stumpKey,
   treeKey,
   type CropCell,
   type FringeBySpecies,
   type FringeCell,
   type FringeSpecies,
   type GrassCell,
+  type StumpCell,
   type TreeCell,
 } from '../protocol.ts';
 import { createCropModels, type CropModels } from './cropModels.ts';
@@ -67,6 +75,8 @@ import { createGrassModels, type GrassModels } from './grassModels.ts';
 import { grassPlacementsFor } from './grassPlacement.ts';
 import { createFloraModels, type FloraModels } from './models.ts';
 import { placementsFor } from './placement.ts';
+import { createStumpModels, type StumpModels } from './stumpModels.ts';
+import { stumpPlacementsFor } from './stumpPlacement.ts';
 
 /**
  * Seconds between retries while some tree's ground is still unknown.
@@ -92,6 +102,7 @@ let models: FloraModels | null = null;
 let cropModels: CropModels | null = null;
 let grassModels: GrassModels | null = null;
 let fringeModels: FringeModels | null = null;
+let stumpModels: StumpModels | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 /** Withdraws this plugin's aimable objects from the host's pick set. */
 let unmarkPickable: Array<() => void> = [];
@@ -114,6 +125,17 @@ const grass = new Map<number, GrassCell>();
  */
 const fringe = new Map<number, FringeSpecies>();
 
+/**
+ * Standing stumps by packed cell key — the same map a fifth time (GH #195).
+ *
+ * NO LIFETIME HERE, deliberately. A stump rots on the server's simulated clock
+ * and arrives as a `rotted` delta like any other removal; a client-side
+ * countdown would be a second clock that has to agree with the first, and it
+ * would be wrong for exactly the players whose connection dropped over the
+ * three minutes it was counting.
+ */
+const stumps = new Map<number, StumpCell>();
+
 /** Trees whose ground was unknown at the last rebuild, and the retry clock. */
 let pendingGround = 0;
 let sinceRetrySeconds = 0;
@@ -126,6 +148,9 @@ let pendingGrassGround = 0;
 
 /** Fringe plants whose ground was unknown at the last rebuild. Fourth map, fourth counter, same clock. */
 let pendingFringeGround = 0;
+
+/** Stumps whose ground was unknown at the last rebuild. Fifth map, fifth counter, same clock. */
+let pendingStumpGround = 0;
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
@@ -174,6 +199,20 @@ function rebuildFringe(ctx: ClientPluginCtx): void {
   sinceRetrySeconds = 0;
 }
 
+/**
+ * REBUILDS ARE WHOLESALE HERE TOO, and this is the population where it costs
+ * least: FLORA_STUMP_CAP is 4096 matrices — the same order as the forest's, and
+ * a fiftieth of the meadow's — and it is only ever reached by a world that has
+ * burned down. On a world that is not on fire this runs over an empty map.
+ */
+function rebuildStumps(ctx: ClientPluginCtx): void {
+  if (stumpModels === null) return;
+  const result = stumpPlacementsFor(stumps.values(), (x, y) => ctx.terrainHeightAt(x, y));
+  stumpModels.apply(result.placements);
+  pendingStumpGround = result.pendingGround;
+  sinceRetrySeconds = 0;
+}
+
 function rebuildCrops(ctx: ClientPluginCtx): void {
   if (cropModels === null) return;
   const result = cropPlacementsFor(crops.values(), (x, y) => ctx.terrainHeightAt(x, y));
@@ -200,6 +239,11 @@ function replaceCrops(cells: readonly CropCell[]): void {
 function replaceGrass(cells: readonly GrassCell[]): void {
   grass.clear();
   for (const cell of cells) grass.set(grassKey(cell.x, cell.y), cell);
+}
+
+function replaceStumps(cells: readonly StumpCell[]): void {
+  stumps.clear();
+  for (const cell of cells) stumps.set(stumpKey(cell.x, cell.y), cell);
 }
 
 /** replaceGrass' contract for the fringe: the two per-species lists ARE the whole state. */
@@ -243,6 +287,17 @@ function applyFringeChanges(sprouted: FringeBySpecies, withered: readonly Fringe
   for (const cell of sprouted.heather) fringe.set(fringeKey(cell.x, cell.y), 'heather');
 }
 
+/**
+ * The same, a fifth time. Rots first for applyChanges' reason — and here the
+ * guarded case is real rather than theoretical: a cell can be cleared by a
+ * sculpt and burned again later, and the two would arrive in one message only
+ * if the server ever batched them, which it does not today.
+ */
+function applyStumpChanges(left: readonly StumpCell[], rotted: readonly StumpCell[]): void {
+  for (const cell of rotted) stumps.delete(stumpKey(cell.x, cell.y));
+  for (const cell of left) stumps.set(stumpKey(cell.x, cell.y), cell);
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: FLORA_PLUGIN_NAME,
 
@@ -253,10 +308,12 @@ export const clientPlugin: TerraceClientPlugin = {
     crops.clear();
     grass.clear();
     fringe.clear();
+    stumps.clear();
     pendingGround = 0;
     pendingCropGround = 0;
     pendingGrassGround = 0;
     pendingFringeGround = 0;
+    pendingStumpGround = 0;
     sinceRetrySeconds = 0;
 
     models = createFloraModels();
@@ -282,6 +339,15 @@ export const clientPlugin: TerraceClientPlugin = {
     // of grass instead of on the terrain. markPickable is opt-in precisely so
     // that a plugin can say "this is scenery, not part of the solid world",
     // which is exactly what grass is: you dig THROUGH it, not at it.
+
+    stumpModels = createStumpModels();
+    ctx.layer.add(stumpModels.root);
+    // DELIBERATELY NOT PICKABLE, for grass's reason. A stump is knee-high and
+    // sits in exactly the ground a player wants to re-sculpt after a fire, so
+    // registering it would put geometry between the cursor and the burnt patch
+    // the player is trying to dig out. There is nothing to aim AT here either:
+    // stumps are not fuel (server/index.ts's floraFuelAt lists three
+    // populations, and this is not one of them — a stump has already burned).
 
     fringeModels = createFringeModels();
     ctx.layer.add(fringeModels.root);
@@ -355,6 +421,21 @@ export const clientPlugin: TerraceClientPlugin = {
         applyFringeChanges(changes.sprouted, changes.withered);
         rebuildFringe(ctx);
       }),
+
+      // The stumps, on their own message pair — same shape a fifth time.
+      ctx.onMessage(FLORA_STUMP_MESSAGE, (payload) => {
+        const cells = parseStumpsPayload(payload);
+        if (cells === null) return;
+        replaceStumps(cells);
+        rebuildStumps(ctx);
+      }),
+
+      ctx.onMessage(FLORA_STUMP_CHANGES_MESSAGE, (payload) => {
+        const changes = parseStumpChangesPayload(payload);
+        if (changes === null) return;
+        applyStumpChanges(changes.left, changes.rotted);
+        rebuildStumps(ctx);
+      }),
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
@@ -362,7 +443,8 @@ export const clientPlugin: TerraceClientPlugin = {
         pendingGround === 0 &&
         pendingCropGround === 0 &&
         pendingGrassGround === 0 &&
-        pendingFringeGround === 0
+        pendingFringeGround === 0 &&
+        pendingStumpGround === 0
       ) {
         return;
       }
@@ -372,6 +454,7 @@ export const clientPlugin: TerraceClientPlugin = {
       if (pendingCropGround !== 0) rebuildCrops(ctx);
       if (pendingGrassGround !== 0) rebuildGrass(ctx);
       if (pendingFringeGround !== 0) rebuildFringe(ctx);
+      if (pendingStumpGround !== 0) rebuildStumps(ctx);
     });
   },
 
@@ -387,11 +470,16 @@ export const clientPlugin: TerraceClientPlugin = {
     crops.clear();
     grass.clear();
     fringe.clear();
+    stumps.clear();
     pendingGround = 0;
     pendingCropGround = 0;
     pendingGrassGround = 0;
     pendingFringeGround = 0;
+    pendingStumpGround = 0;
     sinceRetrySeconds = 0;
+
+    stumpModels?.dispose();
+    stumpModels = null;
 
     fringeModels?.dispose();
     fringeModels = null;
