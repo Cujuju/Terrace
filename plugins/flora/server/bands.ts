@@ -8,44 +8,105 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // THE PALETTE COUPLING, STATED RATHER THAN HIDDEN.
 //
-// The owner's request is "trees in the GREEN layers". Green is not a fact about
-// the terrain model — the server has no colours in it — it is a fact about the
-// client's ramp, and the server may not import client code. So the two band
-// numbers below are a DUPLICATE of a decision recorded in
-// client/src/terrain/bandColors.ts, whose land ramp reads:
+// The owner's request is "trees in the GREEN layers", and grass "on all of the
+// green or green-like bands". Green is not a fact about the terrain model — the
+// server has no colours in it — it is a fact about the client's ramp, and the
+// server may not import client code. So the heights below are a DUPLICATE of a
+// decision recorded in client/src/terrain/bandColors.ts.
 //
-//   band 0  wet beach sand      band 3  bright lowland grass   ← FLORA_MIN_BAND
-//   band 1  dry sand            band 4  grass
-//   band 2  bare soil           band 5  dark highland grass    ← FLORA_MAX_BAND
-//                               band 6+ rock, then snow
+// THE DUPLICATE IS EXPRESSED IN HEIGHTS, NOT IN BAND INDICES, AND THAT IS THE
+// WHOLE POINT (2026-08-25). It used to be two band numbers, FLORA_MIN_BAND = 3
+// and FLORA_MAX_BAND = 5, which were correct when BAND_HEIGHT was 64: bands
+// 3/4/5 sat at h = 192/256/320, exactly the ramp's three grass anchors. When
+// BAND_HEIGHT was re-cut 64 → 16 the ramp did not move — it is anchored to
+// HEIGHTS (LAND_RAMP_ANCHORS is evenlySpaced over SEA_LEVEL..SNOW_LINE_HEIGHT)
+// — but the band indices did, so bands 3–5 became h = 48..95, which the ramp
+// paints as dry sand. Every tree, crop and tuft in the world had been growing
+// on the beach ever since, and nothing failed: this is the exact residual the
+// previous version of this comment named as "somebody notices by eye", and the
+// owner did.
 //
-// RESIDUAL, and it is a real one: if that ramp is re-cut — grass moved up a band
-// for contrast, a fourth grass stop added — nothing here fails, and trees will
-// simply be growing on sand or on rock until somebody notices by eye. There is
-// no cheap fix available today that does not break a hard rule: moving the ramp
-// into shared/ would put a rendering decision in the module that is supposed to
-// hold only terrain math and protocol types, and importing the client from the
-// server is forbidden outright. The honest mitigation is that these two numbers
-// are named, are in ONE place, and say what they are coupled to — so the fix is
-// a two-line edit by whoever re-cuts the ramp, rather than an archaeology
-// exercise.
+// The fix is not a re-guess of two indices, it is a change of unit. A height
+// window is invariant under BAND_HEIGHT, so re-terracing the world can never
+// slide the flora off its colours again. What remains coupled is WHICH anchors
+// of the ramp count as green, and the ramp's own geometry (its snow line and
+// its anchor count) — three numbers, named below, that only move if somebody
+// re-authors the materials themselves.
+//
+// The land ramp, for reference (bandColors.ts LAND_RAMP_SHORELINE_UP), ten
+// anchors evenly spaced from SEA_LEVEL to SNOW_LINE_HEIGHT = 576, so one every
+// 64 units of height:
+//
+//   anchor 0  h   0  wet beach sand      anchor 5  h 320  dark highland grass
+//   anchor 1  h  64  dry sand            anchor 6  h 384  dark exposed rock
+//   anchor 2  h 128  bare soil           anchor 7  h 448  rock
+//   anchor 3  h 192  bright lowland grass  anchor 8  h 512  pale high rock
+//   anchor 4  h 256  grass                 anchor 9  h 576  snow
+//
+// VERIFIED, not derived and hoped for: calling the client's own bandColorOf on
+// every land band's floor, the bands whose colour is green-dominant (g greater
+// than both r and b) are exactly bands 10..23 at BAND_HEIGHT = 16 — h = 160 up
+// to but not including 384 — which is precisely the window the two constants
+// below produce. Re-run that check if the ramp is ever re-authored.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { bandOf } from '@terrace/shared';
+import { BAND_HEIGHT, bandOf, quantizeToBand } from '@terrace/shared';
 
 /**
- * Lowest terrace band a tree will grow on: the first GREEN stop of the client's
- * land ramp (bright lowland grass). Bands 0–2 are the sand-and-soil coast, which
- * the owner specifically asked to stay bare.
+ * Height at which the client's land ramp reaches snow — bandColors.ts's
+ * SNOW_LINE_HEIGHT, restated here because the server may not import it.
  */
-export const FLORA_MIN_BAND = 3;
+const LAND_RAMP_SNOW_LINE_HEIGHT = 576;
+
+/** How many anchors the land ramp spends between the waterline and the snow line. */
+const LAND_RAMP_ANCHOR_COUNT = 10;
 
 /**
- * Highest terrace band a tree will grow on: the last green stop (dark highland
- * grass). Band 6 is exposed rock — the tree line, in effect, which falls out of
- * the palette rather than needing an ecological rule of its own.
+ * Height between two neighbouring ramp anchors. Derived rather than written as
+ * 64, so it follows the ramp if the ramp gains or loses a material.
  */
-export const FLORA_MAX_BAND = 5;
+const LAND_RAMP_ANCHOR_SPACING = LAND_RAMP_SNOW_LINE_HEIGHT / (LAND_RAMP_ANCHOR_COUNT - 1);
+
+/** Index of the first green anchor (bright lowland grass) in the land ramp. */
+const FIRST_GREEN_ANCHOR = 3;
+
+/** Index of the first anchor ABOVE the green ones (dark exposed rock). */
+const FIRST_ROCK_ANCHOR = 6;
+
+/**
+ * Lowest height that reads as green.
+ *
+ * HALF AN ANCHOR BELOW the first grass anchor, not at it: the ramp interpolates
+ * between anchors, so the bands in the soil → grass gap are part soil and part
+ * grass, and the halfway point is where the mix stops being mostly soil. That
+ * is the "green-LIKE" the owner asked grass to cover (2026-08-25), and the
+ * measurement above confirms those transitional bands do render green-dominant.
+ */
+export const FLORA_GREEN_MIN_HEIGHT =
+  (FIRST_GREEN_ANCHOR - 0.5) * LAND_RAMP_ANCHOR_SPACING;
+
+/**
+ * First height that no longer reads as green — EXCLUSIVE.
+ *
+ * The rock anchor itself, with no half-anchor margin, because the asymmetry is
+ * real rather than an oversight: the grass → rock gap interpolates from a
+ * saturated dark green, so it stays green-dominant right up to the anchor where
+ * rock takes over, where the soil → grass gap starts from a brown and does not.
+ * Measured, not assumed — see the module header.
+ */
+export const FLORA_GREEN_MAX_HEIGHT = FIRST_ROCK_ANCHOR * LAND_RAMP_ANCHOR_SPACING;
+
+/**
+ * Lowest terrace band a tree, crop or tuft will grow on. DERIVED from the
+ * height window above, so it re-derives itself under a BAND_HEIGHT change
+ * instead of silently naming different ground — which is the bug this whole
+ * module header is about. Kept as an export because the tests reason in bands.
+ */
+export const FLORA_MIN_BAND = bandOf(FLORA_GREEN_MIN_HEIGHT);
+
+/** Highest terrace band flora will grow on — the last band below the rock anchor. */
+export const FLORA_MAX_BAND = bandOf(FLORA_GREEN_MAX_HEIGHT - BAND_HEIGHT);
+
 
 /** The read-only slice of the server's WorldApi this plugin actually reads. */
 export interface FloraWorld {
@@ -59,15 +120,21 @@ export interface FloraWorld {
 /**
  * Is this height inside the green band range?
  *
+ * TESTED AGAINST THE BAND FLOOR, not the raw height, because the band floor is
+ * what the renderer colours: bandPaletteIndex samples the ramp at
+ * quantizeToBand(h), so a cell is green exactly when its band's floor is inside
+ * the window. Comparing the raw height would disagree with the picture by up to
+ * one band at each end of the range.
+ *
  * NO WATER TEST, and its absence is load-bearing rather than forgotten:
- * FLORA_MIN_BAND = 3 means h ≥ 3 × BAND_HEIGHT = 192, and SEA_LEVEL is 0, so
- * every green height is dry land by arithmetic. A redundant `isWater` branch
- * here would be dead code that looks like a safeguard; the property is pinned by
- * test instead (see "no water cell is ever eligible").
+ * FLORA_GREEN_MIN_HEIGHT is 160 and SEA_LEVEL is 0, so every green height is
+ * dry land by arithmetic. A redundant `isWater` branch here would be dead code
+ * that looks like a safeguard; the property is pinned by test instead (see "no
+ * water cell is ever eligible").
  */
 export function isGreenBand(height: number): boolean {
-  const band = bandOf(height);
-  return band >= FLORA_MIN_BAND && band <= FLORA_MAX_BAND;
+  const bandFloor = quantizeToBand(height);
+  return bandFloor >= FLORA_GREEN_MIN_HEIGHT && bandFloor < FLORA_GREEN_MAX_HEIGHT;
 }
 
 /**

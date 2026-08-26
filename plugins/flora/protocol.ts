@@ -836,11 +836,21 @@ export const FLORA_GRASS_SHARE_OF_256 = Math.round(256 / GRASS_CELLS_PER_TUFT);
  * Hard ceiling on standing grass tufts, whatever the terrain asks for.
  *
  * A GEOMETRY number first and a wire number second — see the section header
- * for both figures. DERIVED, not picked: a fully revealed 512² world is
- * 262 144 cells, of which roughly 35% is green ramp, and
- * FLORA_GRASS_SHARE_OF_256 takes ~40% of those — about 36 500 tufts. 40 960
- * is the next power-of-two step above that, so the cap has headroom on a
- * greener-than-typical world instead of binding on an ordinary one.
+ * for both figures. DERIVED, not picked, and re-derived on 2026-08-25 from a
+ * MEASURED world rather than an assumed one: the old derivation here assumed
+ * ~35% of a 512² world is green ramp, which was never measured. Surveying the
+ * shipped worldgen (world `frostwick-hollows`, all 1024 chunks unlocked,
+ * 262 144 cells) against isGreenBand gives 10 846 green cells — 4.1% — which
+ * FLORA_GRASS_SHARE_OF_256 thins to 4 293 tufts, a tenth of this cap.
+ *
+ * The cap is kept at 40 960 anyway, because the number that has to be safe is
+ * the WORST case, not the measured one: an all-green 512² world thins to
+ * 262 144 / GRASS_CELLS_PER_TUFT ≈ 104 858 tufts, so no cap that also fits the
+ * GPU budget below can promise "never binds". 40 960 is the power-of-two step
+ * that holds a world roughly ten times greener than the one we actually ship
+ * while keeping the instance buffers at the ≈ 26 MB the geometry note costs
+ * out. On a greener world it binds, and the RESIDUAL paragraph above says what
+ * that looks like.
  *
  * Here rather than in the server half because both halves need it: the server
  * enforces it, the client sizes its instance buffers from it, and
