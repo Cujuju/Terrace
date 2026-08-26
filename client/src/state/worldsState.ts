@@ -74,6 +74,19 @@ const [pendingSwitch, setPendingSwitch] = createSignal<WorldSwitchStatus | null>
 const [worldLoaded, setWorldLoaded] = createSignal(true);
 
 /**
+ * Seconds until the server process restarts, or null when none is announced.
+ *
+ * Server-driven and never decremented locally, for `pendingSwitch`'s reason:
+ * the server sends one notice per second and is the only thing that knows the
+ * schedule. Zero is a real value — "restarting now" — and is what the terminal
+ * notice of a countdown and an unannounced restart both carry.
+ *
+ * Cleared by the next snapshot rather than by a timer: the honest end of a
+ * restart is the server being back, and a snapshot is proof of that.
+ */
+const [pendingRestartSeconds, setPendingRestartSeconds] = createSignal<number | null>(null);
+
+/**
  * The plugin enablement the server last reported, for ONE world.
  *
  * One world at a time, not a map keyed by world id, because the panel asks
@@ -108,6 +121,8 @@ const [worldAdminKey, setWorldAdminKey] = createSignal('');
 export {
   activeWorldId,
   archivedWorlds,
+  pendingRestartSeconds,
+  setPendingRestartSeconds,
   pendingSwitch,
   setPendingSwitch,
   setWorldAdminKey,

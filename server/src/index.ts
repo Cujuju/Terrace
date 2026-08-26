@@ -34,6 +34,7 @@ import { openWorlds } from './boot/open-worlds.ts';
 import { WorldRegistry } from './persistence/world-registry.ts';
 import { discoverPlugins } from './plugins/discovery.ts';
 import { PluginHost } from './plugins/host.ts';
+import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
 import { startTickLoop } from './tick.ts';
 import { ROOM_NAME, TerraceRoom, bindRoomContext } from './net/terrace-room.ts';
@@ -150,7 +151,33 @@ async function main(): Promise<void> {
     logInfo(`world is "${session.world.name}" (${outcome.loadedId})`);
   }
 
-  const admin = new WorldAdminService({ manager, registry, config });
+  // THE RESTART SERVICE IS BUILT BEFORE THE COLYSEUS SERVER IT SHUTS DOWN,
+  // because the admin service needs it and the room context needs that. The
+  // cycle is broken by a thunk rather than by a setter: `gameServer` below is
+  // the only thing that can perform the shutdown, and a restart can only be
+  // ASKED FOR over a connection, which cannot exist before `listen`. The throw
+  // states that invariant instead of silently skipping the snapshot.
+  let gameServer: Server | null = null;
+  const restart = new ServerRestartService({
+    shutdown: async () => {
+      if (gameServer === null) {
+        throw new Error('restart requested before the server was listening');
+      }
+      // `false` is mandatory — see server/src/restart.ts's header.
+      await gameServer.gracefullyShutdown(false);
+    },
+    exit: (code) => {
+      process.exit(code);
+    },
+    countdownS: config.worldSwitchCountdownS,
+    // setImmediate, not a timeout with a number in it: the requirement is
+    // "after this turn of the event loop", which is what setImmediate names.
+    defer: (run) => {
+      setImmediate(run);
+    },
+  });
+
+  const admin = new WorldAdminService({ manager, registry, config, restart });
   logOperatorKeys(config);
 
   // BELT AND SUSPENDERS FOR WORLD IDENTITY. Booting can leave the world already
@@ -192,6 +219,7 @@ async function main(): Promise<void> {
   bindRoomContext({
     manager,
     admin,
+    restart,
     pluginMessageTypes: PluginHost.messageTypesFor(plugins),
   });
   // greet: false suppresses the Colyseus ASCII banner + sponsor links on boot
@@ -201,7 +229,7 @@ async function main(): Promise<void> {
   if (clientExpressHook !== undefined) {
     serverOptions.express = clientExpressHook;
   }
-  const gameServer = new Server(serverOptions);
+  gameServer = new Server(serverOptions);
   gameServer.define(ROOM_NAME, TerraceRoom);
 
   gameServer.onBeforeShutdown(() => {
@@ -225,6 +253,12 @@ async function main(): Promise<void> {
 
   await gameServer.listen(config.port);
   logInfo(`listening on ws://0.0.0.0:${config.port} (room "${ROOM_NAME}")`);
+  // Stated at boot so a self-hoster writing a supervisor unit knows which code
+  // means "bring me back" without reading the source.
+  logInfo(
+    `an operator restart exits ${TERRACE_RESTART_EXIT_CODE}; ` +
+      'a supervisor must relaunch on that code',
+  );
   // The line a self-hoster actually needs: where to point a browser. The ws://
   // line above is the protocol endpoint, not a page — printing only that
   // reads as "the client lives at 2567" while a browser gets a 404 (#20).
