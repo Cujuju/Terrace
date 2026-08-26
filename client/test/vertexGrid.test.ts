@@ -1686,8 +1686,17 @@ describe('deep strata sculpting (2026-08-19) — the digs that recalibrated the 
     // Without this, the fixtures could silently stop short and the budget
     // calibration would be measured against a shallower world than the one
     // players dig in.
-    expect(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
-    expect(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
+    //
+    // MIN_HEIGHT + 1 IS THE FLOOR SINCE 2026-08-25 (issue #129 step 4.4): the
+    // brushes write through moveSpanCeiling, and a column emptied of its only
+    // span would be a column with no span, which setColumn refuses. The
+    // remnant is a sixteenth of a band, so this is the same bottom band, the
+    // same drawn height and the same geometry the budgets were calibrated on —
+    // which the quantised assertion below is what actually pins down.
+    expect(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT + 1);
+    expect(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT + 1);
+    expect(quantizeToBand(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE))).toBe(MIN_HEIGHT);
+    expect(quantizeToBand(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE))).toBe(MIN_HEIGHT);
   });
 
   it("draws the owner's hard-dug floor pit organically (the 2026-08-19 report)", () => {
