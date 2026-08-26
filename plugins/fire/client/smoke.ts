@@ -84,10 +84,12 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // AND THE FAILURE THIS FEATURE COULD CAUSE: a distance signature that becomes
-// an opaque grey wall in the player's face is the same feature failing. See
-// SMOKE_NEAR_ALPHA_FRACTION — the column is deliberately at its thinnest when
-// the camera is close enough that the FLAME is doing the talking, and reaches
-// full strength only at the ranges where the flame has stopped being legible.
+// an opaque grey wall in the player's face is the same feature failing, and the
+// first cut of this file did exactly that. See SMOKE_SILENT_DISTANCE — a column
+// is drawn at NOTHING once the camera is inside the closest zoom the player can
+// reach, and climbs to full only out at the camera's default orbit, where the
+// flame has stopped being legible. The two ends of that ramp are the camera's
+// own zoom band, not numbers chosen to look right.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -234,7 +236,11 @@ const SMOKE_BILLOW_RADIUS_AMPLITUDE = 0.62;
 const SMOKE_DRIFT_HEIGHT_BIAS = 1.4;
 /**
  * A steady draught, in tip radii per unit of column height, and the compass
- * direction it blows along.
+ * direction it blows along. RAISED from 0.55 to 1.2 after the renders: 0.55
+ * tilted a 6.75-unit column by about 0.9 units, which is under eight degrees
+ * and photographs as vertical. 1.2 gives roughly two world units of travel over
+ * the column's height — a sixteen-degree lean, the least that reads as gas
+ * being carried somewhere rather than as a pillar standing still.
  *
  * WHY A CONSTANT AND NOT THE WEATHER'S WIND: this plugin is forbidden from
  * importing weather (plugins may not import each other), and no wind vector is
@@ -245,9 +251,29 @@ const SMOKE_DRIFT_HEIGHT_BIAS = 1.4;
  * honest residual: smoke does not answer to the storm blowing through it. If
  * wind is ever published to plugins, this is the constant it replaces.
  */
-const SMOKE_DRAUGHT_LEAN = 0.55;
+const SMOKE_DRAUGHT_LEAN = 1.2;
 const SMOKE_DRAUGHT_DIRECTION_X = 0.82;
 const SMOKE_DRAUGHT_DIRECTION_Z = -0.57;
+/**
+ * How far one column's lean may swing off the shared draught, in radians of
+ * compass bearing, and by what fraction its lean may be longer or shorter.
+ *
+ * WHAT THIS FIXES, from the renders: with one draught applied identically to
+ * every column, five fires photographed as five parallel pillars — the shape
+ * of fog, not of smoke, because nothing in a real column of gas is parallel to
+ * the one beside it. The variation is bounded rather than free for the reason
+ * the shared draught exists at all: ±0.35 rad is ±20°, wide enough that no two
+ * columns in a frame are parallel and narrow enough that all of them are still
+ * plainly standing in the same air, so a burning wood still reads as ONE event.
+ * ±40 % on the length does the same for how far each one leans.
+ *
+ * SEEDED FROM THE FIRE'S OWN `seed`, through the aSeed attribute that is
+ * already there, so a column's lean is stable for its whole life and identical
+ * on every client: never Math.random(), and no new attribute, no new
+ * allocation and no new draw call to carry it.
+ */
+const SMOKE_DRAUGHT_BEARING_SPREAD_RADIANS = 0.35;
+const SMOKE_DRAUGHT_LEAN_SPREAD = 0.4;
 
 // ── Colour and alpha ──────────────────────────────────────────────────────
 /**
@@ -306,34 +332,84 @@ const SMOKE_BILLOW_DEPTH = 0.55;
  * the core it was supposed to be a margin around.
  */
 const SMOKE_EDGE_SOFTNESS = 1.1;
+/**
+ * How deeply the billow noise EATS INTO the column's boundary, as a fraction of
+ * what is left there after SMOKE_EDGE_SOFTNESS has thinned it.
+ *
+ * WHAT THIS FIXES, and it is the other half of the visible-billboard defect: a
+ * soft edge is still an edge if it is the same softness all the way round. The
+ * renders showed a straight vertical line at the top of frame and clean
+ * rectangular smears over the terrace, because the sleeve's outline is a
+ * mathematically smooth curve and the eye finds a smooth curve however gently
+ * it fades. Letting the same slow noise that drives the billows bite into the
+ * margin breaks that curve into a ragged density, which is what a boundary made
+ * of gas actually looks like.
+ *
+ * Weighted by (1 − rim) so it only ever bites at the MARGIN: at 0.7 the
+ * silhouette can be eaten away almost entirely where the noise is dark, while
+ * the head-on core — where rim is near 1 and the weight near 0 — is untouched.
+ * A term that thinned the core instead would be a second, worse way of doing
+ * what SMOKE_ALPHA_PEAK already does.
+ */
+const SMOKE_EDGE_EROSION = 0.7;
 
 // ── Distance ──────────────────────────────────────────────────────────────
 /**
- * How strongly the column is drawn when the camera is ON TOP of the fire, as a
- * fraction of full strength.
+ * THE PLAYER'S CAMERA BAND, restated from client/src/config.ts.
  *
- * THIS IS THE GUARD AGAINST THE FEATURE'S OWN FAILURE MODE. A distance
- * signature that becomes an opaque wall in the player's face has failed exactly
- * as badly as one that is invisible. Inside SMOKE_NEAR_DISTANCE the flame is
- * doing the talking and the smoke only has to be present, so it is drawn at
- * this fraction of an already-low peak — 0.34 × 0.3 ≈ 0.1, a haze you see the
- * tree through rather than a slab you cannot see past. Not zero: a fire you are
- * standing next to visibly smokes, and cutting it to nothing would be a
- * different kind of wrong.
+ * DOCUMENTED COPIES, not imports: nothing under plugins/ imports client/src,
+ * and this plugin is not about to be the first. They are copied rather than
+ * invented because "how close is in the player's face" and "how far away is
+ * the ordinary view" both have exactly one honest answer each, and it is the
+ * camera's own zoom band — CAMERA_CLOSEST_VIEW_WORLD_UNITS,
+ * CAMERA_FOV_DEGREES and CAMERA_INITIAL_DISTANCE. If that band is retuned,
+ * these three move with it and the two distances below re-derive themselves.
  */
-const SMOKE_NEAR_ALPHA_FRACTION = 0.3;
+const SMOKE_CLOSEST_ZOOM_FRAME_HEIGHT_WORLD_UNITS = 10;
+const SMOKE_CAMERA_FOV_DEGREES = 55;
+const SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS = 80;
 /**
- * The two camera distances the fade runs between, in world units.
+ * Camera distance at which a column is drawn at NOTHING AT ALL, in world units.
  *
- * NEAR is the fire light's own reach (fireLights.ts's
- * FIRE_LIGHT_RANGE_WORLD_UNITS, 6) — inside it you are close enough that the
- * ground is lit by the fire and there is nothing left to tell you. FAR is 26,
- * beyond which a 2.1-unit flame is a few pixels and the column is the only
- * thing carrying the fire; between them the smoke takes over from the flame as
- * the thing you read the fire by.
+ * THE CLOSEST ZOOM THE PLAYER CAN REACH, derived exactly as client/src/config.ts
+ * derives CAMERA_MIN_DISTANCE and never written by hand: a lens of vertical
+ * field SMOKE_CAMERA_FOV_DEGREES frames `2 · d · tan(fov / 2)` of world height
+ * at distance d, so the distance that frames exactly the closest zoom's ten
+ * world units is that solved for d — 9.6 units.
+ *
+ * WHY ZERO HERE, AND NOT THE LOW FRACTION THIS FILE SHIPPED FIRST. At that
+ * range the frame is ten world units tall while a mature column is 6.75 tall
+ * and 3.3 wide: one column is a third of the picture and a burning wood is the
+ * whole of it. The first cut kept 0.3 of an already-low peak and photographed
+ * as a grey slab over the top half of the frame, with the sky gone entirely
+ * once the fires had burned out — a distance signature that blinds the player
+ * up close has failed exactly as badly as one that is invisible. Inside this
+ * distance the FLAME is unmissable on its own (2.1 world units in a ten-unit
+ * frame, a fifth of the picture), so smoke has nothing left to add and
+ * everything to hide, and it is drawn at nothing.
  */
-const SMOKE_NEAR_DISTANCE = 6;
-const SMOKE_FAR_DISTANCE = 26;
+const SMOKE_SILENT_DISTANCE =
+  SMOKE_CLOSEST_ZOOM_FRAME_HEIGHT_WORLD_UNITS /
+  (2 * Math.tan((SMOKE_CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
+/**
+ * Camera distance at which a column reaches FULL strength, in world units.
+ *
+ * THE CAMERA'S DEFAULT ORBIT: the distance the game opens at and the one a
+ * player spends most of their time near. It is also, and this is why it is the
+ * right end of the ramp rather than a number chosen to look nice, exactly where
+ * the flame has stopped being legible — 2.1 world units in the 83-unit frame an
+ * 80-unit orbit gives is under three per cent of frame height, a couple of
+ * pixels behind a hill. From here out the column is the only thing carrying the
+ * fire, which is the whole of issue #185.
+ *
+ * The band between the two is therefore the handover: the flame does the
+ * talking near, the smoke does it far, and no camera distance has both
+ * shouting. Wide on purpose — nine to eighty world units — because the fires in
+ * one frame stand a few units apart, and a narrow band was what made two
+ * neighbouring columns in the same picture differ visibly in strength for no
+ * reason a player could see.
+ */
+const SMOKE_FULL_STRENGTH_DISTANCE = SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS;
 
 /**
  * Where smoke sits in the transparent pass: BEFORE the flames.
@@ -395,9 +471,25 @@ const SMOKE_VERTEX_SHADER = /* glsl */ `
     warped.x += driftX * ${SMOKE_DRIFT_AMPLITUDE.toFixed(2)} * bias;
     warped.z += driftZ * ${SMOKE_DRIFT_AMPLITUDE.toFixed(2)} * bias;
     // The shared draught, on top of the per-column wander: this is what makes a
-    // wood full of fires read as one event rather than as many.
-    warped.x += ${(SMOKE_DRAUGHT_LEAN * SMOKE_DRAUGHT_DIRECTION_X).toFixed(3)} * bias;
-    warped.z += ${(SMOKE_DRAUGHT_LEAN * SMOKE_DRAUGHT_DIRECTION_Z).toFixed(3)} * bias;
+    // wood full of fires read as one event rather than as many. Swung off that
+    // shared bearing by a bounded, seed-stable amount per column, because five
+    // columns leaning IDENTICALLY are five parallel pillars and no column of
+    // gas has ever been parallel to the one next to it. Two decorrelated hashes
+    // so bearing and length do not vary together.
+    float bearingJitter = hash21(vec2(aSeed, 3.70)) * 2.0 - 1.0;
+    float lengthJitter = hash21(vec2(aSeed, 8.31)) * 2.0 - 1.0;
+    float bearing = bearingJitter * ${SMOKE_DRAUGHT_BEARING_SPREAD_RADIANS.toFixed(3)};
+    float leanLength =
+      ${SMOKE_DRAUGHT_LEAN.toFixed(3)} *
+      (1.0 + lengthJitter * ${SMOKE_DRAUGHT_LEAN_SPREAD.toFixed(2)});
+    // Rotating the shared unit bearing, rather than jittering x and z apart,
+    // keeps every column's lean the same LENGTH it was asked for — a component
+    // jitter would quietly make diagonal leans longer than axis-aligned ones.
+    vec2 draught = vec2(
+      ${SMOKE_DRAUGHT_DIRECTION_X.toFixed(3)} * cos(bearing) - ${SMOKE_DRAUGHT_DIRECTION_Z.toFixed(3)} * sin(bearing),
+      ${SMOKE_DRAUGHT_DIRECTION_X.toFixed(3)} * sin(bearing) + ${SMOKE_DRAUGHT_DIRECTION_Z.toFixed(3)} * cos(bearing));
+    vec2 lean = draught * leanLength;
+    warped.xz += lean * bias;
 
     // DISTANCE FADE, measured to the COLUMN'S FOOT and not per-vertex: the
     // whole column must fade as one body. A per-vertex distance would fade a
@@ -405,17 +497,66 @@ const SMOKE_VERTEX_SHADER = /* glsl */ `
     // across a single object that nothing in the world justifies.
     vec4 foot = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     float cameraDistance = distance(cameraPosition, foot.xyz);
-    vDistanceFade = mix(
-      ${SMOKE_NEAR_ALPHA_FRACTION.toFixed(2)},
-      1.0,
-      smoothstep(${SMOKE_NEAR_DISTANCE.toFixed(1)}, ${SMOKE_FAR_DISTANCE.toFixed(1)}, cameraDistance));
+    // ...and it runs from NOTHING at the closest zoom to full at the default
+    // orbit. No floor under it: inside SMOKE_SILENT_DISTANCE the flame is a
+    // fifth of the frame on its own and the column is only in the way.
+    vDistanceFade = smoothstep(
+      ${SMOKE_SILENT_DISTANCE.toFixed(2)},
+      ${SMOKE_FULL_STRENGTH_DISTANCE.toFixed(2)},
+      cameraDistance);
 
     // HOW SQUARELY THIS PIECE OF WALL FACES THE CAMERA, 0 at the silhouette and
-    // 1 head-on. The AUTHORED normal, not a recomputed one: the warp above bends
-    // the sleeve by a fraction of its own radius, which moves this term by less
-    // than the softening it feeds is sensitive to, and recovering an exact
-    // normal would mean evaluating the noise three more times per vertex.
-    vFacing = abs(normalize(normalMatrix * normal).z);
+    // 1 head-on. This is the term the whole no-visible-billboard problem rests
+    // on, and getting it from the AUTHORED normal — which is what this file
+    // shipped first — is why the sleeve read as a quad.
+    //
+    // The normal that matters is the normal of the surface ACTUALLY DRAWN, and
+    // two transforms stand between the two:
+    //
+    //   THE WARP, which is a SHEAR. Every stretch above displaces xz by an
+    //   amount that grows with height, so the wall is not the wall the cone
+    //   authored: it is tilted by the rate at which that displacement changes
+    //   with height. At the lean this column now carries that is on the order
+    //   of fifteen degrees, and it tilts the two sides of the column in
+    //   OPPOSITE directions — which is exactly what the renders showed, one
+    //   silhouette edge softening correctly and the other staying hard.
+    //
+    //   THE INSTANCE MATRIX, which is a non-uniform SCALE: this sleeve is
+    //   stretched about four times harder up (SMOKE_HEIGHT_PER_FUEL) than out
+    //   (SMOKE_TIP_RADIUS_PER_FUEL), and three's normalMatrix is built from the
+    //   modelView matrix ALONE, with the instance matrix nowhere in it.
+    //
+    // Both are undone here, in order, and BOTH ARE EXACT rather than
+    // approximated, because a normal is transformed by the INVERSE TRANSPOSE of
+    // the map that moved the surface and both maps are known in closed form.
+    // The only thing left out is the noise's own dependence on position, which
+    // is a second-order wobble on a term feeding a soft falloff — and recovering
+    // it would mean three more noise evaluations per vertex.
+    //
+    // The shear's Jacobian is [[s, gx, 0], [0, 1, 0], [0, gz, s]]: s is the
+    // radial swell, and gx/gz are how fast the lateral displacement grows with
+    // height — the same drift, swell and lean already computed above, times the
+    // slope of the height bias. Its inverse transpose is what the three lines
+    // below apply, at the cost of two multiplies and a divide.
+    float biasSlope =
+      ${SMOKE_DRIFT_HEIGHT_BIAS.toFixed(2)} *
+      pow(max(height, 0.0001), ${(SMOKE_DRIFT_HEIGHT_BIAS - 1).toFixed(2)});
+    float radialSwell = 1.0 + swell * ${SMOKE_BILLOW_RADIUS_AMPLITUDE.toFixed(2)} * bias;
+    float shearX =
+      (position.x * swell * ${SMOKE_BILLOW_RADIUS_AMPLITUDE.toFixed(2)} +
+        driftX * ${SMOKE_DRIFT_AMPLITUDE.toFixed(2)} + lean.x) * biasSlope;
+    float shearZ =
+      (position.z * swell * ${SMOKE_BILLOW_RADIUS_AMPLITUDE.toFixed(2)} +
+        driftZ * ${SMOKE_DRIFT_AMPLITUDE.toFixed(2)} + lean.y) * biasSlope;
+    vec3 surfaceNormal = vec3(
+      normal.x / radialSwell,
+      normal.y - (shearX * normal.x + shearZ * normal.z) / radialSwell,
+      normal.z / radialSwell);
+    vec3 instanceScale = vec3(
+      length(instanceMatrix[0].xyz),
+      length(instanceMatrix[1].xyz),
+      length(instanceMatrix[2].xyz));
+    vFacing = abs(normalize(normalMatrix * (surfaceNormal / instanceScale)).z);
 
     gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(warped, 1.0);
   }
@@ -456,7 +597,16 @@ const SMOKE_FRAGMENT_SHADER = /* glsl */ `
 
     // No hard outline: the column thins to nothing at its silhouette, which is
     // the difference between gas and a pane of grey glass.
-    float edge = pow(clamp(vFacing, 0.0, 1.0), ${SMOKE_EDGE_SOFTNESS.toFixed(2)});
+    float rim = pow(clamp(vFacing, 0.0, 1.0), ${SMOKE_EDGE_SOFTNESS.toFixed(2)});
+    // ...and no outline the eye can TRACE either. the billow noise is the same slow noise
+    // the billows are made of, reused rather than sampled again, so the ragged
+    // boundary crawls with the body it belongs to instead of shimmering against
+    // it. (0.5 - 0.5 * turn) maps the noise's -1…1 onto 0…1, deepest where the
+    // noise is darkest.
+    float edge = clamp(
+      rim - ${SMOKE_EDGE_EROSION.toFixed(2)} * (1.0 - rim) * (0.5 - 0.5 * turn),
+      0.0,
+      1.0);
 
     float alpha =
       body * edge * clamp(billow, 0.0, 1.0) * vStrength * vDistanceFade *

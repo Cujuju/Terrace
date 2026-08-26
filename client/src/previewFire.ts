@@ -31,6 +31,27 @@
 //                           is a DISTANCE signature and deliberately thins as
 //                           the camera nears, so both ends of that have to be
 //                           photographable from the same scene.
+//   ?fov=<degrees>          vertical field of view (default 55, the client's own
+//                           CAMERA_FOV_DEGREES). A LONG LENS, which is the only
+//                           way to photograph smoke honestly: its strength is a
+//                           function of the camera's distance in WORLD UNITS
+//                           (smoke.ts's SMOKE_SILENT_DISTANCE …
+//                           SMOKE_FULL_STRENGTH_DISTANCE), and this scene is a
+//                           four-unit stand, so standing at the eighty units
+//                           where the game's camera actually sits leaves the
+//                           whole scene a speck. Narrowing the lens moves the
+//                           subject back into the frame WITHOUT moving the
+//                           camera, so the fade being photographed is the one
+//                           the player gets. Default 55 keeps every existing
+//                           shot pixel-identical.
+//   ?only=<1..N>            ignite ONLY the nth tree of the scene (1-based, in
+//                           the order the scene lists them); every other tree
+//                           stands unlit. Added while diagnosing "only three of
+//                           the five columns appear": a picture of all five at
+//                           once cannot tell a column that is missing from a
+//                           column that has been painted over by its
+//                           neighbours, and one fire at a time can. Composes
+//                           with ?burn and ?dist.
 //
 // WHY THE TREES ARE HERE. A flame in an empty frame is judged as an ornament.
 // The question actually being asked is "does this look like that tree is on
@@ -82,7 +103,19 @@ const SUN_LIGHT_INTENSITY = 1.2;
 const AMBIENT_FLOOR_INTENSITY = 0.9;
 const SUN_DIRECTION = new Vector3(0.7, 0.45, 0.55);
 const TONE_MAPPING_EXPOSURE = 1.25;
+/**
+ * Default vertical field of view — client/src/config.ts's CAMERA_FOV_DEGREES,
+ * so an unqualified picture is taken through the game's own lens. ?fov
+ * overrides it; see the header.
+ */
 const CAMERA_FOV_DEGREES = 55;
+/**
+ * Bounds on ?fov, in degrees. Below 4 a fitted framing distance rounds to
+ * something the near plane sits inside; above 100 the projection is a fisheye
+ * and nothing photographed through it settles a question about a silhouette.
+ */
+const MIN_CAMERA_FOV_DEGREES = 4;
+const MAX_CAMERA_FOV_DEGREES = 100;
 
 // ── Preview-only presentation ─────────────────────────────────────────────
 /** Neutral mid-grey backdrop — no sky, so nothing tints the flame but the flame. */
@@ -143,11 +176,18 @@ const ANIMATION_STEP_SECONDS = 1 / 60;
 const MAX_PREVIEW_SECONDS = 90;
 /**
  * Bounds on ?dist, as multiples of the fitted framing distance. Below 0.35 the
- * camera is inside the crown; above 12 a 1.5-unit tree is a handful of pixels,
- * which is past the point where any picture of it settles anything.
+ * camera is inside the crown.
+ *
+ * The ceiling was 12 and is 20, because smoke's strength is a function of the
+ * camera's distance IN WORLD UNITS and this scene is small: five trees over
+ * four units fit at about 5.5 units, so the old ceiling could not put the
+ * camera past 66 — short of the 80-unit default orbit
+ * (client/src/config.ts CAMERA_INITIAL_DISTANCE) that smoke is tuned to reach
+ * full strength at. A harness that cannot stand where the player stands cannot
+ * photograph what the player sees. 20 reaches 110 units, comfortably past it.
  */
 const MIN_CAMERA_DISTANCE_MULTIPLIER = 0.35;
-const MAX_CAMERA_DISTANCE_MULTIPLIER = 12;
+const MAX_CAMERA_DISTANCE_MULTIPLIER = 20;
 
 // ── The burning scene ─────────────────────────────────────────────────────
 /** One tree standing in the preview, and how fiercely it is alight. */
@@ -224,6 +264,31 @@ function readBurnSeconds(params: URLSearchParams): number | null {
   return requested;
 }
 
+/**
+ * Zero-based index of the ONLY tree that may burn, or null for all of them.
+ *
+ * Out-of-range and unparseable both mean "all of them", on this file's standing
+ * rule that a typo photographs the scene rather than silently photographing a
+ * world in which nothing is alight.
+ */
+function readOnlyIndex(params: URLSearchParams, treeCount: number): number | null {
+  const raw = params.get('only');
+  if (raw === null) return null;
+  const requested = Number.parseInt(raw, 10);
+  if (!Number.isFinite(requested) || requested < 1 || requested > treeCount) return null;
+  return requested - 1;
+}
+
+/**
+ * Vertical field of view in degrees. Out-of-range and unparseable both mean the
+ * client's own lens, on this file's standing rule about typos.
+ */
+function readFov(params: URLSearchParams): number {
+  const requested = Number.parseFloat(params.get('fov') ?? '');
+  if (!Number.isFinite(requested)) return CAMERA_FOV_DEGREES;
+  return Math.min(Math.max(requested, MIN_CAMERA_FOV_DEGREES), MAX_CAMERA_FOV_DEGREES);
+}
+
 /** Camera distance as a multiple of the fitted framing distance. */
 function readDistanceMultiplier(params: URLSearchParams): number {
   const requested = Number.parseFloat(params.get('dist') ?? '');
@@ -283,13 +348,28 @@ function buildGround(
   return ground;
 }
 
-/** Points `camera` at a box, with headroom for the flame above the trees. */
-function frameCameraOn(camera: PerspectiveCamera, box: Box3, distanceMultiplier: number): void {
+/**
+ * Points `camera` at a box, with headroom for the flame above the trees, and
+ * returns the point it was aimed at — the caller needs it to report the
+ * camera's distance in world units.
+ */
+function frameCameraOn(
+  camera: PerspectiveCamera,
+  box: Box3,
+  distanceMultiplier: number,
+): Vector3 {
   box.max.y += FRAMING_HEADROOM;
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
 
+  // THE DEFAULT LENS, always, even when ?fov has narrowed the one being looked
+  // through. The framing distance is what ?dist multiplies, and smoke's fade is
+  // a function of that distance in world units — so if the fit tracked the lens,
+  // narrowing it to see the subject better would silently walk the camera
+  // backwards and photograph a different fade than the one asked for. The lens
+  // decides how much of the frame the subject fills; only ?dist decides where
+  // the camera stands.
   const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
   const distance =
     ((radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2)) * distanceMultiplier;
@@ -297,6 +377,7 @@ function frameCameraOn(camera: PerspectiveCamera, box: Box3, distanceMultiplier:
   camera.position.copy(center).addScaledVector(CAMERA_DIRECTION.clone().normalize(), distance);
   camera.lookAt(center);
   camera.updateProjectionMatrix();
+  return center;
 }
 
 function main(): void {
@@ -306,6 +387,7 @@ function main(): void {
   const previewSeconds = readTime(params);
   const burnSeconds = readBurnSeconds(params);
   const distanceMultiplier = readDistanceMultiplier(params);
+  const fovDegrees = readFov(params);
 
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
   const scene = new Scene();
@@ -323,6 +405,7 @@ function main(): void {
 
   // The real trees, placed exactly as the flora plugin places them.
   const trees = sceneName === 'single' ? SINGLE_SCENE : STAND_SCENE;
+  const onlyIndex = readOnlyIndex(params, trees.length);
   const flora = createFloraModels();
   const placements: TreePlacement[] = trees.map((tree) => ({
     x: tree.x,
@@ -367,7 +450,12 @@ function main(): void {
   const live: FireInstance[] = [];
   function burningAt(t: number): readonly FireInstance[] {
     live.length = 0;
-    for (const fire of fires) {
+    for (let index = 0; index < fires.length; index++) {
+      // ?only isolates ONE fire: every other tree stands unlit, which is what
+      // separates "this column is not being drawn" from "this column is being
+      // drawn under its neighbour's".
+      if (onlyIndex !== null && index !== onlyIndex) continue;
+      const fire = fires[index]!;
       const mutable = fire as { intensity: number; ageSeconds: number };
       mutable.ageSeconds = t;
       if (burnSeconds === null) {
@@ -383,12 +471,12 @@ function main(): void {
 
   const flames = SHIPPED_FLAMES();
   const smoke = createFireSmoke();
-  document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}${intensityOverride === null ? '' : ` — i=${intensityOverride}`}${burnSeconds === null ? '' : ` — burn=${burnSeconds}`}${distanceMultiplier === 1 ? '' : ` — dist=${distanceMultiplier}`}`;
+  document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}${intensityOverride === null ? '' : ` — i=${intensityOverride}`}${burnSeconds === null ? '' : ` — burn=${burnSeconds}`}${distanceMultiplier === 1 ? '' : ` — dist=${distanceMultiplier}`}${onlyIndex === null ? '' : ` — only=${onlyIndex + 1}`}${fovDegrees === CAMERA_FOV_DEGREES ? '' : ` — fov=${fovDegrees}`}`;
   scene.add(smoke.root);
   scene.add(flames.root);
 
   const camera = new PerspectiveCamera(
-    CAMERA_FOV_DEGREES,
+    fovDegrees,
     window.innerWidth / window.innerHeight,
     0.05,
     200,
@@ -402,7 +490,11 @@ function main(): void {
 
   // Frame on the trees (the flame's own root has no meaningful bounds until it
   // has been updated, and half the candidates disable frustum culling anyway).
-  frameCameraOn(camera, new Box3().setFromObject(flora.root), distanceMultiplier);
+  const cameraFocus = frameCameraOn(
+    camera,
+    new Box3().setFromObject(flora.root),
+    distanceMultiplier,
+  );
 
   // Advance to exactly ?t in fixed steps, APPLYING AND UPDATING at every one.
   // The old loop applied a frozen set once and only stepped `update`; smoke
@@ -437,6 +529,14 @@ function main(): void {
       (
         window as unknown as { __previewDrawCalls: number; __previewSmokeColumns: number }
       ).__previewSmokeColumns = smoke.drawnCount;
+      // The camera's distance from what it is looking at, in WORLD UNITS.
+      // Published because smoke's strength is a function of exactly that
+      // (plugins/fire/client/smoke.ts's SMOKE_SILENT_DISTANCE and
+      // SMOKE_FULL_STRENGTH_DISTANCE) while ?dist is a multiplier of a fitted
+      // distance nobody can read off a picture — so a shot of "smoke at range"
+      // that does not say what range it was taken at proves nothing.
+      (window as unknown as { __previewCameraDistance: number }).__previewCameraDistance =
+        camera.position.distanceTo(cameraFocus);
       (window as unknown as { __previewReady: boolean }).__previewReady = true;
     }
   }
