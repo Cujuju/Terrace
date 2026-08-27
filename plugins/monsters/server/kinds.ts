@@ -226,6 +226,24 @@ export const CTHULHU_IDLE_END_PER_SECOND = 0.12;
  */
 export const CTHULHU_FOOTPRINT_CELLS = cellsAcross(7);
 
+/**
+ * Cells of Cthulhu's lair he must actually FIT ON — one body's worth of area,
+ * `footprint²`, which at 28 cells across is 784 (owner decision, 2026-08-26;
+ * see MonsterProfile.minLairFittingCells for why the rule is an area rather
+ * than a typed number).
+ *
+ * WHAT IT MEANS FOR A PLAYER, stated plainly so nobody meets it as a surprise.
+ * On a fresh all-ocean world it is met trivially and changes nothing — the sea
+ * is one region tens of thousands of cells wide. On a SCULPTED basin it is a
+ * real second bar: 784 fitting cells is a 28×28 core of legal centres, and a
+ * body 28 cells across has to sit inside that core, so a square basin dug for
+ * Cthulhu now has to be roughly 28 + 28 = 56 cells across rather than merely
+ * MIN_LAIR_DEEP_CELLS in total area. A compact basin that clears the area bar
+ * (16 384 cells, ~128 across) clears this one comfortably; what no longer
+ * passes is the same area drawn as a channel or a crescent.
+ */
+export const CTHULHU_MIN_LAIR_FITTING_CELLS = Math.ceil(CTHULHU_FOOTPRINT_CELLS ** 2);
+
 // ── Kraken ───────────────────────────────────────────────────────────────────
 
 /**
@@ -463,6 +481,20 @@ export const KRAKEN_IDLE_END_PER_SECOND = 0.2;
  */
 export const KRAKEN_FOOTPRINT_CELLS = cellsAcross(7);
 
+/**
+ * The same rule as CTHULHU_MIN_LAIR_FITTING_CELLS, from the kraken's own
+ * footprint — the two animals are the same 28 cells across, so the two numbers
+ * are the same 784 today, and each follows its own model if either is resized.
+ * Restated rather than shared for exactly that reason: one constant would make
+ * the two kinds one body again, which is the failure this table is built to
+ * avoid.
+ *
+ * Trivially met on a fresh all-ocean world; on a sculpted trench it means the
+ * same ~56-cells-across shape requirement Cthulhu's note spells out, inside a
+ * region that must already carry KRAKEN_MIN_LAIR_DEEP_CELLS of water.
+ */
+export const KRAKEN_MIN_LAIR_FITTING_CELLS = Math.ceil(KRAKEN_FOOTPRINT_CELLS ** 2);
+
 // ── Yeti ─────────────────────────────────────────────────────────────────────
 //
 // The first LAND kind (owner request, 2026-08-14: "I would like to see a snow
@@ -563,7 +595,8 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.2031547978277752);
  * constant follows, rather than this divisor.
  *
  * FOURTH AMENDMENT (2026-08-26) — THE NUMBER IS UNCHANGED AND IS NO LONGER THE
- * WHOLE BAR. A cell count says how much snow a region holds and nothing about
+ * BAR THAT DECIDES; YETI_MIN_LAIR_FITTING_CELLS below is, and this is the cheap
+ * filter in front of it. A cell count says how much snow a region holds and nothing about
  * its SHAPE, and the two came apart: a 52-cell ribbon one cell wide cleared this
  * threshold, so the yeti was summoned onto a cell his body does not fit on and
  * lived out his life in lurk.ts's pinched-body fallback with his flanks in the
@@ -572,14 +605,16 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.2031547978277752);
  * into LairRegion.fittingCells and required by summoning.ts's bestLairFor), and
  * the summon cell is picked from exactly those cells.
  *
- * THE ARITHMETIC THAT SAYS THE TWO BARS ARE COMPATIBLE, at today's numbers: 52
- * cells is a square ~7.2 cells across; the yeti is YETI_FOOTPRINT_CELLS = 4.81
- * across, so the fitting core of such a square — the set of centres whose whole
- * body is inside it — is ~7.2 − 4.81 ≈ 2.4 cells across, about 6 cells. He fits,
- * with roughly his own radius of room to travel in. That is thin, and it is the
- * owner's dial to raise if a yeti in a minimum lair reads as caged; this
- * amendment deliberately does NOT move the number, only stops the degenerate
- * shapes that cleared it.
+ * THE ARITHMETIC, at today's numbers: 52 cells is a square ~7.2 cells across;
+ * the yeti is YETI_FOOTPRINT_CELLS = 4.81 across, so the fitting core of such a
+ * square — the set of centres whose whole body is inside it — is ~7.2 − 4.81 ≈
+ * 2.4 cells across, about 6 cells. He fits, with roughly his own radius of room
+ * to travel in. That was judged too thin the same day: the owner's answer was
+ * not to move this number but to add the fitting bar, which asks for 24 such
+ * cells and so wants a snowfield ~9.7 cells across (≈95 cells) before he will
+ * come. This constant therefore no longer decides anything on its own — it
+ * remains the floor on how much snow there must be, and the cheap test the
+ * survey applies first. Raising it is still the owner's dial.
  */
 
 /**
@@ -598,6 +633,28 @@ export const YETI_LAIR_REACHABILITY_DIVISOR = 9;
 export const YETI_MIN_LAIR_SNOW_CELLS = Math.floor(
   (LAIR_BODY_WIDTHS_ACROSS * YETI_FOOTPRINT_CELLS) ** 2 / YETI_LAIR_REACHABILITY_DIVISOR,
 );
+
+/**
+ * Cells of his snowfield the yeti must actually FIT ON — his own footprint
+ * squared, one body's worth of ground to roam, which at YETI_FOOTPRINT_CELLS =
+ * 4.81 is 24 (owner decision, 2026-08-26).
+ *
+ * THIS IS THE BAR THAT NOW DECIDES, and YETI_MIN_LAIR_SNOW_CELLS above is the
+ * cheap first filter in front of it: a raw cell count is one increment per cell
+ * of the survey's walk, where a fitting cell is a nine-probe pose test, so the
+ * count goes first and this one settles it.
+ *
+ * THE ARITHMETIC, so the two numbers can be compared without re-deriving them.
+ * The fitting core of a square snowfield `S` cells across is `(S − 4.81)²`
+ * (the body has to sit inside the field), so reaching 24 fitting cells needs
+ * `S ≈ 4.81 + √24 ≈ 4.8 + 4.9 = 9.7` cells across — about 95 snow cells, where
+ * the raw bar asks for 52 (a 7.2-cell square, whose fitting core is only ~6
+ * cells). So a square lair now has to be roughly twice the AREA the cell count
+ * alone demanded, and a ribbon of any length does not qualify at all. The 52
+ * stays as written because it is a floor on the amount of snow, not on the
+ * shape of it; this is the shape.
+ */
+export const YETI_MIN_LAIR_FITTING_CELLS = Math.ceil(YETI_FOOTPRINT_CELLS ** 2);
 
 /**
  * How high the highest cell of the yeti's lair must be, in bands above sea.
@@ -775,6 +832,34 @@ export interface MonsterProfile {
   /** Habitat cells required in one connected region before this kind arrives. */
   readonly minLairCells: number;
   /**
+   * FITTING cells required in that same region — cells whose CENTRE POSE holds
+   * this kind's whole body inside the habitat (habitat.ts's LairFitRule, counted
+   * by the survey into LairRegion.fittingCells). Owner decision, 2026-08-26.
+   *
+   * IT IS ROOM TO ROAM, NOT SOMEWHERE TO ARRIVE, and the distinction is load
+   * bearing: it counts poses anywhere in the region and pays no attention to
+   * `minLairReachBands`, exactly as lurk.ts's steering does. The arrival bar is
+   * a separate count (LairRegion.summonableCells) that gate 3 only requires to
+   * be non-zero. Folding the two together would have made a natural-floor ocean
+   * refuse the kraken — he arrives in 177 cells of trench and lives in eighty
+   * thousand cells of basin — and the owner settled on 2026-08-19 that the
+   * natural floor admits him with no digging.
+   *
+   * TWO BARS, BECAUSE THEY MEASURE DIFFERENT THINGS. `minLairCells` measures how
+   * much habitat there is; this measures how much of it the ANIMAL can be in,
+   * and a region can be enormous on the first and empty on the second — a
+   * 52-cell snow ribbon one cell wide was the shipped case, and the yeti born in
+   * it lived pinched. The first bar is also the cheap one, so it stays: it is a
+   * counter incremented per cell, where this is a nine-probe pose test.
+   *
+   * EVERY ROW DERIVES IT FROM ITS OWN FOOTPRINT — `ceil(footprintCells²)`, one
+   * body's worth of area to roam — rather than typing a number. That is the
+   * owner's rule stated in the unit it was decided in ("the animal can move at
+   * least its own area"), and it follows the kind when its model is resized,
+   * which is exactly how the yeti's other thresholds went stale.
+   */
+  readonly minLairFittingCells: number;
+  /**
    * How far INTO its habitat the lair's most extreme cell must reach, in bands
    * from sea level — deeper for a water kind, higher for a land one. The
    * habitat's own threshold (habitat.ts) is the floor for every kind; a kind may
@@ -836,6 +921,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     kind: 'cthulhu',
     habitat: WATER_HABITAT,
     minLairCells: MIN_LAIR_DEEP_CELLS,
+    minLairFittingCells: CTHULHU_MIN_LAIR_FITTING_CELLS,
     // No extra demand: the global deep-water line IS his habitat.
     minLairReachBands: DEEP_WATER_BANDS_BELOW_SEA,
     summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
@@ -854,6 +940,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     kind: 'kraken',
     habitat: WATER_HABITAT,
     minLairCells: KRAKEN_MIN_LAIR_DEEP_CELLS,
+    minLairFittingCells: KRAKEN_MIN_LAIR_FITTING_CELLS,
     minLairReachBands: KRAKEN_LAIR_MIN_DEPTH_BANDS,
     summonMeanWaitSeconds: SUMMON_MEAN_WAIT_SECONDS,
     // NO COLLAPSE THRESHOLD (owner, 2026-08-19: "For now, no eviction. Later,
@@ -877,6 +964,7 @@ export const MONSTER_PROFILES: Readonly<Record<MonsterKind, MonsterProfile>> = {
     kind: 'yeti',
     habitat: LAND_HABITAT,
     minLairCells: YETI_MIN_LAIR_SNOW_CELLS,
+    minLairFittingCells: YETI_MIN_LAIR_FITTING_CELLS,
     // No extra demand: the snow line IS his habitat, as the deep-water line is
     // Cthulhu's. Both of the "takes any of it" kinds sit at their habitat's own
     // threshold, and both of them are the kind a world gets first.
