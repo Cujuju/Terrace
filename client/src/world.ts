@@ -56,6 +56,7 @@ import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdg
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createRiverRig, type RiverRig } from './render/riverRig.ts';
 import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
+import { createWorkerRiverNetworkSource } from './render/water/riverNetworkSource.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, type Water } from './render/water.ts';
@@ -140,8 +141,8 @@ export interface World extends TerrainSink {
   terrainHeightAt(x: number, y: number): number | null;
   /**
    * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
-   * coordinate — terrain/drawnGround.ts's `capYAt`, memoised per chunk and
-   * discarded whenever the terrain changes.
+   * coordinate — terrain/drawnGround.ts's `capYAt`, read from the plan the
+   * terrain meshes published when they last drew that chunk.
    *
    * DISTINCT FROM `terrainHeightAt`, and the difference is the whole reason
    * drawnGround.ts exists: `terrainHeightAt` answers "which band does the CELL
@@ -193,19 +194,29 @@ export function createWorld(viewport: Viewport): World {
   // whole session" shape. Its own refresh() is throttled internally, so
   // calling it from applyDirty below (the one place terrain changes) is free
   // on every call that lands inside the throttle window.
-  const rivers: RiverRig = createRiverRig(viewport.scene, viewport.onFrame);
+  // The network recompute is GLOBAL by nature (a scan for local maxima over
+  // every active cell, then a trace from every spring it finds) and measured at
+  // ~24 ms on a revealed 512² world — over the whole 7.1 ms frame budget on its
+  // own — so it runs in a worker. Where one cannot be started (an old browser, a
+  // CSP that forbids module workers), the source falls back to this thread:
+  // slower, never wrong.
+  const rivers: RiverRig = createRiverRig(viewport.scene, viewport.onFrame, {
+    networkSource: createWorkerRiverNetworkSource() ?? undefined,
+  });
 
   let mirror: TerrainMirror | null = null;
   /**
-   * The drawn-surface oracle over the CURRENT mirror, built on first ask.
+   * The drawn-surface oracle over the CURRENT mirror.
    *
-   * NULLED RATHER THAN REFRESHED whenever the terrain changes, because a
-   * DrawnGround memoises a chunk plan forever and "MUST NOT outlive a terrain
-   * edit" (terrain/drawnGround.ts's LIFETIME note) — a surviving cache would
-   * answer post-edit queries from pre-edit contours. Rebuilding is lazy, so a
-   * session in which nothing ever asks pays nothing, and a sculpt stroke that
-   * lands between two asks costs one plan per chunk actually queried rather
-   * than a re-plan of everything that was ever cached.
+   * IT NEEDS NO INVALIDATION ANY MORE, and that is the point of the 2026-08-26
+   * contract fix. It used to memoise a chunk plan of its own, which "MUST NOT
+   * outlive a terrain edit" — so four separate places in this file had to
+   * remember to null it, and a fifth that forgot would have laid decals on
+   * pre-edit contours. It is now a pure reader over the store the terrain
+   * meshes publish into as they draw (terrain/drawnGroundStore.ts): an entry is
+   * replaced by the very act that redraws its chunk, so this may live exactly
+   * as long as the mirror it reads. It is replaced with the mirror, in
+   * `resetWorld`, and nowhere else.
    */
   let drawnGround: DrawnGround | null = null;
   let meshes: TerrainMeshes | null = null;
@@ -267,19 +278,18 @@ export function createWorld(viewport: Viewport): World {
    * that is about WHICH segments exist, not their heights.
    */
   const applyDirty = (dirty: Set<number>): void => {
-    // ONE OF THE TWO places terrain changes, and both must drop the
-    // drawn-surface cache — see `drawnGround`'s declaration. The other is the
-    // chunkUnlock handler below, which deliberately does NOT route through
-    // here.
-    drawnGround = null;
     meshes?.update(dirty);
     // Terrace lips follow the same dirty set as the meshes they lie on, so a
     // stroke re-contours exactly the chunks it changed (render/layerEdgeOverlay.ts).
     layerEdges?.update(dirty);
-    if (mirror !== null) {
+    if (mirror !== null && drawnGround !== null) {
       fog.refresh(mirror, dirty);
       water.refresh(mirror, dirty);
-      rivers.refresh(mirror);
+      // The SAME dirty set the meshes got: the rig re-emits only the water
+      // those chunks can have moved (render/riverRig.ts). The oracle goes with
+      // it so the water welds to the rock the meshes have drawn, not to a
+      // second opinion about it.
+      rivers.refresh(mirror, dirty, drawnGround);
     }
   };
 
@@ -310,6 +320,7 @@ export function createWorld(viewport: Viewport): World {
     mirror: TerrainMirror;
     meshes: TerrainMeshes;
     predictions: PredictionStore;
+    ground: DrawnGround;
   } => {
     meshes?.dispose();
     const nextMirror = createTerrainMirror(worldSize);
@@ -332,10 +343,10 @@ export function createWorld(viewport: Viewport): World {
       worldSize,
     );
     mirror = nextMirror;
-    // The oracle closes over the mirror it was built on, so a replaced mirror
-    // must take it with it — a rejoin is the one terrain change applyDirty
-    // above does not see.
-    drawnGround = null;
+    // The oracle closes over the mirror it was built on AND over that mirror's
+    // mesh store, so a replaced mirror takes both with it. This is the only
+    // place it is ever replaced — see its declaration.
+    drawnGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
     meshes = nextMeshes;
     layerEdges = nextLayerEdges;
     predictions = nextPredictions;
@@ -361,6 +372,7 @@ export function createWorld(viewport: Viewport): World {
       mirror: nextMirror,
       meshes: nextMeshes,
       predictions: nextPredictions,
+      ground: drawnGround,
     };
   };
 
@@ -447,7 +459,7 @@ export function createWorld(viewport: Viewport): World {
       // would otherwise leave the PREVIOUS session's tiles on screen for up
       // to RIVER_RECOMPUTE_INTERVAL_MS after a rejoin that happens to land
       // inside its window.
-      rivers.forceRefresh(fresh.mirror);
+      rivers.forceRefresh(fresh.mirror, fresh.ground);
     },
 
     onChunkUnlock(msg: ChunkUnlockMessage): void {
@@ -477,12 +489,16 @@ export function createWorld(viewport: Viewport): World {
       // THE SECOND PLACE TERRAIN CHANGES, and the reason this line is not
       // covered by applyDirty's: this handler updates the meshes itself rather
       // than routing through it, because a newly-revealed chunk needs fog,
-      // water and the depth texels resynced as well. A DrawnGround memoises a
-      // chunk plan FOREVER (terrain/drawnGround.ts's LIFETIME note) and
-      // `capYAt` answers with a number for a chunk that has not arrived — a
-      // plan over empty ground — so a cache that survived an unlock would go
-      // on placing decals on the sea floor of terrain that is now dry land.
-      drawnGround = null;
+      // water and the depth texels resynced as well.
+      //
+      // IT USED TO DROP THE DRAWN-GROUND CACHE HERE TOO, and the reason it no
+      // longer has to is the point of the 2026-08-26 contract fix: the oracle
+      // held a per-chunk memo that "MUST NOT outlive a terrain edit", and
+      // `capYAt` would happily plan a chunk that had NOT arrived — a plan over
+      // empty ground — so a memo that survived an unlock went on placing decals
+      // on the sea floor of terrain that is now dry land. Nothing is memoised
+      // any more: the oracle reads what the meshes published, and `meshes.update`
+      // on the next line is what publishes the newly-revealed chunks.
       meshes.update(unlockDirty);
       layerEdges?.update(unlockDirty);
       // Territory just crept outward — move the mist with it. `received`
@@ -501,7 +517,7 @@ export function createWorld(viewport: Viewport): World {
       // here (unlike the snapshot path below): this is the SAME session's
       // world growing, not a different one replacing it, so there is no
       // stale "previous world" tile to worry about outliving.
-      rivers.refresh(mirror);
+      if (drawnGround !== null) rivers.refresh(mirror, unlockDirty, drawnGround);
       armExpiryTimer();
     },
 
@@ -552,8 +568,7 @@ export function createWorld(viewport: Viewport): World {
     },
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
-      if (mirror === null) return null;
-      drawnGround ??= createDrawnGround(mirror);
+      if (drawnGround === null) return null;
       return drawnGround.capYAt(cellX, cellZ);
     },
 

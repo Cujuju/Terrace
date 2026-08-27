@@ -4058,3 +4058,82 @@ core" forbids.
 constant in count, capped with the columns it accompanies — a quad per burned
 cell done naively breaks the draw-call rule however good it looks, which is the
 same bar smoke was held to.
+
+### Decisions made 2026-08-26 (the sculpt-time water rebuild, three fixes)
+
+**The measurement.** Every sculpt routes through `applyDirty` (client/src/
+world.ts), which calls `rivers.refresh` — throttled to
+`RIVER_RECOMPUTE_INTERVAL_MS` (500 ms), so a held stroke rebuilds the world's
+water twice a second. Measured on a 512² world with 400 chunks revealed and a
+network at its own design ceilings (`MAX_SPRINGS_PER_NETWORK` = 24 springs,
+each traced to `RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER × worldSize` cells,
+i.e. ~24.5k wet cells): **235 ms per rebuild**, against the owner's ≥140 fps
+bar — a 7.1 ms frame budget for everything. Three separate causes, three fixes,
+all owner-approved.
+
+**1. THE TERRAIN PUBLISHES ITS PLAN; NOTHING RE-DERIVES IT.** Commit 7e3332c
+gave the world "the terrain publishes what it drew; water reads it", and the
+reading half honoured it by RE-DERIVING: `createDrawnGround(mirror)` called
+`planChunkCaps` again for every chunk any query touched, while
+`writeChunkVertexData` had already planned exactly those chunks and thrown the
+result away. Two costs, and the second is the worse one: a plan that is a
+private memo of a mutable mirror "MUST NOT outlive a terrain edit", so FOUR
+places in world.ts had to remember to null it and a fifth that forgot would
+have placed decals on pre-edit contours. `terrain/drawnGroundStore.ts` is now
+the handover: the mesh builder publishes each chunk's `ChunkDrawnCaps` as it
+draws it, and `terrain/drawnGround.ts` is a pure reader with no cache and no
+invalidation. **A chunk not yet drawn has no entry**, and that is a real state
+rather than a gap — the mesh queue drains under a frame budget, so water asking
+the store gets what is ON SCREEN, which is the side of that race water must be
+on; the reader answers for such a chunk exactly as it answers for a blocky one,
+from the cell's own height through the blocky fallback's Y rule.
+
+Alongside the plan, each chunk's level polygons are RASTERISED ONCE into a band
+grid at `BAND_GRID_CELLS` (a quarter cell — the curtain's own probe step, now
+one constant read by both). `bandAt`/`topmostLevelAt` become an array read
+instead of a point-in-polygon walk down the level stack, which the waterfall
+curtain was calling four times per boundary segment for thousands of segments.
+The grid samples sit ON the lattice, so every query at a cell centre, half cell
+or quarter cell is exact; only the curtain's outward probe is quantised, and by
+at most half a grid step, at a boundary where its own doc comment already
+records that either adjacent band is a correct answer.
+
+**2. WATER GEOMETRY IS RE-EMITTED PER REGION, NOT PER WORLD.** A region's
+identity is its BAND — the rebuild groups every wet cell by the band its
+surface is drawn at, so one band is one region by construction, and the same
+terrain always produces the same bands. Each region owns a packed RUN in the
+water buffer, spliced with `copyWithin` exactly as `terrainMeshes.ts` packs
+chunks into a super-mesh, and re-emitted only when the chunks it stands over
+can have changed: the dirty set `applyDirty` already computes, plus every chunk
+holding a cell whose water entered, left or changed band, each grown by one
+ring of chunks (a marching tile reads the border row it shares with its
+neighbour, and a curtain probes up to a cell outside its own region). BOTH the
+region's current tiles and the tiles it was last drawn with are tested — a
+region that lost every cell it had in a chunk no longer lists that chunk, so
+only the tiles it was drawn with can report that its old geometry there is
+stale.
+
+**3. THE NETWORK RECOMPUTE MOVED OFF THE MAIN THREAD.** `computeRiverNetwork`
+is GLOBAL by nature — a scan of every active cell for local maxima, then a
+trace from every spring — so unlike the geometry it cannot be scoped to a
+stroke's chunks. Measured at 24–48 ms depending on how much river a world has,
+it is over the whole frame budget on its own. It now runs in a Web Worker,
+which the purity Q3 established is exactly what makes safe: same heightmap in,
+same network out, no state to synchronise, so the answer does not depend on the
+thread. The mirror's cells are TRANSFERRED as a copy (the worker never shares
+memory with the thread that is sculpting), and `columnSpans` is not sent
+because the river math never reads it. **What comes back is not the network.**
+The tree is flattened worker-side to three typed arrays (wet cells, their
+bands, the river head cells — `render/water/riverSurface.ts`), because posting
+~24.5k point objects would put the structured-clone DESERIALISATION back on the
+main thread, which is the thread the move exists to unload. Requests coalesce:
+one compute in flight, a request made during it only marks "again when this
+lands", and an answer whose mirror has since been replaced by a rejoin is
+dropped. Where no worker can be started the source falls back to this thread —
+slower, never wrong. Tests and previews use that direct source, so there is one
+rebuild path rather than a fast one and a test one.
+
+**Result, same fixture:** 235 ms → **3.4 ms** of main-thread work per refresh,
+with 48 ms of network recompute off-thread. What remains is the O(wet cells)
+walk that stamps the surface into a per-cell table and groups it into regions —
+bounded by rivers.ts's own two constants rather than by terrain roughness.

@@ -63,6 +63,7 @@ import {
   type ContourPoint,
 } from '../../terrain/contours.ts';
 import { type DrawnGround } from '../../terrain/drawnGround.ts';
+import { BAND_GRID_CELLS } from '../../terrain/drawnGroundStore.ts';
 
 /**
  * How far outside a segment's midpoint the classification probe steps, in
@@ -78,8 +79,16 @@ import { type DrawnGround } from '../../terrain/drawnGround.ts';
  * It is also the STEP of the foot search below, for the same reasons: fine
  * enough to resolve the levels a sheer face crams into one cell, coarse
  * enough not to re-read the band it started on.
+ *
+ * IT IS THE BAND GRID'S OWN STEP (2026-08-26), not a second 0.25 that happens
+ * to match. `ground.bandAt` is answered from a lattice the terrain rasterises
+ * at `BAND_GRID_CELLS` when it draws a chunk (terrain/drawnGroundStore.ts), so
+ * the probe walking on a coarser lattice would read the same grid sample twice
+ * and a finer one would ask for a precision the answer does not carry. Two
+ * independent constants that must agree is the shape this whole arc has been
+ * deleting; this is one constant, read here.
  */
-export const CURTAIN_PROBE_CELLS = 0.25;
+export const CURTAIN_PROBE_CELLS = BAND_GRID_CELLS;
 
 /**
  * How far out from a segment the foot search may walk, in CELLS, before it

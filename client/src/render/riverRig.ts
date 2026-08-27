@@ -48,31 +48,37 @@ import {
   DynamicDrawUsage,
   Mesh,
   MeshStandardMaterial,
+  Sphere,
+  Vector3,
   type Object3D,
 } from 'three';
 import {
   BAND_HEIGHT,
-  bandOf,
-  cellIndex,
   cellX,
   cellY,
   chunkIndexOfCell,
-  computeRiverNetwork,
+  chunksPerEdge,
+  CHUNK_SIZE,
   quantizeToBand,
   SEA_LEVEL,
-  type RiverNetwork,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, WATER_SURFACE_LIFT } from '../config.ts';
 import { sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
-import { createDrawnGround } from '../terrain/drawnGround.ts';
+import { type DrawnGround } from '../terrain/drawnGround.ts';
 import { WATER_COLOR } from './water.ts';
 import { installWaterBandClock, makeBanded } from './water/waterBands.ts';
 import {
-  TILE_LATTICE_OFFSETS,
+  TILE_LATTICE_MAX_OFFSET,
+  TILE_LATTICE_MIN_OFFSET,
   appendRegionSurface,
   type WaterRegion,
 } from './water/waterTread.ts';
 import { appendCurtains } from './water/waterCurtain.ts';
+import {
+  directRiverNetworkSource,
+  type RiverNetworkSource,
+} from './water/riverNetworkSource.ts';
+import { EMPTY_RIVER_SURFACE, type RiverSurface } from './water/riverSurface.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
 
@@ -198,6 +204,13 @@ function plotRadiusCells(mirror: TerrainMirror, x: number, y: number): number {
 
 
 /**
+ * RETIRED 2026-08-26 — kept as the record of the rule, the same convention this
+ * file already keeps for the superseded MIST_* constants below. The water is no
+ * longer wrapped as a fresh geometry per rebuild (see "The water buffer: one
+ * packed run per region"), but its normals are still authored straight up for
+ * exactly the reason set out here, and the packed buffer's `fillWaterNormals`
+ * is where that now happens.
+ *
  * Wraps a finished triangle-soup position list as a geometry, with every
  * normal AUTHORED STRAIGHT UP rather than computed from the faces.
  *
@@ -472,23 +485,48 @@ interface SpringState {
 export interface RiverRig {
   /**
    * Recomputes the river network from the mirror's CURRENT terrain and
-   * rebuilds every ribbon, lake tile and spring effect — throttled internally to
-   * RIVER_RECOMPUTE_INTERVAL_MS, so calling this from every terrainDiff (as
-   * client/src/world.ts does, alongside the terrain mesh patch) costs nothing
-   * extra: most calls are a no-op elapsed-time check.
+   * re-emits the water the given chunks can have changed — throttled
+   * internally to RIVER_RECOMPUTE_INTERVAL_MS, so calling this from every
+   * terrainDiff (as client/src/world.ts does, alongside the terrain mesh patch)
+   * costs nothing extra: most calls are a no-op elapsed-time check.
+   *
+   * `dirty` IS THE SAME SET THE MESHES GET — the chunks whose heights changed.
+   * Dirty sets accumulate across throttled calls, so a stroke that emits eight
+   * intents a second and gets two rebuilds still re-emits every chunk it
+   * touched. Water whose region neither moved nor stands over changed ground
+   * keeps the vertices it already had.
+   *
+   * `ground` is what the terrain has DRAWN (terrain/drawnGround.ts). It is
+   * passed in rather than built here because it is a reader over the mesh
+   * builder's own store: the water must weld to the rock that is on screen.
    */
-  refresh(mirror: TerrainMirror): void;
+  refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>, ground: DrawnGround): void;
   /**
-   * Rebuilds immediately, bypassing the throttle, and resets it so the next
-   * ordinary `refresh` call is timed from now. For the ONE case a throttle is
-   * wrong: a fresh join or rejoin (client/src/world.ts's onSnapshot), where
-   * `mirror` is a brand-new session's and the previous session's tiles must
-   * not be left on screen for up to RIVER_RECOMPUTE_INTERVAL_MS just because
-   * this rig happened to recompute recently for a DIFFERENT world. Every
-   * other caller wants the throttle — see `refresh`.
+   * Rebuilds EVERYTHING immediately, bypassing the throttle, and resets it so
+   * the next ordinary `refresh` call is timed from now. For the ONE case a
+   * throttle is wrong: a fresh join or rejoin (client/src/world.ts's
+   * onSnapshot), where `mirror` is a brand-new session's and the previous
+   * session's tiles must not be left on screen for up to
+   * RIVER_RECOMPUTE_INTERVAL_MS just because this rig happened to recompute
+   * recently for a DIFFERENT world. Every other caller wants the throttle —
+   * see `refresh`.
+   *
+   * Immediately means the REQUEST is immediate. With the worker source the
+   * network still arrives a beat later; with the direct source the rebuild has
+   * finished by the time this returns.
    */
-  forceRefresh(mirror: TerrainMirror): void;
+  forceRefresh(mirror: TerrainMirror, ground: DrawnGround): void;
   dispose(): void;
+}
+
+/** Optional collaborators — everything here has a working default. */
+export interface RiverRigOptions {
+  /**
+   * Where the river network is computed. Defaults to
+   * `directRiverNetworkSource` (this thread, synchronous), which is what tests
+   * and previews want; the client passes the worker-backed one.
+   */
+  readonly networkSource?: RiverNetworkSource;
 }
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
@@ -522,7 +560,9 @@ function watchReducedMotion(): { matches(): boolean; stop(): void } {
 export function createRiverRig(
   parent: Object3D,
   onFrame: (handler: (dt: number) => void) => () => void,
+  options?: RiverRigOptions,
 ): RiverRig {
+  const networkSource = options?.networkSource ?? directRiverNetworkSource;
   // ONE material and ONE mesh for every drop of river water in the network —
   // channels, pools and the aprons that pour between them. Two materials meant
   // two opacities and therefore a visible boundary wherever a channel met its
@@ -553,6 +593,326 @@ export function createRiverRig(
 
   const waterMesh = new Mesh(new BufferGeometry(), waterMaterial);
   parent.add(waterMesh);
+
+  // ── The water buffer: one packed run per region ────────────────────────────
+  //
+  // WHY THE GEOMETRY IS NO LONGER THROWN AWAY EACH REBUILD. Until 2026-08-26
+  // every rebuild re-emitted every region into one fresh triangle list and
+  // replaced the BufferGeometry — measured at ~235 ms per rebuild on a 512²
+  // world with 400 chunks revealed, twice a second while a stroke is held,
+  // against a 7.1 ms frame budget. Almost all of it was work with no new
+  // answer in it: a stroke changes one or two chunks, and the water standing
+  // three hundred cells away is exactly the water that was already there.
+  //
+  // So the buffer is now packed the way terrainMeshes.ts packs chunks into a
+  // super-mesh, for the same reasons and with the same shape: each region owns
+  // a contiguous RUN of vertices, a re-emit that changes a run's length shifts
+  // the tail with `copyWithin` (bounded memmove, not a rebuild), and the whole
+  // buffer is submitted as ONE draw range with no holes. What differs is only
+  // the key: chunks there, water regions here.
+  //
+  // NORMALS ARE NOT PART OF THE SPLICE. Every water vertex's normal is +Y (see
+  // the note on the retired `geometryFromTriangles` for why the water is
+  // authored flat rather than face-shaded), so the normal buffer is a constant
+  // the length of the capacity — filled on growth and never moved.
+
+  /** Where one region's vertices live inside the packed water buffer. */
+  interface RegionRun {
+    /** First vertex of the run, as an index into the packed buffers. */
+    offset: number;
+    /** Live vertices in the run. */
+    count: number;
+  }
+
+  /**
+   * Vertices the water buffer starts with. A first rebuild grows it to whatever
+   * the world really needs and it never shrinks — the same bargain
+   * `ensureCapacity` makes for a chunk that once held a big cliff.
+   */
+  const INITIAL_WATER_VERTEX_CAPACITY = 3072;
+
+  let waterPositions = new Float32Array(INITIAL_WATER_VERTEX_CAPACITY * 3);
+  let waterNormals = new Float32Array(INITIAL_WATER_VERTEX_CAPACITY * 3);
+  let waterPositionAttribute = new BufferAttribute(waterPositions, 3);
+  let waterNormalAttribute = new BufferAttribute(waterNormals, 3);
+  /** Sum of every run's count — the geometry's draw range, and its only one. */
+  let liveWaterVertices = 0;
+  /**
+   * The regions in the buffer, by surface band, in ASCENDING BAND ORDER — which
+   * is the order their runs sit in the buffer, so a run's offset is the sum of
+   * the counts before it. Sorted rather than insertion-ordered because the
+   * packing depends on it: a splice shifts exactly the runs that follow, and
+   * "the runs that follow" has to be well-defined however the regions happened
+   * to appear.
+   */
+  const waterRunOrder: number[] = [];
+  const waterRuns = new Map<number, RegionRun>();
+
+  /** Every normal from `from` to `to` (vertex indices) authored straight up. */
+  const fillWaterNormals = (from: number, to: number): void => {
+    for (let v = from; v < to; v++) waterNormals[v * 3 + 1] = 1;
+  };
+  fillWaterNormals(0, INITIAL_WATER_VERTEX_CAPACITY);
+
+  /**
+   * Points the mesh at the current buffers. Run at startup and again whenever
+   * they had to grow — a typed array cannot be resized, so growth means new
+   * arrays and therefore new attributes, and the old geometry is disposed
+   * rather than left holding its GPU buffers.
+   */
+  const bindWaterGeometry = (): void => {
+    waterPositionAttribute = new BufferAttribute(waterPositions, 3);
+    waterNormalAttribute = new BufferAttribute(waterNormals, 3);
+    waterPositionAttribute.setUsage(DynamicDrawUsage);
+    waterNormalAttribute.setUsage(DynamicDrawUsage);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', waterPositionAttribute);
+    geometry.setAttribute('normal', waterNormalAttribute);
+    geometry.setDrawRange(0, liveWaterVertices);
+    const previous = waterMesh.geometry;
+    waterMesh.geometry = geometry;
+    if (previous !== geometry) previous.dispose();
+  };
+  bindWaterGeometry();
+
+  /**
+   * Grows the water buffers to hold at least `vertices`, preserving what is in
+   * them. Geometric (doubling) rather than exact, so a river growing a cell at
+   * a time cannot reallocate on every rebuild.
+   */
+  const ensureWaterCapacity = (vertices: number): void => {
+    const capacity = waterPositions.length / 3;
+    if (vertices <= capacity) return;
+    let grown = Math.max(capacity, 1);
+    while (grown < vertices) grown *= 2;
+    const positions = new Float32Array(grown * 3);
+    positions.set(waterPositions.subarray(0, liveWaterVertices * 3));
+    waterPositions = positions;
+    waterNormals = new Float32Array(grown * 3);
+    fillWaterNormals(0, grown);
+    bindWaterGeometry();
+  };
+
+  /**
+   * Copies `count` vertices of `source` into the region's run, moving
+   * everything after it if the run changed length. A `count` of 0 removes the
+   * region from the buffer.
+   *
+   * Line for line the same manoeuvre as terrainMeshes.ts's `spliceChunk`, and
+   * deliberately so: the packing invariant (runs back-to-back, offsets exact,
+   * one draw range) is the thing that must hold, and two spellings of it would
+   * be two chances to get it wrong.
+   */
+  const spliceRegion = (band: number, source: readonly number[], count: number): void => {
+    let run = waterRuns.get(band);
+    if (run === undefined) {
+      if (count === 0) return;
+      // A new region goes where its band sorts to, so one that appears later
+      // still lands between its neighbours rather than at the end.
+      let at = waterRunOrder.length;
+      for (let i = 0; i < waterRunOrder.length; i++) {
+        if (waterRunOrder[i]! > band) {
+          at = i;
+          break;
+        }
+      }
+      const previous = at === 0 ? null : waterRuns.get(waterRunOrder[at - 1]!)!;
+      run = { offset: previous === null ? 0 : previous.offset + previous.count, count: 0 };
+      waterRunOrder.splice(at, 0, band);
+      waterRuns.set(band, run);
+    }
+
+    const delta = count - run.count;
+    if (delta > 0) ensureWaterCapacity(liveWaterVertices + delta);
+
+    const tailStart = run.offset + run.count;
+    const tailLength = liveWaterVertices - tailStart;
+    if (delta !== 0 && tailLength > 0) {
+      // copyWithin, not set(subarray): the source and destination overlap, and
+      // copyWithin is specified to behave as if the range were copied first.
+      waterPositions.copyWithin(
+        (tailStart + delta) * 3,
+        tailStart * 3,
+        (tailStart + tailLength) * 3,
+      );
+    }
+    if (delta !== 0) {
+      const from = waterRunOrder.indexOf(band) + 1;
+      for (let i = from; i < waterRunOrder.length; i++) {
+        waterRuns.get(waterRunOrder[i]!)!.offset += delta;
+      }
+      liveWaterVertices += delta;
+      run.count = count;
+    }
+
+    const base = run.offset * 3;
+    for (let i = 0; i < count * 3; i++) waterPositions[base + i] = source[i]!;
+
+    if (count === 0) {
+      waterRuns.delete(band);
+      waterRunOrder.splice(waterRunOrder.indexOf(band), 1);
+    }
+  };
+
+  /**
+   * The bound the renderer culls against, over the LIVE range only.
+   *
+   * Hand-rolled for the same reason terrainMeshes.ts hand-rolls its own:
+   * `computeBoundingSphere` reads the whole position attribute, and the tail
+   * past `liveWaterVertices` is whatever a previous, longer occupant left there.
+   * Centre-of-AABB, which is what Three's own implementation uses.
+   */
+  const recomputeWaterBounds = (): void => {
+    const geometry = waterMesh.geometry;
+    if (liveWaterVertices === 0) {
+      geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let v = 0; v < liveWaterVertices; v++) {
+      const x = waterPositions[v * 3]!;
+      const y = waterPositions[v * 3 + 1]!;
+      const z = waterPositions[v * 3 + 2]!;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    const centreX = (minX + maxX) / 2;
+    const centreY = (minY + maxY) / 2;
+    const centreZ = (minZ + maxZ) / 2;
+    let maxSquared = 0;
+    for (let v = 0; v < liveWaterVertices; v++) {
+      const dx = waterPositions[v * 3]! - centreX;
+      const dy = waterPositions[v * 3 + 1]! - centreY;
+      const dz = waterPositions[v * 3 + 2]! - centreZ;
+      const squared = dx * dx + dy * dy + dz * dz;
+      if (squared > maxSquared) maxSquared = squared;
+    }
+    geometry.boundingSphere = new Sphere(
+      new Vector3(centreX, centreY, centreZ),
+      Math.sqrt(maxSquared),
+    );
+  };
+
+  // ── What the last rebuild emitted ─────────────────────────────────────────
+
+  // ── The wet-cell scratch ──────────────────────────────────────────────────
+  //
+  // WHY TYPED ARRAYS AND NOT A `Map<cell, band>`. Every rebuild flattens the
+  // whole network into "which band of water stands on this cell", and that walk
+  // is O(WET CELLS) however cheap the geometry around it becomes — its size is
+  // capped by shared/src/rivers.ts's own two constants (MAX_SPRINGS_PER_NETWORK
+  // traces, each bounded by RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER x
+  // worldSize cells), which on a 512-edge world is ~24.5k cells. Done with a
+  // Map — one `get` and one `set` to record each cell, then two more passes of
+  // `get`/`has` to diff against the last rebuild — that walk alone was ~6 ms of
+  // an 11 ms refresh, most of the main-thread cost that survived moving the
+  // network off it.
+  //
+  // A cell index is a dense integer, so the table is an array. The generation
+  // STAMP is what makes it free to reuse: "wet" is `stamp[cell] === thisRebuild`
+  // rather than a value that has to be cleared, so nothing is zeroed between
+  // rebuilds and the previous rebuild's answer stays readable in the other half
+  // of the pair.
+
+  /** One rebuild's wet-cell table: band per cell, valid where the stamp matches. */
+  interface WetCells {
+    band: Int16Array;
+    stamp: Int32Array;
+    /**
+     * The cells stamped this rebuild, in the order the network walk found them.
+     * This IS the array the surface arrived in — adopted rather than copied.
+     */
+    list: Int32Array;
+    /** The stamp value that means "wet in the rebuild this table describes". */
+    generation: number;
+  }
+
+  const makeWetCells = (cellCount: number): WetCells => ({
+    band: new Int16Array(cellCount),
+    stamp: new Int32Array(cellCount),
+    list: new Int32Array(0),
+    generation: 0,
+  });
+
+  /** This rebuild's table and the previous one's; swapped, never rebuilt. */
+  let wetCells = makeWetCells(0);
+  let previousWetCells = makeWetCells(0);
+  let wetGeneration = 0;
+
+  /**
+   * Re-allocates the tables when the world size changes, and rotates them for a
+   * new rebuild. A rejoin can hand over a different world; a table sized for the
+   * old one would index out of range.
+   */
+  const beginWetCells = (cellCount: number): void => {
+    if (wetCells.band.length !== cellCount) {
+      wetCells = makeWetCells(cellCount);
+      previousWetCells = makeWetCells(cellCount);
+      wetGeneration = 0;
+    }
+    const rotated = previousWetCells;
+    previousWetCells = wetCells;
+    wetCells = rotated;
+    wetGeneration++;
+    wetCells.generation = wetGeneration;
+  };
+
+  /** One region's triangles, reused across regions and rebuilds. */
+  const regionTriangles: number[] = [];
+
+  /** The empty run handed to `spliceRegion` when a region is removed. */
+  const EMPTY_TRIANGLES: readonly number[] = [];
+
+  /**
+   * The marching tiles each band-region was EMITTED with, by band.
+   *
+   * A region's IDENTITY IS ITS BAND, which is not a convention imposed here —
+   * the rebuild groups every wet cell by the band its surface is drawn at, so
+   * one band is one region by construction (see the rebuild's step 2). That
+   * makes identity deterministic without an anchor-cell rule: the same terrain
+   * always produces the same bands with the same contents.
+   *
+   * The tiles are kept, rather than the cells, because of the one case the new
+   * tiles cannot speak for: a region that LOST every cell it had in some chunk
+   * no longer lists that chunk, so only the tiles it was drawn with can say
+   * that its old geometry there is stale.
+   */
+  const emittedRegionTiles = new Map<number, ReadonlySet<number>>();
+
+  /**
+   * Whether a region has to be emitted again, or may keep the vertices it has.
+   *
+   * A region's geometry is a function of three things: its own cells, the
+   * terrain in and beside its tiles, and the water standing just outside it (a
+   * curtain's foot lands on the pool below, not on the first rock ledge). The
+   * `affectedChunks` set is built to cover all three — every chunk whose terrain
+   * changed and every chunk holding a cell whose water changed, each grown by
+   * one ring — so intersecting it with the region's tiles is the whole test.
+   *
+   * BOTH TILE SETS ARE TESTED, and the second is not redundant. A region that
+   * lost every cell it had in a chunk does not list that chunk any more, so its
+   * NEW tiles cannot report the change that emptied it; the tiles it was drawn
+   * with can.
+   */
+  const regionNeedsReemit = (
+    region: WaterRegion,
+    affectedChunks: ReadonlySet<number>,
+  ): boolean => {
+    const emittedTiles = emittedRegionTiles.get(region.surfaceBand);
+    if (emittedTiles === undefined || !waterRuns.has(region.surfaceBand)) return true;
+    for (const tile of region.tiles) if (affectedChunks.has(tile)) return true;
+    for (const tile of emittedTiles) if (affectedChunks.has(tile)) return true;
+    return false;
+  };
 
   // Spring materials — one shared instance each across every spring in
   // the network (the rings/dome geometries are merged, so one draw call per
@@ -595,7 +955,7 @@ export function createRiverRig(
    */
   const rebuildSprings = (
     mirror: TerrainMirror,
-    network: RiverNetwork,
+    sourceCells: Int32Array,
     waterSurfaceYAt: (x: number, y: number) => number | null,
   ): void => {
     if (spring !== null) {
@@ -633,12 +993,10 @@ export function createRiverRig(
     // Deduplicated by cell, so two rivers sharing a head spring get one
     // effect.
     const siteCells = new Map<number, { readonly x: number; readonly y: number }>();
-    for (const river of network.rivers) {
-      const source = river.courses[0]?.points[0];
-      if (source === undefined) continue;
-      siteCells.set(cellIndex(mirror.map, source.x, source.y), {
-        x: source.x,
-        y: source.y,
+    for (const cell of sourceCells) {
+      siteCells.set(cell, {
+        x: cellX(mirror.map.size, cell),
+        y: cellY(mirror.map.size, cell),
       });
     }
     const springs = [...siteCells.values()];
@@ -885,84 +1243,146 @@ export function createRiverRig(
    *      code as present-tense fact. See waterCurtain.ts's header for the
    *      reasoning behind the pause.
    */
-  const rebuild = (mirror: TerrainMirror): void => {
-    const network = computeRiverNetwork(mirror.map, {
-      isActive: (x, y) => mirror.received.has(chunkIndexOfCell(mirror.map.size, x, y)),
-    });
-
-
-
+  const rebuild = (
+    mirror: TerrainMirror,
+    ground: DrawnGround,
+    surface: RiverSurface,
+    dirtyChunks: ReadonlySet<number> | null,
+  ): void => {
     // PASS ONE: the surface band of every wet cell in the whole network,
     // before a single triangle is built. An outline can only be marched once
     // every cell under that water is known, and a cell's water can arrive from
     // more than one course (a fork rejoining the same pool contributes cells
     // from each arm).
-    const bandOfCell = new Map<number, number>();
-    const noteWet = (x: number, y: number, band: number): void => {
-      const cell = cellIndex(mirror.map, x, y);
-      const existing = bandOfCell.get(cell);
-      // THE HIGHER WATER WINS where two courses disagree about a cell: the
-      // higher surface is the one that covers it, and the lower one is
-      // underneath. A rule on the bands themselves, so the order the courses
-      // are walked in decides nothing.
-      if (existing === undefined || band > existing) bandOfCell.set(cell, band);
-    };
-    for (const river of network.rivers) {
-      for (const course of river.courses) {
-        for (const point of course.points) {
-          noteWet(
-            point.x,
-            point.y,
-            point.pooled
-              ? bandOf(point.poolHeight ?? 0)
-              : bandOf(sampleHeight(mirror, point.x, point.y)),
-          );
+    const worldSize = mirror.map.size;
+    beginWetCells(worldSize * worldSize);
+    const wetBand = wetCells.band;
+    const wetStamp = wetCells.stamp;
+    const wetList = surface.cells;
+    const generation = wetCells.generation;
+    // THE CHANGE LEDGER, opened before the table is stamped so the stamping walk
+    // can fill it in passing.
+    //
+    // It answers "which chunks can the water have moved in", and it has TWO
+    // sources. The TERRAIN moved wherever `dirtyChunks` says, which moves the
+    // contours a region is marched and welded against. The WATER moved wherever
+    // a cell entered, left or changed band, which moves the outline itself and —
+    // because a curtain's foot lands on the water below it, not on the first
+    // rock ledge — the falls of neighbouring regions too. Each is grown by one
+    // ring of chunks, because a marching tile reads the border row it shares
+    // with the tile next door and a curtain probes up to a cell outside its own
+    // region.
+    const affectedChunks = new Set<number>();
+    const tileCols = chunksPerEdge(worldSize);
+    const noteChunkAndNeighbours = (chunkIdx: number): void => {
+      const chunkX = chunkIdx % tileCols;
+      const chunkZ = (chunkIdx - chunkX) / tileCols;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = chunkX + dx;
+          const nz = chunkZ + dz;
+          if (nx < 0 || nz < 0 || nx >= tileCols || nz >= tileCols) continue;
+          affectedChunks.add(nz * tileCols + nx);
         }
       }
+    };
+    const noteCell = (cell: number): void => {
+      const x = cell % worldSize;
+      noteChunkAndNeighbours(chunkIndexOfCell(worldSize, x, (cell - x) / worldSize));
+    };
+    if (dirtyChunks !== null) for (const chunkIdx of dirtyChunks) noteChunkAndNeighbours(chunkIdx);
+
+    // The surface arrives already flattened and already deduplicated (the
+    // network walk and the higher-water-wins rule both live in
+    // water/riverSurface.ts, which is what the worker runs). All that is left
+    // here is to stamp it into the table the rest of the rebuild reads — and,
+    // in the same pass, to note every cell whose water is new or has moved.
+    const previousBand = previousWetCells.band;
+    const previousStamp = previousWetCells.stamp;
+    const previousGeneration = previousWetCells.generation;
+    for (let i = 0; i < wetList.length; i++) {
+      const cell = wetList[i]!;
+      const band = surface.bands[i]!;
+      wetStamp[cell] = generation;
+      wetBand[cell] = band;
+      if (previousStamp[cell] !== previousGeneration || previousBand[cell] !== band) {
+        noteCell(cell);
+      }
     }
+    // ...and every cell the water has LEFT, which the walk above cannot see.
+    for (const cell of previousWetCells.list) {
+      if (wetStamp[cell] !== generation) noteCell(cell);
+    }
+    wetCells.list = wetList;
 
     // PASS TWO: one region per band, plus the marching tiles it reaches.
     const regions = new Map<number, WaterRegion>();
-    for (const [cell, band] of bandOfCell) {
-      let region = regions.get(band);
+    const lastCell = worldSize - 1;
+    /** The band, region and tile range the previous cell used — see the run skips below. */
+    let lastTileRange = -1;
+    let lastTileBand = Number.NaN;
+    let lastRegion: WaterRegion | undefined;
+    for (const cell of wetList) {
+      const band = wetBand[cell]!;
+      // A course runs along one band for a stretch at a time, so the region of
+      // the previous cell is almost always this cell's too — one comparison in
+      // place of a Map lookup, ~24.5k times per rebuild at the trace ceiling.
+      let region = band === lastTileBand ? lastRegion : regions.get(band);
       if (region === undefined) {
-        region = { cells: new Set<number>(), surfaceBand: band, tiles: new Set<number>() };
+        region = {
+          // Reads the table this pass just filled: a cell is under THIS
+          // region's water when it is wet at all and its band is this one.
+          isWet: (candidate) =>
+            wetStamp[candidate] === generation && wetBand[candidate] === band,
+          anchorCell: cell,
+          surfaceBand: band,
+          tiles: new Set<number>(),
+        };
         regions.set(band, region);
       }
-      region.cells.add(cell);
-      const x = cellX(mirror.map.size, cell);
-      const y = cellY(mirror.map.size, cell);
+      lastRegion = region;
+      const x = cell % worldSize;
+      const y = (cell - x) / worldSize;
       // Every marching tile whose 17x17 lattice HOLDS this cell — its own and,
       // when it sits on a tile's first row or column, the neighbours whose
       // lattice ends on it. Those are exactly the tiles that can carry a
       // crossing on an edge of this cell, and a tile missed here would leave a
       // notch of unbuilt water at a tile border.
-      for (const [dx, dy] of TILE_LATTICE_OFFSETS) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= mirror.map.size || ny >= mirror.map.size) continue;
-        region.tiles.add(chunkIndexOfCell(mirror.map.size, nx, ny));
+      //
+      // WALKED AS A TILE RANGE, not as TILE_LATTICE_OFFSETS' sixteen cells: the
+      // offsets span [-2, +1] on both axes, which is at most two tiles per axis
+      // and one for almost every cell, so the cell walk asked `chunkIndexOfCell`
+      // sixteen times to learn at most four answers. On a network at the trace
+      // budget's own ceiling (MAX_SPRINGS_PER_NETWORK x
+      // RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER x worldSize wet cells) that was
+      // 400k calls per rebuild. Same tiles, named by their range instead.
+      const tileXLo = Math.floor(Math.max(0, x + TILE_LATTICE_MIN_OFFSET) / CHUNK_SIZE);
+      const tileXHi = Math.floor(Math.min(lastCell, x + TILE_LATTICE_MAX_OFFSET) / CHUNK_SIZE);
+      const tileYLo = Math.floor(Math.max(0, y + TILE_LATTICE_MIN_OFFSET) / CHUNK_SIZE);
+      const tileYHi = Math.floor(Math.min(lastCell, y + TILE_LATTICE_MAX_OFFSET) / CHUNK_SIZE);
+      // A course walks cell by cell, so consecutive cells almost always name the
+      // SAME tile range; naming it as one number lets the run be skipped.
+      const tileRange =
+        ((tileYLo * tileCols + tileXLo) * 2 + (tileXHi - tileXLo)) * 2 + (tileYHi - tileYLo);
+      if (tileRange !== lastTileRange || band !== lastTileBand) {
+        lastTileRange = tileRange;
+        lastTileBand = band;
+        for (let tileY = tileYLo; tileY <= tileYHi; tileY++) {
+          for (let tileX = tileXLo; tileX <= tileXHi; tileX++) {
+            region.tiles.add(tileY * tileCols + tileX);
+          }
+        }
       }
     }
 
     /** The band of the water standing at a cell, or null where it is dry. */
     const waterBandAt = (cellXCoord: number, cellYCoord: number): number | null => {
-      if (
-        cellXCoord < 0 ||
-        cellYCoord < 0 ||
-        cellXCoord >= mirror.map.size ||
-        cellYCoord >= mirror.map.size
-      ) {
+      if (cellXCoord < 0 || cellYCoord < 0 || cellXCoord >= worldSize || cellYCoord >= worldSize) {
         return null;
       }
-      return bandOfCell.get(cellIndex(mirror.map, cellXCoord, cellYCoord)) ?? null;
+      const cell = cellYCoord * worldSize + cellXCoord;
+      return wetStamp[cell] === generation ? wetBand[cell]! : null;
     };
-
-    const triangles: number[] = [];
-    // ONE ORACLE PER REBUILD, and it must not outlive this call: it memoises
-    // marches of the terrain as it stands right now, so a terrain edit
-    // invalidates every entry (drawnGround.ts's cache note).
-    const ground = createDrawnGround(mirror);
 
     /**
      * World Y of a water surface standing on a rendered terrace band, water
@@ -979,15 +1399,17 @@ export function createRiverRig(
     const bandWorldY = (band: number, cellXCoord: number, cellZCoord: number): number =>
       ground.capYOfBand(band, cellXCoord, cellZCoord) + RIVER_SURFACE_LIFT_WORLD_UNITS;
 
+    // PASS THREE: re-emit only the regions that can have moved.
     for (const region of regions.values()) {
+      if (dirtyChunks !== null && !regionNeedsReemit(region, affectedChunks)) continue;
       // Anchored at a cell the region actually covers, so band 0 resolves in
       // the chunk the water is really in. Regions are non-empty by
       // construction (they are created when their first cell is added).
-      const anchor = region.cells.values().next().value as number;
-      const anchorX = cellX(mirror.map.size, anchor);
-      const anchorZ = cellY(mirror.map.size, anchor);
+      const anchorX = region.anchorCell % worldSize;
+      const anchorZ = (region.anchorCell - anchorX) / worldSize;
       const surfaceY = bandWorldY(region.surfaceBand, anchorX, anchorZ);
-      const loops = appendRegionSurface(mirror, region, surfaceY, triangles);
+      regionTriangles.length = 0;
+      const loops = appendRegionSurface(mirror, region, surfaceY, regionTriangles);
       // The curtain asks the terrain where the ground is; it is not told, and
       // it is given no probe of ours to guess with. The apron needed two
       // callbacks here — a lower-water probe and a ground-height probe, both
@@ -1005,18 +1427,29 @@ export function createRiverRig(
         bandWorldY,
         waterBandAt,
         SEA_SURFACE_WORLD_Y,
-        triangles,
+        regionTriangles,
       );
+      spliceRegion(region.surfaceBand, regionTriangles, regionTriangles.length / 3);
+      emittedRegionTiles.set(region.surfaceBand, region.tiles);
     }
 
-    waterMesh.geometry.dispose();
-    waterMesh.geometry = geometryFromTriangles(triangles);
+    // Regions that vanished — a band the water has left entirely — give their
+    // run back. Collected first: `spliceRegion` mutates the order it walks.
+    for (const band of Array.from(waterRunOrder)) {
+      if (regions.has(band)) continue;
+      spliceRegion(band, EMPTY_TRIANGLES, 0);
+      emittedRegionTiles.delete(band);
+    }
+
+    waterMesh.geometry.setDrawRange(0, liveWaterVertices);
+    waterPositionAttribute.needsUpdate = true;
+    recomputeWaterBounds();
 
     // The foam belongs on the WATER, so the springs are told where the water
     // surface is rather than left to ask the ground — see the site loop.
-    rebuildSprings(mirror, network, (x, y) => {
-      const band = bandOfCell.get(cellIndex(mirror.map, x, y));
-      return band === undefined ? null : bandWorldY(band, x, y);
+    rebuildSprings(mirror, surface.sources, (x, y) => {
+      const band = waterBandAt(x, y);
+      return band === null ? null : bandWorldY(band, x, y);
     });
     // A rebuild leaves the rings' animated X/Z as placeholders — pose them
     // immediately so the effect is correct even if the frame handler never
@@ -1078,20 +1511,93 @@ export function createRiverRig(
     applySpringPose(elapsedSeconds);
   });
 
+  // ── Requests, and how they coalesce ───────────────────────────────────────
+  //
+  // The network is computed somewhere else now (this thread with the direct
+  // source, a worker with the real one), so a request and its rebuild are two
+  // moments rather than one. Three rules keep that honest:
+  //
+  //   * ONE COMPUTE IN FLIGHT. A request made while one is running does not
+  //     start a second — it marks "again when this finishes". A held stroke
+  //     therefore costs one compute per answer, never a queue of them.
+  //   * DIRTY ACCUMULATES. Every chunk named by every request since the last
+  //     rebuild is remembered, so a request swallowed by the throttle or folded
+  //     into an in-flight one still gets its chunks re-emitted.
+  //   * AN ANSWER FOR A WORLD THAT NO LONGER EXISTS IS DROPPED. A rejoin
+  //     replaces the mirror; a network traced through the previous session's
+  //     heightmap describes rivers that are not there any more.
+
+  /** Chunks named by requests since the last rebuild. */
+  const pendingDirty = new Set<number>();
+  /** True when a request asked for EVERYTHING, not just the dirty chunks. */
+  let pendingEverything = false;
+  /** The mirror and oracle the next rebuild should read. */
+  let pendingMirror: TerrainMirror | null = null;
+  let pendingGround: DrawnGround | null = null;
+  /** The mirror the in-flight compute was requested against, or null when idle. */
+  let computingFor: TerrainMirror | null = null;
+  /** Set while a compute is in flight to mean "request again the moment it lands". */
+  let recomputeWhenDone = false;
+  /** Cleared by dispose(), so a promise that resolves afterwards touches nothing. */
+  let disposed = false;
+
+  const startCompute = (): void => {
+    const mirror = pendingMirror;
+    const ground = pendingGround;
+    if (mirror === null || ground === null) return;
+    if (computingFor !== null) {
+      recomputeWhenDone = true;
+      return;
+    }
+    computingFor = mirror;
+    const dirty = pendingEverything ? null : new Set(pendingDirty);
+    pendingDirty.clear();
+    pendingEverything = false;
+
+    const finish = (surface: RiverSurface): void => {
+      computingFor = null;
+      if (disposed) return;
+      // The world was replaced while this was in flight. The answer describes
+      // terrain that is gone; drop it and let the pending request (which the
+      // replacement's own forceRefresh made) run against the new mirror.
+      if (pendingMirror !== mirror) return;
+      rebuild(mirror, ground, surface, dirty);
+      if (recomputeWhenDone) {
+        recomputeWhenDone = false;
+        startCompute();
+      }
+    };
+
+    const answer = networkSource.compute(mirror);
+    if (answer instanceof Promise) void answer.then(finish);
+    else finish(answer);
+  };
+
   return {
-    refresh(mirror: TerrainMirror): void {
+    refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>, ground: DrawnGround): void {
+      pendingMirror = mirror;
+      pendingGround = ground;
+      for (const chunkIdx of dirty) pendingDirty.add(chunkIdx);
       const now = performance.now();
       if (now - lastRebuildMs < RIVER_RECOMPUTE_INTERVAL_MS) return;
       lastRebuildMs = now;
-      rebuild(mirror);
+      startCompute();
     },
 
-    forceRefresh(mirror: TerrainMirror): void {
+    forceRefresh(mirror: TerrainMirror, ground: DrawnGround): void {
+      pendingMirror = mirror;
+      pendingGround = ground;
+      // EVERYTHING, not the accumulated dirty set: the one caller is a join or
+      // rejoin, where the buffer may still hold the previous world's runs and
+      // no dirty set describes the difference between two worlds.
+      pendingEverything = true;
       lastRebuildMs = performance.now();
-      rebuild(mirror);
+      startCompute();
     },
 
     dispose(): void {
+      disposed = true;
+      networkSource.dispose();
       unregisterFrame();
       reducedMotion.stop();
       parent.remove(waterMesh);

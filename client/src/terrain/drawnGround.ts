@@ -1,6 +1,7 @@
 // DrawnGround — the single source of truth for "what does the terrain DRAW
 // here" (plan water-painted-on-bands, work item W1; rebuilt as a READER on
-// 2026-08-24, the contract fix).
+// 2026-08-24, the contract fix; rebuilt again on 2026-08-26 as a reader over a
+// store the EMITTER fills — see terrain/drawnGroundStore.ts).
 //
 // THE BUG THIS REPLACES, AND THE ONE THAT REPLACED IT. Asking
 // `bandOf(sampleHeight(x, z))` answers "which band does the CELL LATTICE say
@@ -38,103 +39,55 @@
 // drift from. What this file still owns is the QUERY: point-in-region
 // containment against the polygons that were actually triangulated.
 //
-// HAZARD — `planChunkCaps` runs the shared march scratch (contours.ts's
-// `samples` lattice and edge tables are ONE module-level set reused by every
-// marcher in the client). A plan must therefore COMPLETE before another starts:
-// no interleaving, no lazy generator, no async anywhere in this file. That
-// holds naturally because every entry point plans synchronously to completion
-// and caches the result before returning.
+// THE SECOND FIX (2026-08-26): THE PLAN IS HANDED OVER, NOT RE-DERIVED. The
+// version above still CALLED `planChunkCaps` — once per chunk per oracle, and
+// one oracle was built per water rebuild, so a held stroke re-marched every
+// chunk the water reached twice a second while `writeChunkVertexData` had
+// already planned those same chunks and discarded the result. This file is now
+// a pure reader over `DrawnGroundStore`, which the emitter fills as it draws.
+// Three things follow, and all three are the point:
 //
-// LIFETIME. Every plan is memoised per chunk for the lifetime of the DrawnGround
-// instance. One instance is created per water rebuild and discarded with it — it
-// MUST NOT outlive a terrain edit, or its cache would answer later queries from
-// pre-edit contours.
+//   * NO SECOND COMPUTATION. `capsAt` is a Map read, and `bandAt` /
+//     `topmostLevelAt` are an array read into the store's precomputed band grid
+//     instead of a point-in-polygon walk down the level stack.
+//   * NO INVALIDATION. The old memo was private to an instance and "MUST NOT
+//     outlive a terrain edit", which four call sites in world.ts had to
+//     remember. An entry is now replaced by the very act that redraws its
+//     chunk, so an oracle may live as long as its mirror does.
+//   * A CHUNK MAY HAVE NO ENTRY, and the answer for one is defined below rather
+//     than left to chance. See `MISSING CHUNKS`.
+//
+// MISSING CHUNKS. A chunk has no entry until it has been drawn, and the mesh
+// builder drains its queue under a frame budget (terrainMeshes.ts), so during a
+// held stroke a just-dirtied chunk can be a frame or two behind the mirror.
+// This reader answers for such a chunk exactly as it answers for a BLOCKY one:
+// from the cell's own sampled height through the blocky fallback's Y rule. That
+// is the conservative answer — it names a height the terrain really has, never
+// a contour nobody has drawn — and it is on the correct side of the race for
+// every caller: water welded to the rock that is on screen is right, and water
+// welded to rock that has not been emitted yet is not.
+//
+// HAZARD (retired, kept as the record). While this file planned chunks itself
+// it shared contours.ts's module-level march scratch, which forced "a plan must
+// COMPLETE before another starts: no interleaving, no lazy generator, no async
+// anywhere in this file". Nothing here marches any more, so the constraint has
+// moved to the store's `publish` — and to `publishPlannedChunk`, the harness-
+// only entry point.
 
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf } from '@terrace/shared';
-import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
-import {
-  blockyCellCapY,
-  planChunkCaps,
-  type ChunkDrawnCaps,
-  type ChunkPalettes,
-} from './capEmission.ts';
+import { blockyCellCapY, type ChunkDrawnCaps, type DrawnCapLevel } from './capEmission.ts';
 import { type ContourLoop } from './contours.ts';
+import {
+  topLevelIndexAt,
+  type ChunkChart,
+  type DrawnGroundStore,
+} from './drawnGroundStore.ts';
 import { sampleHeight, type TerrainMirror } from './mirror.ts';
 import { type CapPolygon } from './triangulation.ts';
-
-/**
- * The palettes the oracle plans with, and they are the ones the renderer draws
- * with (terrainMeshes.ts builds this same pair from these same two module
- * constants). Colour is almost irrelevant to a plan — but not entirely: an
- * underwater riser that takes a border colour counts 4 triangles per segment
- * instead of 2, which feeds CHUNK_TRIANGLE_BUDGET and can therefore flip the
- * blocky-fallback verdict. Planning with a stand-in palette would reintroduce a
- * way for the oracle and the renderer to disagree, so it does not.
- */
-const DRAWN_PALETTES: ChunkPalettes = {
-  top: TERRAIN_PALETTE,
-  cliff: CLIFF_PALETTE,
-};
 
 /** The chunk holding a cell coordinate — contour chunks tile the cell lattice. */
 function chunkOf(cell: number): number {
   return Math.floor(cell / CHUNK_SIZE);
-}
-/**
- * Even-odd point-in-loop test.
- *
- * EDGE CASES ARE NOT EXCLUDED BY CONSTRUCTION — this comment used to claim
- * "every probe in this module sits at a CELL CENTRE, which
- * CONTOUR_CELL_CENTRE_GUARD keeps at least an eighth of a cell clear of any
- * contour vertex or edge", and that stopped being true when waterCurtain
- * became the only caller: its probes are `midpoint + normal × reach` and land
- * anywhere. A probe exactly on an edge is therefore possible in principle, and
- * the even-odd rule may call it either way. It is left as is deliberately:
- * both answers name a band the terrain draws immediately either side of that
- * edge, the caller (`footBandOf`) is choosing where a sheet of water ends, and
- * a coin-flip between two adjacent bands at a boundary is not a defect worth
- * a tolerance parameter. What WOULD have been a defect — the guess that walk
- * starts from — is fixed in `bandAt` instead.
- *
- * This mirrors triangulation.ts's own pointInLoop; that one stays private to
- * the triangulator, and duplicating twelve lines of standard ray casting beats
- widening triangulation.ts's export surface for it.
- */
-function pointInLoop(px: number, pz: number, loop: ContourLoop): boolean {
-  let inside = false;
-  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
-    const a = loop[i];
-    const b = loop[j];
-    if (a.z > pz !== b.z > pz) {
-      const t = (pz - a.z) / (b.z - a.z);
-      if (px < a.x + t * (b.x - a.x)) inside = !inside;
-    }
-  }
-  return inside;
-}
-
-/**
- * Whether the point lies INSIDE the region a level's grouped loops draw —
- * inside some outer polygon AND inside none of its holes.
- *
- * The grouping is not optional. A basin dug into a plateau produces, at the
- * plateau's own threshold, an outer loop plus an inner loop winding the other
- * way; a naive "inside ANY loop" test reads the basin as part of the plateau
- * cap, which the terrain does not draw (groupLoops splices it out as a hole).
- */
-function insideGrouped(pointX: number, pointZ: number, polygons: readonly CapPolygon[]): boolean {
-  for (const polygon of polygons) {
-    if (!pointInLoop(pointX, pointZ, polygon.outer)) continue;
-    let inHole = false;
-    for (const hole of polygon.holes) {
-      if (pointInLoop(pointX, pointZ, hole)) {
-        inHole = true;
-        break;
-      }
-    }
-    if (!inHole) return true;
-  }
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,70 +137,43 @@ export interface DrawnGround {
   loopsAt(threshold: number, cellX: number, cellZ: number): readonly ContourLoop[];
 }
 
-/** Plans are memoised per chunk; the pair has no cheap integer key. */
-const cacheKey = (cx: number, cz: number): string => `${cx}:${cz}`;
-
-export function createDrawnGround(mirror: TerrainMirror): DrawnGround {
-  const cache = new Map<string, ChunkDrawnCaps>();
-
-  /**
-   * What the terrain drew for the chunk containing (cellX, cellZ), planned once.
-   *
-   * Calls the renderer's own planner, so this is not "the same computation" as
-   * the mesh — it is the same CALL. A chunk the planner sends to the blocky
-   * fallback is reported as such rather than being described with contours it
-   * did not draw.
-   */
-  const capsAt = (cellX: number, cellZ: number): ChunkDrawnCaps => {
-    const cx = chunkOf(cellX);
-    const cz = chunkOf(cellZ);
-    const key = cacheKey(cx, cz);
-    const hit = cache.get(key);
-    if (hit) return hit;
-    const plan = planChunkCaps(mirror, cx, cz, DRAWN_PALETTES);
-    const caps: ChunkDrawnCaps = plan.overBudget
-      ? { blocky: true, levels: [] }
-      : {
-          blocky: false,
-          levels: plan.levels.map((level, index) => ({
-            threshold: level.threshold,
-            sampleBand: level.sampleBand,
-            capY: level.capY,
-            polygons: plan.polygonsPerLevel[index],
-          })),
-        };
-    cache.set(key, caps);
-    return caps;
-  };
+/**
+ * A reader over what the terrain published. Cheap to construct and safe to keep
+ * for the mirror's whole lifetime — it holds no cache of its own, which is the
+ * difference from every earlier version of this function.
+ */
+export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore): DrawnGround {
+  /** What the chunk containing (cellX, cellZ) drew, or null if it has not been drawn. */
+  const chartAt = (cellX: number, cellZ: number): ChunkChart | null =>
+    store.chartOf(chunkOf(cellX), chunkOf(cellZ));
 
   /**
    * The topmost published level whose drawn region contains the point, or null
-   * on a blocky chunk (which publishes no levels).
+   * on a blocky chunk (which publishes no levels) and on one not yet drawn.
    *
-   * TOPMOST, walking the stack backwards, and that is the whole resolution
-   * rule: the levels are drawn lowest-first, each over the one below, so the
-   * last one that contains the point is the one you can see. It needs no guess
-   * and no upper-bound argument — the four-sample-max reasoning the old
-   * `bandAt` carried, and the off-by-one that reasoning was written to fix,
-   * both exist only because the walk used to start from a lattice estimate
-   * instead of from the drawn stack itself.
+   * TOPMOST, and that is the whole resolution rule: the levels are drawn
+   * lowest-first, each over the one below, so the last one that contains the
+   * point is the one you can see. It needs no guess and no upper-bound argument
+   * — the four-sample-max reasoning the old `bandAt` carried, and the off-by-one
+   * that reasoning was written to fix, both exist only because the walk used to
+   * start from a lattice estimate instead of from the drawn stack itself.
    *
    * It also settles band 0's two caps for free: the waterline level sits
    * directly above the seabed level in the stack, so a point on dry shore finds
    * the waterline cap first and a point on seabed falls through to the sunk
    * one. That question used to be pushed onto the caller as a boolean.
+   *
+   * The walk itself now happens once per chunk BUILD, in the store's rasteriser
+   * — this is the array read that replaced it.
    */
-  const topmostLevelAt = (cellX: number, cellZ: number) => {
-    const caps = capsAt(cellX, cellZ);
-    for (let i = caps.levels.length - 1; i >= 0; i--) {
-      const level = caps.levels[i];
-      if (insideGrouped(cellX, cellZ, level.polygons)) return level;
-    }
-    return null;
+  const topmostLevelAt = (chart: ChunkChart, cellX: number, cellZ: number): DrawnCapLevel | null => {
+    const index = topLevelIndexAt(chart, cellX, cellZ);
+    return index === null ? null : chart.caps.levels[index] ?? null;
   };
 
   /**
-   * The height the BLOCKY fallback drew at this point.
+   * The height the BLOCKY fallback drew at this point — also the answer for a
+   * chunk with no entry yet (see the header's MISSING CHUNKS note).
    *
    * A blocky chunk is one flat quad per lattice cell, so the answer is the
    * cell's own sampled height put through the fallback's own Y rule. The cell a
@@ -258,38 +184,48 @@ export function createDrawnGround(mirror: TerrainMirror): DrawnGround {
   const blockyHeightAt = (cellX: number, cellZ: number): number =>
     sampleHeight(mirror, Math.round(cellX), Math.round(cellZ));
 
+  /** True when the chunk drew no contours to read — blocky, or not drawn at all. */
+  const hasNoContours = (chart: ChunkChart | null): chart is null =>
+    chart === null || chart.caps.blocky;
+
   return {
     capYAt(cellX: number, cellZ: number): number {
-      const caps = capsAt(cellX, cellZ);
-      if (caps.blocky) return blockyCellCapY(blockyHeightAt(cellX, cellZ));
-      const level = topmostLevelAt(cellX, cellZ);
+      const chart = chartAt(cellX, cellZ);
+      if (hasNoContours(chart)) return blockyCellCapY(blockyHeightAt(cellX, cellZ));
+      const level = topmostLevelAt(chart, cellX, cellZ);
       // Null means the point is outside every drawn region of its chunk, which
       // the lowest level makes impossible in practice (its region is the whole
       // domain, by makeLevels' construction). Answering with the lowest cap
       // that chunk drew keeps a malformed fixture from returning NaN.
       if (level !== null) return level.capY;
-      return caps.levels.length > 0 ? caps.levels[0].capY : 0;
+      const levels = chart.caps.levels;
+      return levels.length > 0 ? levels[0]!.capY : 0;
     },
 
     capYOfBand(band: number, cellX: number, cellZ: number): number {
-      const caps = capsAt(cellX, cellZ);
-      // Topmost first, so band 0 answers with the waterline cap where the chunk
-      // drew one and the sunk seabed cap where it did not.
-      for (let i = caps.levels.length - 1; i >= 0; i--) {
-        if (caps.levels[i].sampleBand === band) return caps.levels[i].capY;
+      const chart = chartAt(cellX, cellZ);
+      if (!hasNoContours(chart)) {
+        // Topmost first, so band 0 answers with the waterline cap where the
+        // chunk drew one and the sunk seabed cap where it did not.
+        const levels = chart.caps.levels;
+        for (let i = levels.length - 1; i >= 0; i--) {
+          if (levels[i]!.sampleBand === band) return levels[i]!.capY;
+        }
       }
-      // A blocky chunk published no levels. Its Y rule takes a HEIGHT, and
-      // makeLevels' own convention for "the representative raw height of band
-      // k" is that band's threshold — the first height in it.
+      // A blocky chunk published no levels, and an undrawn one published
+      // nothing at all. The blocky Y rule takes a HEIGHT, and makeLevels' own
+      // convention for "the representative raw height of band k" is that band's
+      // threshold — the first height in it.
       return blockyCellCapY(band * BAND_HEIGHT);
     },
 
     bandAt(cellX: number, cellZ: number): number {
-      const caps = capsAt(cellX, cellZ);
-      if (caps.blocky) return bandOf(blockyHeightAt(cellX, cellZ));
-      const level = topmostLevelAt(cellX, cellZ);
+      const chart = chartAt(cellX, cellZ);
+      if (hasNoContours(chart)) return bandOf(blockyHeightAt(cellX, cellZ));
+      const level = topmostLevelAt(chart, cellX, cellZ);
       if (level !== null) return level.sampleBand;
-      return caps.levels.length > 0 ? caps.levels[0].sampleBand : 0;
+      const levels = chart.caps.levels;
+      return levels.length > 0 ? levels[0]!.sampleBand : 0;
     },
 
     nearestOnContour(threshold, cellX, cellZ) {
@@ -298,16 +234,16 @@ export function createDrawnGround(mirror: TerrainMirror): DrawnGround {
       // which only a vertex has — is the useful answer.
       let best: { x: number; z: number; loop: ContourLoop; index: number } | null = null;
       let bestDistanceSquared = Infinity;
-      for (const loop of polygonsOfThreshold(capsAt(cellX, cellZ), threshold).flatMap(
+      for (const loop of polygonsOfThreshold(chartAt(cellX, cellZ), threshold).flatMap(
         (p) => [p.outer, ...p.holes],
       )) {
         for (let i = 0; i < loop.length; i++) {
-          const dx = loop[i].x - cellX;
-          const dz = loop[i].z - cellZ;
+          const dx = loop[i]!.x - cellX;
+          const dz = loop[i]!.z - cellZ;
           const d2 = dx * dx + dz * dz;
           if (d2 < bestDistanceSquared) {
             bestDistanceSquared = d2;
-            best = { x: loop[i].x, z: loop[i].z, loop, index: i };
+            best = { x: loop[i]!.x, z: loop[i]!.z, loop, index: i };
           }
         }
       }
@@ -315,19 +251,22 @@ export function createDrawnGround(mirror: TerrainMirror): DrawnGround {
     },
 
     loopsAt(threshold, cellX, cellZ) {
-      return polygonsOfThreshold(capsAt(cellX, cellZ), threshold).map((p) => p.outer);
+      return polygonsOfThreshold(chartAt(cellX, cellZ), threshold).map((p) => p.outer);
     },
   };
 }
 
 /**
  * The published polygons of one threshold, or none when the chunk drew no such
- * level (including every blocky chunk, which drew no contours at all).
+ * level (including every blocky chunk, which drew no contours at all, and every
+ * chunk that has not been drawn yet).
  */
 function polygonsOfThreshold(
-  caps: ChunkDrawnCaps,
+  chart: ChunkChart | null,
   threshold: number,
 ): readonly CapPolygon[] {
+  if (chart === null) return [];
+  const caps: ChunkDrawnCaps = chart.caps;
   for (const level of caps.levels) {
     if (level.threshold === threshold) return level.polygons;
   }

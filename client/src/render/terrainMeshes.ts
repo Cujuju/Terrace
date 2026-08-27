@@ -134,6 +134,10 @@ import {
   type ChunkGeometryBuffers,
   type ChunkPalettes,
 } from '../terrain/vertexGrid.ts';
+import {
+  createDrawnGroundStore,
+  type DrawnGroundStore,
+} from '../terrain/drawnGroundStore.ts';
 import { spliceShader } from './shaderSplice.ts';
 
 /**
@@ -406,6 +410,18 @@ export interface TerrainMeshes {
    */
   pickables(): Mesh[];
   /**
+   * What the terrain HAS DRAWN, chunk by chunk — the store `writeChunkVertexData`
+   * publishes into as each chunk is built (terrain/drawnGroundStore.ts).
+   *
+   * OWNED HERE because the emitter is here: an entry is written by the same call
+   * that writes the chunk's vertices and replaced by the same call that redraws
+   * them, which is what lets a reader (`terrain/drawnGround.ts`) hold one for the
+   * mirror's whole lifetime instead of being invalidated by hand at every site
+   * that touches terrain. Cleared by `clear()` along with the meshes it
+   * describes.
+   */
+  drawnGround(): DrawnGroundStore;
+  /**
    * Terrain draw calls the renderer would submit with nothing culled — the
    * number this module exists to keep down, exposed so a test can hold a
    * budget against it rather than trusting the comment above.
@@ -450,6 +466,9 @@ export function createTerrainMeshes(
   makeSelfLitAware(material);
 
   const superMeshes = new Map<number, SuperMesh>();
+
+  /** What each built chunk drew — see the `drawnGround` accessor. */
+  const drawnGroundStore = createDrawnGroundStore(worldSize);
 
   /**
    * The one buffer any chunk is emitted into, before its vertices are copied
@@ -705,6 +724,10 @@ export function createTerrainMeshes(
     const cx = chunkIdx % chunkCols;
     const cy = (chunkIdx - cx) / chunkCols;
     const counts = writeChunkVertexData(mirror, cx, cy, scratch, palettes);
+    // HANDED OVER, not re-derived. The plan this chunk was emitted from is
+    // published here rather than planned a second time by whoever needs to know
+    // what the rock looks like — see terrain/drawnGroundStore.ts.
+    drawnGroundStore.publish(chunkIdx, counts.drawnCaps);
     const superIdx = superIndexOf(chunkIdx);
     const sm = superMeshes.get(superIdx) ?? createSuperMesh(superIdx);
     spliceChunk(sm, chunkIdx, counts.vertexCount);
@@ -748,6 +771,9 @@ export function createTerrainMeshes(
       sm.mesh.geometry.dispose();
     }
     superMeshes.clear();
+    // The charts describe geometry that no longer exists; a stale one would
+    // answer a water query with contours from the world being replaced.
+    drawnGroundStore.clear();
     // The queue holds indices into the world being dropped. Draining them
     // against the replacement would build chunks nobody asked for, at best;
     // this is why clear() and not just dispose() empties it.
@@ -772,6 +798,9 @@ export function createTerrainMeshes(
     clear,
     pickables(): Mesh[] {
       return Array.from(superMeshes.values(), (sm) => sm.mesh);
+    },
+    drawnGround(): DrawnGroundStore {
+      return drawnGroundStore;
     },
     drawCallCount(): number {
       return superMeshes.size;

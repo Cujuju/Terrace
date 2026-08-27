@@ -20,11 +20,31 @@
 // triangles, ZERO falling ones).
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, bandOf, cellIndex } from '@terrace/shared';
-import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
+import {
+  appendRegionSurface,
+  waterRegionOfCells,
+  type WaterRegion,
+} from '../src/render/water/waterTread.ts';
 import { appendCurtains } from '../src/render/water/waterCurtain.ts';
-import { createDrawnGround } from '../src/terrain/drawnGround.ts';
-import { createTerrainMirror } from '../src/terrain/mirror.ts';
+import { createDrawnGround, type DrawnGround } from '../src/terrain/drawnGround.ts';
+import {
+  createDrawnGroundStore,
+  publishPlannedWorld,
+} from '../src/terrain/drawnGroundStore.ts';
+import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 import { BAND_WORLD_HEIGHT } from '../src/config.ts';
+
+/**
+ * The drawn-ground oracle for a fixture the harness never draws. The app's
+ * store is filled by the mesh emitter as it draws each chunk; a test with no
+ * meshes publishes the same plans itself.
+ */
+function groundOf(mirror: TerrainMirror): DrawnGround {
+  const store = createDrawnGroundStore(mirror.map.size);
+  publishPlannedWorld(store, mirror);
+  return createDrawnGround(mirror, store);
+}
+
 
 const WORLD = 64;
 const SUMMIT = BAND_HEIGHT * 20;
@@ -57,19 +77,24 @@ describe('a river down a cone', () => {
       bandOfCell.set(cell, bandOf(mirror.map.cells[cell]!));
     }
 
-    const regions = new Map<number, WaterRegion>();
+    const cellsByBand = new Map<number, Set<number>>();
     for (const [cell, band] of bandOfCell) {
-      let region = regions.get(band);
-      if (region === undefined) {
-        region = { cells: new Set(), surfaceBand: band, tiles: new Set() };
-        regions.set(band, region);
+      let cells = cellsByBand.get(band);
+      if (cells === undefined) {
+        cells = new Set<number>();
+        cellsByBand.set(band, cells);
       }
-      region.cells.add(cell);
-      for (const tile of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) region.tiles.add(tile);
+      cells.add(cell);
+    }
+    const regions = new Map<number, WaterRegion>();
+    for (const [band, cells] of cellsByBand) {
+      const tiles = new Set<number>();
+      for (const tile of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) tiles.add(tile);
+      regions.set(band, waterRegionOfCells(cells, band, tiles));
     }
     expect(regions.size).toBeGreaterThan(1); // the course really does step down
 
-    const ground = createDrawnGround(mirror);
+    const ground = groundOf(mirror);
     const triangles: number[] = [];
     for (const region of regions.values()) {
       const surfaceY = region.surfaceBand * BAND_WORLD_HEIGHT;

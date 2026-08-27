@@ -65,6 +65,7 @@ import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
 import { chunkContourLoops } from './terrain/vertexGrid.ts';
 import { createRiverRig } from './render/riverRig.ts';
+import { createDrawnGround } from './terrain/drawnGround.ts';
 
 // ── Lighting rig, copied from previewBoats.ts / render/scene.ts ──────────────
 const SKY_COLOR = 0x9fc7e8;
@@ -588,7 +589,7 @@ const rivers = createRiverRig(scene, (handler) => {
   frameHandlers.push(handler);
   return () => {};
 });
-rivers.forceRefresh(mirror);
+rivers.forceRefresh(mirror, createDrawnGround(mirror, meshes.drawnGround()));
 
 // Frame the fixture's own river, not the whole fixture: the interesting thing
 // is the water, and the walls around it are just there to keep the course

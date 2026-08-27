@@ -48,6 +48,12 @@ export const CARDINAL_NEIGHBOURS: readonly (readonly [number, number])[] = [
 ];
 
 /**
+ * The reach, in cells, of "which tiles must be marched for this flooded cell" —
+ * the bounds TILE_LATTICE_OFFSETS is built from, exported separately because a
+ * caller that walks TILES rather than cells wants the range, not the sixteen
+ * pairs (render/riverRig.ts). One pair of numbers, two views of it.
+ */
+/**
  * The cell offsets whose tiles must be marched for a given flooded cell.
  *
  * A tile's lattice covers cells [origin, origin + CHUNK_SIZE] INCLUSIVE, so a
@@ -60,18 +66,40 @@ export const CARDINAL_NEIGHBOURS: readonly (readonly [number, number])[] = [
  * (Copied verbatim from render/riverRig.ts, which will import this from here
  * once both sides of the water unification land.)
  */
+export const TILE_LATTICE_MIN_OFFSET = -2;
+/** @see TILE_LATTICE_MIN_OFFSET */
+export const TILE_LATTICE_MAX_OFFSET = 1;
+
 export const TILE_LATTICE_OFFSETS: readonly (readonly [number, number])[] = (() => {
   const offsets: [number, number][] = [];
-  for (let dy = -2; dy <= 1; dy++) {
-    for (let dx = -2; dx <= 1; dx++) offsets.push([dx, dy]);
+  for (let dy = TILE_LATTICE_MIN_OFFSET; dy <= TILE_LATTICE_MAX_OFFSET; dy++) {
+    for (let dx = TILE_LATTICE_MIN_OFFSET; dx <= TILE_LATTICE_MAX_OFFSET; dx++) {
+      offsets.push([dx, dy]);
+    }
   }
   return offsets;
 })();
 
 /** One band's worth of water: the wet cells and the band its surface is drawn at. */
 export interface WaterRegion {
-  /** Cell indices (`cellIndex`) of every wet cell. */
-  readonly cells: Set<number>;
+  /**
+   * Whether the cell (a `cellIndex`) is under this region's water.
+   *
+   * A PREDICATE, not a `Set` (2026-08-26). The rig already knows which band of
+   * water stands on every cell — it computes exactly that, into a dense table,
+   * before any region exists — so materialising a Set per region was copying a
+   * membership test it already had, once per wet cell, on every rebuild. On a
+   * network at the trace budget's own ceiling that is ~24.5k Set insertions
+   * twice a second for an answer that was already available in O(1). A harness
+   * that really does start from a cell set has `waterRegionOfCells` below.
+   */
+  isWet(cell: number): boolean;
+  /**
+   * Any cell the region certainly covers, for questions whose answer is
+   * per-chunk rather than per-region (band 0's two caps, above all). Regions are
+   * never empty, so there is always one.
+   */
+  readonly anchorCell: number;
   /** Band index; surface height = surfaceBand * BAND_HEIGHT. */
   readonly surfaceBand: number;
   /**
@@ -81,6 +109,24 @@ export interface WaterRegion {
    * water rather than to its bounding box.
    */
   readonly tiles: Set<number>;
+}
+
+/**
+ * A region over an explicit cell set — what a harness that has one starts from.
+ * The rig itself does not use this: its membership test reads the wet-cell table
+ * it already built.
+ */
+export function waterRegionOfCells(
+  cells: ReadonlySet<number>,
+  surfaceBand: number,
+  tiles: Set<number>,
+): WaterRegion {
+  return {
+    isWet: (cell) => cells.has(cell),
+    anchorCell: cells.values().next().value as number,
+    surfaceBand,
+    tiles,
+  };
 }
 
 /**
@@ -111,7 +157,7 @@ const DRY_SAME_TREAD_FIELD_OFFSET = 1;
  * THE FIELD IT MARCHES, which is where the shape decision actually lives.
  * `threshold = region.surfaceBand * BAND_HEIGHT`. For lattice sample `(x,y)`:
  *
- *   * WET (`(x,y)` is in `region.cells`): `max(threshold, real)`. The surface,
+ *   * WET (`region.isWet(x,y)`): `max(threshold, real)`. The surface,
  *     never below its own band floor — reading the real height would punch a
  *     hole wherever the ground under the water dips below the band.
  *
@@ -162,7 +208,7 @@ export function appendRegionSurface(
     y >= 0 &&
     x < mirror.map.size &&
     y < mirror.map.size &&
-    region.cells.has(cellIndex(mirror.map, x, y));
+    region.isWet(cellIndex(mirror.map, x, y));
 
   const fieldAt = (x: number, y: number): number => {
     if (wet(x, y)) return Math.max(threshold, sampleHeight(mirror, x, y));

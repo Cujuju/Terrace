@@ -27,11 +27,31 @@
 
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terrace/shared';
-import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
+import {
+  appendRegionSurface,
+  waterRegionOfCells,
+  type WaterRegion,
+} from '../src/render/water/waterTread.ts';
 import { appendCurtains } from '../src/render/water/waterCurtain.ts';
 import { CELL_WORLD_SIZE, BAND_WORLD_HEIGHT } from '../src/config.ts';
-import { createDrawnGround } from '../src/terrain/drawnGround.ts';
+import { createDrawnGround, type DrawnGround } from '../src/terrain/drawnGround.ts';
+import {
+  createDrawnGroundStore,
+  publishPlannedWorld,
+} from '../src/terrain/drawnGroundStore.ts';
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
+
+/**
+ * The drawn-ground oracle for a fixture the harness never draws. The app's
+ * store is filled by the mesh emitter as it draws each chunk; a test with no
+ * meshes publishes the same plans itself.
+ */
+function groundOf(mirror: TerrainMirror): DrawnGround {
+  const store = createDrawnGroundStore(mirror.map.size);
+  publishPlannedWorld(store, mirror);
+  return createDrawnGround(mirror, store);
+}
+
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -115,7 +135,7 @@ function regionOf(cells: Set<number>): WaterRegion {
       tiles.add(Math.floor(ny / CHUNK_SIZE) * tilesPerEdge + Math.floor(nx / CHUNK_SIZE));
     }
   }
-  return { cells, surfaceBand: bandOf(PLATEAU_HEIGHT), tiles };
+  return waterRegionOfCells(cells, bandOf(PLATEAU_HEIGHT), tiles);
 }
 
 /**
@@ -129,7 +149,7 @@ function cliffFixture(): { loops: ReturnType<typeof appendRegionSurface>; ground
   const mirror = mirrorWithPlateau(dig);
   const triangles: number[] = [];
   const loops = appendRegionSurface(mirror, regionOf(wet), SURFACE_Y, triangles);
-  return { loops, ground: createDrawnGround(mirror), mirror };
+  return { loops, ground: groundOf(mirror), mirror };
 }
 
 /** Run the curtain builder over a fixture, returning the raw triangle soup. */
@@ -298,7 +318,7 @@ describe('waterfall curtains', () => {
     const loops = appendRegionSurface(mirror, regionOf(wet), SURFACE_Y, triangles);
     const out: number[] = [];
     appendCurtains(
-      createDrawnGround(mirror),
+      groundOf(mirror),
       loops,
       bandOf(PLATEAU_HEIGHT),
       SURFACE_Y,

@@ -17,7 +17,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf, cellIndex, cellX, cellY } from '@terrace/shared';
-import { appendRegionSurface, type WaterRegion } from '../src/render/water/waterTread.ts';
+import {
+  appendRegionSurface,
+  waterRegionOfCells,
+  type WaterRegion,
+} from '../src/render/water/waterTread.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
 import { createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
 
@@ -78,7 +82,7 @@ function regionOf(cells: Set<number>): WaterRegion {
       tiles.add(Math.floor(ny / CHUNK_SIZE) * tilesPerEdge + Math.floor(nx / CHUNK_SIZE));
     }
   }
-  return { cells, surfaceBand: bandOf(FLOOR_HEIGHT), tiles };
+  return waterRegionOfCells(cells, bandOf(FLOOR_HEIGHT), tiles);
 }
 
 /**
