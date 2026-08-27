@@ -1347,6 +1347,84 @@ function retreatHeightAt(
  * and the three questions it has to answer are answered there. Issue #99
  * step 3.
  */
+/**
+ * A REFUSED RIM CELL MAY ONLY BE RIM IF IT STILL REACHES THE OUTSIDE (issue
+ * #152). The ragged rim above refuses each cell by its OWN share of the radius,
+ * and that share is not monotone in distance: a cell can be refused while the
+ * cells further out on every side of it are taken. The fill then walls it in,
+ * and because the fixpoint only ever offers the footprint, nothing ever comes
+ * back for it — a one-cell pit at the old band inside an otherwise flat
+ * terrace, reading as damage in ground whose whole point is the terrace.
+ *
+ * THE RULE: a refused cell counts as rim only if it connects, through other
+ * refused cells that are not already standing at the band, to ground OUTSIDE
+ * the footprint. A refused cell that cannot get out is an enclave and goes
+ * back into the footprint; the fill decides what happens to it under the same
+ * spread rule as every other cell, so nothing here can leak past a higher band.
+ *
+ * "NOT ALREADY AT THE BAND" is what makes it hold across a held drag, not only
+ * within one intent: a cell refused laterally by stroke N sits at the same
+ * lateral distance in stroke N+1 and is refused again, while the ground behind
+ * it was filled by stroke N. Its only way out then runs through cells already
+ * at the band — that is no way out, so it is an enclave here too.
+ *
+ * A flood from the outside in, over the disc's own bound square: the seeds are
+ * every refused cell on the outermost ring (that ring touches the outside by
+ * construction), plus every refused cell against the map edge. 4-connected,
+ * because the fill it argues with spreads 8-connected — a pit sealed on its
+ * four sides is sealed for the fill's purposes, and a diagonal gap is one the
+ * fill closes anyway. Fixed scan order, integer-only: client and server
+ * resolve the same enclaves.
+ */
+function admitRimEnclaves(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  targetBand: number,
+  refused: Set<number>,
+  disc: number[],
+): void {
+  const alreadyAtBand = (x: number, y: number): boolean => {
+    const k = spanIndexCoveringBand(map, x, y, targetBand);
+    return k !== null && bandOf(spanAt(map, x, y, k).ceiling) === targetBand;
+  };
+  // A refused cell an escape path may run through.
+  const passable = (x: number, y: number): boolean =>
+    inBounds(map, x, y) && refused.has(cellIndex(map, x, y)) && !alreadyAtBand(x, y);
+
+  const outermost = radius - 1;
+  const reached = new Set<number>();
+  const stack: number[] = [];
+  const seed = (x: number, y: number): void => {
+    if (!passable(x, y)) return;
+    const i = cellIndex(map, x, y);
+    if (reached.has(i)) return;
+    reached.add(i);
+    stack.push(i);
+  };
+  forEachFootprintOffset(radius, (dx, dy, dist) => {
+    const x = cx + dx;
+    const y = cy + dy;
+    const onEdge = x === 0 || y === 0 || x === map.size - 1 || y === map.size - 1;
+    if (dist === outermost || onEdge) seed(x, y);
+  });
+  while (stack.length > 0) {
+    const i = stack.pop() as number;
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    seed(x - 1, y);
+    seed(x + 1, y);
+    seed(x, y - 1);
+    seed(x, y + 1);
+  }
+  // Enclaves are what the flood never reached; among the refused, still in
+  // the footprint iterator's own order so `disc` stays in one fixed order.
+  for (const i of refused) {
+    if (!reached.has(i)) disc.push(i);
+  }
+}
+
 function applyDragRegion(
   map: Heightmap,
   cx: number,
@@ -1398,6 +1476,8 @@ function applyDragRegion(
   // every brush uses, so a pull considers exactly the cells a stamp of the
   // same radius would — minus, for `soft`, the bites taken out of the rim.
   const disc: number[] = [];
+  // Rim cells the noise refused, by index; resolved into rim or enclave below.
+  const refused = new Set<number>();
   forEachFootprintOffset(radius, (dx, dy, dist) => {
     const x = cx + dx;
     const y = cy + dy;
@@ -1407,10 +1487,12 @@ function applyDragRegion(
     // Deep cells are inside every possible share and are never affected, which
     // is what keeps the region solid rather than pocked — only the rim moves.
     if (ragged && dist >= radius * (SOFT_DRAG_MIN_REACH + (1 - SOFT_DRAG_MIN_REACH) * cellNoise(x, y))) {
+      refused.add(cellIndex(map, x, y));
       return;
     }
     disc.push(cellIndex(map, x, y));
   });
+  if (refused.size > 0) admitRimEnclaves(map, cx, cy, radius, targetBand, refused, disc);
 
   // THE RETREAT — the inward pull, and it returns before the outward pull's
   // machinery because almost none of that machinery applies to it.
