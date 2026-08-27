@@ -97,6 +97,19 @@ const VALID_SIZES = [28, 32, 40, 64, 128].map((span) => span * CHUNK_SIZE);
 const SEEDS = Array.from({ length: 20 }, (_, i) => i * 104729 + 1); // 104729 is prime; just decorrelates the sequence
 
 /**
+ * The same sequence, extended, for the one test that needs several worlds where
+ * the island pass ACTUALLY FIRED — a no-op world tells it nothing.
+ *
+ * SIXTY, from 2026-08-26 (#204): once the octave sum stopped being floored per
+ * octave, the noise's own coasts got both smoother and slightly landier, and
+ * the starter square now clears GENESIS_MIN_STARTER_LAND_CELLS unaided on far
+ * more seeds — 12 of 60 raise an island where 20 seeds used to yield 3. The
+ * contract being pinned did not change; the rate at which the sample exercises
+ * it did, so the sample grew rather than the assertion shrinking.
+ */
+const ISLAND_PASS_SEEDS = Array.from({ length: 60 }, (_, i) => i * 104729 + 1);
+
+/**
  * Wall-clock budget for the tests in this file that GENERATE WHOLE WORLDS, in
  * milliseconds. Named for what earns the budget — world generation, not one
  * subject — so every such test reaches for the same one.
@@ -384,7 +397,7 @@ describe('the island pass', () => {
     // same amount on different ground must come out different sizes, which a
     // stamp can never do.
     const areas = new Set<number>();
-    for (const seed of SEEDS) {
+    for (const seed of ISLAND_PASS_SEEDS) {
       const terrain = buildFreshGenesisTerrain(WORLD_SIZE, seed);
       if (terrain.islands.length === 0) continue;
       const heights = World.createFresh(WORLD_SIZE, undefined, undefined, seed).map.cells;
