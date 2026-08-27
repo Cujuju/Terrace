@@ -445,14 +445,6 @@ export function surfaceAlphaByte(height: number): number {
 const WATER_SHADE_CENTRE_BANDS = 11;
 
 /**
- * How much of the multiplier one band of depth is worth. Set from the measured
- * spread rather than by eye: the p25-p75 window is 10-12 bands, so 0.09 per band
- * gives that dominant population an 18% swing — enough to read as depth, while
- * staying gentle enough that a one-band sculpt does not step visibly.
- */
-const WATER_SHADE_CONTRAST_PER_BAND = 0.09;
-
-/**
  * The ends of the range, and WATER_SHADE_SHALLOW is a CEILING rather than a
  * taste setting. It, the band range and the crest gain (render/water/waterBands.ts)
  * are three multipliers that stack onto WATER_COLOR, whose blue channel is
@@ -468,6 +460,29 @@ export const WATER_SHADE_DEEP = 0.3;
 
 /** The neutral multiplier the centre depth maps to — ordinary sea, unchanged. */
 const WATER_SHADE_NEUTRAL = 1;
+
+/**
+ * How much of the multiplier one band of depth is worth.
+ *
+ * WAS 0.09 (2026-08-24), chosen so "a one-band sculpt does not step visibly".
+ * That is the opposite of what the owner asked for once the seabed palette was
+ * fixed (2026-08-26: "I would still like more differentiation between the
+ * shallows and the depths", and earlier the same day, "I can't even tell what
+ * the outlines for the various bands are below the water"). At 0.09 the
+ * ordinary ocean floor, bands 10-15, used 1.09 → 0.64 of a 1.15 → 0.3 range —
+ * the bottom third of the range was reserved for a trench holding 5% of the
+ * water.
+ *
+ * DERIVED, not chosen: the slope that reaches WATER_SHADE_DEEP exactly at the
+ * ordinary sea floor (config.ts's ORDINARY_SEA_DEPTH_BANDS, measured) from the
+ * neutral median. The whole dark half of the range is spent between the median
+ * depth and the deepest ordinary depth, and the ceiling lands about one band
+ * above the median — so every band the ocean actually has gets its own visible
+ * step, and a re-measurement moves this with the palette and the alpha ramp.
+ */
+const WATER_SHADE_CONTRAST_PER_BAND =
+  (WATER_SHADE_NEUTRAL - WATER_SHADE_DEEP) /
+  (ORDINARY_SEA_DEPTH_BANDS - WATER_SHADE_CENTRE_BANDS);
 
 /**
  * The multiplier this depth should scale the water's colour by, before it is
