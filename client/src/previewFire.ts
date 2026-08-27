@@ -92,6 +92,7 @@ import {
 import { createFloraModels, type TreePlacement } from '../../plugins/flora/client/models.ts';
 import { SHIPPED_FLAMES } from '../../plugins/fire/client/flames/index.ts';
 import { createFireSmoke } from '../../plugins/fire/client/smoke.ts';
+import { createFireScar, type DrawnGroundAt } from '../../plugins/fire/client/scar.ts';
 import { fireIntensity } from '../../plugins/fire/protocol.ts';
 import type { FireInstance } from '../../plugins/fire/client/flames/types.ts';
 
@@ -349,6 +350,26 @@ function buildGround(
 }
 
 /**
+ * THE HARNESS'S OWN ANSWER TO "what does the ground DRAW here", which the burn
+ * scar needs and which nothing else in this file did.
+ *
+ * In the game that answer comes from the terrain's smoothed marched contours
+ * (ClientPluginCtx.drawnGroundYAt); here the ground is two axis-aligned slabs
+ * this file placed itself, so the drawn surface is known exactly and is read
+ * off `buildGround`'s own arithmetic rather than approximated. That is the
+ * property that makes a picture taken here a picture of the real renderer: the
+ * scar is handed a TRUE drawn height in both places, and any misplacement in
+ * the shot is the scar's own and not the harness's.
+ */
+function buildDrawnGroundAt(scene: SceneName): DrawnGroundAt {
+  if (scene === 'single') return () => 0;
+  // `stand`: the upper step is everything beyond the edge, exactly as the
+  // second addSlab call above lays it down.
+  return (_worldX: number, worldZ: number): number =>
+    worldZ < STAND_STEP_EDGE_Z ? TERRACE_BAND_HEIGHT : 0;
+}
+
+/**
  * Points `camera` at a box, with headroom for the flame above the trees, and
  * returns the point it was aimed at — the caller needs it to report the
  * camera's distance in world units.
@@ -471,8 +492,17 @@ function main(): void {
 
   const flames = SHIPPED_FLAMES();
   const smoke = createFireSmoke();
+  // The close-range half of the same signature (plugins/fire/client/scar.ts).
+  // Photographed from the same scene as smoke and deliberately so: the two are
+  // complementary over one pair of distances, so a shot that shows only one of
+  // them cannot show whether the handover between them is right.
+  const scar = createFireScar();
+  const drawnGroundAt = buildDrawnGroundAt(sceneName);
   document.title = `Fire preview — ${flames.name} — ${sceneName} — t=${previewSeconds}${intensityOverride === null ? '' : ` — i=${intensityOverride}`}${burnSeconds === null ? '' : ` — burn=${burnSeconds}`}${distanceMultiplier === 1 ? '' : ` — dist=${distanceMultiplier}`}${onlyIndex === null ? '' : ` — only=${onlyIndex + 1}`}${fovDegrees === CAMERA_FOV_DEGREES ? '' : ` — fov=${fovDegrees}`}`;
   scene.add(smoke.root);
+  // Under both, as it is in the plugin: a mark on the ground is drawn before
+  // the things standing in it.
+  scene.add(scar.root);
   scene.add(flames.root);
 
   const camera = new PerspectiveCamera(
@@ -509,6 +539,11 @@ function main(): void {
     flames.update(ANIMATION_STEP_SECONDS, t);
     smoke.apply(burning);
     smoke.update(ANIMATION_STEP_SECONDS, t);
+    // Stepped inside the same loop for smoke's reason: a scar's strength is
+    // integrated out of which fires it was handed on every step in between,
+    // never read off the final frame.
+    scar.apply(burning, drawnGroundAt);
+    scar.update(ANIMATION_STEP_SECONDS);
   }
 
   let framesRendered = 0;
@@ -529,6 +564,10 @@ function main(): void {
       (
         window as unknown as { __previewDrawCalls: number; __previewSmokeColumns: number }
       ).__previewSmokeColumns = smoke.drawnCount;
+      // Same reason as the column count above: the scar's budget rule is ONE
+      // instanced draw call however many marks there are, and a count read off
+      // the renderer is the only way a picture can evidence that.
+      (window as unknown as { __previewScarMarks: number }).__previewScarMarks = scar.drawnCount;
       // The camera's distance from what it is looking at, in WORLD UNITS.
       // Published because smoke's strength is a function of exactly that
       // (plugins/fire/client/smoke.ts's SMOKE_SILENT_DISTANCE and
@@ -545,6 +584,7 @@ function main(): void {
   window.addEventListener('pagehide', () => {
     flames.dispose();
     smoke.dispose();
+    scar.dispose();
     flora.dispose();
     for (const geometry of geometries) geometry.dispose();
     for (const material of materials) material.dispose();
