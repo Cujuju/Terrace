@@ -25,11 +25,28 @@ import { BAND_HEIGHT, CHUNK_SIZE, bandOf, chunkIndex } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT } from '../src/config.ts';
 import {
   createDrawnGround,
+  type DrawnGround,
 } from '../src/terrain/drawnGround.ts';
+import {
+  createDrawnGroundStore,
+  publishPlannedWorld,
+} from '../src/terrain/drawnGroundStore.ts';
 import { createTerrainMirror, sampleHeight, type TerrainMirror } from '../src/terrain/mirror.ts';
 import { assembleLoops, loadSamples, marchLevel, samples } from '../src/terrain/contours.ts';
 import { smoothLoop } from '../src/terrain/contourSmoothing.ts';
 import { groupLoops, type CapPolygon } from '../src/terrain/triangulation.ts';
+
+/**
+ * The drawn-ground oracle for a fixture the harness never draws. The app's
+ * store is filled by the mesh emitter as it draws each chunk; a test with no
+ * meshes publishes the same plans itself.
+ */
+function groundOf(mirror: TerrainMirror): DrawnGround {
+  const store = createDrawnGroundStore(mirror.map.size);
+  publishPlannedWorld(store, mirror);
+  return createDrawnGround(mirror, store);
+}
+
 
 const WORLD_SIZE = CHUNK_SIZE * 2;
 
@@ -113,7 +130,7 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
 describe('drawnGround', () => {
   it('bandAt agrees with the drawn surface everywhere on a fine grid, including within half a cell of boundaries', () => {
     const mirror = terracedMirror();
-    const ground = createDrawnGround(mirror);
+    const ground = groundOf(mirror);
 
     // Half-cell steps guarantee probes strictly between cell centres, i.e. on
     // both sides of every smoothed boundary — the case the lattice rule gets
@@ -142,7 +159,7 @@ describe('drawnGround', () => {
       for (let x = 14; x <= 17; x++) mirror.map.cells[z * WORLD_SIZE + x] = BAND_HEIGHT;
     }
 
-    const ground = createDrawnGround(mirror);
+    const ground = groundOf(mirror);
     const basinCentre = ground.bandAt(15.5, 15.5);
     expect(basinCentre).toBe(1);
     expect(basinCentre).not.toBe(3);
@@ -158,7 +175,7 @@ describe('drawnGround', () => {
     // above it. The oracle must answer with the one the terrain actually put
     // over the query point rather than asking the caller which it meant.
     const mirror = terracedMirror();
-    const ground = createDrawnGround(mirror);
+    const ground = groundOf(mirror);
     expect(ground.capYOfBand(1, 15.5, 15.5)).toBe(BAND_WORLD_HEIGHT);
   });
 });
