@@ -57,6 +57,16 @@
 // sits alongside the flame rather than inside it, and this file's frame callback
 // is where the difference is visible: smoke's clock is advanced on frames the
 // flame's is not.
+//
+// AND NEITHER IS THE BURN SCAR (./scar.ts), which is smoke's OTHER HALF rather
+// than a third thing: smoke carries "a fire happened here" at distance and goes
+// silent up close, and the scar does the reverse over the same two distances
+// (issue #203). It shares smoke's clock and smoke's keying, so it is fed the
+// same instance list on the same frames — with one difference this file owns.
+// A flame STANDS on the ground and takes ctx.terrainHeightAt, the cell
+// lattice's answer; a scar LIES ON the ground, is seen against the very surface
+// it belongs to, and takes ctx.drawnGroundYAt, which is what the terrain
+// actually drew there. See ./scar.ts for why those two differ by a whole band.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type {
@@ -85,6 +95,7 @@ import { createFireLights, type FireLights } from './fireLights.ts';
 import { createTorchMarker, type TorchMarker } from './torchMarker.ts';
 import { SHIPPED_FLAMES } from './flames/index.ts';
 import { createFireSmoke, type FireSmoke } from './smoke.ts';
+import { createFireScar, type DrawnGroundAt, type FireScar } from './scar.ts';
 import type { FireInstance, FlameRenderer } from './flames/types.ts';
 
 /**
@@ -112,6 +123,13 @@ interface LocalFire {
 
 let flames: FlameRenderer | null = null;
 let smoke: FireSmoke | null = null;
+let scar: FireScar | null = null;
+/**
+ * Turns the scar renderer's world-space question into the cell-space one
+ * ClientPluginCtx answers. Built once per attach and held, rather than made
+ * inside the frame callback, so a per-frame `apply` costs no closure.
+ */
+let scarGroundAt: DrawnGroundAt | null = null;
 let lights: FireLights | null = null;
 let marker: TorchMarker | null = null;
 
@@ -383,6 +401,15 @@ export const clientPlugin: TerraceClientPlugin = {
     smoke = createFireSmoke();
     ctx.layer.add(smoke.root);
 
+    // The close-range half of the same signature (./scar.ts). It is handed the
+    // DRAWN cap rather than the lattice height — the one thing about it this
+    // file has to know, and the reason for the divisions: ClientPluginCtx works
+    // in cells and every renderer here works in world units.
+    scar = createFireScar();
+    scarGroundAt = (worldX: number, worldZ: number): number | null =>
+      ctx.drawnGroundYAt(worldX / CELL_WORLD_SIZE, worldZ / CELL_WORLD_SIZE);
+    ctx.layer.add(scar.root);
+
     lights = createFireLights();
     ctx.layer.add(lights.root);
 
@@ -482,7 +509,8 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeFrames = ctx.onFrame((dt) => {
-      if (flames === null || smoke === null || lights === null) return;
+      if (flames === null || smoke === null || scar === null || lights === null) return;
+      if (scarGroundAt === null) return;
 
       elapsedSeconds += dt;
 
@@ -524,11 +552,15 @@ export const clientPlugin: TerraceClientPlugin = {
       // last column has retired and it too reports nothing drawn.
       if (fires.size === 0 && entityFires.size === 0) {
         lights.darken();
-        if (flames.drawnCount > 0 || smoke.drawnCount > 0) {
+        if (flames.drawnCount > 0 || smoke.drawnCount > 0 || scar.drawnCount > 0) {
           instances.length = 0;
           flames.apply(instances);
           smoke.apply(instances);
           smoke.update(dt, elapsedSeconds);
+          // The scar retires on smoke's clock, so it needs exactly the frames
+          // smoke needs — including these, where nothing is burning at all.
+          scar.apply(instances, scarGroundAt);
+          scar.update(dt);
         }
         return;
       }
@@ -554,6 +586,10 @@ export const clientPlugin: TerraceClientPlugin = {
       // which of its columns are still being fed (./smoke.ts's `apply`).
       smoke.apply(instances);
       smoke.update(dt, elapsedSeconds);
+      // The same list and the same keys again: what the scar does with it is
+      // decide which of its marks are still being fed (./scar.ts's `apply`).
+      scar.apply(instances, scarGroundAt);
+      scar.update(dt);
       lights.update(instances, dt);
     });
   },
@@ -583,6 +619,9 @@ export const clientPlugin: TerraceClientPlugin = {
     flames = null;
     smoke?.dispose();
     smoke = null;
+    scar?.dispose();
+    scar = null;
+    scarGroundAt = null;
     lights = null;
     marker?.dispose();
     marker = null;

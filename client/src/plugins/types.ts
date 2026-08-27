@@ -100,6 +100,28 @@ export interface ClientPluginCtx {
   terrainHeightAt(x: number, y: number): number | null;
 
   /**
+   * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
+   * coordinate. Null until the first snapshot arrives.
+   *
+   * WHEN TO USE THIS RATHER THAN `terrainHeightAt`. A band's cap is drawn over
+   * the region enclosed by the terrain's SMOOTHED MARCHED CONTOUR, not over
+   * the cells the lattice assigns to that band, and the two disagree by a full
+   * band — a whole world unit of relief — wherever a cell sits on the wrong
+   * side of its own contour (terrain/drawnGround.ts). Anything a plugin LAYS
+   * FLAT ON the ground — a decal, a scorch mark, a sheet of liquid — is seen
+   * directly against that surface and must ask this one. Anything that STANDS
+   * on the ground (a tree, a flame, a marker ring) can use `terrainHeightAt`:
+   * a thing standing up is not seen against the surface under it, and the
+   * lattice answer costs nothing.
+   *
+   * COST. The answer is planned per CHUNK and memoised, so the first query in
+   * a chunk pays for that chunk's contour plan and the rest are lookups; the
+   * whole cache is dropped whenever the terrain changes. It is a query for
+   * server-delta moments (something appeared here), not a per-frame one.
+   */
+  drawnGroundYAt(cellX: number, cellZ: number): number | null;
+
+  /**
    * Subscribes to this plugin's namespaced server messages by un-namespaced
    * type. Returns an unsubscribe function.
    */
