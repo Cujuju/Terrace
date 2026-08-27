@@ -83,6 +83,23 @@
 // its own lifetime, which is one look going from present to absent.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// SEVEN OF THE CONSTANTS BELOW ARE EXPORTED, and only because ./scar.ts is the
+// OTHER HALF OF THIS SIGNATURE (DESIGN.md, #203). The burn scar is at full
+// strength exactly where a column is at nothing and fades out as the column
+// comes up, and it retires on this file's clock keyed by this file's key — so
+// the crossover distance, the handover's far end, the rise and afterlife
+// seconds, the retirement threshold, the closest-zoom frame height and the
+// transparent-pass order are each ONE number that two files must agree about,
+// and two numbers that must agree are one number.
+//
+// EXPORTED IN PLACE rather than moved to a shared module, deliberately: the
+// move would carry sixty lines of derivation away from the behaviour that
+// derives them (SMOKE_SILENT_DISTANCE means nothing without the grey-slab
+// failure recorded beneath it), and it is a far larger edit than seven added
+// keywords. ./scar.ts imports them and derives nothing of its own from their
+// values.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // AND THE FAILURE THIS FEATURE COULD CAUSE: a distance signature that becomes
 // an opaque grey wall in the player's face is the same feature failing, and the
 // first cut of this file did exactly that. See SMOKE_SILENT_DISTANCE — a column
@@ -120,7 +137,7 @@ import type { FireInstance } from './flames/types.ts';
  * grass and crops, never quite reach full: a burning tuft producing the same
  * column as a burning wood is the version of this feature that cries wolf.
  */
-const SMOKE_RISE_SECONDS = 4;
+export const SMOKE_RISE_SECONDS = 4;
 /**
  * Seconds a column goes on smoking AFTER its fire has left the world.
  *
@@ -132,7 +149,7 @@ const SMOKE_RISE_SECONDS = 4;
  * out has visibly cleared by the time a player has walked to it, rather than
  * leaving the map permanently hazed with the history of every fire.
  */
-const SMOKE_AFTERLIFE_SECONDS = 30;
+export const SMOKE_AFTERLIFE_SECONDS = 30;
 /**
  * How many columns may exist at once — live and retiring together.
  *
@@ -152,7 +169,7 @@ const SMOKE_COLUMN_CAP = FIRE_FLAME_INSTANCE_CAP;
  * cap slot, still writes into the depth-sorted transparent pass, and still
  * costs the vertex work of a full column.
  */
-const SMOKE_MINIMUM_VISIBLE_STRENGTH = 0.01;
+export const SMOKE_MINIMUM_VISIBLE_STRENGTH = 0.01;
 
 // ── The sleeve ────────────────────────────────────────────────────────────
 /**
@@ -365,7 +382,7 @@ const SMOKE_EDGE_EROSION = 0.7;
  * CAMERA_FOV_DEGREES and CAMERA_INITIAL_DISTANCE. If that band is retuned,
  * these three move with it and the two distances below re-derive themselves.
  */
-const SMOKE_CLOSEST_ZOOM_FRAME_HEIGHT_WORLD_UNITS = 10;
+export const SMOKE_CLOSEST_ZOOM_FRAME_HEIGHT_WORLD_UNITS = 10;
 const SMOKE_CAMERA_FOV_DEGREES = 55;
 const SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS = 80;
 /**
@@ -388,7 +405,7 @@ const SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS = 80;
  * frame, a fifth of the picture), so smoke has nothing left to add and
  * everything to hide, and it is drawn at nothing.
  */
-const SMOKE_SILENT_DISTANCE =
+export const SMOKE_SILENT_DISTANCE =
   SMOKE_CLOSEST_ZOOM_FRAME_HEIGHT_WORLD_UNITS /
   (2 * Math.tan((SMOKE_CAMERA_FOV_DEGREES * Math.PI) / 180 / 2));
 /**
@@ -409,7 +426,7 @@ const SMOKE_SILENT_DISTANCE =
  * neighbouring columns in the same picture differ visibly in strength for no
  * reason a player could see.
  */
-const SMOKE_FULL_STRENGTH_DISTANCE = SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS;
+export const SMOKE_FULL_STRENGTH_DISTANCE = SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS;
 
 /**
  * Where smoke sits in the transparent pass: BEFORE the flames.
@@ -420,7 +437,7 @@ const SMOKE_FULL_STRENGTH_DISTANCE = SMOKE_DEFAULT_ORBIT_DISTANCE_WORLD_UNITS;
  * painted over it; the reverse puts a grey veil across the one thing in the
  * frame that is supposed to be the brightest.
  */
-const SMOKE_RENDER_ORDER = -1;
+export const SMOKE_RENDER_ORDER = -1;
 
 /** Stable 0…1 from an integer — ./flames/shaderPlume.ts's. Never Math.random(). */
 function unitFromSeed(seed: number, salt: number): number {

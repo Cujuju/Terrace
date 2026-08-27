@@ -55,6 +55,7 @@ import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.
 import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createRiverRig, type RiverRig } from './render/riverRig.ts';
+import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
 import { createWater, type Water } from './render/water.ts';
@@ -138,6 +139,25 @@ export interface World extends TerrainSink {
    */
   terrainHeightAt(x: number, y: number): number | null;
   /**
+   * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
+   * coordinate — terrain/drawnGround.ts's `capYAt`, memoised per chunk and
+   * discarded whenever the terrain changes.
+   *
+   * DISTINCT FROM `terrainHeightAt`, and the difference is the whole reason
+   * drawnGround.ts exists: `terrainHeightAt` answers "which band does the CELL
+   * LATTICE put this cell in", while a band's cap is drawn over the region
+   * enclosed by the SMOOTHED MARCHED CONTOUR at that band's threshold. On the
+   * `fork` fixture the two disagreed by a full band on 430 of 6745 probes
+   * (drawnGround.ts's header), and a full band is a whole world unit of
+   * relief. Anything LAID FLAT ON the drawn surface — a decal, a sheet of
+   * water — must ask this one; anything merely STANDING on the ground can
+   * afford the lattice answer, because a thing standing up is not seen against
+   * the surface it stands on.
+   *
+   * Null before the first snapshot, exactly as `terrainHeightAt` is.
+   */
+  drawnGroundYAt(cellX: number, cellZ: number): number | null;
+  /**
    * A read-only window onto the mirror for the Cartographer (ui/Cartographer):
    * the world size, raw heights, and which cells sit in received chunks. Null
    * before the first snapshot. The returned source closes over the CURRENT
@@ -176,6 +196,18 @@ export function createWorld(viewport: Viewport): World {
   const rivers: RiverRig = createRiverRig(viewport.scene, viewport.onFrame);
 
   let mirror: TerrainMirror | null = null;
+  /**
+   * The drawn-surface oracle over the CURRENT mirror, built on first ask.
+   *
+   * NULLED RATHER THAN REFRESHED whenever the terrain changes, because a
+   * DrawnGround memoises a chunk plan forever and "MUST NOT outlive a terrain
+   * edit" (terrain/drawnGround.ts's LIFETIME note) — a surviving cache would
+   * answer post-edit queries from pre-edit contours. Rebuilding is lazy, so a
+   * session in which nothing ever asks pays nothing, and a sculpt stroke that
+   * lands between two asks costs one plan per chunk actually queried rather
+   * than a re-plan of everything that was ever cached.
+   */
+  let drawnGround: DrawnGround | null = null;
   let meshes: TerrainMeshes | null = null;
   let layerEdges: LayerEdgeOverlay | null = null;
   let predictions: PredictionStore | null = null;
@@ -235,6 +267,9 @@ export function createWorld(viewport: Viewport): World {
    * that is about WHICH segments exist, not their heights.
    */
   const applyDirty = (dirty: Set<number>): void => {
+    // The one place terrain changes, so the one place the drawn-surface cache
+    // has to be dropped — see `drawnGround`'s declaration.
+    drawnGround = null;
     meshes?.update(dirty);
     // Terrace lips follow the same dirty set as the meshes they lie on, so a
     // stroke re-contours exactly the chunks it changed (render/layerEdgeOverlay.ts).
@@ -295,6 +330,10 @@ export function createWorld(viewport: Viewport): World {
       worldSize,
     );
     mirror = nextMirror;
+    // The oracle closes over the mirror it was built on, so a replaced mirror
+    // must take it with it — a rejoin is the one terrain change applyDirty
+    // above does not see.
+    drawnGround = null;
     meshes = nextMeshes;
     layerEdges = nextLayerEdges;
     predictions = nextPredictions;
@@ -501,6 +540,12 @@ export function createWorld(viewport: Viewport): World {
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
     },
 
+    drawnGroundYAt(cellX: number, cellZ: number): number | null {
+      if (mirror === null) return null;
+      drawnGround ??= createDrawnGround(mirror);
+      return drawnGround.capYAt(cellX, cellZ);
+    },
+
     highlightLayerEdge(pick: TerrainRayPick | null): number | null {
       // THE AIMED BAND IS DERIVED HERE, not asked of the caller. Both callers
       // — the frame loop that lights the lip and the press that grabs it —
@@ -572,6 +617,7 @@ export function createWorld(viewport: Viewport): World {
       meshes?.dispose();
       meshes = null;
       mirror = null;
+      drawnGround = null;
       predictions = null;
       water.dispose();
       fog.dispose();
