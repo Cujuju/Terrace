@@ -1,10 +1,13 @@
 # Plugin hot swap / update — research and options
 
-Status: PLAN, not decided. Research 2026-08-25 against `main` at f78b056, after
-per-world plugin enablement shipped (3aee383, 10aed51, 2199d88, 6e80860, e3a87b6).
+Status: IMPLEMENTED 2026-08-26 — every phase in §7 has shipped (S0, S, 1, 2
+#196, 3 #197, 4 #198; arc `arc/plugin-hot-swap` closed). Per-step DONE markers
+and the measured restart gap / reload leak are in §7, §9 and DESIGN.md.
+Research 2026-08-25 against `main` at f78b056, after per-world plugin
+enablement shipped (3aee383, 10aed51, 2199d88, 6e80860, e3a87b6).
 Restructured 2026-08-25 (owner feedback): the two scenarios that matter are
-first-class goals; memory reclamation is demoted to a finding (§4). Nothing here
-is implemented. Owner decisions needed are listed at the end (§8).
+first-class goals; memory reclamation is demoted to a finding (§4). The owner
+decisions in §8 were settled by approving the phases.
 
 The two goals:
 
