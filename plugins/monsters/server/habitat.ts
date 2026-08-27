@@ -35,6 +35,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BAND_HEIGHT, SEA_LEVEL, type FreshwaterMap } from '@terrace/shared';
+// A DELIBERATE IMPORT CYCLE with ./habitat-index.ts, and it is safe by
+// construction: neither module touches a binding of the other at evaluation
+// time (every use is inside a function body), so whichever ES module the
+// loader enters first completes. The alternative — moving LairRegion,
+// LairSurvey and the flood fill into the index file — would put the survey's
+// meaning in the file about its storage.
+import {
+  HABITAT_BIT_SET,
+  type HabitatIndex,
+  type RegimeIndex,
+  buildHabitatIndex,
+  indexAnswers,
+} from './habitat-index.ts';
 
 /**
  * The habitat regimes that exist, and the fixed order everything iterates them
@@ -267,6 +280,17 @@ export interface LairWorld {
    * mean "this world has no fresh water".
    */
   readonly freshwater?: FreshwaterMap;
+  /**
+   * The chunk grid, read ONLY as a change detector for the unlock mask
+   * (habitat-index.ts's `unlockGenerationOf`) — never to decide whether a cell
+   * is habitat, which stays `isCellUnlocked`'s answer.
+   *
+   * OPTIONAL because a hand-built test world has no chunk mask, and the index
+   * answers "cannot tell" for one rather than guessing; the concrete object
+   * production passes in is the WorldApi, which has both.
+   */
+  readonly chunksPerEdge?: number;
+  isChunkUnlocked?(cx: number, cy: number): boolean;
 }
 
 /**
@@ -322,7 +346,12 @@ export function isLairCell(
  */
 export const BODY_RIM_PROBE_COUNT = 8;
 
-const BODY_RIM_PROBE_OFFSETS: readonly (readonly [number, number])[] = Array.from(
+/**
+ * EXPORTED (2026-08-26) so `habitat-index.ts` can bake the same ring into the
+ * whole-cell offsets its fit bitmap is built from. One ring, one definition —
+ * a second copy of these eight points is a second answer to `isLairPose`.
+ */
+export const BODY_RIM_PROBE_OFFSETS: readonly (readonly [number, number])[] = Array.from(
   { length: BODY_RIM_PROBE_COUNT },
   (_unused, index) => {
     const angle = (index * 2 * Math.PI) / BODY_RIM_PROBE_COUNT;
@@ -526,17 +555,27 @@ export function releaseSurveyScratch(): void {
  * single-cell pools) has tens of thousands of regions — that is tens of
  * thousands of closure allocations for something with no captured state worth
  * keeping.
+ *
+ * READS BITMAPS, NOT THE WORLD (2026-08-26). Every question this walk used to
+ * ask the WorldApi — is that neighbour habitat, does this kind's body fit here
+ * — is a byte in habitat-index.ts's maintained arrays, kept in step by the
+ * terrain diff that changed it. The 4-neighbour order, the FIFO queue and the
+ * tie-break on the extreme cell are unchanged, so the regions and the counts
+ * are bit-for-bit what the classifying walk reported for the same world.
  */
 function floodRegion(
   regime: HabitatRegime,
-  world: LairWorld,
+  index: HabitatIndex,
+  regimeIndex: RegimeIndex,
   size: number,
   labels: Int32Array,
   queue: Int32Array,
   seedIndex: number,
   label: number,
-  fitRules: readonly LairFitRule[],
 ): LairRegion {
+  const { heights } = index;
+  const { habitat, fit, rules } = regimeIndex;
+
   let head = 0;
   let tail = 0;
   labels[seedIndex] = label;
@@ -551,16 +590,16 @@ function floodRegion(
   let extremeX = seedIndex % size;
   let extremeY = (seedIndex - extremeX) / size;
   /** One running count per fit rule each; see LairRegion.fittingCells. */
-  const fittingCells = fitRules.map(() => 0);
-  const summonableCells = fitRules.map(() => 0);
+  const fittingCells = rules.map(() => 0);
+  const summonableCells = rules.map(() => 0);
 
   while (head < tail) {
-    const index = queue[head++];
-    const x = index % size;
-    const y = (index - x) / size;
+    const cellIndex = queue[head++]!;
+    const x = cellIndex % size;
+    const y = (cellIndex - x) / size;
     cells++;
 
-    const height = world.heightAt(x, y);
+    const height = heights[cellIndex]!;
     const reach = habitatReachHeightUnits(regime, height);
     if (reach > extremeReach) {
       extremeReach = reach;
@@ -569,46 +608,48 @@ function floodRegion(
       extremeY = y;
     }
 
-    // The shape half of the admission test, counted here because the walk is
-    // already standing on the cell. COST, stated rather than discovered later:
-    // `isLairPose` is one centre probe plus BODY_RIM_PROBE_COUNT rim probes, so
-    // each rule multiplies this walk's per-cell work by about nine — a survey
-    // asked for two rules does roughly nineteen `isLairCell` calls per habitat
-    // cell where it used to do one. It is paid once per
-    // LAIR_SURVEY_INTERVAL_SECONDS (summoning.ts) and never per tick, which is
-    // the whole reason the count lives on the survey instead of being
-    // re-derived at every summon roll.
-    for (let rule = 0; rule < fitRules.length; rule++) {
-      const { radiusCells, minReachBands } = fitRules[rule]!;
-      if (
-        !isLairPose(regime, world, x + CELL_CENTRE_OFFSET, y + CELL_CENTRE_OFFSET, radiusCells)
-      ) {
-        continue;
-      }
+    // The shape half of the admission test. It used to be measured HERE, at
+    // nine `isLairCell` calls per rule per cell — the single most expensive
+    // thing this plugin did (see habitat-index.ts's header for the measurement
+    // that ended it). It is now one byte lookup per rule.
+    for (let rule = 0; rule < rules.length; rule++) {
+      if (fit[rule]![cellIndex] !== HABITAT_BIT_SET) continue;
       fittingCells[rule]!++;
-      if (reachesIntoHabitat(regime, height, minReachBands)) summonableCells[rule]!++;
+      if (reachesIntoHabitat(regime, height, rules[rule]!.minReachBands)) summonableCells[rule]!++;
     }
 
     // 4-neighbourhood, in a fixed order: west, east, north, south.
-    if (x > 0 && labels[index - 1] === UNLABELLED && isLairCell(regime, world, x - 1, y)) {
-      labels[index - 1] = label;
-      queue[tail++] = index - 1;
+    if (
+      x > 0 &&
+      labels[cellIndex - 1] === UNLABELLED &&
+      habitat[cellIndex - 1] === HABITAT_BIT_SET
+    ) {
+      labels[cellIndex - 1] = label;
+      queue[tail++] = cellIndex - 1;
     }
-    if (x + 1 < size && labels[index + 1] === UNLABELLED && isLairCell(regime, world, x + 1, y)) {
-      labels[index + 1] = label;
-      queue[tail++] = index + 1;
+    if (
+      x + 1 < size &&
+      labels[cellIndex + 1] === UNLABELLED &&
+      habitat[cellIndex + 1] === HABITAT_BIT_SET
+    ) {
+      labels[cellIndex + 1] = label;
+      queue[tail++] = cellIndex + 1;
     }
-    if (y > 0 && labels[index - size] === UNLABELLED && isLairCell(regime, world, x, y - 1)) {
-      labels[index - size] = label;
-      queue[tail++] = index - size;
+    if (
+      y > 0 &&
+      labels[cellIndex - size] === UNLABELLED &&
+      habitat[cellIndex - size] === HABITAT_BIT_SET
+    ) {
+      labels[cellIndex - size] = label;
+      queue[tail++] = cellIndex - size;
     }
     if (
       y + 1 < size &&
-      labels[index + size] === UNLABELLED &&
-      isLairCell(regime, world, x, y + 1)
+      labels[cellIndex + size] === UNLABELLED &&
+      habitat[cellIndex + size] === HABITAT_BIT_SET
     ) {
-      labels[index + size] = label;
-      queue[tail++] = index + size;
+      labels[cellIndex + size] = label;
+      queue[tail++] = cellIndex + size;
     }
   }
 
@@ -740,12 +781,28 @@ export function qualifyingCellsIn(
  * same argument holds on land, where the pinch is a knife-edge ridge nothing
  * bulky walks across.
  *
- * COST. One pass over every cell plus a BFS that visits each habitat cell once —
- * two WorldApi calls per cell, ~262 000 cells on a full 512² world, on the order
- * of a millisecond PER REGIME (so ~2 ms for the two of them, since each is its
- * own scan). That is why the caller runs it on an interval
- * (LAIR_SURVEY_INTERVAL_SECONDS) and never per tick; habitat only changes when
- * terrain or the unlock mask changes, and both are human-paced.
+ * COST, MEASURED (2026-08-26, and the old figure here was wrong by ~50×). This
+ * used to CLASSIFY as it walked — `isLairCell` per cell for the flood plus
+ * `isLairPose`'s nine probes per fit rule on top, every one of them a WorldApi
+ * getter through the plugin host's `bound()` indirection — which profiled at
+ * ~100 ms per regime on a full 512² world, not the "~1 ms" the comment used to
+ * claim. It now floods habitat-index.ts's maintained bitmaps and reads no
+ * WorldApi at all per cell: one pass over every cell plus a BFS over the
+ * habitat ones, MEASURED AT 3–6 ms for BOTH regimes together on a generated
+ * 512² world (~34 ms for the first one of a process, which pays for the index
+ * build itself). Re-measure with the profiling rig, not by reasoning from
+ * these: the walk is proportional to how much of the board is habitat, so a
+ * world that is mostly ocean costs more than one that is mostly hillside.
+ *
+ * The interval (LAIR_SURVEY_INTERVAL_SECONDS) and the debounced reactive path
+ * (LAIR_SURVEY_DEBOUNCE_SECONDS, summoning.ts) remain the cadence: habitat
+ * only changes when terrain or the unlock mask changes, and both are
+ * human-paced.
+ *
+ * `index` is the caller's maintained HabitatIndex. It is used only when it
+ * answers this exact question — same world size, same regime, same fit rules
+ * (`indexAnswers`) — and a throwaway one is built otherwise, so a caller that
+ * omits it (every test) gets the same answer for a little more work.
  *
  * ITERATION ORDER is fixed (row-major, then a FIFO BFS) so that two runs against
  * the same world report the same summon cell. Determinism is not required here —
@@ -775,9 +832,21 @@ export function surveyLairs(
   world: LairWorld,
   occupied: ReadonlyArray<{ readonly x: number; readonly y: number }> = [],
   fitRules: readonly LairFitRule[] = [],
+  index?: HabitatIndex,
 ): LairSurvey {
   const size = world.worldSize;
   if (size <= 0) return EMPTY_LAIR_SURVEY;
+
+  // The maintained index when the caller has one that answers THIS question,
+  // and a throwaway build otherwise (the tests, which hand in small hand-built
+  // worlds and no index). One code path either way: a build produces exactly
+  // the bitmaps the maintained one holds, so a test and the server survey the
+  // same world the same way.
+  const view =
+    index !== undefined && indexAnswers(index, world, regime, fitRules)
+      ? index
+      : buildHabitatIndex(world, [{ regime, fitRules }]);
+  const regimeIndex = view.regimes.get(regime.id)!;
 
   const cellCount = size * size;
   const scratch = scratchFor(cellCount);
@@ -790,18 +859,18 @@ export function surveyLairs(
     for (let seedX = 0; seedX < size; seedX++) {
       const seedIndex = seedY * size + seedX;
       if (scratch.labels[seedIndex] !== UNLABELLED) continue;
-      if (!isLairCell(regime, world, seedX, seedY)) continue;
+      if (regimeIndex.habitat[seedIndex] !== HABITAT_BIT_SET) continue;
 
       regions.push(
         floodRegion(
           regime,
-          world,
+          view,
+          regimeIndex,
           size,
           scratch.labels,
           scratch.queue,
           seedIndex,
           regions.length,
-          fitRules,
         ),
       );
     }

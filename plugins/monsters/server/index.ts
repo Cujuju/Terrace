@@ -83,6 +83,7 @@ import {
   roundBroadcastCell,
   roundBroadcastPosition,
 } from '../protocol.ts';
+import { noteTerrainChangedInIndex, releaseHabitatIndex } from './habitat-index.ts';
 import { advanceLurking } from './lurk.ts';
 import { MONSTERS_SLICE_VERSION, loadMonsters, saveMonsters } from './persistence.ts';
 import { RAISE_BLOCKED_REASON, reachesProtectedGround } from './protection.ts';
@@ -239,11 +240,19 @@ function simulate(world: WorldApi, dt: number): void {
  *   * if the edit moved the ground out from under a monster — raised the seabed
  *     under the kraken, took the snow off the peak under the yeti — it leaves
  *     immediately;
- *   * every habitat's lair survey is invalidated, so the next tick re-derives
- *     region sizes. That is what turns "I drained the bay" into "it is gone"
- *     within a tick, and equally what lets a newly dug basin or a newly raised
- *     summit qualify at once (it still has to win the summon roll — arrival is
- *     never instant).
+ *   * every habitat's lair survey is invalidated, so it re-derives region sizes
+ *     once the terrain settles (LAIR_SURVEY_DEBOUNCE_SECONDS). That is what
+ *     turns "I drained the bay" into "it is gone" in half a second rather than
+ *     five, and equally what lets a newly dug basin or a newly raised summit
+ *     qualify at once (it still has to win the summon roll — arrival is never
+ *     instant).
+ *
+ * AND THE HABITAT BITMAPS ARE REPAIRED HERE (2026-08-26), which is what makes
+ * that survey cheap when it does run: the diff's cells are the only ones whose
+ * habitat answer can have moved, so habitat-index.ts patches those and the fit
+ * window around them instead of re-classifying the board. Done FIRST and
+ * unconditionally — the index has to be right whether or not anything else in
+ * this function has an opinion about the diff.
  *
  * Note this is called from inside the sculpt that caused it. It only reads
  * heights and writes plugin state — it never calls world.sculpt — so it cannot
@@ -251,6 +260,7 @@ function simulate(world: WorldApi, dt: number): void {
  */
 function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (diff.length === 0) return;
+  noteTerrainChangedInIndex(diff);
   enforceHabitat(world);
   emitTransitions(world);
   invalidateSurvey();
@@ -324,6 +334,25 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
+  },
+
+  /**
+   * THE WORLD ARRIVED WHOLESALE, so everything cached about its cells is void.
+   *
+   * The habitat bitmaps (habitat-index.ts) are a cache of per-cell answers whose
+   * ONLY repair path is an applied `CellDiff`. A rollback replaces every height
+   * in the world without emitting one — `World.rewindTo` swaps the cell buffer
+   * and the unlock masks outright, and the boot pair `restorePersistence()` +
+   * `worldCreate()` is replayed afterwards (server/src/world/rollback.ts) — so
+   * without this the plugin would survey the world it had BEFORE the rollback,
+   * indefinitely: the size is unchanged, so nothing else would ever notice.
+   *
+   * Dropping it rather than rebuilding here: the next survey builds one from the
+   * world as it is by then, which keeps the O(cells) pass on the survey's
+   * cadence and off the rollback's critical path.
+   */
+  onWorldCreate(): void {
+    releaseHabitatIndex();
   },
 
   onIntent(intent: SculptIntent): IntentVerdict | void {
