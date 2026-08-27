@@ -123,6 +123,7 @@ import {
   type YetiVariant,
 } from '../protocol.ts';
 import {
+  CELL_CENTRE_OFFSET,
   EMPTY_LAIR_SURVEY,
   HABITAT_REGIMES,
   type HabitatRegime,
@@ -131,6 +132,7 @@ import {
   type LairSurvey,
   type LairWorld,
   isLairCell,
+  isLairPose,
   qualifyingCellsIn,
   reachesIntoHabitat,
   releaseSurveyScratch,
@@ -139,7 +141,10 @@ import {
 import {
   MAX_LIVING_MONSTERS_PER_KIND,
   type MonsterProfile,
+  bodyRadiusCells,
+  habitatKindIndex,
   kindsInHabitat,
+  lairFitRulesInHabitat,
   profileOf,
   summonRatePerSecond,
 } from './kinds.ts';
@@ -410,8 +415,11 @@ function summon(profile: MonsterProfile, cellX: number, cellY: number): Monster 
     ...(variant === undefined ? {} : { variant }),
     // Cell centre: the survey reports a cell, and a monster placed on the corner
     // of one would be half a cell off from the ground the survey vouched for.
-    x: cellX + 0.5,
-    y: cellY + 0.5,
+    // Named since 2026-08-26 (habitat.ts's CELL_CENTRE_OFFSET) because the
+    // survey's fit count and summonCellIn's filter test the body's pose at
+    // exactly this point — three places that must not disagree by half a cell.
+    x: cellX + CELL_CENTRE_OFFSET,
+    y: cellY + CELL_CENTRE_OFFSET,
     heading: monsterRandom() * Math.PI * 2,
     idle: false,
   };
@@ -490,8 +498,29 @@ export function enforceHabitat(world: LairWorld): boolean {
  * bay, and it must not be summoned INTO that bay either. Ties go to the earlier
  * region in scan order, which is fixed (habitat.ts), so two runs over the same
  * world pick the same lair.
+ *
+ * THE FIT TEST IS PART OF THIS GATE (2026-08-26), not of the summon that
+ * follows it, and that placement is the point. `minLairCells` is a bar on how
+ * much habitat a region holds; a region can clear it and still contain no cell
+ * this kind's BODY fits on — a 52-cell snow ribbon one cell wide is the case
+ * that was shipping — and admitting such a region here would leave
+ * `summonCellIn` to discover it, whose answer to "nowhere to go" is
+ * `invalidateSurvey()`. That is a re-survey every time a roll fires, forever,
+ * on a region that will never be summonable: a loop, not a refusal. Refusing
+ * the region is the refusal.
+ *
+ * IT COSTS NOTHING PER TICK because the survey already counted it: the walk
+ * that measured the region tested each of its cells against each kind's
+ * LairFitRule (habitat.ts) once per LAIR_SURVEY_INTERVAL_SECONDS. Re-deriving
+ * it here would be a flood fill per candidate region per tick while the slot
+ * is empty, which is the shape of cost this gate exists to stay out of.
+ *
+ * A survey taken WITHOUT fit rules reports no count for this kind, which reads
+ * as zero and refuses — see surveyLairs on why that direction is the safe one.
  */
-function bestLairFor(profile: MonsterProfile): LairRegion | null {
+function bestLairFor(kind: MonsterKind): LairRegion | null {
+  const profile = profileOf(kind);
+  const fitIndex = habitatKindIndex(kind);
   const { regions } = surveys[profile.habitat.id];
   let best: LairRegion | null = null;
   for (const region of regions) {
@@ -499,6 +528,7 @@ function bestLairFor(profile: MonsterProfile): LairRegion | null {
     if (!reachesIntoHabitat(profile.habitat, region.extremeHeight, profile.minLairReachBands)) {
       continue;
     }
+    if ((region.fittingCells[fitIndex] ?? 0) <= 0) continue;
     if (best !== null && region.cells <= best.cells) continue;
     best = region;
   }
@@ -547,6 +577,21 @@ function bestLairFor(profile: MonsterProfile): LairRegion | null {
  * pair rather than merely spreading each. Deterministic end to end: same world,
  * same counter, same cell, on any machine (see hashToIndex).
  *
+ * AND THE BODY MUST FIT WHERE IT LANDS (2026-08-26). The qualifying set is a
+ * set of CELLS; the animal is a disc several cells wide, and picking uniformly
+ * among cells whose centred pose is not habitat is how a yeti came to be born
+ * pinched — pose-invalid from his first tick, permanently in lurk.ts's
+ * clearance-0 fallback with his flanks in the rock. So the candidates are
+ * filtered by `isLairPose` at the CELL CENTRE, which is exactly where `summon`
+ * places him.
+ *
+ * IT IS THE SAME TEST GATE 3 ALREADY APPLIED, repeated here for the same reason
+ * the cell re-check above it exists: `bestLairFor` reads a survey up to
+ * LAIR_SURVEY_INTERVAL_SECONDS old, and the world may have moved since. Gate 3
+ * is what stops a permanently unfittable region from being chosen at all; this
+ * is what stops a stale count from placing a body in ground that arrived in the
+ * last five seconds.
+ *
  * Returns null when the region has stopped qualifying since the survey named
  * it, which the caller answers with a re-survey rather than a stale summon.
  */
@@ -562,10 +607,22 @@ function summonCellIn(
     region.y,
     profile.minLairReachBands,
   );
-  if (candidates.length === 0) return null;
-
-  const index = candidates[hashToIndex(nextMonsterId, candidates.length)]!;
   const size = world.worldSize;
+  const radiusCells = bodyRadiusCells(profile);
+  const fitting = candidates.filter((index) => {
+    const cellX = index % size;
+    const cellY = (index - cellX) / size;
+    return isLairPose(
+      profile.habitat,
+      world,
+      cellX + CELL_CENTRE_OFFSET,
+      cellY + CELL_CENTRE_OFFSET,
+      radiusCells,
+    );
+  });
+  if (fitting.length === 0) return null;
+
+  const index = fitting[hashToIndex(nextMonsterId, fitting.length)]!;
   const x = index % size;
   return { x, y: (index - x) / size };
 }
@@ -575,7 +632,7 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
   if (state.cooldownSeconds > 0) return;
 
   const profile = profileOf(kind);
-  const cell = bestLairFor(profile);
+  const cell = bestLairFor(kind);
   if (cell === null) return;
   if (!rollEvent(summonRatePerSecond(profile), dt)) return;
 
@@ -638,7 +695,7 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
       // The occupants are surveyed together: one walk per habitat, one
       // occupiedRegionCells entry per monster, index-aligned (habitat.ts).
       const occupants = livingMonstersIn(regime);
-      const survey = surveyLairs(regime, world, occupants);
+      const survey = surveyLairs(regime, world, occupants, lairFitRulesInHabitat(regime));
       surveys[regime.id] = survey;
 
       for (let i = 0; i < occupants.length; i++) {

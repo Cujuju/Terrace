@@ -386,7 +386,57 @@ export interface LairRegion {
   readonly y: number;
   /** Height of that cell: the furthest into the habitat the region gets. */
   readonly extremeHeight: number;
+  /**
+   * How many cells of this region a monster obeying each of the survey's
+   * `fitRules` could actually be summoned onto — index-aligned with the rule
+   * list handed to `surveyLairs`, and empty for a survey that was asked for no
+   * rules at all.
+   *
+   * ADDED 2026-08-26, and it is the missing half of the admission test. A
+   * region used to be admitted on `cells` alone, which counts CELLS and not
+   * ROOM: a 52-cell snow ribbon one cell wide clears the yeti's cell bar while
+   * containing no pose his 4.81-cell body fits in, so he was summoned pinched
+   * and spent his whole life in lurk.ts's clearance-0 fallback with his flanks
+   * in the rock. `cells >= minLairCells` is a bar on AREA; this is the bar on
+   * SHAPE, and a lair has to clear both.
+   */
+  readonly fittingCells: readonly number[];
 }
+
+/**
+ * One kind's whole-body admission rule, as the survey must count it: a cell is
+ * a place this kind could be SUMMONED onto when it reaches far enough into the
+ * habitat AND the kind's body, centred on that cell, is entirely inside the
+ * habitat.
+ *
+ * BOTH HALVES, in one rule, deliberately (2026-08-26). Counting fit alone would
+ * leave the same re-survey loop this pair of fields exists to close, one kind
+ * over: the kraken's admission bar is a trench (7 bands) while most of a basin
+ * that FITS him is ordinary deep water, so a region can hold plenty of cells he
+ * fits in, plenty he qualifies for, and none that are both — and summoning.ts
+ * would then find no candidate, invalidate the survey and burn a roll every
+ * time one fired. The two questions are asked of the same cell here so the
+ * count means exactly "cells summoning.ts could pick".
+ *
+ * The centre offset the fit is measured at is +0.5 (CELL_CENTRE_OFFSET), because
+ * that is where `summon` places the animal.
+ */
+export interface LairFitRule {
+  /** Half the kind's footprint — kinds.ts's `bodyRadiusCells`. */
+  readonly radiusCells: number;
+  /** The kind's own `minLairReachBands`. */
+  readonly minReachBands: number;
+}
+
+/**
+ * Where in a cell a summoned monster stands: its centre.
+ *
+ * Named because two files have to agree on it — the survey counts a cell as
+ * fitting by testing the pose HERE, and summoning.ts places the animal HERE —
+ * and a half-cell disagreement between them would put the body somewhere the
+ * count never checked.
+ */
+export const CELL_CENTRE_OFFSET = 0.5;
 
 /** What one survey learned about one habitat. */
 export interface LairSurvey {
@@ -463,6 +513,7 @@ function floodRegion(
   queue: Int32Array,
   seedIndex: number,
   label: number,
+  fitRules: readonly LairFitRule[],
 ): LairRegion {
   let head = 0;
   let tail = 0;
@@ -477,6 +528,8 @@ function floodRegion(
   let extremeHeight = 0;
   let extremeX = seedIndex % size;
   let extremeY = (seedIndex - extremeX) / size;
+  /** One running count per fit rule; see LairRegion.fittingCells. */
+  const fittingCells = fitRules.map(() => 0);
 
   while (head < tail) {
     const index = queue[head++];
@@ -491,6 +544,31 @@ function floodRegion(
       extremeHeight = height;
       extremeX = x;
       extremeY = y;
+    }
+
+    // The shape half of the admission test, counted here because the walk is
+    // already standing on the cell. COST, stated rather than discovered later:
+    // `isLairPose` is one centre probe plus BODY_RIM_PROBE_COUNT rim probes, so
+    // each rule multiplies this walk's per-cell work by about nine — a survey
+    // asked for two rules does roughly nineteen `isLairCell` calls per habitat
+    // cell where it used to do one. It is paid once per
+    // LAIR_SURVEY_INTERVAL_SECONDS (summoning.ts) and never per tick, which is
+    // the whole reason the count lives on the survey instead of being
+    // re-derived at every summon roll.
+    for (let rule = 0; rule < fitRules.length; rule++) {
+      const { radiusCells, minReachBands } = fitRules[rule]!;
+      if (!reachesIntoHabitat(regime, height, minReachBands)) continue;
+      if (
+        isLairPose(
+          regime,
+          world,
+          x + CELL_CENTRE_OFFSET,
+          y + CELL_CENTRE_OFFSET,
+          radiusCells,
+        )
+      ) {
+        fittingCells[rule]!++;
+      }
     }
 
     // 4-neighbourhood, in a fixed order: west, east, north, south.
@@ -516,7 +594,7 @@ function floodRegion(
     }
   }
 
-  return { cells, x: extremeX, y: extremeY, extremeHeight };
+  return { cells, x: extremeX, y: extremeY, extremeHeight, fittingCells };
 }
 
 /**
@@ -655,11 +733,30 @@ export function qualifyingCellsIn(
  * the same world report the same summon cell. Determinism is not required here —
  * this is not terrain math — but a survey that answered differently on identical
  * input would make every failure in this plugin harder to read.
+ *
+ * `fitRules` (2026-08-26) is the per-kind whole-body admission rule, ONE ROW PER
+ * KIND OF THIS HABITAT in the caller's order, and every region comes back with a
+ * count of the cells that satisfy each (LairRegion.fittingCells).
+ *
+ * WHY THE CALLER PASSES A LIST RATHER THAN THE SURVEY KNOWING ONE RADIUS. The
+ * survey is per HABITAT and the kinds sharing a habitat have different bodies
+ * and different depth bars — Cthulhu and the kraken are both 7 cells wide but
+ * want 3 and 7 bands, and the yeti is 4.81. Taking a single radius (say the
+ * widest) would make the answer wrong for every other kind the moment a second
+ * one joined a habitat, which is exactly how the yeti's rule came to be wrong
+ * for HIM: a bar written for one animal, inherited by another. A list keeps each
+ * kind's rule its own, at the cost of one extra pose test per cell per kind.
+ *
+ * The default is NO RULES, which reports `fittingCells: []` — for the tests and
+ * for any caller that only wants sizes and connectivity. `bestLairFor`
+ * (summoning.ts) treats a missing entry as zero fitting cells, so forgetting the
+ * argument refuses summons rather than silently permitting pinched ones.
  */
 export function surveyLairs(
   regime: HabitatRegime,
   world: LairWorld,
   occupied: ReadonlyArray<{ readonly x: number; readonly y: number }> = [],
+  fitRules: readonly LairFitRule[] = [],
 ): LairSurvey {
   const size = world.worldSize;
   if (size <= 0) return EMPTY_LAIR_SURVEY;
@@ -686,6 +783,7 @@ export function surveyLairs(
           scratch.queue,
           seedIndex,
           regions.length,
+          fitRules,
         ),
       );
     }

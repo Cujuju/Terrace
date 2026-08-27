@@ -75,6 +75,7 @@ import {
   WATER_HABITAT,
   habitatBoundaryHeight,
   type HabitatRegime,
+  type LairFitRule,
 } from './habitat.ts';
 
 /**
@@ -560,6 +561,25 @@ export const YETI_FOOTPRINT_CELLS = cellsAcross(1.2031547978277752);
  * occupies nearly half his own lair, exactly as he did at 25-against-56. A lair
  * he fills is not a lair, and further cuts should move his SIZE, which this
  * constant follows, rather than this divisor.
+ *
+ * FOURTH AMENDMENT (2026-08-26) — THE NUMBER IS UNCHANGED AND IS NO LONGER THE
+ * WHOLE BAR. A cell count says how much snow a region holds and nothing about
+ * its SHAPE, and the two came apart: a 52-cell ribbon one cell wide cleared this
+ * threshold, so the yeti was summoned onto a cell his body does not fit on and
+ * lived out his life in lurk.ts's pinched-body fallback with his flanks in the
+ * rock. Since today a region must ALSO contain at least one cell whose CENTRED
+ * BODY POSE is entirely snow (habitat.ts's LairFitRule, counted by the survey
+ * into LairRegion.fittingCells and required by summoning.ts's bestLairFor), and
+ * the summon cell is picked from exactly those cells.
+ *
+ * THE ARITHMETIC THAT SAYS THE TWO BARS ARE COMPATIBLE, at today's numbers: 52
+ * cells is a square ~7.2 cells across; the yeti is YETI_FOOTPRINT_CELLS = 4.81
+ * across, so the fitting core of such a square — the set of centres whose whole
+ * body is inside it — is ~7.2 − 4.81 ≈ 2.4 cells across, about 6 cells. He fits,
+ * with roughly his own radius of room to travel in. That is thin, and it is the
+ * owner's dial to raise if a yeti in a minimum lair reads as caged; this
+ * amendment deliberately does NOT move the number, only stops the degenerate
+ * shapes that cleared it.
  */
 
 /**
@@ -996,4 +1016,41 @@ const KINDS_BY_HABITAT: ReadonlyMap<HabitatRegime, readonly MonsterKind[]> = new
 
 export function kindsInHabitat(regime: HabitatRegime): readonly MonsterKind[] {
   return KINDS_BY_HABITAT.get(regime) ?? [];
+}
+
+/**
+ * The whole-body admission rules of one habitat's kinds, in the same
+ * SUMMON_ORDER `kindsInHabitat` reports them in — what `surveyLairs` counts
+ * fitting cells against (2026-08-26).
+ *
+ * Precomputed beside KINDS_BY_HABITAT and for the same reason: it is a fixed
+ * property of the table, and the survey asks for it on an interval forever.
+ * Derived from the profiles rather than restated, so a kind that changes size
+ * or depth bar changes the rule the survey counts by in the same edit.
+ */
+const LAIR_FIT_RULES_BY_HABITAT: ReadonlyMap<HabitatRegime, readonly LairFitRule[]> = new Map(
+  HABITAT_REGIMES.map((regime) => [
+    regime,
+    kindsInHabitat(regime).map((kind) => ({
+      radiusCells: bodyRadiusCells(MONSTER_PROFILES[kind]),
+      minReachBands: MONSTER_PROFILES[kind].minLairReachBands,
+    })),
+  ]),
+);
+
+export function lairFitRulesInHabitat(regime: HabitatRegime): readonly LairFitRule[] {
+  return LAIR_FIT_RULES_BY_HABITAT.get(regime) ?? [];
+}
+
+/**
+ * Where this kind sits in its own habitat's lists — the index that reads its
+ * row out of `LairRegion.fittingCells`, and the ONE place the alignment between
+ * `kindsInHabitat`, `lairFitRulesInHabitat` and that array is stated.
+ *
+ * -1 is unreachable for a kind of the table (every kind is in exactly one
+ * habitat's list by construction); it is what `indexOf` returns and the caller
+ * reads it as "no fitting count", which fails closed.
+ */
+export function habitatKindIndex(kind: MonsterKind): number {
+  return kindsInHabitat(MONSTER_PROFILES[kind].habitat).indexOf(kind);
 }
