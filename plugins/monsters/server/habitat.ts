@@ -387,10 +387,10 @@ export interface LairRegion {
   /** Height of that cell: the furthest into the habitat the region gets. */
   readonly extremeHeight: number;
   /**
-   * How many cells of this region a monster obeying each of the survey's
-   * `fitRules` could actually be summoned onto — index-aligned with the rule
-   * list handed to `surveyLairs`, and empty for a survey that was asked for no
-   * rules at all.
+   * How many cells of this region each of the survey's `fitRules` FITS ON — its
+   * body, centred on the cell, entirely inside the habitat. Index-aligned with
+   * the rule list handed to `surveyLairs`, and empty for a survey that was asked
+   * for no rules at all.
    *
    * ADDED 2026-08-26, and it is the missing half of the admission test. A
    * region used to be admitted on `cells` alone, which counts CELLS and not
@@ -399,24 +399,46 @@ export interface LairRegion {
    * and spent his whole life in lurk.ts's clearance-0 fallback with his flanks
    * in the rock. `cells >= minLairCells` is a bar on AREA; this is the bar on
    * SHAPE, and a lair has to clear both.
+   *
+   * IT IS THE ROOM TO ROAM, and deliberately ignores the rule's `minReachBands`
+   * — see `summonableCells` for the other count and why they are two.
    */
   readonly fittingCells: readonly number[];
+  /**
+   * How many cells of this region each rule could be SUMMONED onto: the same
+   * pose test, AND the rule's own `minReachBands`. Index-aligned the same way.
+   *
+   * TWO COUNTS, BECAUSE ARRIVING AND LIVING ARE DIFFERENT QUESTIONS, and the
+   * kraken is the kind that proves it. He must ARRIVE in a trench 31 bands down
+   * — a natural ocean floor shows perhaps 177 such cells — but he LIVES in deep
+   * water, which is the whole basin: lurk.ts steers him against `isLairPose`
+   * against the habitat and has never once read `minLairReachBands`. Counting
+   * one number for both would have forced a choice between two settled rules —
+   * either the yeti keeps being born in shapes he does not fit, or the owner's
+   * 2026-08-19 "the natural ocean floor admits the kraken, no manual dig"
+   * quietly stops being true.
+   *
+   * `summonableCells` is what stops a REFUSAL from becoming a LOOP: a region
+   * with room to roam but no cell that also clears the depth bar would be
+   * admitted by gate 3 and then found empty by `summonCellIn`, whose answer to
+   * that is `invalidateSurvey()` — a re-survey on every roll, forever. Gate 3
+   * requires at least one, so the region is refused instead of retried.
+   *
+   * The two share their expensive half: one pose test per cell per rule feeds
+   * both counters.
+   */
+  readonly summonableCells: readonly number[];
 }
 
 /**
- * One kind's whole-body admission rule, as the survey must count it: a cell is
- * a place this kind could be SUMMONED onto when it reaches far enough into the
- * habitat AND the kind's body, centred on that cell, is entirely inside the
- * habitat.
+ * One kind's whole-body rule, as the survey must count it (2026-08-26): how wide
+ * its body is, and how far into the habitat a cell must reach before that kind
+ * may be summoned onto it.
  *
- * BOTH HALVES, in one rule, deliberately (2026-08-26). Counting fit alone would
- * leave the same re-survey loop this pair of fields exists to close, one kind
- * over: the kraken's admission bar is a trench (7 bands) while most of a basin
- * that FITS him is ordinary deep water, so a region can hold plenty of cells he
- * fits in, plenty he qualifies for, and none that are both — and summoning.ts
- * would then find no candidate, invalidate the survey and burn a roll every
- * time one fired. The two questions are asked of the same cell here so the
- * count means exactly "cells summoning.ts could pick".
+ * The two are asked of every cell of every region and feed the two counts on
+ * LairRegion: the pose alone gives `fittingCells` (room to roam), the pose AND
+ * the reach give `summonableCells` (somewhere to arrive). See those fields for
+ * why one number could not have served both.
  *
  * The centre offset the fit is measured at is +0.5 (CELL_CENTRE_OFFSET), because
  * that is where `summon` places the animal.
@@ -528,8 +550,9 @@ function floodRegion(
   let extremeHeight = 0;
   let extremeX = seedIndex % size;
   let extremeY = (seedIndex - extremeX) / size;
-  /** One running count per fit rule; see LairRegion.fittingCells. */
+  /** One running count per fit rule each; see LairRegion.fittingCells. */
   const fittingCells = fitRules.map(() => 0);
+  const summonableCells = fitRules.map(() => 0);
 
   while (head < tail) {
     const index = queue[head++];
@@ -557,18 +580,13 @@ function floodRegion(
     // re-derived at every summon roll.
     for (let rule = 0; rule < fitRules.length; rule++) {
       const { radiusCells, minReachBands } = fitRules[rule]!;
-      if (!reachesIntoHabitat(regime, height, minReachBands)) continue;
       if (
-        isLairPose(
-          regime,
-          world,
-          x + CELL_CENTRE_OFFSET,
-          y + CELL_CENTRE_OFFSET,
-          radiusCells,
-        )
+        !isLairPose(regime, world, x + CELL_CENTRE_OFFSET, y + CELL_CENTRE_OFFSET, radiusCells)
       ) {
-        fittingCells[rule]!++;
+        continue;
       }
+      fittingCells[rule]!++;
+      if (reachesIntoHabitat(regime, height, minReachBands)) summonableCells[rule]!++;
     }
 
     // 4-neighbourhood, in a fixed order: west, east, north, south.
@@ -594,7 +612,7 @@ function floodRegion(
     }
   }
 
-  return { cells, x: extremeX, y: extremeY, extremeHeight, fittingCells };
+  return { cells, x: extremeX, y: extremeY, extremeHeight, fittingCells, summonableCells };
 }
 
 /**
@@ -735,8 +753,8 @@ export function qualifyingCellsIn(
  * input would make every failure in this plugin harder to read.
  *
  * `fitRules` (2026-08-26) is the per-kind whole-body admission rule, ONE ROW PER
- * KIND OF THIS HABITAT in the caller's order, and every region comes back with a
- * count of the cells that satisfy each (LairRegion.fittingCells).
+ * KIND OF THIS HABITAT in the caller's order, and every region comes back with
+ * two counts against each (LairRegion.fittingCells and summonableCells).
  *
  * WHY THE CALLER PASSES A LIST RATHER THAN THE SURVEY KNOWING ONE RADIUS. The
  * survey is per HABITAT and the kinds sharing a habitat have different bodies
@@ -747,7 +765,7 @@ export function qualifyingCellsIn(
  * for HIM: a bar written for one animal, inherited by another. A list keeps each
  * kind's rule its own, at the cost of one extra pose test per cell per kind.
  *
- * The default is NO RULES, which reports `fittingCells: []` — for the tests and
+ * The default is NO RULES, which reports both counts empty — for the tests and
  * for any caller that only wants sizes and connectivity. `bestLairFor`
  * (summoning.ts) treats a missing entry as zero fitting cells, so forgetting the
  * argument refuses summons rather than silently permitting pinched ones.

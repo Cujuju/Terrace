@@ -499,7 +499,7 @@ export function enforceHabitat(world: LairWorld): boolean {
  * region in scan order, which is fixed (habitat.ts), so two runs over the same
  * world pick the same lair.
  *
- * THE FIT TEST IS PART OF THIS GATE (2026-08-26), not of the summon that
+ * THE FIT TESTS ARE PART OF THIS GATE (2026-08-26), not of the summon that
  * follows it, and that placement is the point. `minLairCells` is a bar on how
  * much habitat a region holds; a region can clear it and still contain no cell
  * this kind's BODY fits on — a 52-cell snow ribbon one cell wide is the case
@@ -509,11 +509,24 @@ export function enforceHabitat(world: LairWorld): boolean {
  * on a region that will never be summonable: a loop, not a refusal. Refusing
  * the region is the refusal.
  *
+ * TWO OF THEM, because the survey counts two things (habitat.ts): the room this
+ * kind has to ROAM (`fittingCells`, poses its body fits in anywhere in the
+ * region) and the cells it may ARRIVE on (`summonableCells`, those same poses
+ * that also clear its own `minLairReachBands`). The roam count is the owner's
+ * bar below; the arrival count only has to be non-zero, and that is the clause
+ * that keeps `summonCellIn`'s null a refusal rather than the loop above.
+ *
  * IT COSTS NOTHING PER TICK because the survey already counted it: the walk
  * that measured the region tested each of its cells against each kind's
  * LairFitRule (habitat.ts) once per LAIR_SURVEY_INTERVAL_SECONDS. Re-deriving
  * it here would be a flood fill per candidate region per tick while the slot
  * is empty, which is the shape of cost this gate exists to stay out of.
+ *
+ * HOW MANY FITTING CELLS ARE ENOUGH is the kind's own `minLairFittingCells`
+ * (owner decision, 2026-08-26): one body's worth of area, so the bar is not
+ * merely "it fits" but "it can roam at least the ground it occupies". One
+ * fitting cell would have left a lair the animal fills exactly, which is the
+ * pinched case again a hair less literally.
  *
  * A survey taken WITHOUT fit rules reports no count for this kind, which reads
  * as zero and refuses — see surveyLairs on why that direction is the safe one.
@@ -528,7 +541,8 @@ function bestLairFor(kind: MonsterKind): LairRegion | null {
     if (!reachesIntoHabitat(profile.habitat, region.extremeHeight, profile.minLairReachBands)) {
       continue;
     }
-    if ((region.fittingCells[fitIndex] ?? 0) <= 0) continue;
+    if ((region.fittingCells[fitIndex] ?? 0) < profile.minLairFittingCells) continue;
+    if ((region.summonableCells[fitIndex] ?? 0) <= 0) continue;
     if (best !== null && region.cells <= best.cells) continue;
     best = region;
   }
