@@ -342,13 +342,44 @@ const GENESIS_BASELINE_MAX_BAND_OFFSET =
   GENESIS_NOISE_MAX_BAND_OFFSET / GENESIS_BASELINE_CEILING_DIVISOR;
 
 /**
- * One octave's lattice: row-major integer band offsets, `cols` wide and tall.
- * The offsets are ZERO-MEAN WANDER, not heights — the world's baseline is added
+ * Fixed-point units in ONE terrace band, for the octave sum — and the fix for
+ * the faceted coasts of GH #204.
+ *
+ * THE DEFECT. `octaveBandAt` used to floor EACH octave to whole bands before
+ * `genesisNoiseRawBandAt` summed them. The two finest octaves have amplitudes
+ * of at most 3.5 and 1.75 bands, so flooring them individually turned each into
+ * a staircase of 0/±1 plateaus, and the EDGE of such a plateau is a level set
+ * of the bilinear interpolant on that octave's 32- or 16-cell lattice — a
+ * straight line along a lattice row, column or diagonal. Every coastline in the
+ * world inherited those lines and came out as a mosaic of triangles.
+ *
+ * THE FIX. Every octave is summed at 1/256 of a band and the sum is floored
+ * ONCE, in `genesisNoiseRawBandAt`. Each octave then contributes its real
+ * fractional wander to the total instead of a quantised plateau, so a band
+ * boundary falls where the SUM crosses it rather than where one octave's
+ * lattice does.
+ *
+ * 256 = 2^8, so the scaling is exact in binary and nothing accumulates a float
+ * error: the offsets are integers, the interpolation products are integers (the
+ * largest is 28 bands × 256 × 256 × 256 ≈ 4.7e8, well inside exact integer
+ * range), and the two divisions are floors. The determinism contract is
+ * unchanged.
+ */
+const GENESIS_BAND_FIXED_POINT_ONE = 256;
+
+/**
+ * One octave's lattice: row-major integer band offsets in
+ * GENESIS_BAND_FIXED_POINT_ONE units per band, `cols` wide and tall. The
+ * offsets are ZERO-MEAN WANDER, not heights — the world's baseline is added
  * once, by `genesisNoiseBandAt`, rather than once per octave.
+ *
+ * Int32Array rather than Int16Array because the fixed-point scaling multiplies
+ * every offset by 256: the coarsest octave's ±28 bands become ±7168, which
+ * still fits an Int16, but a future amplitude change should not silently wrap.
  */
 interface GenesisNoiseOctave {
   readonly spacingCells: number;
-  readonly bandOffsets: Int16Array;
+  readonly bandOffsets: Int32Array;
   readonly cols: number;
 }
 
@@ -412,11 +443,17 @@ function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseFi
     // +2, not +1: interpolation reads lattice[gx + 1], so the grid needs one
     // more column/row than the number of spacing-steps across the world.
     const cols = Math.floor((size - 1) / spacingCells) + 2;
-    const bandOffsets = new Int16Array(cols * cols);
+    const bandOffsets = new Int32Array(cols * cols);
     for (let j = 0; j < cols; j++) {
       const row = j * cols;
       for (let i = 0; i < cols; i++) {
-        bandOffsets[row + i] = Math.round((rng() * 2 - 1) * amplitude);
+        // Rounded to GENESIS_BAND_FIXED_POINT_ONE units of a band, not to whole
+        // bands: the fine octaves' whole amplitude is a few bands, and rounding
+        // them to bands here is half of what faceted the coasts (#204). Same
+        // draw, same order, same count — only the scale changed.
+        bandOffsets[row + i] = Math.round(
+          (rng() * 2 - 1) * amplitude * GENESIS_BAND_FIXED_POINT_ONE,
+        );
       }
     }
     return { spacingCells, bandOffsets, cols };
@@ -426,11 +463,16 @@ function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseFi
 }
 
 /**
- * Bilinearly interpolated band offset of ONE octave at one cell, entirely in
- * integer arithmetic: the interpolation weights are the integer cell-within-
- * lattice-square offsets `fx`/`fy` (each in `[0, spacing)`) rather than a
- * `[0, 1)` float, so every intermediate product is an exact integer and the one
- * division at the end is the only place rounding happens.
+ * Bilinearly interpolated wander of ONE octave at one cell, in
+ * GENESIS_BAND_FIXED_POINT_ONE units per band — NOT in whole bands. The caller
+ * sums the octaves at this scale and floors the total once; see
+ * GENESIS_BAND_FIXED_POINT_ONE for why flooring here instead was #204.
+ *
+ * Entirely integer arithmetic: the interpolation weights are the integer
+ * cell-within-lattice-square offsets `fx`/`fy` (each in `[0, spacing)`) rather
+ * than a `[0, 1)` float, so every intermediate product is an exact integer and
+ * the one division at the end is the only place rounding happens — and it now
+ * rounds at 1/256 of a band rather than at a whole one.
  */
 function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number {
   const spacing = octave.spacingCells;
@@ -462,9 +504,17 @@ function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number 
  * has not already folded together.
  */
 function genesisNoiseRawBandAt(field: GenesisNoiseField, x: number, y: number): number {
-  let bands = field.baselineBandOffset + field.landLiftBands;
-  for (const octave of field.octaves) bands += octaveBandAt(octave, x, y);
-  return bands;
+  // The octaves are summed at GENESIS_BAND_FIXED_POINT_ONE units per band and
+  // floored ONCE, here. The baseline and the land lift are already whole bands
+  // and stay outside the division, so a lift still moves the field by exactly
+  // the bands it says it does.
+  let wanderFixed = 0;
+  for (const octave of field.octaves) wanderFixed += octaveBandAt(octave, x, y);
+  return (
+    field.baselineBandOffset +
+    field.landLiftBands +
+    Math.floor(wanderFixed / GENESIS_BAND_FIXED_POINT_ONE)
+  );
 }
 
 /**
