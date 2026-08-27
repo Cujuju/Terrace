@@ -33,7 +33,7 @@ import {
   chunksPerEdge,
   seabedHeight,
 } from '@terrace/shared';
-import { HEIGHT_WORLD_SCALE } from '../config.ts';
+import { HEIGHT_WORLD_SCALE, ORDINARY_SEA_DEPTH_BANDS } from '../config.ts';
 import { type TerrainMirror } from './mirror.ts';
 
 /**
@@ -121,6 +121,11 @@ export const WATER_DEPTH_SATURATION_WORLD_UNITS =
  * p95 is trench, and a trench riding the WATER_MAX_ALPHA plateau is the
  * behaviour the plateau was always for.
  *
+ * SUPERSEDED THE NEXT DAY (2026-08-26) as a literal: the same mistake turned
+ * up in the seabed palette, so the measured boundary now lives once, in
+ * config.ts's ORDINARY_SEA_DEPTH_BANDS, and this ramp derives from it like
+ * every other depth curve. The number moved 14 → 15 with the re-measurement.
+ *
  * WHY THE SPECULAR BOUNDARY DID NOT MOVE WITH IT. depthToSpecularFactor keeps
  * WATER_DEPTH_SATURATION_WORLD_UNITS: its flatness across the ENTIRE ordinary
  * sea column is a shipped correction (the 2026-08-20 milky-water fix), and the
@@ -128,7 +133,7 @@ export const WATER_DEPTH_SATURATION_WORLD_UNITS =
  * suppression at p95 instead would strip the sheen from open water — the exact
  * regression that fix exists to prevent. Two questions, two constants.
  */
-const WATER_ALPHA_SATURATION_BANDS = 14;
+const WATER_ALPHA_SATURATION_BANDS = ORDINARY_SEA_DEPTH_BANDS;
 export const WATER_ALPHA_SATURATION_WORLD_UNITS =
   WATER_ALPHA_SATURATION_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 

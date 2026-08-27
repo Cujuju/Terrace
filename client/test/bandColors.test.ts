@@ -9,6 +9,7 @@ import {
   bandOf,
   isWater,
 } from '@terrace/shared';
+import { ORDINARY_SEA_DEPTH_BANDS } from '../src/config.ts';
 import {
   BLUE_SEABED_STOPS,
   CLIFF_PALETTE,
@@ -304,8 +305,22 @@ describe('the 8-bit vertex format the ramp is stored in (2026-08-20)', () => {
     // column, and within the rock, must still fall once stored as bytes — the
     // float-level version of this is pinned above, and it would be worth
     // nothing if the buffer could not carry it.
-    for (let stop = 1; stop < BLUE_SEABED_STOPS; stop++) {
+    //
+    // AMENDED 2026-08-26, when the ocean colours moved to the depths the ocean
+    // actually has (ORDINARY_SEA_DEPTH_BANDS). Strictness holds, per byte,
+    // through the whole ordinary sea — the stops a player looks at — and the
+    // abyss below it (bands 16-64, 0.3% of a measured world's water) must
+    // never brighten, but with eight colours spread over forty-nine bands the
+    // 8-bit format cannot separate every adjacent trench stop and the ramp no
+    // longer pretends it does. The old contract was only ever satisfied by
+    // spending the ocean's colours on the trench.
+    for (let stop = 1; stop <= ORDINARY_SEA_DEPTH_BANDS; stop++) {
       expect(sum(bytes(TERRAIN_PALETTE[stop], (c) => c))).toBeLessThan(
+        sum(bytes(TERRAIN_PALETTE[stop - 1], (c) => c)),
+      );
+    }
+    for (let stop = ORDINARY_SEA_DEPTH_BANDS + 1; stop < BLUE_SEABED_STOPS; stop++) {
+      expect(sum(bytes(TERRAIN_PALETTE[stop], (c) => c))).toBeLessThanOrEqual(
         sum(bytes(TERRAIN_PALETTE[stop - 1], (c) => c)),
       );
     }
