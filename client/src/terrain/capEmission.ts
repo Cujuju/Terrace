@@ -1648,12 +1648,16 @@ function collapseTail(buffers: ChunkGeometryBuffers, vertexCount: number): void 
 }
 
 // ---------------------------------------------------------------------------
-// Test-facing helpers
+// Outline helpers — for tests, and for overlays that must draw the same lips
 //
 // The geometry is subtle enough that tests need to talk about contours, not
 // only about the float soup they turn into. These are the same functions the
 // builder runs, exposed so a test can assert the shape of a band's outline
 // directly (and, for the seam contract, compare two chunks' border vertices).
+//
+// render/layerEdgeOverlay.ts is a real consumer of chunkBandContourLoops: an
+// overlay that claims to show grabbable lips must march the field the mesh
+// marched, not a lookalike of it.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1693,6 +1697,25 @@ export function chunkCapTriangles(
   return triangles;
 }
 
+/**
+ * Assembles whatever the last `marchLevel` left in the scratch into smoothed,
+ * border-flagged loops. Shared by every "give me a chunk's outline" entry point
+ * below so they cannot drift apart in how they close, smooth or flag a loop.
+ */
+function finishLoops(
+  segmentCount: number,
+  originX: number,
+  originZ: number,
+  wholeInside: boolean,
+): { x: number; z: number; onBorder: boolean }[][] {
+  return assembleLoops(segmentCount, originX, originZ, wholeInside)
+    .map(smoothLoop)
+    .filter((loop) => loop.length >= 3)
+    .map((loop) =>
+      loop.map((p) => ({ x: p.x, z: p.z, onBorder: p.rect !== RECT_NONE })),
+    );
+}
+
 /** The smoothed outline of `{height ≥ threshold}` for one chunk. */
 export function chunkContourLoops(
   mirror: TerrainMirror,
@@ -1705,12 +1728,47 @@ export function chunkContourLoops(
   const originZ = cy * CHUNK_SIZE;
   loadSamples(mirror, originX, originZ);
   const segmentCount = marchLevel(threshold, originX, originZ, crossingOverride);
-  const wholeInside = samples[0] >= threshold;
-  return assembleLoops(segmentCount, originX, originZ, wholeInside)
-    .map(smoothLoop)
-    .filter((loop) => loop.length >= 3)
-    .map((loop) =>
-      loop.map((p) => ({ x: p.x, z: p.z, onBorder: p.rect !== RECT_NONE })),
-    );
+  return finishLoops(segmentCount, originX, originZ, samples[0] >= threshold);
+}
+
+/**
+ * The smoothed outline of `{solid at band k}` for one chunk — the lip the cap
+ * of that band is drawn along.
+ *
+ * THE FIELD planChunkCaps MARCHES, not a second opinion about it. A band
+ * level's cap is the contour of `sampleRenderBandHeight(…, k) ≥ k·BAND_HEIGHT`,
+ * and columnSampleAtBand's contract is that this test IS "solid at band k": it
+ * returns the ceiling of the span filling the band, and when the band is OPEN
+ * it returns the ceiling of the highest span below, which is under the
+ * threshold by construction. So a column with a gap carved under a roof reads
+ * as outside at the gap's bands, and the outline breaks at the opening exactly
+ * where the mesh's cap does.
+ *
+ * WHY NOT the binary solidity field marchCeiling loads. A yes/no field has no
+ * heights to interpolate between, so its crossings must be placed by a fixed
+ * fraction (CEILING_EDGE_CROSSING) and the outline lands on cell midpoints
+ * instead of following the cap. Same region, wrong geometry — and every
+ * unlayered lip in the world would visibly shift. The height field above gives
+ * the same solidity answer with the drawn geometry, and on a column of one span
+ * it is the plain height lattice, unchanged.
+ *
+ * HAZARD — runs the shared march scratch (contours.ts) synchronously start to
+ * finish. Must not be interleaved with another marcher.
+ */
+export function chunkBandContourLoops(
+  mirror: TerrainMirror,
+  cx: number,
+  cy: number,
+  band: number,
+): { x: number; z: number; onBorder: boolean }[][] {
+  const originX = cx * CHUNK_SIZE;
+  const originZ = cy * CHUNK_SIZE;
+  loadSampleField(
+    (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+    CHUNK_SIZE,
+  );
+  const threshold = band * BAND_HEIGHT;
+  const segmentCount = marchLevel(threshold, originX, originZ, null);
+  return finishLoops(segmentCount, originX, originZ, samples[0] >= threshold);
 }
 

@@ -4,6 +4,7 @@
 //
 //   ?view=<iso|mouth|inside|cave|top>  — camera angle; defaults to "iso"
 //   ?zoom=<number>                     — distance multiplier; defaults to 1
+//   ?edges=1                           — draw render/layerEdgeOverlay.ts on top
 //
 // WHAT THIS EXISTS TO SHOW, and why the live client could not. Step 3 of the
 // layered-column work (#129) asks one question: does the terraced look — the
@@ -46,6 +47,7 @@ import {
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
+import { createLayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { archFixtureAim, carveArchFixture } from './terrain/archFixture.ts';
 
 // ── Lighting rig, copied from previewRivers.ts / render/scene.ts ─────────────
@@ -122,6 +124,16 @@ function readView(): CameraView {
   return raw !== null && raw in CAMERA_VIEWS ? (raw as CameraView) : 'iso';
 }
 
+/**
+ * Whether to draw the layer-edge overlay over the fixture. Off by default: the
+ * fixture's own job is the terraced look, and cyan contour lines over it would
+ * change every existing shot. On, this is the only place a carved opening and
+ * the overlay that claims to show grabbable lips appear in the same frame.
+ */
+function readEdges(): boolean {
+  return query.get('edges') === '1';
+}
+
 function readZoom(): number {
   const raw = Number(query.get('zoom'));
   return Number.isFinite(raw) && raw > 0 ? raw : 1;
@@ -182,6 +194,9 @@ scene.add(terrainGroup);
 const meshes = createTerrainMeshes(terrainGroup, mirror);
 meshes.update(allChunks);
 meshes.flush();
+
+const edgeOverlay = readEdges() ? createLayerEdgeOverlay(terrainGroup, mirror, PREVIEW_WORLD_SIZE) : null;
+edgeOverlay?.update(allChunks);
 
 const aim = archFixtureAim(PREVIEW_WORLD_SIZE);
 const view = readView();

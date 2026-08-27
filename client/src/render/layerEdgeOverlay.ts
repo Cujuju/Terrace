@@ -2,13 +2,21 @@
 // (owner, 2026-08-23: "I wanted you to actually draw it on the map as to what
 // the map knows in regards to what I could click to start dragging a layer").
 //
-// WHAT IT DRAWS, AND WHY THAT IS THE HONEST ANSWER. A "layer" is the region
-// {height ≥ k·BAND_HEIGHT}; its edge is the marching-squares contour of that
-// region, and that contour is ALREADY the thing the terrain mesh is built from
-// (terrain/capEmission.ts's chunkContourLoops → the same loops that become cap
+// WHAT IT DRAWS, AND WHY THAT IS THE HONEST ANSWER. A "layer" at band k is the
+// region {the column is SOLID at band k}; its edge is the marching-squares
+// contour of that region, and that contour is ALREADY the thing the terrain
+// mesh is built from (terrain/capEmission.ts's chunkBandContourLoops marches
+// the very field planChunkCaps marches → the same loops that become cap
 // outlines and skirt tops). So this overlay does not invent a grab model: it
 // exposes the geometry the renderer already computes, at the exact height the
 // lip is drawn at. If a line is here, the map genuinely knows about that edge.
+//
+// IT USED TO BE {height ≥ k·BAND_HEIGHT} — the top surface only — and that was
+// the same statement while every column held one solid span. Once a column
+// became a LIST of spans (shared/src/columns.ts) and the carve tool opened a
+// gap under a roof, the two parted: the top height still says "solid" over a
+// tunnel mouth, so the overlay drew its cyan line straight across an opening
+// the mesh had left open. Per band solidity is the field that cannot say that.
 //
 // HOW IT DIFFERS FROM render/pickDebugOverlay.ts. That one answers "what did
 // the PICKER name" — one cell, because a cell plus a riser/cap flag is all
@@ -33,9 +41,17 @@
 
 import { BufferAttribute, BufferGeometry, LineBasicMaterial, LineSegments } from 'three';
 import type { Object3D } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE, bandOf } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  CHUNK_SIZE,
+  bandOf,
+  isSpanDrawn,
+  spanAt,
+  spanCapHeight,
+  spanCount,
+} from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import { chunkContourLoops } from '../terrain/capEmission.ts';
+import { chunkBandContourLoops } from '../terrain/capEmission.ts';
 import { hasChunk, sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
 
 /**
@@ -159,7 +175,24 @@ export function createLayerEdgeOverlay(
     meshes.delete(idx);
   };
 
-  /** The inclusive band range this chunk spans, or null if it has no cells. */
+  /**
+   * The inclusive band range whose contours can be non-empty here, or null if
+   * the chunk has no cells.
+   *
+   * `hi` is the highest band any column reaches: nothing is solid above it, so
+   * every higher contour is empty.
+   *
+   * `lo` IS NOT THE LOWEST TOP SURFACE, and that distinction is the whole
+   * carve fix. The old rule was "every column is solid at every band up to the
+   * lowest top, so contours below that are empty" — true only while a column
+   * was one unbroken span. A carved column is open at the bands of its gap,
+   * which can sit BELOW every top surface in the chunk (a flat plateau with a
+   * tunnel through it has one top band and a hole several bands under it), and
+   * a range starting at the lowest top would skip exactly the bands where the
+   * opening lives. So `lo` is the lowest band a column is solid up to WITHOUT
+   * a break: the cap of its lowest drawn span, which for an unlayered column
+   * is its top surface — the old rule, restated so it survives a gap.
+   */
   const bandRange = (cx: number, cy: number): { lo: number; hi: number } | null => {
     const originX = cx * CHUNK_SIZE;
     const originZ = cy * CHUNK_SIZE;
@@ -167,9 +200,22 @@ export function createLayerEdgeOverlay(
     let hi = Number.NEGATIVE_INFINITY;
     for (let ly = 0; ly < CHUNK_SIZE; ly++) {
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-        const h = sampleHeight(mirror, originX + lx, originZ + ly);
-        if (h < lo) lo = h;
+        const x = originX + lx;
+        const y = originZ + ly;
+        const h = sampleHeight(mirror, x, y);
         if (h > hi) hi = h;
+        // The unbroken-solid ceiling of this column: its lowest DRAWN span's
+        // cap. A column with no drawn span at all (fully buried by the
+        // seabed's own rules) contributes its top height, as before.
+        let unbrokenTo = h;
+        const count = spanCount(mirror.map, x, y);
+        for (let k = 0; k < count; k++) {
+          const span = spanAt(mirror.map, x, y, k);
+          if (!isSpanDrawn(span)) continue;
+          unbrokenTo = spanCapHeight(span);
+          break;
+        }
+        if (unbrokenTo < lo) lo = unbrokenTo;
       }
     }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
@@ -213,12 +259,12 @@ export function createLayerEdgeOverlay(
     const positions: number[] = [];
     const perBand = new Map<number, number[]>();
     // A contour exists at each band FLOOR above the chunk's lowest band: the
-    // boundary of {h ≥ k·BAND_HEIGHT} is empty for k at or below the minimum
-    // (everything is inside) and for k above the maximum (nothing is).
+    // boundary of {solid at band k} is empty for k at or below the minimum
+    // (every column is solid there, unbroken — see bandRange) and for k above
+    // the maximum (nothing is solid that high).
     for (let k = range.lo + 1; k <= range.hi; k++) {
-      const threshold = k * BAND_HEIGHT;
-      const y = threshold * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
-      for (const loop of chunkContourLoops(mirror, cx, cy, threshold)) {
+      const y = k * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
+      for (const loop of chunkBandContourLoops(mirror, cx, cy, k)) {
         for (let i = 0; i < loop.length; i++) {
           const a = loop[i]!;
           const b = loop[(i + 1) % loop.length]!;
