@@ -14,6 +14,15 @@
 // banished for it (see isStranded below). It never MOVED there, so the contract
 // is intact; what it does about it is a separate rule.
 //
+// NOWHERE TO GO IS ALWAYS ANSWERED BY HOLDING STILL (2026-08-26). Whether the
+// habitat has left from under the animal (stranded) or merely closed in around
+// it (every candidate step illegal), the answer is the same: keep the position,
+// keep the noise-drifted heading, look again next tick. It used to be the same
+// only for the first of those, and the second reversed by π at the tick rate —
+// which is not a decision an animal makes, it is a weathervane. Nothing about
+// being wedged changes between two ticks, so nothing about the response should
+// either.
+//
 // Everything is scaled by the host's `dt`. There is no wall clock in this file.
 
 import {
@@ -21,7 +30,7 @@ import {
   AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
   UNCONSTRAINED_GRADIENT_PER_CELL,
   normalizeAngle as sharedNormalizeAngle,
-  steerAvoiding,
+  steerWithShorteningProbe,
   withoutSelf,
   type Occupant,
   type TraversalProfile,
@@ -115,6 +124,24 @@ export function lookaheadCellsFor(profile: MonsterProfile): number {
  * `clearanceCells` is the body radius the pose must keep clear, and passing 0
  * asks the old centre-point question (see `advanceMonster` for when, and why,
  * it does exactly that).
+ *
+ * A LADDER OF SHORTENING PROBES SINCE 2026-08-26, not a single probe at
+ * `lookahead`. This used to call shared's `steerAvoiding` directly, which asks
+ * one question: is the whole body legal `lookahead` cells ahead? For the yeti
+ * that is a body 4.81 cells across, centred 2.41 cells out — snow required to
+ * ~4.8 cells ahead — and in a lair near YETI_MIN_LAIR_SNOW_CELLS there is
+ * simply no such heading from anywhere off-centre. All eight candidates failed
+ * every tick, and the blocked-path answer spun him on the spot while a legal
+ * one-tick step of 0.032 cells existed in most directions: near-sighted about a
+ * place he could perfectly well have walked to.
+ *
+ * `steerWithShorteningProbe` (shared) is the fix shared already made for fish
+ * and boats on 2026-08-24 for exactly this failure — full probe, then half,
+ * then one tick's travel — and this plugin was the last mover not using it.
+ * Its third rung probes at `stepCells`, THE SAME DISTANCE `advanceMonster`'s
+ * destination re-check judges, so a heading this returns can never be vetoed by
+ * that re-check: the two cannot disagree, which is what stops the ladder from
+ * granting an escape the line below revokes.
  */
 export function steerToValidHeading(
   world: LairWorld,
@@ -127,7 +154,7 @@ export function steerToValidHeading(
 ): number | null {
   const profile = profileOf(monster.kind);
   const regime = profile.habitat;
-  return steerAvoiding(world, steeringProfileOf(profile), monster, desired, lookahead, {
+  return steerWithShorteningProbe(world, steeringProfileOf(profile), monster, desired, lookahead, {
     stepCells,
     occupants,
     // A monster's personal space is the radius its own POSE already occupies
@@ -211,13 +238,22 @@ export function isStranded(world: LairWorld, monster: Monster): boolean {
  *
  * STRANDED IS ITS OWN CASE, and it exists because Cthulhu cannot be banished.
  * When the water around him is gone, EVERY candidate heading fails the probe,
- * and the ordinary blocked-path answer — reverse, and try again next tick —
+ * and the blocked-path answer of the day — reverse, and try again next tick —
  * would flip his heading by π ten times a second: on a client that is a monster
  * spinning like a weathervane, which reads as a broken server rather than as a
  * stranded animal. So a stranded monster holds its position AND its heading,
  * drifting only by the turn noise, exactly as if it were idling. It costs one
  * habitat lookup per tick, and if the water ever comes back the probe succeeds
  * again on that tick and he simply swims off.
+ *
+ * AND IT IS NO LONGER THE ONLY CASE THAT ANSWERS THAT WAY (2026-08-26). The
+ * reversal it was written against is gone: a monster that the shortening probe
+ * ladder cannot find a single legal step for does the same thing this case does
+ * — hold, and keep the drifted heading — because the reasoning is identical and
+ * only the reason for having nowhere to go differs (the ground under it versus
+ * the ground around it). This early exit is kept because it is the CHEAPER of
+ * the two: one habitat lookup rather than a full ladder that is certain to fail,
+ * every tick, for the rest of a stranded animal's life.
  */
 export function advanceMonster(
   world: LairWorld,
@@ -274,9 +310,23 @@ export function advanceMonster(
   );
 
   if (steered === null) {
-    // Boxed in on every candidate. Reverse: it is un-wedged next tick without
-    // ever having been placed illegally.
-    monster.heading = normalizeAngle(monster.heading + Math.PI);
+    // Boxed in — and since the 2026-08-26 ladder that is a much stronger
+    // statement than it used to be. `steerToValidHeading` now probes at the
+    // full look-ahead, at half of it, and finally at ONE TICK'S TRAVEL, so null
+    // means there is no legal cell a single step away in ANY of the eight
+    // directions at the current clearance. (And a body that is already pinched
+    // is steering at clearance 0, so for it this is the point sense of trapped:
+    // its own cell is habitat and every neighbour a step away is not.)
+    //
+    // Reversal used to be the answer here and is WRONG for that state: nothing
+    // about the world changes next tick, so the flip repeats at the tick rate
+    // and the animal weathervanes on the spot — the yeti in a small lair, and
+    // the exact failure the stranded case below the header exists to prevent.
+    // Since there is nowhere to go, it does what a stranded monster does: holds
+    // its position, keeps the noise-drifted heading, and tries again next tick.
+    // If the ground opens up — a player sculpts, or the water returns — the
+    // ladder finds a step on that tick and it simply walks off.
+    monster.heading = desired;
     return;
   }
 
@@ -297,6 +347,17 @@ export function advanceMonster(
   // the pinched-body fallback must not then be vetoed here by the strict test,
   // or the escape would be granted and immediately revoked — which is the
   // weathervane again, one line further down.
+  //
+  // KEPT, AND SINCE 2026-08-26 IT SHOULD BE UNREACHABLE. The ladder's third
+  // rung probes at exactly `stepCells` — this destination — so any heading it
+  // returns has already been judged legal at precisely the distance judged
+  // here, and the two can no longer disagree. It stays as the suspenders: the
+  // veto is cheap (one pose test per tick), the invariant it protects is
+  // "a monster is never outside its habitat", and a future change to either
+  // probe distance would otherwise re-open the gap silently. The reversal is
+  // left rather than replaced by the hold above, because reaching this line at
+  // all means the two distances HAVE disagreed and the heading is not one to
+  // keep.
   if (!isLairPose(profile.habitat, world, nextX, nextY, clearance)) {
     monster.heading = normalizeAngle(monster.heading + Math.PI);
     return;
