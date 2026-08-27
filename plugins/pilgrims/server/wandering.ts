@@ -164,7 +164,8 @@ interface Wanderer {
   stuckSeconds: number;
   /** See pilgrimage.ts's PanickingWalker — the fire reaction, all three sims. */
   panicSecondsRemaining: number;
-  panicHeading: number;
+  panicFromX: number;
+  panicFromY: number;
   /** See pilgrimage.ts's Pilgrim.route — same contract, same fallback. */
   route: RouteCell[] | null;
   routeIndex: number;
@@ -363,7 +364,8 @@ export class Wandering {
         visitSeconds: 0,
         stuckSeconds: 0,
         panicSecondsRemaining: 0,
-        panicHeading: 0,
+        panicFromX: 0,
+        panicFromY: 0,
         route,
         routeIndex: 0,
       });

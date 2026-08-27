@@ -260,6 +260,33 @@ function isClearOfOccupants(
  * crossing case is sub-stepping the movement itself, which is a decision about
  * simulation cost that nobody has made. Named rather than hidden, because the
  * arithmetic is the same for any future fast, small mover.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THIS IS ONE RUNG, NOT A STEER. `steerWithShorteningProbe` below is the
+ * steer, and it is the ONLY thing in this repo that should call this.
+ *
+ * The distinction is the whole of a bug that has now been fixed four separate
+ * times, once per mover family, because the two functions sit side by side
+ * with identical signatures and nothing but a name to tell a caller which one
+ * answers "where do I go this tick?":
+ *
+ *   fish     — "stuck in place … presumably because of the contours of the
+ *              seabed" (owner, 2026-08-24)
+ *   boats    — "constantly getting stuck" (owner, 2026-08-24)
+ *   monsters — plugins/monsters/server/lurk.ts, moved to the ladder citing
+ *              the fish fix
+ *   peeps    — issue #215, 2026-08-26: a burning peep pressed into a wall and
+ *              stood there for 4.3 s of an 8 s burn, measured on the wire
+ *
+ * Every one of those was the same near-sightedness — a legal strip of ground
+ * narrower than the look-ahead, refused at every candidate — and every one was
+ * diagnosed from scratch as if it were that plugin's own defect.
+ *
+ * THE INVARIANT, and it is grep-checkable rather than a matter of care:
+ * outside this file, `steerAvoiding` has NO production callers. The only
+ * remaining reference is a test-only helper in wildlife. A new direct caller
+ * in a plugin is the bug returning, and reviewing it costs one search.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 export function steerAvoiding(
   world: TerrainSampler,
@@ -531,8 +558,11 @@ export interface FollowRouteResult {
  *
  * FAILURE DEGRADES, never freezes: with no route at all, the mover steers
  * straight at `goalX`/`goalY` under the same avoidance sweep. That is worse
- * than a planned route — it can stall against a real obstacle — but the
- * caller's give-up timer, fed by `progressed`, is now able to see it.
+ * than a planned route — it can still fail to make headway against a real
+ * obstacle — but the caller's give-up timer, fed by `progressed`, is now able
+ * to see it. Since 2026-08-26 every step here goes down the shortening ladder
+ * (`steerWithShorteningProbe`), so "no headway" means a one-cell pocket rather
+ * than the far commoner case of a legal strip narrower than the look-ahead.
  */
 export function followRoute(
   world: TerrainSampler,
@@ -542,19 +572,61 @@ export function followRoute(
 ): FollowRouteResult {
   const stepOnce = (targetX: number, targetY: number): void => {
     const desired = Math.atan2(targetY - mover.y, targetX - mover.x);
-    const heading = steerAvoiding(world, profile, mover, desired, options.lookaheadCells, options);
-    if (heading === null) return; // boxed in: hold, and let the give-up timer run.
+    // THE LADDER, NOT ONE RUNG OF IT (`steerWithShorteningProbe`, above).
+    //
+    // This called `steerAvoiding` directly until 2026-08-26, which is the same
+    // near-sightedness that stalled fish, then boats, then monsters, and the
+    // reason each of those was moved to the ladder in turn: a follower whose
+    // full probe and half probe both fail held position, and nothing about
+    // that changes next tick, so it held forever. Route-following is if
+    // anything MORE exposed to it than free steering, because the mover is
+    // being aimed at one specific adjacent cell rather than at open ground —
+    // an aim that a strip of legal ground narrower than the look-ahead refuses
+    // at every candidate.
+    //
+    // The give-up timer this used to defer to is not a substitute. It can only
+    // retire the mover; it cannot get one that had somewhere to go moving, and
+    // for a walker whose stuck clock is deliberately not running — a panicking
+    // one (plugins/pilgrims/server/pilgrimage.ts's `panicStep`) — there is no
+    // timer watching at all.
+    const heading = steerWithShorteningProbe(
+      world,
+      profile,
+      mover,
+      desired,
+      options.lookaheadCells,
+      options,
+    );
+    // Null now means a one-cell pocket, not near-sightedness: hold, and let
+    // the give-up timer run.
+    if (heading === null) return;
     mover.heading = heading;
     mover.x += Math.cos(heading) * options.stepCells;
     mover.y += Math.sin(heading) * options.stepCells;
   };
 
-  // ── Degraded: no route. Steer at the goal and report closing on it. ──
+  // ── Degraded: no route. Steer at the goal and report LEAVING THE CELL. ──
+  //
+  // ONE DEFINITION OF PROGRESS FOR BOTH BRANCHES (2026-08-26). This branch used
+  // to report "the straight-line distance to the goal shrank", which is the
+  // measure `FollowRouteResult.progressed` documents as wrong directly above —
+  // an oscillating mover closes that distance every other tick and resets the
+  // give-up timer forever. It was survivable only while a wedged mover could
+  // not move at all; now that every step goes down the shortening ladder, a
+  // mover marooned on a single legal cell CAN inch about inside it (the third
+  // rung probes one tick's travel, which never leaves the cell), and it would
+  // have inched toward the goal often enough never to be given up on.
+  //
+  // Entering a new cell is what the routed branch already means by progress,
+  // and it is the one measure a detour cannot defeat and a twitch cannot fake.
+  // The give-up clock has room for it: at the shipped walk speed one cell is
+  // five ticks (0.5 s) against a PILGRIM_STUCK_SECONDS of 20.
   if (mover.route === null || mover.route.length === 0) {
-    const before = squaredDistance(mover.x, mover.y, options.goalX, options.goalY);
+    const fromCellX = Math.floor(mover.x);
+    const fromCellY = Math.floor(mover.y);
     stepOnce(options.goalX, options.goalY);
-    const after = squaredDistance(mover.x, mover.y, options.goalX, options.goalY);
-    return { progressed: after < before, arrived: false, replanned: false };
+    const moved = Math.floor(mover.x) !== fromCellX || Math.floor(mover.y) !== fromCellY;
+    return { progressed: moved, arrived: false, replanned: false };
   }
 
   // ── 1. Re-sync the index to the cell the mover is actually standing in. ──
@@ -627,8 +699,3 @@ function isRouteEdgeStillLegal(
   return canProceedAlong(world, profile, from.x, from.y, to.x, to.y);
 }
 
-function squaredDistance(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx;
-  const dy = ay - by;
-  return dx * dx + dy * dy;
-}

@@ -176,9 +176,18 @@ describe('followRoute — progress reporting', () => {
     expect(Math.hypot(goalX - walker.x, goalY - walker.y)).toBeGreaterThan(before);
   });
 
-  it('reports no progress for a walker held still by terrain', () => {
-    // An island one cell wide: every heading off it is water, so the sweep
-    // finds nothing and the walker holds — which the give-up timer must see.
+  it('reports no progress for a walker marooned on one cell', () => {
+    // An island one cell wide: every heading OFF it is water, so the walker
+    // can never leave — which the give-up timer must see.
+    //
+    // WHAT IT MAY DO IS SHUFFLE, and the assertion pins the cell rather than
+    // the position for that reason (2026-08-26). Every step now goes down the
+    // shortening ladder, whose last rung probes exactly one tick's travel —
+    // and one tick's travel from the middle of a legal cell is still inside
+    // that legal cell. So a marooned walker inches about within its own cell
+    // instead of standing frozen, and the contract is that it never gets OUT
+    // of it and is never credited with progress for the twitching. Pinning
+    // `x === 3.5` instead would pin the near-sightedness the ladder removed.
     //
     // Probed at PROBE_PAST_CELL_CELLS rather than the shipped walker's 0.3 —
     // see that constant on why 0.3 cannot see this island's shore at all.
@@ -193,7 +202,8 @@ describe('followRoute — progress reporting', () => {
       });
       expect(result.progressed).toBe(false);
     }
-    expect(walker.x).toBe(3.5);
+    expect(Math.floor(walker.x)).toBe(3);
+    expect(Math.floor(walker.y)).toBe(3);
   });
 
   it('degrades to steering at the goal when a route is cut and cannot be replanned', () => {

@@ -23,7 +23,7 @@ import {
   findRoute,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
-  steerAvoiding,
+  steerWithShorteningProbe,
   type FreshwaterMap,
   type Occupant,
   type RouteCell,
@@ -351,7 +351,8 @@ export interface Pilgrim {
   stuckSeconds: number;
   /** See PanickingWalker — the fire reaction, shared by all three walker sims. */
   panicSecondsRemaining: number;
-  panicHeading: number;
+  panicFromX: number;
+  panicFromY: number;
   /** The planned route to `goalX`/`goalY` (see `advanceWalker`), or null when
    *  none exists / none has been planned — the walker then falls back to
    *  stepWalker's direct local avoidance for this leg. Never on the wire. */
@@ -441,15 +442,23 @@ function lookaheadCells(): number {
 
 /**
  * One walking step with water/slope/crowd avoidance toward (targetX, targetY)
- * — now a thin adapter over shared's `steerAvoiding` (shared/src/steering.ts),
- * which owns the sweep itself. `targetX`/`targetY` default to
- * `pilgrim.goalX`/`goalY`, the walker's ultimate destination.
+ * — a thin adapter over shared's `steerWithShorteningProbe`
+ * (shared/src/steering.ts), which owns the steer itself. `targetX`/`targetY`
+ * default to `pilgrim.goalX`/`goalY`, the walker's ultimate destination.
  *
  * STILL EXPORTED, and still the one movement rule for every little person on
  * the road: what changed 2026-08-20 is only that the rule moved to the
  * contract layer, where boats and monsters use it too. See steering.ts's
  * header for why four copies of this sweep was the bug rather than four
  * plugins' business.
+ *
+ * THE LADDER, NOT ONE RUNG OF IT (issue #215, 2026-08-26). This called
+ * `steerAvoiding` — the single-probe rung — which is the same near-sightedness
+ * that stalled fish, boats and monsters before it, and which was measured here
+ * as a burning peep standing motionless for 4.3 s of an 8 s burn. Walkers were
+ * simply the last mover family still on the rung; see `steerAvoiding`'s own
+ * contract note for why the choice between the two was never a caller's to
+ * make.
  */
 export function stepWalker(
   world: PilgrimWorld,
@@ -458,6 +467,7 @@ export function stepWalker(
   targetX: number = pilgrim.goalX,
   targetY: number = pilgrim.goalY,
   occupants: readonly Occupant[] = [],
+  permits?: (x: number, y: number) => boolean,
 ): void {
   const desired = Math.atan2(targetY - pilgrim.y, targetX - pilgrim.x);
   // One tick's travel: the distance the walker moves, and the distance the
@@ -465,12 +475,19 @@ export function stepWalker(
   // expression, so the sweep cannot reason about a step the walker does not
   // then take.
   const stepCells = PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt;
-  const heading = steerAvoiding(world, PILGRIM_WALKER_PROFILE, pilgrim, desired, lookaheadCells(), {
-    stepCells,
-    occupants,
-    selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS,
-  });
-  // Boxed in: hold position this tick; the stuck timer decides what is next.
+  const heading = steerWithShorteningProbe(
+    world,
+    PILGRIM_WALKER_PROFILE,
+    pilgrim,
+    desired,
+    lookaheadCells(),
+    { stepCells, occupants, selfRadiusCells: WALKER_PERSONAL_SPACE_CELLS, permits },
+  );
+  // A ONE-CELL POCKET — genuinely nowhere legal one step away in any direction,
+  // which is what null means once the ladder has run. Hold position this tick;
+  // the stuck timer decides what is next, and for a walker whose stuck timer is
+  // deliberately not running (see `panicStep`) this is now the only way to
+  // stand still, rather than the common case it used to be.
   if (heading === null) return;
 
   pilgrim.heading = heading;
@@ -583,7 +600,7 @@ export const FIRE_STARTLE_RADIUS_CELLS = Math.round(
 /**
  * A walker that can panic — every walker in this plugin, across all three sims.
  *
- * `panicHeading` is meaningful only while `panicSecondsRemaining` is positive;
+ * The panic ANCHOR is meaningful only while `panicSecondsRemaining` is positive;
  * there is deliberately no separate "is panicking" flag, so the countdown stays
  * the single definition of the state (wildlife keeps `fleeSecondsRemaining` as
  * the one definition of its own, for the same reason).
@@ -592,7 +609,26 @@ export interface PanickingWalker extends RoutedWalker {
   readonly id: number;
   stuckSeconds: number;
   panicSecondsRemaining: number;
-  panicHeading: number;
+  /**
+   * WHAT THIS WALKER IS RUNNING FROM, in cells — never which way it ran
+   * (issue #215).
+   *
+   * A stored BEARING is a constant, and a constant bearing is what let a
+   * panicking walker pace on the spot: the run target was a fixed offset from
+   * the walker's own position, so `desired` was the same angle every tick, and
+   * a walker pressed against terrain alternated between that angle and its own
+   * reverse — a two-tick cycle that the two-tick broadcast interval then
+   * aliased into a walker that looked perfectly frozen on the wire. Measured
+   * 2026-08-26: 0.6 cells north, 0.6 cells south, ten times, while the client
+   * saw one unchanging position.
+   *
+   * An ANCHOR has no such fixed point. "Away from here" is recomputed from the
+   * walker's CURRENT position every tick, so it rotates as the walker slides
+   * along an obstacle, and — the part that actually closes the bug — it makes
+   * the retreat MEASURABLE, which is what `panicStep`'s veto needs.
+   */
+  panicFromX: number;
+  panicFromY: number;
 }
 
 /**
@@ -610,6 +646,26 @@ export interface PanickingWalker extends RoutedWalker {
  * The run target is a point one whole burst ahead along the panic heading, so
  * the walker is steering at open ground rather than at a destination it could
  * "arrive" at mid-panic.
+ *
+ * THE PANIC BEARING IS A CONSTANT, AND THAT IS SAFE ONLY BECAUSE OF THE LADDER
+ * (issue #215). The target is a fixed offset from the walker's CURRENT
+ * position, so `desired` is the same angle every tick — which means a bearing
+ * the steer refuses is recomputed, identically refused, and refused again for
+ * the whole panic. That is exactly what was measured: 4.3 s of an 8 s burn
+ * standing still. What breaks the loop is `stepWalker` going down shared's
+ * shortening ladder, whose two short rungs steer from the walker's OWN
+ * heading rather than from `desired` — so a walker pressed against something
+ * slides along it and the bearing it is actually travelling on changes even
+ * though the one it wants does not. Re-deriving the bearing from a stored
+ * source point would NOT have fixed this on its own: "away from a thing that
+ * has not moved, from a walker that has not moved" is the same constant.
+ *
+ * AND NOTHING ELSE IS WATCHING. This returns true on a tick where the walker
+ * did not move, and zeroes `stuckSeconds` when the panic ends — both
+ * deliberate (a panic is not a stuck walk), which is why a stalled panic was
+ * invisible to the give-up path that catches a stalled journey. A panicking
+ * walker has no timer behind it, so the steer itself has to be the one that
+ * cannot near-sightedly give up.
  */
 export function panicStep(
   world: PilgrimWorld,
@@ -620,13 +676,36 @@ export function panicStep(
   if (walker.panicSecondsRemaining <= 0) return false;
 
   walker.panicSecondsRemaining = Math.max(0, walker.panicSecondsRemaining - dt);
+
+  // AWAY FROM THE ANCHOR, RE-DERIVED THIS TICK — see `PanickingWalker`'s
+  // anchor for why this may not be a stored angle. Standing exactly on it
+  // keeps the current heading: there is no "away" from a point you are on,
+  // and inventing a direction would read as a glitch.
+  const awayX = walker.x - walker.panicFromX;
+  const awayY = walker.y - walker.panicFromY;
+  const fleeing = awayX !== 0 || awayY !== 0 ? Math.atan2(awayY, awayX) : walker.heading;
+  const anchorDistanceSq = awayX * awayX + awayY * awayY;
+
   stepWalker(
     world,
     walker,
     dt * WALKER_PANIC_SPEED_MULTIPLIER,
-    walker.x + Math.cos(walker.panicHeading) * FIRE_STARTLE_RADIUS_CELLS,
-    walker.y + Math.sin(walker.panicHeading) * FIRE_STARTLE_RADIUS_CELLS,
+    walker.x + Math.cos(fleeing) * FIRE_STARTLE_RADIUS_CELLS,
+    walker.y + Math.sin(fleeing) * FIRE_STARTLE_RADIUS_CELLS,
     occupants,
+    // A PANIC MAY ONLY EVER INCREASE THE DISTANCE FROM WHAT IT IS FLEEING.
+    // This is the whole cure for the two-tick cycle and it is a statement
+    // about what fleeing MEANS, not a tie-break: the reverse of a step just
+    // taken always closes on the anchor, so it can never be chosen, and no
+    // sequence of legal steps can return the walker to where it has been.
+    // Refusing every candidate is now honest — a walker with the fire on all
+    // sides holds rather than pacing — and it cannot last, because the thing
+    // it is failing to escape is killing it.
+    (x, y) => {
+      const dx = x - walker.panicFromX;
+      const dy = y - walker.panicFromY;
+      return dx * dx + dy * dy > anchorDistanceSq;
+    },
   );
 
   if (walker.panicSecondsRemaining <= 0) {
@@ -666,8 +745,8 @@ export function startleWalkersNear(
     const dy = walker.y - centerY;
     if (dx * dx + dy * dy > radiusSquared) continue;
 
-    if (dx !== 0 || dy !== 0) walker.panicHeading = Math.atan2(dy, dx);
-    else walker.panicHeading = walker.heading;
+    walker.panicFromX = centerX;
+    walker.panicFromY = centerY;
     walker.panicSecondsRemaining = Math.max(walker.panicSecondsRemaining, WALKER_PANIC_SECONDS);
     startled++;
   }
@@ -707,7 +786,12 @@ export function panicWalkers(
   // this plugin's own fixed walker order and not the caller's list.
   for (const walker of walkers) {
     if (!ids.includes(walker.id)) continue;
-    walker.panicHeading = walker.heading;
+    // THE PLACE THEY CAUGHT, which is the only honest anchor for a walker
+    // carrying its own fire: there is no external thing to run from, and
+    // "get away from where this happened" is both what a person does and the
+    // measurable retreat `panicStep`'s veto is built on.
+    walker.panicFromX = walker.x;
+    walker.panicFromY = walker.y;
     // NEVER SHORTENS an existing panic: a walker startled a moment ago and set
     // alight now must not have their flight cut back to the shorter of the two.
     walker.panicSecondsRemaining = Math.max(walker.panicSecondsRemaining, seconds);
@@ -817,7 +901,8 @@ export class Pilgrimage {
           lingerSeconds: 0,
           stuckSeconds: 0,
           panicSecondsRemaining: 0,
-          panicHeading: 0,
+          panicFromX: 0,
+          panicFromY: 0,
           route,
           routeIndex: 0,
         });
