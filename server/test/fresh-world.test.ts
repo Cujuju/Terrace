@@ -556,7 +556,11 @@ describe('the trench pass', () => {
         const terrain = buildFreshGenesisTerrain(size, seed);
         const world = World.createFresh(size, undefined, undefined, seed);
         for (const trench of terrain.trenches) {
-          const floor = world.heightAt(trench.centreX, trench.centreY);
+          // Vertex 0 is the anchor cell the trench was aimed at, and #205's
+          // polyline keeps it on the floor exactly as the old centred segment
+          // did — so this is the same assertion, at the same cell.
+          const anchor = trench.vertices[0]!;
+          const floor = world.heightAt(anchor.x, anchor.y);
           expect(floor).toBeLessThanOrEqual(
             SEA_LEVEL - GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * BAND_HEIGHT,
           );
