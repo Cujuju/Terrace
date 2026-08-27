@@ -77,6 +77,7 @@ import {
   reachesIntoHabitat,
   surveyLairs,
 } from '../server/habitat.ts';
+import { releaseHabitatIndex } from '../server/habitat-index.ts';
 import {
   BROADCAST_TICK_INTERVAL,
   monsterStates,
@@ -668,6 +669,33 @@ interface BasinState {
  */
 const NEUTRAL_GROUND_HEIGHT = BAND_HEIGHT;
 
+/**
+ * Wraps a stubbed feature's dials so that writing one ANNOUNCES the terrain
+ * change, the way the real server does.
+ *
+ * These fixtures are the only terrain in the project that moves without an
+ * applied `CellDiff`: a test assigns `basin.radius = 0` and every cell of the
+ * world silently means something new. The survey reads maintained per-cell
+ * bitmaps (server/habitat-index.ts) whose only repair paths are that diff
+ * (`onTerrainChanged`) and a wholesale replacement (`onWorldCreate`, which a
+ * rollback replays) — so a fixture write that told neither would be surveyed
+ * against the world as it was BEFORE the write, forever: the world size is
+ * unchanged, so nothing else would ever notice.
+ *
+ * HERE AND NOT AT THE SEVENTEEN ASSIGNMENT SITES. A rule every future test has
+ * to remember is a rule a future test will forget, and the failure it buys is a
+ * survey quietly reporting stale regions — which reads as a sim bug, not a
+ * fixture bug. Wrapping the three builders below is the same rule, stated once.
+ */
+function announcedTerrain<T extends object>(state: T): T {
+  return new Proxy(state, {
+    set(target, key, value, receiver) {
+      releaseHabitatIndex();
+      return Reflect.set(target, key, value, receiver);
+    },
+  });
+}
+
 /** Height inside the basin, or null outside it. */
 function basinHeightAt(state: BasinState, x: number, y: number): number | null {
   const dx = x - WORLD_CENTER;
@@ -746,12 +774,15 @@ function alpineStubWorld(sea: BasinState, snow: MassifState): LairWorld {
  * MASSIF_CENTER.
  */
 function yetiMassif(): MassifState {
-  return { radius: cellsAcross(14), peakHeight: SNOW_LINE_MIN_HEIGHT + 2 * BAND_HEIGHT };
+  return announcedTerrain({
+    radius: cellsAcross(14),
+    peakHeight: SNOW_LINE_MIN_HEIGHT + 2 * BAND_HEIGHT,
+  });
 }
 
 /** A basin Cthulhu qualifies for and the kraken does not: big, but not a trench. */
 function cthulhuBasin(): BasinState {
-  return { radius: cellsAcross(30), floorHeight: DEEP_WATER_MAX_HEIGHT - 30 };
+  return announcedTerrain({ radius: cellsAcross(30), floorHeight: DEEP_WATER_MAX_HEIGHT - 30 });
 }
 
 /**
@@ -769,11 +800,11 @@ const KRAKEN_TRENCH_DEPTH_MARGIN = 64;
 
 /** A trench the kraken qualifies for: past its depth demand and its area. */
 function krakenTrench(): BasinState {
-  return {
+  return announcedTerrain({
     radius: cellsAcross(40),
     floorHeight:
       SEA_LEVEL - (KRAKEN_LAIR_MIN_DEPTH_BANDS * BAND_HEIGHT + KRAKEN_TRENCH_DEPTH_MARGIN),
-  };
+  });
 }
 
 /**

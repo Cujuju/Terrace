@@ -138,6 +138,7 @@ import {
   releaseSurveyScratch,
   surveyLairs,
 } from './habitat.ts';
+import { releaseHabitatIndex, syncedHabitatIndex } from './habitat-index.ts';
 import {
   MAX_LIVING_MONSTERS_PER_KIND,
   type MonsterProfile,
@@ -179,15 +180,47 @@ export interface Monster {
  * Seconds between lair surveys.
  *
  * Five, the same interval the wildlife plugin's census uses and for the same
- * reason: the survey walks every cell of the world once PER HABITAT (~1 ms each
- * on a full 512² board — see surveyLairs), so it must not run per tick, but
- * habitat only changes when terrain or the unlock mask changes, and both are
+ * reason: the survey walks every cell of the world once PER HABITAT (see
+ * surveyLairs for its measured cost), so it must not run per tick, but habitat
+ * only changes when terrain or the unlock mask changes, and both are
  * human-paced. A five-second worst-case lag in noticing a drained basin or a
  * levelled peak is invisible next to the ten-minute cooldown that follows it,
  * and the reactive path (invalidateSurvey, called from onTerrainChanged)
- * collapses that lag to one tick whenever a player actually sculpts.
+ * collapses that lag to LAIR_SURVEY_DEBOUNCE_SECONDS whenever a player
+ * actually sculpts.
  */
 export const LAIR_SURVEY_INTERVAL_SECONDS = 5;
+
+/**
+ * How long the terrain must be QUIET before the reactive path's survey runs.
+ *
+ * A TRAILING DEBOUNCE, NOT "NEXT TICK" (2026-08-26, measured). `invalidateSurvey`
+ * used to force the survey on the very next tick, and a sculpt fires it: holding
+ * the brush down is one applied diff every ~120 ms, so the server re-surveyed
+ * both habitats several times a second for as long as the player kept sculpting.
+ * With the classifying walk that was ~100 ms of work per regime per stroke
+ * repeat — 72 % event-loop occupancy and a 50–70 ms median sculpt round-trip
+ * where it had been under a millisecond. The bitmaps (habitat-index.ts) made the
+ * survey cheap; this makes it RARE, and the two are independent — either alone
+ * leaves the other's failure mode live. Measured after both: a 60-intent hold
+ * costs ONE survey (it used to cost sixty), 4.6 % occupancy, and a 1.5 ms
+ * median round-trip.
+ *
+ * HALF A SECOND, and both bounds are real:
+ *   * LONGER THAN THE CLIENT'S HOLD-REPEAT, which is 120 ms per intent while
+ *     the brush is held (SCULPT_REPEAT_INTERVAL_MS in
+ *     client/src/input/sculptInput.ts — the server cannot import a client
+ *     constant, and a copy of it here would be a number that silently stops
+ *     matching, so the relationship is stated instead of encoded). Four repeats
+ *     of headroom means a held stroke of any length fires exactly ONE survey,
+ *     when the player lifts off;
+ *   * SHORT ENOUGH TO STILL READ AS IMMEDIATE. "I drained the bay → it is gone"
+ *     is the whole point of the reactive path, and half a second after the last
+ *     edit is inside the time it takes a player to look at what they did. It is
+ *     also a tenth of LAIR_SURVEY_INTERVAL_SECONDS, so the reactive path stays
+ *     an order of magnitude sharper than the periodic one.
+ */
+export const LAIR_SURVEY_DEBOUNCE_SECONDS = 0.5;
 
 // ── Mutable module state ─────────────────────────────────────────────────────
 // Module-level singletons with a reset seam, matching the shape of the wildlife,
@@ -238,6 +271,14 @@ let simSeconds = 0;
 
 /** Simulated time of the last survey; -Infinity forces one on the first tick. */
 let lastSurveySeconds = Number.NEGATIVE_INFINITY;
+
+/**
+ * Simulated time of the most recent terrain change still waiting on a survey,
+ * or null when nothing is pending. The debounce's whole state: each new change
+ * pushes it forward, so the survey fires LAIR_SURVEY_DEBOUNCE_SECONDS after the
+ * LAST one rather than the first.
+ */
+let terrainSettledDeadlineSeconds: number | null = null;
 
 /**
  * The id the next summon will take. Persisted, so an id is never reused across a
@@ -350,20 +391,32 @@ export function resetSummoning(): void {
   surveys = emptySurveys();
   simSeconds = 0;
   lastSurveySeconds = Number.NEGATIVE_INFINITY;
+  terrainSettledDeadlineSeconds = null;
   nextMonsterId = 1;
   pendingTransitions = [];
   releaseSurveyScratch();
+  releaseHabitatIndex();
 }
 
 /**
- * Forces the next tick to re-survey EVERY habitat. Called from the terrain
- * reaction: a player who just drained a basin should not wait out the survey
- * interval to find out whether it worked — and one sculpt can change both
- * habitats at once, since raising the seabed nine bands is the same edit that
- * makes a mountain.
+ * Marks EVERY habitat's survey as owing a re-run once the terrain settles.
+ * Called from the terrain reaction: a player who just drained a basin should not
+ * wait out the survey interval to find out whether it worked — and one sculpt
+ * can change both habitats at once, since raising the seabed nine bands is the
+ * same edit that makes a mountain.
+ *
+ * SETTLES, RATHER THAN FIRING NEXT TICK (2026-08-26). See
+ * LAIR_SURVEY_DEBOUNCE_SECONDS for the measurement that changed this; the
+ * behaviour a caller gets is unchanged in kind — the survey still runs because
+ * of what they did, and still long before the periodic one would have — it just
+ * waits for them to stop doing it.
+ *
+ * Its other two callers are in `trySummon`, where the meaning is "the survey I
+ * just read is stale, do not read it again": that is exactly as true half a
+ * second later, and the roll that discovered it is spent either way.
  */
 export function invalidateSurvey(): void {
-  lastSurveySeconds = Number.NEGATIVE_INFINITY;
+  terrainSettledDeadlineSeconds = simSeconds + LAIR_SURVEY_DEBOUNCE_SECONDS;
 }
 
 // ── Arrival and departure ────────────────────────────────────────────────────
@@ -696,8 +749,16 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
 export function advanceSummoning(world: LairWorld, dt: number): void {
   simSeconds += dt;
 
-  const surveyDue = simSeconds - lastSurveySeconds >= LAIR_SURVEY_INTERVAL_SECONDS;
-  if (surveyDue) lastSurveySeconds = simSeconds;
+  // Two independent reasons to survey: the periodic sweep, and terrain that has
+  // been quiet for the debounce since it last moved.
+  const periodicDue = simSeconds - lastSurveySeconds >= LAIR_SURVEY_INTERVAL_SECONDS;
+  const settledDue =
+    terrainSettledDeadlineSeconds !== null && simSeconds >= terrainSettledDeadlineSeconds;
+  const surveyDue = periodicDue || settledDue;
+  if (surveyDue) {
+    lastSurveySeconds = simSeconds;
+    terrainSettledDeadlineSeconds = null;
+  }
 
   for (const kind of MONSTER_KINDS) {
     const state = stateOf(kind);
@@ -705,11 +766,25 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
   }
 
   if (surveyDue) {
+    // One sync for the whole pass: the index covers both regimes, and building
+    // it per regime would read the world's heights twice on the rare tick that
+    // has to rebuild.
+    const index = syncedHabitatIndex(
+      world,
+      HABITAT_REGIMES.map((regime) => ({ regime, fitRules: lairFitRulesInHabitat(regime) })),
+    );
+
     for (const regime of HABITAT_REGIMES) {
       // The occupants are surveyed together: one walk per habitat, one
       // occupiedRegionCells entry per monster, index-aligned (habitat.ts).
       const occupants = livingMonstersIn(regime);
-      const survey = surveyLairs(regime, world, occupants, lairFitRulesInHabitat(regime));
+      const survey = surveyLairs(
+        regime,
+        world,
+        occupants,
+        lairFitRulesInHabitat(regime),
+        index,
+      );
       surveys[regime.id] = survey;
 
       for (let i = 0; i < occupants.length; i++) {
