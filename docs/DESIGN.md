@@ -4021,3 +4021,40 @@ never had.
   — it walked the land lift back down until a basin appeared — and it cost the
   land floor on exactly the seeds that needed it. Two guarantees pulling in
   opposite directions cannot share a parameter; the basin got its own pass.
+
+### Decisions made 2026-08-26 (the burn scar — the close-range half of smoke, #203)
+
+Smoke's close-range falloff goes to ZERO inside `SMOKE_SILENT_DISTANCE` (9.6
+world units), which is what fixed the grey-slab-in-the-face defect and left a
+new one: at the closest zoom a wood that has finished burning shows nothing at
+all — no flame, and now no smoke either. The record of 2026-08-26 above rejected
+a ground scar as a SUBSTITUTE for smoke; the owner has now settled #203 by
+shipping it as the thing that rejection left room for.
+
+**One signature, two halves, and the crossover is the distance smoke goes
+silent at.** The scar is at full strength where smoke is at nothing and fades
+out as smoke comes up, so at every camera distance exactly one of the two is
+carrying "a fire happened here". `SMOKE_SILENT_DISTANCE` is therefore not
+copied into a second constant — it is the shared boundary, read once and used
+by both, because two numbers that must agree are one number.
+
+**The scar's LIFETIME is smoke's, not the world's.** It appears when the fire
+does and retires on the same `SMOKE_AFTERLIFE_SECONDS` clock, keyed by the
+fire's own stable key exactly as a smoke column is, with smoke's accepted
+residual kept unchanged: a client that joins after a fire died sees neither
+half of the signature. A PERSISTED burn record — a scar that survives a rejoin
+— is a different feature and a question about world history, and it is
+deliberately not being invented inside #203.
+
+**The scar is drawn ON the terrain's own drawn surface, never modelled beside
+it.** It is placed by querying `client/src/terrain/drawnGround.ts` for what the
+terrain actually draws at that point, which is the rule the water work paid for
+four rewrites to learn. It is a plugin-drawn decal in the fire plugin's own
+client half and the terrain's colouring is not touched: tinting terrain
+vertices would put a gameplay concern inside core, which §"nothing gamey in
+core" forbids.
+
+**The flame's budget rules bind the scar unchanged.** One instanced draw call,
+constant in count, capped with the columns it accompanies — a quad per burned
+cell done naively breaks the draw-call rule however good it looks, which is the
+same bar smoke was held to.
