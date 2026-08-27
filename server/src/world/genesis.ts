@@ -342,13 +342,44 @@ const GENESIS_BASELINE_MAX_BAND_OFFSET =
   GENESIS_NOISE_MAX_BAND_OFFSET / GENESIS_BASELINE_CEILING_DIVISOR;
 
 /**
- * One octave's lattice: row-major integer band offsets, `cols` wide and tall.
- * The offsets are ZERO-MEAN WANDER, not heights — the world's baseline is added
+ * Fixed-point units in ONE terrace band, for the octave sum — and the fix for
+ * the faceted coasts of GH #204.
+ *
+ * THE DEFECT. `octaveBandAt` used to floor EACH octave to whole bands before
+ * `genesisNoiseRawBandAt` summed them. The two finest octaves have amplitudes
+ * of at most 3.5 and 1.75 bands, so flooring them individually turned each into
+ * a staircase of 0/±1 plateaus, and the EDGE of such a plateau is a level set
+ * of the bilinear interpolant on that octave's 32- or 16-cell lattice — a
+ * straight line along a lattice row, column or diagonal. Every coastline in the
+ * world inherited those lines and came out as a mosaic of triangles.
+ *
+ * THE FIX. Every octave is summed at 1/256 of a band and the sum is floored
+ * ONCE, in `genesisNoiseRawBandAt`. Each octave then contributes its real
+ * fractional wander to the total instead of a quantised plateau, so a band
+ * boundary falls where the SUM crosses it rather than where one octave's
+ * lattice does.
+ *
+ * 256 = 2^8, so the scaling is exact in binary and nothing accumulates a float
+ * error: the offsets are integers, the interpolation products are integers (the
+ * largest is 28 bands × 256 × 256 × 256 ≈ 4.7e8, well inside exact integer
+ * range), and the two divisions are floors. The determinism contract is
+ * unchanged.
+ */
+const GENESIS_BAND_FIXED_POINT_ONE = 256;
+
+/**
+ * One octave's lattice: row-major integer band offsets in
+ * GENESIS_BAND_FIXED_POINT_ONE units per band, `cols` wide and tall. The
+ * offsets are ZERO-MEAN WANDER, not heights — the world's baseline is added
  * once, by `genesisNoiseBandAt`, rather than once per octave.
+ *
+ * Int32Array rather than Int16Array because the fixed-point scaling multiplies
+ * every offset by 256: the coarsest octave's ±28 bands become ±7168, which
+ * still fits an Int16, but a future amplitude change should not silently wrap.
  */
 interface GenesisNoiseOctave {
   readonly spacingCells: number;
-  readonly bandOffsets: Int16Array;
+  readonly bandOffsets: Int32Array;
   readonly cols: number;
 }
 
@@ -412,11 +443,17 @@ function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseFi
     // +2, not +1: interpolation reads lattice[gx + 1], so the grid needs one
     // more column/row than the number of spacing-steps across the world.
     const cols = Math.floor((size - 1) / spacingCells) + 2;
-    const bandOffsets = new Int16Array(cols * cols);
+    const bandOffsets = new Int32Array(cols * cols);
     for (let j = 0; j < cols; j++) {
       const row = j * cols;
       for (let i = 0; i < cols; i++) {
-        bandOffsets[row + i] = Math.round((rng() * 2 - 1) * amplitude);
+        // Rounded to GENESIS_BAND_FIXED_POINT_ONE units of a band, not to whole
+        // bands: the fine octaves' whole amplitude is a few bands, and rounding
+        // them to bands here is half of what faceted the coasts (#204). Same
+        // draw, same order, same count — only the scale changed.
+        bandOffsets[row + i] = Math.round(
+          (rng() * 2 - 1) * amplitude * GENESIS_BAND_FIXED_POINT_ONE,
+        );
       }
     }
     return { spacingCells, bandOffsets, cols };
@@ -426,11 +463,16 @@ function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseFi
 }
 
 /**
- * Bilinearly interpolated band offset of ONE octave at one cell, entirely in
- * integer arithmetic: the interpolation weights are the integer cell-within-
- * lattice-square offsets `fx`/`fy` (each in `[0, spacing)`) rather than a
- * `[0, 1)` float, so every intermediate product is an exact integer and the one
- * division at the end is the only place rounding happens.
+ * Bilinearly interpolated wander of ONE octave at one cell, in
+ * GENESIS_BAND_FIXED_POINT_ONE units per band — NOT in whole bands. The caller
+ * sums the octaves at this scale and floors the total once; see
+ * GENESIS_BAND_FIXED_POINT_ONE for why flooring here instead was #204.
+ *
+ * Entirely integer arithmetic: the interpolation weights are the integer
+ * cell-within-lattice-square offsets `fx`/`fy` (each in `[0, spacing)`) rather
+ * than a `[0, 1)` float, so every intermediate product is an exact integer and
+ * the one division at the end is the only place rounding happens — and it now
+ * rounds at 1/256 of a band rather than at a whole one.
  */
 function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number {
   const spacing = octave.spacingCells;
@@ -462,9 +504,17 @@ function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number 
  * has not already folded together.
  */
 function genesisNoiseRawBandAt(field: GenesisNoiseField, x: number, y: number): number {
-  let bands = field.baselineBandOffset + field.landLiftBands;
-  for (const octave of field.octaves) bands += octaveBandAt(octave, x, y);
-  return bands;
+  // The octaves are summed at GENESIS_BAND_FIXED_POINT_ONE units per band and
+  // floored ONCE, here. The baseline and the land lift are already whole bands
+  // and stay outside the division, so a lift still moves the field by exactly
+  // the bands it says it does.
+  let wanderFixed = 0;
+  for (const octave of field.octaves) wanderFixed += octaveBandAt(octave, x, y);
+  return (
+    field.baselineBandOffset +
+    field.landLiftBands +
+    Math.floor(wanderFixed / GENESIS_BAND_FIXED_POINT_ONE)
+  );
 }
 
 /**
@@ -970,9 +1020,17 @@ function genesisLandLiftBands(raw: Int16Array, size: number): number {
 // REJECTED ALTERNATIVE 2: bias the noise itself — force one lattice point deep.
 // A single deep lattice point is interpolated into a broad soft bowl that reads
 // nothing like a trench, and it does not actually guarantee the result.
-// REJECTED ALTERNATIVE 3: make the trenches meander for looks. Buys shape at
-// the cost of a second geometry to reason about; clipping a straight gouge to
-// the ocean's own outline already keeps it from reading as a stamp.
+// REJECTED ALTERNATIVE 3, AND ITS REVERSAL (#205, 2026-08-26): make the
+// trenches meander for looks. Rejected as "a second geometry to reason about",
+// on the assumption that meandering meant a curve — a spline or a random walk,
+// with its own distance function, its own bounds and its own float error. It
+// did not. A POLYLINE IS THE SAME SEGMENT GEOMETRY APPLIED N TIMES UNDER A
+// `min`: identical point-to-segment arithmetic, identical integer axes,
+// identical band-exact floor, and the union of the capsules is one trench
+// because a minimum of distances has no seam. So the cost the note weighed
+// against the shape was never charged, and the shape was worth having: clipping
+// to the ocean's outline stopped a straight gouge reading as a stamp, but it
+// did not stop it reading as a BAR, which is what the owner saw.
 
 /**
  * Cells the guarantee trench's chosen basin must have, as a multiple of a
@@ -1029,15 +1087,37 @@ export const GENESIS_TRENCH_QUALIFYING_HEIGHT = heightAtBandsBelowSea(
  * long as the shortest lair the kraken accepts is wide. Long enough to read as
  * a rift rather than a crater, and short enough to sit inside the starter
  * square, which on a calm world is the only ocean there is.
+ *
+ * Since #205 a trench is a polyline rather than one segment, so this is half of
+ * its TOTAL floor run rather than a distance from a centre.
  */
 const GENESIS_TRENCH_HALF_LENGTH_CELLS = Math.round(
   Math.sqrt(GENESIS_TRENCH_MIN_BASIN_CELLS) / 2,
 );
 
 /**
- * How far from the floor segment a trench still has any effect, in cells: the
- * point at which its walls have climbed all the way back to sea level. A cheap
- * bounding-box reject, so it is an upper bound and not a shape.
+ * How many straight segments a trench's floor is broken into — the fix for the
+ * straight bars of GH #205.
+ *
+ * THREE. One segment is a capsule, and a capsule on an open sea floor reads as
+ * a bar somebody laid down. Three gives a trench two bends, which is enough for
+ * it to read as a rift the sea floor tore rather than a stamp, and few enough
+ * that the whole thing still runs roughly one way instead of coiling. It also
+ * divides 2 × GENESIS_TRENCH_HALF_LENGTH_CELLS (192) exactly, so the total
+ * floor run is unchanged at 192 cells and no segment length needs rounding.
+ */
+const GENESIS_TRENCH_SEGMENTS = 3;
+
+/** One segment's floor run, in cells: 192 / 3 = 64, an exact integer. */
+const GENESIS_TRENCH_SEGMENT_CELLS =
+  (2 * GENESIS_TRENCH_HALF_LENGTH_CELLS) / GENESIS_TRENCH_SEGMENTS;
+
+/**
+ * How far from the floor a trench still has any effect, in cells: the point at
+ * which its walls have climbed all the way back to sea level, plus a whole
+ * trench's floor run of slack. A cheap bounding-box reject measured from EVERY
+ * vertex of the polyline, so it is a deliberately loose upper bound and not a
+ * shape.
  */
 const GENESIS_TRENCH_REACH_CELLS =
   GENESIS_TRENCH_HALF_LENGTH_CELLS +
@@ -1074,6 +1154,19 @@ const GENESIS_TRENCH_COUNT_SALT = 0x01;
 const GENESIS_TRENCH_BASIN_SALT = 0x100;
 const GENESIS_TRENCH_AXIS_SALT = 0x200;
 const GENESIS_TRENCH_ANCHOR_SALT = 0x300;
+/**
+ * The next free block, one per (trench, joint): which way each bend in a
+ * trench's polyline turns. GENESIS_TRENCH_SEGMENTS entries per trench and at
+ * most 1 + GENESIS_EXTRA_TRENCH_MAX trenches, so the block it uses is
+ * 0x400..0x40b — comfortably inside its own 0x100 stride.
+ */
+const GENESIS_TRENCH_BEND_SALT = 0x400;
+
+/**
+ * The bend-salt ordinal the kraken guarantee's trench uses; the extras take
+ * 1 + k. Distinct per trench so two trenches in one world never bend alike.
+ */
+const GENESIS_GUARANTEE_TRENCH_ORDINAL = 0;
 
 /**
  * The eight directions a trench may run, as PRIMITIVE INTEGER vectors.
@@ -1097,18 +1190,43 @@ const GENESIS_TRENCH_AXES: readonly (readonly [number, number])[] = [
   [-2, 1],
 ];
 
-/** One planned trench: a line segment to cut along, and how far it reaches. */
-export interface GenesisTrench {
-  /** Centre of the floor segment. */
-  readonly centreX: number;
-  readonly centreY: number;
-  /** Primitive integer direction the floor segment runs along. */
+/** One straight run of a trench's floor, from `vertices[i]` to `vertices[i+1]`. */
+export interface GenesisTrenchSegment {
+  /** Index into GENESIS_TRENCH_AXES — kept so the next bend can step off it. */
+  readonly axisIndex: number;
+  /** Primitive integer direction this run goes in. */
   readonly axisX: number;
   readonly axisY: number;
   /** |axis|², an exact integer: the scale the dot/cross products carry. */
   readonly axisLengthSquared: number;
-  /** Half the floor length, pre-multiplied by |axis| to match that scale. */
-  readonly halfLengthScaled: number;
+  /**
+   * This run's length along the axis, pre-multiplied by |axis|² so it can be
+   * compared against the raw dot product directly. It is the EXACT
+   * vertex-to-vertex distance rather than a rounding of
+   * GENESIS_TRENCH_SEGMENT_CELLS, so consecutive runs meet with neither a gap
+   * nor an overhang at the vertex they share.
+   */
+  readonly lengthScaled: number;
+}
+
+/**
+ * One planned trench: a polyline to cut along, and the bounding box its walls
+ * can reach.
+ *
+ * `vertices` has GENESIS_TRENCH_SEGMENTS + 1 entries. VERTEX 0 IS THE ANCHOR
+ * CELL — the deepest cell of the basin for the guarantee trench, a
+ * seed-scattered cell for an extra — so the cell the pass was aimed at is
+ * always on the floor, exactly as it was when the trench was one centred
+ * segment.
+ */
+export interface GenesisTrench {
+  readonly vertices: readonly { readonly x: number; readonly y: number }[];
+  readonly segments: readonly GenesisTrenchSegment[];
+  /** Every vertex grown by GENESIS_TRENCH_REACH_CELLS: the early-out box. */
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
 }
 
 /**
@@ -1235,20 +1353,83 @@ function pushOceanNeighbour(
   stack.push(index);
 }
 
-/** Builds one trench from an anchor cell index and an axis choice. */
-function trenchAt(index: number, size: number, axisIndex: number): GenesisTrench {
-  const [axisX, axisY] = GENESIS_TRENCH_AXES[axisIndex]!;
-  const axisLengthSquared = axisX * axisX + axisY * axisY;
-  const centreX = index % size;
+/**
+ * Builds one trench from an anchor cell index, a starting axis, and the seed —
+ * a GENESIS_TRENCH_SEGMENTS-run polyline starting at the anchor.
+ *
+ * EACH BEND IS ONE STEP AROUND GENESIS_TRENCH_AXES, ±1 with the sign taken from
+ * the seed. One step is 22.5°-ish on that eight-direction wheel, so a trench
+ * wanders without ever doubling back: over three runs it can turn at most 45°
+ * either way from where it started, which is a rift with a kink in it rather
+ * than a squiggle. `trenchOrdinal` keeps two trenches in the same world from
+ * drawing the same bends.
+ *
+ * EVERY STEP IS INTEGER. The axes are primitive integer vectors of differing
+ * length, so a run of GENESIS_TRENCH_SEGMENT_CELLS along one is `axis` repeated
+ * `floor(cells / |axis|)` times — one `Math.sqrt` floored on the spot, and the
+ * vertex it lands on is an exact integer cell.
+ */
+function trenchAt(
+  index: number,
+  size: number,
+  axisIndex: number,
+  seed: number,
+  trenchOrdinal: number,
+): GenesisTrench {
+  const anchorX = index % size;
+  const anchorY = (index - anchorX) / size;
+
+  const vertices: { x: number; y: number }[] = [{ x: anchorX, y: anchorY }];
+  const segments: GenesisTrenchSegment[] = [];
+  let nextAxisIndex = axisIndex;
+
+  for (let i = 0; i < GENESIS_TRENCH_SEGMENTS; i++) {
+    const [axisX, axisY] = GENESIS_TRENCH_AXES[nextAxisIndex]!;
+    const axisLengthSquared = axisX * axisX + axisY * axisY;
+    const steps = Math.floor(
+      GENESIS_TRENCH_SEGMENT_CELLS / Math.sqrt(axisLengthSquared),
+    );
+    segments.push({
+      axisIndex: nextAxisIndex,
+      axisX,
+      axisY,
+      axisLengthSquared,
+      // (steps · axis) · axis = steps · |axis|², exactly the run's dot-product
+      // length at the scale `along` is measured in.
+      lengthScaled: steps * axisLengthSquared,
+    });
+
+    const from = vertices[i]!;
+    vertices.push({ x: from.x + axisX * steps, y: from.y + axisY * steps });
+
+    // The bend into the NEXT run: one step clockwise or anticlockwise around
+    // the axis wheel, the direction avalanched from (seed, this joint).
+    const turn =
+      genesisMix(seed, GENESIS_TRENCH_BEND_SALT + trenchOrdinal * GENESIS_TRENCH_SEGMENTS + i) & 1
+        ? 1
+        : -1;
+    nextAxisIndex =
+      (nextAxisIndex + turn + GENESIS_TRENCH_AXES.length) % GENESIS_TRENCH_AXES.length;
+  }
+
+  let minX = vertices[0]!.x;
+  let maxX = minX;
+  let minY = vertices[0]!.y;
+  let maxY = minY;
+  for (const vertex of vertices) {
+    if (vertex.x < minX) minX = vertex.x;
+    if (vertex.x > maxX) maxX = vertex.x;
+    if (vertex.y < minY) minY = vertex.y;
+    if (vertex.y > maxY) maxY = vertex.y;
+  }
+
   return {
-    centreX,
-    centreY: (index - centreX) / size,
-    axisX,
-    axisY,
-    axisLengthSquared,
-    halfLengthScaled: Math.floor(
-      GENESIS_TRENCH_HALF_LENGTH_CELLS * Math.sqrt(axisLengthSquared),
-    ),
+    vertices,
+    segments,
+    minX: minX - GENESIS_TRENCH_REACH_CELLS,
+    maxX: maxX + GENESIS_TRENCH_REACH_CELLS,
+    minY: minY - GENESIS_TRENCH_REACH_CELLS,
+    maxY: maxY + GENESIS_TRENCH_REACH_CELLS,
   };
 }
 
@@ -1322,6 +1503,8 @@ function planGenesisTrenches(
           chosen.extremeIndex,
           size,
           genesisMix(seed, GENESIS_TRENCH_AXIS_SALT) % GENESIS_TRENCH_AXES.length,
+          seed,
+          GENESIS_GUARANTEE_TRENCH_ORDINAL,
         ),
       );
     }
@@ -1347,6 +1530,8 @@ function planGenesisTrenches(
           region.anchorsBySalt[k]!,
           size,
           genesisMix(seed, GENESIS_TRENCH_AXIS_SALT + 1 + k) % GENESIS_TRENCH_AXES.length,
+          seed,
+          GENESIS_GUARANTEE_TRENCH_ORDINAL + 1 + k,
         ),
       );
     }
@@ -1361,15 +1546,18 @@ function planGenesisTrenches(
  * rule that keeps every habitat classification exactly where the passes before
  * this one put it) and the trench wants it DEEPER than it is.
  *
- * The depth profile is a capsule: full depth within `halfLength` of the centre
- * along the axis, then one band shallower per
- * GENESIS_TERRACE_WALL_CELLS_PER_BAND cells of distance from that segment, so
- * the result is always an exact band multiple.
+ * The depth profile is a CHAIN OF CAPSULES under a minimum: full depth
+ * anywhere on the floor polyline, then one band shallower per
+ * GENESIS_TERRACE_WALL_CELLS_PER_BAND cells of distance from the NEAREST
+ * segment, so the result is always an exact band multiple. Taking the minimum
+ * over segments is what makes the union one trench rather than three: a bend is
+ * covered from both sides, so there is no notch at a joint.
  *
- * `along` and `across` are the dot and cross products with the axis, so both
- * carry a factor of |axis|; the distance is de-scaled by dividing the squared
- * sum by |axis|² inside the one `Math.sqrt`, whose result is floored on the
- * spot.
+ * `along` and `across` are the dot and cross products with the segment's axis,
+ * measured from the segment's START vertex, so both carry a factor of |axis|;
+ * the distance is de-scaled by dividing the squared sum by |axis|² inside the
+ * one `Math.sqrt`, whose result is floored on the spot. `overhang` is how far
+ * past either END of the run the cell lies, which is zero alongside it.
  */
 function deepenedByTrenches(
   trenches: readonly GenesisTrench[],
@@ -1381,17 +1569,24 @@ function deepenedByTrenches(
 
   let height = base;
   for (const trench of trenches) {
-    const dx = x - trench.centreX;
-    const dy = y - trench.centreY;
-    if (dx > GENESIS_TRENCH_REACH_CELLS || dx < -GENESIS_TRENCH_REACH_CELLS) continue;
-    if (dy > GENESIS_TRENCH_REACH_CELLS || dy < -GENESIS_TRENCH_REACH_CELLS) continue;
+    if (x < trench.minX || x > trench.maxX || y < trench.minY || y > trench.maxY) continue;
 
-    const along = Math.abs(dx * trench.axisX + dy * trench.axisY) - trench.halfLengthScaled;
-    const overhang = along > 0 ? along : 0;
-    const across = dx * trench.axisY - dy * trench.axisX;
-    const distance = Math.floor(
-      Math.sqrt((overhang * overhang + across * across) / trench.axisLengthSquared),
-    );
+    let distance = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < trench.segments.length; i++) {
+      const segment = trench.segments[i]!;
+      const start = trench.vertices[i]!;
+      const dx = x - start.x;
+      const dy = y - start.y;
+
+      const along = dx * segment.axisX + dy * segment.axisY;
+      const overhang =
+        along < 0 ? -along : along > segment.lengthScaled ? along - segment.lengthScaled : 0;
+      const across = dx * segment.axisY - dy * segment.axisX;
+      const toSegment = Math.floor(
+        Math.sqrt((overhang * overhang + across * across) / segment.axisLengthSquared),
+      );
+      if (toSegment < distance) distance = toSegment;
+    }
 
     const bands =
       GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA -
