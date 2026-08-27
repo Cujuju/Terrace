@@ -267,8 +267,10 @@ export function createWorld(viewport: Viewport): World {
    * that is about WHICH segments exist, not their heights.
    */
   const applyDirty = (dirty: Set<number>): void => {
-    // The one place terrain changes, so the one place the drawn-surface cache
-    // has to be dropped — see `drawnGround`'s declaration.
+    // ONE OF THE TWO places terrain changes, and both must drop the
+    // drawn-surface cache — see `drawnGround`'s declaration. The other is the
+    // chunkUnlock handler below, which deliberately does NOT route through
+    // here.
     drawnGround = null;
     meshes?.update(dirty);
     // Terrace lips follow the same dirty set as the meshes they lie on, so a
@@ -472,6 +474,15 @@ export function createWorld(viewport: Viewport): World {
         (m) => applyChunkUnlock(m, msg),
         nowMs(),
       );
+      // THE SECOND PLACE TERRAIN CHANGES, and the reason this line is not
+      // covered by applyDirty's: this handler updates the meshes itself rather
+      // than routing through it, because a newly-revealed chunk needs fog,
+      // water and the depth texels resynced as well. A DrawnGround memoises a
+      // chunk plan FOREVER (terrain/drawnGround.ts's LIFETIME note) and
+      // `capYAt` answers with a number for a chunk that has not arrived — a
+      // plan over empty ground — so a cache that survived an unlock would go
+      // on placing decals on the sea floor of terrain that is now dry land.
+      drawnGround = null;
       meshes.update(unlockDirty);
       layerEdges?.update(unlockDirty);
       // Territory just crept outward — move the mist with it. `received`
