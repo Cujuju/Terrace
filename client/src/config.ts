@@ -115,6 +115,40 @@ export const MAX_RELIEF_WORLD_UNITS = 16;
 export const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 
 /**
+ * How deep the ORDINARY sea is, in terrace bands — the depth an unmodified
+ * genesis ocean reaches, below which the world is trench.
+ *
+ * MEASURED, NOT REASONED. Live world frostwick-hollows, 2026-08-26, 235,663
+ * water cells (90% of a 512² map), depth in bands:
+ *
+ *     p25 10    p50 11    p75 12    p95 15    p99 21    max 62
+ *
+ * 83% of all water sits in bands 10-14. This constant is the p95: the depth
+ * the ordinary ocean floor never exceeds, past which a depth is a dig or a
+ * trench and may share one look.
+ *
+ * WHY IT IS ONE CONSTANT HERE AND NOT A NUMBER IN EACH CURVE. Every
+ * depth-to-appearance map in the client — the seabed palette
+ * (terrain/bandColors.ts), the water's alpha ramp (terrain/waterDepth.ts) —
+ * has to decide how much of its range to spend on the ordinary sea versus the
+ * trench below it. Three times now (the shade ramp 2026-08-24, the alpha ramp
+ * 2026-08-25, the seabed palette 2026-08-26) a curve was spent across the sea
+ * column's full 64 bands because that is the constant that was to hand, and
+ * the ordinary ocean — a sixth of the way down — came out flat: alpha at a
+ * fifth of its range, seabed stops 10 through 14 differing by two parts in 255.
+ * Owner, 2026-08-26: "There is no difference between the shallows and the
+ * depths." A curve that derives from THIS constant cannot make that mistake,
+ * and one measurement moves them all together.
+ *
+ * NOT a shared/ constant: it describes what the world tends to be, not what
+ * it is allowed to be, and nothing deterministic depends on it.
+ */
+export const ORDINARY_SEA_DEPTH_BANDS = 15;
+
+/** The same depth as a signed height, for the modules that think in heights. */
+export const ORDINARY_SEA_FLOOR_HEIGHT = -ORDINARY_SEA_DEPTH_BANDS * BAND_HEIGHT;
+
+/**
  * World units a single terrace band rises — how tall one step LOOKS.
  *
  * Historically forced to equal CELL_WORLD_SIZE by the old vertex-per-cell grid

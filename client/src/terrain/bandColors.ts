@@ -22,6 +22,7 @@ import {
   bandOf,
   isWater,
 } from '@terrace/shared';
+import { ORDINARY_SEA_FLOOR_HEIGHT } from '../config.ts';
 
 /** Colour components in the 0..1 range. Interpreted as sRGB. */
 export type Rgb = readonly [r: number, g: number, b: number];
@@ -186,8 +187,20 @@ function sampleAnchors(anchors: readonly ColorAnchor[], height: number): Rgb {
 /**
  * The blue water column, waterline to sea floor — the seventeen colours the
  * seabed history above describes, now anchored to the depths they were
- * authored for rather than to band indices, and evenly spaced down
- * SEA_COLUMN_DEPTH.
+ * authored for rather than to band indices.
+ *
+ * TWO SPANS, NOT ONE (2026-08-26). Spread evenly down the whole
+ * SEA_COLUMN_DEPTH, the ninth colour — authored as "about as deep as a genesis
+ * ocean reaches" — landed at 512 units, and the ocean the world actually has
+ * reaches 240 (config.ts's ORDINARY_SEA_DEPTH_BANDS, measured). So the first
+ * half of this ramp, the half written to tell the ordinary sea's depths apart,
+ * was spent on depths the sea never has, and the depths it does have — bands
+ * 10 through 14, 83% of all water — fell on one twelfth of it, adjacent stops
+ * two parts in 255 apart. Owner: "There is no difference between the shallows
+ * and the depths." The ramp now honours its own annotation: the ocean colours
+ * run waterline → ORDINARY_SEA_FLOOR_HEIGHT, and the abyssal colours run from
+ * there → the sea column's floor. Same seventeen colours, same order, same
+ * ends; only the depth each one sits at has moved to where it was meant to be.
  *
  * The two properties that history states — luminance falling STRICTLY with
  * depth (front-loaded, so the abyssal tail steps small), and the hue crossing
@@ -196,7 +209,7 @@ function sampleAnchors(anchors: readonly ColorAnchor[], height: number): Rgb {
  * sampled between two strictly-darkening anchors is strictly darker than the
  * stop above it.
  */
-const BLUE_COLUMN_ANCHORS = evenlySpaced(SEA_LEVEL, -SEA_COLUMN_DEPTH, [
+const OCEAN_COLORS: readonly Rgb[] = [
   rgb(0x6a7f68), // the waterline flats (h = 0)
   rgb(0x50705d), // the genesis shelf
   rgb(0x3a5b52), // the genesis ring
@@ -205,7 +218,10 @@ const BLUE_COLUMN_ANCHORS = evenlySpaced(SEA_LEVEL, -SEA_COLUMN_DEPTH, [
   rgb(0x183243),
   rgb(0x122a40),
   rgb(0x0d233c),
-  rgb(0x0a1d37), // about as deep as a genesis ocean reaches
+  rgb(0x0a1d37), // about as deep as a genesis ocean reaches: ORDINARY_SEA_FLOOR_HEIGHT
+];
+const ABYSS_COLORS: readonly Rgb[] = [
+  OCEAN_COLORS[OCEAN_COLORS.length - 1], // shared join, so the ramp has no seam
   rgb(0x081931),
   rgb(0x07152b),
   rgb(0x061226),
@@ -214,7 +230,12 @@ const BLUE_COLUMN_ANCHORS = evenlySpaced(SEA_LEVEL, -SEA_COLUMN_DEPTH, [
   rgb(0x040b19),
   rgb(0x030916),
   rgb(0x030813), // the very dark blue: the sea column's floor
-]);
+];
+const BLUE_COLUMN_ANCHORS: readonly ColorAnchor[] = [
+  ...evenlySpaced(SEA_LEVEL, ORDINARY_SEA_FLOOR_HEIGHT, OCEAN_COLORS),
+  // Drop the abyss's first anchor: it is the ocean's last, at the same height.
+  ...evenlySpaced(ORDINARY_SEA_FLOOR_HEIGHT, -SEA_COLUMN_DEPTH, ABYSS_COLORS).slice(1),
+];
 
 // The crust, per the Deep Strata amendment above. Each stratum's span comes
 // straight from shared's stack, so the colours cannot drift off the material
