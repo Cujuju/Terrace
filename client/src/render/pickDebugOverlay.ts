@@ -4,19 +4,25 @@
 //
 // WHY IT EXISTS AND WHAT IT IS HONEST ABOUT. The two-method sculpt design turns
 // on a question nobody had looked at directly: what can the game currently
-// identify under the pointer? The answer is ONE CELL plus a riser/cap flag —
-// pickTerrainCellByRay returns {x, y, surfaceY, hitRiser} and there is no other
+// identify under the pointer? The answer is ONE CELL, a riser/cap flag, and the
+// point on that face the ray met — pickTerrainCellByRay returns
+// {x, y, surfaceY, spanIndex, hitRiser, hitX, hitY, hitZ} and there is no other
 // spatial information anywhere in the pick path.
 //
-// So the MARKER deliberately draws A SINGLE CELL — that is the whole of what
-// the picker names, and drawing anything richer would misrepresent it.
+// So the MARKER deliberately draws A SINGLE CELL — the cell is still the whole
+// of what the picker names for a SCULPT, and drawing anything richer would
+// misrepresent it. The exact hit point is reported as text beside it rather
+// than drawn: render/brushPreview.ts is what draws at that point, and two marks
+// at the same place would only be read as one.
 //
-// The readout's LIP line is a different question, answered by a different
-// module: render/layerEdgeOverlay.ts matches the picked cell against the
-// terrace contours it retains and reports the band a drag would grab. It is
-// shown here, beside the pick, precisely so the two can be compared — the
-// picker names a cell, the contour query names a band, and the gap between
-// them is the vocabulary a drag-to-sculpt method needs.
+// The readout's BAND line is a different question, answered by two other
+// modules in sequence: world.ts derives the band from the HEIGHT the ray struck
+// on the riser face, and render/layerEdgeOverlay.ts then answers yes or no
+// about whether that band's contour actually runs past this cell — a guard, not
+// a search (2026-08-27). Both halves are shown, beside the pick, precisely so
+// they can be compared: the picker names a face, the derivation names a band,
+// the guard admits or refuses it, and a press that does nothing is one of those
+// three.
 //
 // It is separate from render/brushPreview.ts on purpose. The brush outline
 // answers "what will one click change" — a FOOTPRINT, radius-sized. This
@@ -57,8 +63,16 @@ const MARKER_LIFT_WORLD_UNITS = 0.006;
 const MARKER_OPACITY = 0.55;
 
 export interface PickDebugOverlay {
-  /** Draws the marker and readout for `pick`, or hides both on null. */
-  update(pick: TerrainRayPick | null, grabbedBand: number | null): void;
+  /**
+   * Draws the marker and readout for `pick`, or hides both on null.
+   *
+   * `band` is World.highlightLayerEdge's answer for this same pick — the band
+   * a press would act on, already through the overlay's lip-exists guard. The
+   * readout separates the two halves of that answer (which band the RAY named,
+   * and whether the guard admitted it) because when a press does nothing those
+   * are different faults with different fixes.
+   */
+  update(pick: TerrainRayPick | null, band: number | null): void;
   dispose(): void;
 }
 
@@ -112,7 +126,7 @@ export function createPickDebugOverlay(
   const readout = createReadout(canvas);
 
   return {
-    update(pick, grabbedBand) {
+    update(pick, band) {
       if (pick === null) {
         marker.visible = false;
         readout.textContent =
@@ -130,11 +144,29 @@ export function createPickDebugOverlay(
       readout.textContent = [
         `PICK   cell ${pick.x}, ${pick.y}`,
         `       surfaceY ${pick.surfaceY.toFixed(3)} wu`,
-        `       ${pick.hitRiser ? 'RISER  (step side)  █ amber' : 'TREAD  (flat cap)   █ green'}`,
+        `       hit ${pick.hitX.toFixed(3)}, ${pick.hitY.toFixed(3)}, ${pick.hitZ.toFixed(3)} wu`,
+        // THE FACE, spelled out three ways rather than two, because the three
+        // states behave differently and only the pair (hitRiser, hitY vs
+        // surfaceY) tells them apart: a riser grabs, a tread seeds, and a cave
+        // roof's underside is inert to a raise.
+        `       ${
+          pick.hitRiser
+            ? 'RISER  (step side)  █ amber'
+            : pick.hitY === pick.surfaceY
+              ? 'TREAD  (flat cap)   █ green'
+              : 'UNDER  (cave roof)  █ green'
+        }`,
         '',
-        grabbedBand === null
-          ? 'LIP    none in range'
-          : `LIP    band ${grabbedBand} — a drag here would grab it`,
+        // WHICH BAND THE RAY NAMED, and whether the guard let it through —
+        // separately. A riser hit always names a band; the guard is what can
+        // then refuse it, and a readout that collapsed the two into "none"
+        // could not tell "I am not on a face" from "I am on a face whose lip
+        // does not run past this cell".
+        pick.hitRiser
+          ? band === null
+            ? 'BAND   named by the ray, REFUSED by the lip guard'
+            : `BAND   ${band} — a press here acts on it`
+          : 'BAND   none (only a riser face names one)',
       ].join('\n');
     },
     dispose() {

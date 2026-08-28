@@ -160,6 +160,10 @@ describe('pickTerrainCellByRay', () => {
       // the height it met the column at is that cap.
       hitRiser: false,
       hitY: 0,
+      // Straight down, so the meeting point is directly under the ray's own
+      // origin — the cell's centre, because that is where `above` aims.
+      hitX: 7 * CELL_WORLD_SIZE,
+      hitZ: 11 * CELL_WORLD_SIZE,
       // One span per column, so the only span there is is also the topmost.
       spanIndex: 0,
     });
@@ -195,6 +199,8 @@ describe('pickTerrainCellByRay', () => {
           // column exactly at the cap.
           hitRiser: false,
           hitY: quantizeToBand(heightOf(x, y)) * HEIGHT_WORLD_SCALE,
+          hitX: x * CELL_WORLD_SIZE,
+          hitZ: y * CELL_WORLD_SIZE,
           spanIndex: 0,
         });
       }
@@ -225,6 +231,12 @@ describe('pickTerrainCellByRay', () => {
       // names WHICH lip of the face was grabbed — the ray is level here, so
       // that is the height it came in at.
       hitY: rayY,
+      // WHERE it met the face, not merely which cell owns it. The ray runs
+      // due +x at a constant height, so it meets the wall on the WEST FACE of
+      // cell 32 — half a cell short of that cell's centre — and never moves
+      // off its own Z. This is the point the sculpt pointer is drawn at.
+      hitX: (32 - 0.5) * CELL_WORLD_SIZE,
+      hitZ: 20 * CELL_WORLD_SIZE,
       spanIndex: 0,
     });
   });

@@ -68,6 +68,43 @@ import {
   type Vec3,
 } from './terrain/picking.ts';
 
+/**
+ * How `highlightLayerEdge` should light the lip it finds — the parts of that
+ * decision the WORLD cannot make for itself.
+ *
+ * An options object rather than positional arguments because both fields are
+ * about the HIGHLIGHT and neither is about the pick, and a caller reading
+ * `{ litSpanWorldUnits: … }` at the call site cannot transpose them.
+ */
+export interface LayerEdgeLight {
+  /**
+   * How much of the lip lights up either side of the aimed point, in world
+   * units.
+   *
+   * THE BRUSH RADIUS, in world units, and that is the point of it (owner,
+   * 2026-08-27): the lit stretch is then exactly the run of lip a press would
+   * move, so the pointer stops being a mark the player has to intersect with
+   * the highlight by eye. Passed in because the brush is the HUD's state
+   * (state/hudState.ts) and this module knows nothing about the HUD.
+   */
+  readonly litSpanWorldUnits: number;
+  /**
+   * A band to light INSTEAD of the one this pick names — a live stroke's
+   * frozen grab (input/sculptInput.ts's `heldBand`).
+   *
+   * WHY IT OVERRIDES THE PICK. A pull drags the pointer OFF the riser it
+   * grabbed within the first cell of travel, and the pick-derived band is null
+   * everywhere but on a riser — so the lip the player was holding went dark
+   * while they were still holding it. What is held is a fact about the STROKE,
+   * not about the current ray, and only the stroke knows it.
+   *
+   * The overlay's membership guard still applies: it asks whether that band's
+   * contour runs beside the cell now under the pointer, and if the answer is no
+   * then there is no nearby segment to light in the first place.
+   */
+  readonly heldBand?: number | null;
+}
+
 export interface World extends TerrainSink {
   /**
    * Applies the local player's sculpt immediately, before the server has
@@ -103,7 +140,7 @@ export interface World extends TerrainSink {
    * riser names WHICH of the lips stacked on that face is meant — the thing a
    * plan-view distance cannot answer. See the derivation in the implementation.
    */
-  highlightLayerEdge(pick: TerrainRayPick | null): number | null;
+  highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null;
   /**
    * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored
    * height, in BAND units, not world units.
@@ -615,7 +652,7 @@ export function createWorld(viewport: Viewport): World {
       return drawnGround.capYAt(cellX, cellZ);
     },
 
-    highlightLayerEdge(pick: TerrainRayPick | null): number | null {
+    highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null {
       // THE AIMED BAND IS DERIVED HERE, not asked of the caller. Both callers
       // — the frame loop that lights the lip and the press that grabs it —
       // must agree about which layer the cursor is on, and a parameter either
@@ -634,22 +671,31 @@ export function createWorld(viewport: Viewport): World {
       // derivations of "what am I aiming at" could disagree. Now `bandOfPick`
       // decides and the overlay only answers yes/no about that one band.
       if (layerEdges === null) return null;
-      const band = pick !== null && pick.hitRiser ? bandOfPick(pick) : null;
+      // A LIVE STROKE'S GRAB WINS over the current ray — see LayerEdgeLight's
+      // `heldBand`. `?? null` rather than a truthiness test: band 0 is a real
+      // band (the waterline), and it is held like any other.
+      const band =
+        light.heldBand ?? (pick !== null && pick.hitRiser ? bandOfPick(pick) : null);
       // CALLED EVEN WITH NOTHING TO LIGHT, because the overlay holds the
       // highlight from the last call: returning early on a null pick would
       // leave the previous frame's lip lit after the pointer had left it.
       //
-      // THE POINT THE LIP IS MEASURED FROM is the cell's own lattice position,
-      // which is where the contour vertices live too (the marcher samples the
-      // height field at integer cell coordinates and scales by
-      // CELL_WORLD_SIZE). Handed over rather than re-derived in the overlay so
-      // a caller with a better point — the pointer's actual meeting with the
-      // face — can supply it without a second convention appearing. Ignored
-      // entirely when there is no pick, which is why the cell doubles as the
-      // "is there anything here" flag.
-      const atX = (pick?.x ?? 0) * CELL_WORLD_SIZE;
-      const atZ = (pick?.y ?? 0) * CELL_WORLD_SIZE;
-      return layerEdges.lightBand(pick, band, atX, atZ) ? band : null;
+      // THE POINT THE LIP IS MEASURED FROM. On a RISER hit it is where the ray
+      // actually met the face — the better point the phase-1 note above said a
+      // caller could supply, and now does: the pointer is drawn there
+      // (render/brushPreview.ts), so measuring the lit stretch from anywhere
+      // else would light a run of lip that is not centred on the mark the
+      // player is aiming with.
+      //
+      // Everywhere else it stays the cell's own lattice position, which is
+      // where the contour vertices live (the marcher samples the height field
+      // at integer cell coordinates and scales by CELL_WORLD_SIZE) — a
+      // horizontal face has no meeting point more meaningful than the cell.
+      // Ignored entirely when there is no pick, which is why the cell doubles
+      // as the "is there anything here" flag.
+      const atX = pick === null ? 0 : pick.hitRiser ? pick.hitX : pick.x * CELL_WORLD_SIZE;
+      const atZ = pick === null ? 0 : pick.hitRiser ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
+      return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;
     },
     bandAtCell(x: number, y: number): number | null {
       if (mirror === null) return null;
