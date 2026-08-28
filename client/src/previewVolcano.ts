@@ -315,7 +315,7 @@ function main(): void {
       sceneName === 'cooling'
         ? walkFlow((index, total) => LAVA_COOL_SECONDS * (1 - (index / total) * 0.35))
         : walkFlow((index, total) => (LAVA_COOL_SECONDS * 0.75 * (total - index)) / total);
-    flow.replaceAll(cells, (cellX, cellY) => capWorldY(cellX, cellY));
+    flow.replaceAll(cells, clock, (cellX, cellY) => capWorldY(cellX, cellY));
   }
 
   // ── The column ────────────────────────────────────────────────────────────
@@ -329,14 +329,19 @@ function main(): void {
     // are pure functions of (dt, elapsed), so this IS the frame at `t`.
     plume.update(10, clock);
   }
-  flow.update(0, clock);
+  flow.update(clock);
 
   // ── Framing ───────────────────────────────────────────────────────────────
   const view = CAMERA_VIEWS[viewName] ?? CAMERA_VIEWS.iso;
   const camera = new PerspectiveCamera(
     CAMERA_FOV_DEGREES,
     window.innerWidth / window.innerHeight,
-    0.05,
+    // A near plane of 0.05 against a far of 400 is an 8000:1 ratio, which
+    // leaves so little depth precision that the flow's hover over the ground
+    // stops winning the depth test. The real client does not frame this way;
+    // this is the harness's own camera and it should not invent a z-fight the
+    // shipped one would not have.
+    0.5,
     400,
   );
   const centre = new Vector3(

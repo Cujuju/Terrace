@@ -10,8 +10,9 @@
 // TWO LAYERS, TWO ORACLES FOR THE GROUND, and the distinction is the one
 // ClientPluginCtx spells out:
 //
-//   * the FLOW lies ON the ground and is seen against it, so it is placed by
-//     `drawnGroundYAt` — the Y the terrain actually drew (./lavaFlow.ts);
+//   * the FLOW lies ON the ground and is seen against it, so every cap and
+//     riser of its mesh is placed by `drawnGroundYAt` — the Y the terrain
+//     actually drew (./lavaFlow.ts, which drapes rather than decals);
 //   * the PLUME stands OUT OF the ground and is seen against the sky, so it is
 //     placed by `terrainHeightAt`, which costs nothing and is right for
 //     anything standing up (./plume.ts).
@@ -108,7 +109,7 @@ export const clientPlugin: TerraceClientPlugin = {
         // away. Every plugin in this repo follows the same rule.
         if (all === null) return;
         replaceVents(all.vents);
-        flow?.replaceAll(all.lava, groundAt);
+        flow?.replaceAll(all.lava, elapsedSeconds, groundAt);
       }),
 
       ctx.onMessage(VOLCANOES_CHANGES_MESSAGE, (payload) => {
@@ -121,7 +122,7 @@ export const clientPlugin: TerraceClientPlugin = {
         // Forget before adding: a cell the server evicted and immediately
         // re-melted would otherwise be dropped after being added.
         flow?.forget(changes.forgotten);
-        flow?.add(changes.molten, groundAt);
+        flow?.add(changes.molten, elapsedSeconds, groundAt);
       }),
     ];
 
@@ -130,9 +131,11 @@ export const clientPlugin: TerraceClientPlugin = {
 
       plume?.apply(plumeSources(ctx));
       plume?.update(dt, elapsedSeconds);
-      flow?.update(dt, elapsedSeconds);
+      // No `dt`: the flow's cooling is a uniform and a per-vertex birth time,
+      // so a frame in which nothing changed writes nothing at all.
+      flow?.update(elapsedSeconds);
 
-      if (flow === null || flow.pendingGround === 0) return;
+      if (flow === null || !flow.pendingGround) return;
       sinceRetrySeconds += dt;
       if (sinceRetrySeconds < VOLCANOES_GROUND_RETRY_SECONDS) return;
       sinceRetrySeconds = 0;
