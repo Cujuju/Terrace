@@ -34,7 +34,6 @@ import type { Mesh } from 'three';
 import {
   applyChunkUnlock,
   applySnapshot,
-  applyTerrainDiff,
   createTerrainMirror,
   sampleHeight,
   type TerrainMirror,
@@ -550,7 +549,7 @@ export function createWorld(viewport: Viewport): World {
       // then patch only the chunk meshes those cells touch — including
       // neighbours across a shared border.
       applyDirty(
-        predictions.applyAuthoritative((m) => applyTerrainDiff(m, msg), nowMs()),
+        predictions.applyCellDiff(msg, nowMs()),
       );
       armExpiryTimer();
     },

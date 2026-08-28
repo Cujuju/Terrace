@@ -25,6 +25,7 @@ import {
   type TerrainDiffMessage,
 } from '@terrace/shared';
 import {
+  applyChunkUnlock,
   applySnapshot,
   applyTerrainDiff,
   createTerrainMirror,
@@ -697,5 +698,71 @@ describe('frontier sculpts (issue #21)', () => {
 
     expect(store.pendingCount()).toBe(0);
     expect(mirror.map.cells).toEqual(server.cells);
+  });
+});
+
+describe('the dirty set reports what the SCREEN needs, and only that', () => {
+  // The seam half of the contract. A chunk's border wall reads the FIRST
+  // row/column of the next chunk (mirror.ts's chunksDirtiedByCell), so a cell
+  // on a chunk boundary dirties the chunk BEFORE it as well. Narrowing the set
+  // to "cells that actually changed" must never narrow it past that — missing
+  // it is precisely how seam cracks appear after an edit.
+  it('dirties the −x/−y neighbours of a changed cell on a chunk border', () => {
+    const { store } = createClient();
+
+    // Cell (CHUNK_SIZE, CHUNK_SIZE) is the first row AND first column of chunk
+    // (1,1), so it is read by (0,1), (1,0) and (0,0) too.
+    const dirty = store.predict(raise(CHUNK_SIZE, CHUNK_SIZE, MIN_BRUSH_RADIUS), 0);
+
+    expect(dirty.has(chunkIndex(WORLD, 1, 1))).toBe(true);
+    expect(dirty.has(chunkIndex(WORLD, 0, 1))).toBe(true);
+    expect(dirty.has(chunkIndex(WORLD, 1, 0))).toBe(true);
+    expect(dirty.has(chunkIndex(WORLD, 0, 0))).toBe(true);
+  });
+
+  // The saving half. The server's echo of an edit this client already drew
+  // changes nothing on screen, so it must cost the renderer nothing: before
+  // this contract it re-patched every chunk the diff mentioned.
+  it('reports nothing for an authoritative echo that matches the prediction', () => {
+    const { store } = createClient();
+    const server = createHeightmap(WORLD);
+
+    const intent: SculptIntent = {
+      ...raise(CHUNK_SIZE, CHUNK_SIZE, MIN_BRUSH_RADIUS),
+      seq: 1,
+    };
+    expect(store.predict(intent, 0).size).toBeGreaterThan(0);
+
+    const echo = store.applyCellDiff(serverSculpt(server, intent), 10);
+
+    expect(echo.size).toBe(0);
+    // …and the client is genuinely reconciled, not merely quiet about it.
+    expect(store.authoritativeHeightAt(CHUNK_SIZE, CHUNK_SIZE)).toBe(
+      heightAt(server, CHUNK_SIZE, CHUNK_SIZE),
+    );
+  });
+
+  // The other half of "changed": a chunk crossing into `received` changes what
+  // the renderer resolves its neighbours' border samples to (renderSampleCell's
+  // frontier pull-back) even when not one cell VALUE moves. No cell compare can
+  // see that, so `applyChunkPayload`'s indices pass through unfiltered.
+  it('dirties an unlocked all-sea-level chunk and its three back-neighbours', () => {
+    // Everything except chunk (1,1); its neighbours are drawn, it is not.
+    const held = allChunks().filter((c) => !(c.cx === 1 && c.cy === 1));
+    const { store } = createClient(held);
+
+    const dirty = store.applyAuthoritative(
+      (m) =>
+        applyChunkUnlock(m, {
+          type: 'chunkUnlock',
+          chunks: [chunkPayload(1, 1, 0)],
+        }),
+      10,
+    );
+
+    expect(dirty.has(chunkIndex(WORLD, 1, 1))).toBe(true);
+    expect(dirty.has(chunkIndex(WORLD, 0, 1))).toBe(true);
+    expect(dirty.has(chunkIndex(WORLD, 1, 0))).toBe(true);
+    expect(dirty.has(chunkIndex(WORLD, 0, 0))).toBe(true);
   });
 });

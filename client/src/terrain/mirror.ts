@@ -229,6 +229,16 @@ export function chunksDirtiedByCell(
 }
 
 /**
+ * A writer's report that it is about to overwrite one cell, by flat cell index.
+ *
+ * Exists because "which chunks did this change" is not answerable by the code
+ * doing the writing when the write is one step of a longer reconciliation —
+ * see `applyTerrainDiff`'s `onCellWrite` note. The sink is called BEFORE the
+ * write so the recipient can read the outgoing value.
+ */
+export type CellWriteSink = (cellIdx: number) => void;
+
+/**
  * Writes one chunk payload into the mirror and marks it received.
  * Returns every chunk index whose mesh is now stale — the chunk itself plus,
  * for the same border-sampling reason as above, the neighbours that sample
@@ -329,10 +339,23 @@ export function applyChunkUnlock(
  *
  * Returns the chunk indices to re-patch. Note it returns chunks regardless of
  * whether we hold them; the renderer ignores indices with no mesh.
+ *
+ * `onCellWrite` INVERTS THAT LAST SENTENCE, deliberately. A diff is applied
+ * inside a prediction reconciliation that rolls predictions off, writes these
+ * cells and replays the survivors; the only cells worth re-patching are the
+ * ones whose RENDERED value differs across that whole sequence, and a
+ * per-write comparison here cannot see it (a correctly predicted sculpt writes
+ * each cell twice — once rolling back to base, once with the server's
+ * identical value — and would call both writes a change). So when a sink is
+ * supplied this function reports each cell it is ABOUT TO WRITE and returns an
+ * EMPTY set: the caller holds the before-picture and decides. Without a sink
+ * the behaviour is exactly what it always was, which is what every direct
+ * caller — tests, the mesh harnesses — still wants.
  */
 export function applyTerrainDiff(
   mirror: TerrainMirror,
   msg: TerrainDiffMessage,
+  onCellWrite?: CellWriteSink,
 ): Set<number> {
   const worldSize = mirror.map.size;
   const dirty = new Set<number>();
@@ -355,7 +378,11 @@ export function applyTerrainDiff(
     ) {
       continue;
     }
-    mirror.map.cells[cellIndex(mirror.map, cell.x, cell.y)] = cell.h;
+    const i = cellIndex(mirror.map, cell.x, cell.y);
+    // BEFORE the write, which is the whole contract of the sink: it is the
+    // last moment the cell still holds the value the screen was drawn from.
+    onCellWrite?.(i);
+    mirror.map.cells[i] = cell.h;
 
     // A diff that DISAGREES WITH ITSELF — a span list whose topmost ceiling
     // is not the height beside it in the same entry — is refused its spans
@@ -375,8 +402,12 @@ export function applyTerrainDiff(
       rejectedSpans++;
     }
 
-    for (const idx of chunksDirtiedByCell(worldSize, cell.x, cell.y)) {
-      dirty.add(idx);
+    // With a sink the CALLER owns the dirty question — see the doc above — so
+    // nothing is added here and the returned set stays empty.
+    if (onCellWrite === undefined) {
+      for (const idx of chunksDirtiedByCell(worldSize, cell.x, cell.y)) {
+        dirty.add(idx);
+      }
     }
   }
   if (rejectedSpans > 0) {
