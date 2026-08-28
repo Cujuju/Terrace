@@ -21,6 +21,7 @@ import {
   spanAt,
   spanCapHeight,
   spanCount,
+  spanUndersideHeight,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -39,7 +40,7 @@ import {
   sampleHeight,
   type TerrainMirror,
 } from './terrain/mirror.ts';
-import { HEIGHT_WORLD_SCALE } from './config.ts';
+import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { setServerVersion, setWorldIdentity } from './state/hudState.ts';
 import { noteBuildIdentity } from './net/buildReload.ts';
 import {
@@ -90,14 +91,34 @@ export interface World extends TerrainSink {
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
   /**
    * Lights up the terrace lip this PICK is pointing at and returns the band a
-   * pull starting there would grab, or null for no lip in range
+   * pull starting there would grab, or null when there is none
    * (render/layerEdgeOverlay.ts).
+   *
+   * ONLY A RISER HIT HAS A LIP TO GRAB: the band is the one whose slab contains
+   * the height the ray struck, and the overlay is asked only whether that
+   * band's contour actually bounds this cell or a neighbour — a guard, not a
+   * search. A pick on a tread or on a roof underside returns null.
    *
    * It takes the whole pick, not just its cell, because a ray that struck a
    * riser names WHICH of the lips stacked on that face is meant — the thing a
    * plan-view distance cannot answer. See the derivation in the implementation.
    */
   highlightLayerEdge(pick: TerrainRayPick | null): number | null;
+  /**
+   * The terrace band of the terrain at cell (x, y) — `bandOf` the mirrored
+   * height, in BAND units, not world units.
+   *
+   * Lives here, beside the other pick derivations, because it is a question
+   * about the height mirror and the mirror is this module's. Its caller
+   * (input/sculptInput.ts's seed) has no heightmap, no `bandOf`, and its only
+   * height accessor is in world units — deriving a band there would be a unit
+   * trap. Read twice, before and after a seed, it says whether the seed
+   * actually raised the ground; an absolute read cannot, because `send`
+   * reports true for intents that predict nothing.
+   *
+   * Null before the first snapshot.
+   */
+  bandAtCell(x: number, y: number): number | null;
   /**
    * The band a stroke starting at this PICK has hold of — `SculptIntent`'s
    * `spanBand`, or null to mean the topmost span.
@@ -238,16 +259,38 @@ export function createWorld(viewport: Viewport): World {
    */
   const bandOfPick = (pick: TerrainRayPick): number | null => {
     if (mirror === null) return null;
-    // A riser hit names the lip the ray actually struck — the same rounding
-    // `highlightLayerEdge` uses, and for the same reason: the lip of band k
-    // lies AT k·BAND_HEIGHT, so the nearest lip to a height is the nearest
-    // multiple. A horizontal face (a tread, or a cave roof seen from below)
-    // has no stack to disambiguate, so the band of the span the march itself
-    // reported is the answer.
+    // A RISER HIT NAMES THE BAND WHOSE SLAB CONTAINS THE STRUCK HEIGHT (owner,
+    // 2026-08-26: "if you're grabbing the side of a band, then that is the band
+    // that should apply. I would never grab the band below"). The slab the
+    // renderer draws for band k occupies [(k−1)·BAND_HEIGHT, k·BAND_HEIGHT]
+    // (columns.ts `spanUndersideHeight`), so the band containing a height is
+    // its CEILING in band units — the whole face of band k, top to bottom, is
+    // band k's handle.
+    //
+    // NOT `round` (which is what this was): rounding made the bottom half of
+    // every face grab the band below the one being pointed at. NOT the span's
+    // cap band either: a column is drawn solid from its own cap down to its
+    // neighbour's, so a cliff that drops five bands at once is ONE span with
+    // one five-band-tall riser face carrying five lips, and the cap band would
+    // name the clifftop for every one of them (the 2026-08-24 report).
+    //
+    // CLAMPED TO THE STRUCK SPAN'S DRAWN RANGE so a hit landing exactly on a
+    // slab boundary — where `ceil` is exact and could name the band above the
+    // face — still resolves to a band this span actually draws.
+    //
+    // A horizontal face (a tread, or a cave roof seen from below) has no stack
+    // to disambiguate, so the band of the span the march itself reported is the
+    // answer.
+    const span = spanAt(mirror.map, pick.x, pick.y, pick.spanIndex);
     if (pick.hitRiser) {
-      return Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+      const struck = Math.ceil(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
+      const lowestDrawn = bandOf(spanUndersideHeight(span)) + 1;
+      const highestDrawn = bandOf(spanCapHeight(span));
+      if (struck < lowestDrawn) return lowestDrawn;
+      if (struck > highestDrawn) return highestDrawn;
+      return struck;
     }
-    return bandOf(spanCapHeight(spanAt(mirror.map, pick.x, pick.y, pick.spanIndex)));
+    return bandOf(spanCapHeight(span));
   };
 
   const clearExpiryTimer = (): void => {
@@ -579,21 +622,38 @@ export function createWorld(viewport: Viewport): World {
       // of them could forget to pass is a way for them to disagree. They hand
       // over the pick; this turns it into the aim.
       //
-      // Only a RISER hit names a band: the ray struck the vertical face of a
-      // step, so the height it struck says which of the lips stacked on that
-      // face the player is pointing at (see TerrainRayPick.hitY). A ray that
-      // landed on a tread has no stack to disambiguate, and nearest-in-plan is
-      // then the right answer — null asks for exactly that.
+      // ONLY A RISER HIT NAMES A BAND, and it names it outright: the face under
+      // the cursor is the thing the player gets (owner, 2026-08-26). A ray that
+      // landed on a tread — or on a cave roof's underside — has no face to
+      // grab, so there is nothing to light and nothing to pull; the tread's own
+      // gesture is the seed (input/sculptInput.ts).
       //
-      // Rounded rather than floored: the lip of band k lies AT k·BAND_HEIGHT,
-      // so the nearest lip to a height is the nearest multiple, not the one
-      // below it. Flooring would make the top half of every step grab the lip
-      // beneath the one being pointed at.
-      const preferBand =
-        pick === null || !pick.hitRiser
-          ? null
-          : Math.round(pick.hitY / (HEIGHT_WORLD_SCALE * BAND_HEIGHT));
-      return layerEdges?.highlightAt(pick, preferBand) ?? null;
+      // THE OVERLAY IS NO LONGER ASKED WHICH BAND. It used to search: nearest
+      // lip in plan within a grab radius, tie-broken by the aimed band. A
+      // search is not a function of the pixel under the cursor, so the two
+      // derivations of "what am I aiming at" could disagree. Now `bandOfPick`
+      // decides and the overlay only answers yes/no about that one band.
+      if (layerEdges === null) return null;
+      const band = pick !== null && pick.hitRiser ? bandOfPick(pick) : null;
+      // CALLED EVEN WITH NOTHING TO LIGHT, because the overlay holds the
+      // highlight from the last call: returning early on a null pick would
+      // leave the previous frame's lip lit after the pointer had left it.
+      //
+      // THE POINT THE LIP IS MEASURED FROM is the cell's own lattice position,
+      // which is where the contour vertices live too (the marcher samples the
+      // height field at integer cell coordinates and scales by
+      // CELL_WORLD_SIZE). Handed over rather than re-derived in the overlay so
+      // a caller with a better point — the pointer's actual meeting with the
+      // face — can supply it without a second convention appearing. Ignored
+      // entirely when there is no pick, which is why the cell doubles as the
+      // "is there anything here" flag.
+      const atX = (pick?.x ?? 0) * CELL_WORLD_SIZE;
+      const atZ = (pick?.y ?? 0) * CELL_WORLD_SIZE;
+      return layerEdges.lightBand(pick, band, atX, atZ) ? band : null;
+    },
+    bandAtCell(x: number, y: number): number | null {
+      if (mirror === null) return null;
+      return bandOf(sampleHeight(mirror, x, y));
     },
     graspSpanBand(pick: TerrainRayPick | null): number | null {
       if (pick === null || mirror === null) return null;

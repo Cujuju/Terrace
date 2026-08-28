@@ -114,7 +114,8 @@ const sculptInput = createSculptInput({
   worldSize: () => world.worldSize(),
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.
-  grabbableLip: (pick) => world.highlightLayerEdge(pick),
+  riserBand: (pick) => world.highlightLayerEdge(pick),
+  bandAtCell: (x, y) => world.bandAtCell(x, y),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
   carveBand: (pick) => world.carveBand(pick),
   // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same

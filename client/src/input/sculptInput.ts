@@ -31,7 +31,6 @@
 
 import { Raycaster, Vector2, type Camera } from 'three';
 import {
-  CELL_WORLD_SIZE,
   HEIGHT_WORLD_SCALE,
   SCULPT_REPEAT_DELAY_MS,
   SCULPT_REPEAT_INTERVAL_MS,
@@ -40,6 +39,7 @@ import {
 } from '../config.ts';
 import {
   pointerToNdc,
+  worldPointToCell,
   type TerrainRayPick,
   type Vec3,
 } from '../terrain/picking.ts';
@@ -80,14 +80,25 @@ export interface SculptInputOptions {
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
-   * The terrace band whose lip this PICK is pointing at, or null for none
-   * (World.highlightLayerEdge →
-   * render/layerEdgeOverlay.ts). This is the SAME query that lights the lip up
-   * on screen, so what the player sees highlighted is exactly what a press
-   * grabs — the highlight is the affordance, and two answers to "is there a
-   * lip here" would make it a lie.
+   * The band of the RISER under the pointer — guard-admitted — or null
+   * (World.highlightLayerEdge → render/layerEdgeOverlay.ts).
+   *
+   * Null on a tread, on a cave roof's underside, and off the world: a lip has
+   * no width, so being "on the lip" means being on the riser FACE (owner,
+   * 2026-08-26). No search radius, no nearest-lip snap.
+   *
+   * This is the SAME query that lights the lip up on screen, so what the player
+   * sees highlighted is exactly what a press grabs — the highlight is the
+   * affordance, and two answers to "is there a lip here" would make it a lie.
    */
-  grabbableLip: (pick: TerrainRayPick | null) => number | null;
+  riserBand: (pick: TerrainRayPick | null) => number | null;
+  /**
+   * The terrace band of the terrain at a cell (World.bandAtCell) — read before
+   * and after a seed to learn whether the seed actually raised the ground. See
+   * `takeHold`; the unit is BANDS, which is why it is asked of the world rather
+   * than derived from `terrainHeightAt`'s world units here.
+   */
+  bandAtCell: (x: number, y: number) => number | null;
   /**
    * The band this PICK has hold of — the intent's `spanBand`, or null for the
    * topmost span (World.graspSpanBand). Null on every ordinary column, so an
@@ -131,6 +142,17 @@ export interface SculptInput {
    * see hoverTarget's own note and emitIntent's issue-#25 comment).
    */
   hoverTarget(): TerrainRayPick | null;
+  /**
+   * The band the LIVE stroke has hold of, or null when no stroke is pulling
+   * one — the frozen `strokeGrab`.
+   *
+   * Exposed so the frame loop can keep the grabbed lip lit for as long as it is
+   * held. The highlight is otherwise re-derived from the live pick every frame,
+   * and a pull drags the pointer OFF the riser it grabbed within the first
+   * cell — so the lip the player is holding went dark while they were holding
+   * it.
+   */
+  heldBand(): number | null;
   dispose(): void;
 }
 
@@ -161,7 +183,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     pickCell: pickCellByRay,
     terrainHeightAt,
     worldSize,
-    grabbableLip,
+    riserBand,
+    bandAtCell,
     graspSpanBand,
     carveBand,
     send,
@@ -332,11 +355,11 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
     const worldX = origin.x + direction.x * distance;
     const worldZ = origin.z + direction.z * distance;
-    const x = Math.floor(worldX / CELL_WORLD_SIZE);
-    const y = Math.floor(worldZ / CELL_WORLD_SIZE);
-    // Off the world: the plane is infinite, the world is not.
-    if (x < 0 || y < 0 || x >= size || y >= size) return null;
-    return { x, y };
+    // THE ONE PLAN-POINT → CELL RULE (terrain/picking.ts). This used to floor
+    // where every other pick rounds, which is half a cell of bias in one
+    // direction for the whole length of every pull. `worldPointToCell` also
+    // owns the off-the-world test — the plane is infinite, the world is not.
+    return worldPointToCell(worldX, worldZ, size);
   };
 
   const hoverTarget = (): TerrainRayPick | null => {
@@ -583,6 +606,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * re-targets wherever the cursor is now — but a stationary hold keeps its
    * cell even as the terrain rises (see emitIntent's issue-#25 comment). */
   const armStroke = (): void => {
+    // A TOUCH STROKE TAKES HOLD HERE, NOT AT POINTERDOWN. The grab is a
+    // function of the ray, and with no hover to fall back on and no search
+    // radius to forgive a miss, the only ray worth firing is the one from where
+    // the finger has SETTLED: first contact is measured before the finger has
+    // stopped moving, and the stroke does not arm until TOUCH_STROKE_GRACE_MS
+    // has passed anyway. A mouse press has already taken hold in startStroke,
+    // where the pointer is exactly where the player put it.
+    if (strokeIsTouch) takeHold(currentStrokeAction());
     strokeArmed = true;
     emitIntent();
     // A DRAG IS DRIVEN BY MOTION, NOT BY A TIMER (owner report, 2026-08-23:
@@ -637,6 +668,51 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       seq: nextSeq++,
     });
 
+  /**
+   * DECIDES WHAT THIS STROKE HAS HOLD OF, once, and freezes it in `strokeGrab`.
+   *
+   * THE PULL IS A TOOL YOU SELECT, not a mode a press falls into (owner
+   * decision 2026-08-24): Stamp and Smooth always brush, so they hold nothing.
+   *
+   * With the Pull tool the answer is the face under the pointer and nothing
+   * else — a riser is grabbed at the band whose slab the ray struck, a tread
+   * seeds (below), and anything else holds nothing. BOTH DIRECTIONS grab the
+   * same lip (issue #99 step 3): the lower chord pulls it INWARD, and the stop
+   * rule that needs lives in the shared math (applyDragRegion/retreatHeightAt).
+   */
+  const takeHold = (action: SculptAction): void => {
+    strokeGrab = null;
+    if (brushTool() !== 'drag') return;
+    const hover = hoverTarget();
+    strokeGrab = riserBand(hover);
+    if (strokeGrab !== null) return;
+    // SEEDING IS A RAISE-ONLY RESCUE. A lower press with nothing in its grasp
+    // has nothing to retreat, and stamping a plateau to pull in would be the
+    // opposite of what the player just asked for — it emits nothing instead.
+    if (action !== 'raise') return;
+    // ON THE TREAD, and only there. `riserBand` is null on a cave roof's
+    // UNDERSIDE too, and seeding one would add material to the bottom of a
+    // roof — the very thing emitIntent refuses (plan D4). A horizontal face at
+    // the span's own cap is the tread; below it, the underside.
+    if (hover === null || hover.hitRiser || hover.hitY !== hover.surfaceY) return;
+    // NOTHING TO PULL, SO MAKE SOMETHING (owner, 2026-08-24). The seed is
+    // applied locally by the prediction the moment it is sent (main.tsx's
+    // send), so the band under the pointer moves within this call.
+    //
+    // THE NEW LIP IS READ FROM THE MAP AS A CHANGE, not re-picked. The hover
+    // pick is cached on pointer position and camera pose alone and does not
+    // re-march after a terrain edit, so a second `riserBand(hoverTarget())`
+    // would re-use the pre-seed TREAD pick — null by definition under the
+    // riser-only rule. And an absolute read after the seed is not safe either:
+    // `send` returns true for intents that predict nothing, so the band under
+    // the pointer could be one this press did not raise. A delta is.
+    const before = bandAtCell(hover.x, hover.y);
+    if (!seedLayer(hover)) return;
+    const after = bandAtCell(hover.x, hover.y);
+    if (before === null || after === null || after <= before) return;
+    strokeGrab = after;
+  };
+
   const startStroke = (event: PointerEvent, action: SculptAction): void => {
     // Abandon any stroke still in flight (e.g. a missed pointerup) before
     // starting this one, so at most one repeat timer can ever exist.
@@ -651,38 +727,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     pointerClientY = event.clientY;
     havePointer = true;
     // GRAB, OR BRUSH — decided here, once, after the pointer position is
-    // recorded, because the lip query has to run against the cell THIS press
-    // is over.
-    //
-    // THE PULL IS A TOOL YOU SELECT, not a mode a press falls into (owner
-    // decision 2026-08-24). It used to grab whenever a press happened to land
-    // near a lip, whatever tool was chosen, which meant the same click did two
-    // different things depending on ground the player could easily misjudge.
-    // Now Stamp and Smooth always brush and Pull always pulls, so the HUD
-    // states which of the two a press will be before the press happens. The
-    // lip query is still the one that highlights the edge on screen, so within
-    // the Pull tool what is lit up is exactly what a press takes hold of.
-    //
-    // BOTH DIRECTIONS (issue #99 step 3, 2026-08-24). The lower modifier pulls
-    // the grabbed lip INWARD and the band retreats, exposing the ground it was
-    // standing proud of; the stop rule that direction needed now exists in the
-    // shared math (applyDragRegion/retreatHeightAt — only cells at exactly the
-    // grabbed band move, so a lip pulled in never strips the ground standing on
-    // it). The grab itself is direction-blind: it is the same lip either way.
-    const pulling = brushTool() === 'drag';
-    strokeGrab = pulling ? grabbableLip(hoverTarget()) : null;
-    // SEEDING IS A RAISE-ONLY RESCUE. A lower press with nothing in its grasp
-    // has nothing to retreat, and stamping a plateau to pull in would be the
-    // opposite of what the player just asked for — it emits nothing instead.
-    if (pulling && action === 'raise' && strokeGrab === null) {
-      // NOTHING TO PULL, SO MAKE SOMETHING. The seed is applied locally by the
-      // prediction the moment it is sent (main.tsx's send), and the layer-edge
-      // overlay re-contours on the same dirty set, so the lip it creates
-      // already exists by the time the next line asks for it — this press
-      // becomes a pull of the layer it just raised, in one gesture.
-      const seedCell = hoverTarget();
-      if (seedCell !== null && seedLayer(seedCell)) strokeGrab = grabbableLip(hoverTarget());
-    }
+    // recorded, because the face query has to run against the ray THIS press
+    // fires. A touch press defers it to armStroke instead: see there.
+    if (!strokeIsTouch) takeHold(action);
 
     if (strokeIsTouch) {
       // Touch arms after a grace delay so the second finger of a camera
@@ -808,6 +855,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   return {
     hoverTarget,
+    heldBand: (): number | null => strokeGrab,
     dispose(): void {
       stopRepeat();
       canvas.removeEventListener('pointerdown', onPointerDown);

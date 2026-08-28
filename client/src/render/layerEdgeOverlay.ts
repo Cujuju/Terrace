@@ -85,7 +85,9 @@ const GRABBED_COLOR = 0xfff2c4;
 const GRABBED_OPACITY = 1;
 
 /**
- * How close the cursor must come to a lip to grab it, in world units.
+ * How close a lip must lie to the aimed point to COUNT AS BOUNDING ITS CELL, in
+ * world units. A membership guard, not a search: it answers yes or no about the
+ * one band the pick named (see `lightBand`), and never chooses between bands.
  *
  * DERIVED, not chosen: a lip that BOUNDS the cell being pointed at, or any of
  * that cell's eight neighbours, is grabbable. A contour bounding a cell passes
@@ -118,22 +120,35 @@ export interface LayerEdgeOverlay {
   /** Rebuilds the edges of the given chunks. Unreceived chunks are skipped. */
   update(dirty: Iterable<number>): void;
   /**
-   * Lights up the lip the cursor is pointing at and returns the BAND it
-   * belongs to — the band a pull starting there would grab. Null clears the
-   * highlight and reports no grab, either because the pointer is off the world
-   * or because no lip is within GRAB_RADIUS_WORLD_UNITS.
+   * Lights up ONE NAMED BAND's lip beside `(atX, atZ)` and reports whether that
+   * band has a lip there at all — a segment bounding `cell` or one of its eight
+   * neighbours (GRAB_RADIUS_WORLD_UNITS).
    *
-   * `preferBand` breaks the tie a plan-view distance cannot (owner report,
-   * 2026-08-24: "it only snaps to the edge of the topmost layer"). A terrace
-   * face is VERTICAL, so every lip stacked on it sits at the same place on the
-   * ground and the nearest-in-plan test picks between them almost arbitrarily
-   * — in practice always the same one. When the ray struck a riser, the height
-   * it struck names the band the player is actually pointing at, and passing
-   * it here makes that band win over a rival the same distance away. Null for
-   * a ray that landed on a tread, where there is no stack to disambiguate and
-   * nearest-in-plan is the right answer.
+   * A GUARD, NOT A SEARCH, and that is the whole of the 2026-08-27 change. The
+   * caller has already decided which band the player is aiming at, from the
+   * height the ray struck on the riser face (world.ts's `bandOfPick`), because
+   * only the pick knows that; a nearest-lip-in-plan ranking here was a second,
+   * disagreeing answer to the same question — a terrace face is VERTICAL, so
+   * every lip stacked on it sits at the same place on the ground and the
+   * ranking picked between them almost arbitrarily (owner report, 2026-08-24:
+   * "it only snaps to the edge of the topmost layer").
+   *
+   * The guard survives the search because a grab NAMES a band on the wire and
+   * `applyDragRegion` refuses a band `canSpreadBandTo` cannot reach; an
+   * emitted-then-refused intent still spends a seq and a mana gate.
+   *
+   * `cell` selects the chunks to look in. `(atX, atZ)` is the world-space point
+   * distances are measured from — the caller's, so there is one convention for
+   * it rather than one here and one there. A null `cell` or `band` clears the
+   * highlight and reports false: the pointer is off the world, or it is on a
+   * face with no lip to grab.
    */
-  highlightAt(cell: { x: number; y: number } | null, preferBand?: number | null): number | null;
+  lightBand(
+    cell: { x: number; y: number } | null,
+    band: number | null,
+    atX: number,
+    atZ: number,
+  ): boolean;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
   dispose(): void;
@@ -354,70 +369,51 @@ export function createLayerEdgeOverlay(
       clearGrabbed();
     },
 
-    highlightAt(cell, preferBand = null) {
+    lightBand(cell, band, atX, atZ) {
       clearGrabbed();
-      if (cell === null) return null;
-      // THE CELL'S CENTRE, not its corner (owner report 2026-08-24). A cell's
-      // representative point is its centre — it is where the height field is
-      // sampled and what every contour is drawn relative to — so measuring a
-      // distance from its corner biases every grab half a cell along both
-      // axes, always in the same direction. See GRAB_RADIUS_WORLD_UNITS.
-      const px = (cell.x + 0.5) * CELL_WORLD_SIZE;
-      const pz = (cell.y + 0.5) * CELL_WORLD_SIZE;
+      if (cell === null || band === null) return false;
 
-      // PASS 1 — which band owns the nearest lip within grabbing range.
+      // PASS 1 — THE GUARD. Does this band's contour bound the aimed cell or
+      // one of its neighbours? One band, one yes/no; nothing is ranked and
+      // nothing else can win.
       const grabRadiusSq = GRAB_RADIUS_WORLD_UNITS * GRAB_RADIUS_WORLD_UNITS;
-      let bestBand: number | null = null;
-      let bestDistanceSq = grabRadiusSq;
-      // How far the winning lip's band is from the one the ray's height named.
-      // Compared BEFORE distance, so a lip the player is demonstrably pointing
-      // at beats a nearer one they are not — which is the whole reason a lower
-      // layer can be grabbed at all. Held at 0 when there is no preference, so
-      // every candidate ties here and the distance test decides alone, exactly
-      // as it did before this parameter existed.
-      let bestBandGap = 0;
+      let bounded = false;
       for (const idx of nearbyChunks(cell.x, cell.y)) {
-        const perBand = segmentsByChunk.get(idx);
-        if (perBand === undefined) continue;
-        for (const [band, flat] of perBand) {
-          const gap = preferBand === null ? 0 : Math.abs(band - preferBand);
-          // A band further from the player's aim than the current best cannot
-          // win however close it lies, so its segments need not be measured.
-          if (bestBand !== null && gap > bestBandGap) continue;
-          for (let i = 0; i + 3 < flat.length; i += 4) {
-            const d = distanceSqToSegment(px, pz, flat[i]!, flat[i + 1]!, flat[i + 2]!, flat[i + 3]!);
-            if (d >= grabRadiusSq) continue;
-            // Closer to the aimed band wins outright; a tie falls back to
-            // whichever lip is nearer on the ground.
-            if (bestBand !== null && gap === bestBandGap && d >= bestDistanceSq) continue;
-            bestDistanceSq = d;
-            bestBandGap = gap;
-            bestBand = band;
+        const flat = segmentsByChunk.get(idx)?.get(band);
+        if (flat === undefined) continue;
+        for (let i = 0; i + 3 < flat.length; i += 4) {
+          if (distanceSqToSegment(atX, atZ, flat[i]!, flat[i + 1]!, flat[i + 2]!, flat[i + 3]!) >= grabRadiusSq) {
+            continue;
           }
+          bounded = true;
+          break;
         }
+        if (bounded) break;
       }
-      if (bestBand === null) return null;
+      if (!bounded) return false;
 
       // PASS 2 — light up that band's lip near the cursor. Scoped by distance
       // rather than by loop identity: a loop is CLIPPED AT THE CHUNK BORDER
       // (see chunkContourLoops), so "the whole loop" would stop dead at a seam
       // and read as the lip ending where it plainly does not.
       const spanSq = HIGHLIGHT_SPAN_WORLD_UNITS * HIGHLIGHT_SPAN_WORLD_UNITS;
-      const y = bestBand * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
+      const y = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
       const positions: number[] = [];
       for (const idx of nearbyChunks(cell.x, cell.y)) {
-        const flat = segmentsByChunk.get(idx)?.get(bestBand);
+        const flat = segmentsByChunk.get(idx)?.get(band);
         if (flat === undefined) continue;
         for (let i = 0; i + 3 < flat.length; i += 4) {
           const ax = flat[i]!;
           const az = flat[i + 1]!;
           const bx = flat[i + 2]!;
           const bz = flat[i + 3]!;
-          if (distanceSqToSegment(px, pz, ax, az, bx, bz) > spanSq) continue;
+          if (distanceSqToSegment(atX, atZ, ax, az, bx, bz) > spanSq) continue;
           positions.push(ax, y, az, bx, y, bz);
         }
       }
-      if (positions.length < FLOATS_PER_SEGMENT) return bestBand;
+      // The band IS grabbable — the guard said so — even when no segment came
+      // within the highlight span to draw.
+      if (positions.length < FLOATS_PER_SEGMENT) return true;
 
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
@@ -425,7 +421,7 @@ export function createLayerEdgeOverlay(
       // Above the resting edges it is picked out from.
       grabbed.renderOrder = 501;
       group.add(grabbed);
-      return bestBand;
+      return true;
     },
     clear() {
       clearGrabbed();
