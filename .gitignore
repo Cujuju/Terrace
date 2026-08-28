@@ -10,3 +10,4 @@ __pycache__/
 
 # Throwaway visual-verification rigs (screenshots, capture scripts, vite logs).
 .volcano-shots/
+.mudslide-shots/
