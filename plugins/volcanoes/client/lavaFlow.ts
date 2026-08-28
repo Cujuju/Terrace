@@ -508,9 +508,30 @@ export function createLavaFlow(): LavaFlowRenderer {
     }
 
     geometry.setDrawRange(0, vertex);
-    positionAttribute.needsUpdate = true;
-    birthAttribute.needsUpdate = true;
-    strengthAttribute.needsUpdate = true;
+    // ONLY THE PART THAT IS DRAWN IS UPLOADED. The buffers are LAVA_VERTEX_CAP
+    // long and the drawRange above is the only part of them the mesh reads, but
+    // three's WebGLAttributes.updateBuffer falls back to
+    // `bufferSubData(target, 0, array)` — the WHOLE array — when an attribute
+    // has no update ranges, so a rebuild used to move 1.08 MB to redraw the
+    // ~200 KB a flow at the server's cell cap actually occupies, and ten times
+    // that ratio early in an eruption. Naming the live prefix instead means the
+    // upload costs what the flow costs.
+    //
+    // CLEARED FIRST, and not because three forgets to: updateBuffer calls
+    // clearUpdateRanges() itself once it has uploaded. It only gets there when
+    // the mesh RENDERS, though, and a rebuild is driven by a server message —
+    // two messages inside one frame would otherwise leave two ranges on the
+    // attribute, and every rebuild after a frame the flow was not drawn in
+    // would add another. Clearing here keeps it at exactly one range per
+    // rebuild whether or not a frame happened in between.
+    for (const attribute of [positionAttribute, birthAttribute, strengthAttribute]) {
+      attribute.clearUpdateRanges();
+      // In ARRAY ELEMENTS, not vertices and not bytes — three multiplies the
+      // start by the array's BYTES_PER_ELEMENT itself, so the count has to be
+      // the vertex count times the attribute's own itemSize.
+      attribute.addUpdateRange(0, vertex * attribute.itemSize);
+      attribute.needsUpdate = true;
+    }
   }
 
   /**
