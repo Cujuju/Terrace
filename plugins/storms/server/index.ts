@@ -101,7 +101,7 @@ import {
 } from './storms.ts';
 import { forceSpawnFromEnv } from './dev.ts';
 import { loadWeatherBridge, resetWeatherBridge } from './weather-bridge.ts';
-import { pruneSurge, resetSurge, tickSurge } from './surge.ts';
+import { tickSurge } from './surge.ts';
 
 /**
  * Ticks between client broadcasts. 2 → 5 Hz at the shipped TICK_HZ of 10. See
@@ -145,7 +145,6 @@ function resetSessionState(): void {
   surgeMode = DEFAULT_STORM_SURGE_MODE;
   resetStorms();
   setDevFrozen(false);
-  resetSurge();
   resetWeatherBridge();
 }
 
@@ -232,7 +231,6 @@ function simulate(world: WorldApi, dt: number): void {
       tickSurge(world, storm, storm.peakIntensity * storm.envelope, dt, stormRandom);
     }
   }
-  pruneSurge(new Set(alive.map((storm) => storm.id)));
 
   if (tick.changed) broadcastPending = true;
   if (tickCount % BROADCAST_TICK_INTERVAL === 0 && broadcastPending) {
@@ -281,7 +279,6 @@ export const plugin: TerracePlugin = {
     // The freeze belongs to the world that set it, so it is cleared here and
     // re-set below only if THIS world was forced.
     setDevFrozen(false);
-    resetSurge();
     resetWeatherBridge();
 
     frequency = parseFrequency(world.setting(STORMS_FREQUENCY_SETTING_KEY));

@@ -555,7 +555,14 @@ export function surveySites(world: MudslideWorld, dt: number): void {
   // Re-check freshwater adjacency for the sites already in the table on the same
   // interval: a river re-routes when the terrain around it is sculpted, and a bank
   // that has stopped being a bank must stop saturating for free.
-  for (const site of sites.values()) {
+  // And the slope: a hillside a slide (or a player) has flattened is no longer a
+  // site, and left in the table it would saturate and inflate the trigger rate
+  // while never being able to let go.
+  for (const [key, site] of sites) {
+    if (slopeAt(world, site.x, site.y) === null) {
+      sites.delete(key);
+      continue;
+    }
     site.freshwater = freshwaterAdjacent(world, site.x, site.y);
   }
 }
@@ -673,7 +680,13 @@ export function rollTrigger(
 
   const site = pickSaturatedSite();
   if (site === null) return null;
-  return startSlide(world, site.x, site.y);
+  const slide = startSlide(world, site.x, site.y);
+  // A saturated site the ground refuses (scoured flat by its own last slide,
+  // typically) must leave the table: kept, it counts toward the saturated
+  // fraction — raising the arrival rate — and swallows every arrival that draws
+  // it (review 2026-08-28: "six real slides and then fifty-two silent no-ops").
+  if (slide === null) sites.delete(cellKey(site.x, site.y));
+  return slide;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -983,17 +996,19 @@ export function slideStates(): readonly SlideState[] {
       y: slide.y + dy * slide.progress,
       vx: dx * FRONT_SPEED_CELLS_PER_SECOND,
       vy: dy * FRONT_SPEED_CELLS_PER_SECOND,
-      headX: slide.headX,
-      headY: slide.headY,
       load: slide.excavated > 0 ? Math.min(1, slide.carried / slide.excavated) : 0,
     };
   });
 }
 
-/** Debris laid down since the last call, and clears the pending lists. */
-export function takePendingDebris(): DebrisCell[] {
+/**
+ * Debris laid down since the last call, and clears the pending lists. `alsoFrom`
+ * is for slides that finished THIS tick — `advanceSlides` has already dropped
+ * them from the live list, and a toe dump routinely lands on the finishing tick.
+ */
+export function takePendingDebris(alsoFrom: readonly Slide[] = []): DebrisCell[] {
   const cells: DebrisCell[] = [];
-  for (const slide of slides) {
+  for (const slide of [...slides, ...alsoFrom]) {
     if (slide.pendingDebris.length === 0) continue;
     cells.push(...slide.pendingDebris);
     slide.pendingDebris.length = 0;

@@ -374,6 +374,13 @@ export interface Storm {
   landfallReported: boolean;
   /** Seconds of storm not yet accounted for by a damage event. */
   damageDebtSeconds: number;
+  /**
+   * Seconds of cyclone banked toward its next surge. On the record, not in a
+   * side table, so it survives a restart or a settings reopen — a world reopened
+   * more often than SURGE_INTERVAL_SECONDS otherwise never surged at all
+   * (review 2026-08-28). Always 0 for a tornado.
+   */
+  surgeDebtSeconds: number;
 }
 
 const storms: Storm[] = [];
@@ -472,6 +479,7 @@ function birth(
     ...(name === undefined ? {} : { name }),
     landfallReported: false,
     damageDebtSeconds: 0,
+    surgeDebtSeconds: 0,
   };
   storms.push(storm);
   return storm;

@@ -102,13 +102,10 @@ function isShoreline(world: StormWorld, x: number, y: number): boolean {
   return false;
 }
 
-/** Seconds of storm each cyclone has banked toward its next surge, by id. */
-const surgeDebtSeconds = new Map<number, number>();
-
-/** Drops all surge bookkeeping — a world close, a rollback, a test. */
-export function resetSurge(): void {
-  surgeDebtSeconds.clear();
-}
+// The surge timer lives on the Storm record (`surgeDebtSeconds`) rather than in
+// a side table here: it is state of the storm, it must persist with it, and a
+// side table needed its own reset and prune to stay in step with the roster
+// (review 2026-08-28).
 
 /**
  * Runs one tick of surge for one storm. Returns the cell it scoured, or null.
@@ -129,15 +126,12 @@ export function tickSurge(
 ): { x: number; y: number } | null {
   if (storm.kind !== 'cyclone') return null;
 
-  const debt = (surgeDebtSeconds.get(storm.id) ?? 0) + dt;
-  if (debt < SURGE_INTERVAL_SECONDS) {
-    surgeDebtSeconds.set(storm.id, debt);
-    return null;
-  }
+  storm.surgeDebtSeconds += dt;
+  if (storm.surgeDebtSeconds < SURGE_INTERVAL_SECONDS) return null;
   // The debt is cleared whether or not a site is found, so a storm at sea does
   // not bank up ten minutes of surge and spend it all on the first rock it
   // passes.
-  surgeDebtSeconds.set(storm.id, 0);
+  storm.surgeDebtSeconds = 0;
   if (intensity < SURGE_MIN_INTENSITY) return null;
 
   for (let attempt = 0; attempt < SURGE_SITING_ATTEMPTS; attempt++) {
@@ -157,18 +151,3 @@ export function tickSurge(
   return null;
 }
 
-/**
- * Forgets the bookkeeping of every storm that is no longer alive, so the map
- * cannot grow without bound over a long-lived world.
- *
- * DRIVEN BY THE LIVE SET rather than by a death callback, because a storm can
- * leave the sim three ways (it spent out, it drifted off the map, a rollback
- * replaced the whole list) and only one of them is a moment this module could
- * be told about. Asking "who is still here?" is the version that cannot be
- * forgotten at one of the three sites.
- */
-export function pruneSurge(aliveStormIds: ReadonlySet<number>): void {
-  for (const id of surgeDebtSeconds.keys()) {
-    if (!aliveStormIds.has(id)) surgeDebtSeconds.delete(id);
-  }
-}

@@ -25,6 +25,7 @@
 // rest of the frame loop, because that is where dt is.
 
 import type { SkyRigState } from '../../../client/src/plugins/types.ts';
+import { CYCLONE_EYE_RADIUS_FRACTION } from '../protocol.ts';
 
 /**
  * How dark it gets under the centre of a full-strength cyclone: the fraction of
@@ -109,12 +110,10 @@ export function overheadFraction(distanceCells: number, radiusCells: number): nu
   const r = distanceCells / radiusCells;
   if (r >= 1) return 0;
 
-  // RESTATED FROM ../protocol.ts's CYCLONE_EYE_RADIUS_FRACTION rather than
-  // imported, and this is the one place in this plugin that restates rather
-  // than imports — because it is not the same number twice, it is a number and
-  // the width of the SOFT EDGE around it. Importing the fraction and hard-
-  // coding the edge would hide the second constant inside arithmetic.
-  const eye = 0.125;
+  // The eye is the protocol's fraction (imported — a restated 0.125 drifted the
+  // clear sky away from the drawn eyewall the moment either moved; review
+  // 2026-08-28). The SOFT EDGE around it is a second, local shaping constant.
+  const eye = CYCLONE_EYE_RADIUS_FRACTION;
   const eyewallSoftness = 0.06;
   if (r <= eye) return 0;
 
