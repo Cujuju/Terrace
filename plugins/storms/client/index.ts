@@ -34,7 +34,12 @@ import {
 } from '../protocol.ts';
 import { createFunnel, type FunnelRenderer, type FunnelSource } from './funnel.ts';
 import { createSpiral, type SpiralRenderer, type SpiralSource } from './spiral.ts';
-import { GLOOM_RESPONSE_PER_SECOND, applyGloom, overheadFraction } from './gloom.ts';
+import {
+  GLOOM_RESPONSE_PER_SECOND,
+  MAX_GLOOM_LIGHT_LOSS,
+  applyGloom,
+  overheadFraction,
+} from './gloom.ts';
 
 /**
  * Seconds a storm's last-known velocity may be extrapolated past the push that
@@ -244,10 +249,18 @@ export const clientPlugin: TerraceClientPlugin = {
         // come from the server and hiding them would be hiding the world.
         if (!(reducedMotion?.matches() ?? false)) elapsedSeconds += dt;
 
+        // THE SAME NUMBER THAT DIMS THE SKY DIMS THE CLOUDS. Both renderers use
+        // unlit materials, which read none of the scene's lights, so without
+        // this a deck that is CAUSING the gloom would sit in it at full
+        // brightness — see spiral.ts's uDaylight note. It is derived from the
+        // gloom depth rather than measured from the rig, so the two can only
+        // ever disagree by a frame.
+        const daylight = 1 - gloomDepth * MAX_GLOOM_LIGHT_LOSS;
+
         funnel?.apply(funnelSources(ctx));
-        funnel?.update(dt, elapsedSeconds);
+        funnel?.update(dt, elapsedSeconds, daylight);
         spiral?.apply(spiralSources());
-        spiral?.update(dt, elapsedSeconds);
+        spiral?.update(dt, elapsedSeconds, daylight);
 
         refreshAim(ctx, dt);
         // Eased rather than assigned, so a 5 Hz push and a re-aimed camera do

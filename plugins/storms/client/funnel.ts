@@ -50,12 +50,18 @@ import {
 /**
  * Particles in one funnel.
  *
- * NINETY-SIX, against the volcano plume's 48, because a funnel is seen from the
- * side as a continuous SURFACE rather than as a rising cloud: at 48 the spiral
- * reads as a string of beads, and the count is what closes the gaps. It is
+ * THREE HUNDRED AND TWENTY, against the volcano plume's 48, because a funnel is
+ * seen from the side as a continuous SURFACE rather than as a rising cloud.
+ *
+ * MEASURED IN THE PREVIEW HARNESS, twice. At 96 the puffs were individually
+ * countable — a string of beads on a wire. At 176 they were dense enough only
+ * because they sat on a regular helix, which is the moire the angle hash below
+ * exists to break; once the lattice was gone the same count read as a wisp. A
+ * column of randomly-placed puffs needs about twice the count a lattice of them
+ * does to look solid, which is the whole cost of not having a lattice. It is
  * still one draw call.
  */
-export const PARTICLES_PER_FUNNEL = 96;
+export const PARTICLES_PER_FUNNEL = 320;
 
 /**
  * How many funnels can be drawn at once — the server's tornado cap.
@@ -72,16 +78,29 @@ export const MAX_FUNNELS = 3;
 export const FUNNEL_PARTICLE_LIFE_SECONDS = 2.2;
 
 /**
+ * How much of the server's DAMAGE radius the visible vortex fills.
+ *
+ * A HALF, and the gap is not sloppiness — it is what a tornado is. The wind
+ * that takes a roof off reaches beyond the condensation funnel you can see, so
+ * the damage swathe is genuinely wider than the column. Tying the two together
+ * (which this file did first, at 1.0) drew a vortex three world units across
+ * and six tall: a smear, not a funnel. Derived from the server's radius rather
+ * than typed, so widening the damage still widens the funnel.
+ */
+export const VISIBLE_VORTEX_FRACTION = 0.5;
+
+/**
  * The funnel's radius at the ground and at the cloud, in world units.
  *
- * THE GROUND END IS THE SERVER'S OWN DAMAGE RADIUS, converted — so the wind
- * that flattens a cell and the vortex a player can see are the same width, by
- * construction rather than by eye. The cloud end is four times that: a tornado
- * is a cone that opens upward into the storm it came out of, and the ratio is
- * what makes the silhouette read as one from any distance.
+ * THE FLARE IS 2.4×, MEASURED AGAINST THE HEIGHT, not chosen for itself: at 4×
+ * the top was twelve world units across against a six-unit-tall column, which
+ * renders as a mushroom. A funnel has to be TALLER THAN IT IS WIDE at every
+ * height or it stops reading as one, and 2.4 keeps the cloud end at about a
+ * quarter of the column's height.
  */
-export const FUNNEL_GROUND_RADIUS_WORLD_UNITS = TORNADO_RADIUS_CELLS * CELL_WORLD_SIZE;
-export const FUNNEL_CLOUD_RADIUS_WORLD_UNITS = FUNNEL_GROUND_RADIUS_WORLD_UNITS * 4;
+export const FUNNEL_GROUND_RADIUS_WORLD_UNITS =
+  TORNADO_RADIUS_CELLS * CELL_WORLD_SIZE * VISIBLE_VORTEX_FRACTION;
+export const FUNNEL_CLOUD_RADIUS_WORLD_UNITS = FUNNEL_GROUND_RADIUS_WORLD_UNITS * 2.4;
 
 /**
  * Turns of the spiral a particle makes on its way up.
@@ -101,8 +120,15 @@ export const FUNNEL_SPIRAL_TURNS = 2.5;
  */
 export const FUNNEL_SPIN_TURNS_PER_SECOND = 0.9;
 
-/** Particle size at the ground and at the cloud, in world units. */
-export const FUNNEL_PARTICLE_SIZE_WORLD_UNITS = WORLD_UNITS_PER_BAND * 2.2;
+/**
+ * Puff size, in world units — the base value the shader grows with height.
+ *
+ * A BAND AND A HALF (0.375). Sized against the FUNNEL, not against a cell: a
+ * puff wider than the column's ground end turns the pinch into a ball, and at
+ * 2.2 bands it did exactly that. This is half the ground radius, so the throat
+ * stays a throat while the puffs still overlap into a surface.
+ */
+export const FUNNEL_PARTICLE_SIZE_WORLD_UNITS = WORLD_UNITS_PER_BAND * 1.5;
 
 /**
  * Seconds a funnel takes to appear when a tornado touches down, and to
@@ -155,16 +181,30 @@ const FUNNEL_VERTEX_SHADER = /* glsl */ `
       ${FUNNEL_CLOUD_RADIUS_WORLD_UNITS.toFixed(3)},
       taper);
 
-    // THE SPIRAL, plus the whole column's own rotation. The seed offsets each
-    // particle around the circle so they do not stack into a ribbon.
+    // THE SPIRAL, plus the whole column's own rotation.
+    //
+    // THE ANGULAR OFFSET IS A HASH OF THE SEED, NOT THE SEED ITSELF, and that
+    // is a bug fix rather than a flourish. The CPU hands out phases as i/N and
+    // seeds as a golden-ratio walk, so both are monotone in the particle index:
+    // feeding the seed straight into the angle made the angle a linear function
+    // of the height, which is a perfect helical lattice — and a lattice of
+    // billboards renders as a crosshatch moire, which is exactly what the first
+    // preview showed. Hashing breaks the correlation for free.
     float angle = 6.28318 * (
       life * ${FUNNEL_SPIRAL_TURNS.toFixed(2)} +
       uElapsed * ${FUNNEL_SPIN_TURNS_PER_SECOND.toFixed(2)} +
-      aSeed);
+      fract(aSeed * 97.31));
+
+    // Per-particle radial jitter, for the same reason: particles all sitting
+    // exactly on the ideal cone read as a wireframe of it.
+    radius *= 0.85 + 0.3 * fract(aSeed * 41.7);
 
     // A WOBBLE OF THE WHOLE AXIS, so the funnel snakes instead of standing
     // plumb. Two sines at incommensurate rates, which never repeat visibly.
-    float sway = ${(FUNNEL_GROUND_RADIUS_WORLD_UNITS * 1.6).toFixed(3)} * taper;
+    // A THIRD of the ground radius, not one and a half times it: at the larger
+    // value the axis wandered further than the funnel was wide and the column
+    // smeared into a cloud bank instead of snaking.
+    float sway = ${(FUNNEL_GROUND_RADIUS_WORLD_UNITS * 0.35).toFixed(3)} * taper;
     vec2 axis = vec2(
       sin(uElapsed * 0.7 + aSeed * 0.4) * sway,
       cos(uElapsed * 0.53) * sway);
@@ -185,6 +225,11 @@ const FUNNEL_VERTEX_SHADER = /* glsl */ `
 `;
 
 const FUNNEL_FRAGMENT_SHADER = /* glsl */ `
+  // See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
+  // own light has to reach it as a number, or a funnel under a cyclone stays
+  // sunlit while the ground around it does not.
+  uniform float uDaylight;
+
   varying float vLife;
   varying float vStrength;
   varying vec2 vQuad;
@@ -202,17 +247,20 @@ const FUNNEL_FRAGMENT_SHADER = /* glsl */ `
     // column read as a tornado rather than as smoke.
     vec3 debris = vec3(0.42, 0.35, 0.26);
     vec3 cloud = vec3(0.33, 0.34, 0.38);
-    vec3 color = mix(debris, cloud, smoothstep(0.05, 0.65, vLife));
+    vec3 color = mix(debris, cloud, smoothstep(0.05, 0.65, vLife)) * uDaylight;
 
-    // Denser at the bottom, where the debris is, thinning toward the cloud.
-    float fade = (1.0 - 0.45 * vLife);
+    // Denser at the bottom, where the debris is, thinning toward the cloud, and
+    // dissolving entirely in the last tenth — without that the column ends on a
+    // hard flat lid where the life cycle wraps, which reads as a cut-off rather
+    // than as a funnel going up into the storm.
+    float fade = (1.0 - 0.45 * vLife) * (1.0 - smoothstep(0.86, 1.0, vLife));
 
     // NORMAL BLENDING, NEVER ADDITIVE — plugins/fire/client/smoke.ts's rule.
     // A funnel must be able to DARKEN what is behind it: seen against daylight
     // it is a silhouette, and additive blending can only ever lighten. The
     // alpha is high for a particle system because forty overlapping quads under
     // normal blending converge on the colour rather than running away to white.
-    float alpha = puff * fade * vStrength * 0.42;
+    float alpha = puff * fade * vStrength * 0.5;
     if (alpha <= 0.004) discard;
     gl_FragColor = vec4(color, alpha);
   }
@@ -253,8 +301,11 @@ export interface FunnelRenderer {
    * of its own.
    */
   apply(live: readonly FunnelSource[]): void;
-  /** Advances every funnel's presence and the shared clock. `dt` in seconds. */
-  update(dt: number, elapsed: number): void;
+  /**
+   * Advances every funnel's presence and the shared clock. `dt` in seconds;
+   * `daylight` is how much of the scene's light is reaching it, in [0, 1].
+   */
+  update(dt: number, elapsed: number, daylight: number): void;
   dispose(): void;
 }
 
@@ -277,7 +328,7 @@ export function createFunnel(): FunnelRenderer {
   const geometry = new PlaneGeometry(2, 2, 1, 1);
 
   const material = new ShaderMaterial({
-    uniforms: { uElapsed: { value: 0 } },
+    uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
     vertexShader: FUNNEL_VERTEX_SHADER,
     fragmentShader: FUNNEL_FRAGMENT_SHADER,
     transparent: true,
@@ -343,8 +394,9 @@ export function createFunnel(): FunnelRenderer {
       }
     },
 
-    update(dt, elapsed): void {
+    update(dt, elapsed, daylight): void {
       material.uniforms.uElapsed!.value = elapsed;
+      material.uniforms.uDaylight!.value = daylight;
 
       if (funnels.size === 0) {
         mesh.count = 0;
