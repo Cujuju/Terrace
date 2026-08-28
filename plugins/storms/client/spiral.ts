@@ -213,14 +213,20 @@ const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
     // DARKEST AT THE EYEWALL, THINNING TO THE RIM. That is where the weather
     // actually is, and it is also what gives the deck a centre to read: a
     // uniformly grey disc is an overcast, not a cyclone.
-    // DARKER THAN THEY LOOK ON PAPER, because this material is UNLIT: the deck
-    // keeps whatever brightness is written here however dark the storm has made
-    // the world (../client/gloom.ts dims the scene's lights, which a
-    // ShaderMaterial does not read). Authored at the brightness a storm cloud
-    // should have UNDER its own gloom, so it does not become the brightest
-    // thing in a scene it is supposed to be darkening.
-    vec3 wall = vec3(0.08, 0.09, 0.12);
-    vec3 rim = vec3(0.26, 0.27, 0.32);
+    // A STORM TOP IS BRIGHT. Seen from above it is the brightest thing in the
+    // picture — white cloud over a sea the same storm has put in shadow — and
+    // that contrast is the only thing that makes the arms and the eye readable
+    // at all. The eyewall end stays dark so the spiral has structure and the
+    // eye reads as a hole.
+    //
+    // These were once authored dark, on the reasoning that an unlit material
+    // must not out-shine a gloomed scene. That reasoning produced a black
+    // square with a smear in it; the fix is not a darker cloud, it is
+    // uDaylight — which now dims the deck only a quarter as much as the ground
+    // (gloom.ts's CLOUD_GLOOM_RESPONSE), because the deck is on the sunny side
+    // of its own shadow.
+    vec3 wall = vec3(0.24, 0.25, 0.30);
+    vec3 rim = vec3(0.86, 0.87, 0.92);
     vec3 color = mix(wall, rim, vAlong) * uDaylight;
 
     // The outer tenth fades out, so the deck has no edge — the one thing that
@@ -230,7 +236,7 @@ const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
     // NORMAL BLENDING, NEVER ADDITIVE: an overcast's whole job is to DARKEN
     // what is behind it, and additive blending can only lighten (fire's
     // smoke.ts wrote this rule down; the volcano plume paid for relearning it).
-    float alpha = puff * edge * vStrength * 0.42;
+    float alpha = puff * edge * vStrength * 0.55;
     if (alpha <= 0.004) discard;
     gl_FragColor = vec4(color, alpha);
   }
@@ -244,19 +250,26 @@ interface Spiral {
   radiusWorldUnits: number;
   readonly seed: number;
   alive: boolean;
-  /** 0…1, ramping over SPIRAL_GATHER_SECONDS / SPIRAL_DISPERSE_SECONDS. */
+  /** 1 while the server is broadcasting it; falls over SPIRAL_DISPERSE_SECONDS. */
   presence: number;
   intensity: number;
 }
 
 /**
- * Seconds a deck takes to gather and to disperse.
+ * Seconds a deck takes to DISPERSE after the server stops broadcasting it.
  *
- * BOTH SLOW, and much slower than a funnel's, because a cyclone is a slow thing
- * and the deck covers a quarter of the map: a cloud layer that faded in over a
- * second and a half would read as a curtain being raised.
+ * THERE IS NO GATHER TIME, and its absence is the point. A storm's arrival is
+ * already faded in by the SERVER: `intensity` on the wire is peakIntensity
+ * times the sim's own spin-up envelope, which climbs over CYCLONE_PROFILE's 45
+ * seconds. A second envelope here multiplied the two, so a storm the server
+ * said was at 78% strength was drawn at a few per cent of that - and in a live
+ * world, at software-GL frame rates, "a few per cent" is invisible. The first
+ * in-world capture showed 1 620 instances submitted and nothing on screen.
+ *
+ * A DISPERSAL still needs one, because that direction is NOT on the wire: a
+ * storm that has died stops appearing in the list entirely, so the only thing
+ * that can fade it out is the renderer.
  */
-export const SPIRAL_GATHER_SECONDS = 20;
 export const SPIRAL_DISPERSE_SECONDS = 30;
 
 /** One live cyclone, as ./index.ts hands it over. */
@@ -357,7 +370,9 @@ export function createSpiral(): SpiralRenderer {
           radiusWorldUnits,
           seed: unitFromId(storm.id),
           alive: true,
-          presence: 0,
+          // BORN AT FULL PRESENCE — see SPIRAL_DISPERSE_SECONDS. The server's
+          // own intensity is the fade-in.
+          presence: 1,
           intensity: storm.intensity,
         });
       }
@@ -381,7 +396,9 @@ export function createSpiral(): SpiralRenderer {
 
       for (const [id, spiral] of spirals) {
         if (spiral.alive) {
-          spiral.presence = Math.min(1, spiral.presence + dt / SPIRAL_GATHER_SECONDS);
+          // A storm that was dispersing and came back (a dropped message, a
+          // reconnect) recovers rather than restarting its life.
+          spiral.presence = 1;
         } else {
           spiral.presence -= dt / SPIRAL_DISPERSE_SECONDS;
           if (spiral.presence <= 0) {

@@ -53,6 +53,24 @@ export const MAX_GLOOM_LIGHT_LOSS = 0.6;
 export const GLOOM_COLOR = 0x3a4048;
 
 /**
+ * How much of the gloom reaches the STORM'S OWN CLOUDS, as a fraction of what
+ * reaches the ground.
+ *
+ * A QUARTER, and the asymmetry is the physics rather than a compromise. What
+ * darkens the ground is the cloud deck standing between it and the sun; the
+ * deck itself is on the SUNNY SIDE of that. A hurricane photographed from above
+ * is brilliant white over a black sea, and even from underneath its base is the
+ * brightest thing in the sky. Multiplying the clouds by the same factor as the
+ * ground — which this plugin did first — makes the storm disappear into the
+ * darkness it is causing: the first in-world attempt was a black square with a
+ * grey smear in it.
+ *
+ * Not zero, because a cyclone at dusk should not glow: the deck still tracks
+ * the light, just far less than the ground it is shading.
+ */
+export const CLOUD_GLOOM_RESPONSE = 0.25;
+
+/**
  * How fast the gloom follows the storm, in units of depth per second.
  *
  * 0.35 → about three seconds from clear to fully overcast. The eye of a cyclone

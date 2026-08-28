@@ -91,6 +91,7 @@ import {
   meanSpawnIntervalSeconds,
   profileFor,
   resetStorms,
+  setDevFrozen,
   spawnRoll,
   stormCount,
   stormRandom,
@@ -98,6 +99,7 @@ import {
   trySpawnCyclone,
   trySpawnTornado,
 } from './storms.ts';
+import { forceSpawnFromEnv } from './dev.ts';
 import { loadWeatherBridge, resetWeatherBridge } from './weather-bridge.ts';
 import { pruneSurge, resetSurge, tickSurge } from './surge.ts';
 
@@ -131,6 +133,7 @@ function resetSessionState(): void {
   frequency = DEFAULT_STORM_FREQUENCY;
   surgeMode = DEFAULT_STORM_SURGE_MODE;
   resetStorms();
+  setDevFrozen(false);
   resetSurge();
   resetWeatherBridge();
 }
@@ -260,6 +263,9 @@ export const plugin: TerracePlugin = {
     // settings and the sibling bridge. The storms themselves are whatever the
     // slice restored, or empty on a fresh world.
     tickCount = 0;
+    // The freeze belongs to the world that set it, so it is cleared here and
+    // re-set below only if THIS world was forced.
+    setDevFrozen(false);
     resetSurge();
     resetWeatherBridge();
 
@@ -268,6 +274,14 @@ export const plugin: TerracePlugin = {
     loadWeatherBridge(world);
 
     if (frequency === 'off') return;
+
+    // THE DEV FORCE-SPAWN (./dev.ts) — a no-op unless STORMS_DEV_FORCE is set,
+    // which it is in no real deployment. It runs AFTER the restore, so a world
+    // booted with it twice gets two storms rather than one; that is the correct
+    // behaviour for a development aid whose whole purpose is "put one there
+    // now", and the ordinary despawn cleans up after it.
+    forceSpawnFromEnv(world, process.env);
+
     console.info(
       `[storms] frequency: ${frequency}, surge: ${surgeMode}, ` +
         `difficulty ${world.difficulty} → a tornado every ~${Math.round(

@@ -35,6 +35,7 @@ import {
 import { createFunnel, type FunnelRenderer, type FunnelSource } from './funnel.ts';
 import { createSpiral, type SpiralRenderer, type SpiralSource } from './spiral.ts';
 import {
+  CLOUD_GLOOM_RESPONSE,
   GLOOM_RESPONSE_PER_SECOND,
   MAX_GLOOM_LIGHT_LOSS,
   applyGloom,
@@ -249,13 +250,17 @@ export const clientPlugin: TerraceClientPlugin = {
         // come from the server and hiding them would be hiding the world.
         if (!(reducedMotion?.matches() ?? false)) elapsedSeconds += dt;
 
-        // THE SAME NUMBER THAT DIMS THE SKY DIMS THE CLOUDS. Both renderers use
-        // unlit materials, which read none of the scene's lights, so without
-        // this a deck that is CAUSING the gloom would sit in it at full
-        // brightness — see spiral.ts's uDaylight note. It is derived from the
-        // gloom depth rather than measured from the rig, so the two can only
-        // ever disagree by a frame.
-        const daylight = 1 - gloomDepth * MAX_GLOOM_LIGHT_LOSS;
+        // THE CLOUDS TRACK THE LIGHT, BUT NOT AS FAR AS THE GROUND DOES.
+        //
+        // Both renderers use unlit materials, which read none of the scene's
+        // lights, so the gloom has to reach them as a number or a storm would
+        // sit at full brightness in the darkness it is causing (spiral.ts's
+        // uDaylight note). The number is NOT the ground's, though: the deck is
+        // on the sunny side of the cloud that is doing the shading, so it keeps
+        // most of its light — see gloom.ts's CLOUD_GLOOM_RESPONSE. Derived from
+        // the same gloom depth as the sky, so the two can only ever disagree by
+        // a frame.
+        const daylight = 1 - gloomDepth * MAX_GLOOM_LIGHT_LOSS * CLOUD_GLOOM_RESPONSE;
 
         funnel?.apply(funnelSources(ctx));
         funnel?.update(dt, elapsedSeconds, daylight);
