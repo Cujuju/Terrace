@@ -69,7 +69,7 @@ import {
   type MudslideFrequency,
   type SlideState,
 } from '../protocol.ts';
-import { forceSlideFromEnv } from './dev.ts';
+import { forceSlideFromEnv, resetDevForce, tickDevForce } from './dev.ts';
 import { MUDSLIDES_SLICE_VERSION, loadSlides, saveSlides } from './persistence.ts';
 import {
   FREQUENCY_INTERVAL_MULTIPLIERS,
@@ -78,6 +78,7 @@ import {
   flowEventFor,
   livingSlides,
   meanIntervalSeconds,
+  movedGround,
   residualHeightUnits,
   resetSlides,
   rollTrigger,
@@ -118,6 +119,7 @@ function resetSessionState(): void {
   tickCount = 0;
   frequency = DEFAULT_MUDSLIDE_FREQUENCY;
   resetSlides();
+  resetDevForce();
   resetWeatherBridge();
 }
 
@@ -194,6 +196,7 @@ function broadcastDebris(
 function simulate(world: WorldApi, dt: number): void {
   tickCount++;
 
+  tickDevForce(world, dt);
   surveySites(world, dt);
   soakSites(dt);
 
@@ -205,6 +208,8 @@ function simulate(world: WorldApi, dt: number): void {
   const tick = advanceSlides(world, dt);
 
   for (const slide of tick.finished) {
+    // A SLIDE THAT MOVED NOTHING IS NOT AN EVENT (./slides.ts's `movedGround`).
+    if (!movedGround(slide)) continue;
     const event = flowEventFor(slide);
     world.emitEvent(MUDSLIDES_FLOW_EVENT, event);
     // THE MASS REPORT, per slide (./slides.ts's header has the argument for why
@@ -259,6 +264,7 @@ export const plugin: TerracePlugin = {
     // freeze (which belongs to the world that set it) and the sibling bridge.
     tickCount = 0;
     setDevFrozen(false);
+    resetDevForce();
     resetWeatherBridge();
 
     frequency = parseFrequency(world.setting(MUDSLIDES_FREQUENCY_SETTING_KEY));

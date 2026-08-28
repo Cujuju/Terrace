@@ -34,11 +34,13 @@ import { BAND_HEIGHT, CELL_WORLD_SIZE } from '@terrace/shared';
 /**
  * Clump radius, in world units.
  *
- * 0.35 — a bit over one cell across at the 2026-08-21 sampling (a cell is 0.25
- * world units). Small enough that a line of them reads as churned earth rather
- * than as boulders, big enough to be visible from an orbit camera's usual height.
+ * 0.12 — a bit under one CELL across (a cell is 0.25 world units at the
+ * 2026-08-21 sampling). MEASURED DOWN FROM 0.35 after the first in-world
+ * capture: at that size a deposit read as a pile of boulders sitting on the
+ * terrain rather than as earth that had come to rest on it, and it dwarfed the
+ * terrace treads it was standing on. Sub-cell is the size that reads as debris.
  */
-const CLUMP_RADIUS_WORLD_UNITS = 0.35;
+const CLUMP_RADIUS_WORLD_UNITS = 0.12;
 
 /**
  * Geometry detail. ZERO — a bare dodecahedron, 36 triangles.
@@ -88,10 +90,12 @@ const MAX_DEBRIS_INSTANCES = 1024;
 /**
  * How far a clump is jittered off its cell centre, in world units.
  *
- * 0.5 — two cells. Enough that six clumps in one cell do not stack into a column,
- * and not so much that the trail stops following the path the mud actually took.
+ * 0.22 — just under one cell. Enough that six clumps in one cell do not stack
+ * into a column, and not so much that the trail stops following the path the mud
+ * actually took. Scaled down with the clump radius after the first in-world
+ * capture: a jitter wider than the deposit spreads one cell's mud over four.
  */
-const CLUMP_JITTER_WORLD_UNITS = 0.5;
+const CLUMP_JITTER_WORLD_UNITS = 0.22;
 
 /**
  * How far a clump sinks into the ground, as a fraction of its radius.
@@ -103,6 +107,14 @@ const CLUMP_JITTER_WORLD_UNITS = 0.5;
  * the more expensive oracle.
  */
 const CLUMP_SINK_FRACTION = 0.4;
+
+/**
+ * How flat a clump is drawn, as a fraction of its width.
+ *
+ * 0.45 — a little under half as tall as it is wide. See the scale call in
+ * `apply` for why a sphere is the wrong shape here at any size.
+ */
+const CLUMP_FLATTEN = 0.45;
 
 /**
  * DETERMINISTIC JITTER — a hash of the cell, not `Math.random()`.
@@ -187,7 +199,11 @@ function createClumpField(color: number, capacity: number): ClumpField {
         // Rotated by the same hash, so no two clumps present the same facet and
         // the field does not read as a grid of identical rocks.
         scratch.rotation.set(offset.dx * Math.PI, offset.dz * Math.PI, 0);
-        scratch.scale.setScalar(clump.scale);
+        // SQUASHED, not spherical. A sphere reads as a boulder however small it
+        // is drawn; flattening it into a mound is what makes a clump read as
+        // something that flowed and settled — and it is free, where a second
+        // geometry would not be.
+        scratch.scale.set(clump.scale, clump.scale * CLUMP_FLATTEN, clump.scale);
         scratch.updateMatrix();
         mesh.setMatrixAt(drawn, scratch.matrix);
         drawn++;
