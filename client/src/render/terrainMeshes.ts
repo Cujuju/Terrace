@@ -441,6 +441,18 @@ export interface TerrainMeshes {
    */
   drawnGround(): DrawnGroundStore;
   /**
+   * Registers a handler run immediately after one chunk has been BUILT and its
+   * chart published; returns its unsubscribe.
+   *
+   * WHY A BUILD EVENT AND NOT THE DIRTY SET. `update` queues; the queue drains
+   * under a frame budget. Anything derived from what a chunk DREW — the terrace
+   * lip overlay, above all — that refreshed itself from the dirty set would
+   * read an absent or pre-edit chart for every chunk whose build was deferred.
+   * This is the seam that says "this chunk's published geometry has just been
+   * replaced", which is the only moment such a reader is right.
+   */
+  onChunkDrawn(handler: (chunkIdx: number) => void): () => void;
+  /**
    * Terrain draw calls the renderer would submit with nothing culled — the
    * number this module exists to keep down, exposed so a test can hold a
    * budget against it rather than trusting the comment above.
@@ -488,6 +500,9 @@ export function createTerrainMeshes(
 
   /** What each built chunk drew — see the `drawnGround` accessor. */
   const drawnGroundStore = createDrawnGroundStore(worldSize);
+
+  /** Build-completion subscribers — see `onChunkDrawn`. */
+  const chunkDrawnHandlers = new Set<(chunkIdx: number) => void>();
 
   /**
    * The one buffer any chunk is emitted into, before its vertices are copied
@@ -828,6 +843,9 @@ export function createTerrainMeshes(
     const superIdx = superIndexOf(chunkIdx);
     const sm = superMeshes.get(superIdx) ?? createSuperMesh(superIdx);
     spliceChunk(sm, chunkIdx, counts.vertexCount);
+    // AFTER the splice and after the publish, so a handler sees both the chart
+    // and the vertices this build produced.
+    for (const handler of chunkDrawnHandlers) handler(chunkIdx);
   };
 
   const now = scheduling?.now ?? (() => performance.now());
@@ -899,6 +917,11 @@ export function createTerrainMeshes(
     drawnGround(): DrawnGroundStore {
       return drawnGroundStore;
     },
+    onChunkDrawn(handler: (chunkIdx: number) => void): () => void {
+      chunkDrawnHandlers.add(handler);
+      return () => chunkDrawnHandlers.delete(handler);
+    },
+
     drawCallCount(): number {
       return superMeshes.size;
     },

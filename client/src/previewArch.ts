@@ -195,8 +195,13 @@ const meshes = createTerrainMeshes(terrainGroup, mirror);
 meshes.update(allChunks);
 meshes.flush();
 
-const edgeOverlay = readEdges() ? createLayerEdgeOverlay(terrainGroup, mirror, PREVIEW_WORLD_SIZE) : null;
-edgeOverlay?.update(allChunks);
+// Built and flushed above, so every chunk's chart is already published and the
+// overlay can read them all in one pass — the direct equivalent of the app's
+// build-completion subscription for a harness that builds everything at once.
+const edgeOverlay = readEdges()
+  ? createLayerEdgeOverlay(terrainGroup, mirror, PREVIEW_WORLD_SIZE, meshes.drawnGround())
+  : null;
+for (const chunkIdx of allChunks) edgeOverlay?.refreshChunk(chunkIdx);
 
 const aim = archFixtureAim(PREVIEW_WORLD_SIZE);
 const view = readView();

@@ -676,12 +676,39 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // opposite of what the player just asked for — it emits nothing instead.
     if (pulling && action === 'raise' && strokeGrab === null) {
       // NOTHING TO PULL, SO MAKE SOMETHING. The seed is applied locally by the
-      // prediction the moment it is sent (main.tsx's send), and the layer-edge
-      // overlay re-contours on the same dirty set, so the lip it creates
-      // already exists by the time the next line asks for it — this press
-      // becomes a pull of the layer it just raised, in one gesture.
+      // prediction the moment it is sent (main.tsx's send), so the plateau it
+      // raises is in the mirror before the next line runs — this press becomes
+      // a pull of the layer it just raised, in one gesture.
+      //
+      // THE SEEDED BAND IS READ FROM THE GROUND, NOT FROM THE OVERLAY. It used
+      // to re-ask `grabbableLip`, which worked only because the overlay
+      // re-marched inside that same synchronous call; the overlay is now a
+      // reader of what the terrain published, and the terrain publishes when
+      // it BUILDS, which is a frame or two later under the build budget. A
+      // null `strokeGrab` aborts the gesture outright, so this path cannot be
+      // allowed to become asynchronous.
+      //
+      // `terrainHeightAt` reads the mirror (World.terrainHeightAt →
+      // sampleHeight, band-quantised), which the prediction has already
+      // written, so it is exact and synchronous. A `hard` stamp level-fills its
+      // footprint to the next band up from the clicked cell, so the lip it
+      // creates is at the band of that cell's NEW height — the same
+      // height-to-band rounding World.bandOfPick uses on a riser hit.
+      //
+      // THE RISE IS THE PROOF. `seedLayer` reports that the intent reached the
+      // wire, not that it was predicted: a stroke at the frontier is sent but
+      // deliberately not predicted (terrain/prediction.ts's halo guard), and
+      // the ground under the cursor is then unchanged. Grabbing the band that
+      // was already there would take hold of a lip the player did not make, so
+      // a seed that did not visibly raise anything grabs nothing.
       const seedCell = hoverTarget();
-      if (seedCell !== null && seedLayer(seedCell)) strokeGrab = grabbableLip(hoverTarget());
+      const beforeY = seedCell === null ? null : terrainHeightAt(seedCell.x, seedCell.y);
+      if (seedCell !== null && seedLayer(seedCell)) {
+        const afterY = terrainHeightAt(seedCell.x, seedCell.y);
+        if (afterY !== null && beforeY !== null && afterY > beforeY) {
+          strokeGrab = Math.round(afterY / (BAND_HEIGHT * HEIGHT_WORLD_SCALE));
+        }
+      }
     }
 
     if (strokeIsTouch) {
