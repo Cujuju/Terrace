@@ -198,6 +198,17 @@ export interface World extends TerrainSink {
    */
   terrainHeightAt(x: number, y: number): number | null;
   /**
+   * World-space Y of the cap of ONE span — the `spanIndex` a pick reported —
+   * at cell (x, y), or null when that span no longer exists (the column was
+   * carved, welded or the chunk left). The surface a cached pick must be
+   * refreshed against on a LAYERED column: `terrainHeightAt` is the TOPMOST
+   * span's cap, and reading it for a pick that struck a lower span lifted the
+   * pointer onto the roof (owner report 2026-08-27, "it jumps up several
+   * bands" — a tread hit at 1.5 wu on the floor of a carved notch was rewritten
+   * to the roof's 2.75 wu).
+   */
+  spanCapAt(x: number, y: number, spanIndex: number): number | null;
+  /**
    * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
    * coordinate — terrain/drawnGround.ts's `capYAt`, read from the plan the
    * terrain meshes published when they last drew that chunk.
@@ -696,6 +707,13 @@ export function createWorld(viewport: Viewport): World {
     terrainHeightAt(x: number, y: number): number | null {
       if (mirror === null) return null;
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
+    },
+
+    spanCapAt(x: number, y: number, spanIndex: number): number | null {
+      if (mirror === null) return null;
+      if (x < 0 || y < 0 || x >= mirror.map.size || y >= mirror.map.size) return null;
+      if (spanIndex < 0 || spanIndex >= spanCount(mirror.map, x, y)) return null;
+      return spanCapHeight(spanAt(mirror.map, x, y, spanIndex)) * HEIGHT_WORLD_SCALE;
     },
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {

@@ -71,12 +71,13 @@ export interface SculptInputOptions {
    */
   pickCell: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   /**
-   * World-space Y of the RENDERED surface at a cell (World.terrainHeightAt) —
-   * read LIVE, every time the hover pick is read, so the brush outline sits on
-   * the ground as it is NOW rather than as it was when the ray last flew. See
-   * hoverTarget for why the cell is cached but its height is not.
+   * World-space Y of the cap of the span a pick STRUCK, at its cell
+   * (World.spanCapAt) — read LIVE, every time the hover pick is read, so the
+   * brush outline sits on the ground as it is NOW rather than as it was when
+   * the ray last flew. See hoverTarget for why the cell is cached but its
+   * height is not, and why it is THIS span's cap and not the column's top.
    */
-  terrainHeightAt: (x: number, y: number) => number | null;
+  spanCapAt: (x: number, y: number, spanIndex: number) => number | null;
   /** Live world size; 0 until the join snapshot arrives. */
   worldSize: () => number;
   /**
@@ -96,7 +97,7 @@ export interface SculptInputOptions {
    * The terrace band of the terrain at a cell (World.bandAtCell) — read before
    * and after a seed to learn whether the seed actually raised the ground. See
    * `takeHold`; the unit is BANDS, which is why it is asked of the world rather
-   * than derived from `terrainHeightAt`'s world units here.
+   * than derived from world-unit heights here.
    */
   bandAtCell: (x: number, y: number) => number | null;
   /**
@@ -181,7 +182,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     canvas,
     camera,
     pickCell: pickCellByRay,
-    terrainHeightAt,
+    spanCapAt,
     worldSize,
     riserBand,
     bandAtCell,
@@ -387,8 +388,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // lies on the ground. A cell whose chunk has gone (a rejoin between the
     // pick and this read) yields null rather than a stale Y.
     if (hoverCache === null) return null;
-    const surfaceY = terrainHeightAt(hoverCache.x, hoverCache.y);
-    if (surfaceY === null) return null;
+    // THE STRUCK SPAN'S CAP, NOT THE COLUMN'S TOP (owner report 2026-08-27,
+    // "it jumps up several bands"). On a carved column the ray can strike the
+    // floor span under a roof; refreshing that pick from the topmost cap
+    // rewrote a tread hit on the floor as a tread hit on the roof, and the
+    // pointer was drawn there — several bands above the mouse. A span that
+    // has since vanished (welded, carved away, chunk gone) yields null, and
+    // the cached pick is then a claim about geometry that no longer exists:
+    // re-pick rather than refresh.
+    const surfaceY = spanCapAt(hoverCache.x, hoverCache.y, hoverCache.spanIndex);
+    if (surfaceY === null) {
+      hoverCache = pickCell();
+      return hoverCache;
+    }
     if (surfaceY === hoverCache.surfaceY) return hoverCache;
     // hitRiser, spanIndex and the hit POINT ride along: they are facts about
     // the RAY, and this branch only refreshes the cached cell's height after
@@ -403,10 +415,6 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // which the pointer draws as an inert mark. A riser hit's height is
     // genuinely the ray's own and is left alone.
     //
-    // The refreshed height is `terrainHeightAt`, i.e. the TOPMOST span's cap,
-    // so this is only the right surface for a pick on the topmost span. That
-    // is every pick while every column holds exactly one (columns.ts); a
-    // layered world has to re-pick here instead of re-reading.
     hoverCache = {
       x: hoverCache.x,
       y: hoverCache.y,
