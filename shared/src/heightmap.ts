@@ -172,6 +172,28 @@ export type SculptProfile = 'soft' | 'hard';
 export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
 
 /**
+ * THE TOOLS THAT HAVE NO EDGE PROFILE AT ALL (owner decision 2026-08-27,
+ * issue #225). Not "tools whose profile happens to be ignored" — a shape
+ * neither tool can have:
+ *
+ * - `carve` removes a fixed block, CARVE_BANDS_PER_STROKE bands deep, from
+ *   every footprint cell. It never had a cone, which is why `profile` reaches
+ *   neither its arithmetic nor its price (see sculptDisplacementUnits).
+ * - `drag` moves a level sideways, and its contract is that "a drag never
+ *   changes WHICH bands exist, only how far one extends" (SculptAnchor:
+ *   'band' below). A soft edge bites cells out of the pulled region's rim and
+ *   leaves them at partial-band heights, which the level-set renderer draws
+ *   as a ledge poking out under the lip — a band the player never asked for,
+ *   i.e. exactly what the contract forbids.
+ *
+ * ONE STATEMENT, TWO READERS: `sculptOptionsOf` (protocol.ts) resolves these
+ * tools to a fixed profile so server and prediction cannot disagree, and the
+ * HUD hides its Edge row for them so the UI cannot offer a choice that does
+ * nothing. Adding a tool here changes both at once.
+ */
+export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['drag', 'carve'];
+
+/**
  * How many terrace bands ONE carve stroke removes from each footprint cell.
  *
  * DERIVED FROM `isGapDrawn`, NOT CHOSEN. The value is the SMALLEST band count

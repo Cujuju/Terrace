@@ -7,7 +7,13 @@
 // (mana, cooldowns) AFTER this structural validation passes.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from './constants.ts';
-import { MAX_BAND, MIN_BAND, SCULPT_PROFILES, SCULPT_TOOLS } from './heightmap.ts';
+import {
+  MAX_BAND,
+  MIN_BAND,
+  SCULPT_PROFILES,
+  SCULPT_TOOLS,
+  TOOLS_WITHOUT_EDGE_PROFILE,
+} from './heightmap.ts';
 import type {
   CellDiff,
   ResolvedSculptOptions,
@@ -134,6 +140,23 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
 };
 
 /**
+ * THE PROFILE A TOOL WITHOUT AN EDGE RUNS AT (owner decision 2026-08-27,
+ * issue #225).
+ *
+ * `hard` because it is the flat one: it spreads the stroke evenly over the
+ * region rather than tapering it, which is what both edgeless tools already
+ * do by construction (TOOLS_WITHOUT_EDGE_PROFILE in heightmap.ts says why
+ * neither can have a cone). Resolving them to it rather than to whatever the
+ * intent happened to carry is what keeps the price these options are billed
+ * at (plugins/mana/pricing.ts reads options.profile) describing the stroke
+ * that actually runs.
+ *
+ * Named rather than written inline at the resolver so the decision has one
+ * statement, and so it cannot be changed without changing the sentence above.
+ */
+export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
+
+/**
  * THE NORMALISATION CONTRACT. Turns an intent's optional tool/profile into the
  * concrete options `applySculpt` runs.
  *
@@ -145,9 +168,22 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
  * predicting a spire where the server builds a mound, on every stroke.
  */
 export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
+  const tool = intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
   return {
-    tool: intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool,
-    profile: intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile,
+    tool,
+    // AN EDGELESS TOOL'S PROFILE IS DECIDED HERE (issue #225), not honoured
+    // and then ignored downstream: the drag would otherwise pull a ragged rim
+    // and leave partial-band shelves under the lip it extended, contradicting
+    // its own contract. Doing it in this resolver is what makes the server's
+    // pipeline and the client's prediction — its only two callers — run the
+    // same stroke by construction, and what keeps the mana price computed
+    // from these options describing that stroke. An old or hostile client may
+    // still send `profile: 'soft'` on a drag or carve; it is normalised away
+    // rather than rejected, because the field does not describe those tools
+    // at all, so there is nothing there to cheat with.
+    profile: TOOLS_WITHOUT_EDGE_PROFILE.includes(tool)
+      ? EDGELESS_SCULPT_PROFILE
+      : (intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
     // Deliberately NOT read from the intent: spill containment is fixed
     // policy for player sculpts (issue #26), and so is the clicked-cell
     // anchor (2026-08-19). Both the server pipeline and client prediction
