@@ -63,8 +63,7 @@ import { BufferAttribute, BufferGeometry, LineBasicMaterial, LineSegments } from
 import type { Object3D } from 'three';
 import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import { RECT_NONE } from '../terrain/contours.ts';
-import type { ContourLoop } from '../terrain/contours.ts';
+import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
 
@@ -78,15 +77,11 @@ const EDGE_COLOR = 0x35d6e8;
 /** Edge line opacity — present over bright treads, not so solid it flattens the terrain under it. */
 const EDGE_OPACITY = 0.9;
 
-/**
- * How far above its band's height the contour is drawn, in world units. The
- * lip is exactly at the band height, so without a lift the line z-fights the
- * cap it traces along its entire length.
- */
-const EDGE_LIFT_WORLD_UNITS = 0.004;
-
 /** Two endpoints per segment, three floats each. */
 const FLOATS_PER_SEGMENT = 6;
+
+/** Two endpoints per segment, (x, z) each — the hover query's flat layout. */
+const FLOATS_PER_FLAT_SEGMENT = 4;
 
 /**
  * Colour of the lip currently under the cursor — the one a drag would grab.
@@ -175,7 +170,7 @@ export function createLayerEdgeOverlay(
    * this contour: throwing it away and marching again on hover would run the
    * marching-squares pass every frame the pointer moves.
    */
-  const segmentsByChunk = new Map<number, Map<number, number[]>>();
+  const segmentsByChunk = new Map<number, Map<number, Float32Array>>();
   const material = new LineBasicMaterial({
     color: EDGE_COLOR,
     transparent: true,
@@ -220,34 +215,6 @@ export function createLayerEdgeOverlay(
     return true;
   };
 
-  /**
-   * Emits one published loop's non-border segments at world height `y`.
-   *
-   * `rect` IS WHAT `onBorder` WAS. `assembleLoops` marks every point it placed
-   * on the chunk's own domain rectangle with a non-zero rect mask, and the
-   * marcher's own consumers (capEmission's skirt extrusion) drop a segment with
-   * both ends on it for the same reason this does: there is no riser there, and
-   * left in it would draw a chunk grid over the world.
-   */
-  const emitLoop = (
-    loop: ContourLoop,
-    y: number,
-    positions: number[],
-    band: number[],
-  ): void => {
-    for (let i = 0; i < loop.length; i++) {
-      const a = loop[i]!;
-      const b = loop[(i + 1) % loop.length]!;
-      if (a.rect !== RECT_NONE && b.rect !== RECT_NONE) continue;
-      const ax = a.x * CELL_WORLD_SIZE;
-      const az = a.z * CELL_WORLD_SIZE;
-      const bx = b.x * CELL_WORLD_SIZE;
-      const bz = b.z * CELL_WORLD_SIZE;
-      positions.push(ax, y, az, bx, y, bz);
-      band.push(ax, az, bx, bz);
-    }
-  };
-
   const rebuild = (idx: number): void => {
     dropMesh(idx);
     if (!hasChunk(mirror, idx)) return;
@@ -256,39 +223,30 @@ export function createLayerEdgeOverlay(
     if (!neighboursKnown(cx, cy)) return;
     const chart = drawnGround.chartOf(cx, cy);
     // No chart: the chunk has not been drawn yet, and there is nothing honest
-    // to draw lips over. Blocky: it drew no contours at all — see the header.
-    if (chart === null || chart.caps.blocky) return;
-
-    const positions: number[] = [];
-    const perBand = new Map<number, number[]>();
-    for (const level of chart.caps.levels) {
-      // THE WATERLINE IS NOT A LIP. `makeLevels` publishes one extra level at
-      // threshold SEA_LEVEL + 1 on band 0 — a colour boundary on flat ground
-      // where the seabed becomes beach, with no riser under it. A band level
-      // is one whose threshold IS its band's floor, which is the same
-      // predicate the ceiling pass uses to tell the two apart.
-      if (level.threshold !== level.sampleBand * BAND_HEIGHT) continue;
-      const k = level.sampleBand;
-      // The band's own height, NOT the level's `capY`: band 0's cap is sunk
-      // under the dry-land cap that shares its height (SEABED_CAP_SINK), and
-      // the lip a player grabs is at the band, where it always was.
-      const y = k * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
-      let band = perBand.get(k);
-      if (band === undefined) {
-        band = [];
-        perBand.set(k, band);
-      }
-      for (const polygon of level.polygons) {
-        emitLoop(polygon.outer, y, positions, band);
-        for (const hole of polygon.holes) emitLoop(hole, y, positions, band);
-      }
-      if (band.length === 0) perBand.delete(k);
-    }
+    // to draw lips over. A blocky chunk publishes no lips at all — see header.
+    if (chart === null) return;
+    const { positions, flat, bands } = chart.lips;
     if (positions.length < FLOATS_PER_SEGMENT) return;
+
+    // SUBARRAY VIEWS, not copies: the hover query indexes them and never
+    // writes, and the chart owns the buffer for exactly as long as this mesh
+    // stands — both are replaced by the next build of this chunk.
+    const perBand = new Map<number, Float32Array>();
+    for (let i = 0; i + 2 < bands.length; i += 3) {
+      const band = bands[i]!;
+      const firstSegment = bands[i + 1]!;
+      const segmentCount = bands[i + 2]!;
+      perBand.set(
+        band,
+        flat.subarray(firstSegment * FLOATS_PER_FLAT_SEGMENT, (firstSegment + segmentCount) * FLOATS_PER_FLAT_SEGMENT),
+      );
+    }
     segmentsByChunk.set(idx, perBand);
 
     const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+    // The published array IS the attribute — the job emitted it in the layout
+    // three wants, so nothing is copied or re-packed on this thread.
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
     const mesh = new LineSegments(geometry, material);
     // Above the terrain it traces, below the brush outline that must stay
     // readable over it.
@@ -403,7 +361,9 @@ export function createLayerEdgeOverlay(
       // (see chunkContourLoops), so "the whole loop" would stop dead at a seam
       // and read as the lip ending where it plainly does not.
       const spanSq = HIGHLIGHT_SPAN_WORLD_UNITS * HIGHLIGHT_SPAN_WORLD_UNITS;
-      const y = bestBand * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
+      // The SAME lift the job emitted the resting segments at, so the
+      // highlight sits exactly on the lip it picks out rather than under it.
+      const y = bestBand * BAND_HEIGHT * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
       const positions: number[] = [];
       for (const idx of nearbyChunks(cell.x, cell.y)) {
         const flat = segmentsByChunk.get(idx)?.get(bestBand);

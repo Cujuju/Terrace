@@ -126,6 +126,11 @@ import {
   type Group,
 } from 'three';
 import { chunksPerEdge } from '@terrace/shared';
+import {
+  createDirectChunkBuildSource,
+  type ChunkBuildSource,
+} from './chunkBuildSource.ts';
+import type { ChunkJobAnswer } from '../terrain/chunkJob.ts';
 import { CLIFF_PALETTE, TERRAIN_PALETTE, type Rgb } from '../terrain/bandColors.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
@@ -141,27 +146,23 @@ import {
 import { spliceShader } from './shaderSplice.ts';
 
 /**
- * Wall-clock milliseconds one frame may spend rebuilding chunk geometry.
+ * How long a frame may spend SPLICING finished chunk jobs, in milliseconds.
  *
- * FOUR, and it is a share of the frame rather than a measured cost. A 60 fps
- * frame is 16.67 ms and meshing is not what the frame is FOR: the renderer's
- * own draw submission, the controls' damping update and every plugin's frame
- * hook come out of the same interval. A quarter of it is the largest slice
- * that leaves the other three quarters recognisably intact.
+ * ONE AND A HALF, about a fifth of the 7.1 ms a 140 fps frame has for
+ * everything. It replaced CHUNK_BUILD_FRAME_BUDGET_MS (4 ms) when the chunk
+ * BUILD moved to a worker (render/chunkBuildSource.ts): what a frame does here
+ * is no longer marching and triangulating a chunk but copying a finished
+ * answer into its super-mesh — the packed tail move, the chart publish and the
+ * lip refresh, ~1 ms on a developed super-mesh. A budget sized for the old work
+ * would have been no budget at all.
  *
- * It is also comfortably more than the common case needs, which is the number
- * that actually matters for feel: an ordinary chunk patch is ~1 ms (see the
- * measured table at terrain/capEmission.ts's CHUNK_TRIANGLE_BUDGET), so all
- * four chunks a radius-4 brush can straddle still land in the SAME frame and
- * held sculpting is byte-for-byte as immediate as it was before the queue.
- * Only genuinely heavy chunks — deep pits at the bottom of the world — spill
- * into the next frame, which is exactly the population this exists for.
- *
- * DELIBERATELY SMALLER THAN THE WORST LEGITIMATE CHUNK (~9 ms). A budget that
- * fitted one would have to fit four to be worth anything, and four is the
- * 36 ms frame this change exists to break up.
+ * AT ~1 ms A SPLICE THIS IS ROUGHLY ONE SPLICE PER FRAME, and "always splices
+ * at least one" keeps the no-starvation property — so the constant is a floor
+ * on progress, not a ceiling on cost, exactly as its predecessor was. A
+ * radius-4 brush straddling two chunks therefore lands over two frames.
+ * Accepted: the alternative is a heavier frame.
  */
-export const CHUNK_BUILD_FRAME_BUDGET_MS = 4;
+export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
 
 /** Terrain is dielectric; a little roughness variation is not worth a map. */
 const TERRAIN_ROUGHNESS = 0.95;
@@ -414,7 +415,11 @@ export interface TerrainMeshes {
   update(dirty: Iterable<number>): void;
   /** Builds every queued chunk now, whatever the budget says. */
   flush(): void;
-  /** Chunks still waiting to be built. */
+  /**
+   * Chunks that have been marked dirty and are not yet drawn — queued, out at
+   * the build source, or answered and waiting for a frame's splice budget. All
+   * three are "still waiting", which is the question every caller asks.
+   */
   pendingCount(): number;
   /** Drops every mesh — used when a fresh join replaces the world. */
   clear(): void;
@@ -459,6 +464,18 @@ export interface TerrainMeshes {
    */
   drawCallCount(): number;
   /**
+   * Median wall-clock cost of a SPLICE — copying one finished job into its
+   * super-mesh, publishing its chart and refreshing its lips — over the last
+   * SPLICE_SAMPLE_WINDOW of them, or null before any have run.
+   *
+   * The number CHUNK_SPLICE_FRAME_BUDGET_MS is sized against, and the one
+   * figure this module's move to a worker has to be judged on that a headless
+   * bench cannot report: in node the direct source builds inline, so the bench
+   * measures the whole build and never the splice alone. Exposed so an
+   * in-browser probe can report it beside the frame rate.
+   */
+  medianSpliceMs(): number | null;
+  /**
    * Chunks whose geometry is in the scene.
    *
    * The mesh count stopped answering this at the 2026-08-21 merge, and several
@@ -475,6 +492,12 @@ export function createTerrainMeshes(
   group: Group,
   mirror: TerrainMirror,
   scheduling?: MeshScheduling,
+  /**
+   * Where chunk geometry is built. Defaults to the direct (this-thread) source,
+   * which is what tests and the preview harnesses want; the client passes the
+   * worker-backed one. See render/chunkBuildSource.ts.
+   */
+  buildSource: ChunkBuildSource = createDirectChunkBuildSource(),
 ): TerrainMeshes {
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
@@ -503,20 +526,6 @@ export function createTerrainMeshes(
 
   /** Build-completion subscribers — see `onChunkDrawn`. */
   const chunkDrawnHandlers = new Set<(chunkIdx: number) => void>();
-
-  /**
-   * The one buffer any chunk is emitted into, before its vertices are copied
-   * to their run in a super-mesh.
-   *
-   * ONE, SHARED, FOR THE WHOLE WORLD — and this is most of the memory story of
-   * the merge. Every chunk used to own a permanent set of buffers sized for
-   * INITIAL_CHUNK_TRIANGLE_CAPACITY whether it needed them or not, so a fully
-   * revealed 2048² world held 16 384 of them. Emission is synchronous and its
-   * result is copied out before the next chunk is emitted, so one scratch does
-   * the whole job; it grows to the largest chunk the world has ever contained
-   * (writeChunkVertexData's own ensureCapacity) and stays there.
-   */
-  const scratch = createChunkGeometryBuffers();
 
   const superIndexOf = (chunkIdx: number): number => {
     const cx = chunkIdx % chunkCols;
@@ -646,34 +655,6 @@ export function createTerrainMeshes(
     );
   };
 
-  /** Measures the scratch's first `count` vertices into the slot's box. */
-  const measureSlot = (slot: ChunkSlot, count: number): void => {
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    const positions = scratch.positions;
-    for (let v = 0; v < count; v++) {
-      const x = positions[v * 3]!;
-      const y = positions[v * 3 + 1]!;
-      const z = positions[v * 3 + 2]!;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (z < minZ) minZ = z;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-      if (z > maxZ) maxZ = z;
-    }
-    slot.minX = minX;
-    slot.minY = minY;
-    slot.minZ = minZ;
-    slot.maxX = maxX;
-    slot.maxY = maxY;
-    slot.maxZ = maxZ;
-  };
-
   /**
    * Marks one attribute's vertex range as the only part needing re-upload.
    *
@@ -715,8 +696,8 @@ export function createTerrainMeshes(
   };
 
   /**
-   * Copies the scratch's first `count` vertices into `chunkIdx`'s run, moving
-   * everything after it if the run changed length.
+   * Copies a finished job's vertices into `chunkIdx`'s run, moving everything
+   * after it if the run changed length.
    *
    * THE SHIFT IS WHY THE RUNS ARE PACKED rather than each chunk owning a fixed
    * slot. A fixed slot needs no shifting, but it has to be sized for the worst
@@ -731,7 +712,8 @@ export function createTerrainMeshes(
    * most the tail of one super-mesh, and it is a copyWithin of contiguous
    * memory rather than a rebuild.
    */
-  const spliceChunk = (sm: SuperMesh, chunkIdx: number, count: number): void => {
+  const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkJobAnswer): void => {
+    const count = answer.vertexCount;
     let slot = sm.slots.get(chunkIdx);
     if (slot === undefined) {
       // A new chunk goes where its index sorts to, so one that arrives late
@@ -786,12 +768,19 @@ export function createTerrainMeshes(
     }
 
     const { positions, normals, colors, selfLit } = sm.buffers;
-    positions.set(scratch.positions.subarray(0, count * 3), slot.offset * 3);
-    normals.set(scratch.normals.subarray(0, count * 3), slot.offset * 3);
-    colors.set(scratch.colors.subarray(0, count * 3), slot.offset * 3);
-    selfLit.set(scratch.selfLit.subarray(0, count), slot.offset);
+    positions.set(answer.positions, slot.offset * 3);
+    normals.set(answer.normals, slot.offset * 3);
+    colors.set(answer.colors, slot.offset * 3);
+    selfLit.set(answer.selfLit, slot.offset);
 
-    measureSlot(slot, count);
+    // MEASURED WHERE THE VERTICES WERE MADE, not here: the job walked them
+    // once on its way out and sent six floats.
+    slot.minX = answer.bounds[0]!;
+    slot.minY = answer.bounds[1]!;
+    slot.minZ = answer.bounds[2]!;
+    slot.maxX = answer.bounds[3]!;
+    slot.maxY = answer.bounds[4]!;
+    slot.maxZ = answer.bounds[5]!;
 
     sm.positionAttribute.needsUpdate = true;
     sm.normalAttribute.needsUpdate = true;
@@ -827,58 +816,155 @@ export function createTerrainMeshes(
    */
   const pending = new Set<number>();
 
-  /** Builds one queued chunk into its super-mesh, creating that if needed. */
-  const buildChunk = (chunkIdx: number): void => {
-    // Re-checked at DRAIN time, not at queue time: a chunk can be dropped from
-    // `received` between the two (a rejoin replaces the world), and building
-    // one the mirror no longer holds would read heights that are not there.
+  /**
+   * Chunks whose job is out and whose answer has not landed.
+   *
+   * AT MOST ONE JOB PER CHUNK, and it is an enforced invariant rather than an
+   * implication of the queue. Two answers for one chunk could come back from
+   * two workers in either order, and the older one splicing last would leave
+   * the chunk drawing pre-edit geometry until something else dirtied it. A
+   * chunk re-dirtied while its job is out simply stays in `pending` and is
+   * re-submitted when the answer lands — the answer in flight is a correct
+   * earlier picture, exactly as a queued build has always been.
+   */
+  const inFlight = new Set<number>();
+
+  /** Finished jobs waiting for a frame's splice budget. */
+  const ready: ChunkJobAnswer[] = [];
+
+  /**
+   * A ring of recent splice costs — long enough to survive a held stroke's
+   * worth of edits (a stroke emits ~8 intents a second and this keeps a few
+   * seconds of them), short enough that the median tracks the world as it is
+   * now rather than as it was when it was empty.
+   */
+  const SPLICE_SAMPLE_WINDOW = 64;
+  const spliceMs: number[] = [];
+  let spliceMsNext = 0;
+
+  /**
+   * Bumped whenever the world this builder draws is replaced. An answer
+   * stamped with an older one is a picture of a world that no longer exists —
+   * a rejoin, a world switch — and is dropped rather than spliced.
+   */
+  let generation = 0;
+
+  const receive = (answer: ChunkJobAnswer): void => {
+    inFlight.delete(answer.chunkIdx);
+    if (answer.generation !== generation) return;
+    // Re-checked on ARRIVAL as well as on submission: a chunk can leave
+    // `received` while its job is out (a rejoin replaces the world), and
+    // splicing geometry for a chunk the mirror no longer holds would draw
+    // terrain that is not there.
+    if (!mirror.received.has(answer.chunkIdx)) return;
+    ready.push(answer);
+  };
+
+  /** Sends one queued chunk to the build source. */
+  const submit = (chunkIdx: number): void => {
+    // Re-checked at SUBMIT time, not at queue time: a chunk can be dropped
+    // from `received` between the two, and building one the mirror no longer
+    // holds would read heights that are not there.
     if (!mirror.received.has(chunkIdx)) return;
-    const cx = chunkIdx % chunkCols;
-    const cy = (chunkIdx - cx) / chunkCols;
-    const counts = writeChunkVertexData(mirror, cx, cy, scratch, palettes);
+    inFlight.add(chunkIdx);
+    const answer = buildSource.build(mirror, chunkIdx, generation);
+    if (answer instanceof Promise) void answer.then(receive);
+    else receive(answer);
+  };
+
+  /** Splices one finished job into its super-mesh, creating that if needed. */
+  const spliceAnswer = (answer: ChunkJobAnswer): void => {
+    const startedMs = now();
     // HANDED OVER, not re-derived. The plan this chunk was emitted from is
     // published here rather than planned a second time by whoever needs to know
-    // what the rock looks like — see terrain/drawnGroundStore.ts.
-    drawnGroundStore.publish(chunkIdx, counts.drawnCaps);
-    const superIdx = superIndexOf(chunkIdx);
+    // what the rock looks like — see terrain/drawnGroundStore.ts. It arrives
+    // already flat and already rasterised, from wherever the chunk was built.
+    drawnGroundStore.publishRastered(
+      answer.chunkIdx,
+      answer.plan,
+      answer.topLevel,
+      answer.lips,
+    );
+    const superIdx = superIndexOf(answer.chunkIdx);
     const sm = superMeshes.get(superIdx) ?? createSuperMesh(superIdx);
-    spliceChunk(sm, chunkIdx, counts.vertexCount);
+    spliceChunk(sm, answer.chunkIdx, answer);
     // AFTER the splice and after the publish, so a handler sees both the chart
     // and the vertices this build produced.
-    for (const handler of chunkDrawnHandlers) handler(chunkIdx);
+    for (const handler of chunkDrawnHandlers) handler(answer.chunkIdx);
+    // Timed around ALL THREE, because all three are what a frame pays per
+    // answer — the tail move, the chart publish and the lip refresh.
+    const elapsedMs = now() - startedMs;
+    if (spliceMs.length < SPLICE_SAMPLE_WINDOW) spliceMs.push(elapsedMs);
+    else {
+      spliceMs[spliceMsNext] = elapsedMs;
+      spliceMsNext = (spliceMsNext + 1) % SPLICE_SAMPLE_WINDOW;
+    }
   };
 
   const now = scheduling?.now ?? (() => performance.now());
 
   /**
-   * Builds queued chunks until `budgetMs` of wall clock is gone, or the queue
-   * empties.
+   * Submits what the pool has room for, then splices finished answers until
+   * `budgetMs` of wall clock is gone.
    *
-   * ALWAYS BUILDS AT LEAST ONE, and that is not a rounding convenience: a chunk
-   * whose own build costs more than the entire budget would otherwise never be
-   * built, and the queue would stall permanently on the first heavy chunk with
-   * the terrain frozen behind it. Checking the clock AFTER a build rather than
-   * before is what expresses that — the first build of a frame is unconditional
-   * and every one after it has to fit.
+   * ALWAYS SPLICES AT LEAST ONE, and that is not a rounding convenience: a
+   * splice costing more than the entire budget would otherwise never happen and
+   * the queue would stall permanently with the terrain frozen behind it.
+   * Checking the clock AFTER a splice rather than before is what expresses that
+   * — the first splice of a frame is unconditional and every one after it has
+   * to fit. The constant is therefore a floor on progress, not a ceiling on
+   * cost.
    */
+  /** The first queued chunk with no job out, or undefined. */
+  const nextSubmittable = (): number | undefined => {
+    for (const chunkIdx of pending) {
+      if (!inFlight.has(chunkIdx)) return chunkIdx;
+    }
+    return undefined;
+  };
+
   const drain = (budgetMs: number): void => {
-    if (pending.size === 0) return;
+    if (pending.size === 0 && ready.length === 0) return;
     const startedMs = now();
-    for (const chunkIdx of pending) {
-      pending.delete(chunkIdx);
-      buildChunk(chunkIdx);
-      if (now() - startedMs >= budgetMs) break;
+    for (;;) {
+      // Top the pool up FIRST, so a worker is never idle while this thread
+      // splices. With the direct source, whose `concurrency` is 1 and whose
+      // answers are finished before `build` returns, this is one build — so
+      // that path still costs exactly one chunk per pass and the budget still
+      // bounds building as well as splicing.
+      while (inFlight.size < buildSource.concurrency) {
+        const chunkIdx = nextSubmittable();
+        if (chunkIdx === undefined) break;
+        pending.delete(chunkIdx);
+        submit(chunkIdx);
+      }
+      if (ready.length === 0) return;
+      spliceAnswer(ready.shift()!);
+      if (now() - startedMs >= budgetMs) return;
     }
   };
 
+  /**
+   * Builds every queued chunk now, whatever the budget says.
+   *
+   * SYNCHRONOUS ONLY ON THE DIRECT SOURCE, which answers inside `build`. The
+   * worker source cannot finish on this thread by definition, so a client using
+   * it gets "everything submitted, and everything already answered spliced" —
+   * which is all a flush can honestly mean there. Every caller that depends on
+   * the world being complete when this returns (the tests, the preview
+   * harnesses) is on the direct source.
+   */
   const flush = (): void => {
-    for (const chunkIdx of pending) {
-      pending.delete(chunkIdx);
-      buildChunk(chunkIdx);
+    for (;;) {
+      const chunkIdx = nextSubmittable();
+      if (chunkIdx !== undefined) {
+        pending.delete(chunkIdx);
+        submit(chunkIdx);
+      }
+      if (ready.length > 0) spliceAnswer(ready.shift()!);
+      else if (chunkIdx === undefined) return;
     }
   };
-
-  const stopDraining = scheduling?.onFrame(() => drain(CHUNK_BUILD_FRAME_BUDGET_MS));
 
   const clear = (): void => {
     for (const sm of superMeshes.values()) {
@@ -893,7 +979,14 @@ export function createTerrainMeshes(
     // against the replacement would build chunks nobody asked for, at best;
     // this is why clear() and not just dispose() empties it.
     pending.clear();
+    // And the jobs already out are pictures of the world being dropped. The
+    // generation bump is what makes their answers arrive and be discarded.
+    inFlight.clear();
+    ready.length = 0;
+    generation++;
   };
+
+  const stopDraining = scheduling?.onFrame(() => drain(CHUNK_SPLICE_FRAME_BUDGET_MS));
 
   return {
     update(dirty: Iterable<number>): void {
@@ -908,7 +1001,7 @@ export function createTerrainMeshes(
     },
     flush,
     pendingCount(): number {
-      return pending.size;
+      return pending.size + inFlight.size + ready.length;
     },
     clear,
     pickables(): Mesh[] {
@@ -920,6 +1013,12 @@ export function createTerrainMeshes(
     onChunkDrawn(handler: (chunkIdx: number) => void): () => void {
       chunkDrawnHandlers.add(handler);
       return () => chunkDrawnHandlers.delete(handler);
+    },
+
+    medianSpliceMs(): number | null {
+      if (spliceMs.length === 0) return null;
+      const sorted = [...spliceMs].sort((a, b) => a - b);
+      return sorted[sorted.length >> 1]!;
     },
 
     drawCallCount(): number {
@@ -934,6 +1033,12 @@ export function createTerrainMeshes(
       stopDraining?.();
       clear();
       material.dispose();
+      // THE BUILD SOURCE IS NOT DISPOSED HERE, and that is deliberate: it is
+      // the caller's, and the client's worker pool outlives the mesh set (a
+      // rejoin replaces the meshes and would otherwise terminate and respawn
+      // two threads for nothing). The default direct source holds nothing to
+      // release. `clear()` above has already bumped the generation, so answers
+      // still in flight for this world are dropped when they land.
     },
   };
 }

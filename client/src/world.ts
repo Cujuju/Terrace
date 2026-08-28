@@ -51,6 +51,7 @@ import {
   type PredictionStore,
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
+import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createRiverRig, type RiverRig } from './render/riverRig.ts';
@@ -203,6 +204,14 @@ export function createWorld(viewport: Viewport): World {
     networkSource: createWorkerRiverNetworkSource() ?? undefined,
   });
 
+  /**
+   * The chunk-geometry worker pool, or null where no Worker could be started
+   * (an old browser, a CSP that forbids module workers) — in which case
+   * `createTerrainMeshes` falls back to building on this thread: slower, never
+   * wrong. One pool for the whole session, like the water and river rigs.
+   */
+  const chunkBuildSource = createWorkerChunkBuildSource();
+
   let mirror: TerrainMirror | null = null;
   /**
    * The drawn-surface oracle over the CURRENT mirror.
@@ -352,9 +361,19 @@ export function createWorld(viewport: Viewport): World {
     // rebuilding a whole brush footprint inside one `update` call. Wrapped
     // rather than passed by reference so the viewport keeps ownership of how
     // its frame callbacks are registered.
-    const nextMeshes = createTerrainMeshes(viewport.terrainGroup, nextMirror, {
-      onFrame: (handler) => viewport.onFrame(handler),
-    });
+    const nextMeshes = createTerrainMeshes(
+      viewport.terrainGroup,
+      nextMirror,
+      { onFrame: (handler) => viewport.onFrame(handler) },
+      // The chunk build itself runs off this thread where a Worker can be
+      // started (render/chunkBuildSource.ts): a chunk is ~6 ms on a developed
+      // world against a 7.1 ms frame budget, and the contour pipeline is not
+      // resumable mid-chunk, so no frame budget can make one chunk cost less
+      // than one chunk. The pool outlives the mesh set — a rejoin replaces the
+      // meshes and must not terminate and respawn two threads — so it is
+      // created once, above, and disposed with the world.
+      chunkBuildSource ?? undefined,
+    );
     // A new session's snapshot is the authoritative starting state, so any
     // prediction still outstanding against the OLD session is meaningless: the
     // store is replaced along with the mirror it shadows, which drops them.
@@ -680,6 +699,9 @@ export function createWorld(viewport: Viewport): World {
       water.dispose();
       fog.dispose();
       rivers.dispose();
+      // The pool outlives every mesh set in the session, so this is the only
+      // place it is terminated.
+      chunkBuildSource?.dispose();
     },
   };
 }
