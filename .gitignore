@@ -12,3 +12,4 @@ __pycache__/
 .volcano-shots/
 .mudslide-shots/
 .weather-verify/
+.gpu-perf/
