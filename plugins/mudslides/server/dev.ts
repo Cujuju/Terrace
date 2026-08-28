@@ -22,6 +22,8 @@
 //   MUDSLIDES_DEV_FORCE=slide            collapse the steepest hillside near the
 //                                        centre, once, at boot
 //   MUDSLIDES_DEV_FORCE_PERIOD_SECONDS=n and then again every n seconds
+//   MUDSLIDES_DEV_SLOW=k                 and run each one k times slower, so a
+//                                        capture can land mid-flow
 //
 // THE PERIOD IS WHAT MAKES A SLIDE PHOTOGRAPHABLE IN THIS ENVIRONMENT. A run
 // lasts about six seconds; a headless WebGL client in WSL2 takes longer than
@@ -53,6 +55,7 @@ import {
   MUDSLIDE_BRUSH_RADIUS_CELLS,
   movedGround,
   setDevFrozen,
+  setDevSlowFactor,
   startSlide,
   type Slide,
 } from './slides.ts';
@@ -69,6 +72,13 @@ export const MUDSLIDES_DEV_FORCE_ENV = 'MUDSLIDES_DEV_FORCE';
 
 /** Seconds between re-forced slides; unset or non-positive means "once". */
 export const MUDSLIDES_DEV_PERIOD_ENV = 'MUDSLIDES_DEV_FORCE_PERIOD_SECONDS';
+
+/**
+ * Divides the speed of a running slide, so it can be photographed mid-flow.
+ * See `setDevSlowFactor` in ./slides.ts for what it does and why it is the
+ * slide's dt rather than the server's tick.
+ */
+export const MUDSLIDES_DEV_SLOW_ENV = 'MUDSLIDES_DEV_SLOW';
 
 /**
  * How far from the centre a site is searched, in cells.
@@ -244,12 +254,15 @@ export function forceSlideFromEnv(
   // deployment a way to fail.
   if (value !== 'slide' && value !== '1') {
     periodSeconds = 0;
+    setDevSlowFactor(1);
     return null;
   }
 
   // FROZEN, for the whole life of this world: a fixture whose ORDINARY trigger
   // keeps firing while the forced slide is being photographed is not a fixture.
   setDevFrozen(true);
+
+  setDevSlowFactor(Number(env[MUDSLIDES_DEV_SLOW_ENV]));
 
   const period = Number(env[MUDSLIDES_DEV_PERIOD_ENV]);
   periodSeconds = Number.isFinite(period) && period > 0 ? period : 0;

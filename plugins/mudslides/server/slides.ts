@@ -412,6 +412,20 @@ let revealedChunks: Array<{ readonly cx: number; readonly cy: number }> = [];
 /** Set by ./dev.ts: the trigger never fires on its own on a forced world. */
 let devFrozen = false;
 
+/**
+ * Divides the `dt` a RUNNING SLIDE sees. 1 in every real deployment.
+ *
+ * WHY IT EXISTS (./dev.ts's MUDSLIDES_DEV_SLOW). A run lasts about six seconds,
+ * and a headless SwiftShader client in WSL2 takes roughly twenty-five seconds to
+ * produce ONE frame — so a mid-flow capture is not merely hard, it is arithmetically
+ * impossible. Slowing the slide is the only lever that makes it possible, and it
+ * is applied to the SLIDE'S OWN dt rather than to the server's tick so nothing
+ * else in the world changes speed: the front still walks the same cells in the
+ * same order and the sculpt cadence still fires the same number of times, just
+ * spread over more wall clock. The run a slow capture photographs is the same run.
+ */
+let devSlowFactor = 1;
+
 /** Drops every scrap of state. Called on world close and by the test seam. */
 export function resetSlides(): void {
   sites = new Map();
@@ -422,6 +436,7 @@ export function resetSlides(): void {
   surveyTimerSeconds = MUDSLIDE_SURVEY_INTERVAL_SECONDS;
   revealedChunks = [];
   devFrozen = false;
+  devSlowFactor = 1;
 }
 
 /**
@@ -433,6 +448,11 @@ export function resetSlides(): void {
  */
 export function setDevFrozen(frozen: boolean): void {
   devFrozen = frozen;
+}
+
+/** See `devSlowFactor`. A factor at or below 1 is ignored. */
+export function setDevSlowFactor(factor: number): void {
+  devSlowFactor = Number.isFinite(factor) && factor > 1 ? factor : 1;
 }
 
 export function livingSlides(): readonly Slide[] {
@@ -912,8 +932,9 @@ export interface SlideTick {
 }
 
 /** Advances every running slide by `dt`. */
-export function advanceSlides(world: MudslideWorld, dt: number): SlideTick {
+export function advanceSlides(world: MudslideWorld, rawDt: number): SlideTick {
   if (slides.length === 0) return { finished: [], changed: false };
+  const dt = rawDt / devSlowFactor;
 
   const finished: Slide[] = [];
   const surviving: Slide[] = [];
