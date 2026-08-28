@@ -535,6 +535,33 @@ export function createWater(parent: Object3D, initialWorldSize: number): Water {
       mesh.visible = quad > 0;
     },
     refresh(mirror: TerrainMirror, dirty: Iterable<number>): void {
+      // NOTHING DIRTY MEANS NOTHING UPLOADED. The three `needsUpdate` flags
+      // below cost a FULL re-upload of three world-sized textures each
+      // (768 KB on a 512² world) whether or not a texel changed, so a call
+      // with an empty set is the single most expensive no-op in the refresh
+      // path. world.ts's `applyDirty` already returns before reaching here on
+      // an empty set; this is the second layer, because `refresh` is public
+      // and the snapshot/chunk-unlock paths call it directly.
+      //
+      // WHY NOT RANGED UPLOADS for the rows a sculpt actually touches: all
+      // three textures are RedFormat/UnsignedByteType (createDepthTexture,
+      // above) — one byte per texel. three's `updateTexture`
+      // (WebGLTextures.js:799 in three 0.185.1) hard-codes
+      // `componentStride = 4` with the comment "only RGBA supported" and
+      // derives the uploaded pixel window as `range.start / 4` …
+      // `ceil(range.count / 4)`. For a single-channel texture that addresses
+      // the WRONG texels — it does not degrade to a full upload, it uploads a
+      // quarter-width window at a quarter offset — so `addUpdateRange` is not
+      // usable on these three until three supports non-RGBA strides. The win
+      // ranged uploads were meant to buy is bought instead by this guard plus
+      // the prediction filter: the echo that used to re-upload everything for
+      // no change now does not call `refresh` at all.
+      // Counted, never CONSUMED: `dirty` is typed `Iterable`, and probing a
+      // one-shot iterator for emptiness would eat the element it found. Only
+      // the sized collections every real caller passes are short-circuited;
+      // anything else falls through to the full path.
+      if (dirty instanceof Set && dirty.size === 0) return;
+      if (Array.isArray(dirty) && dirty.length === 0) return;
       writeWaterDepthTexels(
         depthAlphaBuffer,
         worldSizeUniform.value,

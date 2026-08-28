@@ -278,6 +278,28 @@ export function createWorld(viewport: Viewport): World {
    * that is about WHICH segments exist, not their heights.
    */
   const applyDirty = (dirty: Set<number>): void => {
+    // AN EMPTY SET IS NOT A CHEAP CALL, so it is not made at all. Every
+    // consumer below is written to iterate the set, which reads as "nothing
+    // dirty costs nothing" — and is false for `water.refresh`, which re-uploads
+    // three world-sized textures per call whatever the set holds
+    // (render/water.ts). Once the prediction journal stops reporting chunks
+    // whose rendered state did not change, the authoritative echo of a
+    // correctly predicted sculpt arrives with an empty set several times a
+    // second, and this early return is what makes that echo free.
+    //
+    // RIVERS ARE DELIBERATELY OUTSIDE THE GUARD. Their refresh is throttled on
+    // ELAPSED TIME and accumulates the dirty chunks it was handed while inside
+    // the window (render/riverRig.ts): the rebuild happens on the first call
+    // AFTER the window passes, whatever that call's own set holds. Skipping
+    // empty-set calls would strand the last chunks of a stroke in
+    // `pendingDirty` until some unrelated later edit happened to flush them.
+    // An empty-set call is genuinely cheap here — an elapsed-time compare, and
+    // when the window has passed, the rebuild the ACCUMULATED set has already
+    // earned.
+    if (mirror !== null && drawnGround !== null && dirty.size === 0) {
+      rivers.refresh(mirror, dirty, drawnGround);
+      return;
+    }
     meshes?.update(dirty);
     // Terrace lips follow the same dirty set as the meshes they lie on, so a
     // stroke re-contours exactly the chunks it changed (render/layerEdgeOverlay.ts).
