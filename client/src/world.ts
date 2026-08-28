@@ -300,9 +300,11 @@ export function createWorld(viewport: Viewport): World {
       return;
     }
     meshes?.update(dirty);
-    // Terrace lips follow the same dirty set as the meshes they lie on, so a
-    // stroke re-contours exactly the chunks it changed (render/layerEdgeOverlay.ts).
-    layerEdges?.update(dirty);
+    // Terrace lips are NOT refreshed from this set. They are read from what
+    // each chunk published when it was drawn, and the build queue drains under
+    // a frame budget — so the overlay is driven by build completion
+    // (`onChunkDrawn`, wired in resetWorld) rather than by the dirty set, which
+    // would have it reading pre-edit charts for every deferred chunk.
     if (mirror !== null && drawnGround !== null) {
       fog.refresh(mirror, dirty);
       water.refresh(mirror, dirty);
@@ -362,7 +364,15 @@ export function createWorld(viewport: Viewport): World {
       viewport.terrainGroup,
       nextMirror,
       worldSize,
+      nextMeshes.drawnGround(),
     );
+    // The lips follow the rock, chunk by chunk, on the event that redraws it.
+    // Subscribed rather than passed into `createTerrainMeshes` because the
+    // meshes have to exist before the overlay that reads their store does, and
+    // a callback closing over a not-yet-assigned overlay is a way to get that
+    // ordering wrong silently. The subscription dies with the meshes, which are
+    // disposed at the top of the next reset.
+    nextMeshes.onChunkDrawn((chunkIdx) => nextLayerEdges.refreshChunk(chunkIdx));
     mirror = nextMirror;
     // The oracle closes over the mirror it was built on AND over that mirror's
     // mesh store, so a replaced mirror takes both with it. This is the only
@@ -457,7 +467,8 @@ export function createWorld(viewport: Viewport): World {
         nowMs(),
       );
       fresh.meshes.update(snapshotDirty);
-      layerEdges?.update(snapshotDirty);
+      // No lip refresh here: the overlay follows build completion, and these
+      // chunks have only just been queued (see applyDirty's note).
       // The frontier is a fact about `received`, which the snapshot just
       // changed — sync unconditionally, whether this is a first join (empty
       // -> starter footprint) or a rejoin (old world's segments dropped, this
@@ -521,7 +532,7 @@ export function createWorld(viewport: Viewport): World {
       // any more: the oracle reads what the meshes published, and `meshes.update`
       // on the next line is what publishes the newly-revealed chunks.
       meshes.update(unlockDirty);
-      layerEdges?.update(unlockDirty);
+      // Same as the snapshot path: the lips follow the builds, not the queue.
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);

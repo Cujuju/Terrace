@@ -5,11 +5,33 @@
 // WHAT IT DRAWS, AND WHY THAT IS THE HONEST ANSWER. A "layer" at band k is the
 // region {the column is SOLID at band k}; its edge is the marching-squares
 // contour of that region, and that contour is ALREADY the thing the terrain
-// mesh is built from (terrain/capEmission.ts's chunkBandContourLoops marches
-// the very field planChunkCaps marches → the same loops that become cap
-// outlines and skirt tops). So this overlay does not invent a grab model: it
-// exposes the geometry the renderer already computes, at the exact height the
-// lip is drawn at. If a line is here, the map genuinely knows about that edge.
+// mesh is built from. So this overlay does not invent a grab model: it exposes
+// the geometry the renderer already computes, at the exact height the lip is
+// drawn at. If a line is here, the map genuinely knows about that edge.
+//
+// IT IS NOW A READER, NOT A MARCHER (2026-08-27). It used to re-march every
+// band of every dirty chunk with `chunkBandContourLoops` — the same field, the
+// same marcher, the same smoother the chunk build had just run, a second time,
+// for 4-9 ms per sculpt on a developed world. The chunk build publishes the
+// loops it emitted from (terrain/drawnGroundStore.ts's chart →
+// `caps.levels[i].polygons`), and that published set is a SUPERSET of the bands
+// this overlay wants, so the overlay reads them. "Already the thing the mesh is
+// built from" has stopped being an argument about two runs agreeing and become
+// one object.
+//
+// WHICH MEANS IT IS DRIVEN BY BUILDS, NOT BY THE DIRTY SET. Charts are
+// published when a chunk is BUILT, and builds are queued under a frame budget
+// (render/terrainMeshes.ts) — `meshes.update(dirty)` does not build
+// synchronously. An overlay refreshed from the dirty set would therefore read
+// an absent or pre-edit chart for every deferred chunk and draw last edit's
+// lips. `refreshChunk` is called per chunk by build completion instead
+// (TerrainMeshes.onChunkDrawn), so the lips and the rock they lie on are
+// replaced by the same event.
+//
+// A BLOCKY CHUNK GETS NO LIPS. `caps.blocky` means the chunk fell back to
+// axis-aligned per-cell quads and drew no contours at all; the marcher would
+// have happily produced lines for a surface that is not on screen, which is
+// exactly the promise the module header makes and could not keep.
 //
 // IT USED TO BE {height ≥ k·BAND_HEIGHT} — the top surface only — and that was
 // the same statement while every column held one solid span. Once a column
@@ -32,27 +54,19 @@
 // skirts (isBorderSegment), for the same reason: there is no riser there. Left
 // in, the overlay would draw a chunk grid over the world and read as noise.
 //
-// COST. One rebuild per dirty chunk, over only the band levels that chunk
-// actually spans (a flat chunk spans one and costs one march). It rides the
-// same dirty-chunk set as the terrain meshes, so a stroke re-contours the
-// chunks it touched and nothing else. It is a diagnostic, not a shipped
-// feature: unlike terrainMeshes it rebuilds whole geometries rather than
-// patching buffers, and it is not budgeted across frames.
+// COST. One geometry rebuild per chunk BUILT, over the levels that chunk
+// published — no marching, no smoothing, no sampling. It is a diagnostic, not
+// a shipped feature: unlike terrainMeshes it rebuilds whole geometries rather
+// than patching buffers, and it is not budgeted across frames.
 
 import { BufferAttribute, BufferGeometry, LineBasicMaterial, LineSegments } from 'three';
 import type { Object3D } from 'three';
-import {
-  BAND_HEIGHT,
-  CHUNK_SIZE,
-  bandOf,
-  isSpanDrawn,
-  spanAt,
-  spanCapHeight,
-  spanCount,
-} from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
-import { chunkBandContourLoops } from '../terrain/capEmission.ts';
-import { hasChunk, sampleHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { RECT_NONE } from '../terrain/contours.ts';
+import type { ContourLoop } from '../terrain/contours.ts';
+import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
+import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
 
 /**
  * Edge colour. Cyan because nothing else in the scene is: terrain is green and
@@ -115,8 +129,13 @@ const GRAB_RADIUS_WORLD_UNITS = 1.5 * CELL_WORLD_SIZE;
 const HIGHLIGHT_SPAN_WORLD_UNITS = 2;
 
 export interface LayerEdgeOverlay {
-  /** Rebuilds the edges of the given chunks. Unreceived chunks are skipped. */
-  update(dirty: Iterable<number>): void;
+  /**
+   * Rebuilds ONE chunk's edges from the chart the terrain has published for
+   * it. Called by build completion, never by the dirty set — see the module
+   * header. A chunk that is unreceived, frontier-adjacent, blocky or not yet
+   * drawn contributes nothing and loses whatever it had.
+   */
+  refreshChunk(chunkIdx: number): void;
   /**
    * Lights up the lip the cursor is pointing at and returns the BAND it
    * belongs to — the band a pull starting there would grab. Null clears the
@@ -143,6 +162,7 @@ export function createLayerEdgeOverlay(
   group: Object3D,
   mirror: TerrainMirror,
   worldSize: number,
+  drawnGround: DrawnGroundStore,
 ): LayerEdgeOverlay {
   const chunksPerEdge = Math.max(1, Math.floor(worldSize / CHUNK_SIZE));
   const meshes = new Map<number, LineSegments>();
@@ -176,53 +196,6 @@ export function createLayerEdgeOverlay(
   };
 
   /**
-   * The inclusive band range whose contours can be non-empty here, or null if
-   * the chunk has no cells.
-   *
-   * `hi` is the highest band any column reaches: nothing is solid above it, so
-   * every higher contour is empty.
-   *
-   * `lo` IS NOT THE LOWEST TOP SURFACE, and that distinction is the whole
-   * carve fix. The old rule was "every column is solid at every band up to the
-   * lowest top, so contours below that are empty" — true only while a column
-   * was one unbroken span. A carved column is open at the bands of its gap,
-   * which can sit BELOW every top surface in the chunk (a flat plateau with a
-   * tunnel through it has one top band and a hole several bands under it), and
-   * a range starting at the lowest top would skip exactly the bands where the
-   * opening lives. So `lo` is the lowest band a column is solid up to WITHOUT
-   * a break: the cap of its lowest drawn span, which for an unlayered column
-   * is its top surface — the old rule, restated so it survives a gap.
-   */
-  const bandRange = (cx: number, cy: number): { lo: number; hi: number } | null => {
-    const originX = cx * CHUNK_SIZE;
-    const originZ = cy * CHUNK_SIZE;
-    let lo = Number.POSITIVE_INFINITY;
-    let hi = Number.NEGATIVE_INFINITY;
-    for (let ly = 0; ly < CHUNK_SIZE; ly++) {
-      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-        const x = originX + lx;
-        const y = originZ + ly;
-        const h = sampleHeight(mirror, x, y);
-        if (h > hi) hi = h;
-        // The unbroken-solid ceiling of this column: its lowest DRAWN span's
-        // cap. A column with no drawn span at all (fully buried by the
-        // seabed's own rules) contributes its top height, as before.
-        let unbrokenTo = h;
-        const count = spanCount(mirror.map, x, y);
-        for (let k = 0; k < count; k++) {
-          const span = spanAt(mirror.map, x, y, k);
-          if (!isSpanDrawn(span)) continue;
-          unbrokenTo = spanCapHeight(span);
-          break;
-        }
-        if (unbrokenTo < lo) lo = unbrokenTo;
-      }
-    }
-    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
-    return { lo: bandOf(lo), hi: bandOf(hi) };
-  };
-
-  /**
    * Whether every in-bounds neighbour of this chunk has been received.
    *
    * THE FRONTIER FICTION, and why it has to be excluded. A chunk's contour is
@@ -247,42 +220,69 @@ export function createLayerEdgeOverlay(
     return true;
   };
 
+  /**
+   * Emits one published loop's non-border segments at world height `y`.
+   *
+   * `rect` IS WHAT `onBorder` WAS. `assembleLoops` marks every point it placed
+   * on the chunk's own domain rectangle with a non-zero rect mask, and the
+   * marcher's own consumers (capEmission's skirt extrusion) drop a segment with
+   * both ends on it for the same reason this does: there is no riser there, and
+   * left in it would draw a chunk grid over the world.
+   */
+  const emitLoop = (
+    loop: ContourLoop,
+    y: number,
+    positions: number[],
+    band: number[],
+  ): void => {
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i]!;
+      const b = loop[(i + 1) % loop.length]!;
+      if (a.rect !== RECT_NONE && b.rect !== RECT_NONE) continue;
+      const ax = a.x * CELL_WORLD_SIZE;
+      const az = a.z * CELL_WORLD_SIZE;
+      const bx = b.x * CELL_WORLD_SIZE;
+      const bz = b.z * CELL_WORLD_SIZE;
+      positions.push(ax, y, az, bx, y, bz);
+      band.push(ax, az, bx, bz);
+    }
+  };
+
   const rebuild = (idx: number): void => {
     dropMesh(idx);
     if (!hasChunk(mirror, idx)) return;
     const cx = idx % chunksPerEdge;
     const cy = Math.floor(idx / chunksPerEdge);
     if (!neighboursKnown(cx, cy)) return;
-    const range = bandRange(cx, cy);
-    if (range === null) return;
+    const chart = drawnGround.chartOf(cx, cy);
+    // No chart: the chunk has not been drawn yet, and there is nothing honest
+    // to draw lips over. Blocky: it drew no contours at all — see the header.
+    if (chart === null || chart.caps.blocky) return;
 
     const positions: number[] = [];
     const perBand = new Map<number, number[]>();
-    // A contour exists at each band FLOOR above the chunk's lowest band: the
-    // boundary of {solid at band k} is empty for k at or below the minimum
-    // (every column is solid there, unbroken — see bandRange) and for k above
-    // the maximum (nothing is solid that high).
-    for (let k = range.lo + 1; k <= range.hi; k++) {
+    for (const level of chart.caps.levels) {
+      // THE WATERLINE IS NOT A LIP. `makeLevels` publishes one extra level at
+      // threshold SEA_LEVEL + 1 on band 0 — a colour boundary on flat ground
+      // where the seabed becomes beach, with no riser under it. A band level
+      // is one whose threshold IS its band's floor, which is the same
+      // predicate the ceiling pass uses to tell the two apart.
+      if (level.threshold !== level.sampleBand * BAND_HEIGHT) continue;
+      const k = level.sampleBand;
+      // The band's own height, NOT the level's `capY`: band 0's cap is sunk
+      // under the dry-land cap that shares its height (SEABED_CAP_SINK), and
+      // the lip a player grabs is at the band, where it always was.
       const y = k * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
-      for (const loop of chunkBandContourLoops(mirror, cx, cy, k)) {
-        for (let i = 0; i < loop.length; i++) {
-          const a = loop[i]!;
-          const b = loop[(i + 1) % loop.length]!;
-          // The chunk-seam artefact, not a lip — see the module header.
-          if (a.onBorder && b.onBorder) continue;
-          const ax = a.x * CELL_WORLD_SIZE;
-          const az = a.z * CELL_WORLD_SIZE;
-          const bx = b.x * CELL_WORLD_SIZE;
-          const bz = b.z * CELL_WORLD_SIZE;
-          positions.push(ax, y, az, bx, y, bz);
-          let band = perBand.get(k);
-          if (band === undefined) {
-            band = [];
-            perBand.set(k, band);
-          }
-          band.push(ax, az, bx, bz);
-        }
+      let band = perBand.get(k);
+      if (band === undefined) {
+        band = [];
+        perBand.set(k, band);
       }
+      for (const polygon of level.polygons) {
+        emitLoop(polygon.outer, y, positions, band);
+        for (const hole of polygon.holes) emitLoop(hole, y, positions, band);
+      }
+      if (band.length === 0) perBand.delete(k);
     }
     if (positions.length < FLOATS_PER_SEGMENT) return;
     segmentsByChunk.set(idx, perBand);
@@ -346,11 +346,11 @@ export function createLayerEdgeOverlay(
   };
 
   return {
-    update(dirty) {
-      for (const idx of dirty) rebuild(idx);
+    refreshChunk(chunkIdx) {
+      rebuild(chunkIdx);
       // A rebuilt chunk's retained segments are new objects, so any highlight
       // standing on the old ones is stale. Cheaper and more honest to drop it
-      // than to try to re-find the same lip in freshly-marched geometry.
+      // than to try to re-find the same lip in freshly-published geometry.
       clearGrabbed();
     },
 
