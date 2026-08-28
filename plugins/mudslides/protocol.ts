@@ -165,6 +165,22 @@ export const MUDSLIDE_MAX_PATH_CELLS = cellsAcross(MUDSLIDE_MAX_PATH_WORLD_UNITS
 /** Rounding for cell-space positions on the wire — shared's own quantum. */
 export { BROADCAST_POSITION_DECIMALS, roundBroadcastPosition } from '@terrace/shared';
 
+/**
+ * Decimal places kept on a slide's `load`, which is a fraction in [0, 1] rather
+ * than a distance and so is not shared's positional quantum's business.
+ *
+ * TWO. The client scales the moving mud by it; a hundredth of full load is far
+ * under one step of the scale a viewer can resolve, so the thinning reads as
+ * continuous.
+ */
+export const MUDSLIDE_LOAD_DECIMALS = 2;
+const LOAD_QUANTUM = 10 ** MUDSLIDE_LOAD_DECIMALS;
+
+/** Rounds a load for the wire and clamps it into [0, 1]. */
+export function roundBroadcastLoad(value: number): number {
+  return Math.round(Math.min(1, Math.max(0, value)) * LOAD_QUANTUM) / LOAD_QUANTUM;
+}
+
 /** One running slide, as the client sees it. */
 export interface SlideState {
   /** Stable for the slide's whole life; the client keys its renderers by it. */
