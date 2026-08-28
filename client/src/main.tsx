@@ -13,6 +13,7 @@ import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
 import { worldPointToCell } from './terrain/picking.ts';
+import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
 import {
   brushProfile,
@@ -101,6 +102,21 @@ const connection = connect({
   onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
 });
 
+/**
+ * How much of the grabbed lip lights up either side of the pointer, in world
+ * units: THE BRUSH RADIUS (owner, 2026-08-27 — "I want that mouse pointer to be
+ * pointing to those cells on the band lip"). The lit stretch is then exactly
+ * the run of lip a press would move, so the pointer and the highlight name the
+ * same cells instead of leaving the player to intersect the two by eye. It was
+ * a fixed 2 world units inside the overlay, a length with no relationship to
+ * the edit a press makes.
+ *
+ * CONVERTED HERE because this is the one place both units are in scope: the
+ * HUD's radius is in CELLS (state/hudState.ts, and the wire's own unit) while
+ * the overlay measures every distance in world units.
+ */
+const litLipSpan = (): number => brushRadius() * CELL_WORLD_SIZE;
+
 const sculptInput = createSculptInput({
   canvas,
   camera: viewport.camera,
@@ -114,7 +130,7 @@ const sculptInput = createSculptInput({
   worldSize: () => world.worldSize(),
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.
-  riserBand: (pick) => world.highlightLayerEdge(pick),
+  riserBand: (pick) => world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan() }),
   bandAtCell: (x, y) => world.bandAtCell(x, y),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
   carveBand: (pick) => world.carveBand(pick),
@@ -168,7 +184,15 @@ viewport.onFrame(() => {
   // (footprint). One query, so the highlight the player sees, the readout and
   // the pointer shape can never disagree about what is under the cursor —
   // and it is the same question input/sculptInput.ts asks on pointerdown.
-  const grabbedBand = world.highlightLayerEdge(pick);
+  //
+  // A LIVE STROKE'S GRAB OVERRIDES THE PICK. A pull drags the pointer off the
+  // riser it grabbed within the first cell of travel, and the pick-derived band
+  // is null everywhere but on a riser — so without this the lip the player was
+  // holding went dark while they were still holding it.
+  const grabbedBand = world.highlightLayerEdge(pick, {
+    litSpanWorldUnits: litLipSpan(),
+    heldBand: sculptInput.heldBand(),
+  });
   brushPreview.update(
     // GRABBABLE MEANS "THIS PRESS WILL TAKE HOLD", so it is gated on the tool
     // the same way pointerdown is (input/sculptInput.ts). A lip under the
@@ -176,7 +200,11 @@ viewport.onFrame(() => {
     // a pointer that said otherwise would be advertising the wrong edit.
     pick === null
       ? null
-      : { ...pick, grabbable: grabbedBand !== null && brushTool() === 'drag' },
+      : {
+          ...pick,
+          grabbable: grabbedBand !== null && brushTool() === 'drag',
+          band: grabbedBand,
+        },
     {
       radius: brushRadius(),
       tool: brushTool(),

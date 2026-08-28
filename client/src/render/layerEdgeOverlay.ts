@@ -107,15 +107,6 @@ const GRABBED_OPACITY = 1;
  */
 const GRAB_RADIUS_WORLD_UNITS = 1.5 * CELL_WORLD_SIZE;
 
-/**
- * How much of the grabbed lip lights up on either side of the cursor, in world
- * units. Long enough to read which way the lip runs (a couple of world units
- * of contour is unambiguous even at a shallow camera pitch), short enough that
- * grabbing a coastline does not set the whole coast alight and hide where the
- * cursor actually is.
- */
-const HIGHLIGHT_SPAN_WORLD_UNITS = 2;
-
 export interface LayerEdgeOverlay {
   /** Rebuilds the edges of the given chunks. Unreceived chunks are skipped. */
   update(dirty: Iterable<number>): void;
@@ -142,12 +133,24 @@ export interface LayerEdgeOverlay {
    * it rather than one here and one there. A null `cell` or `band` clears the
    * highlight and reports false: the pointer is off the world, or it is on a
    * face with no lip to grab.
+   *
+   * `litSpanWorldUnits` is HOW MUCH of that band's contour lights up either
+   * side of `(atX, atZ)`, and it is the CALLER'S, for the same reason the
+   * aimed point is (owner, 2026-08-27: "I want that mouse pointer to be
+   * pointing to those cells on the band lip"). It was a fixed 2 world units
+   * here, which is a length with no relationship to the edit a press would
+   * make; the caller passes the BRUSH RADIUS instead, so the lit stretch is
+   * exactly the run of lip the press moves. Scoped by distance rather than by
+   * loop identity either way: a loop is CLIPPED AT THE CHUNK BORDER (see
+   * chunkContourLoops), so "the whole loop" would stop dead at a seam and read
+   * as the lip ending where it plainly does not.
    */
   lightBand(
     cell: { x: number; y: number } | null,
     band: number | null,
     atX: number,
     atZ: number,
+    litSpanWorldUnits: number,
   ): boolean;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
@@ -369,7 +372,7 @@ export function createLayerEdgeOverlay(
       clearGrabbed();
     },
 
-    lightBand(cell, band, atX, atZ) {
+    lightBand(cell, band, atX, atZ, litSpanWorldUnits) {
       clearGrabbed();
       if (cell === null || band === null) return false;
 
@@ -392,11 +395,10 @@ export function createLayerEdgeOverlay(
       }
       if (!bounded) return false;
 
-      // PASS 2 — light up that band's lip near the cursor. Scoped by distance
-      // rather than by loop identity: a loop is CLIPPED AT THE CHUNK BORDER
-      // (see chunkContourLoops), so "the whole loop" would stop dead at a seam
-      // and read as the lip ending where it plainly does not.
-      const spanSq = HIGHLIGHT_SPAN_WORLD_UNITS * HIGHLIGHT_SPAN_WORLD_UNITS;
+      // PASS 2 — light up the caller's stretch of that band's lip around the
+      // aimed point. See `litSpanWorldUnits` on the interface for why the
+      // length is the caller's and why it is a distance rather than a loop.
+      const spanSq = litSpanWorldUnits * litSpanWorldUnits;
       const y = band * BAND_HEIGHT * HEIGHT_WORLD_SCALE + EDGE_LIFT_WORLD_UNITS;
       const positions: number[] = [];
       for (const idx of nearbyChunks(cell.x, cell.y)) {

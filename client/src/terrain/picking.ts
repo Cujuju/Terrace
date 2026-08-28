@@ -263,6 +263,31 @@ export interface TerrainRayPick {
    * ray, not about the cell.
    */
   readonly hitY: number;
+  /**
+   * World-space X and Z of that same meeting — so `(hitX, hitY, hitZ)` is ONE
+   * point: where this ray met the terrain.
+   *
+   * WHY THE POINTER NEEDS IT (owner, 2026-08-27: "you can see where the mouse
+   * cursor is, you can see the selected band, but the user is forced to
+   * manually figure out where the two would intersect"). A consumer that only
+   * has the CELL must draw at the cell's lattice position, which on a riser hit
+   * is the column's own cap — so the pointer sat on top of the terrace while
+   * the player was aiming at its side. The march has always known this point:
+   * it is `origin + t·direction` at the very `t` that produced `hitY`, and the
+   * mixed cell/world space the march works in preserves `t` exactly (see the
+   * scaling note in `pickTerrainCellByRay`), so no second derivation is needed.
+   *
+   * KNOWN, ACCEPTED: the march walks the CELL LATTICE, and the mesh draws a
+   * riser on the SMOOTHED CONTOUR, which wanders within the boundary cell. So
+   * on a smoothed face this point can sit a fraction of a cell off the drawn
+   * surface. A cell is a quarter of a world unit since the re-sample, so the
+   * error is small; the pick's own answer (the cell, the band) is unaffected,
+   * because that is decided by the lattice either way.
+   *
+   * VIEW-DEPENDENT for the same reason `hitY` is.
+   */
+  readonly hitX: number;
+  readonly hitZ: number;
 }
 
 /** The world's vertical extent in world units — nothing is drawn outside it. */
@@ -428,6 +453,12 @@ export function pickTerrainCellByRay(
           spanIndex: k,
           hitRiser: insideOnEntry,
           hitY: faceY,
+          // The SAME t that gave faceY, evaluated on the unscaled ray — the
+          // X/Z scaling above divides origin and direction by the same factor,
+          // which leaves t unchanged, so this is the world-space point the
+          // march just found rather than a re-derivation of it.
+          hitX: origin.x + t * direction.x,
+          hitZ: origin.z + t * direction.z,
         };
       }
       if (hit !== null) return hit;

@@ -131,6 +131,7 @@
 
 import {
   BufferGeometry,
+  Color,
   DoubleSide,
   Float32BufferAttribute,
   LineBasicMaterial,
@@ -138,9 +139,11 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
+  SRGBColorSpace,
   type Scene,
 } from 'three';
 import {
+  BAND_HEIGHT,
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
@@ -156,6 +159,7 @@ import {
   type SculptTool,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../config.ts';
+import { bandColorOf } from '../terrain/bandColors.ts';
 import {
   MAX_LATTICE_SPAN,
   assembleLoops,
@@ -220,6 +224,13 @@ const CROSSHAIR_ARM_WORLD_UNITS = CELL_WORLD_SIZE * 0.3;
 const CROSSHAIR_GAP_WORLD_UNITS = CELL_WORLD_SIZE * 0.08;
 
 /**
+ * The centre mark's opacity — a step brighter than the ring it sits inside,
+ * because it is the POINTER: the OS arrow is hidden while it is drawn, so it
+ * has to be the most legible thing the preview puts on screen.
+ */
+const CROSSHAIR_OPACITY = OUTLINE_OPACITY + 0.2;
+
+/**
  * Class the canvas carries while the outline stands in for the mouse pointer.
  * Its `cursor: none` rule lives beside the canvas's other styling in
  * ui/hud.css; this module owns only WHEN it is applied.
@@ -263,8 +274,45 @@ export interface BrushHover {
    * radius-4 stamp footprint over a lip the player is about to drag would
    * advertise an edit that is not the one about to happen — so the pointer
    * says only "here", which is all a drag actually commits to.
+   *
+   * IT IS THE TOOL-GATED FORM OF `band`: main.tsx sets it only for the Pull,
+   * because only the Pull takes HOLD of a lip. The mark below reads both — see
+   * `held` in `update` — so the Pull's pointer cannot promise a grab that the
+   * press itself would not make.
    */
   readonly grabbable: boolean;
+  /**
+   * World-space point where the ray met the terrain — TerrainRayPick's
+   * `hitX`/`hitY`/`hitZ`, one point.
+   *
+   * WHY THE MARK MOVED HERE (owner, 2026-08-27: "you can see where the mouse
+   * cursor is, you can see the selected band, but the user is forced to
+   * manually figure out where the two would intersect. I want that mouse
+   * pointer to be pointing to those cells on the band lip"). Drawn at the cell
+   * lattice position and `surfaceY`, the mark sits on the column's CAP — so on
+   * a riser the pointer stood on top of the terrace whose SIDE the player was
+   * aiming at, several bands above the lip they were about to grab, and the
+   * two had to be intersected by eye.
+   *
+   * OPTIONAL, falling back to the cell centre at `surfaceY` — which is the
+   * cap, and on a horizontal face the cap IS where the ray met the terrain, so
+   * the fallback is exact for every hit that is not a riser.
+   */
+  readonly hitX?: number;
+  readonly hitY?: number;
+  readonly hitZ?: number;
+  /**
+   * The terrace band a press here would act on — World.highlightLayerEdge's
+   * answer: the band whose slab the ray struck on a riser, admitted by the
+   * overlay's lip-exists guard. Null when the pick names none, or when the
+   * guard refused the one it named.
+   *
+   * The mark takes its TINT from it (see `riserMarkColor`), so the pointer and
+   * the lit lip read as one object rather than two marks the player has to
+   * associate. Optional, defaulting to null — a hover that does not say which
+   * band it is on is drawn as one that has hold of nothing.
+   */
+  readonly band?: number | null;
 }
 
 /**
@@ -306,6 +354,51 @@ const OUTLINE_COLOR_CAP = 0xffffff;
  * with the dim grey cell grid or the white ring.
  */
 const OUTLINE_COLOR_RISER = 0xffb347;
+
+/**
+ * Colour of the pointer mark when the pick names no band a press could act on
+ * — a riser whose band the lip-exists guard REFUSED, so the stroke would be
+ * emitted and then thrown away by the shared math.
+ *
+ * A dead neutral grey, and deliberately the one thing this module draws with
+ * no hue at all: OUTLINE_COLOR_RISER says "you have this band", so its absence
+ * has to be unmistakable rather than a shade of it. It is also why the mark
+ * dims — see MARK_REFUSED_OPACITY.
+ */
+const MARK_COLOR_REFUSED = 0x9aa09b;
+
+/**
+ * Opacity of the pointer mark over a refused band, as a fraction of its
+ * ordinary opacity. The mark must still be FINDABLE — it is standing in for
+ * the mouse cursor, which may never vanish — but it is reporting that a press
+ * here does nothing, and a hollowed-out mark says that without a second
+ * symbol. Half is the most that still reads as deliberate rather than as the
+ * mark fading out.
+ */
+const MARK_REFUSED_OPACITY = 0.5;
+
+/**
+ * How far the riser mark's amber is pulled toward the colour the terrain
+ * itself paints the band the pointer has hold of.
+ *
+ * A MINORITY SHARE ON PURPOSE. The band tint is what ties the mark to the lip
+ * lit under it (render/layerEdgeOverlay.ts draws that lip at the band's own
+ * height), but the terrain palette is a smooth ramp, so neighbouring bands
+ * differ by very little and a large share would only mud the amber without
+ * telling the player anything they could name. A third is enough to read as
+ * "this mark belongs to that band" while amber stays the hue that says RISER.
+ */
+const MARK_BAND_TINT_MIX = 1 / 3;
+
+/**
+ * The tool and edge the tread SEED sculpts with — input/sculptInput.ts's
+ * `seedLayer` sends exactly this intent at the HUD's own radius, and the ring
+ * drawn for a Drag press on a tread is that intent's footprint. Named here
+ * rather than written twice: if the seed's shape ever changes, the ring that
+ * promises it must change with it.
+ */
+const SEED_TOOL: SculptTool = 'stamp';
+const SEED_PROFILE: SculptProfile = 'hard';
 
 /**
  * Where the outline crosses the lattice edge between an inside cell and an
@@ -666,21 +759,25 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     `${radius}|${tool}|${profile}`;
   for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
     for (const tool of SCULPT_TOOLS) {
-      // THE PULL AND THE CARVE HAVE NO FOOTPRINT TO CACHE. Both are drawn as
-      // the bare crosshair in every state (see update below), so building a
-      // ring, a skirt and a cell grid for either would be part of this eager
-      // cache that nothing can ever display. Skipped here rather than filtered
-      // at the draw site so the cache holds exactly what is drawable.
+      // THE PULL AND THE CARVE HAVE NO FOOTPRINT OF THEIR OWN TO CACHE.
+      // Building a ring, a skirt and a cell grid under either tool's own key
+      // would be part of this eager cache that nothing ever displays. Skipped
+      // here rather than filtered at the draw site so the cache holds exactly
+      // what is drawable.
       //
-      // The PULL has no footprint at all. The CARVE has one, but not one this
-      // cache can answer for: `oneClickMark` runs the real sculpt on FLAT
-      // GROUND, and flat ground is precisely where `canCarveBandAt` refuses
-      // every cell (columns.ts) — so the honest flat-ground mark for a carve
-      // is empty, and a ring drawn from it would promise a footprint the tool
-      // will not deliver. Which cells a carve takes depends on where the open
-      // air beside them is, which is terrain the flat-ground premise cannot
-      // express; the crosshair under-promises instead, exactly as it does for
-      // the pull.
+      // The PULL has no footprint of its own: what it changes is however far
+      // the player drags. Its one press with an exact extent is the tread SEED,
+      // and that is a hard stamp (SEED_TOOL/SEED_PROFILE), so `update` draws it
+      // from the stamp's entry — the same simulation, not a duplicate of it.
+      //
+      // The CARVE has a footprint, but not one this cache can answer for:
+      // `oneClickMark` runs the real sculpt on FLAT GROUND, and flat ground is
+      // precisely where `canCarveBandAt` refuses every cell (columns.ts) — so
+      // the honest flat-ground mark for a carve is empty, and a ring drawn from
+      // it would promise a footprint the tool will not deliver. Which cells a
+      // carve takes depends on where the open air beside them is, which is
+      // terrain the flat-ground premise cannot express; the mark
+      // under-promises instead.
       if (tool === 'drag' || tool === 'carve') continue;
       for (const profile of SCULPT_PROFILES) {
         geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
@@ -753,7 +850,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   const crosshairMaterial = new LineBasicMaterial({
     color: 0xffffff,
     transparent: true,
-    opacity: OUTLINE_OPACITY + 0.2,
+    opacity: CROSSHAIR_OPACITY,
     depthTest: false,
     depthWrite: false,
   });
@@ -776,6 +873,41 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   crosshair.renderOrder = 999;
   crosshair.visible = false;
   scene.add(crosshair);
+
+  /**
+   * Scratch colours for the crosshair's per-frame tint. Reused rather than
+   * allocated: `update` runs every frame the pointer or the camera moves, and
+   * this module's stated promise is that showing, moving and hiding allocate
+   * nothing.
+   */
+  const markColor = new Color();
+  const bandTint = new Color();
+
+  /**
+   * Paints the crosshair for a RISER hit: the riser amber pulled part of the
+   * way toward the colour the terrain itself paints the band under the
+   * pointer, or the refused grey when there is no band to act on.
+   */
+  const paintRiserMark = (band: number | null): void => {
+    if (band === null) {
+      crosshairMaterial.color.setHex(MARK_COLOR_REFUSED);
+      crosshairMaterial.opacity = CROSSHAIR_OPACITY * MARK_REFUSED_OPACITY;
+      return;
+    }
+    markColor.setHex(OUTLINE_COLOR_RISER, SRGBColorSpace);
+    // `bandColorOf` takes a HEIGHT, and band k's slab tops out at
+    // k·BAND_HEIGHT — the height the terrain paints that band's cap with.
+    const [r, g, b] = bandColorOf(band * BAND_HEIGHT);
+    bandTint.setRGB(r, g, b, SRGBColorSpace);
+    crosshairMaterial.color.copy(markColor.lerp(bandTint, MARK_BAND_TINT_MIX));
+    crosshairMaterial.opacity = CROSSHAIR_OPACITY;
+  };
+
+  /** The plain white centre mark: the pointer over anything but a riser face. */
+  const paintFlatMark = (): void => {
+    crosshairMaterial.color.setHex(OUTLINE_COLOR_CAP);
+    crosshairMaterial.opacity = CROSSHAIR_OPACITY;
+  };
 
   /** The key currently bound to the three objects, so a still brush rebinds nothing. */
   let shownKey = key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!);
@@ -812,32 +944,70 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         show(false);
         return;
       }
-      // THE PULL POINTER: the crosshair alone, and no footprint geometry to
-      // pick. It is the pointer for the WHOLE tool, not only over a lip
-      // (2026-08-24) — a ring is a promise about which cells one click will
-      // change, and the Pull tool never keeps that promise: what it changes is
-      // however far the player drags, which is unknown until they do. Over a
-      // lip the layer-edge overlay lights the edge itself, which is the
-      // affordance that says a press here will take hold.
+      // THE POINT THE RAY MET THE TERRAIN. Optional on the hover, because the
+      // cell centre at the cap IS that point on every horizontal face — see
+      // BrushHover.hitX. Read once here so no branch below can forget the
+      // fallback and put the pointer back on top of the terrace.
+      const atX = hover.hitX ?? hover.x * CELL_WORLD_SIZE;
+      const atY = hover.hitY ?? hover.surfaceY;
+      const atZ = hover.hitZ ?? hover.y * CELL_WORLD_SIZE;
+
+      // A DRAG PRESS ON A TREAD SEEDS, and the seed has an exact footprint
+      // (input/sculptInput.ts's takeHold → seedLayer): a hard stamp of one
+      // band at the HUD's radius. So the pointer promises it with the ring for
+      // that very combination — the KNOWN GAP this comment used to record is
+      // closed. It could be closed because there is no grab RANGE any more:
+      // under the riser-only rule a tread always seeds and a riser always
+      // grabs, so the two pointer shapes cannot flicker into each other as the
+      // cursor sweeps past a lip.
       //
-      // KNOWN GAP, stated rather than found later: away from any lip a press
-      // now seeds a one-band plateau the size of the brush (sculptInput's
-      // seedLayer), and THAT edit does have an exact footprint the ring could
-      // promise. The crosshair under-promises there. Left alone because the
-      // pointer would then flicker between two shapes as the cursor crossed
-      // in and out of grab range of every lip in the world, which is worse
-      // than a pointer that is merely modest.
-      //
-      // Returning before the lookup also means the pull pointer costs nothing
-      // to draw, however the HUD's radius happens to be set.
-      if (hover.grabbable || brush.tool === 'drag' || brush.tool === 'carve') {
-        material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
-        const grabLift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
-        crosshair.position.set(hover.x * CELL_WORLD_SIZE, grabLift, hover.y * CELL_WORLD_SIZE);
+      // "On a tread" means the ray crossed this span's own CAP. Lower down the
+      // same horizontal test is a cave roof's UNDERSIDE, where a raise is
+      // refused outright and there is nothing to promise.
+      const onTread = !hover.hitRiser && atY === hover.surfaceY;
+      const seeding = brush.tool === 'drag' && onTread;
+
+      // THE PULL AND THE CARVE ARE POINTED, NOT OUTLINED, everywhere else — a
+      // ring is a promise about which cells one click will change, and neither
+      // tool keeps it: the Pull changes however far the player drags, and the
+      // Carve's reach depends on where the open air beside the cut is, which
+      // the flat-ground premise cannot express. Over a riser the layer-edge
+      // overlay lights the band's lip beside the mark, which is the affordance
+      // that says what a press takes hold of.
+      if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
+        if (hover.hitRiser) {
+          // THE MARK GOES WHERE THE RAY MET THE FACE, and NOTHING is drawn at
+          // the column's cap (owner, 2026-08-27). Drawing at the cap is the
+          // "stuck on the top terrace" defect: on a cliff that drops five
+          // bands the cap is five bands above the lip being aimed at.
+          //
+          // A PRESS THAT WOULD TAKE HOLD is amber tinted by its band; one that
+          // would not is the refused grey. `grabbable` and `band` are both
+          // read, and both do work: `band` is the aimed band for either tool,
+          // while `grabbable` is main.tsx's tool-gated statement that a press
+          // will actually GRAB — true only for the Pull. They agree by
+          // construction, and on the Pull the conjunction means a regression in
+          // either derivation shows a refused mark rather than promising a hold
+          // the press will not make. The Carve does not grab: it cuts from the
+          // aimed band, so `band` alone answers for it.
+          const band = hover.band ?? null;
+          const held = band !== null && (brush.tool !== 'drag' || hover.grabbable);
+          paintRiserMark(held ? band : null);
+          crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
+          show(true, true);
+          return;
+        }
+        // A tread with the Carve, or either tool on a cave roof's underside:
+        // the bare mark at the cell, which is where the ray met the horizontal
+        // face anyway.
+        paintFlatMark();
+        crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
         show(true, true);
         return;
       }
-      const wanted = key(brush.radius, brush.tool, brush.profile);
+      const wanted = seeding
+        ? key(brush.radius, SEED_TOOL, SEED_PROFILE)
+        : key(brush.radius, brush.tool, brush.profile);
       if (wanted !== shownKey) {
         const geometry = geometries.get(wanted);
         // An unknown combination means a bug upstream (the HUD only offers the
@@ -851,11 +1021,13 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         cellGrid.geometry = geometry.cellGrid;
         shownKey = wanted;
       }
-      // The riser/cap readout. Shared by the ring and the crosshair (one
-      // material), so both change together and the cursor itself reports what
-      // is under it.
+      // The riser/cap readout, on the ring and its skirt. The crosshair has its
+      // own material and its own rule — see paintRiserMark — because on a
+      // riser the two no longer sit in the same place: the ring lies on the
+      // footprint's tread, the mark stands on the face.
       material.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
       skirtMaterial.color.setHex(hover.hitRiser ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+      paintFlatMark();
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
       crosshair.position.copy(line.position);

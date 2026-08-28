@@ -390,10 +390,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     const surfaceY = terrainHeightAt(hoverCache.x, hoverCache.y);
     if (surfaceY === null) return null;
     if (surfaceY === hoverCache.surfaceY) return hoverCache;
-    // hitRiser, hitY and spanIndex ride along unchanged: all three are facts
-    // about the RAY, and this branch only refreshes the cached cell's height
-    // after the ground moved under a stationary pointer. The next pointermove
+    // hitRiser, spanIndex and the hit POINT ride along: they are facts about
+    // the RAY, and this branch only refreshes the cached cell's height after
+    // the ground moved under a stationary pointer. The next pointermove
     // re-picks and re-decides them.
+    //
+    // hitY IS THE ONE EXCEPTION, and only for a cap hit. "The ray met this
+    // column at its cap" is a fact about the ray too, and the refreshed cap has
+    // to carry it: leaving the old height behind would make a TREAD read as a
+    // cave roof's UNDERSIDE (hitY below surfaceY) the moment the ground moved
+    // — which is the one horizontal face `takeHold` refuses to seed on, and
+    // which the pointer draws as an inert mark. A riser hit's height is
+    // genuinely the ray's own and is left alone.
     //
     // The refreshed height is `terrainHeightAt`, i.e. the TOPMOST span's cap,
     // so this is only the right surface for a pick on the topmost span. That
@@ -405,7 +413,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       surfaceY,
       spanIndex: hoverCache.spanIndex,
       hitRiser: hoverCache.hitRiser,
-      hitY: hoverCache.hitY,
+      hitY: hoverCache.hitY === hoverCache.surfaceY ? surfaceY : hoverCache.hitY,
+      hitX: hoverCache.hitX,
+      hitZ: hoverCache.hitZ,
     };
     return hoverCache;
   };
