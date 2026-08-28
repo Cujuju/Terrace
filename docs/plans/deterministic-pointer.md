@@ -163,18 +163,35 @@ the pointer, brush-sized): it stays. Review corrections:
   the riser while the player is still holding it.
 
 ### `client/src/render/brushPreview.ts`
-- Drag on a tread → footprint ring (seed extent); Drag/Carve on a riser →
-  crosshair, riser colour.
-- Crosshair position: the **nearest point on the lit band's retained contour
-  segment** to the pick, at the band's lip height (`segmentsByChunk` already
-  holds these in world space). NOT a raw ray entry point: the march works on
-  the cell lattice, so `(hitX, hitZ)` would be the cell-boundary crossing,
-  not a point on the drawn (smoothed) riser — shipping it as "the face that
-  was hit" would be a lie. The previous draft's `hitX/hitZ` addition to
-  `TerrainRayPick` is dropped with it.
-- `BrushHover` gains the band/point; `client/test/brushPreview.test.ts`'s
-  11 hover literals must be extended (or the new fields made optional with
-  the cell centre as fallback — choose optional).
+
+REVISED 2026-08-27 after phase-1 eyes-on. Owner: "you can see where the mouse
+cursor is, you can see the selected band, but the user is forced to manually
+figure out where the two would intersect. I want that mouse pointer to be
+pointing to those cells on the band lip." Chosen from a modelled comparison:
+**exact hit + short lip tick, the tick as long as the brush.**
+
+- Drag on a tread → footprint ring (seed extent). Drag/Carve on a riser →
+  **marker at the exact ray hit**, riser colour tinted by the grabbed band.
+  Nothing is drawn at the column cap on a riser hit — that is the "stuck on
+  the top terrace" defect.
+- Marker position: `(hitX, hitY, hitZ)` — the point the pick's ray met the
+  terrain. `TerrainRayPick` regains `hitX`/`hitZ` (the entry point the march
+  already computes when it sets `hitY`); `client/test/picking.test.ts`
+  literals extend accordingly. Known, accepted: the march walks the cell
+  lattice, so on a smoothed riser the marker can sit a fraction of a cell off
+  the drawn face. After the quarter-cell re-sample a cell is small; verify
+  eyes-on, and only if visibly off, ray-cast the rendered chunk mesh for the
+  marker alone (the grab stays on the deterministic lattice pick).
+- Lip tick: the grabbed band's contour segments within **the brush radius**
+  of the marker — `HIGHLIGHT_SPAN_WORLD_UNITS` (fixed 2) is replaced by
+  `brushRadius()` in world units, so the lit stretch is exactly the cells a
+  press would move. `lightBand` takes the span as a parameter (caller-owned,
+  like `atX/atZ`); the lit stretch is centred on the marker, not the cell
+  centre. Not the whole nearby contour.
+- `BrushHover` gains the band and the hit point; make the new fields optional
+  with the cell centre as fallback so `client/test/brushPreview.test.ts`'s
+  11 hover literals keep passing.
+- Guard-refused band (no reachable lip): marker drawn hollow/grey, no tick.
 
 ### `client/src/render/pickDebugOverlay.ts`
 - Readout: `hitRiser`, band, guard verdict.
