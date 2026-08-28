@@ -102,6 +102,9 @@ const connection = connect({
   onLivePlugins: (names) => pluginHost.syncLivePlugins(names),
 });
 
+/** Page-URL query flag that turns the pick-debug overlay on (see its creation below). */
+const PICK_DEBUG_QUERY_FLAG = 'pickdebug';
+
 /**
  * How much of the grabbed lip lights up either side of the pointer, in world
  * units: THE BRUSH RADIUS (owner, 2026-08-27 — "I want that mouse pointer to be
@@ -169,7 +172,15 @@ const brushPreview = createBrushPreview(viewport.scene, canvas);
 // The pick-debug overlay reads the SAME pick object as the outline, so the two
 // can never disagree about what is under the pointer. See its module header for
 // why it draws one cell and nothing richer.
-const pickDebug = createPickDebugOverlay(viewport.scene, canvas);
+//
+// A DIAGNOSTIC, OFF BY DEFAULT (owner, 2026-08-27: "why does the square still
+// draw on the top band?"). Its marker is one flat cell at the column's CAP,
+// which on a riser hit is the clifftop — exactly the place the pointer no
+// longer stands. Opt in with `?pickdebug` on the page URL, the same query-flag
+// convention the preview pages use (previewArch.ts, previewFire.ts).
+const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUERY_FLAG)
+  ? createPickDebugOverlay(viewport.scene, canvas)
+  : null;
 viewport.onFrame(() => {
   // THE BRUSH IS ONLY LIVE WHEN NOTHING ELSE IS HELD (owner, 2026-08-24).
   // A plugin tool takes the pointer (plugins/toolbar.ts), so core stops
@@ -211,7 +222,7 @@ viewport.onFrame(() => {
       profile: brushProfile(),
     },
   );
-  pickDebug.update(pick, grabbedBand);
+  pickDebug?.update(pick, grabbedBand);
 });
 
 // The frame-rate readout in the top-right watermark. Started here, beside the
