@@ -31,7 +31,7 @@
 // published pose or a world event, not a reach across the boundary.
 
 import {
-  AdditiveBlending,
+  DoubleSide,
   DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
@@ -43,6 +43,7 @@ import {
   Vector3,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { VENT_SUMMIT_WORLD_UNITS } from '../protocol.ts';
 
 /** Particles in one vent's column. */
 export const PARTICLES_PER_PLUME = 48;
@@ -60,22 +61,53 @@ export const MAX_PLUMES = 8;
 export const PLUME_PARTICLE_LIFE_SECONDS = 6;
 
 /**
- * How high the column rises, in world units.
+ * How tall the column is, MEASURED IN SUMMITS — how many times the height of
+ * the mountain it comes out of.
  *
- * 18 — comfortably above a genesis cone's own ten bands of relief (ten world
- * units, since BAND_HEIGHT is one world unit of rise), so the column clears the
- * mountain that made it and is visible from ground level on the far side of it.
- * That is the whole job of this feature: an eruption you cannot see from
- * anywhere else is an eruption nobody attends.
+ * 2.4, so a genesis volcano throws a column two and a half times its own height
+ * above the sea. Real plumes run ten times their mountain and more; this is
+ * compressed, because a column that tall in a world whose ENTIRE relief is 16
+ * world units would be a wall across the sky rather than a landmark on it.
  */
-export const PLUME_HEIGHT_WORLD_UNITS = 18;
+export const PLUME_HEIGHT_IN_SUMMITS = 2.4;
 
-/** How far the column leans over its rise, in world units. */
-export const PLUME_LEAN_WORLD_UNITS = 7;
+/**
+ * How high the column rises, in world units — 6, and DERIVED, never written.
+ *
+ * THE NUMBER THIS REPLACED WAS 18, AND 18 WAS IMPOSSIBLE. It was reasoned as
+ * "comfortably above a genesis cone's own ten bands of relief (ten world units,
+ * since BAND_HEIGHT is one world unit of rise)" — and BAND_HEIGHT has not been
+ * one world unit of rise since 2026-08-20. A band draws a QUARTER of a world
+ * unit, so ten bands is 2.5 units, not 10; the column was seven times the
+ * mountain, and at 72 bands it was taller than the world's whole 64-band range
+ * could ever be. Nothing would have failed — it would just have rendered, wrong.
+ *
+ * So it is derived from VENT_SUMMIT_WORLD_UNITS now, which is itself derived
+ * from the bands the server actually sculpts. The way to change how tall a
+ * plume is is to change the factor above, not this.
+ */
+export const PLUME_HEIGHT_WORLD_UNITS = VENT_SUMMIT_WORLD_UNITS * PLUME_HEIGHT_IN_SUMMITS;
+
+/**
+ * How far the column leans over its rise, in world units.
+ *
+ * Four tenths of its height: enough that the column is plainly blowing one way
+ * rather than standing straight up (which reads as a special effect), and not
+ * so much that it stops reading as a column at all.
+ */
+export const PLUME_LEAN_WORLD_UNITS = PLUME_HEIGHT_WORLD_UNITS * 0.4;
 
 /** Particle size at the vent mouth and at the top of the column, world units. */
-export const PLUME_START_SIZE = CELL_WORLD_SIZE * 0.9;
-export const PLUME_END_SIZE = CELL_WORLD_SIZE * 5;
+/**
+ * DERIVED FROM THE COLUMN, not from the cell, for the reason the height above
+ * records: a cell is a quarter of a world unit and nothing about how wide a
+ * cloud of ash is follows from how finely the ground is sampled. The mouth is
+ * about a third of a summit across and the top of the column is a summit and a
+ * half — a plume that opens out as it rises, which is the silhouette that reads
+ * as one from a distance.
+ */
+export const PLUME_START_SIZE = VENT_SUMMIT_WORLD_UNITS * 0.28;
+export const PLUME_END_SIZE = VENT_SUMMIT_WORLD_UNITS * 0.95;
 
 /**
  * Seconds a column takes to build when an eruption starts, and to disperse
@@ -122,10 +154,18 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
     // about where this particle is happens here.
     vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 
-    // Rise, eased so particles bunch near the mouth and thin out at the top —
-    // a column that is dense where it leaves the vent, which is what a real one
-    // looks like and what a linear rise conspicuously does not.
-    float rise = pow(life, 0.75) * ${PLUME_HEIGHT_WORLD_UNITS.toFixed(1)};
+    // Rise, eased so particles bunch near the MOUTH and thin out at the top —
+    // a column dense where it leaves the vent, which is what a real one looks
+    // like and what a linear rise conspicuously does not.
+    //
+    // THE EXPONENT WAS 0.75 AND THAT BUNCHED THEM AT THE WRONG END: above 1,
+    // pow(life, e) < life, so particles climb slowly at first and spread out
+    // near the top; below 1 they shoot up and pile at the ceiling, which —
+    // with additive blending and a size that grows with life — stacked forty
+    // large bright quads on top of each other and blew the whole column out to
+    // a white ball. Verified in preview-volcano.html, which is what a preview
+    // harness is for.
+    float rise = pow(life, 1.25) * ${PLUME_HEIGHT_WORLD_UNITS.toFixed(1)};
 
     // Lean, fixed per vent by its seed. Quadratic in life so the column goes up
     // before it goes sideways, instead of setting off at an angle.
@@ -133,10 +173,18 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
     vec2 lean = vec2(cos(leanAngle), sin(leanAngle)) *
       life * life * ${PLUME_LEAN_WORLD_UNITS.toFixed(1)};
 
-    // Per-particle scatter, so the column is a column and not a rope. It widens
-    // with life for the same reason the size does: the plume spreads as it goes.
+    // Per-particle scatter, so the column is a COLUMN and not a rope. It widens
+    // with life for the same reason the size does: the plume spreads as it
+    // goes. The first value here was half a summit and left the plume a
+    // vertical thread — at this world's vertical scale the spread has to be
+    // comparable to the mountain, not to a cell.
     float scatterAngle = fract(aSeed * 31.7 + aPhase * 17.3) * 6.28318;
-    float scatter = life * ${(CELL_WORLD_SIZE * 2).toFixed(2)} * fract(aSeed * 7.13 + 0.31);
+    // A FLOOR ON THE SPREAD, not pure growth: with scatter proportional to life
+    // alone every particle leaves the mouth on the same axis, and forty
+    // additive quads on one axis is a searchlight beam, not a vent. The floor
+    // is what gives the column a throat.
+    float scatter = (0.28 + life) *
+      ${(VENT_SUMMIT_WORLD_UNITS * 0.85).toFixed(2)} * fract(aSeed * 7.13 + 0.31);
     vec2 wobble = vec2(cos(scatterAngle), sin(scatterAngle)) * scatter;
 
     vec3 world = base + vec3(lean.x + wobble.x, rise, lean.y + wobble.y);
@@ -173,12 +221,21 @@ const PLUME_FRAGMENT_SHADER = /* glsl */ `
     // uniformly grey column reads as smoke from a chimney, and a uniformly
     // orange one as a fire that happens to be very tall.
     vec3 ember = vec3(1.0, 0.45, 0.12);
-    vec3 ash = vec3(0.34, 0.31, 0.30);
-    vec3 color = mix(ember, ash, smoothstep(0.0, 0.22, vLife));
+    vec3 ash = vec3(0.30, 0.28, 0.28);
+    vec3 color = mix(ember, ash, smoothstep(0.0, 0.14, vLife));
 
     // In fast, out slow — a particle that appears at full opacity pops.
-    float fade = smoothstep(0.0, 0.08, vLife) * (1.0 - smoothstep(0.55, 1.0, vLife));
-    float alpha = puff * fade * vStrength * 0.5;
+    // FADE IN SLOWLY. A fast ramp puts every particle at full strength while it
+    // is still bunched at the mouth, and additive blending turns that into a
+    // clipped white disc sitting on the summit.
+    float fade = smoothstep(0.0, 0.20, vLife) * (1.0 - smoothstep(0.30, 0.95, vLife));
+
+    // Far higher than the additive version's, and that is the blend mode's doing:
+    // under normal blending each particle CONTRIBUTES ITS OWN COLOUR rather than
+    // adding light, so a column of forty converges on the ash colour instead of
+    // running away to white. Still well under 1 so the column is something you
+    // see the sky through, which is what fire's smoke means by a thin volume.
+    float alpha = puff * fade * vStrength * 0.30;
     if (alpha <= 0.004) discard;
     gl_FragColor = vec4(color, alpha);
   }
@@ -236,11 +293,22 @@ export function createPlume(): PlumeRenderer {
     fragmentShader: PLUME_FRAGMENT_SHADER,
     transparent: true,
     depthWrite: false,
-    // ADDITIVE, unlike ./lavaFlow.ts's decal and for the opposite reason: ash
-    // and embers are a thin volume seen THROUGH, lit from inside, and stacking
-    // them must brighten. (Normal blending over a dark sky would make the
-    // column a grey slab, which is the defect fire's smoke plugin documents.)
-    blending: AdditiveBlending,
+    // NORMAL BLENDING, NEVER ADDITIVE — plugins/fire/client/smoke.ts's rule,
+    // and this plugin made the exact mistake that file already wrote down.
+    //
+    // The reasoning was "ash and embers are a thin volume seen THROUGH, lit
+    // from inside, so stacking them must brighten". That is true of the EMBERS
+    // and false of the ASH, and the ash is most of the column: additive grey
+    // over a lit sky is a paler sky, which is to say no ash at all. Ash is also
+    // the one thing here that must be able to DARKEN what is behind it — a
+    // column standing against daylight is a silhouette — and additive blending
+    // can only ever lighten. On the harness the additive version rendered as a
+    // small white puff on the summit however its alpha was tuned, because the
+    // failure was the blend mode and not the number.
+    //
+    // The ember base still reads: it is a BRIGHT colour at high alpha against
+    // dark rock, which normal blending shows exactly as painted.
+    side: DoubleSide,
   });
 
   const mesh = new InstancedMesh(geometry, material, capacity);
