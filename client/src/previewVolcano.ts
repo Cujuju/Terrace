@@ -241,9 +241,11 @@ function walkFlow(ageOfIndex: (index: number, total: number) => number): LavaCel
   const world = {
     worldSize: GRID_CELLS,
     heightAt: heightAtCell,
-    freshwater: {
-      at: (x: number, y: number) => (isRiverCell(x, y) ? ('channel' as const) : ('none' as const)),
-    },
+  };
+  // Passed beside the world rather than on it, as the server's front does: the
+  // real one snapshots the map once per eruption (flow.ts's FlowWorld).
+  const freshwater = {
+    at: (x: number, y: number) => (isRiverCell(x, y) ? ('channel' as const) : ('none' as const)),
   };
 
   const cells: LavaCellState[] = [];
@@ -252,7 +254,7 @@ function walkFlow(ageOfIndex: (index: number, total: number) => number): LavaCel
   let y = VENT_CELL;
 
   for (let i = 0; i < FLOW_CELLS_DRAWN; i++) {
-    const next = nextFlowCell(world, x, y, visited);
+    const next = nextFlowCell(world, freshwater, x, y, visited);
     // A string is one of flow.ts's stop reasons — water, the sea, or a basin.
     // The fixture is built so this lands on the river, which is the behaviour
     // worth photographing: fresh water stops a front dead.

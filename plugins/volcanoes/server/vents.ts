@@ -36,7 +36,7 @@
 // longer there. What survives is everything permanent — the cone, the ground,
 // the crust — which is all a player can see anyway once the glow has gone.
 
-import { BAND_HEIGHT, MAX_BRUSH_RADIUS } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_BRUSH_RADIUS, type FreshwaterMap } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   GENESIS_CONE_BANDS,
@@ -203,6 +203,11 @@ interface Front {
   laid: number;
   /** THIS eruption's cells, so a front can never re-enter its own path. */
   visited: Set<number>;
+  /**
+   * The world's fresh water AS IT STOOD WHEN THIS ERUPTION BEGAN — see
+   * `beginEruption` for why it is snapshotted rather than read live.
+   */
+  readonly freshwater: FreshwaterMap;
 }
 
 let vents: Vent[] = [];
@@ -428,6 +433,26 @@ function beginEruption(vent: Vent, world: WorldApi): void {
     // The mouth itself counts as visited, so a front cannot immediately flow
     // back into the cell it came out of.
     visited: new Set<number>([lavaKey(vent.x, vent.y)]),
+    // THE WATER IS SNAPSHOTTED ONCE, HERE, and the whole eruption is routed
+    // against this one map.
+    //
+    // WHY: `WorldApi.freshwater` is a getter over World.freshwaterMap() →
+    // riverNetwork(), a FULL-WORLD recompute, and every sculpt marks that
+    // network stale. A front sculpts each cell it enters and then asks the
+    // water question for the next one, so reading the getter per step re-ran
+    // the recompute at its wall-clock throttle cap for the entire eruption —
+    // measured at 40 ms on a starter unlock and 95 ms on a revealed world,
+    // against a 7.14 ms tick budget. Reading it once costs one recompute per
+    // eruption.
+    //
+    // WHAT IT CHANGES, and why it is the right semantics anyway: a front no
+    // longer notices a river that APPEARS mid-eruption. That is the correct
+    // way round for this fiction — lava dams rivers, rivers do not
+    // retroactively stop a front that is already past them — and the river
+    // that mattered, the one the front is running towards, was in the map when
+    // the eruption started. A front is at most ERUPTION_SECONDS long, so the
+    // snapshot is never more than a minute old.
+    freshwater: world.freshwater,
   });
 }
 
@@ -493,7 +518,7 @@ function advanceFront(world: WorldApi, vent: Vent, dt: number, molten: LavaCellS
       return;
     }
 
-    const next = nextFlowCell(world, front.x, front.y, front.visited);
+    const next = nextFlowCell(world, front.freshwater, front.x, front.y, front.visited);
     if (typeof next === 'string') {
       stopFront(vent, next);
       return;
