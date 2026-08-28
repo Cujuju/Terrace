@@ -582,6 +582,32 @@ export const WATER_BAND_EDGE_LIGHTEN_MIX = 0.35;
  */
 export const WATER_BAND_EDGE_WIDTH_CELLS = 0.2;
 
+/**
+ * EMISSIVE CONTOUR STRENGTH — used only when the contour is drawn through
+ * three's emissive path instead of the albedo lift above (render/water.ts's
+ * WaterOptions.bandContourMode === 'emissive'). Experimental, and NOT the
+ * shipped default; it exists so the night look can be judged side by side.
+ *
+ * WHY AN OPTION AT ALL: WATER_BAND_EDGE_LIGHTEN_MIX lifts `diffuseColor.rgb`,
+ * i.e. the water's ALBEDO, so the contour is lit like any other surface colour
+ * — which is right by day and is exactly why it dims with everything else once
+ * the daynight plugin drops the sun to zero and the ambient/hemisphere floor to
+ * a third of noon. Radiance added to `totalEmissiveRadiance` is summed into
+ * `outgoingLight` after the lighting sum, so it does not scale with the rig.
+ *
+ * THE VALUE, derived rather than dialled: the emissive term replaces what the
+ * albedo lift contributed at NOON, so that turning the option on changes the
+ * night and leaves the day roughly where it was. The albedo lift adds
+ * WATER_BAND_EDGE_LIGHTEN_MIX x (1 - water colour) of albedo, which the noon
+ * rig then multiplies by its irradiance (ambient 0.9 + hemisphere 1.5 = 2.4 of
+ * white, per render/scene.ts, before any sun term). Folding the ~0.7 headroom
+ * between the water's colour and white into that irradiance gives
+ * 2.4 x 0.7 ~= 1.7 — the linear radiance one unit of the mix was worth at noon.
+ * APPROXIMATE by construction (it ignores the sun's NdotL term and tone
+ * mapping); it is a starting point for a visual A/B, not a photometric match.
+ */
+export const WATER_BAND_EDGE_EMISSIVE_RADIANCE = 1.7;
+
 /** How much alpha one band of ordinary depth is worth — the ramp's own slope. */
 const WATER_ALPHA_STEP_PER_BAND =
   (WATER_MAX_ALPHA - WATER_MIN_ALPHA) / WATER_ALPHA_SATURATION_BANDS;
