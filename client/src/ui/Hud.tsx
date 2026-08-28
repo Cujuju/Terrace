@@ -88,6 +88,7 @@ import { Toolbar } from './Toolbar.tsx';
 import { Cartographer, chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { ChartSource } from '../terrain/chart.ts';
 import type { ConnectionStatus } from '../net/connection.ts';
+import { TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
 import type { SculptProfile, SculptTool } from '@terrace/shared';
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -340,25 +341,37 @@ export function Hud(props: {
             </div>
           </div>
 
-          <div class="hud-row">
-            <span class="hud-label">Edge</span>
-            <div class="brush-picker">
-              <For each={BRUSH_PROFILES}>
-                {(profile) => (
-                  <button
-                    type="button"
-                    class="brush-button brush-button-wide"
-                    classList={{ active: brushProfile() === profile }}
-                    aria-label={`${PROFILE_LABEL[profile]} edge`}
-                    title={PROFILE_TITLE[profile]}
-                    onClick={() => setBrushProfile(profile)}
-                  >
-                    {PROFILE_LABEL[profile]}
-                  </button>
-                )}
-              </For>
+          {/* EDGE, ONLY FOR THE TOOLS THAT HAVE ONE (issue #225). The drag
+              and the carve have no edge profile at all — shared says which,
+              and its resolver normalises theirs away, so leaving the row up
+              would offer a choice that provably does nothing. The row is
+              REMOVED rather than disabled: a disabled control claims the
+              setting is unavailable right now, and this one does not apply.
+              The stored profile is untouched, so picking Stamp or Smooth
+              again comes back to whatever the player last chose.
+              `brushTool()` is called inside the JSX, per the file header —
+              a `const` here would freeze the row on the mount-time tool. */}
+          <Show when={!TOOLS_WITHOUT_EDGE_PROFILE.includes(brushTool())}>
+            <div class="hud-row">
+              <span class="hud-label">Edge</span>
+              <div class="brush-picker">
+                <For each={BRUSH_PROFILES}>
+                  {(profile) => (
+                    <button
+                      type="button"
+                      class="brush-button brush-button-wide"
+                      classList={{ active: brushProfile() === profile }}
+                      aria-label={`${PROFILE_LABEL[profile]} edge`}
+                      title={PROFILE_TITLE[profile]}
+                      onClick={() => setBrushProfile(profile)}
+                    >
+                      {PROFILE_LABEL[profile]}
+                    </button>
+                  )}
+                </For>
+              </div>
             </div>
-          </div>
+          </Show>
 
           <div class="hud-row">
             <span class="hud-label">Mode</span>
