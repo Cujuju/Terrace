@@ -56,6 +56,7 @@ import {
 } from '../protocol.ts';
 import {
   cellKey,
+  footprintUnlocked,
   freshwaterAdjacent,
   inBounds,
   nextFlowCell,
@@ -669,6 +670,15 @@ export function rollTrigger(
 export function startSlide(world: MudslideWorld, x: number, y: number): Slide | null {
   if (slopeAt(world, x, y) === null) return null;
 
+  // THE HEAD'S OWN BRUSH FOOTPRINT MUST BE REVEALED, checked HERE rather than
+  // left to `sculptGuarded` to refuse later. Found in-world: a site on the edge
+  // of the revealed square passes every test above, starts a slide, and then
+  // every one of its head scours is silently refused — so the run walks its whole
+  // path carrying nothing, deposits nothing, and still emits a flow event
+  // claiming a slide happened. Refusing at the start is the difference between
+  // "the guard held" and "the guard held but everything downstream lied about it".
+  if (!footprintUnlocked(world, x, y, MUDSLIDE_BRUSH_RADIUS_CELLS)) return null;
+
   const first = nextFlowCell(world, x, y, new Set([cellKey(x, y)]));
   if (typeof first === 'string') return null;
 
@@ -723,7 +733,18 @@ function scourHead(world: MudslideWorld, slide: Slide): void {
   );
   slide.headSteps++;
   slide.unmeasuredCells += measured.unmeasuredCells;
-  if (measured.net >= 0) return;
+  if (measured.net >= 0) {
+    // NOTHING CAME AWAY. The hillside is already at a floor the relaxation will
+    // not go below — typically ground a previous slide has already stripped. A
+    // slide with no load is not a slide, so it is ABANDONED here rather than left
+    // to walk its whole path depositing nothing and then report a flow that moved
+    // no ground. Found in-world: repeated forced slides on the same hillside kept
+    // emitting `mudslides:flow` with volumeMoved 0.
+    if (slide.excavated <= 0 && slide.headSteps >= MUDSLIDE_HEAD_SCOUR_STEPS) {
+      slide.stop = 'spent';
+    }
+    return;
+  }
 
   const removed = -measured.net;
   slide.excavated += removed;
@@ -744,7 +765,13 @@ function scourHead(world: MudslideWorld, slide: Slide): void {
 /** Lays some of the load down at (x, y) and takes it off the ledger. */
 function deposit(world: MudslideWorld, slide: Slide, x: number, y: number, volume: number): void {
   if (slide.gain <= 0 || volume <= 0) return;
-  const amount = volume / slide.gain;
+  // AN INTEGER, because `WorldApi.sculpt` refuses anything else — the heightmap
+  // is Int16 and shared/'s determinism contract is integer-only, so a fractional
+  // brush amount throws rather than being rounded somewhere downstream. Rounded
+  // UP to one height unit rather than down to zero: a slide that owes a small
+  // balance must still be able to place it, or the ledger could never clear and
+  // every run would report a residual it had no way to spend.
+  const amount = Math.max(1, Math.round(volume / slide.gain));
 
   const measured = sculptGuarded(world, x, y, MUDSLIDE_BRUSH_RADIUS_CELLS, amount);
   slide.unmeasuredCells += measured.unmeasuredCells;
@@ -826,6 +853,18 @@ function sculptStep(world: MudslideWorld, slide: Slide): void {
   const cell = slide.path[Math.max(0, slide.path.length - 1 - back)]!;
   const stepsLeft = Math.max(1, MUDSLIDE_TOE_DUMP_STEPS - slide.toeSteps + 1);
   deposit(world, slide, cell.x, cell.y, slide.carried / stepsLeft);
+}
+
+/**
+ * Did this slide actually move any ground?
+ *
+ * The one question `mudslides:flow` is worth emitting for. A slide that excavated
+ * nothing crossed cells and changed no heights; telling structures to demolish
+ * and chronicle to write a line about it would be reporting an event that did not
+ * happen.
+ */
+export function movedGround(slide: Slide): boolean {
+  return slide.excavated > 0;
 }
 
 /** True once a slide has nothing left to do and may be dropped. */
