@@ -1,34 +1,37 @@
 // THE FUNNEL — a tornado, and the only part of this plugin that has to read as
-// something with a shape rather than as weather.
+// something with a SHAPE rather than as weather.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// THE WHOLE FUNNEL IS ONE DRAW CALL, AND THE CPU DOES NOT ANIMATE IT.
+// A SHEET, NOT A SWARM. The lesson this file was rewritten for.
 //
-// Each particle's instance matrix holds only WHERE ITS TORNADO IS. The climb,
-// the rotation, the taper and the fade are functions of one uniform (elapsed
-// time) and three per-instance attributes (a phase, a seed and the storm's
-// strength), computed in the vertex shader. So a funnel costs one matrix write
-// per particle per push and nothing at all per frame between pushes.
+// The first version was a column of billboarded puffs, copying the volcano
+// plume. It never worked, at any count: a plume is a cloud, so a cloud of
+// sprites IS a plume, but a funnel is a SURFACE — a continuous, tapered,
+// rotating wall of condensation — and a stack of round sprites reads as a stack
+// of round sprites however many you use and however you jitter them. Chasing it
+// with density made it a grey sausage; chasing it with jitter made it a wisp.
 //
-// That is this project's standing render defect written down (see
-// docs/DESIGN.md and the draw-call budget): the streaming/authoring unit keeps
-// becoming the drawing unit, and low triangles-per-call over a shared material
-// is the tell. A per-particle Sprite would have been MAX_FUNNELS ×
-// PARTICLES_PER_FUNNEL draw calls of two triangles each against a 7 ms frame
-// budget (140 fps is the project benchmark). One InstancedMesh is one call.
-//
-// BILLBOARDED IN THE SHADER, not by writing rotations from the CPU: the quad is
-// authored in XY and offset in VIEW space, which faces it at the camera exactly
-// and for free, and — unlike a CPU billboard — cannot lag the camera by a frame.
+// So the vortex is now one open-ended CONE MESH, tapered and twisted in the
+// vertex shader, with the churn painted on as scrolling streaks in the fragment
+// shader. A surface is drawn as a surface. The only sprites left are the DEBRIS
+// SKIRT at the ground, which is genuinely a swarm — dirt and chaff thrown out
+// around the touchdown — and is what gives the funnel a ragged foot instead of
+// a clean geometric edge where it meets the terrain.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHY A PARTICLE COLUMN AND NOT A CONE MESH.
+// TWO DRAW CALLS FOR EVERY TORNADO IN THE WORLD, AND THE CPU ANIMATES NEITHER.
 //
-// A tornado is a visibly TURBULENT thing; a smooth cone reads as a traffic
-// bollard however it is textured. The particles are what make it churn, and
-// they cost the same one call a cone would.
+// The cone is an InstancedMesh whose instance matrix holds only where the
+// tornado stands; the taper, the twist, the spin, the sway and the streaks are
+// functions of one time uniform and three per-instance attributes. The skirt is
+// a second InstancedMesh on the same principle. So a funnel costs a handful of
+// matrix writes per server push and nothing per frame in between — which is
+// this project's standing render defect (the streaming unit becoming the
+// drawing unit; low triangles-per-call over a shared material) avoided by
+// construction, against a 7 ms frame budget.
 
 import {
+  CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
   Group,
@@ -48,107 +51,248 @@ import {
 } from '../protocol.ts';
 
 /**
- * Particles in one funnel.
+ * How many funnels can be drawn at once — the server's tornado cap, plus one.
  *
- * THREE HUNDRED AND TWENTY, against the volcano plume's 48, because a funnel is
- * seen from the side as a continuous SURFACE rather than as a rising cloud.
- *
- * MEASURED IN THE PREVIEW HARNESS, twice. At 96 the puffs were individually
- * countable — a string of beads on a wire. At 176 they were dense enough only
- * because they sat on a regular helix, which is the moire the angle hash below
- * exists to break; once the lattice was gone the same count read as a wisp. A
- * column of randomly-placed puffs needs about twice the count a lattice of them
- * does to look solid, which is the whole cost of not having a lattice. It is
- * still one draw call.
- */
-export const PARTICLES_PER_FUNNEL = 320;
-
-/**
- * How many funnels can be drawn at once — the server's tornado cap.
- *
- * Restated rather than imported (that constant is in ../server/, which nothing
- * under client/ imports) and deliberately one HIGHER than it: a funnel that has
- * stopped being broadcast is still dispersing here for
- * FUNNEL_DISPERSE_SECONDS, so at the moment one tornado dies and another forms
- * the renderer legitimately holds one more than the server does.
+ * The spare is deliberate: a tornado that has stopped being broadcast is still
+ * dispersing here for FUNNEL_DISPERSE_SECONDS, so at the moment one dies and
+ * another forms this renderer legitimately holds one more than the server does.
  */
 export const MAX_FUNNELS = 3;
-
-/** Seconds one particle takes to climb the whole funnel. */
-export const FUNNEL_PARTICLE_LIFE_SECONDS = 2.2;
 
 /**
  * How much of the server's DAMAGE radius the visible vortex fills.
  *
  * A HALF, and the gap is not sloppiness — it is what a tornado is. The wind
- * that takes a roof off reaches beyond the condensation funnel you can see, so
- * the damage swathe is genuinely wider than the column. Tying the two together
- * (which this file did first, at 1.0) drew a vortex three world units across
- * and six tall: a smear, not a funnel. Derived from the server's radius rather
- * than typed, so widening the damage still widens the funnel.
+ * that takes a roof off reaches well beyond the condensation funnel you can
+ * see, so the damage swathe is genuinely wider than the column. Derived from
+ * the server's radius rather than typed, so widening the damage still widens
+ * the funnel.
  */
 export const VISIBLE_VORTEX_FRACTION = 0.5;
 
 /**
- * The funnel's radius at the ground and at the cloud, in world units.
+ * The vortex's radius at the ground and at the cloud, in world units.
  *
- * THE FLARE IS 2.4×, MEASURED AGAINST THE HEIGHT, not chosen for itself: at 4×
- * the top was twelve world units across against a six-unit-tall column, which
- * renders as a mushroom. A funnel has to be TALLER THAN IT IS WIDE at every
- * height or it stops reading as one, and 2.4 keeps the cloud end at about a
- * quarter of the column's height.
+ * THE FLARE IS 2.4×, MEASURED AGAINST THE HEIGHT rather than chosen for itself:
+ * at 4× the top was twelve world units across against a six-unit column, which
+ * renders as a mushroom. A funnel has to be taller than it is wide at every
+ * height or it stops reading as one.
  */
 export const FUNNEL_GROUND_RADIUS_WORLD_UNITS =
   TORNADO_RADIUS_CELLS * CELL_WORLD_SIZE * VISIBLE_VORTEX_FRACTION;
 export const FUNNEL_CLOUD_RADIUS_WORLD_UNITS = FUNNEL_GROUND_RADIUS_WORLD_UNITS * 2.4;
 
 /**
- * Turns of the spiral a particle makes on its way up.
+ * Segments around the cone and up it.
  *
- * TWO AND A HALF. Fewer and the column looks like it is leaning rather than
- * rotating; many more and adjacent particles alias into a barber's pole at any
- * distance, which is worse than no rotation at all.
+ * 48 × 24 — 2 304 triangles for a whole tornado, which is nothing, and the
+ * counts are set by two different requirements. AROUND: the silhouette is a
+ * circle seen edge-on, and under 32 segments the edge of the funnel visibly
+ * facets. UP: the twist rotates each ring by a different amount, so the ring
+ * spacing is what the helical shear is sampled at — too few and the streaks
+ * staircase instead of spiralling.
  */
-export const FUNNEL_SPIRAL_TURNS = 2.5;
+export const FUNNEL_RADIAL_SEGMENTS = 48;
+export const FUNNEL_HEIGHT_SEGMENTS = 24;
 
 /**
- * Turns per second the whole funnel rotates, on top of the spiral above.
+ * Turns of twist between the ground and the cloud.
  *
- * 0.9 — just under one full turn a second. It is the difference between a
- * static twisted shape and something spinning; faster and it strobes at frame
- * rates that are multiples of it.
+ * TWO. The whole cone is sheared into a helix by this, which is what makes the
+ * streaks painted on it climb rather than run straight up. More than about
+ * three and adjacent streaks alias into a moiré at any distance.
+ */
+export const FUNNEL_TWIST_TURNS = 2;
+
+/**
+ * Turns per second the vortex rotates.
+ *
+ * 0.9 — just under one revolution a second. It is the difference between a
+ * static twisted shape and something spinning; much faster and it strobes at
+ * frame rates that are multiples of it.
  */
 export const FUNNEL_SPIN_TURNS_PER_SECOND = 0.9;
 
 /**
- * Puff size, in world units — the base value the shader grows with height.
+ * Streaks painted around the cone.
  *
- * A BAND AND A HALF (0.375). Sized against the FUNNEL, not against a cell: a
- * puff wider than the column's ground end turns the pinch into a ball, and at
- * 2.2 bands it did exactly that. This is half the ground radius, so the throat
- * stays a throat while the puffs still overlap into a surface.
+ * NINE, which is prime to neither the radial segments nor the twist, and that
+ * is the point: a count that divides into either lines the streaks up with the
+ * mesh and the funnel starts to look like a wireframe of itself.
  */
-export const FUNNEL_PARTICLE_SIZE_WORLD_UNITS = WORLD_UNITS_PER_BAND * 1.5;
+export const FUNNEL_STREAK_COUNT = 9;
 
 /**
- * Seconds a funnel takes to appear when a tornado touches down, and to
- * disperse after it lifts.
+ * Seconds a funnel takes to disperse after the server stops broadcasting it.
  *
- * ASYMMETRIC: a touchdown is sudden (1.5 s) and the debris hangs afterwards
- * (5 s). A symmetric fade makes the end look like somebody switched it off.
+ * THERE IS NO TOUCHDOWN TIME, for the reason ./spiral.ts's
+ * SPIRAL_DISPERSE_SECONDS gives at length: the arrival is already faded in by
+ * the server's own spin-up envelope, which reaches the client as `intensity`,
+ * and a second envelope here multiplies the two into invisibility. The
+ * dispersal is the only direction the wire cannot express, because a dead
+ * tornado simply stops appearing in the list.
+ *
+ * Five seconds, and slow on purpose: a touchdown is sudden but the debris
+ * hangs, so a symmetric fade would make the end look like somebody switched
+ * the funnel off.
  */
-export const FUNNEL_TOUCHDOWN_SECONDS = 1.5;
 export const FUNNEL_DISPERSE_SECONDS = 5;
 
+/** Debris sprites thrown out around one touchdown. */
+export const DEBRIS_PER_FUNNEL = 64;
+
 /**
- * Where the funnel sits in the transparent pass. Above the ground and below the
- * cyclone deck (../client/spiral.ts's SPIRAL_RENDER_ORDER): both are
- * depth-write-off transparent geometry, so submission order IS composite order,
- * and a funnel seen from under an overcast must be painted over the overcast.
+ * How high the skirt reaches and how far out it is thrown, as fractions of the
+ * funnel's own height and ground radius.
+ *
+ * A SIXTH OF THE HEIGHT and up to THREE GROUND RADII out. The skirt's job is to
+ * hide the geometric circle where the cone meets the terrain and to say that
+ * this thing is picking the ground up; it stops well below the point where it
+ * would start competing with the vortex for the silhouette.
+ */
+export const DEBRIS_HEIGHT_FRACTION = 1 / 6;
+export const DEBRIS_SPREAD_RADII = 3;
+
+/** Seconds one debris sprite takes to be thrown out and fall back. */
+export const DEBRIS_LIFE_SECONDS = 1.4;
+
+/**
+ * Where the funnel sits in the transparent pass — above the cyclone deck
+ * (./spiral.ts's SPIRAL_RENDER_ORDER), so a tornado seen against an overcast is
+ * painted over it. Both are depth-write-off transparent geometry, so submission
+ * order IS composite order. The skirt goes above the cone for the same reason:
+ * debris is in front of the wall it was torn from.
  */
 export const FUNNEL_RENDER_ORDER = 2;
+export const DEBRIS_RENDER_ORDER = 3;
 
-const FUNNEL_VERTEX_SHADER = /* glsl */ `
+// ─────────────────────────────────────────────────────────────────────────────
+// THE VORTEX SHEET.
+
+const CONE_VERTEX_SHADER = /* glsl */ `
+  uniform float uElapsed;
+
+  attribute float aSeed;
+  attribute float aStrength;
+
+  varying float vLife;
+  varying float vStrength;
+  varying float vSeed;
+  varying vec2 vSurface;
+
+  void main() {
+    // The geometry is a UNIT open cylinder: uv.y runs 0 at the bottom rim to 1
+    // at the top, and uv.x runs once around. Everything about the funnel's real
+    // shape happens here, so the same geometry serves every tornado.
+    float life = uv.y;
+    vLife = life;
+    vStrength = aStrength;
+    vSeed = aSeed;
+    vSurface = uv;
+
+    // The instance matrix carries ONLY where the tornado is standing.
+    vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+
+    // THE TAPER. Quadratic rather than linear so the funnel is PINCHED near the
+    // ground and flares late — the shape a tornado actually has. A linear cone
+    // is a megaphone.
+    float taper = life * life;
+    float radius = mix(
+      ${FUNNEL_GROUND_RADIUS_WORLD_UNITS.toFixed(4)},
+      ${FUNNEL_CLOUD_RADIUS_WORLD_UNITS.toFixed(4)},
+      taper);
+
+    // THE TWIST AND THE SPIN. Each ring is rotated by a different amount, which
+    // shears the whole cone into a helix — the mesh stays intact because every
+    // vertex in a ring shares its own life value and therefore its rotation.
+    //
+    // uv.x IS THE ANGLE, not atan(position.z, position.x): the seam vertices
+    // are duplicated with uv.x = 0 and 1, which is exactly what makes the two
+    // sides of the seam land on the same point. Deriving the angle from the
+    // position would work too, but it would recompute what the geometry
+    // already knows and it would put a discontinuity at the seam.
+    float angle = 6.28318 * (
+      uv.x +
+      life * ${FUNNEL_TWIST_TURNS.toFixed(2)} +
+      uElapsed * ${FUNNEL_SPIN_TURNS_PER_SECOND.toFixed(2)} +
+      aSeed);
+
+    // A WOBBLE OF THE WHOLE AXIS, so the funnel snakes instead of standing
+    // plumb. Two sines at incommensurate rates, which never visibly repeat, and
+    // scaled by the taper so the foot stays planted while the top wanders.
+    float sway = ${(FUNNEL_GROUND_RADIUS_WORLD_UNITS * 0.55).toFixed(4)} * taper;
+    vec2 axis = vec2(
+      sin(uElapsed * 0.7 + aSeed * 6.28318) * sway,
+      cos(uElapsed * 0.53 + aSeed * 3.14159) * sway);
+
+    vec3 world = base + vec3(
+      cos(angle) * radius + axis.x,
+      life * ${TORNADO_HEIGHT_WORLD_UNITS.toFixed(2)},
+      sin(angle) * radius + axis.y);
+
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }
+`;
+
+const CONE_FRAGMENT_SHADER = /* glsl */ `
+  // See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
+  // own light has to reach it as a number, or a funnel under a cyclone stays
+  // sunlit while the ground around it does not.
+  uniform float uDaylight;
+  uniform float uElapsed;
+
+  varying float vLife;
+  varying float vStrength;
+  varying float vSeed;
+  varying vec2 vSurface;
+
+  void main() {
+    // THE CHURN, painted rather than modelled. Two bands of streaks at
+    // incommensurate frequencies scrolling in opposite directions: one is the
+    // condensation spiralling up the wall, the other tears holes in it. Their
+    // beat is what makes a smooth cone look turbulent without a single extra
+    // triangle or a texture fetch.
+    float climb = sin(6.28318 * (
+      vSurface.x * ${FUNNEL_STREAK_COUNT.toFixed(1)} +
+      vLife * 2.0 +
+      uElapsed * 1.7 +
+      vSeed));
+    float tear = sin(6.28318 * (
+      vSurface.x * 5.0 -
+      vLife * 3.3 +
+      uElapsed * 0.9 +
+      vSeed * 2.0));
+    // THE FLOORS ARE HIGH, and that is what makes this a sheet with texture
+    // rather than a lattice of gaps. Two sines multiplied average about a third
+    // of their peak, so the first values here (0.58 and 0.62) put the whole
+    // funnel at a third of its nominal alpha — in world, against a bright sea,
+    // it read as a smear of glass. Raising the floors keeps the streaks and
+    // gives the surface a body.
+    float churn = (0.74 + 0.26 * climb) * (0.78 + 0.22 * tear);
+
+    // DIRT AT THE BOTTOM, CLOUD AT THE TOP. What a funnel picks up is the
+    // colour of the ground it is standing on; the top of it is the storm base
+    // it hangs from. One smoothstep between the two is what makes a grey cone
+    // read as a tornado rather than as a chimney.
+    vec3 debris = vec3(0.40, 0.32, 0.23);
+    vec3 cloud = vec3(0.62, 0.63, 0.68);
+    vec3 color = mix(debris, cloud, smoothstep(0.04, 0.62, vLife)) * uDaylight;
+
+    // DENSER AT THE FOOT, DISSOLVING INTO THE CLOUD AT THE TOP. Without the top
+    // fade the cone ends on a hard rim, which reads as a cut-off pipe rather
+    // than as a funnel going up into a storm.
+    float body = (1.0 - 0.35 * vLife) * (1.0 - smoothstep(0.72, 1.0, vLife));
+
+    float alpha = churn * body * vStrength * 0.85;
+    if (alpha <= 0.01) discard;
+    gl_FragColor = vec4(color, alpha);
+  }
+`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE DEBRIS SKIRT.
+
+const DEBRIS_VERTEX_SHADER = /* glsl */ `
   uniform float uElapsed;
 
   attribute float aPhase;
@@ -160,74 +304,35 @@ const FUNNEL_VERTEX_SHADER = /* glsl */ `
   varying vec2 vQuad;
 
   void main() {
-    // 0 at the ground, 1 at the cloud. fract() is what makes one instance a
-    // REPEATING particle rather than a single puff — the phase attribute spaces
-    // the instances evenly around the cycle, so the column is continuous with
-    // no CPU respawning anything.
-    float life = fract(uElapsed / ${FUNNEL_PARTICLE_LIFE_SECONDS.toFixed(2)} + aPhase);
+    float life = fract(uElapsed / ${DEBRIS_LIFE_SECONDS.toFixed(2)} + aPhase);
     vLife = life;
     vStrength = aStrength;
     vQuad = position.xy;
 
-    // The instance matrix carries ONLY where the tornado is standing.
     vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 
-    // THE TAPER. Quadratic rather than linear so the funnel is PINCHED near the
-    // ground and flares late — the shape a tornado actually has. A linear cone
-    // reads as a megaphone.
-    float taper = life * life;
-    float radius = mix(
-      ${FUNNEL_GROUND_RADIUS_WORLD_UNITS.toFixed(3)},
-      ${FUNNEL_CLOUD_RADIUS_WORLD_UNITS.toFixed(3)},
-      taper);
+    // Thrown OUTWARD and up, then falling back — a parabola in height against a
+    // radius that only ever grows. That asymmetry is what reads as debris being
+    // flung out rather than as a ring pulsing.
+    float radius = ${FUNNEL_GROUND_RADIUS_WORLD_UNITS.toFixed(4)} *
+      (0.5 + ${DEBRIS_SPREAD_RADII.toFixed(1)} * life * fract(aSeed * 3.7 + 0.2));
+    float angle = 6.28318 * (fract(aSeed * 61.7) + life * 0.35 +
+      uElapsed * ${(FUNNEL_SPIN_TURNS_PER_SECOND * 0.6).toFixed(2)});
+    float height = ${(TORNADO_HEIGHT_WORLD_UNITS * DEBRIS_HEIGHT_FRACTION).toFixed(3)} *
+      4.0 * life * (1.0 - life) * fract(aSeed * 13.1 + 0.5);
 
-    // THE SPIRAL, plus the whole column's own rotation.
-    //
-    // THE ANGULAR OFFSET IS A HASH OF THE SEED, NOT THE SEED ITSELF, and that
-    // is a bug fix rather than a flourish. The CPU hands out phases as i/N and
-    // seeds as a golden-ratio walk, so both are monotone in the particle index:
-    // feeding the seed straight into the angle made the angle a linear function
-    // of the height, which is a perfect helical lattice — and a lattice of
-    // billboards renders as a crosshatch moire, which is exactly what the first
-    // preview showed. Hashing breaks the correlation for free.
-    float angle = 6.28318 * (
-      life * ${FUNNEL_SPIRAL_TURNS.toFixed(2)} +
-      uElapsed * ${FUNNEL_SPIN_TURNS_PER_SECOND.toFixed(2)} +
-      fract(aSeed * 97.31));
+    vec3 world = base + vec3(cos(angle) * radius, height, sin(angle) * radius);
 
-    // Per-particle radial jitter, for the same reason: particles all sitting
-    // exactly on the ideal cone read as a wireframe of it.
-    radius *= 0.85 + 0.3 * fract(aSeed * 41.7);
-
-    // A WOBBLE OF THE WHOLE AXIS, so the funnel snakes instead of standing
-    // plumb. Two sines at incommensurate rates, which never repeat visibly.
-    // A THIRD of the ground radius, not one and a half times it: at the larger
-    // value the axis wandered further than the funnel was wide and the column
-    // smeared into a cloud bank instead of snaking.
-    float sway = ${(FUNNEL_GROUND_RADIUS_WORLD_UNITS * 0.35).toFixed(3)} * taper;
-    vec2 axis = vec2(
-      sin(uElapsed * 0.7 + aSeed * 0.4) * sway,
-      cos(uElapsed * 0.53) * sway);
-
-    vec3 world = base + vec3(
-      cos(angle) * radius + axis.x,
-      life * ${TORNADO_HEIGHT_WORLD_UNITS.toFixed(2)},
-      sin(angle) * radius + axis.y);
-
-    // BILLBOARD IN VIEW SPACE: offset the vertex after the view transform, so
-    // the quad faces the camera exactly with no rotation written from the CPU.
-    // The particle grows a little with height, matching the flare.
-    float size = ${FUNNEL_PARTICLE_SIZE_WORLD_UNITS.toFixed(3)} * (0.7 + 0.6 * taper);
+    // BILLBOARD IN VIEW SPACE — faces the camera exactly, for free, with no
+    // rotation written from the CPU and no chance of lagging it by a frame.
+    float size = ${(WORLD_UNITS_PER_BAND * 0.55).toFixed(4)} * (0.5 + fract(aSeed * 29.3));
     vec4 viewPosition = viewMatrix * vec4(world, 1.0);
     viewPosition.xy += position.xy * size;
     gl_Position = projectionMatrix * viewPosition;
   }
 `;
 
-const FUNNEL_FRAGMENT_SHADER = /* glsl */ `
-  // See ./spiral.ts's uDaylight note: this material is unlit, so the scene's
-  // own light has to reach it as a number, or a funnel under a cyclone stays
-  // sunlit while the ground around it does not.
+const DEBRIS_FRAGMENT_SHADER = /* glsl */ `
   uniform float uDaylight;
 
   varying float vLife;
@@ -235,33 +340,19 @@ const FUNNEL_FRAGMENT_SHADER = /* glsl */ `
   varying vec2 vQuad;
 
   void main() {
-    // A soft round puff. The quad is authored two units across, so vQuad is the
-    // offset from its centre in half-widths and everything past 1 discards.
+    // The quad is authored two units across, so vQuad is the offset from its
+    // centre in half-widths. Harder-edged than the cloud puffs elsewhere in
+    // this plugin: this is dirt and chaff, not vapour.
     float radius = length(vQuad);
-    float puff = 1.0 - smoothstep(0.1, 1.0, radius);
-    if (puff <= 0.0) discard;
+    float chip = 1.0 - smoothstep(0.35, 1.0, radius);
+    if (chip <= 0.0) discard;
 
-    // DIRT AT THE BOTTOM, CLOUD AT THE TOP. The debris a funnel picks up is the
-    // colour of the ground it is standing on and the top of it is the storm
-    // base it hangs from; one smoothstep between the two is what makes a grey
-    // column read as a tornado rather than as smoke.
-    vec3 debris = vec3(0.42, 0.35, 0.26);
-    vec3 cloud = vec3(0.33, 0.34, 0.38);
-    vec3 color = mix(debris, cloud, smoothstep(0.05, 0.65, vLife)) * uDaylight;
-
-    // Denser at the bottom, where the debris is, thinning toward the cloud, and
-    // dissolving entirely in the last tenth — without that the column ends on a
-    // hard flat lid where the life cycle wraps, which reads as a cut-off rather
-    // than as a funnel going up into the storm.
-    float fade = (1.0 - 0.45 * vLife) * (1.0 - smoothstep(0.86, 1.0, vLife));
-
-    // NORMAL BLENDING, NEVER ADDITIVE — plugins/fire/client/smoke.ts's rule.
-    // A funnel must be able to DARKEN what is behind it: seen against daylight
-    // it is a silhouette, and additive blending can only ever lighten. The
-    // alpha is high for a particle system because forty overlapping quads under
-    // normal blending converge on the colour rather than running away to white.
-    float alpha = puff * fade * vStrength * 0.5;
-    if (alpha <= 0.004) discard;
+    vec3 color = vec3(0.34, 0.27, 0.19) * uDaylight;
+    // In fast, out slow, and gone before it lands: a sprite that reached the
+    // ground at full opacity would pile into a solid ring.
+    float fade = smoothstep(0.0, 0.12, vLife) * (1.0 - smoothstep(0.45, 1.0, vLife));
+    float alpha = chip * fade * vStrength * 0.8;
+    if (alpha <= 0.01) discard;
     gl_FragColor = vec4(color, alpha);
   }
 `;
@@ -272,11 +363,11 @@ interface Funnel {
   /** World-space Y of the ground the funnel is standing on. */
   groundY: number;
   z: number;
-  /** Stable 0…1 from the storm id — offsets the spiral so two do not match. */
+  /** Stable 0…1 from the storm id — offsets the twist so two do not match. */
   readonly seed: number;
   /** True while the server is still broadcasting this tornado. */
   alive: boolean;
-  /** 0…1, ramping over FUNNEL_TOUCHDOWN_SECONDS / FUNNEL_DISPERSE_SECONDS. */
+  /** 1 while the server is broadcasting it; falls over FUNNEL_DISPERSE_SECONDS. */
   presence: number;
   /** The storm's own intensity, as last broadcast. */
   intensity: number;
@@ -321,39 +412,75 @@ export function createFunnel(): FunnelRenderer {
   const root = new Group();
   root.name = 'storms:funnel';
 
-  const capacity = MAX_FUNNELS * PARTICLES_PER_FUNNEL;
-
-  // Authored two units across so the fragment shader's vQuad is in half-widths;
-  // the real size is applied in view space, per particle, from its height.
-  const geometry = new PlaneGeometry(2, 2, 1, 1);
-
-  const material = new ShaderMaterial({
+  // ── The vortex sheet ──────────────────────────────────────────────────────
+  // A UNIT open cylinder, reshaped entirely in the vertex shader: the taper is
+  // per-height, so authoring a cone here would only fix the wrong taper into
+  // the geometry.
+  const coneGeometry = new CylinderGeometry(
+    1,
+    1,
+    1,
+    FUNNEL_RADIAL_SEGMENTS,
+    FUNNEL_HEIGHT_SEGMENTS,
+    true,
+  );
+  const coneMaterial = new ShaderMaterial({
     uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
-    vertexShader: FUNNEL_VERTEX_SHADER,
-    fragmentShader: FUNNEL_FRAGMENT_SHADER,
+    vertexShader: CONE_VERTEX_SHADER,
+    fragmentShader: CONE_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: false,
+    // SEEN FROM INSIDE AS WELL AS OUT — the near wall is transparent, so the
+    // far wall is what gives the funnel its volume. Culling it would leave a
+    // hollow shell that reads as a decal.
+    side: DoubleSide,
+    // NORMAL BLENDING, NEVER ADDITIVE — plugins/fire/client/smoke.ts's rule. A
+    // funnel must be able to DARKEN what is behind it: against daylight it is a
+    // silhouette, and additive blending can only ever lighten.
+  });
+  const cone = new InstancedMesh(coneGeometry, coneMaterial, MAX_FUNNELS);
+  cone.name = 'storms:funnel:vortex';
+  cone.count = 0;
+  cone.renderOrder = FUNNEL_RENDER_ORDER;
+  // Every vertex is displaced in the shader, so three's bounding sphere — which
+  // it computes from the undisplaced cylinder — describes nothing this draws.
+  cone.frustumCulled = false;
+  root.add(cone);
+
+  const coneSeeds = new InstancedBufferAttribute(new Float32Array(MAX_FUNNELS), 1);
+  const coneStrengths = new InstancedBufferAttribute(new Float32Array(MAX_FUNNELS), 1);
+  coneSeeds.setUsage(DynamicDrawUsage);
+  coneStrengths.setUsage(DynamicDrawUsage);
+  coneGeometry.setAttribute('aSeed', coneSeeds);
+  coneGeometry.setAttribute('aStrength', coneStrengths);
+
+  // ── The debris skirt ──────────────────────────────────────────────────────
+  const debrisCapacity = MAX_FUNNELS * DEBRIS_PER_FUNNEL;
+  const debrisGeometry = new PlaneGeometry(2, 2, 1, 1);
+  const debrisMaterial = new ShaderMaterial({
+    uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
+    vertexShader: DEBRIS_VERTEX_SHADER,
+    fragmentShader: DEBRIS_FRAGMENT_SHADER,
     transparent: true,
     depthWrite: false,
     side: DoubleSide,
   });
+  const debris = new InstancedMesh(debrisGeometry, debrisMaterial, debrisCapacity);
+  debris.name = 'storms:funnel:debris';
+  debris.count = 0;
+  debris.renderOrder = DEBRIS_RENDER_ORDER;
+  debris.frustumCulled = false;
+  root.add(debris);
 
-  const mesh = new InstancedMesh(geometry, material, capacity);
-  mesh.name = 'storms:funnel:particles';
-  mesh.count = 0;
-  mesh.renderOrder = FUNNEL_RENDER_ORDER;
-  // Every vertex is displaced in the shader, so three's bounding sphere — which
-  // it computes from the undisplaced quad — describes nothing this mesh draws.
-  mesh.frustumCulled = false;
-  root.add(mesh);
-
-  const phases = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-  const seeds = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-  const strengths = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-  phases.setUsage(DynamicDrawUsage);
-  seeds.setUsage(DynamicDrawUsage);
-  strengths.setUsage(DynamicDrawUsage);
-  geometry.setAttribute('aPhase', phases);
-  geometry.setAttribute('aSeed', seeds);
-  geometry.setAttribute('aStrength', strengths);
+  const debrisPhases = new InstancedBufferAttribute(new Float32Array(debrisCapacity), 1);
+  const debrisSeeds = new InstancedBufferAttribute(new Float32Array(debrisCapacity), 1);
+  const debrisStrengths = new InstancedBufferAttribute(new Float32Array(debrisCapacity), 1);
+  for (const attribute of [debrisPhases, debrisSeeds, debrisStrengths]) {
+    attribute.setUsage(DynamicDrawUsage);
+  }
+  debrisGeometry.setAttribute('aPhase', debrisPhases);
+  debrisGeometry.setAttribute('aSeed', debrisSeeds);
+  debrisGeometry.setAttribute('aStrength', debrisStrengths);
 
   const funnels = new Map<number, Funnel>();
 
@@ -388,29 +515,38 @@ export function createFunnel(): FunnelRenderer {
           z: storm.z,
           seed: unitFromId(storm.id),
           alive: true,
-          presence: 0,
+          // BORN AT FULL PRESENCE — see FUNNEL_DISPERSE_SECONDS.
+          presence: 1,
           intensity: storm.intensity,
         });
       }
     },
 
     update(dt, elapsed, daylight): void {
-      material.uniforms.uElapsed!.value = elapsed;
-      material.uniforms.uDaylight!.value = daylight;
+      coneMaterial.uniforms.uElapsed!.value = elapsed;
+      coneMaterial.uniforms.uDaylight!.value = daylight;
+      debrisMaterial.uniforms.uElapsed!.value = elapsed;
+      debrisMaterial.uniforms.uDaylight!.value = daylight;
 
       if (funnels.size === 0) {
-        mesh.count = 0;
+        cone.count = 0;
+        debris.count = 0;
         return;
       }
 
-      const phaseArray = phases.array as Float32Array;
-      const seedArray = seeds.array as Float32Array;
-      const strengthArray = strengths.array as Float32Array;
-      let drawn = 0;
+      const coneSeedArray = coneSeeds.array as Float32Array;
+      const coneStrengthArray = coneStrengths.array as Float32Array;
+      const phaseArray = debrisPhases.array as Float32Array;
+      const seedArray = debrisSeeds.array as Float32Array;
+      const strengthArray = debrisStrengths.array as Float32Array;
+      let drawnCones = 0;
+      let drawnDebris = 0;
 
       for (const [id, funnel] of funnels) {
         if (funnel.alive) {
-          funnel.presence = Math.min(1, funnel.presence + dt / FUNNEL_TOUCHDOWN_SECONDS);
+          // A funnel that was dispersing and came back (a dropped message, a
+          // reconnect) recovers rather than restarting its life.
+          funnel.presence = 1;
         } else {
           funnel.presence -= dt / FUNNEL_DISPERSE_SECONDS;
           if (funnel.presence <= 0) {
@@ -422,33 +558,47 @@ export function createFunnel(): FunnelRenderer {
 
         position.set(funnel.x, funnel.groundY, funnel.z);
         matrix.compose(position, rotation, scale);
-        // The storm's own intensity times how far into its touchdown it is:
-        // a weak tornado is a thin funnel, and a dispersing one thins out.
+        // The storm's own intensity times how far into its touchdown it is: a
+        // weak tornado is a thin funnel, and a dispersing one thins out.
         const strength = funnel.presence * funnel.intensity;
 
-        for (let i = 0; i < PARTICLES_PER_FUNNEL; i++) {
-          mesh.setMatrixAt(drawn, matrix);
-          // Evenly spaced around the life cycle, so the column is continuous.
-          phaseArray[drawn] = i / PARTICLES_PER_FUNNEL;
-          // Offset by the golden ratio per particle, so two tornadoes with
-          // adjacent ids do not put their particles in the same places.
-          seedArray[drawn] = (funnel.seed + i * 0.6180339887) % 1;
-          strengthArray[drawn] = strength;
-          drawn++;
+        cone.setMatrixAt(drawnCones, matrix);
+        coneSeedArray[drawnCones] = funnel.seed;
+        coneStrengthArray[drawnCones] = strength;
+        drawnCones++;
+
+        for (let i = 0; i < DEBRIS_PER_FUNNEL; i++) {
+          debris.setMatrixAt(drawnDebris, matrix);
+          // Evenly spaced around the life cycle, so the skirt is continuous
+          // rather than pulsing.
+          phaseArray[drawnDebris] = i / DEBRIS_PER_FUNNEL;
+          // Offset by the golden ratio per sprite, so two tornadoes with
+          // adjacent ids do not throw their debris into the same places.
+          seedArray[drawnDebris] = (funnel.seed + i * 0.6180339887) % 1;
+          strengthArray[drawnDebris] = strength;
+          drawnDebris++;
         }
       }
 
-      mesh.count = drawn;
-      mesh.instanceMatrix.needsUpdate = true;
-      phases.needsUpdate = true;
-      seeds.needsUpdate = true;
-      strengths.needsUpdate = true;
+      cone.count = drawnCones;
+      cone.instanceMatrix.needsUpdate = true;
+      coneSeeds.needsUpdate = true;
+      coneStrengths.needsUpdate = true;
+
+      debris.count = drawnDebris;
+      debris.instanceMatrix.needsUpdate = true;
+      debrisPhases.needsUpdate = true;
+      debrisSeeds.needsUpdate = true;
+      debrisStrengths.needsUpdate = true;
     },
 
     dispose(): void {
-      mesh.dispose();
-      geometry.dispose();
-      material.dispose();
+      cone.dispose();
+      coneGeometry.dispose();
+      coneMaterial.dispose();
+      debris.dispose();
+      debrisGeometry.dispose();
+      debrisMaterial.dispose();
       root.clear();
       funnels.clear();
     },

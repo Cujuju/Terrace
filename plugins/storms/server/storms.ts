@@ -216,8 +216,15 @@ const TORNADO_PROFILE: KindProfile = {
 /**
  * A cyclone: large, slow, and eight minutes long.
  *
- * SPEED — half a world unit a second, a quarter of weather's wind ceiling, so
- * a player watching one come in has minutes to do something about it.
+ * SPEED — a quarter of a world unit a second, an eighth of weather's wind
+ * ceiling.
+ *
+ * MEASURED AGAINST THE LIFETIME, not chosen for feel. At half a unit a second a
+ * cyclone crosses the whole default world in four minutes, so a storm given
+ * eight minutes to live spent most of them off the map — verified in a live
+ * world, where a forced cyclone had left the map before its own spin-up curve
+ * was interesting. At a quarter it crosses in eight, which is what makes the
+ * lifetime the thing that ends a cyclone and the map edge the exception.
  *
  * VEER — 0.008 rad/s, slower than weather's own front veer. Real tracks curve
  * gently and over hours; a hurricane that turned like a tornado would read as
@@ -229,7 +236,7 @@ const TORNADO_PROFILE: KindProfile = {
  * seconds is the whole difference between "land-only" and "weakens over land".
  */
 const CYCLONE_PROFILE: KindProfile = {
-  speedCellsPerSecond: cellsAcross(0.5),
+  speedCellsPerSecond: cellsAcross(0.25),
   veerRadiansPerSecond: 0.008,
   meanLifetimeSeconds: 480,
   spinUpSeconds: 45,
@@ -380,6 +387,43 @@ export function livingStorms(): readonly Storm[] {
   return storms;
 }
 
+/**
+ * Drops every live storm, keeping the generator and the name counter where they
+ * are — the dev force-spawn's seam (./dev.ts), and nothing on the tick path
+ * calls it.
+ *
+ * SEPARATE FROM `resetStorms`, which also rewinds the RNG and the roster. A
+ * developer forcing a storm wants THIS world's sky cleared, not this world's
+ * random sequence restarted underneath them.
+ */
+/**
+ * THE DEV FREEZE — storms stop moving, ageing and weakening (./dev.ts).
+ *
+ * WHY IT HAD TO EXIST, and it is not a convenience. A tornado travels ten cells
+ * a second and lives about a minute; the real client renders this world at one
+ * to four frames a second under software GL, so a screenshot takes minutes. A
+ * forced funnel was therefore always dead — and usually out at sea, since water
+ * kills one in four seconds — before a single frame of it reached the file.
+ * Freezing is the only thing that makes a tornado photographable at all here.
+ *
+ * WHAT IT DOES NOT STOP: the damage events. A frozen storm still emits, so the
+ * seam every consumer plugin will attach to is exercised exactly as it would be
+ * in a live world, and a frozen fixture is not a different code path pretending
+ * to be this one.
+ *
+ * Set ONLY by the dev force-spawn, which itself only runs when STORMS_DEV_FORCE
+ * is set. Every real deployment leaves it false.
+ */
+let devFrozen = false;
+
+export function setDevFrozen(frozen: boolean): void {
+  devFrozen = frozen;
+}
+
+export function clearStorms(): void {
+  storms.length = 0;
+}
+
 export function stormCount(kind: StormKind): number {
   let count = 0;
   for (const storm of storms) if (storm.kind === kind) count++;
@@ -472,6 +516,44 @@ export function trySpawnTornado(world: StormWorld): Storm | null {
     return birth('tornado', x, y, TORNADO_RADIUS_CELLS, rng.next() * Math.PI * 2);
   }
   return null;
+}
+
+/**
+ * BIRTHS A STORM AT AN EXACT CELL, SKIPPING EVERY SITING TEST — the seam the
+ * dev force-spawn (./dev.ts) needs and the ONLY way into `birth` from outside
+ * this file.
+ *
+ * DELIBERATELY NOT THE ORDINARY PATH. `trySpawnTornado` and `trySpawnCyclone`
+ * are the ordinary paths, and they exist to enforce the two rules issue #213
+ * cares about — a funnel comes out of a weather cell and touches down on land;
+ * a cyclone forms over open water. This bypasses both, which is exactly what a
+ * developer photographing a storm wants and exactly what a world must never do
+ * on its own. Nothing on the tick path calls it.
+ *
+ * The radius and the name still come from the same functions the real spawner
+ * uses, so a forced storm is identical to a natural one in every respect except
+ * where it was put.
+ */
+export function spawnStormAt(
+  world: StormWorld,
+  kind: StormKind,
+  x: number,
+  y: number,
+): Storm {
+  if (kind === 'tornado') {
+    return birth('tornado', x, y, TORNADO_RADIUS_CELLS, rng.next() * Math.PI * 2);
+  }
+  const basin = basinNameFor(x, y, world.worldSize);
+  const given = givenNameFor(namedCycloneCount++);
+  const label = `${basin.charAt(0).toUpperCase()}${basin.slice(1)} ${given}`;
+  return birth(
+    'cyclone',
+    x,
+    y,
+    cycloneRadiusFor(world.worldSize),
+    rng.next() * Math.PI * 2,
+    label,
+  );
 }
 
 /**
@@ -645,26 +727,33 @@ export function advanceStorms(world: StormWorld, dt: number): StormTickResult {
     const profile = profileFor(storm.kind);
     changed = true;
 
-    // TRACK. The heading wanders on a bounded random walk, exactly as weather's
-    // wind does, so a storm curves instead of ruling a line across the map.
-    storm.heading += (rng.next() * 2 - 1) * profile.veerRadiansPerSecond * dt;
-    storm.x += Math.cos(storm.heading) * profile.speedCellsPerSecond * dt;
-    storm.y += Math.sin(storm.heading) * profile.speedCellsPerSecond * dt;
+    // THE THREE THINGS THE DEV FREEZE SKIPS — movement, ageing and weakening.
+    // Everything below them (landfall, damage, the wire) runs either way; see
+    // setDevFrozen for why this exists at all.
+    let hostile = 0;
+    if (!devFrozen) {
+      // TRACK. The heading wanders on a bounded random walk, exactly as
+      // weather's wind does, so a storm curves instead of ruling a line across
+      // the map.
+      storm.heading += (rng.next() * 2 - 1) * profile.veerRadiansPerSecond * dt;
+      storm.x += Math.cos(storm.heading) * profile.speedCellsPerSecond * dt;
+      storm.y += Math.sin(storm.heading) * profile.speedCellsPerSecond * dt;
 
-    // LIFE. Counted down rather than re-rolled, so it survives a snapshot.
-    if (!storm.retiring) {
-      storm.lifeSeconds -= dt;
-      if (storm.lifeSeconds <= 0) storm.retiring = true;
+      // LIFE. Counted down rather than re-rolled, so it survives a snapshot.
+      if (!storm.retiring) {
+        storm.lifeSeconds -= dt;
+        if (storm.lifeSeconds <= 0) storm.retiring = true;
+      }
+
+      // ENVELOPE. Linear, not exponential, so the fade ARRIVES: "the envelope
+      // reached zero" is the removal condition, and an exponential approach
+      // never gets there. (weather's advanceWeather makes the same argument.)
+      hostile = hostileTerrainFraction(storm, world);
+      const terrainDecay = hostile * profile.hostileTerrainDecayPerSecond * dt;
+      storm.envelope = storm.retiring
+        ? Math.max(0, storm.envelope - dt / profile.fadeSeconds - terrainDecay)
+        : Math.min(1, Math.max(0, storm.envelope + dt / profile.spinUpSeconds - terrainDecay));
     }
-
-    // ENVELOPE. Linear, not exponential, so the fade ARRIVES: "the envelope
-    // reached zero" is the removal condition, and an exponential approach never
-    // gets there. (weather's advanceWeather makes the same argument.)
-    const hostile = hostileTerrainFraction(storm, world);
-    const terrainDecay = hostile * profile.hostileTerrainDecayPerSecond * dt;
-    storm.envelope = storm.retiring
-      ? Math.max(0, storm.envelope - dt / profile.fadeSeconds - terrainDecay)
-      : Math.min(1, Math.max(0, storm.envelope + dt / profile.spinUpSeconds - terrainDecay));
 
     const intensity = storm.peakIntensity * storm.envelope;
 
@@ -718,7 +807,9 @@ export function advanceStorms(world: StormWorld, dt: number): StormTickResult {
     // being removed on its first tick, when its envelope is legitimately still
     // zero.
     const spentOut = storm.envelope <= 0 && (storm.retiring || hostile > 0);
-    if (spentOut || hasLeftWorld(storm, world.worldSize)) storms.splice(index, 1);
+    if (!devFrozen && (spentOut || hasLeftWorld(storm, world.worldSize))) {
+      storms.splice(index, 1);
+    }
   }
 
   return { changed, damage, landfalls };
