@@ -349,6 +349,48 @@ export interface ClientPluginCtx {
    * on each server broadcast.
    */
   setSkyRig(state: SkyRigState): void;
+
+  /**
+   * DARKENS, TINTS OR OTHERWISE ADJUSTS THE SKY THE CLAIMANT PRODUCED, without
+   * claiming it (2026-08-27, for the storms plugin's overhead cyclone).
+   *
+   * WHY THIS EXISTS AT ALL, given `setSkyRig` above. The single-claimant rule
+   * there is right and stays: two plugins WRITING the lights would fight, and
+   * the last one to run each frame would win by accident of registration order.
+   * But "who OWNS the sky" and "who has something to say about it" are two
+   * different questions, and only the first of them has one answer. The
+   * day/night plugin owns the sky because it is the thing that knows what time
+   * it is; a hurricane parked overhead has no opinion about the time and every
+   * opinion about how much of the sun gets through. Before this seam existed
+   * the second plugin's only options were to fight for the claim (breaking
+   * whichever of the two lost) or to draw its own dark canopy into the scene
+   * (a second, inconsistent sky). Neither is a contract; this is.
+   *
+   * WHAT A MODIFIER IS. A PURE function from the sky as it stands to the sky as
+   * this plugin would rather have it. It is called once per `setSkyRig`, in
+   * registration order, and each modifier sees the previous one's output — so
+   * two of them compose rather than the last one winning. Returning the state
+   * unchanged is the correct way to say "not right now"; a modifier that is
+   * registered but idle costs one call and one object per frame.
+   *
+   * WHAT IT MUST NOT DO. Touch the scene, keep the state object it was handed
+   * (core does not promise to keep it either), or throw — a modifier that
+   * throws is skipped for that frame and logged, exactly like every other
+   * plugin-supplied callback here. It runs on the render path, so it is a place
+   * for arithmetic and nothing else.
+   *
+   * RESIDUAL, NAMED: modifiers only run when SOMEBODY has claimed the rig,
+   * because core never calls `applySkyRig` on its own — an unclaimed sky is
+   * core's static boot-time look and stays that way. A world running storms
+   * with no day/night plugin installed therefore gets storms it can see and a
+   * sky that does not darken. That is the honest degradation (the plugin that
+   * owns the sky is absent, so the sky does not move) rather than a bug, but it
+   * is worth knowing before wondering why the gloom did nothing.
+   *
+   * Returns an unregister function; the host also drops every modifier a plugin
+   * registered when that plugin is unloaded.
+   */
+  modulateSkyRig(modify: (state: SkyRigState) => SkyRigState): () => void;
 }
 
 export interface TerraceClientPlugin {

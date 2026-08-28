@@ -210,4 +210,22 @@ export { currentWind } from './systems.ts';
  * suppression) — same entry-point-is-the-API argument as `currentWind` above.
  */
 export { precipitationAt } from './systems.ts';
+
+/**
+ * THE LIVING SYSTEMS THEMSELVES, re-exported for other plugins (2026-08-27, for
+ * the storms plugin's tornadoes) — same entry-point-is-the-API argument as
+ * `currentWind` above.
+ *
+ * WHY THE WHOLE SYSTEM AND NOT A PREDICATE. `precipitationAt` answers "is this
+ * cell wet", which is the question a fire asks; a tornado's question is "where
+ * is there a storm cell, and how big is it" — it needs to pick a spawn site
+ * INSIDE one, which no per-cell query can answer without scanning the map. The
+ * list is at most MAX_ACTIVE_SYSTEMS long, so handing it over costs nothing.
+ *
+ * READ-ONLY BY CONSTRUCTION at the type level (`readonly WeatherSystem[]`), and
+ * the objects in it are this plugin's live state: a consumer that wrote to one
+ * would be steering the weather. Nothing enforces that beyond the type, which
+ * is the same bargain `currentWind` already makes with its Readonly<Wind>.
+ */
+export { livingSystems } from './systems.ts';
 export type { WeatherWorld };
