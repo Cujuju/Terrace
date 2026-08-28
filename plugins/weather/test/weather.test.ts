@@ -48,12 +48,13 @@ import {
   SYSTEM_MAX_RADIUS_CELLS,
   SYSTEM_MAX_RADIUS_WORLD_FRACTION,
   SYSTEM_MEAN_LIFETIME_SECONDS,
-  SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS,
+  SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS,
   SYSTEM_MIN_PEAK_INTENSITY,
   SYSTEM_MIN_RADIUS_CELLS,
   WIND_MAX_SPEED_CELLS_PER_SECOND,
   WIND_MIN_SPEED_CELLS_PER_SECOND,
   WIND_VEER_RADIANS_PER_SECOND,
+  activeSystemCapFor,
   advanceWeather,
   currentWind,
   isSnowSite,
@@ -245,7 +246,7 @@ describe('spawn and decay', () => {
     for (let tick = 0; tick < 72000; tick++) {
       advanceWeather(world, TICK_SECONDS);
       const alive = livingSystems();
-      if (alive.length > MAX_ACTIVE_SYSTEMS) overCap++;
+      if (alive.length > activeSystemCapFor(WORLD_SIZE)) overCap++;
       if (alive.length > mostAlive) mostAlive = alive.length;
       for (const system of alive) {
         if (system.radius < SYSTEM_MIN_RADIUS_CELLS || system.radius > ceiling) outOfBand++;
@@ -258,7 +259,10 @@ describe('spawn and decay', () => {
     expect(overCap).toBe(0);
     expect(outOfBand).toBe(0);
     // The cap must actually BIND at some point, or this test proves nothing.
-    expect(mostAlive).toBe(MAX_ACTIVE_SYSTEMS);
+    // The cap is the world's own (activeSystemCapFor) since 2026-08-28;
+    // MAX_ACTIVE_SYSTEMS is the ceiling that cap is clamped to.
+    expect(mostAlive).toBe(activeSystemCapFor(WORLD_SIZE));
+    expect(activeSystemCapFor(WORLD_SIZE)).toBeLessThanOrEqual(MAX_ACTIVE_SYSTEMS);
     expect(BROADCAST_SYSTEM_CEILING).toBe(MAX_ACTIVE_SYSTEMS);
   });
 
@@ -356,8 +360,8 @@ describe('spawn and decay', () => {
     // nominal one: what this asserts is that weather keeps arriving forever and
     // at the right order of frequency, not an exact Poisson mean.
     const observedMean = seconds / arrivals;
-    expect(observedMean).toBeGreaterThanOrEqual(SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS * 0.5);
-    expect(observedMean).toBeLessThanOrEqual(SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS * 6);
+    expect(observedMean).toBeGreaterThanOrEqual(SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS * 0.5);
+    expect(observedMean).toBeLessThanOrEqual(SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS * 6);
     // Every system that ever existed also stopped existing, or the sky would
     // have silently jammed at the cap.
     expect(arrivals).toBeGreaterThan(MAX_ACTIVE_SYSTEMS);
@@ -488,6 +492,12 @@ describe('broadcast', () => {
   });
 
   it('sends an EMPTY list for a clear sky rather than no message at all', () => {
+    // A source that always returns 1 never fires a Poisson roll (rollEvent
+    // compares against a probability strictly below 1), so the sky is
+    // deterministically clear for this second. It used to be clear by luck —
+    // one arrival per 40 s made a spawn in the first second unlikely — and the
+    // 2026-08-28 retune raised the arrival rate enough that luck ran out.
+    setWeatherRandomSource(scriptedRandom([1]));
     const { host, sink } = bootOn(highlandWorld());
     for (let tick = 0; tick < BROADCAST_TICK_INTERVAL; tick++) host.tick(TICK_SECONDS);
     const message = sink.ofType(NAMESPACED_TYPE)[0]!;
