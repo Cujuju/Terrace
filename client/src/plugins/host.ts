@@ -116,6 +116,14 @@ export function createClientPluginHost(
    */
   const skyRigRefusals = new Set<string>();
 
+  /**
+   * The registered sky-rig MODIFIERS, in registration order — see
+   * ClientPluginCtx.modulateSkyRig. Separate from the claimant above because
+   * they answer a different question: the claimant WRITES the sky, a modifier
+   * only gets a say in what is written, and any number of plugins may have one.
+   */
+  const skyRigModifiers: ((state: SkyRigState) => SkyRigState)[] = [];
+
   const onCanvasPointerDown = (event: PointerEvent): void => {
     for (const handler of pressHandlers) {
       let claimed = false;
@@ -401,7 +409,26 @@ export function createClientPluginHost(
           }
           return;
         }
-        applySkyRig(viewport, state);
+        // EVERY MODIFIER SEES THE PREVIOUS ONE'S OUTPUT, so two compose
+        // instead of the last one winning. A modifier that throws is skipped
+        // for this frame — the sky keeps the state it had reached, which is
+        // the claimant's own if nothing has modified it yet.
+        let modulated = state;
+        for (const modify of skyRigModifiers) {
+          try {
+            modulated = modify(modulated);
+          } catch (error) {
+            console.error('[terrace] plugin sky-rig modifier threw', error);
+          }
+        }
+        applySkyRig(viewport, modulated);
+      },
+      modulateSkyRig(modify: (state: SkyRigState) => SkyRigState) {
+        skyRigModifiers.push(modify);
+        return track(() => {
+          const index = skyRigModifiers.indexOf(modify);
+          if (index !== -1) skyRigModifiers.splice(index, 1);
+        });
       },
     };
 
