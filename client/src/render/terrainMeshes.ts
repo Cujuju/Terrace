@@ -903,6 +903,14 @@ export function createTerrainMeshes(
 
   const now = scheduling?.now ?? (() => performance.now());
 
+  /** The first queued chunk with no job out, or undefined. */
+  const nextSubmittable = (): number | undefined => {
+    for (const chunkIdx of pending) {
+      if (!inFlight.has(chunkIdx)) return chunkIdx;
+    }
+    return undefined;
+  };
+
   /**
    * Submits what the pool has room for, then splices finished answers until
    * `budgetMs` of wall clock is gone.
@@ -915,24 +923,25 @@ export function createTerrainMeshes(
    * to fit. The constant is therefore a floor on progress, not a ceiling on
    * cost.
    */
-  /** The first queued chunk with no job out, or undefined. */
-  const nextSubmittable = (): number | undefined => {
-    for (const chunkIdx of pending) {
-      if (!inFlight.has(chunkIdx)) return chunkIdx;
-    }
-    return undefined;
-  };
-
   const drain = (budgetMs: number): void => {
     if (pending.size === 0 && ready.length === 0) return;
     const startedMs = now();
     for (;;) {
       // Top the pool up FIRST, so a worker is never idle while this thread
-      // splices. With the direct source, whose `concurrency` is 1 and whose
-      // answers are finished before `build` returns, this is one build — so
-      // that path still costs exactly one chunk per pass and the budget still
-      // bounds building as well as splicing.
-      while (inFlight.size < buildSource.concurrency) {
+      // splices.
+      //
+      // FINISHED ANSWERS COUNT AGAINST THE POOL, and that is what bounds the
+      // DIRECT source. Its `build` returns an answer that is already finished,
+      // so `receive` runs inline and has released the `inFlight` slot before
+      // `submit` even returns: a condition on `inFlight.size` alone re-tests
+      // 0 < 1 for ever and builds EVERY pending chunk inside one drain call,
+      // ignoring the budget entirely (the clock is only read after a splice).
+      // Counting `ready` too means one unspliced answer is one occupied slot,
+      // so the direct path builds exactly one chunk per pass and the budget
+      // bounds building as well as splicing — which is what the worker path
+      // gets for free, its answers being genuinely in flight. `flush` is the
+      // path that deliberately builds everything.
+      while (inFlight.size + ready.length < buildSource.concurrency) {
         const chunkIdx = nextSubmittable();
         if (chunkIdx === undefined) break;
         pending.delete(chunkIdx);
