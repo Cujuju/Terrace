@@ -417,8 +417,9 @@ export interface TerrainMeshes {
   flush(): void;
   /**
    * Chunks that have been marked dirty and are not yet drawn — queued, out at
-   * the build source, or answered and waiting for a frame's splice budget. All
-   * three are "still waiting", which is the question every caller asks.
+   * the build source, answered and waiting for a frame's splice budget, or
+   * waiting to be retried after a lost build. All four are "still waiting",
+   * which is the question every caller asks.
    */
   pendingCount(): number;
   /** Drops every mesh — used when a fresh join replaces the world. */
@@ -833,6 +834,20 @@ export function createTerrainMeshes(
   const ready: ChunkJobAnswer[] = [];
 
   /**
+   * Chunks whose build was LOST (`ChunkBuildSource.build` answered null) and
+   * which must be built again.
+   *
+   * A HOLDING PEN RATHER THAN `pending` DIRECTLY, and the reason is the one way
+   * a retry can go wrong: a source is allowed to fail SYNCHRONOUSLY, inside
+   * `submit`, and a chunk put straight back into `pending` there would be the
+   * very chunk `nextSubmittable` hands the same loop on its next turn — a spin
+   * that never ends and never builds anything. This set is merged into
+   * `pending` only at the TOP of a drain or flush pass, so a lost job is
+   * retried by the NEXT pass and never by the one that lost it.
+   */
+  const retry = new Set<number>();
+
+  /**
    * A ring of recent splice costs — long enough to survive a held stroke's
    * worth of edits (a stroke emits ~8 intents a second and this keeps a few
    * seconds of them), short enough that the median tracks the world as it is
@@ -849,8 +864,21 @@ export function createTerrainMeshes(
    */
   let generation = 0;
 
-  const receive = (answer: ChunkJobAnswer): void => {
-    inFlight.delete(answer.chunkIdx);
+  /**
+   * Takes one build's outcome off the pool. `answer` is null when the build
+   * produced nothing — see `ChunkBuildSource.build`'s failure contract. The
+   * chunk index is passed separately for exactly that case: a lost job has no
+   * answer to read it from.
+   */
+  const receive = (chunkIdx: number, answer: ChunkJobAnswer | null): void => {
+    inFlight.delete(chunkIdx);
+    if (answer === null) {
+      // TRIED AGAIN, not dropped: the chunk is still dirty and still drawing
+      // its pre-edit geometry, so a later pass must build it — on a surviving
+      // worker, or on this thread once the pool has none.
+      if (mirror.received.has(chunkIdx)) retry.add(chunkIdx);
+      return;
+    }
     if (answer.generation !== generation) return;
     // Re-checked on ARRIVAL as well as on submission: a chunk can leave
     // `received` while its job is out (a rejoin replaces the world), and
@@ -868,8 +896,8 @@ export function createTerrainMeshes(
     if (!mirror.received.has(chunkIdx)) return;
     inFlight.add(chunkIdx);
     const answer = buildSource.build(mirror, chunkIdx, generation);
-    if (answer instanceof Promise) void answer.then(receive);
-    else receive(answer);
+    if (answer instanceof Promise) void answer.then((settled) => receive(chunkIdx, settled));
+    else receive(chunkIdx, answer);
   };
 
   /** Splices one finished job into its super-mesh, creating that if needed. */
@@ -923,7 +951,15 @@ export function createTerrainMeshes(
    * to fit. The constant is therefore a floor on progress, not a ceiling on
    * cost.
    */
+  /** Folds lost builds back into the queue. Called at the top of a pass only. */
+  const takeRetries = (): void => {
+    if (retry.size === 0) return;
+    for (const chunkIdx of retry) pending.add(chunkIdx);
+    retry.clear();
+  };
+
   const drain = (budgetMs: number): void => {
+    takeRetries();
     if (pending.size === 0 && ready.length === 0) return;
     const startedMs = now();
     for (;;) {
@@ -964,6 +1000,7 @@ export function createTerrainMeshes(
    * harnesses) is on the direct source.
    */
   const flush = (): void => {
+    takeRetries();
     for (;;) {
       const chunkIdx = nextSubmittable();
       if (chunkIdx !== undefined) {
@@ -988,6 +1025,10 @@ export function createTerrainMeshes(
     // against the replacement would build chunks nobody asked for, at best;
     // this is why clear() and not just dispose() empties it.
     pending.clear();
+    // Same reasoning: a lost build's chunk index belongs to the world going
+    // away, and rebuilding it against the replacement would draw terrain
+    // nobody asked for.
+    retry.clear();
     // And the jobs already out are pictures of the world being dropped. The
     // generation bump is what makes their answers arrive and be discarded.
     inFlight.clear();
@@ -1010,7 +1051,7 @@ export function createTerrainMeshes(
     },
     flush,
     pendingCount(): number {
-      return pending.size + inFlight.size + ready.length;
+      return pending.size + inFlight.size + ready.length + retry.size;
     },
     clear,
     pickables(): Mesh[] {
