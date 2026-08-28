@@ -585,8 +585,9 @@ export const WATER_BAND_EDGE_WIDTH_CELLS = 0.2;
 /**
  * EMISSIVE CONTOUR STRENGTH — used only when the contour is drawn through
  * three's emissive path instead of the albedo lift above (render/water.ts's
- * WaterOptions.bandContourMode === 'emissive'). Experimental, and NOT the
- * shipped default; it exists so the night look can be judged side by side.
+ * WaterOptions.bandContourMode === 'emissive'), which is the shipped default
+ * since 2026-08-28: the owner chose it over the albedo lift from a top-down
+ * noon/midnight A/B, because the albedo contour all but vanished at night.
  *
  * WHY AN OPTION AT ALL: WATER_BAND_EDGE_LIGHTEN_MIX lifts `diffuseColor.rgb`,
  * i.e. the water's ALBEDO, so the contour is lit like any other surface colour

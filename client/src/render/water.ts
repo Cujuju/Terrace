@@ -384,7 +384,7 @@ function makeDepthAware(
         'vec2 wInCell = fract( vWaterCellXZ + 0.5 );',
         `float wNearEdge = ${glslFloat(1 - WATER_BAND_EDGE_WIDTH_CELLS)};`,
         'float wBandEdge = max( wStepX * step( wNearEdge, wInCell.x ), wStepZ * step( wNearEdge, wInCell.y ) );',
-        // ALBEDO mode (the shipped default): the lift is part of what colour
+        // ALBEDO mode (the pre-2026-08-28 behaviour): the lift is part of what colour
         // the water IS, so it is lit with the rest of the surface. In EMISSIVE
         // mode this line is omitted and the same lift is added as radiance at
         // the <emissivemap_fragment> splice below instead.
@@ -429,10 +429,11 @@ function makeDepthAware(
 /**
  * How the band-boundary contour is drawn.
  *
- * 'albedo' — the shipped behaviour: the contour lifts `diffuseColor.rgb`
+ * 'albedo' — the original behaviour: the contour lifts `diffuseColor.rgb`
  * toward white, so it is lit, tone-mapped and fogged with the rest of the
  * surface, and dims with the sky at night.
- * 'emissive' — experimental: the same lift is added to
+ * 'emissive' — the shipped default (owner, 2026-08-28, after a noon/midnight
+ * A/B): the same lift is added to
  * `totalEmissiveRadiance` instead, which the lighting sum does not scale, so
  * the contour holds its brightness at night. See
  * WATER_BAND_EDGE_EMISSIVE_RADIANCE for the strength and its derivation.
@@ -444,7 +445,7 @@ function makeDepthAware(
 export type WaterBandContourMode = 'albedo' | 'emissive';
 
 export interface WaterOptions {
-  /** Defaults to 'albedo' — absent, createWater behaves exactly as before. */
+  /** Defaults to 'emissive', the shipped look; 'albedo' is kept for the A/B. */
   readonly bandContourMode?: WaterBandContourMode;
 }
 
@@ -497,7 +498,7 @@ export function createWater(
     specularFactorTexture,
     shadeMixTexture,
     worldSizeUniform,
-    options.bandContourMode ?? 'albedo',
+    options.bandContourMode ?? 'emissive',
   );
   // The sea gets the same painted bands the rivers do — one rule, in
   // water/waterBands.ts, precisely so the ocean cannot be left behind when the

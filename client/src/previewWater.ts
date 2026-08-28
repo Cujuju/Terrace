@@ -8,7 +8,7 @@
 //   ?light=<noon|night>       — lighting rig; defaults to "noon" (the static
 //                               rig this harness has always had)
 //   ?contour=<albedo|emissive> — how the sea's band contour is drawn; defaults
-//                               to "albedo", the shipped behaviour
+//                               to "emissive", the shipped behaviour
 //
 // WHAT THIS EXISTS TO SHOW, and why the live client could not. The thing under
 // test is a CURVE — how much terrain shows through the sea as a function of the
@@ -174,7 +174,7 @@ const zoom = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 1;
 const builder = SCENE_BUILDERS[sceneName] ?? buildStaircase;
 const isNight = params.get('light') === 'night';
 const bandContourMode: WaterBandContourMode =
-  params.get('contour') === 'emissive' ? 'emissive' : 'albedo';
+  params.get('contour') === 'albedo' ? 'albedo' : 'emissive';
 
 const scene = new Scene();
 scene.background = new Color(BACKDROP_COLOR);
