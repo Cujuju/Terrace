@@ -129,7 +129,7 @@ const sculptInput = createSculptInput({
   // The outline's ground height, re-read every frame for the cell the pick
   // already chose — see sculptInput's hoverTarget for why the cell is cached
   // and this is not.
-  terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
+  spanCapAt: (x, y, spanIndex) => world.spanCapAt(x, y, spanIndex),
   worldSize: () => world.worldSize(),
   // THE GRAB QUERY — the same call the frame loop below makes to highlight the
   // lip under the cursor, so what is lit up is exactly what a press grabs.
