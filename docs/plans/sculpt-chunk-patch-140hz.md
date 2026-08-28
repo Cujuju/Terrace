@@ -50,7 +50,7 @@ Not visible in the node bench (no renderer), named by the review:
   MB on a developed super-mesh) per splice. This is the next hot spot once
   the CPU cost is gone (§3b).
 - **`water.refresh` uploads three world-sized textures per call** —
-  `render/water.ts:537` sets `needsUpdate` on the depth-alpha, specular and
+  `render/water.ts:546-548` sets `needsUpdate` on the depth-alpha, specular and
   third texture with no update range and no empty-set guard; a matching echo
   with an empty dirty set still pays it (§3e).
 
@@ -254,10 +254,10 @@ adapter; do not fork the math).
   `count`-length copy the main thread does today at :686-690, moved.
 - bounds: six floats.
 - band raster: `Int8Array` (transfer). `rasterizeLevels` moves out of
-  `drawnGroundStore.publish` into the job — **export it from
+  `publishPlannedChunk` (terrain/drawnGroundStore.ts:204) into the job — **export it from
   drawnGroundStore.ts and import it in the worker** so fill and lookup share
   one grid geometry (the store header's contract). The store gains
-  `publishRastered(chunkIdx, caps, topLevel)`; `publish` stays for the
+  `publishRastered(chunkIdx, caps, topLevel)`; `publishPlannedChunk` stays for the
   direct path and the harnesses. Update the `rowCrossings` scratch note
   (:256-263): the invariant is per-realm, not per-`publish`.
 - cap plan, flat: per level `threshold/sampleBand/capY`, then **`Float64Array`

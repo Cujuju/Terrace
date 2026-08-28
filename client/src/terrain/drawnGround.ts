@@ -75,9 +75,10 @@
 // only entry point.
 
 import { BAND_HEIGHT, CHUNK_SIZE, bandOf } from '@terrace/shared';
-import { blockyCellCapY, type ChunkDrawnCaps, type DrawnCapLevel } from './capEmission.ts';
+import { blockyCellCapY } from './capEmission.ts';
 import { type ContourLoop } from './contours.ts';
 import {
+  polygonsOfLevel,
   topLevelIndexAt,
   type ChunkChart,
   type DrawnGroundStore,
@@ -166,9 +167,10 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
    * The walk itself now happens once per chunk BUILD, in the store's rasteriser
    * — this is the array read that replaced it.
    */
-  const topmostLevelAt = (chart: ChunkChart, cellX: number, cellZ: number): DrawnCapLevel | null => {
+  const topmostLevelAt = (chart: ChunkChart, cellX: number, cellZ: number): number | null => {
     const index = topLevelIndexAt(chart, cellX, cellZ);
-    return index === null ? null : chart.caps.levels[index] ?? null;
+    if (index === null || index >= chart.plan.levelThreshold.length) return null;
+    return index;
   };
 
   /**
@@ -186,7 +188,7 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
 
   /** True when the chunk drew no contours to read — blocky, or not drawn at all. */
   const hasNoContours = (chart: ChunkChart | null): chart is null =>
-    chart === null || chart.caps.blocky;
+    chart === null || chart.plan.blocky;
 
   return {
     capYAt(cellX: number, cellZ: number): number {
@@ -197,9 +199,8 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
       // the lowest level makes impossible in practice (its region is the whole
       // domain, by makeLevels' construction). Answering with the lowest cap
       // that chunk drew keeps a malformed fixture from returning NaN.
-      if (level !== null) return level.capY;
-      const levels = chart.caps.levels;
-      return levels.length > 0 ? levels[0]!.capY : 0;
+      if (level !== null) return chart.plan.levelCapY[level]!;
+      return chart.plan.levelCapY.length > 0 ? chart.plan.levelCapY[0]! : 0;
     },
 
     capYOfBand(band: number, cellX: number, cellZ: number): number {
@@ -207,9 +208,9 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
       if (!hasNoContours(chart)) {
         // Topmost first, so band 0 answers with the waterline cap where the
         // chunk drew one and the sunk seabed cap where it did not.
-        const levels = chart.caps.levels;
-        for (let i = levels.length - 1; i >= 0; i--) {
-          if (levels[i]!.sampleBand === band) return levels[i]!.capY;
+        const { levelSampleBand, levelCapY } = chart.plan;
+        for (let i = levelSampleBand.length - 1; i >= 0; i--) {
+          if (levelSampleBand[i] === band) return levelCapY[i]!;
         }
       }
       // A blocky chunk published no levels, and an undrawn one published
@@ -223,9 +224,8 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
       const chart = chartAt(cellX, cellZ);
       if (hasNoContours(chart)) return bandOf(blockyHeightAt(cellX, cellZ));
       const level = topmostLevelAt(chart, cellX, cellZ);
-      if (level !== null) return level.sampleBand;
-      const levels = chart.caps.levels;
-      return levels.length > 0 ? levels[0]!.sampleBand : 0;
+      if (level !== null) return chart.plan.levelSampleBand[level]!;
+      return chart.plan.levelSampleBand.length > 0 ? chart.plan.levelSampleBand[0]! : 0;
     },
 
     nearestOnContour(threshold, cellX, cellZ) {
@@ -266,9 +266,12 @@ function polygonsOfThreshold(
   threshold: number,
 ): readonly CapPolygon[] {
   if (chart === null) return [];
-  const caps: ChunkDrawnCaps = chart.caps;
-  for (const level of caps.levels) {
-    if (level.threshold === threshold) return level.polygons;
+  const thresholds = chart.plan.levelThreshold;
+  for (let i = 0; i < thresholds.length; i++) {
+    // THE ONE PLACE point objects are rebuilt from the flat published plan —
+    // lazily, per chunk and level, and kept. See drawnGroundStore's
+    // `polygonsOfLevel`.
+    if (thresholds[i] === threshold) return polygonsOfLevel(chart, i);
   }
   return [];
 }

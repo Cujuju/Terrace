@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Volcano preview (throwaway)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #33405a;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness for the volcanoes plugin (issue #214),
+         mirroring preview-fire.html. Not part of the shipped app: not linked
+         from index.html, not registered in plugins/registry.ts. It runs the
+         REAL server-side descent front and the REAL client renderers over a
+         fixture cone. See previewVolcano.ts for the query-string contract
+         (?scene, ?view, ?t). -->
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/previewVolcano.ts"></script>
+  </body>
+</html>

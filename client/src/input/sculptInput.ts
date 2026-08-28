@@ -716,6 +716,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // riser-only rule. And an absolute read after the seed is not safe either:
     // `send` returns true for intents that predict nothing, so the band under
     // the pointer could be one this press did not raise. A delta is.
+    //
+    // THE RISE IS THE PROOF (main, 2026-08-27). `seedLayer` reports that the
+    // intent reached the wire, not that it was predicted: a stroke at the
+    // frontier is sent but deliberately not predicted (terrain/prediction.ts's
+    // halo guard), and the ground under the cursor is then unchanged. Grabbing
+    // the band that was already there would take hold of a lip the player did
+    // not make, so a seed that did not visibly raise anything grabs nothing.
+    // Read from the mirror, not the overlay: the overlay is a reader of what
+    // the terrain PUBLISHES, a frame or two later under the build budget.
     const before = bandAtCell(hover.x, hover.y);
     if (!seedLayer(hover)) return;
     const after = bandAtCell(hover.x, hover.y);

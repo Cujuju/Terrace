@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, MIN_HEIGHT, SEA_LEVEL, type ChunkPayload } from '@terrace/shared';
 import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
 import {
+  bandFloorWaterDepthWorldUnits,
   WATER_DEEP_STRATA_ALPHA,
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
   WATER_DEPTH_FLOOR_WORLD_UNITS,
@@ -367,8 +368,29 @@ describe('surfaceAlphaByte — dry land is not drawn as sea (2026-08-20)', () =>
   });
 
   it('is unchanged from the depth curve for every submerged height', () => {
+    // AMENDED 2026-08-27: the curve is now asked about the BAND the terrain
+    // under the water is drawn at, not the raw cell height — see
+    // bandFloorWaterDepthWorldUnits. The contract this test pins is unchanged
+    // in meaning ("a submerged height gets the depth curve and nothing else,
+    // with no dry-land special case"); only the depth the curve is handed has
+    // moved, and it moved for every consumer at once.
     for (const height of [SEA_LEVEL - 1, -BAND_HEIGHT, -BAND_HEIGHT * 8, MIN_HEIGHT]) {
-      expect(surfaceAlphaByte(height)).toBe(depthAlphaByte(waterDepthWorldUnits(height)));
+      expect(surfaceAlphaByte(height)).toBe(
+        depthAlphaByte(bandFloorWaterDepthWorldUnits(height)),
+      );
+    }
+  });
+
+  it('gives every cell of one terrace band the same alpha, and the next band a different one', () => {
+    // The step the whole 2026-08-27 change exists to produce: within a band the
+    // sea must not vary at all, and at the boundary it must jump. Before the
+    // fix this swept smoothly across the band and was continuous across the
+    // boundary, so the sea erased the staircase it was drawn over.
+    for (let band = 1; band <= 15; band++) {
+      const top = -band * BAND_HEIGHT + BAND_HEIGHT - 1;
+      const floor = -band * BAND_HEIGHT;
+      expect(surfaceAlphaByte(top)).toBe(surfaceAlphaByte(floor));
+      expect(surfaceAlphaByte(floor)).not.toBe(surfaceAlphaByte(floor + BAND_HEIGHT));
     }
   });
 });

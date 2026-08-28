@@ -1655,9 +1655,14 @@ function collapseTail(buffers: ChunkGeometryBuffers, vertexCount: number): void 
 // builder runs, exposed so a test can assert the shape of a band's outline
 // directly (and, for the seam contract, compare two chunks' border vertices).
 //
-// render/layerEdgeOverlay.ts is a real consumer of chunkBandContourLoops: an
-// overlay that claims to show grabbable lips must march the field the mesh
-// marched, not a lookalike of it.
+// render/layerEdgeOverlay.ts USED TO be a real consumer of
+// chunkBandContourLoops, on the argument that an overlay claiming to show
+// grabbable lips must march the field the mesh marched rather than a lookalike
+// of it. Since 2026-08-27 it does not march at all: it reads the loops this
+// module PUBLISHED for the chunk (ChunkDrawnCaps.levels[i].polygons, via
+// terrain/drawnGroundStore.ts), which settles the same argument by having one
+// object instead of two agreeing runs — and saves the second march. What is
+// left here is the test surface.
 // ---------------------------------------------------------------------------
 
 /**
