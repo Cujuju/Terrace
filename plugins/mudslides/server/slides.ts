@@ -53,6 +53,7 @@ import {
   type MudslideFlowEvent,
   type MudslideStop,
   type SlideState,
+  MAX_ACTIVE_SLIDES,
 } from '../protocol.ts';
 import {
   cellKey,
@@ -199,16 +200,10 @@ const MAX_DIFFICULTY = 100;
  */
 export const FREQUENCY_INTERVAL_MULTIPLIERS = { rare: 6, common: 1 } as const;
 
-/**
- * Slides running at once.
- *
- * THREE. Each one holds a path, a visited set and an event cell list, and each
- * one sculpts a few times a second; three is enough that a world under a big
- * storm feels like it is coming apart in more than one place, and few enough that
- * the sculpt traffic stays a small fraction of what a single player's brush
- * already generates.
- */
-export const MAX_ACTIVE_SLIDES = 3;
+// MAX_ACTIVE_SLIDES lives in ../protocol.ts (2026-08-28): the client sizes its
+// front-instance buffer from it, and a cap the client cannot import is a cap the
+// client restates as a literal.
+export { MAX_ACTIVE_SLIDES };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SLIDE ITSELF.

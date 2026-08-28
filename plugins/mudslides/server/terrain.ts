@@ -281,6 +281,11 @@ export function nextFlowCell(
   y: number,
   visited: ReadonlySet<number>,
 ): { readonly x: number; readonly y: number } | MudslideStop {
+  // A front standing OUTSIDE the world (a slice restored from a larger world)
+  // has no height to compare against — shared's heightAt reads past the array —
+  // and would otherwise walk to the first neighbour instead of downhill
+  // (review 2026-08-28). There is nothing under it; treat it as unreachable.
+  if (!inBounds(world, x, y)) return 'locked';
   const here = world.heightAt(x, y);
 
   let bestX = -1;

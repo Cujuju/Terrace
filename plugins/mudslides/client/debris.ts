@@ -23,6 +23,7 @@
 import {
   Color,
   DodecahedronGeometry,
+  DynamicDrawUsage,
   InstancedMesh,
   MeshLambertMaterial,
   Object3D,
@@ -30,6 +31,7 @@ import {
   type Material,
 } from 'three';
 import { BAND_HEIGHT, CELL_WORLD_SIZE } from '@terrace/shared';
+import { MAX_ACTIVE_SLIDES } from '../protocol.ts';
 
 /**
  * Clump radius, in world units.
@@ -84,7 +86,7 @@ const FRONT_TAIL_CELLS = 12;
  * clumps is about 37 000 triangles in one call, which is nothing next to one
  * chunk of terrain, and cells past it evict the oldest.
  */
-const MAX_FRONT_INSTANCES = 3 * FRONT_TAIL_CELLS * CLUMPS_PER_FRONT_CELL;
+const MAX_FRONT_INSTANCES = MAX_ACTIVE_SLIDES * FRONT_TAIL_CELLS * CLUMPS_PER_FRONT_CELL;
 const MAX_DEBRIS_INSTANCES = 1024;
 
 /**
@@ -171,6 +173,9 @@ function createClumpField(color: number, capacity: number): ClumpField {
   mesh.count = 0;
   // The instance matrices change every frame while a slide runs, and three's
   // default static hint makes each upload re-validate the whole buffer.
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  // Instances stand anywhere in the world; one bounding sphere for all of them
+  // would be the world, so culling is left to the instances' own absence.
   mesh.frustumCulled = false;
   mesh.castShadow = false;
   mesh.receiveShadow = false;
@@ -180,6 +185,10 @@ function createClumpField(color: number, capacity: number): ClumpField {
   return {
     mesh,
     apply(clumps: readonly Clump[], groundAt: GroundAt): void {
+      // Nothing to draw and nothing drawn: no upload. This runs every frame, and
+      // a world with no slide running — nearly all of them — was re-uploading
+      // the whole empty buffer each frame (review 2026-08-28).
+      if (clumps.length === 0 && mesh.count === 0) return;
       let drawn = 0;
       for (const clump of clumps) {
         if (drawn >= capacity) break;

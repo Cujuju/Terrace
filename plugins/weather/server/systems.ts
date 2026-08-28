@@ -109,18 +109,21 @@ export interface WeatherWorld {
  * name and becomes what it always really was: the HARD CEILING the wire, the
  * draw calls and the storm lights are budgeted against.
  *
- * FOURTEEN. It is the first number that does not bind on the shipped world
- * (the coverage formula asks for 10 there), and every cost it caps is bounded
+ * FOURTEEN. On the shipped 2048-cell world the coverage formula asks for 13.75
+ * (corrected 2026-08-28 — an earlier comment said 10, before the equilibrium
+ * occupancy was folded into the cap), so the ceiling sits exactly at what the
+ * default world wants, with no headroom above it; every cost it caps is bounded
  * and small at 14: 14 × 97 B at 1 Hz is 11 kbit/s per client, still under 3% of
  * what the wildlife plugin spends; at most 14 particle columns and 4 fog sheets
  * each is ~70 draw calls; and lightning's photosensitivity floor is enforced by
  * ONE governor for the whole client (client/sky.ts), so more storms cannot make
  * the screen flash faster.
  *
- * RESIDUAL, NAMED: on a world larger than about twice the shipped default the
- * ceiling binds before the coverage target is met — MAX_WORLD_SIZE is 4096
- * cells, where the formula asks for 24 systems and gets 14, i.e. about 10%
- * coverage instead of 18%. That is a self-hoster's deliberately huge world
+ * RESIDUAL, NAMED: on any world larger than the shipped default the ceiling
+ * binds before the coverage target is met — MAX_WORLD_SIZE is 4096 cells,
+ * where the formula asks for 48 systems and gets 14, i.e. about 5% coverage
+ * instead of 18% (figures corrected 2026-08-28; the earlier "24 and 10%"
+ * were wrong). That is a self-hoster's deliberately huge world
  * getting a slightly emptier sky, which is a far better failure than 24 storm
  * lights; the fix if anyone ever wants it is bigger systems on bigger worlds,
  * not more of them.
@@ -193,6 +196,26 @@ export const TARGET_SKY_COVERAGE_FRACTION = 0.18;
  *   the owner's report was 'I don't see any weather spawning', and he was right."
  */
 export const SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS = 20;
+
+/**
+ * How long a system actually lasts on the shipped world, in simulated seconds —
+ * MEASURED (2026-08-28 sweep), not SYSTEM_MEAN_LIFETIME_SECONDS: drift off the
+ * edge kills most systems long before old age does, so the effective figure is
+ * about half the nominal one.
+ *
+ * It exists for one arithmetic fact: a birth-death population with per-slot
+ * refill T and lifetime L sits at C × L/(L+T) of its cap C, not at C. Sizing
+ * the cap for the target coverage without that factor delivered 0.146 for a
+ * target of 0.18 (review 2026-08-28) — the same sky the 2026-08-14 world had,
+ * i.e. the retune reproduced the number it was meant to raise. The cap is
+ * therefore inflated by (L+T)/L so the EQUILIBRIUM meets the target.
+ */
+export const EFFECTIVE_SYSTEM_LIFETIME_SECONDS = 130;
+
+/** Fraction of the cap the sky holds at equilibrium — see EFFECTIVE_SYSTEM_LIFETIME_SECONDS. */
+export const EQUILIBRIUM_OCCUPANCY =
+  EFFECTIVE_SYSTEM_LIFETIME_SECONDS /
+  (EFFECTIVE_SYSTEM_LIFETIME_SECONDS + SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS);
 
 /**
  * Mean simulated seconds a system lives before it starts dissipating, again as a
@@ -549,7 +572,9 @@ export function meanSystemFootprintCells(worldSize: number): number {
 export function activeSystemCapFor(worldSize: number): number {
   const spawnFieldEdge = worldSize + 2 * meanRadiusFor(worldSize) * SYSTEM_SPAWN_MARGIN_RADII;
   const perSystemCoverage = meanSystemFootprintCells(worldSize) / (spawnFieldEdge * spawnFieldEdge);
-  const wanted = Math.round(TARGET_SKY_COVERAGE_FRACTION / perSystemCoverage);
+  const wanted = Math.round(
+    TARGET_SKY_COVERAGE_FRACTION / perSystemCoverage / EQUILIBRIUM_OCCUPANCY,
+  );
   return Math.max(MIN_ACTIVE_SYSTEMS, Math.min(MAX_ACTIVE_SYSTEMS, wanted));
 }
 
