@@ -23,19 +23,31 @@
 //
 //   * FRESH WATER (issue #214: "freshwater contact stops the front (steam)").
 //     Core publishes rivers and pools per cell as WorldApi.freshwater, so this
-//     is one lookup and no river math of this plugin's own.
+//     is one lookup and no river math of this plugin's own. The front reads a
+//     SNAPSHOT of that map taken when the eruption began, not the live getter —
+//     see FlowWorld below, and ./vents.ts's `beginEruption`.
 //   * THE SEA. Below sea level the flow is under water, which is the same
 //     steam by a different route.
 //   * NOWHERE LEFT TO GO. No unvisited neighbour lower than the front means the
 //     lava has found a basin and is pooling in it — the flow is done.
 //   * THE LENGTH CAP. See MAX_FLOW_CELLS.
 
-import { BAND_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { BAND_HEIGHT, SEA_LEVEL, cellsAcross, type FreshwaterMap } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import { FLOW_RADIUS_WORLD_UNITS, lavaKey } from '../protocol.ts';
 
-/** The slice of the world a flow reads. */
-export type FlowWorld = Pick<WorldApi, 'worldSize' | 'heightAt' | 'freshwater'>;
+/**
+ * The slice of the world a flow reads.
+ *
+ * FRESH WATER IS NOT IN IT, deliberately: `WorldApi.freshwater` is a getter
+ * that rebuilds the whole world's river network on demand, and a front asks the
+ * water question once per cell it enters while ALSO invalidating that network
+ * with every raise it makes. Reading it through the world therefore forced a
+ * full-world recompute at its throttle cap for the whole eruption. The map is
+ * passed in beside this instead — see ./vents.ts's `beginEruption`, which
+ * snapshots it once.
+ */
+export type FlowWorld = Pick<WorldApi, 'worldSize' | 'heightAt'>;
 
 /**
  * How fast a front travels, in CELLS per second.
@@ -146,6 +158,7 @@ const NEIGHBOUR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
  */
 export function nextFlowCell(
   world: FlowWorld,
+  freshwater: FreshwaterMap,
   x: number,
   y: number,
   visited: ReadonlySet<number>,
@@ -176,7 +189,7 @@ export function nextFlowCell(
   // The stop tests are on the cell the front is ABOUT to enter, not the one it
   // is in, so a flow reaching a river stops AT the bank rather than in the
   // water — which is where the steam is, and where the player can see it.
-  if (world.freshwater.at(bestX, bestY) !== 'none') return 'water';
+  if (freshwater.at(bestX, bestY) !== 'none') return 'water';
   if (bestHeight < SEA_LEVEL) return 'sea';
 
   return { x: bestX, y: bestY };
