@@ -138,6 +138,43 @@ const CONE_RING_OFFSETS: ReadonlyArray<readonly [number, number]> = [
 ];
 
 /**
+ * Cone sculpts taken off the pending queue each tick — see `raiseCone`.
+ *
+ * ONE, WORLD-WIDE, and the "world-wide" half is the point. A per-vent queue
+ * would still put one sculpt per erupting vent into the same tick, so the cost
+ * of a synchronised eruption would go on scaling with the vent count: at the
+ * MAX_VENTS_PER_WORLD ceiling that is eight full-radius smooth sculpts landing
+ * together, which is most of a tick budget again. One queue for the whole world
+ * makes the per-tick cost of cone building a CONSTANT — one sculpt, whatever
+ * the world is doing — which is the only version of this fix that cannot be
+ * defeated by adding vents.
+ *
+ * The cost of that constant is latency: a four-vent simultaneous eruption
+ * finishes its rings sixteen ticks (1.6 s) after it starts them. A cone is
+ * geology growing by one band; nobody can see 1.6 s of it.
+ */
+export const CONE_SCULPTS_PER_TICK = 1;
+
+/**
+ * Whether a cone's ring goes into the world with its centre, or into the
+ * pending queue.
+ *
+ * THE QUESTION IS "AM I ON THE TICK LOOP", NOT "HOW BIG IS THE CONE", and the
+ * two answers are not interchangeable:
+ *
+ *   'immediate' — genesis siting, which runs inside `onWorldCreate`, before the
+ *                 world has a tick or a player. There is no budget to overrun
+ *                 there, and deferring measurably makes things WORSE: a genesis
+ *                 cone is GENESIS_CONE_BANDS tall, so its ring steps are the
+ *                 expensive kind (4–190 ms apiece on a 2048² world, measured),
+ *                 and queueing eight vents' worth of them just moves 300 ms of
+ *                 unbudgeted work onto the first thirty seconds of ticks.
+ *   'deferred'  — every route that runs inside a tick: an eruption's cone
+ *                 growth, a spontaneous birth, a dug vent.
+ */
+export type ConeRingTiming = 'immediate' | 'deferred';
+
+/**
  * Terrace bands each eruption adds to the cone.
  *
  * ONE. It is the smallest unit the terrain can express, and the point is that a
@@ -230,6 +267,26 @@ const lava = new Map<number, LavaCell>();
 /** Live fronts by vent id. Never persisted; see the header. */
 const fronts = new Map<number, Front>();
 
+/** One ring step of a cone that has not been applied to the world yet. */
+interface PendingConeSculpt {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly amount: number;
+}
+
+/**
+ * Cone ring steps still owed to the world, oldest first — see `raiseCone`.
+ *
+ * PERSISTED, unlike a front. A front is live state that a restart is entitled
+ * to throw away (this file's header says why), but a queued ring step is a
+ * terrain edit whose CENTRE has already been written and persisted by core: a
+ * restart that dropped the queue would leave that cone lopsided forever, and
+ * nothing would ever notice. Persisting four small records per erupting vent is
+ * the cheap end of that trade.
+ */
+let pendingConeSculpts: PendingConeSculpt[] = [];
+
 /** Test seam, and the world-close reset: drops everything. */
 export function resetVolcanoes(): void {
   vents = [];
@@ -238,6 +295,7 @@ export function resetVolcanoes(): void {
   seeded = false;
   lava.clear();
   fronts.clear();
+  pendingConeSculpts = [];
 }
 
 export function ventStates(): VentState[] {
@@ -289,8 +347,45 @@ export function anyErupting(): boolean {
  * applyBrush throws on an out-of-bounds centre, and sliding it back would
  * silently make a cone near the border lopsided in a way that reads as a bug
  * rather than as an edge.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CENTRE IS SCULPTED NOW; THE RING IS QUEUED WHEN `ringTiming` DEFERS IT.
+ *
+ * All five went in on one tick, and a full-radius smooth sculpt is not cheap:
+ * measured at ~0.6 ms each on a 2048² world, so one cone was ~3 ms of a 7.14 ms
+ * tick and four vents erupting on the same tick was ~20 ms — three budgets, in
+ * the one tick a player is most likely to be looking at the world.
+ *
+ * So on every route that runs inside a tick the centre — the sculpt that makes
+ * the mountain visibly move at the moment the eruption is announced — is
+ * applied here, and the four ring steps are queued and drained at
+ * CONE_SCULPTS_PER_TICK by `drainPendingConeSculpts`. Genesis siting is the one
+ * caller that still lays all five at once, because it is not on the tick loop
+ * at all; ConeRingTiming has the measurement that decided it.
+ * Order is FIFO over a fixed offset list, so the terrain a run produces is
+ * still a pure function of its inputs.
+ *
+ * WHAT SPREADING IT CHANGES, since relaxation is not commutative with itself:
+ * the ring steps now relax against ground that the eruption's first flow cells
+ * may already have raised, so the finished cone is not bit-identical to the one
+ * the single-tick version built. It is the same cone to the eye and it is
+ * deterministic; it is simply a different fixed point. The eruption's other
+ * timing is UNCHANGED — the front still starts on the eruption tick, beside the
+ * centre sculpt, because the front descends from the mouth and the mouth is the
+ * part that is already built.
+ *
+ * The queue is bounded by construction: `raiseCone` is called at most once per
+ * vent per eruption or birth, it adds at most CONE_RING_OFFSETS.length steps,
+ * and the drain runs every tick — so the standing queue cannot exceed
+ * MAX_VENTS_PER_WORLD ring-fulls even if every vent in the world erupts at once.
  */
-function raiseCone(world: WorldApi, x: number, y: number, bands: number): void {
+function raiseCone(
+  world: WorldApi,
+  x: number,
+  y: number,
+  bands: number,
+  ringTiming: ConeRingTiming,
+): void {
   const size = world.worldSize;
   world.sculpt(x, y, MAX_BRUSH_RADIUS, bands * BAND_HEIGHT);
 
@@ -299,7 +394,29 @@ function raiseCone(world: WorldApi, x: number, y: number, bands: number): void {
     const cx = x + dx;
     const cy = y + dy;
     if (cx < 0 || cy < 0 || cx >= size || cy >= size) continue;
-    world.sculpt(cx, cy, MAX_BRUSH_RADIUS, rim);
+    if (ringTiming === 'immediate') {
+      world.sculpt(cx, cy, MAX_BRUSH_RADIUS, rim);
+      continue;
+    }
+    pendingConeSculpts.push({ x: cx, y: cy, radius: MAX_BRUSH_RADIUS, amount: rim });
+  }
+}
+
+/**
+ * Applies up to CONE_SCULPTS_PER_TICK of the queued ring steps.
+ *
+ * CALLED ON EVERY TICK, INCLUDING UNDER `none`. The queue is a debt: the centre
+ * of that cone is already in the terrain, so a world that stops draining is a
+ * world left with a permanently lopsided mountain — the exact defect
+ * `raiseCone`'s out-of-bounds note refuses to introduce. An operator turning
+ * the setting down makes the plugin inert about FUTURE volcanoes; it does not
+ * abandon an edit that is half-applied.
+ */
+export function drainPendingConeSculpts(world: WorldApi): void {
+  for (let applied = 0; applied < CONE_SCULPTS_PER_TICK; applied++) {
+    const step = pendingConeSculpts.shift();
+    if (step === undefined) return;
+    world.sculpt(step.x, step.y, step.radius, step.amount);
   }
 }
 
@@ -314,7 +431,13 @@ function raiseCone(world: WorldApi, x: number, y: number, bands: number): void {
  * in exactly one place and a new route cannot forget one of them. (fire's
  * `igniteAt` is the same shape for the same reason.)
  */
-export function openVent(world: WorldApi, x: number, y: number, coneBands: number): Vent | null {
+export function openVent(
+  world: WorldApi,
+  x: number,
+  y: number,
+  coneBands: number,
+  ringTiming: ConeRingTiming,
+): Vent | null {
   if (vents.length >= MAX_VENTS_PER_WORLD) return null;
   if (!isSiteClear({ x, y }, ventSites())) return null;
 
@@ -332,7 +455,7 @@ export function openVent(world: WorldApi, x: number, y: number, coneBands: numbe
   vents.push(vent);
 
   if (coneBands > 0) {
-    raiseCone(world, x, y, coneBands);
+    raiseCone(world, x, y, coneBands, ringTiming);
     vent.coneBands = coneBands;
   }
   return vent;
@@ -358,7 +481,8 @@ export function seedGenesisVents(world: WorldApi): readonly Vent[] {
     // Stopping rather than retrying: the next attempt reads the same terrain
     // and would fail the same way, having consumed VENT_SITE_ATTEMPTS again.
     if (site === null) break;
-    const vent = openVent(world, site.x, site.y, GENESIS_CONE_BANDS);
+    // 'immediate': genesis is off the tick loop entirely — see ConeRingTiming.
+    const vent = openVent(world, site.x, site.y, GENESIS_CONE_BANDS, 'immediate');
     if (vent !== null) created.push(vent);
   }
   return created;
@@ -383,7 +507,9 @@ export function rollSpontaneousBirth(world: WorldApi, dt: number): Vent | null {
 
   const site = chooseVentSite(world, rng, ventSites());
   if (site === null) return null;
-  return openVent(world, site.x, site.y, GENESIS_CONE_BANDS);
+  // 'deferred': this runs inside a tick, and a genesis-sized cone is five
+  // full-radius sculpts — far more than one tick's budget.
+  return openVent(world, site.x, site.y, GENESIS_CONE_BANDS, 'deferred');
 }
 
 // ── The tick ────────────────────────────────────────────────────────────────
@@ -422,7 +548,7 @@ function beginEruption(vent: Vent, world: WorldApi): void {
   // a single band and a band split across six hundred ticks is six hundred
   // sculpts, each running a full gradient relaxation, to produce the same
   // terrain one sculpt produces.
-  raiseCone(world, vent.x, vent.y, CONE_GROWTH_BANDS_PER_ERUPTION);
+  raiseCone(world, vent.x, vent.y, CONE_GROWTH_BANDS_PER_ERUPTION, 'deferred');
   vent.coneBands += CONE_GROWTH_BANDS_PER_ERUPTION;
 
   fronts.set(vent.id, {
@@ -602,6 +728,8 @@ export interface VolcanoSnapshot {
   readonly rngState: number;
   readonly vents: readonly Vent[];
   readonly lava: ReadonlyArray<{ x: number; y: number; ageSeconds: number }>;
+  /** Cone ring steps not yet applied — see `pendingConeSculpts`. */
+  readonly pendingConeSculpts: readonly PendingConeSculpt[];
 }
 
 export function volcanoSnapshot(): VolcanoSnapshot {
@@ -623,6 +751,7 @@ export function volcanoSnapshot(): VolcanoSnapshot {
       y: cell.y,
       ageSeconds: cell.ageSeconds,
     })),
+    pendingConeSculpts: pendingConeSculpts.map((step) => ({ ...step })),
   };
 }
 
@@ -644,4 +773,5 @@ export function restoreVolcanoes(snapshot: VolcanoSnapshot): void {
   for (const cell of snapshot.lava) {
     lava.set(lavaKey(cell.x, cell.y), { x: cell.x, y: cell.y, ageSeconds: cell.ageSeconds });
   }
+  pendingConeSculpts = snapshot.pendingConeSculpts.map((step) => ({ ...step }));
 }
