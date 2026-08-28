@@ -75,6 +75,19 @@
 //
 // The 2 cells/s ceiling and this cadence are two ends of one decision: if the
 // wind is ever allowed to blow harder, this interval is what has to move.
+//
+// RESTATED 2026-08-28. The arithmetic above is unchanged and so is every
+// conclusion; only the multiplier moved. The population is derived from the
+// world's size now (systems.ts, TARGET_SKY_COVERAGE_FRACTION), and the ceiling
+// it is capped at is MAX_ACTIVE_SYSTEMS = 14 rather than 3:
+//
+//   14 systems × 97 B + 20 B   = 1 378 B per message
+//   every 10th tick (1 Hz)     = 1.4 KB/s ≈ 11 kbit/s per client
+//   × ~10 players              ≈ 110 kbit/s of server upstream
+//
+// Still under 3% of the wildlife plugin's ~390 kbit/s, and still not what picks
+// the cadence — the motion argument below is, and it is untouched by how many
+// systems there are.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // PERSISTENCE: NONE, DELIBERATELY — and there is no `persistence` slice at all,
@@ -88,6 +101,7 @@
 // difference no player can observe. A restarted server has a clear sky for a
 // minute or two; that is what a clear sky looks like the rest of the time too.
 
+import { logInfo } from '../../../server/src/log.ts';
 import type {
   TerracePlugin,
   WorldApi,
@@ -101,10 +115,12 @@ import {
   WEATHER_SYSTEMS_MESSAGE,
   packStrikes,
 } from '../protocol.ts';
+import { WEATHER_DEV_FORCE_ENV, readForcedWeatherKind } from './dev.ts';
 import { rollStrikes } from './lightning.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
   advanceWeather,
+  forceWeather,
   resetWeather,
   systemStates,
   type WeatherWorld,
@@ -173,6 +189,15 @@ export const plugin: TerracePlugin = {
     // drawing the boot wind here rather than at module load means a host that
     // creates two worlds in one process does not have them share a wind.
     resetWeather();
+
+    // THE DEV OVERRIDE, read here and nowhere else (./dev.ts). Applied AFTER
+    // the reset, because the reset is what clears the sky the override then
+    // parks its one system in.
+    const forced = readForcedWeatherKind(process.env);
+    forceWeather(forced);
+    if (forced !== null) {
+      logInfo(`[weather] ${WEATHER_DEV_FORCE_ENV}=${forced} — one ${forced} system parked over the world centre`);
+    }
   },
 
   onTick(world: WorldApi, dt: number): void {

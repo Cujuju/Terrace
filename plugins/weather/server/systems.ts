@@ -73,34 +73,126 @@ export interface WeatherWorld {
 // ── How many, how big, how long ──────────────────────────────────────────────
 
 /**
- * Weather systems alive at once. THREE, and it is an aesthetic number before it
- * is a bandwidth one — see the budget in ./index.ts, where three systems come to
- * 2.4 kbit/s, i.e. 0.6% of what the wildlife plugin already spends.
+ * SUPERSEDED 2026-08-28 — kept because the reasoning below is still the reason
+ * the ceiling exists, and only the NUMBER was wrong:
  *
- * One system would make weather a single event a player either is in or is not.
- * Three is the smallest number that can put a rain front over one coast, fog in
- * a valley and clear sky in between — a SKY rather than an effect — while still
- * leaving most of a 512² world clear at any moment, which is what keeps clear
- * weather the default the owner's "sun" asks for.
+ *   "Weather systems alive at once. THREE, and it is an aesthetic number before
+ *   it is a bandwidth one — see the budget in ./index.ts, where three systems
+ *   come to 2.4 kbit/s, i.e. 0.6% of what the wildlife plugin already spends.
+ *   One system would make weather a single event a player either is in or is
+ *   not. Three is the smallest number that can put a rain front over one coast,
+ *   fog in a valley and clear sky in between — a SKY rather than an effect —
+ *   while still leaving most of a 512² world clear at any moment, which is what
+ *   keeps clear weather the default the owner's 'sun' asks for."
+ *
+ * WHAT WAS WRONG WITH IT. Three is a POPULATION, and a population says nothing
+ * about whether a player sees weather; what a player experiences is COVERAGE —
+ * the chance that the patch of world they are looking at is under a system —
+ * and coverage is population × system area ÷ world area. Every number in the
+ * paragraph above was chosen against the 128-world-unit world of 2026-08-14.
+ * The shipped default is 512 world units, SIXTEEN TIMES the area, so the same
+ * three discs cover a sixteenth as much of it. Measured on the sim (three
+ * simulated hours, .weather-verify/sim-sweep.mjs):
+ *
+ *   128-unit world:  1.67 systems alive, a fixed point under weather 14.5% of
+ *                    the time — the picture the paragraph above describes.
+ *   512-unit world:  2.04 systems alive, a fixed point under weather  2.8% of
+ *                    the time — about 100 seconds an hour, in bursts.
+ *
+ * 2.8% is why the owner reported seeing no weather at all (2026-08-28), and it
+ * is why the 2026-08-14 retune of the spawn interval did not fix his first
+ * report either: that retune moved the population, and the population was never
+ * the thing that was too small.
+ *
+ * So the tuned quantity is coverage now (TARGET_SKY_COVERAGE_FRACTION) and the
+ * population is derived from it (activeSystemCapFor). This constant keeps its
+ * name and becomes what it always really was: the HARD CEILING the wire, the
+ * draw calls and the storm lights are budgeted against.
+ *
+ * FOURTEEN. It is the first number that does not bind on the shipped world
+ * (the coverage formula asks for 10 there), and every cost it caps is bounded
+ * and small at 14: 14 × 97 B at 1 Hz is 11 kbit/s per client, still under 3% of
+ * what the wildlife plugin spends; at most 14 particle columns and 4 fog sheets
+ * each is ~70 draw calls; and lightning's photosensitivity floor is enforced by
+ * ONE governor for the whole client (client/sky.ts), so more storms cannot make
+ * the screen flash faster.
+ *
+ * RESIDUAL, NAMED: on a world larger than about twice the shipped default the
+ * ceiling binds before the coverage target is met — MAX_WORLD_SIZE is 4096
+ * cells, where the formula asks for 24 systems and gets 14, i.e. about 10%
+ * coverage instead of 18%. That is a self-hoster's deliberately huge world
+ * getting a slightly emptier sky, which is a far better failure than 24 storm
+ * lights; the fix if anyone ever wants it is bigger systems on bigger worlds,
+ * not more of them.
+ *
+ * RESIDUAL, NAMED: a storm rig carries a PointLight, and adding or removing a
+ * light recompiles every material's shader (see client/rig.ts). More systems
+ * means more turnover, so that recompile lands more often — roughly once a
+ * minute on the shipped world instead of once every three. It is a hitch, not a
+ * leak, and moving the storm light out of the rig is a separate change.
  */
-export const MAX_ACTIVE_SYSTEMS = 3;
+export const MAX_ACTIVE_SYSTEMS = 14;
 
 /**
- * Mean simulated seconds between system arrivals, as a constant hazard of 1/T
- * per second (see rollEvent), so arrivals are memoryless rather than metronomic.
+ * The fewest systems the derived cap may fall to, whatever the arithmetic says.
  *
- * 40 s (measured retune, 2026-08-14 — first shipped as 90). The 90-second
- * figure's ~2.1 equilibrium assumed systems die of old age (240 s), but on a
- * small world DRIFT is the dominant killer: a system crosses 128 cells in
- * 64–210 s and is removed at the far edge, so the effective lifetime is far
- * shorter and the sky measured EMPTY 60% of the time on the live 128² world —
- * the owner's report was "I don't see any weather spawning", and he was right.
- * At 40 s the same birth-death arithmetic against the drift-shortened lifetime
- * keeps at least one system alive most of the time on a small world and runs
- * 2–3 on a 512² one, where crossings are long enough for old age to matter
- * again.
+ * ONE, not zero: on a world small enough that a single system already covers
+ * more than the target, the honest answer is "one system, and it covers a lot",
+ * not "no weather". Zero would be a world where this plugin silently does
+ * nothing.
  */
-export const SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS = 40;
+export const MIN_ACTIVE_SYSTEMS = 1;
+
+/**
+ * THE NUMBER THIS PLUGIN IS TUNED ON: the fraction of the map expected to be
+ * under some system once the sky has reached equilibrium.
+ *
+ * 0.18 — stated as a fraction, so it means the same thing on a 128-unit world
+ * and on a 4096-cell one, which is exactly what the population constant it
+ * replaces could not do.
+ *
+ * WHY 0.18 AND NOT MORE. Clear sky is still the default the owner's "sun" asks
+ * for: at 0.18 a player watching one place sees weather roughly a fifth of the
+ * time — several fronts an hour, each one arriving, crossing and leaving — and
+ * four fifths of the time they see the sun. Above about a third the sky stops
+ * reading as weather and starts reading as a climate the player is stuck in.
+ *
+ * WHY NOT LESS. 0.145 is what the 128-unit world measured in 2026-08-14, i.e.
+ * the picture the owner signed off on then; 0.18 is deliberately a little above
+ * it, because the same measurement showed the CAP binding for part of the time,
+ * so the realised figure runs below the target (see the sweep in the commit).
+ */
+export const TARGET_SKY_COVERAGE_FRACTION = 0.18;
+
+/**
+ * Mean simulated seconds ONE EMPTY SLOT waits before it is filled — the arrival
+ * hazard is this rate times the number of free slots, so a sky that has just
+ * emptied refills proportionally faster than one that is nearly full.
+ *
+ * PER SLOT, changed 2026-08-28 from a single world-wide arrival hazard. A world
+ * rate cannot scale: with the cap now derived from the world's size, one fixed
+ * arrival rate would fill a small world's 1 slot as fast as a large world's 10,
+ * so the large world would sit far below its cap forever and the coverage
+ * target would be a number that was never reached. Per-slot makes the refill a
+ * property of how empty the sky is, which is the only formulation that holds at
+ * every world size with ONE constant.
+ *
+ * TWENTY SECONDS. It sets how closely the population tracks its cap, and that
+ * is the whole of what it does: with a drift-shortened effective lifetime of
+ * L ≈ 130 s (measured), the birth-death equilibrium is C × L/(L+T), so T = 20
+ * holds the sky at ~87% of the cap. The old 40 s would hold it at 76% and leave
+ * the coverage target visibly unmet; going much below 20 buys the last few
+ * percent for a sky that visibly pops rather than gathers.
+ *
+ * SUPERSEDED, kept because it records why the previous number was chosen:
+ *   "40 s (measured retune, 2026-08-14 — first shipped as 90). The 90-second
+ *   figure's ~2.1 equilibrium assumed systems die of old age (240 s), but on a
+ *   small world DRIFT is the dominant killer: a system crosses 128 cells in
+ *   64–210 s and is removed at the far edge, so the effective lifetime is far
+ *   shorter and the sky measured EMPTY 60% of the time on the live 128² world —
+ *   the owner's report was 'I don't see any weather spawning', and he was right."
+ */
+export const SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS = 20;
 
 /**
  * Mean simulated seconds a system lives before it starts dissipating, again as a
@@ -415,6 +507,52 @@ export function maxRadiusFor(worldSize: number): number {
   return Math.max(SYSTEM_MIN_RADIUS_CELLS, Math.min(SYSTEM_MAX_RADIUS_CELLS, fromWorld));
 }
 
+/** The middle of the radius band this world allows, in cells. */
+/**
+ * Mean footprint of one system on this world, in cells², i.e. π·E[r²] over the
+ * radius band the world allows.
+ *
+ * E[r²] AND NOT E[r]², because coverage is an area and the radius is a random
+ * variable: using the mean radius would understate the mean area by the band's
+ * variance, which on the shipped world is a 5% error in the direction that
+ * makes weather rarer — the exact direction this whole change is correcting.
+ * For r uniform on [a, b], E[r²] = (a² + ab + b²)/3.
+ */
+export function meanRadiusFor(worldSize: number): number {
+  return (SYSTEM_MIN_RADIUS_CELLS + maxRadiusFor(worldSize)) / 2;
+}
+
+export function meanSystemFootprintCells(worldSize: number): number {
+  const a = SYSTEM_MIN_RADIUS_CELLS;
+  const b = maxRadiusFor(worldSize);
+  return (Math.PI * (a * a + a * b + b * b)) / 3;
+}
+
+/**
+ * HOW MANY SYSTEMS THIS WORLD GETS. Derived from TARGET_SKY_COVERAGE_FRACTION,
+ * clamped to [MIN_ACTIVE_SYSTEMS, MAX_ACTIVE_SYSTEMS].
+ *
+ * Centres are drawn uniformly over the world square GROWN BY THE SPAWN MARGIN
+ * (randomCentre), so the density of centres is the population divided by that
+ * larger area, not by the world's — a system whose centre sits in the margin
+ * covers only part of the world, and dividing by the world square would count
+ * it as if it covered all of it. Using the spawn field is what keeps the
+ * estimate honest on a small world, where the margin is a large share of it.
+ *
+ * The result is a first-order estimate (coverage = density × footprint) rather
+ * than the exact 1 − e^(−density·footprint): they differ by under a tenth of
+ * the target at these densities, and the target is an aesthetic number that was
+ * measured, not derived, so spending precision here would be false rigour.
+ * What the sweep measures is the truth; this formula is what makes the sweep's
+ * answer the same shape on every world size.
+ */
+export function activeSystemCapFor(worldSize: number): number {
+  const spawnFieldEdge = worldSize + 2 * meanRadiusFor(worldSize) * SYSTEM_SPAWN_MARGIN_RADII;
+  const perSystemCoverage = meanSystemFootprintCells(worldSize) / (spawnFieldEdge * spawnFieldEdge);
+  const wanted = Math.round(TARGET_SKY_COVERAGE_FRACTION / perSystemCoverage);
+  return Math.max(MIN_ACTIVE_SYSTEMS, Math.min(MAX_ACTIVE_SYSTEMS, wanted));
+}
+
 /** Cell-space velocity of the shared wind. */
 export function windVelocity(): { vx: number; vy: number } {
   return {
@@ -603,7 +741,64 @@ export function precipitationAt(x: number, y: number): number {
   return Math.min(1, wettest);
 }
 
+/**
+ * THE DEV OVERRIDE, or null in every ordinary run. Set from the environment
+ * once at world creation (./dev.ts) and never from the wire, a player or a
+ * setting — a world nobody asked to be strange must not be able to become
+ * strange.
+ */
+let forcedKind: WeatherKind | null = null;
+
+/**
+ * Parks ONE system of `kind` over the middle of the world and holds it there,
+ * or clears the override when passed null. See ./dev.ts for why this exists:
+ * weather that appears a few times an hour somewhere on a 512-unit world cannot
+ * be photographed, and "I could not catch it" is not a verification.
+ */
+export function forceWeather(kind: WeatherKind | null): void {
+  forcedKind = kind;
+  systems.length = 0;
+}
+
+/**
+ * One tick under the dev override: the wind still veers (so rain still leans
+ * and the client still gets a direction) and lightning still rolls, but the
+ * system neither drifts, ages nor dies, and no second system ever arrives.
+ */
+function advanceForcedWeather(world: WeatherWorld, dt: number): void {
+  advanceWind(dt);
+
+  const centre = world.worldSize / 2;
+  if (systems.length === 0) {
+    systems.push({
+      id: nextSystemId++,
+      kind: forcedKind!,
+      x: centre,
+      y: centre,
+      // The middle of the band this world allows, so the photograph shows an
+      // ordinary system rather than the largest or smallest one.
+      radius: meanRadiusFor(world.worldSize),
+      peakIntensity: SYSTEM_MAX_PEAK_INTENSITY,
+      envelope: 0,
+      retiring: false,
+    });
+  }
+
+  // It still GATHERS over SYSTEM_FADE_SECONDS rather than snapping to full: a
+  // screenshot of weather that arrived by teleport is not a screenshot of this
+  // plugin's weather.
+  const system = systems[0]!;
+  system.x = centre;
+  system.y = centre;
+  system.envelope = Math.min(1, system.envelope + dt / SYSTEM_FADE_SECONDS);
+}
+
 export function advanceWeather(world: WeatherWorld, dt: number): void {
+  if (forcedKind !== null) {
+    advanceForcedWeather(world, dt);
+    return;
+  }
+
   advanceWind(dt);
   const { vx, vy } = windVelocity();
   const envelopeStep = dt / SYSTEM_FADE_SECONDS;
@@ -631,8 +826,14 @@ export function advanceWeather(world: WeatherWorld, dt: number): void {
     }
   }
 
-  if (systems.length >= MAX_ACTIVE_SYSTEMS) return;
-  if (!rollEvent(1 / SYSTEM_MEAN_SPAWN_INTERVAL_SECONDS, dt)) return;
+  // ARRIVALS. One hazard per FREE SLOT, summed — see
+  // SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS. Summing the rates rather than
+  // rolling per slot keeps this one call into rollEvent (and therefore one draw
+  // from the seeded stream per tick, whatever the cap is), which is what makes a
+  // seeded run reproducible across a change of world size.
+  const freeSlots = activeSystemCapFor(world.worldSize) - systems.length;
+  if (freeSlots <= 0) return;
+  if (!rollEvent(freeSlots / SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS, dt)) return;
   spawnSystem(world);
 }
 
