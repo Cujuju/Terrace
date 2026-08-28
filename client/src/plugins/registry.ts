@@ -18,6 +18,7 @@ import { clientPlugin as pilgrims } from '../../../plugins/pilgrims/client/index
 import { clientPlugin as relics } from '../../../plugins/relics/client/index.ts';
 import { clientPlugin as structures } from '../../../plugins/structures/client/index.ts';
 import { clientPlugin as temples } from '../../../plugins/temples/client/index.ts';
+import { clientPlugin as volcanoes } from '../../../plugins/volcanoes/client/index.ts';
 import { clientPlugin as weather } from '../../../plugins/weather/client/index.ts';
 import { clientPlugin as wildlife } from '../../../plugins/wildlife/client/index.ts';
 import type { TerraceClientPlugin } from './types.ts';
@@ -36,5 +37,6 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   pilgrims,
   daynight,
   weather,
+  volcanoes,
   chronicle,
 ];

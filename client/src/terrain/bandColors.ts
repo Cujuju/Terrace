@@ -22,7 +22,7 @@ import {
   bandOf,
   isWater,
 } from '@terrace/shared';
-import { ORDINARY_SEA_FLOOR_HEIGHT } from '../config.ts';
+import { ORDINARY_SEA_FLOOR_HEIGHT, ORDINARY_SEA_SHELF_HEIGHT } from '../config.ts';
 
 /** Colour components in the 0..1 range. Interpreted as sRGB. */
 export type Rgb = readonly [r: number, g: number, b: number];
@@ -189,6 +189,31 @@ function sampleAnchors(anchors: readonly ColorAnchor[], height: number): Rgb {
  * seabed history above describes, now anchored to the depths they were
  * authored for rather than to band indices.
  *
+ * THREE SPANS SINCE 2026-08-27, and the third one is the fix the owner asked
+ * for twice ("There has to be a very clear visual distinction between the
+ * bands"). The two-span version below moved the ocean's colours off depths the
+ * sea never has and onto the depths it does — necessary, and not sufficient,
+ * because it spread them EVENLY across bands 0-15 while the water itself is not
+ * spread evenly at all. config.ts's measured histogram: p25 is band 10, p95 is
+ * band 15, and 83% of every water cell in the world sits between them. So the
+ * even spread still handed six of the nine ocean colours to bands 0-9 — a
+ * quarter of the water — and left bands 10-15 sharing the last three, which is
+ * why adjacent ordinary-ocean stops still came out a couple of parts in 255
+ * apart and the change read as no change at all on screen.
+ *
+ * The ramp is now spread by WATER DENSITY rather than by depth, which is the
+ * same histogram-equalisation move terrain/waterDepth.ts's shade ramp already
+ * made and argues for in those words ("output range is spent where the input
+ * density is"). The split lands on the palette's OWN story, not on an arbitrary
+ * colour index: the first three colours are named for shallow FEATURES (the
+ * waterline flats, the genesis shelf, the genesis ring) and get the sparse
+ * shallow quarter, bands 0 to ORDINARY_SEA_SHELF_HEIGHT; the remaining seven
+ * are named for DEPTH ("deep water begins" onward) and get the dense ordinary
+ * floor, ORDINARY_SEA_SHELF_HEIGHT to ORDINARY_SEA_FLOOR_HEIGHT. Predicted
+ * through the shipped shader math, the worst adjacent-band step over the
+ * ordinary floor goes from 5 to 11 parts in 255 of on-screen luma, and the
+ * abyssal span past the floor is untouched.
+ *
  * TWO SPANS, NOT ONE (2026-08-26). Spread evenly down the whole
  * SEA_COLUMN_DEPTH, the ninth colour — authored as "about as deep as a genesis
  * ocean reaches" — landed at 512 units, and the ocean the world actually has
@@ -209,10 +234,17 @@ function sampleAnchors(anchors: readonly ColorAnchor[], height: number): Rgb {
  * sampled between two strictly-darkening anchors is strictly darker than the
  * stop above it.
  */
+/**
+ * Index of the colour where the shallow FEATURES end and DEPTH takes over —
+ * the join between the ramp's two ocean spans, and the one stop that belongs to
+ * both. Named rather than written as a slice bound in two places: the split is
+ * a statement about what these colours mean, so it is spelled once beside them.
+ */
+const OCEAN_SHELF_COLOR_INDEX = 2;
 const OCEAN_COLORS: readonly Rgb[] = [
   rgb(0x6a7f68), // the waterline flats (h = 0)
   rgb(0x50705d), // the genesis shelf
-  rgb(0x3a5b52), // the genesis ring
+  rgb(0x3a5b52), // the genesis ring — and ORDINARY_SEA_SHELF_HEIGHT, the p25
   rgb(0x274347), // deep water begins — monster country
   rgb(0x1f3a44),
   rgb(0x183243),
@@ -232,7 +264,20 @@ const ABYSS_COLORS: readonly Rgb[] = [
   rgb(0x030813), // the very dark blue: the sea column's floor
 ];
 const BLUE_COLUMN_ANCHORS: readonly ColorAnchor[] = [
-  ...evenlySpaced(SEA_LEVEL, ORDINARY_SEA_FLOOR_HEIGHT, OCEAN_COLORS),
+  // The sparse shallow quarter: three colours, one per named shallow feature.
+  ...evenlySpaced(
+    SEA_LEVEL,
+    ORDINARY_SEA_SHELF_HEIGHT,
+    OCEAN_COLORS.slice(0, OCEAN_SHELF_COLOR_INDEX + 1),
+  ),
+  // The dense ordinary floor: the seven depth colours. Its first anchor is the
+  // shallow span's last, at the same height, so the ramp has no seam — the same
+  // shared-join trick the abyss uses just below.
+  ...evenlySpaced(
+    ORDINARY_SEA_SHELF_HEIGHT,
+    ORDINARY_SEA_FLOOR_HEIGHT,
+    OCEAN_COLORS.slice(OCEAN_SHELF_COLOR_INDEX),
+  ).slice(1),
   // Drop the abyss's first anchor: it is the ocean's last, at the same height.
   ...evenlySpaced(ORDINARY_SEA_FLOOR_HEIGHT, -SEA_COLUMN_DEPTH, ABYSS_COLORS).slice(1),
 ];

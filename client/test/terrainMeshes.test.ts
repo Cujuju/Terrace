@@ -25,7 +25,7 @@ import {
   createTerrainMirror,
 } from '../src/terrain/mirror.ts';
 import {
-  CHUNK_BUILD_FRAME_BUDGET_MS,
+  CHUNK_SPLICE_FRAME_BUDGET_MS,
   createTerrainMeshes,
 } from '../src/render/terrainMeshes.ts';
 import {
@@ -533,7 +533,7 @@ describe('multi-frame chunk meshing', () => {
     // Every build costs the whole budget, so each frame gets exactly one.
     const { meshes, clock } = scheduledSetup(
       FOUR_CHUNKS,
-      CHUNK_BUILD_FRAME_BUDGET_MS,
+      CHUNK_SPLICE_FRAME_BUDGET_MS,
     );
     for (let built = 1; built <= 4; built++) {
       clock.frame();
@@ -549,7 +549,7 @@ describe('multi-frame chunk meshing', () => {
     // FORWARD PROGRESS. A chunk costing many times the budget must still be
     // built, or the queue stalls on it forever and the terrain freezes behind
     // it. Ten times the budget per build, and a frame still makes progress.
-    const { group, clock } = scheduledSetup(FOUR_CHUNKS, CHUNK_BUILD_FRAME_BUDGET_MS * 10);
+    const { group, clock } = scheduledSetup(FOUR_CHUNKS, CHUNK_SPLICE_FRAME_BUDGET_MS * 10);
     clock.frame();
     expect(group.children).toHaveLength(1);
   });
@@ -560,7 +560,7 @@ describe('multi-frame chunk meshing', () => {
     // a flicker and the tradeoff would not be worth making.
     const { meshes, mirror, group, clock } = scheduledSetup(
       [chunkPayload(0, 0, 0)],
-      CHUNK_BUILD_FRAME_BUDGET_MS,
+      CHUNK_SPLICE_FRAME_BUDGET_MS,
     );
     clock.frame();
     const mesh = meshes.pickables()[0];
@@ -622,7 +622,7 @@ describe('multi-frame chunk meshing', () => {
   });
 
   it('flush builds everything regardless of budget', () => {
-    const { meshes } = scheduledSetup(FOUR_CHUNKS, CHUNK_BUILD_FRAME_BUDGET_MS * 10);
+    const { meshes } = scheduledSetup(FOUR_CHUNKS, CHUNK_SPLICE_FRAME_BUDGET_MS * 10);
     meshes.flush();
     expect(meshes.builtChunkCount()).toBe(4);
     expect(meshes.pendingCount()).toBe(0);

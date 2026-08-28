@@ -54,6 +54,13 @@
 import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
 import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
 import { planChunkCaps, type ChunkDrawnCaps, type ChunkPalettes } from './capEmission.ts';
+import {
+  emitLipSegments,
+  flattenCapPlan,
+  rehydrateLevelPolygons,
+  type ChunkLipSegments,
+  type FlatCapPlan,
+} from './capPlanFlat.ts';
 import { type ContourLoop } from './contours.ts';
 import { type TerrainMirror } from './mirror.ts';
 import { type CapPolygon } from './triangulation.ts';
@@ -106,22 +113,46 @@ export interface ChunkChart {
   /** Cell coordinate of the chunk's first lattice column/row. */
   readonly originX: number;
   readonly originZ: number;
-  /** Exactly what `writeChunkVertexData` published for this chunk. */
-  readonly caps: ChunkDrawnCaps;
   /**
-   * Index into `caps.levels` of the TOPMOST level covering each grid sample, or
-   * `BAND_GRID_UNCOVERED`. Row-major, `BAND_GRID_EDGE` samples per row. Empty
-   * for a blocky chunk, which drew no levels at all.
+   * Exactly what `writeChunkVertexData` published for this chunk, FLAT — see
+   * terrain/capPlanFlat.ts for why it is typed arrays rather than the level /
+   * polygon / loop / point tree it used to be.
+   */
+  readonly plan: FlatCapPlan;
+  /**
+   * Index into the plan's levels of the TOPMOST level covering each grid
+   * sample, or `BAND_GRID_UNCOVERED`. Row-major, `BAND_GRID_EDGE` samples per
+   * row. Empty for a blocky chunk, which drew no levels at all.
    */
   readonly topLevel: Int8Array;
+  /** The terrace lips this chunk drew — render/layerEdgeOverlay.ts draws these. */
+  readonly lips: ChunkLipSegments;
+  /**
+   * Per level, the rehydrated polygons once something has asked for them.
+   * Sparse and lazy on purpose: see `polygonsOfLevel`.
+   */
+  readonly polygonCache: (readonly CapPolygon[] | undefined)[];
 }
 
 export interface DrawnGroundStore {
   /**
-   * Records what a chunk drew. Called by the emitter as part of drawing it, so
-   * the entry and the vertices in the buffer are the same event.
+   * Records what a chunk drew, from the plan object — the PLANNING path, for
+   * harnesses that ask what the terrain draws without drawing it. The drawing
+   * path is `publishRastered`, which is handed a chunk job's finished answer.
    */
   publish(chunkIdx: number, caps: ChunkDrawnCaps): void;
+  /**
+   * Records what a chunk drew, from a chunk job's already-flat answer — the
+   * path every drawn chunk takes. The flattening, the rasterisation and the lip
+   * emission all happened wherever the chunk was built, which is a worker in
+   * the client; this only files the result.
+   */
+  publishRastered(
+    chunkIdx: number,
+    plan: FlatCapPlan,
+    topLevel: Int8Array,
+    lips: ChunkLipSegments,
+  ): void;
   /** What the chunk at these CHUNK coordinates drew, or null if it has not been drawn. */
   chartOf(chunkX: number, chunkZ: number): ChunkChart | null;
   /** Drops every entry — used when the world is replaced. */
@@ -149,6 +180,25 @@ export function topLevelIndexAt(chart: ChunkChart, cellX: number, cellZ: number)
 }
 
 /**
+ * One level's polygons as point objects, built on first ask and kept.
+ *
+ * LAZY, AND THAT IS THE POINT. The plan arrives flat and stays flat: the band
+ * grid, the lips and every cap-height query are answered from typed arrays and
+ * never allocate. Only `terrain/drawnGround.ts`'s `nearestOnContour` and
+ * `loopsAt` — the waterfall curtain's two contour walks — genuinely need
+ * vertices as objects, and they ask for one level of one chunk at a time.
+ * Rehydrating eagerly on splice would put back exactly the per-chunk clone cost
+ * that moving the build into a worker exists to remove.
+ */
+export function polygonsOfLevel(chart: ChunkChart, levelIndex: number): readonly CapPolygon[] {
+  const cached = chart.polygonCache[levelIndex];
+  if (cached !== undefined) return cached;
+  const built = rehydrateLevelPolygons(chart.plan, levelIndex);
+  chart.polygonCache[levelIndex] = built;
+  return built;
+}
+
+/**
  * Clamps a grid index into range. A query is inside its own chunk by
  * construction (the chunk is chosen by flooring the coordinate), so this only
  * catches a non-finite coordinate — cheaper than validating one.
@@ -163,18 +213,47 @@ export function createDrawnGroundStore(worldSize: number): DrawnGroundStore {
   const chunkCols = chunksPerEdge(worldSize);
   const charts = new Map<number, ChunkChart>();
 
+  // A plain function rather than a `this` call between the two methods below:
+  // a store handed around as a detached method reference would silently lose
+  // `this`, and there is no reason for the filing to depend on how it was
+  // reached.
+  const file = (
+    chunkIdx: number,
+    plan: FlatCapPlan,
+    topLevel: Int8Array,
+    lips: ChunkLipSegments,
+  ): void => {
+    const chunkX = chunkIdx % chunkCols;
+    const chunkZ = (chunkIdx - chunkX) / chunkCols;
+    charts.set(chunkIdx, {
+      originX: chunkX * CHUNK_SIZE,
+      originZ: chunkZ * CHUNK_SIZE,
+      plan,
+      topLevel,
+      lips,
+      polygonCache: new Array<readonly CapPolygon[] | undefined>(plan.levelThreshold.length),
+    });
+  };
+
   return {
     publish(chunkIdx: number, caps: ChunkDrawnCaps): void {
       const chunkX = chunkIdx % chunkCols;
       const chunkZ = (chunkIdx - chunkX) / chunkCols;
-      const originX = chunkX * CHUNK_SIZE;
-      const originZ = chunkZ * CHUNK_SIZE;
-      charts.set(chunkIdx, {
-        originX,
-        originZ,
-        caps,
-        topLevel: rasterizeLevels(caps, originX, originZ),
-      });
+      file(
+        chunkIdx,
+        flattenCapPlan(caps),
+        rasterizeLevels(caps, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE),
+        emitLipSegments(caps),
+      );
+    },
+
+    publishRastered(
+      chunkIdx: number,
+      plan: FlatCapPlan,
+      topLevel: Int8Array,
+      lips: ChunkLipSegments,
+    ): void {
+      file(chunkIdx, plan, topLevel, lips);
     },
     chartOf(chunkX: number, chunkZ: number): ChunkChart | null {
       if (chunkX < 0 || chunkZ < 0 || chunkX >= chunkCols || chunkZ >= chunkCols) return null;
@@ -257,8 +336,11 @@ export function publishPlannedWorld(store: DrawnGroundStore, mirror: TerrainMirr
  * Crossing x-coordinates per grid row, reused across polygons.
  *
  * Module scratch, on the same precondition every other scratch in the contour
- * pipeline states: one fill runs to completion before the next starts. That
- * holds by construction — the only caller is `publish`, which is synchronous.
+ * pipeline states: one fill runs to completion before the next starts. The
+ * invariant is PER REALM, not per `publish`: `rasterizeLevels` is exported and
+ * a worker runs its own copy of this module over its own scratch, while the
+ * main thread's callers (the direct build source, the planning harnesses) are
+ * all synchronous. Nothing awaits inside a fill on either.
  */
 const rowCrossings: number[][] = Array.from({ length: BAND_GRID_EDGE }, () => []);
 
@@ -268,11 +350,16 @@ const ascending = (a: number, b: number): number => a - b;
  * Fills a chunk's band grid from its drawn levels, LOWEST LEVEL FIRST so the
  * topmost one that covers a sample is the one left in the grid.
  *
+ * EXPORTED so the chunk job can run it on the worker thread (terrain/chunkJob.ts)
+ * and post the finished grid. It stays HERE, beside `topLevelIndexAt`, because
+ * the fill and the lookup must not be able to disagree about where a sample
+ * sits — that shared grid geometry is this module's whole contract.
+ *
  * That is exactly the resolution rule `topmostLevelAt` walked the stack
  * backwards to apply — the levels are drawn lowest-first, each over the one
  * below, so the last one covering a point is the one you can see.
  */
-function rasterizeLevels(caps: ChunkDrawnCaps, originX: number, originZ: number): Int8Array {
+export function rasterizeLevels(caps: ChunkDrawnCaps, originX: number, originZ: number): Int8Array {
   if (caps.blocky || caps.levels.length === 0) return new Int8Array(0);
   const grid = new Int8Array(BAND_GRID_EDGE * BAND_GRID_EDGE).fill(BAND_GRID_UNCOVERED);
   for (let index = 0; index < caps.levels.length; index++) {

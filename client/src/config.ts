@@ -149,6 +149,32 @@ export const ORDINARY_SEA_DEPTH_BANDS = 15;
 export const ORDINARY_SEA_FLOOR_HEIGHT = -ORDINARY_SEA_DEPTH_BANDS * BAND_HEIGHT;
 
 /**
+ * Where the ordinary ocean floor BEGINS, in terrace bands — the p25 of the very
+ * same measurement ORDINARY_SEA_DEPTH_BANDS quotes above (2026-08-27).
+ *
+ * The p95 alone was only half the constant the curves needed. It says where the
+ * ocean ENDS, so a curve pinned to it spends its range across bands 0-15 — and
+ * the histogram in the comment above says three quarters of all water is in the
+ * last third of that span, bands 10-15. Every curve pinned to the p95 therefore
+ * still hands two thirds of its range to the shallow quarter of the water and
+ * squeezes the ordinary ocean floor — the part the owner is actually looking at
+ * — into the remaining third. Measured through the shipped shader math
+ * (2026-08-27): adjacent bands 10-14 differed by 1-2 parts in 255 on screen,
+ * which is the "before and after is identical" report that this pair of
+ * constants exists to close.
+ *
+ * With BOTH ends named, a depth curve can spend its range where the water
+ * actually is: sparse shallows across bands 0-10, the dense ordinary floor
+ * across bands 10-15. That is histogram equalisation, the discipline
+ * terrain/waterDepth.ts's shade ramp already adopted and states in those words;
+ * this constant is what lets the seabed palette adopt it too.
+ */
+export const ORDINARY_SEA_SHELF_BANDS = 10;
+
+/** The same depth as a signed height, matching ORDINARY_SEA_FLOOR_HEIGHT. */
+export const ORDINARY_SEA_SHELF_HEIGHT = -ORDINARY_SEA_SHELF_BANDS * BAND_HEIGHT;
+
+/**
  * World units a single terrace band rises — how tall one step LOOKS.
  *
  * Historically forced to equal CELL_WORLD_SIZE by the old vertex-per-cell grid

@@ -5,6 +5,10 @@
 //   ?scene=<staircase|ocean>  — fixture; defaults to "staircase"
 //   ?view=<iso|side|top>      — camera angle; defaults to "iso"
 //   ?zoom=<number>            — camera distance multiplier; defaults to 1
+//   ?light=<noon|night>       — lighting rig; defaults to "noon" (the static
+//                               rig this harness has always had)
+//   ?contour=<albedo|emissive> — how the sea's band contour is drawn; defaults
+//                               to "emissive", the shipped behaviour
 //
 // WHAT THIS EXISTS TO SHOW, and why the live client could not. The thing under
 // test is a CURVE — how much terrain shows through the sea as a function of the
@@ -39,7 +43,11 @@ import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellIndex, chunkIndex, chunksPerEdg
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
-import { createWater } from './render/water.ts';
+import { createWater, type WaterBandContourMode } from './render/water.ts';
+// The REAL night rig, not a copy of its numbers: ?light=night drives this
+// fixture's three lights from the same function the daynight plugin drives the
+// live client's with, so a night capture here is lit exactly as the game is.
+import { skyStateAtPhase } from '../../plugins/daynight/client/sky.ts';
 import { installWaterBandClock } from './render/water/waterBands.ts';
 import { depthToWaterAlpha, waterDepthWorldUnits } from './terrain/waterDepth.ts';
 
@@ -50,10 +58,24 @@ const HEMISPHERE_LIGHT_INTENSITY = 1.5;
 const SUN_LIGHT_INTENSITY = 1.2;
 const AMBIENT_FLOOR_INTENSITY = 0.9;
 const SUN_DIRECTION = new Vector3(0.7, 0.45, 0.55);
+/**
+ * How far out the directional light is placed. A DirectionalLight's position
+ * sets only its DIRECTION (it has no falloff and this fixture casts no
+ * shadows), so the magnitude is arbitrary; it is named here because ?light=
+ * now has to re-place the same light and the two must not disagree.
+ */
+const SUN_DISTANCE_WORLD_UNITS = 1000;
 const TONE_MAPPING_EXPOSURE = 1.25;
 const CAMERA_FOV_DEGREES = 55;
 const BACKDROP_COLOR = 0x9fc7e8;
 const SETTLE_FRAME_COUNT = 6;
+
+/**
+ * The phase the day/night cycle calls midnight. Not a guess: sky.ts models the
+ * whole day as one sine, `sunHeight(phase) = sin(phase * 2pi)`, which is -1 —
+ * the sun at its lowest, the NIGHT keyframe reached in full — at exactly 0.75.
+ */
+const MIDNIGHT_PHASE = 0.75;
 
 /**
  * The fixture world's edge, in cells. Eight chunks, not the four previewRivers
@@ -150,14 +172,40 @@ const view = params.get('view') ?? 'iso';
 const zoomRaw = Number(params.get('zoom'));
 const zoom = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 1;
 const builder = SCENE_BUILDERS[sceneName] ?? buildStaircase;
+const isNight = params.get('light') === 'night';
+const bandContourMode: WaterBandContourMode =
+  params.get('contour') === 'albedo' ? 'albedo' : 'emissive';
 
 const scene = new Scene();
 scene.background = new Color(BACKDROP_COLOR);
-scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
-scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
+const hemisphere = new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY);
+scene.add(hemisphere);
+const ambient = new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY);
+scene.add(ambient);
 const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
-sun.position.copy(SUN_DIRECTION).multiplyScalar(1000);
+sun.position.copy(SUN_DIRECTION).multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
 scene.add(sun);
+
+// ?light=night — overwrite the static noon rig above with the day/night
+// plugin's own midnight state. Written out here rather than through
+// render/skyRig.ts's applySkyRig because that takes a Viewport, which this
+// fixture (no scene.ts, no renderer rig) does not have; the STATE still comes
+// from the plugin, so none of its numbers are duplicated.
+if (isNight) {
+  const night = skyStateAtPhase(MIDNIGHT_PHASE);
+  sun.position
+    .set(night.sunDirection.x, night.sunDirection.y, night.sunDirection.z)
+    .normalize()
+    .multiplyScalar(SUN_DISTANCE_WORLD_UNITS);
+  sun.color.setHex(night.sunColor);
+  sun.intensity = night.sunIntensity;
+  hemisphere.color.setHex(night.hemisphereSkyColor);
+  hemisphere.groundColor.setHex(night.hemisphereGroundColor);
+  hemisphere.intensity = night.hemisphereIntensity;
+  ambient.color.setHex(night.ambientColor);
+  ambient.intensity = night.ambientIntensity;
+  (scene.background as Color).setHex(night.backgroundColor);
+}
 
 const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -190,7 +238,7 @@ meshes.flush();
 const frameHandlers: ((dt: number) => void)[] = [];
 const waterGroup = new Group();
 scene.add(waterGroup);
-const water = createWater(waterGroup, PREVIEW_WORLD_SIZE);
+const water = createWater(waterGroup, PREVIEW_WORLD_SIZE, { bandContourMode });
 water.setWorldSize(PREVIEW_WORLD_SIZE);
 water.sync(mirror);
 water.refresh(mirror, allChunks);

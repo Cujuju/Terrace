@@ -35,7 +35,6 @@ import type { Mesh } from 'three';
 import {
   applyChunkUnlock,
   applySnapshot,
-  applyTerrainDiff,
   createTerrainMirror,
   sampleHeight,
   type TerrainMirror,
@@ -53,6 +52,7 @@ import {
   type PredictionStore,
 } from './terrain/prediction.ts';
 import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.ts';
+import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createRiverRig, type RiverRig } from './render/riverRig.ts';
@@ -262,6 +262,14 @@ export function createWorld(viewport: Viewport): World {
     networkSource: createWorkerRiverNetworkSource() ?? undefined,
   });
 
+  /**
+   * The chunk-geometry worker pool, or null where no Worker could be started
+   * (an old browser, a CSP that forbids module workers) — in which case
+   * `createTerrainMeshes` falls back to building on this thread: slower, never
+   * wrong. One pool for the whole session, like the water and river rigs.
+   */
+  const chunkBuildSource = createWorkerChunkBuildSource();
+
   let mirror: TerrainMirror | null = null;
   /**
    * The drawn-surface oracle over the CURRENT mirror.
@@ -358,10 +366,34 @@ export function createWorld(viewport: Viewport): World {
    * that is about WHICH segments exist, not their heights.
    */
   const applyDirty = (dirty: Set<number>): void => {
+    // AN EMPTY SET IS NOT A CHEAP CALL, so it is not made at all. Every
+    // consumer below is written to iterate the set, which reads as "nothing
+    // dirty costs nothing" — and is false for `water.refresh`, which re-uploads
+    // three world-sized textures per call whatever the set holds
+    // (render/water.ts). Once the prediction journal stops reporting chunks
+    // whose rendered state did not change, the authoritative echo of a
+    // correctly predicted sculpt arrives with an empty set several times a
+    // second, and this early return is what makes that echo free.
+    //
+    // RIVERS ARE DELIBERATELY OUTSIDE THE GUARD. Their refresh is throttled on
+    // ELAPSED TIME and accumulates the dirty chunks it was handed while inside
+    // the window (render/riverRig.ts): the rebuild happens on the first call
+    // AFTER the window passes, whatever that call's own set holds. Skipping
+    // empty-set calls would strand the last chunks of a stroke in
+    // `pendingDirty` until some unrelated later edit happened to flush them.
+    // An empty-set call is genuinely cheap here — an elapsed-time compare, and
+    // when the window has passed, the rebuild the ACCUMULATED set has already
+    // earned.
+    if (mirror !== null && drawnGround !== null && dirty.size === 0) {
+      rivers.refresh(mirror, dirty, drawnGround);
+      return;
+    }
     meshes?.update(dirty);
-    // Terrace lips follow the same dirty set as the meshes they lie on, so a
-    // stroke re-contours exactly the chunks it changed (render/layerEdgeOverlay.ts).
-    layerEdges?.update(dirty);
+    // Terrace lips are NOT refreshed from this set. They are read from what
+    // each chunk published when it was drawn, and the build queue drains under
+    // a frame budget — so the overlay is driven by build completion
+    // (`onChunkDrawn`, wired in resetWorld) rather than by the dirty set, which
+    // would have it reading pre-edit charts for every deferred chunk.
     if (mirror !== null && drawnGround !== null) {
       fog.refresh(mirror, dirty);
       water.refresh(mirror, dirty);
@@ -409,9 +441,19 @@ export function createWorld(viewport: Viewport): World {
     // rebuilding a whole brush footprint inside one `update` call. Wrapped
     // rather than passed by reference so the viewport keeps ownership of how
     // its frame callbacks are registered.
-    const nextMeshes = createTerrainMeshes(viewport.terrainGroup, nextMirror, {
-      onFrame: (handler) => viewport.onFrame(handler),
-    });
+    const nextMeshes = createTerrainMeshes(
+      viewport.terrainGroup,
+      nextMirror,
+      { onFrame: (handler) => viewport.onFrame(handler) },
+      // The chunk build itself runs off this thread where a Worker can be
+      // started (render/chunkBuildSource.ts): a chunk is ~6 ms on a developed
+      // world against a 7.1 ms frame budget, and the contour pipeline is not
+      // resumable mid-chunk, so no frame budget can make one chunk cost less
+      // than one chunk. The pool outlives the mesh set — a rejoin replaces the
+      // meshes and must not terminate and respawn two threads — so it is
+      // created once, above, and disposed with the world.
+      chunkBuildSource ?? undefined,
+    );
     // A new session's snapshot is the authoritative starting state, so any
     // prediction still outstanding against the OLD session is meaningless: the
     // store is replaced along with the mirror it shadows, which drops them.
@@ -421,7 +463,15 @@ export function createWorld(viewport: Viewport): World {
       viewport.terrainGroup,
       nextMirror,
       worldSize,
+      nextMeshes.drawnGround(),
     );
+    // The lips follow the rock, chunk by chunk, on the event that redraws it.
+    // Subscribed rather than passed into `createTerrainMeshes` because the
+    // meshes have to exist before the overlay that reads their store does, and
+    // a callback closing over a not-yet-assigned overlay is a way to get that
+    // ordering wrong silently. The subscription dies with the meshes, which are
+    // disposed at the top of the next reset.
+    nextMeshes.onChunkDrawn((chunkIdx) => nextLayerEdges.refreshChunk(chunkIdx));
     mirror = nextMirror;
     // The oracle closes over the mirror it was built on AND over that mirror's
     // mesh store, so a replaced mirror takes both with it. This is the only
@@ -516,7 +566,8 @@ export function createWorld(viewport: Viewport): World {
         nowMs(),
       );
       fresh.meshes.update(snapshotDirty);
-      layerEdges?.update(snapshotDirty);
+      // No lip refresh here: the overlay follows build completion, and these
+      // chunks have only just been queued (see applyDirty's note).
       // The frontier is a fact about `received`, which the snapshot just
       // changed — sync unconditionally, whether this is a first join (empty
       // -> starter footprint) or a rejoin (old world's segments dropped, this
@@ -580,7 +631,7 @@ export function createWorld(viewport: Viewport): World {
       // any more: the oracle reads what the meshes published, and `meshes.update`
       // on the next line is what publishes the newly-revealed chunks.
       meshes.update(unlockDirty);
-      layerEdges?.update(unlockDirty);
+      // Same as the snapshot path: the lips follow the builds, not the queue.
       // Territory just crept outward — move the mist with it. `received`
       // changed, which is the only thing the frontier is defined from.
       fog.sync(mirror);
@@ -608,7 +659,7 @@ export function createWorld(viewport: Viewport): World {
       // then patch only the chunk meshes those cells touch — including
       // neighbours across a shared border.
       applyDirty(
-        predictions.applyAuthoritative((m) => applyTerrainDiff(m, msg), nowMs()),
+        predictions.applyCellDiff(msg, nowMs()),
       );
       armExpiryTimer();
     },
@@ -754,6 +805,9 @@ export function createWorld(viewport: Viewport): World {
       water.dispose();
       fog.dispose();
       rivers.dispose();
+      // The pool outlives every mesh set in the session, so this is the only
+      // place it is terminated.
+      chunkBuildSource?.dispose();
     },
   };
 }

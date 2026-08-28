@@ -78,9 +78,16 @@ import {
   sculptOptionsOf,
   validateSculptIntent,
   type SculptIntent,
+  type TerrainDiffMessage,
 } from '@terrace/shared';
 import { DRAG_INTENTS_PER_TICK, SCULPT_REPEAT_INTERVAL_MS } from '../config.ts';
-import { chunksDirtiedByCell, hasChunk, type TerrainMirror } from './mirror.ts';
+import {
+  applyTerrainDiff,
+  chunksDirtiedByCell,
+  hasChunk,
+  type CellWriteSink,
+  type TerrainMirror,
+} from './mirror.ts';
 
 /**
  * How long a prediction may stay applied without the authoritative state
@@ -193,6 +200,22 @@ export interface PredictionStore {
     mutate: (mirror: TerrainMirror) => Set<number>,
     nowMs: number,
   ): Set<number>;
+
+  /**
+   * `applyAuthoritative` for the ONE authoritative message that writes cells
+   * rather than whole chunks — the server's terrain diff, the hot path.
+   *
+   * ITS OWN METHOD, not a `mutate` closure the caller writes, because the
+   * saving depends on the mirror's writer reporting the cells it touches
+   * (`CellWriteSink`) and a closure is exactly the place that reporting gets
+   * forgotten. A forgotten sink is silent: the reconciliation stays correct
+   * and simply re-patches every chunk the diff mentions, at ~25 ms a sculpt on
+   * a developed world. So the wiring is not offered as an option — the diff
+   * path is this method, and `applyAuthoritative` is the chunk-level path
+   * (snapshot, chunk unlock, dev fixtures) whose indices pass through
+   * unfiltered by design.
+   */
+  applyCellDiff(msg: TerrainDiffMessage, nowMs: number): Set<number>;
 
   /**
    * Retires the prediction whose intent carried this seq — THE SERVER HAS
@@ -350,10 +373,98 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
     return known;
   };
 
-  /** Marks every chunk whose mesh reads a cell this prediction touched. */
-  const addJournalChunks = (p: PendingPrediction, dirty: Set<number>): void => {
-    for (const i of p.indices) {
-      for (const idx of chunksDirtiedByCell(size, cellX(size, i), cellY(size, i))) dirty.add(idx);
+  // ── Net-of-call change tracking ─────────────────────────────────────────
+  //
+  // WHY NET, AND WHY NOT PER WRITE. A reconciliation is three steps — roll the
+  // predictions off, apply the authoritative message, replay the survivors —
+  // and a correctly predicted sculpt writes each of its cells TWICE inside
+  // that: once back to base, once with the server's identical value. Every
+  // per-write test calls both writes a change, so the echo of an edit the
+  // client already drew re-patched every chunk it mentioned: 26 ms of contour
+  // marching, eight times a second, to redraw exactly what was on screen.
+  // Comparing the cell's value at the START of the call with its value at the
+  // END is the only test that can answer "did the screen change".
+  //
+  // WHAT IS COMPARED: height OR SPAN LIST. A carve arrives as a diff entry
+  // whose `h` is unchanged and whose `spans` are not (mirror.ts's
+  // applyTerrainDiff), and the mesh reads spans as well as heights
+  // (sampleRenderBandSolid; capEmission's buried-floor band). A heights-only
+  // compare would leave a freshly cut cave mouth undrawn.
+  //
+  // WHICH CELLS ARE COMPARED — a bounded candidate set, never the map:
+  //   * every pending prediction's journal cell, noted AT ENTRY. `rendered`
+  //     differs from `base` at exactly these cells, so noting them is what
+  //     makes the "before" of every other cell readable from `base`.
+  //   * every cell an authoritative writer is about to write (its
+  //     `CellWriteSink` report), noted BEFORE the write, because `base` is
+  //     overwritten with the post-mutation state further down the call and
+  //     the outgoing value would be gone.
+  //   * every journal cell of the predictions as REPLAYED, which is not a
+  //     subset of the entry journals: the same intent over a moved base can
+  //     change a different cell. These need no note — an unnoted cell was
+  //     written by neither of the two cases above, so its start-of-call value
+  //     IS its `base` value, which still stands.
+  //
+  // The scratch is reused across calls: this runs on every authoritative
+  // message and must not allocate per sculpt.
+  const noteSlotOf = new Map<number, number>();
+  const noteHeight: number[] = [];
+  const noteSpans: (Int16Array | undefined)[] = [];
+  const candidates = new Set<number>();
+
+  /** Records a cell's start-of-call rendered state, once, and candidates it. */
+  const noteCell: CellWriteSink = (i: number): void => {
+    candidates.add(i);
+    if (noteSlotOf.has(i)) return;
+    noteSlotOf.set(i, noteHeight.length);
+    noteHeight.push(rendered[i]);
+    // COPIED, not aliased, for the same reason `snapshotBaseSpans` copies: the
+    // shared math writes through the live table's backing stores. Free while
+    // nobody has carved, which is the overwhelmingly common world.
+    const live = mirror.map.columnSpans;
+    const packed = live.size === 0 ? undefined : live.get(i);
+    noteSpans.push(packed === undefined ? undefined : new Int16Array(packed));
+  };
+
+  /** Opens a change pass. Must run BEFORE the call mutates anything. */
+  const beginChangePass = (): void => {
+    noteSlotOf.clear();
+    noteHeight.length = 0;
+    noteSpans.length = 0;
+    candidates.clear();
+    for (const p of pending) for (const i of p.indices) noteCell(i);
+  };
+
+  const spansEqual = (
+    a: Int16Array | undefined,
+    b: Int16Array | undefined,
+  ): boolean => {
+    if (a === undefined || b === undefined) return a === b;
+    if (a.length !== b.length) return false;
+    for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false;
+    return true;
+  };
+
+  /**
+   * Closes the pass: every candidate whose rendered state moved marks the
+   * chunks that READ it — through `chunksDirtiedByCell`, never by the cell's
+   * own chunk, because a chunk's border wall reads the first row/column of the
+   * next chunk and missing that is precisely how seam cracks appear.
+   */
+  const collectChanged = (dirty: Set<number>): void => {
+    const live = mirror.map.columnSpans;
+    for (const i of candidates) {
+      const slot = noteSlotOf.get(i);
+      const beforeHeight = slot === undefined ? base[i] : noteHeight[slot];
+      let changed = beforeHeight !== rendered[i];
+      if (!changed) {
+        const beforeSpans = slot === undefined ? baseSpans.get(i) : noteSpans[slot];
+        changed = !spansEqual(beforeSpans, live.get(i));
+      }
+      if (!changed) continue;
+      for (const idx of chunksDirtiedByCell(size, cellX(size, i), cellY(size, i))) {
+        dirty.add(idx);
+      }
     }
   };
 
@@ -362,7 +473,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
    * The journal is rewritten on every replay because the result depends on the
    * state underneath: the same intent over a changed base changes other cells.
    */
-  const applyPrediction = (p: PendingPrediction, dirty: Set<number>): void => {
+  const applyPrediction = (p: PendingPrediction): void => {
     const amount = DEFAULT_SCULPT_AMOUNT * p.intent.dir;
     // The intent's tool/profile are resolved by the SAME shared function the
     // server's intent pipeline uses (`sculptOptionsOf`, protocol.ts), so an
@@ -393,25 +504,26 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       p.indices.push(i);
       p.after.push(cell.h);
       if (anyLayered && (live.has(i) || baseSpans.has(i))) p.touchedLayeredColumn = true;
-      for (const idx of chunksDirtiedByCell(size, cell.x, cell.y)) dirty.add(idx);
+      // A CANDIDATE, not a dirty chunk: whether this cell's rendered state
+      // actually moved across the whole call is `collectChanged`'s question.
+      candidates.add(i);
     }
   };
 
   /** Rolls every prediction off: the rendered map becomes pure authoritative. */
-  const restoreToBase = (dirty: Set<number>): void => {
+  const restoreToBase = (): void => {
     if (pending.length === 0) return;
     // Safe to skip the span table too when nothing is pending: every path
     // that empties `pending` passes through here FIRST, so a zero-pending
     // store always has the base's span table standing already. (The one
     // writer that bypasses it, the dropped no-op prediction in `predict`,
     // changed no cells and so created no split.)
-    for (const p of pending) addJournalChunks(p, dirty);
     rendered.set(base);
     restoreBaseSpans();
   };
 
-  const replayPending = (dirty: Set<number>): void => {
-    for (const p of pending) applyPrediction(p, dirty);
+  const replayPending = (): void => {
+    for (const p of pending) applyPrediction(p);
   };
 
   /**
@@ -466,6 +578,55 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
     return comparable > 0;
   };
 
+  /**
+   * The reconciliation both authoritative entry points share: predictions off,
+   * mutation, new base, retire, replay, compare.
+   *
+   * The mutation's OWN returned indices pass through UNFILTERED and are unioned
+   * with the compare's answer. That is not laziness — `applyChunkPayload`'s
+   * indices (the chunk plus its −x/−y/−xy back-neighbours) are dirty because a
+   * chunk crossed into `received`, and that changes what `renderSampleCell`
+   * resolves the neighbours' border samples to even when not one cell value
+   * moved. There is no cell compare that could see it.
+   */
+  const reconcile = (
+    mutate: (m: TerrainMirror) => Set<number>,
+    nowMs: number,
+  ): Set<number> => {
+    const dirty = new Set<number>();
+
+    beginChangePass();
+    // 1. Predictions off, so the mutation sees only authoritative state...
+    restoreToBase();
+    // 2. ...apply it (the mirror's own validated writers do this)...
+    for (const idx of mutate(mirror)) dirty.add(idx);
+    // 3. ...and record the result as the new authoritative truth. A whole-map
+    //    copy (512 KB at 512², ~tens of microseconds) rather than replaying
+    //    the mutation's cells into `base` separately: the mutation's return
+    //    value is chunk indices, not cells, so re-deriving the cell set here
+    //    would mean duplicating the mirror's writers — the exact drift the
+    //    single-source-of-truth rule exists to prevent. At the design's
+    //    budget of a diff per tick this is far below the frame budget.
+    //    The span side table is snapshotted with it, so the base stays the
+    //    COMPLETE column state (see `snapshotBaseSpans`) — free until
+    //    someone has actually carved a layer.
+    base.set(rendered);
+    snapshotBaseSpans();
+
+    // 4. Retire what the server has now confirmed or what has run out of
+    //    time, then put the survivors back on top. Retiring is not restricted
+    //    to a prefix: an old prediction that diverged must not pin newer,
+    //    confirmed ones in place — that would double every edit behind it.
+    pending = pending.filter(
+      (p) => !isConfirmed(p) && nowMs - p.createdAtMs < PREDICTION_TTL_MS,
+    );
+    replayPending();
+
+    // 5. And only now, with the rendered map final, ask what actually moved.
+    collectChanged(dirty);
+    return dirty;
+  };
+
   return {
     predict(intent: SculptIntent, nowMs: number): Set<number> {
       const dirty = new Set<number>();
@@ -482,12 +643,16 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       // and let the authoritative diff show what it did (issue #21).
       if (!canPredictFaithfully(validated.x, validated.y, validated.radius)) return dirty;
 
+      // Opened after the refusals above, which mutate nothing, and before
+      // anything below, which all do.
+      beginChangePass();
+
       if (pending.length >= MAX_PENDING_PREDICTIONS) {
         // Drop the oldest and re-derive, so the rendered map is exactly
         // base + the predictions we are still willing to show.
-        restoreToBase(dirty);
+        restoreToBase();
         pending.shift();
-        replayPending(dirty);
+        replayPending();
       }
 
       const prediction: PendingPrediction = {
@@ -500,12 +665,13 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
         touchedLayeredColumn: false,
       };
       pending.push(prediction);
-      applyPrediction(prediction, dirty);
+      applyPrediction(prediction);
 
       // An edit that changed nothing (fully clamped at MAX_HEIGHT, say) has
       // nothing to reconcile and could never be confirmed — do not keep it.
       if (prediction.indices.length === 0) pending.pop();
 
+      collectChanged(dirty);
       return dirty;
     },
 
@@ -513,35 +679,14 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       mutate: (m: TerrainMirror) => Set<number>,
       nowMs: number,
     ): Set<number> {
-      const dirty = new Set<number>();
+      return reconcile(mutate, nowMs);
+    },
 
-      // 1. Predictions off, so the mutation sees only authoritative state...
-      restoreToBase(dirty);
-      // 2. ...apply it (the mirror's own validated writers do this)...
-      for (const idx of mutate(mirror)) dirty.add(idx);
-      // 3. ...and record the result as the new authoritative truth. A whole-map
-      //    copy (512 KB at 512², ~tens of microseconds) rather than replaying
-      //    the mutation's cells into `base` separately: the mutation's return
-      //    value is chunk indices, not cells, so re-deriving the cell set here
-      //    would mean duplicating the mirror's writers — the exact drift the
-      //    single-source-of-truth rule exists to prevent. At the design's
-      //    budget of a diff per tick this is far below the frame budget.
-      //    The span side table is snapshotted with it, so the base stays the
-      //    COMPLETE column state (see `snapshotBaseSpans`) — free until
-      //    someone has actually carved a layer.
-      base.set(rendered);
-      snapshotBaseSpans();
-
-      // 4. Retire what the server has now confirmed or what has run out of
-      //    time, then put the survivors back on top. Retiring is not restricted
-      //    to a prefix: an old prediction that diverged must not pin newer,
-      //    confirmed ones in place — that would double every edit behind it.
-      pending = pending.filter(
-        (p) => !isConfirmed(p) && nowMs - p.createdAtMs < PREDICTION_TTL_MS,
-      );
-      replayPending(dirty);
-
-      return dirty;
+    applyCellDiff(msg: TerrainDiffMessage, nowMs: number): Set<number> {
+      // The sink is wired HERE, once, rather than by every caller — see the
+      // interface note. `applyTerrainDiff` returns an empty set when it is
+      // given one, so the whole dirty answer comes from the net compare.
+      return reconcile((m) => applyTerrainDiff(m, msg, noteCell), nowMs);
     },
 
     resolveSeq(seq: number): Set<number> {
@@ -549,9 +694,11 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       const index = pending.findIndex((p) => p.intent.seq === seq);
       if (index === -1) return dirty;
 
-      restoreToBase(dirty);
+      beginChangePass();
+      restoreToBase();
       pending.splice(index, 1);
-      replayPending(dirty);
+      replayPending();
+      collectChanged(dirty);
       return dirty;
     },
 
@@ -560,9 +707,11 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
       const survivors = pending.filter((p) => nowMs - p.createdAtMs < PREDICTION_TTL_MS);
       if (survivors.length === pending.length) return dirty;
 
-      restoreToBase(dirty);
+      beginChangePass();
+      restoreToBase();
       pending = survivors;
-      replayPending(dirty);
+      replayPending();
+      collectChanged(dirty);
       return dirty;
     },
 
