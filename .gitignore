@@ -7,3 +7,6 @@ data/
 
 # Python bytecode from run_server.py
 __pycache__/
+
+# Throwaway visual-verification rigs (screenshots, capture scripts, vite logs).
+.volcano-shots/
