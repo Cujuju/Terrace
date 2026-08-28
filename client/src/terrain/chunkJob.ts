@@ -69,10 +69,17 @@ import { createTerrainMirror, type TerrainMirror } from './mirror.ts';
 import { rasterizeLevels } from './drawnGroundStore.ts';
 
 /**
- * Cells on one side of a job's height window: the chunk's 17 lattice columns
- * plus the one cell of pull-back reach in front of them.
+ * How far BEFORE its origin a chunk's job window reaches, in cells.
+ *
+ * ONE, and it is not margin. At the NE lattice corner the double-seam branch of
+ * `renderSampleCell` (mirror.ts) can pull back one row above and one column
+ * before the chunk's own 17 lattice columns, so a window that started at the
+ * origin would sample a cell it had not been sent. Enforced in
+ * `extractChunkWindow` below, which is the only place a window is cut; the
+ * window is therefore at most CHUNK_SIZE + 1 + this = 18 cells on a side, and
+ * smaller where it clamps to the world edge.
  */
-export const JOB_WINDOW_CELLS = CHUNK_SIZE + 2;
+const JOB_WINDOW_REACH_CELLS = 1;
 
 /** The palettes every chunk is emitted with — one statement, both threads. */
 export const CHUNK_PALETTES: ChunkPalettes = {
@@ -174,8 +181,8 @@ export function extractChunkWindow(
   const originX = cx * CHUNK_SIZE;
   const originY = cy * CHUNK_SIZE;
 
-  const windowX = Math.max(0, originX - 1);
-  const windowY = Math.max(0, originY - 1);
+  const windowX = Math.max(0, originX - JOB_WINDOW_REACH_CELLS);
+  const windowY = Math.max(0, originY - JOB_WINDOW_REACH_CELLS);
   const windowRight = Math.min(worldSize - 1, originX + CHUNK_SIZE);
   const windowBottom = Math.min(worldSize - 1, originY + CHUNK_SIZE);
   const windowWidth = windowRight - windowX + 1;
