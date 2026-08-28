@@ -381,3 +381,53 @@ Rejected alternatives:
 - Change `shared/` APIs for a client render optimisation.
 - Filter `applyChunkPayload`'s dirty chunks.
 - Make the lip-grab seed path asynchronous.
+
+## 7. Measured on the real GPU (2026-08-28, after all five pieces)
+
+Rig: `.gpu-perf/` (gitignored) — the in-page probe dollies to
+`CAMERA_MIN_DISTANCE × 1.05` over the owner's world and holds a radius-4
+stroke for 5 s on Windows Chrome (RTX 3090, vsync off). One sample per row.
+
+| stroke, 5 s held | before 830b15c | after 3f49fdb |
+|---|---|---|
+| fpsMean | 217 | 429 |
+| msMean | 4.6 | 2.3 |
+| p95 / p99 ms | 15.6 / 21.5 | 9.2 / 22.5 |
+| msMax | 1894 | 37 |
+| medianSpliceMs | — | 1.4–1.7 |
+| draw calls / triangles | 254 / 3.07 M | 251 / 3.06 M |
+
+**The bar is not met at p95/p99.** Draw calls and triangles are flat, so the
+spikes are not the GPU's work. Per-frame attribution (every onFrame handler,
+`renderer.render`, timers, rAF, Worker/WebSocket handlers, and wrapped
+`bufferSubData`/`bufferData`/`texSubImage2D`) over the slowest 1 % of frames:
+
+- every slow frame uploads **~19–21 MB** of vertex attributes, and the frame
+  before it uploaded ~18.8 MB too;
+- a frame that uploads 21 MB with only ~3 ms of JS still lasts 22–46 ms — the
+  main thread is stalled on the GPU process copying the previous frame's
+  upload, which no JS timer sees.
+
+**Residual root cause:** §3b's ranged upload spans `[slot.offset,
+liveVertices)` because a splice that changes a chunk's vertex count moves the
+super-mesh tail (`copyWithin`) and everything after the chunk is dirty. A
+chunk ~500 k vertices from the end of a 1.25 M-vertex super-mesh re-uploads
+~19 MB (37 B/vertex) per stroke step, and a radius-4 brush straddling two
+chunks does it twice. The CPU-side splice is 1.5 ms; the frame is spent in the
+transfer and its backpressure.
+
+**Fix (next arc, not in this plan):** stop moving the tail. Give each chunk a
+run that is not relocated when it regrows — a vertex arena with holes: a
+chunk that no longer fits its run is appended at the live end and its old run
+is zeroed (degenerate triangles draw nothing), holes are recorded on a free
+list and reused by later regrows, and compaction (one full re-upload) runs
+only when the terrain has settled and holes exceed a named fraction. Upload
+per splice becomes the chunk's own run plus the zeroed hole. Rejected:
+fixed-capacity slots (64 × the largest chunk's vertex count per super-mesh is
+GPU memory spent on the rare terraced chunk); `glBufferSubData` of the tail
+in ranged pieces across frames (the tail is the same bytes; splitting it
+spreads the stall without removing it).
+
+Also seen, not stroke-related: initial streaming uploads 5.4 GB / 3.7 s over
+400 chunks — every super-mesh growth (`ensureSuperCapacity` → new
+`BufferGeometry`) is a full `bufferData`. Worth its own ticket.
