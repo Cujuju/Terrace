@@ -23,9 +23,10 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// Resolved, never written down — see that module's header for why.
+import { resolveChromeHeadlessShell } from './chromeHeadlessShell.mjs';
 
-const CHROME =
-  '/home/shawn/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell';
+const CHROME = resolveChromeHeadlessShell();
 
 const DEFAULT_URL_BASE = 'http://localhost:5173';
 const DEFAULT_SCENES = ['fork', 'meander', 'terrace', 'basin', 'stairpools'];
