@@ -59,8 +59,10 @@ import {
   godsHandLine,
   monsterArrivedLine,
   monsterDepartedLine,
+  mudslideLine,
   parseFireBurned,
   parseMonsterEvent,
+  parseMudslideFlow,
   parseRelicCollected,
   parseStructuresChanges,
   relicLine,
@@ -379,6 +381,27 @@ function onFireBurned(world: WorldApi, payload: unknown): void {
   write(world, [wildfireLine(event.consumed, placeOf(event))]);
 }
 
+/**
+ * How long a slide's run must be, in cells, to be worth a line.
+ *
+ * SIXTEEN — four world units. A slide that moved a couple of cells is a hillside
+ * shrugging; the saga records events, and the wildfire rule above (whose
+ * threshold is in the same spirit) is the precedent for putting the judgement
+ * here rather than asking the emitter to decide what is memorable.
+ */
+export const CHRONICLE_MUDSLIDE_MIN_CELLS = 16;
+
+function onMudslideFlow(world: WorldApi, payload: unknown): void {
+  const event = parseMudslideFlow(payload);
+  if (event === null) return;
+  if (event.cellCount < CHRONICLE_MUDSLIDE_MIN_CELLS) return;
+  const where = { x: event.headX, y: event.headY };
+  // Day-scoped suppression, keyed on the CHUNK the head sat in — the same rule
+  // wildfires follow, so one wet afternoon on one hillside does not fill a page.
+  if (alreadyToldToday(`mudslide:${chunkKeyOf(where)}`)) return;
+  write(world, [mudslideLine(event.cellCount, placeOf(where))]);
+}
+
 function onMonsterDeparted(world: WorldApi, payload: unknown): void {
   const event = parseMonsterEvent(payload);
   if (event === null) return;
@@ -531,6 +554,9 @@ export const plugin: TerracePlugin = {
         break;
       case 'monsters:departed':
         onMonsterDeparted(world, payload);
+        break;
+      case 'mudslides:flow':
+        onMudslideFlow(world, payload);
         break;
       default:
         break;

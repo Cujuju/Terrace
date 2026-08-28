@@ -223,3 +223,47 @@ export function parseFireBurned(payload: unknown): FireBurnedEvent | null {
 export function monsterDepartedLine(kind: string): string {
   return `The ${kind} was driven from the world.`;
 }
+
+/**
+ * A mudslide worth remembering (see CHRONICLE_MUDSLIDE_MIN_CELLS in ./index.ts).
+ *
+ * The count is of CELLS THE MUD CROSSED, which is the length of the run — the
+ * one number in `mudslides:flow` that means the same thing to a reader as it
+ * does to the emitter. `volumeMoved` is in height units, which is a quantity no
+ * line of the saga has ever been written in and which a player has no way to
+ * calibrate against anything, so it is deliberately not phrased.
+ */
+export function mudslideLine(cells: number, place: string): string {
+  return `A hillside gave way near ${place} and ran ${cells} paces downhill.`;
+}
+
+/** Parsed `mudslides:flow` — a landslide that has come to rest. */
+export interface MudslideFlowEvent {
+  readonly headX: number;
+  readonly headY: number;
+  readonly cellCount: number;
+}
+
+/**
+ * Structural parse of mudslides' `flow` world-event. An own copy of the shape,
+ * never an import from the mudslides plugin — the by-name subscription rule
+ * every parser in this file already keeps.
+ *
+ * ONLY THE THREE FIELDS THIS PLUGIN READS are validated. The event also carries
+ * the toe, a per-cell delta list and a stop reason; a parse that insisted on them
+ * would refuse a perfectly usable event from a version of the emitter that had
+ * dropped one, which is the opposite of what a loose cross-plugin contract is
+ * for.
+ */
+export function parseMudslideFlow(payload: unknown): MudslideFlowEvent | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const event = payload as { headX?: unknown; headY?: unknown; cells?: unknown };
+  if (!Number.isInteger(event.headX) || !Number.isInteger(event.headY)) return null;
+  if (!Array.isArray(event.cells) || event.cells.length === 0) return null;
+  if (event.cells.length > EVENT_LIST_CAP) return null;
+  return {
+    headX: event.headX as number,
+    headY: event.headY as number,
+    cellCount: event.cells.length,
+  };
+}
