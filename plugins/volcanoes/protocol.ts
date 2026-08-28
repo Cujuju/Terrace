@@ -36,6 +36,87 @@
 // stays; only the glow goes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The one import this file allows itself, and for boats/protocol.ts's reason:
+// every measurement below is a fact about the WORLD, and @terrace/shared owns
+// the world's own scale.
+import { BAND_HEIGHT, MAX_HEIGHT } from '@terrace/shared';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SHAPE OF A VOLCANO, IN THE UNITS BOTH HALVES MEASURE IN.
+//
+// These live here rather than beside the sim because BOTH HALVES HAVE A STAKE
+// IN THEM: the server sites and sculpts the cone, and the client sizes a plume
+// and a flow decal AGAINST that cone. Two copies of "how big is a volcano"
+// would drift, and the way they would drift is silent — a column that no longer
+// clears the mountain it comes out of still renders, it just looks wrong.
+
+/**
+ * World units one terrace band rises.
+ *
+ * RESTATED, NOT IMPORTED, and the same restatement plugins/weather/client/sky.ts
+ * makes with the same reasoning: the client derives its vertical scale in
+ * client/src/config.ts (MAX_RELIEF_WORLD_UNITS / the range in bands), and a
+ * plugin cannot import that file without dragging `import.meta.env` into its
+ * node test run. Restated as the DERIVATION rather than as 0.25, so the two
+ * agree by construction and not by coincidence.
+ *
+ * RESIDUAL, NAMED: if client/src/config.ts's MAX_RELIEF_WORLD_UNITS changes and
+ * this does not, every vertical measurement in this plugin's client half is
+ * wrong by that ratio and nothing fails loudly. It is the same residual weather
+ * carries, and the same one that came true once already (2026-08-20, when a
+ * band stopped being one world unit).
+ */
+const MAX_RELIEF_WORLD_UNITS = 16;
+export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+
+/**
+ * How high above sea level a GENESIS vent's ground has to be, in terrace bands.
+ *
+ * Six bands is issue #214's "high ground" made checkable. It is above the shore
+ * and above the buildable flats a settlement wants (structures sites near the
+ * waterline), so a genesis cone lands on the part of the island a player was
+ * going to look at rather than the part they were going to live on.
+ */
+export const VENT_MIN_BANDS_ABOVE_SEA = 6;
+
+/**
+ * Terrace bands a vent's cone stands above the ground it was sited on, when the
+ * world is created.
+ *
+ * FOUR, on top of the siting bar above, so a genesis volcano's mouth sits ten
+ * bands above the sea — clearly the highest thing in its region without being
+ * the map's ceiling, and low enough that the flows it throws still have
+ * somewhere to run downhill to.
+ */
+export const GENESIS_CONE_BANDS = 4;
+
+/**
+ * A genesis summit's height above sea level, in WORLD UNITS — the one number
+ * the client's plume is sized against.
+ *
+ * 2.5, against a world whose entire relief is 16. It is worth writing out
+ * because the intuition is wrong in a way that has already bitten this
+ * codebase: a band has drawn a QUARTER of a world unit since 2026-08-20, so ten
+ * bands of mountain is two and a half world units, not ten. Anything sized "in
+ * bands" by eye comes out four times too big.
+ */
+export const VENT_SUMMIT_WORLD_UNITS =
+  (VENT_MIN_BANDS_ABOVE_SEA + GENESIS_CONE_BANDS) * WORLD_UNITS_PER_BAND;
+
+/**
+ * The nominal RADIUS of a lava flow, in world units — how wide a river of lava
+ * is.
+ *
+ * ONE WORLD UNIT, so a flow is two across: a flow you could step over, which is
+ * what the fiction wants (a river of lava, not a lake front). The server turns
+ * this into its sculpt brush (server/flow.ts's FLOW_BRUSH_RADIUS) and the client
+ * turns it into its decal (client/lavaFlow.ts's LAVA_DECAL_RADIUS), so the
+ * glow and the ground it raised are the same width by construction. They were
+ * not, before this constant existed: the decal was sized off the CELL and came
+ * out a fifth of the ridge it was supposed to be marking.
+ */
+export const FLOW_RADIUS_WORLD_UNITS = 1;
+
 /** Plugin name on both sides. Also the message namespace. */
 export const VOLCANOES_PLUGIN_NAME = 'volcanoes';
 

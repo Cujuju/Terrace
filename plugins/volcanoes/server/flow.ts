@@ -32,7 +32,7 @@
 
 import { BAND_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
-import { lavaKey } from '../protocol.ts';
+import { FLOW_RADIUS_WORLD_UNITS, lavaKey } from '../protocol.ts';
 
 /** The slice of the world a flow reads. */
 export type FlowWorld = Pick<WorldApi, 'worldSize' | 'heightAt' | 'freshwater'>;
@@ -81,15 +81,18 @@ export const MAX_FLOW_CELLS = 64;
 export const FLOW_THICKNESS = BAND_HEIGHT / 2;
 
 /**
- * Brush radius for a flow cell's raise, in cells.
+ * Brush radius for a flow cell's raise, in cells — the sculpt that IS the flow.
  *
- * ONE WORLD UNIT, which is the finest brush that still writes a feature the
- * terrain can draw (MAX_STEP is one band per world unit of run, so a narrower
- * brush's edit is entirely inside one terrace tread and relaxation flattens it
- * back out). A flow one world unit wide is a flow you can step over, which is
- * what the fiction wants — a river of lava, not a lake front.
+ * DERIVED FROM protocol.ts's FLOW_RADIUS_WORLD_UNITS, which is the same number
+ * the client's decal is sized from, so the glow and the ground it raised are
+ * the same width by construction rather than by two people agreeing.
+ *
+ * One world unit is also the finest brush that still writes a feature the
+ * terrain can draw: MAX_STEP is one band per world unit of run, so a narrower
+ * brush's edit sits entirely inside one terrace tread and relaxation flattens
+ * it straight back out.
  */
-export const FLOW_BRUSH_RADIUS = cellsAcross(1);
+export const FLOW_BRUSH_RADIUS = cellsAcross(FLOW_RADIUS_WORLD_UNITS);
 
 /**
  * How many flow cells the world remembers, across every eruption there has ever

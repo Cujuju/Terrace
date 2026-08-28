@@ -44,6 +44,7 @@ import {
   cellsOverArea,
 } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
+import { VENT_MIN_BANDS_ABOVE_SEA } from '../protocol.ts';
 import type { VolcanoRng } from './rng.ts';
 
 /** The read-only slice of the world this module needs. Keeps stubs one-line. */
@@ -68,18 +69,6 @@ export interface Site {
  * happened once to this codebase (the kraken bar, same design section).
  */
 export const LAVA_BAND_CEILING = MIN_HEIGHT + DEEP_LAVA_DEPTH;
-
-/**
- * How high above sea level a GENESIS vent's ground has to be, in terrace bands.
- *
- * Six bands is issue #214's "high ground" made checkable. It is above the
- * shore and above the buildable flats a settlement wants (structures' own
- * siting lives near the waterline), so a genesis cone lands on the part of the
- * island a player was going to look at rather than the part they were going to
- * live on — and the relaxation around a 6-band shoulder is a slope, not a
- * cliff, so the cone reads as the summit of ground that was already rising.
- */
-export const VENT_MIN_BANDS_ABOVE_SEA = 6;
 
 /** The same bar in height units, which is what heightAt answers in. */
 export const VENT_MIN_HEIGHT = SEA_LEVEL + VENT_MIN_BANDS_ABOVE_SEA * BAND_HEIGHT;

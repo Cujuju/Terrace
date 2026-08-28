@@ -46,7 +46,12 @@ import {
   Vector3,
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { heatFromAge, lavaKey, type LavaCellState } from '../protocol.ts';
+import {
+  FLOW_RADIUS_WORLD_UNITS,
+  heatFromAge,
+  lavaKey,
+  type LavaCellState,
+} from '../protocol.ts';
 
 /**
  * Hard ceiling on decals drawn at once.
@@ -63,13 +68,43 @@ export const LAVA_DECAL_CAP = 192;
 /**
  * The decal's radius, in world units.
  *
- * 0.75 × the cell it marks, so neighbouring cells of a flow OVERLAP and read as
- * one continuous river rather than as a dotted line of discs. A flow is one
- * world unit wide by construction (the server's FLOW_BRUSH_RADIUS is one world
- * unit), so this is the width of the thing it is drawing, plus the overlap that
- * hides the seams between its cells.
+ * DERIVED FROM THE FLOW'S OWN WIDTH (protocol.ts's FLOW_RADIUS_WORLD_UNITS),
+ * which is the same number the server's sculpt brush is derived from — so the
+ * glow and the ridge it raised are the same feature, not two guesses about one.
+ *
+ * IT WAS SIZED OFF THE CELL BEFORE THIS, and that was wrong by a factor of five:
+ * a cell is a QUARTER of a world unit (CELL_WORLD_SIZE, since the 2026-08-21
+ * re-sample), so a decal 0.75 cells across marked a fifth of the two-world-unit
+ * ridge the server had just raised — a thin bright line down the middle of a
+ * wide bare hump. The rule the re-sample wrote down is exactly this: a physical
+ * width is stated in world units, never in cells.
+ *
+ * Kept UNDER the full radius so the glow sits inside the ground it raised
+ * rather than spilling past its shoulders — relaxation carries the raise
+ * further than the lava ever reached, which is also true of the real thing.
+ *
+ * THE FRACTION IS BOUNDED BELOW BY CONTINUITY, and that is what fixed it at
+ * 0.75 rather than 0.5. The front walks CELL BY CELL and the terrain relaxes at
+ * most one band per world unit, so on the steepest ground the game permits a
+ * flow crosses a terrace tread exactly one world unit wide. A disc of radius
+ * 0.5 spans that tread and no more: consecutive cells' discs met at a point,
+ * the rim erosion pulled them apart, and a river came out as a string of beads
+ * with bare ground showing between them (seen in preview-volcano.html). At 0.75
+ * they overlap by half and the flow reads as one continuous body.
  */
-export const LAVA_DECAL_RADIUS = CELL_WORLD_SIZE * 0.75;
+export const LAVA_DECAL_RADIUS = FLOW_RADIUS_WORLD_UNITS * 0.75;
+
+/**
+ * THE OVERDRAW THIS COSTS, stated rather than discovered later. Path cells are
+ * CELL_WORLD_SIZE (0.25) apart and each decal is 1.0 across, so a fragment in
+ * the middle of a flow is covered about four times. That is deliberate — the
+ * overlap is what makes a line of discs read as one continuous river instead of
+ * a dotted trail — and it is bounded by LAVA_DECAL_CAP: at most 192 discs of
+ * one square world unit, all transparent, all depth-write-off. Against the
+ * 7 ms frame budget (140 fps is the project benchmark) that is a small, FIXED
+ * area of blending; it does not grow with the age of the world, because the cap
+ * does not.
+ */
 
 /**
  * How far above the drawn cap the decal floats, in world units.
@@ -184,8 +219,16 @@ const LAVA_FRAGMENT_SHADER = /* glsl */ `
     // No traceable circle: the noise pushes the boundary in and out, so what
     // falls off is a ragged edge. A flow's edge is where a viscous liquid
     // stopped, which is lobed, never an arc.
+    // A SOLID CORE AND A SHORT RAGGED MARGIN. The falloff starts late (0.62)
+    // and the erosion is shallow (0.18), which is what makes a line of discs
+    // one world unit apart read as a CONTINUOUS RIVER. The first version faded
+    // from 0.35 with 0.3 of erosion — each cell's disc was mostly margin, so a
+    // flow came out as a string of separate beads with bare ground showing
+    // between them. Seen in preview-volcano.html; the fix is here rather than
+    // in the decal's radius because the radius is the flow's real width and is
+    // not free to change.
     float edge = vnoise(vPlan * 1.7 + vSeed) - 0.5;
-    float body = 1.0 - smoothstep(0.35, 1.0, radius + edge * 0.3);
+    float body = 1.0 - smoothstep(0.62, 1.0, radius + edge * 0.18);
     if (body <= 0.0) discard;
 
     // THE CRACKS. Cold crust floating on molten rock: the noise field is the
@@ -204,7 +247,11 @@ const LAVA_FRAGMENT_SHADER = /* glsl */ `
     // Where the veins are, the cell is as hot as it is; where the plates are,
     // it is already crust. So the SAME cell shows both, and cools by the veins
     // narrowing and dimming rather than by the whole disc fading uniformly.
-    vec3 color = mix(uCrust, uMolten, clamp(glow * (0.35 + 0.65 * veins), 0.0, 1.0));
+    // FRESH LAVA IS MOSTLY BRIGHT WITH DARK PLATES FLOATING ON IT, not mostly
+    // dark with bright cracks: the floor of 0.6 is what keeps a cell that is
+    // fully molten reading as molten. At the first value (0.35) a hot flow was
+    // more crust than lava and the whole thing looked like gravel.
+    vec3 color = mix(uCrust, uMolten, clamp(glow * (0.6 + 0.4 * veins), 0.0, 1.0));
 
     // Opaque MATTER, not a stain: this is new ground, and a translucent flow
     // would show the old grass through the rock that buried it. It stops short

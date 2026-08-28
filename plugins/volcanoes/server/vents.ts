@@ -38,7 +38,15 @@
 
 import { BAND_HEIGHT, MAX_BRUSH_RADIUS } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
-import { LAVA_COOL_SECONDS, lavaKey, type LavaCellState, type VentState } from '../protocol.ts';
+import {
+  GENESIS_CONE_BANDS,
+  LAVA_COOL_SECONDS,
+  lavaKey,
+  type LavaCellState,
+  type VentState,
+} from '../protocol.ts';
+
+export { GENESIS_CONE_BANDS };
 import {
   FLOW_BRUSH_RADIUS,
   FLOW_SPEED_CELLS_PER_SECOND,
@@ -128,17 +136,6 @@ const CONE_RING_OFFSETS: ReadonlyArray<readonly [number, number]> = [
   [0, -CONE_RING_OFFSET],
   [0, CONE_RING_OFFSET],
 ];
-
-/**
- * Terrace bands a vent's cone stands above the ground it was sited on, when the
- * world is created.
- *
- * FOUR, on top of ./siting.ts's six-band siting bar, so a genesis volcano's
- * mouth sits ten bands above the sea — clearly the highest thing in its region
- * without being the map's ceiling, and low enough that the flows it eventually
- * throws still have somewhere to run downhill to.
- */
-export const GENESIS_CONE_BANDS = 4;
 
 /**
  * Terrace bands each eruption adds to the cone.
