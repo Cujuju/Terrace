@@ -228,7 +228,16 @@ const CROSSHAIR_GAP_WORLD_UNITS = CELL_WORLD_SIZE * 0.08;
  * because it is the POINTER: the OS arrow is hidden while it is drawn, so it
  * has to be the most legible thing the preview puts on screen.
  */
-const CROSSHAIR_OPACITY = OUTLINE_OPACITY + 0.2;
+const CROSSHAIR_OPACITY = 1;
+
+/**
+ * The centre mark's own hue on a RISER — a saturated magenta, deliberately
+ * outside everything the terrain palette holds (owner, 2026-08-27: "make the
+ * crosshair a more visible colour"). The amber the outline uses sits too close
+ * to soil and sand once it is lerped toward the band's colour, and the mark
+ * is the pointer: it has to read at a glance against every band there is.
+ */
+const MARK_COLOR_RISER = 0xff2d95;
 
 /**
  * Class the canvas carries while the outline stands in for the mouse pointer.
@@ -894,7 +903,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       crosshairMaterial.opacity = CROSSHAIR_OPACITY * MARK_REFUSED_OPACITY;
       return;
     }
-    markColor.setHex(OUTLINE_COLOR_RISER, SRGBColorSpace);
+    markColor.setHex(MARK_COLOR_RISER, SRGBColorSpace);
     // `bandColorOf` takes a HEIGHT, and band k's slab tops out at
     // k·BAND_HEIGHT — the height the terrain paints that band's cap with.
     const [r, g, b] = bandColorOf(band * BAND_HEIGHT);
