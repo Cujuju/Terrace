@@ -246,6 +246,13 @@ export interface World extends TerrainSink {
  */
 const nowMs = (): number => performance.now();
 
+/**
+ * The empty dirty set, for the callers that tick a throttled consumer without
+ * naming any chunk. Shared and never written: every consumer that takes a
+ * dirty set only iterates it.
+ */
+const NO_CHUNKS: ReadonlySet<number> = new Set<number>();
+
 export function createWorld(viewport: Viewport): World {
   // One sea for the whole session, like the fog and rivers below. It draws
   // NOTHING until the first snapshot's `water.sync`: since the surface covers
@@ -280,6 +287,12 @@ export function createWorld(viewport: Viewport): World {
    * wrong. One pool for the whole session, like the water and river rigs.
    */
   const chunkBuildSource = createWorkerChunkBuildSource();
+
+  /**
+   * The one-element dirty set `onChunkDrawn` hands the river rig. Reused across
+   * splices — see the subscription in `resetWorld` for why that is safe.
+   */
+  const drawnChunkScratch = new Set<number>();
 
   let mirror: TerrainMirror | null = null;
   /**
@@ -372,47 +385,52 @@ export function createWorld(viewport: Viewport): World {
    * segments standing on them, rewrites the sea's depth-alpha texels over
    * them (render/water.ts — a sculpt that breaks the surface or digs deeper
    * must be visible through the water the same frame it lands, not only
-   * after the next rejoin), and refreshes rivers. Events that change
-   * `received` (snapshot, chunkUnlock) call fog.sync afterwards as well;
-   * that is about WHICH segments exist, not their heights.
+   * after the next rejoin), and ticks the river rig's throttle. Events that
+   * change `received` (snapshot, chunkUnlock) call fog.sync afterwards as
+   * well; that is about WHICH segments exist, not their heights.
+   *
+   * IT NAMES CHUNKS ONLY TO MIRROR READERS. Anything that reads a chunk's
+   * published chart is driven by `onChunkDrawn` instead — see the guard
+   * comments below and the subscription in `resetWorld`.
    */
   const applyDirty = (dirty: Set<number>): void => {
-    // AN EMPTY SET IS NOT A CHEAP CALL, so it is not made at all. Every
-    // consumer below is written to iterate the set, which reads as "nothing
-    // dirty costs nothing" — and is false for `water.refresh`, which re-uploads
-    // three world-sized textures per call whatever the set holds
+    // AN EMPTY SET IS NOT A CHEAP CALL, so nothing below is asked to make it.
+    // Every mirror consumer here is written to iterate the set, which reads as
+    // "nothing dirty costs nothing" — and is false for `water.refresh`, which
+    // re-uploads three world-sized textures per call whatever the set holds
     // (render/water.ts). Once the prediction journal stops reporting chunks
     // whose rendered state did not change, the authoritative echo of a
     // correctly predicted sculpt arrives with an empty set several times a
-    // second, and this early return is what makes that echo free.
-    //
-    // RIVERS ARE DELIBERATELY OUTSIDE THE GUARD. Their refresh is throttled on
-    // ELAPSED TIME and accumulates the dirty chunks it was handed while inside
-    // the window (render/riverRig.ts): the rebuild happens on the first call
-    // AFTER the window passes, whatever that call's own set holds. Skipping
-    // empty-set calls would strand the last chunks of a stroke in
-    // `pendingDirty` until some unrelated later edit happened to flush them.
-    // An empty-set call is genuinely cheap here — an elapsed-time compare, and
-    // when the window has passed, the rebuild the ACCUMULATED set has already
-    // earned.
-    if (mirror !== null && drawnGround !== null && dirty.size === 0) {
-      rivers.refresh(mirror, dirty, drawnGround);
-      return;
+    // second, and this guard is what makes that echo free.
+    if (dirty.size > 0) {
+      meshes?.update(dirty);
+      // WHAT THIS SET IS GOOD FOR, and what it is not. `fog` and `water` read
+      // the MIRROR — heights and `received` — which the caller has already
+      // written, so they are correct the instant the set exists. The lips, the
+      // rivers and the sea's curtains read the per-chunk CHART instead
+      // (terrain/drawnGroundStore.ts), and `meshes.update` above only ENQUEUES:
+      // the chart is published one build later, in the splice. Chart readers
+      // are therefore driven by build completion (`onChunkDrawn`, wired in
+      // resetWorld) and never from here — driving them from this set has them
+      // reading the pre-edit chart, or the blocky MISSING-CHUNKS fallback, for
+      // every chunk whose build has not landed yet.
+      if (mirror !== null) {
+        fog.refresh(mirror, dirty);
+        water.refresh(mirror, dirty);
+      }
     }
-    meshes?.update(dirty);
-    // Terrace lips are NOT refreshed from this set. They are read from what
-    // each chunk published when it was drawn, and the build queue drains under
-    // a frame budget — so the overlay is driven by build completion
-    // (`onChunkDrawn`, wired in resetWorld) rather than by the dirty set, which
-    // would have it reading pre-edit charts for every deferred chunk.
+    // RIVERS TICK ON EVERY CALL, EMPTY SET INCLUDED, and they are handed no
+    // chunks: the chunks reach them from `onChunkDrawn`. Their refresh is
+    // throttled on ELAPSED TIME and accumulates whatever chunks it has been
+    // handed while inside the window (render/riverRig.ts), so the rebuild
+    // happens on the first call AFTER the window passes, whatever that call's
+    // own set holds. Skipping the empty-set calls would strand the last chunks
+    // of a stroke in `pendingDirty` until some unrelated later edit flushed
+    // them. An empty-set call is genuinely cheap — an elapsed-time compare,
+    // and, when the window has passed, the rebuild the ACCUMULATED set has
+    // already earned.
     if (mirror !== null && drawnGround !== null) {
-      fog.refresh(mirror, dirty);
-      water.refresh(mirror, dirty);
-      // The SAME dirty set the meshes got: the rig re-emits only the water
-      // those chunks can have moved (render/riverRig.ts). The oracle goes with
-      // it so the water welds to the rock the meshes have drawn, not to a
-      // second opinion about it.
-      rivers.refresh(mirror, dirty, drawnGround);
+      rivers.refresh(mirror, NO_CHUNKS, drawnGround);
     }
   };
 
@@ -476,18 +494,36 @@ export function createWorld(viewport: Viewport): World {
       worldSize,
       nextMeshes.drawnGround(),
     );
-    // The lips follow the rock, chunk by chunk, on the event that redraws it.
-    // Subscribed rather than passed into `createTerrainMeshes` because the
-    // meshes have to exist before the overlay that reads their store does, and
-    // a callback closing over a not-yet-assigned overlay is a way to get that
-    // ordering wrong silently. The subscription dies with the meshes, which are
-    // disposed at the top of the next reset.
-    nextMeshes.onChunkDrawn((chunkIdx) => nextLayerEdges.refreshChunk(chunkIdx));
     mirror = nextMirror;
     // The oracle closes over the mirror it was built on AND over that mirror's
     // mesh store, so a replaced mirror takes both with it. This is the only
     // place it is ever replaced — see its declaration.
-    drawnGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
+    const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
+    drawnGround = nextGround;
+    // EVERY CHART READER IS DRIVEN FROM HERE, chunk by chunk, on the event that
+    // publishes the chart it reads — the lips (layerEdgeOverlay.ts) and the
+    // rivers rig, whose curtains cut the sea and the river tiles from the drawn
+    // contours (render/water/waterCurtain.ts). `meshes.update` only enqueues a
+    // build; the chart lands one build later, in the splice, and `onChunkDrawn`
+    // fires after both the publish and the vertices (render/terrainMeshes.ts).
+    // A reader driven by the dirty set instead reads the pre-edit chart, or the
+    // blocky MISSING-CHUNKS fallback, for every chunk still in the queue.
+    //
+    // Subscribed here rather than passed into `createTerrainMeshes` because the
+    // meshes have to exist before the overlay and the oracle that read their
+    // store do, and a callback closing over a not-yet-assigned reader is a way
+    // to get that ordering wrong silently. The subscription dies with the
+    // meshes, which are disposed at the top of the next reset.
+    nextMeshes.onChunkDrawn((chunkIdx) => {
+      nextLayerEdges.refreshChunk(chunkIdx);
+      // The rig copies the set's elements into its own `pendingDirty` before
+      // returning (render/riverRig.ts), so one scratch set serves every chunk
+      // rather than allocating one per splice. Its time throttle coalesces a
+      // burst of drawn chunks into a single rebuild.
+      drawnChunkScratch.clear();
+      drawnChunkScratch.add(chunkIdx);
+      rivers.refresh(nextMirror, drawnChunkScratch, nextGround);
+    });
     meshes = nextMeshes;
     layerEdges = nextLayerEdges;
     predictions = nextPredictions;
@@ -513,7 +549,7 @@ export function createWorld(viewport: Viewport): World {
       mirror: nextMirror,
       meshes: nextMeshes,
       predictions: nextPredictions,
-      ground: drawnGround,
+      ground: nextGround,
     };
   };
 
@@ -639,8 +675,16 @@ export function createWorld(viewport: Viewport): World {
       // `capYAt` would happily plan a chunk that had NOT arrived — a plan over
       // empty ground — so a memo that survived an unlock went on placing decals
       // on the sea floor of terrain that is now dry land. Nothing is memoised
-      // any more: the oracle reads what the meshes published, and `meshes.update`
-      // on the next line is what publishes the newly-revealed chunks.
+      // any more: the oracle reads what the meshes published.
+      //
+      // WHAT `meshes.update` ON THE NEXT LINE ACTUALLY DOES is queue these
+      // chunks for a build; the chart each one is read through is published
+      // later, when its finished job is spliced (render/terrainMeshes.ts). So
+      // nothing here may read the oracle for these chunks — every chart reader
+      // (lips, rivers, the sea's curtains) is driven per chunk by
+      // `onChunkDrawn`, wired in resetWorld. The exception is the direct build
+      // source, where `update` flushes and the publish happens inside the call;
+      // that is what the tests and the preview harnesses run on.
       meshes.update(unlockDirty);
       // Same as the snapshot path: the lips follow the builds, not the queue.
       // Territory just crept outward — move the mist with it. `received`
@@ -659,7 +703,11 @@ export function createWorld(viewport: Viewport): World {
       // here (unlike the snapshot path below): this is the SAME session's
       // world growing, not a different one replacing it, so there is no
       // stale "previous world" tile to worry about outliving.
-      if (drawnGround !== null) rivers.refresh(mirror, unlockDirty, drawnGround);
+      //
+      // NO CHUNKS ARE NAMED, for applyDirty's reason: these chunks have only
+      // just been queued and have no chart yet. They reach the rig from
+      // `onChunkDrawn` as each one is drawn. This call is the throttle tick.
+      if (drawnGround !== null) rivers.refresh(mirror, NO_CHUNKS, drawnGround);
       armExpiryTimer();
     },
 
