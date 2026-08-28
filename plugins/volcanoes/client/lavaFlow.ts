@@ -270,10 +270,28 @@ export interface LavaFlowRenderer {
   readonly root: Group;
   /** Replaces the whole flow — the `volcanoes:all` message. */
   replaceAll(cells: readonly LavaCellState[], elapsed: number, groundAt: DrawnGroundAtCell): void;
-  /** Adds cells that have just gone molten — the delta's `molten`. */
-  add(cells: readonly LavaCellState[], elapsed: number, groundAt: DrawnGroundAtCell): void;
-  /** Drops cells the server has stopped tracking — the delta's `forgotten`. */
-  forget(cells: ReadonlyArray<{ x: number; y: number }>): void;
+  /**
+   * Applies ONE `volcanoes:changes` message — the delta's `forgotten` (cells
+   * the server has stopped tracking) and its `molten` (cells that have just
+   * gone molten), together.
+   *
+   * ONE MESSAGE, AT MOST ONE REBUILD, which is why this is a single call and
+   * not the `add()` + `forget()` pair it replaces. Each of those rebuilt the
+   * mesh for itself, so every delta that evicted — which is every delta once a
+   * flow stands at LAVA_CELL_CAP — rebuilt the whole mesh twice to draw one
+   * frame; and `add()` rebuilt unconditionally, so a message that carried
+   * nothing but a vent's `erupting` flag rebuilt it for no visible change at
+   * all. Here a message whose cells did not change rebuilds nothing.
+   *
+   * Forgotten cells are dropped BEFORE molten ones are taken, so a cell the
+   * server evicted and immediately re-melted in the same message survives.
+   */
+  apply(
+    forgotten: ReadonlyArray<{ x: number; y: number }>,
+    molten: readonly LavaCellState[],
+    elapsed: number,
+    groundAt: DrawnGroundAtCell,
+  ): void;
   /** True while some covered cell's terrain has not streamed in yet. */
   readonly pendingGround: boolean;
   /** Rebuilds against terrain that may have arrived. Call on a slow retry clock. */
@@ -326,8 +344,6 @@ export function createLavaFlow(): LavaFlowRenderer {
   const cells = new Map<number, FlowCell>();
   /** True when the last rebuild wanted ground it did not have. */
   let missingGround = false;
-  /** The ground oracle the last rebuild used, so a retry can repeat it. */
-  let lastGroundAt: DrawnGroundAtCell | null = null;
 
   /**
    * Rebuilds the whole mesh from `cells`.
@@ -339,7 +355,6 @@ export function createLavaFlow(): LavaFlowRenderer {
    * a frame, and cannot leave a stale triangle behind.
    */
   function rebuild(groundAt: DrawnGroundAtCell): void {
-    lastGroundAt = groundAt;
     missingGround = false;
 
     if (cells.size === 0) {
@@ -498,7 +513,16 @@ export function createLavaFlow(): LavaFlowRenderer {
     strengthAttribute.needsUpdate = true;
   }
 
-  function remember(list: readonly LavaCellState[], elapsed: number): void {
+  /**
+   * Takes the molten cells, ANSWERING WHETHER THE SET ACTUALLY CHANGED.
+   *
+   * The answer is what lets one message cost at most one rebuild: every path
+   * out of the loop below is either a write (the geometry or a birth moved) or
+   * a deliberate skip (a stale re-melt, or a new cell over the cap), and only
+   * the writes are worth rebuilding for.
+   */
+  function remember(list: readonly LavaCellState[], elapsed: number): boolean {
+    let changed = false;
     for (const cell of list) {
       const key = lavaKey(cell.x, cell.y);
       // BIRTH, NOT AGE: the server sends how old a cell is NOW, and the shader
@@ -511,7 +535,16 @@ export function createLavaFlow(): LavaFlowRenderer {
       if (existing !== undefined && existing.birth >= birth) continue;
       if (existing === undefined && cells.size >= LAVA_CELL_CAP) continue;
       cells.set(key, { x: cell.x, y: cell.y, birth });
+      changed = true;
     }
+    return changed;
+  }
+
+  /** Drops cells, answering whether any of them was actually held. */
+  function drop(list: ReadonlyArray<{ x: number; y: number }>): boolean {
+    let changed = false;
+    for (const cell of list) changed = cells.delete(lavaKey(cell.x, cell.y)) || changed;
+    return changed;
   }
 
   return {
@@ -523,15 +556,18 @@ export function createLavaFlow(): LavaFlowRenderer {
       rebuild(groundAt);
     },
 
-    add(list, elapsed, groundAt): void {
-      remember(list, elapsed);
+    apply(forgotten, molten, elapsed, groundAt): void {
+      // FORGOTTEN FIRST, and the two results are collected before either is
+      // acted on: a cell the server evicted and re-melted in the same message
+      // has to survive, and it only does if the drop happens before the take.
+      const dropped = drop(forgotten);
+      const taken = remember(molten, elapsed);
+      // A MESSAGE THAT MOVED NO CELL DRAWS THE SAME MESH IT ALREADY HOLDS.
+      // `changes` also carries the complete vent list (protocol.ts), so the
+      // server broadcasts one whenever a vent merely flips `erupting` — with
+      // both cell lists empty. That message used to cost a full rebuild.
+      if (!dropped && !taken) return;
       rebuild(groundAt);
-    },
-
-    forget(list): void {
-      let changed = false;
-      for (const cell of list) changed = cells.delete(lavaKey(cell.x, cell.y)) || changed;
-      if (changed && lastGroundAt !== null) rebuild(lastGroundAt);
     },
 
     get pendingGround(): boolean {
@@ -552,7 +588,6 @@ export function createLavaFlow(): LavaFlowRenderer {
       material.dispose();
       root.clear();
       cells.clear();
-      lastGroundAt = null;
     },
   };
 }

@@ -120,9 +120,12 @@ export const clientPlugin: TerraceClientPlugin = {
         // whose flag is now false, never one that was removed.
         replaceVents(changes.vents);
         // Forget before adding: a cell the server evicted and immediately
-        // re-melted would otherwise be dropped after being added.
-        flow?.forget(changes.forgotten);
-        flow?.add(changes.molten, elapsedSeconds, groundAt);
+        // re-melted would otherwise be dropped after being added. That ordering
+        // now lives INSIDE the renderer, along with the reason this is one call
+        // and not two — a message is worth at most one rebuild of the mesh, and
+        // a message that moved no cell at all is worth none (lavaFlow.ts's
+        // `apply`). It was two calls, and each of them rebuilt.
+        flow?.apply(changes.forgotten, changes.molten, elapsedSeconds, groundAt);
       }),
     ];
 
