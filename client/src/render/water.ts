@@ -29,9 +29,9 @@ import {
   BufferGeometry,
   DataTexture,
   DoubleSide,
-  LinearFilter,
   Mesh,
   MeshStandardMaterial,
+  NearestFilter,
   RedFormat,
   Sphere,
   UnsignedByteType,
@@ -50,10 +50,13 @@ import {
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
+  WATER_BAND_EDGE_LIGHTEN_MIX,
+  WATER_BAND_EDGE_THRESHOLD,
+  WATER_BAND_EDGE_WIDTH_CELLS,
+  WATER_DEEP_TINT,
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
-  WATER_SHADE_DEEP,
   WATER_SHADE_MIX_DEFAULT_BYTE,
-  WATER_SHADE_SHALLOW,
+  WATER_SHALLOW_TINT,
   WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
   writeWaterDepthTexels,
 } from '../terrain/waterDepth.ts';
@@ -193,9 +196,17 @@ export interface Water {
  * the same order as the terrain patch path's own per-edit budget
  * (render/terrainMeshes.ts's header).
  *
- * NearestFilter/no-mipmaps would show a hard step at every cell boundary;
- * LinearFilter interpolates smoothly between adjacent cells' depths instead,
- * which is also the right visual for a soft alpha cue. No mipmaps: the sea
+ * NEAREST, NOT LINEAR (2026-08-27 — this comment used to argue the exact
+ * opposite, and the argument was the second half of the bug terrain/
+ * waterDepth.ts's bandFloorWaterDepthWorldUnits describes). "A hard step at
+ * every cell boundary" is not a cost here, it is the entire requirement: the
+ * terrain under this texture is a staircase, and the owner's report is that the
+ * sea over it shows no steps at all. LinearFilter smeared each texel across its
+ * neighbours, so even once the data underneath became a per-band step (it now
+ * is) the screen would still have received a ramp — the two changes only work
+ * together, which is why neither was enough on its own. "The right visual for a
+ * soft alpha cue" was a real preference and it is the one being overruled: a
+ * soft cue is what makes two adjacent bands indistinguishable. No mipmaps: the sea
  * is viewed near-perpendicular from the game's usual high camera, so
  * minification aliasing is not a concern worth a mip chain for an NPOT
  * (world sizes are multiples of CHUNK_SIZE, not necessarily of 2) texture.
@@ -213,8 +224,8 @@ function createDepthTexture(
   const buffer = new Uint8Array(worldSize * worldSize).fill(defaultByte);
   const texture = new DataTexture(buffer, worldSize, worldSize, RedFormat, UnsignedByteType);
   texture.generateMipmaps = false;
-  texture.minFilter = LinearFilter;
-  texture.magFilter = LinearFilter;
+  texture.minFilter = NearestFilter;
+  texture.magFilter = NearestFilter;
   texture.needsUpdate = true;
   return { texture, buffer };
 }
@@ -259,6 +270,11 @@ function createDepthTexture(
  */
 function glslFloat(value: number): string {
   return value.toFixed(6);
+}
+
+/** The same, for a colour constant that lives in TypeScript as a triple. */
+function glslVec3(value: readonly [number, number, number]): string {
+  return `vec3( ${value.map(glslFloat).join(', ')} )`;
 }
 
 function makeDepthAware(
@@ -309,7 +325,7 @@ function makeDepthAware(
         'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;',
         // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
         // beyond the world border, same as the depth-alpha sample below.
-        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterSpecularFactor, vWaterCellXZ / uWorldSizeCells ).r;',
+        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterSpecularFactor, wDepthUv ).r;',
         'water',
       ),
       // Spliced at <color_fragment> — the base colour BEFORE lighting, the same
@@ -320,21 +336,64 @@ function makeDepthAware(
       // what lets the painted steps stay legible against a deep sea instead of
       // being flattened by it — the whole point of adding it.
       '#include <color_fragment>',
-      `#include <color_fragment>\ndiffuseColor.rgb *= mix( ${glslFloat(
-        WATER_SHADE_DEEP,
-      )}, ${glslFloat(
-        WATER_SHADE_SHALLOW,
-      )}, texture2D( uWaterShadeMix, vWaterCellXZ / uWorldSizeCells ).r );`,
+      [
+        '#include <color_fragment>',
+        // THE HALF-CELL, and it is a correction, not a flourish (2026-08-27).
+        // A chunk's drawn area is the lattice of cell CENTRES, so cell i covers
+        // world cell-units [i - 0.5, i + 0.5) (terrain/vertexGrid.ts's "KNOWN,
+        // ACCEPTED" note) — while texel i covers [i, i + 1). Sampling at
+        // vWaterCellXZ / worldSize therefore read the depth of the cell HALF A
+        // CELL away for every fragment. Under the old LinearFilter that showed
+        // up as a bias inside a smear and nobody could see it; unfiltered it is
+        // a visible half-cell offset between the sea's bands and the terrace
+        // they are drawn over, caught in a top-down capture of the staircase
+        // fixture. The + 0.5 puts the sample on the texel CENTRE that belongs
+        // to the cell the fragment is actually standing on.
+        'vec2 wDepthUv = ( vWaterCellXZ + 0.5 ) / uWorldSizeCells;',
+        // The depth-alpha sample is taken HERE, not at its own <opaque_fragment>
+        // splice below, because three things now need it — the alpha itself and
+        // the two band-contour comparisons.
+        // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
+        // beyond the world border: UVs past [0,1] just hold the edge cell's
+        // depth, the same "clamp to world" rule terrain/mirror.ts's own
+        // sampleHeight applies to any out-of-bounds read.
+        'float wDepthAlpha = texture2D( uWaterDepthAlpha, wDepthUv ).r;',
+        // A COLOUR range, not a scalar one, since 2026-08-27 — see
+        // terrain/waterDepth.ts's WATER_SHALLOW_TINT for why hue carries part
+        // of the depth signal now.
+        `diffuseColor.rgb *= mix( ${glslVec3(WATER_DEEP_TINT)}, ${glslVec3(
+          WATER_SHALLOW_TINT,
+        )}, texture2D( uWaterShadeMix, wDepthUv ).r );`,
+        // The band contour, drawn in the world rather than in screen space —
+        // see WATER_BAND_EDGE_LIGHTEN_MIX for why the screen-space version was
+        // rejected. A fragment is on a boundary when the next cell along X or Z
+        // is in a different band AND the fragment is inside the last
+        // WATER_BAND_EDGE_WIDTH_CELLS of its own cell in that direction, so
+        // every boundary gets exactly one line, on its lower-coordinate side.
+        'vec2 wCellUv = 1.0 / vec2( uWorldSizeCells );',
+        `float wStepX = step( ${glslFloat(
+          WATER_BAND_EDGE_THRESHOLD,
+        )}, abs( texture2D( uWaterDepthAlpha, wDepthUv + vec2( wCellUv.x, 0.0 ) ).r - wDepthAlpha ) );`,
+        `float wStepZ = step( ${glslFloat(
+          WATER_BAND_EDGE_THRESHOLD,
+        )}, abs( texture2D( uWaterDepthAlpha, wDepthUv + vec2( 0.0, wCellUv.y ) ).r - wDepthAlpha ) );`,
+        // Same + 0.5 as the sample above, for the same reason: this is the
+        // fragment's position inside the cell the texel belongs to.
+        'vec2 wInCell = fract( vWaterCellXZ + 0.5 );',
+        `float wNearEdge = ${glslFloat(1 - WATER_BAND_EDGE_WIDTH_CELLS)};`,
+        'float wBandEdge = max( wStepX * step( wNearEdge, wInCell.x ), wStepZ * step( wNearEdge, wInCell.y ) );',
+        `diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 1.0 ), ${glslFloat(
+          WATER_BAND_EDGE_LIGHTEN_MIX,
+        )} * wBandEdge );`,
+      ].join('\n'),
       'water',
     );
     shader.fragmentShader = spliceShader(
       shader.fragmentShader,
       '#include <opaque_fragment>',
-      // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
-      // beyond the world border: UVs past [0,1] just hold the edge cell's
-      // depth, the same "clamp to world" rule terrain/mirror.ts's own
-      // sampleHeight applies to any out-of-bounds read.
-      'diffuseColor.a *= texture2D( uWaterDepthAlpha, vWaterCellXZ / uWorldSizeCells ).r;\n#include <opaque_fragment>',
+      // wDepthAlpha was sampled at the <color_fragment> splice above, which
+      // three emits earlier in the same main().
+      'diffuseColor.a *= wDepthAlpha;\n#include <opaque_fragment>',
       'water',
     );
   };

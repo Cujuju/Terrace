@@ -31,6 +31,7 @@ import {
   SEA_COLUMN_BANDS,
   SEA_LEVEL,
   chunksPerEdge,
+  quantizeToBand,
   seabedHeight,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE, ORDINARY_SEA_DEPTH_BANDS } from '../config.ts';
@@ -198,6 +199,39 @@ export const WATER_DEPTH_FLOOR_WORLD_UNITS =
  */
 export function waterDepthWorldUnits(height: number): number {
   return Math.max(0, SEA_LEVEL - height) * HEIGHT_WORLD_SCALE;
+}
+
+/**
+ * THE BAND IS THE UNIT (2026-08-27, owner: "There has to be a very clear visual
+ * distinction between the bands"). The depth every curve in this file is
+ * evaluated at, quantised to the terrace band the terrain under it is DRAWN at.
+ *
+ * THE BUG THIS FIXES, and it is one bug behind three failed attempts. Terrain
+ * renders snapped DOWN to its band floor (shared's quantizeToBand) — that is
+ * what makes the world a staircase. The water's three depth curves were fed the
+ * RAW stored height instead, so within one drawn band the alpha, the shade and
+ * the specular factor all swept smoothly across the band's full 16 units, and
+ * at the boundary between two bands they were CONTINUOUS: the terrain stepped,
+ * the water did not. Since the water owns roughly half of every underwater
+ * pixel, the sea contributed a smooth ramp over a stepped world and erased the
+ * steps it was drawn over. Measured through the shipped shader math
+ * (2026-08-27, client/.seabands-model.mjs): the on-screen luma step at a band
+ * boundary in the ordinary ocean was 0.9 to 2.2 parts in 255 — which is exactly
+ * the owner's "before and after is identical" for two rounds of palette and
+ * slope tuning, neither of which could have worked, because neither addressed
+ * the fact that nothing STEPPED.
+ *
+ * Every consumer of this file goes through here, so the fix is one function
+ * rather than one correction per curve. The three curves keep their own shapes;
+ * they are simply asked about the band, which is the only depth the player can
+ * actually see.
+ *
+ * NOT a determinism concern despite quantizeToBand's integer contract: this is
+ * a render-side lookup over a mirror the server already agrees on, the same way
+ * the palette's own bandPaletteIndex is.
+ */
+export function bandFloorWaterDepthWorldUnits(height: number): number {
+  return waterDepthWorldUnits(quantizeToBand(height));
 }
 
 /**
@@ -374,7 +408,10 @@ export const WATER_DRY_LAND_ALPHA = 0;
  */
 export function surfaceAlphaByte(height: number): number {
   if (height > SEA_LEVEL) return Math.round(WATER_DRY_LAND_ALPHA * WATER_DEPTH_ALPHA_BYTE_MAX);
-  return depthAlphaByte(waterDepthWorldUnits(height));
+  // The RAW height answers "is this dry"; the BAND answers "how deep" — see
+  // bandFloorWaterDepthWorldUnits. The two questions want different values from
+  // the same number and always have.
+  return depthAlphaByte(bandFloorWaterDepthWorldUnits(height));
 }
 
 /**
@@ -457,6 +494,107 @@ const WATER_SHADE_CENTRE_BANDS = 11;
  */
 export const WATER_SHADE_SHALLOW = 1.15;
 export const WATER_SHADE_DEEP = 0.3;
+
+/**
+ * THE SHADE RANGE IS A COLOUR RANGE, NOT A SCALAR (2026-08-27). The two
+ * constants above still define the CURVE — its clamps, and the [0,1] the texel
+ * normalises into — but what the shader mixes between is now these two
+ * per-channel triples, applied to WATER_COLOR the same way the scalar was.
+ *
+ * WHY. A scalar can only move a colour along one line through black, so every
+ * undersea band is the same hue at a different brightness, and brightness is
+ * the axis with the least room left: ACES tone mapping (render/scene.ts) spends
+ * its shoulder compressing exactly the range the sea occupies, so the whole
+ * ordinary ocean floor arrives inside a ~30-part-in-255 luma window whatever
+ * this curve does. Measured through the shipped shader math (2026-08-27), the
+ * best a scalar range can do for the worst adjacent band pair over the ordinary
+ * floor is dLuma 8.8 / dE 5.3; pulling the two ends apart in HUE as well gets
+ * the same pair to dLuma 10.8 / dE 7.7 — a 45% gain in perceptual distance for
+ * the same one multiply, because chroma is the axis that still has room.
+ *
+ * WHAT THE ENDS SAY. Shallow water is silt over a lit floor, so its tint lifts
+ * red and green and holds blue back — the shallows go silt-teal at about the
+ * luminance the 1.15 scalar gave them. Deep water is the opposite statement,
+ * and deliberately darker than the 0.3 scalar it replaces as well as bluer: the
+ * deep end is the half of the range the owner's report was about, so it spends
+ * both axes at once and lands as near-black indigo.
+ *
+ * BOUNDED ABOVE by the same ceiling the scalar was — see WATER_SHADE_SHALLOW's
+ * comment. The binding channel is blue, and blue is the one channel this tint
+ * pulls DOWN, so the stack's peak falls rather than rises.
+ */
+export const WATER_SHALLOW_TINT: readonly [number, number, number] = [1.6, 1.3, 1.0];
+export const WATER_DEEP_TINT: readonly [number, number, number] = [0.1, 0.2, 0.42];
+
+/**
+ * BAND-BOUNDARY CONTOURS (2026-08-27) — the other half of "a very clear visual
+ * distinction between the bands", and the half no amount of tuning can supply.
+ *
+ * Even with every curve above stepping per band, two ADJACENT bands in the
+ * ordinary ocean are about eleven parts in 255 apart on screen (measured, see
+ * WATER_SHALLOW_TINT). That is a visible difference between two large areas and
+ * a weak one across a boundary a few pixels long — which is most of what a real
+ * seabed's contours are. A contour map does not rely on the difference between
+ * neighbouring fills; it draws the line.
+ *
+ * So the water draws one, from the step it now has: with the depth texels
+ * quantised to the band (bandFloorWaterDepthWorldUnits) and sampled unfiltered
+ * (render/water.ts's NearestFilter), the alpha texel is CONSTANT inside a band
+ * and changes only where the band does. A fragment is on a boundary when its
+ * cell's texel differs from the next cell's, and it is within
+ * WATER_BAND_EDGE_WIDTH_CELLS of that cell edge.
+ *
+ * A WORLD-SPACE LINE, NOT A SCREEN-SPACE ONE. The first version took `fwidth`
+ * of the same texel — free, no neighbour taps, and the derivative is nonzero
+ * only on boundary pixels. Captured (2026-08-27, preview-water staircase): a
+ * top-down shot gives clean unbroken lines, and the game's own three-quarter
+ * camera gives a STIPPLE — screen-space derivatives are computed per 2x2 pixel
+ * quad, so a boundary running obliquely across the quad grid lights some quads
+ * and misses others. A dotted contour is an artefact of how the value was
+ * measured, not a look anyone chose, so the line is measured in the world
+ * instead: two extra taps of an 8-bit texture that is already resident, for a
+ * line that is the same width on every terrace at every camera angle.
+ *
+ * THE ALPHA TEXEL AND NOT THE SHADE ONE, deliberately: the shade curve is
+ * clamped flat over bands 0-10 and again past band 15, so a contour driven off
+ * it would vanish across the shallows — the alpha ramp is the only one of the
+ * three that is strictly monotone across every band the ordinary world has.
+ * RESIDUAL, stated rather than hidden: past ORDINARY_SEA_DEPTH_BANDS the alpha
+ * ramp plateaus too, so a trench deeper than the ordinary floor draws no
+ * contours until the deep-strata ramp picks up again below the sea column. That
+ * matches what the plateau already says about trenches ("a trench riding the
+ * WATER_MAX_ALPHA plateau is the behaviour the plateau was always for") and it
+ * is 5% of the world's water.
+ */
+export const WATER_BAND_EDGE_LIGHTEN_MIX = 0.35;
+
+/**
+ * How wide the contour is, as a fraction of one CELL — measured in the world,
+ * so a line is the same width on every terrace whatever the camera does.
+ *
+ * A fifth of a cell is one to four screen pixels across the game's usual camera
+ * range, which is the "single one pixel border" the owner asked the seabed
+ * risers for (terrain/bandColors.ts's 2026-08-19 amendment) at the resolution
+ * this rig actually draws at. RESIDUAL, stated: zoomed far enough out that a
+ * cell is under a pixel, the line goes sub-pixel and thins rather than holding
+ * a minimum width — the same thing the terrace risers it runs alongside do, so
+ * it thins WITH the geometry it is outlining rather than surviving it.
+ */
+export const WATER_BAND_EDGE_WIDTH_CELLS = 0.2;
+
+/** How much alpha one band of ordinary depth is worth — the ramp's own slope. */
+const WATER_ALPHA_STEP_PER_BAND =
+  (WATER_MAX_ALPHA - WATER_MIN_ALPHA) / WATER_ALPHA_SATURATION_BANDS;
+
+/**
+ * The difference between two neighbouring cells' alpha texels above which they
+ * are in DIFFERENT bands. HALF a band's alpha step: the texel is constant
+ * inside a band, so the true within-band difference is exactly zero and any
+ * positive threshold would do — half the step is the value that stays correct
+ * if a future filter or a byte-rounding change ever makes it merely small
+ * instead of zero, while still being cleared by every real boundary.
+ */
+export const WATER_BAND_EDGE_THRESHOLD = WATER_ALPHA_STEP_PER_BAND / 2;
 
 /** The neutral multiplier the centre depth maps to — ordinary sea, unchanged. */
 const WATER_SHADE_NEUTRAL = 1;
@@ -588,7 +726,9 @@ export function writeWaterDepthTexels(
       const row = y * worldSize;
       for (let x = x0; x < x0 + CHUNK_SIZE; x++) {
         const height = seabedHeight(mirror.map, x, y);
-        const depth = waterDepthWorldUnits(height);
+        // The band's depth, not the raw cell's — see
+        // bandFloorWaterDepthWorldUnits for why every curve wants the band.
+        const depth = bandFloorWaterDepthWorldUnits(height);
         // Height, not depth, for the alpha: only the height distinguishes dry
         // band-0 land (no sea drawn over it) from water at zero depth (a thin
         // film). See surfaceAlphaByte / WATER_DRY_LAND_ALPHA.
