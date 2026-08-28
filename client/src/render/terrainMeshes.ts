@@ -334,6 +334,25 @@ interface ChunkSlot {
   offset: number;
   /** Live vertices in the run. Moves on every rebuild that changes a contour. */
   count: number;
+  /**
+   * The run's own axis-aligned bounds, in world units — measured once, over the
+   * ~4.5 k vertices the chunk was just emitted with, at the moment they are
+   * copied in.
+   *
+   * WHY PER CHUNK. The super-mesh's bound has to be recomputed on every splice,
+   * and computing it from the vertices means scanning every live vertex of the
+   * super-mesh — 1.25 M on this world's busiest one, ~14 ms, for an edit that
+   * touched 4.5 k of them. Kept per slot, the super-mesh's bound is the union
+   * of at most SUPER_MESH_SPAN_CHUNKS² = 64 boxes.
+   *
+   * Meaningless while `count` is 0 (min > max); the union skips those slots.
+   */
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
 }
 
 /**
@@ -529,6 +548,14 @@ export function createTerrainMeshes(
     sm.normalAttribute = normalAttribute;
     sm.colorAttribute = colorAttribute;
     sm.selfLitAttribute = selfLitAttribute;
+
+    // LAST, AND IT HAS TO BE HERE. The geometry above is brand new and its
+    // `boundingSphere` is null, and three computes a null sphere over the WHOLE
+    // position attribute — including the dead tail past `liveVertices`, which
+    // holds whatever a previous, longer occupant left there and would stretch
+    // the sphere to the origin. Setting it here means a regrow never leaves a
+    // window in which that can happen. Do not move it into the callers.
+    updateBounds(sm);
   };
 
   /**
@@ -557,33 +584,63 @@ export function createTerrainMeshes(
   };
 
   /**
-   * The bound the renderer culls against, computed over the LIVE range only.
+   * The bound the renderer culls against: the union of the super-mesh's slot
+   * boxes, which is O(64) rather than O(live vertices).
+   *
+   * EXACT, not conservative. The union of the chunks' own measured boxes IS the
+   * AABB of the live vertices — a static box derived from the world size and
+   * the height range would be wrong for every partially revealed super-mesh,
+   * which is most of them while a world is being explored.
+   *
+   * The SPHERE is the AABB's centre plus its half-diagonal, which is
+   * marginally looser than the old max-distance-over-vertices radius (that one
+   * needed a second pass over every vertex to find the farthest). A looser
+   * sphere culls a hair later; it never culls something that should be drawn.
    *
    * Hand-rolled rather than `geometry.computeBoundingSphere()` because that
    * reads the whole position attribute, and the tail past `liveVertices` is
-   * whatever a previous, longer occupant left there. The old per-chunk path
-   * dodged this by collapsing its unused tail onto a live vertex; a packed
-   * super-buffer would have to do that over the whole slack after every edit,
-   * which is unbounded work to avoid a bounded loop.
-   *
-   * Centre-of-AABB, which is what Three's own implementation uses, so the
-   * radius means exactly what it did before the merge.
+   * whatever a previous, longer occupant left there.
    */
-  const recomputeBounds = (sm: SuperMesh): void => {
-    const geometry = sm.mesh.geometry;
-    const positions = sm.buffers.positions;
-    const live = sm.liveVertices;
-    if (live === 0) {
-      geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
-      return;
-    }
+  const updateBounds = (sm: SuperMesh): void => {
     let minX = Infinity;
     let minY = Infinity;
     let minZ = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
     let maxZ = -Infinity;
-    for (let v = 0; v < live; v++) {
+    for (const slot of sm.slots.values()) {
+      if (slot.count === 0) continue; // a chunk that emitted nothing has no box
+      if (slot.minX < minX) minX = slot.minX;
+      if (slot.minY < minY) minY = slot.minY;
+      if (slot.minZ < minZ) minZ = slot.minZ;
+      if (slot.maxX > maxX) maxX = slot.maxX;
+      if (slot.maxY > maxY) maxY = slot.maxY;
+      if (slot.maxZ > maxZ) maxZ = slot.maxZ;
+    }
+    const geometry = sm.mesh.geometry;
+    if (minX > maxX) {
+      geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
+      return;
+    }
+    const centreX = (minX + maxX) / 2;
+    const centreY = (minY + maxY) / 2;
+    const centreZ = (minZ + maxZ) / 2;
+    geometry.boundingSphere = new Sphere(
+      new Vector3(centreX, centreY, centreZ),
+      Math.hypot(maxX - centreX, maxY - centreY, maxZ - centreZ),
+    );
+  };
+
+  /** Measures the scratch's first `count` vertices into the slot's box. */
+  const measureSlot = (slot: ChunkSlot, count: number): void => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    const positions = scratch.positions;
+    for (let v = 0; v < count; v++) {
       const x = positions[v * 3]!;
       const y = positions[v * 3 + 1]!;
       const z = positions[v * 3 + 2]!;
@@ -594,21 +651,33 @@ export function createTerrainMeshes(
       if (y > maxY) maxY = y;
       if (z > maxZ) maxZ = z;
     }
-    const centreX = (minX + maxX) / 2;
-    const centreY = (minY + maxY) / 2;
-    const centreZ = (minZ + maxZ) / 2;
-    let maxSquared = 0;
-    for (let v = 0; v < live; v++) {
-      const dx = positions[v * 3]! - centreX;
-      const dy = positions[v * 3 + 1]! - centreY;
-      const dz = positions[v * 3 + 2]! - centreZ;
-      const squared = dx * dx + dy * dy + dz * dz;
-      if (squared > maxSquared) maxSquared = squared;
-    }
-    geometry.boundingSphere = new Sphere(
-      new Vector3(centreX, centreY, centreZ),
-      Math.sqrt(maxSquared),
-    );
+    slot.minX = minX;
+    slot.minY = minY;
+    slot.minZ = minZ;
+    slot.maxX = maxX;
+    slot.maxY = maxY;
+    slot.maxZ = maxZ;
+  };
+
+  /**
+   * Marks one attribute's vertex range as the only part needing re-upload.
+   *
+   * WITHOUT THIS, `needsUpdate` alone re-uploads the WHOLE attribute — tens of
+   * megabytes on a developed super-mesh — for a splice that rewrote one chunk.
+   * three's ranges are in ARRAY ELEMENTS, not vertices, so the vertex range is
+   * scaled by the attribute's itemSize (WebGLAttributes.js:141 passes
+   * `range.start`/`range.count` straight to `bufferSubData`'s element offsets).
+   * three clears the ranges itself once it has uploaded them
+   * (WebGLAttributes.js:147), so there is nothing to reset here.
+   */
+  const addVertexRange = (
+    attribute: BufferAttribute,
+    startVertex: number,
+    vertexCount: number,
+  ): void => {
+    if (vertexCount <= 0) return;
+    const stride = attribute.itemSize;
+    attribute.addUpdateRange(startVertex * stride, vertexCount * stride);
   };
 
   const createSuperMesh = (superIdx: number): SuperMesh => {
@@ -660,13 +729,27 @@ export function createTerrainMeshes(
         }
       }
       const previous = at === 0 ? null : sm.slots.get(sm.order[at - 1]!)!;
-      slot = { offset: previous === null ? 0 : previous.offset + previous.count, count: 0 };
+      slot = {
+        offset: previous === null ? 0 : previous.offset + previous.count,
+        count: 0,
+        // An empty box (min > max), which `updateBounds` skips. Filled by the
+        // `measureSlot` below, in this same call.
+        minX: Infinity,
+        minY: Infinity,
+        minZ: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity,
+        maxZ: -Infinity,
+      };
       sm.order.splice(at, 0, chunkIdx);
       sm.slots.set(chunkIdx, slot);
     }
 
     const delta = count - slot.count;
-    if (delta > 0) ensureSuperCapacity(sm, sm.liveVertices + delta);
+    // A REGROW IS EXEMPT from the ranged upload below: `bindGeometry` installs
+    // brand-new BufferAttributes with no GL buffer behind them, so three takes
+    // a full `bufferData` for the whole array whatever ranges are set.
+    const grew = delta > 0 ? ensureSuperCapacity(sm, sm.liveVertices + delta) : false;
 
     const tailStart = slot.offset + slot.count;
     const tailLength = sm.liveVertices - tailStart;
@@ -693,15 +776,29 @@ export function createTerrainMeshes(
     colors.set(scratch.colors.subarray(0, count * 3), slot.offset * 3);
     selfLit.set(scratch.selfLit.subarray(0, count), slot.offset);
 
+    measureSlot(slot, count);
+
     sm.positionAttribute.needsUpdate = true;
     sm.normalAttribute.needsUpdate = true;
     sm.colorAttribute.needsUpdate = true;
     sm.selfLitAttribute.needsUpdate = true;
+    if (!grew) {
+      // From this chunk's first vertex to the END OF THE LIVE RANGE, using the
+      // POST-update `liveVertices`: everything before the run is untouched,
+      // everything after it was shifted by the tail move, and stopping at the
+      // live count excludes both the dead tail a shrink left behind and the
+      // capacity slack a growth has not reached.
+      const dirtyVertices = sm.liveVertices - slot.offset;
+      addVertexRange(sm.positionAttribute, slot.offset, dirtyVertices);
+      addVertexRange(sm.normalAttribute, slot.offset, dirtyVertices);
+      addVertexRange(sm.colorAttribute, slot.offset, dirtyVertices);
+      addVertexRange(sm.selfLitAttribute, slot.offset, dirtyVertices);
+    }
 
     // On non-indexed geometry the draw range counts VERTICES, and the packed
     // runs have no holes, so ONE range covers every chunk in this super-mesh.
     sm.mesh.geometry.setDrawRange(0, sm.liveVertices);
-    recomputeBounds(sm);
+    updateBounds(sm);
   };
 
   /**
