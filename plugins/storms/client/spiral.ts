@@ -45,14 +45,16 @@ import { CYCLONE_DECK_HEIGHT_WORLD_UNITS, CYCLONE_EYE_RADIUS_FRACTION } from '..
 /**
  * Puffs in one cyclone's deck.
  *
- * FOUR HUNDRED AND EIGHTY — sixty per arm across eight arms. It is a big number
- * for one storm and it is still one draw call and one 480-instance matrix
- * buffer, which is under 31 KB. The count is set by COVERAGE, not by taste: a
- * cyclone's radius is a quarter of the map, and a deck that has to look
- * continuous over that area from underneath needs its puffs to overlap.
+ * EIGHT HUNDRED AND TEN — ninety per arm across nine arms. It is a big number
+ * for one storm and it is still one draw call and one 810-instance matrix
+ * buffer, which is under 52 KB. The count is set by COVERAGE, not by taste, and
+ * it was RAISED from 480 when the preview harness showed why: at the puff size
+ * needed for the arms to be distinguishable from each other, sixty per arm
+ * leaves gaps along an arm, and the deck reads as a dotted spiral. Puff size and
+ * this count are one decision — shrink one and the other has to grow.
  */
-export const ARMS_PER_SPIRAL = 8;
-export const PUFFS_PER_ARM = 60;
+export const ARMS_PER_SPIRAL = 9;
+export const PUFFS_PER_ARM = 90;
 export const PUFFS_PER_SPIRAL = ARMS_PER_SPIRAL * PUFFS_PER_ARM;
 
 /**
@@ -89,11 +91,15 @@ export const SPIRAL_SPIN_TURNS_PER_SECOND = 0.02;
  *
  * A FRACTION, not a length, because the deck must stay continuous whatever
  * radius the world's size clamp gave this cyclone (../protocol.ts's
- * cycloneRadiusFor). 0.16 of the radius means neighbouring puffs along an arm
- * overlap by roughly half at PUFFS_PER_ARM spacing — enough for the deck to
- * close up, not so much that it becomes a solid lid.
+ * cycloneRadiusFor).
+ *
+ * MEASURED DOWN FROM 0.16, which made a featureless white disc: a puff a sixth
+ * of the storm wide is wider than the gap between two arms, so the arms merged
+ * into a lid and the eye all but closed. At 0.085 neighbouring puffs along an
+ * arm still overlap (see PUFFS_PER_ARM, which had to rise with it) while two
+ * adjacent arms do not.
  */
-export const PUFF_SIZE_RADIUS_FRACTION = 0.16;
+export const PUFF_SIZE_RADIUS_FRACTION = 0.085;
 
 /**
  * How much of the deck's height a puff may sit above or below the mean, as a
@@ -105,6 +111,21 @@ export const PUFF_SIZE_RADIUS_FRACTION = 0.16;
  */
 export const DECK_THICKNESS_FRACTION = 0.1;
 
+/**
+ * How much the scene's own light reaches these puffs, in [0, 1] - the uniform
+ * that keeps an UNLIT material honest.
+ *
+ * WHY IT HAS TO EXIST. A ShaderMaterial reads none of the scene's lights, so a
+ * cloud deck authored at a fixed brightness keeps that brightness however dark
+ * the storm has made the world - and since the storm darkens the world through
+ * ./gloom.ts, the deck ends up the BRIGHTEST thing in a scene it is supposed to
+ * be the cause of the darkness in. The preview harness showed exactly that: a
+ * white disc over a near-black coast.
+ *
+ * So the plugin's frame loop hands the renderers the same daylight factor it
+ * hands the sky, and the puffs are multiplied by it. One number, driven from
+ * the one place that knows how dark it is.
+ */
 /**
  * Where the deck sits in the transparent pass — BELOW the funnel
  * (funnel.ts's FUNNEL_RENDER_ORDER), so a tornado under an overcast is painted
@@ -151,7 +172,9 @@ const SPIRAL_VERTEX_SHADER = /* glsl */ `
     // wire. It widens outward, which is what real arms do and what stops the
     // eyewall being swallowed.
     float scatterAngle = fract(aSeed * 13.7) * 6.28318;
-    float scatter = aRadius * (0.02 + 0.09 * aAlong) * fract(aSeed * 7.13 + 0.17);
+    // The band an arm covers. Narrowed with the puff size for the same reason:
+    // at the old width the scatter alone filled the gaps between arms.
+    float scatter = aRadius * (0.012 + 0.045 * aAlong) * fract(aSeed * 7.13 + 0.17);
 
     float height = ${CYCLONE_DECK_HEIGHT_WORLD_UNITS.toFixed(2)} *
       (1.0 + ${DECK_THICKNESS_FRACTION.toFixed(2)} * (fract(aSeed * 3.1) * 2.0 - 1.0));
@@ -173,6 +196,8 @@ const SPIRAL_VERTEX_SHADER = /* glsl */ `
 `;
 
 const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
+  uniform float uDaylight;
+
   varying float vAlong;
   varying float vStrength;
   varying float vSeed;
@@ -188,9 +213,15 @@ const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
     // DARKEST AT THE EYEWALL, THINNING TO THE RIM. That is where the weather
     // actually is, and it is also what gives the deck a centre to read: a
     // uniformly grey disc is an overcast, not a cyclone.
-    vec3 wall = vec3(0.20, 0.21, 0.25);
-    vec3 rim = vec3(0.55, 0.56, 0.60);
-    vec3 color = mix(wall, rim, vAlong);
+    // DARKER THAN THEY LOOK ON PAPER, because this material is UNLIT: the deck
+    // keeps whatever brightness is written here however dark the storm has made
+    // the world (../client/gloom.ts dims the scene's lights, which a
+    // ShaderMaterial does not read). Authored at the brightness a storm cloud
+    // should have UNDER its own gloom, so it does not become the brightest
+    // thing in a scene it is supposed to be darkening.
+    vec3 wall = vec3(0.08, 0.09, 0.12);
+    vec3 rim = vec3(0.26, 0.27, 0.32);
+    vec3 color = mix(wall, rim, vAlong) * uDaylight;
 
     // The outer tenth fades out, so the deck has no edge — the one thing that
     // would give away that this is a finite set of quads rather than a sky.
@@ -199,7 +230,7 @@ const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
     // NORMAL BLENDING, NEVER ADDITIVE: an overcast's whole job is to DARKEN
     // what is behind it, and additive blending can only lighten (fire's
     // smoke.ts wrote this rule down; the volcano plume paid for relearning it).
-    float alpha = puff * edge * vStrength * 0.5;
+    float alpha = puff * edge * vStrength * 0.42;
     if (alpha <= 0.004) discard;
     gl_FragColor = vec4(color, alpha);
   }
@@ -242,7 +273,11 @@ export interface SpiralSource {
 export interface SpiralRenderer {
   readonly root: Group;
   apply(live: readonly SpiralSource[]): void;
-  update(dt: number, elapsed: number): void;
+  /**
+   * Advances the deck. `daylight` is how much of the scene's light is reaching
+   * it, in [0, 1] - see this file's uDaylight note.
+   */
+  update(dt: number, elapsed: number, daylight: number): void;
   dispose(): void;
 }
 
@@ -262,7 +297,7 @@ export function createSpiral(): SpiralRenderer {
   const geometry = new PlaneGeometry(2, 2, 1, 1);
 
   const material = new ShaderMaterial({
-    uniforms: { uElapsed: { value: 0 } },
+    uniforms: { uElapsed: { value: 0 }, uDaylight: { value: 1 } },
     vertexShader: SPIRAL_VERTEX_SHADER,
     fragmentShader: SPIRAL_FRAGMENT_SHADER,
     transparent: true,
@@ -328,8 +363,9 @@ export function createSpiral(): SpiralRenderer {
       }
     },
 
-    update(dt, elapsed): void {
+    update(dt, elapsed, daylight): void {
       material.uniforms.uElapsed!.value = elapsed;
+      material.uniforms.uDaylight!.value = daylight;
 
       if (spirals.size === 0) {
         mesh.count = 0;
@@ -366,11 +402,18 @@ export function createSpiral(): SpiralRenderer {
           for (let i = 0; i < PUFFS_PER_ARM; i++) {
             mesh.setMatrixAt(drawn, matrix);
             armArray[drawn] = arm / ARMS_PER_SPIRAL;
-            // Square-rooted, so the puffs bunch toward the EYEWALL rather than
-            // spreading evenly: the area an arm covers grows with its radius,
-            // so an even parameter spacing would thin the cloud out exactly
-            // where the storm is strongest.
-            alongArray[drawn] = Math.sqrt((i + 0.5) / PUFFS_PER_ARM);
+            // EVENLY SPACED ALONG THE ARM, which is what makes an arm read as an
+            // arm.
+            //
+            // IT WAS SQUARE-ROOTED FIRST, on the reasoning that area grows with
+            // radius so the puffs should bunch outward to keep the density even.
+            // That reasoning is right about DENSITY and wrong about this
+            // picture: even density is a uniform disc, and the preview showed
+            // exactly that — a bright annulus with no arms in it, because sqrt
+            // piles most of the puffs into the outer third. Even spacing along
+            // the arm keeps each arm a continuous line at every radius, and the
+            // gaps between arms are the whole point.
+            alongArray[drawn] = (i + 0.5) / PUFFS_PER_ARM;
             seedArray[drawn] = (spiral.seed + drawn * 0.6180339887) % 1;
             radiusArray[drawn] = spiral.radiusWorldUnits;
             strengthArray[drawn] = strength;

@@ -30,13 +30,17 @@ import type { SkyRigState } from '../../../client/src/plugins/types.ts';
  * How dark it gets under the centre of a full-strength cyclone: the fraction of
  * the sky's light that is REMOVED.
  *
- * 0.72 — under a hurricane it is famously dark enough to need a lamp at noon,
+ * 0.6 — under a hurricane it is famously dark enough to need a lamp at noon,
  * and the whole point of the effect is that a player looks up and knows. It is
  * not 1.0 because a black scene is not a dark day, it is a bug report: the
- * terrain has to stay legible enough to keep playing, and this leaves rather
- * more than a quarter of the light.
+ * terrain has to stay legible enough to keep playing.
+ *
+ * MEASURED DOWN FROM 0.72 in the preview harness, where the land under a
+ * full-strength cyclone went to near-black and the coastline stopped being
+ * findable. 0.6 leaves two fifths of the directional light and rather more of
+ * the fill, which reads as a storm without taking the world away.
  */
-export const MAX_GLOOM_LIGHT_LOSS = 0.72;
+export const MAX_GLOOM_LIGHT_LOSS = 0.6;
 
 /**
  * The colour everything is dragged toward as the gloom deepens — a cold slate.
@@ -66,20 +70,43 @@ export const GLOOM_RESPONSE_PER_SECOND = 0.35;
 /**
  * How much of a cyclone's radius counts as "overhead", as a fraction.
  *
- * A player under the outer arms of a hurricane is under a hurricane — the
- * cloud deck covers them and the light really has gone — so this is 1.0 at the
- * eye and tapers to nothing at the rim rather than switching at some inner
- * ring. The taper is what makes walking out from under one a gradual
- * brightening instead of a light switch.
+ * IT FOLLOWS THE CLOUD DECK, NOT THE WIND, and that is the whole point: what
+ * darkens a sky is what is between it and the sun. So this is the same shape
+ * ./spiral.ts draws — nothing inside the EYE, full cover just outside it,
+ * tapering out at the rim — rather than the server's wind falloff, which peaks
+ * at the eyewall for a different reason.
+ *
+ * THE EYE IS BRIGHT, and that is not an oversight to be smoothed away. The
+ * calm bright middle of a hurricane is the one thing everybody knows about
+ * one, the renderer already draws the hole, and a gloom that stayed dark
+ * through it would be the sky contradicting the clouds directly overhead.
+ * A cyclone crosses at half a world unit a second, so a player under the eye
+ * gets a minute or two of daylight and then the far eyewall.
+ *
+ * The taper at the rim is what makes walking out from under a storm a gradual
+ * brightening rather than a light switch.
  */
 export function overheadFraction(distanceCells: number, radiusCells: number): number {
   if (!(radiusCells > 0)) return 0;
   const r = distanceCells / radiusCells;
   if (r >= 1) return 0;
-  // Squared, so the deep interior is uniformly dark and the last quarter of the
-  // radius is where the light comes back — matching the deck, which also thins
-  // only at its rim (./spiral.ts's edge fade).
-  return 1 - r * r;
+
+  // RESTATED FROM ../protocol.ts's CYCLONE_EYE_RADIUS_FRACTION rather than
+  // imported, and this is the one place in this plugin that restates rather
+  // than imports — because it is not the same number twice, it is a number and
+  // the width of the SOFT EDGE around it. Importing the fraction and hard-
+  // coding the edge would hide the second constant inside arithmetic.
+  const eye = 0.125;
+  const eyewallSoftness = 0.06;
+  if (r <= eye) return 0;
+
+  // In over the eyewall, then out to the rim. Squared on the way out so the
+  // interior is uniformly dark and only the last quarter of the radius is
+  // where the light comes back — matching the deck, which also thins only at
+  // its rim (./spiral.ts's edge fade).
+  const overEyewall = Math.min(1, (r - eye) / eyewallSoftness);
+  const towardRim = (r - eye) / (1 - eye);
+  return overEyewall * (1 - towardRim * towardRim);
 }
 
 /** Mixes two 0xRRGGBB colours, `t` of the way from `from` to `to`. */
