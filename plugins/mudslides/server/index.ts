@@ -104,6 +104,8 @@ export { MUDSLIDES_FLOW_EVENT };
 export { MAX_ACTIVE_SLIDES };
 
 let tickCount = 0;
+/** A roster change seen on a non-broadcast tick, owed to the next broadcast tick. */
+let activeBroadcastPending = false;
 
 /**
  * The world's frequency setting, read ONCE in onWorldCreate.
@@ -226,14 +228,24 @@ function simulate(world: WorldApi, dt: number): void {
 
   // Debris FIRST, so a client that is about to be told the slide has vanished has
   // already been told what it left behind.
-  broadcastDebris(world, takePendingDebris());
+  // Finished slides have already left the live list, but their last deposit
+  // may have landed this very tick — drain them too, or only a later joiner
+  // (who gets the full debris list) ever sees the toe (review 2026-08-28).
+  broadcastDebris(world, takePendingDebris(tick.finished));
 
-  if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
   // A world with nothing running costs one comparison per tick and no traffic —
   // but the tick a slide FINISHES on must still send, or the client keeps drawing
   // a front that is gone. `tick.changed` is true whenever anything was running at
-  // the top of this tick, which includes that one.
-  if (tick.changed || livingSlides().length > 0) broadcastActive(world);
+  // the top of this tick, which includes that one — and if that tick is not a
+  // broadcast tick the change is CARRIED to the next one, because the tick after
+  // has nothing running and would otherwise never say so (review 2026-08-28:
+  // half of all finished slides stayed parked on screen).
+  if (tick.changed) activeBroadcastPending = true;
+  if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
+  if (activeBroadcastPending || livingSlides().length > 0) {
+    activeBroadcastPending = false;
+    broadcastActive(world);
+  }
 }
 
 const persistence: PersistenceSlice = {

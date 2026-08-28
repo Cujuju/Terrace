@@ -56,6 +56,7 @@ function parseStorm(value: unknown): Storm | null {
     name,
     landfallReported,
     damageDebtSeconds,
+    surgeDebtSeconds,
   } = value as Record<string, unknown>;
 
   if (!Number.isInteger(id)) return null;
@@ -64,6 +65,10 @@ function parseStorm(value: unknown): Storm | null {
     if (!isFiniteNumber(number)) return null;
   }
   if (!isFiniteNumber(damageDebtSeconds) || damageDebtSeconds < 0) return null;
+  // Absent in slices written before the surge debt was persisted (2026-08-28);
+  // a missing debt is a debt of zero, not a corrupt storm.
+  const surgeDebt = surgeDebtSeconds === undefined ? 0 : surgeDebtSeconds;
+  if (!isFiniteNumber(surgeDebt) || surgeDebt < 0) return null;
   if (typeof retiring !== 'boolean' || typeof landfallReported !== 'boolean') return null;
   if (name !== undefined && typeof name !== 'string') return null;
 
@@ -81,6 +86,7 @@ function parseStorm(value: unknown): Storm | null {
     ...(typeof name === 'string' ? { name } : {}),
     landfallReported: landfallReported as boolean,
     damageDebtSeconds: damageDebtSeconds as number,
+    surgeDebtSeconds: surgeDebt,
   };
 }
 

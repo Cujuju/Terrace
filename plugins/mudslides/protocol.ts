@@ -191,9 +191,10 @@ export interface SlideState {
   /** Cells per second — the client extrapolates between pushes. */
   readonly vx: number;
   readonly vy: number;
-  /** The head that gave way, in cells. The scar the client draws a scarp on. */
-  readonly headX: number;
-  readonly headY: number;
+  // THE HEAD IS DELIBERATELY NOT HERE. `broadcastVisible` filters on the front,
+  // so a player who can see the valley but not the peak would otherwise be told
+  // the exact cell where hidden terrain gave way — and the client never drew it
+  // (review 2026-08-28). It travels in `mudslides:flow`, server-side only.
   /**
    * How much of its excavated load the front is still carrying, in [0, 1]. It
    * starts at 1 and falls as the run-out deposits; the client scales the moving
@@ -264,18 +265,15 @@ function isFiniteNumber(value: unknown): value is number {
 
 function parseSlide(value: unknown): SlideState | null {
   if (typeof value !== 'object' || value === null) return null;
-  const { id, x, y, vx, vy, headX, headY, load } = value as Record<string, unknown>;
+  const { id, x, y, vx, vy, load } = value as Record<string, unknown>;
   if (!Number.isInteger(id)) return null;
   for (const number of [x, y, vx, vy, load]) if (!isFiniteNumber(number)) return null;
-  if (!Number.isInteger(headX) || !Number.isInteger(headY)) return null;
   return {
     id: id as number,
     x: x as number,
     y: y as number,
     vx: vx as number,
     vy: vy as number,
-    headX: headX as number,
-    headY: headY as number,
     load: load as number,
   };
 }
