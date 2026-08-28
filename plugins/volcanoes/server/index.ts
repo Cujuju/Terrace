@@ -8,6 +8,9 @@
 // DEEP_LAVA_DEPTH (./siting.ts) and nothing else about the strata.
 //
 // SHAPE OF THE TICK:
+//   0. one queued cone ring sculpt is applied (./vents.ts's raiseCone), which
+//      happens even under `none` because the cone's centre is already in the
+//      ground;
 //   1. any vent a player DUG open last tick is opened (see THE DEFERRED BIRTH);
 //   2. the world rolls its rare spontaneous birth, under `active` only;
 //   3. every vent advances — dormancy, eruption, front (./vents.ts);
@@ -71,6 +74,7 @@ import { isLavaExposed, isSiteClear, MAX_VENTS_PER_WORLD } from './siting.ts';
 import { loadVolcanoes, saveVolcanoes, VOLCANOES_SLICE_VERSION } from './persistence.ts';
 import {
   advanceVolcanoes,
+  drainPendingConeSculpts,
   GENESIS_CONE_BANDS,
   lavaStates,
   openVent,
@@ -228,7 +232,8 @@ function openDugVents(world: WorldApi): boolean {
     // ground that is no longer showing lava is a vent nothing justifies.
     if (!isLavaExposed(world.heightAt(x, y))) continue;
     if (!isSiteClear({ x, y }, ventSites())) continue;
-    if (openVent(world, x, y, GENESIS_CONE_BANDS) !== null) opened = true;
+    // 'deferred': this is a tick — see ./vents.ts's ConeRingTiming.
+    if (openVent(world, x, y, GENESIS_CONE_BANDS, 'deferred') !== null) opened = true;
   }
   pendingDugSites.clear();
   return opened;
@@ -319,6 +324,12 @@ export const plugin: TerracePlugin = {
   },
 
   onTick(world: WorldApi, dt: number): void {
+    // BEFORE the `none` gate, and it is the only thing here that is: the queue
+    // holds ring steps for cones whose centres this plugin has ALREADY written,
+    // so finishing them is settling a debt rather than simulating a volcano.
+    // See ./vents.ts's drainPendingConeSculpts.
+    drainPendingConeSculpts(world);
+
     if (activity === 'none') return;
     simulate(world, dt);
   },

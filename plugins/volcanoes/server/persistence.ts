@@ -16,7 +16,17 @@
 
 import { restoreVolcanoes, volcanoSnapshot, type Vent, type VolcanoSnapshot } from './vents.ts';
 
-/** Bumped when `save`'s shape changes in a way `load` cannot read blind. */
+/**
+ * Bumped when `save`'s shape changes in a way `load` cannot read blind.
+ *
+ * STILL 1 after `pendingConeSculpts` was added to the snapshot, and that is the
+ * rule above applied rather than dodged: a blob written before that field
+ * simply has no queue outstanding, and reading a missing list as an empty one
+ * is the correct answer, not a guess. Bumping would have been strictly worse —
+ * the host parks a world whose slice version is higher than the code's, so a
+ * bump would take every existing world offline to add a field that changes
+ * nothing about how the old ones load.
+ */
 export const VOLCANOES_SLICE_VERSION = 1;
 
 export function saveVolcanoes(): unknown {
@@ -41,6 +51,27 @@ function parseVent(value: unknown): Vent | null {
   };
 }
 
+/**
+ * One queued cone ring step. `radius` and `amount` are re-validated as integers
+ * rather than trusted: they go straight to applyBrush, which THROWS on a
+ * non-integer amount or an out-of-range radius, and a throw inside the tick is
+ * the failure mode this slice's all-or-nothing rule exists to avoid.
+ */
+function parsePendingConeSculpt(
+  value: unknown,
+): { x: number; y: number; radius: number; amount: number } | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { x, y, radius, amount } = value as Record<string, unknown>;
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
+  if (!Number.isInteger(radius) || !Number.isInteger(amount)) return null;
+  return {
+    x: x as number,
+    y: y as number,
+    radius: radius as number,
+    amount: amount as number,
+  };
+}
+
 function parseLavaCell(value: unknown): { x: number; y: number; ageSeconds: number } | null {
   if (typeof value !== 'object' || value === null) return null;
   const { x, y, ageSeconds } = value as Record<string, unknown>;
@@ -58,7 +89,10 @@ function parseLavaCell(value: unknown): { x: number; y: number; ageSeconds: numb
  */
 export function loadVolcanoes(data: unknown): void {
   if (typeof data !== 'object' || data === null) return;
-  const { seeded, nextVentId, rngState, vents, lava } = data as Record<string, unknown>;
+  const { seeded, nextVentId, rngState, vents, lava, pendingConeSculpts } = data as Record<
+    string,
+    unknown
+  >;
   if (typeof seeded !== 'boolean') return;
   if (!Number.isInteger(nextVentId) || !Number.isInteger(rngState)) return;
   if (!Array.isArray(vents) || !Array.isArray(lava)) return;
@@ -77,12 +111,27 @@ export function loadVolcanoes(data: unknown): void {
     parsedLava.push(cell);
   }
 
+  // ABSENT IS LEGAL, and only absent: a blob written before cone rings were
+  // queued has no such field and owes the world nothing. A field that is
+  // present but not an array is a shape this code does not understand, which is
+  // the discard case the header argues for.
+  const parsedPending: Array<{ x: number; y: number; radius: number; amount: number }> = [];
+  if (pendingConeSculpts !== undefined) {
+    if (!Array.isArray(pendingConeSculpts)) return;
+    for (const value of pendingConeSculpts) {
+      const step = parsePendingConeSculpt(value);
+      if (step === null) return;
+      parsedPending.push(step);
+    }
+  }
+
   const snapshot: VolcanoSnapshot = {
     seeded,
     nextVentId: nextVentId as number,
     rngState: rngState as number,
     vents: parsedVents,
     lava: parsedLava,
+    pendingConeSculpts: parsedPending,
   };
   restoreVolcanoes(snapshot);
 }
