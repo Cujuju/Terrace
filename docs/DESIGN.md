@@ -3302,6 +3302,11 @@ independently verifiable, and the first two change nothing a player can see.
 4. **Only then decide what sculpting a second span means**, informed by
    something on screen rather than in the abstract.
 
+   AMENDED 2026-08-27 (issue #224): the first of those decisions is made — see
+   "Decisions made 2026-08-27 (a pulled band overhangs a carve; it never fills
+   it)" at the end of this file, which overturns the drag's D4 "fill the
+   opening" rule.
+
 **Steps 1–3 are the answer to "render them at least."** Step 3 is the decision
 point: if the aesthetic does not survive a ceiling, the authored-props
 alternative above is the fallback and steps 1–2 are still worth having.
@@ -4137,3 +4142,77 @@ rebuild path rather than a fast one and a test one.
 with 48 ms of network recompute off-thread. What remains is the O(wet cells)
 walk that stamps the surface into a per-cell table and groups it into regions —
 bounded by rivers.ts's own two constants rather than by terrain roughness.
+
+### Decisions made 2026-08-27 (a pulled band overhangs a carve; it never fills it)
+
+Owner report (#224): "if I carve and I try to pull the layers above, it
+instantly fills the carve." Reproduced on a carved column — a floor span, an
+opening, a roof span — by pulling a band that lies in the opening.
+
+**This overturns D4's "fill the opening" rule, which is kept below as the
+record of what it used to be.** D4 (issue #129, step 4.5) said the receiving
+span for a fill to band k is "the highest span whose ceiling lies below k"
+(`spanIndexBelowBand`, columns.ts): raising that span's ceiling to the band
+"puts material in the opening, and if that reaches the span above the two weld,
+which is a sealed cave rather than a deleted one." The reasoning was that a
+drag adds material and a sealed cave is at least not a deleted one. In the hand
+it is the opposite of what the gesture means: the player who just cut an
+opening and grabbed the roof gets the opening filled from the floor up and the
+carve destroyed in one click.
+
+**Decision (owner, 2026-08-27): the roof extends as an OVERHANG. The floor span
+never rises.** Pulling a band that lies in a gap under the cell's own roof lays
+that band's own slab — which welds to the roof above it wherever the join is
+too thin to draw — and leaves the span below byte-untouched.
+
+**The rule, stated once, in `columns.ts` `bandFillAt`.** For a cell open at band
+k, the fill is `extend` (the ground below rises to the band — the terrace step
+the drag has always built) when the column has OPEN SKY above the band, and
+`overhang` (the band's own slab) when the column has any span above it. Both
+the drag's own fill and `pushLowerLayers`' cascade go through it, so neither
+can seal a carve; the cascade additionally refuses `overhang` outright, because
+it exists to carry an existing staircase and must never author new roofs.
+
+- **Why the cell's own column decides and not a survey of its neighbours.** The
+  neighbour is what ADMITS the fill (`canSpreadBandToSpan` — the anti-cheat that
+  keeps "clients send intents, never heights" true of a message naming a band);
+  what the cell then looks like is a question its own spans answer completely.
+  Neighbours that disagree would need a tie-break, and a tie-break is a rule two
+  replicas can drift on.
+- **Why no new field on the wire.** The grasped span already travels: a drag
+  carries `targetBand`, one column covers a band with at most one span, and both
+  replicas resolve the band against their own map. A `spanBand` on a drag intent
+  would be the same number twice — and it could not be derived correctly anyway,
+  because a pull's `x`/`y` is the CURSOR cell, not the cell whose lip is in the
+  player's hand. This is what `sculptInput.ts` `emitDrag` deferred to "plan step
+  4.5, D5", now resolved: the span-aware form of the pull is the per-cell rule
+  inside `applyDragRegion`, not a wire field.
+- **Unlayered worlds cannot reach the new branch, by construction.** A one-span
+  column floors at `BEDROCK_FLOOR` and every band of a valid world is at or
+  above it, so the span either covers the band or lies below it and there is
+  never a span above. Verified: a hard drag pulling a band-4 terrace across a
+  disc produces a byte-identical height field before and after this change.
+- **The slab is floored one height unit above the boundary below it**, not on
+  it, because `spanUndersideHeight` hangs a span one band below its lowest
+  FILLED band: a slab floored on the boundary would fill the band under it too,
+  be drawn two bands deep, and weld to ground one band down — the floor-to-roof
+  weld this decision exists to prevent. Same reconciliation and the same single
+  height unit as `BEDROCK_REMNANT`.
+- **An opening too thin to hold an overhang still welds, and that is the model
+  speaking, not this rule.** `isGapDrawn` says a one-band gap is not drawn;
+  a slab laid with less than that clearance merges into what it touches. A
+  carve deep enough to see is deep enough to overhang.
+
+**Rejected alternatives.**
+
+- *Keep D4 and refuse the pull under a roof.* Honest, and useless: the owner's
+  gesture would do nothing rather than the wrong thing, and there would still be
+  no way to extend a roof.
+- *Ask the neighbour that holds the band whether it holds it as a roof
+  (`spanIndexCoveringBand > 0`) and mirror that.* Closer to the words of the
+  report and strictly worse to implement: several neighbours can hold the band
+  in different shapes, so it needs a tie-break, and the answer would then depend
+  on scan order rather than on the terrain.
+- *Carry the grasped span on the drag intent.* See "why no new field" above —
+  the cursor cell is not the grabbed cell, so the field would be wrong exactly
+  where it mattered.

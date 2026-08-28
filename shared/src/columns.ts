@@ -65,6 +65,15 @@ export interface Span {
  */
 const BEDROCK_REMNANT: Span = { floor: BEDROCK_FLOOR, ceiling: BEDROCK_FLOOR + 1 };
 
+/**
+ * The smallest height difference this integer height field can express — one
+ * sixteenth of a band at BAND_HEIGHT = 16, and invisible to every band test.
+ * Named because the places that use it are making a DESIGN choice with it
+ * ("just clear of the boundary below", "the thinnest column the world can
+ * hold"), not doing arithmetic that happens to land on 1.
+ */
+const HEIGHT_UNIT = 1;
+
 /** Flattened entries are [floor, ceiling] pairs; this is the stride. */
 const SPAN_STRIDE = 2;
 
@@ -393,6 +402,15 @@ export function spanIndexCoveringBand(
  * reaches the span above the two weld (`moveSpanCeiling`), which is a sealed
  * cave rather than a deleted one. On a one-span column it is span 0 whenever
  * `cells[i] < band · BAND_HEIGHT`, exactly the cell the old fill would write.
+ *
+ * SUPERSEDED AS THE DRAG'S RECEIVING-SPAN RULE (2026-08-27, issue #224). The
+ * paragraph above describes D4's "fill the opening" behaviour, which the owner
+ * overturned: pulling a band over a carve must extend the material as an
+ * OVERHANG and must never raise the floor span. This function still answers
+ * exactly the question its first paragraph asks — it is the "material below"
+ * half of `bandFillAt`, which is now the rule callers want. Kept as the record
+ * of what the drag used to do, and still correct for anything that really does
+ * mean "the highest span under this band".
  */
 export function spanIndexBelowBand(
   map: Heightmap,
@@ -408,6 +426,121 @@ export function spanIndexBelowBand(
     if (spanAt(map, x, y, k).ceiling < threshold) below = k;
   }
   return below;
+}
+
+/**
+ * WHERE MATERIAL LANDS when a stroke fills band `band` at one cell — the
+ * receiving-span rule, in one place, for every tool that adds material at a
+ * named band (owner decision 2026-08-27, issue #224).
+ *
+ * TWO OUTCOMES, DECIDED BY WHETHER THE CELL IS UNDER ITS OWN ROOF:
+ *
+ * - `extend` — the column is open at the band with nothing but sky above it, so
+ *   the material joins the ground below and the receiving span's ceiling rises
+ *   to the band. This is the terrace step the drag has always built, and on an
+ *   unlayered world it is the ONLY outcome (see below), so ordinary ground
+ *   sculpts byte-identically to before this rule existed.
+ * - `overhang` — some span of this column stands ABOVE the band, so the band
+ *   lies in a gap under a roof. The material becomes the band's own slab and
+ *   the span below is left byte-untouched. Filling that gap from the floor is
+ *   what the owner reported as "if I carve and I try to pull the layers above,
+ *   it instantly fills the carve": it welds floor to roof and destroys the
+ *   opening the player just cut. The floor span never rises.
+ *
+ * `null` when the column is already solid at the band — nothing to add.
+ *
+ * WHY THE TEST IS "IS THERE A SPAN ABOVE" AND NOT A NEIGHBOUR SURVEY. The
+ * neighbour is what ADMITS the fill (`canSpreadBandToSpan`, the anti-cheat);
+ * this decides only what the cell's own column looks like afterwards, and that
+ * is a question its own spans answer completely. A survey would also have to
+ * break ties between neighbours that disagree, and a tie-break here is a rule
+ * two replicas can drift on.
+ *
+ * UNLAYERED WORLDS CANNOT REACH `overhang`. A one-span column's span floors at
+ * BEDROCK_FLOOR and every band of a valid world is at or above it, so the span
+ * either covers the band (`null`) or lies below it (`extend`); there is no
+ * span above anything. That identity is what makes this safe to put on the
+ * path every drag takes.
+ */
+export type BandFill =
+  | { readonly kind: 'extend'; readonly spanIndex: number }
+  | { readonly kind: 'overhang' };
+
+export function bandFillAt(
+  map: Heightmap,
+  x: number,
+  y: number,
+  band: number,
+): BandFill | null {
+  if (columnCoversBand(map, x, y, band)) return null;
+  const below = spanIndexBelowBand(map, x, y, band);
+  // Not covered, so every span of the column is either wholly below the band
+  // (`below` is the highest of them) or wholly above it. The spans above are
+  // therefore exactly those after `below`, and any one of them is a roof.
+  const firstAbove = below === null ? 0 : below + 1;
+  if (firstAbove < spanCount(map, x, y)) return { kind: 'overhang' };
+  // Nothing above and nothing below is the empty column, which cannot exist
+  // (`setColumn` refuses it). Answered rather than asserted: a fill has
+  // nowhere to land, which is the same "nothing happens" every other null is.
+  if (below === null) return null;
+  return { kind: 'extend', spanIndex: below };
+}
+
+/**
+ * Performs the fill `bandFillAt` resolved. `ceiling` is the band's threshold
+ * height as the CALLER clamped it (`clampHeight` in heightmap.ts owns the
+ * world's height limits, and this module does not import it).
+ *
+ * The overhang slab is ONE BAND THICK AS THE RENDERER MEASURES IT: its cap is
+ * the band's threshold and its drawn underside hangs one band below that
+ * (`spanUndersideHeight`), so the slab occupies exactly the box the mesh draws
+ * for band `band` and fills that band and no other.
+ *
+ * WHY THE FLOOR IS ONE HEIGHT UNIT ABOVE THE BOUNDARY BELOW rather than on it.
+ * `spanUndersideHeight` hangs a span one band below its LOWEST FILLED band, and
+ * a span floored exactly on the boundary below fills that lower band too — so
+ * it would be drawn two bands deep and would weld to any ground capping one
+ * band under the slab, which is the floor-to-roof weld this whole rule exists
+ * to prevent. Floored one unit above it, the span's lowest filled band IS the
+ * threshold. Same reconciliation, and the same single height unit, as
+ * BEDROCK_REMNANT: one unit is a sixteenth of a band and no band test can see
+ * it.
+ *
+ * Everything that makes the result honest is `canonicaliseColumn`, not this
+ * function: a slab laid directly on the ground below merges into it (so a
+ * pull over ground that already reaches the band under it is exactly the
+ * `extend` it would have been), and a slab laid against the roof above merges
+ * into the roof, which is what "extends the roof laterally" means in spans.
+ */
+export function applyBandFill(
+  map: Heightmap,
+  x: number,
+  y: number,
+  fill: BandFill,
+  ceiling: number,
+): void {
+  if (fill.kind === 'extend') {
+    moveSpanCeiling(map, x, y, fill.spanIndex, ceiling);
+    return;
+  }
+  const floor = Math.max(BEDROCK_FLOOR, ceiling - BAND_HEIGHT + HEIGHT_UNIT);
+  // The bottom band of the world clamped to nothing: no slab to lay, and no
+  // silent half-height one either.
+  if (floor >= ceiling) return;
+  const spans = readSpans(map, x, y);
+  // Ascending by floor, which is the order `canonicaliseColumn` and
+  // `setColumn` both require. Every stored span is drawn, so a span whose
+  // ceiling is below this slab's ceiling also has its floor at or below the
+  // slab's floor — the scan cannot split a span pair the wrong way round.
+  let at = spans.length;
+  for (let k = 0; k < spans.length; k++) {
+    if (spans[k]!.floor > floor) {
+      at = k;
+      break;
+    }
+  }
+  spans.splice(at, 0, { floor, ceiling });
+  setColumn(map, x, y, canonicaliseColumn(spans));
 }
 
 /**
