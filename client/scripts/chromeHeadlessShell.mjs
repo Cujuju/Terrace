@@ -1,22 +1,22 @@
 // WHERE chrome-headless-shell IS — resolved, never written down.
 //
 // THE BUG THIS EXISTS TO END. Both CDP drivers in this folder used to open with
-// the same two lines:
+// the same two lines, an absolute path into one developer's own machine:
 //
 //   const CHROME =
-//     '/home/<user>/.cache/ms-playwright/chromium_headless_shell-1234/…';
+//     '/.../.cache/ms-playwright/chromium_headless_shell-1234/…';
 //
-// which is wrong three separate ways, and the same three ways in each copy:
+// which is wrong three ways, and the same three ways in each copy:
 //
-//   1. IT COMMITS SOMEBODY'S HOME DIRECTORY TO A PUBLIC REPO. The path carries
-//      the account name of whoever happened to write the script, and it lands in
-//      every commit from then on. That is the reason this module exists.
+//   1. IT ONLY EVER WORKED ON ONE MACHINE. A second contributor, a CI runner, or
+//      the same person on another box gets a silent no-op.
 //   2. IT PINS A PLAYWRIGHT BUILD NUMBER. `chromium_headless_shell-1234` stops
 //      existing the next time Playwright updates, and the failure is an ENOENT
 //      from `spawn` several frames later rather than anything that names the
 //      cause.
-//   3. IT ONLY EVER WORKED ON ONE MACHINE. A second contributor, a CI runner, or
-//      the same person on another box gets a silent no-op.
+//   3. AN ENVIRONMENT-SPECIFIC ABSOLUTE PATH IS NOT SHARED-SCRIPT MATERIAL. Where
+//      a tool lives is a property of the machine running it, so it is discovered
+//      or configured, never committed.
 //
 // One resolver, imported by both drivers, so a new driver cannot reintroduce any
 // of the three by copying its neighbour's header — which is exactly how the
