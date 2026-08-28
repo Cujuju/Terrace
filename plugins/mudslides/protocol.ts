@@ -182,6 +182,18 @@ export function roundBroadcastLoad(value: number): number {
 }
 
 /** One running slide, as the client sees it. */
+/**
+ * Slides running at once, world-wide.
+ *
+ * THREE. Each one holds a path, a visited set and an event cell list, and each
+ * one sculpts a few times a second; three is enough that a world under a big
+ * storm feels like it is coming apart in more than one place, and few enough that
+ * the sculpt traffic stays a small fraction of what a single player's brush
+ * already generates. HERE rather than in the server, because the client sizes
+ * its front-instance buffer from it.
+ */
+export const MAX_ACTIVE_SLIDES = 3;
+
 export interface SlideState {
   /** Stable for the slide's whole life; the client keys its renderers by it. */
   readonly id: number;
