@@ -1497,13 +1497,26 @@ function applyDragRegion(
   // THE RETREAT — the inward pull, and it returns before the outward pull's
   // machinery because almost none of that machinery applies to it.
   //
-  // ONLY GROUND AT EXACTLY THE GRABBED BAND MOVES. That single clause is the
-  // "a lip pulled in must not strip the ground standing on it" stop rule: a
-  // cell standing at band 9 is not part of band 7's extent, so pulling band 7
-  // in leaves it and everything it holds up exactly where it stands. It is the
-  // same lesson `treadWasNear` learned on the way out (0b81845) — "at or above"
-  // would have made every band beneath a totem answer for the totem — read in
-  // the other direction: here it is "at or above" that would strip a tower.
+  // WHAT RETREATING BAND k MEANS: every cell of the footprint that is solid at
+  // band k and whose span CAPS AT OR ABOVE k falls back to the ground exposed
+  // beside it (`retreatHeightAt`), so the FACE is cut back at the band the
+  // player has hold of. It used to mean "caps at exactly k", and that was a
+  // silent no-op on every face taller than one band (#223): since #217 the
+  // pointer names the slab under the ray, so a grab low on a 4→6 face names
+  // band 5, no cell on that face caps at band 5, and nothing moved — while
+  // raise, which has never cared how tall the face is, worked. On a one-band
+  // step "caps at k" and "caps at or above k" select the same cells, so this is
+  // byte-identical there.
+  //
+  // WHAT THAT COSTS, NAMED: a span that towers over the grabbed band is cut
+  // back too, so pulling band 7 in beneath a band-9 totem takes the totem's own
+  // cells down with the face they stand on — the stop rule this clause used to
+  // be (0b81845, read in the retreat's direction). The retreat cannot tell a
+  // totem from a tall face: both are one span, solid at k, capping above it.
+  // Bounded, deliberately, by the same two things that bound every retreat —
+  // the footprint, and `retreatHeightAt` returning null wherever no lower
+  // ground stands beside the cell, which is why a retreat never eats inward
+  // past the lip it was aimed at.
   //
   // NO CASCADE, DELIBERATELY, and this is where the symmetry with the outward
   // pull is broken on purpose. `pushLowerLayers` exists because an ADVANCING
@@ -1529,14 +1542,18 @@ function applyDragRegion(
       for (const i of disc) {
         const x = cellX(map.size, i);
         const y = cellY(map.size, i);
-        // Not this band's ground: higher land the retreat leaves standing,
-        // lower land it has already exposed, or a level it never owned. In
-        // spans: the span solid at the grabbed band must also CAP there — a
-        // span that towers over the band is not its lip (step 4.5).
+        // Not this band's ground: lower land the retreat has already exposed,
+        // or a level this column never owned.
         const k = spanIndexCoveringBand(map, x, y, targetBand);
         if (k === null) continue;
         const span = spanAt(map, x, y, k);
-        if (bandOf(span.ceiling) !== targetBand) continue;
+        // The span that covers the band caps at or above it by
+        // `spanIndexCoveringBand`'s own contract (it admits a span only when
+        // the band's threshold is at most the span's drawn cap), so this cannot
+        // fire today. It is kept as the loop's rule written down where the loop
+        // relies on it: a span capping BELOW the grabbed band is not that
+        // band's lip and must not be cut by a pull on it.
+        if (bandOf(span.ceiling) < targetBand) continue;
         const exposed = retreatHeightAt(map, x, y, targetBand);
         // Interior of the plateau — nothing lower beside it, so the band does
         // not end here and there is no lip at this cell to pull in.
