@@ -21,7 +21,13 @@
 // first bad field abandons the whole load.
 
 import { STORM_KINDS, type StormKind } from '../protocol.ts';
-import { restoreStorms, stormSnapshot, type Storm, type StormSnapshot } from './storms.ts';
+import {
+  resetStorms,
+  restoreStorms,
+  stormSnapshot,
+  type Storm,
+  type StormSnapshot,
+} from './storms.ts';
 
 /** Bumped when `save`'s shape changes in a way `load` cannot read blind. */
 export const STORMS_SLICE_VERSION = 1;
@@ -84,6 +90,12 @@ function parseStorm(value: unknown): Storm | null {
  * (server/src/plugins/slice-envelope.ts).
  */
 export function loadStorms(data: unknown): void {
+  // REPLACE, NEVER ADD: a load runs on a live world for a rollback
+  // (server/src/plugins/types.ts, PersistenceSlice), so whatever is in the air
+  // now is gone whether or not the slice below turns out to be readable. Every
+  // early return after this line therefore leaves an EMPTY sky, not the old one
+  // (review 2026-08-28).
+  resetStorms();
   if (typeof data !== 'object' || data === null) return;
   const { nextStormId, namedCycloneCount, rngState, storms } = data as Record<string, unknown>;
   if (!Number.isInteger(nextStormId) || !Number.isInteger(namedCycloneCount)) return;

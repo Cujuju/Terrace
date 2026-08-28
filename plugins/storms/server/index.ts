@@ -118,6 +118,17 @@ export { MAX_ACTIVE_STORMS };
 let tickCount = 0;
 
 /**
+ * A tick that changed the roster has been seen but not yet broadcast. The
+ * broadcast runs every BROADCAST_TICK_INTERVAL ticks; `advanceStorms` only
+ * reports `changed` while a storm is alive, so the tick on which the LAST
+ * storm dies is the last one that says so — and if that tick is not a
+ * broadcast tick, nothing would ever tell the clients the sky is empty
+ * (review 2026-08-28: a spent cyclone spun over the player forever). This
+ * flag carries the change across to the next broadcast tick.
+ */
+let broadcastPending = false;
+
+/**
  * The world's settings, read ONCE in onWorldCreate.
  *
  * WorldApi.setting's own instruction: the value is fixed for the life of a
@@ -223,7 +234,11 @@ function simulate(world: WorldApi, dt: number): void {
   }
   pruneSurge(new Set(alive.map((storm) => storm.id)));
 
-  if (tickCount % BROADCAST_TICK_INTERVAL === 0 && tick.changed) broadcastStorms(world);
+  if (tick.changed) broadcastPending = true;
+  if (tickCount % BROADCAST_TICK_INTERVAL === 0 && broadcastPending) {
+    broadcastPending = false;
+    broadcastStorms(world);
+  }
 }
 
 const persistence: PersistenceSlice = {
