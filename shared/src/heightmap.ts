@@ -40,6 +40,8 @@ export {
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
 import {
+  applyBandFill,
+  bandFillAt,
   canCarveBandAt,
   canSpreadBandToSpan,
   carveRange,
@@ -50,7 +52,6 @@ import {
   readSpans,
   spanAt,
   spanCount,
-  spanIndexBelowBand,
   spanIndexCoveringBand,
   spanLowestBandHeight,
   spanUndersideHeight,
@@ -1136,12 +1137,19 @@ function pushLowerLayers(
       for (const i of candidates) {
         const x = cellX(map.size, i);
         const y = cellY(map.size, i);
-        // The span the fill lands on: null once this band is solid here.
-        const k = spanIndexBelowBand(map, x, y, band);
-        if (k === null) continue;
+        // Where the fill lands: null once this band is solid here.
+        //
+        // THE CASCADE CARRIES STEPS AND NEVER AUTHORS OVERHANGS (issue #224).
+        // A cell whose band lies in a gap under its own roof answers
+        // `overhang`, and it is skipped: this pass is here to keep an existing
+        // staircase from being swallowed, not to hang new slabs under roofs,
+        // and filling that gap from the floor is exactly the carve-sealing the
+        // rule above forbids.
+        const fill = bandFillAt(map, x, y, band);
+        if (fill === null || fill.kind !== 'extend') continue;
         if (!canSpreadBandTo(map, x, y, band)) continue;
         record(i);
-        moveSpanCeiling(map, x, y, k, level);
+        applyBandFill(map, x, y, fill, level);
         changed.add(i);
         raised.push(i);
         filledThisPass = true;
@@ -1608,17 +1616,30 @@ function applyDragRegion(
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
       // Already solid at the band: the lip itself, land an earlier pass took,
-      // or higher ground the pull leaves standing. Otherwise `k` is the span
-      // the fill lands on — the one whose gap holds the band (plan D4), so
-      // under a roof the fill goes into the opening and may weld to the roof,
-      // and the roof itself never moves.
-      const k = spanIndexBelowBand(map, x, y, targetBand);
-      if (k === null) continue;
+      // or higher ground the pull leaves standing. Otherwise `fill` says where
+      // the material lands — the ground below when this cell has open sky, a
+      // NEW SLAB when the band lies in a gap under this cell's own roof
+      // (columns.ts `bandFillAt`, owner decision 2026-08-27, issue #224).
+      //
+      // The superseded rule, kept here as the record of what changed: the fill
+      // used to land on `spanIndexBelowBand` unconditionally (plan D4, "put
+      // material in the opening… the two weld, a sealed cave"), which is why
+      // pulling a roof band over a carve raised the FLOOR span to the roof and
+      // sealed the carve. See DESIGN.md, "Decisions made 2026-08-27 (a pulled
+      // band overhangs a carve; it never fills it)".
+      const fill = bandFillAt(map, x, y, targetBand);
+      if (fill === null) continue;
       if (!canSpreadBandTo(map, x, y, targetBand)) continue;
       record(i);
-      moveSpanCeiling(map, x, y, k, targetHeight);
+      applyBandFill(map, x, y, fill, targetHeight);
       changed.add(i);
-      raised.push(i);
+      // ONLY AN `extend` SEEDS THE CASCADE. `pushLowerLayers` exists because an
+      // advancing lip swallows the tread below it, and the level below has to
+      // give ground too or the step is destroyed. An overhang advances over AIR
+      // and swallows nothing: there is no tread under it being crowded, and
+      // carrying the levels below it would push material into the very opening
+      // the overhang was created to leave open.
+      if (fill.kind === 'extend') raised.push(i);
       filledThisPass = true;
     }
   }

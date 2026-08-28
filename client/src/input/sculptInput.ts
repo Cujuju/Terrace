@@ -574,6 +574,15 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // no-op legitimate pulls over layered ground. The pull's grasp travels as
       // `targetBand` plus the per-cell neighbour rule inside applyDragRegion,
       // which is where the span-aware form belongs (plan step 4.5, D5).
+      //
+      // SETTLED 2026-08-27 (issue #224), and the answer is that there is
+      // nothing to add here. The span-aware pull now lives entirely in the
+      // shared math's per-cell rule (`bandFillAt`, columns.ts): a pull over a
+      // gap under a roof extends the roof as an OVERHANG instead of raising
+      // the floor into it. One column covers a band with at most one span, so
+      // `targetBand` plus the receiver's own map names the grasped span
+      // exactly — a `spanBand` here would be the same number twice, derived
+      // from the wrong cell.
       seq: nextSeq++,
     });
     // A dropped intent leaves lastDragTo alone, so the very next pointermove
