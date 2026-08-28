@@ -68,39 +68,53 @@
 // what gives flat shading a hard crease at every cap/skirt boundary, and an
 // index buffer that never shares a vertex is pure overhead.
 //
-// MULTI-FRAME MESHING (issue #47, 2026-08-20). `update` does not build
-// anything. It marks chunks dirty in a queue, and a frame hook drains that
-// queue under a wall-clock budget (CHUNK_BUILD_FRAME_BUDGET_MS), rebuilding as
-// many as fit and leaving the rest for the next frame. A chunk still waiting
-// its turn keeps DRAWING ITS PREVIOUS MESH — stale by a frame or two, never
-// absent — which is what makes deferral invisible rather than a flicker.
+// QUEUE → JOB → SPLICE (issue #47, 2026-08-20; the build moved off-thread
+// 2026-08-28). `update` does not build anything. It marks chunks dirty in a
+// queue; a frame hook submits what the build source has room for and SPLICES
+// the answers that have come back, under a wall-clock budget
+// (CHUNK_SPLICE_FRAME_BUDGET_MS). A chunk still waiting its turn keeps DRAWING
+// ITS PREVIOUS MESH — stale by a frame or two, never absent — which is what
+// makes deferral invisible rather than a flicker.
+//
+// WHERE THE WORK IS. The job itself — marching, smoothing, triangulating, the
+// cap plan and the band raster — is render/chunkBuildSource.ts's, and in the
+// client that is a worker pool. What a frame pays here is the splice: the
+// packed tail move into the super-mesh, the chart publish, and the
+// `onChunkDrawn` handlers (~1 ms on a developed super-mesh). That is why the
+// budget is a splice budget and not a build budget; the constant's own doc
+// comment derives the number.
 //
 // WHY IT COSTS NO LATENCY. Frame callbacks run before `renderer.render`
 // (render/scene.ts's renderFrame), so a sculpt that lands between two frames is
-// queued, drained and drawn on the very next frame — exactly the frame it would
-// have appeared on when `update` built it inline. What changes is only what
-// happens when the queue holds MORE work than a frame can afford.
+// queued, drained and drawn on the very next frame — plus, on the worker path,
+// the job's own ~6 ms. What changes is only what happens when the queue holds
+// MORE work than a frame can afford.
 //
 // WHAT IT FIXES. A radius-4 brush straddles up to four chunks and every one of
 // them was rebuilt inside a single `update` call, so their costs ADDED: four
 // floor-depth chunks at the measured worst case (~9 ms each — see
 // terrain/capEmission.ts's budget table) was a ~36 ms frame, two and a half
-// vsync intervals. Spread across frames the same work costs one chunk's worth
-// per frame and the compounding is gone.
+// vsync intervals. Spreading them across frames removed the compounding, and
+// moving the build itself off-thread removed the remaining floor: the cost of
+// ONE chunk, which no frame budget could ever divide because the contour
+// pipeline is not resumable mid-chunk. What is left on this thread is a splice.
 //
-// WHAT IT DOES NOT FIX, STATED PLAINLY: the cost of ONE chunk. The drain always
-// builds at least one chunk per frame — it must, or a chunk costing more than
-// the whole budget would sit in the queue forever — so a single 9 ms chunk is
-// still a 9 ms frame. Removing THAT requires suspending a build partway through
-// its own level walk, which is a change to the builder rather than to the
-// scheduler; capEmission.ts's two budgets are what stand in for it meanwhile.
+// A CHART IS PUBLISHED BY THE SPLICE, NOT BY `update`. Everything that reads
+// what a chunk DREW — terrain/drawnGroundStore.ts's charts, and through them
+// the lip overlay, the river rig and the sea's curtains — must therefore be
+// driven by `onChunkDrawn` rather than by the dirty set the caller passed in.
+// Driven by the dirty set it reads the pre-edit chart, or the blocky
+// MISSING-CHUNKS fallback, for every chunk whose job has not landed. See
+// world.ts's applyDirty.
 //
 // NO FRAME HOOK, NO DEFERRAL. `createTerrainMeshes` takes the scheduler as an
-// option and falls back to draining inside `update` when it is absent. That is
+// option and falls back to `flush` inside `update` when it is absent. That is
 // not a test affordance: deferring work to a later frame is meaningless without
 // a frame loop to defer to, and a caller that has none (the headless suite, and
 // anything that wants the world complete before it looks at it) should get the
-// synchronous behaviour rather than a queue nobody pumps.
+// synchronous behaviour rather than a queue nobody pumps. Such a caller is on
+// the direct build source by definition — the worker cannot finish on this
+// thread — so `update` there both builds and publishes before it returns.
 //
 // DRAW-CALL TRADEOFF, known and accepted for v1: one mesh per 16×16 chunk
 // means a fully revealed 512² world would be 1024 draw calls. That is a lot,
@@ -131,13 +145,11 @@ import {
   type ChunkBuildSource,
 } from './chunkBuildSource.ts';
 import type { ChunkJobAnswer } from '../terrain/chunkJob.ts';
-import { CLIFF_PALETTE, TERRAIN_PALETTE, type Rgb } from '../terrain/bandColors.ts';
+import { type Rgb } from '../terrain/bandColors.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
   createChunkGeometryBuffers,
-  writeChunkVertexData,
   type ChunkGeometryBuffers,
-  type ChunkPalettes,
 } from '../terrain/vertexGrid.ts';
 import {
   createDrawnGroundStore,
@@ -503,11 +515,6 @@ export function createTerrainMeshes(
   const worldSize = mirror.map.size;
   const chunkCols = chunksPerEdge(worldSize);
   const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
-  const palettes: ChunkPalettes = {
-    top: TERRAIN_PALETTE,
-    cliff: CLIFF_PALETTE,
-  };
-
   const material = new MeshStandardMaterial({
     vertexColors: true,
     flatShading: true,

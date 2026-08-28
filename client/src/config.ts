@@ -522,8 +522,8 @@ export const CAMERA_MAX_POLAR_ANGLE_DEGREES = 85;
  * Shorter windows chase every hitch — at 100 ms a single dropped frame moves
  * the reading by 10 fps, so the number flickers and stops being readable —
  * while longer ones average away the very thing the meter exists to expose:
- * the chunk-rebuild spikes a held brush causes (render/terrainMeshes.ts's
- * CHUNK_BUILD_FRAME_BUDGET_MS) last a few hundred milliseconds, and a 2 s
+ * the chunk-splice spikes a held brush causes (render/terrainMeshes.ts's
+ * CHUNK_SPLICE_FRAME_BUDGET_MS) last a few hundred milliseconds, and a 2 s
  * window would smear them into an innocent-looking mean. Two updates a second
  * is also about as fast as a reading of this kind can be usefully read.
  */
