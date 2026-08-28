@@ -531,6 +531,10 @@ export function maxRadiusFor(worldSize: number): number {
 }
 
 /** The middle of the radius band this world allows, in cells. */
+export function meanRadiusFor(worldSize: number): number {
+  return (SYSTEM_MIN_RADIUS_CELLS + maxRadiusFor(worldSize)) / 2;
+}
+
 /**
  * Mean footprint of one system on this world, in cells², i.e. π·E[r²] over the
  * radius band the world allows.
@@ -540,11 +544,11 @@ export function maxRadiusFor(worldSize: number): number {
  * variance, which on the shipped world is a 5% error in the direction that
  * makes weather rarer — the exact direction this whole change is correcting.
  * For r uniform on [a, b], E[r²] = (a² + ab + b²)/3.
+ *
+ * (The spawn-field edge in activeSystemCapFor still uses E[r]; the true
+ * coverage is E[πr²/(W+2rm)²] and this factorisation is off by ~1–2% on the
+ * shipped world — stated, not corrected, review 2026-08-28.)
  */
-export function meanRadiusFor(worldSize: number): number {
-  return (SYSTEM_MIN_RADIUS_CELLS + maxRadiusFor(worldSize)) / 2;
-}
-
 export function meanSystemFootprintCells(worldSize: number): number {
   const a = SYSTEM_MIN_RADIUS_CELLS;
   const b = maxRadiusFor(worldSize);
@@ -738,6 +742,9 @@ export function advanceWind(dt: number): void {
  * snow is a fire under falling water with extra steps.
  */
 const WETTING_KINDS: readonly WeatherKind[] = ['rain', 'storm', 'snow'];
+// A Set for the hot path: fire asks precipitationAt per candidate cell per tick,
+// and with up to 14 systems a linear `includes` per system was the loop's cost.
+const WETTING_KIND_SET: ReadonlySet<WeatherKind> = new Set(WETTING_KINDS);
 
 /**
  * How wet cell (x, y) is right now, in [0, 1] — the strongest wetting system
@@ -756,7 +763,7 @@ const WETTING_KINDS: readonly WeatherKind[] = ['rain', 'storm', 'snow'];
 export function precipitationAt(x: number, y: number): number {
   let wettest = 0;
   for (const system of systems) {
-    if (!WETTING_KINDS.includes(system.kind)) continue;
+    if (!WETTING_KIND_SET.has(system.kind)) continue;
     const dx = x - system.x;
     const dy = y - system.y;
     if (dx * dx + dy * dy > system.radius * system.radius) continue;

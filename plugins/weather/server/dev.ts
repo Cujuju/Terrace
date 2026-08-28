@@ -14,6 +14,13 @@
 // starts, and reading it once means a running world's weather cannot change
 // character underneath the people in it.
 //
+// IT CHANGES THE WORLD, NOT JUST THE PICTURE. A parked system never drifts,
+// ages or dies, so `precipitationAt` reports full intensity over the central
+// disc for as long as the process lives: fire cannot start there (it
+// extinguishes on wetness) and mudslides soak continuously. An agent
+// photographing rain with this set and wondering why the torch does nothing
+// is looking at this paragraph (review 2026-08-28).
+//
 // UNSET OR UNRECOGNISED IS OFF, LOUDLY. A typo (`WEATHER_DEV_FORCE=rainy`)
 // warns and runs ordinary weather rather than failing the boot: this is a
 // diagnostic aid, and one that could stop a server booting would be worse than
