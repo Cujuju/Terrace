@@ -424,6 +424,67 @@ export function createLavaFlow(): LavaFlowRenderer {
       return 1 - t * t * (3 - 2 * t);
     }
 
+    /**
+     * The riser on ONE shared edge of a covered cell, if that edge is a step.
+     *
+     * TAKEN OUT OF THE PER-CELL LOOP, and that is the only reason it is a
+     * function: the two edges used to be described by an array of two tuples
+     * built fresh for every covered cell — three allocations each, ~1 500 cells
+     * a rebuild, several rebuilds a second — to hold a shape that never varies.
+     * Called twice below instead, so the constant structure lives in the call
+     * sites and nothing is allocated to carry it.
+     *
+     * `edgeA`/`edgeB` are the edge's two ends in world plan coordinates, and
+     * `normalX`/`normalZ` its outward normal; the geometry it emits is
+     * unchanged.
+     */
+    function pushRiser(
+      cellBirth: number,
+      y: number,
+      strength: number,
+      neighbourX: number,
+      neighbourY: number,
+      edgeAX: number,
+      edgeAZ: number,
+      edgeBX: number,
+      edgeBZ: number,
+      normalX: number,
+      normalZ: number,
+    ): void {
+      const neighbourKey = lavaKey(neighbourX, neighbourY);
+      const neighbour = covered.get(neighbourKey);
+      if (neighbour === undefined) return;
+      const neighbourCapY = capY.get(neighbourKey);
+      if (neighbourCapY === undefined || neighbourCapY === y) return;
+
+      const topY = Math.max(y, neighbourCapY);
+      const bottomY = Math.min(y, neighbourCapY);
+      // Downhill is +normal when this cell is the higher one, -normal when the
+      // neighbour is; the face leans away from whichever body it belongs to.
+      const sign = y > neighbourCapY ? 1 : -1;
+      const offsetX = normalX * LAVA_HOVER_HEIGHT * sign;
+      const offsetZ = normalZ * LAVA_HOVER_HEIGHT * sign;
+
+      // The face carries the WEAKER of the two cells' strengths, so the flow's
+      // edge fades down a step as evenly as it fades across a tread.
+      const riserStrength = Math.min(strength, strengthOf(neighbour.distance));
+      if (riserStrength <= 0) return;
+      // The birth of whichever cell is on top — the face is lava running over
+      // the lip, and that lava is the upper cell's.
+      const riserBirth = y > neighbourCapY ? cellBirth : neighbour.birth;
+
+      const ax = edgeAX + offsetX;
+      const az = edgeAZ + offsetZ;
+      const bx = edgeBX + offsetX;
+      const bz = edgeBZ + offsetZ;
+      push(ax, topY, az, riserBirth, riserStrength);
+      push(bx, topY, bz, riserBirth, riserStrength);
+      push(bx, bottomY, bz, riserBirth, riserStrength);
+      push(ax, topY, az, riserBirth, riserStrength);
+      push(bx, bottomY, bz, riserBirth, riserStrength);
+      push(ax, bottomY, az, riserBirth, riserStrength);
+    }
+
     for (const [key, cell] of covered) {
       const y = capY.get(key);
       if (y === undefined) continue;
@@ -464,47 +525,16 @@ export function createLavaFlow(): LavaFlowRenderer {
       // every fourth cell that reads as a black stipple crawling over
       // everything. So the face is pushed out along the DOWNHILL normal by the
       // same distance the cap is pushed up.
-      const edges: ReadonlyArray<
-        readonly [number, number, number, number, number, number, number, number]
-      > = [
-        // [neighbour cell, edge point A, edge point B, outward normal]
-        [cell.x + 1, cell.y, x1, z0, x1, z1, 1, 0],
-        [cell.x, cell.y + 1, x1, z1, x0, z1, 0, 1],
-      ];
-      for (const [nx, ny, ax0, az0, bx0, bz0, normalX, normalZ] of edges) {
-        const neighbourKey = lavaKey(nx, ny);
-        const neighbour = covered.get(neighbourKey);
-        if (neighbour === undefined) continue;
-        const neighbourY = capY.get(neighbourKey);
-        if (neighbourY === undefined || neighbourY === y) continue;
-
-        const topY = Math.max(y, neighbourY);
-        const bottomY = Math.min(y, neighbourY);
-        // Downhill is +normal when this cell is the higher one, -normal when the
-        // neighbour is; the face leans away from whichever body it belongs to.
-        const sign = y > neighbourY ? 1 : -1;
-        const offsetX = normalX * LAVA_HOVER_HEIGHT * sign;
-        const offsetZ = normalZ * LAVA_HOVER_HEIGHT * sign;
-
-        // The face carries the WEAKER of the two cells' strengths, so the flow's
-        // edge fades down a step as evenly as it fades across a tread.
-        const riserStrength = Math.min(strength, strengthOf(neighbour.distance));
-        if (riserStrength <= 0) continue;
-        // The birth of whichever cell is on top — the face is lava running over
-        // the lip, and that lava is the upper cell's.
-        const riserBirth = y > neighbourY ? cell.birth : neighbour.birth;
-
-        const ax = ax0 + offsetX;
-        const az = az0 + offsetZ;
-        const bx = bx0 + offsetX;
-        const bz = bz0 + offsetZ;
-        push(ax, topY, az, riserBirth, riserStrength);
-        push(bx, topY, bz, riserBirth, riserStrength);
-        push(bx, bottomY, bz, riserBirth, riserStrength);
-        push(ax, topY, az, riserBirth, riserStrength);
-        push(bx, bottomY, bz, riserBirth, riserStrength);
-        push(ax, bottomY, az, riserBirth, riserStrength);
-      }
+      //
+      // THE TWO EDGES ARE WRITTEN OUT, NOT LISTED. They used to be an array of
+      // two tuples — [neighbour cell, edge point A, edge point B, outward
+      // normal] — built inside this loop, which allocated three arrays per
+      // covered cell (~1 500 of them per rebuild) to carry a shape that is the
+      // same on every one. `pushRiser` above takes those eight numbers as
+      // arguments instead, in that order, and the +x and +z edges are its two
+      // call sites.
+      pushRiser(cell.birth, y, strength, cell.x + 1, cell.y, x1, z0, x1, z1, 1, 0);
+      pushRiser(cell.birth, y, strength, cell.x, cell.y + 1, x1, z1, x0, z1, 0, 1);
     }
 
     geometry.setDrawRange(0, vertex);
