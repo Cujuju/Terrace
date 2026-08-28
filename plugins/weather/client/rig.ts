@@ -252,8 +252,6 @@ interface Precipitation {
  */
 function createPrecipitation(profile: PrecipitationProfile): Precipitation {
   const verticesPerParticle = profile.form === 'streak' ? 2 : 1;
-  const positions = new Float32Array(profile.count * verticesPerParticle * 3);
-
   // Per-particle constants, drawn once. Kept in flat arrays rather than an array
   // of objects: the frame loop reads them count times, and a struct-of-arrays
   // walk is both allocation-free and cache-friendly.
@@ -274,11 +272,34 @@ function createPrecipitation(profile: PrecipitationProfile): Precipitation {
   }
 
   const geometry = new BufferGeometry();
-  const attribute = new Float32BufferAttribute(positions, 3);
+  const attribute = new Float32BufferAttribute(
+    profile.count * verticesPerParticle * 3,
+    3,
+  );
   // Told once that this buffer changes every frame, so the driver can pick the
   // right storage for it instead of assuming static geometry.
   attribute.setUsage(DynamicDrawUsage);
   geometry.setAttribute('position', attribute);
+
+  // THE BUFFER THE FRAME LOOP WRITES IS THE ATTRIBUTE'S OWN, TAKEN BACK OUT OF
+  // IT — never a Float32Array handed in and kept alongside.
+  //
+  // Fixed 2026-08-28, and it is why no player had ever seen a raindrop.
+  // `Float32BufferAttribute`'s constructor is `super(new Float32Array(array),
+  // …)`, and `new Float32Array(aFloat32Array)` COPIES: the array passed in is
+  // not the array drawn. The rig kept writing into its own copy and setting
+  // `needsUpdate` on an attribute whose buffer stayed zero-filled, so every
+  // drop, streak and flake was a degenerate zero-length line at the rig's
+  // centre. Nothing failed, nothing warned, and the fog sheets around it — real
+  // static geometry — kept drawing, which is why the effect read as "the rain
+  // is too faint to see" rather than as a bug.
+  //
+  // Constructing the attribute from a LENGTH and reading `.array` back is what
+  // makes the two impossible to separate again: there is now only one buffer,
+  // and it is the one the GPU uploads. (`new BufferAttribute(positions, 3)`
+  // would also work — it stores by reference — but it leaves the copying
+  // constructor one edit away from being reintroduced.)
+  const positions = attribute.array as Float32Array;
 
   const material =
     profile.form === 'streak'
