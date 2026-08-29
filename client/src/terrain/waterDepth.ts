@@ -34,7 +34,7 @@ import {
   quantizeToBand,
   seabedHeight,
 } from '@terrace/shared';
-import { HEIGHT_WORLD_SCALE, ORDINARY_SEA_DEPTH_BANDS } from '../config.ts';
+import { HEIGHT_WORLD_SCALE } from '../config.ts';
 import { type TerrainMirror } from './mirror.ts';
 
 /**
@@ -134,7 +134,18 @@ export const WATER_DEPTH_SATURATION_WORLD_UNITS =
  * suppression at p95 instead would strip the sheen from open water — the exact
  * regression that fix exists to prevent. Two questions, two constants.
  */
-const WATER_ALPHA_SATURATION_BANDS = ORDINARY_SEA_DEPTH_BANDS;
+/**
+ * WHERE THE WATER READS AS FULLY DEEP — the band the shade ramp reaches
+ * WATER_SHADE_DEEP at and the alpha ramp saturates at. WAS the measured
+ * ordinary floor (ORDINARY_SEA_DEPTH_BANDS, 15) so that every band the
+ * ordinary ocean has got its own step; owner, 2026-08-28, on the staircase:
+ * "it still goes from looking shallow to deep too quickly" — so the descent
+ * is spread over five more bands, past the ordinary floor and into what the
+ * histogram calls trench. The per-band step in the populated 10-15 window
+ * gets smaller by the same ratio; that is the trade the owner chose.
+ */
+const WATER_DEEP_FLOOR_BANDS = 20;
+const WATER_ALPHA_SATURATION_BANDS = WATER_DEEP_FLOOR_BANDS;
 export const WATER_ALPHA_SATURATION_WORLD_UNITS =
   WATER_ALPHA_SATURATION_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 
@@ -514,7 +525,7 @@ export const WATER_SHADE_DEEP = 0.3;
  * scalar used to have relative to noon, now reached only in a trench.
  */
 export const WATER_SHADE_TRENCH = 0.12;
-const WATER_SHADE_TRENCH_BANDS = 26;
+const WATER_SHADE_TRENCH_BANDS = 28;
 
 /**
  * THE SHADE RANGE IS A COLOUR RANGE, NOT A SCALAR (2026-08-27). The two
@@ -563,7 +574,7 @@ export const WATER_DEEP_TINT: readonly [number, number, number] = [0.16, 0.28, 0
  * to a near-black one, with blue — the channel that still has room — doing the
  * work.
  */
-export const WATER_TRENCH_TINT: readonly [number, number, number] = [0.03, 0.07, 0.18];
+export const WATER_TRENCH_TINT: readonly [number, number, number] = [0.01, 0.03, 0.1];
 
 /**
  * THE SEA'S OWN LIGHT (2026-08-28). The band contour that used to live here
@@ -614,7 +625,7 @@ const WATER_SHADE_NEUTRAL = 1;
  */
 const WATER_SHADE_CONTRAST_PER_BAND =
   (WATER_SHADE_NEUTRAL - WATER_SHADE_DEEP) /
-  (ORDINARY_SEA_DEPTH_BANDS - WATER_SHADE_CENTRE_BANDS);
+  (WATER_DEEP_FLOOR_BANDS - WATER_SHADE_CENTRE_BANDS);
 
 /**
  * Where, in the stored [0,1] mix, the ordinary floor sits — the join between
@@ -626,7 +637,7 @@ export const WATER_SHADE_FLOOR_MIX =
 
 /** Derived the same way as the segment above it: deep at the ordinary floor, trench at its bands. */
 const WATER_SHADE_TRENCH_CONTRAST_PER_BAND =
-  (WATER_SHADE_DEEP - WATER_SHADE_TRENCH) / (WATER_SHADE_TRENCH_BANDS - ORDINARY_SEA_DEPTH_BANDS);
+  (WATER_SHADE_DEEP - WATER_SHADE_TRENCH) / (WATER_SHADE_TRENCH_BANDS - WATER_DEEP_FLOOR_BANDS);
 
 /**
  * The multiplier this depth should scale the water's colour by, before it is
@@ -634,14 +645,14 @@ const WATER_SHADE_TRENCH_CONTRAST_PER_BAND =
  */
 function depthToShadeMultiplier(depthWorldUnits: number): number {
   const bands = depthWorldUnits / (BAND_HEIGHT * HEIGHT_WORLD_SCALE);
-  if (bands <= ORDINARY_SEA_DEPTH_BANDS) {
+  if (bands <= WATER_DEEP_FLOOR_BANDS) {
     const raw =
       WATER_SHADE_NEUTRAL - WATER_SHADE_CONTRAST_PER_BAND * (bands - WATER_SHADE_CENTRE_BANDS);
     return Math.min(WATER_SHADE_SHALLOW, raw);
   }
   // The trench segment — see WATER_SHADE_TRENCH.
   const raw =
-    WATER_SHADE_DEEP - WATER_SHADE_TRENCH_CONTRAST_PER_BAND * (bands - ORDINARY_SEA_DEPTH_BANDS);
+    WATER_SHADE_DEEP - WATER_SHADE_TRENCH_CONTRAST_PER_BAND * (bands - WATER_DEEP_FLOOR_BANDS);
   return Math.max(WATER_SHADE_TRENCH, raw);
 }
 
