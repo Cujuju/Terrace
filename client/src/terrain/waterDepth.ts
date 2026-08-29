@@ -523,105 +523,36 @@ export const WATER_SHADE_DEEP = 0.3;
  * comment. The binding channel is blue, and blue is the one channel this tint
  * pulls DOWN, so the stack's peak falls rather than rises.
  */
-export const WATER_SHALLOW_TINT: readonly [number, number, number] = [1.6, 1.3, 1.0];
-export const WATER_DEEP_TINT: readonly [number, number, number] = [0.1, 0.2, 0.42];
+// Lifted 2026-08-28 (owner: "the depths a little brighter, the shallows a
+// little brighter"). Shallow blue stays at 1.0 — it is the channel bound by
+// the WATER_SHADE_SHALLOW ceiling — so the lift goes into red and green.
+export const WATER_SHALLOW_TINT: readonly [number, number, number] = [1.8, 1.45, 1.0];
+export const WATER_DEEP_TINT: readonly [number, number, number] = [0.16, 0.28, 0.52];
 
 /**
- * BAND-BOUNDARY CONTOURS (2026-08-27) — the other half of "a very clear visual
- * distinction between the bands", and the half no amount of tuning can supply.
+ * THE SEA'S OWN LIGHT (2026-08-28). The band contour that used to live here
+ * (fd11cef..a4b50fc) was rejected on sight by the owner: a stepped ring drawn
+ * on the water surface reads as a ghost outline, not as a seabed. What the
+ * owner actually wanted was for the water not to go near-black at night.
  *
- * Even with every curve above stepping per band, two ADJACENT bands in the
- * ordinary ocean are about eleven parts in 255 apart on screen (measured, see
- * WATER_SHALLOW_TINT). That is a visible difference between two large areas and
- * a weak one across a boundary a few pixels long — which is most of what a real
- * seabed's contours are. A contour map does not rely on the difference between
- * neighbouring fills; it draws the line.
+ * The daynight plugin drops the sun to zero and the ambient/hemisphere floor
+ * to a third of noon, and the water's albedo is lit by that floor like any
+ * other surface — so at midnight the whole sea sits at a third of its noon
+ * brightness, on top of a tint range whose deep end is already near-black.
+ * Radiance added to `totalEmissiveRadiance` (render/water.ts) is summed into
+ * `outgoingLight` after the lighting sum and does not scale with the rig; the
+ * water emits WATER_SELF_LIGHT_RADIANCE x its own tinted colour, so the depth
+ * structure (shallow silt-teal, deep indigo) is preserved, only lifted.
  *
- * So the water draws one, from the step it now has: with the depth texels
- * quantised to the band (bandFloorWaterDepthWorldUnits) and sampled unfiltered
- * (render/water.ts's NearestFilter), the alpha texel is CONSTANT inside a band
- * and changes only where the band does. A fragment is on a boundary when its
- * cell's texel differs from the next cell's, and it is within
- * WATER_BAND_EDGE_WIDTH_CELLS of that cell edge.
- *
- * A WORLD-SPACE LINE, NOT A SCREEN-SPACE ONE. The first version took `fwidth`
- * of the same texel — free, no neighbour taps, and the derivative is nonzero
- * only on boundary pixels. Captured (2026-08-27, preview-water staircase): a
- * top-down shot gives clean unbroken lines, and the game's own three-quarter
- * camera gives a STIPPLE — screen-space derivatives are computed per 2x2 pixel
- * quad, so a boundary running obliquely across the quad grid lights some quads
- * and misses others. A dotted contour is an artefact of how the value was
- * measured, not a look anyone chose, so the line is measured in the world
- * instead: two extra taps of an 8-bit texture that is already resident, for a
- * line that is the same width on every terrace at every camera angle.
- *
- * THE ALPHA TEXEL AND NOT THE SHADE ONE, deliberately: the shade curve is
- * clamped flat over bands 0-10 and again past band 15, so a contour driven off
- * it would vanish across the shallows — the alpha ramp is the only one of the
- * three that is strictly monotone across every band the ordinary world has.
- * RESIDUAL, stated rather than hidden: past ORDINARY_SEA_DEPTH_BANDS the alpha
- * ramp plateaus too, so a trench deeper than the ordinary floor draws no
- * contours until the deep-strata ramp picks up again below the sea column. That
- * matches what the plateau already says about trenches ("a trench riding the
- * WATER_MAX_ALPHA plateau is the behaviour the plateau was always for") and it
- * is 5% of the world's water.
+ * THE VALUE: noon irradiance is ambient 0.9 + hemisphere 1.5 = 2.4 (render/
+ * scene.ts, before the sun); midnight's floor is a third of that, 0.8. Adding
+ * 0.4 of self-light takes the midnight sea from 0.8 to 1.2 of its colour —
+ * half of noon's un-sunned level instead of a third — while adding only a
+ * sixth to the noon sea, which the owner also asked to be brighter.
+ * APPROXIMATE by construction (ignores the sun's NdotL term and tone
+ * mapping); a starting point for eyes-on tuning, not a photometric match.
  */
-export const WATER_BAND_EDGE_LIGHTEN_MIX = 0.35;
-
-/**
- * How wide the contour is, as a fraction of one CELL — measured in the world,
- * so a line is the same width on every terrace whatever the camera does.
- *
- * A fifth of a cell is one to four screen pixels across the game's usual camera
- * range, which is the "single one pixel border" the owner asked the seabed
- * risers for (terrain/bandColors.ts's 2026-08-19 amendment) at the resolution
- * this rig actually draws at. RESIDUAL, stated: zoomed far enough out that a
- * cell is under a pixel, the line goes sub-pixel and thins rather than holding
- * a minimum width — the same thing the terrace risers it runs alongside do, so
- * it thins WITH the geometry it is outlining rather than surviving it.
- */
-export const WATER_BAND_EDGE_WIDTH_CELLS = 0.2;
-
-/**
- * EMISSIVE CONTOUR STRENGTH — used only when the contour is drawn through
- * three's emissive path instead of the albedo lift above (render/water.ts's
- * WaterOptions.bandContourMode === 'emissive'), which is the shipped default
- * since 2026-08-28: the owner chose it over the albedo lift from a top-down
- * noon/midnight A/B, because the albedo contour all but vanished at night.
- *
- * WHY AN OPTION AT ALL: WATER_BAND_EDGE_LIGHTEN_MIX lifts `diffuseColor.rgb`,
- * i.e. the water's ALBEDO, so the contour is lit like any other surface colour
- * — which is right by day and is exactly why it dims with everything else once
- * the daynight plugin drops the sun to zero and the ambient/hemisphere floor to
- * a third of noon. Radiance added to `totalEmissiveRadiance` is summed into
- * `outgoingLight` after the lighting sum, so it does not scale with the rig.
- *
- * THE VALUE, derived rather than dialled: the emissive term replaces what the
- * albedo lift contributed at NOON, so that turning the option on changes the
- * night and leaves the day roughly where it was. The albedo lift adds
- * WATER_BAND_EDGE_LIGHTEN_MIX x (1 - water colour) of albedo, which the noon
- * rig then multiplies by its irradiance (ambient 0.9 + hemisphere 1.5 = 2.4 of
- * white, per render/scene.ts, before any sun term). Folding the ~0.7 headroom
- * between the water's colour and white into that irradiance gives
- * 2.4 x 0.7 ~= 1.7 — the linear radiance one unit of the mix was worth at noon.
- * APPROXIMATE by construction (it ignores the sun's NdotL term and tone
- * mapping); it is a starting point for a visual A/B, not a photometric match.
- */
-export const WATER_BAND_EDGE_EMISSIVE_RADIANCE = 1.7;
-
-/** How much alpha one band of ordinary depth is worth — the ramp's own slope. */
-const WATER_ALPHA_STEP_PER_BAND =
-  (WATER_MAX_ALPHA - WATER_MIN_ALPHA) / WATER_ALPHA_SATURATION_BANDS;
-
-/**
- * The difference between two neighbouring cells' alpha texels above which they
- * are in DIFFERENT bands. HALF a band's alpha step: the texel is constant
- * inside a band, so the true within-band difference is exactly zero and any
- * positive threshold would do — half the step is the value that stays correct
- * if a future filter or a byte-rounding change ever makes it merely small
- * instead of zero, while still being cleared by every real boundary.
- */
-export const WATER_BAND_EDGE_THRESHOLD = WATER_ALPHA_STEP_PER_BAND / 2;
+export const WATER_SELF_LIGHT_RADIANCE = 0.4;
 
 /** The neutral multiplier the centre depth maps to — ordinary sea, unchanged. */
 const WATER_SHADE_NEUTRAL = 1;

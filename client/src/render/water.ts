@@ -50,10 +50,7 @@ import {
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
-  WATER_BAND_EDGE_EMISSIVE_RADIANCE,
-  WATER_BAND_EDGE_LIGHTEN_MIX,
-  WATER_BAND_EDGE_THRESHOLD,
-  WATER_BAND_EDGE_WIDTH_CELLS,
+  WATER_SELF_LIGHT_RADIANCE,
   WATER_DEEP_TINT,
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
   WATER_SHADE_MIX_DEFAULT_BYTE,
@@ -284,7 +281,6 @@ function makeDepthAware(
   specularFactorTexture: DataTexture,
   shadeMixTexture: DataTexture,
   worldSizeUniform: { value: number },
-  bandContourMode: WaterBandContourMode,
 ): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWaterDepthAlpha = { value: depthAlphaTexture };
@@ -352,9 +348,8 @@ function makeDepthAware(
         // fixture. The + 0.5 puts the sample on the texel CENTRE that belongs
         // to the cell the fragment is actually standing on.
         'vec2 wDepthUv = ( vWaterCellXZ + 0.5 ) / uWorldSizeCells;',
-        // The depth-alpha sample is taken HERE, not at its own <opaque_fragment>
-        // splice below, because three things now need it — the alpha itself and
-        // the two band-contour comparisons.
+        // The depth-alpha sample is taken HERE rather than at its own
+        // <opaque_fragment> splice below, where the alpha is applied.
         // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
         // beyond the world border: UVs past [0,1] just hold the edge cell's
         // depth, the same "clamp to world" rule terrain/mirror.ts's own
@@ -366,55 +361,24 @@ function makeDepthAware(
         `diffuseColor.rgb *= mix( ${glslVec3(WATER_DEEP_TINT)}, ${glslVec3(
           WATER_SHALLOW_TINT,
         )}, texture2D( uWaterShadeMix, wDepthUv ).r );`,
-        // The band contour, drawn in the world rather than in screen space —
-        // see WATER_BAND_EDGE_LIGHTEN_MIX for why the screen-space version was
-        // rejected. A fragment is on a boundary when the next cell along X or Z
-        // is in a different band AND the fragment is inside the last
-        // WATER_BAND_EDGE_WIDTH_CELLS of its own cell in that direction, so
-        // every boundary gets exactly one line, on its lower-coordinate side.
-        'vec2 wCellUv = 1.0 / vec2( uWorldSizeCells );',
-        `float wStepX = step( ${glslFloat(
-          WATER_BAND_EDGE_THRESHOLD,
-        )}, abs( texture2D( uWaterDepthAlpha, wDepthUv + vec2( wCellUv.x, 0.0 ) ).r - wDepthAlpha ) );`,
-        `float wStepZ = step( ${glslFloat(
-          WATER_BAND_EDGE_THRESHOLD,
-        )}, abs( texture2D( uWaterDepthAlpha, wDepthUv + vec2( 0.0, wCellUv.y ) ).r - wDepthAlpha ) );`,
-        // Same + 0.5 as the sample above, for the same reason: this is the
-        // fragment's position inside the cell the texel belongs to.
-        'vec2 wInCell = fract( vWaterCellXZ + 0.5 );',
-        `float wNearEdge = ${glslFloat(1 - WATER_BAND_EDGE_WIDTH_CELLS)};`,
-        'float wBandEdge = max( wStepX * step( wNearEdge, wInCell.x ), wStepZ * step( wNearEdge, wInCell.y ) );',
-        // ALBEDO mode (the pre-2026-08-28 behaviour): the lift is part of what colour
-        // the water IS, so it is lit with the rest of the surface. In EMISSIVE
-        // mode this line is omitted and the same lift is added as radiance at
-        // the <emissivemap_fragment> splice below instead.
-        ...(bandContourMode === 'albedo'
-          ? [
-              `diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 1.0 ), ${glslFloat(
-                WATER_BAND_EDGE_LIGHTEN_MIX,
-              )} * wBandEdge );`,
-            ]
-          : []),
       ].join('\n'),
       'water',
     );
-    if (bandContourMode === 'emissive') {
-      shader.fragmentShader = spliceShader(
-        shader.fragmentShader,
-        // three emits this include after <color_fragment> in the same main(),
-        // so wBandEdge — declared at the splice above — is in scope here, and
-        // `totalEmissiveRadiance` has been initialised to `emissive` just
-        // before it. What is added here is summed into `outgoingLight` after
-        // the lighting sum (`outgoingLight = totalDiffuse + totalSpecular +
-        // totalEmissiveRadiance;`), which is the whole point: it does not
-        // scale with the sky rig, so the contour survives night.
-        '#include <emissivemap_fragment>',
-        `#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3( ${glslFloat(
-          WATER_BAND_EDGE_LIGHTEN_MIX * WATER_BAND_EDGE_EMISSIVE_RADIANCE,
-        )} * wBandEdge );`,
-        'water',
-      );
-    }
+    shader.fragmentShader = spliceShader(
+      shader.fragmentShader,
+      // three emits this include after <color_fragment> in the same main(), so
+      // diffuseColor already carries the depth tint, and
+      // `totalEmissiveRadiance` has just been initialised to `emissive`. What
+      // is added here is summed into `outgoingLight` AFTER the lighting sum,
+      // so it does not scale with the sky rig — this is the sea's own light,
+      // and it is what keeps the water legible at night. See
+      // WATER_SELF_LIGHT_RADIANCE for the value.
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * ${glslFloat(
+        WATER_SELF_LIGHT_RADIANCE,
+      )};`,
+      'water',
+    );
     shader.fragmentShader = spliceShader(
       shader.fragmentShader,
       '#include <opaque_fragment>',
@@ -426,28 +390,7 @@ function makeDepthAware(
   };
 }
 
-/**
- * How the band-boundary contour is drawn.
- *
- * 'albedo' — the original behaviour: the contour lifts `diffuseColor.rgb`
- * toward white, so it is lit, tone-mapped and fogged with the rest of the
- * surface, and dims with the sky at night.
- * 'emissive' — the shipped default (owner, 2026-08-28, after a noon/midnight
- * A/B): the same lift is added to
- * `totalEmissiveRadiance` instead, which the lighting sum does not scale, so
- * the contour holds its brightness at night. See
- * WATER_BAND_EDGE_EMISSIVE_RADIANCE for the strength and its derivation.
- *
- * An option on this factory rather than a module-level switch so the two can
- * be rendered side by side (preview-water's ?contour= param) without one
- * caller's choice reaching another's water.
- */
-export type WaterBandContourMode = 'albedo' | 'emissive';
-
-export interface WaterOptions {
-  /** Defaults to 'emissive', the shipped look; 'albedo' is kept for the A/B. */
-  readonly bandContourMode?: WaterBandContourMode;
-}
+export interface WaterOptions {}
 
 export function createWater(
   parent: Object3D,
@@ -498,7 +441,6 @@ export function createWater(
     specularFactorTexture,
     shadeMixTexture,
     worldSizeUniform,
-    options.bandContourMode ?? 'emissive',
   );
   // The sea gets the same painted bands the rivers do — one rule, in
   // water/waterBands.ts, precisely so the ocean cannot be left behind when the

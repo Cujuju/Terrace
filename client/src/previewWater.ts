@@ -7,8 +7,6 @@
 //   ?zoom=<number>            — camera distance multiplier; defaults to 1
 //   ?light=<noon|night>       — lighting rig; defaults to "noon" (the static
 //                               rig this harness has always had)
-//   ?contour=<albedo|emissive> — how the sea's band contour is drawn; defaults
-//                               to "emissive", the shipped behaviour
 //
 // WHAT THIS EXISTS TO SHOW, and why the live client could not. The thing under
 // test is a CURVE — how much terrain shows through the sea as a function of the
@@ -43,7 +41,7 @@ import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellIndex, chunkIndex, chunksPerEdg
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
-import { createWater, type WaterBandContourMode } from './render/water.ts';
+import { createWater } from './render/water.ts';
 // The REAL night rig, not a copy of its numbers: ?light=night drives this
 // fixture's three lights from the same function the daynight plugin drives the
 // live client's with, so a night capture here is lit exactly as the game is.
@@ -173,8 +171,6 @@ const zoomRaw = Number(params.get('zoom'));
 const zoom = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 1;
 const builder = SCENE_BUILDERS[sceneName] ?? buildStaircase;
 const isNight = params.get('light') === 'night';
-const bandContourMode: WaterBandContourMode =
-  params.get('contour') === 'albedo' ? 'albedo' : 'emissive';
 
 const scene = new Scene();
 scene.background = new Color(BACKDROP_COLOR);
@@ -238,7 +234,7 @@ meshes.flush();
 const frameHandlers: ((dt: number) => void)[] = [];
 const waterGroup = new Group();
 scene.add(waterGroup);
-const water = createWater(waterGroup, PREVIEW_WORLD_SIZE, { bandContourMode });
+const water = createWater(waterGroup, PREVIEW_WORLD_SIZE);
 water.setWorldSize(PREVIEW_WORLD_SIZE);
 water.sync(mirror);
 water.refresh(mirror, allChunks);
