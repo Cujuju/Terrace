@@ -496,6 +496,27 @@ export const WATER_SHADE_SHALLOW = 1.15;
 export const WATER_SHADE_DEEP = 0.3;
 
 /**
+ * THE TRENCH SEGMENT (2026-08-28). Owner, on the staircase fixture: "I want
+ * more variability in the staircase when getting to deeper water." The ramp
+ * above reaches WATER_SHADE_DEEP at the ordinary floor (band 15) and was flat
+ * beyond it, so every band from 15 to the fixture's 26 rendered identically —
+ * the "trench reads uniformly dark" flat that the histogram note calls a
+ * feature. It is not one the owner wants: past the ordinary floor the shade
+ * keeps falling, on a SECOND, gentler slope, from WATER_SHADE_DEEP at the
+ * ordinary floor to WATER_SHADE_TRENCH at WATER_SHADE_TRENCH_BANDS, and is
+ * flat only below that. The steep segment over the populated 11-15 window is
+ * untouched, so the differentiation asked for on 2026-08-26 is kept.
+ *
+ * WATER_SHADE_TRENCH_BANDS: the live world's p99 is 21 bands; 26 is that with
+ * the same headroom previewWater's staircase uses, so the whole fixture shows
+ * a change per tread. WATER_SHADE_TRENCH: the headroom the self-light and the
+ * 2026-08-28 tint lift created is spent here — 0.12 is the deep end the 0.3
+ * scalar used to have relative to noon, now reached only in a trench.
+ */
+export const WATER_SHADE_TRENCH = 0.12;
+const WATER_SHADE_TRENCH_BANDS = 26;
+
+/**
  * THE SHADE RANGE IS A COLOUR RANGE, NOT A SCALAR (2026-08-27). The two
  * constants above still define the CURVE — its clamps, and the [0,1] the texel
  * normalises into — but what the shader mixes between is now these two
@@ -528,6 +549,21 @@ export const WATER_SHADE_DEEP = 0.3;
 // the WATER_SHADE_SHALLOW ceiling — so the lift goes into red and green.
 export const WATER_SHALLOW_TINT: readonly [number, number, number] = [1.8, 1.45, 1.0];
 export const WATER_DEEP_TINT: readonly [number, number, number] = [0.16, 0.28, 0.52];
+
+/**
+ * The colour the trench segment (WATER_SHADE_TRENCH) descends to. A THIRD
+ * tint rather than a wider deep→shallow span, measured (2026-08-28): the
+ * first cut of the trench segment stretched the two-tint mix to cover it and
+ * the deep treads did not move — the WATER_COLOR red channel is already at
+ * the floor by the ordinary sea floor, and WATER_DEEP_TINT holds blue at
+ * 0.52, so the extra 11 bands had nothing left to spend. The shader mixes
+ * trench→deep over the trench segment and deep→shallow over the ordinary one
+ * (WATER_SHADE_FLOOR_MIX is the join), so the owner-tuned ordinary range is
+ * untouched and the trench gets a range of its own: from the deep indigo down
+ * to a near-black one, with blue — the channel that still has room — doing the
+ * work.
+ */
+export const WATER_TRENCH_TINT: readonly [number, number, number] = [0.03, 0.07, 0.18];
 
 /**
  * THE SEA'S OWN LIGHT (2026-08-28). The band contour that used to live here
@@ -581,14 +617,32 @@ const WATER_SHADE_CONTRAST_PER_BAND =
   (ORDINARY_SEA_DEPTH_BANDS - WATER_SHADE_CENTRE_BANDS);
 
 /**
+ * Where, in the stored [0,1] mix, the ordinary floor sits — the join between
+ * the shader's trench→deep and deep→shallow mixes. Derived, so the texture
+ * and the shader agree on it by construction.
+ */
+export const WATER_SHADE_FLOOR_MIX =
+  (WATER_SHADE_DEEP - WATER_SHADE_TRENCH) / (WATER_SHADE_SHALLOW - WATER_SHADE_TRENCH);
+
+/** Derived the same way as the segment above it: deep at the ordinary floor, trench at its bands. */
+const WATER_SHADE_TRENCH_CONTRAST_PER_BAND =
+  (WATER_SHADE_DEEP - WATER_SHADE_TRENCH) / (WATER_SHADE_TRENCH_BANDS - ORDINARY_SEA_DEPTH_BANDS);
+
+/**
  * The multiplier this depth should scale the water's colour by, before it is
  * normalised into the [0,1] the texture carries.
  */
 function depthToShadeMultiplier(depthWorldUnits: number): number {
   const bands = depthWorldUnits / (BAND_HEIGHT * HEIGHT_WORLD_SCALE);
+  if (bands <= ORDINARY_SEA_DEPTH_BANDS) {
+    const raw =
+      WATER_SHADE_NEUTRAL - WATER_SHADE_CONTRAST_PER_BAND * (bands - WATER_SHADE_CENTRE_BANDS);
+    return Math.min(WATER_SHADE_SHALLOW, raw);
+  }
+  // The trench segment — see WATER_SHADE_TRENCH.
   const raw =
-    WATER_SHADE_NEUTRAL - WATER_SHADE_CONTRAST_PER_BAND * (bands - WATER_SHADE_CENTRE_BANDS);
-  return Math.min(WATER_SHADE_SHALLOW, Math.max(WATER_SHADE_DEEP, raw));
+    WATER_SHADE_DEEP - WATER_SHADE_TRENCH_CONTRAST_PER_BAND * (bands - ORDINARY_SEA_DEPTH_BANDS);
+  return Math.max(WATER_SHADE_TRENCH, raw);
 }
 
 /**
@@ -598,9 +652,11 @@ function depthToShadeMultiplier(depthWorldUnits: number): number {
  * two siblings and needs no encode scale anyone has to remember.
  */
 export function depthToShadeMix(depthWorldUnits: number): number {
+  // Normalised over the FULL range, trench to shallow, since the trench
+  // segment was added (2026-08-28); the shader mixes over the same two ends.
   return (
-    (depthToShadeMultiplier(depthWorldUnits) - WATER_SHADE_DEEP) /
-    (WATER_SHADE_SHALLOW - WATER_SHADE_DEEP)
+    (depthToShadeMultiplier(depthWorldUnits) - WATER_SHADE_TRENCH) /
+    (WATER_SHADE_SHALLOW - WATER_SHADE_TRENCH)
   );
 }
 
