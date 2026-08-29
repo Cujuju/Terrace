@@ -138,20 +138,37 @@ function buildWorld(): { mirror: ReturnType<typeof createTerrainMirror>; pickabl
 }
 
 /**
- * The same world, sculpted, on the FRAME-HOOKED path — so the vertex arena is
- * left mid-compaction and the geometry the rays meet contains real holes.
+ * The same world, sculpted, on the FRAME-HOOKED path — so the geometry the rays
+ * meet has been through the vertex arena's placement and compaction rather than
+ * laid out once in chunk order.
  *
- * WHY IT HAD TO BE THIS PATH. `flush` ends with an unbudgeted compaction, so
- * the no-scheduler build above never holds a hole by the time it returns and a
- * sweep over it would pass by construction. Frames compact under a budget
- * (ARENA_COMPACT_STROKE_BUDGET_MS on a frame that spliced), so stopping the
- * moment the queue drains leaves dead space still in the buffers — which is
- * exactly the state a player pans and clicks through mid-stroke.
+ * WHY THE SWEEP ABOVE IS NOT ENOUGH. A from-scratch build appends every run in
+ * the order the chunks arrive, so it never exercises a first fit, a moved run
+ * or a zeroed hole: it would pass whatever the arena did with any of them. A
+ * sculpted world does exercise all three, and the compactor then reorders the
+ * runs — which is what `reordered` below asserts, so this fixture cannot
+ * quietly stop being the case it was written for.
+ *
+ * AND THE CLOCK IS A CONSTANT, which is what makes the holes deterministic. On
+ * the real `performance.now` the splice budget decides how many of the dirtied
+ * chunks land per frame, and therefore how far behind the frame's single
+ * compaction budget falls — a machine-load-dependent amount of dead space,
+ * which is no basis for an assertion. Frozen, every dirty chunk splices on one
+ * frame (the budget can never be exceeded) and exactly one compaction budget is
+ * spent against all of them.
+ *
+ * THE SCULPT IS A STRIP, not the whole world, for the same reason it is a
+ * sculpt at all: dead space is inside the DRAW RANGE, so it is inside the
+ * Raycaster's traversal too, and fragmenting all 256 chunks at once would make
+ * this sweep several times slower to no extra purpose. Two chunk rows leave
+ * more dead space than one frame's ARENA_COMPACT_STROKE_BUDGET_MS can close and
+ * a few per cent more triangles to walk.
  */
 function buildSculptedWorld(): {
   mirror: ReturnType<typeof createTerrainMirror>;
   pickables: Mesh[];
   deadVertices: number;
+  reordered: boolean;
 } {
   const handlers = new Set<(dt: number) => void>();
   const mirror = createTerrainMirror(WORLD);
@@ -161,6 +178,7 @@ function buildSculptedWorld(): {
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
+    now: () => 0,
   });
   const frame = (): void => {
     for (const handler of handlers) handler(1 / 60);
@@ -179,14 +197,17 @@ function buildSculptedWorld(): {
   );
   runToIdle();
 
-  // A RAISE THEN A LEVEL, so a grow and a shrink both land: the grow moves runs
-  // to fresh ground and the shrink opens holes behind them.
-  const band = (h: number) => Math.round(h / BAND_HEIGHT) * BAND_HEIGHT;
+  // A RAISE AND THEN THE ORIGINAL HEIGHTS BACK, so a grow and a shrink both
+  // land: the grow moves runs to fresh ground and the shrink opens holes behind
+  // them. RESTORED EXACTLY, not merely levelled — the world the rays sweep must
+  // be the same world the sweep's agreement thresholds were measured on, so
+  // that what this test varies is the LAYOUT of the geometry and nothing else.
+  const STRIP_CHUNK_ROWS = 2;
   for (const lift of [6 * BAND_HEIGHT, 0]) {
     const cells: { x: number; y: number; h: number }[] = [];
-    for (let y = CHUNK_SIZE; y < WORLD - CHUNK_SIZE; y += 3) {
+    for (let y = CHUNK_SIZE; y < CHUNK_SIZE * (1 + STRIP_CHUNK_ROWS); y += 3) {
       for (let x = CHUNK_SIZE; x < WORLD - CHUNK_SIZE; x += 3) {
-        cells.push({ x, y, h: band(terrainHeight(x, y)) + lift });
+        cells.push({ x, y, h: terrainHeight(x, y) + lift });
       }
     }
     meshes.update(applyTerrainDiff(mirror, { type: 'terrainDiff', cells }));
@@ -196,7 +217,14 @@ function buildSculptedWorld(): {
   const deadVertices = meshes
     .arenaStats()
     .reduce((total, stats) => total + stats.deadVertices, 0);
-  return { mirror, pickables: meshes.pickables() as Mesh[], deadVertices };
+  // A run whose neighbour in the buffers is not its neighbour by chunk index:
+  // proof that placement and compaction, not the arrival order, decided where
+  // this geometry sits.
+  const reordered = meshes.arenaLayout().some(({ slots }) => {
+    const byOffset = [...slots].sort((a, b) => a.offset - b.offset);
+    return byOffset.some((slot, i) => i > 0 && slot.chunkIdx < byOffset[i - 1]!.chunkIdx);
+  });
+  return { mirror, pickables: meshes.pickables() as Mesh[], deadVertices, reordered };
 }
 
 function sweep(
@@ -286,15 +314,18 @@ describe('pickTerrainCellByRay vs the mesh raycast it replaced', () => {
     sweep(mirror, pickables);
   });
 
-  it('still agrees when the arena the rays cross is full of holes', () => {
-    // THE ARENA'S DEAD SPACE IS INSIDE THE DRAW RANGE, so it is inside the
-    // raycast too: a hole is not skipped by the GPU or by the Raycaster, it is
-    // simply zeroed, and three triangles' worth of zeroes is a degenerate
-    // triangle at the world origin that `Ray.intersectTriangle` rejects for
-    // `DdN === 0`. If a hole were ever left holding stale vertices instead,
-    // this sweep would start reporting hits on terrain that is not there —
-    // which is the same failure the players' clicks would show.
-    const { mirror, pickables, deadVertices } = buildSculptedWorld();
+  it('still agrees when the arena the rays cross is fragmented', () => {
+    // THE ARENA IS INSIDE THE RAYCAST. Its dead space sits within the draw
+    // range — a hole is not skipped by the GPU or by the Raycaster, only zeroed
+    // — and its live runs are wherever placement and compaction put them. A
+    // `copyWithin` that moved a run by the wrong length, or a zeroing that ate
+    // one vertex too many, would show up here as rays hitting terrain that is
+    // not there, which is the same failure a player's clicks would show.
+    const { mirror, pickables, deadVertices, reordered } = buildSculptedWorld();
+    expect(reordered).toBe(true);
+    // The rays really do cross dead space: a hole is not skipped by anything,
+    // it is simply three zero positions per triangle, which is zero area and
+    // which `Ray.intersectTriangle` rejects for `DdN === 0`.
     expect(deadVertices).toBeGreaterThan(0);
     sweep(mirror, pickables);
   });

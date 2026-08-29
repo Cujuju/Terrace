@@ -78,11 +78,12 @@
 //
 // WHERE THE WORK IS. The job itself — marching, smoothing, triangulating, the
 // cap plan and the band raster — is render/chunkBuildSource.ts's, and in the
-// client that is a worker pool. What a frame pays here is the splice: the
-// packed tail move into the super-mesh, the chart publish, and the
-// `onChunkDrawn` handlers (~1 ms on a developed super-mesh). That is why the
-// budget is a splice budget and not a build budget; the constant's own doc
-// comment derives the number.
+// client that is a worker pool. What a frame pays here is the splice: placing
+// the finished run in the super-mesh's ARENA (see spliceChunk), the chart
+// publish, and the `onChunkDrawn` handlers (~1 ms on a developed super-mesh).
+// That is why the budget is a splice budget and not a build budget; the
+// constant's own doc comment derives the number. A second, separate budget pays
+// for COMPACTION on the same frame — see ARENA_COMPACT_STROKE_BUDGET_MS.
 //
 // WHY IT COSTS NO LATENCY. Frame callbacks run before `renderer.render`
 // (render/scene.ts's renderFrame), so a sculpt that lands between two frames is
@@ -175,6 +176,53 @@ import { spliceShader } from './shaderSplice.ts';
  * Accepted: the alternative is a heavier frame.
  */
 export const CHUNK_SPLICE_FRAME_BUDGET_MS = 1.5;
+
+/**
+ * What one vertex costs to get onto the GPU, in milliseconds — the exchange
+ * rate the compaction budgets below are denominated in.
+ *
+ * MEASURED, 2026-08-28, on the owner's machine (RTX 3090, Chrome/ANGLE), from
+ * the real-GPU attribution in docs/plans/vertex-arena-no-tail-move.md §1: a
+ * frame that uploaded 19–21 MB of vertex attributes spent 3.5–12 ms inside
+ * `bufferSubData` and roughly as much again on the NEXT frame, stalled while
+ * the GPU process copied it — about 1 ms per megabyte all in. A vertex is 19
+ * bytes in this renderer's compressed format (three Float32 positions, three
+ * Int8 normals, three Uint8 colours, one Uint8 self-lit flag; see
+ * `createChunkGeometryBuffers`), so a megabyte is 1e6/19 vertices and one
+ * vertex is 19/1e6 ms.
+ *
+ * It is an ESTIMATOR, not a clock: compaction decides whether it can afford a
+ * move BEFORE making it, and the cost it is deciding about is a transfer that
+ * has not happened yet and would not be visible to `performance.now()` on this
+ * frame if it had.
+ */
+export const ARENA_TRANSFER_MS_PER_VERTEX = 19 / 1e6;
+
+/**
+ * How much transfer compaction may schedule on a frame that also SPLICED, in
+ * milliseconds.
+ *
+ * ONE. The 140 fps bar (owner, 2026-08-26) gives a frame 7.1 ms. Measured on
+ * the owner's world, that frame already owes: ~1.7 ms of idle render, 1.5 ms
+ * of splice budget (CHUNK_SPLICE_FRAME_BUDGET_MS) and ~0.5 ms of plugins —
+ * 3.7 ms. Of the 3.4 ms left, half is held back for the NEXT frame, because a
+ * transfer bills roughly its own cost again in GPU-process backpressure on the
+ * frame after it (§1). That leaves 1.7 ms, and 1.0 is the round number under
+ * it. At ARENA_TRANSFER_MS_PER_VERTEX that moves runs up to ~52 k vertices —
+ * above the owner's world's p90 chunk (38.8 k).
+ */
+export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
+
+/**
+ * The same arithmetic for a frame that spliced NOTHING: 7.1 − 1.7 render −
+ * 0.5 plugins = 4.9 ms, halved for backpressure, rounded down to 3.
+ *
+ * That moves any run on the owner's world (max 142 k vertices ≈ 2.7 ms). A
+ * chunk at the CHUNK_TRIANGLE_BUDGET ceiling — 393 k vertices ≈ 7.5 ms — would
+ * not fit even here and is the named residual in the plan's §5: the hole in
+ * front of such a run waits until that run itself regrows or shrinks.
+ */
+export const ARENA_COMPACT_IDLE_BUDGET_MS = 3.0;
 
 /** Terrain is dielectric; a little roughness variation is not worth a map. */
 const TERRAIN_ROUGHNESS = 0.95;
@@ -369,8 +417,43 @@ interface ChunkSlot {
 }
 
 /**
+ * A run of dead vertices inside a super-mesh's arena, in vertices.
+ *
+ * ZEROED IN ALL FOUR ATTRIBUTES, which is what makes a hole safe to leave
+ * inside the draw range: three zero positions are a triangle of zero area at
+ * the world origin, so it produces no fragments, and `Ray.intersectTriangle`
+ * rejects it outright (`DdN === 0`) so a raycast cannot hit one either.
+ * Zeroing the other three attributes costs 7 of the 19 bytes a hole vertex
+ * would otherwise keep, and buys one recognisable byte pattern for "dead" —
+ * a deliberate trade.
+ */
+interface Hole {
+  offset: number;
+  length: number;
+}
+
+/** Per-super-mesh arena occupancy — see `TerrainMeshes.arenaStats`. */
+export interface ArenaStats {
+  /** The arena's EXTENT: the draw range, and where an append lands. */
+  liveEnd: number;
+  /** The sum of the slot counts — what is actually drawn geometry. */
+  liveCount: number;
+  /** `liveEnd - liveCount`; equal to the total length of the free list. */
+  deadVertices: number;
+  holeCount: number;
+  /** How many times these buffers have been reallocated (a full `bufferData`). */
+  growths: number;
+}
+
+/** Per-super-mesh arena layout — see `TerrainMeshes.arenaLayout`. */
+export interface ArenaLayout {
+  slots: { chunkIdx: number; offset: number; count: number }[];
+  holes: { offset: number; length: number }[];
+}
+
+/**
  * One drawn object: the merged geometry of a SUPER_MESH_SPAN_CHUNKS square of
- * chunks, holding their vertices back-to-back with no gaps.
+ * chunks — an ARENA of runs, one per chunk, in no particular order.
  */
 interface SuperMesh {
   mesh: Mesh;
@@ -379,18 +462,39 @@ interface SuperMesh {
   normalAttribute: BufferAttribute;
   colorAttribute: BufferAttribute;
   selfLitAttribute: BufferAttribute;
-  /**
-   * The chunks built into this super-mesh, in ASCENDING CHUNK INDEX order —
-   * which is the order their runs sit in the buffers, so a chunk's offset is
-   * the sum of the counts before it. A sorted array rather than a Map's
-   * insertion order because the packing depends on it: a splice shifts exactly
-   * the runs that follow, and "the runs that follow" has to be well-defined
-   * however the chunks happened to arrive.
-   */
-  order: number[];
   slots: Map<number, ChunkSlot>;
-  /** Sum of every slot's count — the geometry's draw range, and its only one. */
-  liveVertices: number;
+  /**
+   * The dead runs between the live ones, SORTED BY OFFSET AND COALESCED, every
+   * offset and length a multiple of VERTICES_PER_TRIANGLE. Bounded by one hole
+   * per run plus one, so at most SUPER_MESH_SPAN_CHUNKS² + 1 entries.
+   *
+   * Maintained by exactly one insert/take pair (`insertHole`/`takeHole`) so
+   * that "sorted", "coalesced", "aligned" and the retreat rule are properties
+   * of the LIST rather than things every caller has to remember.
+   */
+  holes: Hole[];
+  /**
+   * The arena's extent: one past the highest live vertex, and the geometry's
+   * draw range. AT LEAST the sum of the slot counts, and more than it exactly
+   * when the free list is non-empty.
+   */
+  liveEnd: number;
+  /**
+   * True once these buffers have been reallocated during the current drain
+   * pass, and reset by the frame hook (or by `flush`).
+   *
+   * WHY IT IS A FLAG AND NOT A RETURN VALUE. `bindGeometry` installs brand-new
+   * BufferAttributes, and three's create path (`WebGLAttributes.update` with
+   * `data === undefined`) takes a full `bufferData` WITHOUT clearing
+   * `updateRanges` — only `updateBuffer` clears them. Any range added to that
+   * super-mesh later in the same pass is therefore uploaded a second time on
+   * the next frame. The packed layout had one range producer per pass (the
+   * splice) and could carry this as a local `grew`; the arena has two (splices
+   * and compaction), so the fact has to live on the super-mesh.
+   */
+  reallocatedThisPass: boolean;
+  /** How many times the buffers have been reallocated — reported by arenaStats. */
+  growths: number;
 }
 
 /**
@@ -489,6 +593,27 @@ export interface TerrainMeshes {
    */
   medianSpliceMs(): number | null;
   /**
+   * Arena occupancy per super-mesh, in `pickables()` order.
+   *
+   * THE SEAM THE ARENA IS JUDGED ON. Dead space is not asserted as a constant
+   * anywhere — the plan's §3d argues convergence, not a bound — so what the
+   * tests, the bench and the in-page perf probe do instead is OBSERVE it. The
+   * vertex-shader cost of holes is proportional to `deadVertices`, and
+   * `growths` is the count of the one upload the arena does not bound (a
+   * capacity doubling is still a full `bufferData`; plan §5).
+   */
+  arenaStats(): ArenaStats[];
+  /**
+   * Where every run and every hole actually sits, per super-mesh, in
+   * `pickables()` order.
+   *
+   * FOR TESTS. The free list's invariants — sorted, coalesced, aligned to
+   * VERTICES_PER_TRIANGLE, never reaching `liveEnd` — are the reason a hole is
+   * safe to leave inside the draw range, and they are checkable only against
+   * the layout itself. Exposing it beats casting into the module.
+   */
+  arenaLayout(): ArenaLayout[];
+  /**
    * Chunks whose geometry is in the scene.
    *
    * The mesh count stopped answering this at the 2026-08-21 merge, and several
@@ -570,7 +695,7 @@ export function createTerrainMeshes(
     geometry.setAttribute('normal', normalAttribute);
     geometry.setAttribute('color', colorAttribute);
     geometry.setAttribute(SELF_LIT_ATTRIBUTE, selfLitAttribute);
-    geometry.setDrawRange(0, sm.liveVertices);
+    geometry.setDrawRange(0, sm.liveEnd);
 
     const previous = sm.mesh.geometry;
     sm.mesh.geometry = geometry;
@@ -583,7 +708,7 @@ export function createTerrainMeshes(
 
     // LAST, AND IT HAS TO BE HERE. The geometry above is brand new and its
     // `boundingSphere` is null, and three computes a null sphere over the WHOLE
-    // position attribute — including the dead tail past `liveVertices`, which
+    // position attribute — including the dead tail past `liveEnd`, which
     // holds whatever a previous, longer occupant left there and would stretch
     // the sphere to the origin. Setting it here means a regrow never leaves a
     // window in which that can happen. Do not move it into the callers.
@@ -599,18 +724,25 @@ export function createTerrainMeshes(
    * the whole super-buffer on every chunk of every super-mesh — quadratic in
    * the chunk count, paid during the reveal the player is watching.
    */
+  const capacityVertices = (sm: SuperMesh): number =>
+    sm.buffers.triangleCapacity * VERTICES_PER_TRIANGLE;
+
   const ensureSuperCapacity = (sm: SuperMesh, vertices: number): boolean => {
-    const capacity = sm.buffers.triangleCapacity * VERTICES_PER_TRIANGLE;
-    if (vertices <= capacity) return false;
+    if (vertices <= capacityVertices(sm)) return false;
     let triangles = Math.max(sm.buffers.triangleCapacity, 1);
     while (triangles * VERTICES_PER_TRIANGLE < vertices) triangles *= 2;
 
     const grown = createChunkGeometryBuffers(triangles);
-    grown.positions.set(sm.buffers.positions.subarray(0, sm.liveVertices * 3));
-    grown.normals.set(sm.buffers.normals.subarray(0, sm.liveVertices * 3));
-    grown.colors.set(sm.buffers.colors.subarray(0, sm.liveVertices * 3));
-    grown.selfLit.set(sm.buffers.selfLit.subarray(0, sm.liveVertices));
+    grown.positions.set(sm.buffers.positions.subarray(0, sm.liveEnd * 3));
+    grown.normals.set(sm.buffers.normals.subarray(0, sm.liveEnd * 3));
+    grown.colors.set(sm.buffers.colors.subarray(0, sm.liveEnd * 3));
+    grown.selfLit.set(sm.buffers.selfLit.subarray(0, sm.liveEnd));
     sm.buffers = grown;
+    // BEFORE bindGeometry, which is what installs the fresh attributes three
+    // will fully re-upload: every range added to this super-mesh for the rest
+    // of the pass would be uploaded a second time next frame. See the field.
+    sm.reallocatedThisPass = true;
+    sm.growths++;
     bindGeometry(sm);
     return true;
   };
@@ -630,7 +762,7 @@ export function createTerrainMeshes(
    * sphere culls a hair later; it never culls something that should be drawn.
    *
    * Hand-rolled rather than `geometry.computeBoundingSphere()` because that
-   * reads the whole position attribute, and the tail past `liveVertices` is
+   * reads the whole position attribute, and the tail past `liveEnd` is
    * whatever a previous, longer occupant left there.
    */
   const updateBounds = (sm: SuperMesh): void => {
@@ -684,6 +816,217 @@ export function createTerrainMeshes(
     attribute.addUpdateRange(startVertex * stride, vertexCount * stride);
   };
 
+  /** Every attribute of one super-mesh needs re-uploading. */
+  const markDirty = (sm: SuperMesh): void => {
+    sm.positionAttribute.needsUpdate = true;
+    sm.normalAttribute.needsUpdate = true;
+    sm.colorAttribute.needsUpdate = true;
+    sm.selfLitAttribute.needsUpdate = true;
+  };
+
+  /**
+   * Declares one vertex range of one super-mesh as the only part needing
+   * re-upload, on all four attributes.
+   *
+   * CLAMPED TO THE ARENA, and skipped entirely on a super-mesh that
+   * reallocated during this pass (§3e). Clamping is not defensive: the retreat
+   * rule can pull `liveEnd` back BELOW a range that was correct when it was
+   * computed — a shrink whose hole reached the end, say — and those vertices
+   * leave the draw range instead of being uploaded as zeroes.
+   */
+  const addRange = (sm: SuperMesh, startVertex: number, vertexCount: number): void => {
+    if (sm.reallocatedThisPass) return;
+    const start = Math.max(0, startVertex);
+    const end = Math.min(sm.liveEnd, startVertex + vertexCount);
+    if (end <= start) return;
+    addVertexRange(sm.positionAttribute, start, end - start);
+    addVertexRange(sm.normalAttribute, start, end - start);
+    addVertexRange(sm.colorAttribute, start, end - start);
+    addVertexRange(sm.selfLitAttribute, start, end - start);
+  };
+
+  /** Writes zeroes over a vertex range in all four attributes — see `Hole`. */
+  const zeroVertices = (sm: SuperMesh, startVertex: number, vertexCount: number): void => {
+    if (vertexCount <= 0) return;
+    const { positions, normals, colors, selfLit } = sm.buffers;
+    positions.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
+    normals.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
+    colors.fill(0, startVertex * 3, (startVertex + vertexCount) * 3);
+    selfLit.fill(0, startVertex, startVertex + vertexCount);
+  };
+
+  /**
+   * THE RETREAT RULE, and it is an invariant of the LIST rather than of any one
+   * insertion: a hole that ends at the arena's extent is not dead space at all
+   * — it is space that has simply stopped being live. Dropping it and pulling
+   * `liveEnd` back costs no upload, because those vertices leave the draw range
+   * instead of being sent as zeroes.
+   *
+   * A loop rather than an `if` only so the rule is stated as "while the list
+   * still ends at `liveEnd`"; a coalesced list can never satisfy it twice.
+   */
+  const retreatFromLiveEnd = (sm: SuperMesh): void => {
+    for (;;) {
+      const last = sm.holes[sm.holes.length - 1];
+      if (last === undefined || last.offset + last.length !== sm.liveEnd) break;
+      sm.holes.pop();
+      sm.liveEnd = last.offset;
+    }
+    sm.mesh.geometry.setDrawRange(0, sm.liveEnd);
+  };
+
+  /**
+   * Adds one dead run to the free list, keeping it sorted, coalesced and
+   * retreated. THE ONLY WAY A HOLE IS EVER CREATED.
+   */
+  const insertHole = (sm: SuperMesh, offset: number, length: number): void => {
+    if (length <= 0) return;
+    let at = 0;
+    while (at < sm.holes.length && sm.holes[at]!.offset < offset) at++;
+    sm.holes.splice(at, 0, { offset, length });
+    // FORWARD FIRST, then backward: merging with the next entry can make this
+    // one adjacent to the previous, and doing it the other way round would
+    // leave that second merge for nobody.
+    const next = sm.holes[at + 1];
+    const here = sm.holes[at]!;
+    if (next !== undefined && here.offset + here.length === next.offset) {
+      here.length += next.length;
+      sm.holes.splice(at + 1, 1);
+    }
+    const previous = sm.holes[at - 1];
+    if (previous !== undefined && previous.offset + previous.length === here.offset) {
+      previous.length += here.length;
+      sm.holes.splice(at, 1);
+    }
+    retreatFromLiveEnd(sm);
+  };
+
+  /**
+   * FIRST FIT: the lowest hole that can hold `count` vertices, split so the
+   * surplus stays on the list. Returns where the run may be written and how
+   * many vertices of surplus follow it, or null if nothing fits.
+   *
+   * Lowest-first rather than best-fit because it keeps the live geometry
+   * bunched toward offset 0, which is what makes the compactor's job short —
+   * and because a best-fit scan would still be O(64) while leaving the arena
+   * more scattered.
+   */
+  const takeHole = (
+    sm: SuperMesh,
+    count: number,
+  ): { offset: number; surplus: number } | null => {
+    for (let i = 0; i < sm.holes.length; i++) {
+      const hole = sm.holes[i]!;
+      if (hole.length < count) continue;
+      const offset = hole.offset;
+      const surplus = hole.length - count;
+      if (surplus === 0) sm.holes.splice(i, 1);
+      else {
+        hole.offset = offset + count;
+        hole.length = surplus;
+      }
+      // No retreat check: the split hole ENDS where the original did, so if it
+      // had reached `liveEnd` the rule would already have removed it.
+      return { offset, surplus };
+    }
+    return null;
+  };
+
+  /** The slot whose run starts exactly at `offset`, or undefined. O(64). */
+  const runStartingAt = (sm: SuperMesh, offset: number): ChunkSlot | undefined => {
+    for (const slot of sm.slots.values()) {
+      if (slot.count > 0 && slot.offset === offset) return slot;
+    }
+    return undefined;
+  };
+
+  /**
+   * Moves the run immediately above `hole` down into it, in one piece.
+   *
+   * IN ONE PIECE, NEVER SPLIT ACROSS FRAMES: a partially moved live run draws
+   * garbage between its halves. A run too dear for this frame's budget is
+   * skipped and waits for a cheaper frame; that is the caller's decision, and
+   * this function only ever runs when it has been made.
+   *
+   * The upload is one run plus one hole — `[hole.offset, oldRunEnd)` — and the
+   * slot's BOUNDS are untouched, because a move changes where a run lives and
+   * not what it contains.
+   */
+  const moveRunDown = (sm: SuperMesh, hole: Hole, run: ChunkSlot): void => {
+    const from = run.offset;
+    const runEnd = from + run.count;
+    const to = hole.offset;
+    const { positions, normals, colors, selfLit } = sm.buffers;
+    // copyWithin, not set(subarray): source and destination overlap whenever
+    // the hole is shorter than the run, and copyWithin is specified to behave
+    // as if the range were copied first.
+    positions.copyWithin(to * 3, from * 3, runEnd * 3);
+    normals.copyWithin(to * 3, from * 3, runEnd * 3);
+    colors.copyWithin(to * 3, from * 3, runEnd * 3);
+    selfLit.copyWithin(to, from, runEnd);
+    run.offset = to;
+
+    const vacated = to + run.count;
+    zeroVertices(sm, vacated, runEnd - vacated);
+    sm.holes.splice(sm.holes.indexOf(hole), 1);
+    insertHole(sm, vacated, runEnd - vacated);
+    markDirty(sm);
+    addRange(sm, to, runEnd - to);
+  };
+
+  /**
+   * Closes holes, cheapest-first in free-list order, for as long as
+   * `budgetMs` of ESTIMATED transfer is left. Returns what it spent.
+   *
+   * A skipped run is not a failure: the next hole is tried, and the run waits
+   * for a frame with more budget (ARENA_COMPACT_IDLE_BUDGET_MS). Convergence
+   * is not a constant here and is not asserted as one — one full sweep is at
+   * most one move per run, since the lowest hole is carried past exactly one
+   * run per move and absorbs every hole it meets.
+   */
+  const compactSuperMesh = (sm: SuperMesh, budgetMs: number): number => {
+    let spentMs = 0;
+    for (;;) {
+      let moved = false;
+      for (const hole of sm.holes) {
+        const run = runStartingAt(sm, hole.offset + hole.length);
+        // Only the highest hole can have no run above it, and the retreat rule
+        // has already taken that one off the list.
+        if (run === undefined) continue;
+        const costMs = run.count * ARENA_TRANSFER_MS_PER_VERTEX;
+        if (spentMs + costMs > budgetMs) continue;
+        moveRunDown(sm, hole, run);
+        spentMs += costMs;
+        moved = true;
+        break; // the list was mutated; re-read it
+      }
+      if (!moved) return spentMs;
+    }
+  };
+
+  /**
+   * One frame's compaction across every super-mesh, sharing one budget.
+   *
+   * SHARED, not per super-mesh: the budget is a statement about how much
+   * transfer this FRAME can afford, and four super-meshes each spending it
+   * would spend four times what the frame has.
+   */
+  const compact = (budgetMs: number): void => {
+    let spentMs = 0;
+    for (const sm of superMeshes.values()) {
+      if (sm.holes.length === 0) continue;
+      spentMs += compactSuperMesh(sm, budgetMs - spentMs);
+      if (spentMs >= budgetMs) return;
+    }
+  };
+
+  /** Sum of every slot's count — the live geometry, as against the extent. */
+  const liveCount = (sm: SuperMesh): number => {
+    let total = 0;
+    for (const slot of sm.slots.values()) total += slot.count;
+    return total;
+  };
+
   const createSuperMesh = (superIdx: number): SuperMesh => {
     const placeholder = new BufferAttribute(new Float32Array(0), 3);
     const sm: SuperMesh = {
@@ -693,9 +1036,11 @@ export function createTerrainMeshes(
       normalAttribute: placeholder,
       colorAttribute: placeholder,
       selfLitAttribute: placeholder,
-      order: [],
       slots: new Map(),
-      liveVertices: 0,
+      holes: [],
+      liveEnd: 0,
+      reallocatedThisPass: false,
+      growths: 0,
     };
     bindGeometry(sm);
     group.add(sm.mesh);
@@ -704,41 +1049,60 @@ export function createTerrainMeshes(
   };
 
   /**
-   * Copies a finished job's vertices into `chunkIdx`'s run, moving everything
-   * after it if the run changed length.
+   * Copies a finished job's vertices into `chunkIdx`'s run, PLACING that run
+   * wherever it now fits — and never moving anybody else's.
    *
-   * THE SHIFT IS WHY THE RUNS ARE PACKED rather than each chunk owning a fixed
-   * slot. A fixed slot needs no shifting, but it has to be sized for the worst
-   * chunk and the dead space inside it still runs the vertex shader: at
-   * INITIAL_CHUNK_TRIANGLE_CAPACITY per chunk a fully revealed world would
-   * submit ~16.8 M triangles a frame to draw the ~4 M it actually has, trading
-   * the draw-call bottleneck for a vertex one. Packing keeps the submitted
-   * triangle count exactly what it was before the merge, so the merge costs
-   * the GPU nothing at all.
+   * THE CONTRACT (docs/plans/vertex-arena-no-tail-move.md §2): a splice's
+   * upload is bounded by the chunk it splices, never by the super-mesh. The
+   * runs used to be packed in chunk-index order, so a chunk whose vertex count
+   * changed moved every run after it and the ranged upload had to cover
+   * `[slot.offset, liveEnd)` — measured on the owner's world at 19–21 MB per
+   * stroke step on the busiest super-mesh, which is the whole 1.25 M-vertex
+   * arena, twice per step for a two-chunk brush. Under the arena the upload is
+   * this chunk's own run plus the run it vacated.
    *
-   * The shift is bounded by the super-mesh, not the world: a sculpt moves at
-   * most the tail of one super-mesh, and it is a copyWithin of contiguous
-   * memory rather than a rebuild.
+   * WHY NOT A FIXED SLOT PER CHUNK (the alternative the packed layout was
+   * chosen over, restated with the constants as they stand in 2026-08-28).
+   * Sized for the worst chunk the builder may emit — CHUNK_TRIANGLE_BUDGET,
+   * 131 072 triangles = 393 216 vertices = 7.5 MB — a super-mesh of
+   * SUPER_MESH_SPAN_CHUNKS² = 64 slots is ~480 MB of buffer and submits ~8.4 M
+   * triangles a frame to draw the ~50 k it holds. Sized for
+   * INITIAL_CHUNK_TRIANGLE_CAPACITY (1 024 triangles = 3 072 vertices) instead,
+   * it cannot hold the owner's world's MEDIAN chunk, which is 5 388 vertices.
+   * There is no slot size that is both affordable and sufficient; the arena
+   * gives every chunk exactly its own size and keeps the dead space on a list.
+   *
+   * PLACEMENT, decided first and capacity second (§3b). For a run of `count`
+   * vertices replacing one of `old` at `[offset, offset+old)`:
+   *
+   *   1. count === old — overwrite in place. Upload: the run.
+   *   2. count < old — overwrite in place; the remainder becomes a hole.
+   *      Upload: the run and the hole, which are contiguous.
+   *   3. count > old and the run ends at `liveEnd` — extend in place. This is
+   *      the common case for a one-chunk super-mesh (every preview harness),
+   *      and it is what keeps those hole-free. Upload: the run.
+   *   4. count > old — the lowest hole that fits, split. Upload: the new run,
+   *      the surplus, and the old run being zeroed. Three DISJOINT ranges, and
+   *      three's own merge (`range.start <= prev.start + prev.count + 1`,
+   *      WebGLAttributes.js) only joins adjacent ones, so they stay separate
+   *      `bufferSubData` calls and the bound holds.
+   *   5. count > old and nothing fits — append at `liveEnd`. Upload: the new
+   *      run and the old one.
+   *
+   * A chunk arriving for the first time is case 3, 4 or 5 with `old = 0`.
    */
   const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkJobAnswer): void => {
     const count = answer.vertexCount;
     let slot = sm.slots.get(chunkIdx);
     if (slot === undefined) {
-      // A new chunk goes where its index sorts to, so one that arrives late
-      // still lands between its neighbours rather than at the end.
-      let at = sm.order.length;
-      for (let i = 0; i < sm.order.length; i++) {
-        if (sm.order[i]! > chunkIdx) {
-          at = i;
-          break;
-        }
-      }
-      const previous = at === 0 ? null : sm.slots.get(sm.order[at - 1]!)!;
       slot = {
-        offset: previous === null ? 0 : previous.offset + previous.count,
+        // Placed below, by the same rules as any other run. An empty run at 0
+        // is case 3 on an empty super-mesh and case 4/5 on a populated one,
+        // which is exactly what "a new chunk" means.
+        offset: 0,
         count: 0,
         // An empty box (min > max), which `updateBounds` skips. Filled by the
-        // `measureSlot` below, in this same call.
+        // bounds copy below, in this same call.
         minX: Infinity,
         minY: Infinity,
         minZ: Infinity,
@@ -746,33 +1110,64 @@ export function createTerrainMeshes(
         maxY: -Infinity,
         maxZ: -Infinity,
       };
-      sm.order.splice(at, 0, chunkIdx);
       sm.slots.set(chunkIdx, slot);
     }
 
-    const delta = count - slot.count;
-    // A REGROW IS EXEMPT from the ranged upload below: `bindGeometry` installs
-    // brand-new BufferAttributes with no GL buffer behind them, so three takes
-    // a full `bufferData` for the whole array whatever ranges are set.
-    const grew = delta > 0 ? ensureSuperCapacity(sm, sm.liveVertices + delta) : false;
+    const old = slot.count;
+    /** Vertex ranges this splice dirtied, as [startVertex, vertexCount] pairs. */
+    const dirtied: [number, number][] = [];
 
-    const tailStart = slot.offset + slot.count;
-    const tailLength = sm.liveVertices - tailStart;
-    if (delta !== 0 && tailLength > 0) {
-      const { positions, normals, colors, selfLit } = sm.buffers;
-      // copyWithin, not set(subarray): the source and destination overlap, and
-      // copyWithin is specified to behave as if the range were copied first.
-      positions.copyWithin((tailStart + delta) * 3, tailStart * 3, (tailStart + tailLength) * 3);
-      normals.copyWithin((tailStart + delta) * 3, tailStart * 3, (tailStart + tailLength) * 3);
-      colors.copyWithin((tailStart + delta) * 3, tailStart * 3, (tailStart + tailLength) * 3);
-      selfLit.copyWithin(tailStart + delta, tailStart, tailStart + tailLength);
-    }
-
-    if (delta !== 0) {
-      const from = sm.order.indexOf(chunkIdx) + 1;
-      for (let i = from; i < sm.order.length; i++) sm.slots.get(sm.order[i]!)!.offset += delta;
-      sm.liveVertices += delta;
+    if (count <= old) {
+      // Cases 1 and 2. The hole (empty when the counts match) is contiguous
+      // with the run, so one range covers both.
+      zeroVertices(sm, slot.offset + count, old - count);
+      dirtied.push([slot.offset, old]);
       slot.count = count;
+      insertHole(sm, slot.offset + count, old - count);
+    } else if (slot.offset + old === sm.liveEnd) {
+      // Case 3. CAPACITY IS AN EXTENT, not a delta: what has to fit is where
+      // the run now ends.
+      ensureSuperCapacity(sm, slot.offset + count);
+      sm.liveEnd = slot.offset + count;
+      slot.count = count;
+      dirtied.push([slot.offset, count]);
+    } else {
+      const reused = takeHole(sm, count);
+      /** Where this chunk's previous run sat, once nothing can move it again. */
+      let freedOffset: number;
+      if (reused !== null) {
+        // Case 4.
+        freedOffset = slot.offset;
+        slot.offset = reused.offset;
+        dirtied.push([reused.offset, count]);
+        if (reused.surplus > 0) dirtied.push([reused.offset + count, reused.surplus]);
+      } else {
+        // Case 5. COMPACT BEFORE DOUBLING: a capacity growth is one full
+        // `bufferData` of the whole super-mesh (the arena does not bound that
+        // one — plan §5), and a full sweep of the compactor is cheaper than it
+        // whenever the arena is holding enough dead space to make room. This is
+        // the one place a sweep runs without a budget.
+        if (sm.liveEnd + count > capacityVertices(sm) && sm.holes.length > 0) {
+          compactSuperMesh(sm, Infinity);
+        }
+        // CAPACITY FROM `count`, NEVER FROM `delta`. The packed layout left the
+        // run where it was and needed `delta` more vertices; an append writes
+        // the WHOLE run past the live end, so a test phrased in `delta`
+        // under-requests by `old` and `set()` runs off the buffer — a
+        // RangeError inside the frame hook.
+        ensureSuperCapacity(sm, sm.liveEnd + count);
+        // READ AFTER THE COMPACTION, not before it: a sweep moves live runs,
+        // and this chunk's own run is one of them.
+        freedOffset = slot.offset;
+        slot.offset = sm.liveEnd;
+        sm.liveEnd += count;
+        dirtied.push([slot.offset, count]);
+      }
+      slot.count = count;
+      // The run it left behind, zeroed and offered back to the free list.
+      zeroVertices(sm, freedOffset, old);
+      dirtied.push([freedOffset, old]);
+      insertHole(sm, freedOffset, old);
     }
 
     const { positions, normals, colors, selfLit } = sm.buffers;
@@ -790,26 +1185,13 @@ export function createTerrainMeshes(
     slot.maxY = answer.bounds[4]!;
     slot.maxZ = answer.bounds[5]!;
 
-    sm.positionAttribute.needsUpdate = true;
-    sm.normalAttribute.needsUpdate = true;
-    sm.colorAttribute.needsUpdate = true;
-    sm.selfLitAttribute.needsUpdate = true;
-    if (!grew) {
-      // From this chunk's first vertex to the END OF THE LIVE RANGE, using the
-      // POST-update `liveVertices`: everything before the run is untouched,
-      // everything after it was shifted by the tail move, and stopping at the
-      // live count excludes both the dead tail a shrink left behind and the
-      // capacity slack a growth has not reached.
-      const dirtyVertices = sm.liveVertices - slot.offset;
-      addVertexRange(sm.positionAttribute, slot.offset, dirtyVertices);
-      addVertexRange(sm.normalAttribute, slot.offset, dirtyVertices);
-      addVertexRange(sm.colorAttribute, slot.offset, dirtyVertices);
-      addVertexRange(sm.selfLitAttribute, slot.offset, dirtyVertices);
-    }
+    markDirty(sm);
+    for (const [startVertex, vertexCount] of dirtied) addRange(sm, startVertex, vertexCount);
 
-    // On non-indexed geometry the draw range counts VERTICES, and the packed
-    // runs have no holes, so ONE range covers every chunk in this super-mesh.
-    sm.mesh.geometry.setDrawRange(0, sm.liveVertices);
+    // On non-indexed geometry the draw range counts VERTICES, and it covers the
+    // arena's whole extent — holes included, which is what makes them have to
+    // be zeroed rather than merely forgotten.
+    sm.mesh.geometry.setDrawRange(0, sm.liveEnd);
     updateBounds(sm);
   };
 
@@ -927,7 +1309,7 @@ export function createTerrainMeshes(
     // and the vertices this build produced.
     for (const handler of chunkDrawnHandlers) handler(answer.chunkIdx);
     // Timed around ALL THREE, because all three are what a frame pays per
-    // answer — the tail move, the chart publish and the lip refresh.
+    // answer — the run placement, the chart publish and the lip refresh.
     const elapsedMs = now() - startedMs;
     if (spliceMs.length < SPLICE_SAMPLE_WINDOW) spliceMs.push(elapsedMs);
     else {
@@ -965,9 +1347,11 @@ export function createTerrainMeshes(
     retry.clear();
   };
 
-  const drain = (budgetMs: number): void => {
+  /** Returns how many answers it spliced — what decides the compaction budget. */
+  const drain = (budgetMs: number): number => {
     takeRetries();
-    if (pending.size === 0 && ready.length === 0) return;
+    let spliced = 0;
+    if (pending.size === 0 && ready.length === 0) return spliced;
     const startedMs = now();
     for (;;) {
       // Top the pool up FIRST, so a worker is never idle while this thread
@@ -990,9 +1374,10 @@ export function createTerrainMeshes(
         pending.delete(chunkIdx);
         submit(chunkIdx);
       }
-      if (ready.length === 0) return;
+      if (ready.length === 0) return spliced;
       spliceAnswer(ready.shift()!);
-      if (now() - startedMs >= budgetMs) return;
+      spliced++;
+      if (now() - startedMs >= budgetMs) return spliced;
     }
   };
 
@@ -1008,6 +1393,7 @@ export function createTerrainMeshes(
    */
   const flush = (): void => {
     takeRetries();
+    for (const sm of superMeshes.values()) sm.reallocatedThisPass = false;
     for (;;) {
       const chunkIdx = nextSubmittable();
       if (chunkIdx !== undefined) {
@@ -1015,8 +1401,13 @@ export function createTerrainMeshes(
         submit(chunkIdx);
       }
       if (ready.length > 0) spliceAnswer(ready.shift()!);
-      else if (chunkIdx === undefined) return;
+      else if (chunkIdx === undefined) break;
     }
+    // "BUILD EVERYTHING NOW" ALSO MEANS "AND LEAVE NO HOLES". Every caller of
+    // this path — the headless suite, the six preview-* harnesses, the bench —
+    // wants the world finished when it returns, and an arena still holding dead
+    // space is not finished. There is no later frame to compact on.
+    compact(Infinity);
   };
 
   const clear = (): void => {
@@ -1043,7 +1434,21 @@ export function createTerrainMeshes(
     generation++;
   };
 
-  const stopDraining = scheduling?.onFrame(() => drain(CHUNK_SPLICE_FRAME_BUDGET_MS));
+  /**
+   * COMPACTION IS ITS OWN SEAM ON THE FRAME, not a step inside `drain`.
+   *
+   * `drain` returns the moment there is nothing to build and nothing to splice,
+   * so a settled frame — the only kind with budget to spare — would never reach
+   * anything placed after the splices inside it. And a stroke frame's FIRST
+   * splice already spends the splice budget (medianSpliceMs 1.4–1.7 against
+   * CHUNK_SPLICE_FRAME_BUDGET_MS's 1.5), so compaction sharing that budget
+   * would never run either. Two budgets, two seams.
+   */
+  const stopDraining = scheduling?.onFrame(() => {
+    for (const sm of superMeshes.values()) sm.reallocatedThisPass = false;
+    const spliced = drain(CHUNK_SPLICE_FRAME_BUDGET_MS);
+    compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
+  });
 
   return {
     update(dirty: Iterable<number>): void {
@@ -1076,6 +1481,29 @@ export function createTerrainMeshes(
       if (spliceMs.length === 0) return null;
       const sorted = [...spliceMs].sort((a, b) => a - b);
       return sorted[sorted.length >> 1]!;
+    },
+
+    arenaStats(): ArenaStats[] {
+      return Array.from(superMeshes.values(), (sm) => {
+        const live = liveCount(sm);
+        return {
+          liveEnd: sm.liveEnd,
+          liveCount: live,
+          deadVertices: sm.liveEnd - live,
+          holeCount: sm.holes.length,
+          growths: sm.growths,
+        };
+      });
+    },
+    arenaLayout(): ArenaLayout[] {
+      return Array.from(superMeshes.values(), (sm) => ({
+        slots: Array.from(sm.slots, ([chunkIdx, slot]) => ({
+          chunkIdx,
+          offset: slot.offset,
+          count: slot.count,
+        })),
+        holes: sm.holes.map((hole) => ({ offset: hole.offset, length: hole.length })),
+      }));
     },
 
     drawCallCount(): number {
