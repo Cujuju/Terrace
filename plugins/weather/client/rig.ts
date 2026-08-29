@@ -15,7 +15,9 @@
 //     the rest of the map in the sun. Clear weather is therefore literally
 //     nothing: no system, no rig, no draw call, no change to any scene state.
 //     The one exception is a flash's PointLight, which is a light in the scene
-//     by necessity and is bounded by FLASH_LIGHT_RANGE_CELLS.
+//     by necessity and is bounded by FLASH_LIGHT_RANGE_CELLS — and which is
+//     PARKED, never added or removed: the pool owns a fixed bank of them
+//     (STORM_FLASH_LIGHT_BANK_SIZE) so the scene's light count never changes.
 //   * PHOTOSENSITIVITY IS A HARD REQUIREMENT, not a setting. Under
 //     prefers-reduced-motion there are no flashes at all and the whole sky holds
 //     still; outside it, the client-wide LightningGovernor and the single-rise
@@ -63,6 +65,7 @@ import {
   FLASH_GLOW_OPACITY,
   FLASH_LIGHT_PEAK_INTENSITY,
   FLASH_LIGHT_RANGE_CELLS,
+  STORM_FLASH_LIGHT_BANK_SIZE,
   FOG_COLOR,
   FOG_EDGE_SOFTNESS,
   FOG_LAYERS,
@@ -428,7 +431,11 @@ interface SharedGeometry {
   readonly bolt: BufferGeometry;
 }
 
-function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
+function createRig(
+  kind: WeatherKind,
+  shared: SharedGeometry,
+  lentLight: PointLight | null,
+): WeatherRig {
   const root = new Group();
   root.name = `weather:${kind}`;
 
@@ -529,11 +536,18 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
    * nobody can see. It is also why rigs are POOLED: a storm that leaves and one
    * that arrives a minute later reuse the same rig and the same light.
    */
-  const flashLight = isStorm ? new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS) : null;
-  if (flashLight !== null) {
-    flashLight.position.y = BOLT_BOTTOM_WORLD_Y;
-    root.add(flashLight);
-  }
+  // BORROWED FROM THE POOL'S BANK, NOT CREATED, and NOT a child of `root`
+  // (2026-08-28): the rig's root leaves the scene when its system dissipates,
+  // and a light that left with it changed the scene's light count — which is
+  // baked into every material's program key, so each arrival and departure
+  // recompiled every shader. The bank light stays in the scene at zero
+  // intensity forever; this rig only moves it and brightens it. It is therefore
+  // positioned in WORLD space (root's position plus the strike offset), and
+  // null when the bank is exhausted — such a storm still draws its bolt and
+  // glow, it just does not light the ground.
+  const flashLight = isStorm ? lentLight : null;
+  let strikeOffsetX = 0;
+  let strikeOffsetZ = 0;
 
   return {
     kind,
@@ -605,7 +619,14 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
         glowSheet!.scale.setScalar(worldRadius * FOG_LAYERS[0]!.radiusScale);
         glowSheet!.position.y = FOG_LAYERS[0]!.height;
       }
-      flashLight!.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+      if (flashLight !== null) {
+        flashLight.intensity = brightness * FLASH_LIGHT_PEAK_INTENSITY;
+        flashLight.position.set(
+          root.position.x + strikeOffsetX,
+          BOLT_BOTTOM_WORLD_Y,
+          root.position.z + strikeOffsetZ,
+        );
+      }
     },
 
     strike(offsetX: number, offsetZ: number, governor: LightningGovernor): void {
@@ -621,11 +642,16 @@ function createRig(kind: WeatherKind, shared: SharedGeometry): WeatherRig {
       // silhouette. Derived from the strike's own offset rather than drawn at
       // random, so the same strike looks the same on every client that draws it.
       boltPivot!.rotation.y = Math.atan2(offsetZ, offsetX);
-      flashLight!.position.set(offsetX, BOLT_BOTTOM_WORLD_Y, offsetZ);
+      strikeOffsetX = offsetX;
+      strikeOffsetZ = offsetZ;
     },
 
     reset(): void {
       lightning?.reset();
+      // The light stays in the scene after this rig's root has left it, so a
+      // rig released mid-flash must put its light out itself — nothing else
+      // will update it until a later storm acquires this rig.
+      if (flashLight !== null) flashLight.intensity = 0;
     },
 
     dispose(): void {
@@ -746,13 +772,23 @@ export function createDryBoltRig(shared: SharedGeometry): DryBoltRig {
  * Rigs, reused across systems of the same kind.
  *
  * WHY POOL AT ALL when at most MAX_ACTIVE_SYSTEMS exist: building a rain rig
- * allocates a 1 350-drop buffer and a fresh material, and creating a STORM rig
- * adds a PointLight to the scene, which invalidates every material's shader
- * program (see flashLight). Weather turns over every few minutes forever, so
- * without a pool a world left running all evening pays that repeatedly. With one
- * it pays it once per kind, and the shared fog and bolt geometry once ever.
+ * allocates a 1 350-drop buffer and a fresh material. Weather turns over every
+ * few minutes forever, so without a pool a world left running all evening pays
+ * that repeatedly. With one it pays it once per kind, and the shared fog and
+ * bolt geometry once ever.
+ *
+ * (Until 2026-08-28 the pool's other job was to keep a storm rig's PointLight
+ * — and with it a shader recompile — from being paid per storm. That is now
+ * the light bank's job, see `lightBank`, and the pool merely lends from it.)
  */
 export interface WeatherRigs {
+  /**
+   * Every storm flash light there will ever be, parked at zero intensity.
+   * Added to the plugin's layer ONCE at attach and never touched again, so the
+   * scene's point-light count is constant for the plugin's life — see
+   * STORM_FLASH_LIGHT_BANK_SIZE for why that is the whole point.
+   */
+  readonly lightBank: Group;
   /**
    * The world's single dry bolt — lightning that belongs to no system. Owned by
    * the pool because it shares the pool's bolt geometry and has exactly the same
@@ -773,14 +809,28 @@ export function createWeatherRigs(): WeatherRigs {
   const all: WeatherRig[] = [];
   const dryBolt = createDryBoltRig(shared);
 
+  const lightBank = new Group();
+  lightBank.name = 'weather:flash-lights';
+  // Every light exists from the start, dark. A storm rig, once created, keeps
+  // its lent light for the rig's whole (pooled) life, so the lights are handed
+  // out in creation order and the Nth storm rig beyond the bank gets none.
+  const unlent: PointLight[] = [];
+  for (let index = 0; index < STORM_FLASH_LIGHT_BANK_SIZE; index++) {
+    const light = new PointLight(FLASH_COLOR, 0, FLASH_LIGHT_RANGE_CELLS);
+    light.position.y = BOLT_BOTTOM_WORLD_Y;
+    lightBank.add(light);
+    unlent.push(light);
+  }
+
   return {
     dryBolt,
+    lightBank,
 
     acquire(kind: WeatherKind): WeatherRig {
       const waiting = free.get(kind);
       const reused = waiting?.pop();
       if (reused !== undefined) return reused;
-      const rig = createRig(kind, shared);
+      const rig = createRig(kind, shared, kind === 'storm' ? (unlent.pop() ?? null) : null);
       all.push(rig);
       return rig;
     },
@@ -804,6 +854,8 @@ export function createWeatherRigs(): WeatherRigs {
       for (const rig of all) rig.dispose();
       all.length = 0;
       free.clear();
+      // PointLight owns no GPU resource; clearing the group is the whole of it.
+      lightBank.clear();
       dryBolt.dispose();
       shared.fog.dispose();
       shared.bolt.dispose();

@@ -466,6 +466,25 @@ export const FLASH_LIGHT_PEAK_INTENSITY = 520;
 export const FLASH_LIGHT_RANGE_CELLS = 90;
 
 /**
+ * How many storm flash lights exist IN THE SCENE, for the plugin's whole life.
+ *
+ * WHY A FIXED BANK (2026-08-28). three bakes the point-light COUNT into every
+ * material's program key, so adding or removing one light recompiles the
+ * terrain, the water and every creature. Storm rigs used to carry their own
+ * light in and out of the scene as storms came and went; at the world-sized cap
+ * (activeSystemCapFor, up to 14 systems) that was a fresh light count — and a
+ * compile burst — roughly every half minute, measured at 41 → 82 programs in
+ * 150 s. The bank is created once, at zero intensity, and never changes size,
+ * so the count is constant from the first frame and nothing recompiles.
+ *
+ * FOUR. Storms are a fifth of the kind weights, so a full 14-system sky holds
+ * about three; a fifth simultaneous storm still throws bolts and glow, it
+ * simply does not light the ground — and every extra light here is a cost
+ * paid by every material on every frame, lit or not.
+ */
+export const STORM_FLASH_LIGHT_BANK_SIZE = 4;
+
+/**
  * The bolt's vertical extent, in world units.
  *
  * It falls from the cloud base — the same altitude the storm's own rain is born

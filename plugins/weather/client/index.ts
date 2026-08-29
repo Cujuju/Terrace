@@ -246,6 +246,10 @@ export const clientPlugin: TerraceClientPlugin = {
     // space and must not ride any system's transform.
     ctx.layer.add(rigs.dryBolt.root);
 
+    // The storm flash lights, all of them, dark, for the plugin's whole life —
+    // so the scene's light count is fixed from here on (rig.ts, lightBank).
+    ctx.layer.add(rigs.lightBank);
+
     unsubscribeMessages = ctx.onMessage(WEATHER_SYSTEMS_MESSAGE, (payload) => {
       const systems = parseSystemsPayload(payload);
       // A malformed payload is dropped whole: the weather already on screen
