@@ -25,9 +25,20 @@ import {
   createTerrainMirror,
 } from '../src/terrain/mirror.ts';
 import {
+  ARENA_COMPACT_IDLE_BUDGET_MS,
+  ARENA_COMPACT_STROKE_BUDGET_MS,
+  ARENA_TRANSFER_MS_PER_VERTEX,
   CHUNK_SPLICE_FRAME_BUDGET_MS,
+  SUPER_MESH_SPAN_CHUNKS,
   createTerrainMeshes,
+  type ArenaLayout,
+  type TerrainMeshes,
 } from '../src/render/terrainMeshes.ts';
+import {
+  createDirectChunkBuildSource,
+  type ChunkBuildSource,
+} from '../src/render/chunkBuildSource.ts';
+import type { ChunkJobAnswer } from '../src/terrain/chunkJob.ts';
 import {
   INITIAL_CHUNK_TRIANGLE_CAPACITY,
   VERTICES_PER_TRIANGLE,
@@ -71,6 +82,175 @@ function setup(chunks: ChunkPayload[]) {
   meshes.update(
     applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks }),
   );
+  return { mirror, group, meshes };
+}
+
+/**
+ * Every slot of `patched` holds, vertex for vertex and attribute for
+ * attribute, exactly what the same chunk's slot holds in `reference`.
+ *
+ * PER SLOT, NOT PER BUFFER POSITION: the arena places a run wherever it fits,
+ * so two builds of the same world may lay the same geometry out differently
+ * and still both be right. What may never differ is a chunk's own run.
+ */
+function expectSlotsEqual(patched: TerrainMeshes, reference: TerrainMeshes): void {
+  const patchedLayouts = patched.arenaLayout();
+  const referenceLayouts = reference.arenaLayout();
+  expect(patchedLayouts).toHaveLength(referenceLayouts.length);
+  for (let s = 0; s < patchedLayouts.length; s++) {
+    const patchedGeometry = patched.pickables()[s]!.geometry;
+    const referenceGeometry = reference.pickables()[s]!.geometry;
+    const referenceSlots = new Map(
+      referenceLayouts[s]!.slots.map((slot) => [slot.chunkIdx, slot]),
+    );
+    expect(patchedLayouts[s]!.slots.length).toBe(referenceSlots.size);
+    for (const slot of patchedLayouts[s]!.slots) {
+      const mirrorSlot = referenceSlots.get(slot.chunkIdx);
+      expect(mirrorSlot, `chunk ${slot.chunkIdx} is missing from the reference`).toBeDefined();
+      expect(slot.count, `chunk ${slot.chunkIdx} vertex count`).toBe(mirrorSlot!.count);
+      for (const name of ['position', 'normal', 'color', 'selfLit'] as const) {
+        const a = plainAttribute(patchedGeometry, name);
+        const b = plainAttribute(referenceGeometry, name);
+        const stride = a.itemSize;
+        for (let v = 0; v < slot.count; v++) {
+          for (let c = 0; c < stride; c++) {
+            expect(
+              a.array[(slot.offset + v) * stride + c],
+              `chunk ${slot.chunkIdx} ${name}[${v}][${c}]`,
+            ).toBe(b.array[(mirrorSlot!.offset + v) * stride + c]);
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * A build source that answers with runs of an EXACT, caller-chosen vertex
+ * count.
+ *
+ * WHY A FAKE SOURCE RATHER THAN CONTRIVED TERRAIN. The arena's placement rules
+ * turn on arithmetic between a run's old count, its new count, the free list
+ * and the buffer capacity — "grow past the slack but not past the delta",
+ * "a run too dear to move inside the stroke budget". Reaching those cases
+ * through the marcher would mean hunting for heights that happen to emit a
+ * particular number of triangles, which pins the test to the CONTOUR PIPELINE
+ * rather than to the placement contract it is about. The vertex data is still
+ * a real answer's — only its length is dictated — and every value written is
+ * non-zero, so "the hole is zeroed" stays an observable rather than a
+ * coincidence.
+ */
+function sizedSource(sizes: Map<number, number>): ChunkBuildSource {
+  const direct = createDirectChunkBuildSource();
+  return {
+    concurrency: 1,
+    build(mirror, chunkIdx, generation): ChunkJobAnswer | null {
+      const real = direct.build(mirror, chunkIdx, generation) as ChunkJobAnswer | null;
+      const want = sizes.get(chunkIdx);
+      if (real === null || want === undefined) return real;
+      const positions = new Float32Array(want * 3);
+      const normals = new Int8Array(want * 3);
+      const colors = new Uint8Array(want * 3);
+      const selfLit = new Uint8Array(want);
+      for (let v = 0; v < want; v++) {
+        positions[v * 3] = chunkIdx + 1;
+        positions[v * 3 + 1] = v + 1;
+        positions[v * 3 + 2] = 1;
+        normals[v * 3] = 1;
+        normals[v * 3 + 1] = 2;
+        normals[v * 3 + 2] = 3;
+        colors[v * 3] = 7;
+        colors[v * 3 + 1] = 8;
+        colors[v * 3 + 2] = 9;
+        selfLit[v] = 1;
+      }
+      return {
+        ...real,
+        vertexCount: want,
+        positions,
+        normals,
+        colors,
+        selfLit,
+        bounds: new Float32Array([1, 1, 1, chunkIdx + 1, want, 1]),
+      };
+    },
+    dispose(): void {},
+  };
+}
+
+/**
+ * Asserts every invariant the free list carries (plan §3c), against the buffers
+ * as they actually stand.
+ */
+function expectHoleInvariants(meshes: TerrainMeshes): void {
+  const layouts = meshes.arenaLayout();
+  const stats = meshes.arenaStats();
+  for (let s = 0; s < layouts.length; s++) {
+    const { slots, holes } = layouts[s]!;
+    const { liveEnd, deadVertices } = stats[s]!;
+    let total = 0;
+    for (let h = 0; h < holes.length; h++) {
+      const hole = holes[h]!;
+      expect(hole.length, 'a zero-length hole is not a hole').toBeGreaterThan(0);
+      // ALIGNED, which is what makes the degenerate-triangle argument true: a
+      // hole that split a triangle would leave a live sliver drawing garbage.
+      expect(hole.offset % VERTICES_PER_TRIANGLE).toBe(0);
+      expect(hole.length % VERTICES_PER_TRIANGLE).toBe(0);
+      // Sorted AND coalesced: adjacency would mean two entries where the list
+      // must hold one.
+      if (h > 0) {
+        const previous = holes[h - 1]!;
+        expect(previous.offset + previous.length).toBeLessThan(hole.offset);
+      }
+      // The retreat rule: a hole that reached `liveEnd` must have left the draw
+      // range instead of sitting in the list.
+      expect(hole.offset + hole.length).toBeLessThan(liveEnd);
+      total += hole.length;
+    }
+    // No leaked remainder: dead space IS the free list, not merely covered by it.
+    expect(total).toBe(deadVertices);
+
+    // And every vertex outside a live run is zero in all four attributes.
+    const live = new Uint8Array(liveEnd);
+    for (const slot of slots) {
+      expect(slot.offset % VERTICES_PER_TRIANGLE).toBe(0);
+      expect(slot.count % VERTICES_PER_TRIANGLE).toBe(0);
+      expect(slot.offset + slot.count).toBeLessThanOrEqual(liveEnd);
+      live.fill(1, slot.offset, slot.offset + slot.count);
+    }
+    const geometry = meshes.pickables()[s]!.geometry;
+    for (const name of ['position', 'normal', 'color', 'selfLit'] as const) {
+      const attribute = plainAttribute(geometry, name);
+      const stride = attribute.itemSize;
+      for (let v = 0; v < liveEnd; v++) {
+        if (live[v] === 1) continue;
+        for (let c = 0; c < stride; c++) {
+          expect(attribute.array[v * stride + c], `dead ${name} vertex ${v}`).toBe(0);
+        }
+      }
+    }
+  }
+}
+
+/** The first `count` chunks of the SUPER_MESH_SPAN_CHUNKS square at the origin. */
+function arenaChunks(count: number): ChunkPayload[] {
+  const chunks: ChunkPayload[] = [];
+  for (let i = 0; i < count; i++) {
+    chunks.push(chunkPayload(i % SUPER_MESH_SPAN_CHUNKS, Math.floor(i / SUPER_MESH_SPAN_CHUNKS), 0));
+  }
+  return chunks;
+}
+
+/** A world of `count` chunks, all inside super-mesh 0, built to exact sizes. */
+function arenaSetup(count: number, sizes: Map<number, number>) {
+  const mirror = createTerrainMirror(WORLD);
+  const group = new Group();
+  const meshes = createTerrainMeshes(group, mirror, undefined, sizedSource(sizes));
+  const chunks = arenaChunks(count);
+  const dirty = applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks });
+  // ORDERED EXPLICITLY, not from the diff's Set: the drain order is the queue's
+  // insertion order, and these tests assert which run is placed where.
+  meshes.update([...dirty].sort((a, b) => a - b));
   return { mirror, group, meshes };
 }
 
@@ -159,67 +339,110 @@ describe('createTerrainMeshes', () => {
     }
   });
 
-  it('patches one chunk without disturbing the others packed beside it', () => {
+  it('patches one chunk without disturbing the others, wherever the arena put them', () => {
     // THE FAILURE MODE THE MERGE INTRODUCES, and the reason this replaced a
-    // test that compared two chunks' normal attributes for identity. Chunks no
-    // longer own an attribute each: they own a RUN inside a shared one, packed
-    // end to end. A rebuild whose vertex count changed has to shift every run
-    // after it, and a splice that got that wrong would corrupt its neighbours
-    // rather than fail loudly — the geometry would simply be wrong.
+    // test that compared two chunks' normal attributes for identity. Chunks do
+    // not own an attribute each: they own a RUN inside a shared one.
     //
-    // Pinned as an EQUIVALENCE: a super-mesh patched incrementally must hold
-    // exactly what one built from scratch over the same heights holds. That
-    // catches a bad shift, a stale offset and a lost tail alike, without this
-    // test having to know how the packing is laid out.
-    const built = setup([chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)]);
-    const diff = {
-      type: 'terrainDiff' as const,
-      cells: [{ x: 2, y: 3, h: 4 * BAND_HEIGHT }],
-    };
-    built.meshes.update(applyTerrainDiff(built.mirror, diff));
+    // RESTATED FOR THE ARENA (2026-08-28). The runs used to be packed in
+    // chunk-index order, so "the same buffer, vertex for vertex" was a fair
+    // oracle. Under the arena a run is placed wherever it fits and moved by the
+    // compactor, so the layout of a spliced super-mesh legitimately differs
+    // from a from-scratch build's. The EQUIVALENCE survives, restated PER SLOT:
+    // for every chunk, its own run of all four attributes must equal that
+    // chunk's run in a from-scratch build over the same heights.
+    //
+    // This is the test that catches a bad copyWithin length, a x3/x1 unit slip
+    // on `selfLit`, or zeroing one vertex too many; the upload-size test below
+    // cannot see any of those.
+    const chunks = [
+      chunkPayload(0, 0, 0),
+      chunkPayload(1, 0, 0),
+      chunkPayload(2, 0, 0),
+      chunkPayload(3, 0, 0),
+    ];
+    const built = setup(chunks);
 
-    // The same world, reached in one build instead of two.
+    // A HISTORY WITH ALL THREE EVENTS IN IT: a grow that cannot extend in place
+    // (chunk 0 has runs after it), a shrink that opens a hole, and — because
+    // two chunks are dirtied in the same pass — a first-fit reuse of that hole,
+    // followed by the compaction `flush` ends with.
+    const history = [
+      { type: 'terrainDiff' as const, cells: [{ x: 2, y: 3, h: 4 * BAND_HEIGHT }] },
+      { type: 'terrainDiff' as const, cells: [{ x: 2, y: 3, h: 0 }] },
+      {
+        type: 'terrainDiff' as const,
+        cells: [
+          { x: 2, y: 3, h: 6 * BAND_HEIGHT },
+          { x: CHUNK_SIZE + 4, y: 5, h: 5 * BAND_HEIGHT },
+          { x: 2 * CHUNK_SIZE + 6, y: 7, h: 3 * BAND_HEIGHT },
+        ],
+      },
+      {
+        type: 'terrainDiff' as const,
+        cells: [
+          { x: 2, y: 3, h: 0 },
+          { x: CHUNK_SIZE + 4, y: 5, h: 8 * BAND_HEIGHT },
+        ],
+      },
+    ];
+
+    // The arena's own events, observed as they happen: `onChunkDrawn` fires
+    // after a splice and BEFORE the frame's compaction, which is the only
+    // moment a hole is visible from outside.
+    let sawHole = false;
+    let sawRunMoveDown = false;
+    let previous = new Map<number, number>();
+    const noteLayout = (): void => {
+      const layout = built.meshes.arenaLayout()[0]!;
+      if (layout.holes.length > 0) sawHole = true;
+      for (const slot of layout.slots) {
+        const before = previous.get(slot.chunkIdx);
+        if (before !== undefined && slot.offset < before) sawRunMoveDown = true;
+      }
+      previous = new Map(layout.slots.map((slot) => [slot.chunkIdx, slot.offset]));
+    };
+    built.meshes.onChunkDrawn(noteLayout);
+    for (const diff of history) {
+      built.meshes.update(applyTerrainDiff(built.mirror, diff));
+      noteLayout();
+    }
+    expect(sawHole).toBe(true);
+    expect(sawRunMoveDown).toBe(true);
+
+    // The same world, reached in one build instead of five.
     const freshMirror = createTerrainMirror(WORLD);
-    applySnapshot(freshMirror, {
-      type: 'snapshot',
-      worldSize: WORLD,
-      chunks: [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)],
-    });
-    applyTerrainDiff(freshMirror, diff);
-    // Every received chunk at once, against a mirror that already holds the
-    // edit — so this super-mesh is packed in one pass and never spliced.
+    applySnapshot(freshMirror, { type: 'snapshot', worldSize: WORLD, chunks });
+    for (const diff of history) applyTerrainDiff(freshMirror, diff);
     const freshMeshes = createTerrainMeshes(new Group(), freshMirror);
     freshMeshes.update(freshMirror.received);
 
-    const patchedGeometry = built.meshes.pickables()[0]!.geometry;
-    const freshGeometry = freshMeshes.pickables()[0]!.geometry;
     expect(built.meshes.drawCallCount()).toBe(1);
-    expect(patchedGeometry.drawRange.count).toBe(freshGeometry.drawRange.count);
-
-    const live = patchedGeometry.drawRange.count;
-    const patchedPositions = patchedGeometry.getAttribute('position');
-    const freshPositions = freshGeometry.getAttribute('position');
-    for (let v = 0; v < live; v++) {
-      expect(patchedPositions.getX(v)).toBe(freshPositions.getX(v));
-      expect(patchedPositions.getY(v)).toBe(freshPositions.getY(v));
-      expect(patchedPositions.getZ(v)).toBe(freshPositions.getZ(v));
-    }
+    expectSlotsEqual(built.meshes, freshMeshes);
   });
 
-  it('draws only the emitted prefix of the buffers', () => {
+  it('draws only the arena prefix of the buffers', () => {
     // A flat chunk is two triangles; the draw range must cut the rest of the
     // capacity rather than rasterising it. On non-indexed geometry the range
-    // counts vertices.
+    // counts vertices, and the prefix it covers is the arena's EXTENT
+    // (`liveEnd`) rather than the sum of the slot counts — the two are the same
+    // number here only because a single hole-free run has nothing dead in it.
     const { meshes } = setup([chunkPayload(0, 0, 0)]);
     const geometry = meshes.pickables()[0].geometry;
+    const stats = meshes.arenaStats()[0]!;
     expect(geometry.drawRange.start).toBe(0);
-    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
+    expect(geometry.drawRange.count).toBe(stats.liveEnd);
+    expect(stats.liveEnd).toBe(FLAT_CHUNK_VERTEX_COUNT);
     expect(geometry.drawRange.count).toBeLessThan(
       INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
     );
   });
 
-  it('grows and shrinks the draw range as sculpting adds and removes terraces', () => {
+  it('keeps the draw range over every live vertex as sculpting adds and removes terraces', () => {
+    // WHAT THE DRAW RANGE IS FOR, under the arena: it must cover every live
+    // vertex — `liveEnd`, which is at least the sum of the slot counts and is
+    // more than it exactly when the arena holds holes. A range set to the COUNT
+    // sum would truncate the arena and cut live geometry off the end.
     const { meshes, mirror } = setup([chunkPayload(0, 0, 0)]);
     const geometry = meshes.pickables()[0].geometry;
     expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
@@ -236,15 +459,23 @@ describe('createTerrainMeshes', () => {
     expect(raised).toBeLessThanOrEqual(
       INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE,
     );
+    const grown = meshes.arenaStats()[0]!;
+    expect(raised).toBe(grown.liveEnd);
+    expect(grown.liveEnd).toBeGreaterThanOrEqual(grown.liveCount);
 
-    // Level it again and the column — and the range — go away.
+    // Level it again and the column — and the range — go away. The retreat
+    // rule is what makes this exact: the shrink's hole ends at `liveEnd`, so it
+    // leaves the draw range rather than being uploaded as zeroes.
     meshes.update(
       applyTerrainDiff(mirror, {
         type: 'terrainDiff',
         cells: [{ x: 2, y: 3, h: 0 }],
       }),
     );
-    expect(geometry.drawRange.count).toBe(FLAT_CHUNK_VERTEX_COUNT);
+    const levelled = meshes.arenaStats()[0]!;
+    expect(geometry.drawRange.count).toBe(levelled.liveEnd);
+    expect(levelled.liveEnd).toBe(FLAT_CHUNK_VERTEX_COUNT);
+    expect(levelled.liveCount).toBe(FLAT_CHUNK_VERTEX_COUNT);
   });
 
   it('writes the new height into the patched chunk', () => {
@@ -626,5 +857,334 @@ describe('multi-frame chunk meshing', () => {
     meshes.flush();
     expect(meshes.builtChunkCount()).toBe(4);
     expect(meshes.pendingCount()).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // COMPACTION. Its own seam on the frame hook, with its own budget — the only
+  // block in this file that has a frame hook to hang it on. `drain` returns
+  // early on a settled frame, so anything placed "after the splices" inside it
+  // would never run on the frames that matter.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A run too dear to move inside the stroke budget and cheap enough for the
+   * idle one — 1.14 ms against 1.0 and 3.0. Stated as a vertex count because
+   * that is what the arena moves; the assertions below re-derive the two
+   * milliseconds from ARENA_TRANSFER_MS_PER_VERTEX so the fixture cannot drift
+   * away from the constants it is chosen against.
+   */
+  const DEAR_RUN_VERTICES = 60000;
+
+  function compactionSetup() {
+    const sizes = new Map<number, number>([
+      [chunkIndex(WORLD, 0, 0), 300],
+      [chunkIndex(WORLD, 1, 0), DEAR_RUN_VERTICES],
+      [chunkIndex(WORLD, 2, 0), 300],
+    ]);
+    const mirror = createTerrainMirror(WORLD);
+    const group = new Group();
+    const clock = fakeScheduler(0);
+    const meshes = createTerrainMeshes(group, mirror, clock.scheduling, sizedSource(sizes));
+    const dirty = applySnapshot(mirror, {
+      type: 'snapshot',
+      worldSize: WORLD,
+      chunks: [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0), chunkPayload(2, 0, 0)],
+    });
+    meshes.update([...dirty].sort((a, b) => a - b));
+    clock.frame();
+    return { meshes, clock, sizes };
+  }
+
+  it('will not move a run it cannot afford on a frame that spliced, and moves it when idle', () => {
+    expect(DEAR_RUN_VERTICES * ARENA_TRANSFER_MS_PER_VERTEX).toBeGreaterThan(
+      ARENA_COMPACT_STROKE_BUDGET_MS,
+    );
+    expect(DEAR_RUN_VERTICES * ARENA_TRANSFER_MS_PER_VERTEX).toBeLessThanOrEqual(
+      ARENA_COMPACT_IDLE_BUDGET_MS,
+    );
+
+    const { meshes, clock, sizes } = compactionSetup();
+    expect(meshes.arenaStats()[0]).toMatchObject({
+      liveEnd: DEAR_RUN_VERTICES + 600,
+      deadVertices: 0,
+    });
+
+    // A stroke step shrinks the first chunk, opening a hole the dear run sits
+    // behind. SPLICED frame: the move does not fit, and skipping it is correct
+    // — a half-moved live run would draw garbage.
+    sizes.set(chunkIndex(WORLD, 0, 0), 3);
+    meshes.update([chunkIndex(WORLD, 0, 0)]);
+    clock.frame();
+    expect(meshes.arenaStats()[0]).toMatchObject({ deadVertices: 297, holeCount: 1 });
+
+    // COMPACTION MUST NOT TOUCH A SLOT'S BOUNDS: a move changes where a run
+    // lives, not what it contains, so the culling sphere is the same sphere.
+    const sphereBefore = meshes.pickables()[0]!.geometry.boundingSphere!.clone();
+
+    // IDLE frame: nothing to splice, three times the budget, and the arena
+    // closes up.
+    clock.frame();
+    expect(meshes.arenaStats()[0]).toMatchObject({ deadVertices: 0, holeCount: 0 });
+    const sphereAfter = meshes.pickables()[0]!.geometry.boundingSphere!;
+    expect(sphereAfter.center.equals(sphereBefore.center)).toBe(true);
+    expect(sphereAfter.radius).toBe(sphereBefore.radius);
+  });
+
+  it('converges to a hole-free arena within one sweep of idle frames', () => {
+    // CONVERGENCE, NOT A HOLE CONSTANT (plan §3d): one full sweep is at most
+    // one move per run, so a super-mesh of SUPER_MESH_SPAN_CHUNKS² chunks
+    // retires every hole in at most that many moves less one.
+    const { meshes, clock, sizes } = compactionSetup();
+    for (let step = 0; step < 5; step++) {
+      sizes.set(chunkIndex(WORLD, 0, 0), 300 + step * 3);
+      sizes.set(chunkIndex(WORLD, 2, 0), 300 + (5 - step) * 3);
+      meshes.update([chunkIndex(WORLD, 0, 0), chunkIndex(WORLD, 2, 0)]);
+      clock.frame();
+    }
+
+    const MAX_SWEEP_FRAMES = SUPER_MESH_SPAN_CHUNKS ** 2 - 1;
+    let frames = 0;
+    while (meshes.arenaStats()[0]!.deadVertices > 0 && frames < MAX_SWEEP_FRAMES) {
+      clock.frame();
+      frames++;
+    }
+    const stats = meshes.arenaStats()[0]!;
+    expect(stats.deadVertices).toBe(0);
+    expect(stats.holeCount).toBe(0);
+    expect(stats.liveEnd).toBe(stats.liveCount);
+    expect(frames).toBeLessThan(MAX_SWEEP_FRAMES);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// THE VERTEX ARENA (docs/plans/vertex-arena-no-tail-move.md). The contract:
+// A SPLICE'S UPLOAD IS BOUNDED BY THE CHUNK IT SPLICES — and, during
+// compaction, by one moved run — never by the super-mesh. Everything below
+// is a statement about that bound or about the free list that makes it
+// possible; none of it is a statement about a particular callsite.
+// -----------------------------------------------------------------------------
+
+describe('the vertex arena', () => {
+  /** 100 triangles — a run size, chosen only so the arithmetic below is legible. */
+  const RUN = 100 * VERTICES_PER_TRIANGLE;
+
+  it('uploads only the chunk it spliced, however many runs follow it', () => {
+    // THE MEASURED DEFECT, as a test (plan §1): the packed layout uploaded
+    // `[slot.offset, liveVertices)` — this chunk and all 63 runs after it,
+    // ~19 MB on the owner's busiest super-mesh, twice per stroke step. The
+    // arena appends the regrown run and frees the old one, so the upload is
+    // two runs' worth whatever sits between them.
+    const sizes = new Map<number, number>();
+    const chunkCount = SUPER_MESH_SPAN_CHUNKS ** 2;
+    for (const payload of arenaChunks(chunkCount)) {
+      sizes.set(chunkIndex(WORLD, payload.cx, payload.cy), RUN);
+    }
+    const { meshes } = arenaSetup(chunkCount, sizes);
+    const first = chunkIndex(WORLD, 0, 0);
+    const layoutBefore = meshes.arenaLayout()[0]!;
+    expect(layoutBefore.slots).toHaveLength(chunkCount);
+    const liveEndBefore = meshes.arenaStats()[0]!.liveEnd;
+    const growthsBefore = meshes.arenaStats()[0]!.growths;
+    const offsetBefore = layoutBefore.slots.find((slot) => slot.chunkIdx === first)!.offset;
+
+    // EXPLICITLY CLEARED, and that is what makes the assertion observable: the
+    // headless suite has no WebGLRenderer, so nothing ever drains the ranges
+    // three would have uploaded, and they would otherwise accumulate from the
+    // initial build.
+    const geometry = meshes.pickables()[0]!.geometry;
+    const attributes = (['position', 'normal', 'color', 'selfLit'] as const).map((name) =>
+      plainAttribute(geometry, name),
+    );
+    for (const attribute of attributes) attribute.clearUpdateRanges();
+
+    // Captured DURING the pass: `flush` compacts once every answer is spliced,
+    // and compaction adds ranges of its own (bounded by one run plus one hole,
+    // which is the other half of the contract). What this test pins is the
+    // splice's own upload.
+    let ranges: { start: number; count: number }[][] = [];
+    meshes.onChunkDrawn(() => {
+      ranges = attributes.map((attribute) => attribute.updateRanges.map((r) => ({ ...r })));
+    });
+    sizes.set(first, RUN * 2);
+    meshes.update([first]);
+
+    // No reallocation, so ranges were honoured rather than skipped (§3e).
+    expect(meshes.arenaStats()[0]!.growths).toBe(growthsBefore);
+    for (let a = 0; a < attributes.length; a++) {
+      const stride = attributes[a]!.itemSize;
+      // Two ranges, DISJOINT: the new run at the old live end, and the old run
+      // being zeroed. Never one range spanning everything between them.
+      expect(ranges[a], `${attributes[a]!.itemSize}-component attribute`).toEqual([
+        { start: liveEndBefore * stride, count: RUN * 2 * stride },
+        { start: offsetBefore * stride, count: RUN * stride },
+      ]);
+    }
+  });
+
+  it('holds every free-list invariant through an arbitrary splice history', () => {
+    const sizes = new Map<number, number>([
+      [chunkIndex(WORLD, 0, 0), RUN * 4],
+      [chunkIndex(WORLD, 1, 0), RUN * 2],
+      [chunkIndex(WORLD, 2, 0), RUN * 3],
+      [chunkIndex(WORLD, 3, 0), RUN],
+    ]);
+    const { meshes } = arenaSetup(4, sizes);
+    meshes.onChunkDrawn(() => expectHoleInvariants(meshes));
+
+    const history: [number, number][][] = [
+      [[0, RUN], [2, RUN * 6]],
+      [[1, RUN * 5], [3, RUN * 2]],
+      [[0, RUN * 7]],
+      [[2, RUN], [1, RUN], [3, RUN * 4]],
+      [[3, RUN * 9], [0, RUN * 2]],
+    ];
+    for (const step of history) {
+      const dirty: number[] = [];
+      for (const [chunk, count] of step) {
+        const idx = chunkIndex(WORLD, chunk, 0);
+        sizes.set(idx, count);
+        dirty.push(idx);
+      }
+      meshes.update(dirty);
+      expectHoleInvariants(meshes);
+    }
+  });
+
+  it('leaves no hole behind once flush has built everything', () => {
+    // `flush` means "build everything now"; under the arena it also means "and
+    // leave no holes", which is what the six preview harnesses and every
+    // no-scheduler caller get (plan §3d).
+    const sizes = new Map<number, number>([
+      [chunkIndex(WORLD, 0, 0), RUN * 3],
+      [chunkIndex(WORLD, 1, 0), RUN * 3],
+      [chunkIndex(WORLD, 2, 0), RUN * 3],
+    ]);
+    const { meshes } = arenaSetup(3, sizes);
+    sizes.set(chunkIndex(WORLD, 0, 0), RUN);
+    sizes.set(chunkIndex(WORLD, 1, 0), RUN * 5);
+    meshes.update([chunkIndex(WORLD, 0, 0), chunkIndex(WORLD, 1, 0)]);
+
+    const stats = meshes.arenaStats()[0]!;
+    expect(stats.deadVertices).toBe(0);
+    expect(stats.holeCount).toBe(0);
+    expect(stats.liveEnd).toBe(stats.liveCount);
+  });
+
+  it('extends a run in place when it already ends at the live end', () => {
+    // THE COMMON CASE for a one-chunk super-mesh — every `setup()` above, every
+    // preview harness. Without it a regrow would re-append the only run on
+    // every step and leave a hole where it had just been.
+    const first = chunkIndex(WORLD, 0, 0);
+    const sizes = new Map<number, number>([[first, RUN]]);
+    const { meshes } = arenaSetup(1, sizes);
+    expect(meshes.arenaStats()[0]).toMatchObject({ liveEnd: RUN, holeCount: 0, growths: 0 });
+
+    sizes.set(first, RUN * 3);
+    const seen: ArenaLayout[] = [];
+    meshes.onChunkDrawn(() => seen.push(meshes.arenaLayout()[0]!));
+    meshes.update([first]);
+
+    // No hole, and `liveEnd` moved by the DELTA rather than by the count.
+    expect(seen[0]!.holes).toEqual([]);
+    expect(seen[0]!.slots).toEqual([{ chunkIdx: first, offset: 0, count: RUN * 3 }]);
+    expect(meshes.arenaStats()[0]).toMatchObject({
+      liveEnd: RUN * 3,
+      liveCount: RUN * 3,
+      holeCount: 0,
+      growths: 0,
+    });
+  });
+
+  it('first-fits the lowest hole that fits, splits the surplus, and leaves the live end alone', () => {
+    const a = chunkIndex(WORLD, 0, 0);
+    const b = chunkIndex(WORLD, 1, 0);
+    const sizes = new Map<number, number>([
+      [a, 600],
+      [b, 300],
+      [chunkIndex(WORLD, 2, 0), 300],
+      [chunkIndex(WORLD, 3, 0), 300],
+    ]);
+    const { meshes } = arenaSetup(4, sizes);
+    expect(meshes.arenaStats()[0]!.liveEnd).toBe(1500);
+
+    // A shrinks to 3, opening a 597-vertex hole at 3; B then grows to 450,
+    // which fits that hole with 147 to spare and must NOT extend the arena.
+    sizes.set(a, 3);
+    sizes.set(b, 450);
+    const seen: ArenaLayout[] = [];
+    const liveEnds: number[] = [];
+    meshes.onChunkDrawn(() => {
+      seen.push(meshes.arenaLayout()[0]!);
+      liveEnds.push(meshes.arenaStats()[0]!.liveEnd);
+    });
+    meshes.update([a, b]);
+
+    const afterFirstFit = seen[1]!;
+    expect(afterFirstFit.slots.find((slot) => slot.chunkIdx === b)).toEqual({
+      chunkIdx: b,
+      offset: 3,
+      count: 450,
+    });
+    expect(afterFirstFit.holes).toEqual([
+      { offset: 453, length: 147 },
+      { offset: 600, length: 300 },
+    ]);
+    // The arena did not extend: a first-fit reuses dead space, it does not add any.
+    expect(liveEnds).toEqual([1500, 1500]);
+  });
+
+  it('sizes an append from the run\'s COUNT, not from its delta', () => {
+    // THE REGRESSION THE PACKED LAYOUT WOULD HAVE LEFT BEHIND. Packed, a regrow
+    // needed `delta` more vertices, because the run stayed where it was. An
+    // append needs `count` more — the whole run is written past the live end —
+    // and a capacity test still phrased in `delta` lets `set()` run off the
+    // buffer and throw RangeError inside the frame hook.
+    const a = chunkIndex(WORLD, 0, 0);
+    const b = chunkIndex(WORLD, 1, 0);
+    const capacity = INITIAL_CHUNK_TRIANGLE_CAPACITY * VERTICES_PER_TRIANGLE;
+    const sizes = new Map<number, number>([[a, 1500], [b, 1500]]);
+    const { meshes } = arenaSetup(2, sizes);
+    expect(meshes.arenaStats()[0]).toMatchObject({ liveEnd: 3000, growths: 0 });
+
+    // delta = 60, which fits the 72 vertices of slack; count = 1560, which does
+    // not. The buffers must grow.
+    sizes.set(a, 1560);
+    expect(3000 + 1560).toBeGreaterThan(capacity);
+    expect(3000 + 60).toBeLessThanOrEqual(capacity);
+    expect(() => meshes.update([a])).not.toThrow();
+
+    expect(meshes.arenaStats()[0]!.growths).toBe(1);
+    expect(meshes.arenaStats()[0]!.liveCount).toBe(1560 + 1500);
+    expectHoleInvariants(meshes);
+  });
+
+  it('compacts before it grows, so a fragmented arena reuses its own dead space', () => {
+    const a = chunkIndex(WORLD, 0, 0);
+    const b = chunkIndex(WORLD, 1, 0);
+    const sizes = new Map<number, number>([
+      [a, 1002],
+      [b, 1002],
+      [chunkIndex(WORLD, 2, 0), 1002],
+    ]);
+    const { meshes } = arenaSetup(3, sizes);
+    expect(meshes.arenaStats()[0]).toMatchObject({ liveEnd: 3006, growths: 0 });
+
+    // B shrinks to 3, freeing 999; A then grows to 1050 — too big for that hole
+    // to first-fit, and too big to append at 3006 without doubling a 3072-vertex
+    // buffer. Compacting first retires the hole, drops `liveEnd` to 2007, and
+    // the append then fits with 15 vertices to spare.
+    sizes.set(b, 3);
+    sizes.set(a, 1050);
+    const seen: ArenaLayout[] = [];
+    meshes.onChunkDrawn(() => seen.push(meshes.arenaLayout()[0]!));
+    meshes.update([b, a]);
+
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+    expect(seen[1]!.slots.find((slot) => slot.chunkIdx === a)).toEqual({
+      chunkIdx: a,
+      offset: 2007,
+      count: 1050,
+    });
+    expectHoleInvariants(meshes);
   });
 });

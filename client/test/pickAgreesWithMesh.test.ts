@@ -22,7 +22,11 @@ import {
   cellsAcross,
   type ChunkPayload,
 } from '@terrace/shared';
-import { applySnapshot, createTerrainMirror } from '../src/terrain/mirror.ts';
+import {
+  applySnapshot,
+  applyTerrainDiff,
+  createTerrainMirror,
+} from '../src/terrain/mirror.ts';
 import { createTerrainMeshes } from '../src/render/terrainMeshes.ts';
 import { pickTerrainCellByRay } from '../src/terrain/picking.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from '../src/render/terrainMeshes.ts';
@@ -104,7 +108,7 @@ function terrainHeight(cellX: number, cellY: number): number {
   );
 }
 
-function buildWorld(): { mirror: ReturnType<typeof createTerrainMirror>; pickables: Mesh[] } {
+function worldChunks(): ChunkPayload[] {
   const chunks: ChunkPayload[] = [];
   for (let cy = 0; cy < WORLD / CHUNK_SIZE; cy++) {
     for (let cx = 0; cx < WORLD / CHUNK_SIZE; cx++) {
@@ -120,16 +124,85 @@ function buildWorld(): { mirror: ReturnType<typeof createTerrainMirror>; pickabl
       chunks.push({ cx, cy, heights });
     }
   }
+  return chunks;
+}
+
+function buildWorld(): { mirror: ReturnType<typeof createTerrainMirror>; pickables: Mesh[] } {
   const mirror = createTerrainMirror(WORLD);
   const group = new Group();
   const meshes = createTerrainMeshes(group, mirror);
-  meshes.update(applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks }));
+  meshes.update(
+    applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks: worldChunks() }),
+  );
   return { mirror, pickables: meshes.pickables() as Mesh[] };
 }
 
-describe('pickTerrainCellByRay vs the mesh raycast it replaced', () => {
-  it('agrees on the cell, and never disagrees about whether there is terrain at all', () => {
-    const { mirror, pickables } = buildWorld();
+/**
+ * The same world, sculpted, on the FRAME-HOOKED path — so the vertex arena is
+ * left mid-compaction and the geometry the rays meet contains real holes.
+ *
+ * WHY IT HAD TO BE THIS PATH. `flush` ends with an unbudgeted compaction, so
+ * the no-scheduler build above never holds a hole by the time it returns and a
+ * sweep over it would pass by construction. Frames compact under a budget
+ * (ARENA_COMPACT_STROKE_BUDGET_MS on a frame that spliced), so stopping the
+ * moment the queue drains leaves dead space still in the buffers — which is
+ * exactly the state a player pans and clicks through mid-stroke.
+ */
+function buildSculptedWorld(): {
+  mirror: ReturnType<typeof createTerrainMirror>;
+  pickables: Mesh[];
+  deadVertices: number;
+} {
+  const handlers = new Set<(dt: number) => void>();
+  const mirror = createTerrainMirror(WORLD);
+  const group = new Group();
+  const meshes = createTerrainMeshes(group, mirror, {
+    onFrame(handler: (dt: number) => void): () => void {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+  });
+  const frame = (): void => {
+    for (const handler of handlers) handler(1 / 60);
+  };
+  const runToIdle = (): void => {
+    // Bounded rather than `while (true)`: a queue that stopped draining would
+    // otherwise hang the suite instead of failing it.
+    for (let guard = 0; guard <= (WORLD / CHUNK_SIZE) ** 2 * 4; guard++) {
+      if (meshes.pendingCount() === 0) return;
+      frame();
+    }
+    throw new Error('the chunk queue never drained');
+  };
+  meshes.update(
+    applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks: worldChunks() }),
+  );
+  runToIdle();
+
+  // A RAISE THEN A LEVEL, so a grow and a shrink both land: the grow moves runs
+  // to fresh ground and the shrink opens holes behind them.
+  const band = (h: number) => Math.round(h / BAND_HEIGHT) * BAND_HEIGHT;
+  for (const lift of [6 * BAND_HEIGHT, 0]) {
+    const cells: { x: number; y: number; h: number }[] = [];
+    for (let y = CHUNK_SIZE; y < WORLD - CHUNK_SIZE; y += 3) {
+      for (let x = CHUNK_SIZE; x < WORLD - CHUNK_SIZE; x += 3) {
+        cells.push({ x, y, h: band(terrainHeight(x, y)) + lift });
+      }
+    }
+    meshes.update(applyTerrainDiff(mirror, { type: 'terrainDiff', cells }));
+    runToIdle();
+  }
+
+  const deadVertices = meshes
+    .arenaStats()
+    .reduce((total, stats) => total + stats.deadVertices, 0);
+  return { mirror, pickables: meshes.pickables() as Mesh[], deadVertices };
+}
+
+function sweep(
+  mirror: ReturnType<typeof createTerrainMirror>,
+  pickables: Mesh[],
+): void {
     // ONE MESH PER SUPER-MESH, not per chunk (2026-08-21). This world's 256
     // chunks are submitted as 4 draw calls — the merge this differential test
     // has to keep honest, since it raycasts the very geometry the renderer
@@ -205,5 +278,24 @@ describe('pickTerrainCellByRay vs the mesh raycast it replaced', () => {
     expect(disagreedOnHit).toBe(0);
     expect(worstDisagreement).toBeLessThanOrEqual(MAX_CELL_DISAGREEMENT);
     expect(exact / compared).toBeGreaterThanOrEqual(MIN_EXACT_AGREEMENT);
+}
+
+describe('pickTerrainCellByRay vs the mesh raycast it replaced', () => {
+  it('agrees on the cell, and never disagrees about whether there is terrain at all', () => {
+    const { mirror, pickables } = buildWorld();
+    sweep(mirror, pickables);
+  });
+
+  it('still agrees when the arena the rays cross is full of holes', () => {
+    // THE ARENA'S DEAD SPACE IS INSIDE THE DRAW RANGE, so it is inside the
+    // raycast too: a hole is not skipped by the GPU or by the Raycaster, it is
+    // simply zeroed, and three triangles' worth of zeroes is a degenerate
+    // triangle at the world origin that `Ray.intersectTriangle` rejects for
+    // `DdN === 0`. If a hole were ever left holding stale vertices instead,
+    // this sweep would start reporting hits on terrain that is not there —
+    // which is the same failure the players' clicks would show.
+    const { mirror, pickables, deadVertices } = buildSculptedWorld();
+    expect(deadVertices).toBeGreaterThan(0);
+    sweep(mirror, pickables);
   });
 });
