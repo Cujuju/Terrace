@@ -1,153 +1,187 @@
 # Frame budget, next two levers: no growth in a stroke (#229), and a draw-call budget — plan
 
-Status: PLAN v1, 2026-08-29. Follows `vertex-arena-no-tail-move.md` (shipped
-64ce9cf). The arena met its contract on the real GPU (slow-frame upload 20–24
-MB → 0.7–1.8 MB, splice 1.7 → 0.10 ms) and the bar (≥140 fps = every frame
-< 7.1 ms, owner 2026-08-26) is still missed: at matched scene complexity
-p95 ≈ 22–24 ms, p99 ≈ 75 ms. Two things remain that are already known, and
-they are different problems:
+Status: PLAN v2, 2026-08-29. Follows `vertex-arena-no-tail-move.md` (shipped
+64ce9cf). v1 was reviewed by three independent lenses with every finding
+adversarially verified: 25 held, 7 refuted. v2 folds them in; where v2
+contradicts v1, the review was right and the measurement that decided it is
+quoted.
 
-- **A.** The stroke's first frames are capacity growths — the one upload the
-  arena does not bound (`ensureSuperCapacity` → `bindGeometry` → a full
-  `bufferData`), ~3 MB frames measured up to 505 ms at stroke start
-  (issue #229). Also why streaming a 400-chunk world uploads 5.4 GB.
-- **B.** The per-frame baseline scales with draw calls, and plugins add them
-  freely: 196 → 342 calls drifted between two runs in one session, ~250 →
-  ~330 over a day. Idle render is ~1.7 ms at ~330 calls; at ~1 000 it is
-  the whole budget. This is the project's recurring defect
-  (`terrace-draw-call-budget` memory) and it needs a contract, not a tune.
+The arena met its contract on the real GPU (slow-frame upload 20–24 MB →
+0.7–1.8 MB, splice 1.7 → 0.10 ms) and the bar (≥140 fps = every frame
+< 7.1 ms, owner 2026-08-26) is still missed at matched scene complexity
+(p95 ≈ 22–24 ms, p99 ≈ 75 ms). Two known things remain, and they are
+different problems:
+
+- **A.** A super-mesh can reallocate (`ensureSuperCapacity` → `bindGeometry`
+  → one full `bufferData`) **inside a stroke**, because how much slack it
+  has after streaming is an accident of the doubling ladder (issue #229).
+- **B.** The per-frame baseline scales with draw calls and nothing budgets
+  them. Measured on the shipped arena build (`.gpu-perf/results/arena-sink.jsonl`,
+  client 688.64ce9cf, same world, same camera): 197 calls → idle
+  `renderer.render` 1.55 ms; **340 calls → 3.10 ms, 44 % of the 7.1 ms
+  budget at idle**, programs 60 → 90. The two runs differ only in live
+  scene state (creatures, storm rigs) — plugin counts are dynamic by design.
 
 A third suspect — one blocking GL call charged ~115 ms for 1.8 MB — is NOT
-planned here; it is unattributed (assumption: a write into a buffer the GPU
-is still reading), and it gets one probe run after A lands, because A's
-growth frames are the same size class and may be the whole story.
+planned here. Unattributed (assumption: a write into a buffer the GPU is
+still reading, or the allocation cost of a fresh GL buffer); it gets one
+probe run after A lands, because A's growth frames are in the same size
+class and may be the whole story.
 
 ---
 
 ## Part A — a stroke never reallocates a super-mesh
 
-### A1. Mechanism (verified from source)
+### A1. Mechanism, measured (owner's world, 400 chunks, 2026-08-29)
 
-`createSuperMesh` (terrainMeshes.ts:1030-1040) allocates
-`createChunkGeometryBuffers()` at the default
-`INITIAL_CHUNK_TRIANGLE_CAPACITY = 1 024` triangles = 3 072 vertices — a
-**chunk**-sized default used for a **super-mesh** of up to 64 chunks whose
-measured median chunk is 5 388 vertices. `ensureSuperCapacity` (:728-745)
-then doubles: for the busiest super-mesh (1.25 M vertices) that is 9
-doublings, each a fresh `BufferGeometry` whose attributes three uploads with
-one `bufferData` of the WHOLE array — capacity, not live vertices
-(`WebGLAttributes.createBuffer`, `gl.bufferData(type, array, usage)`). The
-doubling series sums to ~2× the final capacity, and every super-mesh pays it
-during the reveal: 5.4 GB / 3.7 s measured on the 400-chunk stream.
+`createSuperMesh` (terrainMeshes.ts:1030-1040) allocates the chunk-sized
+default (`INITIAL_CHUNK_TRIANGLE_CAPACITY` = 1 024 triangles = 3 072
+vertices) and `ensureSuperCapacity` (:730-745) doubles **from the current
+capacity** until the append fits; three's `createBuffer` then uploads the
+whole capacity array. Per super-mesh after the stream (`arenaLayout()` /
+`arenaStats()`):
 
-After the stream, capacity sits anywhere between 1× and 2× `liveEnd`. When
-the slack is small, the first regrow of a stroke that finds no hole (§3b
-case 5 of the arena plan) appends past capacity, `compact-before-grow` finds
-nothing to reclaim, and the doubling lands **inside the stroke**: a
-`bufferData` of the busiest super-mesh is 2.5 M × 19 B ≈ 47 MB.
-`arenaStats().growths` counts exactly these.
+| sm | chunks | liveEnd | capacity | slack | growths | max run |
+|---|---|---|---|---|---|---|
+| #5 | 64 | 1 031 550 | 1 572 864 | 541 314 | 9 | 122 385 |
+| #6 | 64 | 1 183 338 | 1 572 864 | 389 526 | 7 | 141 954 |
+| #9 | 64 | 915 699 | 1 572 864 | 657 165 | 7 | 75 567 |
+| #10 | 64 | 1 248 378 | 1 572 864 | 324 486 | 6 | 72 114 |
+| #8 / #11 | 16 | 246 k / 269 k | 393 216 | 147 k / 125 k | 7 | 47 k / 48 k |
+| #4 | 16 | 109 665 | 196 608 | 86 943 | 5 | 16 263 |
+| #0 | 4 | 19 536 | 24 576 | **5 040** | 3 | 5 580 |
+| #1, #7, #13 | 16 | 34–43 k | 49 152 | 6–15 k | 3–4 | 5–8 k |
+| others | 4–16 | ≤ 64 k | ≤ 98 k | 2–35 k | 1–4 | ≤ 9 k |
+
+Summing every capacity the doubling ladder ever bound: **the stream uploads
+≈ 289 MB in total** (19 B/vertex), over a reveal, off the stroke. v1's
+"5.4 GB" was `idle.uploadMBTotal` on the pre-arena client 672.924c4a0 — a
+different quantity on a different build; the same field on 688.64ce9cf is
+9–17 MB. Streaming is not the problem.
+
+The problem is the last row and the ones like it: slack is whatever the
+ladder left, and where it is smaller than a regrow (sm#0: 5 040 slack, 5 580
+max run), the first stroke that finds no hole appends past capacity and the
+doubling lands inside the stroke — measured as ~3 MB `bufferData` frames at
+stroke start, up to 505 ms (the byte count does not explain 505 ms; see the
+third suspect above).
 
 ### A2. Root cause, one sentence
 
-Super-mesh capacity is decided by the chunk-sized default and by whatever
-doubling the reveal happened to end on, so the amount of slack a stroke has
-to work with is an accident of streaming order rather than a guarantee.
+Slack after streaming is an accident of where the doubling ladder stopped,
+so whether a stroke reallocates is decided by streaming order rather than
+guaranteed.
 
-The contract that prevents recurrence: **a super-mesh always holds
-`ARENA_STROKE_HEADROOM_VERTICES` of free capacity when the terrain is
-settled, and capacity is only ever grown on a settled, idle frame.**
+The contract that prevents recurrence: **when the terrain is quiet, every
+super-mesh holds at least `headroom(sm)` of free capacity, and capacity is
+only ever grown while the terrain is quiet** (plus the correctness backstop
+in the append branch, counted separately).
 
-### A3. The fix — three rules
+### A3. The fix — one rule, one seam
 
-1. **Size the first allocation from what is known.** When the snapshot
-   arrives, `update(dirty)` receives every received chunk of the world at
-   once (400 here). `createSuperMesh` is called per super-mesh as its first
-   chunk is spliced; at that moment `pending` already holds the super-mesh's
-   other chunks. Initial capacity = `chunksQueuedFor(superIdx) ×
-   SUPER_MESH_INITIAL_VERTICES_PER_CHUNK`, where the per-chunk prior is the
-   **measured p90 run size, 39 k vertices, rounded to 40 960** (= 13 653
-   triangles ×3; measured 2026-08-28 over the owner's 400 chunks: p50 5 388,
-   p90 38 787, p99 104 850). Derivation: p90 makes ≥ 90 % of chunks fit
-   without the sum of 64 of them (2.6 M vertices, 50 MB) blowing GPU memory
-   at 16 super-meshes (800 MB worst case is too much — see A5); a super-mesh
-   whose chunks are all p90-sized needs 0 growths, the busiest real one
-   (1.25 M live over its chunk count) needs at most 1. Falls back to today's
-   default when nothing is queued (tests, harnesses that splice one chunk).
-2. **Headroom at settle.** `ARENA_STROKE_HEADROOM_VERTICES` = `2 ×
-   the largest run in that super-mesh` (its `slots` — O(64)), floor
-   `2 × p90 = 81 920`. A regrow appends at most one new run of roughly the
-   old run's size; 2× covers a regrow of the largest run plus the brush's
-   second chunk in the same step. On a frame where `drain` spliced nothing,
-   `ready`/`inFlight`/`pending` are empty for that super-mesh, and
-   `capacity − liveEnd < headroom`: grow once, to `liveEnd + headroom`
-   rounded up to the next doubling of the *chunk-sized* unit (so the
-   allocation series stays geometric and the slack is never below the
-   floor). This is the only growth that happens outside streaming.
-3. **Growth is never an emergency in a stroke.** Keep `ensureSuperCapacity`
-   as the correctness backstop in the append branch — a stroke that grows
-   past its headroom over many steps still works — but count it separately
-   (`arenaStats().strokeGrowths`) so §A6 can assert it is zero on the bench
-   and the probe can show it on the GPU.
+**Headroom.** `headroom(sm) = max(2 × largest run in sm.slots,
+ARENA_HEADROOM_FLOOR_TRIANGLES × 3)`, with
+`ARENA_HEADROOM_FLOOR_TRIANGLES = 2 × 13 653 = 27 306` (13 653 triangles =
+40 959 vertices, the measured p90 run rounded up to whole triangles —
+constants are in TRIANGLES because `createChunkGeometryBuffers` and
+`ensureSuperCapacity` take triangles and every arena offset/length is a
+multiple of `VERTICES_PER_TRIANGLE`). Derivation of 2×: a regrow appends at
+most one new run of about the old run's size while the old run is still
+live until the splice returns, and a brush straddles two chunks per step.
+On the table above, every 64-chunk super-mesh already has it (slack ≥
+324 k vs 2 × 142 k = 284 k); sm#0, #1, #7, #13 and the 4-chunk ones do not
+and grow once — at settle, not in the stroke.
 
-Where: all in `render/terrainMeshes.ts`; the settle-time growth rides the
-frame hook beside `drain`/`compact` (`drain(…); compact(…); ensureHeadroom()`),
-under `ARENA_COMPACT_IDLE_BUDGET_MS`'s idle condition, so §3d of the arena
-plan is the same seam. `flush()` ends with `ensureHeadroom()` too, so the
-direct path matches.
+**Quiet.** The terrain is quiet for a super-mesh when (a) no `update(dirty)`
+has been called for `TERRAIN_QUIET_MS = 2 × SCULPT_REPEAT_DELAY_MS =
+800 ms` (a hold's slowest inter-intent gap is the first repeat, 400 ms,
+config.ts; 2× keeps a slow first repeat from reading as a lifted brush) —
+a timestamp `update` maintains; and (b) no chunk of that super-mesh is in
+`pending`, `inFlight`, `ready` or `retry` (all four are global sets; map
+each `chunkIdx` through `superIndexOf`, O(queue) per pass and the queues are
+empty when it matters). `drain` returning 0 is NOT quiet — on the worker
+source most reveal frames splice nothing while jobs are out, and during a
+hold ~16 of every 17 frames splice nothing between intents.
+
+**Grow.** `ensureHeadroom(sm)`: if quiet and `capacity − liveEnd <
+headroom(sm)`, call `ensureSuperCapacity(sm, sm.liveEnd + headroom(sm))` and
+accept its existing doubling-from-current rule — no second rounding ladder.
+One super-mesh per frame at most (each is one `bufferData`; on this world
+≤ 30 MB ≈ 30 ms all-in, once).
+
+**Seam.** The frame hook becomes `drain(…); compact(…); settle()`, where
+`settle()` runs `ensureHeadroom` over super-meshes with the quiet test and
+the one-per-frame cap. `settle()` is public on `TerrainMeshes`; `flush()`
+does **not** call it (on the no-scheduler path `update` → `flush` runs on
+every sculpt step — a headroom pass there would be growth inside the stroke
+and would count against the bench's `meshes` row). The bench and the
+harnesses call `settle()` once after the world build; tests call it
+explicitly.
+
+**Backstop, counted.** `ensureSuperCapacity` stays in the append branch. A
+growth it performs there increments `strokeGrowths` (new field on
+`ArenaStats`); `growths` keeps counting all reallocations. A6 asserts
+`strokeGrowths === 0` on the bench and the probe shows it on the GPU.
+
+**Reveal path.** Chunks unlocked by reveal arrive a few per `update`
+(world.ts:688); their super-meshes climb the same ladder during streaming
+and get headroom at the next quiet frame. Doublings during a reveal are
+streaming cost, accepted (289 MB total today).
 
 ### A4. Rejected alternatives
 
-- **Paged super-meshes** (a full super-mesh starts a sibling `Mesh` instead of
-  reallocating): removes the full re-upload entirely but adds draw calls
-  (~11 pages of 512 k vertices over this world, plus up to 16 partials)
-  and puts a page boundary inside the arena's free list and compactor. Right
-  answer if A3 still leaves stroke growths; wrong first move against a bar
-  that Part B exists to defend by *reducing* calls.
-- **Allocate the GL buffer at capacity and upload only the live prefix.**
-  three's `createBuffer` uploads `attribute.array` whole; doing better means
-  bypassing `BufferAttribute` for the terrain (own `WebGLBuffer`, own
-  `bufferSubData` on bind). A second upload path beside three's is more
-  contract than the headroom rule and buys nothing the rule does not.
-- **Size from p99 or the ceiling.** 64 × 105 k × 19 B = 128 MB per
-  super-mesh, 2 GB for 16; `CHUNK_TRIANGLE_BUDGET` (393 k) is 480 MB per
-  super-mesh. p90 is the largest prior that keeps the worst case (A5) under
-  a named limit.
-- **Grow during the stroke but on a worker.** A `bufferData` is a main-thread
-  GL call; a worker cannot make it for this context (OffscreenCanvas is a
-  different renderer).
+- **Pre-size the first allocation from the queued chunk count × a per-chunk
+  prior (v1 rule 1).** Measured against the table: a p90 prior gives the
+  64-chunk super-meshes 2.62 M vertices each (1.7× what they ended with)
+  and the 4-chunk ones 164 k (8–40× their live size) — ≈ 320 MB of GPU
+  memory and ≈ 320 MB of zeros uploaded once, to save a 289 MB doubling
+  series that happens off the stroke. It also could not count the queue
+  correctly (`createSuperMesh` runs from `spliceAnswer`, after `drain` has
+  moved up to `concurrency` chunks out of `pending`), and it does nothing
+  for reveal-streamed super-meshes. The headroom rule is what the bar
+  actually needs.
+- **Paged super-meshes** (a full super-mesh starts a sibling `Mesh`):
+  removes the re-upload entirely but adds draw calls (~11 pages of 512 k on
+  this world plus partials) and a page boundary inside the free list and
+  compactor. Right answer if A3 still leaves stroke growths; wrong first
+  move against a bar Part B defends by *reducing* calls.
+- **Own `WebGLBuffer` at capacity, upload only the live prefix.** GPU memory
+  is still capacity; a second upload path beside three's is more contract
+  than the headroom rule.
+- **Grow on a worker.** `bufferData` is a main-thread GL call on this
+  context.
 
 ### A5. Residuals, named
 
-- **GPU memory prior.** 16 super-meshes × 64 chunks × 40 960 × 19 B =
-  797 MB if every super-mesh were full and every chunk queued — an upper
-  bound the 512² world does not reach (its 400 chunks over 16 super-meshes
-  allocate ~311 MB before the first doubling, vs 5.27 M × 19 B = 100 MB
-  live). Named as the cost of zero streaming growths; a 2048² world (16 384
-  chunks, 256 super-meshes) would need the prior lowered or made
-  per-world — decide when a 2048² world exists, not before.
-- **One idle-frame hitch after streaming** per super-mesh that needs
-  headroom (a `bufferData` of ≤ 47 MB, ~25–50 ms), paid once, off the
-  stroke. Visible as one dropped frame right after a reveal.
-- A stroke longer than its headroom still grows mid-stroke; counted, not
-  prevented.
+- One quiet-frame hitch per super-mesh that needs headroom after a reveal
+  (a `bufferData` of ≤ 30 MB on this world, ≈ 30 ms all-in at the measured
+  ~1 ms/MB), paid once, off the stroke.
+- A stroke longer than its headroom still grows mid-stroke; counted
+  (`strokeGrowths`), not prevented.
+- Capacity is never shrunk; the 64-chunk super-meshes keep 1.57 M
+  (30 MB) each. Fine at 16 super-meshes; a 2048² world (256 super-meshes)
+  revisits this together with paging.
 
 ### A6. Tests and verification
 
-Tests (write first): initial capacity equals queued-chunks × prior when the
-snapshot update is pending, default otherwise; after `flush`, every
-super-mesh has `capacity − liveEnd ≥ headroom(sm)`; an idle scheduled frame
-grows a super-mesh whose slack is under headroom and no stroke frame does;
-`strokeGrowths` stays 0 across the arena tests' stroke histories; growth on
-the idle frame preserves the arena (equivalence oracle).
+Tests (write first): `headroom(sm)` and its floor; a quiet super-mesh under
+headroom grows on `settle()` and one over it does not; `settle()` grows at
+most one super-mesh per call; a super-mesh with a chunk in `retry` or
+`inFlight` is not quiet; `update` within `TERRAIN_QUIET_MS` is not quiet
+(fake clock); `strokeGrowths` counts an append-branch growth and `settle`'s
+does not; growth on `settle` preserves the arena (the per-slot equivalence
+oracle from the arena suite). **The existing arena fixtures** (`arenaSetup`
+in terrainMeshes.test.ts, e.g. "sizes an append from the run's COUNT", which
+fills to `liveEnd = 3000` and asserts `growths`) keep their 3 072-vertex
+default — nothing in A3 changes the initial allocation, so they stay as
+they are; say so in the commit.
 
-Verification: bench prints `growths` and `strokeGrowths` after the stream
-and after 30 sculpts (expect `strokeGrowths` 0, `growths` ≤ 1 per
-super-mesh); real GPU per `.gpu-perf/README.md`: the stroke's first frames
-no longer carry ~3 MB uploads, `stroke.slow1pct.uploadMBMean` and `msMax`
-before/after, plus **the total upload during the settle window** (the
-probe's idle block runs after settle; add a `streamUploadMB` figure from
-the accounting installed before settle — expect 5.4 GB → ≤ ~0.6 GB, i.e.
-one allocation per super-mesh at the prior).
+Verification: bench prints `growths` / `strokeGrowths` after the stream,
+after `settle()`, and after 30 sculpts (expect `strokeGrowths` 0); real GPU
+per `.gpu-perf/README.md`, before = 64ce9cf, after = the arc: the stroke's
+first frames no longer carry the growth upload (`stroke.slow1pct.uploadMBMean`,
+`msMax`, and the probe's per-frame `gl linkProgram`/upload rows), plus
+`strokeGrowths` from `arenaStats` exposed through `__terraceMeshes`.
 
 ---
 
@@ -156,118 +190,149 @@ one allocation per super-mesh at the prior).
 ### B1. Mechanism
 
 Every plugin gets a `layer: Group` under the scene (plugins/host.ts:286-290)
-and adds whatever it likes. Nothing counts. `renderer.info.render.calls` is
-read only by the perf probe. Terrain has a `drawCallCount()` contract (16
-calls on this world); nothing else does. Per-call cost in three is
-per-object: `projectObject` → render list → `setProgram`/uniform upload →
-`drawArrays`; at 330 calls the idle render is 1.7 ms; the self-profile taken
-2026-08-28 shows `setProgram`, `updateMatrixWorld`, `markUniformsLightsNeedsUpdate`
-as the per-object costs. Draw calls also carry the shader-program count
-(107 programs at one point — every distinct material variant compiles one).
+and adds whatever it likes; nothing counts. Core adds objects too: terrain
+(`drawCallCount()`, 16 here), frontier fog (`drawCallCount()`), water,
+rivers, the layer-edge overlay, brush preview (four `scene.add`s,
+brushPreview.ts:814-884), pick-debug overlay (one). The per-object cost is
+`projectObject` → render list → `setProgram` → uniforms → `drawArrays`; the
+arena runs above put it at 1.55 ms for 197 calls and 3.10 ms for 340 (the
+spread across all runs is 0.9–10.8 µs/call — it depends on what the objects
+are, and programs moved 60 → 90 between those two runs).
 
 ### B2. Root cause, one sentence
 
-The drawing unit is whatever each plugin happens to author (one `Mesh` per
-tree, per raindrop cloud, per lamp), and no contract turns "objects I made"
-into "calls I am allowed", so the frame budget is spent by whoever adds a
-feature last.
+The drawing unit is whatever each plugin authors (one `Mesh` per creature,
+per lamp, per rig), and no contract turns "objects I made" into "calls I am
+allowed", so the frame budget is spent by whichever population is largest
+at the moment.
 
 The contract that prevents recurrence: **each plugin declares its draw
-budget, the host measures it every frame, and exceeding it is a failure the
-developer sees in dev and the probe reports on the GPU.**
+budget from its own spawn caps, the host samples every plugin's layer
+against it, and a breach is a failure the developer sees in dev and the
+probe reports on the GPU.**
 
 ### B3. The fix
 
-1. **Declare.** `TerraceClientPlugin` gains `readonly drawBudget: number` —
-   the maximum *renderable objects* (Mesh/InstancedMesh/Points/Line/Sprite
-   with `visible`) the plugin's layer may hold, i.e. its worst-case draw
-   calls before frustum culling. Required, not optional: a plugin without a
-   number has not thought about it. Counted by the host, not by the plugin.
-2. **Measure.** The host walks each plugin's `layer` once per
-   `DRAW_BUDGET_SAMPLE_INTERVAL_MS = 1000` (the fps meter's window,
-   `FPS_SAMPLE_INTERVAL_MS`, so the two readouts update together) — a
-   traversal of a few hundred objects is ~0.05 ms, per second — and
-   publishes `{plugin, objects, budget}` to `hudState` beside `frameRate`.
-   `renderer.info.render.calls` (actual, post-cull) is published alongside
-   as the frame's total.
-3. **Enforce.** Over budget → in dev (`import.meta.env.DEV`) a
-   `console.error` naming the plugin, its count and its budget, once per
-   breach (not per second); in the HUD the plugin's row turns red. Not a
-   throw — a runtime kill of a plugin for a perf regression is worse than
-   the regression. The total, `FRAME_DRAW_CALL_BUDGET`, is the sum of the
-   declared budgets plus core's fixed calls (terrain `drawCallCount()`,
-   water, rivers, fog, overlay — each named); the HUD shows
-   `calls / budget`.
-4. **Ratchet, then reduce.** The initial numbers are **measured, not
-   chosen**: step 0 of the implementation runs the probe with per-plugin
-   attribution (one scene traversal per sample — `.gpu-perf/perf-probe.patch`
-   already walks the scene) on the owner's world with every plugin live, and
-   each plugin's budget is set to its measured count. From then on a budget
-   only goes down, and raising one is a reviewed decision in the plugin's
-   commit. The three largest contributors get batching tickets (B5).
-5. **Cost model, measured once.** A `.gpu-perf` run with N extra trivial
-   meshes (N = 0, 250, 500, 1 000) gives ms-per-call on the owner's machine;
-   that number, dated, becomes the derivation of `FRAME_DRAW_CALL_BUDGET`'s
-   ceiling: `(7.1 ms − measured idle render at 0 extra) / ms-per-call`.
-   Until measured, the ceiling is the ratchet's sum.
+1. **Declare.** `TerraceClientPlugin` gains `readonly drawBudget: number`:
+   the maximum renderable objects its layer may hold, **derived from the
+   plugin's own caps** (fire `SCAR_CAP`/`SMOKE_COLUMN_CAP`, storms
+   `MAX_FUNNELS`, volcanoes `MAX_PLUMES`, mudslides `MAX_DEBRIS_INSTANCES`,
+   structures `STRUCTURES_CAP`, …) plus its fixed rigs, written as an
+   expression of those constants so the two cannot drift. A plugin with no
+   cap for a population that grows (flora, wildlife, pilgrims, relics,
+   temples, chronicle, invite, monsters' creatures) gets the cap first —
+   that is the finding, and its ticket (B7). Required at the type level;
+   at runtime a missing or non-finite budget is itself a breach (a
+   runtime-loaded plugin, DESIGN Q6, supplies `undefined`).
+2. **Count exactly what three draws, before culling.** The walk is
+   `projectObject`'s rule: descend a node only while `visible !== false`
+   (visibility is inherited — plugins hide subtree roots: pilgrims'
+   `model.root`, temples' `standing`/`ghost`, monsters' atmosphere), count a
+   node when `isMesh || isLine || isPoints || isSprite`, InstancedMesh as 1
+   **only if `count > 0`** (three skips `primcount === 0`; flora, fire,
+   storms, mudslides park pools at 0), and 0 for a geometry with
+   `drawRange.count === 0`. Implemented once in the host as
+   `countDrawObjects(root)`, used by the sampler, the test and the probe.
+   Frustum culling is the only difference from `renderer.info.render.calls`;
+   the HUD shows both and says which is which.
+3. **Sample.** One host `onFrame` handler with its own window of
+   `FPS_SAMPLE_INTERVAL_MS` (500, `client/src/config.ts:530` — reused, not
+   re-exported; the fps meter's closure has no seam to share and does not
+   need one). Per window: walk each mounted plugin's layer and core's named
+   contributors, publish `{plugin, objects, budget}` rows to the
+   plugin-keyed HUD state (`plugins/hudPanels.ts`, beside the other
+   per-plugin entries; removed on `unmountPlugin` like its panels and tools)
+   and the frame total `{calls: renderer.info.render.calls, objects,
+   budget}` to `hudState` beside `frameRate`. A traversal of ~1 000
+   objects is ~0.05 ms, twice a second.
+4. **Enforce with hysteresis.** A breach is reported on the first sample
+   with `objects ≥ budget` (dev: `console.error` naming plugin, count,
+   budget; HUD: row red) and cleared only after `DRAW_BUDGET_CLEAR_SAMPLES
+   = 2` consecutive samples below `budget × (1 − DRAW_BUDGET_CLEAR_MARGIN)`,
+   `DRAW_BUDGET_CLEAR_MARGIN = 0.1` (one sample of population noise must
+   not clear it; 10 % is one creature in ten). Not a throw — killing a
+   plugin for a perf regression is worse than the regression.
+5. **The frame total** `frameDrawBudget = Σ mounted plugins' drawBudget +
+   core's named calls`, recomputed on `syncLivePlugins` (mounted ≠
+   registered). Core's contributors each get a `drawCallCount()` or a named
+   constant (`BRUSH_PREVIEW_DRAW_OBJECTS = 4`, …) — the same ratchet, no
+   pass for core.
+6. **Cost model, measured once.** A `.gpu-perf` run with N extra trivial
+   meshes (N = 0, 250, 500, 1 000) at fixed scene state gives µs/call on the
+   owner's machine; `FRAME_DRAW_CALL_CEILING = current calls + (7.1 ms −
+   idle render at N=0) / µs-per-call` — additional calls, since the idle
+   render already includes today's. Until measured, the ceiling is the sum
+   of budgets.
 
-Where: `plugins/types.ts` (the field), `plugins/host.ts` (the sampler,
-beside `mountPlugin`'s layer), `state/hudState.ts` + `ui/VersionWatermark.tsx`
-(the readout — the fps span already lives there), `render/frameRate.ts`
-(export the interval; do not add a second timer), every plugin under
-`plugins/*/client` (one field each, with the measured number).
+Where: `plugins/types.ts` (field), `plugins/host.ts` (`countDrawObjects`,
+sampler, hysteresis, total), `plugins/hudPanels.ts` (rows),
+`state/hudState.ts` + `ui/VersionWatermark.tsx` (total beside fps),
+`render/brushPreview.ts`, `render/water.ts`, `render/riverRig.ts`,
+`render/layerEdgeOverlay.ts`, `render/pickDebugOverlay.ts` (named counts),
+every `plugins/*/client` (one field each), `.gpu-perf/perf-probe.patch`
+(the per-layer walk — it does **not** exist there yet; writing it is step 0).
 
 ### B4. Rejected alternatives
 
-- **A global cap only.** Tells you the frame is over without telling you who;
-  the drift 196 → 342 came from one session's plugins and nobody could say
-  which.
-- **Enforce in tests.** Plugins' client halves build Three objects; a node
-  test can count objects after `attach` for the static ones, but the
-  offenders are dynamic (spawned creatures, weather) and grow at runtime.
-  The host's live count is the only honest measure; a per-plugin static
-  test is optional wiring, not the contract.
-- **Auto-batch in the host** (merge a plugin's meshes into instanced draws
-  behind its back). Instancing needs the plugin's cooperation (per-instance
-  transforms and materials); a host-side merge would silently break
-  per-object animation. Batching is the plugin's job under its budget.
-- **Kill the plugin on breach.** See B3.3.
+- **A global cap only.** Names the frame, not the population.
+- **Budgets from one measured sample (v1's ratchet).** The 196 → 342 drift
+  was the same build; a budget set from one instant breaches by
+  construction the next time a population is larger. Caps are the honest
+  maximum; where a plugin has none, the missing cap is the defect.
+- **Enforce in tests only.** Static counts after `attach` miss every
+  dynamic population; the host's live sample is the measure. A per-plugin
+  static test is optional wiring.
+- **Auto-batch in the host.** Instancing needs the plugin's cooperation
+  (per-instance transforms/materials); batching is the plugin's job under
+  its budget.
+- **Kill the plugin on breach.** See B3.4.
 
 ### B5. Residuals, named
 
-- Budgets are in objects, calls are post-cull; a plugin can be under budget
-  and still cost when everything is in view, or over budget with everything
-  culled. Objects are the deterministic, camera-independent unit and that
-  is why they are the contract; the HUD's actual-calls total is the check.
-- Programs (shader variants) are not budgeted here; they cost compile time
-  on first use, not per frame. Observed, via `renderer.info.programs`, not
-  enforced.
-- The batching tickets for the largest contributors are follow-ups filed
-  from step 0's numbers, not this plan's scope.
+- Budgets are objects before culling; actual calls are lower when much is
+  out of view. Objects are the deterministic, camera-independent unit; the
+  HUD's actual-calls figure is the check, and the two are never shown as
+  one ratio.
+- Programs (shader variants; 60 → 90 between two runs) are not budgeted;
+  observed via `renderer.info.programs`, not enforced.
+- Batching for the largest populations is follow-up tickets from step 0's
+  numbers (B7), not this plan's scope.
 
 ### B6. Tests and verification
 
-Tests: the host's sampler counts renderable objects under a layer (Mesh,
-InstancedMesh as 1, Points, Line, Sprite; invisible excluded; nested
-groups walked); over-budget publishes the breach once and clears when
-under; `FRAME_DRAW_CALL_BUDGET` equals the sum of declared budgets + core's
-named calls (a test that fails when a plugin is added without a budget —
-the registry is the fixture).
+Tests: `countDrawObjects` on a fixture with a visible Mesh under an
+invisible Group (0), an InstancedMesh with `count 0` (0) and `count 5` (1),
+Points/Line/Sprite (1 each), a `drawRange.count 0` mesh (0), nested visible
+groups (walked); hysteresis (breach on the first ≥ sample; no clear after
+one low sample; clear after two below the margin); the frame total follows
+`syncLivePlugins`; a missing budget is a breach; every registered plugin's
+`drawBudget` is finite (a registry-driven test — the type already requires
+the field, so this pins the runtime shape, not the compile-time one).
 
-Verification: HUD shows `calls / budget` and per-plugin rows in dev; the
-probe reports per-plugin object counts and `renderer.info.render.calls`
-per run; step 0's measured table is committed into this doc as B7.
+Verification: HUD shows `objects / budget` and `calls`, with per-plugin
+rows, in dev; the probe reports per-layer counts per run; step 0's table
+(per plugin: objects at the reference scene = the owner's world with every
+plugin live, at stroke zoom and at full-world view) is committed as B7.
+
+### B7. Step 0 output (filled by the implementer)
+
+Per plugin: measured objects (reference scene), the caps it declares, the
+`drawBudget` expression adopted, and the ticket filed where a cap is
+missing.
 
 ---
 
 ## Order and NOT-list
 
-Order: **B step 0 (measure) → A (tests, fix, bench, GPU) → B (contract,
-HUD, budgets from step 0) → B step 5 (cost model) → one GPU run to
+Order: **B step 0 (add the per-layer walk to the probe patch, measure,
+fill B7) → A (tests, `settle()`, bench, GPU) → B (contract, `countDrawObjects`,
+sampler, HUD, budgets from caps) → B step 6 (cost model) → one GPU run to
 attribute the 115 ms GL stall with A's growth frames gone.** One commit per
 piece.
 
-NOT: no paging (A4); no host-side batching (B4); no `shared/` change; no
-touching the job/worker pipeline; no plugin behaviour change beyond adding
-its budget field; no new constant without a derivation and, for the
-measured ones, the date and the run it came from.
+NOT: no initial-allocation prior (A4); no paging (A4); no host-side
+batching (B4); no `shared/` change; no touching the job/worker pipeline or
+`flush()`'s behaviour; no plugin behaviour change beyond adding its budget
+field (and a cap where one is missing, as its own commit); no new constant
+without a derivation and, for the measured ones, the date and the run it
+came from.
