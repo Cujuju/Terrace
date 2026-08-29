@@ -175,6 +175,24 @@ export const ORDINARY_SEA_SHELF_BANDS = 10;
 export const ORDINARY_SEA_SHELF_HEIGHT = -ORDINARY_SEA_SHELF_BANDS * BAND_HEIGHT;
 
 /**
+ * How many bands of depth the sea's DEPTH CUES span — the water's shade and
+ * alpha ramps (terrain/waterDepth.ts) and the seabed palette
+ * (terrain/bandColors.ts) all run from the surface to here, EVENLY in
+ * luminance, and are flat below it. Owner, 2026-08-28: "I want the luminance
+ * spread evenly across the first forty-eight bands." This supersedes the
+ * histogram-equalised curves the two ORDINARY_SEA_* constants above were
+ * measured for: 48 is three quarters of the 64-band sea column
+ * (shared/constants.ts), so a sculpted trench keeps darkening well past the
+ * deepest natural floor and only the column's bottom quarter, and the deep
+ * strata under it, sit on the plateau. Lives here, not in either consumer, so
+ * the water and the seabed cannot be tuned to different spans.
+ */
+export const SEA_DEPTH_CUE_SPAN_BANDS = 48;
+
+/** The same depth as a signed height, matching ORDINARY_SEA_FLOOR_HEIGHT. */
+export const SEA_DEPTH_CUE_FLOOR_HEIGHT = -SEA_DEPTH_CUE_SPAN_BANDS * BAND_HEIGHT;
+
+/**
  * World units a single terrace band rises — how tall one step LOOKS.
  *
  * Historically forced to equal CELL_WORLD_SIZE by the old vertex-per-cell grid

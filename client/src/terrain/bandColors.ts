@@ -22,7 +22,7 @@ import {
   bandOf,
   isWater,
 } from '@terrace/shared';
-import { ORDINARY_SEA_FLOOR_HEIGHT, ORDINARY_SEA_SHELF_HEIGHT } from '../config.ts';
+import { SEA_DEPTH_CUE_FLOOR_HEIGHT } from '../config.ts';
 
 /** Colour components in the 0..1 range. Interpreted as sRGB. */
 export type Rgb = readonly [r: number, g: number, b: number];
@@ -263,23 +263,51 @@ const ABYSS_COLORS: readonly Rgb[] = [
   rgb(0x030916),
   rgb(0x030813), // the very dark blue: the sea column's floor
 ];
+/**
+ * Relative luminance (Rec. 709) of a palette colour — the axis the seabed ramp
+ * is now spaced along.
+ */
+function luminance([r, g, b]: Rgb): number {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * Spread colours down a span so that LUMINANCE, not index, is linear in depth
+ * — each colour sits at the depth where an even luminance descent from the
+ * first colour to the last passes through its own luminance. Requires strictly
+ * falling luminance, which every ramp here has (see the history above).
+ */
+function luminanceSpaced(
+  topHeight: number,
+  bottomHeight: number,
+  colors: readonly Rgb[],
+): readonly ColorAnchor[] {
+  const top = luminance(colors[0]);
+  const bottom = luminance(colors[colors.length - 1]);
+  return colors.map((color) => [
+    topHeight + ((bottomHeight - topHeight) * (top - luminance(color))) / (top - bottom),
+    color,
+  ]);
+}
+
+/**
+ * ONE SPAN AGAIN, EVEN IN LUMINANCE (owner, 2026-08-28: "I want the luminance
+ * spread evenly across the first forty-eight bands"). The two-span,
+ * histogram-equalised layout above packed the seven depth colours into bands
+ * 10-15 — on the staircase fixture that is a cliff in the seabed's brightness
+ * between two adjacent treads, while the water above it was already running
+ * a smooth 48-band ramp. Same seventeen colours, same order: the whole ocean
+ * and abyss sequence now descends from the waterline to
+ * SEA_DEPTH_CUE_FLOOR_HEIGHT, spaced by luminance so the descent the eye
+ * sees is straight, and the floor colour holds from there to the column's
+ * floor.
+ */
 const BLUE_COLUMN_ANCHORS: readonly ColorAnchor[] = [
-  // The sparse shallow quarter: three colours, one per named shallow feature.
-  ...evenlySpaced(
-    SEA_LEVEL,
-    ORDINARY_SEA_SHELF_HEIGHT,
-    OCEAN_COLORS.slice(0, OCEAN_SHELF_COLOR_INDEX + 1),
-  ),
-  // The dense ordinary floor: the seven depth colours. Its first anchor is the
-  // shallow span's last, at the same height, so the ramp has no seam — the same
-  // shared-join trick the abyss uses just below.
-  ...evenlySpaced(
-    ORDINARY_SEA_SHELF_HEIGHT,
-    ORDINARY_SEA_FLOOR_HEIGHT,
-    OCEAN_COLORS.slice(OCEAN_SHELF_COLOR_INDEX),
-  ).slice(1),
-  // Drop the abyss's first anchor: it is the ocean's last, at the same height.
-  ...evenlySpaced(ORDINARY_SEA_FLOOR_HEIGHT, -SEA_COLUMN_DEPTH, ABYSS_COLORS).slice(1),
+  ...luminanceSpaced(SEA_LEVEL, SEA_DEPTH_CUE_FLOOR_HEIGHT, [
+    ...OCEAN_COLORS,
+    ...ABYSS_COLORS.slice(1),
+  ]),
+  [-SEA_COLUMN_DEPTH, ABYSS_COLORS[ABYSS_COLORS.length - 1]],
 ];
 
 // The crust, per the Deep Strata amendment above. Each stratum's span comes

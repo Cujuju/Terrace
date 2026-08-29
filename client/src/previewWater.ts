@@ -42,6 +42,7 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
 import { createTerrainMirror, type TerrainMirror } from './terrain/mirror.ts';
 import { createTerrainMeshes } from './render/terrainMeshes.ts';
 import { createWater } from './render/water.ts';
+import { WATER_SHADE_SPAN_BANDS } from './terrain/waterDepth.ts';
 // The REAL night rig, not a copy of its numbers: ?light=night drives this
 // fixture's three lights from the same function the daynight plugin drives the
 // live client's with, so a night capture here is lit exactly as the game is.
@@ -84,12 +85,13 @@ const MIDNIGHT_PHASE = 0.75;
 const PREVIEW_WORLD_SIZE = CHUNK_SIZE * 8;
 
 /**
- * The deepest tread of the staircase, in bands. Past the measured p99 (21
- * bands on the live world) with headroom, so the fixture shows both the
- * populated part of the curve AND the start of the flat beyond it — where the
- * curve stops changing is exactly the thing being judged.
+ * The deepest tread of the staircase, in bands. Two past the end of the shade
+ * ramp (WATER_SHADE_SPAN_BANDS, 48 since 2026-08-28), so the fixture shows the
+ * whole ramp AND the start of the flat beyond it — where the curve stops
+ * changing is exactly the thing being judged. (Was 26: p99 plus headroom,
+ * when the ramp ended at the ordinary floor.)
  */
-const STAIRCASE_MAX_DEPTH_BANDS = 26;
+const STAIRCASE_MAX_DEPTH_BANDS = WATER_SHADE_SPAN_BANDS + 2;
 
 /** Bands of dry land at the shallow end, so the shot contains a shoreline. */
 const STAIRCASE_DRY_BANDS = 2;
