@@ -51,6 +51,8 @@ import {
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
   WATER_SELF_LIGHT_RADIANCE,
+  WATER_SHADE_FLOOR_MIX,
+  WATER_TRENCH_TINT,
   WATER_DEEP_TINT,
   WATER_DEPTH_ALPHA_DEFAULT_BYTE,
   WATER_SHADE_MIX_DEFAULT_BYTE,
@@ -358,9 +360,16 @@ function makeDepthAware(
         // A COLOUR range, not a scalar one, since 2026-08-27 — see
         // terrain/waterDepth.ts's WATER_SHALLOW_TINT for why hue carries part
         // of the depth signal now.
-        `diffuseColor.rgb *= mix( ${glslVec3(WATER_DEEP_TINT)}, ${glslVec3(
+        // Two segments joined at the ordinary floor — see WATER_TRENCH_TINT.
+        'float wShadeMix = texture2D( uWaterShadeMix, wDepthUv ).r;',
+        `float wFloorMix = ${glslFloat(WATER_SHADE_FLOOR_MIX)};`,
+        `vec3 wTrenchSide = mix( ${glslVec3(WATER_TRENCH_TINT)}, ${glslVec3(
+          WATER_DEEP_TINT,
+        )}, clamp( wShadeMix / wFloorMix, 0.0, 1.0 ) );`,
+        `vec3 wOrdinarySide = mix( ${glslVec3(WATER_DEEP_TINT)}, ${glslVec3(
           WATER_SHALLOW_TINT,
-        )}, texture2D( uWaterShadeMix, wDepthUv ).r );`,
+        )}, clamp( ( wShadeMix - wFloorMix ) / ( 1.0 - wFloorMix ), 0.0, 1.0 ) );`,
+        'diffuseColor.rgb *= wShadeMix < wFloorMix ? wTrenchSide : wOrdinarySide;',
       ].join('\n'),
       'water',
     );
