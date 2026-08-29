@@ -299,14 +299,19 @@ function luminanceSpaced(
  * a smooth 48-band ramp. Same seventeen colours, same order: the whole ocean
  * and abyss sequence now descends from the waterline to
  * SEA_DEPTH_CUE_FLOOR_HEIGHT, spaced by luminance so the descent the eye
- * sees is straight, and the floor colour holds from there to the column's
- * floor.
+ * sees is straight, with the final colour trailing off to the column's floor.
  */
 const BLUE_COLUMN_ANCHORS: readonly ColorAnchor[] = [
   ...luminanceSpaced(SEA_LEVEL, SEA_DEPTH_CUE_FLOOR_HEIGHT, [
     ...OCEAN_COLORS,
-    ...ABYSS_COLORS.slice(1),
+    ...ABYSS_COLORS.slice(1, -1),
   ]),
+  // The last colour sits at the column's floor rather than at the span's end,
+  // so the bottom quarter is a faint TAIL, not a plateau: every stop down the
+  // whole column stays strictly darker than the one above it (which is what
+  // lets a sculpted trench floor still read apart from its walls), while the
+  // step is one or two parts in 255 — nothing the even 48-band descent above
+  // it would register.
   [-SEA_COLUMN_DEPTH, ABYSS_COLORS[ABYSS_COLORS.length - 1]],
 ];
 
