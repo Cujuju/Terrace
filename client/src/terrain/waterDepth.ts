@@ -34,7 +34,7 @@ import {
   quantizeToBand,
   seabedHeight,
 } from '@terrace/shared';
-import { HEIGHT_WORLD_SCALE } from '../config.ts';
+import { HEIGHT_WORLD_SCALE, SEA_DEPTH_CUE_SPAN_BANDS } from '../config.ts';
 import { type TerrainMirror } from './mirror.ts';
 
 /**
@@ -134,18 +134,15 @@ export const WATER_DEPTH_SATURATION_WORLD_UNITS =
  * suppression at p95 instead would strip the sheen from open water — the exact
  * regression that fix exists to prevent. Two questions, two constants.
  */
+/** The ramps' span — config.ts's SEA_DEPTH_CUE_SPAN_BANDS, shared with the seabed palette. */
+export const WATER_SHADE_SPAN_BANDS = SEA_DEPTH_CUE_SPAN_BANDS;
+
 /**
- * WHERE THE WATER READS AS FULLY DEEP — the band the shade ramp reaches
- * WATER_SHADE_DEEP at and the alpha ramp saturates at. WAS the measured
- * ordinary floor (ORDINARY_SEA_DEPTH_BANDS, 15) so that every band the
- * ordinary ocean has got its own step; owner, 2026-08-28, on the staircase:
- * "it still goes from looking shallow to deep too quickly" — so the descent
- * is spread over five more bands, past the ordinary floor and into what the
- * histogram calls trench. The per-band step in the populated 10-15 window
- * gets smaller by the same ratio; that is the trade the owner chose.
+ * The alpha ramp saturates where the shade ramp ends (WATER_SHADE_SPAN_BANDS,
+ * owner 2026-08-28) so the two depth cues stop changing at the same band.
+ * Earlier values, superseded: the measured ordinary floor (15), then 20.
  */
-const WATER_DEEP_FLOOR_BANDS = 20;
-const WATER_ALPHA_SATURATION_BANDS = WATER_DEEP_FLOOR_BANDS;
+const WATER_ALPHA_SATURATION_BANDS = WATER_SHADE_SPAN_BANDS;
 export const WATER_ALPHA_SATURATION_WORLD_UNITS =
   WATER_ALPHA_SATURATION_BANDS * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
 
@@ -487,10 +484,15 @@ export function surfaceAlphaByte(height: number): number {
  * This is histogram equalisation by another name: output range is spent where
  * the input density is. The flats at either end are the point, not a defect —
  * past p95 is trench, and a trench reading uniformly dark is correct.
+ *
+ * SUPERSEDED (owner, 2026-08-28): "I want the luminance spread evenly across
+ * the first forty-eight bands." The centred, histogram-weighted ramp above is
+ * kept as the record of why it was tried; the shipped curve is the plain
+ * linear one below, surface to WATER_SHADE_SPAN_BANDS, with the three tints
+ * placed along it by their luminance so the descent is even in what the eye
+ * sees and not merely in the mix parameter.
  */
 
-/** The depth that renders neutral: the measured median of a real world. */
-const WATER_SHADE_CENTRE_BANDS = 11;
 
 /**
  * The ends of the range, and WATER_SHADE_SHALLOW is a CEILING rather than a
@@ -504,28 +506,13 @@ const WATER_SHADE_CENTRE_BANDS = 11;
  * arithmetic was checked. 1.15 x 1.25 x 1.10 = 1.581, peak blue 0.980.
  */
 export const WATER_SHADE_SHALLOW = 1.15;
-export const WATER_SHADE_DEEP = 0.3;
 
 /**
- * THE TRENCH SEGMENT (2026-08-28). Owner, on the staircase fixture: "I want
- * more variability in the staircase when getting to deeper water." The ramp
- * above reaches WATER_SHADE_DEEP at the ordinary floor (band 15) and was flat
- * beyond it, so every band from 15 to the fixture's 26 rendered identically —
- * the "trench reads uniformly dark" flat that the histogram note calls a
- * feature. It is not one the owner wants: past the ordinary floor the shade
- * keeps falling, on a SECOND, gentler slope, from WATER_SHADE_DEEP at the
- * ordinary floor to WATER_SHADE_TRENCH at WATER_SHADE_TRENCH_BANDS, and is
- * flat only below that. The steep segment over the populated 11-15 window is
- * untouched, so the differentiation asked for on 2026-08-26 is kept.
- *
- * WATER_SHADE_TRENCH_BANDS: the live world's p99 is 21 bands; 26 is that with
- * the same headroom previewWater's staircase uses, so the whole fixture shows
- * a change per tread. WATER_SHADE_TRENCH: the headroom the self-light and the
- * 2026-08-28 tint lift created is spent here — 0.12 is the deep end the 0.3
- * scalar used to have relative to noon, now reached only in a trench.
+ * THE TRENCH (2026-08-28). Owner, on the staircase fixture: "I want more
+ * variability in the staircase when getting to deeper water." The ramp used
+ * to bottom out at the ordinary floor and was flat beyond it. It now runs to
+ * WATER_SHADE_SPAN_BANDS, through a third colour, WATER_TRENCH_TINT.
  */
-export const WATER_SHADE_TRENCH = 0.12;
-const WATER_SHADE_TRENCH_BANDS = 28;
 
 /**
  * THE SHADE RANGE IS A COLOUR RANGE, NOT A SCALAR (2026-08-27). The two
@@ -601,74 +588,37 @@ export const WATER_TRENCH_TINT: readonly [number, number, number] = [0.01, 0.03,
  */
 export const WATER_SELF_LIGHT_RADIANCE = 0.4;
 
-/** The neutral multiplier the centre depth maps to — ordinary sea, unchanged. */
-const WATER_SHADE_NEUTRAL = 1;
-
 /**
- * How much of the multiplier one band of depth is worth.
- *
- * WAS 0.09 (2026-08-24), chosen so "a one-band sculpt does not step visibly".
- * That is the opposite of what the owner asked for once the seabed palette was
- * fixed (2026-08-26: "I would still like more differentiation between the
- * shallows and the depths", and earlier the same day, "I can't even tell what
- * the outlines for the various bands are below the water"). At 0.09 the
- * ordinary ocean floor, bands 10-15, used 1.09 → 0.64 of a 1.15 → 0.3 range —
- * the bottom third of the range was reserved for a trench holding 5% of the
- * water.
- *
- * DERIVED, not chosen: the slope that reaches WATER_SHADE_DEEP exactly at the
- * ordinary sea floor (config.ts's ORDINARY_SEA_DEPTH_BANDS, measured) from the
- * neutral median. The whole dark half of the range is spent between the median
- * depth and the deepest ordinary depth, and the ceiling lands about one band
- * above the median — so every band the ocean actually has gets its own visible
- * step, and a re-measurement moves this with the palette and the alpha ramp.
+ * Relative luminance (Rec. 709 weights) of a tint on its own. APPROXIMATE by
+ * design: the tint multiplies WATER_COLOR (render/water.ts, not imported here
+ * — it imports this module), whose channels are unequal, so the true on-screen
+ * luminance is weighted differently; close enough to place a join by.
  */
-const WATER_SHADE_CONTRAST_PER_BAND =
-  (WATER_SHADE_NEUTRAL - WATER_SHADE_DEEP) /
-  (WATER_DEEP_FLOOR_BANDS - WATER_SHADE_CENTRE_BANDS);
-
-/**
- * Where, in the stored [0,1] mix, the ordinary floor sits — the join between
- * the shader's trench→deep and deep→shallow mixes. Derived, so the texture
- * and the shader agree on it by construction.
- */
-export const WATER_SHADE_FLOOR_MIX =
-  (WATER_SHADE_DEEP - WATER_SHADE_TRENCH) / (WATER_SHADE_SHALLOW - WATER_SHADE_TRENCH);
-
-/** Derived the same way as the segment above it: deep at the ordinary floor, trench at its bands. */
-const WATER_SHADE_TRENCH_CONTRAST_PER_BAND =
-  (WATER_SHADE_DEEP - WATER_SHADE_TRENCH) / (WATER_SHADE_TRENCH_BANDS - WATER_DEEP_FLOOR_BANDS);
-
-/**
- * The multiplier this depth should scale the water's colour by, before it is
- * normalised into the [0,1] the texture carries.
- */
-function depthToShadeMultiplier(depthWorldUnits: number): number {
-  const bands = depthWorldUnits / (BAND_HEIGHT * HEIGHT_WORLD_SCALE);
-  if (bands <= WATER_DEEP_FLOOR_BANDS) {
-    const raw =
-      WATER_SHADE_NEUTRAL - WATER_SHADE_CONTRAST_PER_BAND * (bands - WATER_SHADE_CENTRE_BANDS);
-    return Math.min(WATER_SHADE_SHALLOW, raw);
-  }
-  // The trench segment — see WATER_SHADE_TRENCH.
-  const raw =
-    WATER_SHADE_DEEP - WATER_SHADE_TRENCH_CONTRAST_PER_BAND * (bands - WATER_DEEP_FLOOR_BANDS);
-  return Math.max(WATER_SHADE_TRENCH, raw);
+function tintLuminance(tint: readonly [number, number, number]): number {
+  const [r, g, b] = tint;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 /**
- * The stored value: the multiplier above, normalised to the [0,1] a RedFormat
- * byte carries, which the shader turns back into a multiplier by mixing between
- * the same two constants. Keeping the texture a plain [0,1] scalar matches its
- * two siblings and needs no encode scale anyone has to remember.
+ * Where, in the stored [0,1] mix, WATER_DEEP_TINT sits — the join between the
+ * shader's trench→deep and deep→shallow mixes. Placed by LUMINANCE, so the
+ * two linear segments have the same luminance slope and the descent from the
+ * surface to WATER_SHADE_SPAN_BANDS is even to the eye ("the luminance spread
+ * evenly", owner 2026-08-28) rather than even in the parameter. Derived, so
+ * moving any tint moves the join with it and the ramp stays straight.
+ */
+export const WATER_SHADE_FLOOR_MIX =
+  (tintLuminance(WATER_DEEP_TINT) - tintLuminance(WATER_TRENCH_TINT)) /
+  (tintLuminance(WATER_SHALLOW_TINT) - tintLuminance(WATER_TRENCH_TINT));
+
+/**
+ * The stored value: 1 at the surface, 0 at WATER_SHADE_SPAN_BANDS and below,
+ * linear between — the [0,1] a RedFormat byte carries, which the shader turns
+ * into a colour by mixing the three tints (WATER_SHADE_FLOOR_MIX is the join).
  */
 export function depthToShadeMix(depthWorldUnits: number): number {
-  // Normalised over the FULL range, trench to shallow, since the trench
-  // segment was added (2026-08-28); the shader mixes over the same two ends.
-  return (
-    (depthToShadeMultiplier(depthWorldUnits) - WATER_SHADE_TRENCH) /
-    (WATER_SHADE_SHALLOW - WATER_SHADE_TRENCH)
-  );
+  const bands = depthWorldUnits / (BAND_HEIGHT * HEIGHT_WORLD_SCALE);
+  return Math.min(1, Math.max(0, 1 - bands / WATER_SHADE_SPAN_BANDS));
 }
 
 /** depthToShadeMix, quantised to the byte the shade texture stores. */
