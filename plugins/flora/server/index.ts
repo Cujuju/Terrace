@@ -1067,27 +1067,51 @@ export const FLORA_CROP_FUEL_HEIGHT = 0.35;
  * of the reasoning. 3 s buys it ~2.5 spread rolls (see below), which is enough
  * to hand the fire to a neighbouring tuft or to the tree it grows under.
  *
- * THIS NUMBER IS NOT THE MEADOW'S BRAKE, and an earlier draft of this comment
- * said it was. Measured 2026-08-25 on a 256² bed, 20 trials per point: what
- * bounds a grass fire is the meadow's own SPARSENESS, not its burn time. Grass
- * is thinned to FLORA_GRASS_SHARE_OF_256/256 ≈ 0.398 of eligible cells, which
- * sits just under the ~0.407 site-percolation threshold of the eight-neighbour
- * lattice this spread uses — so a meadow has no spanning cluster and a fire in
- * one cannot cross it, at ANY burn time:
+ * A MEADOW FIRE DOES NOT RUN, AND BOTH EARLIER DRAFTS OF THIS COMMENT NAMED
+ * THE WRONG REASON. The first said this burn time was the brake; the second
+ * (2026-08-25) said the brake was the meadow's SPARSENESS — grass is thinned to
+ * FLORA_GRASS_SHARE_OF_256/256 ≈ 0.398, just under the ~0.407 site-percolation
+ * threshold of the eight-neighbour lattice this spread uses, so the meadow was
+ * said to have no spanning cluster at ANY burn time. Re-measured 2026-08-28 on
+ * the same 256² bed, 20 trials per point, sweeping DENSITY as well as burn
+ * time (issue #170), and that is not what the bed does:
  *
- *     burn      2s    3s    4s    6s   10s   22s
- *     cells      1     2     2     3     4    26   (mean, still air)
- *     cells      1     2     2     3     5    29   (mean, full gale)
+ *     mean cells burned, still air / full gale
+ *     density      2s     3s     4s     6s     10s      22s
+ *     0.398      1/1    2/1    1/2    2/4     5/5    39/18
+ *     0.410      2/1    2/2    2/3    3/4     6/6    31/35
+ *     0.500      1/1    2/2    2/3    4/3   10/27  1458/999
+ *     0.750      2/2    2/3    4/5   27/27  20965/7324   runaway
+ *     1.000      2/2    4/8  13/19  21014/8825  runaway   runaway
  *
- * A SOLID bed of the same fuel runs away above 5 s (tens of thousands of cells,
- * never self-extinguishing), which is the firestorm the old "grass is not fuel"
- * comment feared — it is unreachable at the shipped thinning, and that is why
- * grass could be registered at all.
+ * Crossing 0.407 changes NOTHING at grass's 3 s (0.398 and 0.410 are the same
+ * bed to within trial noise), and a SOLID bed — density 1.0, the worst case
+ * this fuel can present — still dies at 4 cells. The 0.407 figure is the
+ * threshold of PURE site percolation, which assumes every occupied neighbour
+ * catches; this spread is site-BOND percolation, and the bond term is the
+ * binding one. One burning cell hands a neighbour, over its whole life:
  *
- * SO THE LEVER IS DENSITY, NOT THIS. If a meadow fire should run, the number to
- * change is GRASS_CELLS_PER_TUFT (../protocol.ts) — and crossing 0.407 flips
- * the world from local scorches to unstoppable ones with very little in
- * between, so it wants measuring rather than nudging.
+ *     burn        3s     6s     10s     22s
+ *     p(cardinal) 0.150  0.308  0.461   0.749
+ *     p(diagonal) 0.107  0.227  0.351   0.619
+ *
+ * (BASE_SPREAD_RATE_PER_SECOND compounded over the ticks fireIntensity keeps
+ * the cell above SPREAD_MIN_INTENSITY — 2 of 3 at this burn time.) With ~5
+ * not-yet-burnt neighbours per front cell, mean offspring at 3 s is ≈ 5 × 0.13
+ * ≈ 0.65 even at density 1.0: SUBCRITICAL AT EVERY DENSITY, which is exactly
+ * what the sweep shows. The pure-site 0.407 only becomes the real threshold as
+ * p(bond) → 1, i.e. at a TREE's 22 s — which is why the burn-22 row is the one
+ * that looked like it confirmed the percolation story.
+ *
+ * SO NEITHER LEVER WORKS ALONE. Density is subcritical at 3 s however far it is
+ * pushed, and burn time at the shipped thinning only reaches 39 cells at 22 s.
+ * If a meadow fire should actually run, the pair to move together is this
+ * number and GRASS_CELLS_PER_TUFT (../protocol.ts) — 0.75 density at 6 s is the
+ * nearest point in the table that spreads without running away, and it is one
+ * step from the 10 s column that burns the whole 256² bed. That is an owner
+ * call on how a burning meadow should read, and it is why grass could be
+ * registered as fuel at all: at the shipped pair it cannot produce the
+ * firestorm the old "grass is not fuel" comment feared.
  */
 export const FLORA_GRASS_BURN_SECONDS = 3;
 
