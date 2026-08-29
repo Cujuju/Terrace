@@ -1125,10 +1125,10 @@ describe('the vertex arena', () => {
       offset: 3,
       count: 450,
     });
-    expect(afterFirstFit.holes).toEqual([
-      { offset: 453, length: 147 },
-      { offset: 600, length: 300 },
-    ]);
+    // The 147-vertex surplus of the split hole and the 300 vertices B vacated
+    // are ADJACENT — 453+147 === 600 — so the free list holds them as one
+    // entry. Two entries here would mean the coalescing invariant had lapsed.
+    expect(afterFirstFit.holes).toEqual([{ offset: 453, length: 447 }]);
     // The arena did not extend: a first-fit reuses dead space, it does not add any.
     expect(liveEnds).toEqual([1500, 1500]);
   });
