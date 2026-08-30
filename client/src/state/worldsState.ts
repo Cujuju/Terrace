@@ -40,8 +40,14 @@ export type WorldFeedback =
   | { kind: 'working' }
   /** A listing arrived; `worlds` and `archivedWorlds` hold it. */
   | { kind: 'listed' }
-  /** An action succeeded. */
-  | { kind: 'done'; action: WorldAdminAction; id: string | null; archivedPath: string | null }
+  /** An action succeeded. `plugin` is carried only by reloadPlugin (#211). */
+  | {
+      kind: 'done';
+      action: WorldAdminAction;
+      id: string | null;
+      archivedPath: string | null;
+      plugin: string | null;
+    }
   /** The server said no. */
   | { kind: 'refused'; action: WorldAdminAction; reason: WorldAdminRefusal };
 
@@ -211,6 +217,7 @@ export function applyWorldAdminResult(message: {
   ok: boolean;
   id?: string;
   archivedPath?: string;
+  plugin?: string;
   refused?: WorldAdminRefusal;
 }): void {
   if (!message.ok) {
@@ -230,6 +237,7 @@ export function applyWorldAdminResult(message: {
     action: message.action,
     id: message.id ?? null,
     archivedPath: message.archivedPath ?? null,
+    plugin: message.plugin ?? null,
   });
 }
 

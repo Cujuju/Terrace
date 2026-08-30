@@ -35,6 +35,7 @@ import {
   setWorldAdminKey,
   setWorldFeedback,
   setWorldPanelOpen,
+  type WorldFeedback,
   worldAdminKey,
   worldFeedback,
   worldPlugins,
@@ -219,7 +220,9 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
 
         <Show when={worldFeedback().kind === 'done'}>
           <p class="hud-hint">
-            {doneText(worldFeedback() as { action: string; id: string | null; archivedPath: string | null })}
+            {/* Narrowed the same way as the refusal above; keeping the union
+                intact is what lets doneText's switch be checked exhaustive. */}
+            {doneText(worldFeedback() as Extract<WorldFeedback, { kind: 'done' }>)}
           </p>
         </Show>
 
@@ -734,7 +737,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
 }
 
 /** What a successful action says. Kept beside refusalText for the same reason. */
-function doneText(done: { action: string; id: string | null; archivedPath: string | null }): string {
+function doneText(done: Extract<WorldFeedback, { kind: 'done' }>): string {
   switch (done.action) {
     case 'create':
       return `Created “${done.id ?? 'the world'}”.`;
@@ -762,9 +765,18 @@ function doneText(done: { action: string; id: string | null; archivedPath: strin
       return 'That world’s plugin set was changed.';
     case 'configurePlugin':
       return 'That world’s plugin setting was changed.';
+    case 'reloadPlugin':
+      // The one action whose whole purpose is confirming which code is live
+      // (issue #211). The stamp beside the plugin's toggle is re-sent by the
+      // server right after this receipt and is the authoritative answer.
+      return `Re-imported “${done.plugin ?? 'the plugin'}”. The version beside its toggle is the build that is now live.`;
     case 'restart':
       return 'The server is restarting. It will come back on the code that is on disk now.';
-    default:
-      return 'Done.';
+    default: {
+      // Exhaustiveness check: a new WorldAdminAction with no wording here is
+      // now a compile error — the omission this switch shipped with (#211).
+      const missed: never = done.action;
+      return missed;
+    }
   }
 }

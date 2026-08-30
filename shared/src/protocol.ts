@@ -1228,6 +1228,12 @@ export interface WorldAdminResultMessage {
    * in a log the operator would have to know to read.
    */
   archivedPath?: string;
+  /**
+   * The plugin a reloadPlugin acted on (issue #211). Echoed so the success
+   * receipt can say WHICH code was re-imported — `id` is the world, not the
+   * plugin, and confirming which code is live is the reload's whole purpose.
+   */
+  plugin?: string;
   /** Why it did not happen, when `!ok`. */
   refused?: WorldAdminRefusal;
 }
