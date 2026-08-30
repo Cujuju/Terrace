@@ -314,11 +314,101 @@ rows, in dev; the probe reports per-layer counts per run; step 0's table
 (per plugin: objects at the reference scene = the owner's world with every
 plugin live, at stroke zoom and at full-world view) is committed as B7.
 
-### B7. Step 0 output (filled by the implementer)
+### B7. Step 0 output (filled by the implementer, 2026-08-29)
 
-Per plugin: measured objects (reference scene), the caps it declares, the
-`drawBudget` expression adopted, and the ticket filed where a cap is
-missing.
+**What was measured, and where.** The real-GPU rig (`.gpu-perf/README.md`) was
+NOT driven for this: it needs the perf server and a Vite started, and Windows
+Chrome raised into the foreground for ~110 s, and this arc had no owner
+permission in-turn to start the app (project rule). The per-layer draw-object
+walk it needs was written anyway and is in `.gpu-perf/perf-probe.patch`
+(`countDrawObjects` / `drawObjectsByLayer`, sampled at stroke zoom and again
+after the stroke, posted as `drawObjectsAtStrokeZoom` /
+`drawObjectsAfterStroke`); the patch applies clean against this arc.
+
+Everything below is therefore HEADLESS, on the owner's world
+(`snapshot.owner.json`, 512², 400 chunks) for core and by constructing each
+plugin's rigs and models directly for the plugins. **Object counts are
+camera-independent by construction** (the walk counts before frustum culling),
+so the only figure a real GPU would add is `renderer.info.render.calls` — what
+survived culling — which is why the HUD carries both and never their ratio.
+
+**Core, measured on the owner's world (headless, `countDrawObjects` per rig):**
+
+| core rig | draw objects | shape |
+|---|---|---|
+| terrain super-meshes | **16** | `TerrainMeshes.drawCallCount()` |
+| frontier fog | **12** | `FrontierFog.drawCallCount()` |
+| layer-edge overlay | **319** | `LayerEdgeOverlay.drawCallCount()` — one LineSegments PER CHUNK |
+| river rig | **3** | `RIVER_RIG_DRAW_OBJECTS` (surface + merged spring rings + domes) |
+| sea | **1** | `WATER_DRAW_OBJECTS` |
+| brush preview | 4 | `BRUSH_PREVIEW_DRAW_OBJECTS` (not in the 351 below; it is main.tsx's) |
+| pick-debug overlay | 1 | `PICK_DEBUG_OVERLAY_DRAW_OBJECTS`, only under `?pickdebug` |
+| **core total in the world group** | **351** | |
+
+**THE FINDING: 319 of core's 351 draw objects are the layer-edge overlay** —
+91 % of core, and more than the whole rest of the client. It is the one rig
+whose DRAWING unit is still the chunk (`layerEdgeOverlay.ts:272`, one
+`LineSegments` per chunk that has lips, plus the grabbed lip), so it grows one
+call per chunk as a world is revealed. This is the same defect shape the
+super-mesh merge removed from the terrain itself, still present next door.
+
+**Per plugin.** "Objects" is the CEILING measured by building the rig or model
+and walking it with visibility and instance-count ignored — what the layer
+holds when the population is at its cap. Objects at the reference scene were
+not measured (see above).
+
+| plugin | per-item / per-rig objects (measured) | cap it declares | `drawBudget` expression | value |
+|---|---|---|---|---|
+| mana | 0 — no scene geometry | — | `MANA_DRAW_OBJECTS` | **0** |
+| invite | 0 — no scene geometry | — | `INVITE_DRAW_OBJECTS` | **0** |
+| chronicle | 0 — no scene geometry | — | `CHRONICLE_DRAW_OBJECTS` | **0** |
+| daynight | 0 — drives core's sky rig only | — | `DAYNIGHT_DRAW_OBJECTS` | **0** |
+| relics | 1 mesh per gem | `RELIC_COUNT` = `SKILL_IDS.length` = 5 | `RELIC_COUNT * RELIC_DRAW_OBJECTS` | **5** |
+| fire | flames 2, smoke 1, scar 1, lights 0, marker 1 — all instanced pools | `FIRE_FLAME_INSTANCE_CAP` bounds INSTANCES, not calls | sum of the five | **5** |
+| storms | funnel 2, spiral 1 — instanced pools | `MAX_FUNNELS`, `MAX_SPIRALS` bound instances | `FUNNEL_+SPIRAL_DRAW_OBJECTS` | **3** |
+| volcanoes | lava flow 1, plume 1 | `LAVA_CELL_CAP`, `MAX_PLUMES` bound instances | `LAVA_FLOW_+PLUME_DRAW_OBJECTS` | **2** |
+| mudslides | 1 per field, two fields | `MAX_DEBRIS_INSTANCES`, `MAX_ACTIVE_SLIDES` bound instances | `DEBRIS_FIELDS * DEBRIS_FIELD_DRAW_OBJECTS` | **2** |
+| flora | trees 3, crops 2, grass 3, stumps 2, fringe 4 — instanced pools | `FLORA_*_CAP` bound instances | sum of the five | **14** |
+| structures | buildings 36, skiffs 2 — merged per tier, not per placement | `STRUCTURES_CAP` bounds placements, not calls | `STRUCTURE_+SKIFF_SURFACE_DRAW_OBJECTS` | **38** |
+| temples | standing 10, ghost 1 | one temple per world (`TEMPLE_REFUSED_STANDING`) | `TEMPLES_PER_WORLD * (10 + 1)` | **11** |
+| monsters | model ≤ 6 (yeti; kraken 3, cthulhu 4) + dread 5 | `MAX_LIVING_MONSTERS` = 3 | `MAX_LIVING_MONSTERS * (6 + 5)` | **33** |
+| pilgrims | 2 per walker (baked to a fur and a gloss surface) | `WALKERS_WIRE_CAP` = 24 + 16 + 6 = 46 | `WALKERS_WIRE_CAP * WALKER_DRAW_OBJECTS` | **92** |
+| weather | 7 per storm rig (rain 5, snow 5, fog 4) + dry bolt 1 | `MAX_ACTIVE_SYSTEMS` = 14 | `14 * 7 + 1 + 0` | **99** |
+| wildlife | ≤ 2 per creature (whale/deep-sea carry a second surface) | `WILDLIFE_POPULATION_CAP` 850 + `MAX_BIRDS_ALOFT` 18 | `(850 + 18) * 2` | **1 736** |
+| boats | 2 per boat (baked from ~7 parts) | `BOATS_PAYLOAD_CAP` = 2048 | `BOATS_PAYLOAD_CAP * BOAT_DRAW_OBJECTS` | **4 096** |
+| | | | **Σ plugins** | **6 136** |
+
+**Caps that had to be relocated before a budget could name them** (commit
+`refactor(plugins): population caps move to protocol.ts…`): a client half may
+not import its plugin's server half, and five caps lived there —
+`MAX_ACTIVE_SYSTEMS` (weather), `WILDLIFE_POPULATION_CAP` and the bird-flock
+trio (wildlife), `MAX_LIVING_MONSTERS_PER_KIND`/`MAX_LIVING_MONSTERS`
+(monsters), `RELIC_COUNT` (relics). Each moved to its plugin's `protocol.ts`
+with its derivation comment; each server module imports and re-exports it.
+
+**Tickets to file** (not filed here — no `gh issue create` in this arc):
+
+1. **The layer-edge overlay draws one LineSegments per chunk** (319 of 351 core
+   objects on the owner's world). It is core's whole draw-call problem, and the
+   fix is the terrain's: merge per super-mesh, or per band across chunks.
+   Blocks any real `FRAME_DRAW_CALL_CEILING`.
+2. **boats' only bound is a defensive payload cap of 2 048**, whose own comment
+   says the true ceiling is coastal villages × `BOATS_PER_VILLAGE`. At 2 objects
+   a boat that is a 4 096-object budget — two thirds of the frame's whole
+   declared budget, for a population that is realistically single digits. It
+   needs a real fleet cap; until then its budget cannot bind.
+3. **wildlife's 850 + 18 creatures is a bandwidth cap, not a draw cap** (its own
+   comment says the constraint is a self-hoster's upstream). At ≤ 2 objects a
+   creature that is 1 736 objects. Either the creatures want instancing per
+   species, or the plugin wants a separate DRAWN cap under the census cap.
+4. **Budget arithmetic, once 1–3 land.** Σ plugins 6 136 + core 355 = 6 491
+   declared objects against a scene that actually holds ~355 core objects and a
+   few dozen plugin objects. The declared total is therefore not yet a ceiling
+   anything can breach; boats and wildlife are 96 % of it. Step 6's
+   `FRAME_DRAW_CALL_CEILING` should not be written until they are real.
+5. **Programs are not budgeted** (60 → 90 between two runs, B5). Observed via
+   `renderer.info.programs`; storms' and fire's PointLights are the known
+   driver (each add/remove recompiles every material).
 
 ---
 
