@@ -246,12 +246,27 @@ probe reports on the GPU.**
    budget}` to `hudState` beside `frameRate`. A traversal of ~1 000
    objects is ~0.05 ms, twice a second.
 4. **Enforce with hysteresis.** A breach is reported on the first sample
-   with `objects ≥ budget` (dev: `console.error` naming plugin, count,
+   with `objects > budget` (dev: `console.error` naming plugin, count,
    budget; HUD: row red) and cleared only after `DRAW_BUDGET_CLEAR_SAMPLES
-   = 2` consecutive samples below `budget × (1 − DRAW_BUDGET_CLEAR_MARGIN)`,
-   `DRAW_BUDGET_CLEAR_MARGIN = 0.1` (one sample of population noise must
-   not clear it; 10 % is one creature in ten). Not a throw — killing a
-   plugin for a perf regression is worse than the regression.
+   = 2` consecutive samples at or under `budget × (1 −
+   DRAW_BUDGET_CLEAR_MARGIN)`, `DRAW_BUDGET_CLEAR_MARGIN = 0.1` (one sample
+   of population noise must not clear it; 10 % is one creature in ten). Not
+   a throw — killing a plugin for a perf regression is worse than the
+   regression.
+
+   **Corrected 2026-08-29, during implementation: v2 said `objects ≥
+   budget` and "below the margin", and both were wrong** — a spec bug, not
+   an implementation one. `drawBudget` is defined two paragraphs up as *the
+   maximum a layer may hold*, and every budget written under B3.1 evaluates
+   to exactly the count its layer reaches with its population AT its cap
+   (flora 14, weather 99, fire 5, structures 38). An inclusive test reports
+   each of those as a failure the moment it works. Worse, four plugins that
+   deliberately draw nothing declare `0`: `0 ≥ 0` breached on the first
+   window and the clear branch needed `objects < 0`, so mana, invite,
+   chronicle and daynight would have sat permanently red from boot, burying
+   the one real breach the display exists for. The clear test is inclusive
+   for the same reason it is exclusive above: at a budget of 0 the margin is
+   0, and a plugin that has stopped drawing has to be able to clear.
 5. **The frame total** `frameDrawBudget = Σ mounted plugins' drawBudget +
    core's named calls`, recomputed on `syncLivePlugins` (mounted ≠
    registered). Core's contributors each get a `drawCallCount()` or a named

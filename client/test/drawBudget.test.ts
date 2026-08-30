@@ -116,29 +116,71 @@ describe('countDrawObjects', () => {
 
 describe('the draw-budget breach hysteresis', () => {
   const BUDGET = 100;
+  /** One object past the ceiling — the smallest real breach. */
+  const OVER = BUDGET + 1;
   /** Comfortably under the clear margin. */
   const LOW = Math.floor(BUDGET * (1 - DRAW_BUDGET_CLEAR_MARGIN)) - 1;
+  /** Exactly ON the clear margin, which counts toward clearing. */
+  const AT_MARGIN = BUDGET * (1 - DRAW_BUDGET_CLEAR_MARGIN);
 
   it('does not breach under budget', () => {
     expect(stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, LOW, BUDGET).breached).toBe(false);
   });
 
-  it('breaches on the FIRST sample at the budget', () => {
-    // AT, not over: a budget is a ceiling, and reaching it is already the
-    // failure the developer has to see.
-    expect(stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, BUDGET, BUDGET).breached).toBe(true);
+  it('does not breach a plugin sitting at EXACTLY its budget', () => {
+    // THE BUDGET IS THE MOST THE LAYER MAY HOLD, so holding it is the healthy
+    // full state, not the failure. Every fixed-pool plugin's budget IS its
+    // fully-populated count (flora 14, weather 99, fire 5): an inclusive test
+    // would report all of them as breached the moment they worked.
+    expect(stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, BUDGET, BUDGET).breached).toBe(false);
+  });
+
+  it('breaches on the FIRST sample OVER the budget', () => {
+    expect(stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, OVER, BUDGET).breached).toBe(true);
+  });
+
+  it('leaves a plugin that draws nothing against a budget of 0 healthy', () => {
+    // mana, invite, chronicle and daynight all declare 0 because they add no
+    // scene geometry at all. Under an inclusive test `0 >= 0` breached on the
+    // first window and the clear branch needed `objects < 0`, so all four sat
+    // permanently red in the HUD and logged on every session — burying the one
+    // real breach the display exists for.
+    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, 0, 0);
+    expect(state.breached).toBe(false);
+    state = stepDrawBudgetBreach(state, 0, 0);
+    expect(state.breached).toBe(false);
+  });
+
+  it('breaches a zero-budget plugin that draws anything, and lets it clear', () => {
+    // The intent those four plugins' own comments state: the first mesh added
+    // to such a layer is reported. And it must be able to go away again — at a
+    // budget of 0 the clear margin is 0, so the test there has to be inclusive.
+    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, 1, 0);
+    expect(state.breached).toBe(true);
+    for (let i = 0; i < DRAW_BUDGET_CLEAR_SAMPLES; i++) {
+      state = stepDrawBudgetBreach(state, 0, 0);
+    }
+    expect(state.breached).toBe(false);
   });
 
   it('does not clear after a single low sample', () => {
-    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, BUDGET, BUDGET);
+    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, OVER, BUDGET);
     state = stepDrawBudgetBreach(state, LOW, BUDGET);
     expect(state.breached).toBe(true);
   });
 
   it('clears after DRAW_BUDGET_CLEAR_SAMPLES consecutive samples under the margin', () => {
-    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, BUDGET, BUDGET);
+    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, OVER, BUDGET);
     for (let i = 0; i < DRAW_BUDGET_CLEAR_SAMPLES; i++) {
       state = stepDrawBudgetBreach(state, LOW, BUDGET);
+    }
+    expect(state.breached).toBe(false);
+  });
+
+  it('clears on samples sitting exactly ON the clear margin', () => {
+    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, OVER, BUDGET);
+    for (let i = 0; i < DRAW_BUDGET_CLEAR_SAMPLES; i++) {
+      state = stepDrawBudgetBreach(state, AT_MARGIN, BUDGET);
     }
     expect(state.breached).toBe(false);
   });
@@ -148,7 +190,7 @@ describe('the draw-budget breach hysteresis', () => {
     // just under its budget is still the plugin that breached.
     const nearBudget = BUDGET - 1;
     expect(nearBudget).toBeGreaterThan(BUDGET * (1 - DRAW_BUDGET_CLEAR_MARGIN));
-    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, BUDGET, BUDGET);
+    let state = stepDrawBudgetBreach(NO_DRAW_BUDGET_BREACH, OVER, BUDGET);
     state = stepDrawBudgetBreach(state, LOW, BUDGET);
     state = stepDrawBudgetBreach(state, nearBudget, BUDGET);
     expect(state.breached).toBe(true);
