@@ -23,7 +23,10 @@
 //              √2 away and gets 1/√2 of it. Without this a fire spreads as a
 //              square. It is a DISTANCE term rather than a diagonal flag
 //              because a thing that moves does not stand on the lattice — see
-//              SPREAD_MIN_DISTANCE_CELLS.
+//              SPREAD_MIN_DISTANCE_CELLS. Inside one cell the flame is being
+//              TOUCHED rather than radiated at, and the term ramps to
+//              CONTACT_SPREAD_RATE_PER_SECOND: no cell is ever that close to
+//              another cell's fire, so only something that moves gets there.
 //   WET        rain on the ground ahead. The same number that puts fires out
 //              (./index.ts) also stops them starting, so a front walking into a
 //              squall slows before it dies rather than marching on and then
@@ -59,11 +62,53 @@
 // cardinal neighbour, 1/√2 at a corner) and SPREAD_REACH_CELLS is the corner
 // distance itself, so cell-to-cell behaviour is unchanged BY CONSTRUCTION
 // rather than by assertion.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// A THING THAT MOVES IS EXPOSED FOR A STRETCH OF TIME, NOT AT AN INSTANT.
+//
+// A step runs once every SPREAD_INTERVAL_SECONDS and used to ask, of each
+// individual, ONE question: are you within reach RIGHT NOW — and then charged
+// the answer the whole interval. For a cell that is exact, because a cell was
+// where it is for the whole interval and will be there for the next one. For
+// anything that walks it is a strobe, and the faster the thing the worse the
+// lie, in both directions:
+//
+//   MISSED ENTIRELY. A grazer crosses at 6.4 cells/s (wildlife's species.ts)
+//   and is within SPREAD_REACH_CELLS of a fire for 2·√2/6.4 ≈ 0.44 s of that
+//   crossing — so it is inside the flame at sample time on fewer than half its
+//   crossings, and fleeing at ×3 on fewer than one in six. Issue #227, owner
+//   in-world 2026-08-28: animals run straight through a fire and never catch.
+//
+//   OVER-CHARGED WHEN NOT MISSED. The crossing that IS sampled is then rolled
+//   as though the animal had stood in the flame for a whole second, which is
+//   the same error with the other sign.
+//
+// So exposure is computed along the SWEPT SEGMENT each end travelled since the
+// previous step: how long the two were actually within reach of each other
+// (the DWELL) and how close they got while they were (the GAP). The dwell is
+// the `dt` handed to `happensWithin`, which is exactly what that function's
+// cadence-independence promises — half a second beside a flame is half a
+// second's worth of chance, whether it arrives as one sample or as two.
+//
+// WHERE THE PREVIOUS POSITION COMES FROM: this file remembers it. It is not
+// asked of the registrants (./entityFuel.ts), and that is the point — the
+// sampling cadence is fire's own, so "where was it one sample ago" is fire's
+// question to answer. A source that only reports where its individual is now
+// cannot forget an obligation it was never handed.
+//
+// STATIONARY ENDS ARE UNTOUCHED BY THIS, by construction: with no relative
+// motion the dwell is the whole interval and the gap is the distance, which is
+// the arithmetic that was here before. Cell-to-cell spread does not change.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BAND_HEIGHT } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
-import { fireIntensity, type FireCellState, type FireEntityState } from '../protocol.ts';
+import {
+  fireEntityKey,
+  fireIntensity,
+  type FireCellState,
+  type FireEntityState,
+} from '../protocol.ts';
 import type { Blaze } from './blaze.ts';
 import type { EntityBlaze } from './entityBlaze.ts';
 import { entityFuelSources, type FlammableIndividual } from './entityFuel.ts';
@@ -202,24 +247,72 @@ export const SPREAD_REACH_CELLS = Math.SQRT2;
 /**
  * The distance at which the rate is quoted whole — one cell, because
  * BASE_SPREAD_RATE_PER_SECOND is defined as the chance of setting a given
- * ADJACENT cell alight.
- *
- * It is a FLOOR on the divisor, not a minimum distance: two things can stand a
- * tenth of a cell apart, and without this the 1/d term would quietly multiply
- * the base rate tenfold for a crowd. Nothing burns faster than adjacent.
+ * ADJACENT cell alight. Below it the flame is being TOUCHED rather than
+ * radiated at, and CONTACT_SPREAD_RATE_PER_SECOND takes over.
  */
 export const SPREAD_MIN_DISTANCE_CELLS = 1;
 
 /**
- * The distance term: 1/d, floored at one cell.
+ * How long a thing can be INSIDE a flame before it catches, in seconds.
  *
- * Replaces the flat 1/√2 diagonal factor this file used to carry, and is the
- * same number wherever that one applied — d = 1 cardinally, d = √2 at a corner.
- * Stated as a distance because a boat two-fifths of a cell off a burning pier
- * is a real case and "is it diagonal?" has no answer for it.
+ * A SECOND MECHANISM, not a tuning of the first, and the distinction is the
+ * whole of issue #227. BASE_SPREAD_RATE_PER_SECOND prices a flame HEATING
+ * something a cell away for as long as it burns — the tree next door, which
+ * stands there for the fire's whole 22-second life and has four fifths of a
+ * chance over it. Nothing that holds still is ever any closer than that, so
+ * until things that move became fuel there was no reason for the model to know
+ * what touching a fire does.
+ *
+ * A moving thing is only ever in the flame in passing: a grazer crosses a
+ * burning cell in 1/6.4 s at cruise and a third of that fleeing (wildlife's
+ * species.ts). Priced at the neighbour's rate that is a 1-in-80 chance of
+ * catching, which is what the owner saw — animals running clean through a fire.
+ * Priced as CONTACT, at 0.15 s, an animal that runs through a fire catches and
+ * one that runs PAST it, a cell out, still mostly does not. That is the
+ * mechanic the issue asks for, stated as the physical difference it is.
+ *
+ * 0.15 s is the smallest interval this can be given and still be a chance
+ * rather than a certainty: it is roughly one animation frame of a creature at
+ * cruise crossing a cell, so "you were in the fire for a moment" is genuinely
+ * survivable and "you ran through it" is not.
+ */
+export const CONTACT_IGNITION_SECONDS = 0.15;
+
+/**
+ * Chance per second of catching while in direct contact with a flame.
+ *
+ * The reciprocal of the time above, which is what a rate IS for the exponential
+ * form `happensWithin` uses: a thing in contact for CONTACT_IGNITION_SECONDS
+ * has caught with probability 1 − 1/e. Derived rather than written down so the
+ * two can never drift apart, and so the tunable number is the one that can be
+ * explained to a player.
+ */
+export const CONTACT_SPREAD_RATE_PER_SECOND = 1 / CONTACT_IGNITION_SECONDS;
+
+/**
+ * The distance term: 1/d beyond a cell, and a ramp from contact to a cell
+ * inside that.
+ *
+ * BEYOND ONE CELL it is the 1/d this file has always had — the same number
+ * wherever the old flat 1/√2 diagonal factor applied (d = 1 cardinally, d = √2
+ * at a corner), so cell-to-cell spread is untouched. A cell target is never
+ * nearer than one cell to a neighbouring cell fire, so the ramp below cannot
+ * reach the lattice at all; only something standing off it can be in there.
+ *
+ * INSIDE ONE CELL it runs linearly from the contact rate at zero to the
+ * neighbour rate at one. Linear because it is the boring monotone choice and
+ * nothing here justifies a curve: what the term has to express is that being
+ * IN a fire is categorically worse than being beside one, and any monotone ramp
+ * says that. The two ends are the two rates that were reasoned about; the
+ * middle is interpolation, and is honestly nothing more.
  */
 function distanceFactor(distanceCells: number): number {
-  return SPREAD_MIN_DISTANCE_CELLS / Math.max(SPREAD_MIN_DISTANCE_CELLS, distanceCells);
+  if (distanceCells >= SPREAD_MIN_DISTANCE_CELLS) return SPREAD_MIN_DISTANCE_CELLS / distanceCells;
+
+  const contactFactor = CONTACT_SPREAD_RATE_PER_SECOND / BASE_SPREAD_RATE_PER_SECOND;
+  const towardsContact =
+    (SPREAD_MIN_DISTANCE_CELLS - Math.max(0, distanceCells)) / SPREAD_MIN_DISTANCE_CELLS;
+  return 1 + (contactFactor - 1) * towardsContact;
 }
 
 /**
@@ -393,6 +486,153 @@ function flammableNow(): FlammableIndividual[] {
   return found;
 }
 
+/** A point in fractional cell space — the space everything that moves lives in. */
+interface Position {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Where every individual this file saw last step was standing, by
+ * `fireEntityKey`. Rebuilt whole at the end of each step, so an individual that
+ * has gone drops out of it for free.
+ *
+ * MODULE STATE, and the one piece this file has. It is a memory of the previous
+ * SAMPLE, which is a property of the sampling — see the header on why that
+ * makes it fire's to keep rather than a registrant's to report.
+ */
+let previousSweep = new Map<string, Position>();
+
+/**
+ * Forgets the previous sample.
+ *
+ * Called when the world stops burning and when fire state is reset or rolled
+ * back, because in all three cases the next step's "previous position" would
+ * not be one interval old — it would be from before a gap of unknown length,
+ * or from a world that no longer exists, and the segment between the two is a
+ * path nothing walked.
+ *
+ * The cost of forgetting is bounded and small: with no previous sample an
+ * individual is treated as having stood still, which is exactly the behaviour
+ * this file had before, for exactly one step.
+ */
+export function resetSpreadSweep(): void {
+  previousSweep.clear();
+}
+
+/** Where this individual was one step ago, or `now` when there is no sample. */
+function whereItWas(sourceName: string, id: number, now: Position): Position {
+  return previousSweep.get(fireEntityKey(sourceName, id)) ?? now;
+}
+
+/**
+ * A cell does not move, so its swept segment is the point it stands on. Named
+ * so that the call sites read as what they are rather than as a duplicated
+ * argument.
+ */
+function stoodStill(at: Position): Position {
+  return at;
+}
+
+/** How long two things were within reach of each other, and how close. */
+interface Exposure {
+  /** Seconds of the interval spent within reach. Never 0 — see the null. */
+  readonly dwellSeconds: number;
+  /** Where the flame was at closest approach. */
+  readonly fromX: number;
+  readonly fromY: number;
+  /** Where the target was at closest approach. */
+  readonly toX: number;
+  readonly toY: number;
+  /** Flame-to-EDGE distance at closest approach, floored at 0. */
+  readonly gapCells: number;
+}
+
+/**
+ * The encounter between two things that each moved in a straight line over
+ * `dt` — or null if they were never in reach of one another during it.
+ *
+ * Both ends are segments, so this covers all four cases in one piece of
+ * arithmetic: a fire and an animal, a burning animal and a cell, a burning
+ * animal running through a herd, and two things that both stood still. It is
+ * expressed in RELATIVE motion, which is why the two moving ends cost nothing
+ * extra: what matters is the separation, and the separation is itself a point
+ * moving in a straight line.
+ *
+ * THE RATE IS QUOTED AT CLOSEST APPROACH AND CHARGED FOR THE WHOLE DWELL,
+ * which is the encounter's PEAK rate rather than its mean — an upper bound, and
+ * stated as one rather than discovered later. The exact answer is the integral
+ * of the rate along the pass, and the distance term is 1/d, so the mean over a
+ * pass differs from the peak by a transcendental and, for the worst case the
+ * reach allows (grazing the boundary at √2 and closing to one cell), by about a
+ * fifth. A fifth of a term that is itself one factor of five is not worth an
+ * `asinh` in a loop that runs once a second over every burning thing; a
+ * different curve on the distance term, or a reach much larger than a cell,
+ * would make it worth revisiting.
+ *
+ * Writing r(s) = d0 + w·s for s in [0, 1] — d0 the separation at the start of
+ * the interval, w how much that separation changed over it — "in reach" is
+ * |r(s)| ≤ reach + radius, one quadratic in s. Its roots clipped to [0, 1] are
+ * the stretch of the interval the two spent together; the vertex, clipped to
+ * that same stretch, is their closest approach.
+ */
+function exposureAlongPaths(
+  fromStart: Position,
+  fromEnd: Position,
+  toStart: Position,
+  toEnd: Position,
+  radiusCells: number,
+  dt: number,
+): Exposure | null {
+  // Measured to the target's EDGE, so a two-cell hull is in reach from further
+  // out than a walker standing at a point — ./entityFuel.ts's radiusCells.
+  const reach = SPREAD_REACH_CELLS + Math.max(0, radiusCells);
+
+  const startDx = toStart.x - fromStart.x;
+  const startDy = toStart.y - fromStart.y;
+  const driftX = toEnd.x - fromEnd.x - startDx;
+  const driftY = toEnd.y - fromEnd.y - startDy;
+
+  const driftSquared = driftX * driftX + driftY * driftY;
+  const startDotDrift = startDx * driftX + startDy * driftY;
+  const startSquared = startDx * startDx + startDy * startDy;
+
+  let enter = 0;
+  let leave = 1;
+  if (driftSquared === 0) {
+    // Nothing moved relative to anything else: they were in reach for the
+    // whole interval or for none of it. This is the cell-to-cell case, and it
+    // is the reason lattice spread is untouched by any of the above.
+    if (startSquared > reach * reach) return null;
+  } else {
+    const discriminant =
+      startDotDrift * startDotDrift - driftSquared * (startSquared - reach * reach);
+    if (discriminant <= 0) return null;
+    const root = Math.sqrt(discriminant);
+    enter = Math.max(0, (-startDotDrift - root) / driftSquared);
+    leave = Math.min(1, (-startDotDrift + root) / driftSquared);
+    if (leave <= enter) return null;
+  }
+
+  // Closest approach, clipped into the stretch they were actually together
+  // for: a pass that begins or ends mid-interval is at its closest at the
+  // boundary, not at the vertex outside it.
+  const closest =
+    driftSquared === 0
+      ? enter
+      : Math.max(enter, Math.min(leave, -startDotDrift / driftSquared));
+
+  const separation = Math.hypot(startDx + driftX * closest, startDy + driftY * closest);
+  return {
+    dwellSeconds: (leave - enter) * dt,
+    fromX: fromStart.x + (fromEnd.x - fromStart.x) * closest,
+    fromY: fromStart.y + (fromEnd.y - fromStart.y) * closest,
+    toX: toStart.x + (toEnd.x - toStart.x) * closest,
+    toY: toStart.y + (toEnd.y - toStart.y) * closest,
+    gapCells: Math.max(0, separation - Math.max(0, radiusCells)),
+  };
+}
+
 /**
  * Rolls one source against every individual in reach of it.
  *
@@ -405,6 +645,7 @@ function spreadToIndividuals(
   world: WorldApi,
   entityBlaze: EntityBlaze,
   from: SpreadSource,
+  fromWas: Position,
   candidates: readonly FlammableIndividual[],
   wind: { readonly heading: number; readonly speed: number },
   dt: number,
@@ -413,15 +654,30 @@ function spreadToIndividuals(
   for (const candidate of candidates) {
     if (entityBlaze.isBurning(candidate.sourceName, candidate.id)) continue;
 
-    const gap = Math.max(
-      0,
-      Math.hypot(candidate.x - from.x, candidate.y - from.y) - candidate.radiusCells,
+    const exposure = exposureAlongPaths(
+      fromWas,
+      from,
+      whereItWas(candidate.sourceName, candidate.id, candidate),
+      candidate,
+      candidate.radiusCells,
+      dt,
     );
-    if (gap > SPREAD_REACH_CELLS) continue;
+    if (exposure === null) continue;
 
-    const rate = spreadRate(world, from, candidate, wind, gap);
+    // The rate is quoted at CLOSEST APPROACH — the moment of the encounter
+    // that actually decides it — and then charged for however long the
+    // encounter lasted. Quoting it at either endpoint instead would price a
+    // crossing by where the animal happened to be when the clock ticked,
+    // which is the strobe this whole computation exists to remove.
+    const rate = spreadRate(
+      world,
+      { ...from, x: exposure.fromX, y: exposure.fromY },
+      { x: exposure.toX, y: exposure.toY },
+      wind,
+      exposure.gapCells,
+    );
     if (rate <= 0) continue;
-    if (!happensWithin(rate, dt)) continue;
+    if (!happensWithin(rate, exposure.dwellSeconds)) continue;
 
     // May still decline — the entity cap is full, or something took it in the
     // meantime. An ordinary answer, exactly as Blaze.ignite's null is.
@@ -493,13 +749,40 @@ export function spreadOnce(
 
   for (const fire of cellSources) {
     spreadToCells(world, blaze, fire, fire, NEIGHBOUR_OFFSETS, wind, dt, cells);
-    spreadToIndividuals(world, entityBlaze, fire, candidates, wind, dt, entities);
+    spreadToIndividuals(world, entityBlaze, fire, stoodStill(fire), candidates, wind, dt, entities);
   }
 
   for (const fire of entitySources) {
     spreadToCells(world, blaze, fire, fire, SELF_AND_NEIGHBOUR_OFFSETS, wind, dt, cells);
-    spreadToIndividuals(world, entityBlaze, fire, candidates, wind, dt, entities);
+    // A burning individual moved too, so its own previous sample is the start
+    // of ITS segment — which is what makes a fire that runs through a herd the
+    // same computation as a herd that runs through a fire.
+    spreadToIndividuals(
+      world,
+      entityBlaze,
+      fire,
+      whereItWas(fire.sourceName, fire.id, fire),
+      candidates,
+      wind,
+      dt,
+      entities,
+    );
   }
+
+  // THE SAMPLE THIS STEP TOOK, kept for the next one. Written after every roll
+  // and rebuilt whole rather than patched, so nothing that has left the world
+  // lingers in it. Burning individuals are recorded alongside the candidates
+  // because they are the SOURCE end of the next step's segments, and a source
+  // no registrant still lists in `flammable` would otherwise have no memory.
+  const sweep = new Map<string, Position>();
+  for (const candidate of candidates) {
+    const key = fireEntityKey(candidate.sourceName, candidate.id);
+    sweep.set(key, { x: candidate.x, y: candidate.y });
+  }
+  for (const fire of entitySources) {
+    sweep.set(fireEntityKey(fire.sourceName, fire.id), { x: fire.x, y: fire.y });
+  }
+  previousSweep = sweep;
 
   return { cells, entities };
 }
