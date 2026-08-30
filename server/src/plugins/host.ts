@@ -205,10 +205,20 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     try {
       return call();
     } catch (error) {
-      this.faults.set(plugin.name, (this.faults.get(plugin.name) ?? 0) + 1);
-      logError(`plugin "${plugin.name}" threw in ${hook}`, error);
+      this.recordFault(plugin, hook, error);
       return undefined;
     }
+  }
+
+  /**
+   * Books one plugin fault: the counter `faultCount` reports and the one log
+   * line a throw produces. Shared by `safely` and by the one call site that
+   * must SEE the throw rather than have it swallowed (`restorePersistence`),
+   * so both paths count and log a throw identically.
+   */
+  private recordFault(plugin: TerracePlugin, hook: string, error: unknown): void {
+    this.faults.set(plugin.name, (this.faults.get(plugin.name) ?? 0) + 1);
+    logError(`plugin "${plugin.name}" threw in ${hook}`, error);
   }
 
   /** How many of one plugin's hooks have thrown in this world. See `faults`. */
@@ -578,17 +588,29 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
         continue;
       }
 
-      const outcome = this.safely(plugin, 'persistence.load', () =>
-        slice.load(stored.data, stored.version),
-      );
-      // A plugin that REFUSED, or that THREW (safely returns undefined only for
-      // a throw or a void return — a refusal is the only truthy outcome), is in
-      // the same position as a downgrade: it has no state, and its bytes must
-      // survive rather than be overwritten by the empty save that follows.
-      if (outcome === 'refuse') {
+      // A plugin that REFUSED, and a plugin that THREW, are in the same
+      // position as a downgrade: neither holds any of the stored state, and
+      // its bytes must survive rather than be overwritten by the empty save
+      // that follows. One branch parks both because the plan settles them as
+      // one row (docs/plans/plugin-hot-unload.md §3.5); only the wording of
+      // the warning distinguishes the deliberate case from the accidental one.
+      let parkReason: 'refused' | 'threw while loading' | null = null;
+      try {
+        if (slice.load(stored.data, stored.version) === 'refuse') parkReason = 'refused';
+      } catch (error) {
+        // CAUGHT HERE RATHER THAN IN `safely` (issue #206): `safely` returns
+        // undefined for a throw AND for an ordinary void return, so a throw is
+        // invisible at this call site — it was therefore never parked, and the
+        // plugin's own post-throw empty save replaced the recoverable bytes at
+        // the next snapshot. The fault is booked by hand so the counter and the
+        // log line stay exactly what `safely` would have produced.
+        parkReason = 'threw while loading';
+        this.recordFault(plugin, 'persistence.load', error);
+      }
+      if (parkReason !== null) {
         this.park(plugin.name, slices[plugin.name]);
         logWarn(
-          `plugin "${plugin.name}" refused its saved data (written under version ` +
+          `plugin "${plugin.name}" ${parkReason} its saved data (written under version ` +
             `${stored.version}). It is being kept exactly as it is and this plugin ` +
             'is running with no saved state.',
         );
