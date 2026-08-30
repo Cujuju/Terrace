@@ -89,8 +89,26 @@ function applyChanges(
   for (const cell of upgraded) buildings.set(structureKey(cell.x, cell.y), cell);
 }
 
+/**
+ * The buildings: THIRTY-SIX surfaces for the whole world's structures, not per
+ * structure — models.ts merges every tier's ~100 authored parts into a handful
+ * of surfaces per tier and draws all STRUCTURES_CAP placements through them.
+ * Measured 2026-08-29; it does not scale with the settlement count, which is
+ * the whole point of the merge.
+ */
+const STRUCTURE_SURFACE_DRAW_OBJECTS = 36;
+
+/** The moored skiffs, merged the same way: TWO surfaces for the fleet. */
+const SKIFF_SURFACE_DRAW_OBJECTS = 2;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: STRUCTURES_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: STRUCTURE_SURFACE_DRAW_OBJECTS + SKIFF_SURFACE_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     buildings.clear();

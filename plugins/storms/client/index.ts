@@ -208,8 +208,22 @@ function refreshAim(ctx: ClientPluginCtx, dt: number): void {
   if (cell !== null) aimedCell = cell;
 }
 
+/**
+ * Both storm rigs are instanced pools shared by every live storm — MAX_FUNNELS
+ * and MAX_SPIRALS bound the INSTANCES inside them, not the draw calls — so this
+ * is a fixed pair of numbers. Measured 2026-08-29: funnel 2 surfaces, spiral 1.
+ */
+const FUNNEL_DRAW_OBJECTS = 2;
+const SPIRAL_DRAW_OBJECTS = 1;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: STORMS_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: FUNNEL_DRAW_OBJECTS + SPIRAL_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     storms = [];

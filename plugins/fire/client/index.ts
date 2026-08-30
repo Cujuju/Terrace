@@ -379,8 +379,31 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   return true;
 }
 
+/**
+ * Fire draws every flame, column and scar through InstancedMesh pools sized at
+ * FIRE_FLAME_INSTANCE_CAP, so its cost is a FIXED number of surfaces however
+ * much of the world is alight — the rule ./flames/types.ts already states.
+ * Measured 2026-08-29, per rig.
+ */
+const FLAME_DRAW_OBJECTS = 2;
+const SMOKE_DRAW_OBJECTS = 1;
+const SCAR_DRAW_OBJECTS = 1;
+/** PointLights are not drawn objects; they cost shader recompiles, not calls. */
+const FIRE_LIGHT_DRAW_OBJECTS = 0;
+const TORCH_MARKER_DRAW_OBJECTS = 1;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: FIRE_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: FLAME_DRAW_OBJECTS +
+    SMOKE_DRAW_OBJECTS +
+    SCAR_DRAW_OBJECTS +
+    FIRE_LIGHT_DRAW_OBJECTS +
+    TORCH_MARKER_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     // Module scope outlives an attach, so a re-attach after a rejoin would

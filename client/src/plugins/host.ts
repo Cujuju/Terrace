@@ -10,19 +10,137 @@
 import type { SculptIntent } from '@terrace/shared';
 import { Group, Raycaster, Vector2, type Intersection, type Object3D } from 'three';
 import type { Component } from 'solid-js';
+import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
+import { setFrameDraw } from '../state/hudState.ts';
 import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import {
   addPluginHudPanel,
   claimWorldHeaderAction,
   releaseWorldHeaderAction,
+  removePluginDrawRow,
   removePluginHudPanels,
+  setPluginDrawRows,
+  type PluginDrawRow,
 } from './hudPanels.ts';
 import { addPluginTool, removePluginTools } from './toolbar.ts';
 import type { ClientPluginCtx, MoverPose, TerraceClientPlugin } from './types.ts';
+
+/**
+ * How many objects three would DRAW under `root`, before frustum culling —
+ * the unit the draw budget is denominated in (part B of
+ * docs/plans/frame-budget-growth-and-draw-calls.md).
+ *
+ * THE RULE IS `projectObject`'s OWN (three/src/renderers/WebGLRenderer.js):
+ *   - descend a node only while `visible !== false`. Visibility is INHERITED,
+ *     and hiding a subtree root is how several plugins park a whole rig;
+ *   - count a node when it is a Mesh, Line, Points or Sprite;
+ *   - an InstancedMesh is ONE object however many instances it holds, and NO
+ *     object when `count` is 0 — three skips a `primcount === 0` draw, and
+ *     pools parked at 0 are how flora, fire, storms and mudslides idle;
+ *   - a geometry whose `drawRange.count` is 0 draws nothing either.
+ *
+ * FRUSTUM CULLING IS THE ONLY DIFFERENCE from `renderer.info.render.calls`:
+ * this number is what the scene CONTAINS, which is camera-independent and
+ * therefore the only thing a budget can be written against; the renderer's
+ * count is what one camera happened to keep. The HUD shows both and never
+ * shows them as one ratio.
+ */
+export function countDrawObjects(root: Object3D): number {
+  if (!root.visible) return 0;
+  // Structural, not `instanceof`: three's own render path tests these flags,
+  // and a plugin may legitimately hand in an object from a different copy of
+  // three (a bundled model loader) where `instanceof` would say no.
+  const node = root as Object3D & {
+    isMesh?: boolean;
+    isLine?: boolean;
+    isPoints?: boolean;
+    isSprite?: boolean;
+    isInstancedMesh?: boolean;
+    count?: number;
+    geometry?: { drawRange?: { count: number } };
+  };
+  let drawn = 0;
+  if (
+    node.isMesh === true ||
+    node.isLine === true ||
+    node.isPoints === true ||
+    node.isSprite === true
+  ) {
+    const emptyInstances = node.isInstancedMesh === true && (node.count ?? 0) <= 0;
+    const drawRange = node.geometry?.drawRange;
+    const emptyRange = drawRange !== undefined && drawRange.count === 0;
+    if (!emptyInstances && !emptyRange) drawn = 1;
+  }
+  for (const child of root.children) drawn += countDrawObjects(child);
+  return drawn;
+}
+
+/**
+ * Consecutive samples under `budget × (1 − DRAW_BUDGET_CLEAR_MARGIN)` needed to
+ * clear a breach.
+ *
+ * TWO, because one is not evidence. Populations move every sample — a creature
+ * despawns, a storm's funnel retires — and a breach cleared by a single dip
+ * would flicker on and off while the plugin sat over its budget the whole time.
+ */
+export const DRAW_BUDGET_CLEAR_SAMPLES = 2;
+
+/**
+ * How far under budget those samples must be, as a fraction.
+ *
+ * A TENTH: one creature in ten. Clearing exactly at the budget would let a
+ * population sitting on the line toggle the breach on every sample.
+ */
+export const DRAW_BUDGET_CLEAR_MARGIN = 0.1;
+
+/** One plugin's breach state between samples — see `stepDrawBudgetBreach`. */
+export interface DrawBudgetBreachState {
+  readonly breached: boolean;
+  /** Consecutive samples under the clear margin while breached. */
+  readonly lowSamples: number;
+}
+
+export const NO_DRAW_BUDGET_BREACH: DrawBudgetBreachState = {
+  breached: false,
+  lowSamples: 0,
+};
+
+/**
+ * One sample of the breach state machine, as a pure step so the hysteresis is
+ * testable as the contract it is rather than through a frame loop.
+ *
+ * Breach on the FIRST sample at or above the budget — a budget is a ceiling,
+ * and reaching it is already the failure. Clearing needs
+ * DRAW_BUDGET_CLEAR_SAMPLES consecutive samples below
+ * `budget × (1 − DRAW_BUDGET_CLEAR_MARGIN)`; a single sample at the margin
+ * resets nothing, and one sample back at the budget restarts the count.
+ *
+ * A budget that is not a finite number is itself a breach that can never clear
+ * (a plugin loaded at runtime, design Q6, can supply `undefined`).
+ */
+export function stepDrawBudgetBreach(
+  state: DrawBudgetBreachState,
+  objects: number,
+  budget: number,
+): DrawBudgetBreachState {
+  if (!Number.isFinite(budget)) return { breached: true, lowSamples: 0 };
+  if (objects >= budget) return { breached: true, lowSamples: 0 };
+  if (!state.breached) return NO_DRAW_BUDGET_BREACH;
+  // Breached and under budget: only a sample under the MARGIN counts toward
+  // clearing. Anything between the margin and the budget is a population
+  // sitting on the line, and it resets the count rather than advancing it.
+  if (objects >= budget * (1 - DRAW_BUDGET_CLEAR_MARGIN)) {
+    return { breached: true, lowSamples: 0 };
+  }
+  const lowSamples = state.lowSamples + 1;
+  return lowSamples >= DRAW_BUDGET_CLEAR_SAMPLES
+    ? NO_DRAW_BUDGET_BREACH
+    : { breached: true, lowSamples };
+}
 
 export interface ClientPluginHost {
   /**
@@ -49,6 +167,15 @@ export interface ClientPluginHost {
    * everything compiled in stays mounted — absence is not "nothing is live".
    */
   syncLivePlugins(liveNames: readonly string[] | undefined): void;
+  /**
+   * The frame's whole draw budget: every MOUNTED plugin's `drawBudget` plus
+   * core's named contributors.
+   *
+   * MOUNTED, NOT REGISTERED — `syncLivePlugins` is what decides which plugins
+   * are running on this world, and a budget that counted the compiled-in list
+   * would license draw calls no one is making.
+   */
+  frameDrawBudget(): number;
   dispose(): void;
 }
 
@@ -61,6 +188,27 @@ export function createClientPluginHost(
      * routeMessage in its options); the host only sends, never at attach
      * time, so reading it lazily breaks the cycle without a setter dance. */
     connection: () => Connection;
+    /**
+     * Core's own share of the frame's draw budget — the terrain, the frontier
+     * fog, water, the rivers, the layer-edge overlay, the brush preview and
+     * the pick-debug overlay, each from its own `drawCallCount()` or named
+     * constant.
+     *
+     * SUPPLIED BY THE CALLER, not read here, for the reason every other core
+     * fact is: the host knows plugins, and main.tsx is the one place that
+     * holds every core rig. Late-bound like `connection` because several of
+     * those rigs are built after the host is (the brush preview, the
+     * pick-debug overlay), and the number is dynamic anyway — the terrain's
+     * super-mesh count grows as a world is revealed.
+     */
+    coreDrawBudget: () => number;
+    /**
+     * Monotonic millisecond clock the draw sampler's window is measured
+     * against. Injectable so a test can advance it by a known amount instead of
+     * racing a real one — the same seam render/frameRate.ts and
+     * render/terrainMeshes.ts already take; defaults to `performance.now`.
+     */
+    now?: () => number;
   },
 ): ClientPluginHost {
   const { viewport, world } = deps;
@@ -84,6 +232,13 @@ export function createClientPluginHost(
 
   /** Mounted plugins by name. */
   const mounted = new Map<string, MountedPlugin>();
+
+  /**
+   * The draw-budget breach state machine's memory, per plugin. Dropped on
+   * unmount with everything else that plugin owns, so a plugin that comes back
+   * starts clean rather than inheriting a breach from a previous world.
+   */
+  const breachStates = new Map<string, DrawBudgetBreachState>();
 
   const canvas = viewport.renderer.domElement;
 
@@ -470,6 +625,11 @@ export function createClientPluginHost(
     // do it while its own layer is still in the scene.
     removePluginTools(name);
     removePluginHudPanels(name);
+    // Its draw row goes with its panels, and for the same reason: the HUD must
+    // not show a budget for a plugin that has stopped running, not even for the
+    // rest of the sampling window.
+    removePluginDrawRow(name);
+    breachStates.delete(name);
     releaseWorldHeaderAction(name);
 
     try {
@@ -496,7 +656,72 @@ export function createClientPluginHost(
 
   for (const plugin of plugins) mountPlugin(plugin);
 
+  const frameDrawBudget = (): number => {
+    let budget = deps.coreDrawBudget();
+    for (const entry of mounted.values()) {
+      const declared = entry.plugin.drawBudget;
+      // A non-finite budget contributes NOTHING to the total — it is a breach
+      // in its own row, and adding NaN would destroy the whole frame's number.
+      if (Number.isFinite(declared)) budget += declared;
+    }
+    return budget;
+  };
+
+  /**
+   * One walk of every mounted plugin's layer and of the whole scene, published
+   * to the HUD.
+   *
+   * CORE'S OBJECTS ARE THE REMAINDER — the scene minus the plugin layers —
+   * rather than an enumeration of core's rigs, because the plugin layers are
+   * the only children of the scene whose owner is known here, and a remainder
+   * cannot fall out of date when core gains a rig.
+   */
+  const sampleDrawObjects = (): void => {
+    const rows: PluginDrawRow[] = [];
+    for (const [name, entry] of mounted) {
+      const objects = countDrawObjects(entry.layer);
+      const budget = entry.plugin.drawBudget;
+      const before = breachStates.get(name) ?? NO_DRAW_BUDGET_BREACH;
+      const after = stepDrawBudgetBreach(before, objects, budget);
+      breachStates.set(name, after);
+      // ON THE TRANSITION ONLY: a plugin over budget stays over budget for as
+      // long as its population is large, and one line per sample twice a
+      // second would bury the console it is trying to be read in.
+      if (after.breached && !before.breached) {
+        console.error(
+          `[terrace] client plugin "${name}" is over its draw budget: ` +
+            `${String(objects)} objects against a budget of ${String(budget)}`,
+        );
+      }
+      rows.push({ pluginName: name, objects, budget, breached: after.breached });
+    }
+    setPluginDrawRows(rows);
+    setFrameDraw({
+      calls: viewport.renderer.info.render.calls,
+      objects: countDrawObjects(viewport.scene),
+      budget: frameDrawBudget(),
+    });
+  };
+
+  /**
+   * The sampler's own window, at FPS_SAMPLE_INTERVAL_MS.
+   *
+   * ITS OWN, not the fps meter's: that meter's window lives inside a closure
+   * with no seam to share and no need of one, and the two are only the same
+   * LENGTH — half a second, which is as often as a HUD number can be read.
+   * A walk of ~1 000 objects is ~0.05 ms, so twice a second is free.
+   */
+  const now = deps.now ?? ((): number => performance.now());
+  let sampleWindowStartMs = now();
+  const stopSampling = viewport.onFrame(() => {
+    const nowMs = now();
+    if (nowMs - sampleWindowStartMs < FPS_SAMPLE_INTERVAL_MS) return;
+    sampleWindowStartMs = nowMs;
+    sampleDrawObjects();
+  });
+
   return {
+    frameDrawBudget,
     allowLocalIntent(intent: SculptIntent): boolean {
       for (const handler of localIntentHandlers) {
         try {
@@ -542,6 +767,7 @@ export function createClientPluginHost(
     },
 
     dispose(): void {
+      stopSampling();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,

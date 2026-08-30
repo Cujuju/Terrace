@@ -16,8 +16,23 @@ import {
 import { ManaGauge } from './ManaGauge.tsx';
 import { gateLocalSculpt, recordDenial, setManaPool } from './state.ts';
 
+/**
+ * DRAW BUDGET: NOTHING. This plugin is a HUD gauge and a local-intent gate; it
+ * never touches `ctx.layer` (part B of
+ * docs/plans/frame-budget-growth-and-draw-calls.md). Zero is a real budget —
+ * the sampler breaches on `objects >= budget`, so the first mesh added here
+ * would be reported.
+ */
+const MANA_DRAW_OBJECTS = 0;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: MANA_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: MANA_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     ctx.onMessage(MANA_BALANCE_MESSAGE, (payload) => {

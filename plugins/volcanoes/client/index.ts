@@ -85,8 +85,22 @@ function replaceVents(list: readonly VentState[]): void {
   for (const vent of list) vents.set(vent.id, vent);
 }
 
+/**
+ * One merged surface each, for every eruption in the world: LAVA_CELL_CAP and
+ * MAX_PLUMES bound what goes INTO them, not how many calls they cost. Measured
+ * 2026-08-29.
+ */
+const LAVA_FLOW_DRAW_OBJECTS = 1;
+const PLUME_DRAW_OBJECTS = 1;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: VOLCANOES_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: LAVA_FLOW_DRAW_OBJECTS + PLUME_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     vents.clear();

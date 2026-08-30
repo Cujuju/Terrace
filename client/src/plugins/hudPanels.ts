@@ -68,6 +68,52 @@ export function removePluginHudPanels(pluginName: string): void {
 }
 
 /**
+ * One plugin's draw-object row, published by the host's sampler twice a second
+ * (plugins/host.ts) — see part B of
+ * docs/plans/frame-budget-growth-and-draw-calls.md.
+ *
+ * HERE RATHER THAN IN hudState.ts for the same reason the panels are: it is
+ * PER-PLUGIN state, keyed by plugin name, and it goes away when the plugin is
+ * unmounted along with everything else that plugin registered.
+ */
+export interface PluginDrawRow {
+  readonly pluginName: string;
+  /** Renderable objects in the plugin's layer, before frustum culling. */
+  readonly objects: number;
+  /** What the plugin declared it may hold, from its own spawn caps. */
+  readonly budget: number;
+  /**
+   * Whether this plugin is currently OVER budget. Sticky: set on the first
+   * sample at or above the budget and cleared only after
+   * DRAW_BUDGET_CLEAR_SAMPLES samples below the clear margin (host.ts).
+   */
+  readonly breached: boolean;
+}
+
+const [pluginDrawRows, setPluginDrawRowsSignal] = createSignal<
+  readonly PluginDrawRow[]
+>([]);
+
+export { pluginDrawRows };
+
+/** Replaces the whole set — the sampler publishes every mounted plugin at once. */
+export function setPluginDrawRows(rows: readonly PluginDrawRow[]): void {
+  setPluginDrawRowsSignal(rows);
+}
+
+/**
+ * Drops one plugin's row on unmount, so the HUD does not show a budget for a
+ * plugin that is no longer running for up to a whole sampling window.
+ */
+export function removePluginDrawRow(pluginName: string): void {
+  setPluginDrawRowsSignal((rows) =>
+    rows.some((row) => row.pluginName === pluginName)
+      ? rows.filter((row) => row.pluginName !== pluginName)
+      : rows,
+  );
+}
+
+/**
  * The world-header action: ONE plugin may claim the top-centre world banner
  * as its entry point (owner move, 2026-08-19: the chronicle left its info-
  * panel row for the banner). Core renders the claimant's icon to the right of

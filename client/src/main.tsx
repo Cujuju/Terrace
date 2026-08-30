@@ -30,9 +30,12 @@ import {
   setPendingRestartSeconds,
   setWorldLoaded,
 } from './state/worldsState.ts';
-import { createBrushPreview } from './render/brushPreview.ts';
+import { BRUSH_PREVIEW_DRAW_OBJECTS, createBrushPreview } from './render/brushPreview.ts';
 import { SCULPT_TOOL_ID, activeToolId } from './plugins/toolbar.ts';
-import { createPickDebugOverlay } from './render/pickDebugOverlay.ts';
+import {
+  createPickDebugOverlay,
+  PICK_DEBUG_OVERLAY_DRAW_OBJECTS,
+} from './render/pickDebugOverlay.ts';
 import { startFrameRateMeter } from './render/frameRate.ts';
 import { Hud } from './ui/Hud.tsx';
 import './ui/hud.css';
@@ -68,6 +71,17 @@ const pluginHost = createClientPluginHost(CLIENT_PLUGINS, {
   viewport,
   world,
   connection: () => connection,
+  // Core's own share of the frame's draw budget — the same ratchet the plugins
+  // are held to, with no pass for core (part B of
+  // docs/plans/frame-budget-growth-and-draw-calls.md). The world owns the five
+  // terrain-side rigs and reports them itself; the two rigs THIS file owns are
+  // added here. A thunk because both of them are built below, after the host,
+  // and because the world's half is live (super-mesh counts grow as a world is
+  // revealed).
+  coreDrawBudget: () =>
+    world.drawBudget() +
+    BRUSH_PREVIEW_DRAW_OBJECTS +
+    (pickDebug === null ? 0 : PICK_DEBUG_OVERLAY_DRAW_OBJECTS),
 });
 
 const connection = connect({

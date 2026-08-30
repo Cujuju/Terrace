@@ -14,6 +14,7 @@ import {
   PILGRIMS_ENTITIES_MESSAGE,
   PILGRIMS_PLUGIN_NAME,
   parseEntitiesPayload,
+  WALKERS_WIRE_CAP,
 } from '../protocol.ts';
 import { PilgrimInterpolator, type InterpolatedPilgrim } from './interpolation.ts';
 import { createPilgrimModels, type PilgrimModel, type PilgrimModels } from './models.ts';
@@ -116,8 +117,21 @@ function drawnPoseOf(id: number): MoverPose | null {
   return { x: at.x, y: at.y, z: at.z };
 }
 
+/**
+ * Draw objects one walker costs: TWO, whatever its race or kind — the rig is
+ * baked by material into a fur surface and a gloss surface (models.ts), and
+ * props ride on those same two.
+ */
+const WALKER_DRAW_OBJECTS = 2;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: PILGRIMS_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: WALKERS_WIRE_CAP * WALKER_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     models = createPilgrimModels();

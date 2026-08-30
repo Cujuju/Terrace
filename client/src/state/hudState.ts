@@ -191,6 +191,35 @@ export function setFrameRate(fps: number): void {
   setFrameRateSignal(fps);
 }
 
+/**
+ * The frame's draw accounting, published beside `frameRate` by the plugin
+ * host's sampler once per window (part B of
+ * docs/plans/frame-budget-growth-and-draw-calls.md).
+ *
+ * TWO DIFFERENT NUMBERS, DELIBERATELY NOT ONE RATIO. `objects` is what the
+ * scene CONTAINS before frustum culling — camera-independent, and therefore
+ * the only thing a budget can be written against. `calls` is what the renderer
+ * actually submitted for the last frame, which is lower whenever much of the
+ * world is off screen. The HUD prints both and says which is which.
+ */
+export interface FrameDrawAccounting {
+  /** renderer.info.render.calls — after culling. */
+  readonly calls: number;
+  /** Renderable objects across every plugin layer and core's contributors. */
+  readonly objects: number;
+  /** Σ mounted plugins' declared budgets + core's named contributors. */
+  readonly budget: number;
+}
+
+/** Null until the first sampling window closes — same contract as `frameRate`. */
+const [frameDraw, setFrameDrawSignal] = createSignal<FrameDrawAccounting | null>(
+  null,
+);
+
+export function setFrameDraw(accounting: FrameDrawAccounting): void {
+  setFrameDrawSignal(accounting);
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 //
@@ -529,6 +558,7 @@ export {
   worldIdentity,
   serverVersion,
   frameRate,
+  frameDraw,
   brushRadius,
   brushTool,
   brushProfile,

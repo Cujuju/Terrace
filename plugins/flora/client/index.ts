@@ -298,8 +298,31 @@ function applyStumpChanges(left: readonly StumpCell[], rotted: readonly StumpCel
   for (const cell of left) stumps.set(stumpKey(cell.x, cell.y), cell);
 }
 
+/**
+ * Flora draws every population through InstancedMesh pools, so its cost is a
+ * FIXED number of surfaces for the whole world rather than one per plant —
+ * FLORA_TREE_CAP, FLORA_CROP_CAP, FLORA_GRASS_CAP, FLORA_STUMP_CAP and
+ * FLORA_FRINGE_CAP bound the INSTANCES inside these, not the draw calls.
+ * Measured 2026-08-29, per rig: trees 3, crops 2, grass 3, stumps 2, fringe 4.
+ */
+const TREE_DRAW_OBJECTS = 3;
+const CROP_DRAW_OBJECTS = 2;
+const GRASS_DRAW_OBJECTS = 3;
+const STUMP_DRAW_OBJECTS = 2;
+const FRINGE_DRAW_OBJECTS = 4;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: FLORA_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: TREE_DRAW_OBJECTS +
+    CROP_DRAW_OBJECTS +
+    GRASS_DRAW_OBJECTS +
+    STUMP_DRAW_OBJECTS +
+    FRINGE_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     // Module scope outlives an attach, so a re-attach after a rejoin would

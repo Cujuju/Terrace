@@ -557,6 +557,16 @@ function watchReducedMotion(): { matches(): boolean; stop(): void } {
   };
 }
 
+/**
+ * The river rig's share of the frame's draw budget: THREE meshes, whatever the
+ * network holds. One packed water mesh for every region, plus the two MERGED
+ * spring meshes — the rings and the domes — which cover every spring in the
+ * network at once (see the spring section below) rather than one pair per
+ * spring. The count is fixed, so a world with more rivers costs more triangles
+ * and no more draw calls.
+ */
+export const RIVER_RIG_DRAW_OBJECTS = 3;
+
 export function createRiverRig(
   parent: Object3D,
   onFrame: (handler: (dt: number) => void) => () => void,
