@@ -778,6 +778,17 @@ function scourHead(world: MudslideWorld, slide: Slide): void {
     // to walk its whole path depositing nothing and then report a flow that moved
     // no ground. Found in-world: repeated forced slides on the same hillside kept
     // emitting `mudslides:flow` with volumeMoved 0.
+    //
+    // THIS IS NOW A DEFENSIVE GUARD, not the common path (issue #239, fixed
+    // 2026-08-29). The reason a scour on STEEP ground used to net >= 0 was
+    // core: relaxation manufactured height, so the surroundings rose by more
+    // than the centre fell and a real excavation measured as a gain (#108).
+    // Relaxation conserves exactly now — it can move ground away from the head
+    // but never invent it — so a scour into ground that has anything to give
+    // measures negative. The branch is kept because net >= 0 remains REACHABLE
+    // and correct for the case it was written for: already-stripped ground with
+    // nothing left to remove, and a head fully contained by band or span caps
+    // that refuse the move. Both leave measured.net at exactly 0.
     if (slide.excavated <= 0 && slide.headSteps >= MUDSLIDE_HEAD_SCOUR_STEPS) {
       slide.stop = 'spent';
     }

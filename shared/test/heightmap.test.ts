@@ -31,12 +31,14 @@ import {
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   quantizeToBand,
+  RELAX_SLACK,
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
   sculptDisplacementUnits,
   smooth,
   SMOOTH_PASS_LIMIT,
   SMOOTH_SPREAD_CELLS,
+  WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
   type Heightmap,
   type SculptOptions,
@@ -83,15 +85,19 @@ function texturedMap(size: number): Heightmap {
 const CEILING_BANDS = MAX_HEIGHT / BAND_HEIGHT;
 
 function expectGradientLimitHolds(map: Heightmap): void {
+  // MAX_STEP + RELAX_SLACK, not MAX_STEP: relaxation splits a pair's excess
+  // exactly in half so that it conserves height (#108), which leaves an odd
+  // remainder of one unit standing in the pair. See RELAX_SLACK.
+  const limit = MAX_STEP + RELAX_SLACK;
   const { size, cells } = map;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
       if (x < size - 1) {
-        expect(Math.abs(cells[i] - cells[i + 1])).toBeLessThanOrEqual(MAX_STEP);
+        expect(Math.abs(cells[i] - cells[i + 1])).toBeLessThanOrEqual(limit);
       }
       if (y < size - 1) {
-        expect(Math.abs(cells[i] - cells[i + size])).toBeLessThanOrEqual(MAX_STEP);
+        expect(Math.abs(cells[i] - cells[i + size])).toBeLessThanOrEqual(limit);
       }
     }
   }
@@ -351,8 +357,31 @@ describe('applySculpt (the full server/prediction operation)', () => {
     }
     expect(heightAt(map, 32, 32)).toBeLessThanOrEqual(MAX_HEIGHT);
     expectGradientLimitHolds(map);
-    // It actually built a mountain.
-    expect(heightAt(map, 32, 32)).toBeGreaterThan(MAX_HEIGHT / 2);
+
+    // IT ACTUALLY BUILT A MOUNTAIN — asserted on the PLAYER path since
+    // 2026-08-29 (#108), and that is a correction of what this line was
+    // measuring, not a weakening of it.
+    //
+    // The stack above runs the LIBRARY defaults (smooth / soft / spill 'free'
+    // / anchor 'free' — the plugin-terraform path). It used to reach
+    // MAX_HEIGHT from those 384 clicks, and it did so on manufactured height:
+    // measured old vs new on this exact fixture (.sim-108/results.txt), the
+    // brush delivered 18,432 height units and the map ended up holding
+    // 3,686,396 — relaxation invented 99.5% of that mountain. With the
+    // conserving split the same clicks build the hill those 18,432 units
+    // actually pay for, and its peak is 87.
+    //
+    // What a PLAYER does is unchanged, bit for bit: WIRE_DEFAULT_SCULPT_OPTIONS
+    // is anchored and band-contained, so a click's height lands in the
+    // footprint instead of spilling, and a stack of them still reaches the
+    // ceiling. Old and new both end at peak 1024 with a map total of 5,120 —
+    // measured side by side. So the contract "clicks build a mountain" is
+    // asserted where it is real.
+    const player = createHeightmap(64);
+    for (let k = 0; k < STACKED_CLICKS; k++) {
+      applySculpt(player, 32, 32, 2, DEFAULT_SCULPT_AMOUNT, WIRE_DEFAULT_SCULPT_OPTIONS);
+    }
+    expect(heightAt(player, 32, 32)).toBe(MAX_HEIGHT);
   });
 
   it('one band-click on flat ground raises ONE crisp terrace and nothing else (the Godus contract)', () => {
@@ -1312,7 +1341,14 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     // nothing outside at all. Both phases are the contract, so both are
     // asserted, per stroke rather than as one accumulated count.
     const movedPerStroke: number[] = [];
-    const strokes = 12;
+    // 12 STROKES UNTIL 2026-08-29 (#108). Saturation is unchanged as a
+    // contract but arrives later: relaxation used to hand the LOW cell of a
+    // pair `ceil(e/2)` and now hands it `floor(e/2)`, so an outside cell fills
+    // its band cap a little slower and needs a few more strokes to stop
+    // moving. Measured: outside movement per stroke falls to 0 from stroke 15
+    // and stays there (checked out to 40 strokes); 20 leaves headroom without
+    // making the assertion meaningless.
+    const strokes = 20;
     for (let s = 0; s < strokes; s++) {
       const preStroke = Int16Array.from(map.cells);
       applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, BANDED);
@@ -1468,10 +1504,16 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     // the residual is 15 units larger. Note the stroke is radius 4 CELLS here,
     // a quarter of a world unit: these scenarios pin the containment maths at
     // the grid's own scale, not a brush a player holds.
+    //
+    // RE-MEASURED AGAIN 2026-08-29, 993 → 987, and the conserving split (#108)
+    // is the deliberate change. The relaxation now moves the SAME amount off
+    // the high side that it puts on the low side, so the free cells inside the
+    // footprint shed a little further before the caps outside stop them: six
+    // more units come off the wall, and the standing excess is six smaller.
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(993);
+    expect(maxExcess(map)).toBe(987);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
@@ -1536,7 +1578,13 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     // MAX_STEP is a slope per WORLD UNIT now, so a legal step is a quarter of
     // what it was and the same excess has to be walked out over four times the
     // cells before the band caps stop it.)
-    expect(passes).toBe(10);
+    //
+    // 12 SINCE THE 2026-08-29 CONSERVING SPLIT (#108): the low side of a pair
+    // now gains floor(e/2) rather than ceil(e/2), so an excess is walked out in
+    // slightly smaller steps and two more passes run before nothing moves.
+    // Still single-to-low-double digits, still far under the cap — the banded
+    // path's cost characteristic is unchanged.
+    expect(passes).toBe(12);
   });
 
   it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {
@@ -2152,5 +2200,177 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
       // The cell beyond is untouched until the drag reaches it.
       expect(map.cells[cellIndex(map, x + 1, 12)]).toBe(0);
     }
+  });
+});
+
+describe('relaxation conserves height exactly (issue #108)', () => {
+  /**
+   * A cliff: the west half of the map at `height`, the east half at 0, with
+   * NOTHING else done to it — no brush, no spill bounds, no anchor. This is
+   * the #108 measurement fixture, and it is deliberately bare: the leak being
+   * pinned here is relaxation's own arithmetic, so anything a brush might add
+   * or subtract would only muddy the sum.
+   */
+  function cliffMap(size: number, height: number): Heightmap {
+    const map = createHeightmap(size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size / 2; x++) {
+        map.cells[cellIndex(map, x, y)] = height;
+      }
+    }
+    return map;
+  }
+
+  /** Every cell of the raised half — the seed the cascade starts from. */
+  function cliffSeed(map: Heightmap, height: number): Set<number> {
+    const seed = new Set<number>();
+    for (let i = 0; i < map.cells.length; i++) {
+      if (map.cells[i] === height) seed.add(i);
+    }
+    return seed;
+  }
+
+  /** A single cell at MAX_HEIGHT on an otherwise flat map. */
+  function spireMap(size: number): Heightmap {
+    const map = createHeightmap(size);
+    map.cells[cellIndex(map, size >> 1, size >> 1)] = MAX_HEIGHT;
+    return map;
+  }
+
+  /** The whole map's height, as an exact integer — the quantity #108 is about. */
+  function mapTotal(map: Heightmap): number {
+    let total = 0;
+    for (let i = 0; i < map.cells.length; i++) total += map.cells[i]!;
+    return total;
+  }
+
+  /** The #108 measurement heights. Conservation must hold on all of them. */
+  const CLIFF_HEIGHTS = [100, 401, 1000];
+
+  /**
+   * The heights whose cascade also fits inside SMOOTH_PASS_LIMIT. 1000 does
+   * not — see the truncation test below, which pins that boundary rather than
+   * hiding it by not testing it.
+   */
+  const CONVERGING_CLIFF_HEIGHTS = [100, 401];
+
+  /**
+   * An explicit budget for the cliff fixtures. The tallest of them relaxes for
+   * SMOOTH_PASS_LIMIT passes over a 128² map — seconds of real arithmetic, and
+   * more than vitest's 5 000 ms default once `pnpm test` is running every
+   * package's suite at once. Long by design, not slow by accident.
+   */
+  const CLIFF_TIMEOUT_MS = 30_000;
+
+  for (const height of CLIFF_HEIGHTS) {
+    it(`invents nothing relaxing a ${height}-unit cliff on 128x128`, { timeout: CLIFF_TIMEOUT_MS }, () => {
+      const map = cliffMap(128, height);
+      const before = mapTotal(map);
+      const seed = cliffSeed(map, height);
+      smooth(map, new Set(seed), seed);
+      // EXACT, not approximate. Relaxation is closed over the map — every unit
+      // it moves comes off a neighbour — so the only correct difference is 0.
+      // Before the even split (#108) a 401-unit cliff manufactured 1,666,592
+      // units here, 50.7% of the map's total, purely from the odd remainder of
+      // `e >> 1` being handed to the low cell and taken off nobody.
+      expect(mapTotal(map)).toBe(before);
+    });
+  }
+
+  for (const height of CONVERGING_CLIFF_HEIGHTS) {
+    it(`converges relaxing a ${height}-unit cliff on 128x128`, { timeout: CLIFF_TIMEOUT_MS }, () => {
+      const map = cliffMap(128, height);
+      const seed = cliffSeed(map, height);
+      const passes = smooth(map, new Set(seed), seed);
+      // Strictly below the cap proves a clean pass ran, i.e. the sweep stopped
+      // because nothing moved and not because it ran out of budget. This is
+      // the property a bare even split threatened (#108 measured it spinning
+      // to the cap) and RELAX_SLACK restores: an excess of 1 is legal, so
+      // e >= 2 for every pair that is touched at all and both sides move at
+      // least 1 — every counted move is progress.
+      expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
+    });
+  }
+
+  it('invents nothing relaxing a full-height spire', () => {
+    const map = spireMap(128);
+    const before = mapTotal(map);
+    const seed = new Set([cellIndex(map, 64, 64)]);
+    smooth(map, new Set(seed), seed);
+    expect(mapTotal(map)).toBe(before);
+  });
+
+  it('converges relaxing a full-height spire', () => {
+    const map = spireMap(128);
+    const seed = new Set([cellIndex(map, 64, 64)]);
+    expect(smooth(map, new Set(seed), seed)).toBeLessThan(SMOOTH_PASS_LIMIT);
+  });
+
+  it('leaves every pair inside the gradient limit plus the slack', { timeout: CLIFF_TIMEOUT_MS }, () => {
+    // The invariant relaxation now guarantees. The slack is the odd remainder
+    // that STAYS in the pair rather than being invented into the low cell:
+    // a pair sitting at MAX_STEP + 1 is at rest, by construction of the
+    // trigger, and is the price of exact conservation.
+    for (const height of CONVERGING_CLIFF_HEIGHTS) {
+      const map = cliffMap(128, height);
+      const seed = cliffSeed(map, height);
+      smooth(map, new Set(seed), seed);
+      expectGradientLimitHolds(map);
+    }
+  });
+
+  it('runs out of pass budget on a 1000-unit cliff — the known boundary', { timeout: CLIFF_TIMEOUT_MS }, () => {
+    // NAMED, NOT HIDDEN. Conservation costs passes: the fill on the low side
+    // is no longer invented, so every unit of the ramp has to be walked down
+    // off the plateau, and a cascade takes roughly four times as many passes
+    // as it did. Measured on this fixture (.sim-108/results.txt): 841 passes
+    // under the old manufacturing rule, ~7205 under this one — it DOES
+    // converge, and leaves a max gradient of 5, but only when given the budget.
+    // At SMOOTH_PASS_LIMIT = 2560 the sweep is truncated instead.
+    //
+    // WHAT THAT MEANS AND DOES NOT MEAN. SMOOTH_PASS_LIMIT is a bound on the
+    // authoritative server's CPU per intent, not a promise of convergence, and
+    // that bound is unchanged — the worst case still costs exactly the cap.
+    // What grew is the set of scenarios that reach it, and the residual is the
+    // one already documented on SMOOTH_PASS_LIMIT: the gradient invariant is
+    // locally violated until a later edit resumes relaxation. Every
+    // PLAYER-CONSTRUCTIBLE cascade still converges far under the cap (the #12
+    // stress tests above, and the banded worst case at 12 passes); a 1000-unit
+    // vertical cliff is a synthetic fixture, roughly 62 stamped bands of sheer
+    // wall, not a stroke.
+    const map = cliffMap(128, 1000);
+    const seed = cliffSeed(map, 1000);
+    expect(smooth(map, new Set(seed), seed)).toBe(SMOOTH_PASS_LIMIT);
+  });
+
+  it('is deterministic: identical input, identical output', { timeout: CLIFF_TIMEOUT_MS }, () => {
+    // The determinism contract (constants.ts) restated against the new
+    // arithmetic — server and client must agree bit for bit.
+    const a = cliffMap(128, 401);
+    const b = cliffMap(128, 401);
+    const seedA = cliffSeed(a, 401);
+    const seedB = cliffSeed(b, 401);
+    const passesA = smooth(a, new Set(seedA), seedA);
+    const passesB = smooth(b, new Set(seedB), seedB);
+    expect(passesA).toBe(passesB);
+    expect(Array.from(a.cells)).toEqual(Array.from(b.cells));
+  });
+
+  it('invents nothing scouring a head out of steep ground (issue #239)', () => {
+    // The mudslide head scour, reduced to its core: lower a centre cell hard
+    // and let the relaxation answer. #239's symptom was that the surroundings
+    // rose as much as the centre fell, so the plugin measured net >= 0 and
+    // abandoned the slide. The sum below is the reason that could happen.
+    const map = createHeightmap(128);
+    for (let i = 0; i < map.cells.length; i++) map.cells[i] = 512;
+    const centre = cellIndex(map, 64, 64);
+    map.cells[centre] = 512 - 64;
+    const before = mapTotal(map);
+    const seed = new Set([centre]);
+    smooth(map, new Set(seed), seed);
+    expect(mapTotal(map)).toBe(before);
+    // And the scour is still a NET REMOVAL at the head, which is what the
+    // plugin measures to decide the slide carries a load at all.
+    expect(map.cells[centre]!).toBeLessThan(512);
   });
 });

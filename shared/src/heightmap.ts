@@ -16,6 +16,7 @@ import {
   MAX_STEP,
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
+  RELAX_SLACK,
   SEA_LEVEL,
   SMOOTH_PASS_LIMIT,
   WORLD_UNIT_CELLS,
@@ -1802,9 +1803,23 @@ type SpillBoundsOf = (index: number) => SpillBand | null;
 
 /**
  * Moves the excess `e` (the amount a pair exceeds MAX_STEP by) between the
- * higher cell `hiIdx` and the lower cell `loIdx`: higher loses `floor(e/2)`,
- * lower gains the rest, leaving the pair at exactly MAX_STEP — the original
- * relaxation arithmetic, verbatim, when `boundsOf` is null.
+ * higher cell `hiIdx` and the lower cell `loIdx`: BOTH sides move by exactly
+ * `e >> 1`, leaving the pair at MAX_STEP when `e` is even and at
+ * MAX_STEP + RELAX_SLACK when it is odd.
+ *
+ * THE SPLIT IS EXACT (issue #108, 2026-08-29). It used to be
+ * `drop = e >> 1; rise = e - drop`, which on an odd excess gave the low cell
+ * one unit the high cell never lost. Relaxation is CLOSED over the map — the
+ * only thing it may do is move height between two cells — so that unit was
+ * manufactured out of nothing: one bare smooth of a 401-unit cliff on a 128²
+ * map invented 1,666,592 height units, 50.7% of the map's own total, and a
+ * player roaming with a smooth brush was a height pump. `drop === rise` makes
+ * a pass sum-preserving by construction, on every path through this function
+ * including the coupled clamp below (which already moved both sides by the
+ * same `t`). The caller pays for it with RELAX_SLACK — see that constant for
+ * why the trigger had to move with the arithmetic, and for the alternatives
+ * (odd unit to the high side; parity alternation; a remainder ledger) that
+ * were rejected.
  *
  * BANDED CLAMPING (issue #26). When either side is band-capped and its half
  * of the move does not fit, BOTH sides move by the same reduced amount `t`
@@ -1840,8 +1855,11 @@ function movePair(
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
 ): boolean {
+  // EXACTLY half each way — never `e - drop` for the low side (#108). The
+  // caller guarantees e >= 2 (relaxPair's trigger), so this is never a
+  // zero move on the unbanded path.
   let drop = e >> 1;
-  let rise = e - drop;
+  let rise = drop;
   if (boundsOf !== null || spanCaps !== null) {
     const hiBand = boundsOf === null ? null : boundsOf(hiIdx);
     const loBand = boundsOf === null ? null : boundsOf(loIdx);
@@ -1871,10 +1889,22 @@ function movePair(
 
 /**
  * Relaxes one 4-neighbor pair toward the gradient limit: if `cells[i]` and
- * `cells[j]` differ by more than MAX_STEP, the higher of the two loses
- * `floor(e/2)` (`e` the excess over MAX_STEP) and the lower gains the rest,
- * leaving the pair at exactly MAX_STEP — subject to band caps when `boundsOf`
- * is non-null (see movePair). Both indices are added to `changed`, in (i, j)
+ * `cells[j]` differ by more than `MAX_STEP + RELAX_SLACK`, the higher of the
+ * two loses `floor(e/2)` (`e` the excess over MAX_STEP) and the lower gains
+ * the SAME amount, leaving the pair at MAX_STEP or, on an odd excess, at
+ * MAX_STEP + RELAX_SLACK — subject to band caps when `boundsOf` is non-null
+ * (see movePair).
+ *
+ * WHY THE THRESHOLD IS NOT MAX_STEP (issue #108). The excess is now split
+ * evenly, so an excess of 1 would move nobody; treating such a pair as
+ * relaxable would make every pass report "changed" forever and the sweep would
+ * run to SMOOTH_PASS_LIMIT. Excluding it here makes `e >= 2` for every pair
+ * movePair is called on, hence both sides always move at least 1, hence every
+ * pass that reports a change strictly reduced the map's total excess — which
+ * is the termination argument the sweep rests on. The cost is one unit of
+ * standing slope, named RELAX_SLACK.
+ *
+ * Both indices are added to `changed`, in (i, j)
  * caller order and even when one side's own delta rounded to zero — the
  * pre-#26 behaviour, kept so free mode's changed-set is bit-identical in
  * contents AND insertion order. Returns whether the pair was adjusted, so a
@@ -1894,9 +1924,9 @@ function relaxPair(
   const spanCaps = layer === null ? null : layer.spanCaps;
   const d = cells[i] - cells[j];
   let moved = false;
-  if (d > MAX_STEP) {
+  if (d > MAX_STEP + RELAX_SLACK) {
     moved = movePair(cells, i, j, d - MAX_STEP, boundsOf, spanCaps);
-  } else if (d < -MAX_STEP) {
+  } else if (d < -(MAX_STEP + RELAX_SLACK)) {
     moved = movePair(cells, j, i, -d - MAX_STEP, boundsOf, spanCaps);
   }
   if (moved) {
@@ -1984,10 +2014,18 @@ function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | nul
 /**
  * Gradient-limit relaxation — the Populous signature and the single most
  * feel-critical routine in the project. After an edit, any 4-neighbor pair
- * differing by more than MAX_STEP is pulled toward each other by half the
- * excess (higher cell loses floor(e/2), lower gains the rest, leaving the
- * pair at exactly MAX_STEP), swept in fixed row-major passes over a bounding
- * box that grows by one cell per pass so spillover can propagate outward.
+ * differing by more than MAX_STEP + RELAX_SLACK is pulled toward each other by
+ * half the excess (each cell moves floor(e/2), leaving the pair at MAX_STEP,
+ * or at MAX_STEP + RELAX_SLACK when the excess was odd), swept in fixed
+ * row-major passes over a bounding box that grows by one cell per pass so
+ * spillover can propagate outward.
+ *
+ * A PASS MOVES HEIGHT AND NEVER MAKES IT (issue #108). Both cells of a pair
+ * move by the same amount in opposite directions, so sum(cells) is invariant
+ * across this whole routine — tested. Relaxation is not allowed to be a source
+ * or a sink of ground; that it once was is what made a roaming smooth brush a
+ * height pump and what made mudslide head scours net zero on steep ground
+ * (#239).
  *
  * Exits as soon as a full pass changes nothing. SMOOTH_PASS_LIMIT (see
  * constants.ts) is a safety cap sized so every single-stroke cascade a player
@@ -2006,7 +2044,8 @@ function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | nul
  * cascade converged.
  *
  * INVARIANT (tested): starting from a map that satisfies the gradient limit,
- * applyBrush + smooth leaves no 4-neighbor pair exceeding MAX_STEP.
+ * applyBrush + smooth leaves no 4-neighbor pair exceeding
+ * MAX_STEP + RELAX_SLACK.
  * Relaxation moves values strictly toward each other, so it can never leave
  * [MIN_HEIGHT, MAX_HEIGHT] and never needs clamping.
  *
@@ -2513,12 +2552,14 @@ export function applySculpt(
     // Plugin terraforms are unaffected either way — they run `anchor: 'free'`,
     // which never reaches this code.
     //
-    // NOT the relaxation height leak itself. movePair still manufactures
-    // height (a 401-unit cliff relaxes into 1,073,664 units from nowhere);
-    // that is a real defect, it is what made the two directions asymmetric,
-    // and it is deliberately left for its own change — every rounding fix
-    // measured either broke the exact MAX_STEP invariant this keeps or
-    // quadrupled the pass count on a tall cliff.
+    // NOT the relaxation height leak itself. That was a separate defect —
+    // movePair manufactured height (a 401-unit cliff relaxed into over a
+    // million units from nowhere), and it is what made the two directions
+    // asymmetric. FIXED 2026-08-29 in its own change (#108): the excess is now
+    // split exactly in half and the pair trigger carries RELAX_SLACK, so the
+    // invariant this anchor keeps is MAX_STEP + RELAX_SLACK rather than
+    // MAX_STEP exactly. The anchor arithmetic here is unaffected — it bounds
+    // cells, it does not split excesses.
     //
     // PLAYER STROKES ONLY. anchorBounds is built for `anchor: 'clicked'`, and
     // the library default is `anchor: 'free'` — plugin terraforms are

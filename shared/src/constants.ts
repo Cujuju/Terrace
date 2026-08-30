@@ -361,6 +361,44 @@ export const LEGACY_MIN_HEIGHT = -1536;
 export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
 
 /**
+ * The odd height unit relaxation is allowed to LEAVE STANDING in a pair, in
+ * height units. A neighbour pair is relaxed only when it exceeds
+ * `MAX_STEP + RELAX_SLACK`, so a pair sitting one unit over the gradient limit
+ * is at rest and the world's true steepest legal slope is MAX_STEP + 1 per
+ * cell rather than MAX_STEP. Every reader of the gradient invariant must
+ * allow it (shared/test/heightmap.test.ts's expectGradientLimitHolds).
+ *
+ * WHY IT EXISTS — issue #108, and it is the price of conservation, not a
+ * tolerance for sloppiness. Relaxation splits a pair's excess `e` EXACTLY in
+ * half (`drop = rise = e >> 1`): the high cell loses precisely what the low
+ * cell gains, so the map's total height is unchanged by a pass. The previous
+ * rule gave the low cell `e - (e >> 1)`, one unit more than the high cell lost
+ * whenever `e` was odd, and since relaxation is closed over the map that unit
+ * came from NOWHERE — measured at 1,666,592 units manufactured by one bare
+ * smooth of a 401-unit cliff on a 128² map, 50.7% of the map's total.
+ *
+ * WHY IT IS EXACTLY 1, and why the trigger and not just the arithmetic had to
+ * move: an even split of an excess of 1 gives both sides zero, and a pair that
+ * cannot move must not be treated as movable or the sweep never reports a
+ * clean pass and spins to SMOOTH_PASS_LIMIT (measured: it does). Excluding
+ * `e === 1` from the trigger makes `e >= 2` for every pair the sweep touches,
+ * so both sides always move at least 1 — every counted move is real progress
+ * and termination is provable rather than hoped for. 1 is the smallest slack
+ * with that property, and the largest that is invisible: it is a quarter of
+ * MAX_STEP and 1/16 of a terrace band, well inside one band contour.
+ *
+ * REJECTED ALTERNATIVES: give the odd unit to the HIGH side instead
+ * (`drop = e - (e >> 1)`) — that makes the map a height SINK, destroying
+ * ground on every odd pair, which is the same defect with the sign flipped;
+ * alternate the parity by pass or by cell index — conserves only on average,
+ * which is not conservation, and makes the result depend on sweep bookkeeping
+ * the determinism contract would then have to pin; carry the remainder in a
+ * ledger cell — exact, but it makes the map's height depend on invisible
+ * state and is unreadable.
+ */
+export const RELAX_SLACK = 1;
+
+/**
  * Height units applied at the brush center by one sculpt intent: exactly one
  * terrace band per click, so each sculpt visibly pops a terrace — the core
  * interaction. Server config may override; plugins may modify per-intent.
@@ -425,9 +463,17 @@ export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
  *
  * WHAT THE DOUBLING DOES AND DOES NOT COST. This is the worst case — a single
  * stroke laid against the full 2560-unit range — not the common one. A PLAYER
- * click got cheaper, not dearer: DEFAULT_SCULPT_AMOUNT and MAX_STEP are both
- * BAND_HEIGHT now, so one click's excess spills exactly one cell, where the
- * old 64-against-32 pair spilled two.
+ * click got cheaper, not dearer: DEFAULT_SCULPT_AMOUNT is BAND_HEIGHT and
+ * MAX_STEP is BAND_HEIGHT per WORLD UNIT, so one click's excess spills exactly
+ * one WORLD UNIT, where the old 64-against-32 pair spilled two.
+ *
+ * CORRECTED 2026-08-29 (#108): this paragraph used to say the two constants
+ * "are both BAND_HEIGHT now", which stopped being true at the 2026-08-21
+ * re-sample — DEFAULT_SCULPT_AMOUNT is 16 and MAX_STEP is 4. The DISTANCE the
+ * claim was making a point about is unchanged, which is why the error was
+ * invisible: a click spills one world unit either way, and that world unit is
+ * four cells now. The ratio DEFAULT_SCULPT_AMOUNT = MAX_STEP * WORLD_UNIT_CELLS
+ * is its own settled decision (see MAX_STEP above); only the wording moved.
  *
  * FOUR TIMES THE CELLS, THE SAME DISTANCE (2026-08-21). MAX_STEP is a slope
  * per world unit, so spread went 160 to 640 CELLS while staying 160 world

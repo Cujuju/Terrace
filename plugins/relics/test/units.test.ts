@@ -247,7 +247,14 @@ describe('terraform shapes', () => {
     expect([...TERRAFORM_BY_SKILL.keys()].sort()).toEqual(['genesis', 'quake']);
   });
 
-  it('stays inside a small footprint on real terrain, through the plugin sculpt path', () => {
+  // AN EXPLICIT TIMEOUT (2026-08-29, #108). This test runs real casts over two
+  // 256² maps of deliberately over-steep terrain, and relaxation got slower
+  // when it stopped manufacturing height: the fill on a pair's low side is no
+  // longer invented, so a cascade walks the same excess out in more passes
+  // (measured ~4× on a bare cliff). It now runs at ~9 s against vitest's
+  // 5 000 ms default. The work is legitimate and the budget it asserts is
+  // unchanged — only the wall clock moved.
+  it('stays inside a small footprint on real terrain, through the plugin sculpt path', { timeout: 60_000 }, () => {
     // REGRESSION (2026-08-21, Frostwick Hollows): WorldApi.sculpt used to run
     // the library default (smooth + FREE spill). After MAX_STEP was halved to
     // BAND_HEIGHT, one Genesis cast's unbounded relaxation regraded every
