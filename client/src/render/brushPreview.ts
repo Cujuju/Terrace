@@ -31,10 +31,43 @@
 // 0.75 units as a stamp and 0.25 as a smooth, a threefold change from the Tool
 // row. That is what made a click unpredictable.
 //
-// THE GEOMETRY IS THEREFORE PER (RADIUS, TOOL, EDGE), and all of them are built
-// at startup rather than on demand — 64 simulations, 24 ms measured, and it
-// keeps the structural guards below firing at load or never, which is what they
-// were written to promise. Showing, moving and hiding still allocates nothing.
+// THE DIRECTION MOVES IT TOO, and that table above is the RAISE half. Lowering
+// is not the mirror of raising: the heights mirror exactly (applyBrush truncs
+// toward zero) but the BAND does not, because `bandOf` FLOORS. From a
+// band-aligned h = 0 a cell must gain the whole +BAND_HEIGHT to reach the band
+// above, which only the footprint centre does under a soft falloff — while ANY
+// loss at all, down to −1, puts the cell below zero and `Math.floor` reads that
+// as the band below. So on flat ground every combination lowers its WHOLE
+// footprint by a band. Measured the same way, one click, width of what renders:
+//
+//     brush   stamp+hard  stamp+soft  smooth+hard  smooth+soft
+//     0.25   raise 0.25    0.25         0.25         0.25
+//            lower 0.25    0.25         0.25         0.25
+//     0.75   raise 0.75    0.25         0.25         0.25
+//            lower 0.75    0.75         0.75         0.75
+//     1.75   raise 1.75    0.25         1.00         0.25
+//            lower 1.75    1.75         1.75         1.75
+//     3.75   raise 3.75    0.25         3.25         0.25
+//            lower 3.75    3.75         3.75         3.75
+//     7.75   raise 7.75    0.25         7.25         0.25
+//            lower 7.75    7.75         7.75         7.75
+//
+// The lower row is the footprint at every radius and every combination, so a
+// preview built from the raise alone under-promised by up to 31 cells across —
+// the 7.75 brush drew a single cell and dropped 749 of them. It read as a
+// direction control that silently resized the brush, which is the same defect
+// the Tool row had, one axis over.
+//
+// THE GEOMETRY IS THEREFORE PER (RADIUS, TOOL, EDGE, DIRECTION), and all of them
+// are built at startup rather than on demand — 128 simulations now, and it keeps
+// the structural guards below firing at load or never, which is what they were
+// written to promise. Showing, moving and hiding still allocates nothing.
+//
+// The direction axis doubles the count and costs proportionally: measured in the
+// headless test harness on one machine, the 64-entry build took 33 ms and the
+// 128-entry build 70 ms. The 24 ms above was measured elsewhere and is left as
+// the record of what the 64 cost there; the ratio, not the absolute, is what
+// this axis added.
 //
 // HOW that set is DRAWN is the terrain's business, and this is the whole point
 // of the module (owner, 2026-08-19: "use the terrain's pipeline for the brush
@@ -155,6 +188,7 @@ import {
   createHeightmap,
   forEachFootprintOffset,
   sculptOptionsOf,
+  type SculptIntent,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -325,15 +359,31 @@ export interface BrushHover {
 }
 
 /**
+ * Which way a click moves the ground: `SculptIntent`'s own `dir` field, read off
+ * the protocol type rather than restated as a second `1 | -1`, so the outline
+ * cannot come to disagree with the wire about what a direction is.
+ */
+type SculptDir = SculptIntent['dir'];
+
+/**
  * The brush as the outline needs it: everything about the player's selection
  * that changes what one click renders. Tool and edge are here for the same
  * reason radius is — see the table in the module header, where the Tool row
  * moves the 0.75 brush's mark by a factor of three.
+ *
+ * `dir` is here for that same reason and REQUIRED for a stronger one: it is the
+ * field a caller is most likely to leave out, and the outline drawn without it
+ * was the raise mark under a Lower selection — up to 31 cells narrower than the
+ * click it promised (module header). An optional field with a raise default
+ * would put that bug back one forgetful callsite away, so the type refuses to
+ * describe a selection that has not said which way it moves the ground.
  */
 export interface BrushSelection {
   readonly radius: number;
   readonly tool: SculptTool;
   readonly profile: SculptProfile;
+  /** +1 raise, −1 lower — SculptIntent's own `dir` (shared/src/protocol.ts). */
+  readonly dir: SculptDir;
 }
 
 export interface BrushPreview {
@@ -408,6 +458,25 @@ const MARK_BAND_TINT_MIX = 1 / 3;
  */
 const SEED_TOOL: SculptTool = 'stamp';
 const SEED_PROFILE: SculptProfile = 'hard';
+/**
+ * And it always RAISES: `seedLayer` sends `sculptDirection('raise')` outright
+ * (input/sculptInput.ts), so the seed's ring is looked up under the raise mark
+ * rather than under the HUD's current direction. `takeHold` only ever calls it
+ * on a raise press, so the two never disagree — but naming the direction here
+ * is what makes that true by construction rather than by the two staying in
+ * step, and it is the value `update` tests the selection against before it
+ * decides a press is a seed at all.
+ */
+const SEED_DIR: SculptDir = 1;
+
+/**
+ * Both directions the wire allows, in the order the eager cache builds them.
+ * The counterpart of shared's SCULPT_TOOLS / SCULPT_PROFILES, written here
+ * because `dir` is a plain field rather than a named set: a direction the HUD
+ * can select and this list omits has no geometry to bind, and `update` hides
+ * the outline rather than drawing the other direction's promise.
+ */
+const SCULPT_DIRECTIONS: readonly SculptDir[] = [1, -1];
 
 /**
  * Where the outline crosses the lattice edge between an inside cell and an
@@ -534,7 +603,12 @@ const SIMULATION_GROUND_HEIGHT = 0;
  * would resize as the cursor crossed terrain that looks identical, which is
  * less predictable than one honest premise, not more.
  */
-function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile): Mark {
+function oneClickMark(
+  radius: number,
+  tool: SculptTool,
+  profile: SculptProfile,
+  dir: SculptDir,
+): Mark {
   const map = createHeightmap(SIMULATION_SPAN_CELLS);
   const centre = SIMULATION_SPAN_CELLS >> 1;
   map.cells.fill(SIMULATION_GROUND_HEIGHT);
@@ -545,12 +619,21 @@ function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile):
     centre,
     centre,
     radius,
-    DEFAULT_SCULPT_AMOUNT,
-    // `dir` and the amount only have to be a legal RAISE — the mark's
-    // shape is symmetric between raise and lower on the band-aligned ground
-    // this simulates (applyLevelFillBrush's own note), so one direction
-    // answers for both.
-    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir: 1, tool, profile }),
+    // THE SIGN OF THE AMOUNT IS THE DIRECTION, and it is the only place the
+    // direction enters: this is how the server builds the call
+    // (DEFAULT_SCULPT_AMOUNT * effective.dir, server/src/intent/pipeline.ts),
+    // and `sculptOptionsOf` never reads the intent's own `dir` at all — it
+    // resolves tool, profile, spill and anchor and nothing else. A `dir` put
+    // in the intent below without this multiplication would change no cell.
+    //
+    // THIS USED TO BE A BARE RAISE, on the claim that the mark is symmetric
+    // between the two directions "on the band-aligned ground this simulates".
+    // The HEIGHTS are symmetric (applyBrush truncs toward zero — its own note,
+    // and it is about heights); the BANDS are not, because `bandOf` floors, so
+    // a −1 delta crosses a band boundary where +1 does not. See the table in
+    // the module header: that claim cost the Lower mode up to 31 cells of ring.
+    DEFAULT_SCULPT_AMOUNT * dir,
+    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
   );
 
   const keys = new Set<string>();
@@ -568,7 +651,9 @@ function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile):
   // moves at least the clicked cell — so an empty mark means the sculpt rules
   // changed underneath this module. All inputs are constants; startup or never.
   if (cells.length === 0) {
-    throw new RangeError(`brush radius ${radius} (${tool}, ${profile}) renders no change`);
+    throw new RangeError(
+      `brush radius ${radius} (${tool}, ${profile}, dir ${dir}) renders no change`,
+    );
   }
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
@@ -712,8 +797,9 @@ function brushGeometry(
   radius: number,
   tool: SculptTool,
   profile: SculptProfile,
+  dir: SculptDir,
 ): BrushGeometry {
-  const mark = oneClickMark(radius, tool, profile);
+  const mark = oneClickMark(radius, tool, profile, dir);
   const outline = markOutline(radius, mark);
   const drop = skirtDropWorldUnits(mark);
 
@@ -774,12 +860,17 @@ export const BRUSH_PREVIEW_DRAW_OBJECTS = 4;
 
 export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
   /**
-   * Every (radius, tool, edge) the wire allows, built once at startup — see the
-   * module header for the cost and for why it is eager rather than lazy.
+   * Every (radius, tool, edge, direction) the wire allows, built once at
+   * startup — see the module header for the cost and for why it is eager rather
+   * than lazy.
    */
   const geometries = new Map<string, BrushGeometry>();
-  const key = (radius: number, tool: SculptTool, profile: SculptProfile): string =>
-    `${radius}|${tool}|${profile}`;
+  const key = (
+    radius: number,
+    tool: SculptTool,
+    profile: SculptProfile,
+    dir: SculptDir,
+  ): string => `${radius}|${tool}|${profile}|${dir}`;
   for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
     for (const tool of SCULPT_TOOLS) {
       // THE PULL AND THE CARVE HAVE NO FOOTPRINT OF THEIR OWN TO CACHE.
@@ -803,13 +894,26 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       // under-promises instead.
       if (tool === 'drag' || tool === 'carve') continue;
       for (const profile of SCULPT_PROFILES) {
-        geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
+        for (const dir of SCULPT_DIRECTIONS) {
+          geometries.set(key(r, tool, profile, dir), brushGeometry(r, tool, profile, dir));
+        }
       }
     }
   }
-  const initial = geometries.get(
-    key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!),
-  )!;
+  /**
+   * The combination the three objects are BORN bound to. Stated once and read
+   * by both the geometry lookup and `shownKey` below: written out twice, the
+   * two could name different combinations, and `update` would then skip the
+   * rebind on a first frame that asked for the key `shownKey` claimed —
+   * leaving the player the ring for a brush they had not selected.
+   */
+  const initialKey = key(
+    MIN_BRUSH_RADIUS,
+    SCULPT_TOOLS[0]!,
+    SCULPT_PROFILES[0]!,
+    SCULPT_DIRECTIONS[0]!,
+  );
+  const initial = geometries.get(initialKey)!;
 
   const material = new LineBasicMaterial({
     color: OUTLINE_COLOR_CAP,
@@ -933,7 +1037,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
   };
 
   /** The key currently bound to the three objects, so a still brush rebinds nothing. */
-  let shownKey = key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!);
+  let shownKey = initialKey;
 
   /**
    * The ONE place either visibility is written. Both callers of `update` used
@@ -987,8 +1091,15 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       // "On a tread" means the ray crossed this span's own CAP. Lower down the
       // same horizontal test is a cave roof's UNDERSIDE, where a raise is
       // refused outright and there is nothing to promise.
+      //
+      // AND ONLY WHEN THE PRESS RAISES. `takeHold` seeds on `action === 'raise'`
+      // and returns outright otherwise ("a lower press with nothing in its grasp
+      // has nothing to retreat" — input/sculptInput.ts), so a Drag press on a
+      // tread in Lower mode emits no intent at all. Ringing it would promise a
+      // stamp that never happens; without the direction test this branch could
+      // not tell the two presses apart, and drew the seed's ring for both.
       const onTread = !hover.hitRiser && atY === hover.surfaceY;
-      const seeding = brush.tool === 'drag' && onTread;
+      const seeding = brush.tool === 'drag' && onTread && brush.dir === SEED_DIR;
 
       // THE PULL AND THE CARVE ARE POINTED, NOT OUTLINED, everywhere else — a
       // ring is a promise about which cells one click will change, and neither
@@ -1029,8 +1140,8 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         return;
       }
       const wanted = seeding
-        ? key(brush.radius, SEED_TOOL, SEED_PROFILE)
-        : key(brush.radius, brush.tool, brush.profile);
+        ? key(brush.radius, SEED_TOOL, SEED_PROFILE, SEED_DIR)
+        : key(brush.radius, brush.tool, brush.profile, brush.dir);
       if (wanted !== shownKey) {
         const geometry = geometries.get(wanted);
         // An unknown combination means a bug upstream (the HUD only offers the

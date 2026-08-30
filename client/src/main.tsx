@@ -19,6 +19,8 @@ import {
   brushProfile,
   brushRadius,
   brushTool,
+  sculptDirection,
+  sculptMode,
   setConnectionStatus,
 } from './state/hudState.ts';
 import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
@@ -234,6 +236,22 @@ viewport.onFrame(() => {
       radius: brushRadius(),
       tool: brushTool(),
       profile: brushProfile(),
+      // THE MODE IS PART OF THE SHAPE, not just of the sign. Lowering drops the
+      // whole footprint a band while a soft raise clears the band above only at
+      // the centre, so the same radius promises up to 31 cells more one way
+      // than the other (the table in render/brushPreview.ts). Read the same way
+      // input/sculptInput.ts reads it for the intent it sends, so the ring and
+      // the click are the same direction by construction.
+      //
+      // RESIDUAL, stated: a press resolves through `resolvePress` (button AND
+      // modifier), while `syncMode` can only infer the mode from the MODIFIER.
+      // Under the default bindings the two agree — raise and lower share the
+      // left button and differ by shift — but a player who rebinds Lower to a
+      // different BUTTON at the same modifier gets a ring for the mode the HUD
+      // shows, not for the button they are about to press. A hover knows no
+      // button, so closing that needs the Mode readout to become
+      // button-aware — the same gap the HUD indicator already has.
+      dir: sculptDirection(sculptMode()),
     },
   );
   pickDebug?.update(pick, grabbedBand);
