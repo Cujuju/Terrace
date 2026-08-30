@@ -259,3 +259,67 @@ export function parseStrikesPayload(payload: unknown): WeatherStrike[] | null {
   }
   return parsed;
 }
+
+/**
+ * SUPERSEDED 2026-08-28 — kept because the reasoning below is still the reason
+ * the ceiling exists, and only the NUMBER was wrong:
+ *
+ *   "Weather systems alive at once. THREE, and it is an aesthetic number before
+ *   it is a bandwidth one — see the budget in ./index.ts, where three systems
+ *   come to 2.4 kbit/s, i.e. 0.6% of what the wildlife plugin already spends.
+ *   One system would make weather a single event a player either is in or is
+ *   not. Three is the smallest number that can put a rain front over one coast,
+ *   fog in a valley and clear sky in between — a SKY rather than an effect —
+ *   while still leaving most of a 512² world clear at any moment, which is what
+ *   keeps clear weather the default the owner's 'sun' asks for."
+ *
+ * WHAT WAS WRONG WITH IT. Three is a POPULATION, and a population says nothing
+ * about whether a player sees weather; what a player experiences is COVERAGE —
+ * the chance that the patch of world they are looking at is under a system —
+ * and coverage is population × system area ÷ world area. Every number in the
+ * paragraph above was chosen against the 128-world-unit world of 2026-08-14.
+ * The shipped default is 512 world units, SIXTEEN TIMES the area, so the same
+ * three discs cover a sixteenth as much of it. Measured on the sim (three
+ * simulated hours, .weather-verify/sim-sweep.mjs):
+ *
+ *   128-unit world:  1.67 systems alive, a fixed point under weather 14.5% of
+ *                    the time — the picture the paragraph above describes.
+ *   512-unit world:  2.04 systems alive, a fixed point under weather  2.8% of
+ *                    the time — about 100 seconds an hour, in bursts.
+ *
+ * 2.8% is why the owner reported seeing no weather at all (2026-08-28), and it
+ * is why the 2026-08-14 retune of the spawn interval did not fix his first
+ * report either: that retune moved the population, and the population was never
+ * the thing that was too small.
+ *
+ * So the tuned quantity is coverage now (TARGET_SKY_COVERAGE_FRACTION) and the
+ * population is derived from it (activeSystemCapFor). This constant keeps its
+ * name and becomes what it always really was: the HARD CEILING the wire, the
+ * draw calls and the storm lights are budgeted against.
+ *
+ * FOURTEEN. On the shipped 2048-cell world the coverage formula asks for 13.75
+ * (corrected 2026-08-28 — an earlier comment said 10, before the equilibrium
+ * occupancy was folded into the cap), so the ceiling sits exactly at what the
+ * default world wants, with no headroom above it; every cost it caps is bounded
+ * and small at 14: 14 × 97 B at 1 Hz is 11 kbit/s per client, still under 3% of
+ * what the wildlife plugin spends; at most 14 particle columns and 4 fog sheets
+ * each is ~70 draw calls; and lightning's photosensitivity floor is enforced by
+ * ONE governor for the whole client (client/sky.ts), so more storms cannot make
+ * the screen flash faster.
+ *
+ * RESIDUAL, NAMED: on any world larger than the shipped default the ceiling
+ * binds before the coverage target is met — MAX_WORLD_SIZE is 4096 cells,
+ * where the formula asks for 48 systems and gets 14, i.e. about 5% coverage
+ * instead of 18% (figures corrected 2026-08-28; the earlier "24 and 10%"
+ * were wrong). That is a self-hoster's deliberately huge world
+ * getting a slightly emptier sky, which is a far better failure than 24 storm
+ * lights; the fix if anyone ever wants it is bigger systems on bigger worlds,
+ * not more of them.
+ *
+ * RESIDUAL, NAMED: a storm rig carries a PointLight, and adding or removing a
+ * light recompiles every material's shader (see client/rig.ts). More systems
+ * means more turnover, so that recompile lands more often — roughly once a
+ * minute on the shipped world instead of once every three. It is a hitch, not a
+ * leak, and moving the storm light out of the rig is a separate change.
+ */
+export const MAX_ACTIVE_SYSTEMS = 14;

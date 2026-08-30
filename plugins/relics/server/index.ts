@@ -97,16 +97,13 @@ import { TERRAFORM_BY_SKILL, applyTerraform } from './terraform.ts';
 // Tuning constants
 // ────────────────────────────────────────────────────────────────────────────
 
-/**
- * How many relics exist at once: exactly one per skill.
- *
- * Derived from the roster rather than picked, because the alternative is a
- * player who wants Genesis waiting on a dice roll for it to be the one that
- * spawned. One of each means every skill is always obtainable by someone, the
- * cycle below can be a simple round robin, and adding a skill to the roster
- * automatically adds its relic instead of quietly making the pool more diluted.
- */
-export const RELIC_COUNT = SKILL_IDS.length;
+// RELIC_COUNT MOVED TO ../protocol.ts (2026-08-29): it is the cap the CLIENT
+// half's draw budget is written against — one gem mesh per relic, part B of
+// docs/plans/frame-budget-growth-and-draw-calls.md — and a client half may not
+// import a plugin's server half. It was already derived from SKILL_IDS, which
+// lives there. Re-exported here so every importer keeps working.
+import { RELIC_COUNT } from '../protocol.ts';
+export { RELIC_COUNT };
 
 /**
  * Seconds between a relic being collected and the same skill's relic returning,
