@@ -871,6 +871,14 @@ export type WorldAdminRefusal =
    */
   | 'reloadFailed'
   /**
+   * The reload failed AND the world could not be reopened over either build,
+   * so the server is left with NO world loaded (issue #207). Told apart from
+   * `reloadFailed` because that name promises the operator the previous build
+   * is still running, and here nothing is: the clients have been told the
+   * world is unloaded, and somebody has to load one again.
+   */
+  | 'reloadLeftNoWorld'
+  /**
    * The plugin is installed but declares no such setting, or does not accept
    * that value for it. Its own declaration is the authority — core knows what
    * a key MEANS to nobody — so this is the same class of refusal as a plugin

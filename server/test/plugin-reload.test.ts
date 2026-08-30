@@ -282,4 +282,42 @@ describe('reloading one plugin in place', () => {
     const announced = snapshotIdentities().filter(([, identity]) => identity === after);
     expect(announced.map(([target]) => target).sort()).toEqual(['a', 'b']);
   });
+
+  // WHEN THE WORLD ITSELF CANNOT BE REOPENED (issue #207). `openInto` clears
+  // the session before it opens the incoming world, so an open-side failure
+  // leaves NOTHING loaded — and the rollback's open can fail the same way,
+  // because it opens the very same file the very same way a moment later. The
+  // clients are then still drawing a world the server has closed and every
+  // sculpt they send is dropped, so this path owes them the `worldUnloaded`
+  // every other no-world exit sends, and owes the operator a receipt that does
+  // not claim the build that was running still is.
+  it('tells every client the world is gone when both opens fail', async () => {
+    writeProbe(pluginsDir, { mark: 'v2', messageType: 'two' });
+    sink.clear();
+    // The read side of opening a world, broken for the rest of the test: this
+    // is the shape of the real fault (the store file becoming unopenable
+    // between the release and the reopen), and it reproduces on the rollback.
+    registry.openStore = (): never => {
+      throw new Error('store is unopenable');
+    };
+
+    expect(await manager.reloadPlugin(PLUGIN_DIRECTORY)).toBe('reloadLeftNoWorld');
+
+    expect(manager.current).toBeNull();
+    const unloaded = sink.ofType('worldUnloaded');
+    expect(unloaded).toHaveLength(1);
+    expect(unloaded[0]?.target).toBe('broadcast');
+  });
+
+  // THE OTHER SIDE OF THE SAME CONTRACT: a rollback that succeeded left a world
+  // loaded, so saying it is unloaded would blank a live world's view.
+  it('says nothing about unloading when the rollback succeeds', async () => {
+    writeProbe(pluginsDir, { mark: 'v2', messageType: 'two', throwOnTick: true });
+    sink.clear();
+
+    expect(await manager.reloadPlugin(PLUGIN_DIRECTORY)).toBe('reloadFailed');
+
+    expect(manager.current).not.toBeNull();
+    expect(sink.ofType('worldUnloaded')).toHaveLength(0);
+  });
 });
