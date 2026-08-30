@@ -86,7 +86,7 @@ import { EntityBlaze } from './entityBlaze.ts';
 import { entityFuelAt, entityFuelSource } from './entityFuel.ts';
 import { fuelAt, fuelSources } from './fuel.ts';
 import { fireRandom, happensWithin } from './rng.ts';
-import { SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
+import { resetSpreadSweep, SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
 import { parseStruckCells } from './strike-event.ts';
 import { chargeMana, loadManaBridge } from './mana-bridge.ts';
 import { loadWeatherBridge, precipitationAt } from './weather-bridge.ts';
@@ -955,6 +955,10 @@ export function resetFireState(): void {
   restoredEntities = [];
   blaze.clear();
   entityBlaze.clear();
+  // Spread remembers where everything was one step ago (./spread.ts). After a
+  // reset or a rollback that memory is of a world that no longer exists, and
+  // the segment from there to here is a path nothing walked.
+  resetSpreadSweep();
 }
 
 
@@ -977,6 +981,13 @@ function tick(world: WorldApi, dt: number): void {
   if (blaze.size === 0 && entityBlaze.size === 0) {
     if (episodeConsumed > 0) endEpisode(world);
     lastKeepaliveSeconds = simSeconds;
+    // Spread does not run in a quiet world, so its memory of "where was
+    // everything one step ago" would span the whole quiet stretch the next
+    // time something catches. Dropping it here is what keeps that memory one
+    // spread interval old, which is the only age its arithmetic is true for
+    // (./spread.ts). A no-op once it is empty, so a quiet world still pays
+    // only the comparisons.
+    resetSpreadSweep();
     return;
   }
 
