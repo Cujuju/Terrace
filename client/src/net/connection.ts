@@ -17,10 +17,22 @@
 //   * `room.onMessage(type, cb)` returns an unsubscribe function.
 //   * `room.send(type, payload)` msgpack-encodes the payload.
 //   * `room.reconnection` is real, built-in and enabled by default
-//     (`ReconnectionOptions.enabled = true`): the SDK transparently
-//     re-establishes a dropped connection, replaying enqueued messages, and
-//     fires `onDrop` / `onReconnect` around it. Phase 1 deliberately adds NO
-//     retry logic on top of that; see RETRY POLICY below.
+//     (`ReconnectionOptions.enabled = true`): the SDK retries a dropped
+//     socket on its own and fires `onDrop` / `onReconnect` around it. Phase 1
+//     deliberately adds NO retry logic on top of that; see RETRY POLICY below.
+//   * While the socket is down `room.send()` does NOT fail — it enqueues
+//     (Room.mjs:150-151 `if (!this.connection.isOpen) enqueueMessage(...)`)
+//     into a ring that silently drops its oldest entry when full
+//     (Room.mjs:363-367). Against THIS server those enqueued messages can
+//     never be flushed: nothing calls `allowReconnection`, and
+//     `TerraceRoom.onLeave` tears the player down synchronously, so the
+//     rejoin finds neither a reserved seat nor a live client to match the
+//     reconnection token (@colyseus/core Room.mjs:670-687) and throws
+//     MATCHMAKE_EXPIRED. `onReconnect` therefore never fires here; the SDK
+//     exhausts its retries and fires `onLeave` instead, discarding the room
+//     object and everything queued in it. Hence the `dropped` gate below —
+//     a send while dropped is a send into a bucket with a hole in it, and
+//     must be reported as not sent.
 //
 // RETRY POLICY. The SDK's automatic reconnection only covers a room that was
 // successfully joined. It cannot cover the first connection — if no server is
@@ -182,9 +194,12 @@ export interface ConnectionOptions {
 
 export interface Connection {
   /**
-   * Sends a sculpt intent if a room is joined; a no-op otherwise. Dropping
-   * intents while offline is correct — the server is authoritative and there
-   * is nothing to replay them against.
+   * Sends a sculpt intent if a room is joined AND its socket is up; a no-op
+   * otherwise, including while the SDK is reconnecting a dropped room (the
+   * room object outlives the socket, and a send then is only enqueued into a
+   * queue that never flushes — see the module header). Dropping intents while
+   * offline is correct — the server is authoritative and there is nothing to
+   * replay them against.
    *
    * Returns whether the intent actually went out. This is load-bearing for
    * client-side prediction, not a convenience: a prediction is only ever
@@ -231,6 +246,10 @@ export function connect(options: ConnectionOptions): Connection {
   const roomName = options.roomName ?? ROOM_NAME;
 
   let room: Room | null = null;
+  // True between the SDK's onDrop and the end of that room's life. The room
+  // object outlives the socket, so `room !== null` is NOT evidence that a
+  // send reaches the server; this is.
+  let dropped = false;
   let disposed = false;
   let retryDelay = RECONNECT_MIN_DELAY_MS;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -252,8 +271,25 @@ export function connect(options: ConnectionOptions): Connection {
     }, retryDelay);
   };
 
+  // THE ONE GATE every sender goes through. Kept as a helper rather than a
+  // check repeated in each of the five senders below, because the failure it
+  // prevents is silent: a sender that forgets it does not throw, it enqueues
+  // into the SDK's ring and looks like it worked.
+  //
+  // RESIDUAL FAILURE MODE, documented rather than papered over: between the
+  // physical link loss and the browser firing the socket's close event,
+  // `isOpen` is still true and `dropped` is still false, so sends in that
+  // window go into a dead socket and are treated as delivered. Closing it
+  // would take a per-intent server ack and a timeout; the window is bounded
+  // by the browser's own close detection.
+  const live = (): Room | null => (room !== null && !dropped ? room : null);
+
   const wireRoom = (joined: Room): void => {
     room = joined;
+    // A fresh join is the only thing that actually clears this here (see the
+    // header: onReconnect cannot fire against this server), so clear it where
+    // the new room is adopted, not only where the old one ended.
+    dropped = false;
     // Reset the backoff: the next outage should retry promptly again.
     retryDelay = RECONNECT_MIN_DELAY_MS;
 
@@ -329,16 +365,26 @@ export function connect(options: ConnectionOptions): Connection {
     });
 
     // Connection lifecycle. `onDrop`/`onReconnect` bracket the SDK's own
-    // automatic reconnection, so they only move the status dot — there is
-    // nothing for us to do in between.
-    joined.onDrop(() => setStatus('reconnecting'));
-    joined.onReconnect(() => setStatus('connected'));
+    // automatic reconnection. They move the status dot AND flip the send gate:
+    // in between, the room object is still here but the socket is not, and a
+    // send would only be enqueued into a queue that never flushes.
+    joined.onDrop(() => {
+      dropped = true;
+      setStatus('reconnecting');
+    });
+    joined.onReconnect(() => {
+      dropped = false;
+      setStatus('connected');
+    });
 
     // onLeave fires when the session is finished for good, including after
     // the SDK's reconnection attempts are exhausted. That is the one case
     // where we take the retry loop back over.
     joined.onLeave(() => {
       room = null;
+      // Cleared with the room, so a drop that ended in onLeave cannot leave a
+      // stale `true` gating the next session's sends.
+      dropped = false;
       if (!disposed) scheduleRetry();
     });
 
@@ -391,24 +437,25 @@ export function connect(options: ConnectionOptions): Connection {
 
   return {
     sendSculpt(intent: SculptIntent): boolean {
-      if (room === null) return false;
-      room.send(MSG_SCULPT, intent);
+      const open = live();
+      if (open === null) return false;
+      open.send(MSG_SCULPT, intent);
       return true;
     },
     requestRestorePoints(key: string): void {
-      room?.send(MSG_RESTORE_POINTS, { type: MSG_RESTORE_POINTS, key });
+      live()?.send(MSG_RESTORE_POINTS, { type: MSG_RESTORE_POINTS, key });
     },
     requestRollback(key: string, toId: number): void {
-      room?.send(MSG_ROLLBACK, { type: MSG_ROLLBACK, key, toId });
+      live()?.send(MSG_ROLLBACK, { type: MSG_ROLLBACK, key, toId });
     },
     sendWorldAdmin(message: WorldAdminRequestMessage): void {
-      room?.send(message.type, message);
+      live()?.send(message.type, message);
     },
     sendPlugin(type: string, payload: unknown): void {
       // Dropping while offline mirrors sendSculpt: plugin messages are
       // requests against live server state; there is nothing to replay
       // them against after a reconnect.
-      room?.send(type, payload);
+      live()?.send(type, payload);
     },
     dispose(): void {
       disposed = true;
