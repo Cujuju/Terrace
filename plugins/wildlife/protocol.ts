@@ -274,3 +274,32 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
  * there is a single answer to "what does a full message weigh".
  */
 export const WILDLIFE_POPULATION_CAP = 850;
+
+/**
+ * Birds in a flock: a uniform draw over this inclusive range.
+ *
+ * A range rather than a constant so no two crossings look like the same asset
+ * played twice. 5 is the floor at which cohesion reads as flocking rather than
+ * as a few birds that happen to be near each other (it is also the fish
+ * groupSize, for the same reason); 9 is what MAX_BIRDS_ALOFT can afford twice
+ * over, and past ~10 the individual birds stop being countable and the flock
+ * gains nothing but payload.
+ */
+export const BIRDS_PER_FLOCK_MIN = 5;
+export const BIRDS_PER_FLOCK_MAX = 9;
+
+/**
+ * Flocks aloft at once. TWO, and it is a bandwidth number before it is an
+ * aesthetic one — see the combined budget in ./index.ts.
+ *
+ * Two is also the smallest number that makes the sky feel inhabited rather than
+ * scripted: with one, a player who watches a flock leave knows the sky is now
+ * empty until the timer fires again.
+ */
+export const MAX_CONCURRENT_FLOCKS = 2;
+
+/**
+ * Hard ceiling on birds on the wire. Derived, never written by hand — it is the
+ * number the bandwidth arithmetic in ./index.ts consumes.
+ */
+export const MAX_BIRDS_ALOFT = MAX_CONCURRENT_FLOCKS * BIRDS_PER_FLOCK_MAX;
