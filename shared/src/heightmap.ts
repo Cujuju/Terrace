@@ -40,6 +40,7 @@ export {
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
 import {
+  anyColumnLayered,
   applyBandFill,
   bandFillAt,
   canCarveBandAt,
@@ -2096,8 +2097,43 @@ export function smooth(
   // Layered strokes relax a VIEW of the grasped layer and commit it after
   // (see LayerView); a surface stroke over an unlayered world is the original
   // in-place pass on `map.cells`, untouched.
-  const layer = spanBand === null && map.columnSpans.size === 0 ? null : buildLayerView(map, spanBand);
-  const cells = layer === null ? map.cells : layer.heights;
+  //
+  // A BANDED STROKE ALWAYS NEEDS THE VIEW — it has hold of a span the cell
+  // index cannot name — but a SURFACE stroke needs it only where a layered
+  // column actually stands, and "stands somewhere in the world" is not that
+  // question: the view costs a copy and a clear of the whole grid, so asking
+  // `columnSpans.size` made one carve anywhere make every later surface
+  // stroke pay world-sized. The question is whether a layered column stands
+  // in the box THIS sweep touches, and the box is only known as it grows, so
+  // the view is adopted lazily below, one ring at a time.
+  //
+  // Adopting it late is exact, not an approximation. Where the swept box
+  // holds no layered column, every cell the view could differ on is one it
+  // does not contain: `layerSpanIndex` with `spanBand === null` resolves to
+  // the top span, whose ceiling IS `map.cells[i]` (setColumn keeps that
+  // identity, columns.ts), nothing is excluded, no `spanCaps` entry is ever
+  // looked up, and `commitLayerView` writes unlayered columns straight back.
+  let layer: LayerView | null = spanBand === null ? null : buildLayerView(map, spanBand);
+  let cells: Int16Array = layer === null ? map.cells : layer.heights;
+
+  /**
+   * Builds the layer view if the rectangle holds a layered column and the
+   * sweep is not already working on one.
+   *
+   * Switching mid-sweep loses nothing: the passes already run wrote
+   * `map.cells` in place, which for an unlayered column is exactly the write
+   * `commitLayerView` would have made, and the view is built from
+   * `map.cells` as it now stands. `cells` is rebound rather than copied into,
+   * so the sweep AND `boundsOf` below both follow the switch; `captured`
+   * keeps its entries, and every one of them still reads the same height
+   * (the fresh `heights` starts as a copy of `map.cells`).
+   */
+  const adoptLayerView = (x0: number, y0: number, width: number, height: number): void => {
+    if (layer !== null) return;
+    if (!anyColumnLayered(map, x0, y0, width, height)) return;
+    layer = buildLayerView(map, spanBand);
+    cells = layer.heights;
+  };
 
   let boundsOf: SpillBoundsOf | null = null;
   if (spillFree !== undefined || anchorBounds !== undefined) {
@@ -2135,8 +2171,11 @@ export function smooth(
     if (y > maxY) maxY = y;
   }
 
+  adoptLayerView(minX, minY, maxX - minX + 1, maxY - minY + 1);
+
   let adjustingPasses = 0;
   for (let pass = 0; pass < SMOOTH_PASS_LIMIT; pass++) {
+    const heldMinX = minX, heldMinY = minY, heldMaxX = maxX, heldMaxY = maxY;
     // Expand one ring per pass: excess travels at most one cell per pass, so
     // this always covers the frontier. Everything outside the box satisfied
     // the invariant before the edit and is untouched, so it still does.
@@ -2144,6 +2183,16 @@ export function smooth(
     if (minY > 0) minY--;
     if (maxX < size - 1) maxX++;
     if (maxY < size - 1) maxY++;
+
+    // Only the ring just gained is new ground for the layered-column test —
+    // the seed box was tested above and every earlier ring on its own pass —
+    // so the whole test costs O(cells the sweep reaches), never O(world).
+    // The two rows take the full new width; the two columns take only the
+    // rows the box already had, so the corners are not walked twice.
+    if (minY < heldMinY) adoptLayerView(minX, minY, maxX - minX + 1, 1);
+    if (maxY > heldMaxY) adoptLayerView(minX, maxY, maxX - minX + 1, 1);
+    if (minX < heldMinX) adoptLayerView(minX, heldMinY, 1, heldMaxY - heldMinY + 1);
+    if (maxX > heldMaxX) adoptLayerView(maxX, heldMinY, 1, heldMaxY - heldMinY + 1);
 
     let changedThisPass = false;
 
