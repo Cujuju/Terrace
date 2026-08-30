@@ -45,7 +45,7 @@
 //      window, so it IS measured — which is exactly why the ledger is kept in
 //      measured units rather than in requested ones.
 
-import { BAND_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
 import {
   MUDSLIDE_MAX_PATH_CELLS,
   cellsAcross,
@@ -465,14 +465,24 @@ export function trackedDebris(): readonly DebrisCell[] {
 // ─────────────────────────────────────────────────────────────────────────────
 // SURVEY + SOAK.
 
-/**
- * Cells per chunk edge, DERIVED from the two numbers WorldApi publishes rather
- * than imported from shared, so a world configured with a non-default size cannot
- * put a sampled cell outside it.
- */
-function chunkSizeCells(world: MudslideWorld): number {
-  return Math.max(1, Math.floor(world.worldSize / Math.max(1, world.chunksPerEdge)));
-}
+// Cells per chunk edge, IMPORTED from shared — the same number, read the same
+// way, as ./terrain.ts's `footprintUnlocked` uses to map a cell to its chunk.
+//
+// It used to be DERIVED here as `worldSize / chunksPerEdge`, on the argument
+// that deriving cannot be wrong for a non-default world size. That argument
+// does not hold, and the derivation was the more dangerous of the two: a world
+// size is a positive multiple of `CHUNK_SIZE` BY CONSTRUCTION — shared's
+// `chunksPerEdge()` throws a RangeError for anything else (shared/src/chunks.ts),
+// and it is the only producer of `WorldApi.chunksPerEdge` (server/src/world/world.ts),
+// with the config loader (server/src/config.ts) and the world-admin validator
+// (server/src/world/world-admin.ts) both rejecting a non-multiple before a world
+// exists at all. So `worldSize === chunksPerEdge × CHUNK_SIZE` always holds, the
+// two forms can never disagree, and the derived form's `Math.max`/`Math.floor`
+// clamps only served to turn an impossible input into a silently wrong chunk
+// size instead of a throw. Importing also matches every other plugin that maps
+// cells to chunks (chronicle, fire, flora).
+//
+// Used by `surveySites` below to turn a revealed chunk into a cell to sample.
 
 function rebuildRevealedChunks(world: MudslideWorld): void {
   revealedChunks = [];
@@ -531,7 +541,7 @@ export function surveySites(world: MudslideWorld, dt: number): void {
   rebuildRevealedChunks(world);
   if (revealedChunks.length === 0) return;
 
-  const size = chunkSizeCells(world);
+  const size = CHUNK_SIZE;
   for (let sample = 0; sample < MUDSLIDE_SURVEY_SAMPLES; sample++) {
     const chunk = revealedChunks[randomIndex(rng, revealedChunks.length)]!;
     const x = chunk.cx * size + randomIndex(rng, size);
