@@ -153,34 +153,23 @@ export const FLOCK_COURSE_CORRECTION_RADIANS_PER_SECOND = 1;
  */
 export const BIRD_FLOCK_LOOSENESS = 2;
 
-/**
- * Birds in a flock: a uniform draw over this inclusive range.
- *
- * A range rather than a constant so no two crossings look like the same asset
- * played twice. 5 is the floor at which cohesion reads as flocking rather than
- * as a few birds that happen to be near each other (it is also the fish
- * groupSize, for the same reason); 9 is what MAX_BIRDS_ALOFT can afford twice
- * over, and past ~10 the individual birds stop being countable and the flock
- * gains nothing but payload.
- */
-export const BIRDS_PER_FLOCK_MIN = 5;
-export const BIRDS_PER_FLOCK_MAX = 9;
+// BIRDS_PER_FLOCK_MAX MOVED TO ../protocol.ts (2026-08-29) with
+// MAX_CONCURRENT_FLOCKS and the MAX_BIRDS_ALOFT derived from them (and with
+// BIRDS_PER_FLOCK_MIN, which shares its comment): birds are
+// the half of this plugin's drawn population that WILDLIFE_POPULATION_CAP does
+// not cover, and the client half's draw budget has to be written against both.
+import { BIRDS_PER_FLOCK_MIN, BIRDS_PER_FLOCK_MAX } from '../protocol.ts';
+export { BIRDS_PER_FLOCK_MIN, BIRDS_PER_FLOCK_MAX };
 
-/**
- * Flocks aloft at once. TWO, and it is a bandwidth number before it is an
- * aesthetic one — see the combined budget in ./index.ts.
- *
- * Two is also the smallest number that makes the sky feel inhabited rather than
- * scripted: with one, a player who watches a flock leave knows the sky is now
- * empty until the timer fires again.
- */
-export const MAX_CONCURRENT_FLOCKS = 2;
+// MAX_CONCURRENT_FLOCKS MOVED TO ../protocol.ts (2026-08-29) — see the note on
+// BIRDS_PER_FLOCK_MAX above.
+import { MAX_CONCURRENT_FLOCKS } from '../protocol.ts';
+export { MAX_CONCURRENT_FLOCKS };
 
-/**
- * Hard ceiling on birds on the wire. Derived, never written by hand — it is the
- * number the bandwidth arithmetic in ./index.ts consumes.
- */
-export const MAX_BIRDS_ALOFT = MAX_CONCURRENT_FLOCKS * BIRDS_PER_FLOCK_MAX;
+// MAX_BIRDS_ALOFT MOVED TO ../protocol.ts (2026-08-29) — see the note on
+// BIRDS_PER_FLOCK_MAX above.
+import { MAX_BIRDS_ALOFT } from '../protocol.ts';
+export { MAX_BIRDS_ALOFT };
 
 /**
  * Mean simulated seconds between flock arrivals, as a constant hazard of
