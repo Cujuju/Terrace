@@ -640,6 +640,37 @@ function brushDelta(
 }
 
 /**
+ * THE FOOTPRINT CELLS A BAND-ANCHORED STROKE MAY WRITE, decided from the map
+ * BEFORE the stroke writes anything.
+ *
+ * canSpreadBandTo is the band anchor's whole anti-cheat story, but the brushes
+ * used to ask it once, for the stroke centre, and then write the entire disc:
+ * with the whole-way amount the anchor also buys (FULL_HEIGHT_SPAN, see
+ * applySculpt) that lifted every cell in the footprint to the named band off a
+ * single adjacent cell — a height that came from the caller rather than from
+ * the world. Asking per cell restores the documented semantics: the level
+ * creeps onto ground already touching it, one cell at a time.
+ *
+ * READ FROM THE UNTOUCHED MAP, which is why the answers are collected up front
+ * instead of being asked inside the writing sweep: a cell this stroke raises
+ * would otherwise make its own neighbour legal, and the disc would fill by
+ * scan order. Same map in, same set out — no iteration-order dependence.
+ */
+function spreadableFootprintCells(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  band: number,
+): ReadonlySet<number> {
+  const spreadable = new Set<number>();
+  forEachFootprintCell(map, cx, cy, radius, (i) => {
+    if (canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), band)) spreadable.add(i);
+  });
+  return spreadable;
+}
+
+/**
  * The radius precondition every brush entry point shares. Untrusted input is
  * validated in protocol.ts; reaching the math with garbage is a programming
  * error, so this throws rather than clamping.
@@ -771,8 +802,12 @@ export function applyBrush(
   // THE DRAG'S SPREAD RULE (`anchor: 'band'`): a grabbed level may only creep
   // onto ground that already touches it. Checked before anything is written,
   // from the map alone, so a forged band on an unrelated cell moves nothing.
-  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
-    return;
+  // Asked for EVERY footprint cell and not only the centre — see
+  // spreadableFootprintCells for what the centre-only test allowed.
+  let spreadable: ReadonlySet<number> | null = null;
+  if (anchor === 'band') {
+    if (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand)) return;
+    spreadable = spreadableFootprintCells(map, cx, cy, radius, targetBand);
   }
 
   // The ceiling/floor is pinned from the centre BEFORE any write: the centre
@@ -786,6 +821,9 @@ export function applyBrush(
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
   forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
+    // Ground this band cannot spread onto: outside the stroke, not merely
+    // unmoved by it (the spread rule above).
+    if (spreadable !== null && !spreadable.has(i)) return;
     const delta = brushDelta(amount, radius, dist, profile);
     if (delta === 0) return;
     // WHICH SPAN THIS CELL OFFERS THE STROKE. Null is a cell the grasped band
@@ -889,9 +927,12 @@ export function applyLevelFillBrush(
   if (amount === 0) return;
 
   // THE DRAG'S SPREAD RULE — see canSpreadBandTo, and applyBrush's identical
-  // guard. Both brushes carry it because both are reachable with this anchor.
-  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
-    return;
+  // guard. Both brushes carry it because both are reachable with this anchor,
+  // and both ask it per footprint cell rather than for the centre alone.
+  let spreadable: ReadonlySet<number> | null = null;
+  if (anchor === 'band') {
+    if (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand)) return;
+    spreadable = spreadableFootprintCells(map, cx, cy, radius, targetBand);
   }
 
   const raising = amount > 0;
@@ -901,7 +942,9 @@ export function applyLevelFillBrush(
     // ('band'), read before any write — the same derivation the other two
     // anchored call sites use.
     const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
-    fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
+    fillTowardTarget(
+      map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand, spreadable,
+    );
     return;
   }
 
@@ -956,8 +999,12 @@ function fillTowardTarget(
   raising: boolean,
   targetHeight: number,
   spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
+  // The band anchor's per-cell spread rule, or null when the caller's target
+  // came from its own survey and no band is being spread (see applyBrush).
+  spreadable: ReadonlySet<number> | null = null,
 ): void {
   forEachFootprintCell(map, cx, cy, radius, (i) => {
+    if (spreadable !== null && !spreadable.has(i)) return;
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const h = graspedCeiling(map, i, k);
