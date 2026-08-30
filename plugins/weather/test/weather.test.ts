@@ -39,6 +39,7 @@ import {
   setWeatherRandomSource,
 } from '../server/rng.ts';
 import {
+  EFFECTIVE_SYSTEM_LIFETIME_SECONDS,
   MAX_ACTIVE_SYSTEMS,
   SNOW_ELEVATION_SAMPLES,
   SNOW_MIN_TERRAIN_HEIGHT,
@@ -339,29 +340,91 @@ describe('spawn and decay', () => {
     expect(livingSystems()).toHaveLength(0);
   });
 
-  it('spawns at the stated mean interval, measured', () => {
-    // A statistical check on the ONE number a player feels: how often weather
-    // arrives. Driven by a seeded stream, so it is reproducible rather than
-    // flaky; the tolerance is wide because it is checking the order of
-    // magnitude of the mean, not the RNG.
+  it('sits at the equilibrium population its per-slot interval sets (#240)', () => {
+    // A statistical check on the ONE number a player feels: how much weather
+    // is on screen at once. This replaces a prior version of this test that
+    // measured mean ARRIVAL interval against a [0.5x, 6x] band — a bound so
+    // wide (see issue #240) that it passed unchanged whether
+    // SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS was 5 or 40, because after
+    // the 2026-08-28 per-slot retune the arrival rate races the cap, and
+    // arrival interval alone no longer pins the constant down.
+    //
+    // What the constant actually controls — per its own doc comment in
+    // systems.ts — is the EQUILIBRIUM POPULATION: advanceWeather rolls one
+    // arrival hazard per free slot (rate 1/T per slot, T =
+    // SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS) and one death hazard per
+    // living system (rate 1/EFFECTIVE_SYSTEM_LIFETIME_SECONDS, folding in
+    // drift-off-map removal as well as old age — see that constant's doc
+    // comment). That is `cap` independent alternating renewal processes, each
+    // "empty, waiting mean T" then "full, waiting mean L" — a per-slot
+    // continuous-time Markov chain whose stationary "full" probability is the
+    // textbook two-state result L/(L+T) (this is exactly
+    // EQUILIBRIUM_OCCUPANCY's derivation in systems.ts). Summed over `cap`
+    // slots: mean population = cap × L/(L+T).
+    //
+    // DESIGN SNAPSHOT, NOT A LIVE IMPORT. activeSystemCapFor divides by
+    // EQUILIBRIUM_OCCUPANCY when it sizes the cap, specifically so that a
+    // change to T is absorbed into the cap and the target sky coverage holds
+    // regardless of T's value — which means a formula built from LIVE T (and
+    // a live-recomputed cap) tracks any accidental change to T and reports
+    // the "correct" equilibrium for whatever T has become, never failing.
+    // (Verified: temporarily setting T to 80 — 4x the shipped 20 — and
+    // rerunning this measurement with a live-recomputed expectation still
+    // matches observed population to within ~7%.) Pinning "expected" to the
+    // value T is DESIGNED to hold, and separately asserting the import still
+    // equals that snapshot, is what makes a drive-by change to T fail this
+    // test instead of silently passing through the cap's compensation.
+    const DESIGN_SPAWN_INTERVAL_PER_SLOT_SECONDS = 20;
+    expect(SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS).toBe(
+      DESIGN_SPAWN_INTERVAL_PER_SLOT_SECONDS,
+    );
+
+    // This world's cap saturates MAX_ACTIVE_SYSTEMS (activeSystemCapFor's own
+    // "wanted" sizing is exactly 14 at the design T, and still clamps to 14 at
+    // 4x that T — verified above) — confirmed live so the formula below can
+    // use the ceiling directly instead of re-deriving activeSystemCapFor's own
+    // T-dependent sizing, which would reintroduce the same self-tracking
+    // problem T's snapshot above exists to avoid.
+    expect(activeSystemCapFor(WORLD_SIZE)).toBe(MAX_ACTIVE_SYSTEMS);
+
+    const expectedPopulation =
+      (MAX_ACTIVE_SYSTEMS * EFFECTIVE_SYSTEM_LIFETIME_SECONDS) /
+      (EFFECTIVE_SYSTEM_LIFETIME_SECONDS + DESIGN_SPAWN_INTERVAL_PER_SLOT_SECONDS);
+
     setWeatherRandomSource(seededRandom(7));
     resetWeather();
     const world = asWeatherWorld(highlandWorld());
 
     let arrivals = 0;
+    let populationSeconds = 0;
     const seconds = 36000;
     for (let tick = 0; tick < seconds / TICK_SECONDS; tick++) {
       const before = livingSystems().length;
       advanceWeather(world, TICK_SECONDS);
       if (livingSystems().length > before) arrivals++;
+      populationSeconds += livingSystems().length * TICK_SECONDS;
     }
+    const observedMeanPopulation = populationSeconds / seconds;
 
-    // Arrivals are throttled by the cap, so the observed rate is at most the
-    // nominal one: what this asserts is that weather keeps arriving forever and
-    // at the right order of frequency, not an exact Poisson mean.
-    const observedMean = seconds / arrivals;
-    expect(observedMean).toBeGreaterThanOrEqual(SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS * 0.5);
-    expect(observedMean).toBeLessThanOrEqual(SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS * 6);
+    // TOLERANCE, derived rather than copied: this is ~14 roughly-independent
+    // alternating slots, each Bernoulli-ish at p = L/(L+T) ≈ 0.867, sampled
+    // over a run of ~36000 / (L + T) ≈ 240 renewal cycles. For a mean of
+    // independent-ish Bernoulli slots, Var[time-average population] ≈
+    // cap·p(1-p) / cycles ≈ 14 × 0.867 × 0.133 / 240 ≈ 0.0068, so
+    // sd/mean ≈ sqrt(0.0068) / 12.13 ≈ 0.7%. The measured run above lands at
+    // ~1.0% off formula, consistent with that estimate. 5% is ~7x that
+    // 1-sigma noise (comfortable headroom against flakiness) while staying
+    // far under the ~24% gap a 4x change to
+    // SYSTEM_MEAN_SPAWN_INTERVAL_PER_SLOT_SECONDS produces against this same
+    // pinned expectation (measured: ~9.25 observed vs ~12.13 expected).
+    const POPULATION_TOLERANCE_FRACTION = 0.05;
+    expect(observedMeanPopulation).toBeGreaterThanOrEqual(
+      expectedPopulation * (1 - POPULATION_TOLERANCE_FRACTION),
+    );
+    expect(observedMeanPopulation).toBeLessThanOrEqual(
+      expectedPopulation * (1 + POPULATION_TOLERANCE_FRACTION),
+    );
+
     // Every system that ever existed also stopped existing, or the sky would
     // have silently jammed at the cap.
     expect(arrivals).toBeGreaterThan(MAX_ACTIVE_SYSTEMS);
