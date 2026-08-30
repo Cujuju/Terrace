@@ -26,14 +26,17 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { JoinSnapshotMessage } from '@terrace/shared';
 import { CHUNK_SIZE } from '@terrace/shared';
+import { buildIdentity } from '../src/build-identity.ts';
 import type { ServerConfig } from '../src/config.ts';
+import type { Player } from '../src/player.ts';
 import { WorldRegistry } from '../src/persistence/world-registry.ts';
 import { InstalledPlugins } from '../src/plugins/installed.ts';
 import { discoverPlugins } from '../src/plugins/discovery.ts';
 import type { SiblingModule, TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
-import { asLoadedPlugin } from './support/harness.ts';
+import { RecordingSink, asLoadedPlugin } from './support/harness.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const RETENTION = 5;
@@ -103,6 +106,7 @@ export const plugin = {
 
 let root: string;
 let pluginsDir: string;
+let sink: RecordingSink;
 let registry: WorldRegistry;
 let config: ServerConfig;
 let installed: InstalledPlugins;
@@ -136,6 +140,19 @@ function markOfLiveSibling(): unknown {
   return (seenSibling as { MARK?: unknown } | null)?.MARK;
 }
 
+/** Two connected players, so "one snapshot each" is distinguishable from "one". */
+const ROSTER: readonly Player[] = [
+  { id: 'a', token: 'token-a', name: 'Player A' },
+  { id: 'b', token: 'token-b', name: 'Player B' },
+];
+
+/** Every join snapshot the room has been handed, as `[player id, identity]`. */
+function snapshotIdentities(): ReadonlyArray<readonly [string, string | undefined]> {
+  return sink
+    .ofType('snapshot')
+    .map((message) => [message.target, (message.payload as JoinSnapshotMessage).buildIdentity]);
+}
+
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'terrace-reload-'));
   pluginsDir = join(root, 'plugins');
@@ -150,6 +167,11 @@ beforeEach(async () => {
     asLoadedPlugin(watcherPlugin()),
   ]);
   manager = new WorldManager({ config, registry, plugins: installed, switchCountdownS: 0 });
+  // A ROOM WITH PEOPLE IN IT: the build identity only reaches a client through
+  // a join snapshot, so a reload's effect on open pages is invisible without
+  // one (issue #209).
+  sink = new RecordingSink();
+  manager.attachRoom({ sink, clientCount: () => ROSTER.length, players: () => ROSTER });
   const id = manager.createWorld('Reloadfall', WORLD_SIZE, config.difficulty);
   expect(id).not.toBeNull();
   expect(manager.requestLoad(id as string)).toEqual({ mode: 'immediate', secondsRemaining: 0 });
@@ -226,4 +248,38 @@ describe('reloading one plugin in place', () => {
       expect(manager.installedPluginVersions[PLUGIN_DIRECTORY]).toBe(before);
     });
   }
+
+  // THE BUILD IDENTITY IS A PROMISE TO THE OPEN PAGES (issue #209). A client
+  // reloads itself exactly once when a join snapshot states an identity other
+  // than the one it joined under, and it ignores every identity after that —
+  // so an identity sent for a build that is then REJECTED cannot be taken back.
+  // The reload's either/or has to hold on the wire too: either every page is
+  // told the new identity, or no page is told anything.
+  it('tells no client a new identity for a build that fails its probe', async () => {
+    const before = buildIdentity();
+    writeProbe(pluginsDir, { mark: 'v2', messageType: 'two', throwOnTick: true });
+    sink.clear();
+
+    expect(await manager.reloadPlugin(PLUGIN_DIRECTORY)).toBe('reloadFailed');
+
+    // Snapshots were sent — the world was torn down and rebuilt twice — but
+    // every one of them states the identity the pages already joined under, so
+    // rule 3 of the client's one-shot reload (an unchanged identity reloads
+    // nothing) leaves every page alone.
+    for (const [, identity] of snapshotIdentities()) expect(identity).toBe(before);
+    expect(buildIdentity()).toBe(before);
+  });
+
+  it('tells every client the new identity exactly once when the probe passes', async () => {
+    const before = buildIdentity();
+    writeProbe(pluginsDir, { mark: 'v2', messageType: 'two' });
+    sink.clear();
+
+    expect(await manager.reloadPlugin(PLUGIN_DIRECTORY)).not.toBe('reloadFailed');
+
+    const after = buildIdentity();
+    expect(after).not.toBe(before);
+    const announced = snapshotIdentities().filter(([, identity]) => identity === after);
+    expect(announced.map(([target]) => target).sort()).toEqual(['a', 'b']);
+  });
 });

@@ -28,7 +28,7 @@ import type { MessageSink } from '../net/message-sink.ts';
 import type { WorldPluginSetting, WorldSwitchStatus } from '@terrace/shared';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
-import { rebindBuildIdentity } from '../build-identity.ts';
+import { buildIdentity, rebindBuildIdentity } from '../build-identity.ts';
 import { logError, logInfo, logWarn } from '../log.ts';
 import type { LoadedPlugin } from '../plugins/types.ts';
 import { reimportPlugin } from '../plugins/reload.ts';
@@ -528,6 +528,8 @@ export class WorldManager {
 
     const failure = this.installAndProbe(id, replacement);
     if (failure === null) {
+      // ONLY NOW MAY THE OPEN PAGES HEAR ABOUT IT — see announceBuildIdentity.
+      this.announceBuildIdentity();
       logInfo(`plugin "${name}" reloaded in place as v${replacement.version}`);
       return { version: replacement.version };
     }
@@ -557,12 +559,19 @@ export class WorldManager {
    * over it, and takes one real tick. Returns null when the plugin came up
    * clean, or the step it failed at.
    *
-   * THE IDENTITY IS REBOUND BEFORE THE WORLD IS OPENED, not after: `openInto`
-   * hands every connected player a fresh join snapshot, and that snapshot is
-   * the only place the build identity a client keys its one-shot page reload on
-   * is ever stated (net/join-snapshot.ts). Rebinding afterwards would send the
-   * OLD identity with the reload's own snapshot and leave every open page on the
-   * old client half until something else happened to re-snapshot it.
+   * THE IDENTITY IS NOT TOUCHED HERE, on the way in or on the way back (issue
+   * #209). `openInto` hands every connected player a fresh join snapshot, and
+   * that snapshot is the only place the build identity a client keys its
+   * one-shot page reload on is ever stated (net/join-snapshot.ts) — so
+   * rebinding before the reopen would order every open page to reload for a
+   * build the checks below may be about to REJECT, and a client acts on the
+   * first identity that differs from the one it joined under and ignores every
+   * later one (client/src/net/buildReload.ts), so the rollback could not take
+   * that reload back. The snapshots this reopen sends therefore state the
+   * identity the pages already joined under, which reloads nothing;
+   * `announceBuildIdentity` states the new one afterwards, once the probe has
+   * passed — which is also what keeps a rejected build's rollback re-sending
+   * the ORIGINAL identity rather than a second new one.
    *
    * `rollingBack` only shapes the log: on the way back there is no probe result
    * anybody can act on, but a failure there is still worth stating.
@@ -574,7 +583,6 @@ export class WorldManager {
   ): ReloadFailureStep | null {
     const name = build.plugin.name;
     this.deps.plugins.replace(build);
-    rebindBuildIdentity(this.deps.plugins.list);
 
     try {
       this.openInto(id);
@@ -599,6 +607,47 @@ export class WorldManager {
     session.host.tick(1 / this.deps.config.tickHz);
     if (session.host.faultCount(name) > 0) return 'the probe tick';
     return null;
+  }
+
+  /**
+   * REBINDS THE BUILD IDENTITY AND TELLS THE OPEN PAGES — the last step of a
+   * reload that has already passed all four of its checks (issue #209).
+   *
+   * WHY IT IS A SECOND SNAPSHOT RATHER THAN THE REOPEN'S OWN. The identity only
+   * ever reaches a client on a join snapshot, and a client acts on the first
+   * identity that differs from the one it joined under and ignores the rest —
+   * so an identity sent by the reopen INSIDE the probe would be a page reload
+   * ordered for a build that may then be rejected, and nothing the rollback
+   * sends afterwards can cancel it. Sending it here costs one extra join
+   * snapshot per connected player on a SUCCESSFUL reload — a dev-loop action
+   * that has just rebuilt the world for everybody anyway — and it is what makes
+   * the reload's promise true on the wire as well as in the process: either
+   * every page is told the new identity, or no page is told anything.
+   *
+   * IT REBINDS FROM THE INSTALLED SET, so the digest states what is actually
+   * running. A rejected build never reaches this, which is why the identity a
+   * rollback's snapshots carry is still the one the pages joined under.
+   *
+   * NOTHING CAN JOIN BETWEEN THE PROBE AND THIS CALL: the reload is synchronous
+   * from `plugins.replace` to here, so no join handshake can interleave and be
+   * told an identity for a build that is still on probation.
+   */
+  private announceBuildIdentity(): void {
+    const before = buildIdentity();
+    const after = rebindBuildIdentity(this.deps.plugins.list);
+    // A reload that moved no stamp has nothing to say: an unchanged identity
+    // reloads no page (buildReload rule 3), so the snapshot would be pure cost.
+    if (after === before) return;
+
+    const session = this.session;
+    // Cannot be null — the probe just ticked it — but the type says it can, and
+    // a non-null assertion here would lie about the session like nothing else
+    // in this file does.
+    if (session === null) return;
+
+    for (const player of this.bridge?.players() ?? []) {
+      session.world.sendTo(player.id, buildJoinSnapshot(session.world, session.host, player.token));
+    }
   }
 
   /** This world's stored settings, flattened to `<plugin>/<key>` -> value. */
