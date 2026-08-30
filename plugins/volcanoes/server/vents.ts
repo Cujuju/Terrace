@@ -175,18 +175,51 @@ export const CONE_SCULPTS_PER_TICK = 1;
 export type ConeRingTiming = 'immediate' | 'deferred';
 
 /**
- * Terrace bands each eruption adds to the cone.
+ * Terrace bands each eruption is meant to ADD TO THE CONE'S PEAK.
  *
  * ONE. It is the smallest unit the terrain can express, and the point is that a
  * cone grows on a GEOLOGICAL scale relative to the eruptions: after ten
  * eruptions the mountain is visibly taller than it was, and after one it is
  * not. A larger figure would make the cone the eruption's main effect, which
  * puts the drama in the wrong place — the lava is the event.
+ */
+export const CONE_PEAK_BANDS_PER_ERUPTION = 1;
+
+/**
+ * How many bands of BRUSH AMOUNT it takes to leave one band standing at the
+ * apex of a cone whose flanks are already at the gradient limit.
+ *
+ * TWO, AND IT IS A PROPERTY OF THE RELAXATION, NOT A DIAL (issue #108,
+ * 2026-08-29). A cone's flanks sit at the steepest slope the sim holds, so
+ * every unit the brush puts on the apex is immediately over the limit against
+ * its four neighbours and the relaxation moves half of it out — and since
+ * 2026-08-29 relaxation CONSERVES: what leaves the apex is really gone, where
+ * the old rule handed the low cell a unit the high cell never lost and the apex
+ * kept the whole band it was given. Measured old vs new on a genesis cone
+ * (.sim-108/plugins.mjs, `=== VOLCANOES: cone peak gain per eruption ===`), ten
+ * eruptions on a GENESIS_CONE_BANDS cone:
+ *
+ *   rule  bands asked   mean peak gain per eruption
+ *   old   1             16.0   ← one band, the intent
+ *   new   1              9.0   ← 56% of it: the rest slid down the flanks
+ *   new   2             15.1   ← the intent restored
+ *   new   3             20.4
+ *
+ * (On flat ground, where the cone has slack to grow into, the same rows read
+ * 16.0 / 12.1 / 17.7 / 22.9.) Two is therefore the smallest whole number of
+ * bands that still leaves a band, and asking for three overshoots.
+ */
+export const CONE_BRUSH_BANDS_PER_PEAK_BAND = 2;
+
+/**
+ * What `raiseCone` is actually handed per eruption — the amount that DELIVERS
+ * CONE_PEAK_BANDS_PER_ERUPTION at the peak.
  *
  * The heightmap clamps at MAX_HEIGHT, so an immortal world's cone stops
  * growing rather than overflowing; nothing here has to check for it.
  */
-export const CONE_GROWTH_BANDS_PER_ERUPTION = 1;
+export const CONE_GROWTH_BANDS_PER_ERUPTION =
+  CONE_PEAK_BANDS_PER_ERUPTION * CONE_BRUSH_BANDS_PER_PEAK_BAND;
 
 /**
  * A vent's cone RING is raised half as much as its centre, so the mouth is a
@@ -545,9 +578,9 @@ function beginEruption(vent: Vent, world: WorldApi): void {
   // across it. At the start because that is the moment the player is told
   // something is happening, so the mountain and the announcement are one event;
   // in one step rather than per tick because CONE_GROWTH_BANDS_PER_ERUPTION is
-  // a single band and a band split across six hundred ticks is six hundred
-  // sculpts, each running a full gradient relaxation, to produce the same
-  // terrain one sculpt produces.
+  // a couple of bands and a couple of bands split across six hundred ticks is
+  // six hundred sculpts, each running a full gradient relaxation, to produce
+  // the same terrain one sculpt produces.
   raiseCone(world, vent.x, vent.y, CONE_GROWTH_BANDS_PER_ERUPTION, 'deferred');
   vent.coneBands += CONE_GROWTH_BANDS_PER_ERUPTION;
 

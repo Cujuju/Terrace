@@ -1,0 +1,17 @@
+Issue #108 pass 2 — passes per cell of spread, old rule vs new
+MAX_STEP=4  SMOOTH_SPREAD_CELLS=640  SMOOTH_PASS_LIMIT=2560  node v24.19.0  2026-08-30T05:16:54.673Z
+
+stroke                                rule    relief  spread  passes  per cell
+--------------------------------------  ----  ------  ------  ------  --------
+15-band plateau, one smooth stroke    old       1008     252     135      0.54
+15-band plateau, one smooth stroke    new       1008     252     108      0.43
+MAX plateau (brush fully clamped)     old       1024     256     135      0.53
+MAX plateau (brush fully clamped)     new       1024     256     108      0.42
+MAX plateau beside a MIN moat         old       1280     320     119      0.37
+MAX plateau beside a MIN moat         new       1280     320     118      0.37
+bare cliff 100 (synthetic)            old        100      25      53      2.12
+bare cliff 100 (synthetic)            new        100      25      76      3.04
+bare cliff 401 (synthetic)            old        401     100     300      3.00
+bare cliff 401 (synthetic)            new        401     100    1187     11.87
+bare cliff 1000 (synthetic)           old       1000     250     841      3.36
+bare cliff 1000 (synthetic)           new       1000     250    2560     10.24 (TRUNCATED at the cap)

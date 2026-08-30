@@ -1,0 +1,63 @@
+Issue #108 pass 2 — plugin constants under the conserving relaxation
+MAX_STEP=4  RELAX_SLACK=1  BAND_HEIGHT=16  genesis 512² seed 108  node v24.19.0  2026-08-30T05:09:55.677Z
+
+=== VOLCANOES: cone peak gain per eruption (intent: one band = 16) ===
+world    rule  bands/erupt    1st gain   peak/10  mean gain
+flat     old   1                    16       160      16.00
+flat     new   1                    16       121      12.10
+flat     new   2                    32       177      17.70
+flat     new   3                    48       229      22.90
+genesis  old   1                    16       160      16.00
+genesis  new   1                    16        90       9.00
+genesis  new   2                    32       151      15.10
+genesis  new   3                    39       204      20.40
+
+=== VOLCANOES: lava settled thickness over the flow (intent: 8 = half a band) ===
+world    rule  FLOW_THICKNESS    one cell  over a flow  height moved
+flat     old   8                     8.00        45.16         11682
+flat     new   8                     8.00        25.38          4608
+flat     new   16                   16.00        38.09          9216
+flat     new   24                   21.00        55.88         13824
+flat     new   32                   24.00        73.78         18432
+genesis  old   8                     8.00        41.88         12642
+genesis  new   8                     8.00        20.44          4608
+genesis  new   16                   16.00        34.19          9216
+genesis  new   24                   21.00        50.91         13824
+genesis  new   32                   24.00        68.81         18432
+
+=== STORMS: ground one surge removes (intent: what the old rule removed) ===
+world    rule  radius     removed  centre drop   cells  vs old
+slope    old   4              109            4      39   1.00×
+slope    new   4              144            8      39   1.32×
+slope    new   3               72            6      24   0.66×
+slope    new   2               24            6       8   0.22×
+genesis  old   4              139           10      35   1.00×
+genesis  new   4              152           11      35   1.09×
+genesis  new   3               85           10      22   0.61×
+genesis  new   2               30           10       7   0.22×
+
+=== STORMS: a whole landfall (48 surges on one site) — intent: a band or two ===
+world    rule  radius     removed  shore drop  in bands
+slope    old   4              277           5      0.31
+slope    new   4             6912         191     11.94
+slope    new   3             3456         162     10.13
+genesis  old   4             5360         154      9.63
+genesis  new   4             6912         205     12.81
+genesis  new   3             3456         179     11.19
+
+=== MUDSLIDES: where the load ends up, and how far the diff reaches ===
+world    rule  margin  track  toe   excavated deposited residual  resid %  unmeas max changed
+slope    old   16      0.15   8           588       596        0      0.0       0         129
+slope    new   16      0.15   8          1848      1828       20      1.1       0         133
+slope    new   32      0.15   8          1848      1828       20      1.1       0         133
+slope    new   64      0.15   8          1848      1828       20      1.1       0         133
+slope    new   64      0.25   8          1848      1853        0      0.0       0         133
+slope    new   64      0.25   16         1848      1816       32      1.7       0         133
+slope    new   96      0.25   16         1848      1816       32      1.7       0         133
+genesis  old   16      0.15   8           675      1811        0      0.0      41         502
+genesis  new   16      0.15   8          1848      1828       20      1.1       0         229
+genesis  new   32      0.15   8          1848      1828       20      1.1       0         229
+genesis  new   64      0.15   8          1848      1828       20      1.1       0         229
+genesis  new   64      0.25   8          1848      1826       22      1.2       0         242
+genesis  new   64      0.25   16         1848      1834       14      0.8       0         242
+genesis  new   96      0.25   16         1848      1834       14      0.8       0         242

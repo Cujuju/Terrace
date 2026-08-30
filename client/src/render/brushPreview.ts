@@ -91,13 +91,21 @@
 // depth buffer. No height sampling, no per-frame geometry: the contact line
 // falls out of the depth test that was already running.
 //
-// HOW FAR IT HANGS is derived, not chosen. MAX_STEP bounds every 4-neighbour
-// height difference in the world (shared/constants.ts), and MAX_STEP equals
-// BAND_HEIGHT, so the RENDERED (band-quantised) surface drops at most one band
-// per cell of 4-neighbour travel. The furthest ground the outline passes over
-// is therefore its own Manhattan reach, in bands, below the hovered cell — and
+// HOW FAR IT HANGS is derived, not chosen. Relaxation bounds every 4-neighbour
+// height difference in the world at MAX_STEP + RELAX_SLACK (shared/constants.ts
+// — the pass splits a pair's excess exactly in half and comes to rest one unit
+// over MAX_STEP; issue #108, 2026-08-29), and that bound is under BAND_HEIGHT,
+// so the RENDERED (band-quantised) surface still drops at most one band per
+// cell of 4-neighbour travel. The furthest ground the outline passes over is
+// therefore its own Manhattan reach, in bands, below the hovered cell — and
 // that reach is measured from the footprint iterator itself rather than from a
 // formula, so it cannot drift if the footprint's shape changes again.
+//
+// (This comment used to say "MAX_STEP equals BAND_HEIGHT". That stopped being
+// true at the 2026-08-21 re-sample, which made MAX_STEP one band per WORLD
+// UNIT — a quarter of a band per cell. The claim the skirt actually needs is
+// the one now stated: at most one BAND of drop per cell, which held before the
+// re-sample by equality and holds after it with three units to spare.)
 //
 // AND IT NEVER CROSSES THE EDGE OF THE CELLS IT PROMISES (owner, 2026-08-22:
 // "draw the brush outline inside the cells the brush edits, not outside").

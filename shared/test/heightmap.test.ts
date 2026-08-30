@@ -5,6 +5,7 @@ import {
   applySculpt,
   bandOf,
   BAND_HEIGHT,
+  BEDROCK_FLOOR,
   canSpreadBandTo,
   cellIndex,
   cellX,
@@ -31,10 +32,12 @@ import {
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   quantizeToBand,
+  readSpans,
   RELAX_SLACK,
   SEA_COLUMN_BANDS,
   SEA_COLUMN_DEPTH,
   sculptDisplacementUnits,
+  setColumn,
   smooth,
   SMOOTH_PASS_LIMIT,
   SMOOTH_SPREAD_CELLS,
@@ -2354,6 +2357,236 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     const passesB = smooth(b, new Set(seedB), seedB);
     expect(passesA).toBe(passesB);
     expect(Array.from(a.cells)).toEqual(Array.from(b.cells));
+  });
+
+  /**
+   * GENESIS-SHAPED GROUND: band-quantised plateaus on a coarse lattice — the
+   * exact shape `World.createFresh` writes (every cell `bands * BAND_HEIGHT`
+   * off a noise lattice, never smoothed), so neighbouring plateaus meet in
+   * SHEER whole-band steps of 16, 32 or 48 units against a gradient limit of 5.
+   *
+   * WHY THE FIXTURE IS BUILT HERE RATHER THAN IMPORTED: `shared/` may not
+   * import from `server/`, and the property under test is not genesis's noise —
+   * it is that the ground a fresh world ships is ALREADY over-steep everywhere,
+   * which is what makes a player's first smooth stroke on it a real cascade
+   * instead of a no-op. The hash is integer-only and fixed, so the fixture is
+   * identical on every machine.
+   */
+  function genesisTerraces(size: number): Heightmap {
+    const map = createHeightmap(size);
+    const LATTICE_CELLS = 16;
+    const BAND_SPREAD = 7;
+    const LOWEST_BAND = -2;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const gx = Math.floor(x / LATTICE_CELLS);
+        const gy = Math.floor(y / LATTICE_CELLS);
+        let h = (gx * 73856093) ^ (gy * 19349663);
+        h = (h ^ (h >>> 13)) >>> 0;
+        map.cells[cellIndex(map, x, y)] = ((h % BAND_SPREAD) + LOWEST_BAND) * BAND_HEIGHT;
+      }
+    }
+    return map;
+  }
+
+  /** The footprint of a brush, as `smooth`'s spill-free / bbox-seed set. */
+  function brushFootprint(map: Heightmap, cx: number, cy: number, radius: number): Set<number> {
+    const cells = new Set<number>();
+    forEachFootprintOffset(radius, (dx, dy) => {
+      const x = cx + dx;
+      const y = cy + dy;
+      if (x < 0 || y < 0 || x >= map.size || y >= map.size) return;
+      cells.add(cellIndex(map, x, y));
+    });
+    return cells;
+  }
+
+  /** Solid material in the world: every span's thickness, layered columns included. */
+  function mapVolume(map: Heightmap): number {
+    let volume = 0;
+    for (let y = 0; y < map.size; y++) {
+      for (let x = 0; x < map.size; x++) {
+        for (const span of readSpans(map, x, y)) volume += span.ceiling - span.floor;
+      }
+    }
+    return volume;
+  }
+
+  const TERRACE_SIZE = 96;
+  const TERRACE_CENTRE = 48;
+
+  it('the PLAYER smooth tool on genesis terraces: real cascade, pinned', () => {
+    // SUPERSEDES the "what a player does is unchanged, bit for bit" claim that
+    // used to be asserted with WIRE_DEFAULT_SCULPT_OPTIONS alone. That default
+    // is the STAMP (shared/src/protocol.ts), and a stamp never relaxes — so the
+    // assertion could not have failed however the relaxation changed, which
+    // makes it no evidence at all. The player's SMOOTH tool is the one that
+    // reaches this code, and on the ground a fresh world actually ships it
+    // moves real cells. Pinned rather than asserted equal to anything: the
+    // point is that the behaviour is known, not that it is unchanged.
+    const map = genesisTerraces(TERRACE_SIZE);
+    const before = Int16Array.from(map.cells);
+    const PLAYER_SMOOTH: SculptOptions = { ...WIRE_DEFAULT_SCULPT_OPTIONS, tool: 'smooth' };
+
+    const diff = applySculpt(
+      map,
+      TERRACE_CENTRE,
+      TERRACE_CENTRE,
+      4,
+      DEFAULT_SCULPT_AMOUNT,
+      PLAYER_SMOOTH,
+    );
+    let moved = 0;
+    for (let i = 0; i < map.cells.length; i++) {
+      if (map.cells[i] !== before[i]) moved++;
+    }
+    // Measured 2026-08-29 (.sim-108/probe3.mjs). Every cell the diff reports is
+    // a cell that really moved, and the stroke is band-contained, so this is a
+    // brush-sized edit and not a world-wide regrade.
+    expect(diff.length).toBe(37);
+    expect(moved).toBe(37);
+
+    // AND IT SETTLES rather than eating the hillside: successive strokes on the
+    // same spot keep touching more ground (the terrace steps around it are
+    // still over-steep) but each one is bounded by its own footprint's band
+    // caps, so the count grows slowly instead of exploding.
+    const counts = [diff.length];
+    for (let stroke = 0; stroke < 3; stroke++) {
+      counts.push(
+        applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, 4, DEFAULT_SCULPT_AMOUNT, PLAYER_SMOOTH)
+          .length,
+      );
+    }
+    expect(counts).toEqual([37, 58, 74, 94]);
+  });
+
+  it('the relaxation pass conserves height exactly on the FREE path', () => {
+    const map = genesisTerraces(TERRACE_SIZE);
+    const before = mapTotal(map);
+    const seed = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, 8);
+    const passes = smooth(map, new Set(), seed);
+    expect(passes).toBeGreaterThan(0);
+    expect(mapTotal(map)).toBe(before);
+  });
+
+  it('the relaxation pass conserves height exactly on the BANDED path', () => {
+    // The player's containment (issue #26): every cell outside the footprint is
+    // capped to its pre-stroke band, so movePair takes the COUPLED-CLAMP branch
+    // — the one whose `t` is the whole reason conservation had to be argued for
+    // separately here.
+    const map = genesisTerraces(TERRACE_SIZE);
+    const before = mapTotal(map);
+    const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, 8);
+    const passes = smooth(map, new Set(), footprint, footprint);
+    expect(passes).toBeGreaterThan(0);
+    expect(mapTotal(map)).toBe(before);
+  });
+
+  it('the relaxation pass conserves height exactly on the ANCHORED path', () => {
+    // The clicked-cell anchor (2026-08-19): footprint cells carry their own
+    // interval, which takes precedence over the footprint's blanket freedom and
+    // drives the same coupled clamp from the other side.
+    const map = genesisTerraces(TERRACE_SIZE);
+    const before = mapTotal(map);
+    const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, 8);
+    const anchorBounds = new Map<number, { lo: number; hi: number }>();
+    for (const i of footprint) {
+      const h = map.cells[i]!;
+      anchorBounds.set(i, { lo: h - BAND_HEIGHT, hi: h + BAND_HEIGHT });
+    }
+    const passes = smooth(map, new Set(), footprint, footprint, anchorBounds);
+    expect(passes).toBeGreaterThan(0);
+    expect(mapTotal(map)).toBe(before);
+  });
+
+  it('the LAYERED path conserves SOLID VOLUME; its cells-sum is not a conserved quantity', () => {
+    // KNOWN RESIDUAL, PRE-EXISTING, PINNED RATHER THAN FIXED (issues #108 and
+    // #129 step 4.6). On a world holding a layered column the pass relaxes a
+    // VIEW of the grasped layer's ceilings and commits it through
+    // `moveSpanCeiling`; `map.cells` holds only the TOP span's ceiling, so a
+    // stroke that moves a LOWER span changes the world's solid material not at
+    // all while changing the sum of `map.cells` by an amount that depends on
+    // the column shapes it touched. That sum is therefore the wrong invariant
+    // to assert on this path, and the right one — material — holds exactly.
+    const ROOF_GAP_BANDS = 8;
+    const map = genesisTerraces(TERRACE_SIZE);
+    for (let y = 40; y < 56; y++) {
+      for (let x = 40; x < 56; x++) {
+        const floorHeight = map.cells[cellIndex(map, x, y)]!;
+        setColumn(map, x, y, [
+          { floor: BEDROCK_FLOOR, ceiling: floorHeight },
+          {
+            floor: floorHeight + ROOF_GAP_BANDS * BAND_HEIGHT,
+            ceiling: floorHeight + (ROOF_GAP_BANDS + 1) * BAND_HEIGHT,
+          },
+        ]);
+      }
+    }
+    const volumeBefore = mapVolume(map);
+    const cellsBefore = mapTotal(map);
+    const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, 8);
+    const passes = smooth(map, new Set(), footprint, footprint);
+    expect(passes).toBeGreaterThan(0);
+    // The invariant that means something on this path.
+    expect(mapVolume(map)).toBe(volumeBefore);
+    // And the one that does not, pinned so a change in it is noticed and
+    // explained rather than discovered as a mystery. Measured 2026-08-29
+    // (.sim-108/probe3.mjs); it is NEGATIVE because the roofed columns' top
+    // ceilings are untouched while the ground under them moves.
+    expect(mapTotal(map) - cellsBefore).toBe(-1408);
+  });
+
+  it('pins the free-spill peak: 384 library-default clicks build a hill of 87', () => {
+    // The number the conserving split leaves for a plugin-style stroke: the
+    // library default is smooth + FREE spill + FREE anchor, so a stacked click
+    // spills its height outward instead of holding it under the brush. Under
+    // the old rule the same 384 clicks reached MAX_HEIGHT — on manufactured
+    // height: the brush delivered 18,432 units and the map ended up holding
+    // 3,686,396 (.sim-108/results.txt). Now the map holds exactly the 18,432
+    // the brush paid for, and the peak that buys is 87.
+    const STACKED_CLICKS = (MAX_HEIGHT * 6) / DEFAULT_SCULPT_AMOUNT;
+    const map = createHeightmap(64);
+    for (let k = 0; k < STACKED_CLICKS; k++) {
+      applySculpt(map, 32, 32, 2, DEFAULT_SCULPT_AMOUNT);
+    }
+    expect(heightAt(map, 32, 32)).toBe(87);
+    expect(mapTotal(map)).toBe(18_432);
+  });
+
+  it('never moves a pair APART when a span cap is already violated (the movePair guard)', () => {
+    // THE FAILURE MODE. movePair's coupled clamp takes `t = min(dropCap,
+    // riseCap)` and moves BOTH sides by it. Both caps are differences against a
+    // bound the capture is supposed to have put on the far side of the cell, so
+    // the comment there argued they could never be negative — but that is an
+    // argument about the caller, and a SPAN cap is built from the column rather
+    // than captured: `spanCaps.lo` is `spanLowestBandHeight`, the lowest BAND
+    // BOUNDARY at or above the span's floor, which for an UNDRAWN span (one
+    // thinner than a band, falling between two boundaries) is ABOVE the span's
+    // own ceiling. `dropCap` is then negative, and `drop = rise = t` with t < 0
+    // RAISES the high cell and LOWERS the low one: the pair ends steeper than
+    // it started and the sweep counts that as progress.
+    //
+    // Measured before the guard (.sim-108/probe3.mjs): the layered cell rose
+    // from 14 to 16 against a neighbour at 0 — a pair at 14 pushed to 16.
+    const map = createHeightmap(16);
+    const UNDRAWN_FLOOR = 10;
+    const UNDRAWN_CEILING = 14; // < BAND_HEIGHT: no band boundary inside the span
+    setColumn(map, 8, 8, [
+      { floor: BEDROCK_FLOOR, ceiling: -100 },
+      { floor: UNDRAWN_FLOOR, ceiling: UNDRAWN_CEILING },
+    ]);
+    const layered = cellIndex(map, 8, 8);
+    const neighbour = cellIndex(map, 9, 8);
+    const before = Int16Array.from(map.cells);
+    const seed = new Set([layered, neighbour]);
+
+    smooth(map, new Set(), seed);
+
+    // The pair is REFUSED, which is what the coupled clamp already reports for
+    // "not even one unit fits" — and refusal is the only correct answer: it
+    // leaves the world exactly as it found it.
+    expect(map.cells[layered]).toBe(UNDRAWN_CEILING);
+    expect(Array.from(map.cells)).toEqual(Array.from(before));
   });
 
   it('invents nothing scouring a head out of steep ground (issue #239)', () => {

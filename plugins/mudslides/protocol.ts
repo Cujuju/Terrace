@@ -8,7 +8,7 @@
 // Nothing in here reads a clock, a socket or three.js, so a node test run can
 // import it and so can the browser bundle.
 
-import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, WORLD_UNIT_CELLS } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, RELAX_SLACK, WORLD_UNIT_CELLS } from '@terrace/shared';
 
 /** The host's key for this plugin: the message and event namespace. */
 export const MUDSLIDES_PLUGIN_NAME = 'mudslides';
@@ -119,15 +119,26 @@ export const MUDSLIDE_SLOPE_SPAN_CELLS = cellsAcross(MUDSLIDE_SLOPE_SPAN_WORLD_U
 
 /**
  * The steepest drop the terrain sim itself permits over that span, in height
- * units — MAX_STEP per cell, by definition of MAX_STEP (shared/src/constants.ts:
- * the relaxation will not leave a neighbour pair steeper than this).
+ * units — the steepest LEGAL slope per cell, by definition (the relaxation will
+ * not leave a neighbour pair steeper than this).
+ *
+ * MAX_STEP + RELAX_SLACK PER CELL, NOT MAX_STEP (issue #108, 2026-08-29). The
+ * relaxation splits a pair's excess exactly in half now, which makes it
+ * conserve height but leaves the odd unit standing in the pair: its trigger is
+ * `|d| > MAX_STEP + RELAX_SLACK`, so a pair at MAX_STEP + 1 is AT REST and the
+ * true steepest ground the sim holds is 5 units per cell, not 4
+ * (shared/src/constants.ts, RELAX_SLACK). Written against the old figure this
+ * constant claimed 32 over the span where the sim really permits 40, and
+ * MUDSLIDE_TRIGGER_DROP — a fraction of it — was therefore 20% low: ground the
+ * relaxation itself considers settled qualified as "about to give way".
  *
  * DERIVED, so the trigger threshold below is a FRACTION OF WHAT IS POSSIBLE
  * rather than an absolute number that silently becomes unreachable the next time
- * BAND_HEIGHT or WORLD_UNIT_CELLS moves. The 2026-08-20 re-terrace and the
- * 2026-08-21 re-sample each changed one of those two.
+ * BAND_HEIGHT, WORLD_UNIT_CELLS or the relaxation rule moves. The 2026-08-20
+ * re-terrace, the 2026-08-21 re-sample and the #108 split each changed one of
+ * its inputs.
  */
-export const MUDSLIDE_MAX_DROP_OVER_SPAN = MAX_STEP * MUDSLIDE_SLOPE_SPAN_CELLS;
+export const MUDSLIDE_MAX_DROP_OVER_SPAN = (MAX_STEP + RELAX_SLACK) * MUDSLIDE_SLOPE_SPAN_CELLS;
 
 /**
  * How steep is steep enough to give way, as a fraction of the steepest ground

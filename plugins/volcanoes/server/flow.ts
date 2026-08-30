@@ -89,6 +89,25 @@ export const MAX_FLOW_CELLS = 64;
  * the ground it crosses without inventing a staircase, and where several cells
  * of flow overlap in a hollow the halves add up and the pool does step. That is
  * exactly the right way round.
+ *
+ * RE-MEASURED AND DELIBERATELY NOT RETUNED after the conserving relaxation
+ * (issue #108, 2026-08-29). The claim above is about a single flow cell, and it
+ * is exactly as true as it was: one cell melted on genesis ground settles at
+ * 8.00 height units under BOTH rules (.sim-108/plugins.mjs, `=== VOLCANOES:
+ * lava settled thickness ===`, "one cell" column) — the relaxation has nothing
+ * to spread half a band of rise into that it did not have before.
+ *
+ * WHAT DID CHANGE IS THE POOL, and it is the change that was WANTED. Over a
+ * 32-cell flow the mean settled rise fell from 41.9 units to 20.4, and the
+ * height the world actually gained fell from 12,642 to 4,608 — the 4,608 being
+ * exactly what the brush displaced. The missing 8,034 was never lava: it was
+ * relaxation manufacturing height out of the odd remainder of every pair it
+ * touched (#108), so an old flow deposited nearly three times the material it
+ * was asked for. Doubling this constant to "restore" that would be restoring an
+ * accounting error, and it would break the sentence above outright — measured,
+ * FLOW_THICKNESS = BAND_HEIGHT lands a full band on every cell the flow enters
+ * (16.00 in the same table), which is the self-terracing flow this value exists
+ * to prevent. The pool still steps: 20.4 units is more than one band.
  */
 export const FLOW_THICKNESS = BAND_HEIGHT / 2;
 

@@ -105,6 +105,17 @@ export function footprintUnlocked(
  * plugin uses; anything the diff puts beyond it is counted as UNMEASURED rather
  * than silently as zero, which is what keeps the ledger's error visible instead
  * of making the ledger wrong (see `SculptMeasurement.unmeasuredCells`).
+ *
+ * RE-MEASURED AND DELIBERATELY NOT WIDENED after the conserving relaxation
+ * (issue #108, 2026-08-29) — the cascade got SMALLER, not larger. Simulating a
+ * full slide on a 512² genesis world (.sim-108/plugins.mjs, `=== MUDSLIDES ===`)
+ * the widest single sculpt diff went from 502 cells to 229, and the count of
+ * cells landing outside this window went from 41 to 0. The reason is the
+ * mechanism itself: the old rule handed the low cell of every odd pair a unit
+ * nobody paid for, and each of those units was a fresh excess for the next pass
+ * to push further out, so the manufacturing rule kept feeding its own cascade.
+ * A 229-cell diff sits inside the 45×45 window this margin already gives the
+ * plugin's radius of 6, with room to spare.
  */
 export const MUDSLIDE_MEASURE_MARGIN_CELLS = 16;
 
