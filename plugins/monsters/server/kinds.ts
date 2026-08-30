@@ -260,10 +260,11 @@ export const KRAKEN_MIN_LAIR_DEEP_CELLS =
  *     floored integer band. So a FRESH world's floor is always a whole band,
  *     and the −496 the live world reads is not a genesis height at all — it is
  *     a genesis floor some later EDIT relaxed. (Nor is that shave capped at
- *     MAX_STEP / 2 = 16: relaxation gives the LOWER cell `ceil(e/2)` of the
- *     excess `e` over MAX_STEP, and 16 is only the value for a single
- *     one-band step. A floor beside a neighbour raised again and again rises
- *     again and again.)
+ *     MAX_STEP / 2: relaxation moves the lower cell by `floor(e/2)` of the
+ *     excess `e` over MAX_STEP — `ceil(e/2)` until 2026-08-29, when the split
+ *     was made exact so the pass conserves height, issue #108 — and either way
+ *     that is only half of ONE step's excess. A floor beside a neighbour
+ *     raised again and again rises again and again.)
  *   * BAND −8 IS NOT THE DEEPEST an ordinary ocean settles at. The noise
  *     lattice draws band offsets across its whole
  *     [OUTER_TERRAIN_MIN_BAND_OFFSET, OUTER_TERRAIN_MAX_BAND_OFFSET] =

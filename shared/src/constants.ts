@@ -495,11 +495,40 @@ export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_ST
  * Relaxation passes budgeted per cell of spread. One pass per cell is NOT
  * enough (#12): each relaxation moves only half the excess, and the row-major
  * sweep propagates against the sweep direction (-x/-y) at one cell per pass,
- * so real cascades need a small multiple of the travel distance. Measured on
- * the worst player-constructible single strokes (a MAX_HEIGHT stamp plateau
- * smoothed in one stroke; the same plateau beside a MIN_HEIGHT moat): ~2.2
- * passes per cell of spread. 4 doubles the measured worst case; the stress
- * tests in shared/test/heightmap.test.ts pin that the budget converges there.
+ * so real cascades need a small multiple of the travel distance.
+ *
+ * RE-MEASURED 2026-08-29 FOR THE CONSERVING SPLIT (issue #108), and it stays 4.
+ * The whole per-cell figure moved, so the derivation is restated rather than
+ * patched. Passes actually taken, over the spread the fixture's own relief pays
+ * for (relief / MAX_STEP), old rule vs new (.sim-108/passes.mjs):
+ *
+ *   fixture                                   old    new
+ *   15-band stamp plateau, one smooth stroke  0.54   0.43   ← player-constructible
+ *   MAX plateau, brush fully clamped          0.53   0.42   ← player-constructible
+ *   MAX plateau beside a MIN moat             0.37   0.37   ← player-constructible
+ *   bare 100-unit cliff (synthetic)           2.12   3.04
+ *   bare 401-unit cliff (synthetic)           3.00  11.87
+ *   bare 1000-unit cliff (synthetic)          3.36  10.24  ← truncated at the cap
+ *
+ * THE OLD "~2.2 PASSES PER CELL" WAS THE SYNTHETIC ROW, NOT THE PLAYER ONE.
+ * Every stroke a player can actually make still converges in under half a pass
+ * per cell of spread — FEWER passes than under the old rule, because the
+ * manufactured unit the old rule handed the low cell of every odd pair was
+ * itself a fresh excess for the next pass to push further out. What got dearer
+ * is the synthetic case: a bare sheer cliff has to walk every unit of its ramp
+ * down off the plateau now instead of having the fill invented under it, and at
+ * 401 units that is 11.9 passes per cell.
+ *
+ * SO 4 IS NO LONGER "double the measured worst case" — it is roughly nine times
+ * the worst PLAYER-CONSTRUCTIBLE case and about a third of what a 401-unit
+ * synthetic cliff wants. That is deliberate and is the owner's call (2026-08-29,
+ * recorded on SMOOTH_PASS_LIMIT below): this factor is the SERVER'S CPU BOUND
+ * per intent, not a promise that every conceivable fixture converges. Keeping
+ * it at 4 keeps SMOOTH_PASS_LIMIT at 2560, i.e. keeps the worst-case cost of a
+ * single intent exactly where it has been; raising it to cover a legacy sheer
+ * cliff would raise that cost for every world. The stress tests in
+ * shared/test/heightmap.test.ts pin both halves: the player cascades converge
+ * far under the cap, and the 1000-unit cliff truncates AT it.
  */
 export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
 
@@ -520,6 +549,35 @@ export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
  * PLAYER-CONSTRUCTIBLE cascades converge far faster banded than free (9 vs 67
  * passes), because the band caps stop the excess from travelling. The #12
  * stress tests pin both modes.
+ *
+ * IT STAYS 2560 UNDER THE CONSERVING SPLIT — OWNER DECISION, 2026-08-29 (issue
+ * #108), with the residual named rather than fixed. Conservation costs passes
+ * on SHEER ground: the fill on the low side of a cliff is no longer invented,
+ * so every unit of the ramp has to be walked down off the plateau. Measured by
+ * bisection on a bare cliff over 128² (.sim-108/passes.mjs), the smallest wall
+ * that no longer converges inside this cap is 593 height units — a 592-unit
+ * cliff finishes in 2,524 passes and a 593-unit one is truncated at 2,560. A
+ * 1000-unit cliff wants ~7,205 (.sim-108/results.txt).
+ *
+ * WHAT A TRUNCATED SWEEP LEAVES: the gradient invariant locally violated, with
+ * a measured worst local gradient of 6 at the 593-unit threshold and 7 at 1000
+ * units, against the MAX_STEP + RELAX_SLACK of 5 it guarantees elsewhere. It is
+ * deterministic on both sides (client and server truncate identically), it is
+ * visible — `smooth` returns its pass count, and a count equal to this cap
+ * means exactly this — and it is repaired incrementally: the next smooth stroke
+ * over that ground resumes the cascade where the last one stopped.
+ *
+ * WHY THE CAP DID NOT MOVE ANYWAY. Nothing a PLAYER can construct reaches it:
+ * the worst player-constructible strokes converge in 108-118 passes, 4% of the
+ * cap (see the table on SMOOTH_PASSES_PER_SPREAD_CELL). A 600-unit sheer wall
+ * is roughly 37 stamped bands with no tread between them — a legacy or
+ * synthetic world, not a stroke. Raising the cap would raise the worst-case
+ * cost of EVERY intent on EVERY world to buy convergence on those; the cost of
+ * leaving it is that a legacy over-steep world re-grades over several strokes
+ * instead of one. The other price is time on such a world: a relic cast landing
+ * on genesis-steep ground was measured at 888 ms before the split and 1,271 ms
+ * after (issue #108's review, 2026-08-30 — roughly 2× the genesis-cast cost,
+ * not re-measured here).
  */
 export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;
 

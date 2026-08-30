@@ -287,6 +287,28 @@ const MAX_STEPS_PER_TICK = 8;
  * survives to the end is the lobe. Zero would give a flow that carries a hill
  * intact for twenty world units and drops it in one place; a half would leave
  * nothing to run out with.
+ *
+ * RE-MEASURED AND DELIBERATELY NOT RETUNED after the conserving relaxation
+ * (issue #108, 2026-08-29), together with MUDSLIDE_TOE_DUMP_STEPS and
+ * MUDSLIDE_MASS_TOLERANCE_HEIGHT_UNITS below — the three of them are one
+ * mechanism and were re-derived as one. A full slide simulated at the shipped
+ * cadence on a 512² genesis world (.sim-108/plugins.mjs, `=== MUDSLIDES ===`):
+ *
+ *   rule  excavated  deposited  residual  residual %
+ *   old         675       1811         0        0.0
+ *   new        1848       1828        20        1.1
+ *
+ * The old row is the defect, not the target. Under the manufacturing rule a
+ * scour MEASURED 675 units out of a hillside and the run-out then put 1811 units
+ * back — the ledger was not conserving anything, it was laundering height the
+ * relaxation invented, and the reason it "cleared" is that every deposit
+ * over-delivered. Under the conserving rule `sculptGuarded`'s net is exactly
+ * what the brush displaced, so `Slide.gain` is an exact calibration and each
+ * deposit lands what it asks for; 1.1% of the load left owed after the toe dump
+ * is the run-out genuinely meeting MAX_STEP, which is the residual this
+ * mechanism was always documented to have. Raising the fraction to 0.25 moves
+ * it to 1.2% and doubling MUDSLIDE_TOE_DUMP_STEPS to 16 to 0.8% — noise, not a
+ * mis-tuning, and both cost sculpts.
  */
 export const MUDSLIDE_TRACK_DEPOSIT_FRACTION = 0.15;
 
@@ -296,6 +318,11 @@ export const MUDSLIDE_TRACK_DEPOSIT_FRACTION = 0.15;
  * EIGHT. Each one raises the ground a little; the relaxation refuses more and
  * more of them as the lobe builds, so this is the point at which "keep trying
  * until the ledger clears" has to become "stop and report what is left".
+ *
+ * STILL EIGHT after the conserving relaxation (issue #108): the measured
+ * residual at eight steps is 1.1% of the load, and sixteen steps buys 0.3
+ * points of it for twice the sculpts — see MUDSLIDE_TRACK_DEPOSIT_FRACTION
+ * above for the table.
  */
 export const MUDSLIDE_TOE_DUMP_STEPS = 8;
 
@@ -315,6 +342,14 @@ export const MUDSLIDE_TOE_LOBE_CELLS = 4;
  * single sculpt of this brush can produce. Stated as an absolute because the
  * ledger is absolute: a slide with four height units left has, for every purpose
  * a player can see, finished.
+ *
+ * STILL FOUR after the conserving relaxation (issue #108). It is a floor on the
+ * ledger's RESOLUTION, not a tolerance for its error, and the resolution did not
+ * move: the smallest deposit this brush can make is still one height unit's
+ * worth of displacement across its footprint. The measured residual after the
+ * toe dump (1.1% of a ~1848-unit load, i.e. ~20 units) is reported through
+ * `residualHeightUnits`, not swallowed here — see
+ * MUDSLIDE_TRACK_DEPOSIT_FRACTION for the measurement.
  */
 export const MUDSLIDE_MASS_TOLERANCE_HEIGHT_UNITS = 4;
 

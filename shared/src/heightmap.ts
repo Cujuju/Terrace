@@ -1865,7 +1865,8 @@ function movePair(
     const loBand = boundsOf === null ? null : boundsOf(loIdx);
     // How much of each half actually fits inside its side's band. A capture
     // happens before a cell's first move, and every later move stays inside
-    // the captured band, so these can never be negative.
+    // the captured band, so on THAT path these are never negative — the
+    // coupled clamp below no longer relies on it being true of every path.
     let dropCap = hiBand === null ? drop : Math.min(drop, cells[hiIdx] - hiBand.lo);
     let riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[loIdx]);
     // A LAYERED CELL'S SPAN BOUNDS (step 4.6), intersected with the above: its
@@ -1877,6 +1878,26 @@ function movePair(
     if (loSpan !== undefined) riseCap = Math.min(riseCap, loSpan.hi - cells[loIdx]);
     if (dropCap < drop || riseCap < rise) {
       const t = Math.min(dropCap, riseCap);
+      // A NEGATIVE `t` WOULD MOVE THE PAIR APART, which is the one thing this
+      // function must never do. Both caps are DIFFERENCES against a cap that
+      // the capture is supposed to have put on the far side of the cell
+      // (`cells[hiIdx] - hiBand.lo`, `loBand.hi - cells[loIdx]`), so the
+      // comment above says they cannot go negative — but that is an argument
+      // about the CALLER, and there are four of them (band capture, span caps,
+      // and the two intersected together). A cell that reaches here already
+      // outside a bound — a span cap built from a column the stroke did not
+      // capture, a saved world whose spans predate the current rule — makes
+      // one cap negative, and `drop = rise = t` with t < 0 then RAISES the
+      // high cell and LOWERS the low one: the pair ends steeper than it
+      // started, the sweep counts it as progress, and the cascade runs away
+      // from its own termination argument. The `drop === 0 && rise === 0`
+      // test below does not catch it, because -3 is not 0.
+      //
+      // Refusing the pair is the correct answer and not merely the safe one:
+      // "not even one unit fits" is exactly the state the coupled clamp
+      // already reports as UNCHANGED (see the standing-residual note above),
+      // and a pair that cannot move must not count as progress.
+      if (t <= 0) return false;
       drop = t;
       rise = t;
     }

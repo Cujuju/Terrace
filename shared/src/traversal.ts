@@ -137,11 +137,23 @@ export const UNCONSTRAINED_GRADIENT_PER_CELL = Infinity;
  * along the level instead of crossing.
  *
  * Sized against the terrain's OWN gradient cap, not picked independently:
- * MAX_STEP (constants.ts) bounds every 4-neighbor height difference, so
- * MAX_STEP is the STEEPEST slope that can exist anywhere in the world —
- * anything steeper is not legal terrain. Half of that means the steepest HALF
- * of legally-possible slopes are impassable to a walker — a terrace riser
- * reads as a riser — while an ordinary rolling ramp still crosses freely.
+ * relaxation bounds every 4-neighbor height difference, so that bound is the
+ * STEEPEST slope that can exist anywhere in the world — anything steeper is
+ * not legal terrain. Half of it means the steepest HALF of legally-possible
+ * slopes are impassable to a walker — a terrace riser reads as a riser —
+ * while an ordinary rolling ramp still crosses freely.
+ *
+ * THE BOUND IS MAX_STEP + RELAX_SLACK, NOT MAX_STEP (issue #108, 2026-08-29),
+ * and this constant is deliberately still half of MAX_STEP alone. Relaxation
+ * splits a pair's excess exactly in half now, so it comes to rest at
+ * MAX_STEP + 1 rather than MAX_STEP (constants.ts, RELAX_SLACK) and the
+ * steepest legal slope is 5 units per cell. Half of THAT is 2.5, which is not
+ * a height: the walker rule has to be an integer number of height units per
+ * cell or every caller rounds it differently. Rounding down gives 2, which is
+ * this constant unchanged; rounding up gives 3, which would let a walker take
+ * slopes it used to refuse. So the tie is broken DOWNWARD and the sentence
+ * above holds a fortiori — the walker refuses slightly more than half of the
+ * legally-possible slopes, never fewer.
  *
  * WRITTEN AGAINST MAX_STEP, NOT BAND_HEIGHT (2026-08-20). It used to say
  * `BAND_HEIGHT / 4` and note in passing that this equalled MAX_STEP/2. The

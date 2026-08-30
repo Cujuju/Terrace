@@ -159,3 +159,132 @@ new  wire default (clicked/banded)  r=8  peak= 1024  mapTotal        0 ->    173
 new  stamp/hard                     r=2  peak= 1024  mapTotal        0 ->      5120
 new  stamp/hard                     r=8  peak= 1024  mapTotal        0 ->    181248
 
+
+
+##############################################################################
+# PASS 2 (2026-08-29) — RE-DERIVING THE PLUGIN CONSTANTS AND THE PASS BUDGET
+##############################################################################
+
+Scripts, all run with `node --experimental-strip-types` from the repo root and
+all driving the SAME fixtures through `.sim-108/old-src/` (shared/src as it
+stood before the fix) and the working tree's `shared/src`:
+
+  .sim-108/plugins.mjs  → .sim-108/plugins.txt   plugin constants, old vs new
+  .sim-108/passes.mjs   → .sim-108/passes.txt    passes per cell of spread
+  .sim-108/probe3.mjs                            the numbers the new tests pin
+
+Plugin fixtures are a 512x512 GENESIS world (seed 108), built with the server's
+own buildFreshGenesisTerrain/freshGenesisHeightAt so the ground is the
+band-quantised, everywhere-over-steep terrain a fresh world really ships, plus
+flat/uniform-slope controls. Plugin sculpts go through
+applySculpt(..., {tool:'smooth', profile:'soft', spill:'banded'}), which is
+exactly what WorldApi.sculpt does.
+
+------------------------------------------------------------------ RETUNED --
+
+volcanoes CONE_GROWTH_BANDS_PER_ERUPTION  1 -> 2
+  (rewritten as CONE_PEAK_BANDS_PER_ERUPTION x CONE_BRUSH_BANDS_PER_PEAK_BAND)
+  Mean cone PEAK gain per eruption, 10 eruptions on a GENESIS_CONE_BANDS cone:
+
+    world     rule  bands asked   1st gain   peak/10   mean gain
+    genesis   old   1                   16       160       16.00   <- the intent
+    genesis   new   1                   16        90        9.00
+    genesis   new   2                   32       151       15.10   <- restored
+    genesis   new   3                   39       204       20.40
+    flat      old   1                   16       160       16.00
+    flat      new   1                   16       121       12.10
+    flat      new   2                   32       177       17.70
+    flat      new   3                   48       229       22.90
+
+mudslides MUDSLIDE_MAX_DROP_OVER_SPAN  32 -> 40
+  Not a measurement, a definition: the constant claims to be "the steepest the
+  sim permits", and the conserving split moved that from MAX_STEP to
+  MAX_STEP + RELAX_SLACK per cell. Written as (MAX_STEP + RELAX_SLACK) x
+  MUDSLIDE_SLOPE_SPAN_CELLS. MUDSLIDE_TRIGGER_DROP follows it, 16 -> 20.
+
+--------------------------------------------- RE-MEASURED, NOT RETUNED ------
+
+volcanoes FLOW_THICKNESS  stays BAND_HEIGHT/2
+    world     rule  FLOW_THICKNESS   one cell   over a 32-cell flow   moved
+    genesis   old   8                    8.00                 41.88   12642
+    genesis   new   8                    8.00                 20.44    4608
+    genesis   new   16                  16.00                 34.19    9216
+  The constant's own claim is the "one cell" column, and it is unchanged. The
+  pooled figure halved because the old rule was inventing 8,034 of those 12,642
+  units; 4,608 is exactly what the brush displaced. Doubling the constant would
+  put a FULL band on every flow cell (16.00), i.e. the self-terracing flow the
+  half-band exists to prevent.
+
+storms SURGE_BRUSH_RADIUS_CELLS  stays 4 (one world unit)
+    world     rule  radius   removed   centre drop   vs old
+    genesis   old   4            139            10    1.00x
+    genesis   new   4            152            11    1.09x
+    genesis   new   3             85            10    0.56x
+    slope     old   4            109             4    1.00x
+    slope     new   4            144             8    1.32x
+    slope     new   3             72             6    0.66x
+  One surge still drops the shore less than one band (11 of 16), which is the
+  documented intent. The only integer alternative undershoots harder than 4
+  overshoots, and stops being a derivation. Residual named in the doc comment:
+  48 surges on ONE cell cut 12.8 bands (old rule on the same fixture: 9.6).
+
+mudslides MUDSLIDE_TRACK_DEPOSIT_FRACTION / _TOE_DUMP_STEPS /
+          _MASS_TOLERANCE_HEIGHT_UNITS / _MEASURE_MARGIN_CELLS  all unchanged
+    world     rule  margin  track  toe   excavated  deposited  residual  resid%  unmeas  max changed
+    genesis   old   16      0.15   8           675       1811         0     0.0      41          502
+    genesis   new   16      0.15   8          1848       1828        20     1.1       0          229
+    genesis   new   64      0.25   16         1848       1834        14     0.8       0          242
+  The old row is the defect: a scour MEASURED 675 units out and the run-out put
+  1,811 back. Under the conserving rule sculptGuarded's net is exactly the
+  brush's displacement, Slide.gain is an exact calibration, and 1.1% is the
+  run-out genuinely meeting MAX_STEP. The measurement window did not need
+  widening either: the widest single diff FELL from 502 cells to 229 and the
+  unmeasured count from 41 to 0 — the manufacturing rule had been feeding its
+  own cascade.
+
+------------------------------------------------- THE PASS BUDGET ------------
+
+Passes actually taken over the spread the fixture's relief pays for
+(relief / MAX_STEP) — .sim-108/passes.mjs:
+
+    stroke                                    rule    relief  spread  passes  per cell
+    15-band stamp plateau, one smooth stroke  old       1008     252     135      0.54
+    15-band stamp plateau, one smooth stroke  new       1008     252     108      0.43
+    MAX plateau, brush fully clamped          old       1024     256     135      0.53
+    MAX plateau, brush fully clamped          new       1024     256     108      0.42
+    MAX plateau beside a MIN moat             old       1280     320     119      0.37
+    MAX plateau beside a MIN moat             new       1280     320     118      0.37
+    bare cliff 100 (synthetic)                old        100      25      53      2.12
+    bare cliff 100 (synthetic)                new        100      25      76      3.04
+    bare cliff 401 (synthetic)                old        401     100     300      3.00
+    bare cliff 401 (synthetic)                new        401     100    1187     11.87
+    bare cliff 1000 (synthetic)               old       1000     250     841      3.36
+    bare cliff 1000 (synthetic)               new       1000     250    2560     10.24  TRUNCATED
+
+  SMOOTH_PASSES_PER_SPREAD_CELL's old "~2.2 passes per cell" was the SYNTHETIC
+  row, not the player one. Player-constructible strokes take FEWER passes under
+  the conserving rule than under the old one. The factor stays 4 and
+  SMOOTH_PASS_LIMIT stays 2560 (owner decision) — see the constants' own doc
+  comments.
+
+  Truncation threshold, by bisection on a bare cliff over 128x128:
+
+    cliff 529: passes 2047  max gradient 5
+    cliff 592: passes 2524  max gradient 5
+    cliff 593: passes 2560  max gradient 6   <- smallest wall that truncates
+    cliff 657: passes 2560  max gradient 6
+    cliff 1000: passes 2560 max gradient 7
+
+------------------------------------------ WHAT THE NEW TESTS PIN ------------
+
+  player smooth stroke on genesis terraces: 37 diff cells on stroke 1,
+    then 58, 74, 94 — every diff cell really moved
+  relaxation total delta: free 0, banded 0, anchored 0
+  layered path: SOLID VOLUME delta 0; sum of map.cells delta -1408 on the
+    pinned fixture (map.cells holds only the TOP span's ceiling, so it is not
+    a conserved quantity when the stroke moves a lower span)
+  free-spill peak after 384 library-default clicks: 87, map total 18,432
+  movePair guard: an UNDRAWN top span (thinner than a band, between two band
+    boundaries) has spanCaps.lo ABOVE its own ceiling, so the coupled clamp's
+    `t` goes negative — measured before the guard, a cell at 14 beside a
+    neighbour at 0 was pushed UP to 16, moving the pair APART.

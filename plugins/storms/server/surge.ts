@@ -44,10 +44,34 @@ export const SURGE_SCOUR_HEIGHT_UNITS = BAND_HEIGHT / 2;
 /**
  * The brush radius one surge is applied with, in cells.
  *
- * FOUR — one world unit, so a surge scours about as much shore as a small
- * player stroke would. Wider and a single storm re-cuts a whole bay in one
- * call; narrower and the relaxation swallows the whole edit and nothing
- * happens at all.
+ * FOUR — one world unit (WORLD_UNIT_CELLS), so a surge scours about as much
+ * shore as a small player stroke would. Wider and a single storm re-cuts a
+ * whole bay in one call; narrower and the relaxation swallows the whole edit
+ * and nothing happens at all.
+ *
+ * RE-MEASURED AND DELIBERATELY NOT RETUNED after the conserving relaxation
+ * (issue #108, 2026-08-29). One surge on a genesis shoreline now takes 152
+ * height units away where the old rule took 139 — 1.09× — and on a uniform
+ * shoreline slope 144 against 109, 1.32× (.sim-108/plugins.mjs, `=== STORMS:
+ * ground one surge removes ===`). The surge got slightly BIGGER because the old
+ * rule partly refilled its own hole with manufactured height; nothing about the
+ * brush changed.
+ *
+ * THE INTENT SENTENCE ABOVE STILL HOLDS AND IS THE REASON THIS STAYS 4: one
+ * surge drops the shore at the centre by 8 units on a slope and 11 on genesis,
+ * both under the 16 that would draw a new contour, so "less than a visible
+ * step" is still measured true. The only integer alternative is 3, which
+ * undershoots harder than 4 overshoots (0.61× and 0.56× of the old figures in
+ * the same table) AND stops being one world unit — it would be a tuning
+ * literal where this is a derivation.
+ *
+ * RESIDUAL, NAMED: many surges landing on the SAME cell take the shore down far
+ * more than the file header's "a band or two" — 48 of them (a full landfall at
+ * SURGE_INTERVAL_SECONDS) cut 12.8 bands on genesis. That is not new and not
+ * this fix's doing: the same fixture under the old rule cut 9.6 bands. It is
+ * bounded in practice by the siting loop, which draws a fresh random point over
+ * the storm's whole disc for every surge, so a landfall spreads its cuts along
+ * the coast rather than stacking them.
  */
 export const SURGE_BRUSH_RADIUS_CELLS = 4;
 
