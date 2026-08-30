@@ -43,6 +43,7 @@ import {
   type RollbackResultMessage,
   type ServerRestartNoticeMessage,
   type TerrainDiffMessage,
+  type WorldAdminRequestMessage,
   type WorldAdminResultMessage,
   type WorldListMessage,
   type WorldPluginListMessage,
@@ -54,7 +55,7 @@ import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.
 import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
 import type { ServerRestartService } from '../restart.ts';
-import type { WorldAdminService } from '../world/world-admin.ts';
+import { containWorldAdminMessage, type WorldAdminService } from '../world/world-admin.ts';
 import type { WorldManager } from '../world/world-manager.ts';
 import { buildJoinSnapshot } from './join-snapshot.ts';
 import { isPluginMessageType, routePluginMessage } from './plugin-message-routing.ts';
@@ -270,52 +271,17 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         const request = validateWorldAdminRequest(message);
         if (request === null) return;
 
-        if (request.type === 'worldList') {
-          client.send('worldListing', this.context.admin.list(client.sessionId, request.key));
-          return;
-        }
-
-        if (request.type === 'worldPluginList') {
-          client.send(
-            'worldPluginListing',
-            this.context.admin.plugins(client.sessionId, request.key, request.id),
-          );
-          return;
-        }
-
-        // THE ONE ACTION THAT AWAITS (issue #198): a reload imports code, so it
-        // cannot be answered on this turn of the event loop. Its receipt and
-        // the refreshed listings are sent from the promise, in the same order
-        // and for the same reasons as the synchronous path below.
-        if (request.type === 'worldPluginReload') {
-          void this.context.admin
-            .reloadPlugin(client.sessionId, request)
-            .then((reloaded) => {
-              client.send('worldAdminResult', reloaded);
-              if (!reloaded.ok) return;
-              client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
-              client.send('worldListing', this.context.admin.listing());
-            });
-          return;
-        }
-
-        const result = this.context.admin.handle(client.sessionId, request);
-        client.send('worldAdminResult', result);
-        // A toggle changed the very lists the plugin panel is showing, so the
-        // fresh set rides along on success for the same reason the world
-        // listing does below — and only on success, so a refusal never becomes
-        // an oracle for which plugins this server runs.
-        if (
-          result.ok &&
-          (request.type === 'worldPluginSet' || request.type === 'worldPluginConfigure')
-        ) {
-          client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
-        }
-        // A successful action changed what the panel is showing, so the fresh
-        // listing rides along rather than making the client ask for it. Only
-        // on success, and only for a client that just proved it holds the key
-        // — a refusal must not become an oracle for what worlds exist.
-        if (result.ok) client.send('worldListing', this.context.admin.listing());
+        // ONE CONTAINMENT FOR THE WHOLE RESPONSE (issue #210). The action is
+        // already contained by the service; the LISTING REFRESHES below are
+        // not, and they do filesystem and SQLite work. Colyseus dispatches
+        // handlers unguarded, so a throw here would exit the process — see
+        // containWorldAdminMessage for why this is a wrapper and not five
+        // `.catch`es. It never rejects, hence `void`.
+        void containWorldAdminMessage(
+          request,
+          (reply) => client.send(reply.type, reply),
+          () => this.answerWorldAdminMessage(client, request),
+        );
       });
     }
 
@@ -347,6 +313,67 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
         ? `room "${ROOM_NAME}" created (no world loaded)`
         : `room "${ROOM_NAME}" created (world ${session.world.size}²)`,
     );
+  }
+
+  /**
+   * The whole answer to one world-admin message: the action, then the listing
+   * refreshes that ride along with it.
+   *
+   * A METHOD RATHER THAN AN INLINE HANDLER BODY so it has exactly one caller —
+   * containWorldAdminMessage, in onCreate — and therefore exactly one place
+   * where a throw or a rejection out of any of it can escape. Returning the
+   * reload's promise instead of voiding it is what puts the async path under
+   * the same containment as the synchronous one.
+   */
+  private answerWorldAdminMessage(
+    client: TerraceClient,
+    request: WorldAdminRequestMessage,
+  ): void | Promise<void> {
+    if (request.type === 'worldList') {
+      client.send('worldListing', this.context.admin.list(client.sessionId, request.key));
+      return;
+    }
+
+    if (request.type === 'worldPluginList') {
+      client.send(
+        'worldPluginListing',
+        this.context.admin.plugins(client.sessionId, request.key, request.id),
+      );
+      return;
+    }
+
+    // THE ONE ACTION THAT AWAITS (issue #198): a reload imports code, so it
+    // cannot be answered on this turn of the event loop. Its receipt and
+    // the refreshed listings are sent from the promise, in the same order
+    // and for the same reasons as the synchronous path below.
+    if (request.type === 'worldPluginReload') {
+      return this.context.admin
+        .reloadPlugin(client.sessionId, request)
+        .then((reloaded) => {
+          client.send('worldAdminResult', reloaded);
+          if (!reloaded.ok) return;
+          client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
+          client.send('worldListing', this.context.admin.listing());
+        });
+    }
+
+    const result = this.context.admin.handle(client.sessionId, request);
+    client.send('worldAdminResult', result);
+    // A toggle changed the very lists the plugin panel is showing, so the
+    // fresh set rides along on success for the same reason the world
+    // listing does below — and only on success, so a refusal never becomes
+    // an oracle for which plugins this server runs.
+    if (
+      result.ok &&
+      (request.type === 'worldPluginSet' || request.type === 'worldPluginConfigure')
+    ) {
+      client.send('worldPluginListing', this.context.admin.pluginListing(request.id));
+    }
+    // A successful action changed what the panel is showing, so the fresh
+    // listing rides along rather than making the client ask for it. Only
+    // on success, and only for a client that just proved it holds the key
+    // — a refusal must not become an oracle for what worlds exist.
+    if (result.ok) client.send('worldListing', this.context.admin.listing());
   }
 
   /**

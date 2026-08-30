@@ -91,13 +91,7 @@ export class WorldAdminService {
   list(clientId: string, key: string): WorldListMessage {
     const refusal = this.gate.authorize(clientId, key);
     if (refusal !== null) {
-      return {
-        type: 'worldListing',
-        worlds: [],
-        archived: [],
-        activeId: null,
-        refused: refusal,
-      };
+      return refusedList(refusal);
     }
     return this.listing();
   }
@@ -543,6 +537,17 @@ function actionOf(request: WorldAdminRequestMessage): WorldAdminAction {
   }
 }
 
+/** One shape for every refused world listing, matching `fail`'s role. */
+function refusedList(refused: WorldAdminRefusal): WorldListMessage {
+  return {
+    type: 'worldListing',
+    worlds: [],
+    archived: [],
+    activeId: null,
+    refused,
+  };
+}
+
 /** One shape for every refused plugin listing, matching `fail`'s role. */
 function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPluginListMessage {
   return {
@@ -559,4 +564,53 @@ function refusedPlugins(worldId: string, refused: WorldAdminRefusal): WorldPlugi
 /** One shape for every refusal, so no call site invents its own. */
 function fail(action: WorldAdminAction, refused: WorldAdminRefusal): WorldAdminResultMessage {
   return { type: 'worldAdminResult', action, ok: false, refused };
+}
+
+/** Everything the room may send in answer to one world-admin message. */
+export type WorldAdminReply =
+  | WorldAdminResultMessage
+  | WorldListMessage
+  | WorldPluginListMessage;
+
+/**
+ * Runs one world-admin message's whole response — action AND the listing
+ * refreshes that ride along with it — with a single containment around it
+ * (issue #210).
+ *
+ * WHY A WRAPPER AND NOT A `.catch` PER CALL SITE. `handle` and `reloadPlugin`
+ * each contain the ACTION, but the room sends listings after them, and
+ * `listing()`/`pluginListing()` do real I/O: they read the worlds directory
+ * and open a SnapshotStore per world. Colyseus does not wrap handler dispatch
+ * (`Room._onMessage` guards decode and validation, then emits unguarded), so a
+ * throw from a listing leaves as an uncaughtException on the synchronous path
+ * and as an unhandled rejection on the reload path — and Node's default for
+ * both is to exit the process, taking every connected player's world with it,
+ * for a listing refresh. There were five such call sites; a per-site `.catch`
+ * leaves the sixth one someone adds next unguarded, so the containment lives
+ * where the dispatch does: every `world*` message runs through here, and there
+ * is no other way for the room to answer one.
+ *
+ * NEVER REJECTS AND NEVER THROWS. The returned promise is the completion of
+ * the response, not its success; a synchronous body still does its sends
+ * synchronously, because `run` is called before the first await.
+ *
+ * The refusal is sent in the SHAPE THE REQUEST ASKED FOR — a listing request
+ * is answered with a refused listing, everything else with a `fail` receipt —
+ * for the same reason `list` and `plugins` answer their gate refusals that
+ * way: a client waiting for a listing must not have to recognise a receipt.
+ */
+export async function containWorldAdminMessage(
+  request: WorldAdminRequestMessage,
+  reply: (message: WorldAdminReply) => void,
+  run: () => void | Promise<void>,
+): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    const action = actionOf(request);
+    logError(`world management message "${request.type}" failed`, error);
+    if (request.type === 'worldList') reply(refusedList('failed'));
+    else if (request.type === 'worldPluginList') reply(refusedPlugins(request.id, 'failed'));
+    else reply(fail(action, 'failed'));
+  }
 }
