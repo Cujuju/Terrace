@@ -433,7 +433,11 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                         re-snapshotted where they stand, and nobody is disconnected.
                       </p>
                     </Show>
-                    <div class="restore-row-actions">
+                    {/* One grid row per plugin: a label column of one shared
+                        width, then the toggle and its reload joined as one
+                        control group, so sixteen rows align instead of
+                        wrapping wherever the names happen to break. */}
+                    <div class="plugin-list">
                       <For each={worldPlugins()?.installed ?? []}>
                         {(pluginName) => {
                           // Accessors, never a const holding the read: the lists
@@ -447,6 +451,17 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                           const stamp = (): string => worldPlugins()?.versions[pluginName] ?? '';
                           return (
                             <>
+                            <span class="plugin-label">
+                              {pluginName}
+                              {/* The build, in small type: it answers "is the
+                                  code I just edited live?" and is never
+                                  something to act on, so it must not compete
+                                  with the on/off state beside it. */}
+                              <Show when={stamp() !== ''}>
+                                <span class="plugin-version"> v{stamp()}</span>
+                              </Show>
+                            </span>
+                            <span class="plugin-controls">
                             <button
                               type="button"
                               class="chart-button plugin-toggle"
@@ -466,14 +481,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                                 })
                               }
                             >
-                              {pluginName} — {isDisabled() ? 'off' : 'on'}
-                              {/* The build, in small type: it answers "is the
-                                  code I just edited live?" and is never
-                                  something to act on, so it must not compete
-                                  with the on/off state beside it. */}
-                              <Show when={stamp() !== ''}>
-                                <span class="plugin-version"> v{stamp()}</span>
-                              </Show>
+                              {isDisabled() ? 'off' : 'on'}
                             </button>
                             {/* RE-IMPORT THIS PLUGIN'S SERVER CODE (issue
                                 #198). Its own control rather than a modifier on
@@ -486,6 +494,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                             <button
                               type="button"
                               class="chart-button plugin-reload"
+                              aria-label={`Reload ${pluginName}`}
                               title={`Re-import “${pluginName}”’s server code without restarting. If the new code fails, the build that is running stays.`}
                               onClick={() =>
                                 send({
@@ -496,8 +505,9 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                                 })
                               }
                             >
-                              reload
+                              ↻
                             </button>
+                            </span>
                             </>
                           );
                         }}

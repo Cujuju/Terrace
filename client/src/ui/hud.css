@@ -974,6 +974,42 @@ button.world-header {
    row of sixteen reads at a glance without parsing each label's "on"/"off".
    Translucent so the panel's ground still shows through, and the same green
    and red the HUD already uses for "connected" and for the discard button. */
+/* The plugin list is a two-column grid: every label shares the widest
+   label's width (max-content), so the control groups line up down the panel.
+   Names are short enough to never need wrapping; the version stamp trails. */
+.plugin-list {
+  display: grid;
+  grid-template-columns: max-content auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 6px;
+}
+
+.plugin-label {
+  font-size: 13px;
+}
+
+/* The toggle and its reload are one control group: flush edges, a shared
+   border, and rounded corners only at the outside. The reload is the same
+   glyph everywhere, so it needs no width for a word. */
+.plugin-controls {
+  display: inline-flex;
+  justify-self: start;
+}
+
+.plugin-controls .plugin-toggle {
+  min-width: 3.25rem;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.plugin-controls .plugin-reload {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding: 8px 10px;
+}
+
 .plugin-toggle.on {
   background: var(--plugin-on-bg);
   border-color: var(--plugin-on-border);
