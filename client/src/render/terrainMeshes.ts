@@ -141,6 +141,7 @@ import {
   type Group,
 } from 'three';
 import { chunksPerEdge } from '@terrace/shared';
+import { SCULPT_REPEAT_DELAY_MS } from '../config.ts';
 import {
   createDirectChunkBuildSource,
   type ChunkBuildSource,
@@ -223,6 +224,59 @@ export const ARENA_COMPACT_STROKE_BUDGET_MS = 1.0;
  * front of such a run waits until that run itself regrows or shrinks.
  */
 export const ARENA_COMPACT_IDLE_BUDGET_MS = 3.0;
+
+/**
+ * The p90 chunk RUN on the owner's world, in TRIANGLES.
+ *
+ * MEASURED 2026-08-29 from `arenaLayout()` over that world's 400 streamed
+ * chunks (docs/plans/frame-budget-growth-and-draw-calls.md §A3): the p90 run is
+ * 40 959 vertices, which is 13 653 whole triangles.
+ *
+ * IN TRIANGLES, NOT VERTICES, because that is the unit
+ * `createChunkGeometryBuffers` and `ensureSuperCapacity` are denominated in and
+ * every arena offset and length is a multiple of VERTICES_PER_TRIANGLE. A
+ * headroom expressed in vertices could name a capacity that is not a whole
+ * number of triangles.
+ */
+const ARENA_P90_RUN_TRIANGLES = 13_653;
+
+/**
+ * How many of a super-mesh's OWN largest run it must be able to absorb without
+ * reallocating — and therefore also the multiplier on the floor below.
+ *
+ * TWO. A regrow appends at most one new run of about the old run's size WHILE
+ * THE OLD RUN IS STILL LIVE (the splice frees it only on its way out), and a
+ * brush straddles two chunks per step. One run's worth of slack is therefore
+ * demonstrably not enough and three buys nothing the next quiet frame will not
+ * provide.
+ */
+export const ARENA_HEADROOM_RUN_MULTIPLE = 2;
+
+/**
+ * The floor under a super-mesh's headroom, in TRIANGLES: two p90 runs.
+ *
+ * WHY A FLOOR AT ALL. `ARENA_HEADROOM_RUN_MULTIPLE × largest run` is measured
+ * against what a super-mesh HAS ALREADY DRAWN, and a barely-revealed super-mesh
+ * has drawn almost nothing — its largest run is a flat chunk's six vertices, so
+ * the rule alone would leave it with the same accidental slack the whole
+ * mechanism exists to remove. The floor sizes it for the run the world is
+ * likely to hand it next instead.
+ */
+export const ARENA_HEADROOM_FLOOR_TRIANGLES =
+  ARENA_HEADROOM_RUN_MULTIPLE * ARENA_P90_RUN_TRIANGLES;
+
+/**
+ * How long the terrain must go without an `update` before a super-mesh may be
+ * grown, in milliseconds.
+ *
+ * TWICE SCULPT_REPEAT_DELAY_MS. A held brush's SLOWEST gap between intents is
+ * its first repeat — SCULPT_REPEAT_DELAY_MS, 400 ms (input/sculptInput.ts) —
+ * after which the interval ramps down to SCULPT_REPEAT_INTERVAL_MS. Waiting one
+ * delay would let a slow first repeat read as a lifted brush and put the growth
+ * back inside the stroke, which is the whole defect; two is the margin that
+ * cannot.
+ */
+export const TERRAIN_QUIET_MS = 2 * SCULPT_REPEAT_DELAY_MS;
 
 /** Terrain is dielectric; a little roughness variation is not worth a map. */
 const TERRAIN_ROUGHNESS = 0.95;
@@ -443,6 +497,20 @@ export interface ArenaStats {
   holeCount: number;
   /** How many times these buffers have been reallocated (a full `bufferData`). */
   growths: number;
+  /**
+   * The subset of `growths` taken DURING A SPLICE — every one `settle` did not
+   * schedule.
+   *
+   * READ IT AS A DELTA, NOT AS A TOTAL. A splice grows for two different
+   * reasons: streaming a world in climbs the doubling ladder chunk by chunk
+   * (accepted — it happens over a reveal, off the stroke), and a stroke that
+   * outruns its headroom reallocates on a frame the player is watching (the
+   * defect issue #229 is about). The counter cannot tell them apart, and no
+   * state on the super-mesh can; what says which is which is WHEN it moved. So
+   * the contract is that this number does not change across a stroke, and the
+   * bench and the probe report it before and after one.
+   */
+  strokeGrowths: number;
 }
 
 /** Per-super-mesh arena layout — see `TerrainMeshes.arenaLayout`. */
@@ -495,7 +563,22 @@ interface SuperMesh {
   reallocatedThisPass: boolean;
   /** How many times the buffers have been reallocated — reported by arenaStats. */
   growths: number;
+  /** Of those, the ones taken during a splice — see `ArenaStats.strokeGrowths`. */
+  strokeGrowths: number;
 }
+
+/**
+ * Which seam a capacity growth was taken from — the whole distinction part A of
+ * docs/plans/frame-budget-growth-and-draw-calls.md is about.
+ *
+ * REQUIRED AT EVERY CALLSITE rather than defaulted, so a future call cannot be
+ * counted as planned growth by forgetting to say what it is.
+ */
+type GrowthSite =
+  /** Inside `spliceChunk`, i.e. inside a stroke. Counted in `strokeGrowths`. */
+  | 'splice'
+  /** From `settle`, on a quiet frame. The growth the headroom rule schedules. */
+  | 'settle';
 
 /**
  * How the builder gets its frames. Absent means "there are none" — see the
@@ -531,6 +614,20 @@ export interface TerrainMeshes {
   update(dirty: Iterable<number>): void;
   /** Builds every queued chunk now, whatever the budget says. */
   flush(): void;
+  /**
+   * Gives one QUIET super-mesh the free capacity it is short of, so that a
+   * later stroke does not have to reallocate to make room (issue #229).
+   *
+   * Run from the frame hook after the frame's splices and compaction, which is
+   * where a client gets it for nothing. It is public because the paths with no
+   * frame hook — the preview harnesses, the bench, the tests — build their
+   * world and then stop, and "the terrain has gone quiet" is a moment only they
+   * can name. Calling it while the terrain is busy is safe and does nothing:
+   * the quiet test is inside.
+   *
+   * Deliberately NOT called by `flush` — see the implementation.
+   */
+  settle(): void;
   /**
    * Chunks that have been marked dirty and are not yet drawn — queued, out at
    * the build source, answered and waiting for a frame's splice budget, or
@@ -727,7 +824,11 @@ export function createTerrainMeshes(
   const capacityVertices = (sm: SuperMesh): number =>
     sm.buffers.triangleCapacity * VERTICES_PER_TRIANGLE;
 
-  const ensureSuperCapacity = (sm: SuperMesh, vertices: number): boolean => {
+  const ensureSuperCapacity = (
+    sm: SuperMesh,
+    vertices: number,
+    site: GrowthSite,
+  ): boolean => {
     if (vertices <= capacityVertices(sm)) return false;
     let triangles = Math.max(sm.buffers.triangleCapacity, 1);
     while (triangles * VERTICES_PER_TRIANGLE < vertices) triangles *= 2;
@@ -743,6 +844,7 @@ export function createTerrainMeshes(
     // of the pass would be uploaded a second time next frame. See the field.
     sm.reallocatedThisPass = true;
     sm.growths++;
+    if (site === 'splice') sm.strokeGrowths++;
     bindGeometry(sm);
     return true;
   };
@@ -1041,6 +1143,7 @@ export function createTerrainMeshes(
       liveEnd: 0,
       reallocatedThisPass: false,
       growths: 0,
+      strokeGrowths: 0,
     };
     bindGeometry(sm);
     group.add(sm.mesh);
@@ -1127,7 +1230,7 @@ export function createTerrainMeshes(
     } else if (slot.offset + old === sm.liveEnd) {
       // Case 3. CAPACITY IS AN EXTENT, not a delta: what has to fit is where
       // the run now ends.
-      ensureSuperCapacity(sm, slot.offset + count);
+      ensureSuperCapacity(sm, slot.offset + count, 'splice');
       sm.liveEnd = slot.offset + count;
       slot.count = count;
       dirtied.push([slot.offset, count]);
@@ -1155,7 +1258,7 @@ export function createTerrainMeshes(
         // the WHOLE run past the live end, so a test phrased in `delta`
         // under-requests by `old` and `set()` runs off the buffer — a
         // RangeError inside the frame hook.
-        ensureSuperCapacity(sm, sm.liveEnd + count);
+        ensureSuperCapacity(sm, sm.liveEnd + count, 'splice');
         // READ AFTER THE COMPACTION, not before it: a sweep moves live runs,
         // and this chunk's own run is one of them.
         freedOffset = slot.offset;
@@ -1444,14 +1547,114 @@ export function createTerrainMeshes(
    * CHUNK_SPLICE_FRAME_BUDGET_MS's 1.5), so compaction sharing that budget
    * would never run either. Two budgets, two seams.
    */
+  /**
+   * When `update` was last called, on the same clock the budgets are measured
+   * against. Half of the quiet test — see `settle`.
+   *
+   * NEGATIVE INFINITY until the first update, because "nothing has been asked
+   * of the terrain yet" is the quietest the terrain ever is.
+   */
+  let lastUpdateMs = Number.NEGATIVE_INFINITY;
+
+  /** The largest run this super-mesh currently holds, in vertices. */
+  const largestRunVertices = (sm: SuperMesh): number => {
+    let largest = 0;
+    for (const slot of sm.slots.values()) {
+      if (slot.count > largest) largest = slot.count;
+    }
+    return largest;
+  };
+
+  /**
+   * Free capacity this super-mesh must hold when the terrain is quiet, in
+   * vertices: ARENA_HEADROOM_RUN_MULTIPLE times its own largest run, never
+   * below ARENA_HEADROOM_FLOOR_TRIANGLES.
+   */
+  const headroom = (sm: SuperMesh): number =>
+    Math.max(
+      ARENA_HEADROOM_RUN_MULTIPLE * largestRunVertices(sm),
+      ARENA_HEADROOM_FLOOR_TRIANGLES * VERTICES_PER_TRIANGLE,
+    );
+
+  /**
+   * Whether any chunk of this super-mesh is still on its way to being drawn —
+   * queued, out at the build source, answered and awaiting a splice, or waiting
+   * to be retried.
+   *
+   * ALL FOUR QUEUES, AND `drain` RETURNING 0 IS NOT A SUBSTITUTE: on the worker
+   * source most reveal frames splice nothing while jobs are out, and during a
+   * held stroke roughly sixteen of every seventeen frames splice nothing
+   * between intents. Either would read as quiet.
+   *
+   * O(queue) per call, and the queues are empty exactly when it matters.
+   */
+  const superMeshHasChunkQueued = (superIdx: number): boolean => {
+    for (const chunkIdx of pending) {
+      if (superIndexOf(chunkIdx) === superIdx) return true;
+    }
+    for (const chunkIdx of inFlight) {
+      if (superIndexOf(chunkIdx) === superIdx) return true;
+    }
+    for (const chunkIdx of retry) {
+      if (superIndexOf(chunkIdx) === superIdx) return true;
+    }
+    for (const answer of ready) {
+      if (superIndexOf(answer.chunkIdx) === superIdx) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Gives one quiet super-mesh its headroom (issue #229; part A of
+   * docs/plans/frame-budget-growth-and-draw-calls.md).
+   *
+   * THE CONTRACT: when the terrain is quiet, every super-mesh holds at least
+   * `headroom(sm)` of free capacity, and capacity is only ever GROWN while the
+   * terrain is quiet. Before this seam existed, how much slack a super-mesh had
+   * after streaming was an accident of where the doubling ladder stopped, so
+   * whether a stroke reallocated — one full `bufferData` of the whole
+   * super-mesh, measured at ~3 MB and up to 505 ms, on a frame the player is
+   * watching — was decided by streaming order rather than by anything.
+   *
+   * ONE SUPER-MESH PER CALL. Each growth is one `bufferData` of a whole
+   * super-mesh (≤ 30 MB ≈ 30 ms on the owner's world at
+   * ARENA_TRANSFER_MS_PER_VERTEX); paying several on one frame would replace a
+   * stroke hitch with a bigger idle one.
+   *
+   * NOT CALLED BY `flush`. On the no-scheduler path `update` calls `flush` on
+   * every sculpt step, so a headroom pass there would be growth inside the
+   * stroke — precisely what this exists to prevent.
+   */
+  const settle = (): void => {
+    // The global half of the quiet test, checked once: no `update` at all
+    // within the window means no super-mesh can be quiet.
+    if (now() - lastUpdateMs < TERRAIN_QUIET_MS) return;
+    for (const [superIdx, sm] of superMeshes) {
+      if (capacityVertices(sm) - sm.liveEnd >= headroom(sm)) continue;
+      if (superMeshHasChunkQueued(superIdx)) continue;
+      // Deliberately NOT a second rounding ladder: `ensureSuperCapacity` keeps
+      // its doubling-from-current rule and lands on whichever rung holds this.
+      ensureSuperCapacity(sm, sm.liveEnd + headroom(sm), 'settle');
+      return;
+    }
+  };
+
   const stopDraining = scheduling?.onFrame(() => {
     for (const sm of superMeshes.values()) sm.reallocatedThisPass = false;
     const spliced = drain(CHUNK_SPLICE_FRAME_BUDGET_MS);
     compact(spliced > 0 ? ARENA_COMPACT_STROKE_BUDGET_MS : ARENA_COMPACT_IDLE_BUDGET_MS);
+    // LAST, AND ONLY HERE. `settle` is the one seam allowed to reallocate, and
+    // it must see this frame's splices and compaction before deciding whether
+    // the terrain still lacks headroom.
+    settle();
   });
 
   return {
     update(dirty: Iterable<number>): void {
+      // BEFORE the loop and unconditionally, including for a dirty set that is
+      // entirely locked chunks: the quiet test asks when the terrain was last
+      // ASKED to change, not when it last managed to.
+      lastUpdateMs = now();
       for (const chunkIdx of dirty) {
         if (!mirror.received.has(chunkIdx)) continue;
         pending.add(chunkIdx);
@@ -1462,6 +1665,7 @@ export function createTerrainMeshes(
       if (stopDraining === undefined) flush();
     },
     flush,
+    settle,
     pendingCount(): number {
       return pending.size + inFlight.size + ready.length + retry.size;
     },
@@ -1492,6 +1696,7 @@ export function createTerrainMeshes(
           deadVertices: sm.liveEnd - live,
           holeCount: sm.holes.length,
           growths: sm.growths,
+          strokeGrowths: sm.strokeGrowths,
         };
       });
     },
