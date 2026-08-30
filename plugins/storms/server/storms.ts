@@ -502,6 +502,10 @@ function birth(
  *
  * Returns null when there is no cell, or when SITING_ATTEMPTS draws inside one
  * found only water.
+ *
+ * NOT REPRODUCIBLE FROM SEED ALONE — see ./rng.ts's header. `cells` comes from
+ * weather's unseeded rng, so replaying this needs the same seed AND the same
+ * weather-cell history, not just the seed.
  */
 export function trySpawnTornado(world: StormWorld): Storm | null {
   const cells = stormCells();

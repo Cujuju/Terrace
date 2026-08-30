@@ -12,7 +12,15 @@
 // Nothing here is terrain math — the results travel to clients as authoritative
 // state and no client reproduces any of it — so the determinism contract in
 // CLAUDE.md (which governs shared/'s heightmap ops) does not apply. What DOES
-// apply is that the same seed must give the same world twice on the same build.
+// apply is that the same seed must give the same world twice on the same
+// build — for a cyclone and for surge, which draw only from this generator.
+// A tornado is the one exception: ./storms.ts's trySpawnTornado also draws on
+// weather's live storm-cell list (./weather-bridge.ts), and that list is
+// positioned by weather's OWN unseeded rng (plugins/weather/server/rng.ts —
+// Math.random by design, since no client reproduces a front either). So a
+// tornado replays only given the same seed AND the same weather-cell history;
+// seeding this generator alone reproduces where and when tornadoes are SITED
+// relative to a cell, not which cells exist to be sited against.
 
 /** A seeded PRNG whose whole state is one uint32, so it persists trivially. */
 export interface StormRng {
