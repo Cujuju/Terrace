@@ -24,9 +24,21 @@
 
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
-/** The slice of fire this plugin uses — one function, deliberately. */
+/** The slice of fire this plugin uses — a registration, and its withdrawal. */
 export interface FireFuelApi {
-  registerFuel(source: unknown): void;
+  registerFuel(source: NamedFuelSource): void;
+  unregisterFuel(name: string): void;
+}
+
+/**
+ * What the BRIDGE itself needs to know about a registration: its NAME, which
+ * is the key fire's registry is stored under and therefore the whole of what
+ * withdrawal takes. Everything else stays opaque — what a fuel source is made
+ * of is fire's business (rule 4), not this file's.
+ */
+export interface NamedFuelSource {
+  readonly name: string;
+  readonly [field: string]: unknown;
 }
 
 /**
@@ -54,12 +66,16 @@ let warned = false;
  * because there is only ever one answer to "what of flora's is flammable" and
  * replaying a stale one would be worse than replaying none.
  */
-let pendingSource: unknown = null;
+let pendingSource: NamedFuelSource | null = null;
 
 /** Duck-types the sibling's module namespace into the API we need (rule 4). */
 function asFireApi(module: SiblingModule | null): FireFuelApi | null {
   if (module === null) return null;
   if (typeof module.registerFuel !== 'function') return null;
+  // BOTH HALVES OR NEITHER: a fire that cannot take a source back is not one
+  // this bridge can safely hand a source to, because the registration would
+  // then outlive the world it describes with no way to withdraw it.
+  if (typeof module.unregisterFuel !== 'function') return null;
   return module as unknown as FireFuelApi;
 }
 
@@ -96,9 +112,37 @@ export function loadFireBridge(world: WorldApi): void {
  * Declares flora's flammable content to fire — now if fire is already loaded,
  * on arrival otherwise. Callers never branch on "is it loaded yet" (rule 3).
  */
-export function registerFloraFuel(source: unknown): void {
+export function registerFloraFuel(source: NamedFuelSource): void {
   pendingSource = source;
   if (fireApi !== null) fireApi.registerFuel(source);
+}
+
+/**
+ * WITHDRAWS this plugin's registration as its world closes — the bridge's half
+ * of session.ts's close contract, and what makes that contract something a
+ * registrant can no longer forget (issue #208).
+ *
+ * WHY THE BRIDGE OWNS THIS AND NOT THE PLUGIN. Registering is push-shaped:
+ * what lands in fire is a CALLBACK over this module's live state, and fire's
+ * `sources` array is module scope, so it goes on being asked every spread step
+ * for as long as the process lives — through world switches, plugin toggles
+ * and rollbacks alike. A PULL-style bridge (./structures-bridge.ts) needs
+ * nothing like this: it re-resolves its sibling on every onWorldCreate and
+ * clears itself when the sibling is gone. A push-style one has already handed
+ * something over, so somebody has to hand it back — and the only somebody that
+ * cannot forget is the file that pushed it, because a plugin that is disabled
+ * for the next session never gets an onWorldCreate to notice anything in.
+ *
+ * `warned` deliberately survives: a permanently absent fire is worth one line,
+ * however many worlds open and close over it.
+ */
+export function closeFireBridge(): void {
+  // A no-op when fire never resolved, and harmless when fire has already
+  // dropped every source in its own close hook: withdrawal is BY NAME, and a
+  // name that is not registered is not an error.
+  if (fireApi !== null && pendingSource !== null) fireApi.unregisterFuel(pendingSource.name);
+  fireApi = null;
+  pendingSource = null;
 }
 
 /** Test seam: forgets the resolved sibling, the buffer and the warning. */

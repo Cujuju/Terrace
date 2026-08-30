@@ -47,7 +47,7 @@ import {
   resetFleet,
   type KrakenTarget,
 } from './fleet.ts';
-import { loadFireBridge, registerBoatsFuel } from './fire-bridge.ts';
+import { closeFireBridge, loadFireBridge, registerBoatsFuel } from './fire-bridge.ts';
 import { loadBoats, saveBoats } from './persistence.ts';
 
 /**
@@ -209,6 +209,24 @@ export const plugin: TerracePlugin = {
     });
   },
 
+  /**
+   * THE FLEET BELONGS TO ITS WORLD (issue #208). The final snapshot has already
+   * been written when this runs, so dropping everything here costs nothing and
+   * closes two holes at once: the registration fire holds is withdrawn, so a
+   * world reopened WITHOUT boats cannot be offered the last one's hulls as fuel
+   * every spread step; and the fleet itself goes, so a switch to a brand-new
+   * world — whose genesis slices are empty, which means `persistence.load`
+   * never runs — cannot sail the previous world's boats across.
+   *
+   * WITHDRAWAL FIRST, then the state it described: either order works (fire's
+   * registry is keyed by name and does not read the source to drop it), and
+   * this one keeps the module from being briefly registered but empty.
+   */
+  onWorldClose(): void {
+    closeFireBridge();
+    resetBoatsState();
+  },
+
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
   },
@@ -239,7 +257,10 @@ export const plugin: TerracePlugin = {
   persistence,
 };
 
-/** Test seam: drops all accumulated state so a suite can start from zero. */
+/**
+ * Drops all accumulated state so the next world starts from zero — called by
+ * `onWorldClose` above, and by a suite that wants the same fresh start.
+ */
 export function resetBoatsState(): void {
   tickCount = 0;
   krakenThisTick = null;

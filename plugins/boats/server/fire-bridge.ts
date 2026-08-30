@@ -23,9 +23,21 @@
 
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
-/** The slice of fire this plugin uses — one function, deliberately. */
+/** The slice of fire this plugin uses — a registration, and its withdrawal. */
 export interface FireFuelApi {
-  registerEntityFuel(source: unknown): void;
+  registerEntityFuel(source: NamedFuelSource): void;
+  unregisterEntityFuel(name: string): void;
+}
+
+/**
+ * What the BRIDGE itself needs to know about a registration: its NAME, which
+ * is the key fire's registry is stored under and therefore the whole of what
+ * withdrawal takes. Everything else stays opaque — what a fuel source is made
+ * of is fire's business (rule 4), not this file's.
+ */
+export interface NamedFuelSource {
+  readonly name: string;
+  readonly [field: string]: unknown;
 }
 
 /**
@@ -53,12 +65,16 @@ let warned = false;
  * this plugin's is flammable", and replaying a stale one would be worse than
  * replaying none.
  */
-let pendingSource: unknown = null;
+let pendingSource: NamedFuelSource | null = null;
 
 /** Duck-types the sibling's module namespace into the API we need (rule 4). */
 function asFireApi(module: SiblingModule | null): FireFuelApi | null {
   if (module === null) return null;
   if (typeof module.registerEntityFuel !== 'function') return null;
+  // BOTH HALVES OR NEITHER: a fire that cannot take a source back is not one
+  // this bridge can safely hand a source to, because the registration would
+  // then outlive the world it describes with no way to withdraw it.
+  if (typeof module.unregisterEntityFuel !== 'function') return null;
   return module as unknown as FireFuelApi;
 }
 
@@ -94,9 +110,23 @@ export function loadFireBridge(world: WorldApi): void {
  * Declares this plugin's flammable content to fire — now if fire is already
  * loaded, on arrival otherwise. Callers never branch on "is it loaded yet".
  */
-export function registerBoatsFuel(source: unknown): void {
+export function registerBoatsFuel(source: NamedFuelSource): void {
   pendingSource = source;
   if (fireApi !== null) fireApi.registerEntityFuel(source);
+}
+
+/**
+ * WITHDRAWS this plugin's registration as its world closes, from
+ * `onWorldClose` (issue #208). plugins/flora/server/fire-bridge.ts carries the
+ * reasoning for why the BRIDGE owns withdrawal rather than the plugin.
+ */
+export function closeFireBridge(): void {
+  // A no-op when fire never resolved, and harmless when fire has already
+  // dropped every source in its own close hook: withdrawal is BY NAME, and a
+  // name that is not registered is not an error.
+  if (fireApi !== null && pendingSource !== null) fireApi.unregisterEntityFuel(pendingSource.name);
+  fireApi = null;
+  pendingSource = null;
 }
 
 /** Test seam: forgets the resolved sibling, the buffer and the warning. */

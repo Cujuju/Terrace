@@ -112,9 +112,13 @@ export function registerFuel(source: FuelSource): void {
 }
 
 /**
- * Withdraws a source. Exists for tests and for symmetry; nothing in the shipped
- * server unregisters, because a plugin's flammability does not end while the
- * process lives.
+ * Withdraws a source.
+ *
+ * A PLUGIN'S FLAMMABILITY DOES NOT END WHILE THE PROCESS LIVES, BUT ITS
+ * WORLD'S DOES (issue #208). This array is module scope: it outlives the world
+ * whose sources filled it, and what a source answers with is that world's
+ * state. So every registrant's fire-bridge calls this from its plugin's
+ * `onWorldClose`, and ./index.ts's own `onWorldClose` clears whatever is left.
  */
 export function unregisterFuel(name: string): void {
   const index = sources.findIndex((candidate) => candidate.name === name);
@@ -126,8 +130,12 @@ export function fuelSources(): readonly FuelSource[] {
   return sources;
 }
 
-/** Test seam: forgets every registration. */
-export function resetFuelRegistry(): void {
+/**
+ * Forgets every registration — ./index.ts's `onWorldClose`, and a suite that
+ * wants the same fresh start. Named `clear` rather than `reset` because the
+ * server calls it: a "reset" seam reads as test-only, and this one is not.
+ */
+export function clearFuelRegistry(): void {
   sources.length = 0;
 }
 
