@@ -1337,6 +1337,86 @@ describe('headroom at settle', () => {
     clock.frame();
   }
 
+  it('grows on a FRAME, with no explicit settle() call', () => {
+    // THE SEAM ITSELF (A3): the frame hook is `drain(…); compact(…); settle()`,
+    // and in the shipped client it is the ONLY caller — main.tsx has a
+    // scheduler, so every test below driving settle() by hand could pass with
+    // the hook's call deleted and the feature dead in the real client.
+    const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
+    const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+
+    // Nothing but time passing and one frame.
+    clock.advance(TERRAIN_QUIET_MS);
+    clock.frame();
+
+    expect(meshes.arenaStats()[0]!.growths).toBe(1);
+    expect(capacityVertices(meshes, 0) - meshes.arenaStats()[0]!.liveEnd).toBeGreaterThanOrEqual(
+      expectedHeadroom(SMALL_RUN),
+    );
+  });
+
+  it('is NOT settled by flush(), however quiet the terrain has gone', () => {
+    // A3's named rule. On the no-scheduler path `update` calls `flush` on every
+    // sculpt step, so a headroom pass there would be a full `bufferData` inside
+    // the stroke — the whole defect. The fixture proves the terrain WAS
+    // settle-able at that moment by settling it on the next line.
+    const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
+    const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+    clock.advance(TERRAIN_QUIET_MS);
+
+    meshes.flush();
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(1);
+  });
+
+  it('settle({ assumeQuiet }) skips the clock, so a harness can name the moment', () => {
+    // Every caller without a frame hook runs `update(); flush(); settle();` in
+    // ONE synchronous turn, so under the timestamp gate alone whether the pass
+    // ran was decided by how long the build happened to take — silently, and
+    // with the call reporting nothing either way.
+    const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
+    const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+
+    // The clock has not moved: the timestamp gate refuses.
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+
+    meshes.settle({ assumeQuiet: true });
+    expect(meshes.arenaStats()[0]!.growths).toBe(1);
+  });
+
+  it('settle({ assumeQuiet }) still refuses a super-mesh with a chunk queued', () => {
+    // IT SKIPS THE TIMESTAMP GATE ONLY. The caller may assert that no MORE work
+    // is coming; it may not assert that the work already queued is done, and
+    // growing under an unspliced run would pay a second full `bufferData`.
+    const sizes = new Map<number, number>([
+      [ORIGIN, SMALL_RUN],
+      [NEIGHBOUR, SMALL_RUN],
+    ]);
+    const { meshes, clock, held, mirror } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+
+    held.hold();
+    meshes.update(
+      applySnapshot(mirror, {
+        type: 'snapshot',
+        worldSize: WORLD,
+        chunks: [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)],
+      }),
+    );
+    clock.frame();
+    expect(meshes.pendingCount()).toBeGreaterThan(0);
+
+    meshes.settle({ assumeQuiet: true });
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+  });
+
   it('grows a quiet super-mesh that is under its headroom, to at least the floor', () => {
     const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
     const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);

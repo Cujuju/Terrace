@@ -118,6 +118,17 @@ and would count against the bench's `meshes` row). The bench and the
 harnesses call `settle()` once after the world build; tests call it
 explicitly.
 
+**Amended 2026-08-29, during implementation:** those callers pass
+`settle({ assumeQuiet: true })`. They run `update(everything); flush();
+settle();` in ONE synchronous turn, so under the timestamp gate alone whether
+the headroom pass did anything was decided by how long the intervening build
+happened to take — a silent wall-clock race in exactly the callers whose whole
+purpose is to be a finished world, and one that could make the bench's "after
+settle()" row print success-shaped output from a pass that never ran. The
+option skips the TIMESTAMP gate only; the queue test still applies, because a
+caller may assert that no more work is coming but never that the work already
+queued is done.
+
 **Backstop, counted.** `ensureSuperCapacity` stays in the append branch. A
 growth it performs there increments `strokeGrowths` (new field on
 `ArenaStats`); `growths` keeps counting all reallocations. A6 asserts

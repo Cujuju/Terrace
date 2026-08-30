@@ -596,6 +596,35 @@ export interface MeshScheduling {
   now?: () => number;
 }
 
+/** See `TerrainMeshes.settle`. */
+export interface SettleOptions {
+  /**
+   * Skips the "no `update` for TERRAIN_QUIET_MS" half of the quiet test,
+   * because the CALLER knows the terrain is done.
+   *
+   * WHY IT HAS TO EXIST. The timestamp gate asks how long it has been since
+   * `update` was called, and a caller with no frame hook runs
+   * `update(everything); flush(); settle();` in ONE synchronous turn — so
+   * whether the headroom pass did anything was decided by how long the build
+   * in between happened to take, silently, with the call reporting nothing
+   * either way. That is a wall-clock race in exactly the harnesses whose whole
+   * purpose is to be a finished world, and it makes the bench's
+   * "after settle()" row able to print success-shaped output from a pass that
+   * never ran.
+   *
+   * IT SKIPS THE TIMESTAMP GATE ONLY. The queue test — no chunk of this
+   * super-mesh in `pending`, `inFlight`, `ready` or `retry` — still applies,
+   * and it is the half that protects correctness: growing a super-mesh whose
+   * run is about to be spliced in would pay a second full `bufferData`. What
+   * the caller is allowed to assert is that no MORE work is coming, never that
+   * the work already queued is done.
+   *
+   * A NAMED OPTION rather than a positional boolean: `settle(true)` at a
+   * callsite says nothing about what is being asserted.
+   */
+  readonly assumeQuiet?: boolean;
+}
+
 export interface TerrainMeshes {
   /**
    * Marks the given chunks for rebuild. Indices for chunks the mirror has not
@@ -627,7 +656,7 @@ export interface TerrainMeshes {
    *
    * Deliberately NOT called by `flush` — see the implementation.
    */
-  settle(): void;
+  settle(options?: SettleOptions): void;
   /**
    * Chunks that have been marked dirty and are not yet drawn — queued, out at
    * the build source, answered and waiting for a frame's splice budget, or
@@ -1625,10 +1654,13 @@ export function createTerrainMeshes(
    * every sculpt step, so a headroom pass there would be growth inside the
    * stroke — precisely what this exists to prevent.
    */
-  const settle = (): void => {
+  const settle = (options?: SettleOptions): void => {
     // The global half of the quiet test, checked once: no `update` at all
-    // within the window means no super-mesh can be quiet.
-    if (now() - lastUpdateMs < TERRAIN_QUIET_MS) return;
+    // within the window means no super-mesh can be quiet. A caller that has
+    // just finished building a world knows this without a clock and says so —
+    // see SettleOptions.assumeQuiet, which skips THIS gate and not the queue
+    // test below it.
+    if (options?.assumeQuiet !== true && now() - lastUpdateMs < TERRAIN_QUIET_MS) return;
     for (const [superIdx, sm] of superMeshes) {
       if (capacityVertices(sm) - sm.liveEnd >= headroom(sm)) continue;
       if (superMeshHasChunkQueued(superIdx)) continue;

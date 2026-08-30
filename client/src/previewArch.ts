@@ -197,7 +197,9 @@ meshes.flush();
 // The world is built and nothing more is coming, which is the moment a client
 // gets from its frame hook and a harness has to name for itself: give the
 // super-meshes their headroom now rather than on a later edit (issue #229).
-meshes.settle();
+// `assumeQuiet` because this harness IS the assertion: the build above is
+// everything this page will ever draw, and the wall clock cannot know that.
+meshes.settle({ assumeQuiet: true });
 
 // Built and flushed above, so every chunk's chart is already published and the
 // overlay can read them all in one pass — the direct equivalent of the app's
