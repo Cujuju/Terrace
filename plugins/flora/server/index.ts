@@ -1104,16 +1104,26 @@ export const FLORA_CROP_FUEL_HEIGHT = 0.35;
  * that looked like it confirmed the percolation story.
  *
  * SO NEITHER LEVER WORKS ALONE. Density is subcritical at 3 s however far it is
- * pushed, and burn time at the shipped thinning only reaches 39 cells at 22 s.
- * If a meadow fire should actually run, the pair to move together is this
- * number and GRASS_CELLS_PER_TUFT (../protocol.ts) — 0.75 density at 6 s is the
- * nearest point in the table that spreads without running away, and it is one
- * step from the 10 s column that burns the whole 256² bed. That is an owner
- * call on how a burning meadow should read, and it is why grass could be
- * registered as fuel at all: at the shipped pair it cannot produce the
- * firestorm the old "grass is not fuel" comment feared.
+ * pushed, and burn time at 0.398 only reaches 39 cells at 22 s. The pair has
+ * to move together, and the minimum that runs away, from a finer sweep
+ * (still air, 256², 20 trials, runaway = alive at the 1200-step cap):
+ *
+ *     burn   min density   runaway   mean cells burned
+ *     22s    0.50          6/20      1 342
+ *     22s    0.5625        19/20     15 087
+ *     10s    0.75          16/20     22 699
+ *     8s     0.875         8/20      38 938
+ *     ≤6s    none, even at 0.875
+ *
+ * OWNER'S CALL, 2026-08-29: a burning meadow should run. Set to the cheapest
+ * pair — 0.5625 density (GRASS_CELLS_PER_TUFT = 1.78, ../protocol.ts) and 22 s
+ * here, 3 → 22. A gale makes it LESS likely to run (the front goes one way and
+ * burns out behind itself), and the rig's bed is flat, dry and all grass, so a
+ * real meadow broken by trees, water and rain runs somewhat less readily than
+ * the table says. This is the firestorm the old "grass is not fuel" comment
+ * feared, chosen deliberately.
  */
-export const FLORA_GRASS_BURN_SECONDS = 3;
+export const FLORA_GRASS_BURN_SECONDS = 22;
 
 /**
  * Flame size for grass. Ankle-high — well under a crop's knee-high 0.35, so a

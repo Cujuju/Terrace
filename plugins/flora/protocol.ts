@@ -825,8 +825,15 @@ export const FLORA_GRASS_CHANGES_MESSAGE = 'grassChanges';
  * them, which reads as scattered clumps rather than as the cover the owner
  * asked for. Every step down here is paid for in the cap below and in the
  * wire, so it is a dial with a real price rather than a free one.
+ *
+ * TIGHTENED 2.5 → 1.78 (owner, 2026-08-29) so meadow fires can run. 1.78
+ * rounds to FLORA_GRASS_SHARE_OF_256 = 144, a density of 0.5625 — the lowest
+ * that, paired with FLORA_GRASS_BURN_SECONDS = 22, burns a 256² bed to the
+ * step cap in 19 of 20 trials (0.50 managed only 6 of 20). Neither number does
+ * it alone; see the note on FLORA_GRASS_BURN_SECONDS (server/index.ts) for the
+ * site-bond mechanism and the full density × burn-time sweep.
  */
-export const GRASS_CELLS_PER_TUFT = 2.5;
+export const GRASS_CELLS_PER_TUFT = 1.78;
 
 /**
  * The thinning roll's threshold, out of 256 — GRASS_CELLS_PER_TUFT expressed
