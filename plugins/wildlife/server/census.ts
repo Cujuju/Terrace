@@ -79,49 +79,13 @@ export interface HabitatWorld {
   readonly freshwater?: FreshwaterMap;
 }
 
-/**
- * Hard ceiling on living creatures, whatever the habitat census says.
- *
- * 850 is a bandwidth number, not an ecology one (100 → 150 on 2026-08-14 with
- * the density retune in species.ts; 150 → 850 on 2026-08-23). The full-state
- * broadcast costs roughly 58 B per creature once msgpack has encoded the six
- * keys and their values — 52 B for the original five, plus 6 B for the `size`
- * key and its single-byte class index (protocol.ts) — so:
- *
- *   850 × 58 B          = 48.1 KB per message
- *   × 5 Hz              = 240.7 KB/s ≈ 1.97 Mbit/s of steady downstream PER CLIENT
- *   × ~10 players       ≈ 19.7 Mbit/s of server upstream on wildlife alone
- *
- * (The 5 Hz cadence and why it is not 10 Hz are argued in server/index.ts.)
- *
- * WHY IT MOVED, AND WHAT IT COSTS (owner, 2026-08-23: "increase the wildlife
- * population cap and restore the numbers for fish, deep sea, and whales"). The
- * grazer density was cut 27-fold the same day (species.ts), which on a fully
- * revealed world takes the total ask from 270 to 1 532 — and because this cap
- * divides the budget PROPORTIONALLY, holding it at 150 would have paid for the
- * hillside out of the sea: 72 fish down to 12, 21 whales down to 3. 850 is the
- * number that leaves fish, deepsea and whales at exactly the counts they had
- * before the grazer cut (72 / 28 / 21); anything from 845 to 853 does, and 850
- * is the round one.
- *
- * THE HONEST PRICE is the table above: 348 kbit/s per client becomes 1.97
- * Mbit/s, and ten concurrent players now cost ~19.7 Mbit/s of upstream on
- * wildlife alone. That is no longer a fraction of a modest home connection, and
- * it is what stops this going higher — a self-hoster on domestic upstream is
- * the constraint, not the client's ability to render the creatures.
- *
- * IT STILL BINDS only on a fully revealed 512-unit world, which is a
- * hypothetical: every world that exists is ocean with an island, where the
- * total ask is a handful and this number is never reached. See species.ts's
- * header table and the exact assertion in wildlife.test.ts.
- *
- * SCOPE, since 2026-08-14: this caps the HABITAT population only. Birds are not
- * censused and do not consume it (server/flocks.ts); their own hard ceiling is
- * MAX_BIRDS_ALOFT, and the two together are what the broadcast actually costs.
- * The combined arithmetic lives in server/index.ts's header, in one place, so
- * there is a single answer to "what does a full message weigh".
- */
-export const WILDLIFE_POPULATION_CAP = 850;
+// WILDLIFE_POPULATION_CAP MOVED TO ../protocol.ts (2026-08-29): it is the cap
+// the CLIENT half's draw budget is written against (part B of
+// docs/plans/frame-budget-growth-and-draw-calls.md), and a client half may not
+// import a plugin's server half. Re-exported here so every importer that had it
+// from this module keeps working.
+import { WILDLIFE_POPULATION_CAP } from '../protocol.ts';
+export { WILDLIFE_POPULATION_CAP };
 
 /**
  * Seconds between habitat censuses. The census walks every cell of every

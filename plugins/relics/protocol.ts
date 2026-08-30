@@ -274,3 +274,14 @@ export function parseSkillsPayload(payload: unknown): SkillView[] {
   }
   return skills;
 }
+
+/**
+ * How many relics exist at once: exactly one per skill.
+ *
+ * Derived from the roster rather than picked, because the alternative is a
+ * player who wants Genesis waiting on a dice roll for it to be the one that
+ * spawned. One of each means every skill is always obtainable by someone, the
+ * cycle below can be a simple round robin, and adding a skill to the roster
+ * automatically adds its relic instead of quietly making the pool more diluted.
+ */
+export const RELIC_COUNT = SKILL_IDS.length;

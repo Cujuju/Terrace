@@ -78,51 +78,18 @@ import {
   type LairFitRule,
 } from './habitat.ts';
 
-/**
- * HARD SINGLETON, PER HABITAT REGIME. Each habitat holds at most this many
- * living monsters, of any kind that lives there, ever, at once.
- *
- * ONE PER HABITAT, NOT ONE PER WORLD (owner decision, 2026-08-14 — superseding
- * the world-wide cap of one). The owner's original brief was "no more than one
- * per map", and it was written as a single world-wide slot because every kind
- * that existed lived in the sea: two sea horrors in one ocean is a bestiary, and
- * the dramatic weight of this plugin is that the thing in the water is THE thing
- * in the water.
- *
- * A MOUNTAIN YETI DOES NOT CONTEND FOR THAT. He occupies a disjoint half of the
- * heightmap: no player can see him and the kraken in one frame without also
- * seeing the sea and a snow line, and a world where digging a trench silently
- * cost you the yeti on the peak you spent an hour building reads as a BUG rather
- * than as scarcity. Scarcity is preserved exactly where it means something — the
- * sea still holds one thing, and the snow still holds one thing.
- *
- * The invariant remains STRUCTURAL rather than counted: summoning.ts holds one
- * nullable slot per regime, so a second monster in one habitat is
- * unrepresentable (see the note at the top of that file).
- *
- * SUPERSEDED 2026-08-19 (owner decision: "let's allow multiple sea monsters to
- * spawn" — the kraken had never once appeared, because Cthulhu takes the sea
- * slot first and nothing short of his impossible banishment frees it). The
- * singleton is now PER KIND, not per habitat: the sea may hold one Cthulhu AND
- * one kraken at once. Everything the paragraphs above argue survives at the
- * kind level — an arrival is still an event, and "the thing in the water" is
- * still the only one of ITS kind in the water; what changes is that two
- * different horrors no longer contend for one slot. The structural invariant
- * moves with it: summoning.ts now holds one nullable slot per KIND (a total
- * record over MonsterKind), so two krakens stay unrepresentable.
- */
-export const MAX_LIVING_MONSTERS_PER_KIND = 1;
+// MAX_LIVING_MONSTERS_PER_KIND MOVED TO ../protocol.ts (2026-08-29) — see the
+// note on MAX_LIVING_MONSTERS below, which is derived from it.
+import { MAX_LIVING_MONSTERS_PER_KIND } from '../protocol.ts';
+export { MAX_LIVING_MONSTERS_PER_KIND };
 
-/**
- * The world-wide ceiling, DERIVED rather than chosen: one per kind, times the
- * kinds that exist. Three today (was: one per habitat, times the habitats —
- * two — until the 2026-08-19 per-kind decision above).
- *
- * It is what the broadcast's bandwidth note and the client's reconcile are sized
- * against, and it is the name to grep for the day the shape of this changes
- * again.
- */
-export const MAX_LIVING_MONSTERS = MAX_LIVING_MONSTERS_PER_KIND * MONSTER_KINDS.length;
+// MAX_LIVING_MONSTERS MOVED TO ../protocol.ts (2026-08-29), with
+// MAX_LIVING_MONSTERS_PER_KIND: it is the cap the CLIENT half's draw budget is
+// written against (part B of docs/plans/frame-budget-growth-and-draw-calls.md),
+// and a client half may not import a plugin's server half. Re-exported here so
+// every importer that had it from this module keeps working.
+import { MAX_LIVING_MONSTERS } from '../protocol.ts';
+export { MAX_LIVING_MONSTERS };
 
 /**
  * Mean wait, in simulated seconds, between a world becoming eligible and a
