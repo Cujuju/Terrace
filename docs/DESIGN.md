@@ -4287,8 +4287,9 @@ save migration is part of this decision.
 **`SMOOTH_PASS_LIMIT` stays 2560 — owner decision, with the residual named.**
 Conservation costs passes on sheer ground: the fill on the low side of a cliff
 is no longer invented, so every unit of the ramp is walked down off the plateau.
-Measured by bisection on a bare cliff over 128² (`.sim-108/passes.mjs`), walls
-of 593 height units and up no longer converge inside the cap; a 592-unit cliff
+Measured by bisection on a bare cliff over 128² (`.sim-108/passes.mjs`'s
+truncation-threshold section, output in `.sim-108/passes.txt`), walls of 593
+height units and up no longer converge inside the cap; a 592-unit cliff
 finishes in 2,524 passes, a 593-unit one truncates at 2,560, and a 1000-unit one
 wants ~7,205. A truncated sweep leaves the gradient invariant locally violated —
 worst local gradient 6 at the threshold, 7 at 1000 units, against the 5 it
@@ -4305,10 +4306,11 @@ over several strokes instead of one, plus wall-clock on such worlds — a relic
 cast landing on genesis-steep ground was measured at 888 ms before and 1,271 ms
 after (issue #108's review).
 
-**Plugin constants were re-derived against the new rule, not assumed.** Every
-plugin that reaches the ground does so through `WorldApi.sculpt`, so each of the
-constants tuned against the manufacturing rule was re-measured old-vs-new on a
-512² genesis world (`.sim-108/plugins.mjs`):
+**The plugin constants named in the review were re-derived against the new
+rule, not assumed** — not every constant in every plugin, which is a claim
+nobody has earned. Each of these was re-measured old-vs-new on a 512² genesis
+world (`.sim-108/plugins.mjs`), driven through the same
+`applySculpt(..., {smooth, soft, banded})` that `WorldApi.sculpt` is:
 
 - **volcanoes `CONE_GROWTH_BANDS_PER_ERUPTION` 1 → 2**, and rewritten as the
   derivation it is: `CONE_PEAK_BANDS_PER_ERUPTION ×
@@ -4332,3 +4334,13 @@ constants tuned against the manufacturing rule was re-measured old-vs-new on a
   The mudslide measurement window did not need widening either — the widest
   single sculpt diff FELL from 502 cells to 229, because the manufacturing rule
   had been feeding its own cascade.
+- **volcanoes `GENESIS_CONE_BANDS`: measured, accepted, not retuned.** One
+  `raiseCone` of 4 bands delivers a peak gain of exactly 64 units (4.00 bands)
+  on FLAT ground under both rules — the documented ten-band summit is exact
+  there — and on genesis ground 54 units (3.38 bands) old against 44 (2.75)
+  new, because a fresh world's over-steep terraces take the difference. The
+  ten-band summit was therefore already nominal before this fix; the split
+  moved it by 0.63 of a band, and its only consumers are cosmetic (the client's
+  plume and the settings preview). Retuning to 6 or 8 bands would overshoot to
+  11.4 or 12.4 bands on flat ground and make genesis dearer. Recorded on the
+  constant, and on `VENT_SUMMIT_WORLD_UNITS`, which is now labelled nominal.

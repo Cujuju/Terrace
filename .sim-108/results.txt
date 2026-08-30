@@ -267,13 +267,35 @@ Passes actually taken over the spread the fixture's relief pays for
   SMOOTH_PASS_LIMIT stays 2560 (owner decision) — see the constants' own doc
   comments.
 
-  Truncation threshold, by bisection on a bare cliff over 128x128:
+  Truncation threshold, by bisection on a bare cliff over 128x128 — produced by
+  .sim-108/passes.mjs's TRUNCATION THRESHOLD section (output in passes.txt):
 
     cliff 529: passes 2047  max gradient 5
     cliff 592: passes 2524  max gradient 5
     cliff 593: passes 2560  max gradient 6   <- smallest wall that truncates
     cliff 657: passes 2560  max gradient 6
     cliff 1000: passes 2560 max gradient 7
+
+volcanoes GENESIS_CONE_BANDS  stays 4  (measured 2026-08-30, review finding 4)
+  Peak gain from ONE raiseCone call, i.e. what a genesis vent's summit really
+  stands above the ground it was sited on:
+
+    ground    rule  bands asked   peak gain   in bands   summit above sea
+    flat      old   4                    64       4.00              10.00
+    flat      new   4                    64       4.00              10.00
+    genesis   old   4                    54       3.38               9.38
+    genesis   new   4                    44       2.75               8.75
+    genesis   new   5                    53       3.31               9.31
+    genesis   new   6                    60       3.75               9.75
+    genesis   new   8                    77       4.81              10.81
+
+  The documented ten-band summit is EXACT on flat ground under both rules. The
+  shortfall belongs to the ground, not the rule: a fresh world is band-quantised
+  and over-steep, so the cone sheds into the terraces round it — and it was
+  already 9.38 bands before the split. Accepted rather than retuned: 6 or 8
+  bands overshoots to 11.4 / 12.4 on flat ground and makes genesis dearer (ring
+  steps are 4-190 ms apiece on 2048²), to buy 0.63 of a band on a figure whose
+  only consumers are the client's plume and the settings preview.
 
 ------------------------------------------ WHAT THE NEW TESTS PIN ------------
 

@@ -87,6 +87,35 @@ export const VENT_MIN_BANDS_ABOVE_SEA = 6;
  * bands above the sea — clearly the highest thing in its region without being
  * the map's ceiling, and low enough that the flows it throws still have
  * somewhere to run downhill to.
+ *
+ * FOUR BRUSH BANDS, AND ON REAL GROUND THAT IS NOT FOUR BANDS OF MOUNTAIN.
+ * Re-measured old vs new after the conserving relaxation (issue #108,
+ * 2026-08-29, .sim-108/plugins.mjs — `=== VOLCANOES: what a GENESIS cone
+ * actually delivers at its peak ===`), peak gain from one `raiseCone` call:
+ *
+ *   ground    rule  bands asked   peak gain   in bands   summit above sea
+ *   flat      old   4                    64       4.00              10.00
+ *   flat      new   4                    64       4.00              10.00
+ *   genesis   old   4                    54       3.38               9.38
+ *   genesis   new   4                    44       2.75               8.75
+ *   genesis   new   6                    60       3.75               9.75
+ *   genesis   new   8                    77       4.81              10.81
+ *
+ * MEASURED AND ACCEPTED, NOT RETUNED, and the reasons are in that table. On
+ * flat ground the sentence above is exactly true under BOTH rules — the ten
+ * bands are real. The shortfall is a property of the GROUND a genesis vent is
+ * sited on: a fresh world is band-quantised and over-steep everywhere
+ * (server/src/world/world.ts writes `bands * BAND_HEIGHT` and never smooths),
+ * so the cone sheds into the terraces around it. That was already happening
+ * before the conserving split — 9.38 bands, not 10 — and the split moved it by
+ * 0.63 of a band.
+ *
+ * Retuning to 6 or 8 would buy that back on genesis ground at the cost of
+ * overshooting to 11.4 or 12.4 bands on flat ground, where the number is
+ * currently exact, and of making genesis dearer: a genesis cone's ring steps
+ * are the expensive kind (4-190 ms apiece on a 2048² world — see vents.ts's
+ * `ConeRingTiming`), and they scale with this. Not worth 0.63 of a band on a
+ * figure whose only consumers are cosmetic (below).
  */
 export const GENESIS_CONE_BANDS = 4;
 
@@ -99,6 +128,17 @@ export const GENESIS_CONE_BANDS = 4;
  * codebase: a band has drawn a QUARTER of a world unit since 2026-08-20, so ten
  * bands of mountain is two and a half world units, not ten. Anything sized "in
  * bands" by eye comes out four times too big.
+ *
+ * NOMINAL, NOT MEASURED, and deliberately so: it adds the siting bar to the
+ * bands the cone is ASKED for, and a cone on real genesis ground keeps about
+ * 2.75 of its 4 (see GENESIS_CONE_BANDS above), so a real summit is nearer 8.75
+ * bands — 2.19 world units. Everything downstream is decoration sized against
+ * a mountain: the client's plume (PLUME_HEIGHT_WORLD_UNITS and the particle
+ * sizes in client/plume.ts) and the settings preview's cone
+ * (client/src/previewVolcano.ts). A plume 14% taller than the mountain it
+ * stands on is not a defect worth a per-vent measurement round trip, and the
+ * alternative — deriving this from a height the SERVER measured after siting —
+ * would make a client-side constant depend on per-world terrain.
  */
 export const VENT_SUMMIT_WORLD_UNITS =
   (VENT_MIN_BANDS_ABOVE_SEA + GENESIS_CONE_BANDS) * WORLD_UNITS_PER_BAND;

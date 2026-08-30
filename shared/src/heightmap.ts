@@ -2537,18 +2537,31 @@ export function applySculpt(
     // against-the-stroke end of that interval used to be the world's own limit
     // for EVERY footprint cell — MIN_HEIGHT raising, MAX_HEIGHT lowering —
     // which licensed the stroke's own relaxation pass to put the cell the
-    // player aimed at back where it started. Lowering wore it worst, because
-    // movePair hands the odd unit of every excess to the LOW cell, so
-    // relaxation is a net height source and refilled a pit as fast as the
-    // brush dug it: measured on rolling terrain at the default brush, 137 of
-    // 200 lower clicks left the clicked cell's drawn band unchanged, and 131
-    // of those cells could not be lowered a band by FORTY clicks. Raising, the
-    // same bias worked with the brush instead of against it — 30 of 200, none
-    // permanent.
+    // player aimed at back where it started. THE MECHANISM IS PURE TRANSFER
+    // AND IS STILL HERE: a pit is a cell below its neighbours, so the very
+    // next pass moves their height into it, and without a bound the cell the
+    // player aimed at is refilled by the ground around it.
     //
-    // The fix is upstream of that rounding bias, which is why it is here and
-    // not in movePair: inverting the bias reproduces the identical bug
-    // mirrored onto raising (127 of 200), and this bound holds either way.
+    // WHAT IS NO LONGER TRUE, and is kept here because the numbers below were
+    // measured against it (2026-08-22): relaxation used to be a net height
+    // SOURCE as well as a mover — movePair handed the odd unit of every excess
+    // to the LOW cell — so a pit was refilled by more than its neighbours gave
+    // up, and lowering wore the defect worst. Measured then, on rolling terrain
+    // at the default brush: 137 of 200 lower clicks left the clicked cell's
+    // drawn band unchanged and 131 of those could not be lowered a band by
+    // FORTY clicks, against 30 of 200 raising, none permanent. Since 2026-08-29
+    // (issue #108) the split is exact and relaxation moves height without
+    // making it, so that asymmetry is gone and the raw counts above are
+    // expected to be smaller — not re-measured, because they are not what this
+    // bound rests on.
+    //
+    // THE BOUND DOES NOT REST ON THE BIAS, WHICH IS WHY IT IS STILL HERE and
+    // why it was right to put it here rather than in movePair. Neighbours
+    // higher than a freshly-dug pit refill it under ANY conservative rule; a
+    // bias only decided which direction hurt more, and inverting it reproduced
+    // the identical bug mirrored onto raising (127 of 200, measured). The
+    // clicked cell's own interval is what makes the stroke keep its promise,
+    // under the old arithmetic and under the new.
     //
     // ONLY THE CLICKED CELL, AND THAT BOUND IS LOAD-BEARING. Applying it to
     // the whole footprint also fixes the click — and collapses `smooth` into

@@ -1,5 +1,5 @@
 Issue #108 pass 2 — plugin constants under the conserving relaxation
-MAX_STEP=4  RELAX_SLACK=1  BAND_HEIGHT=16  genesis 512² seed 108  node v24.19.0  2026-08-30T05:09:55.677Z
+MAX_STEP=4  RELAX_SLACK=1  BAND_HEIGHT=16  genesis 512² seed 108  node v24.19.0  2026-08-30T05:48:47.313Z
 
 === VOLCANOES: cone peak gain per eruption (intent: one band = 16) ===
 world    rule  bands/erupt    1st gain   peak/10  mean gain
@@ -11,6 +11,19 @@ genesis  old   1                    16       160      16.00
 genesis  new   1                    16        90       9.00
 genesis  new   2                    32       151      15.10
 genesis  new   3                    39       204      20.40
+
+=== VOLCANOES: what a GENESIS cone actually delivers at its peak (protocol.ts GENESIS_CONE_BANDS, intent: 4 bands = 64) ===
+world    rule  bands asked    peak gain  in bands  summit bands
+flat     old   4                     64      4.00         10.00
+flat     new   4                     64      4.00         10.00
+flat     new   5                     80      5.00         11.00
+flat     new   6                     87      5.44         11.44
+flat     new   8                    102      6.38         12.38
+genesis  old   4                     54      3.38          9.38
+genesis  new   4                     44      2.75          8.75
+genesis  new   5                     53      3.31          9.31
+genesis  new   6                     60      3.75          9.75
+genesis  new   8                     77      4.81         10.81
 
 === VOLCANOES: lava settled thickness over the flow (intent: 8 = half a band) ===
 world    rule  FLOW_THICKNESS    one cell  over a flow  height moved
