@@ -489,6 +489,26 @@ export function validateSculptIntent(
     return null;
   }
 
+  // AND ONLY A DRAG MAY CARRY ONE. sculptOptionsOf mints `anchor: 'band'` for
+  // ANY intent that carries a band, and that anchor is also what buys the
+  // whole-way amount in applySculpt (FULL_HEIGHT_SPAN). That amount is safe
+  // for the drag because applyDragRegion re-asks canSpreadBandTo for every
+  // cell it fills; the two brushes the other tools run ask it once, for the
+  // stroke centre, so a stamp or smooth wearing this anchor would lift its
+  // whole disc to the band the MESSAGE named off a single adjacent cell —
+  // final heights chosen by the client, which is exactly what "clients send
+  // intents, never heights" forbids. REJECTED WITH THE WHOLE INTENT, the same
+  // call the carve's `dir: 1` gets two blocks up, rather than dropping the
+  // band and stamping instead: silently reinterpreting an intent applies a
+  // differently-shaped edit than its sender predicted.
+  //
+  // TESTED ON THE RAW FIELD, deliberately: an absent `tool` means stamp
+  // (WIRE_DEFAULT_SCULPT_OPTIONS, resolved in sculptOptionsOf), so an intent
+  // that omits the tool while carrying a band is rejected here too rather than
+  // defaulted into the very combination this rules out. The only legitimate
+  // sender writes `tool: 'drag'` beside the band (client/src/input/sculptInput.ts).
+  if (targetBand !== undefined && tool !== 'drag') return null;
+
   // spanBand is optional and, when present, must be a band this world could
   // hold — the same structural check targetBand gets, and for the same reason:
   // it says the number is a band, not that a span is there. WHICH span it names

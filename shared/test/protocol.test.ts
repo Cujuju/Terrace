@@ -226,14 +226,35 @@ describe('validateRollbackRequest', () => {
 
 describe('targetBand — the drag field on the wire', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 1, dir: 1 } as const;
+  /** The only shape allowed to carry a band: the drag names its own tool. */
+  const drag = { ...base, tool: 'drag' } as const;
 
   it('accepts a band the world could hold, and carries it through verbatim', () => {
     for (const targetBand of [MIN_BAND, -1, 0, 1, MAX_BAND]) {
-      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toEqual({
-        ...base,
+      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toEqual({
+        ...drag,
         targetBand,
       });
     }
+  });
+
+  it('rejects a band carried by anything but a drag, the absent tool included', () => {
+    // The band is what flips the anchor to 'band' (sculptOptionsOf), and that
+    // anchor is what buys the whole-way amount in applySculpt. Only the drag
+    // re-checks the spread rule for every cell it fills, so only the drag may
+    // name a band — a stamp or smooth wearing the anchor would lift its whole
+    // disc to a height the MESSAGE chose. An intent with no tool at all is
+    // rejected too: absent defaults to stamp, so defaulting it here would mint
+    // the very combination this forbids.
+    expect(validateSculptIntent({ ...base, targetBand: 3 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'stamp', targetBand: 3 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'smooth', targetBand: 3 }, WORLD)).toBeNull();
+    // dir: -1 so the carve is refused for carrying the band, not for its own
+    // never-raises rule.
+    expect(
+      validateSculptIntent({ ...base, dir: -1, tool: 'carve', targetBand: 3 }, WORLD),
+    ).toBeNull();
+    expect(validateSculptIntent({ ...drag, targetBand: 3 }, WORLD)).not.toBeNull();
   });
 
   it('is optional — an intent without one is a stamp, exactly as before', () => {
@@ -244,13 +265,13 @@ describe('targetBand — the drag field on the wire', () => {
 
   it('rejects a band outside the range the world can hold', () => {
     for (const targetBand of [MIN_BAND - 1, MAX_BAND + 1, 10_000]) {
-      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toBeNull();
+      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toBeNull();
     }
   });
 
   it('rejects a non-integer band WITH THE WHOLE INTENT, never defaulting it', () => {
     for (const targetBand of [1.5, NaN, Infinity, '3', null, {}]) {
-      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toBeNull();
+      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toBeNull();
     }
   });
 
