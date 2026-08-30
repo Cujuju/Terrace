@@ -1153,9 +1153,13 @@ readiness DESIGN §3.5)**
     on failure at any of import / restore+`onWorldCreate` /
     `persistence.load` / the probe tick. Two of those failures are throws the
     host swallows, so `PluginHost` now counts per-plugin faults. The stamp
-    gains a `-reload.<n>` marker and the build identity is rebound BEFORE the
-    reopen, so the join snapshot that reopen sends carries the new identity and
-    the client's existing one-shot reload fires.
+    gains a `-reload.<n>` marker and the build identity is rebound once the
+    probe has PASSED (#209 — rebinding before the reopen page-reloaded every
+    browser for builds that were then rejected, and a client ignores every
+    identity after the first difference it acted on, so the rollback could not
+    take it back); `WorldManager.announceBuildIdentity` then hands every
+    connected player one more join snapshot, which carries the new identity and
+    fires the client's existing one-shot reload.
 
     Verified on an isolated rig (port 2604, own plugins dir, `--expose-gc`):
     editing the SECOND file of a two-file plugin and pressing reload changed

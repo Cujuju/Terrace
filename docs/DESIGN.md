@@ -3879,8 +3879,21 @@ instead of it.
 into the bundle, so a successful reload rebinds the build identity (the plugin
 stamp it is derived from moves — with a `-reload.<n>` marker, because a
 deployment with no git stamps every plugin identically for the life of the
-process) and the join snapshot the reopen already sends fires the client's
-existing one-shot page reload.
+process) and one more join snapshot per connected player carries it, firing the
+client's existing one-shot page reload.
+
+**The identity is rebound AFTER the probe, not before the reopen (#209,
+2026-08-29).** The either/or has to hold on the wire too, and a client acts on
+the first identity that differs from the one it joined under and ignores every
+later one — so an identity announced by the probe's own reopen would page-reload
+every browser for a build that the three checks after that reopen may still
+reject, and the rollback could not take it back. The reopen therefore re-states
+the identity the pages already joined under (which reloads nothing), and the new
+one goes out by itself once the probe has passed. The rejected shape: probe in a
+session whose join snapshots are withheld and send them after a pass — that
+breaks the snapshot-before-`onPlayerJoin` ordering `openInto` STEP 7 shares with
+`TerraceRoom.onJoin`, because a plugin's `onPlayerJoin` would then broadcast to
+a client not yet sized for the rebuilt world.
 
 ### Decisions made 2026-08-25/26 (archipelago genesis, and MIN_WORLD_SIZE, #181)
 
