@@ -581,6 +581,10 @@ scene.add(terrainGroup);
 const meshes = createTerrainMeshes(terrainGroup, mirror);
 meshes.update(allChunks);
 meshes.flush();
+// The world is built and nothing more is coming, which is the moment a client
+// gets from its frame hook and a harness has to name for itself: give the
+// super-meshes their headroom now rather than on a later edit (issue #229).
+meshes.settle();
 
 // The rig's own frame hook: this harness has no animation loop worth the name,
 // so handlers are collected and called once per rendered frame below.

@@ -27,9 +27,12 @@ import {
 import {
   ARENA_COMPACT_IDLE_BUDGET_MS,
   ARENA_COMPACT_STROKE_BUDGET_MS,
+  ARENA_HEADROOM_FLOOR_TRIANGLES,
+  ARENA_HEADROOM_RUN_MULTIPLE,
   ARENA_TRANSFER_MS_PER_VERTEX,
   CHUNK_SPLICE_FRAME_BUDGET_MS,
   SUPER_MESH_SPAN_CHUNKS,
+  TERRAIN_QUIET_MS,
   createTerrainMeshes,
   type ArenaLayout,
   type TerrainMeshes,
@@ -1186,5 +1189,416 @@ describe('the vertex arena', () => {
       count: 1050,
     });
     expectHoleInvariants(meshes);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// HEADROOM AT SETTLE (issue #229, docs/plans/frame-budget-growth-and-draw-calls.md
+// part A). The contract: WHEN THE TERRAIN IS QUIET, EVERY SUPER-MESH HOLDS AT
+// LEAST `headroom(sm)` OF FREE CAPACITY, AND CAPACITY IS ONLY EVER GROWN WHILE
+// THE TERRAIN IS QUIET. Slack used to be an accident of where the doubling
+// ladder stopped, so whether a stroke reallocated — one full `bufferData` of the
+// whole super-mesh, inside the stroke — was decided by streaming order.
+//
+// None of these is a statement about a callsite: they are about the rule
+// (`headroom`), the gate (quiet), the pace (one super-mesh per call) and the
+// backstop that counts what the rule failed to prevent (`strokeGrowths`).
+// -----------------------------------------------------------------------------
+
+/**
+ * A frame loop and a clock the test moves BY HAND.
+ *
+ * Distinct from `fakeScheduler` above, whose clock advances on every read so a
+ * per-build budget can be simulated. What these tests assert is the QUIET
+ * WINDOW — a rule about how long it has been since the last `update` — so the
+ * clock has to stand still until the test says otherwise.
+ */
+function settleScheduler() {
+  const handlers = new Set<(dt: number) => void>();
+  let clockMs = 0;
+  return {
+    scheduling: {
+      onFrame(handler: (dt: number) => void): () => void {
+        handlers.add(handler);
+        return () => handlers.delete(handler);
+      },
+      now: (): number => clockMs,
+    },
+    advance(ms: number): void {
+      clockMs += ms;
+    },
+    frame(): void {
+      for (const handler of handlers) handler(1 / 60);
+    },
+  };
+}
+
+/**
+ * `sizedSource` with the answer withheld, so a chunk can be parked in the two
+ * queue states a test cannot otherwise reach: `build` returns a PROMISE while
+ * holding, which leaves the chunk in `inFlight`, and settling that promise with
+ * the source's `null` failure value is what moves it into `retry`.
+ */
+function heldSource(sizes: Map<number, number>) {
+  const inner = sizedSource(sizes);
+  const held: {
+    resolve: (answer: ChunkJobAnswer | null) => void;
+    answer: ChunkJobAnswer | null;
+  }[] = [];
+  let holding = false;
+  const source: ChunkBuildSource = {
+    concurrency: 2,
+    build(mirror, chunkIdx, generation) {
+      const answer = inner.build(mirror, chunkIdx, generation) as ChunkJobAnswer | null;
+      if (!holding) return answer;
+      return new Promise<ChunkJobAnswer | null>((resolve) => {
+        held.push({ resolve, answer });
+      });
+    },
+    dispose(): void {},
+  };
+  /**
+   * A macrotask, not `await Promise.resolve()`: the answer travels through the
+   * mesh set's own `.then` before it is spliced, and one microtask is not
+   * reliably enough of that chain.
+   */
+  const drainMicrotasks = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  return {
+    source,
+    hold(): void {
+      holding = true;
+    },
+    /** Answers every held job with the geometry it built. */
+    async release(): Promise<void> {
+      for (const job of held.splice(0)) job.resolve(job.answer);
+      await drainMicrotasks();
+    },
+    /** Answers every held job with `null` — the source's "this build produced nothing". */
+    async lose(): Promise<void> {
+      for (const job of held.splice(0)) job.resolve(null);
+      await drainMicrotasks();
+    },
+  };
+}
+
+function settleSetup(chunks: ChunkPayload[], sizes: Map<number, number>) {
+  const mirror = createTerrainMirror(WORLD);
+  const group = new Group();
+  const clock = settleScheduler();
+  const held = heldSource(sizes);
+  const meshes = createTerrainMeshes(group, mirror, clock.scheduling, held.source);
+  const dirty = applySnapshot(mirror, { type: 'snapshot', worldSize: WORLD, chunks });
+  // ORDERED EXPLICITLY, exactly as `arenaSetup` does and for the same reason.
+  meshes.update([...dirty].sort((a, b) => a - b));
+  return { mirror, group, meshes, clock, held };
+}
+
+/**
+ * Capacity of super-mesh `s` in VERTICES, read off the buffer three would
+ * upload rather than from module internals: the position attribute IS the
+ * allocation, and `liveEnd` is only the part of it that draws.
+ */
+function capacityVertices(meshes: TerrainMeshes, s: number): number {
+  return plainAttribute(meshes.pickables()[s]!.geometry, 'position').array.length / 3;
+}
+
+/** The rule under test, restated: 2 × the largest run, floored. */
+function expectedHeadroom(largestRunVertices: number): number {
+  return Math.max(
+    ARENA_HEADROOM_RUN_MULTIPLE * largestRunVertices,
+    ARENA_HEADROOM_FLOOR_TRIANGLES * VERTICES_PER_TRIANGLE,
+  );
+}
+
+describe('headroom at settle', () => {
+  const ORIGIN = chunkIndex(WORLD, 0, 0);
+  const NEIGHBOUR = chunkIndex(WORLD, 1, 0);
+  /** The first chunk of the NEXT super-mesh — SUPER_MESH_SPAN_CHUNKS along. */
+  const OTHER_SUPER = chunkIndex(WORLD, SUPER_MESH_SPAN_CHUNKS, 0);
+  /** Small enough that the floor, not the run, decides the headroom. */
+  const SMALL_RUN = 1000 * VERTICES_PER_TRIANGLE;
+  /**
+   * Large enough that 2 × it clears the floor by a whole rung of the doubling
+   * ladder, so the floor and the run rule cannot both be satisfied by the same
+   * allocation and the test can tell which one ran.
+   */
+  const LARGE_RUN = 30_000 * VERTICES_PER_TRIANGLE;
+
+  /**
+   * Builds every queued chunk. Two frames because the source's concurrency is
+   * two and a frame submits before it splices.
+   */
+  function stream(clock: ReturnType<typeof settleScheduler>): void {
+    clock.frame();
+    clock.frame();
+    clock.frame();
+  }
+
+  it('grows a quiet super-mesh that is under its headroom, to at least the floor', () => {
+    const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
+    const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+    const before = meshes.arenaStats()[0]!;
+    expect(before.growths).toBe(0);
+    // The defect this fixes: the ladder left less slack than one regrow needs.
+    expect(capacityVertices(meshes, 0) - before.liveEnd).toBeLessThan(
+      expectedHeadroom(SMALL_RUN),
+    );
+
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+
+    const after = meshes.arenaStats()[0]!;
+    expect(after.growths).toBe(1);
+    // 2 × SMALL_RUN is far under the floor, so this is the floor's doing.
+    expect(ARENA_HEADROOM_RUN_MULTIPLE * SMALL_RUN).toBeLessThan(
+      ARENA_HEADROOM_FLOOR_TRIANGLES * VERTICES_PER_TRIANGLE,
+    );
+    expect(capacityVertices(meshes, 0) - after.liveEnd).toBeGreaterThanOrEqual(
+      ARENA_HEADROOM_FLOOR_TRIANGLES * VERTICES_PER_TRIANGLE,
+    );
+    // A settle growth is not a stroke growth — that is the whole point.
+    expect(after.strokeGrowths).toBe(0);
+  });
+
+  it('sizes headroom from the largest run when twice it clears the floor', () => {
+    const sizes = new Map<number, number>([[ORIGIN, LARGE_RUN]]);
+    const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+
+    const stats = meshes.arenaStats()[0]!;
+    const headroom = expectedHeadroom(LARGE_RUN);
+    expect(headroom).toBe(ARENA_HEADROOM_RUN_MULTIPLE * LARGE_RUN);
+    expect(capacityVertices(meshes, 0) - stats.liveEnd).toBeGreaterThanOrEqual(headroom);
+    // And the floor alone would not have got there: the run rule is what ran.
+    expect(capacityVertices(meshes, 0)).toBeGreaterThan(
+      stats.liveEnd + ARENA_HEADROOM_FLOOR_TRIANGLES * VERTICES_PER_TRIANGLE,
+    );
+  });
+
+  it('leaves a super-mesh that already has its headroom alone', () => {
+    const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
+    const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+    const grown = meshes.arenaStats()[0]!.growths;
+    const geometry = meshes.pickables()[0]!.geometry;
+    const capacity = capacityVertices(meshes, 0);
+
+    meshes.settle();
+    meshes.settle();
+
+    expect(meshes.arenaStats()[0]!.growths).toBe(grown);
+    expect(capacityVertices(meshes, 0)).toBe(capacity);
+    // Not merely the same size — the same geometry, unrebound.
+    expect(meshes.pickables()[0]!.geometry).toBe(geometry);
+  });
+
+  it('grows at most one super-mesh per settle()', () => {
+    const sizes = new Map<number, number>([
+      [ORIGIN, SMALL_RUN],
+      [OTHER_SUPER, SMALL_RUN],
+    ]);
+    const { meshes, clock } = settleSetup(
+      [chunkPayload(0, 0, 0), chunkPayload(SUPER_MESH_SPAN_CHUNKS, 0, 0)],
+      sizes,
+    );
+    stream(clock);
+    expect(meshes.drawCallCount()).toBe(2);
+    clock.advance(TERRAIN_QUIET_MS);
+
+    const total = (): number =>
+      meshes.arenaStats().reduce((sum, stats) => sum + stats.growths, 0);
+    expect(total()).toBe(0);
+    meshes.settle();
+    expect(total()).toBe(1);
+    meshes.settle();
+    expect(total()).toBe(2);
+    // Both have their headroom now; a third call grows nothing.
+    meshes.settle();
+    expect(total()).toBe(2);
+  });
+
+  it('does not grow before TERRAIN_QUIET_MS has passed since the last update', () => {
+    const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
+    const { meshes, clock, mirror } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+
+    // One millisecond short of the window is still a stroke in progress.
+    clock.advance(TERRAIN_QUIET_MS - 1);
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+
+    clock.advance(1);
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(1);
+
+    // And a fresh update re-opens the window: the next stroke step must not
+    // find a growth pass running between its intents.
+    meshes.update(
+      applyTerrainDiff(mirror, { type: 'terrainDiff', cells: [{ x: 2, y: 3, h: 256 }] }),
+    );
+    stream(clock);
+    const afterUpdate = meshes.arenaStats()[0]!.growths;
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(afterUpdate);
+  });
+
+  it('is not quiet while a chunk of that super-mesh is still in flight', async () => {
+    const sizes = new Map<number, number>([
+      [ORIGIN, SMALL_RUN],
+      [NEIGHBOUR, SMALL_RUN],
+    ]);
+    const { meshes, clock, held, mirror } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+    expect(meshes.builtChunkCount()).toBe(1);
+
+    // A second chunk of the SAME super-mesh, with its answer withheld.
+    held.hold();
+    meshes.update(
+      applySnapshot(mirror, {
+        type: 'snapshot',
+        worldSize: WORLD,
+        chunks: [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)],
+      }),
+    );
+    clock.frame();
+    expect(meshes.pendingCount()).toBeGreaterThan(0);
+
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+    // Not merely "no growth counted": the super-mesh is still short, which is
+    // what makes the refusal the quiet gate's doing rather than a coincidence.
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+    expect(capacityVertices(meshes, 0) - meshes.arenaStats()[0]!.liveEnd).toBeLessThan(
+      expectedHeadroom(SMALL_RUN),
+    );
+
+    // Answered, and the queue is empty: the same super-mesh now gets it.
+    await held.release();
+    clock.frame();
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+    const stats = meshes.arenaStats()[0]!;
+    expect(capacityVertices(meshes, 0) - stats.liveEnd).toBeGreaterThanOrEqual(
+      expectedHeadroom(SMALL_RUN),
+    );
+  });
+
+  it('is not quiet while a chunk of that super-mesh is waiting to be retried', async () => {
+    const sizes = new Map<number, number>([
+      [ORIGIN, SMALL_RUN],
+      [NEIGHBOUR, SMALL_RUN],
+    ]);
+    const { meshes, clock, held, mirror } = settleSetup([chunkPayload(0, 0, 0)], sizes);
+    stream(clock);
+
+    held.hold();
+    meshes.update(
+      applySnapshot(mirror, {
+        type: 'snapshot',
+        worldSize: WORLD,
+        chunks: [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0)],
+      }),
+    );
+    clock.frame();
+    // A lost build: the chunk goes to `retry` and is folded back into the queue
+    // at the top of the next pass. It is still "not yet drawn".
+    await held.lose();
+    expect(meshes.pendingCount()).toBeGreaterThan(0);
+
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(0);
+  });
+
+  it('counts a growth taken during a splice as a STROKE growth', () => {
+    // The backstop, not the rule: a stroke longer than its headroom still
+    // grows, and what the contract owes is that the growth is COUNTED.
+    const a = chunkIndex(WORLD, 0, 0);
+    const b = chunkIndex(WORLD, 1, 0);
+    const sizes = new Map<number, number>([
+      [a, 1500],
+      [b, 1500],
+    ]);
+    const { meshes } = arenaSetup(2, sizes);
+    expect(meshes.arenaStats()[0]).toMatchObject({ growths: 0, strokeGrowths: 0 });
+
+    sizes.set(a, 1560);
+    meshes.update([a]);
+
+    expect(meshes.arenaStats()[0]).toMatchObject({ growths: 1, strokeGrowths: 1 });
+  });
+
+  it('preserves every run when it grows on settle(), holes and all', () => {
+    // A HOLE UNDER THE GROWTH, deliberately. `settle` reallocates directly —
+    // it does not take the append path's compaction sweep first — so it is a
+    // way to reach `ensureSuperCapacity` with the arena FRAGMENTED, and the
+    // four preserving copies there are written in `liveEnd` (the extent) for
+    // exactly this case: copying `liveCount` (the sum of the runs) would drop
+    // every live vertex above the hole.
+    const THIRD = chunkIndex(WORLD, 2, 0);
+    const chunks = [chunkPayload(0, 0, 0), chunkPayload(1, 0, 0), chunkPayload(2, 0, 0)];
+    /**
+     * A run the compactor cannot afford to move on an idle frame — one whole
+     * triangle past ARENA_COMPACT_IDLE_BUDGET_MS at ARENA_TRANSFER_MS_PER_VERTEX.
+     * WITHOUT IT THERE IS NO HOLE TO GROW OVER: the frame hook compacts after
+     * every drain, and a hole under a movable run is closed on the next frame.
+     */
+    const TOO_DEAR_TO_MOVE_RUN =
+      (Math.floor(
+        ARENA_COMPACT_IDLE_BUDGET_MS / ARENA_TRANSFER_MS_PER_VERTEX / VERTICES_PER_TRIANGLE,
+      ) +
+        1) *
+      VERTICES_PER_TRIANGLE;
+    /**
+     * Three runs, then the middle one shrinks — which opens a hole below the
+     * third run rather than at the live end, so it stays on the free list
+     * instead of retreating.
+     */
+    const build = () => {
+      const sizes = new Map<number, number>([
+        [ORIGIN, SMALL_RUN],
+        [NEIGHBOUR, SMALL_RUN * 2],
+        [THIRD, TOO_DEAR_TO_MOVE_RUN],
+      ]);
+      const world = settleSetup(chunks, sizes);
+      stream(world.clock);
+      sizes.set(NEIGHBOUR, SMALL_RUN);
+      world.meshes.update([NEIGHBOUR]);
+      stream(world.clock);
+      return world;
+    };
+    const { meshes, clock } = build();
+    // The same world, with the same history, never settled — the oracle.
+    const reference = build();
+    expect(meshes.arenaStats()[0]!.holeCount).toBe(1);
+    expect(meshes.arenaStats()[0]!.liveEnd).toBeGreaterThan(
+      meshes.arenaStats()[0]!.liveCount,
+    );
+
+    // A delta, not an absolute: the stream itself climbs the doubling ladder,
+    // and those growths are streaming cost, off the stroke and accepted.
+    const streamed = meshes.arenaStats()[0]!.growths;
+    const streamedInSplice = meshes.arenaStats()[0]!.strokeGrowths;
+    clock.advance(TERRAIN_QUIET_MS);
+    meshes.settle();
+    expect(meshes.arenaStats()[0]!.growths).toBe(streamed + 1);
+    // And settle's growth is not charged to the splice path.
+    expect(meshes.arenaStats()[0]!.strokeGrowths).toBe(streamedInSplice);
+
+    expectSlotsEqual(meshes, reference.meshes);
+    expectHoleInvariants(meshes);
+    // The draw range still covers the EXTENT, hole included — a range cut back
+    // to the count sum would leave the third run undrawn.
+    expect(meshes.pickables()[0]!.geometry.drawRange.count).toBe(
+      meshes.arenaStats()[0]!.liveEnd,
+    );
   });
 });
