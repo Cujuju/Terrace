@@ -19,6 +19,10 @@
 //   5. A plugin may refuse a slice it cannot read; a refusal parks it the
 //      same way, which is what closes the gap for a pre-envelope blob whose
 //      own self-described version is ahead of the code.
+//   6. A `load` that THROWS parks identically (issue #206). The plugin did not
+//      choose to decline, but it is in the same position as one that did: it
+//      holds none of the stored state, so its own empty save must not reach
+//      the slice key. §3.5 of the plan lists throw and refuse as one row.
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +42,7 @@ const WORLD_SIZE = CHUNK_SIZE * 4;
 function recordingPlugin(
   name: string,
   version: number,
-  options: { refuseFrom?: number } = {},
+  options: { refuseFrom?: number; throwFrom?: number } = {},
 ): { plugin: TerracePlugin; loads: Array<{ data: unknown; fromVersion: number }>; state: { n: number } } {
   const loads: Array<{ data: unknown; fromVersion: number }> = [];
   const state = { n: 0 };
@@ -47,6 +51,11 @@ function recordingPlugin(
     save: () => ({ n: state.n }),
     load: (data, fromVersion) => {
       if (options.refuseFrom !== undefined && fromVersion === options.refuseFrom) return 'refuse';
+      // A malformed slice this build cannot parse — the accidental sibling of a
+      // refusal, and the case issue #206 was filed against.
+      if (options.throwFrom !== undefined && fromVersion === options.throwFrom) {
+        throw new Error('malformed slice');
+      }
       loads.push({ data, fromVersion });
       const parsed = data as { n?: unknown };
       state.n = typeof parsed.n === 'number' ? parsed.n : 0;
@@ -162,6 +171,17 @@ describe('slice version envelope', () => {
   });
 
   describe('a plugin refusing a slice it cannot read', () => {
+    it('reports the slice as parked', () => {
+      const { plugin } = recordingPlugin('picky', 2, { refuseFrom: 1 });
+      const host = hostFor([plugin]);
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      host.restorePersistence({ picky: { legacy: true } });
+      warn.mockRestore();
+
+      expect(host.isSliceParked('picky')).toBe(true);
+    });
+
     it('parks it and re-emits it byte-identically over TWO consecutive snapshots', () => {
       // Refuses anything written under version 1 — the case a pre-envelope
       // blob whose own self-described version is ahead of the code produces.
@@ -178,6 +198,79 @@ describe('slice version envelope', () => {
 
       expect(first).toBe(JSON.stringify({ picky: { legacy: true } }));
       expect(second).toBe(first);
+    });
+  });
+
+  // ISSUE #206: `load` used to run through `safely`, which swallows a throw and
+  // returns undefined — indistinguishable there from a successful void return.
+  // The slice was therefore never parked, and the plugin's own post-throw empty
+  // save replaced the recoverable bytes at the next snapshot, ~60 s after boot.
+  describe('a plugin whose load() THROWS on a malformed slice', () => {
+    it('reports the slice as parked', () => {
+      const { plugin } = recordingPlugin('brittle', 1, { throwFrom: 1 });
+      const host = hostFor([plugin]);
+
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      host.restorePersistence({ brittle: { broken: true } });
+      warn.mockRestore();
+      errors.mockRestore();
+
+      expect(host.isSliceParked('brittle')).toBe(true);
+    });
+
+    it('re-emits the stored bytes byte-identically over TWO consecutive snapshots', () => {
+      const { plugin, state } = recordingPlugin('brittle', 1, { throwFrom: 1 });
+      const host = hostFor([plugin]);
+
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      host.restorePersistence({ brittle: { broken: true } });
+      warn.mockRestore();
+      errors.mockRestore();
+
+      // The plugin came up empty and is running; only write-suppression keeps
+      // its empty save off the slice key.
+      state.n = 77;
+      const first = JSON.stringify(host.collectPersistence());
+      const second = JSON.stringify(host.collectPersistence());
+
+      expect(first).toBe(JSON.stringify({ brittle: { broken: true } }));
+      expect(second).toBe(first);
+    });
+
+    it('still counts the throw as a fault, so the reload gate keeps seeing it', () => {
+      const { plugin } = recordingPlugin('brittle', 1, { throwFrom: 1 });
+      const host = hostFor([plugin]);
+
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      host.restorePersistence({ brittle: { broken: true } });
+      const logged = errors.mock.calls.map((call) => call.map(String).join(' '));
+      warn.mockRestore();
+      errors.mockRestore();
+
+      expect(host.faultCount('brittle')).toBe(1);
+      expect(logged.filter((line) => line.includes('threw in persistence.load'))).toHaveLength(1);
+    });
+
+    it('leaves a healthy sibling loading and saving normally', () => {
+      const brittle = recordingPlugin('brittle', 1, { throwFrom: 1 });
+      const fine = recordingPlugin('fine', 1);
+      const host = hostFor([brittle.plugin, fine.plugin]);
+
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      host.restorePersistence({ brittle: { broken: true }, fine: { v: 1, data: { n: 3 } } });
+      warn.mockRestore();
+      errors.mockRestore();
+
+      expect(host.isSliceParked('fine')).toBe(false);
+      expect(fine.loads).toEqual([{ data: { n: 3 }, fromVersion: 1 }]);
+      expect(host.collectPersistence()).toEqual({
+        brittle: { broken: true },
+        fine: { v: 1, data: { n: 3 } },
+      });
     });
   });
 
