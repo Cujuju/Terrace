@@ -19,7 +19,7 @@ import {
   chunkIndexOfCell,
   chunksPerEdge,
   clearColumns,
-  computeRiverNetwork,
+  computeRiverNetworkFromSprings,
   createChunkMask,
   createHeightmap,
   heightAt,
@@ -30,6 +30,7 @@ import {
   SEA_LEVEL,
   setColumn,
   simMillisAtRealTime,
+  SpringIndex,
   unlockChunk,
   type CellDiff,
   type ChunkPayload,
@@ -82,14 +83,21 @@ function normalizeDifficulty(value: number): number {
  * (mechanics card 27 — Rivers & Springs — see docs/DESIGN.md's "Decisions
  * made 2026-08-19" entry for the full cost argument this constant closes).
  *
- * `computeRiverNetwork` is a full spring scan plus a bounded retrace of every
- * spring it finds — cheap ONCE (single-digit milliseconds even on a fully
- * revealed 512² world, per the arithmetic in DESIGN.md) but NOT cheap enough
- * to re-run inside every single sculpt intent's validate→apply→broadcast
- * path: a held brush emits an intent every ~120 ms (SCULPT_REPEAT_INTERVAL_MS,
- * client/src/config.ts) PER PLAYER, so a naive per-intent recompute would
- * scale the server's CPU with (players × sculpt rate), not with a fixed
- * budget — exactly the "will not fit" failure mode a full-world pass risks.
+ * A recompute is a bounded retrace of every spring the SpringIndex names —
+ * measured at ~3.7 ms on a 2048² world with rivers running, dominated by
+ * basin filling. Not expensive, but not free either, and a held brush emits
+ * an intent every ~120 ms (SCULPT_REPEAT_INTERVAL_MS, client/src/config.ts)
+ * PER PLAYER while a sim plugin (mudslides, storm surge, volcanoes) sculpts
+ * on every 10 Hz tick with nobody touching anything: a naive per-sculpt
+ * recompute would scale the server's CPU with (sculpt rate), not with a fixed
+ * budget.
+ *
+ * IT USED TO BE MUCH WORSE, and the fix for that is elsewhere. Until issue
+ * #235 the recompute also rescanned all size² cells for springs (~48 ms on a
+ * 2048² world), so this throttle was the ONLY thing standing between a
+ * sculpting plugin and 20% of a core. The rescan is now incremental
+ * (SpringIndex, shared/src/rivers.ts) and this constant is back to being what
+ * it says it is: a cadence, not a dam.
  *
  * Throttling to a fixed wall-clock cadence instead decouples the cost from
  * both player count and sculpt rate: however many players are sculpting,
@@ -316,6 +324,38 @@ export class World {
   private freshwaterCache: FreshwaterMap | null = null;
   private freshwaterCacheNetwork: RiverNetwork | null = null;
 
+  /**
+   * `isCellUnlocked` as a value, allocated ONCE per world.
+   *
+   * The river layer takes the activity predicate as a callback and calls it
+   * per cell; a fresh `(x, y) => this.isCellUnlocked(x, y)` at each call site
+   * would hand the engine a new function identity every time, which is both a
+   * per-refresh allocation and — more to the point — a hidden invitation for
+   * two call sites to disagree about what "active" means. One field, one
+   * answer: `SpringIndex` and every recompute share it.
+   */
+  private readonly isCellUnlockedHere = (x: number, y: number): boolean => this.isCellUnlocked(x, y);
+
+  /**
+   * The incrementally maintained spring-candidate set behind `riverNetwork()`
+   * (issue #235).
+   *
+   * WHAT IT REPLACES. Every refresh used to rescan all `size²` cells for local
+   * maxima — ~48 ms on a 2048² world, whatever had actually changed — so a sim
+   * plugin sculpting every tick made the world pay that four times a second
+   * (RIVER_RECOMPUTE_INTERVAL_MS) with no player involved. The index costs the
+   * CHANGE instead: a sculpt re-tests its own diff's neighbourhood and nothing
+   * else.
+   *
+   * THIS CLASS IS THE INDEX'S ONLY INFORMANT, and deliberately so — an index
+   * is only as correct as what it is told, and `World` is the one object that
+   * owns both the heightmap and the unlock mask. Every mutation of either is a
+   * method here (`applySculpt`, `unlockChunk`, `grantChunkToToken`,
+   * `rewindTo`), each of which notifies it; no plugin and no call site is in a
+   * position to forget, because none of them can reach the state directly.
+   */
+  private readonly springIndex: SpringIndex;
+
   private constructor(
     map: Heightmap,
     mask: Uint8Array,
@@ -328,6 +368,10 @@ export class World {
     this.difficulty = difficulty;
     this.worldName = name;
     this.simMillis = simMillis;
+    // After `this.map`, necessarily: the index holds the heightmap it indexes.
+    // Costs nothing here — it scans lazily, on the first `springs()` (see
+    // SpringIndex), so a world whose rivers are never read never pays.
+    this.springIndex = new SpringIndex(this.map, this.isCellUnlockedHere);
   }
 
   /**
@@ -694,6 +738,10 @@ export class World {
     this.riverNetworkCache = null;
     this.riverNetworkComputedAtMs = Number.NEGATIVE_INFINITY;
     this.riverNetworkStale = true;
+    // A rewind reports no diff, so the spring index has no way to learn what
+    // moved — every cell and every mask bit may have. Stale is the honest
+    // answer, and it costs nothing until the next reader asks.
+    this.springIndex.markStale();
     this.freshwaterCache = null;
     this.freshwaterCacheNetwork = null;
 
@@ -779,8 +827,32 @@ export class World {
 
     unlockChunk(this.mask, index);
     this.changedSinceSnapshot = true;
+    this.noteChunkBecameActive(cx, cy);
     this.broadcast({ type: 'chunkUnlock', chunks: [chunkPayloadOf(this, cx, cy)] });
     return true;
+  }
+
+  /**
+   * A chunk just joined the UNION mask — the one place that fact reaches the
+   * derived river caches.
+   *
+   * WHY THIS EXISTS AT ALL (a bug fixed alongside issue #235). Unlocking never
+   * touched `riverNetworkStale`, so a newly revealed chunk's springs stayed
+   * invisible until the next SCULPT happened to invalidate the cache — on a
+   * world nobody was sculpting, indefinitely. The activity predicate is an
+   * input to the network exactly as the heightmap is, so it invalidates
+   * exactly as a sculpt does.
+   *
+   * The region is the chunk's own cells; `noteRegionChanged` widens it by
+   * SPRING_CANDIDACY_REACH_CELLS itself, which is what re-tests the cells just
+   * OUTSIDE the chunk that were passing vacuously while their neighbour was
+   * dark.
+   */
+  private noteChunkBecameActive(cx: number, cy: number): void {
+    const minX = cx * CHUNK_SIZE;
+    const minY = cy * CHUNK_SIZE;
+    this.springIndex.noteRegionChanged(minX, minY, minX + CHUNK_SIZE - 1, minY + CHUNK_SIZE - 1);
+    this.riverNetworkStale = true;
   }
 
   /** Lazily allocates and returns ONE token's own mask. Never returns the shared union `mask`. */
@@ -810,7 +882,12 @@ export class World {
 
     unlockChunk(tokenMask, index);
     this.changedSinceSnapshot = true;
+    const wasUnionLocked = !isChunkUnlocked(this.mask, index);
     unlockChunk(this.mask, index); // union — see isChunkUnlocked's doc comment.
+    // Only when the UNION mask actually moved: the river layer is scoped to
+    // the union (riverNetwork's doc comment), so a second token earning a
+    // chunk somebody else already opened changes nothing it can see.
+    if (wasUnionLocked) this.noteChunkBecameActive(cx, cy);
     return true;
   }
 
@@ -963,6 +1040,12 @@ export class World {
     const diff = applySculpt(this.map, x, y, radius, amount, options);
     if (diff.length > 0) {
       this.changedSinceSnapshot = true;
+      // The diff is the WHOLE set of cells whose height moved, spill included
+      // (see this method's contract above), which is exactly what the spring
+      // index needs to stay exact — hence feeding it here, off the one return
+      // value, rather than re-deriving a brush footprint that would have to
+      // track every future edge profile.
+      this.springIndex.noteCellsChanged(diff);
       this.riverNetworkStale = true;
     }
     return diff;
@@ -976,10 +1059,11 @@ export class World {
    *
    * SCOPED TO THE UNLOCKED (union-mask) AREA, exactly like the wildlife
    * plugin's habitat census (plugins/wildlife/server/census.ts): nobody can
-   * see a river over land nobody has revealed, and bounding the scan to it is
-   * what keeps a fully-locked fresh world's recompute nearly free and a
-   * mostly-locked large world's recompute proportional to what is actually
-   * visible rather than to the full (possibly 512²) allocation.
+   * see a river over land nobody has revealed. The scoping is a RULE, not a
+   * cost bound — `isCellUnlockedHere` is asked per cell, so scoping alone
+   * never made the pass cheaper than the world is big. What bounds the cost
+   * is `springIndex`, which re-tests only what changed (issue #235); the one
+   * O(size²) pass left is that index's first build, paid once per world.
    *
    * A CACHE, NOT AUTHORITATIVE STATE: nothing here is persisted, nothing
    * here is on the wire (see the plugin surface in world-api.ts and
@@ -997,9 +1081,11 @@ export class World {
       this.riverNetworkCache === null ||
       (this.riverNetworkStale && now - this.riverNetworkComputedAtMs >= RIVER_RECOMPUTE_INTERVAL_MS)
     ) {
-      this.riverNetworkCache = computeRiverNetwork(this.map, {
-        isActive: (x, y) => this.isCellUnlocked(x, y),
-      });
+      this.riverNetworkCache = computeRiverNetworkFromSprings(
+        this.map,
+        this.springIndex.springs(),
+        this.isCellUnlockedHere,
+      );
       this.riverNetworkComputedAtMs = now;
       this.riverNetworkStale = false;
     }

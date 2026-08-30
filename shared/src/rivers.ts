@@ -120,30 +120,205 @@ function isLocalMaximum(
 }
 
 /**
- * Every spring candidate in the active area, in FIXED (height descending,
- * then cell index ascending) order, capped at MAX_SPRINGS_PER_NETWORK.
+ * THE ONE PLACE candidate cells become the network's springs: FIXED (height
+ * descending, then cell index ascending) order, capped at
+ * MAX_SPRINGS_PER_NETWORK.
  *
- * The scan itself is row-major over the active area (bounded, on the server,
- * to unlocked chunks by the caller's `isActive` — see World's river cache —
- * and, on the client, to received chunks by the same mechanism), which is an
- * O(activeCells) pass; the sort that follows is O(k log k) in the candidate
- * count k. Both are cheap relative to the recompute throttle they run behind
- * — see docs/DESIGN.md's cost arithmetic.
+ * Shared by BOTH producers of a candidate set — the full rescan
+ * (`selectSprings`) and the incrementally maintained `SpringIndex` — so the
+ * two cannot rank the same cells differently. That is not tidiness: the whole
+ * safety argument for the index is "same candidates in, same springs out",
+ * and a second copy of this comparator is exactly how that would quietly stop
+ * being true.
+ *
+ * ORDER-INDEPENDENT IN ITS INPUT. The comparator is a TOTAL order (cell
+ * indices are unique, so no two entries ever compare equal), which means the
+ * result is a pure function of the candidate SET — never of the order the
+ * caller happened to iterate it in. That is what lets `SpringIndex` keep its
+ * candidates in a Set, whose iteration order reflects the history of edits
+ * rather than the terrain, without any of that history reaching the network.
+ */
+function rankSprings(map: Heightmap, candidates: Iterable<number>): number[] {
+  const ranked: { index: number; height: number }[] = [];
+  for (const index of candidates) ranked.push({ index, height: map.cells[index] });
+  ranked.sort((a, b) => (b.height !== a.height ? b.height - a.height : a.index - b.index));
+  return ranked.slice(0, MAX_SPRINGS_PER_NETWORK).map((c) => c.index);
+}
+
+/**
+ * Every spring candidate in the active area, ranked by `rankSprings`.
+ *
+ * The scan is row-major over the WHOLE grid, testing `isActive` per cell, so
+ * it is an O(worldSize²) pass regardless of how much of the world is active
+ * or how little of it just changed. That cost is why `SpringIndex` exists
+ * (issue #235); this function remains the definition the index is checked
+ * against, and the path a caller with no index to maintain still takes.
  */
 function selectSprings(
   map: Heightmap,
   isActive: (x: number, y: number) => boolean,
 ): number[] {
-  const candidates: { index: number; height: number }[] = [];
+  const candidates: number[] = [];
   for (let y = 0; y < map.size; y++) {
     for (let x = 0; x < map.size; x++) {
       if (!isActive(x, y)) continue;
       if (!isLocalMaximum(map, x, y, isActive)) continue;
-      candidates.push({ index: cellIndex(map, x, y), height: heightAt(map, x, y) });
+      candidates.push(cellIndex(map, x, y));
     }
   }
-  candidates.sort((a, b) => (b.height !== a.height ? b.height - a.height : a.index - b.index));
-  return candidates.slice(0, MAX_SPRINGS_PER_NETWORK).map((c) => c.index);
+  return rankSprings(map, candidates);
+}
+
+/**
+ * How far one cell's height change can reach into OTHER cells' spring
+ * candidacy, in cells.
+ *
+ * DERIVED FROM `isLocalMaximum`, NOT CHOSEN: that predicate reads the cell
+ * itself and its FLOW_DIRECTIONS neighbours and nothing else, so a cell whose
+ * height (or activity) moves can only add or remove candidates within one
+ * step of itself. Widening FLOW_DIRECTIONS to eight neighbours would still
+ * leave this at 1; giving springs a wider test (a 5×5 dominance rule, say)
+ * would have to widen this with it, which is why it is named here, next to
+ * the predicate it is a fact about, rather than inlined as a `- 1` in
+ * `SpringIndex`.
+ */
+const SPRING_CANDIDACY_REACH_CELLS = 1;
+
+/**
+ * The spring-candidate set of one heightmap, maintained INCREMENTALLY.
+ *
+ * WHY (issue #235). `selectSprings` is an O(worldSize²) rescan, ~48 ms on a
+ * 2048² world, and the server's river cache invalidates on every sculpt — so
+ * a sim plugin that sculpts every tick (mudslides, storm surge, volcanoes)
+ * made the whole world pay a full rescan four times a second with no player
+ * touching anything. Spring candidacy, though, is a purely LOCAL predicate
+ * (`isLocalMaximum`, radius SPRING_CANDIDACY_REACH_CELLS), so the set a
+ * rescan would find can be maintained by re-testing only what moved. This
+ * class is that maintenance, and the cost of a refresh becomes proportional
+ * to the terrain CHANGE rather than to the world.
+ *
+ * EXACT, NOT APPROXIMATE. `springs()` returns precisely what `selectSprings`
+ * over the same map and predicate would return — same cells, same order (see
+ * `rankSprings` on why the Set's iteration order cannot leak in). The
+ * equivalence is the class's entire contract and is what shared/test/
+ * spring-index.test.ts checks against a live full rescan after every kind of
+ * change the server can make.
+ *
+ * THE CALLER OWES IT EVERY CHANGE. An index is only as correct as what it is
+ * told: every write to `map.cells` must arrive as `noteCellChanged` /
+ * `noteCellsChanged` / `noteRegionChanged`, every change in what `isActive`
+ * answers must arrive as `noteRegionChanged` over the affected area, and any
+ * wholesale replacement (a rollback) as `markStale`. On the server that duty
+ * is discharged in exactly one place — `World`, which owns both the heightmap
+ * and the unlock mask — so no plugin or call site can forget it.
+ *
+ * LAZY. Nothing is scanned until the first `springs()`, and a `markStale`
+ * costs nothing until somebody next asks; constructing an index for a world
+ * whose rivers are never read is free.
+ */
+export class SpringIndex {
+  private readonly map: Heightmap;
+  private readonly isActive: (x: number, y: number) => boolean;
+  /** Every cell currently passing `isLocalMaximum` — the set `rankSprings` draws from. */
+  private readonly candidates = new Set<number>();
+  /** True until a full scan has run; set again by `markStale`. */
+  private needsFullScan = true;
+
+  constructor(map: Heightmap, isActive: (x: number, y: number) => boolean = ALWAYS_ACTIVE) {
+    this.map = map;
+    this.isActive = isActive;
+  }
+
+  /**
+   * Declares the whole index worthless — the next `springs()` rescans.
+   *
+   * For the changes that arrive with no diff to work from: a rollback
+   * rewinding every cell at once, a restore, or anything else that replaces
+   * the terrain wholesale. Cheap to call and safe to call redundantly; the
+   * cost lands on the next reader, not here.
+   */
+  markStale(): void {
+    this.needsFullScan = true;
+  }
+
+  /** One cell moved (or changed activity) — re-test it and its neighbours. */
+  noteCellChanged(x: number, y: number): void {
+    this.noteRegionChanged(x, y, x, y);
+  }
+
+  /**
+   * A scattered set of cells moved — a sculpt's diff, in practice.
+   *
+   * Re-tests the union of their neighbourhoods ONCE each rather than once per
+   * mention: a brush's diff is dense, so its cells' neighbourhoods overlap
+   * heavily, and re-testing per mention would do the same work up to
+   * (2 × SPRING_CANDIDACY_REACH_CELLS + 1)² times over.
+   */
+  noteCellsChanged(cells: Iterable<{ readonly x: number; readonly y: number }>): void {
+    if (this.needsFullScan) return;
+    const size = this.map.size;
+    const affected = new Set<number>();
+    for (const cell of cells) {
+      const minX = Math.max(0, cell.x - SPRING_CANDIDACY_REACH_CELLS);
+      const maxX = Math.min(size - 1, cell.x + SPRING_CANDIDACY_REACH_CELLS);
+      const minY = Math.max(0, cell.y - SPRING_CANDIDACY_REACH_CELLS);
+      const maxY = Math.min(size - 1, cell.y + SPRING_CANDIDACY_REACH_CELLS);
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) affected.add(cellIndex(this.map, x, y));
+      }
+    }
+    // Through the shared grid helpers both ways: the index↔(x,y) mapping is
+    // terrain math and lives in exactly one place (shared/src/grid.ts), not
+    // re-derived inline here.
+    for (const index of affected) {
+      this.reassess(cellX(size, index), cellY(size, index));
+    }
+  }
+
+  /**
+   * A whole inclusive rectangle moved, or became active — re-test it and the
+   * SPRING_CANDIDACY_REACH_CELLS-wide border around it, which the rectangle's
+   * own cells can unseat without having moved themselves.
+   */
+  noteRegionChanged(minX: number, minY: number, maxX: number, maxY: number): void {
+    if (this.needsFullScan) return;
+    const size = this.map.size;
+    const x0 = Math.max(0, minX - SPRING_CANDIDACY_REACH_CELLS);
+    const x1 = Math.min(size - 1, maxX + SPRING_CANDIDACY_REACH_CELLS);
+    const y0 = Math.max(0, minY - SPRING_CANDIDACY_REACH_CELLS);
+    const y1 = Math.min(size - 1, maxY + SPRING_CANDIDACY_REACH_CELLS);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) this.reassess(x, y);
+    }
+  }
+
+  /** This map's springs right now — identical to `selectSprings`, see the class comment. */
+  springs(): readonly number[] {
+    if (this.needsFullScan) this.fullScan();
+    return rankSprings(this.map, this.candidates);
+  }
+
+  /** Re-runs the candidacy test for one cell and files the verdict. */
+  private reassess(x: number, y: number): void {
+    const index = cellIndex(this.map, x, y);
+    if (this.isActive(x, y) && isLocalMaximum(this.map, x, y, this.isActive)) {
+      this.candidates.add(index);
+    } else {
+      this.candidates.delete(index);
+    }
+  }
+
+  private fullScan(): void {
+    this.candidates.clear();
+    for (let y = 0; y < this.map.size; y++) {
+      for (let x = 0; x < this.map.size; x++) {
+        if (!this.isActive(x, y)) continue;
+        if (!isLocalMaximum(this.map, x, y, this.isActive)) continue;
+        this.candidates.add(cellIndex(this.map, x, y));
+      }
+    }
+    this.needsFullScan = false;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -677,7 +852,30 @@ function traceRiver(map: Heightmap, springIndex: number, isActive: (x: number, y
  */
 export function computeRiverNetwork(map: Heightmap, options?: RiverNetworkOptions): RiverNetwork {
   const isActive = options?.isActive ?? ALWAYS_ACTIVE;
-  const springs = selectSprings(map, isActive);
+  return computeRiverNetworkFromSprings(map, selectSprings(map, isActive), isActive);
+}
+
+/**
+ * The same network, from springs somebody else already ranked — the half of
+ * `computeRiverNetwork` that is NOT the O(worldSize²) rescan.
+ *
+ * For a caller maintaining a `SpringIndex`: `computeRiverNetworkFromSprings(
+ * map, index.springs(), isActive)` is by construction equal to
+ * `computeRiverNetwork(map, { isActive })`, because the index's contract is to
+ * return exactly what `selectSprings` would (see SpringIndex). Splitting the
+ * two apart is what lets the server refresh its rivers at the cost of the
+ * terrain CHANGE rather than the cost of the world (issue #235).
+ *
+ * `springs` is trusted to be a ranked candidate list — cell indices into
+ * `map`, at most MAX_SPRINGS_PER_NETWORK of them, in the order rivers should
+ * be traced. Nothing re-ranks or re-caps it here: this is the seam an index
+ * plugs into, not a validator.
+ */
+export function computeRiverNetworkFromSprings(
+  map: Heightmap,
+  springs: readonly number[],
+  isActive: (x: number, y: number) => boolean = ALWAYS_ACTIVE,
+): RiverNetwork {
   const rivers = springs.map((springIndex) => traceRiver(map, springIndex, isActive));
   return { rivers };
 }
