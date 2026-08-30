@@ -1,5 +1,5 @@
 Issue #108 pass 2 — passes per cell of spread, old rule vs new
-MAX_STEP=4  SMOOTH_SPREAD_CELLS=640  SMOOTH_PASS_LIMIT=2560  node v24.19.0  2026-08-30T05:16:54.673Z
+MAX_STEP=4  SMOOTH_SPREAD_CELLS=640  SMOOTH_PASS_LIMIT=2560  node v24.19.0  2026-08-30T05:44:51.524Z
 
 stroke                                rule    relief  spread  passes  per cell
 --------------------------------------  ----  ------  ------  ------  --------
@@ -15,3 +15,11 @@ bare cliff 401 (synthetic)            old        401     100     300      3.00
 bare cliff 401 (synthetic)            new        401     100    1187     11.87
 bare cliff 1000 (synthetic)           old       1000     250     841      3.36
 bare cliff 1000 (synthetic)           new       1000     250    2560     10.24 (TRUNCATED at the cap)
+
+TRUNCATION THRESHOLD — smallest bare cliff that hits the pass cap (128², new rule)
+  smallest wall that TRUNCATES: 593 height units
+  cliff   529: passes  2047  max gradient 5
+  cliff   592: passes  2524  max gradient 5
+  cliff   593: passes  2560  max gradient 6  TRUNCATED
+  cliff   657: passes  2560  max gradient 6  TRUNCATED
+  cliff  1000: passes  2560  max gradient 7  TRUNCATED

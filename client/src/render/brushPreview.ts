@@ -684,13 +684,22 @@ function cellGridSegments(mark: Mark): number[] {
  * How far below the ring the skirt must hang to be certain of reaching the
  * ground everywhere the outline passes over, in world units.
  *
- * DERIVED FROM THE FOOTPRINT, NOT PICKED. MAX_STEP bounds every 4-neighbour
- * height difference in the world and equals BAND_HEIGHT, so the band-quantised
- * surface the player sees drops at most ONE BAND per cell of 4-neighbour
- * travel. The deepest ground under the outline is therefore its Manhattan
- * reach in bands below the hovered cell — and the reach is measured by running
- * the footprint iterator itself, so a change to the footprint's shape carries
- * into this number instead of silently invalidating a formula.
+ * DERIVED FROM THE FOOTPRINT, NOT PICKED. Relaxation bounds every 4-neighbour
+ * height difference in the world at MAX_STEP + RELAX_SLACK — 5 units, one over
+ * MAX_STEP, because the pass splits a pair's excess exactly in half and comes
+ * to rest there (shared/src/constants.ts; issue #108, 2026-08-29) — and that
+ * bound is under BAND_HEIGHT, so the band-quantised surface the player sees
+ * drops at most ONE BAND per cell of 4-neighbour travel. The deepest ground
+ * under the outline is therefore its Manhattan reach in bands below the hovered
+ * cell — and the reach is measured by running the footprint iterator itself, so
+ * a change to the footprint's shape carries into this number instead of
+ * silently invalidating a formula.
+ *
+ * (This said "MAX_STEP ... equals BAND_HEIGHT", which stopped being true at the
+ * 2026-08-21 re-sample — MAX_STEP is one band per WORLD UNIT, a quarter of a
+ * band per cell. The claim the skirt needs is the one now stated, and it held
+ * by equality before the re-sample and holds with eleven units to spare after
+ * it. See the same correction on OUTLINE_SKIRT's own note above.)
  *
  * The `+ 1` is the OUTSIDE cell of each boundary crossing: the outline sits on
  * the edge between the outermost footprint cell and its neighbour, and that

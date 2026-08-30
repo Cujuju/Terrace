@@ -554,7 +554,8 @@ export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
  * #108), with the residual named rather than fixed. Conservation costs passes
  * on SHEER ground: the fill on the low side of a cliff is no longer invented,
  * so every unit of the ramp has to be walked down off the plateau. Measured by
- * bisection on a bare cliff over 128² (.sim-108/passes.mjs), the smallest wall
+ * bisection on a bare cliff over 128² (.sim-108/passes.mjs's truncation-
+ * threshold section, output in .sim-108/passes.txt), the smallest wall
  * that no longer converges inside this cap is 593 height units — a 592-unit
  * cliff finishes in 2,524 passes and a 593-unit one is truncated at 2,560. A
  * 1000-unit cliff wants ~7,205 (.sim-108/results.txt).

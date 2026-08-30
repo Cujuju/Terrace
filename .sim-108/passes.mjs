@@ -136,3 +136,47 @@ for (const height of CLIFFS) {
     );
   }
 }
+
+// ─────────────────────────────────────────────── TRUNCATION THRESHOLD ──────
+//
+// The smallest bare cliff that no longer converges inside SMOOTH_PASS_LIMIT,
+// found by bisection. This is the figure SMOOTH_PASS_LIMIT's doc comment and
+// DESIGN.md's #108 entry both quote, so it is produced HERE rather than by
+// hand.
+
+function cliffPassesAndGradient(height) {
+  const map = NEW.createHeightmap(SIZE);
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE >> 1; x++) map.cells[y * SIZE + x] = height;
+  }
+  const seed = new Set();
+  for (let i = 0; i < map.cells.length; i++) if (map.cells[i] === height) seed.add(i);
+  const passes = NEW.smooth(map, new Set(seed), seed);
+  let worst = 0;
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const i = y * SIZE + x;
+      if (x < SIZE - 1) worst = Math.max(worst, Math.abs(map.cells[i] - map.cells[i + 1]));
+      if (y < SIZE - 1) worst = Math.max(worst, Math.abs(map.cells[i] - map.cells[i + SIZE]));
+    }
+  }
+  return { passes, worst };
+}
+
+console.log('');
+console.log('TRUNCATION THRESHOLD — smallest bare cliff that hits the pass cap (128², new rule)');
+let lo = 400;
+let hi = 1000;
+while (lo < hi) {
+  const mid = (lo + hi) >> 1;
+  if (cliffPassesAndGradient(mid).passes >= NEW.SMOOTH_PASS_LIMIT) hi = mid;
+  else lo = mid + 1;
+}
+console.log(`  smallest wall that TRUNCATES: ${lo} height units`);
+for (const height of [lo - 64, lo - 1, lo, lo + 64, 1000]) {
+  const r = cliffPassesAndGradient(height);
+  const flag = r.passes >= NEW.SMOOTH_PASS_LIMIT ? '  TRUNCATED' : '';
+  console.log(
+    `  cliff ${pad(height, 5)}: passes ${pad(r.passes, 5)}  max gradient ${r.worst}${flag}`,
+  );
+}

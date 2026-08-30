@@ -249,7 +249,20 @@ export interface Vent {
   erupting: boolean;
   /** Simulated seconds left in the CURRENT phase — a dormancy or an eruption. */
   phaseSeconds: number;
-  /** Bands this cone has been raised, in total. Persisted; diagnostic. */
+  /**
+   * BRUSH bands this cone has been given, in total — the sum of the `bands`
+   * arguments `raiseCone` was called with, not the height the mountain gained.
+   * Persisted; diagnostic, and nothing reads it back but the snapshot.
+   *
+   * THE DISTINCTION IS NOT PEDANTRY (issue #108, 2026-08-29). Relaxation moves
+   * roughly half of what the brush puts on a cone's apex down its flanks, so
+   * the two quantities differ by about a factor of two — measured, a genesis
+   * cone asked for 4 bands keeps 2.75 of them on real terrain and an eruption
+   * asking for CONE_GROWTH_BANDS_PER_ERUPTION = 2 leaves about 1
+   * (.sim-108/plugins.mjs). `openVent` seeds this field from the bands it
+   * ASKED for, so `beginEruption` adds the bands it asks for too; a counter
+   * that mixed the two units would be meaningless in both.
+   */
   coneBands: number;
 }
 
@@ -582,6 +595,9 @@ function beginEruption(vent: Vent, world: WorldApi): void {
   // six hundred sculpts, each running a full gradient relaxation, to produce
   // the same terrain one sculpt produces.
   raiseCone(world, vent.x, vent.y, CONE_GROWTH_BANDS_PER_ERUPTION, 'deferred');
+  // BRUSH bands, matching what `openVent` puts there — see `Vent.coneBands`.
+  // The PEAK gains CONE_PEAK_BANDS_PER_ERUPTION of that; this field counts
+  // what was spent, not what stuck.
   vent.coneBands += CONE_GROWTH_BANDS_PER_ERUPTION;
 
   fronts.set(vent.id, {

@@ -450,6 +450,33 @@ for (const world of ['flat', 'genesis']) {
   }
 }
 
+console.log(
+  '\n=== VOLCANOES: what a GENESIS cone actually delivers at its peak' +
+    ' (protocol.ts GENESIS_CONE_BANDS, intent: 4 bands = 64) ===',
+);
+console.log(
+  `${padR('world', 9)}${padR('rule', 6)}${padR('bands asked', 13)}${pad('peak gain', 11)}` +
+    `${pad('in bands', 10)}${pad('summit bands', 14)}`,
+);
+for (const world of ['flat', 'genesis']) {
+  for (const { label, mod } of RULES) {
+    for (const bands of [4, 5, 6, 8]) {
+      if (label === 'old' && bands !== 4) continue;
+      const { map, site } = stage(mod, world, (m) => landSite(m, MAX_BRUSH_RADIUS * 2));
+      const before = heightAt(map, site.x, site.y);
+      raise(mod, map, site.x, site.y, bands);
+      const gain = heightAt(map, site.x, site.y) - before;
+      // VENT_MIN_BANDS_ABOVE_SEA (6) is the SITING bar, which the cone is
+      // raised on top of — so the summit the plume is sized against is
+      // 6 bands plus whatever the cone really delivered.
+      console.log(
+        `${padR(world, 9)}${padR(label, 6)}${padR(bands, 13)}${pad(gain, 11)}` +
+          `${pad(fx(gain / BAND_HEIGHT), 10)}${pad(fx(6 + gain / BAND_HEIGHT), 14)}`,
+      );
+    }
+  }
+}
+
 console.log('\n=== VOLCANOES: lava settled thickness over the flow (intent: 8 = half a band) ===');
 console.log(
   `${padR('world', 9)}${padR('rule', 6)}${padR('FLOW_THICKNESS', 16)}${pad('one cell', 10)}${pad('over a flow', 13)}${pad('height moved', 14)}`,
