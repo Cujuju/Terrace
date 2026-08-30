@@ -35,6 +35,7 @@ import {
   WEATHER_SYSTEMS_MESSAGE,
   parseStrikesPayload,
   parseSystemsPayload,
+  MAX_ACTIVE_SYSTEMS,
 } from '../protocol.ts';
 import { WeatherInterpolator, type InterpolatedSystem } from './interpolation.ts';
 import { createWeatherRigs, type WeatherRig, type WeatherRigs } from './rig.ts';
@@ -228,8 +229,28 @@ function applyStrike(systemId: number, cellX: number, cellY: number): void {
   );
 }
 
+/**
+ * Draw objects ONE weather system's rig costs at worst: SEVEN — a storm's
+ * (rain 5, snow 5, fog 4; measured 2026-08-29 over every WeatherKind).
+ */
+const WEATHER_SYSTEM_DRAW_OBJECTS = 7;
+
+/** The world's single dry bolt, which belongs to no system: ONE. */
+const DRY_BOLT_DRAW_OBJECTS = 1;
+
+/** The light bank holds PointLights, which are not drawn objects. */
+const LIGHT_BANK_DRAW_OBJECTS = 0;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: WEATHER_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: MAX_ACTIVE_SYSTEMS * WEATHER_SYSTEM_DRAW_OBJECTS +
+    DRY_BOLT_DRAW_OBJECTS +
+    LIGHT_BANK_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     rigs = createWeatherRigs();

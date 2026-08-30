@@ -16,8 +16,21 @@ import {
 import { BookIcon, ChronicleReaderHost } from './ChroniclePanel.tsx';
 import { appendEntries, replaceEntries, setGenesisDay, setReaderOpen } from './state.ts';
 
+/**
+ * DRAW BUDGET: NOTHING. The chronicle is a HUD panel and a world-header claim;
+ * it puts no geometry in the scene. Zero is a real budget: the first mesh added
+ * to this layer breaches it.
+ */
+const CHRONICLE_DRAW_OBJECTS = 0;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: CHRONICLE_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: CHRONICLE_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     // The offset is applied FIRST in both handlers, so the entries it explains

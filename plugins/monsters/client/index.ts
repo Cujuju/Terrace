@@ -30,6 +30,7 @@ import {
   MONSTERS_STATE_MESSAGE,
   parseMonstersPayload,
   type YetiVariant,
+  MAX_LIVING_MONSTERS,
 } from '../protocol.ts';
 import { createDread, type Dread } from './atmosphere.ts';
 import { dreadSpecOf } from './dread.ts';
@@ -253,8 +254,28 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   }
 }
 
+/**
+ * Draw objects one monster's MODEL costs at worst: SIX — the yeti, whose rig
+ * bakes to six surfaces (kraken 3, cthulhu 4; measured 2026-08-29).
+ */
+const MONSTER_MODEL_DRAW_OBJECTS = 6;
+
+/**
+ * And its weather: FIVE for a swimmer's dread rig (mist sheets, glow sheet,
+ * bolt). Budgeted for every living monster rather than for the swimmers alone,
+ * because which kinds carry one is a question for ./dread.ts and not for a
+ * ceiling.
+ */
+const MONSTER_DREAD_DRAW_OBJECTS = 5;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: MONSTERS_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: MAX_LIVING_MONSTERS * (MONSTER_MODEL_DRAW_OBJECTS + MONSTER_DREAD_DRAW_OBJECTS),
 
   attach(ctx: ClientPluginCtx): void {
     models = createMonsterModels();

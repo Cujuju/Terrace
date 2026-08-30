@@ -758,6 +758,20 @@ function brushGeometry(
   return { ring, skirt, cellGrid };
 }
 
+/**
+ * What the preview adds to the scene, as draw objects — its share of the
+ * frame's draw budget (part B of
+ * docs/plans/frame-budget-growth-and-draw-calls.md; core is held to the same
+ * ratchet as a plugin).
+ *
+ * FOUR, ALL CREATED AT BOOT AND ONLY EVER HIDDEN, which is why this is a
+ * constant rather than a live count: the outline LineLoop, the skirt, the cell
+ * grid and the crosshair. `visible = false` takes them out of the walk but not
+ * out of the budget — the budget is the ceiling, and a preview under the
+ * cursor has all four up.
+ */
+export const BRUSH_PREVIEW_DRAW_OBJECTS = 4;
+
 export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
   /**
    * Every (radius, tool, edge) the wire allows, built once at startup — see the

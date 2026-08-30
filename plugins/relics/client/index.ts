@@ -25,6 +25,7 @@ import {
   parseRelicsPayload,
   parseSkillsPayload,
   type RelicView,
+  RELIC_COUNT,
 } from '../protocol.ts';
 import {
   CELL_WORLD_SIZE,
@@ -211,8 +212,19 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   return true;
 }
 
+/**
+ * Draw objects one relic costs: ONE mesh per gem (`createGem` above).
+ */
+const RELIC_DRAW_OBJECTS = 1;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: 'relics',
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: RELIC_COUNT * RELIC_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     // Module-scope signals outlive an attach (the module is a singleton), so a

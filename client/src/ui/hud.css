@@ -834,6 +834,22 @@ button.world-header {
   font-variant-numeric: tabular-nums;
 }
 
+/* The draw-call budget (part B of
+   docs/plans/frame-budget-growth-and-draw-calls.md), under the frame rate in
+   the same diagnostic column. Quiet by default, like the fps line, and its own
+   colour for the same reason: a version skew must not read as a draw-call
+   alarm. --over is the breach state, which the host makes STICKY (it clears
+   only after two samples well under budget), so this does not flicker with a
+   population sitting on the line. */
+.hud-version__draw {
+  color: rgb(255 255 255 / 55%);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-version__draw--over {
+  color: rgb(255 138 128 / 90%);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    RESTORE POINTS (world rollback, 2026-08-21). A scrim overlay like the
    chart's — an open document covers the instruments — reusing .chart-button so

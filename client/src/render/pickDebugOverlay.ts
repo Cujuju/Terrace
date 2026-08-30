@@ -101,6 +101,14 @@ function createReadout(canvas: HTMLCanvasElement): HTMLDivElement {
   return el;
 }
 
+/**
+ * The overlay's share of the frame's draw budget: ONE marker mesh (its readout
+ * is DOM, not scene). Counted even though the overlay exists only behind the
+ * `pickdebug` query flag — main.tsx adds it to core's budget only when it
+ * actually builds one.
+ */
+export const PICK_DEBUG_OVERLAY_DRAW_OBJECTS = 1;
+
 export function createPickDebugOverlay(
   scene: Scene,
   canvas: HTMLCanvasElement,

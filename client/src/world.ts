@@ -55,12 +55,12 @@ import { createTerrainMeshes, type TerrainMeshes } from './render/terrainMeshes.
 import { createWorkerChunkBuildSource } from './render/chunkBuildSource.ts';
 import { createLayerEdgeOverlay, type LayerEdgeOverlay } from './render/layerEdgeOverlay.ts';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
-import { createRiverRig, type RiverRig } from './render/riverRig.ts';
+import { createRiverRig, RIVER_RIG_DRAW_OBJECTS, type RiverRig } from './render/riverRig.ts';
 import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
 import { createWorkerRiverNetworkSource } from './render/water/riverNetworkSource.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
-import { createWater, type Water } from './render/water.ts';
+import { createWater, WATER_DRAW_OBJECTS, type Water } from './render/water.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
   pickTerrainCellByRay,
@@ -235,6 +235,22 @@ export interface World extends TerrainSink {
    * rejoin replaces the world mid-draw — it charts the world it was opened on.
    */
   chartSource(): ChartSource | null;
+  /**
+   * Core's terrain-side share of the frame's draw budget: the terrain
+   * super-meshes, the frontier fog, the sea, the river rig and the layer-edge
+   * overlay (part B of docs/plans/frame-budget-growth-and-draw-calls.md).
+   *
+   * HERE BECAUSE THE RIGS ARE HERE — `createWorld` is what builds all five,
+   * and a budget assembled anywhere else would be a list to keep in sync with
+   * this file. main.tsx adds the two rigs it owns (the brush preview and, when
+   * it exists, the pick-debug overlay) and hands the total to the plugin host.
+   *
+   * LIVE, not a constant: the terrain's and the fog's counts are their
+   * super-mesh counts, and the layer-edge overlay's is one per chunk with lips
+   * — all three grow as a world is revealed. Zero for the terrain-side rigs
+   * before the first snapshot, when there are none.
+   */
+  drawBudget(): number;
   dispose(): void;
 }
 
@@ -836,6 +852,15 @@ export function createWorld(viewport: Viewport): World {
       return pickTerrainCellByRay(mirror, origin, direction);
     },
 
+    drawBudget(): number {
+      return (
+        (meshes?.drawCallCount() ?? 0) +
+        fog.drawCallCount() +
+        WATER_DRAW_OBJECTS +
+        RIVER_RIG_DRAW_OBJECTS +
+        (layerEdges?.drawCallCount() ?? 0)
+      );
+    },
     chartSource(): ChartSource | null {
       const m = mirror;
       if (m === null) return null;

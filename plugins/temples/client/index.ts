@@ -244,8 +244,31 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   return true;
 }
 
+/**
+ * The standing temple: TEN surfaces (the stone shell plus the celestial rig's
+ * core, halo, bloom, rings, motes and shaft — ./temple.ts and ./celestial.ts),
+ * measured 2026-08-29.
+ */
+const TEMPLE_STANDING_DRAW_OBJECTS = 10;
+
+/** The placement ghost: ONE. */
+const TEMPLE_GHOST_DRAW_OBJECTS = 1;
+
+/**
+ * Temples in a world: ONE. The server refuses a placement with
+ * TEMPLE_REFUSED_STANDING while one stands (../protocol.ts), so this is the
+ * population cap and not an estimate.
+ */
+const TEMPLES_PER_WORLD = 1;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: TEMPLES_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: TEMPLES_PER_WORLD * (TEMPLE_STANDING_DRAW_OBJECTS + TEMPLE_GHOST_DRAW_OBJECTS),
 
   attach(ctx: ClientPluginCtx): void {
     models = createTempleModels();

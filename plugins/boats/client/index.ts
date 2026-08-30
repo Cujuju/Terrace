@@ -17,7 +17,12 @@ import type {
   MoverPose,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
-import { BOATS_PLUGIN_NAME, BOATS_STATE_MESSAGE, parseBoatsPayload } from '../protocol.ts';
+import {
+  BOATS_PAYLOAD_CAP,
+  BOATS_PLUGIN_NAME,
+  BOATS_STATE_MESSAGE,
+  parseBoatsPayload,
+} from '../protocol.ts';
 import { BoatInterpolator } from './interpolation.ts';
 import { BOAT_WATERLINE_LIFT, createBoatModels, type BoatModel, type BoatModels } from './models.ts';
 
@@ -148,8 +153,21 @@ function drawnPoseOf(id: number): MoverPose | null {
   return { x: at.x, y: at.y, z: at.z };
 }
 
+/**
+ * Draw objects one boat costs: TWO. Its rig is authored as ~7 parts and BAKED
+ * into two merged surfaces by material (models.ts's bakeRig), which is why this
+ * is 2 and not the part count.
+ */
+const BOAT_DRAW_OBJECTS = 2;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: BOATS_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: BOATS_PAYLOAD_CAP * BOAT_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     models = createBoatModels();

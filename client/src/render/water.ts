@@ -401,6 +401,13 @@ function makeDepthAware(
 
 export interface WaterOptions {}
 
+/**
+ * The sea's share of the frame's draw budget: ONE mesh, whatever the world
+ * size. The surface is a single merged quad set — see the module header — and
+ * the depth cues are a texture on it rather than more geometry.
+ */
+export const WATER_DRAW_OBJECTS = 1;
+
 export function createWater(
   parent: Object3D,
   initialWorldSize: number,

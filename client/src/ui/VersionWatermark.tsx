@@ -27,8 +27,9 @@
 // CLIENT_VERSION alone is a const on purpose: it is a build-time literal that
 // cannot change for the life of the page.
 
-import { Show, type JSX } from 'solid-js';
-import { frameRate, serverVersion } from '../state/hudState.ts';
+import { For, Show, type JSX } from 'solid-js';
+import { frameDraw, frameRate, serverVersion } from '../state/hudState.ts';
+import { pluginDrawRows } from '../plugins/hudPanels.ts';
 
 /** This bundle's stamp; the `typeof` guard keeps any non-Vite runtime (a
  *  future test harness importing UI) at the sentinel instead of throwing. */
@@ -52,6 +53,36 @@ export function VersionWatermark(): JSX.Element {
       <Show when={frameRate() !== null}>
         <span class="hud-version__fps">{frameRate()} fps</span>
       </Show>
+      {/* The draw-call budget (part B of
+          docs/plans/frame-budget-growth-and-draw-calls.md). TWO NUMBERS AND A
+          BUDGET, never one ratio: `objects` is what the scene contains before
+          frustum culling — the camera-independent thing a budget can be
+          written against — and `calls` is what the renderer actually submitted
+          last frame, which is lower whenever much of the world is off screen.
+          Null until the host's first sampling window closes, same contract as
+          the frame rate above. */}
+      <Show when={frameDraw()}>
+        {(draw) => (
+          <span
+            class="hud-version__draw"
+            classList={{
+              'hud-version__draw--over': draw().objects >= draw().budget,
+            }}
+          >
+            {draw().objects}/{draw().budget} objects · {draw().calls} calls
+          </span>
+        )}
+      </Show>
+      {/* One row per plugin over its budget. Only the breaches: seventeen rows
+          of healthy plugins would bury the one that matters, and the full
+          table belongs to the probe, not to a watermark. */}
+      <For each={pluginDrawRows().filter((row) => row.breached)}>
+        {(row) => (
+          <span class="hud-version__draw hud-version__draw--over">
+            {row.pluginName} {row.objects}/{row.budget}
+          </span>
+        )}
+      </For>
       <Show when={mismatch()}>
         <span class="hud-version__flag">version skew — restart the stack</span>
       </Show>

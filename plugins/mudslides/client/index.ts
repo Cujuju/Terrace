@@ -136,8 +136,24 @@ function frontClumps(): Clump[] {
   return clumps;
 }
 
+/**
+ * Two InstancedMesh fields, one for the moving front and one for what has
+ * settled, shared by every slide — MAX_DEBRIS_INSTANCES and MAX_ACTIVE_SLIDES
+ * bound the instances inside them, not the calls. Measured 2026-08-29.
+ */
+const DEBRIS_FIELD_DRAW_OBJECTS = 1;
+
+/** The two fields: the moving front and the settled deposit. */
+const DEBRIS_FIELDS = 2;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: MUDSLIDES_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: DEBRIS_FIELDS * DEBRIS_FIELD_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     slides = [];

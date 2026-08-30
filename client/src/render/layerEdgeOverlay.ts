@@ -168,6 +168,18 @@ export interface LayerEdgeOverlay {
   ): boolean;
   /** Drops every edge mesh — for a fresh join replacing the world. */
   clear(): void;
+  /**
+   * Draw objects this overlay currently puts in the scene — its share of the
+   * frame's draw budget (part B of
+   * docs/plans/frame-budget-growth-and-draw-calls.md).
+   *
+   * A LIVE COUNT AND NOT A CONSTANT, because this overlay is the one core rig
+   * whose DRAWING unit is still the chunk: one LineSegments per chunk that has
+   * lips, plus the grabbed lip when one is lit. It therefore grows with the
+   * revealed world, which is exactly the shape of defect the budget exists to
+   * make visible — see B7 of the plan.
+   */
+  drawCallCount(): number;
   dispose(): void;
 }
 
@@ -388,6 +400,9 @@ export function createLayerEdgeOverlay(
     clear() {
       clearGrabbed();
       for (const idx of [...meshes.keys()]) dropMesh(idx);
+    },
+    drawCallCount(): number {
+      return meshes.size + (grabbed === null ? 0 : 1);
     },
     dispose() {
       this.clear();

@@ -21,6 +21,8 @@ import {
   WILDLIFE_SIZE_MODEL_SCALE,
   parseEntitiesPayload,
   sizeClassAt,
+  MAX_BIRDS_ALOFT,
+  WILDLIFE_POPULATION_CAP,
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
@@ -194,8 +196,22 @@ function drawnPoseOf(id: number): MoverPose | null {
   return { x: at.x, y: at.y, z: at.z };
 }
 
+/**
+ * Draw objects one creature costs at WORST: TWO. Most species bake to one
+ * merged surface; the whale and the deep-sea creature carry a second (their
+ * eye/gloss material cannot share the body's surface — see whaleSpecies.ts).
+ * Measured 2026-08-29 over every (species, size class) pair.
+ */
+const CREATURE_DRAW_OBJECTS = 2;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: (WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT) * CREATURE_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     models = createWildlifeModels();

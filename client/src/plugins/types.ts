@@ -397,6 +397,37 @@ export interface TerraceClientPlugin {
   /** Must equal the server plugin's name — it is the message namespace. */
   readonly name: string;
 
+  /**
+   * The most renderable objects this plugin's layer may hold — its share of
+   * the frame's draw calls (part B of
+   * docs/plans/frame-budget-growth-and-draw-calls.md).
+   *
+   * WHY EVERY PLUGIN DECLARES ONE. Every plugin gets a Group under the scene
+   * and adds whatever it likes, and nothing counted: the per-object cost is
+   * `projectObject` → render list → `setProgram` → uniforms → `drawArrays`,
+   * measured on the owner's world at 1.55 ms for 197 calls and 3.10 ms for
+   * 340 — 44 % of a 140 fps frame's 7.1 ms, at idle. The frame budget was
+   * therefore spent by whichever population happened to be largest.
+   *
+   * WRITTEN AS AN EXPRESSION OF THE PLUGIN'S OWN CAPS — `SCAR_CAP`,
+   * `MAX_FUNNELS`, `STRUCTURES_CAP` … — times the objects each of those costs,
+   * plus its fixed rigs. Never a number copied from one measurement: a budget
+   * set from one instant breaches by construction the next time the population
+   * is larger, whereas the caps are the honest maximum. A plugin whose
+   * population has NO cap needs the cap first — that is the defect, and this
+   * field is where it surfaces.
+   *
+   * COUNTED THE WAY THREE DRAWS (see `countDrawObjects` in ./host.ts): one per
+   * Mesh/Line/Points/Sprite, one for a whole InstancedMesh however many
+   * instances it carries (and none while its `count` is 0), and none for a
+   * subtree whose root is invisible.
+   *
+   * Required at the type level; at runtime a missing or non-finite value is
+   * itself a breach, because a plugin loaded at runtime (design Q6) can supply
+   * one.
+   */
+  readonly drawBudget: number;
+
   /** Called once at boot with the plugin's context. */
   attach(ctx: ClientPluginCtx): void;
 

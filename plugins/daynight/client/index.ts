@@ -82,8 +82,23 @@ let calendarGenesisDay: number | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
+/**
+ * DRAW BUDGET: NOTHING, which the module header above already states as a
+ * design fact — this plugin drives core's sky rig and the HUD clock and never
+ * touches `ctx.layer`. Zero is a real budget: the first mesh added here would
+ * be reported (part B of
+ * docs/plans/frame-budget-growth-and-draw-calls.md).
+ */
+const DAYNIGHT_DRAW_OBJECTS = 0;
+
 export const clientPlugin: TerraceClientPlugin = {
   name: DAYNIGHT_PLUGIN_NAME,
+
+  /**
+   * Its share of the frame's draw calls, from its own caps — see
+   * TerraceClientPlugin.drawBudget and the constants above.
+   */
+  drawBudget: DAYNIGHT_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
     reducedMotion = watchReducedMotion();
