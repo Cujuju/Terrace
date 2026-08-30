@@ -135,7 +135,15 @@ export class WorldAdminService {
     try {
       const outcome = await this.deps.manager.reloadPlugin(request.plugin);
       if (typeof outcome === 'string') return fail('reloadPlugin', outcome);
-      return { type: 'worldAdminResult', action: 'reloadPlugin', ok: true, id: request.id };
+      return {
+        type: 'worldAdminResult',
+        action: 'reloadPlugin',
+        ok: true,
+        id: request.id,
+        // Echoed so the client's receipt can name the code that was reloaded
+        // (issue #211) — `id` above is the world, not the plugin.
+        plugin: request.plugin,
+      };
     } catch (error) {
       // The manager contains every failure the plugin itself can produce, so a
       // throw out of it is core's own — the same class `handle` catches.
