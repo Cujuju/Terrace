@@ -136,7 +136,7 @@ import {
 import { CropField, cropSurveyChunksPerTick } from './crops.ts';
 import { GrassField, grassSurveyChunksPerTick } from './grass.ts';
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
-import { loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
+import { closeFireBridge, loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { StumpField } from './stumps.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
@@ -1333,6 +1333,10 @@ export const plugin: TerracePlugin = {
    * standing in a module the next session never re-enters.
    */
   onWorldClose(): void {
+    // The registration fire holds is withdrawn by the bridge that made it
+    // (issue #208): a source left standing is asked for fuel every spread
+    // step of the NEXT world, whether or not this plugin is in it.
+    closeFireBridge();
     resetFloraState();
   },
 

@@ -167,7 +167,10 @@ export function registerEntityFuel(source: EntityFuelSource): void {
   else sources.push(source);
 }
 
-/** Withdraws a source. Exists for tests and for symmetry with ./fuel.ts. */
+/**
+ * Withdraws a source — see ./fuel.ts's `unregisterFuel` for why a registry
+ * that outlives its world is a bug and who calls this (issue #208).
+ */
 export function unregisterEntityFuel(name: string): void {
   const index = sources.findIndex((candidate) => candidate.name === name);
   if (index >= 0) sources.splice(index, 1);
@@ -178,8 +181,12 @@ export function entityFuelSources(): readonly EntityFuelSource[] {
   return sources;
 }
 
-/** Test seam: forgets every registration. */
-export function resetEntityFuelRegistry(): void {
+/**
+ * Forgets every registration — ./index.ts's `onWorldClose`, and a suite that
+ * wants the same fresh start. Named as ./fuel.ts's counterpart is, and for the
+ * same reason.
+ */
+export function clearEntityFuelRegistry(): void {
   sources.length = 0;
 }
 

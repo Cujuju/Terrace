@@ -97,7 +97,7 @@ import { STRUCTURES_SLICE_VERSION, loadStructures, saveStructures } from './pers
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasBuildingWithinSeparation } from './clearance.ts';
-import { loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
+import { closeFireBridge, loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
 
 /**
  * Simulated seconds between unsolicited full re-broadcasts.
@@ -816,6 +816,10 @@ export const plugin: TerracePlugin = {
    * answer to every one of those questions once this world is gone.
    */
   onWorldClose(): void {
+    // The registration fire holds is withdrawn by the bridge that made it
+    // (issue #208): a source left standing is asked for fuel every spread
+    // step of the NEXT world, whether or not this plugin is in it.
+    closeFireBridge();
     resetStructuresState();
   },
 

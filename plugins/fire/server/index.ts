@@ -83,8 +83,8 @@ import {
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
 import { EntityBlaze } from './entityBlaze.ts';
-import { entityFuelAt, entityFuelSource } from './entityFuel.ts';
-import { fuelAt, fuelSources } from './fuel.ts';
+import { clearEntityFuelRegistry, entityFuelAt, entityFuelSource } from './entityFuel.ts';
+import { clearFuelRegistry, fuelAt, fuelSources } from './fuel.ts';
 import { fireRandom, happensWithin } from './rng.ts';
 import { resetSpreadSweep, SPREAD_INTERVAL_SECONDS, spreadOnce } from './spread.ts';
 import { parseStruckCells } from './strike-event.ts';
@@ -869,6 +869,29 @@ export const plugin: TerracePlugin = {
     // back world two small messages is made here, where the set changed.
     broadcastSnapshot(world);
     broadcastEntities(world);
+  },
+
+  /**
+   * THE REGISTRIES BELONG TO THE WORLD THAT FILLED THEM (issue #208).
+   *
+   * WHY FIRE CLEARS THEM AND NOT ONLY THE REGISTRANTS. `./fuel.ts` and
+   * `./entityFuel.ts` hold their sources at MODULE scope, so without this a
+   * registry is the one thing in the session that no close path could empty:
+   * every source is pushed in from a sibling's `onWorldCreate`, and a sibling
+   * that is not enabled for the next world never gets one to withdraw itself
+   * in. Each bridge now withdraws its own registration too, which is the fix
+   * that scales to a plugin this repo has not seen; this is the half that does
+   * not depend on the registrant having been written correctly.
+   *
+   * SAFE TO CLEAR WHOLESALE because every registration in the repo is made
+   * from an `onWorldCreate` and replayed there on every reopen and rollback
+   * (each fire-bridge's `loadFireBridge`), so the next world rebuilds exactly
+   * the set of sources that is actually running in it — which is the set fire
+   * should have been asking all along.
+   */
+  onWorldClose(): void {
+    clearFuelRegistry();
+    clearEntityFuelRegistry();
   },
 
   /**

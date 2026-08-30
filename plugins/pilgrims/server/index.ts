@@ -26,7 +26,7 @@ import {
 import { bridgedMonsters, loadMonstersBridge } from './monsters-bridge.ts';
 import { applyBlessedCells, bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
 import { bridgedTemple, loadTemplesBridge } from './temples-bridge.ts';
-import { loadFireBridge, registerPilgrimsFuel } from './fire-bridge.ts';
+import { closeFireBridge, loadFireBridge, registerPilgrimsFuel } from './fire-bridge.ts';
 import { FIRE_IGNITED_EVENT_NAME, parseIgnitedPositions } from './fire-event.ts';
 import {
   FIRE_STARTLE_RADIUS_CELLS,
@@ -210,6 +210,10 @@ export const plugin: TerracePlugin = {
    */
   onWorldClose(): void {
     applyBlessedCells([]);
+    // The registration fire holds is withdrawn by the bridge that made it
+    // (issue #208): a source left standing is asked for fuel every spread
+    // step of the NEXT world, whether or not this plugin is in it.
+    closeFireBridge();
     resetPilgrimsState();
   },
 
