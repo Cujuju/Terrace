@@ -113,12 +113,19 @@ export type PluginSettingRefusal = PluginToggleRefusal | 'unknownSetting';
  * the one that matters: the new code was rejected and the old build is still
  * running. A refusal vocabulary that enumerated a plugin's internal failure
  * modes would be core learning what a plugin's steps mean.
+ *
+ * THE ONE EXCEPTION IS NOT A STEP, IT IS A STATE (issue #207).
+ * `reloadFailed` states that the build that was running still is, so it may
+ * only be said when a world is actually loaded. When the reopen failed over
+ * BOTH builds there is no world at all, which is a different fact for the
+ * operator — a world to load, not a plugin to fix — and it gets its own name.
  */
 export type PluginReloadRefusal =
   | 'unknownPlugin'
   | 'noWorldLoaded'
   | 'switchInProgress'
-  | 'reloadFailed';
+  | 'reloadFailed'
+  | 'reloadLeftNoWorld';
 
 /** What a successful reload produced: the stamp the new build is running as. */
 export interface PluginReloadOutcome {
@@ -544,7 +551,50 @@ export class WorldManager {
       // is whatever the last open left, and the operator needs to see this.
       logError(`rolling plugin "${name}" back to v${previous.version} also failed at ${rolledBack}`);
     }
+    // AND IF THAT LEFT NOTHING LOADED, SAY SO (issue #207). `openInto` clears
+    // the session before it opens the incoming world, so a failure on the open
+    // side leaves no world at all — and it is the open side that can fail
+    // identically on the way back, since the rollback reopens the same file the
+    // same way. Everyone still believes the old world is live: the clients are
+    // drawing it and the room drops every sculpt they send, and 'reloadFailed'
+    // would tell the operator the previous build is still running when nothing
+    // is. Both audiences are told the state instead.
+    if (this.session === null) {
+      logError(
+        `reloading plugin "${name}" left no world loaded — world "${id}" could not be reopened ` +
+          `over either build; load a world again`,
+      );
+      this.announceWorldUnloaded();
+      return 'reloadLeftNoWorld';
+    }
     return 'reloadFailed';
+  }
+
+  /**
+   * NOTHING IS LOADED — TELL THE CLIENTS. The one exit every no-world path
+   * goes through (issue #207).
+   *
+   * A client draws whatever the last snapshot gave it until something says
+   * otherwise; `worldUnloaded` is that something, and without it the page keeps
+   * rendering a world the server has closed while the room silently drops every
+   * sculpt it sends (net/terrace-room.ts's `session === null` early-out). There
+   * is no reconciliation timer to catch a path that forgot, so forgetting is
+   * permanent until the client reconnects — which is why the broadcast is a
+   * method with a name rather than a line each caller has to remember.
+   *
+   * The guard is not decoration: announcing an unload while a world is live
+   * would blank a running world's view for everybody, so a caller that reaches
+   * here in the wrong state gets a log rather than a broadcast.
+   */
+  private announceWorldUnloaded(): void {
+    if (this.session !== null) {
+      logWarn(
+        `refusing to announce an unload while world "${this.session.id}" is live — ` +
+          `this is a core bug, not a world state`,
+      );
+      return;
+    }
+    this.broadcast('worldUnloaded', { type: 'worldUnloaded' });
   }
 
   /** The two states in which no reload may start (or continue after an await). */
@@ -750,7 +800,7 @@ export class WorldManager {
       logError(`saving world "${closing.id}" while unloading it failed`, error);
     }
     this.deps.registry.writeActive(null);
-    this.broadcast('worldUnloaded', { type: 'worldUnloaded' });
+    this.announceWorldUnloaded();
     logInfo(`world "${closing.id}" unloaded; no world is live`);
     return true;
   }
@@ -898,7 +948,7 @@ export class WorldManager {
         // Guarantee 4 leaves NO world loaded here — but the clients are still
         // drawing the old one, believing it live. Tell them what unload tells
         // them, so the banner states the fact instead of a stale view.
-        this.broadcast('worldUnloaded', { type: 'worldUnloaded' });
+        this.announceWorldUnloaded();
         // And tell the operator who asked. Their receipt already said ok —
         // announcing is not loading — so this async refusal is the ONLY word
         // they get. An absent/unknown id (disconnected since) is silently

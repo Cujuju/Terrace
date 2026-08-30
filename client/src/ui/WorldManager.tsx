@@ -109,6 +109,8 @@ function refusalText(reason: WorldAdminRefusal): string {
       return 'This server has no plugin by that name any more. Reopen the plugin list.';
     case 'reloadFailed':
       return 'That plugin’s new code was rejected — the build that was running still is. The server log says which step failed.';
+    case 'reloadLeftNoWorld':
+      return 'That plugin’s new code was rejected, and the world could not be reopened over the old one either — no world is loaded now. Load one again; the server log says what failed.';
     case 'unknownSetting':
       return 'That plugin does not offer that setting, or does not accept that value. Reopen the plugin list.';
     case 'worldIsActive':
