@@ -92,7 +92,7 @@ export const DRAW_BUDGET_CLEAR_SAMPLES = 2;
 /**
  * How far under budget those samples must be, as a fraction.
  *
- * A TENTH: one creature in ten. Clearing exactly at the budget would let a
+ * A TENTH: one creature in ten. Clearing at the budget itself would let a
  * population sitting on the line toggle the breach on every sample.
  */
 export const DRAW_BUDGET_CLEAR_MARGIN = 0.1;
@@ -113,11 +113,21 @@ export const NO_DRAW_BUDGET_BREACH: DrawBudgetBreachState = {
  * One sample of the breach state machine, as a pure step so the hysteresis is
  * testable as the contract it is rather than through a frame loop.
  *
- * Breach on the FIRST sample at or above the budget — a budget is a ceiling,
- * and reaching it is already the failure. Clearing needs
- * DRAW_BUDGET_CLEAR_SAMPLES consecutive samples below
- * `budget × (1 − DRAW_BUDGET_CLEAR_MARGIN)`; a single sample at the margin
- * resets nothing, and one sample back at the budget restarts the count.
+ * BREACH IS `objects > budget`, NOT `>=`. A budget is THE MOST the layer may
+ * hold — the value `TerraceClientPlugin.drawBudget` is documented as, and the
+ * value every plugin's expression computes: the count its layer reaches when
+ * its population is AT its cap. An inclusive test would report that healthy
+ * full state as a failure (flora at 14/14, weather at its 14 systems, fire
+ * with all five pools alight), and would make a budget of 0 — which four
+ * plugins that deliberately draw nothing declare — a breach from the first
+ * sample that no later sample could clear.
+ *
+ * Clearing needs DRAW_BUDGET_CLEAR_SAMPLES consecutive samples AT OR UNDER
+ * `budget × (1 − DRAW_BUDGET_CLEAR_MARGIN)`; anything between that margin and
+ * the budget is a population sitting on the line and restarts the count.
+ * Inclusive here for the same reason it is exclusive above: at a budget of 0
+ * the margin is 0, and a plugin that has dropped back to drawing nothing has
+ * to be able to come back.
  *
  * A budget that is not a finite number is itself a breach that can never clear
  * (a plugin loaded at runtime, design Q6, can supply `undefined`).
@@ -128,12 +138,11 @@ export function stepDrawBudgetBreach(
   budget: number,
 ): DrawBudgetBreachState {
   if (!Number.isFinite(budget)) return { breached: true, lowSamples: 0 };
-  if (objects >= budget) return { breached: true, lowSamples: 0 };
+  if (objects > budget) return { breached: true, lowSamples: 0 };
   if (!state.breached) return NO_DRAW_BUDGET_BREACH;
-  // Breached and under budget: only a sample under the MARGIN counts toward
-  // clearing. Anything between the margin and the budget is a population
-  // sitting on the line, and it resets the count rather than advancing it.
-  if (objects >= budget * (1 - DRAW_BUDGET_CLEAR_MARGIN)) {
+  // Breached and within budget: only a sample at or under the MARGIN counts
+  // toward clearing.
+  if (objects > budget * (1 - DRAW_BUDGET_CLEAR_MARGIN)) {
     return { breached: true, lowSamples: 0 };
   }
   const lowSamples = state.lowSamples + 1;

@@ -66,7 +66,8 @@ export function VersionWatermark(): JSX.Element {
           <span
             class="hud-version__draw"
             classList={{
-              'hud-version__draw--over': draw().objects >= draw().budget,
+              // OVER, not at: the budget is the most the frame may hold.
+              'hud-version__draw--over': draw().objects > draw().budget,
             }}
           >
             {draw().objects}/{draw().budget} objects · {draw().calls} calls
