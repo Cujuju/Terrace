@@ -6,6 +6,7 @@ import {
   bandOf,
   BAND_HEIGHT,
   canSpreadBandTo,
+  carveRange,
   cellIndex,
   cellX,
   cellY,
@@ -2152,5 +2153,88 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
       // The cell beyond is untouched until the drag reaches it.
       expect(map.cells[cellIndex(map, x + 1, 12)]).toBe(0);
     }
+  });
+});
+
+describe('smooth builds the layer view only where the sweep meets a layered column', () => {
+  const SIZE = 64;
+  /** Flat ground, high enough to carve a gap out of the middle of it. */
+  const GROUND_BAND = 10;
+  /**
+   * The carved column, in the corner opposite the stroke. The gap spans four
+   * bands because `isGapDrawn` folds a shallow opening back into one span —
+   * this has to leave a column that really holds two spans, not one.
+   */
+  const CARVED_X = 1;
+  const CARVED_Y = 1;
+  const CARVE_FLOOR_BAND = 2;
+  const CARVE_ROOF_BAND = 6;
+  /** The stroke, ~46 cells away from the carve and radius+cascade nowhere near it. */
+  const FAR_X = 48;
+  const FAR_Y = 48;
+  const STROKE_RADIUS = 8;
+  const SMOOTH_STROKE: SculptOptions = {
+    tool: 'smooth',
+    profile: 'soft',
+    spill: 'banded',
+    anchor: 'clicked',
+  };
+
+  function flatWorld(carved: boolean): Heightmap {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(GROUND_BAND * BAND_HEIGHT);
+    if (carved) {
+      carveRange(
+        map,
+        CARVED_X,
+        CARVED_Y,
+        CARVE_FLOOR_BAND * BAND_HEIGHT,
+        CARVE_ROOF_BAND * BAND_HEIGHT,
+      );
+    }
+    return map;
+  }
+
+  /**
+   * Counts the whole-grid copies the sculpt makes. `map.cells.slice()` in
+   * buildLayerView is the only one on this path, so this counts layer views —
+   * the cost the stroke is supposed to pay only when it meets a layered column.
+   */
+  function countGridCopies(map: Heightmap): () => number {
+    let copies = 0;
+    const real = map.cells.slice.bind(map.cells);
+    Object.defineProperty(map.cells, 'slice', {
+      configurable: true,
+      value: (): Int16Array => {
+        copies++;
+        return real();
+      },
+    });
+    return () => copies;
+  }
+
+  it('a carve in the far corner costs a distant stroke nothing, and changes nothing', () => {
+    // Pre-2026-08-29 the test was `map.columnSpans.size === 0` — a GLOBAL
+    // fact — so one carve anywhere made every later smooth stroke copy and
+    // clear the whole grid, whatever it was actually sweeping.
+    const carved = flatWorld(true);
+    expect(carved.columnSpans.size).toBe(1);
+    const copies = countGridCopies(carved);
+    const carvedDiff = applySculpt(carved, FAR_X, FAR_Y, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
+    expect(copies()).toBe(0);
+
+    // And skipping the view is exact, not an approximation: the identical
+    // stroke on an uncarved world produces the identical diff.
+    const plain = flatWorld(false);
+    const plainDiff = applySculpt(plain, FAR_X, FAR_Y, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
+    expect(carvedDiff).toEqual(plainDiff);
+    expect(carvedDiff.length).toBeGreaterThan(0);
+  });
+
+  it('a stroke whose sweep does reach the carved column still relaxes a view', () => {
+    const carved = flatWorld(true);
+    const copies = countGridCopies(carved);
+    applySculpt(carved, CARVED_X + STROKE_RADIUS, CARVED_Y + STROKE_RADIUS, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
+    expect(copies()).toBe(1);
   });
 });
