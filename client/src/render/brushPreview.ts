@@ -771,22 +771,43 @@ function cellGridSegments(mark: Mark): number[] {
 }
 
 /**
- * How far below the ring the skirt must hang to be certain of reaching the
- * ground everywhere the outline passes over, in world units.
+ * How far below the ring the skirt hangs, in world units — deep enough to be
+ * certain of reaching the ground everywhere the outline passes over ground the
+ * gradient invariant describes.
  *
- * DERIVED FROM THE FOOTPRINT, NOT PICKED. MAX_STEP bounds every 4-neighbour
- * height difference in the world and equals BAND_HEIGHT, so the band-quantised
- * surface the player sees drops at most ONE BAND per cell of 4-neighbour
- * travel. The deepest ground under the outline is therefore its Manhattan
- * reach in bands below the hovered cell — and the reach is measured by running
- * the footprint iterator itself, so a change to the footprint's shape carries
- * into this number instead of silently invalidating a formula.
+ * MEASURED FROM THE FOOTPRINT, NOT PICKED: the reach is found by running the
+ * footprint iterator itself, so a change to the footprint's shape carries into
+ * this number instead of silently invalidating a formula.
  *
  * The `+ 1` is the OUTSIDE cell of each boundary crossing: the outline sits on
  * the edge between the outermost footprint cell and its neighbour, and that
  * neighbour is one 4-neighbour step further out than anything the iterator
  * reports. The lift is added back because the skirt hangs from the RING, which
  * floats OUTLINE_LIFT_WORLD_UNITS above the surface rather than on it.
+ *
+ * WHAT THE INVARIANT ACTUALLY BOUNDS, corrected 2026-08-30. This used to say
+ * "MAX_STEP … equals BAND_HEIGHT, so the surface drops at most ONE BAND per
+ * cell", and that stopped being true at the 2026-08-21 re-sample: MAX_STEP is
+ * `BAND_HEIGHT / WORLD_UNIT_CELLS` (shared/src/constants.ts) — a band per world
+ * UNIT, which is a QUARTER of a band per cell. Over d cells of 4-neighbour
+ * travel the stored height falls at most d·MAX_STEP, and flooring to bands adds
+ * at most the fraction of one, so the band-quantised surface the player sees is
+ * at most ceil(d / WORLD_UNIT_CELLS) BANDS below the hovered cell.
+ *
+ * ONE BAND PER CELL IS THEREFORE HEADROOM, not the bound — WORLD_UNIT_CELLS
+ * times it at the widest brush (16 bands where 4 would do). It is kept because
+ * the bound above describes only ground the gradient invariant covers, and the
+ * ground beside a carve is not: a span leaves open air under a cap, so the
+ * surface visible one cell away can be any number of bands down. The excess
+ * costs nothing to draw — the skirt is built once at startup and is the one
+ * depth-TESTED part of the preview, so every quad below the ground is discarded
+ * by the depth test rather than shaded.
+ *
+ * RESIDUAL, stated because the headroom is not a proof: over carved ground
+ * neither this depth nor any other constant is a bound, and a skirt that stops
+ * short of a deep cave floor shows as a wall that does not reach. Closing that
+ * needs the terrain under the ring, which this module deliberately does not
+ * read.
  */
 function skirtDropWorldUnits(mark: Mark): number {
   let manhattanReachCells = 0;
