@@ -44,6 +44,7 @@ import {
   type Vec3,
 } from '../terrain/picking.ts';
 import {
+  DEFAULT_BRUSH_TOOL,
   brushRadius,
   brushProfile,
   brushTool,
@@ -59,7 +60,7 @@ import {
   type SculptAction,
 } from '../state/controlPrefs.ts';
 import { BAND_HEIGHT } from '@terrace/shared';
-import type { SculptIntent } from '@terrace/shared';
+import type { SculptIntent, SculptTool } from '@terrace/shared';
 
 
 export interface SculptInputOptions {
@@ -213,6 +214,28 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokePointerId: number | null = null;
   let strokeIsTouch = false;
   let strokeAction: SculptAction = 'raise';
+
+  /**
+   * THE TOOL THIS STROKE IS SCULPTING WITH, decided at the press and fixed for
+   * the stroke — exactly like `strokeAction` and `strokeGrab` beside it.
+   *
+   * FROZEN BECAUSE THE GRASP IS. Which tool is held decides whether the press
+   * takes hold of a lip at all (`takeHold`), and that answer is frozen in
+   * `strokeGrab`; reading the live HUD signal afterwards let the two disagree.
+   * Clicking Stamp in the HUD mid-pull kept the frozen grasp and went on
+   * pulling the terrace out while the HUD said Stamp, and switching the other
+   * way — Stamp to Pull, with nothing grasped — made every remaining intent
+   * fall out of `emitIntent`'s "a Pull with nothing in its grasp emits
+   * nothing" guard, so the brush went dead until the button was released.
+   *
+   * Only the TOOL is frozen. Radius and edge stay live reads, because neither
+   * one is half of a decision the press already made: they reshape the next
+   * intent and nothing about the stroke contradicts them.
+   *
+   * Meaningful only while a stroke is live; every press sets it before
+   * anything reads it, and the initial value is simply the HUD's own default.
+   */
+  let strokeTool: SculptTool = DEFAULT_BRUSH_TOOL;
 
   /**
    * THE GRABBED BAND, decided once at pointerdown and fixed for the stroke —
@@ -475,14 +498,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // generic send below would put a `drag` intent with no band on the wire,
     // which the shared math treats as a no-op — a message, and a mana charge,
     // for an edit that was never going to happen.
-    if (brushTool() === 'drag' && strokeGrab === null) return;
+    if (strokeTool === 'drag' && strokeGrab === null) return;
     // A CARVE ONLY EVER LOWERS (plan D6). The raise chord is not "carve
     // upward", it is nothing at all: the shared validator rejects a carve
     // intent carrying `dir: 1` with the whole intent, so emitting one would
     // spend a seq and a mana gate on a message the server drops on the floor.
     // Refused here so the HUD's mode indicator still reads honestly (setSculptMode
     // above has already run) while nothing goes out.
-    if (brushTool() === 'carve' && sculptDirection(action) > 0) return;
+    if (strokeTool === 'carve' && sculptDirection(action) > 0) return;
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
       // Too shallow a ray, or off the world: hold the pull where it was rather
@@ -517,16 +540,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // asks `carveBand`, the same derivation without the one-span shortcut —
     // and it is only ever this tool that does, which is what leaves every
     // other stroke over unlayered ground byte-identical.
-    const spanBand = brushTool() === 'carve' ? carveBand(cell) : graspSpanBand(cell);
-    // tool/profile are read (not captured) per intent, so switching the HUD
-    // toggles mid-stroke takes effect on the very next repeat.
+    const spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
+    // The EDGE is read (not captured) per intent, so switching that toggle
+    // mid-stroke takes effect on the very next repeat. The TOOL is not: it is
+    // the press's own decision, frozen with the grasp it implies — see
+    // `strokeTool` for the two ways reading it live broke a stroke in flight.
     send({
       type: 'sculpt',
       x: cell.x,
       y: cell.y,
       radius: brushRadius(),
       dir: sculptDirection(action),
-      tool: brushTool(),
+      tool: strokeTool,
       profile: brushProfile(),
       ...(spanBand !== null ? { spanBand } : {}),
       seq: nextSeq++,
@@ -660,7 +685,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // does; standing still with the Pull tool means the lip is already where
     // the player put it, and a seeded layer is "a single layer" by the owner's
     // instruction — a repeat would turn either into a tower.
-    if (brushTool() === 'drag') return;
+    if (strokeTool === 'drag') return;
     scheduleRepeat(0);
   };
 
@@ -709,7 +734,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    */
   const takeHold = (action: SculptAction): void => {
     strokeGrab = null;
-    if (brushTool() !== 'drag') return;
+    if (strokeTool !== 'drag') return;
     const hover = hoverTarget();
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
@@ -758,6 +783,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokePointerId = event.pointerId;
     strokeIsTouch = event.pointerType === 'touch';
     strokeAction = action;
+    // Before takeHold below, which asks the HUD's tool what a press even means
+    // here, and before any intent this stroke emits.
+    strokeTool = brushTool();
     setSculptMode(action);
     pointerClientX = event.clientX;
     pointerClientY = event.clientY;
