@@ -43,6 +43,7 @@ import {
   anyColumnLayered,
   applyBandFill,
   bandFillAt,
+  BEDROCK_FLOOR,
   canCarveBandAt,
   canSpreadBandToSpan,
   carveRange,
@@ -2331,6 +2332,22 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
  * the precise thing "one cell per intent, outward from air that is really
  * there" forbids. Iteration order is the footprint iterator's fixed scan, so
  * server and client collect the same cells in the same order.
+ *
+ * A CUT THAT STARTS AT THE BOTTOM OF THE WORLD IS THE WHOLE STROKE REFUSED,
+ * and it is `lo` — not the anti-cheat rule — that decides it. The lower piece
+ * a cut leaves is `[span.floor, lo)`, so at `lo === BEDROCK_FLOOR` the bottom
+ * span has no lower piece and whatever stood above the cut is left standing on
+ * nothing: a column the storage cannot encode (`setColumn`), i.e. a RangeError
+ * out of the server's message handler and the client's prediction alike.
+ * `canCarveBandAt` does not catch it, and cannot be asked to: it is asked of
+ * the bands the cut OPENS (`spanBand + 1` upward), and a neighbour dug to the
+ * floor is genuinely open at those — the BEDROCK_REMNANT it keeps caps below
+ * the world's bottom band. So the grasped band's own footing is a separate
+ * question, asked here, once, before any cell is judged. `spanBand` reaches
+ * MIN_BAND from an ordinary pick — the floor of a fully dug pit — and
+ * validateSculptIntent admits MIN_BAND because it is a band this world holds;
+ * "this world has no material to take from under it" is terrain, and terrain
+ * is re-derived here on both replicas rather than trusted off the wire.
  */
 function applyCarve(
   map: Heightmap,
@@ -2342,6 +2359,12 @@ function applyCarve(
 ): void {
   const lo = spanBand * BAND_HEIGHT;
   const hi = (spanBand + CARVE_BANDS_PER_STROKE) * BAND_HEIGHT;
+
+  // No footing would be left under the cut — see the paragraph above. `<=`
+  // rather than `===` because a lower band would take even more away; both are
+  // the same refusal, and the comparison stays right if MIN_BAND ever stops
+  // being the lowest band a `spanBand` can name.
+  if (lo <= BEDROCK_FLOOR) return;
 
   const admitted: number[] = [];
   forEachFootprintCell(map, cx, cy, radius, (i) => {

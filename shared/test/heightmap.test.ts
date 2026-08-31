@@ -29,6 +29,7 @@ import {
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
+  MIN_BAND,
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   quantizeToBand,
@@ -2236,5 +2237,47 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
     const copies = countGridCopies(carved);
     applySculpt(carved, CARVED_X + STROKE_RADIUS, CARVED_Y + STROKE_RADIUS, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
     expect(copies()).toBe(1);
+  });
+});
+
+describe('applySculpt — carve grasped at the bottom of the world', () => {
+  const SIZE = 32;
+  const PIT_X = 10;
+  const PIT_Y = 10;
+  /**
+   * The second rung of the HUD's brush sizes, and the smallest radius whose
+   * footprint reaches a NEIGHBOUR of the pit — the cell that still has material
+   * at the world's bottom band for the cut to take away. Radius 1 is a one-cell
+   * footprint and hides the bug.
+   */
+  const RADIUS = 2;
+
+  it('refuses the whole stroke rather than cutting a column off its bedrock', () => {
+    const map = createHeightmap(SIZE);
+    // The pick that mints `spanBand: MIN_BAND` is an ordinary one: the floor of
+    // a pit dug all the way down, whose horizontal face reports the band of its
+    // own cap. Dig it with plain lower strokes, the way a player would.
+    const strokes = Math.ceil((0 - MIN_HEIGHT) / DEFAULT_SCULPT_AMOUNT);
+    for (let n = 0; n < strokes; n++) {
+      applySculpt(map, PIT_X, PIT_Y, 1, -DEFAULT_SCULPT_AMOUNT, {
+        tool: 'stamp',
+        profile: 'hard',
+      });
+    }
+    expect(heightAt(map, PIT_X, PIT_Y)).toBe(MIN_HEIGHT + 1);
+
+    // The cut would leave every neighbour of the pit floored above
+    // BEDROCK_FLOOR — a column standing on nothing, which setColumn refuses —
+    // so the stroke must be a no-op, not a RangeError thrown out of the
+    // server's message handler and the client's prediction alike.
+    const before = Int16Array.from(map.cells);
+    const diff = applySculpt(map, PIT_X, PIT_Y, RADIUS, -DEFAULT_SCULPT_AMOUNT, {
+      tool: 'carve',
+      spanBand: MIN_BAND,
+    });
+
+    expect(diff).toEqual([]);
+    expect(map.cells).toEqual(before);
+    expect(map.columnSpans.size).toBe(0);
   });
 });
