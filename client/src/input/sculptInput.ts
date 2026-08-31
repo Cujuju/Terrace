@@ -44,6 +44,7 @@ import {
   type Vec3,
 } from '../terrain/picking.ts';
 import {
+  DEFAULT_BRUSH_TOOL,
   brushRadius,
   brushProfile,
   brushTool,
@@ -58,8 +59,8 @@ import {
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
-import { BAND_HEIGHT } from '@terrace/shared';
-import type { SculptIntent } from '@terrace/shared';
+import { BAND_HEIGHT, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
+import type { SculptIntent, SculptTool } from '@terrace/shared';
 
 
 export interface SculptInputOptions {
@@ -215,6 +216,28 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeAction: SculptAction = 'raise';
 
   /**
+   * THE TOOL THIS STROKE IS SCULPTING WITH, decided at the press and fixed for
+   * the stroke — exactly like `strokeAction` and `strokeGrab` beside it.
+   *
+   * FROZEN BECAUSE THE GRASP IS. Which tool is held decides whether the press
+   * takes hold of a lip at all (`takeHold`), and that answer is frozen in
+   * `strokeGrab`; reading the live HUD signal afterwards let the two disagree.
+   * Clicking Stamp in the HUD mid-pull kept the frozen grasp and went on
+   * pulling the terrace out while the HUD said Stamp, and switching the other
+   * way — Stamp to Pull, with nothing grasped — made every remaining intent
+   * fall out of `emitIntent`'s "a Pull with nothing in its grasp emits
+   * nothing" guard, so the brush went dead until the button was released.
+   *
+   * Only the TOOL is frozen. Radius and edge stay live reads, because neither
+   * one is half of a decision the press already made: they reshape the next
+   * intent and nothing about the stroke contradicts them.
+   *
+   * Meaningful only while a stroke is live; every press sets it before
+   * anything reads it, and the initial value is simply the HUD's own default.
+   */
+  let strokeTool: SculptTool = DEFAULT_BRUSH_TOOL;
+
+  /**
    * THE GRABBED BAND, decided once at pointerdown and fixed for the stroke —
    * null for an ordinary brush stroke.
    *
@@ -236,7 +259,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeArmed = false;
 
   /**
-   * The cursor cell the last drag intent named, so an unmoved cursor sends
+   * WHAT THE LAST DRAG INTENT SAID — the cursor cell it named and the two
+   * live HUD readings that shape it — so an intent that would repeat it sends
    * nothing.
    *
    * A RATE LIMIT, NOT A CHAIN — the distinction the per-cell build got wrong.
@@ -245,9 +269,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * carries everything the skipped one would have. It exists purely so a
    * hundred pointermove events inside one cell do not become a hundred
    * messages.
+   *
+   * THE WHOLE INTENT, NOT JUST THE CELL. Keyed on the cursor cell alone this
+   * dropped intents that were not duplicates at all: pressing Shift to pull a
+   * lip back IN without moving the mouse changes `dir` and nothing else, and
+   * was silently swallowed until the player jiggled the cursor into another
+   * cell. Everything else a pull's intent carries is fixed for the stroke —
+   * the tool, the grasped band — or absent, so cell, direction and radius are
+   * the whole of what can differ between two of them.
    */
   let lastDragToX = 0;
   let lastDragToY = 0;
+  let lastDragDir: 1 | -1 = 1;
+  let lastDragRadius = 0;
   let haveDragTo = false;
 
   /**
@@ -475,14 +509,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // generic send below would put a `drag` intent with no band on the wire,
     // which the shared math treats as a no-op — a message, and a mana charge,
     // for an edit that was never going to happen.
-    if (brushTool() === 'drag' && strokeGrab === null) return;
+    if (strokeTool === 'drag' && strokeGrab === null) return;
     // A CARVE ONLY EVER LOWERS (plan D6). The raise chord is not "carve
     // upward", it is nothing at all: the shared validator rejects a carve
     // intent carrying `dir: 1` with the whole intent, so emitting one would
     // spend a seq and a mana gate on a message the server drops on the floor.
     // Refused here so the HUD's mode indicator still reads honestly (setSculptMode
     // above has already run) while nothing goes out.
-    if (brushTool() === 'carve' && sculptDirection(action) > 0) return;
+    if (strokeTool === 'carve' && sculptDirection(action) > 0) return;
     if (strokeGrab !== null) {
       const to = dragPlaneCell(strokeGrab);
       // Too shallow a ray, or off the world: hold the pull where it was rather
@@ -517,17 +551,26 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // asks `carveBand`, the same derivation without the one-span shortcut —
     // and it is only ever this tool that does, which is what leaves every
     // other stroke over unlayered ground byte-identical.
-    const spanBand = brushTool() === 'carve' ? carveBand(cell) : graspSpanBand(cell);
-    // tool/profile are read (not captured) per intent, so switching the HUD
-    // toggles mid-stroke takes effect on the very next repeat.
+    const spanBand = strokeTool === 'carve' ? carveBand(cell) : graspSpanBand(cell);
+    // The EDGE is read (not captured) per intent, so switching that toggle
+    // mid-stroke takes effect on the very next repeat. The TOOL is not: it is
+    // the press's own decision, frozen with the grasp it implies — see
+    // `strokeTool` for the two ways reading it live broke a stroke in flight.
     send({
       type: 'sculpt',
       x: cell.x,
       y: cell.y,
       radius: brushRadius(),
       dir: sculptDirection(action),
-      tool: brushTool(),
-      profile: brushProfile(),
+      tool: strokeTool,
+      // NO EDGE FOR A TOOL THAT HAS NONE — the carve, here, for exactly the
+      // reason the pull names none in `emitDrag`: `sculptOptionsOf` resolves
+      // every TOOLS_WITHOUT_EDGE_PROFILE tool to EDGELESS_SCULPT_PROFILE, so a
+      // profile sent with one describes nothing that will happen. The stamp
+      // and the smooth do have an edge and send the live toggle.
+      ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(strokeTool)
+        ? {}
+        : { profile: brushProfile() }),
       ...(spanBand !== null ? { spanBand } : {}),
       seq: nextSeq++,
     });
@@ -548,7 +591,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * more (see lastDragTo).
    */
   const emitDrag = (toX: number, toY: number, action: SculptAction, band: number): void => {
-    if (haveDragTo && toX === lastDragToX && toY === lastDragToY) return;
+    const dir = sculptDirection(action);
+    const radius = brushRadius();
+    if (
+      haveDragTo &&
+      toX === lastDragToX &&
+      toY === lastDragToY &&
+      dir === lastDragDir &&
+      radius === lastDragRadius
+    ) {
+      return;
+    }
     const sent = send({
       type: 'sculpt',
       // THE CURSOR CELL, which for this tool is where the edit happens — the
@@ -559,13 +612,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // front (owner report, 2026-08-24).
       x: toX,
       y: toY,
-      radius: brushRadius(),
-      dir: sculptDirection(action),
+      radius,
+      dir,
       tool: 'drag',
-      // Read live, so switching the toggle mid-stroke reshapes the very next
-      // intent — soft advances the lip as a smooth face, hard fills every
-      // legal cell of the disc.
-      profile: brushProfile(),
+      // NO `profile`, because a pull has no edge to choose (issue #225). It
+      // used to send the Edge toggle live, on the reading that soft advanced
+      // the lip as a smooth face and hard filled every legal cell of the disc;
+      // `sculptOptionsOf` resolves every tool in TOOLS_WITHOUT_EDGE_PROFILE to
+      // EDGELESS_SCULPT_PROFILE, so what went out was overwritten on both
+      // sides of the prediction contract before it reached any arithmetic. A
+      // field whose value cannot change the stroke does not belong on the
+      // wire: leaving it out is what stops the next reader believing the
+      // toggle reshapes a pull. The HUD hides the Edge row for these tools for
+      // the same reason.
       targetBand: band,
       // NO `spanBand` HERE YET, and that is a decision rather than an
       // oversight. A pull's x/y is the CURSOR cell, not the cell whose lip is
@@ -590,6 +649,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (!sent) return;
     lastDragToX = toX;
     lastDragToY = toY;
+    lastDragDir = dir;
+    lastDragRadius = radius;
     haveDragTo = true;
   };
 
@@ -660,7 +721,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // does; standing still with the Pull tool means the lip is already where
     // the player put it, and a seeded layer is "a single layer" by the owner's
     // instruction — a repeat would turn either into a tower.
-    if (brushTool() === 'drag') return;
+    if (strokeTool === 'drag') return;
     scheduleRepeat(0);
   };
 
@@ -709,7 +770,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    */
   const takeHold = (action: SculptAction): void => {
     strokeGrab = null;
-    if (brushTool() !== 'drag') return;
+    if (strokeTool !== 'drag') return;
     const hover = hoverTarget();
     strokeGrab = riserBand(hover);
     if (strokeGrab !== null) return;
@@ -758,6 +819,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     strokePointerId = event.pointerId;
     strokeIsTouch = event.pointerType === 'touch';
     strokeAction = action;
+    // Before takeHold below, which asks the HUD's tool what a press even means
+    // here, and before any intent this stroke emits.
+    strokeTool = brushTool();
     setSculptMode(action);
     pointerClientX = event.clientX;
     pointerClientY = event.clientY;
@@ -848,7 +912,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // A tap quicker than the grace delay ended before the stroke armed. It is
     // unambiguous now — no second finger arrived in its whole lifetime — so
     // it earns its single intent here; otherwise fast taps would do nothing.
-    if (graceTimer !== null) emitIntent();
+    //
+    // IT TAKES HOLD FIRST, exactly as `armStroke` would have. A touch press
+    // defers the grasp to arming (the ray is only worth firing once the finger
+    // has settled), so a tap that never armed had never grasped anything —
+    // and with the Pull tool `emitIntent` then refused it as "a Pull with
+    // nothing in its grasp", which is the one tool for which fast taps still
+    // did nothing. The grace timer is a touch-stroke timer and nothing else,
+    // so this branch is exactly the arming that did not happen.
+    if (graceTimer !== null) {
+      takeHold(currentStrokeAction());
+      emitIntent();
+    }
     stopRepeat();
   };
 

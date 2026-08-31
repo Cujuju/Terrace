@@ -270,15 +270,30 @@ export const WATER_SURFACE_LIFT = 1 / 32;
 export const SCULPT_REPEAT_INTERVAL_MS = 120;
 
 /**
- * The slowest display refresh this client assumes, in hertz. Used to turn a
- * duration into a count of frames — and therefore into a count of coalesced
+ * The FASTEST display refresh this client sizes against, in hertz. Used to turn
+ * a duration into a count of frames — and therefore into a count of coalesced
  * pointer events (see DRAG_INTENTS_PER_TICK).
  *
- * 60 because that is the universal floor for a display a browser will render
- * to, not a measurement of this machine: it is used to size a CEILING, and
- * assuming a slower refresh than the real one would undersize it.
+ * A CEILING, AND IT HAS TO BE (2026-08-30). This was DISPLAY_HZ_FLOOR = 60,
+ * "the universal floor for a display a browser will render to", on the
+ * reasoning that assuming a slower refresh than the real one is the safe
+ * direction. It is the unsafe one: frames per tick is what the count MEASURES,
+ * so a faster display emits MORE intents per tick, not fewer, and every
+ * display above 60 Hz emitted past the bound derived here. On a 144 Hz panel a
+ * fast pull put ~17 intents in a tick against a budget of 8, so the prediction
+ * store began evicting the live stroke's own oldest prediction — the start of
+ * the pull snapping back to authoritative ground mid-drag.
+ *
+ * 144 Hz is the fastest panel this project is developed and benchmarked
+ * against (the 140 fps frame-budget target is measured on one). Faster
+ * displays exist; on one of those, a drag fast enough to change cell every
+ * frame over a link near PREDICTION_TTL_MS can still reach the cap and evict,
+ * which is the pre-existing behaviour rather than a new failure. Sizing for an
+ * arbitrarily fast display is not free — MAX_PENDING_PREDICTIONS is replayed
+ * whole on every reconciliation, so the bound is also a frame-time cost, and
+ * it buys nothing on a link that meets the deadline.
  */
-export const DISPLAY_HZ_FLOOR = 60;
+export const DISPLAY_HZ_CEILING = 144;
 
 /**
  * HOW MANY INTENTS ONE DRAG CAN PUT IN FLIGHT PER REPEAT TICK — the figure
@@ -293,13 +308,13 @@ export const DISPLAY_HZ_FLOOR = 60;
  *
  * DERIVED, NOT CHOSEN. A cursor changes cell at most once per pointermove
  * event, and browsers coalesce pointermove to the display refresh, so the
- * ceiling is the number of frames in one repeat tick. 60 Hz is the floor a
- * display can be assumed to run at and the rate the coalescing is against; a
- * faster display makes this generous, which is the safe direction — an
- * undercount would make a fast drag evict its own live predictions.
+ * ceiling is the number of frames in one repeat tick — at the FASTEST refresh
+ * the frames are counted against (DISPLAY_HZ_CEILING, which says why the
+ * slowest is the wrong end of that range for a bound whose undercount makes a
+ * fast drag evict its own live predictions).
  */
 export const DRAG_INTENTS_PER_TICK = Math.ceil(
-  (SCULPT_REPEAT_INTERVAL_MS * DISPLAY_HZ_FLOOR) / 1000,
+  (SCULPT_REPEAT_INTERVAL_MS * DISPLAY_HZ_CEILING) / 1000,
 );
 
 /**

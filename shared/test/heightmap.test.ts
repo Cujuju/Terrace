@@ -7,6 +7,7 @@ import {
   BAND_HEIGHT,
   BEDROCK_FLOOR,
   canSpreadBandTo,
+  carveRange,
   cellIndex,
   cellX,
   cellY,
@@ -29,6 +30,7 @@ import {
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
   MAX_STEP,
+  MIN_BAND,
   MIN_BRUSH_RADIUS,
   MIN_HEIGHT,
   quantizeToBand,
@@ -2605,5 +2607,213 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     // And the scour is still a NET REMOVAL at the head, which is what the
     // plugin measures to decide the slide carries a load at all.
     expect(map.cells[centre]!).toBeLessThan(512);
+  });
+});
+describe('smooth builds the layer view only where the sweep meets a layered column', () => {
+  const SIZE = 64;
+  /** Flat ground, high enough to carve a gap out of the middle of it. */
+  const GROUND_BAND = 10;
+  /**
+   * The carved column, in the corner opposite the stroke. The gap spans four
+   * bands because `isGapDrawn` folds a shallow opening back into one span —
+   * this has to leave a column that really holds two spans, not one.
+   */
+  const CARVED_X = 1;
+  const CARVED_Y = 1;
+  const CARVE_FLOOR_BAND = 2;
+  const CARVE_ROOF_BAND = 6;
+  /** The stroke, ~46 cells away from the carve and radius+cascade nowhere near it. */
+  const FAR_X = 48;
+  const FAR_Y = 48;
+  const STROKE_RADIUS = 8;
+  const SMOOTH_STROKE: SculptOptions = {
+    tool: 'smooth',
+    profile: 'soft',
+    spill: 'banded',
+    anchor: 'clicked',
+  };
+
+  function flatWorld(carved: boolean): Heightmap {
+    const map = createHeightmap(SIZE);
+    map.cells.fill(GROUND_BAND * BAND_HEIGHT);
+    if (carved) {
+      carveRange(
+        map,
+        CARVED_X,
+        CARVED_Y,
+        CARVE_FLOOR_BAND * BAND_HEIGHT,
+        CARVE_ROOF_BAND * BAND_HEIGHT,
+      );
+    }
+    return map;
+  }
+
+  /**
+   * Counts the whole-grid copies the sculpt makes. `map.cells.slice()` in
+   * buildLayerView is the only one on this path, so this counts layer views —
+   * the cost the stroke is supposed to pay only when it meets a layered column.
+   */
+  function countGridCopies(map: Heightmap): () => number {
+    let copies = 0;
+    const real = map.cells.slice.bind(map.cells);
+    Object.defineProperty(map.cells, 'slice', {
+      configurable: true,
+      value: (): Int16Array => {
+        copies++;
+        return real();
+      },
+    });
+    return () => copies;
+  }
+
+  it('a carve in the far corner costs a distant stroke nothing, and changes nothing', () => {
+    // Pre-2026-08-29 the test was `map.columnSpans.size === 0` — a GLOBAL
+    // fact — so one carve anywhere made every later smooth stroke copy and
+    // clear the whole grid, whatever it was actually sweeping.
+    const carved = flatWorld(true);
+    expect(carved.columnSpans.size).toBe(1);
+    const copies = countGridCopies(carved);
+    const carvedDiff = applySculpt(carved, FAR_X, FAR_Y, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
+    expect(copies()).toBe(0);
+
+    // And skipping the view is exact, not an approximation: the identical
+    // stroke on an uncarved world produces the identical diff.
+    const plain = flatWorld(false);
+    const plainDiff = applySculpt(plain, FAR_X, FAR_Y, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
+    expect(carvedDiff).toEqual(plainDiff);
+    expect(carvedDiff.length).toBeGreaterThan(0);
+  });
+
+  it('a stroke whose sweep does reach the carved column still relaxes a view', () => {
+    const carved = flatWorld(true);
+    const copies = countGridCopies(carved);
+    applySculpt(carved, CARVED_X + STROKE_RADIUS, CARVED_Y + STROKE_RADIUS, STROKE_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_STROKE);
+    expect(copies()).toBe(1);
+  });
+});
+
+describe('applySculpt — carve grasped at the bottom of the world', () => {
+  const SIZE = 32;
+  const PIT_X = 10;
+  const PIT_Y = 10;
+  /**
+   * The second rung of the HUD's brush sizes, and the smallest radius whose
+   * footprint reaches a NEIGHBOUR of the pit — the cell that still has material
+   * at the world's bottom band for the cut to take away. Radius 1 is a one-cell
+   * footprint and hides the bug.
+   */
+  const RADIUS = 2;
+
+  it('refuses the whole stroke rather than cutting a column off its bedrock', () => {
+    const map = createHeightmap(SIZE);
+    // The pick that mints `spanBand: MIN_BAND` is an ordinary one: the floor of
+    // a pit dug all the way down, whose horizontal face reports the band of its
+    // own cap. Dig it with plain lower strokes, the way a player would.
+    const strokes = Math.ceil((0 - MIN_HEIGHT) / DEFAULT_SCULPT_AMOUNT);
+    for (let n = 0; n < strokes; n++) {
+      applySculpt(map, PIT_X, PIT_Y, 1, -DEFAULT_SCULPT_AMOUNT, {
+        tool: 'stamp',
+        profile: 'hard',
+      });
+    }
+    expect(heightAt(map, PIT_X, PIT_Y)).toBe(MIN_HEIGHT + 1);
+
+    // The cut would leave every neighbour of the pit floored above
+    // BEDROCK_FLOOR — a column standing on nothing, which setColumn refuses —
+    // so the stroke must be a no-op, not a RangeError thrown out of the
+    // server's message handler and the client's prediction alike.
+    const before = Int16Array.from(map.cells);
+    const diff = applySculpt(map, PIT_X, PIT_Y, RADIUS, -DEFAULT_SCULPT_AMOUNT, {
+      tool: 'carve',
+      spanBand: MIN_BAND,
+    });
+
+    expect(diff).toEqual([]);
+    expect(map.cells).toEqual(before);
+    expect(map.columnSpans.size).toBe(0);
+  });
+});
+
+describe('a soft drag bites its rim at the disc diagonals too (issue #152)', () => {
+  const SIZE = 64;
+  /** Band-1 ground for the pull to spread out of; everything west of it is band 0. */
+  const PLATEAU_X = 40;
+  const TARGET_BAND = 1;
+  const RADIUS = 4;
+  /**
+   * A PINNED WITNESS. At this centre the ragged rim's noise refuses the offset
+   * below, and no chain of refused cells joins it to the `dist === RADIUS - 1`
+   * ring — so seeding the flood from that ring alone never reached it, and it
+   * was admitted as an enclave and filled. `cellNoise` is a deterministic
+   * function of position, so the case is stable; it was found by sweeping every
+   * centre of this fixture and diffing the two seeding rules.
+   */
+  const CX = 37;
+  const CY = 17;
+  /**
+   * On the disc's BOUNDARY — its west neighbour (-3, 2) is outside a radius-4
+   * disc (9 + 4 >= 4·3) — while its `dist` is floor(sqrt(8)) = 2, not the
+   * outermost 3. That gap between "touches the outside" and "is on the
+   * outermost ring" is the whole defect.
+   */
+  const BOUNDARY_DX = -2;
+  const BOUNDARY_DY = 2;
+
+  it('leaves a refused boundary cell bitten rather than filling it as an enclave', () => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = PLATEAU_X; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = BAND_HEIGHT;
+    }
+
+    applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'drag',
+      profile: 'soft',
+      targetBand: TARGET_BAND,
+    });
+
+    // The pull did happen: the disc is mostly at the grabbed band.
+    expect(heightAt(map, CX, CY)).toBe(BAND_HEIGHT);
+    // And the rim kept its bite, which is the point of the ragged profile.
+    expect(heightAt(map, CX + BOUNDARY_DX, CY + BOUNDARY_DY)).toBe(0);
+  });
+});
+
+describe('a pull carries the one level under it and no further', () => {
+  const SIZE = 64;
+  /** Cells per tread, wide enough that a step is a step and not a cliff. */
+  const TREAD_CELLS = 2;
+  const TOP_BAND = 3;
+  /** The first tread's west edge; everything west of it stands at TOP_BAND. */
+  const STAIR_X = 20;
+  const CY = 32;
+  const RADIUS = 2;
+
+  /** The staircase: TOP_BAND, then one band down every TREAD_CELLS cells. */
+  const bandAtX = (x: number): number =>
+    x < STAIR_X ? TOP_BAND : Math.max(0, TOP_BAND - (Math.floor((x - STAIR_X) / TREAD_CELLS) + 1));
+
+  it('pushes the step below the grabbed band, and leaves the one under that', () => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = bandAtX(x) * BAND_HEIGHT;
+    }
+
+    applySculpt(map, STAIR_X, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'drag',
+      profile: 'hard',
+      targetBand: TOP_BAND,
+    });
+
+    // The pull itself: the grabbed band took the tread it was pulled across.
+    expect(bandOf(heightAt(map, STAIR_X, CY))).toBe(TOP_BAND);
+    // The step immediately below is CARRIED — it gives ground rather than
+    // being swallowed, which is the whole reason pushLowerLayers exists.
+    expect(bandOf(heightAt(map, STAIR_X + TREAD_CELLS, CY))).toBe(TOP_BAND - 1);
+    // And the chain stops there (owner, 2026-08-24): the level under THAT was
+    // crowded by the cascade, not by the player's own fill, so it does not
+    // move — one gesture, one level. A cascade that fed each level's push into
+    // the next one's entitlement is the ladder the lip can never catch up to.
+    expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS - 1, CY))).toBe(TOP_BAND - 2);
+    expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS, CY))).toBe(TOP_BAND - 3);
   });
 });

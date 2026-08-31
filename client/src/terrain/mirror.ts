@@ -208,24 +208,108 @@ function renderSampleCell(
  * Missing this is precisely how seam cracks appear after an edit, which is why
  * it is its own tested function rather than inline arithmetic.
  *
+ * THE FRONTIER PULL-BACK IS PART OF THIS QUESTION (issue #22's other half).
+ * A sample in a never-received chunk is not read as a zero — `renderSampleCell`
+ * answers it with a RECEIVED cell one step back — so a cell is also read by
+ * every chunk whose lattice covers a sample that pulls back onto it. That is
+ * why the mirror is the argument: which chunks read a cell is a function of
+ * the received set, not of arithmetic alone. Missing it left one stale corner
+ * vertex behind after a sculpt at a frontier's inside corner — the seam crack
+ * this function exists to prevent, arriving by the one route the arithmetic
+ * could not see.
+ *
  * Returned indices are all in-bounds, but are NOT filtered against `received`
  * — the caller does that, because a chunk we do not have simply has no mesh.
  */
 export function chunksDirtiedByCell(
-  worldSize: number,
+  mirror: TerrainMirror,
   x: number,
   y: number,
 ): number[] {
-  const cx = Math.floor(x / CHUNK_SIZE);
-  const cy = Math.floor(y / CHUNK_SIZE);
-  const alsoLeft = x % CHUNK_SIZE === 0 && cx > 0;
-  const alsoUp = y % CHUNK_SIZE === 0 && cy > 0;
+  const worldSize = mirror.map.size;
+  const perEdge = chunksPerEdge(worldSize);
+  const out: number[] = [];
+  addSampleReaders(out, worldSize, perEdge, x, y);
 
-  const out = [chunkIndex(worldSize, cx, cy)];
-  if (alsoLeft) out.push(chunkIndex(worldSize, cx - 1, cy));
-  if (alsoUp) out.push(chunkIndex(worldSize, cx, cy - 1));
-  if (alsoLeft && alsoUp) out.push(chunkIndex(worldSize, cx - 1, cy - 1));
+  // The only samples that can pull back onto (x, y) are its +x/+y neighbours
+  // ON A CHUNK SEAM: the pull-back steps exactly one cell, and it only fires
+  // for a sample that lies on a seam (`renderSampleCell`). So a cell anywhere
+  // but its chunk's LAST row or column cannot be reached this way, and the
+  // arithmetic above is the whole answer for it.
+  const lastInChunkColumn = (x + 1) % CHUNK_SIZE === 0;
+  const lastInChunkRow = (y + 1) % CHUNK_SIZE === 0;
+  if (lastInChunkColumn) addPullBackReaders(out, mirror, perEdge, x + 1, y, x, y);
+  if (lastInChunkRow) addPullBackReaders(out, mirror, perEdge, x, y + 1, x, y);
+  if (lastInChunkColumn && lastInChunkRow) {
+    addPullBackReaders(out, mirror, perEdge, x + 1, y + 1, x, y);
+  }
   return out;
+}
+
+/**
+ * Adds chunk (cx, cy) to `out` if it exists and is not already there. The
+ * de-duplication is what lets the callers below name the same reader twice
+ * without the caller of `chunksDirtiedByCell` seeing a repeat.
+ */
+function addChunk(
+  out: number[],
+  worldSize: number,
+  perEdge: number,
+  cx: number,
+  cy: number,
+): void {
+  if (cx < 0 || cy < 0 || cx >= perEdge || cy >= perEdge) return;
+  const idx = chunkIndex(worldSize, cx, cy);
+  if (!out.includes(idx)) out.push(idx);
+}
+
+/**
+ * Every chunk whose mesh READS the sample at lattice position (px, py) — its
+ * own chunk plus, because a chunk's lattice overflows one cell past its last
+ * row and column (vertexGrid.ts, S2), the chunk to the west of a column seam,
+ * the one to the north of a row seam, and the diagonal one at a corner.
+ *
+ * A sample position may be `worldSize` (the last chunk's overflow), which owns
+ * no chunk at all; `addChunk` drops it and the seam readers still land.
+ */
+function addSampleReaders(
+  out: number[],
+  worldSize: number,
+  perEdge: number,
+  px: number,
+  py: number,
+): void {
+  const cx = Math.floor(px / CHUNK_SIZE);
+  const cy = Math.floor(py / CHUNK_SIZE);
+  const onColumnSeam = px % CHUNK_SIZE === 0;
+  const onRowSeam = py % CHUNK_SIZE === 0;
+  addChunk(out, worldSize, perEdge, cx, cy);
+  if (onColumnSeam) addChunk(out, worldSize, perEdge, cx - 1, cy);
+  if (onRowSeam) addChunk(out, worldSize, perEdge, cx, cy - 1);
+  if (onColumnSeam && onRowSeam) addChunk(out, worldSize, perEdge, cx - 1, cy - 1);
+}
+
+/**
+ * The readers of sample (px, py), but only when that sample actually resolves
+ * to cell (x, y) — i.e. when the frontier pull-back sends it there.
+ *
+ * ASKED OF `renderSampleCell` ITSELF rather than re-derived from the received
+ * set, so the invalidation rule cannot drift from the sampling rule it is
+ * invalidating: whatever that function decides a sample reads is what this
+ * treats as depending on it.
+ */
+function addPullBackReaders(
+  out: number[],
+  mirror: TerrainMirror,
+  perEdge: number,
+  px: number,
+  py: number,
+  x: number,
+  y: number,
+): void {
+  const read = renderSampleCell(mirror, px, py);
+  if (read.x !== x || read.y !== y) return;
+  addSampleReaders(out, mirror.map.size, perEdge, px, py);
 }
 
 /**
@@ -405,7 +489,7 @@ export function applyTerrainDiff(
     // With a sink the CALLER owns the dirty question — see the doc above — so
     // nothing is added here and the returned set stays empty.
     if (onCellWrite === undefined) {
-      for (const idx of chunksDirtiedByCell(worldSize, cell.x, cell.y)) {
+      for (const idx of chunksDirtiedByCell(mirror, cell.x, cell.y)) {
         dirty.add(idx);
       }
     }

@@ -462,7 +462,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
         changed = !spansEqual(beforeSpans, live.get(i));
       }
       if (!changed) continue;
-      for (const idx of chunksDirtiedByCell(size, cellX(size, i), cellY(size, i))) {
+      for (const idx of chunksDirtiedByCell(mirror, cellX(size, i), cellY(size, i))) {
         dirty.add(idx);
       }
     }

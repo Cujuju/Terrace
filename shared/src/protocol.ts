@@ -77,8 +77,22 @@ export interface SculptIntent {
    * is: the number names a place in the world the player aimed at, never a
    * position in server state.
    *
-   * NOT INTERCHANGEABLE WITH `targetBand`, and a drag carries both. `spanBand`
-   * is where the hand is; `targetBand` is where the material goes.
+   * NOT INTERCHANGEABLE WITH `targetBand`: `spanBand` is where the hand is,
+   * `targetBand` is where the material goes.
+   *
+   * A DRAG DOES NOT CARRY THIS ONE, and that is settled rather than pending
+   * (owner, 2026-08-27, issue #224 — DESIGN.md, "Why no new field on the
+   * wire"). This doc used to say "a drag carries both", and acting on that
+   * sentence would break the tool: a pull's `x`/`y` is the CURSOR cell, not the
+   * cell whose lip is in the player's hand, so a `spanBand` derived at the
+   * sender names a span of the wrong column — and applySculpt's whole-stroke
+   * grasp guard then no-ops legitimate pulls over layered ground. The grasp
+   * travels as `targetBand` plus the per-cell rule inside `applyDragRegion`
+   * (`bandFillAt`): one column covers a band with at most one span, so the band
+   * plus the receiver's own map names the grasped span exactly, and a
+   * `spanBand` beside it would be the same number twice. The tools that DO
+   * carry it are the ones whose x/y IS the cell they act on — the carve, and
+   * the brushes over layered ground.
    *
    * Optional: ABSENT MEANS THE TOPMOST SPAN, which is what every intent in
    * existence means today and what every plugin `WorldApi.sculpt` call means.
@@ -157,6 +171,22 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
 
 /**
+ * THE EDGE A STROKE ACTUALLY RUNS AT, given the tool it runs with and the edge
+ * the player chose. One statement of the rule above, for every reader of it.
+ *
+ * `sculptOptionsOf` below is the reader on the wire path, and for a while it
+ * was the only one — which made the rule invisible to the two places that hold
+ * a TOOL and an EDGE with no intent between them: the mana gauge pricing the
+ * brush the player is holding (plugins/mana/client/state.ts) and anything else
+ * that must show what the next stroke will cost or look like. The gauge
+ * restated the profile as the raw HUD choice and priced a Pull at up to 2.6x
+ * less than the gate one line below it charged for the same stroke.
+ */
+export function sculptProfileOf(tool: SculptTool, profile: SculptProfile): SculptProfile {
+  return TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? EDGELESS_SCULPT_PROFILE : profile;
+}
+
+/**
  * THE NORMALISATION CONTRACT. Turns an intent's optional tool/profile into the
  * concrete options `applySculpt` runs.
  *
@@ -169,6 +199,28 @@ export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
  */
 export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
   const tool = intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
+  // THE BAND IS THE DRAG'S FIELD AND NO OTHER TOOL'S, resolved once, here, so
+  // that both of the things a band decides below are decided from a band the
+  // TOOL was allowed to name. `validateSculptIntent` already rejects a band
+  // carried by anything but a drag, so on the wire path this changes nothing;
+  // this is the same rule stated at the point the value becomes options,
+  // because the resolver is also reached from intents no validator ever saw —
+  // the client's prediction store and its brush preview build their own.
+  //
+  // BOTH derived fields matter, not just the anchor. The anchor is what buys
+  // the whole-way amount in applySculpt (FULL_HEIGHT_SPAN), and a non-drag
+  // tool wearing it lifts its whole disc to a height the MESSAGE named; but a
+  // band left in place under any OTHER anchor is read by anchoredTargetHeight
+  // as the stroke's level outright, ahead of the clicked cell's own band and
+  // without even the centre-cell spread check the 'band' anchor gets. Deriving
+  // both from one tool-gated value is what makes "clients send intents, never
+  // heights" hold here by construction rather than by two guards agreeing.
+  //
+  // DROPPED rather than rejected, unlike the validator's call on the same
+  // combination: a resolver's return type has no way to say no, and every
+  // intent that reaches it on the server has already passed that rejection.
+  const targetBand =
+    tool === 'drag' ? (intent.targetBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.targetBand;
   return {
     tool,
     // AN EDGELESS TOOL'S PROFILE IS DECIDED HERE (issue #225), not honoured
@@ -181,9 +233,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // still send `profile: 'soft'` on a drag or carve; it is normalised away
     // rather than rejected, because the field does not describe those tools
     // at all, so there is nothing there to cheat with.
-    profile: TOOLS_WITHOUT_EDGE_PROFILE.includes(tool)
-      ? EDGELESS_SCULPT_PROFILE
-      : (intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
+    profile: sculptProfileOf(tool, intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
     // Deliberately NOT read from the intent: spill containment is fixed
     // policy for player sculpts (issue #26), and so is the clicked-cell
     // anchor (2026-08-19). Both the server pipeline and client prediction
@@ -195,8 +245,8 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // configured one, so there is no way to ask for the drag anchor without
     // naming the band it drags toward, and no way to name a band without
     // getting the drag anchor. The two cannot be desynchronised.
-    anchor: intent.targetBand !== undefined ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
-    targetBand: intent.targetBand ?? null,
+    anchor: targetBand !== null ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
+    targetBand,
     // The grasp travels through the same single normalisation both replicas
     // run, for the same lockstep reason everything else here does. Absent is
     // null, and null is resolved to the topmost span by the terrain math —
@@ -488,6 +538,26 @@ export function validateSculptIntent(
   ) {
     return null;
   }
+
+  // AND ONLY A DRAG MAY CARRY ONE. sculptOptionsOf mints `anchor: 'band'` for
+  // ANY intent that carries a band, and that anchor is also what buys the
+  // whole-way amount in applySculpt (FULL_HEIGHT_SPAN). That amount is safe
+  // for the drag because applyDragRegion re-asks canSpreadBandTo for every
+  // cell it fills; the two brushes the other tools run ask it once, for the
+  // stroke centre, so a stamp or smooth wearing this anchor would lift its
+  // whole disc to the band the MESSAGE named off a single adjacent cell —
+  // final heights chosen by the client, which is exactly what "clients send
+  // intents, never heights" forbids. REJECTED WITH THE WHOLE INTENT, the same
+  // call the carve's `dir: 1` gets two blocks up, rather than dropping the
+  // band and stamping instead: silently reinterpreting an intent applies a
+  // differently-shaped edit than its sender predicted.
+  //
+  // TESTED ON THE RAW FIELD, deliberately: an absent `tool` means stamp
+  // (WIRE_DEFAULT_SCULPT_OPTIONS, resolved in sculptOptionsOf), so an intent
+  // that omits the tool while carrying a band is rejected here too rather than
+  // defaulted into the very combination this rules out. The only legitimate
+  // sender writes `tool: 'drag'` beside the band (client/src/input/sculptInput.ts).
+  if (targetBand !== undefined && tool !== 'drag') return null;
 
   // spanBand is optional and, when present, must be a band this world could
   // hold — the same structural check targetBand gets, and for the same reason:

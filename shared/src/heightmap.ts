@@ -41,8 +41,10 @@ export {
 // Used by the terrain math below, which is why they are imported as well as
 // re-exported: a re-export is not a binding in this module's own scope.
 import {
+  anyColumnLayered,
   applyBandFill,
   bandFillAt,
+  BEDROCK_FLOOR,
   canCarveBandAt,
   canSpreadBandToSpan,
   carveRange,
@@ -582,14 +584,29 @@ export function forEachFootprintOffset(
     visit(0, 0, 0);
     return;
   }
-  const discBound = radius * (radius - 1);
   for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
     for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
-      const dSquared = dx * dx + dy * dy;
-      if (dSquared >= discBound) continue;
-      visit(dx, dy, Math.floor(Math.sqrt(dSquared)));
+      if (!isFootprintOffset(radius, dx, dy)) continue;
+      visit(dx, dy, Math.floor(Math.sqrt(dx * dx + dy * dy)));
     }
   }
+}
+
+/**
+ * THE MEMBERSHIP HALF of the footprint above, for a caller that has one offset
+ * in hand rather than a disc to walk — "is (dx, dy) in the brush of this
+ * radius". Same test, same integer arithmetic, same radius-1 special case; it
+ * is a function so that asking about a single offset does not mean writing the
+ * disc's shape down a second time, which is the drift `forEachFootprintOffset`
+ * itself exists to prevent.
+ *
+ * Its caller is `admitRimEnclaves`: whether a rim cell touches the ground
+ * OUTSIDE the disc is a question about the disc's boundary, and the boundary
+ * is not a ring the iterator can hand out — see the note there.
+ */
+function isFootprintOffset(radius: number, dx: number, dy: number): boolean {
+  if (radius === 1) return dx === 0 && dy === 0;
+  return dx * dx + dy * dy < radius * (radius - 1);
 }
 
 /**
@@ -638,6 +655,37 @@ function brushDelta(
   profile: SculptProfile,
 ): number {
   return profile === 'hard' ? amount : Math.trunc((amount * (radius - dist)) / radius);
+}
+
+/**
+ * THE FOOTPRINT CELLS A BAND-ANCHORED STROKE MAY WRITE, decided from the map
+ * BEFORE the stroke writes anything.
+ *
+ * canSpreadBandTo is the band anchor's whole anti-cheat story, but the brushes
+ * used to ask it once, for the stroke centre, and then write the entire disc:
+ * with the whole-way amount the anchor also buys (FULL_HEIGHT_SPAN, see
+ * applySculpt) that lifted every cell in the footprint to the named band off a
+ * single adjacent cell — a height that came from the caller rather than from
+ * the world. Asking per cell restores the documented semantics: the level
+ * creeps onto ground already touching it, one cell at a time.
+ *
+ * READ FROM THE UNTOUCHED MAP, which is why the answers are collected up front
+ * instead of being asked inside the writing sweep: a cell this stroke raises
+ * would otherwise make its own neighbour legal, and the disc would fill by
+ * scan order. Same map in, same set out — no iteration-order dependence.
+ */
+function spreadableFootprintCells(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  band: number,
+): ReadonlySet<number> {
+  const spreadable = new Set<number>();
+  forEachFootprintCell(map, cx, cy, radius, (i) => {
+    if (canSpreadBandTo(map, cellX(map.size, i), cellY(map.size, i), band)) spreadable.add(i);
+  });
+  return spreadable;
 }
 
 /**
@@ -772,8 +820,12 @@ export function applyBrush(
   // THE DRAG'S SPREAD RULE (`anchor: 'band'`): a grabbed level may only creep
   // onto ground that already touches it. Checked before anything is written,
   // from the map alone, so a forged band on an unrelated cell moves nothing.
-  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
-    return;
+  // Asked for EVERY footprint cell and not only the centre — see
+  // spreadableFootprintCells for what the centre-only test allowed.
+  let spreadable: ReadonlySet<number> | null = null;
+  if (anchor === 'band') {
+    if (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand)) return;
+    spreadable = spreadableFootprintCells(map, cx, cy, radius, targetBand);
   }
 
   // The ceiling/floor is pinned from the centre BEFORE any write: the centre
@@ -787,6 +839,9 @@ export function applyBrush(
   // Each cell is written at most once, so the fixed scan order only matters for
   // reproducibility of the `changed` set's insertion order.
   forEachFootprintCell(map, cx, cy, radius, (i, dist) => {
+    // Ground this band cannot spread onto: outside the stroke, not merely
+    // unmoved by it (the spread rule above).
+    if (spreadable !== null && !spreadable.has(i)) return;
     const delta = brushDelta(amount, radius, dist, profile);
     if (delta === 0) return;
     // WHICH SPAN THIS CELL OFFERS THE STROKE. Null is a cell the grasped band
@@ -890,9 +945,12 @@ export function applyLevelFillBrush(
   if (amount === 0) return;
 
   // THE DRAG'S SPREAD RULE — see canSpreadBandTo, and applyBrush's identical
-  // guard. Both brushes carry it because both are reachable with this anchor.
-  if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
-    return;
+  // guard. Both brushes carry it because both are reachable with this anchor,
+  // and both ask it per footprint cell rather than for the centre alone.
+  let spreadable: ReadonlySet<number> | null = null;
+  if (anchor === 'band') {
+    if (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand)) return;
+    spreadable = spreadableFootprintCells(map, cx, cy, radius, targetBand);
   }
 
   const raising = amount > 0;
@@ -902,7 +960,9 @@ export function applyLevelFillBrush(
     // ('band'), read before any write — the same derivation the other two
     // anchored call sites use.
     const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
-    fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand);
+    fillTowardTarget(
+      map, cx, cy, radius, amount, changed, raising, targetHeight, spanBand, spreadable,
+    );
     return;
   }
 
@@ -957,8 +1017,12 @@ function fillTowardTarget(
   raising: boolean,
   targetHeight: number,
   spanBand: number | null = LIBRARY_DEFAULT_SCULPT_OPTIONS.spanBand,
+  // The band anchor's per-cell spread rule, or null when the caller's target
+  // came from its own survey and no band is being spread (see applyBrush).
+  spreadable: ReadonlySet<number> | null = null,
 ): void {
   forEachFootprintCell(map, cx, cy, radius, (i) => {
+    if (spreadable !== null && !spreadable.has(i)) return;
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const h = graspedCeiling(map, i, k);
@@ -1069,8 +1133,6 @@ function pushLowerLayers(
   record: (index: number) => void,
   changed: Set<number>,
 ): void {
-  let seeds = raisedAtBand;
-
   /**
    * Whether a TREAD OF BAND `band` stood within the tread tolerance of
    * (cx, cy) before this intent — ground whose own band is exactly `band`.
@@ -1098,88 +1160,93 @@ function pushLowerLayers(
     return false;
   };
 
-  for (let band = topBand - 1; band > MIN_BAND && seeds.length > 0; band--) {
-    const level = clampHeight(band * BAND_HEIGHT);
+  // ONE LEVEL, WRITTEN AS ONE LEVEL. This was a descending loop over bands
+  // whose body ended in an unconditional `return`, so it could never reach its
+  // own second iteration and the state that fed one — the reassignable `seeds`
+  // and the `raised` list the sweep filled — was write-only. Saying it once,
+  // straight, is what makes the decision below legible: there is no chain here
+  // to restore by editing a loop bound.
+  const band = topBand - 1;
+  if (band <= MIN_BAND || raisedAtBand.length === 0) return;
+  const level = clampHeight(band * BAND_HEIGHT);
 
-    // Everything within the tolerance of what the level above just took. A Set
-    // then a sort, because a cell near two seeds must be considered once and
-    // the order must not depend on which seed reached it first.
-    const candidates: number[] = [];
-    const seen = new Set<number>();
-    for (const seed of seeds) {
-      const sx = cellX(map.size, seed);
-      const sy = cellY(map.size, seed);
-      for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
-        for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
-          const x = sx + dx;
-          const y = sy + dy;
-          if (!inBounds(map, x, y)) continue;
-          const i = cellIndex(map, x, y);
-          if (seen.has(i)) continue;
-          seen.add(i);
-          // Solid at this band already — nothing here to push.
-          if (columnCoversBand(map, x, y, band)) continue;
-          // Clause 2: only a step that was already here may be pushed.
-          if (!treadWasNear(x, y, band)) continue;
-          candidates.push(i);
-        }
+  // Everything within the tolerance of what the level above just took. A Set
+  // then a sort, because a cell near two seeds must be considered once and
+  // the order must not depend on which seed reached it first.
+  const candidates: number[] = [];
+  const seen = new Set<number>();
+  for (const seed of raisedAtBand) {
+    const sx = cellX(map.size, seed);
+    const sy = cellY(map.size, seed);
+    for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
+      for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
+        const x = sx + dx;
+        const y = sy + dy;
+        if (!inBounds(map, x, y)) continue;
+        const i = cellIndex(map, x, y);
+        if (seen.has(i)) continue;
+        seen.add(i);
+        // Solid at this band already — nothing here to push.
+        if (columnCoversBand(map, x, y, band)) continue;
+        // Clause 2: only a step that was already here may be pushed.
+        if (!treadWasNear(x, y, band)) continue;
+        candidates.push(i);
       }
     }
-    if (candidates.length === 0) return;
-    candidates.sort((a, b) => a - b);
-
-    // The same wave discipline the pull itself uses: a candidate more than one
-    // cell from the band cannot take it until its inward neighbour has, so the
-    // set is swept until a pass changes nothing.
-    const raised: number[] = [];
-    let filledThisPass = true;
-    while (filledThisPass) {
-      filledThisPass = false;
-      for (const i of candidates) {
-        const x = cellX(map.size, i);
-        const y = cellY(map.size, i);
-        // Where the fill lands: null once this band is solid here.
-        //
-        // THE CASCADE CARRIES STEPS AND NEVER AUTHORS OVERHANGS (issue #224).
-        // A cell whose band lies in a gap under its own roof answers
-        // `overhang`, and it is skipped: this pass is here to keep an existing
-        // staircase from being swallowed, not to hang new slabs under roofs,
-        // and filling that gap from the floor is exactly the carve-sealing the
-        // rule above forbids.
-        const fill = bandFillAt(map, x, y, band);
-        if (fill === null || fill.kind !== 'extend') continue;
-        if (!canSpreadBandTo(map, x, y, band)) continue;
-        record(i);
-        applyBandFill(map, x, y, fill, level);
-        changed.add(i);
-        raised.push(i);
-        filledThisPass = true;
-      }
-    }
-
-    // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
-    // pulling up to those layers, it pushes them out until it slowly stops
-    // pushing them and slowly catches up").
-    //
-    // This used to be `seeds = raised`, which fed each level's push into the
-    // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
-    // different hat. There, the cascade judged entitlement on land the pull had
-    // just created; here it judged crowding on land THE CASCADE ITSELF had just
-    // created. Band j−4 was never crowded by the band the player grabbed; it was
-    // crowded by band j−3, which this loop moved a moment earlier. Measured on
-    // the owner's own world, one intent grabbing band 24: 33 cells filled at the
-    // grabbed band and 202 cells pushed across NINE bands beneath it — the
-    // cascade doing six times the work of the pull, which is what reads on
-    // screen as a ladder the lip can never catch up to.
-    //
-    // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
-    // stroke moves the grabbed band and at most the single level under it. To
-    // carry the next one down the player pulls again — the same walk the inward
-    // drag makes, and the same "one gesture, one level" the stamp has always
-    // had. The step is still carried rather than swallowed; it is simply
-    // carried one at a time instead of all the way to the sea.
-    return;
   }
+  if (candidates.length === 0) return;
+  candidates.sort((a, b) => a - b);
+
+  // The same wave discipline the pull itself uses: a candidate more than one
+  // cell from the band cannot take it until its inward neighbour has, so the
+  // set is swept until a pass changes nothing. What it fills is not collected:
+  // the only thing a list of it could seed is the next level down, and there
+  // is no next level down — see the note under the sweep.
+  let filledThisPass = true;
+  while (filledThisPass) {
+    filledThisPass = false;
+    for (const i of candidates) {
+      const x = cellX(map.size, i);
+      const y = cellY(map.size, i);
+      // Where the fill lands: null once this band is solid here.
+      //
+      // THE CASCADE CARRIES STEPS AND NEVER AUTHORS OVERHANGS (issue #224).
+      // A cell whose band lies in a gap under its own roof answers
+      // `overhang`, and it is skipped: this pass is here to keep an existing
+      // staircase from being swallowed, not to hang new slabs under roofs,
+      // and filling that gap from the floor is exactly the carve-sealing the
+      // rule above forbids.
+      const fill = bandFillAt(map, x, y, band);
+      if (fill === null || fill.kind !== 'extend') continue;
+      if (!canSpreadBandTo(map, x, y, band)) continue;
+      record(i);
+      applyBandFill(map, x, y, fill, level);
+      changed.add(i);
+      filledThisPass = true;
+    }
+  }
+
+  // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
+  // pulling up to those layers, it pushes them out until it slowly stops
+  // pushing them and slowly catches up").
+  //
+  // This used to be `seeds = raised`, which fed each level's push into the
+  // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
+  // different hat. There, the cascade judged entitlement on land the pull had
+  // just created; here it judged crowding on land THE CASCADE ITSELF had just
+  // created. Band j−4 was never crowded by the band the player grabbed; it was
+  // crowded by band j−3, which this loop moved a moment earlier. Measured on
+  // the owner's own world, one intent grabbing band 24: 33 cells filled at the
+  // grabbed band and 202 cells pushed across NINE bands beneath it — the
+  // cascade doing six times the work of the pull, which is what reads on
+  // screen as a ladder the lip can never catch up to.
+  //
+  // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
+  // stroke moves the grabbed band and at most the single level under it. To
+  // carry the next one down the player pulls again — the same walk the inward
+  // drag makes, and the same "one gesture, one level" the stamp has always
+  // had. The step is still carried rather than swallowed; it is simply
+  // carried one at a time instead of all the way to the sea.
 }
 
 /**
@@ -1400,8 +1467,11 @@ function retreatHeightAt(
  * at the band — that is no way out, so it is an enclave here too.
  *
  * A flood from the outside in, over the disc's own bound square: the seeds are
- * every refused cell on the outermost ring (that ring touches the outside by
- * construction), plus every refused cell against the map edge. 4-connected,
+ * every refused cell ON THE DISC'S BOUNDARY — one whose four-neighbourhood
+ * reaches an offset the disc does not contain, or reaches off the map — which
+ * is the cells that touch the outside, said as the thing itself. (It used to
+ * be the `dist === radius − 1` ring, which is a DIFFERENT set: see the note at
+ * the seeding loop for the cells that fall between the two.) 4-connected,
  * because the fill it argues with spreads 8-connected — a pit sealed on its
  * four sides is sealed for the fill's purposes, and a diagonal gap is one the
  * fill closes anyway. Fixed scan order, integer-only: client and server
@@ -1424,7 +1494,6 @@ function admitRimEnclaves(
   const passable = (x: number, y: number): boolean =>
     inBounds(map, x, y) && refused.has(cellIndex(map, x, y)) && !alreadyAtBand(x, y);
 
-  const outermost = radius - 1;
   const reached = new Set<number>();
   const stack: number[] = [];
   const seed = (x: number, y: number): void => {
@@ -1434,11 +1503,25 @@ function admitRimEnclaves(
     reached.add(i);
     stack.push(i);
   };
-  forEachFootprintOffset(radius, (dx, dy, dist) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    const onEdge = x === 0 || y === 0 || x === map.size - 1 || y === map.size - 1;
-    if (dist === outermost || onEdge) seed(x, y);
+  // Ground this flood may escape TO: anything the pull is not offering — a
+  // neighbouring offset outside the disc, or one off the map altogether.
+  const outside = (dx: number, dy: number): boolean =>
+    !isFootprintOffset(radius, dx, dy) || !inBounds(map, cx + dx, cy + dy);
+  forEachFootprintOffset(radius, (dx, dy) => {
+    // THE SEEDS ARE THE DISC'S BOUNDARY, AND `dist === radius - 1` IS NOT IT
+    // (2026-08-30). `dist` is `floor(sqrt(dx² + dy²))` while membership is
+    // `dx² + dy² < r·(r−1)`, so the two disagree at the diagonals the tight
+    // disc was introduced to round off: at radius 16 there are 32 cells with
+    // a 4-neighbour outside the disc whose dist is 14, not 15 — (−5, −14) and
+    // (−4, −14) among them — and radii 12, 8, 5 and 4 have 16, 8, 8 and 4.
+    // Any of those refused by the noise, and not 4-chained to a dist-15 cell,
+    // was never seeded, so the flood never reached it and it was admitted as
+    // an ENCLAVE: filled, squaring the ragged outline off at exactly those
+    // diagonals. Asking the neighbours directly is the boundary itself rather
+    // than a stand-in for it, and it stays right if the disc's shape changes.
+    if (outside(dx - 1, dy) || outside(dx + 1, dy) || outside(dx, dy - 1) || outside(dx, dy + 1)) {
+      seed(cx + dx, cy + dy);
+    }
   });
   while (stack.length > 0) {
     const i = stack.pop() as number;
@@ -1716,6 +1799,20 @@ function applyDragRegion(
  *                        a cheaper request, it is the same request landing on
  *                        flatter ground.
  *                  So a level-fill stroke displaces less and is priced the same.
+ *
+ * THE DRAG IS THE ONE EXCLUSION THAT RUNS THE OTHER WAY, and it is a KNOWN
+ * OPEN PRICE rather than a decided one (2026-08-30). The five above all
+ * describe a stroke that moves LESS than the cone priced here; a pull moves
+ * MORE. It has no cone at all — `applyDragRegion` takes every admitted cell
+ * ALL THE WAY to the grabbed band, up to FULL_HEIGHT_SPAN each — so extending
+ * a band-60 terrace over a band-0 plain at radius 16 displaces on the order of
+ * 700,000 units for the price of a stamp's 749 x BAND_HEIGHT. That is the same
+ * free-tool asymmetry the carve branch above was added to close (plan D6/P3),
+ * and it is left open here because closing it needs a number nobody has
+ * chosen: the price may not read the terrain (see (a) below), so a pull's
+ * price can only ever be a fixed multiple of its footprint, and which multiple
+ * is a balance decision for the owner rather than an arithmetic one. Until
+ * then a held pull is the cheapest terrain in the game per unit moved.
  *
  * This function is therefore about `applyBrush`'s arithmetic specifically, and
  * is pinned to it by test rather than to whatever applySculpt dispatches to.
@@ -2109,8 +2206,43 @@ export function smooth(
   // Layered strokes relax a VIEW of the grasped layer and commit it after
   // (see LayerView); a surface stroke over an unlayered world is the original
   // in-place pass on `map.cells`, untouched.
-  const layer = spanBand === null && map.columnSpans.size === 0 ? null : buildLayerView(map, spanBand);
-  const cells = layer === null ? map.cells : layer.heights;
+  //
+  // A BANDED STROKE ALWAYS NEEDS THE VIEW — it has hold of a span the cell
+  // index cannot name — but a SURFACE stroke needs it only where a layered
+  // column actually stands, and "stands somewhere in the world" is not that
+  // question: the view costs a copy and a clear of the whole grid, so asking
+  // `columnSpans.size` made one carve anywhere make every later surface
+  // stroke pay world-sized. The question is whether a layered column stands
+  // in the box THIS sweep touches, and the box is only known as it grows, so
+  // the view is adopted lazily below, one ring at a time.
+  //
+  // Adopting it late is exact, not an approximation. Where the swept box
+  // holds no layered column, every cell the view could differ on is one it
+  // does not contain: `layerSpanIndex` with `spanBand === null` resolves to
+  // the top span, whose ceiling IS `map.cells[i]` (setColumn keeps that
+  // identity, columns.ts), nothing is excluded, no `spanCaps` entry is ever
+  // looked up, and `commitLayerView` writes unlayered columns straight back.
+  let layer: LayerView | null = spanBand === null ? null : buildLayerView(map, spanBand);
+  let cells: Int16Array = layer === null ? map.cells : layer.heights;
+
+  /**
+   * Builds the layer view if the rectangle holds a layered column and the
+   * sweep is not already working on one.
+   *
+   * Switching mid-sweep loses nothing: the passes already run wrote
+   * `map.cells` in place, which for an unlayered column is exactly the write
+   * `commitLayerView` would have made, and the view is built from
+   * `map.cells` as it now stands. `cells` is rebound rather than copied into,
+   * so the sweep AND `boundsOf` below both follow the switch; `captured`
+   * keeps its entries, and every one of them still reads the same height
+   * (the fresh `heights` starts as a copy of `map.cells`).
+   */
+  const adoptLayerView = (x0: number, y0: number, width: number, height: number): void => {
+    if (layer !== null) return;
+    if (!anyColumnLayered(map, x0, y0, width, height)) return;
+    layer = buildLayerView(map, spanBand);
+    cells = layer.heights;
+  };
 
   let boundsOf: SpillBoundsOf | null = null;
   if (spillFree !== undefined || anchorBounds !== undefined) {
@@ -2148,8 +2280,11 @@ export function smooth(
     if (y > maxY) maxY = y;
   }
 
+  adoptLayerView(minX, minY, maxX - minX + 1, maxY - minY + 1);
+
   let adjustingPasses = 0;
   for (let pass = 0; pass < SMOOTH_PASS_LIMIT; pass++) {
+    const heldMinX = minX, heldMinY = minY, heldMaxX = maxX, heldMaxY = maxY;
     // Expand one ring per pass: excess travels at most one cell per pass, so
     // this always covers the frontier. Everything outside the box satisfied
     // the invariant before the edit and is untouched, so it still does.
@@ -2157,6 +2292,16 @@ export function smooth(
     if (minY > 0) minY--;
     if (maxX < size - 1) maxX++;
     if (maxY < size - 1) maxY++;
+
+    // Only the ring just gained is new ground for the layered-column test —
+    // the seed box was tested above and every earlier ring on its own pass —
+    // so the whole test costs O(cells the sweep reaches), never O(world).
+    // The two rows take the full new width; the two columns take only the
+    // rows the box already had, so the corners are not walked twice.
+    if (minY < heldMinY) adoptLayerView(minX, minY, maxX - minX + 1, 1);
+    if (maxY > heldMaxY) adoptLayerView(minX, maxY, maxX - minX + 1, 1);
+    if (minX < heldMinX) adoptLayerView(minX, heldMinY, 1, heldMaxY - heldMinY + 1);
+    if (maxX > heldMaxX) adoptLayerView(maxX, heldMinY, 1, heldMaxY - heldMinY + 1);
 
     let changedThisPass = false;
 
@@ -2295,6 +2440,22 @@ function diffOf(map: Heightmap, changed: Set<number>): CellDiff[] {
  * the precise thing "one cell per intent, outward from air that is really
  * there" forbids. Iteration order is the footprint iterator's fixed scan, so
  * server and client collect the same cells in the same order.
+ *
+ * A CUT THAT STARTS AT THE BOTTOM OF THE WORLD IS THE WHOLE STROKE REFUSED,
+ * and it is `lo` — not the anti-cheat rule — that decides it. The lower piece
+ * a cut leaves is `[span.floor, lo)`, so at `lo === BEDROCK_FLOOR` the bottom
+ * span has no lower piece and whatever stood above the cut is left standing on
+ * nothing: a column the storage cannot encode (`setColumn`), i.e. a RangeError
+ * out of the server's message handler and the client's prediction alike.
+ * `canCarveBandAt` does not catch it, and cannot be asked to: it is asked of
+ * the bands the cut OPENS (`spanBand + 1` upward), and a neighbour dug to the
+ * floor is genuinely open at those — the BEDROCK_REMNANT it keeps caps below
+ * the world's bottom band. So the grasped band's own footing is a separate
+ * question, asked here, once, before any cell is judged. `spanBand` reaches
+ * MIN_BAND from an ordinary pick — the floor of a fully dug pit — and
+ * validateSculptIntent admits MIN_BAND because it is a band this world holds;
+ * "this world has no material to take from under it" is terrain, and terrain
+ * is re-derived here on both replicas rather than trusted off the wire.
  */
 function applyCarve(
   map: Heightmap,
@@ -2306,6 +2467,12 @@ function applyCarve(
 ): void {
   const lo = spanBand * BAND_HEIGHT;
   const hi = (spanBand + CARVE_BANDS_PER_STROKE) * BAND_HEIGHT;
+
+  // No footing would be left under the cut — see the paragraph above. `<=`
+  // rather than `===` because a lower band would take even more away; both are
+  // the same refusal, and the comparison stays right if MIN_BAND ever stops
+  // being the lowest band a `spanBand` can name.
+  if (lo <= BEDROCK_FLOOR) return;
 
   const admitted: number[] = [];
   forEachFootprintCell(map, cx, cy, radius, (i) => {

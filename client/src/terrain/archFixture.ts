@@ -244,7 +244,7 @@ export function carveArchFixture(mirror: TerrainMirror): Set<number> {
       }
 
       setColumn(mirror.map, x, z, spans);
-      for (const idx of chunksDirtiedByCell(size, x, z)) dirty.add(idx);
+      for (const idx of chunksDirtiedByCell(mirror, x, z)) dirty.add(idx);
     }
   }
 

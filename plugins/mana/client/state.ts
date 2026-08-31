@@ -2,7 +2,7 @@
 // Module-scope signals, per the client's standing pattern (see hudState.ts).
 
 import { createSignal } from 'solid-js';
-import { sculptOptionsOf, type SculptIntent } from '@terrace/shared';
+import { sculptOptionsOf, sculptProfileOf, type SculptIntent } from '@terrace/shared';
 import { sculptManaCost } from '../pricing.ts';
 // THE ACCEPTED COUPLING (documented, deliberate): a plugin's client half reaching
 // into the core client's HUD state. Both compile into the same browser bundle
@@ -118,17 +118,31 @@ export function recordDenial(): void {
  * It is the same function on the same inputs the gate below uses, one line
  * apart, so what the player is shown is what they will be charged.
  *
- * `brushTool` IS READ, and only because of the carve. The stamp/smooth/pull
- * choice cannot change the answer — the relaxation spill those tools differ by
- * is free by design (see sculptDisplacementUnits in shared/src/heightmap.ts) —
- * but `carve` removes a fixed block of bands rather than a brush cone and
- * prices as that block, so the gauge would show the wrong number for it if the
- * signal were not read. Reactive, like every other read here.
+ * `brushTool` IS READ, and for two reasons. The carve is the first: it removes
+ * a fixed block of bands rather than a brush cone and prices as that block, so
+ * the gauge would show the wrong number for it if the signal were not read.
+ * The second is the EDGE — the tool decides whether the player's edge choice
+ * survives at all (`sculptProfileOf`), and the stamp/smooth/pull choice cannot
+ * change the answer beyond that, because the relaxation spill those three
+ * differ by is free by design (see sculptDisplacementUnits in
+ * shared/src/heightmap.ts). Reactive, like every other read here.
+ *
+ * PRICED THROUGH THE SHARED NORMALISATION, not off the raw HUD signals. An
+ * edgeless tool runs at EDGELESS_SCULPT_PROFILE whatever the Edge row was last
+ * left on, so pricing the held Pull at a raw `soft` showed 283 where the gate
+ * one function below — and the server — charged 749 for the very same stroke.
+ * The gauge and the gate now resolve the profile through one function.
  */
 export function currentBrushCost(): number {
   const pool = manaPool();
   if (pool === null) return 0;
-  return sculptManaCost(pool.manaPerBandCell, brushRadius(), brushProfile(), brushTool());
+  const tool = brushTool();
+  return sculptManaCost(
+    pool.manaPerBandCell,
+    brushRadius(),
+    sculptProfileOf(tool, brushProfile()),
+    tool,
+  );
 }
 
 /** The pool's live balance, or null when no economy has been declared. */

@@ -25,6 +25,11 @@ import {
   type CursorSurface,
 } from '../src/render/brushPreview.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
+// THE LADDER, NOT THE WIRE RANGE: the preview builds a geometry per rung the
+// Brush row offers, so these loops walk exactly the radii that can be drawn —
+// an off-ladder radius is the `hides for a radius it has no geometry for` case
+// below, not a shape to assert.
+import { BRUSH_RADII } from '../src/state/hudState.ts';
 
 /**
  * Stands in for the canvas: records whether the cursor-hiding class is on, and
@@ -96,6 +101,7 @@ function renderedCells(
   radius: number,
   tool: 'stamp' | 'smooth',
   profile: 'soft' | 'hard',
+  dir: 1 | -1,
 ): Set<string> {
   const span = 2 * (MAX_BRUSH_RADIUS + 2);
   const centre = span >> 1;
@@ -106,8 +112,11 @@ function renderedCells(
     centre,
     centre,
     radius,
-    DEFAULT_SCULPT_AMOUNT,
-    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir: 1, tool, profile }),
+    // The sign IS the direction — how the server builds the call
+    // (server/src/intent/pipeline.ts). `sculptOptionsOf` never reads the
+    // intent's `dir`, so passing it there alone would sculpt the same cells.
+    DEFAULT_SCULPT_AMOUNT * dir,
+    sculptOptionsOf({ type: 'sculpt', x: centre, y: centre, radius, dir, tool, profile }),
   );
   const changed = new Set<string>();
   for (let j = 0; j < span; j++) {
@@ -134,9 +143,14 @@ function footprintReach(radius: number): number {
  * A brush selection at the stamp+hard combination — the one the outline was
  * always true for, and the HUD's default since 2026-08-22. Tests that are about
  * radius say so by varying only the radius.
+ *
+ * Raising, for the same reason: stamp+hard is the one combination whose mark is
+ * the same both ways, so the tests below that compare against the FOOTPRINT are
+ * true of either direction and say `raise` only because the type requires a
+ * direction to be named.
  */
 function brush(radius: number): BrushSelection {
-  return { radius, tool: 'stamp', profile: 'hard' };
+  return { radius, tool: 'stamp', profile: 'hard', dir: 1 };
 }
 
 describe('createBrushPreview', () => {
@@ -150,7 +164,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
       const points = outlinePoints(line);
       expect(points.length).toBeGreaterThanOrEqual(3);
@@ -171,7 +185,7 @@ describe('createBrushPreview', () => {
     preview.dispose();
   });
 
-  it('outlines exactly what one click renders, for every tool and edge', () => {
+  it('outlines exactly what one click renders, for every tool, edge and direction', () => {
     // THE CONTRACT THE WHOLE MODULE EXISTS FOR (owner, 2026-08-22: "I want the
     // outline to be exactly the same size as what I'm going to get for a single
     // click on flat land"). The reference is not the footprint — that is the
@@ -182,6 +196,14 @@ describe('createBrushPreview', () => {
     // Tool and edge are both varied because both move the answer: measured on
     // the 0.75 brush, one click renders 0.75 units as a stamp and 0.25 as a
     // smooth. An outline blind to that was the bug.
+    //
+    // DIRECTION IS VARIED FOR THE SAME REASON, and it was the same bug one axis
+    // over: the preview simulated a raise whatever the Mode toggle said. Raising
+    // off band-aligned ground a soft falloff clears the band above only at the
+    // centre; lowering, any delta at all drops the cell below its band floor —
+    // so Lower renders the whole footprint. On the 7.75 brush that is one cell
+    // outlined against 749 edited. This loop fails on every soft entry and on
+    // smooth+hard if the direction stops reaching the simulation.
     const scene = new Scene();
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
@@ -189,18 +211,20 @@ describe('createBrushPreview', () => {
     for (const radius of [1, 2, 4, 8]) {
       for (const tool of ['stamp', 'smooth'] as const) {
         for (const profile of ['soft', 'hard'] as const) {
-          preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, { radius, tool, profile });
-          const points = outlinePoints(line);
+          for (const dir of [1, -1] as const) {
+            preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, { radius, tool, profile, dir });
+            const points = outlinePoints(line);
 
-          const rendered = renderedCells(radius, tool, profile);
-          const scan = footprintReach(radius) + 2;
-          for (let dz = -scan; dz <= scan; dz++) {
-            for (let dx = -scan; dx <= scan; dx++) {
-              expect({
-                radius, tool, profile, dx, dz, enclosed: encloses(points, dx, dz),
-              }).toEqual({
-                radius, tool, profile, dx, dz, enclosed: rendered.has(`${dx},${dz}`),
-              });
+            const rendered = renderedCells(radius, tool, profile, dir);
+            const scan = footprintReach(radius) + 2;
+            for (let dz = -scan; dz <= scan; dz++) {
+              for (let dx = -scan; dx <= scan; dx++) {
+                expect({
+                  radius, tool, profile, dir, dx, dz, enclosed: encloses(points, dx, dz),
+                }).toEqual({
+                  radius, tool, profile, dir, dx, dz, enclosed: rendered.has(`${dx},${dz}`),
+                });
+              }
             }
           }
         }
@@ -225,7 +249,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
@@ -259,7 +283,7 @@ describe('createBrushPreview', () => {
       (c): c is LineSegments => c instanceof LineSegments,
     );
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
@@ -291,7 +315,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
       const { minX, maxX, minZ, maxZ } = extent(line);
       expect(minX).toBeCloseTo(-maxX);

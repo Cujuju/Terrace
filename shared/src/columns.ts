@@ -164,6 +164,21 @@ export function seabedHeight(map: Heightmap, x: number, y: number): number {
  * with a real gap between consecutive ones. Two spans that touch are one span,
  * and storing them either way would let two replicas hold the same world in two
  * different encodings — which the determinism contract does not allow.
+ *
+ * AND REJECTS A COLUMN STANDING ON NOTHING, at every span count. The bottom
+ * span floors at BEDROCK_FLOOR or the column is not a shape this world has:
+ * the storage says so for a lone span (absent from the table means
+ * `[BEDROCK_FLOOR, cells[i])`, so a floating lone span has no encoding at all),
+ * and `parsePackedSpans` says so for every list that arrives over the wire or
+ * off the disk. This check used to sit inside the lone-span branch only, which
+ * left the two disagreeing: a floating MULTI-span column was stored happily in
+ * memory and then refused by the receiver it was broadcast to — divergence
+ * instead of a fault, and a column that faulted late, on the unrelated cut that
+ * happened to reduce it to one span. One rule, checked once, for every length.
+ *
+ * EVERY REJECTION HAPPENS BEFORE ANY WRITE. `cells[i]` used to be assigned
+ * ahead of the lone-span check, so a refused column left the walkable surface
+ * moved and the span table not — a half-applied write behind a thrown error.
  */
 export function setColumn(map: Heightmap, x: number, y: number, spans: readonly Span[]): void {
   if (spans.length === 0) {
@@ -189,15 +204,15 @@ export function setColumn(map: Heightmap, x: number, y: number, spans: readonly 
       );
     }
   }
+  if (spans[0]!.floor !== BEDROCK_FLOOR) {
+    throw new RangeError(
+      `cell (${x}, ${y}) has its bottom span floored at ${spans[0]!.floor}; a column floors at ` +
+        `${BEDROCK_FLOOR} (a column standing on nothing needs the gap below it to be a span)`,
+    );
+  }
   const i = cellIndex(map, x, y);
   map.cells[i] = spans[spans.length - 1]!.ceiling;
   if (spans.length === 1) {
-    if (spans[0]!.floor !== BEDROCK_FLOOR) {
-      throw new RangeError(
-        `cell (${x}, ${y}) has one span floored at ${spans[0]!.floor}; a lone span floors at ` +
-          `${BEDROCK_FLOOR} (a column standing on nothing needs the gap below it to be a span)`,
-      );
-    }
     map.columnSpans.delete(i);
     return;
   }
@@ -675,6 +690,20 @@ export function anyColumnLayered(
 // unless something above it was carved first — so `canCarveBandAt` refuses that
 // band on every cell in the world. Callers that reach past the sculpt tools are
 // on notice: the RangeError is the contract.
+//
+// CORRECTED (2026-08-30): that last paragraph is right about the band and wrong
+// about which band the carve asks for, and the second inexpressible column WAS
+// reachable in play. `canCarveBandAt` does refuse the world's bottom band on
+// every cell — every column covers it, the BEDROCK_REMNANT of a cell dug to the
+// floor included — but `applyCarve` never asks about the band it GRASPS. It
+// asks about the bands its cut OPENS, `spanBand + 1` upward, and a neighbour
+// dug to the floor is genuinely open at those. So a carve grasped at MIN_BAND
+// was admitted and cut `[BEDROCK_FLOOR, …)` out of its neighbours, leaving each
+// one standing on nothing. The refusal now lives where the cut's `lo` is
+// computed (`applyCarve`, heightmap.ts), and the invariant it protects is
+// checked for EVERY span count in `setColumn` rather than for a lone span only
+// — so a caller reaching past the sculpt tools faults on the cut that removed
+// the footing, not on some later one.
 
 /** A column's spans as a fresh mutable array, ascending — a snapshot, not a view. */
 export function readSpans(map: Heightmap, x: number, y: number): Span[] {

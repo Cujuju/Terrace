@@ -1557,7 +1557,31 @@ export function writeChunkVertexData(
 
   const triangleCount = capEmitted + skirtEmitted + ceilingEmitted;
   const vertexCount = triangleCount * VERTICES_PER_TRIANGLE;
-  collapseTail(buffers, vertexCount);
+  // THE UNUSED TAIL IS LEFT WHERE IT LIES, and until 2026-08-30 it was
+  // rewritten here on every build — `collapseTail`, which stamped vertex 0's
+  // position and a cleared normal, colour and self-lit flag over every slot
+  // from `vertexCount` to the capacity. It gave two reasons and both had
+  // stopped being true:
+  //
+  //   - "computeBoundingSphere reads the whole position attribute and ignores
+  //     the draw range". Nothing computes it: render/terrainMeshes.ts's
+  //     `updateBounds` hand-rolls the sphere from the union of the super-mesh's
+  //     SLOT BOXES (O(64), and exact), precisely because that three call reads
+  //     past `liveEnd`. Its own doc comment says so.
+  //   - "if the draw range were ever wrong, the tail rasterises as zero-area
+  //     triangles rather than as garbage". These buffers are never bound to a
+  //     BufferGeometry at all — no `setAttribute` anywhere in this module or in
+  //     terrain/vertexGrid.ts. They are SCRATCH: terrain/chunkJob.ts slices
+  //     [0, vertexCount) out of them into the answer it ships, and the arena in
+  //     terrainMeshes.ts owns the buffers that do reach the GPU. Whose own tail,
+  //     note, was never collapsed and is handled by zeroing the arena's holes.
+  //
+  // So it was a full pass over the capacity — 40 953 vertices × 10 typed-array
+  // stores once a workspace has built one p90 chunk, and the workspace's
+  // capacity never shrinks — paid on every build of every chunk, including the
+  // flat ones, to protect nobody. On the direct source that is main-thread time
+  // inside the frame budget; on the worker path it is latency on every sculpt
+  // of a stroke.
   outBuffers = null;
 
   // The published record, built from the SAME arrays the write loop above drew
@@ -1610,41 +1634,6 @@ function ensureCapacity(buffers: ChunkGeometryBuffers, triangles: number): boole
   buffers.selfLit = grown.selfLit;
   buffers.triangleCapacity = capacity;
   return true;
-}
-
-/**
- * Collapses every unused vertex slot onto vertex 0.
- *
- * Two reasons, both about not trusting a single mechanism:
- *   - computeBoundingSphere() (terrainMeshes.ts, every patch) reads the WHOLE
- *     position attribute and ignores drawRange, so stale or zeroed tail
- *     vertices would drag the sphere back toward the world origin and inflate
- *     it enormously for a distant chunk. Vertex 0 is inside this chunk, so
- *     collapsing onto it leaves the sphere exact.
- *   - if the draw range were ever wrong, the tail rasterises as zero-area
- *     triangles rather than as garbage.
- */
-function collapseTail(buffers: ChunkGeometryBuffers, vertexCount: number): void {
-  const { positions, normals, colors, selfLit } = buffers;
-  const total = buffers.triangleCapacity * VERTICES_PER_TRIANGLE;
-  const anchorX = positions[0];
-  const anchorY = positions[1];
-  const anchorZ = positions[2];
-  for (let v = vertexCount; v < total; v++) {
-    const p = v * COMPONENTS_PER_POSITION;
-    positions[p] = anchorX;
-    positions[p + 1] = anchorY;
-    positions[p + 2] = anchorZ;
-    const n = v * COMPONENTS_PER_NORMAL;
-    normals[n] = 0;
-    normals[n + 1] = 0;
-    normals[n + 2] = 0;
-    const c = v * COMPONENTS_PER_COLOR;
-    colors[c] = 0;
-    colors[c + 1] = 0;
-    colors[c + 2] = 0;
-    selfLit[v] = LIT_BY_SCENE;
-  }
 }
 
 // ---------------------------------------------------------------------------
