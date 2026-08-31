@@ -277,29 +277,43 @@ describe('applyChunkUnlock', () => {
 });
 
 describe('chunksDirtiedByCell', () => {
+  /**
+   * A mirror holding the WHOLE world. The frontier pull-back only redirects a
+   * sample that lands in a chunk we were never sent, so with every chunk
+   * received the answer is the plain border-sampling arithmetic these cases
+   * were written against.
+   */
+  const wholeWorld = (): ReturnType<typeof createTerrainMirror> => {
+    const mirror = createTerrainMirror(WORLD);
+    for (let cy = 0; cy < CHUNKS_PER_EDGE; cy++) {
+      for (let cx = 0; cx < CHUNKS_PER_EDGE; cx++) mirror.received.add(chunkIndex(WORLD, cx, cy));
+    }
+    return mirror;
+  };
+
   it('dirties one chunk for an interior cell', () => {
-    expect(chunksDirtiedByCell(WORLD, 5, 5)).toEqual([chunkIndex(WORLD, 0, 0)]);
-    expect(chunksDirtiedByCell(WORLD, CHUNK_SIZE + 5, CHUNK_SIZE + 5)).toEqual([
+    expect(chunksDirtiedByCell(wholeWorld(), 5, 5)).toEqual([chunkIndex(WORLD, 0, 0)]);
+    expect(chunksDirtiedByCell(wholeWorld(), CHUNK_SIZE + 5, CHUNK_SIZE + 5)).toEqual([
       chunkIndex(WORLD, 1, 1),
     ]);
   });
 
   it('dirties the left neighbour for a cell on a chunk first column', () => {
-    const dirty = chunksDirtiedByCell(WORLD, CHUNK_SIZE, 5);
+    const dirty = chunksDirtiedByCell(wholeWorld(), CHUNK_SIZE, 5);
     expect(dirty.sort((a, b) => a - b)).toEqual(
       [chunkIndex(WORLD, 1, 0), chunkIndex(WORLD, 0, 0)].sort((a, b) => a - b),
     );
   });
 
   it('dirties the upper neighbour for a cell on a chunk first row', () => {
-    const dirty = chunksDirtiedByCell(WORLD, 5, CHUNK_SIZE);
+    const dirty = chunksDirtiedByCell(wholeWorld(), 5, CHUNK_SIZE);
     expect(dirty.sort((a, b) => a - b)).toEqual(
       [chunkIndex(WORLD, 0, 1), chunkIndex(WORLD, 0, 0)].sort((a, b) => a - b),
     );
   });
 
   it('dirties all four chunks meeting at a corner cell', () => {
-    const dirty = chunksDirtiedByCell(WORLD, CHUNK_SIZE, CHUNK_SIZE);
+    const dirty = chunksDirtiedByCell(wholeWorld(), CHUNK_SIZE, CHUNK_SIZE);
     expect(dirty.sort((a, b) => a - b)).toEqual(
       [
         chunkIndex(WORLD, 1, 1),
@@ -317,7 +331,7 @@ describe('chunksDirtiedByCell', () => {
       [WORLD - 1, 0],
       [WORLD - 1, WORLD - 1],
     ]) {
-      for (const idx of chunksDirtiedByCell(WORLD, x, y)) {
+      for (const idx of chunksDirtiedByCell(wholeWorld(), x, y)) {
         expect(idx).toBeGreaterThanOrEqual(0);
         expect(idx).toBeLessThan(CHUNKS_PER_EDGE * CHUNKS_PER_EDGE);
       }
