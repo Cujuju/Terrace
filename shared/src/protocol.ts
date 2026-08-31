@@ -77,8 +77,22 @@ export interface SculptIntent {
    * is: the number names a place in the world the player aimed at, never a
    * position in server state.
    *
-   * NOT INTERCHANGEABLE WITH `targetBand`, and a drag carries both. `spanBand`
-   * is where the hand is; `targetBand` is where the material goes.
+   * NOT INTERCHANGEABLE WITH `targetBand`: `spanBand` is where the hand is,
+   * `targetBand` is where the material goes.
+   *
+   * A DRAG DOES NOT CARRY THIS ONE, and that is settled rather than pending
+   * (owner, 2026-08-27, issue #224 — DESIGN.md, "Why no new field on the
+   * wire"). This doc used to say "a drag carries both", and acting on that
+   * sentence would break the tool: a pull's `x`/`y` is the CURSOR cell, not the
+   * cell whose lip is in the player's hand, so a `spanBand` derived at the
+   * sender names a span of the wrong column — and applySculpt's whole-stroke
+   * grasp guard then no-ops legitimate pulls over layered ground. The grasp
+   * travels as `targetBand` plus the per-cell rule inside `applyDragRegion`
+   * (`bandFillAt`): one column covers a band with at most one span, so the band
+   * plus the receiver's own map names the grasped span exactly, and a
+   * `spanBand` beside it would be the same number twice. The tools that DO
+   * carry it are the ones whose x/y IS the cell they act on — the carve, and
+   * the brushes over layered ground.
    *
    * Optional: ABSENT MEANS THE TOPMOST SPAN, which is what every intent in
    * existence means today and what every plugin `WorldApi.sculpt` call means.
