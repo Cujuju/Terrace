@@ -60,6 +60,7 @@ import type { WorldManager } from '../world/world-manager.ts';
 import { buildJoinSnapshot } from './join-snapshot.ts';
 import { isPluginMessageType, routePluginMessage } from './plugin-message-routing.ts';
 import { NULL_SINK, type MessageSink } from './message-sink.ts';
+import { SculptRateLimiter } from './sculpt-rate-limit.ts';
 
 /** The matchmaking name clients join. Agreed with the Phase 1 client agent. */
 export const ROOM_NAME = 'world';
@@ -164,6 +165,18 @@ export function bindRoomContext(context: RoomContext): void {
 export class TerraceRoom extends Room<{ client: TerraceClient }> {
   private context!: RoomContext;
 
+  /**
+   * The inbound sculpt brake, keyed by connection id — see
+   * net/sculpt-rate-limit.ts for what it protects and why the room owns it
+   * (the connection is the room's, and the check happens before there is a
+   * world or an intent to attribute the message to).
+   *
+   * ON THE ROOM, NOT THE SESSION: it must survive a world switch, because the
+   * socket does. A limiter that died with the world would hand a flooding
+   * client a fresh bucket every time an operator loaded one.
+   */
+  private readonly sculptRate = new SculptRateLimiter();
+
   override onCreate(): void {
     if (processRoomContext === null) {
       throw new Error('room created before bindRoomContext() — boot order bug');
@@ -195,6 +208,10 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     this.context.restart.attachRoom({ sink, clientCount: () => this.clients.length });
 
     this.onMessage(SCULPT_MESSAGE_TYPE, (client: TerraceClient, message: unknown) => {
+      // RATE LIMIT FIRST, before the player lookup and before the message is
+      // parsed: a socket over its budget must cost the server nothing but this
+      // check. Dropped in silence, like every other rejected intent below.
+      if (!this.sculptRate.allow(client.sessionId)) return;
       const player = client.userData?.player;
       // A message can arrive between the socket opening and onJoin completing;
       // without a player there is no intent to attribute, so it is dropped.
@@ -475,6 +492,9 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     this.context.admin.forgetClient(client.sessionId);
     const session = this.context.manager.current;
     session?.rollback.forgetClient(client.sessionId);
+    // Same reasoning for the sculpt bucket: keyed by connection id, so it is
+    // dropped with the connection and the map stays bounded by the roster.
+    this.sculptRate.forgetClient(client.sessionId);
 
     const player = session?.world.removePlayer(client.sessionId);
     if (player) {
