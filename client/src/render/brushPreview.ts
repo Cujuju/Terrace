@@ -1164,7 +1164,25 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
       paintFlatMark();
       const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
       line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
-      crosshair.position.copy(line.position);
+      // THE MARK STANDS ON THE FACE, THE RING LIES ON THE TREAD — the comment
+      // above says so, and this is where it becomes true for the Stamp and the
+      // Smooth as well. Copying the ring's position put the pointer on the
+      // hovered column's CAP, which on a five-band cliff is five
+      // BAND_WORLD_HEIGHTs above the ground the mouse is actually addressing:
+      // the same "stuck on the top terrace" defect already fixed for the Pull
+      // and the Carve (owner, 2026-08-27), left standing on the two tools that
+      // are used most.
+      //
+      // ONLY ON A RISER. On a tread the mark is the brush's CENTRE — the owner
+      // asked for "a fine crosshair in the middle of the brush stamp", and the
+      // ring it sits inside is drawn about the hovered CELL, so a mark at the
+      // ray's exact point would drift off that centre by up to half a cell and
+      // the two would stop describing the same click.
+      if (hover.hitRiser) {
+        crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
+      } else {
+        crosshair.position.copy(line.position);
+      }
       skirt.position.copy(line.position);
       cellGrid.position.copy(line.position);
       show(true);
