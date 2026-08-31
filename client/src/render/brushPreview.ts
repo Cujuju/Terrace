@@ -59,7 +59,7 @@
 // the Tool row had, one axis over.
 //
 // THE GEOMETRY IS THEREFORE PER (RADIUS, TOOL, EDGE, DIRECTION), and all of them
-// are built at startup rather than on demand — 128 simulations now, and it keeps
+// are built at startup rather than on demand — 40 simulations, and it keeps
 // the structural guards below firing at load or never, which is what they were
 // written to promise. Showing, moving and hiding still allocates nothing.
 //
@@ -68,6 +68,18 @@
 // 128-entry build 70 ms. The 24 ms above was measured elsewhere and is left as
 // the record of what the 64 cost there; the ratio, not the absolute, is what
 // this axis added.
+//
+// THE RADIUS AXIS IS THE PICKER'S LADDER, NOT THE WIRE'S RANGE (2026-08-30).
+// Those 64- and 128-entry builds walked every integer radius from
+// MIN_BRUSH_RADIUS to MAX_BRUSH_RADIUS — sixteen of them — while the only radii
+// that can ever be asked for are the five BRUSH_RADII rungs the Brush row
+// offers (state/hudState.ts; `setBrushRadius` has exactly one caller, the
+// picker, and a restored radius is validated against the same ladder). The
+// other eleven were simulated, marched, smoothed and kept for the life of the
+// session so that nothing could ever draw them: 128 entries where 40 are
+// reachable, roughly three times the startup cost and three times the resident
+// geometry. An off-ladder radius is still safe — `update` finds no entry and
+// hides rather than drawing a wrong promise.
 //
 // HOW that set is DRAWN is the terrain's business, and this is the whole point
 // of the module (owner, 2026-08-19: "use the terrain's pipeline for the brush
@@ -202,6 +214,7 @@ import {
   type ContourLoop,
 } from '../terrain/contours.ts';
 import { smoothLoop } from '../terrain/contourSmoothing.ts';
+import { BRUSH_RADII } from '../state/hudState.ts';
 
 /**
  * How far above the picked surface the outline floats, in world units. Only
@@ -860,9 +873,10 @@ export const BRUSH_PREVIEW_DRAW_OBJECTS = 4;
 
 export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
   /**
-   * Every (radius, tool, edge, direction) the wire allows, built once at
-   * startup — see the module header for the cost and for why it is eager rather
-   * than lazy.
+   * Every (radius, tool, edge, direction) the PICKER can select, built once at
+   * startup — see the module header for the cost, for why it is eager rather
+   * than lazy, and for why the radius axis is the ladder rather than the wire's
+   * range.
    */
   const geometries = new Map<string, BrushGeometry>();
   const key = (
@@ -871,7 +885,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     profile: SculptProfile,
     dir: SculptDir,
   ): string => `${radius}|${tool}|${profile}|${dir}`;
-  for (let r = MIN_BRUSH_RADIUS; r <= MAX_BRUSH_RADIUS; r++) {
+  for (const r of BRUSH_RADII) {
     for (const tool of SCULPT_TOOLS) {
       // THE PULL AND THE CARVE HAVE NO FOOTPRINT OF THEIR OWN TO CACHE.
       // Building a ring, a skirt and a cell grid under either tool's own key

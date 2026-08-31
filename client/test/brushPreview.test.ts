@@ -25,6 +25,11 @@ import {
   type CursorSurface,
 } from '../src/render/brushPreview.ts';
 import { CELL_WORLD_SIZE } from '../src/config.ts';
+// THE LADDER, NOT THE WIRE RANGE: the preview builds a geometry per rung the
+// Brush row offers, so these loops walk exactly the radii that can be drawn —
+// an off-ladder radius is the `hides for a radius it has no geometry for` case
+// below, not a shape to assert.
+import { BRUSH_RADII } from '../src/state/hudState.ts';
 
 /**
  * Stands in for the canvas: records whether the cursor-hiding class is on, and
@@ -159,7 +164,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
       const points = outlinePoints(line);
       expect(points.length).toBeGreaterThanOrEqual(3);
@@ -244,7 +249,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
@@ -278,7 +283,7 @@ describe('createBrushPreview', () => {
       (c): c is LineSegments => c instanceof LineSegments,
     );
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
 
       const edited = new Set<string>();
@@ -310,7 +315,7 @@ describe('createBrushPreview', () => {
     const preview = createBrushPreview(scene, fakeCanvas());
     const line = outlineOf(scene);
 
-    for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
+    for (const radius of BRUSH_RADII) {
       preview.update({ x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false }, brush(radius));
       const { minX, maxX, minZ, maxZ } = extent(line);
       expect(minX).toBeCloseTo(-maxX);
