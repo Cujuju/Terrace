@@ -2281,3 +2281,47 @@ describe('applySculpt — carve grasped at the bottom of the world', () => {
     expect(map.columnSpans.size).toBe(0);
   });
 });
+
+describe('a soft drag bites its rim at the disc diagonals too (issue #152)', () => {
+  const SIZE = 64;
+  /** Band-1 ground for the pull to spread out of; everything west of it is band 0. */
+  const PLATEAU_X = 40;
+  const TARGET_BAND = 1;
+  const RADIUS = 4;
+  /**
+   * A PINNED WITNESS. At this centre the ragged rim's noise refuses the offset
+   * below, and no chain of refused cells joins it to the `dist === RADIUS - 1`
+   * ring — so seeding the flood from that ring alone never reached it, and it
+   * was admitted as an enclave and filled. `cellNoise` is a deterministic
+   * function of position, so the case is stable; it was found by sweeping every
+   * centre of this fixture and diffing the two seeding rules.
+   */
+  const CX = 37;
+  const CY = 17;
+  /**
+   * On the disc's BOUNDARY — its west neighbour (-3, 2) is outside a radius-4
+   * disc (9 + 4 >= 4·3) — while its `dist` is floor(sqrt(8)) = 2, not the
+   * outermost 3. That gap between "touches the outside" and "is on the
+   * outermost ring" is the whole defect.
+   */
+  const BOUNDARY_DX = -2;
+  const BOUNDARY_DY = 2;
+
+  it('leaves a refused boundary cell bitten rather than filling it as an enclave', () => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = PLATEAU_X; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = BAND_HEIGHT;
+    }
+
+    applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'drag',
+      profile: 'soft',
+      targetBand: TARGET_BAND,
+    });
+
+    // The pull did happen: the disc is mostly at the grabbed band.
+    expect(heightAt(map, CX, CY)).toBe(BAND_HEIGHT);
+    // And the rim kept its bite, which is the point of the ragged profile.
+    expect(heightAt(map, CX + BOUNDARY_DX, CY + BOUNDARY_DY)).toBe(0);
+  });
+});

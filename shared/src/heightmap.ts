@@ -583,14 +583,29 @@ export function forEachFootprintOffset(
     visit(0, 0, 0);
     return;
   }
-  const discBound = radius * (radius - 1);
   for (let dy = -(radius - 1); dy <= radius - 1; dy++) {
     for (let dx = -(radius - 1); dx <= radius - 1; dx++) {
-      const dSquared = dx * dx + dy * dy;
-      if (dSquared >= discBound) continue;
-      visit(dx, dy, Math.floor(Math.sqrt(dSquared)));
+      if (!isFootprintOffset(radius, dx, dy)) continue;
+      visit(dx, dy, Math.floor(Math.sqrt(dx * dx + dy * dy)));
     }
   }
+}
+
+/**
+ * THE MEMBERSHIP HALF of the footprint above, for a caller that has one offset
+ * in hand rather than a disc to walk — "is (dx, dy) in the brush of this
+ * radius". Same test, same integer arithmetic, same radius-1 special case; it
+ * is a function so that asking about a single offset does not mean writing the
+ * disc's shape down a second time, which is the drift `forEachFootprintOffset`
+ * itself exists to prevent.
+ *
+ * Its caller is `admitRimEnclaves`: whether a rim cell touches the ground
+ * OUTSIDE the disc is a question about the disc's boundary, and the boundary
+ * is not a ring the iterator can hand out — see the note there.
+ */
+function isFootprintOffset(radius: number, dx: number, dy: number): boolean {
+  if (radius === 1) return dx === 0 && dy === 0;
+  return dx * dx + dy * dy < radius * (radius - 1);
 }
 
 /**
@@ -1448,8 +1463,11 @@ function retreatHeightAt(
  * at the band — that is no way out, so it is an enclave here too.
  *
  * A flood from the outside in, over the disc's own bound square: the seeds are
- * every refused cell on the outermost ring (that ring touches the outside by
- * construction), plus every refused cell against the map edge. 4-connected,
+ * every refused cell ON THE DISC'S BOUNDARY — one whose four-neighbourhood
+ * reaches an offset the disc does not contain, or reaches off the map — which
+ * is the cells that touch the outside, said as the thing itself. (It used to
+ * be the `dist === radius − 1` ring, which is a DIFFERENT set: see the note at
+ * the seeding loop for the cells that fall between the two.) 4-connected,
  * because the fill it argues with spreads 8-connected — a pit sealed on its
  * four sides is sealed for the fill's purposes, and a diagonal gap is one the
  * fill closes anyway. Fixed scan order, integer-only: client and server
@@ -1472,7 +1490,6 @@ function admitRimEnclaves(
   const passable = (x: number, y: number): boolean =>
     inBounds(map, x, y) && refused.has(cellIndex(map, x, y)) && !alreadyAtBand(x, y);
 
-  const outermost = radius - 1;
   const reached = new Set<number>();
   const stack: number[] = [];
   const seed = (x: number, y: number): void => {
@@ -1482,11 +1499,25 @@ function admitRimEnclaves(
     reached.add(i);
     stack.push(i);
   };
-  forEachFootprintOffset(radius, (dx, dy, dist) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    const onEdge = x === 0 || y === 0 || x === map.size - 1 || y === map.size - 1;
-    if (dist === outermost || onEdge) seed(x, y);
+  // Ground this flood may escape TO: anything the pull is not offering — a
+  // neighbouring offset outside the disc, or one off the map altogether.
+  const outside = (dx: number, dy: number): boolean =>
+    !isFootprintOffset(radius, dx, dy) || !inBounds(map, cx + dx, cy + dy);
+  forEachFootprintOffset(radius, (dx, dy) => {
+    // THE SEEDS ARE THE DISC'S BOUNDARY, AND `dist === radius - 1` IS NOT IT
+    // (2026-08-30). `dist` is `floor(sqrt(dx² + dy²))` while membership is
+    // `dx² + dy² < r·(r−1)`, so the two disagree at the diagonals the tight
+    // disc was introduced to round off: at radius 16 there are 32 cells with
+    // a 4-neighbour outside the disc whose dist is 14, not 15 — (−5, −14) and
+    // (−4, −14) among them — and radii 12, 8, 5 and 4 have 16, 8, 8 and 4.
+    // Any of those refused by the noise, and not 4-chained to a dist-15 cell,
+    // was never seeded, so the flood never reached it and it was admitted as
+    // an ENCLAVE: filled, squaring the ragged outline off at exactly those
+    // diagonals. Asking the neighbours directly is the boundary itself rather
+    // than a stand-in for it, and it stays right if the disc's shape changes.
+    if (outside(dx - 1, dy) || outside(dx + 1, dy) || outside(dx, dy - 1) || outside(dx, dy + 1)) {
+      seed(cx + dx, cy + dy);
+    }
   });
   while (stack.length > 0) {
     const i = stack.pop() as number;
