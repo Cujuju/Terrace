@@ -500,6 +500,56 @@ describe('sculptDenied nack', () => {
     expect(sink.messages).toHaveLength(0);
   });
 
+  it('nacks a plugin rewrite that failed re-validation, so the prediction is not stranded', () => {
+    // The plugin's bug, not the sender's: leaving this path silent left the
+    // client drawing its predicted stroke over unchanged ground until its
+    // reconciliation deadline, on every stroke, for as long as the plugin
+    // stayed broken.
+    const breaker: TerracePlugin = {
+      name: 'breaker',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, x: -1 } };
+      },
+    };
+    const outcome = handleSculptIntent(makeDeps(world, [breaker]), PLAYER, sculptMessage({ seq: 7 }));
+
+    expect(outcome.applied).toBe(false);
+    if (!outcome.applied) expect(outcome.reason).toBe('plugin-modified-invalid');
+    expect(sink.messages).toEqual([
+      { target: PLAYER.id, type: 'sculptDenied', payload: { type: 'sculptDenied', seq: 7 } },
+    ]);
+  });
+
+  it('nacks a plugin rewrite that aimed the centre at locked terrain', () => {
+    const intoLocked: TerracePlugin = {
+      name: 'into-locked',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, x: LOCKED_CELL.x, y: LOCKED_CELL.y } };
+      },
+    };
+    const outcome = handleSculptIntent(
+      makeDeps(world, [intoLocked]),
+      PLAYER,
+      sculptMessage({ seq: 8 }),
+    );
+
+    expect(outcome.applied).toBe(false);
+    expect(sink.messages).toEqual([
+      { target: PLAYER.id, type: 'sculptDenied', payload: { type: 'sculptDenied', seq: 8 } },
+    ]);
+  });
+
+  it('sends nothing for a plugin rewrite that failed re-validation without a seq', () => {
+    const breaker: TerracePlugin = {
+      name: 'breaker',
+      onIntent(intent): IntentVerdict {
+        return { kind: 'modify', intent: { ...intent, x: -1 } };
+      },
+    };
+    handleSculptIntent(makeDeps(world, [breaker]), PLAYER, sculptMessage());
+    expect(sink.messages).toHaveLength(0);
+  });
+
   it('stays SILENT for a mask rejection even when the intent carried a seq', () => {
     // The anti-cheat boundary: a locked-centre intent must remain
     // indistinguishable from a dropped packet (protocol.ts, pipeline step 2).
