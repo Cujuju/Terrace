@@ -171,6 +171,22 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
 
 /**
+ * THE EDGE A STROKE ACTUALLY RUNS AT, given the tool it runs with and the edge
+ * the player chose. One statement of the rule above, for every reader of it.
+ *
+ * `sculptOptionsOf` below is the reader on the wire path, and for a while it
+ * was the only one — which made the rule invisible to the two places that hold
+ * a TOOL and an EDGE with no intent between them: the mana gauge pricing the
+ * brush the player is holding (plugins/mana/client/state.ts) and anything else
+ * that must show what the next stroke will cost or look like. The gauge
+ * restated the profile as the raw HUD choice and priced a Pull at up to 2.6x
+ * less than the gate one line below it charged for the same stroke.
+ */
+export function sculptProfileOf(tool: SculptTool, profile: SculptProfile): SculptProfile {
+  return TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? EDGELESS_SCULPT_PROFILE : profile;
+}
+
+/**
  * THE NORMALISATION CONTRACT. Turns an intent's optional tool/profile into the
  * concrete options `applySculpt` runs.
  *
@@ -217,9 +233,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // still send `profile: 'soft'` on a drag or carve; it is normalised away
     // rather than rejected, because the field does not describe those tools
     // at all, so there is nothing there to cheat with.
-    profile: TOOLS_WITHOUT_EDGE_PROFILE.includes(tool)
-      ? EDGELESS_SCULPT_PROFILE
-      : (intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
+    profile: sculptProfileOf(tool, intent.profile ?? WIRE_DEFAULT_SCULPT_OPTIONS.profile),
     // Deliberately NOT read from the intent: spill containment is fixed
     // policy for player sculpts (issue #26), and so is the clicked-cell
     // anchor (2026-08-19). Both the server pipeline and client prediction
