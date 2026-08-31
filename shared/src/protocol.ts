@@ -169,6 +169,28 @@ export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
  */
 export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
   const tool = intent.tool ?? WIRE_DEFAULT_SCULPT_OPTIONS.tool;
+  // THE BAND IS THE DRAG'S FIELD AND NO OTHER TOOL'S, resolved once, here, so
+  // that both of the things a band decides below are decided from a band the
+  // TOOL was allowed to name. `validateSculptIntent` already rejects a band
+  // carried by anything but a drag, so on the wire path this changes nothing;
+  // this is the same rule stated at the point the value becomes options,
+  // because the resolver is also reached from intents no validator ever saw —
+  // the client's prediction store and its brush preview build their own.
+  //
+  // BOTH derived fields matter, not just the anchor. The anchor is what buys
+  // the whole-way amount in applySculpt (FULL_HEIGHT_SPAN), and a non-drag
+  // tool wearing it lifts its whole disc to a height the MESSAGE named; but a
+  // band left in place under any OTHER anchor is read by anchoredTargetHeight
+  // as the stroke's level outright, ahead of the clicked cell's own band and
+  // without even the centre-cell spread check the 'band' anchor gets. Deriving
+  // both from one tool-gated value is what makes "clients send intents, never
+  // heights" hold here by construction rather than by two guards agreeing.
+  //
+  // DROPPED rather than rejected, unlike the validator's call on the same
+  // combination: a resolver's return type has no way to say no, and every
+  // intent that reaches it on the server has already passed that rejection.
+  const targetBand =
+    tool === 'drag' ? (intent.targetBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.targetBand;
   return {
     tool,
     // AN EDGELESS TOOL'S PROFILE IS DECIDED HERE (issue #225), not honoured
@@ -195,8 +217,8 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedSculptOptions {
     // configured one, so there is no way to ask for the drag anchor without
     // naming the band it drags toward, and no way to name a band without
     // getting the drag anchor. The two cannot be desynchronised.
-    anchor: intent.targetBand !== undefined ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
-    targetBand: intent.targetBand ?? null,
+    anchor: targetBand !== null ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
+    targetBand,
     // The grasp travels through the same single normalisation both replicas
     // run, for the same lockstep reason everything else here does. Absent is
     // null, and null is resolved to the topmost span by the terrain math —
