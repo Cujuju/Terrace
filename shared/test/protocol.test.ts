@@ -276,12 +276,32 @@ describe('targetBand — the drag field on the wire', () => {
   });
 
   it('flips the anchor to the drag, and only ever together with the band', () => {
-    const drag = sculptOptionsOf({ ...base, targetBand: 4 });
-    expect(drag.anchor).toBe('band');
-    expect(drag.targetBand).toBe(4);
+    const pulled = sculptOptionsOf({ ...drag, targetBand: 4 });
+    expect(pulled.anchor).toBe('band');
+    expect(pulled.targetBand).toBe(4);
 
     const stamp = sculptOptionsOf(base);
     expect(stamp.anchor).toBe('clicked');
     expect(stamp.targetBand).toBeNull();
+  });
+
+  it('drops a band any tool but the drag carries, anchor and level both', () => {
+    // The resolver is the second half of the validator's rule, and it has to
+    // be: it is also reached from intents no validator saw (the client's
+    // prediction store and brush preview build their own). Neither field may
+    // survive on a non-drag tool — `anchor: 'band'` is what buys the whole-way
+    // amount in applySculpt, and a band left under the clicked-cell anchor is
+    // read as the stroke's level outright by anchoredTargetHeight, which is
+    // the client naming the height its stroke ends at either way.
+    for (const tool of ['stamp', 'smooth', 'carve'] as const) {
+      const resolved = sculptOptionsOf({ ...base, tool, targetBand: 4 });
+      expect(resolved.anchor).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.anchor);
+      expect(resolved.targetBand).toBeNull();
+    }
+    // The absent tool means stamp, so it is dropped for it too rather than
+    // defaulted into the very combination this forbids.
+    const bare = sculptOptionsOf({ ...base, targetBand: 4 });
+    expect(bare.anchor).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.anchor);
+    expect(bare.targetBand).toBeNull();
   });
 });
