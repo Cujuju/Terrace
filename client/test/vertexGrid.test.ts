@@ -1516,15 +1516,21 @@ describe('self-lit seabed rims', () => {
     for (const t of triangles) expect(t.selfLit).toBe(LIT_BY_SCENE);
   });
 
-  it('clears the flag on the unused tail, like every other attribute', () => {
-    // A stale SELF_LIT byte under a later, shorter geometry would light a
-    // triangle that no longer exists if the draw range were ever wrong.
-    const { buffers } = writeEdge(coast);
+  it('leaves the flag on the unused tail alone, like every other attribute', () => {
+    // THE TAIL IS NOT REWRITTEN, and this is the guard that says the flag
+    // follows the same rule as the other three arrays rather than a private
+    // one. `collapseTail` used to stamp LIT_BY_SCENE over every slot past the
+    // count; it went on 2026-08-30 with both of its reasons (see the note in
+    // capEmission.ts's writeChunkVertexData) because no consumer of these
+    // scratch buffers ever reads past `vertexCount`.
+    const { buffers, counts } = writeEdge(coast);
+    const litBefore = Array.from(buffers.selfLit.subarray(counts.vertexCount));
     const flat = mirrorWith([edgeChunk(() => 0)]);
     const after = writeChunkVertexData(flat, EDGE_CHUNK, EDGE_CHUNK, buffers, PALETTES);
-    for (let v = after.vertexCount; v < buffers.selfLit.length; v++) {
-      expect(buffers.selfLit[v]).toBe(LIT_BY_SCENE);
-    }
+    // What the shorter build wrote is its own; everything above the LONGER
+    // build's count is untouched, which is what "not rewritten" means.
+    expect(Array.from(buffers.selfLit.subarray(counts.vertexCount))).toEqual(litBefore);
+    expect(after.vertexCount).toBeLessThan(counts.vertexCount);
   });
 
   it('grows the flag buffer alongside the others', () => {
@@ -1610,19 +1616,6 @@ describe('buffers', () => {
     expect(after.triangleCapacity).toBe(grown.triangleCapacity);
   });
 
-  it('collapses the unused tail onto a vertex inside the chunk', () => {
-    // computeBoundingSphere (terrainMeshes.ts) reads the whole attribute and
-    // ignores the draw range, so stale or zeroed tail vertices would drag a
-    // distant chunk's bound back toward the world origin.
-    const { buffers, counts } = write(mirrorWith([chunkPayload(2, 2, 100)]), 2, 2);
-    const total = counts.triangleCapacity * VERTICES_PER_TRIANGLE;
-    expect(counts.vertexCount).toBeLessThan(total);
-    const anchor = vertexAt(buffers, 0);
-    for (let v = counts.vertexCount; v < total; v++) {
-      expect(vertexAt(buffers, v)).toEqual(anchor);
-    }
-  });
-
   it('leaves no stale geometry behind when a re-patch emits less', () => {
     const buffers = createChunkGeometryBuffers();
     const cliffy = mirrorWith([edgeChunk((i) => (i < 8 ? 0 : 256))]);
@@ -1633,11 +1626,13 @@ describe('buffers', () => {
     expect(after.triangleCount).toBeLessThan(before.triangleCount);
     expect(after.skirtTriangleCount).toBe(0);
 
-    const anchor = vertexAt(buffers, 0);
-    const total = after.triangleCapacity * VERTICES_PER_TRIANGLE;
-    for (let v = after.vertexCount; v < total; v++) {
-      expect(vertexAt(buffers, v).y).toBe(anchor.y);
-    }
+    // THE COUNTS ARE THE WHOLE GUARANTEE, and since 2026-08-30 they are the
+    // only one: the tail past `vertexCount` keeps the taller build's vertices,
+    // and no consumer reads it (see the note in capEmission.ts's
+    // writeChunkVertexData). What must not be stale is what the counts admit —
+    // the cliff's skirts are gone from the live range, not merely hidden behind
+    // a shorter one.
+    expect(skirtsOf(trianglesOf(buffers, after)).length).toBe(0);
   });
 
   it('is idempotent — re-patching the same data yields the same buffers', () => {

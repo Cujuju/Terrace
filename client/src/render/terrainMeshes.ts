@@ -559,6 +559,12 @@ interface SuperMesh {
    * the next frame. The packed layout had one range producer per pass (the
    * splice) and could carry this as a local `grew`; the arena has two (splices
    * and compaction), so the fact has to live on the super-mesh.
+   *
+   * WRITTEN ONLY BY `bindGeometry`, never by its callers: the flag is true of
+   * exactly the super-meshes whose attributes were replaced this pass, and a
+   * caller that binds without saying so puts the double upload back. The
+   * initial value here is `false` because `createSuperMesh` binds immediately
+   * afterwards, which is what sets it.
    */
   reallocatedThisPass: boolean;
   /** How many times the buffers have been reallocated — reported by arenaStats. */
@@ -800,8 +806,19 @@ export function createTerrainMeshes(
    * array cannot be resized, so growth means new arrays and therefore new
    * attributes, and the old geometry is disposed rather than left holding its
    * GPU buffers.
+   *
+   * IT IS ALSO WHAT SETS `reallocatedThisPass`, because it is the operation the
+   * flag is a fact about: brand-new BufferAttributes take three's create path,
+   * which uploads everything and leaves `updateRanges` UNCLEARED (only
+   * `updateBuffer` clears them — WebGLAttributes.js:147), so every range added
+   * to this super-mesh later in the pass is uploaded a second time on the next
+   * frame. It used to be set by the caller, and the OTHER caller —
+   * `createSuperMesh` — did not: a chunk streaming in got a fresh super-mesh
+   * and spliced into it in the same pass, leaking that chunk's four ranges into
+   * the following frame's upload. Set here, no caller can forget it.
    */
   const bindGeometry = (sm: SuperMesh): void => {
+    sm.reallocatedThisPass = true;
     const positionAttribute = new BufferAttribute(sm.buffers.positions, 3);
     // `true` = NORMALIZED: the GPU reads these byte attributes back as
     // value/127 (signed) and value/255 (unsigned). Omitting the flag would feed
@@ -868,10 +885,10 @@ export function createTerrainMeshes(
     grown.colors.set(sm.buffers.colors.subarray(0, sm.liveEnd * 3));
     grown.selfLit.set(sm.buffers.selfLit.subarray(0, sm.liveEnd));
     sm.buffers = grown;
-    // BEFORE bindGeometry, which is what installs the fresh attributes three
-    // will fully re-upload: every range added to this super-mesh for the rest
-    // of the pass would be uploaded a second time next frame. See the field.
-    sm.reallocatedThisPass = true;
+    // The fresh attributes three will fully re-upload are installed by
+    // `bindGeometry` below, and so is the `reallocatedThisPass` flag that keeps
+    // the rest of the pass from adding ranges on top of that upload. See the
+    // field, and bindGeometry's own note.
     sm.growths++;
     if (site === 'splice') sm.strokeGrowths++;
     bindGeometry(sm);

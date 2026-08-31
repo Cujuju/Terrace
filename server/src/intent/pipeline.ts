@@ -26,7 +26,8 @@
 //
 // THE ANSWER CONTRACT (issue #21). An intent that carries a seq gets exactly
 // one answer back to its sender: 'sculptApplied' from step 6, or 'sculptDenied'
-// from step 3. Both exist for the same reason — the client retires the exact
+// from step 3 or step 4 — every refusal that happens at or after the plugin
+// chain is answered. Both exist for the same reason — the client retires the exact
 // prediction it made for that intent when its answer arrives, instead of
 // inferring acknowledgement from the heights in the broadcast diff. That
 // inference cannot work for an edit whose shared math reads terrain the client
@@ -85,10 +86,13 @@ export interface IntentPipelineDeps {
 /**
  * Runs one inbound sculpt message end to end.
  *
- * Rejections are returned, not thrown, and carry no reply to the client in v1:
- * a well-behaved client never sends an invalid intent, and telling a hostile
- * one *why* its intent failed would confirm the existence of locked terrain —
- * exactly the information the mask exists to withhold. The caller logs at most.
+ * Rejections are returned, not thrown. The two that happen BEFORE the plugin
+ * chain carry no reply to the client: a well-behaved client never sends an
+ * invalid intent, and telling a hostile one *why* its intent failed would
+ * confirm the existence of locked terrain — exactly the information the mask
+ * exists to withhold. Everything from the chain down is answered with a bare
+ * 'sculptDenied' (see `refuse` below), which names no reason and so withholds
+ * the same information. The caller logs at most.
  */
 export function handleSculptIntent(
   deps: IntentPipelineDeps,
@@ -112,15 +116,23 @@ export function handleSculptIntent(
     return { applied: false, reason: 'locked' };
   }
 
-  // 3. Plugin interceptor chain (mana, cooldowns, ownership, …).
-  const verdict = interceptors.runIntent(intent, player);
-  if (verdict.kind === 'deny') {
+  // HOW EVERY REFUSAL FROM HERE DOWN IS DELIVERED — one function, because
+  // every one of them owes the sender the same two things in the same order,
+  // and the branch that owed them and did not say so (a plugin rewrite that
+  // failed re-validation, silent until 2026-08-30) was a call site that
+  // forgot, not a rule that differed. The two rejections ABOVE this line
+  // ('malformed', 'locked') deliberately stay silent — see the module header.
+  const refuse = (reason: IntentRejection, detail?: string): IntentOutcome => {
     // Nack PLUGIN denials — and only those — back to the sender, echoing the
     // intent's seq so the client can retire the exact prediction it made for
     // it immediately instead of waiting out its reconciliation deadline.
     // The mask rejection above stays silent on purpose (see its comment); a
     // plugin denial reveals nothing about the mask, and the plugin itself has
     // already had the chance to say why on its own channel (e.g. mana:denied).
+    //
+    // The seq is the ORIGINAL intent's, never a plugin's rewrite of it, for
+    // the same reason the ack's is (step 7): it is the CLIENT's correlation
+    // id for the prediction it is holding.
     if (intent.seq !== undefined) {
       world.sendTo(player.id, { type: 'sculptDenied', seq: intent.seq });
     }
@@ -132,7 +144,15 @@ export function handleSculptIntent(
     // broadcast: the client should retire the terrain prediction and receive
     // the plugin corrections in one causally-ordered burst.
     interceptors.notifyIntentDenied(intent, player);
-    return { applied: false, reason: 'plugin-denied', detail: verdict.reason };
+    return detail === undefined
+      ? { applied: false, reason }
+      : { applied: false, reason, detail };
+  };
+
+  // 3. Plugin interceptor chain (mana, cooldowns, ownership, …).
+  const verdict = interceptors.runIntent(intent, player);
+  if (verdict.kind === 'deny') {
+    return refuse('plugin-denied', verdict.reason);
   }
 
   let effective = intent;
@@ -142,18 +162,22 @@ export function handleSculptIntent(
     // Plugins are trusted, but a buggy one must not be able to move a brush
     // out of bounds (which would throw inside the shared brush math) or into
     // locked terrain (which would defeat the mask by proxy).
+    //
+    // BOTH FAILURES ARE ANSWERED, exactly like a plugin deny. This is the
+    // plugin's bug, not the sender's, and leaving it silent stranded the
+    // sender's prediction on top of unchanged ground until its reconciliation
+    // deadline — on every stroke, for as long as the plugin stayed broken.
+    // Answering leaks nothing the client could not already infer: the ABSENCE
+    // of the step-7 ack it is owed already distinguishes "applied" from "not
+    // applied", so the nack adds timeliness, not a new bit. That includes the
+    // locked-centre branch, whose centre was chosen by the PLUGIN — the
+    // client's own centre passed the step-2 mask check to get here.
     const revalidated = validateSculptIntent(verdict.intent, world.size);
     if (revalidated === null) {
-      // A refusal like any plugin deny from the SENDER's point of view: their
-      // prediction is stranded either way (this path is silent by design),
-      // but plugin-side predictions can still be reconciled — see the deny
-      // branch above.
-      interceptors.notifyIntentDenied(intent, player);
-      return { applied: false, reason: 'plugin-modified-invalid' };
+      return refuse('plugin-modified-invalid');
     }
     if (!world.isCellUnlocked(revalidated.x, revalidated.y)) {
-      interceptors.notifyIntentDenied(intent, player);
-      return { applied: false, reason: 'plugin-modified-invalid', detail: 'centre is locked' };
+      return refuse('plugin-modified-invalid', 'centre is locked');
     }
     effective = revalidated;
   }

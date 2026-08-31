@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EDGELESS_SCULPT_PROFILE,
   MAX_BAND,
   MAX_BRUSH_RADIUS,
   MAX_ROLLBACK_KEY_LENGTH,
   MIN_BAND,
+  SCULPT_TOOLS,
   sculptOptionsOf,
+  TOOLS_WITHOUT_EDGE_PROFILE,
   validateRestorePointsRequest,
   validateRollbackRequest,
   validateSculptIntent,
@@ -226,14 +229,35 @@ describe('validateRollbackRequest', () => {
 
 describe('targetBand — the drag field on the wire', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 1, dir: 1 } as const;
+  /** The only shape allowed to carry a band: the drag names its own tool. */
+  const drag = { ...base, tool: 'drag' } as const;
 
   it('accepts a band the world could hold, and carries it through verbatim', () => {
     for (const targetBand of [MIN_BAND, -1, 0, 1, MAX_BAND]) {
-      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toEqual({
-        ...base,
+      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toEqual({
+        ...drag,
         targetBand,
       });
     }
+  });
+
+  it('rejects a band carried by anything but a drag, the absent tool included', () => {
+    // The band is what flips the anchor to 'band' (sculptOptionsOf), and that
+    // anchor is what buys the whole-way amount in applySculpt. Only the drag
+    // re-checks the spread rule for every cell it fills, so only the drag may
+    // name a band — a stamp or smooth wearing the anchor would lift its whole
+    // disc to a height the MESSAGE chose. An intent with no tool at all is
+    // rejected too: absent defaults to stamp, so defaulting it here would mint
+    // the very combination this forbids.
+    expect(validateSculptIntent({ ...base, targetBand: 3 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'stamp', targetBand: 3 }, WORLD)).toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'smooth', targetBand: 3 }, WORLD)).toBeNull();
+    // dir: -1 so the carve is refused for carrying the band, not for its own
+    // never-raises rule.
+    expect(
+      validateSculptIntent({ ...base, dir: -1, tool: 'carve', targetBand: 3 }, WORLD),
+    ).toBeNull();
+    expect(validateSculptIntent({ ...drag, targetBand: 3 }, WORLD)).not.toBeNull();
   });
 
   it('is optional — an intent without one is a stamp, exactly as before', () => {
@@ -244,23 +268,133 @@ describe('targetBand — the drag field on the wire', () => {
 
   it('rejects a band outside the range the world can hold', () => {
     for (const targetBand of [MIN_BAND - 1, MAX_BAND + 1, 10_000]) {
-      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toBeNull();
+      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toBeNull();
     }
   });
 
   it('rejects a non-integer band WITH THE WHOLE INTENT, never defaulting it', () => {
     for (const targetBand of [1.5, NaN, Infinity, '3', null, {}]) {
-      expect(validateSculptIntent({ ...base, targetBand }, WORLD)).toBeNull();
+      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toBeNull();
     }
   });
 
   it('flips the anchor to the drag, and only ever together with the band', () => {
-    const drag = sculptOptionsOf({ ...base, targetBand: 4 });
-    expect(drag.anchor).toBe('band');
-    expect(drag.targetBand).toBe(4);
+    const pulled = sculptOptionsOf({ ...drag, targetBand: 4 });
+    expect(pulled.anchor).toBe('band');
+    expect(pulled.targetBand).toBe(4);
 
     const stamp = sculptOptionsOf(base);
     expect(stamp.anchor).toBe('clicked');
     expect(stamp.targetBand).toBeNull();
+  });
+
+  it('drops a band any tool but the drag carries, anchor and level both', () => {
+    // The resolver is the second half of the validator's rule, and it has to
+    // be: it is also reached from intents no validator saw (the client's
+    // prediction store and brush preview build their own). Neither field may
+    // survive on a non-drag tool — `anchor: 'band'` is what buys the whole-way
+    // amount in applySculpt, and a band left under the clicked-cell anchor is
+    // read as the stroke's level outright by anchoredTargetHeight, which is
+    // the client naming the height its stroke ends at either way.
+    for (const tool of ['stamp', 'smooth', 'carve'] as const) {
+      const resolved = sculptOptionsOf({ ...base, tool, targetBand: 4 });
+      expect(resolved.anchor).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.anchor);
+      expect(resolved.targetBand).toBeNull();
+    }
+    // The absent tool means stamp, so it is dropped for it too rather than
+    // defaulted into the very combination this forbids.
+    const bare = sculptOptionsOf({ ...base, targetBand: 4 });
+    expect(bare.anchor).toBe(WIRE_DEFAULT_SCULPT_OPTIONS.anchor);
+    expect(bare.targetBand).toBeNull();
+  });
+});
+
+describe('the tool set is the wire contract, not a local list', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: -1 } as const;
+
+  it('is exactly the four tools, in wire/UI order', () => {
+    // PINNED because a fifth tool is a wire change: the validator accepts a
+    // `tool` by membership of this list, the HUD offers the same list, and the
+    // resolver decides what an absent one means. Adding one without deciding
+    // those three is the change this line exists to stop.
+    expect(SCULPT_TOOLS).toEqual(['stamp', 'smooth', 'drag', 'carve']);
+  });
+
+  it('validates the two newest tools, not only the brushes', () => {
+    // A lowering carve and a drag are both well-formed intents; the earlier
+    // tool/profile suite only ever exercises stamp and smooth.
+    expect(validateSculptIntent({ ...base, tool: 'carve' }, WORLD)).toEqual({
+      ...base,
+      tool: 'carve',
+    });
+    expect(validateSculptIntent({ ...base, tool: 'drag' }, WORLD)).toEqual({
+      ...base,
+      tool: 'drag',
+    });
+  });
+
+  it('rejects a raising carve WITH the whole intent, never flipping it', () => {
+    // A carve removes material and has no other direction (plan D6). Silently
+    // reinterpreting it would apply a differently-shaped edit than the sender
+    // predicted, which is the same call the unknown-tool branch makes.
+    expect(validateSculptIntent({ ...base, dir: 1, tool: 'carve' }, WORLD)).toBeNull();
+    // Every other tool may raise.
+    for (const tool of ['stamp', 'smooth', 'drag'] as const) {
+      expect(validateSculptIntent({ ...base, dir: 1, tool }, WORLD)).not.toBeNull();
+    }
+  });
+
+  it('resolves an edgeless tool to one profile whatever the intent carried', () => {
+    // The drag and the carve have no cone to shape, so the edge they are sent
+    // with is normalised away here rather than honoured and then ignored
+    // downstream — which is also what keeps the mana price (read off these
+    // options) describing the stroke that actually runs.
+    for (const tool of TOOLS_WITHOUT_EDGE_PROFILE) {
+      for (const profile of ['soft', 'hard'] as const) {
+        expect(sculptOptionsOf({ ...base, tool, profile }).profile).toBe(EDGELESS_SCULPT_PROFILE);
+      }
+    }
+    // A tool that DOES have an edge keeps the one it was sent with.
+    expect(sculptOptionsOf({ ...base, tool: 'stamp', profile: 'hard' }).profile).toBe('hard');
+  });
+});
+
+describe('spanBand — the grasp on the wire', () => {
+  const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: -1 } as const;
+
+  it('accepts any band this world could hold, on any tool, verbatim', () => {
+    // Unlike `targetBand`, the grasp is not the drag's alone: the carve always
+    // names one, and a brush over layered ground names one too.
+    for (const spanBand of [MIN_BAND, -1, 0, 1, MAX_BAND]) {
+      expect(validateSculptIntent({ ...base, tool: 'carve', spanBand }, WORLD)).toEqual({
+        ...base,
+        tool: 'carve',
+        spanBand,
+      });
+    }
+    expect(validateSculptIntent({ ...base, tool: 'stamp', spanBand: 3 }, WORLD)).not.toBeNull();
+  });
+
+  it('rejects a band outside the range, or one that is not a band at all', () => {
+    for (const spanBand of [MIN_BAND - 1, MAX_BAND + 1, 1.5, Number.NaN, Infinity, '3', null, {}]) {
+      expect(validateSculptIntent({ ...base, spanBand }, WORLD)).toBeNull();
+    }
+  });
+
+  it('is optional — an intent without one omits the field entirely', () => {
+    // Absent is the topmost span, so an unlayered world's intents stay
+    // byte-identical to what they were before the field existed.
+    const validated = validateSculptIntent({ ...base }, WORLD);
+    expect(validated).not.toBeNull();
+    expect(Object.hasOwn(validated as object, 'spanBand')).toBe(false);
+    expect(sculptOptionsOf({ ...base }).spanBand).toBeNull();
+  });
+
+  it('travels through the resolver untouched — the map resolves it, not this', () => {
+    // The band names a place in the world, and which SPAN that is can only be
+    // answered against a heightmap. The resolver has none, so it must neither
+    // clamp nor default it.
+    expect(sculptOptionsOf({ ...base, tool: 'carve', spanBand: MIN_BAND }).spanBand).toBe(MIN_BAND);
+    expect(sculptOptionsOf({ ...base, tool: 'carve', spanBand: MAX_BAND }).spanBand).toBe(MAX_BAND);
   });
 });
