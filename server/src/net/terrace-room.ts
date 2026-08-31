@@ -50,7 +50,7 @@ import {
   type WorldSwitchNoticeMessage,
   type WorldUnloadedMessage,
 } from '@terrace/shared';
-import { logInfo } from '../log.ts';
+import { logInfo, logWarn } from '../log.ts';
 import { sanitizePlayerName, sanitizePlayerToken, type Player } from '../player.ts';
 import { handleSculptIntent } from '../intent/pipeline.ts';
 import { applyInitialUnlockForToken } from '../world/initial-unlock.ts';
@@ -109,6 +109,19 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
  * TerraceRoom.rejectUnregisteredMessage.
  */
 const UNREGISTERED_MESSAGE_REASON_PREFIX = 'room onMessage for ';
+
+/**
+ * How long one logged plugin-rewrite failure suppresses the next line.
+ *
+ * The failure is per SCULPT: a broken plugin produces one for every stroke of
+ * every affected player, which unthrottled is a log flood that buries the
+ * thing it is reporting. Ten seconds is short enough that the line reappears
+ * while the operator is still looking (a held stroke is over in a second or
+ * two, so a repeat proves the plugin is still broken rather than echoing one
+ * old event) and long enough that a busy world logs it a handful of times a
+ * minute, not hundreds.
+ */
+const PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS = 10_000;
 
 /**
  * Server → client message map. The Colyseus message name is the payload's own
@@ -177,6 +190,13 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
    */
   private readonly sculptRate = new SculptRateLimiter();
 
+  /**
+   * When the last plugin-rewrite failure was logged — see
+   * PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS. Starts at negative infinity so the
+   * very first failure always logs, whatever the process clock reads.
+   */
+  private lastPluginRewriteLogMs = Number.NEGATIVE_INFINITY;
+
   override onCreate(): void {
     if (processRoomContext === null) {
       throw new Error('room created before bindRoomContext() — boot order bug');
@@ -221,11 +241,23 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       // like every other rejected intent (see the pipeline's comment on why
       // telling a client WHY an intent failed leaks the unlock mask).
       if (session === null) return;
-      handleSculptIntent(
+      const outcome = handleSculptIntent(
         { world: session.world, interceptors: session.host },
         player,
         message,
       );
+      // THE ONLY REJECTION WORTH A LOG LINE. A plugin that rewrites an intent
+      // into something core has to refuse turns every affected player's
+      // sculpting into a no-op, and nothing else says so anywhere: the sender
+      // gets a bare nack that names no reason (pipeline.ts), and the operator
+      // watching a world where sculpting stopped working has nothing to grep
+      // for. The other three reasons are deliberately NOT logged — a plugin
+      // deny is ordinary play (mana refusing an unaffordable stroke), and
+      // 'malformed'/'locked' come from untrusted input, so logging them would
+      // hand any socket a log-flood lever.
+      if (!outcome.applied && outcome.reason === 'plugin-modified-invalid') {
+        this.notePluginRewriteFailure(outcome.detail);
+      }
     });
 
     // OPERATOR MESSAGES. Deliberately NOT routed through the intent pipeline:
@@ -483,6 +515,23 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // chunks, and the new client must already be sized to receive that.
     session.host.playerJoined(player);
     logInfo(`player "${player.name}" joined (${snapshot.chunks.length} chunks sent)`);
+  }
+
+  /**
+   * Reports a plugin's invalid `modify`, at most once per
+   * PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS.
+   *
+   * WARN, not ERROR: core handled it correctly (the intent was refused and the
+   * sender was told), and the thing that needs fixing is in a plugin.
+   */
+  private notePluginRewriteFailure(detail?: string): void {
+    const nowMs = Date.now();
+    if (nowMs - this.lastPluginRewriteLogMs < PLUGIN_REWRITE_FAILURE_LOG_INTERVAL_MS) return;
+    this.lastPluginRewriteLogMs = nowMs;
+    logWarn(
+      'a plugin rewrote a sculpt intent into one core had to refuse ' +
+        `(${detail ?? 'failed re-validation'}); those players cannot sculpt until it is fixed`,
+    );
   }
 
   override onLeave(client: TerraceClient): void {
