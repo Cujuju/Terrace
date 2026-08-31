@@ -2325,3 +2325,43 @@ describe('a soft drag bites its rim at the disc diagonals too (issue #152)', () 
     expect(heightAt(map, CX + BOUNDARY_DX, CY + BOUNDARY_DY)).toBe(0);
   });
 });
+
+describe('a pull carries the one level under it and no further', () => {
+  const SIZE = 64;
+  /** Cells per tread, wide enough that a step is a step and not a cliff. */
+  const TREAD_CELLS = 2;
+  const TOP_BAND = 3;
+  /** The first tread's west edge; everything west of it stands at TOP_BAND. */
+  const STAIR_X = 20;
+  const CY = 32;
+  const RADIUS = 2;
+
+  /** The staircase: TOP_BAND, then one band down every TREAD_CELLS cells. */
+  const bandAtX = (x: number): number =>
+    x < STAIR_X ? TOP_BAND : Math.max(0, TOP_BAND - (Math.floor((x - STAIR_X) / TREAD_CELLS) + 1));
+
+  it('pushes the step below the grabbed band, and leaves the one under that', () => {
+    const map = createHeightmap(SIZE);
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = bandAtX(x) * BAND_HEIGHT;
+    }
+
+    applySculpt(map, STAIR_X, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
+      tool: 'drag',
+      profile: 'hard',
+      targetBand: TOP_BAND,
+    });
+
+    // The pull itself: the grabbed band took the tread it was pulled across.
+    expect(bandOf(heightAt(map, STAIR_X, CY))).toBe(TOP_BAND);
+    // The step immediately below is CARRIED — it gives ground rather than
+    // being swallowed, which is the whole reason pushLowerLayers exists.
+    expect(bandOf(heightAt(map, STAIR_X + TREAD_CELLS, CY))).toBe(TOP_BAND - 1);
+    // And the chain stops there (owner, 2026-08-24): the level under THAT was
+    // crowded by the cascade, not by the player's own fill, so it does not
+    // move — one gesture, one level. A cascade that fed each level's push into
+    // the next one's entitlement is the ladder the lip can never catch up to.
+    expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS - 1, CY))).toBe(TOP_BAND - 2);
+    expect(bandOf(heightAt(map, STAIR_X + 2 * TREAD_CELLS, CY))).toBe(TOP_BAND - 3);
+  });
+});

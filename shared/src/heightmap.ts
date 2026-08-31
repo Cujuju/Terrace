@@ -1132,8 +1132,6 @@ function pushLowerLayers(
   record: (index: number) => void,
   changed: Set<number>,
 ): void {
-  let seeds = raisedAtBand;
-
   /**
    * Whether a TREAD OF BAND `band` stood within the tread tolerance of
    * (cx, cy) before this intent — ground whose own band is exactly `band`.
@@ -1161,88 +1159,93 @@ function pushLowerLayers(
     return false;
   };
 
-  for (let band = topBand - 1; band > MIN_BAND && seeds.length > 0; band--) {
-    const level = clampHeight(band * BAND_HEIGHT);
+  // ONE LEVEL, WRITTEN AS ONE LEVEL. This was a descending loop over bands
+  // whose body ended in an unconditional `return`, so it could never reach its
+  // own second iteration and the state that fed one — the reassignable `seeds`
+  // and the `raised` list the sweep filled — was write-only. Saying it once,
+  // straight, is what makes the decision below legible: there is no chain here
+  // to restore by editing a loop bound.
+  const band = topBand - 1;
+  if (band <= MIN_BAND || raisedAtBand.length === 0) return;
+  const level = clampHeight(band * BAND_HEIGHT);
 
-    // Everything within the tolerance of what the level above just took. A Set
-    // then a sort, because a cell near two seeds must be considered once and
-    // the order must not depend on which seed reached it first.
-    const candidates: number[] = [];
-    const seen = new Set<number>();
-    for (const seed of seeds) {
-      const sx = cellX(map.size, seed);
-      const sy = cellY(map.size, seed);
-      for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
-        for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
-          const x = sx + dx;
-          const y = sy + dy;
-          if (!inBounds(map, x, y)) continue;
-          const i = cellIndex(map, x, y);
-          if (seen.has(i)) continue;
-          seen.add(i);
-          // Solid at this band already — nothing here to push.
-          if (columnCoversBand(map, x, y, band)) continue;
-          // Clause 2: only a step that was already here may be pushed.
-          if (!treadWasNear(x, y, band)) continue;
-          candidates.push(i);
-        }
+  // Everything within the tolerance of what the level above just took. A Set
+  // then a sort, because a cell near two seeds must be considered once and
+  // the order must not depend on which seed reached it first.
+  const candidates: number[] = [];
+  const seen = new Set<number>();
+  for (const seed of raisedAtBand) {
+    const sx = cellX(map.size, seed);
+    const sy = cellY(map.size, seed);
+    for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
+      for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
+        const x = sx + dx;
+        const y = sy + dy;
+        if (!inBounds(map, x, y)) continue;
+        const i = cellIndex(map, x, y);
+        if (seen.has(i)) continue;
+        seen.add(i);
+        // Solid at this band already — nothing here to push.
+        if (columnCoversBand(map, x, y, band)) continue;
+        // Clause 2: only a step that was already here may be pushed.
+        if (!treadWasNear(x, y, band)) continue;
+        candidates.push(i);
       }
     }
-    if (candidates.length === 0) return;
-    candidates.sort((a, b) => a - b);
-
-    // The same wave discipline the pull itself uses: a candidate more than one
-    // cell from the band cannot take it until its inward neighbour has, so the
-    // set is swept until a pass changes nothing.
-    const raised: number[] = [];
-    let filledThisPass = true;
-    while (filledThisPass) {
-      filledThisPass = false;
-      for (const i of candidates) {
-        const x = cellX(map.size, i);
-        const y = cellY(map.size, i);
-        // Where the fill lands: null once this band is solid here.
-        //
-        // THE CASCADE CARRIES STEPS AND NEVER AUTHORS OVERHANGS (issue #224).
-        // A cell whose band lies in a gap under its own roof answers
-        // `overhang`, and it is skipped: this pass is here to keep an existing
-        // staircase from being swallowed, not to hang new slabs under roofs,
-        // and filling that gap from the floor is exactly the carve-sealing the
-        // rule above forbids.
-        const fill = bandFillAt(map, x, y, band);
-        if (fill === null || fill.kind !== 'extend') continue;
-        if (!canSpreadBandTo(map, x, y, band)) continue;
-        record(i);
-        applyBandFill(map, x, y, fill, level);
-        changed.add(i);
-        raised.push(i);
-        filledThisPass = true;
-      }
-    }
-
-    // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
-    // pulling up to those layers, it pushes them out until it slowly stops
-    // pushing them and slowly catches up").
-    //
-    // This used to be `seeds = raised`, which fed each level's push into the
-    // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
-    // different hat. There, the cascade judged entitlement on land the pull had
-    // just created; here it judged crowding on land THE CASCADE ITSELF had just
-    // created. Band j−4 was never crowded by the band the player grabbed; it was
-    // crowded by band j−3, which this loop moved a moment earlier. Measured on
-    // the owner's own world, one intent grabbing band 24: 33 cells filled at the
-    // grabbed band and 202 cells pushed across NINE bands beneath it — the
-    // cascade doing six times the work of the pull, which is what reads on
-    // screen as a ladder the lip can never catch up to.
-    //
-    // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
-    // stroke moves the grabbed band and at most the single level under it. To
-    // carry the next one down the player pulls again — the same walk the inward
-    // drag makes, and the same "one gesture, one level" the stamp has always
-    // had. The step is still carried rather than swallowed; it is simply
-    // carried one at a time instead of all the way to the sea.
-    return;
   }
+  if (candidates.length === 0) return;
+  candidates.sort((a, b) => a - b);
+
+  // The same wave discipline the pull itself uses: a candidate more than one
+  // cell from the band cannot take it until its inward neighbour has, so the
+  // set is swept until a pass changes nothing. What it fills is not collected:
+  // the only thing a list of it could seed is the next level down, and there
+  // is no next level down — see the note under the sweep.
+  let filledThisPass = true;
+  while (filledThisPass) {
+    filledThisPass = false;
+    for (const i of candidates) {
+      const x = cellX(map.size, i);
+      const y = cellY(map.size, i);
+      // Where the fill lands: null once this band is solid here.
+      //
+      // THE CASCADE CARRIES STEPS AND NEVER AUTHORS OVERHANGS (issue #224).
+      // A cell whose band lies in a gap under its own roof answers
+      // `overhang`, and it is skipped: this pass is here to keep an existing
+      // staircase from being swallowed, not to hang new slabs under roofs,
+      // and filling that gap from the floor is exactly the carve-sealing the
+      // rule above forbids.
+      const fill = bandFillAt(map, x, y, band);
+      if (fill === null || fill.kind !== 'extend') continue;
+      if (!canSpreadBandTo(map, x, y, band)) continue;
+      record(i);
+      applyBandFill(map, x, y, fill, level);
+      changed.add(i);
+      filledThisPass = true;
+    }
+  }
+
+  // ONE LEVEL, AND THE CHAIN STOPS HERE (owner, 2026-08-24: "instead of
+  // pulling up to those layers, it pushes them out until it slowly stops
+  // pushing them and slowly catches up").
+  //
+  // This used to be `seeds = raised`, which fed each level's push into the
+  // next one's entitlement — and that is the PYRAMID BUG OF 0b81845 wearing a
+  // different hat. There, the cascade judged entitlement on land the pull had
+  // just created; here it judged crowding on land THE CASCADE ITSELF had just
+  // created. Band j−4 was never crowded by the band the player grabbed; it was
+  // crowded by band j−3, which this loop moved a moment earlier. Measured on
+  // the owner's own world, one intent grabbing band 24: 33 cells filled at the
+  // grabbed band and 202 cells pushed across NINE bands beneath it — the
+  // cascade doing six times the work of the pull, which is what reads on
+  // screen as a ladder the lip can never catch up to.
+  //
+  // A level is now carried only where the PLAYER'S OWN FILL crowds it, so one
+  // stroke moves the grabbed band and at most the single level under it. To
+  // carry the next one down the player pulls again — the same walk the inward
+  // drag makes, and the same "one gesture, one level" the stamp has always
+  // had. The step is still carried rather than swallowed; it is simply
+  // carried one at a time instead of all the way to the sea.
 }
 
 /**
