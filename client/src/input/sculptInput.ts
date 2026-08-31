@@ -59,7 +59,7 @@ import {
   type ModifierState,
   type SculptAction,
 } from '../state/controlPrefs.ts';
-import { BAND_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
 import type { SculptIntent, SculptTool } from '@terrace/shared';
 
 
@@ -259,7 +259,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   let strokeArmed = false;
 
   /**
-   * The cursor cell the last drag intent named, so an unmoved cursor sends
+   * WHAT THE LAST DRAG INTENT SAID — the cursor cell it named and the two
+   * live HUD readings that shape it — so an intent that would repeat it sends
    * nothing.
    *
    * A RATE LIMIT, NOT A CHAIN — the distinction the per-cell build got wrong.
@@ -268,9 +269,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * carries everything the skipped one would have. It exists purely so a
    * hundred pointermove events inside one cell do not become a hundred
    * messages.
+   *
+   * THE WHOLE INTENT, NOT JUST THE CELL. Keyed on the cursor cell alone this
+   * dropped intents that were not duplicates at all: pressing Shift to pull a
+   * lip back IN without moving the mouse changes `dir` and nothing else, and
+   * was silently swallowed until the player jiggled the cursor into another
+   * cell. Everything else a pull's intent carries is fixed for the stroke —
+   * the tool, the grasped band — or absent, so cell, direction and radius are
+   * the whole of what can differ between two of them.
    */
   let lastDragToX = 0;
   let lastDragToY = 0;
+  let lastDragDir: 1 | -1 = 1;
+  let lastDragRadius = 0;
   let haveDragTo = false;
 
   /**
@@ -552,7 +563,14 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       radius: brushRadius(),
       dir: sculptDirection(action),
       tool: strokeTool,
-      profile: brushProfile(),
+      // NO EDGE FOR A TOOL THAT HAS NONE — the carve, here, for exactly the
+      // reason the pull names none in `emitDrag`: `sculptOptionsOf` resolves
+      // every TOOLS_WITHOUT_EDGE_PROFILE tool to EDGELESS_SCULPT_PROFILE, so a
+      // profile sent with one describes nothing that will happen. The stamp
+      // and the smooth do have an edge and send the live toggle.
+      ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(strokeTool)
+        ? {}
+        : { profile: brushProfile() }),
       ...(spanBand !== null ? { spanBand } : {}),
       seq: nextSeq++,
     });
@@ -573,7 +591,17 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
    * more (see lastDragTo).
    */
   const emitDrag = (toX: number, toY: number, action: SculptAction, band: number): void => {
-    if (haveDragTo && toX === lastDragToX && toY === lastDragToY) return;
+    const dir = sculptDirection(action);
+    const radius = brushRadius();
+    if (
+      haveDragTo &&
+      toX === lastDragToX &&
+      toY === lastDragToY &&
+      dir === lastDragDir &&
+      radius === lastDragRadius
+    ) {
+      return;
+    }
     const sent = send({
       type: 'sculpt',
       // THE CURSOR CELL, which for this tool is where the edit happens — the
@@ -584,13 +612,19 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
       // front (owner report, 2026-08-24).
       x: toX,
       y: toY,
-      radius: brushRadius(),
-      dir: sculptDirection(action),
+      radius,
+      dir,
       tool: 'drag',
-      // Read live, so switching the toggle mid-stroke reshapes the very next
-      // intent — soft advances the lip as a smooth face, hard fills every
-      // legal cell of the disc.
-      profile: brushProfile(),
+      // NO `profile`, because a pull has no edge to choose (issue #225). It
+      // used to send the Edge toggle live, on the reading that soft advanced
+      // the lip as a smooth face and hard filled every legal cell of the disc;
+      // `sculptOptionsOf` resolves every tool in TOOLS_WITHOUT_EDGE_PROFILE to
+      // EDGELESS_SCULPT_PROFILE, so what went out was overwritten on both
+      // sides of the prediction contract before it reached any arithmetic. A
+      // field whose value cannot change the stroke does not belong on the
+      // wire: leaving it out is what stops the next reader believing the
+      // toggle reshapes a pull. The HUD hides the Edge row for these tools for
+      // the same reason.
       targetBand: band,
       // NO `spanBand` HERE YET, and that is a decision rather than an
       // oversight. A pull's x/y is the CURSOR cell, not the cell whose lip is
@@ -615,6 +649,8 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (!sent) return;
     lastDragToX = toX;
     lastDragToY = toY;
+    lastDragDir = dir;
+    lastDragRadius = radius;
     haveDragTo = true;
   };
 

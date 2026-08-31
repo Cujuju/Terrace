@@ -298,8 +298,11 @@ export const DEFAULT_BRUSH_TOOL: SculptTool = WIRE_DEFAULT_SCULPT_OPTIONS.tool;
  * nothing else.
  *
  * SAFE TO DIVERGE FROM THE WIRE DEFAULT, unlike the tool above: the client sends
- * `profile` on every intent it emits (input/sculptInput.ts), so no player sculpt
- * ever falls back to the wire value. That invariant guarded a divergence which
+ * `profile` on every intent whose tool HAS an edge (input/sculptInput.ts), so no
+ * player sculpt ever falls back to the wire value. The edgeless tools — the pull
+ * and the carve — deliberately send none, and fall not to the wire default but
+ * to EDGELESS_SCULPT_PROFILE, which `sculptOptionsOf` gives them whatever the
+ * intent carried. That invariant guarded a divergence which
  * cannot occur on this field, and the default now has to answer a different
  * question — which edge makes the preview honest.
  */
