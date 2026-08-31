@@ -876,7 +876,18 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // A tap quicker than the grace delay ended before the stroke armed. It is
     // unambiguous now — no second finger arrived in its whole lifetime — so
     // it earns its single intent here; otherwise fast taps would do nothing.
-    if (graceTimer !== null) emitIntent();
+    //
+    // IT TAKES HOLD FIRST, exactly as `armStroke` would have. A touch press
+    // defers the grasp to arming (the ray is only worth firing once the finger
+    // has settled), so a tap that never armed had never grasped anything —
+    // and with the Pull tool `emitIntent` then refused it as "a Pull with
+    // nothing in its grasp", which is the one tool for which fast taps still
+    // did nothing. The grace timer is a touch-stroke timer and nothing else,
+    // so this branch is exactly the arming that did not happen.
+    if (graceTimer !== null) {
+      takeHold(currentStrokeAction());
+      emitIntent();
+    }
     stopRepeat();
   };
 
