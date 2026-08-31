@@ -1799,6 +1799,20 @@ function applyDragRegion(
  *                        flatter ground.
  *                  So a level-fill stroke displaces less and is priced the same.
  *
+ * THE DRAG IS THE ONE EXCLUSION THAT RUNS THE OTHER WAY, and it is a KNOWN
+ * OPEN PRICE rather than a decided one (2026-08-30). The five above all
+ * describe a stroke that moves LESS than the cone priced here; a pull moves
+ * MORE. It has no cone at all — `applyDragRegion` takes every admitted cell
+ * ALL THE WAY to the grabbed band, up to FULL_HEIGHT_SPAN each — so extending
+ * a band-60 terrace over a band-0 plain at radius 16 displaces on the order of
+ * 700,000 units for the price of a stamp's 749 x BAND_HEIGHT. That is the same
+ * free-tool asymmetry the carve branch above was added to close (plan D6/P3),
+ * and it is left open here because closing it needs a number nobody has
+ * chosen: the price may not read the terrain (see (a) below), so a pull's
+ * price can only ever be a fixed multiple of its footprint, and which multiple
+ * is a balance decision for the owner rather than an arithmetic one. Until
+ * then a held pull is the cheapest terrain in the game per unit moved.
+ *
  * This function is therefore about `applyBrush`'s arithmetic specifically, and
  * is pinned to it by test rather than to whatever applySculpt dispatches to.
  *
