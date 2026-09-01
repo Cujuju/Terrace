@@ -96,7 +96,20 @@ export class EntityBlaze {
   }
 
   isBurning(sourceName: string, id: number): boolean {
-    return this.burning.has(fireEntityKey(sourceName, id));
+    return this.isBurningKey(fireEntityKey(sourceName, id));
+  }
+
+  /**
+   * The same question asked with an ALREADY-BUILT `fireEntityKey`.
+   *
+   * It exists for ./spread.ts, which asks it once per (source, candidate) pair
+   * — hundreds of thousands of times in a bad step — and can build one key per
+   * candidate per step instead of one per pair. Anything holding a name and an
+   * id should call `isBurning` above; this is the same map lookup with the
+   * template string hoisted out of the caller's inner loop.
+   */
+  isBurningKey(key: string): boolean {
+    return this.burning.has(key);
   }
 
   /**
