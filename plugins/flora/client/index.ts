@@ -87,6 +87,7 @@ import { fringePlacementsFor } from './fringePlacement.ts';
 import { createGrassModels, type GrassModels } from './grassModels.ts';
 import { grassPlacementsFor } from './grassPlacement.ts';
 import { createFloraModels, type FloraModels } from './models.ts';
+import { cropOccupancy, treeOccupancy } from './occupancy.ts';
 import { placementsFor } from './placement.ts';
 import { createStumpModels, type StumpModels } from './stumpModels.ts';
 import { stumpPlacementsFor } from './stumpPlacement.ts';
@@ -431,13 +432,24 @@ export const clientPlugin: TerraceClientPlugin = {
     // canopy carries on to the ground several cells behind it, and the torch
     // lights bare dirt behind the wood the player was aiming at
     // (ClientPluginCtx.pickWorldCell).
-    unmarkPickable.push(ctx.markPickable(models.root));
+    // WITH AN OCCUPANCY LOOKUP, so the pick never raycasts the forest: three
+    // walks every live instance of an InstancedMesh, which at the cap is eight
+    // thousand per-instance tests for one pointer position (GH #252). The
+    // lookup answers the same question from the cells the plugin was handed.
+    unmarkPickable.push(
+      ctx.markPickable(models.root, treeOccupancy(trees, groundLookup(ctx))),
+    );
 
     cropModels = createCropModels();
     ctx.layer.add(cropModels.root);
     // Crops too: knee-high, so the parallax is small, but a field is exactly
     // the sort of thing a player sets light to on purpose.
-    unmarkPickable.push(ctx.markPickable(cropModels.root));
+    unmarkPickable.push(
+      ctx.markPickable(
+        cropModels.root,
+        cropOccupancy(crops, groundLookup(ctx), cropModels.plotReach),
+      ),
+    );
 
     grassModels = createGrassModels();
     ctx.layer.add(grassModels.root);
