@@ -136,6 +136,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   // carrying between frames and nothing to reconcile.
   models.beginFrame(animationSeconds);
 
+  // One sampler per frame, not per creature: it captures only `ctx`.
+  const sample = (cx: number, cy: number): number | null => ctx.terrainHeightAt(cx, cy);
+
   for (const [id, entity] of sampled) {
     const view = views.get(id);
     if (view === undefined) continue;
@@ -153,7 +156,6 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     //     instead of recomputing it from a band-quantised seabed each frame.
     const sizeClass = sizeClassAt(entity.size);
     const kind = placementKindOf(entity.species);
-    const sample = (cx: number, cy: number): number | null => ctx.terrainHeightAt(cx, cy);
     const swimProfile = SWIM_PROFILES[entity.species];
     const terrainY =
       kind === 'flyer'

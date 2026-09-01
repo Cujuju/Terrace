@@ -381,6 +381,16 @@ export function swimmerFrameY(
  * speed is roughly three seconds of warning — far more than the fraction of a
  * second SWIM_VERTICAL_WORLD_UNITS_PER_SECOND needs to lift it clear.
  */
+/**
+ * Where a swimmer's hull is sampled, as multipliers of its half-length (along
+ * the heading) and half-width (across it): centre, nose, tail, both flanks.
+ * Module-level so the per-frame call allocates nothing — an inline
+ * `[[0, 0], …] as const` is type-only and rebuilt on every call.
+ */
+const HULL_SAMPLE_ALONG: readonly number[] = [0, 1, -1, 0, 0];
+const HULL_SAMPLE_ACROSS: readonly number[] = [0, 0, 0, 1, -1];
+const HULL_SAMPLE_COUNT = HULL_SAMPLE_ALONG.length;
+
 export function swimmerSeabedY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
@@ -400,13 +410,9 @@ export function swimmerSeabedY(
   const rightY = forwardX;
 
   let seabed: number | null = null;
-  for (const [alongOffset, acrossOffset] of [
-    [0, 0],
-    [along, 0],
-    [-along, 0],
-    [0, across],
-    [0, -across],
-  ] as const) {
+  for (let i = 0; i < HULL_SAMPLE_COUNT; i++) {
+    const alongOffset = HULL_SAMPLE_ALONG[i]! * along;
+    const acrossOffset = HULL_SAMPLE_ACROSS[i]! * across;
     const sampled = sampleRenderedY(
       Math.floor(x + forwardX * alongOffset + rightX * acrossOffset),
       Math.floor(y + forwardY * alongOffset + rightY * acrossOffset),
@@ -504,21 +510,32 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS = cellsAcross(WALKER_FOOTPRINT_H
  * up a band the moment its leading edge reaches it — a step, which is how a
  * terraced world walks.
  */
+/**
+ * Where a walker's footprint is sampled, in cell offsets from its centre: the
+ * centre and the four corners. Module-level for the same reason as
+ * HULL_SAMPLE_ALONG — this runs once per walker per frame.
+ */
+const FOOTPRINT_SAMPLE_DX: readonly number[] = (() => {
+  const h = WALKER_FOOTPRINT_HALF_EXTENT_CELLS;
+  return [0, -h, -h, h, h];
+})();
+const FOOTPRINT_SAMPLE_DY: readonly number[] = (() => {
+  const h = WALKER_FOOTPRINT_HALF_EXTENT_CELLS;
+  return [0, -h, h, -h, h];
+})();
+const FOOTPRINT_SAMPLE_COUNT = FOOTPRINT_SAMPLE_DX.length;
+
 export function walkerGroundY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
 ): number | null {
-  const h = WALKER_FOOTPRINT_HALF_EXTENT_CELLS;
   let ground: number | null = null;
-  for (const [dx, dy] of [
-    [0, 0],
-    [-h, -h],
-    [-h, h],
-    [h, -h],
-    [h, h],
-  ]) {
-    const sampled = sampleRenderedY(Math.floor(x + dx), Math.floor(y + dy));
+  for (let i = 0; i < FOOTPRINT_SAMPLE_COUNT; i++) {
+    const sampled = sampleRenderedY(
+      Math.floor(x + FOOTPRINT_SAMPLE_DX[i]!),
+      Math.floor(y + FOOTPRINT_SAMPLE_DY[i]!),
+    );
     if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
   }
   return ground;
