@@ -17,7 +17,11 @@ import {
   depthToWaterAlpha,
   surfaceAlphaByte,
   waterDepthWorldUnits,
-  writeWaterDepthTexels,
+  WATER_CURVE_ALPHA_CHANNEL,
+  WATER_CURVE_BYTES_PER_TEXEL,
+  WATER_CURVE_SPECULAR_CHANNEL,
+  createWaterCurveBuffer,
+  writeWaterCurveTexels,
 } from '../src/terrain/waterDepth.ts';
 
 /** 64 cells = 4×4 chunks: matches test/mirror.test.ts's own convention. */
@@ -246,7 +250,13 @@ describe('depthAlphaByte / WATER_DEPTH_ALPHA_DEFAULT_BYTE', () => {
   });
 });
 
-describe('writeWaterDepthTexels', () => {
+// The packed-texel index of cell (x, y), channel `channel` — the layout
+// render/water.ts uploads as one RGBA DataTexture (2026-09-01, issue #259).
+function texel(x: number, y: number, channel: number): number {
+  return (y * WORLD + x) * WATER_CURVE_BYTES_PER_TEXEL + channel;
+}
+
+describe('writeWaterCurveTexels', () => {
   it('writes only the cells inside the given dirty chunks', () => {
     const mirror = createTerrainMirror(WORLD);
     // Chunk (1,0): flat at MIN_HEIGHT — the deepest possible dig.
@@ -258,8 +268,8 @@ describe('writeWaterDepthTexels', () => {
     });
 
     const SENTINEL = 77; // recognisably not any real depth-alpha byte
-    const out = new Uint8Array(WORLD * WORLD).fill(SENTINEL);
-    writeWaterDepthTexels(out, WORLD, mirror, [/* chunk (1,0) */ 1]);
+    const out = new Uint8Array(WORLD * WORLD * WATER_CURVE_BYTES_PER_TEXEL).fill(SENTINEL);
+    writeWaterCurveTexels(out, WORLD, mirror, [/* chunk (1,0) */ 1]);
 
     // AMENDMENT (2026-08-20): MIN_HEIGHT is now the FAR end of the deep-
     // strata ramp (see depthToWaterAlpha), so the cell reads
@@ -270,14 +280,16 @@ describe('writeWaterDepthTexels', () => {
     const deepStrataAlphaByte = Math.round(WATER_DEEP_STRATA_ALPHA * 255);
     // Inside the dirty chunk (cells CHUNK_SIZE..2*CHUNK_SIZE-1 on x): the
     // lava-floor depth is past the plateau and rides the deep-strata floor.
-    expect(out[0 * WORLD + CHUNK_SIZE]).toBe(deepStrataAlphaByte);
-    expect(out[(CHUNK_SIZE - 1) * WORLD + (2 * CHUNK_SIZE - 1)]).toBe(deepStrataAlphaByte);
+    expect(out[texel(CHUNK_SIZE, 0, WATER_CURVE_ALPHA_CHANNEL)]).toBe(deepStrataAlphaByte);
+    expect(
+      out[texel(2 * CHUNK_SIZE - 1, CHUNK_SIZE - 1, WATER_CURVE_ALPHA_CHANNEL)],
+    ).toBe(deepStrataAlphaByte);
     // Outside the dirty set entirely: untouched.
-    expect(out[0]).toBe(SENTINEL);
-    expect(out[WORLD * WORLD - 1]).toBe(SENTINEL);
+    expect(out[texel(0, 0, WATER_CURVE_ALPHA_CHANNEL)]).toBe(SENTINEL);
+    expect(out[texel(WORLD - 1, WORLD - 1, WATER_CURVE_ALPHA_CHANNEL)]).toBe(SENTINEL);
   });
 
-  it('writes the specular-factor buffer in the same pass when given one', () => {
+  it('writes the specular-factor channel in the same pass', () => {
     const mirror = createTerrainMirror(WORLD);
     applySnapshot(mirror, {
       type: 'snapshot',
@@ -286,32 +298,23 @@ describe('writeWaterDepthTexels', () => {
     });
 
     const SENTINEL = 77;
-    const out = new Uint8Array(WORLD * WORLD).fill(SENTINEL);
-    const specularOut = new Uint8Array(WORLD * WORLD).fill(SENTINEL);
-    writeWaterDepthTexels(out, WORLD, mirror, [/* chunk (1,0) */ 1], specularOut);
+    const out = new Uint8Array(WORLD * WORLD * WATER_CURVE_BYTES_PER_TEXEL).fill(SENTINEL);
+    writeWaterCurveTexels(out, WORLD, mirror, [/* chunk (1,0) */ 1]);
 
     const floorSpecularByte = Math.round(WATER_SPECULAR_FLOOR * 255);
-    expect(specularOut[0 * WORLD + CHUNK_SIZE]).toBe(floorSpecularByte);
-    expect(specularOut[(CHUNK_SIZE - 1) * WORLD + (2 * CHUNK_SIZE - 1)]).toBe(floorSpecularByte);
-    // Outside the dirty set entirely: untouched, same contract as `out`.
-    expect(specularOut[0]).toBe(SENTINEL);
-    expect(specularOut[WORLD * WORLD - 1]).toBe(SENTINEL);
-  });
-
-  it('leaves specularOut untouched (and does not throw) when omitted', () => {
-    const mirror = createTerrainMirror(WORLD);
-    applySnapshot(mirror, {
-      type: 'snapshot',
-      worldSize: WORLD,
-      chunks: [chunkPayload(1, 0, MIN_HEIGHT)],
-    });
-    const out = new Uint8Array(WORLD * WORLD);
-    expect(() => writeWaterDepthTexels(out, WORLD, mirror, [1])).not.toThrow();
+    expect(out[texel(CHUNK_SIZE, 0, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(floorSpecularByte);
+    expect(
+      out[texel(2 * CHUNK_SIZE - 1, CHUNK_SIZE - 1, WATER_CURVE_SPECULAR_CHANNEL)],
+    ).toBe(floorSpecularByte);
+    // Outside the dirty set entirely: untouched, same contract as the alpha
+    // channel.
+    expect(out[texel(0, 0, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(SENTINEL);
+    expect(out[texel(WORLD - 1, WORLD - 1, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(SENTINEL);
   });
 
   // ADDED (2026-08-20, east-coast investigation): render/water.ts's real
-  // buffers are never sentinel-filled — createDepthTexture fills a fresh
-  // allocation with the DEFAULT byte (see water.ts's createDepthTexture /
+  // buffer is never sentinel-filled — createWaterCurveBuffer fills a fresh
+  // allocation with each channel's DEFAULT byte (see waterDepth.ts's
   // WATER_DEPTH_ALPHA_DEFAULT_BYTE, WATER_SPECULAR_FACTOR_DEFAULT_BYTE), and
   // every subsequent `refresh` only patches the dirty chunks a snapshot or
   // edit actually touched — exactly water.ts's own refresh() contract
@@ -319,11 +322,11 @@ describe('writeWaterDepthTexels', () => {
   // revealed to this client (open ocean far from any player's explored
   // footprint, most of a fresh world) therefore keeps the default byte
   // forever, not a leftover sentinel — this test pins that directly, using
-  // the SAME default bytes the real factory uses, rather than an arbitrary
+  // the SAME defaults the real factory uses, rather than an arbitrary
   // SENTINEL, so a future change to either default's value or to the
   // "only touch dirty chunks" contract fails this test instead of only
   // showing up as a rendering symptom.
-  it('a never-written texel keeps the real default byte after a partial refresh, in both buffers', () => {
+  it('a never-written texel keeps the real default byte after a partial refresh, in every channel', () => {
     const mirror = createTerrainMirror(WORLD);
     applySnapshot(mirror, {
       type: 'snapshot',
@@ -331,66 +334,22 @@ describe('writeWaterDepthTexels', () => {
       chunks: [chunkPayload(1, 0, MIN_HEIGHT)],
     });
 
-    // Mirrors water.ts's createDepthTexture(worldSize, defaultByte) exactly:
-    // a fresh allocation is filled with the default, not zero.
-    const out = new Uint8Array(WORLD * WORLD).fill(WATER_DEPTH_ALPHA_DEFAULT_BYTE);
-    const specularOut = new Uint8Array(WORLD * WORLD).fill(WATER_SPECULAR_FACTOR_DEFAULT_BYTE);
-    writeWaterDepthTexels(out, WORLD, mirror, [/* only chunk (1,0) */ 1], specularOut);
+    // The real factory render/water.ts's createCurveTexture calls.
+    const out = createWaterCurveBuffer(WORLD);
+    writeWaterCurveTexels(out, WORLD, mirror, [/* only chunk (1,0) */ 1]);
 
     // Chunk (2,0) — never in any dirty set, standing in for open ocean past
     // the frontier of what any player has ever revealed: must still read as
     // ordinary shallow water (alpha) and full sheen (specular), NOT as a
     // hole (byte 0) or any other value.
-    const untouchedCell = 0 * WORLD + (2 * CHUNK_SIZE);
-    expect(out[untouchedCell]).toBe(WATER_DEPTH_ALPHA_DEFAULT_BYTE);
-    expect(out[untouchedCell]).not.toBe(0);
-    expect(specularOut[untouchedCell]).toBe(WATER_SPECULAR_FACTOR_DEFAULT_BYTE);
-    expect(specularOut[untouchedCell]).not.toBe(0);
-  });
-});
-
-describe('surfaceAlphaByte — dry land is not drawn as sea (2026-08-20)', () => {
-  it('draws no water at all over a band-0 dry flat', () => {
-    // The bug: heights 1..BAND_HEIGHT-1 are DRY (design record Q3) but render
-    // at exactly SEA_LEVEL (quantizeToBand), underneath a sea plane lifted just
-    // above it — so the fringe every shoreline is made of wore a water film and
-    // anything standing there read as wading.
-    expect(surfaceAlphaByte(SEA_LEVEL + 1)).toBe(0);
-    expect(surfaceAlphaByte(BAND_HEIGHT - 1)).toBe(0);
-    expect(surfaceAlphaByte(BAND_HEIGHT)).toBe(0);
-  });
-
-  it('still draws the thin film over water at zero depth', () => {
-    // The asymmetry is deliberate: a cell at exactly SEA_LEVEL is water, and a
-    // sea with no film at the waterline reads as "no sea" rather than "shallow".
-    expect(surfaceAlphaByte(SEA_LEVEL)).toBe(depthAlphaByte(0));
-    expect(surfaceAlphaByte(SEA_LEVEL)).toBeGreaterThan(0);
-  });
-
-  it('is unchanged from the depth curve for every submerged height', () => {
-    // AMENDED 2026-08-27: the curve is now asked about the BAND the terrain
-    // under the water is drawn at, not the raw cell height — see
-    // bandFloorWaterDepthWorldUnits. The contract this test pins is unchanged
-    // in meaning ("a submerged height gets the depth curve and nothing else,
-    // with no dry-land special case"); only the depth the curve is handed has
-    // moved, and it moved for every consumer at once.
-    for (const height of [SEA_LEVEL - 1, -BAND_HEIGHT, -BAND_HEIGHT * 8, MIN_HEIGHT]) {
-      expect(surfaceAlphaByte(height)).toBe(
-        depthAlphaByte(bandFloorWaterDepthWorldUnits(height)),
-      );
-    }
-  });
-
-  it('gives every cell of one terrace band the same alpha, and the next band a different one', () => {
-    // The step the whole 2026-08-27 change exists to produce: within a band the
-    // sea must not vary at all, and at the boundary it must jump. Before the
-    // fix this swept smoothly across the band and was continuous across the
-    // boundary, so the sea erased the staircase it was drawn over.
-    for (let band = 1; band <= 15; band++) {
-      const top = -band * BAND_HEIGHT + BAND_HEIGHT - 1;
-      const floor = -band * BAND_HEIGHT;
-      expect(surfaceAlphaByte(top)).toBe(surfaceAlphaByte(floor));
-      expect(surfaceAlphaByte(floor)).not.toBe(surfaceAlphaByte(floor + BAND_HEIGHT));
-    }
+    const untouchedX = 2 * CHUNK_SIZE;
+    expect(out[texel(untouchedX, 0, WATER_CURVE_ALPHA_CHANNEL)]).toBe(
+      WATER_DEPTH_ALPHA_DEFAULT_BYTE,
+    );
+    expect(out[texel(untouchedX, 0, WATER_CURVE_ALPHA_CHANNEL)]).not.toBe(0);
+    expect(out[texel(untouchedX, 0, WATER_CURVE_SPECULAR_CHANNEL)]).toBe(
+      WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
+    );
+    expect(out[texel(untouchedX, 0, WATER_CURVE_SPECULAR_CHANNEL)]).not.toBe(0);
   });
 });

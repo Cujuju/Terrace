@@ -299,7 +299,7 @@ export function depthToWaterAlpha(depthWorldUnits: number): number {
  * shallow water, falling to a floor by the SAME sea-column-floor depth the
  * alpha ramp plateaus at, then HOLDING at that floor for every depth beyond
  * (never rising back up, unlike alpha). It is written by the same
- * writeWaterDepthTexels pass below, from the same per-cell depth value, into
+ * writeWaterCurveTexels pass below, from the same per-cell depth value, into
  * a texel next to the alpha one — "the same depth texel" in the sense that
  * matters (one depth fact, one write pass, one fragment-shader lookup site
  * in water.ts), just not literally the same byte, because a byte that must
@@ -649,9 +649,61 @@ export function depthSpecularFactorByte(depthWorldUnits: number): number {
 export const WATER_SPECULAR_FACTOR_DEFAULT_BYTE = depthSpecularFactorByte(0);
 
 /**
- * Writes surface-alpha texels for every cell inside `dirtyChunks` into `out` —
- * a worldSize×worldSize, row-major byte buffer, the exact layout
- * render/water.ts uploads as a DataTexture. Cells outside those chunks are
+ * Bytes per cell in the packed water-curve buffer, and which channel each
+ * curve lives in.
+ *
+ * ONE RGBA TEXEL PER CELL, NOT THREE SINGLE-CHANNEL ONES (2026-09-01, issue
+ * #259). The three curves above used to be three RedFormat byte buffers, one
+ * DataTexture each. They are written by the same loop from the same height
+ * sample and consumed by the same fragment, so the split bought nothing —
+ * and it cost everything: three's `updateTexture` hard-codes
+ * `componentStride = 4` with the comment "only RGBA supported"
+ * (three 0.185.1, three.cjs:71782), so `addUpdateRange` addresses the wrong
+ * texels on a single-channel texture and every refresh had to fall back to a
+ * whole-image upload of all three textures. Packed as RGBA the stride is
+ * exactly right, ranged uploads become legal, and render/water.ts uploads
+ * only the rows a sculpt actually touched. The fourth channel is spare.
+ */
+export const WATER_CURVE_BYTES_PER_TEXEL = 4;
+/** Channel holding surfaceAlphaByte — read as `.r` in the water shader. */
+export const WATER_CURVE_ALPHA_CHANNEL = 0;
+/** Channel holding depthSpecularFactorByte — read as `.g`. */
+export const WATER_CURVE_SPECULAR_CHANNEL = 1;
+/** Channel holding depthShadeMixByte — read as `.b`. */
+export const WATER_CURVE_SHADE_CHANNEL = 2;
+/**
+ * The unused fourth channel. Held at fully opaque rather than 0 so the
+ * texture never presents itself to a driver as transparent data (nothing
+ * samples `.a`, and DataTexture does not premultiply, but a zero alpha
+ * channel is the kind of thing a future format or filter change reads as
+ * meaningful).
+ */
+export const WATER_CURVE_SPARE_CHANNEL = 3;
+const WATER_CURVE_SPARE_BYTE = WATER_DEPTH_ALPHA_BYTE_MAX;
+
+/**
+ * Allocates the packed curve buffer for a world, pre-filled with each
+ * channel's default byte — the value a texel keeps for as long as its chunk
+ * has never been revealed to this client. See each
+ * `WATER_*_DEFAULT_BYTE` for why that default is the shallow end.
+ */
+export function createWaterCurveBuffer(worldSize: number): Uint8Array {
+  const buffer = new Uint8Array(worldSize * worldSize * WATER_CURVE_BYTES_PER_TEXEL);
+  for (let texel = 0; texel < worldSize * worldSize; texel++) {
+    const base = texel * WATER_CURVE_BYTES_PER_TEXEL;
+    buffer[base + WATER_CURVE_ALPHA_CHANNEL] = WATER_DEPTH_ALPHA_DEFAULT_BYTE;
+    buffer[base + WATER_CURVE_SPECULAR_CHANNEL] = WATER_SPECULAR_FACTOR_DEFAULT_BYTE;
+    buffer[base + WATER_CURVE_SHADE_CHANNEL] = WATER_SHADE_MIX_DEFAULT_BYTE;
+    buffer[base + WATER_CURVE_SPARE_CHANNEL] = WATER_CURVE_SPARE_BYTE;
+  }
+  return buffer;
+}
+
+/**
+ * Writes all three depth-derived curves for every cell inside `dirtyChunks`
+ * into `out` — a worldSize×worldSize, row-major RGBA byte buffer (see
+ * WATER_CURVE_BYTES_PER_TEXEL), the exact layout render/water.ts uploads as a
+ * DataTexture. Cells outside those chunks are
  * left untouched, matching the patch-in-place contract every other terrain
  * consumer of a dirty-chunk set follows (render/terrainMeshes.ts,
  * render/frontierFog.ts): a stroke that dirties a handful of chunks costs a
@@ -674,22 +726,21 @@ export const WATER_SPECULAR_FACTOR_DEFAULT_BYTE = depthSpecularFactorByte(0);
  * not a whole number of chunks, so every (x, y) below is in bounds and needs
  * none of `sampleHeight`'s border clamping.
  *
- * AMENDMENT (2026-08-20, specular suppression): `specularOut`, an optional
- * second row-major byte buffer of the exact same layout, receives
- * depthSpecularFactorByte for the same cell in the same pass — one height
- * sample and one loop serve both curves, rather than a second world/chunk
- * scan. Optional (not every caller needs it — kept so a future consumer of
- * just the alpha buffer, or a test pinning only that half, is not forced to
- * allocate a buffer it never reads) and defaults to leaving specular texels
- * untouched when omitted.
+ * AMENDMENT (2026-08-20, specular suppression): the specular factor is
+ * written for the same cell in the same pass — one height sample and one loop
+ * serve every curve, rather than a second world/chunk scan.
+ *
+ * AMENDMENT (2026-09-01, issue #259): the three separate output buffers (and
+ * the optionality of the second and third) are gone — every curve now lands
+ * in its own channel of the single packed texel described by
+ * WATER_CURVE_BYTES_PER_TEXEL. The per-cell math below is byte-for-byte the
+ * same; only where each byte is stored changed.
  */
-export function writeWaterDepthTexels(
+export function writeWaterCurveTexels(
   out: Uint8Array,
   worldSize: number,
   mirror: TerrainMirror,
   dirtyChunks: Iterable<number>,
-  specularOut?: Uint8Array,
-  shadeOut?: Uint8Array,
 ): void {
   const chunkCols = chunksPerEdge(worldSize);
   for (const chunkIdx of dirtyChunks) {
@@ -704,14 +755,15 @@ export function writeWaterDepthTexels(
         // The band's depth, not the raw cell's — see
         // bandFloorWaterDepthWorldUnits for why every curve wants the band.
         const depth = bandFloorWaterDepthWorldUnits(height);
+        const base = (row + x) * WATER_CURVE_BYTES_PER_TEXEL;
         // Height, not depth, for the alpha: only the height distinguishes dry
         // band-0 land (no sea drawn over it) from water at zero depth (a thin
         // film). See surfaceAlphaByte / WATER_DRY_LAND_ALPHA.
-        out[row + x] = surfaceAlphaByte(height);
-        if (specularOut) specularOut[row + x] = depthSpecularFactorByte(depth);
+        out[base + WATER_CURVE_ALPHA_CHANNEL] = surfaceAlphaByte(height);
+        out[base + WATER_CURVE_SPECULAR_CHANNEL] = depthSpecularFactorByte(depth);
         // Third curve, same single height sample and same single loop — see
-        // depthToShadeMix. Optional for the same reason specularOut is.
-        if (shadeOut) shadeOut[row + x] = depthShadeMixByte(depth);
+        // depthToShadeMix.
+        out[base + WATER_CURVE_SHADE_CHANNEL] = depthShadeMixByte(depth);
       }
     }
   }

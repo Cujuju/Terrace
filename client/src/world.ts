@@ -413,8 +413,9 @@ export function createWorld(viewport: Viewport): World {
     // AN EMPTY SET IS NOT A CHEAP CALL, so nothing below is asked to make it.
     // Every mirror consumer here is written to iterate the set, which reads as
     // "nothing dirty costs nothing" — and is false for `water.refresh`, which
-    // re-uploads three world-sized textures per call whatever the set holds
-    // (render/water.ts). Once the prediction journal stops reporting chunks
+    // re-uploads its whole world-sized texture per call whatever the set holds
+    // (render/water.ts: an empty dirty set names no upload ranges, and a
+    // range-less `needsUpdate` is three's full-image path). Once the prediction journal stops reporting chunks
     // whose rendered state did not change, the authoritative echo of a
     // correctly predicted sculpt arrives with an empty set several times a
     // second, and this guard is what makes that echo free.
