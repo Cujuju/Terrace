@@ -13,6 +13,14 @@
 import type { SculptIntent } from '@terrace/shared';
 import type { Group, Object3D } from 'three';
 import type { Component } from 'solid-js';
+import type { CellOccupancy } from '../terrain/occupancy.ts';
+
+/**
+ * RE-EXPORTED so a plugin declaring an occupancy lookup imports one module —
+ * this contract — rather than reaching into the client's terrain internals for
+ * half its types (GH #252).
+ */
+export type { CellColumn, CellOccupancy, CellRayChord } from '../terrain/occupancy.ts';
 
 /**
  * The declarative sky/lighting state a plugin may drive core's rig with — see
@@ -272,8 +280,19 @@ export interface ClientPluginCtx {
    * HIT rather than from which instance it was, so the host needs no
    * instance-to-cell mapping — and a plugin whose group also holds something
    * unaimable should register the aimable child instead of the group.
+   *
+   * `occupancy` REPLACES THE RAYCAST FOR THIS SUBTREE, and any population big
+   * enough to be worth drawing with an InstancedMesh should supply one (GH
+   * #252). A raycast descent tests every live instance — a mature forest is
+   * eight thousand of them, measured at 0.72–0.85 ms per pick, paid IN FULL
+   * even when the ray hits nothing, because a world-spanning population's
+   * bounding sphere accepts every ray. With a lookup the host instead marches
+   * the cells the ray crosses (tens of them) and asks this what stands on
+   * each. The plugin already knows: it placed them by cell.
+   *
+   * The lookup answers with the SILHOUETTE over that cell — see CellOccupancy.
    */
-  markPickable(object: Object3D): () => void;
+  markPickable(object: Object3D, occupancy?: CellOccupancy): () => void;
 
   /**
    * The cell the player is POINTING AT — which is not the same question as
@@ -290,13 +309,16 @@ export interface ClientPluginCtx {
    * hit wins) and falls back to the terrain when the ray hits none of them.
    * Null when it hits nothing at all.
    *
-   * COSTS THE WHOLE DECLARED WORLD PER CALL, and a caller has to budget for it:
-   * every subtree any plugin has marked pickable is descended, and an
-   * InstancedMesh is tested per instance — a mature forest is over twenty
-   * thousand per-instance tests, measured at 2.28 ms, which is a seventh of a
-   * 60 fps frame. Fine for a click. NOT fine once per pointer event: a tool
-   * that follows the cursor must remember the last coordinates and pick ONCE
-   * PER FRAME (plugins/fire/client/index.ts's torch does exactly this).
+   * COSTS ONE CELL MARCH PLUS WHATEVER IS STILL RAYCAST (GH #252). Populations
+   * that supplied an occupancy lookup to `markPickable` cost a handful of
+   * lookups per cell the ray crosses; populations that did not are still
+   * descended in full, per instance. It used to be the second kind only, at
+   * 0.72–0.85 ms per call with a mature forest declared — a tenth of the
+   * frame budget, paid even when the ray hit nothing.
+   *
+   * Still not free, and a tool that follows the cursor should remember the last
+   * coordinates and pick ONCE PER FRAME rather than once per pointer event
+   * (plugins/fire/client/index.ts's torch does exactly this).
    */
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
 

@@ -15,7 +15,7 @@ import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
 import { applySkyRig, type SkyRigState } from '../render/skyRig.ts';
 import { setFrameDraw } from '../state/hudState.ts';
-import { pointerToNdc, worldPointToCell } from '../terrain/picking.ts';
+import { pointerToNdc, worldPointToCell, type CellOccupancy } from '../terrain/picking.ts';
 import type { World } from '../world.ts';
 import {
   addPluginHudPanel,
@@ -331,12 +331,29 @@ export function createClientPluginHost(
   };
 
   /**
-   * Everything any plugin has declared aimable (ClientPluginCtx.markPickable).
+   * Everything any plugin has declared aimable WITHOUT a cell-space occupancy
+   * lookup (ClientPluginCtx.markPickable) — the subtrees that still have to be
+   * answered by a Three.js raycast.
+   *
    * An ARRAY because that is what Raycaster.intersectObjects takes, and the
    * membership churn is a handful of registrations at attach time rather than
    * anything per-frame.
    */
   const pickableObjects: Object3D[] = [];
+
+  /**
+   * The occupancy lookups instead, one per registrant that supplied one — the
+   * populations that are asked "what stands on this cell?" during the pick's
+   * own cell march rather than raycast per instance (GH #252).
+   *
+   * A registrant is in EXACTLY ONE of these two lists: a lookup replaces the
+   * raycast for that subtree rather than supplementing it, or a forest would be
+   * both marched and walked and the expensive half would still be paid.
+   */
+  const pickableOccupancy: CellOccupancy[] = [];
+
+  /** "Ask nobody what stands here" — the ground-only march, allocated once. */
+  const NO_OCCUPANTS: readonly CellOccupancy[] = [];
 
   /**
    * Scratch for the object pick, allocated once.
@@ -353,10 +370,15 @@ export function createClientPluginHost(
    * pointer, and the terrain only when there is none.
    *
    * See ClientPluginCtx.pickWorldCell for WHY this is a different question
-   * from pickTerrainCell. The conversion from the hit point is
-   * `worldPointToCell` — the terrain picker's own function, so an object hit
-   * and a ground hit can never disagree about which cell a world position is
-   * in.
+   * from pickTerrainCell.
+   *
+   * TWO MECHANISMS, ONE ANSWER (GH #252). A registrant that supplied an
+   * occupancy lookup is resolved by the SAME height-field cell march the
+   * terrain pick uses — so its hit and the ground's hit are the same walk, in
+   * the same order, and cannot disagree about which cell a world position is
+   * in. A registrant that supplied none is still raycast, and its hit point
+   * goes through `worldPointToCell` — the terrain picker's own function, for
+   * that same reason.
    */
   const pickWorldCell = (
     clientX: number,
@@ -365,35 +387,51 @@ export function createClientPluginHost(
     const size = world.worldSize();
     if (size <= 0) return null;
 
-    if (pickableObjects.length > 0) {
-      const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
-      // OFF THE CANVAS IS NOT A MISS TO BE COMPUTED. `pointerToNdc` only fails
-      // on a zero-sized viewport, so a pointer over the toolbar or off the
-      // window still produces coordinates — and the declared subtrees span the
-      // whole world, so their bounding spheres accept the ray and the descent
-      // runs in full to answer a question about a pixel that is not in the
-      // scene. Costed at 2.28 ms with a mature forest declared.
-      if (device !== null && device.x >= -1 && device.x <= 1 && device.y >= -1 && device.y <= 1) {
-        // The scratch is module-scoped and reused: this runs on pointer events,
-        // which arrive far faster than frames.
-        pickRaycaster.setFromCamera(pickNdc.set(device.x, device.y), viewport.camera);
-        const raycaster = pickRaycaster;
-        // RECURSIVE, because what a plugin holds is a Group: flora's whole
-        // forest is one node over three InstancedMeshes. A registration
-        // therefore declares a SUBTREE aimable, and keeping unaimable things
-        // out of it is the registrant's business — which is the right place
-        // for it, since the registrant is the only one who knows.
-        const hits: Intersection[] = raycaster.intersectObjects(pickableObjects, true);
-        // Sorted nearest-first by Raycaster, so the first hit is the object the
-        // player can actually see at that pixel.
-        for (const hit of hits) {
-          const cell = worldPointToCell(hit.point.x, hit.point.z, size);
-          if (cell !== null) return { x: cell.x, y: cell.y };
-        }
+    const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+    if (device === null) return null;
+    // The scratch is module-scoped and reused: this runs on pointer events,
+    // which arrive far faster than frames.
+    pickRaycaster.setFromCamera(pickNdc.set(device.x, device.y), viewport.camera);
+    const ray = pickRaycaster.ray;
+
+    // OFF THE CANVAS IS NOT A QUESTION ABOUT THE WORLD'S CONTENTS.
+    // `pointerToNdc` only fails on a zero-sized viewport, so a pointer over the
+    // toolbar or off the window still produces coordinates — and the answer for
+    // a pixel that is not in the scene is whatever ground the ray happens to
+    // cross, never a tree or a boat that is not drawn there.
+    const onCanvas = device.x >= -1 && device.x <= 1 && device.y >= -1 && device.y <= 1;
+
+    // ONE CELL MARCH FOR THE GROUND AND EVERYTHING STANDING ON IT (GH #252).
+    // This is the whole pick for any population that declared an occupancy
+    // lookup, and it also gives the distance that caps the raycast below.
+    const pointed = world.pickPointedCell(
+      ray.origin,
+      ray.direction,
+      onCanvas ? pickableOccupancy : NO_OCCUPANTS,
+    );
+
+    if (onCanvas && pickableObjects.length > 0) {
+      // NOTHING BEHIND THE GROUND IS BEING POINTED AT. Without this the
+      // raycast returns hits at any depth and the nearest one wins even when
+      // the terrain is in front of it. `far` is left at Infinity for a ray that
+      // meets no ground at all, which is the only case where an object beyond
+      // the terrain is still the right answer.
+      pickRaycaster.far = pointed === null ? Infinity : pointed.distance;
+      // RECURSIVE, because what a plugin holds is a Group. A registration
+      // declares a SUBTREE aimable, and keeping unaimable things out of it is
+      // the registrant's business — which is the right place for it, since the
+      // registrant is the only one who knows.
+      const hits: Intersection[] = pickRaycaster.intersectObjects(pickableObjects, true);
+      // Sorted nearest-first by Raycaster, so the first hit is the object the
+      // player can actually see at that pixel — and `far` has already thrown
+      // away everything the ground or a canopy hides.
+      for (const hit of hits) {
+        const cell = worldPointToCell(hit.point.x, hit.point.z, size);
+        if (cell !== null) return { x: cell.x, y: cell.y };
       }
     }
 
-    return pickTerrainCell(clientX, clientY);
+    return pointed === null ? null : { x: pointed.x, y: pointed.y };
   };
 
   /**
@@ -542,7 +580,17 @@ export function createClientPluginHost(
           if (moverLookups.get(plugin.name) === lookup) moverLookups.delete(plugin.name);
         });
       },
-      markPickable(object: Object3D): () => void {
+      markPickable(object: Object3D, occupancy?: CellOccupancy): () => void {
+        // THE LOOKUP REPLACES THE RAYCAST for this subtree — see
+        // pickableOccupancy. The object itself is still what the registrant
+        // holds and unregisters by, it is simply never descended.
+        if (occupancy !== undefined) {
+          pickableOccupancy.push(occupancy);
+          return track(() => {
+            const index = pickableOccupancy.indexOf(occupancy);
+            if (index !== -1) pickableOccupancy.splice(index, 1);
+          });
+        }
         if (!pickableObjects.includes(object)) pickableObjects.push(object);
         return track(() => {
           const index = pickableObjects.indexOf(object);
