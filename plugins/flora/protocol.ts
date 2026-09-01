@@ -1284,10 +1284,13 @@ export function grassFlowerOf(x: number, y: number): GrassFlower | null {
 //             join / keepalive / unlock paths.
 //   geometry  FOUR InstancedMeshes (two species × base and tip tone), so four
 //             draw calls whatever the count. Instances are allocated per
-//             species at the cap × that species' blade count, which is a hard
-//             guarantee rather than a shared pool: 8192 × 3 reed blades and
-//             8192 × 6 heather sprigs ≈ 74k matrices ≈ 9 MB of GPU buffer, a
-//             third of what the meadow already allocates.
+//             species at the cap × that species' stem count, which is a hard
+//             guarantee rather than a shared pool: 8192 × 3 reed stems and
+//             8192 × 7 heather sprigs is 82k plants' worth of stems, and BOTH
+//             TONES carry the full set — 164k matrices ≈ 10.5 MB of GPU
+//             buffer, a third of what the meadow already allocates.
+//             (Corrected 2026-09-01: this read "6 sprigs ≈ 74k ≈ 9 MB", which
+//             undercounted FRINGE_HEATHER_STEM_COUNT and counted one tone.)
 //
 // WHAT IS DELIBERATELY NOT HERE: the fringe is not fuel. Grass, crops and trees
 // register with fire (server/fire-bridge.ts); reeds and heather do not, so a
@@ -1350,7 +1353,7 @@ export const FRINGE_HEATHER_SHARE_OF_256 = Math.round(256 / FRINGE_HEATHER_CELLS
  * A GEOMETRY number first, exactly as FLORA_GRASS_CAP is, and a quarter of that
  * one: the fringe's eligible ground is two narrow height windows where the
  * meadow's is the whole green ramp, and its instance buffers are allocated per
- * species at the cap (see the section header's 9 MB).
+ * species at the cap (see the section header's 10.5 MB).
  *
  * MEASURED, not assumed — surveying the shipped world `frostwick-hollows` (512²,
  * all 262 144 cells) against the real predicates gives:
