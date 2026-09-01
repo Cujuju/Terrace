@@ -54,18 +54,44 @@
 // skirts (isBorderSegment), for the same reason: there is no riser there. Left
 // in, the overlay would draw a chunk grid over the world and read as noise.
 //
-// COST. One geometry rebuild per chunk BUILT, over the levels that chunk
-// published — no marching, no smoothing, no sampling. It is a diagnostic, not
-// a shipped feature: unlike terrainMeshes it rebuilds whole geometries rather
-// than patching buffers, and it is not budgeted across frames.
+// COST. One arena write per chunk BUILT, over the levels that chunk published
+// — no marching, no smoothing, no sampling. It is not budgeted across frames.
+//
+// IT DRAWS SUPER-MESHES, NOT CHUNKS (issue #246, 2026-09-01). It used to add
+// one LineSegments per chunk, which made the CHUNK the drawing unit for the
+// third time in this renderer and cost the same way it did in terrainMeshes:
+// a fully revealed 2048-cell world is 128 x 128 = 16 384 chunks, and three
+// walks every scene object with `updateMatrixWorld` and a frustum-sphere test
+// BEFORE culling can discard any of it — measured at 0.187 us per object,
+// 3.07 ms of a 7.1 ms frame. The overlay now packs SUPER_MESH_SPAN_CHUNKS^2
+// chunks into one buffer per tile (the same span terrain and the frontier fog
+// merge on, imported from render/terrainMeshes.ts so the three rigs cull at
+// one granularity), which is 256 objects on that world instead of 16 384.
+//
+// PACKED, WITH NO HOLES. Terrain's arena keeps a free list because a chunk
+// there is thousands of vertices and moving the tail is a real memmove; a
+// chunk's LIPS are two orders smaller, so a run that changes size just shifts
+// the runs after it (`copyWithin`, at most 63 offsets to fix up) and the tile
+// stays a dense prefix. That is what lets the draw range be `[0, liveEnd)`
+// with nothing dead inside it — no zeroed padding to keep out of the picture,
+// and no compactor to schedule.
 
-import { BufferAttribute, BufferGeometry, LineBasicMaterial, LineSegments } from 'three';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  DynamicDrawUsage,
+  LineBasicMaterial,
+  LineSegments,
+  Sphere,
+  Vector3,
+} from 'three';
 import type { Object3D } from 'three';
 import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
+import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
 
 /**
  * Edge colour. Cyan because nothing else in the scene is: terrain is green and
@@ -82,6 +108,64 @@ const FLOATS_PER_SEGMENT = 6;
 
 /** Two endpoints per segment, (x, z) each — the hover query's flat layout. */
 const FLOATS_PER_FLAT_SEGMENT = 4;
+
+/** Position components per vertex — the stride of a tile's packed buffer. */
+const POSITION_FLOATS_PER_VERTEX = 3;
+
+/**
+ * How a tile's buffer grows when a chunk's lips no longer fit: geometric, for
+ * the reason terrainMeshes' arena is (a world fills in chunk by chunk, and
+ * growing by one chunk's worth each time would copy the whole tile on every
+ * chunk of every tile). Doubling caps the reallocations any tile can ever see
+ * at log2 of its final size.
+ */
+const TILE_CAPACITY_GROWTH_FACTOR = 2;
+
+/** A chunk that draws no lips, as the arena writer wants it. */
+const NO_LIP_POSITIONS = new Float32Array(0);
+
+/**
+ * Above the terrain the lips trace, below the brush outline that must stay
+ * readable over them.
+ */
+const RESTING_RENDER_ORDER = 500;
+
+/** Above the resting edges the grabbed lip is picked out from. */
+const GRABBED_RENDER_ORDER = RESTING_RENDER_ORDER + 1;
+
+/**
+ * Where one chunk's lip vertices live inside its tile's packed buffer, plus
+ * the run's own box.
+ *
+ * WHY A BOX PER RUN. The tile's bounding sphere has to be recomputed whenever
+ * any of its chunks is rebuilt, and computing it from the buffer means
+ * scanning every live vertex of the tile for an edit that touched one chunk's
+ * worth. Kept per run, it is the union of at most SUPER_MESH_SPAN_CHUNKS^2
+ * boxes. Meaningless while `count` is 0 (min > max); the union skips those.
+ */
+interface ChunkRun {
+  /** First vertex of this chunk's run, as an index into the packed buffer. */
+  offset: number;
+  /** Live vertices in the run. */
+  count: number;
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+}
+
+/** One drawn object: the packed lips of up to SUPER_MESH_SPAN_CHUNKS^2 chunks. */
+interface EdgeTile {
+  mesh: LineSegments;
+  /** Capacity-sized; only `[0, liveEnd)` is live, and the draw range says so. */
+  positions: Float32Array;
+  attribute: BufferAttribute;
+  /** Vertices in use — the packed prefix, holes being impossible here. */
+  liveEnd: number;
+  runs: Map<number, ChunkRun>;
+}
 
 /**
  * Colour of the lip currently under the cursor — the one a drag would grab.
@@ -173,11 +257,11 @@ export interface LayerEdgeOverlay {
    * frame's draw budget (part B of
    * docs/plans/frame-budget-growth-and-draw-calls.md).
    *
-   * A LIVE COUNT AND NOT A CONSTANT, because this overlay is the one core rig
-   * whose DRAWING unit is still the chunk: one LineSegments per chunk that has
-   * lips, plus the grabbed lip when one is lit. It therefore grows with the
-   * revealed world, which is exactly the shape of defect the budget exists to
-   * make visible — see B7 of the plan.
+   * A LIVE COUNT AND NOT A CONSTANT: one LineSegments per SUPER-MESH TILE
+   * holding lips, plus the grabbed lip when one is lit. It still grows with
+   * the revealed world — every merged rig does — but at one
+   * SUPER_MESH_SPAN_CHUNKS^2-th of the rate it did while the chunk was the
+   * drawing unit (issue #246); see B7 of the plan.
    */
   drawCallCount(): number;
   dispose(): void;
@@ -190,7 +274,8 @@ export function createLayerEdgeOverlay(
   drawnGround: DrawnGroundStore,
 ): LayerEdgeOverlay {
   const chunksPerEdge = Math.max(1, Math.floor(worldSize / CHUNK_SIZE));
-  const meshes = new Map<number, LineSegments>();
+  const tilesPerEdge = Math.max(1, Math.ceil(chunksPerEdge / SUPER_MESH_SPAN_CHUNKS));
+  const tiles = new Map<number, EdgeTile>();
   /**
    * The same segments the meshes draw, kept in world space and keyed by chunk
    * then band, so "which lip is under the cursor" is a lookup rather than a
@@ -211,13 +296,226 @@ export function createLayerEdgeOverlay(
     depthWrite: false,
   });
 
-  const dropMesh = (idx: number): void => {
+  /** Which tile a chunk's lips are packed into. */
+  const tileIndexOfChunk = (chunkIdx: number): number => {
+    const cx = chunkIdx % chunksPerEdge;
+    const cy = Math.floor(chunkIdx / chunksPerEdge);
+    return Math.floor(cy / SUPER_MESH_SPAN_CHUNKS) * tilesPerEdge
+      + Math.floor(cx / SUPER_MESH_SPAN_CHUNKS);
+  };
+
+  /**
+   * The bound the renderer culls the tile against: the union of its runs'
+   * boxes, which is O(64) rather than O(live vertices).
+   *
+   * Hand-rolled rather than `geometry.computeBoundingSphere()` for the reason
+   * terrainMeshes' is — that one reads the WHOLE position attribute, and the
+   * tail past `liveEnd` is whatever a previous, longer occupant left there.
+   */
+  const updateTileBounds = (tile: EdgeTile): void => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (const run of tile.runs.values()) {
+      if (run.count === 0) continue; // a chunk that drew no lips has no box
+      if (run.minX < minX) minX = run.minX;
+      if (run.minY < minY) minY = run.minY;
+      if (run.minZ < minZ) minZ = run.minZ;
+      if (run.maxX > maxX) maxX = run.maxX;
+      if (run.maxY > maxY) maxY = run.maxY;
+      if (run.maxZ > maxZ) maxZ = run.maxZ;
+    }
+    const geometry = tile.mesh.geometry;
+    if (minX > maxX) {
+      geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
+      return;
+    }
+    const centreX = (minX + maxX) / 2;
+    const centreY = (minY + maxY) / 2;
+    const centreZ = (minZ + maxZ) / 2;
+    geometry.boundingSphere = new Sphere(
+      new Vector3(centreX, centreY, centreZ),
+      Math.hypot(maxX - centreX, maxY - centreY, maxZ - centreZ),
+    );
+  };
+
+  /**
+   * Installs a fresh attribute and geometry over the tile's current buffer —
+   * a Float32Array cannot be resized, so growth means new arrays and therefore
+   * a new attribute, and the old geometry is disposed rather than left holding
+   * its GPU buffer.
+   */
+  const bindTile = (tile: EdgeTile): void => {
+    const attribute = new BufferAttribute(tile.positions, POSITION_FLOATS_PER_VERTEX);
+    attribute.setUsage(DynamicDrawUsage);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', attribute);
+    geometry.setDrawRange(0, tile.liveEnd);
+    const previous = tile.mesh.geometry;
+    tile.mesh.geometry = geometry;
+    if (previous !== geometry) previous.dispose();
+    tile.attribute = attribute;
+    // LAST, AND IT HAS TO BE HERE: the geometry above is brand new and its
+    // `boundingSphere` is null, which three would otherwise compute over the
+    // whole attribute, dead tail included.
+    updateTileBounds(tile);
+  };
+
+  const createTile = (tileIdx: number): EdgeTile => {
+    const positions = NO_LIP_POSITIONS;
+    const geometry = new BufferGeometry();
+    const attribute = new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX);
+    geometry.setAttribute('position', attribute);
+    const mesh = new LineSegments(geometry, material);
+    mesh.renderOrder = RESTING_RENDER_ORDER;
+    const tile: EdgeTile = { mesh, positions, attribute, liveEnd: 0, runs: new Map() };
+    group.add(mesh);
+    tiles.set(tileIdx, tile);
+    return tile;
+  };
+
+  const disposeTile = (tileIdx: number, tile: EdgeTile): void => {
+    group.remove(tile.mesh);
+    tile.mesh.geometry.dispose();
+    tiles.delete(tileIdx);
+  };
+
+  /** Grows a tile's buffer to hold at least `vertices`. Returns true if it had to. */
+  const ensureTileCapacity = (tile: EdgeTile, vertices: number): boolean => {
+    const capacity = tile.positions.length / POSITION_FLOATS_PER_VERTEX;
+    if (vertices <= capacity) return false;
+    let grown = Math.max(capacity, 1);
+    while (grown < vertices) grown *= TILE_CAPACITY_GROWTH_FACTOR;
+    const positions = new Float32Array(grown * POSITION_FLOATS_PER_VERTEX);
+    positions.set(tile.positions.subarray(0, tile.liveEnd * POSITION_FLOATS_PER_VERTEX));
+    tile.positions = positions;
+    bindTile(tile);
+    return true;
+  };
+
+  /** The run's own box, measured over the vertices being written into it. */
+  const measureRun = (run: ChunkRun, source: Float32Array): void => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i + 2 < source.length; i += POSITION_FLOATS_PER_VERTEX) {
+      const x = source[i]!;
+      const y = source[i + 1]!;
+      const z = source[i + 2]!;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    run.minX = minX;
+    run.minY = minY;
+    run.minZ = minZ;
+    run.maxX = maxX;
+    run.maxY = maxY;
+    run.maxZ = maxZ;
+  };
+
+  /**
+   * Replaces one chunk's run inside its tile, keeping the tile a dense prefix.
+   *
+   * A run that changes length shifts every run after it by the delta — the
+   * memmove the packed layout trades the free list for, bounded by one tile's
+   * lips. An emptied run is removed outright, and a tile whose last run goes
+   * with it leaves the scene: an empty LineSegments is still an object three
+   * walks every frame, which is the cost this whole arena exists to remove.
+   */
+  const writeRun = (
+    tileIdx: number,
+    tile: EdgeTile,
+    chunkIdx: number,
+    source: Float32Array,
+  ): void => {
+    const count = source.length / POSITION_FLOATS_PER_VERTEX;
+    let run = tile.runs.get(chunkIdx);
+    if (run === undefined) {
+      if (count === 0) return;
+      run = {
+        // Appended: the tile is packed, so the only free space is past the end.
+        offset: tile.liveEnd,
+        count: 0,
+        // An empty box (min > max), which `updateTileBounds` skips. Filled by
+        // `measureRun` below, in this same call.
+        minX: Infinity,
+        minY: Infinity,
+        minZ: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity,
+        maxZ: -Infinity,
+      };
+      tile.runs.set(chunkIdx, run);
+    }
+
+    const delta = count - run.count;
+    // BEFORE the tail moves and before the run is written: both index the
+    // buffer this may replace.
+    const regrown = delta > 0 && ensureTileCapacity(tile, tile.liveEnd + delta);
+
+    const tailStart = run.offset + run.count;
+    const tailCount = tile.liveEnd - tailStart;
+    if (delta !== 0 && tailCount > 0) {
+      tile.positions.copyWithin(
+        (tailStart + delta) * POSITION_FLOATS_PER_VERTEX,
+        tailStart * POSITION_FLOATS_PER_VERTEX,
+        tile.liveEnd * POSITION_FLOATS_PER_VERTEX,
+      );
+      for (const other of tile.runs.values()) {
+        if (other !== run && other.offset >= tailStart) other.offset += delta;
+      }
+    }
+    tile.positions.set(source, run.offset * POSITION_FLOATS_PER_VERTEX);
+    tile.liveEnd += delta;
+    run.count = count;
+    measureRun(run, source);
+
+    const dirtyStart = run.offset;
+    if (count === 0) tile.runs.delete(chunkIdx);
+    if (tile.liveEnd === 0) {
+      disposeTile(tileIdx, tile);
+      return;
+    }
+
+    // A regrow installed a fresh attribute, which three uploads whole the
+    // first time it sees it (WebGLAttributes' `createBuffer`) — an update
+    // range on top of that is a second upload of data already sent. Residual,
+    // named rather than hidden: ranges added by a LATER write to the same tile
+    // in the same frame survive that first full upload, because three only
+    // clears them in `updateBuffer`, so the next write re-sends those bytes
+    // once. They are bounded by one tile and the data is current either way.
+    if (!regrown) {
+      // three's ranges are in ARRAY ELEMENTS, not vertices. A moved tail
+      // dirties everything from this run's start to the live end; a rewrite
+      // that kept its length dirties only the run.
+      const dirtyCount = delta === 0 ? count : tile.liveEnd - dirtyStart;
+      tile.attribute.addUpdateRange(
+        dirtyStart * POSITION_FLOATS_PER_VERTEX,
+        dirtyCount * POSITION_FLOATS_PER_VERTEX,
+      );
+      tile.attribute.needsUpdate = true;
+    }
+    tile.mesh.geometry.setDrawRange(0, tile.liveEnd);
+    updateTileBounds(tile);
+  };
+
+  /** Drops a chunk's contribution: its retained segments and its tile run. */
+  const dropChunk = (idx: number): void => {
     segmentsByChunk.delete(idx);
-    const existing = meshes.get(idx);
-    if (existing === undefined) return;
-    group.remove(existing);
-    existing.geometry.dispose();
-    meshes.delete(idx);
+    const tileIdx = tileIndexOfChunk(idx);
+    const tile = tiles.get(tileIdx);
+    if (tile === undefined || !tile.runs.has(idx)) return;
+    writeRun(tileIdx, tile, idx, NO_LIP_POSITIONS);
   };
 
   /**
@@ -246,7 +544,7 @@ export function createLayerEdgeOverlay(
   };
 
   const rebuild = (idx: number): void => {
-    dropMesh(idx);
+    dropChunk(idx);
     if (!hasChunk(mirror, idx)) return;
     const cx = idx % chunksPerEdge;
     const cy = Math.floor(idx / chunksPerEdge);
@@ -273,16 +571,12 @@ export function createLayerEdgeOverlay(
     }
     segmentsByChunk.set(idx, perBand);
 
-    const geometry = new BufferGeometry();
-    // The published array IS the attribute — the job emitted it in the layout
-    // three wants, so nothing is copied or re-packed on this thread.
-    geometry.setAttribute('position', new BufferAttribute(positions, 3));
-    const mesh = new LineSegments(geometry, material);
-    // Above the terrain it traces, below the brush outline that must stay
-    // readable over it.
-    mesh.renderOrder = 500;
-    group.add(mesh);
-    meshes.set(idx, mesh);
+    // COPIED INTO THE TILE, where the published array used to BE the
+    // attribute. One `set` of a chunk's lips is the price of the chunk no
+    // longer being a draw object; the array is still emitted in the layout
+    // three wants, so nothing is re-packed element by element.
+    const tileIdx = tileIndexOfChunk(idx);
+    writeRun(tileIdx, tiles.get(tileIdx) ?? createTile(tileIdx), idx, positions);
   };
 
   // The grabbed lip, drawn as its own mesh so highlighting never rebuilds a
@@ -392,17 +686,17 @@ export function createLayerEdgeOverlay(
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
       grabbed = new LineSegments(geometry, grabbedMaterial);
-      // Above the resting edges it is picked out from.
-      grabbed.renderOrder = 501;
+      grabbed.renderOrder = GRABBED_RENDER_ORDER;
       group.add(grabbed);
       return true;
     },
     clear() {
       clearGrabbed();
-      for (const idx of [...meshes.keys()]) dropMesh(idx);
+      segmentsByChunk.clear();
+      for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return meshes.size + (grabbed === null ? 0 : 1);
+      return tiles.size + (grabbed === null ? 0 : 1);
     },
     dispose() {
       this.clear();
