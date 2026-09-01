@@ -23,6 +23,7 @@ import DatabaseConstructor, { type Database, type Statement } from 'better-sqlit
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { logWarn } from '../log.ts';
+import { buildThumbnail } from './thumbnail.ts';
 import type { Span } from '@terrace/shared';
 import {
   decodeColumnSpans,
@@ -30,6 +31,13 @@ import {
   encodeColumnSpans,
   encodeHeights,
 } from './codec.ts';
+import {
+  copyColumnSpans,
+  copyTokenMasks,
+  snapshotWriterThread,
+  type SnapshotSettledCallback,
+  type SnapshotWriterThread,
+} from './snapshot-writer.ts';
 
 /**
  * Bumped whenever the stored layout changes in a way this reader cannot
@@ -466,15 +474,188 @@ function addColumnIfMissing(
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+// ---------------------------------------------------------------------------
+// THE WRITE CORE — the one transaction that turns a world into a row.
+//
+// EXTRACTED OUT OF THE STORE (issue #273) so it can run on a worker thread as
+// well as on the tick thread. Both callers go through `writeSnapshot` with the
+// same payload shape and the same prepared statements, which is what makes the
+// off-thread write BYTE-IDENTICAL to the synchronous one by construction
+// rather than by two code paths agreeing: there is only one code path.
+// ---------------------------------------------------------------------------
+
+/** The four statements one snapshot write needs. Prepared per connection. */
+export interface SnapshotWriteStatements {
+  readonly insertSnapshot: Statement;
+  readonly insertSlice: Statement;
+  readonly insertTokenMask: Statement;
+  readonly pruneOld: Statement;
+}
+
+/**
+ * A snapshot with every live reference already resolved: the plugin slices are
+ * JSON text, not objects, and every buffer is one the writer may hold across a
+ * thread hop.
+ *
+ * WHY THE SLICES ARRIVE AS TEXT. `JSON.stringify` is the only step of a write
+ * that can see a plugin's live object graph, and a graph is not something a
+ * worker can be handed (a class instance loses its prototype and its `toJSON`
+ * on the way over, which would silently change the bytes stored). So the
+ * stringify stays with the caller that owns the graph, and what crosses the
+ * boundary is the exact string the row will hold.
+ */
+export interface SnapshotWritePayload {
+  readonly worldSize: number;
+  readonly name: string;
+  readonly cells: Int16Array;
+  readonly mask: Uint8Array;
+  readonly columnSpans?: ReadonlyMap<number, Int16Array> | undefined;
+  /** `[plugin, json]` pairs, in the order the row's slices must be inserted. */
+  readonly slicesJson: readonly (readonly [string, string])[];
+  readonly tokenMasks?: ReadonlyMap<string, Uint8Array> | undefined;
+  readonly simMillis?: number | undefined;
+  readonly genesisMillis?: number | undefined;
+  readonly thumbnail?: Uint8Array | undefined;
+}
+
+/** Prepares the write statements against one connection (main or worker). */
+export function prepareSnapshotWriteStatements(db: Database): SnapshotWriteStatements {
+  return {
+    insertSnapshot: db.prepare(
+      `INSERT INTO snapshots
+         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
+          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN},
+          ${COLUMN_SPANS_COLUMN})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    insertSlice: db.prepare(
+      'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
+    ),
+    insertTokenMask: db.prepare(
+      'INSERT INTO token_masks (snapshot_id, token, mask) VALUES (?, ?, ?)',
+    ),
+    // Keep the newest N rows; ON DELETE CASCADE removes their slices and
+    // token_masks rows too — both reference snapshots(id) the same way.
+    // PINNED ROWS ARE NOT IN THE WINDOW AT ALL — note `pinned = 0` appears
+    // TWICE, and both are load-bearing. The outer one stops a pinned row from
+    // ever being deleted. The inner one keeps pinned rows from consuming the
+    // LIMIT, so pinning a moment does not silently shorten the undo history:
+    // retention means "the newest N unprotected points", plus everything a
+    // human asked to keep.
+    pruneOld: db.prepare(
+      `DELETE FROM snapshots
+         WHERE ${PINNED_COLUMN} = 0
+           AND id NOT IN (
+             SELECT id FROM snapshots WHERE ${PINNED_COLUMN} = 0 ORDER BY id DESC LIMIT ?
+           )`,
+    ),
+  };
+}
+
+/**
+ * Writes one snapshot and prunes the history, in a single transaction: a
+ * crash mid-write leaves the previous snapshot as the newest, never a half
+ * world. Returns the new snapshot's id.
+ */
+export function writeSnapshot(
+  db: Database,
+  statements: SnapshotWriteStatements,
+  retention: number,
+  payload: SnapshotWritePayload,
+): number {
+  const heightmap = encodeHeights(payload.cells);
+  const mask = Buffer.copyBytesFrom(payload.mask);
+  // Same shape as the heights above: the caller hands over live state, the
+  // encode happens HERE, once, before the transaction — so a failure in the
+  // encoder can never leave a half-written row behind. An omitted map and an
+  // empty one both become NULL/zero-length respectively; see SnapshotInput.
+  const columnSpansBlob =
+    payload.columnSpans === undefined ? null : encodeColumnSpans(payload.columnSpans);
+  // `?? []`: an omitted tokenMasks means "this caller never touched
+  // per-token unlocks" (see SnapshotInput's doc comment) — nothing to write,
+  // not an error.
+  const tokenMaskEntries = payload.tokenMasks ?? [];
+
+  const write = db.transaction((): number => {
+    const result = statements.insertSnapshot.run(
+      SNAPSHOT_SCHEMA_VERSION,
+      Date.now(),
+      payload.worldSize,
+      payload.name,
+      heightmap,
+      mask,
+      // `?? null` rather than undefined: better-sqlite3 refuses undefined as
+      // a bound value, and a caller that produced no thumbnail means NULL.
+      payload.thumbnail === undefined ? null : Buffer.copyBytesFrom(payload.thumbnail),
+      payload.simMillis ?? 0,
+      // `?? null` for the same better-sqlite3 reason as the thumbnail above;
+      // here NULL is also the meaningful value — see GENESIS_MILLIS_COLUMN.
+      payload.genesisMillis ?? null,
+      // Already encoded (or null); binding it inside the transaction like
+      // every other column keeps "one transaction covering everything" true.
+      columnSpansBlob,
+    );
+    const snapshotId = Number(result.lastInsertRowid);
+    for (const [plugin, json] of payload.slicesJson) {
+      // JSON, not a binary encoding: plugin slices are small, and a
+      // human-readable column is worth a lot when debugging someone else's
+      // plugin from a self-hoster's database.
+      statements.insertSlice.run(snapshotId, plugin, json);
+    }
+    for (const [token, tokenMask] of tokenMaskEntries) {
+      // BINARY, like `mask` above and unlike plugin_slices: a per-token
+      // mask is the same bitset shape as the union mask, not small JSON a
+      // human would want to eyeball.
+      statements.insertTokenMask.run(snapshotId, token, Buffer.copyBytesFrom(tokenMask));
+    }
+    statements.pruneOld.run(retention);
+    return snapshotId;
+  });
+
+  return write();
+}
+
+/**
+ * Turns a caller's `SnapshotInput` into the payload the write core takes —
+ * i.e. resolves the one field that cannot cross a thread, the plugin slices.
+ */
+export function snapshotWritePayloadOf(input: SnapshotInput): SnapshotWritePayload {
+  return {
+    worldSize: input.worldSize,
+    name: input.name,
+    cells: input.cells,
+    mask: input.mask,
+    columnSpans: input.columnSpans,
+    slicesJson: Object.entries(input.pluginSlices).map(
+      ([plugin, data]) => [plugin, JSON.stringify(data)] as const,
+    ),
+    tokenMasks: input.tokenMasks,
+    simMillis: input.simMillis,
+    genesisMillis: input.genesisMillis,
+    thumbnail: input.thumbnail,
+  };
+}
+
 export class SnapshotStore {
   private readonly db: Database;
-  private readonly insertSnapshot: Statement;
-  private readonly insertSlice: Statement;
-  private readonly insertTokenMask: Statement;
+  /**
+   * The file this store's connection is open on — `IN_MEMORY_DB_PATH` for a
+   * test store. Kept because the writer thread opens the SAME file through a
+   * SECOND connection, and a path is the only thing a connection can be
+   * described by across a thread boundary.
+   */
+  private readonly dbPath: string;
+  /**
+   * The writer thread, started on the first deferred write and shared by every
+   * store in the process. Null until then (and forever for an in-memory
+   * database) so nothing pays for a thread it never uses — most notably the
+   * test suite, which never takes the deferred path.
+   */
+  private deferredWriter: SnapshotWriterThread | null = null;
+  private readonly writeStatements: SnapshotWriteStatements;
   private readonly selectLatest: Statement;
   private readonly selectSlices: Statement;
   private readonly selectTokenMasks: Statement;
-  private readonly pruneOld: Statement;
   private readonly countAll: Statement;
   private readonly selectById: Statement;
   private readonly selectHistory: Statement;
@@ -498,22 +679,11 @@ export class SnapshotStore {
    */
   private readonly retention: number;
 
-  private constructor(db: Database, retention: number) {
+  private constructor(db: Database, retention: number, dbPath: string) {
     this.db = db;
     this.retention = retention;
-    this.insertSnapshot = db.prepare(
-      `INSERT INTO snapshots
-         (schema_version, created_at, world_size, ${WORLD_NAME_COLUMN}, heightmap, mask,
-          ${THUMBNAIL_COLUMN}, ${SIM_MILLIS_COLUMN}, ${GENESIS_MILLIS_COLUMN},
-          ${COLUMN_SPANS_COLUMN})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    this.insertSlice = db.prepare(
-      'INSERT INTO plugin_slices (snapshot_id, plugin, data) VALUES (?, ?, ?)',
-    );
-    this.insertTokenMask = db.prepare(
-      'INSERT INTO token_masks (snapshot_id, token, mask) VALUES (?, ?, ?)',
-    );
+    this.dbPath = dbPath;
+    this.writeStatements = prepareSnapshotWriteStatements(db);
     this.selectLatest = db.prepare('SELECT * FROM snapshots ORDER BY id DESC LIMIT 1');
     this.selectById = db.prepare('SELECT * FROM snapshots WHERE id = ?');
     // OLDEST FIRST, and that ordering is load-bearing: listRestorePoints
@@ -528,21 +698,6 @@ export class SnapshotStore {
     );
     this.selectTokenMasks = db.prepare(
       'SELECT token, mask FROM token_masks WHERE snapshot_id = ?',
-    );
-    // Keep the newest N rows; ON DELETE CASCADE removes their slices and
-    // token_masks rows too — both reference snapshots(id) the same way.
-    // PINNED ROWS ARE NOT IN THE WINDOW AT ALL — note `pinned = 0` appears
-    // TWICE, and both are load-bearing. The outer one stops a pinned row from
-    // ever being deleted. The inner one keeps pinned rows from consuming the
-    // LIMIT, so pinning a moment does not silently shorten the undo history:
-    // retention means "the newest N unprotected points", plus everything a
-    // human asked to keep.
-    this.pruneOld = db.prepare(
-      `DELETE FROM snapshots
-         WHERE ${PINNED_COLUMN} = 0
-           AND id NOT IN (
-             SELECT id FROM snapshots WHERE ${PINNED_COLUMN} = 0 ORDER BY id DESC LIMIT ?
-           )`,
     );
     this.selectLatestThumbnail = db.prepare(
       `SELECT ${THUMBNAIL_COLUMN} AS thumbnail FROM snapshots ORDER BY id DESC LIMIT 1`,
@@ -609,66 +764,101 @@ export class SnapshotStore {
     addColumnIfMissing(db, 'snapshots', SIM_MILLIS_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'snapshots', GENESIS_MILLIS_COLUMN, 'INTEGER');
     addColumnIfMissing(db, 'snapshots', COLUMN_SPANS_COLUMN, 'BLOB');
-    return new SnapshotStore(db, retention);
+    return new SnapshotStore(db, retention, dbPath);
   }
 
   /**
    * Writes one snapshot and prunes the history, in a single transaction: a
    * crash mid-write leaves the previous snapshot as the newest, never a half
    * world. Returns the new snapshot's id.
+   *
+   * SYNCHRONOUS, and stays that way: it returns the id, and three callers
+   * (rollback, world creation, close) need the row on disk before they take
+   * their next step. The off-thread cadence path is `saveSnapshotDeferred`.
    */
   saveSnapshot(input: SnapshotInput): number {
-    const heightmap = encodeHeights(input.cells);
-    const mask = Buffer.copyBytesFrom(input.mask);
-    // Same shape as the heights above: the caller hands over live state, the
-    // encode happens HERE, once, before the transaction — so a failure in the
-    // encoder can never leave a half-written row behind. An omitted map and an
-    // empty one both become NULL/zero-length respectively; see SnapshotInput.
-    const columnSpansBlob =
-      input.columnSpans === undefined ? null : encodeColumnSpans(input.columnSpans);
-    const entries = Object.entries(input.pluginSlices);
-    // `?? []`: an omitted tokenMasks means "this caller never touched
-    // per-token unlocks" (see SnapshotInput's doc comment) — nothing to write,
-    // not an error.
-    const tokenMaskEntries = input.tokenMasks ?? [];
+    this.settle();
+    return writeSnapshot(
+      this.db,
+      this.writeStatements,
+      this.retention,
+      snapshotWritePayloadOf(input),
+    );
+  }
 
-    const write = this.db.transaction((): number => {
-      const result = this.insertSnapshot.run(
-        SNAPSHOT_SCHEMA_VERSION,
-        Date.now(),
-        input.worldSize,
-        input.name,
-        heightmap,
-        mask,
-        // `?? null` rather than undefined: better-sqlite3 refuses undefined as
-        // a bound value, and a caller that produced no thumbnail means NULL.
-        input.thumbnail === undefined ? null : Buffer.copyBytesFrom(input.thumbnail),
-        input.simMillis ?? 0,
-        // `?? null` for the same better-sqlite3 reason as the thumbnail above;
-        // here NULL is also the meaningful value — see GENESIS_MILLIS_COLUMN.
-        input.genesisMillis ?? null,
-        // Already encoded (or null); binding it inside the transaction like
-        // every other column keeps "one transaction covering everything" true.
-        columnSpansBlob,
-      );
-      const snapshotId = Number(result.lastInsertRowid);
-      for (const [plugin, data] of entries) {
-        // JSON, not a binary encoding: plugin slices are small, and a
-        // human-readable column is worth a lot when debugging someone else's
-        // plugin from a self-hoster's database.
-        this.insertSlice.run(snapshotId, plugin, JSON.stringify(data));
+  /**
+   * Hands one snapshot to the writer thread and returns — the periodic-cadence
+   * path (issue #273).
+   *
+   * WHAT THE CALLER PAYS, and why it is the irreducible part: this copies the
+   * live world (heights, mask, per-token masks, span table) and stringifies the
+   * plugin slices, because everything it hands over must be a value the tick
+   * thread can no longer touch. A snapshot that shared the live heightmap would
+   * be torn by the next sculpt. Everything AFTER the copy — the LE-Int16
+   * encode, the thumbnail pass, the span encode, the transaction and the
+   * retention prune — happens on the worker.
+   *
+   * DURABILITY IS UNCHANGED, NOT WEAKENED. The window in which a snapshot
+   * exists but is not on disk already existed: the synchronous path spent
+   * milliseconds-to-seconds inside one transaction, and a process killed there
+   * lost exactly the same write to the rollback. What this adds is that the
+   * window is no longer *blocking*; it is closed by `settle()`, which every
+   * other method of this store and `close()` run first, and by the shutdown
+   * hook that saves before the process ends.
+   *
+   * Falls back to a synchronous write when there is no worker to hand it to —
+   * an in-memory database (no path a second connection could open) or a writer
+   * that failed to start. The world is still saved; it just blocks, exactly as
+   * it did before.
+   */
+  saveSnapshotDeferred(
+    input: Omit<SnapshotInput, 'thumbnail'>,
+    onSettled?: SnapshotSettledCallback,
+  ): void {
+    const writer = this.writer();
+    if (writer === null) {
+      // Inline, and report the outcome through the same callback the deferred
+      // path uses, so no caller has to have a second story for the fallback.
+      // The thumbnail is built HERE rather than by the caller for the same
+      // reason it is built on the worker: a caller that had to remember to
+      // pass one would be a caller that can silently store a world with no
+      // picture in the list.
+      try {
+        this.saveSnapshot({
+          ...input,
+          thumbnail: buildThumbnail(input.cells, input.worldSize),
+        });
+        onSettled?.(null);
+      } catch (error) {
+        onSettled?.(error instanceof Error ? error.message : String(error));
+        throw error;
       }
-      for (const [token, tokenMask] of tokenMaskEntries) {
-        // BINARY, like `mask` above and unlike plugin_slices: a per-token
-        // mask is the same bitset shape as the union mask, not small JSON a
-        // human would want to eyeball.
-        this.insertTokenMask.run(snapshotId, token, Buffer.copyBytesFrom(tokenMask));
-      }
-      this.pruneOld.run(this.retention);
-      return snapshotId;
-    });
-
-    return write();
+      return;
+    }
+    // Filled, not allocated: `scratchHeights` hands back the buffer the last
+    // snapshot used, whose pages are already resident — six sevenths cheaper
+    // than a fresh 8 MB `.slice()`. See RECYCLED_HEIGHT_BUFFERS.
+    const cells = writer.scratchHeights(input.cells.length);
+    cells.set(input.cells);
+    writer.enqueue(
+      this.dbPath,
+      this.retention,
+      {
+        worldSize: input.worldSize,
+        name: input.name,
+        // A COPY of every live buffer: the tick thread owns the originals and
+        // will mutate them on its next sculpt. Copied here rather than
+        // structured-cloned at postMessage time so the buffers can be MOVED.
+        cells,
+        mask: input.mask.slice(),
+        columnSpans: copyColumnSpans(input.columnSpans),
+        slicesJson: snapshotWritePayloadOf(input).slicesJson,
+        tokenMasks: copyTokenMasks(input.tokenMasks),
+        simMillis: input.simMillis,
+        genesisMillis: input.genesisMillis,
+      },
+      onSettled,
+    );
   }
 
   /**
@@ -679,6 +869,7 @@ export class SnapshotStore {
    * self-hoster's map, so an unreadable database must stop the boot and say so.
    */
   loadLatest(): WorldSnapshot | null {
+    this.settle();
     return this.hydrate(this.selectLatest.get() as SnapshotRow | undefined);
   }
 
@@ -695,6 +886,7 @@ export class SnapshotStore {
    * likely to be the corrupt or foreign one those checks exist to catch.
    */
   loadSnapshot(id: number): WorldSnapshot | null {
+    this.settle();
     return this.hydrate(this.selectById.get(id) as SnapshotRow | undefined);
   }
 
@@ -867,6 +1059,7 @@ export class SnapshotStore {
    * and hiding it would hide the very row an operator most needs to see.
    */
   listRestorePoints(): RestorePoint[] {
+    this.settle();
     const rows = this.selectHistory.all() as HistoryRow[];
     const points: RestorePoint[] = [];
     let previous: Int16Array | null = null;
@@ -926,6 +1119,7 @@ export class SnapshotStore {
 
   /** The newest snapshot's thumbnail, or null when it has none. */
   latestThumbnail(): Buffer | null {
+    this.settle();
     const row = this.selectLatestThumbnail.get() as { thumbnail: Buffer | null } | undefined;
     return row?.thumbnail ?? null;
   }
@@ -940,6 +1134,7 @@ export class SnapshotStore {
    * purpose is showing what a world looks like.
    */
   setLatestThumbnail(thumbnail: Uint8Array): boolean {
+    this.settle();
     return this.setLatestThumbnailStatement.run(Buffer.copyBytesFrom(thumbnail)).changes > 0;
   }
 
@@ -959,6 +1154,7 @@ export class SnapshotStore {
    * opened for a rename. Returns how many rows were relabelled.
    */
   setWorldName(name: string): number {
+    this.settle();
     return this.setWorldNameStatement.run(name).changes;
   }
 
@@ -970,6 +1166,7 @@ export class SnapshotStore {
    * double-click cannot toggle something the operator did not see.
    */
   setPinned(id: number, pinned: boolean): boolean {
+    this.settle();
     const result = this.setPinnedStatement.run(pinned ? 1 : 0, id);
     return result.changes > 0;
   }
@@ -985,6 +1182,7 @@ export class SnapshotStore {
    * the world is opened without it.
    */
   disabledPlugins(): string[] {
+    this.settle();
     return (this.selectDisabledPlugins.all() as { plugin: string }[]).map((row) => row.plugin);
   }
 
@@ -999,33 +1197,39 @@ export class SnapshotStore {
    * time the world is opened without it.
    */
   pluginSettings(): PluginSettingRow[] {
+    this.settle();
     return this.selectPluginSettings.all() as PluginSettingRow[];
   }
 
   /** One setting's value, or undefined when this world has never set it. */
   pluginSetting(plugin: string, key: string): string | undefined {
+    this.settle();
     const row = this.selectPluginSetting.get(plugin, key) as { value: string } | undefined;
     return row?.value;
   }
 
   /** Records one plugin setting for this world. Idempotent. */
   setPluginSetting(plugin: string, key: string, value: string): void {
+    this.settle();
     this.upsertPluginSetting.run(plugin, key, value);
   }
 
   /** Records whether this world runs `plugin`. Idempotent in both directions. */
   setPluginEnabled(plugin: string, enabled: boolean): void {
+    this.settle();
     if (enabled) this.deleteDisabledPlugin.run(plugin);
     else this.insertDisabledPlugin.run(plugin);
   }
 
   /** How many restore points are pinned, i.e. exempt from retention. */
   countPinned(): number {
+    this.settle();
     return (this.countPinnedStatement.get() as { n: number }).n;
   }
 
   /** Number of retained snapshots; used by the retention test. */
   countSnapshots(): number {
+    this.settle();
     return (this.countAll.get() as { n: number }).n;
   }
 
@@ -1041,10 +1245,47 @@ export class SnapshotStore {
    * connection cannot complete while this one holds the file open.
    */
   checkpoint(): void {
+    this.settle();
     this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
 
   close(): void {
+    // SETTLE BEFORE CLOSING, and close the WORKER's connection too: a handed-
+    // off snapshot must land in the file it belongs to, and a worker
+    // connection left open on a world nobody is looking at any more keeps that
+    // world's WAL alive — the exact leak releaseSession() exists to avoid.
+    this.settle();
+    if (this.deferredWriter !== null) this.deferredWriter.closeDatabase(this.dbPath);
     this.db.close();
+  }
+
+  /**
+   * Blocks until the writer thread has no work left for ANY database.
+   *
+   * CALLED AT THE TOP OF EVERY METHOD THAT TOUCHES THE FILE, which is the
+   * whole contract: two connections must never be inside SQLite at once, and a
+   * read must never answer from before a snapshot this process already
+   * decided to write. Costing one atomic load when the queue is empty (the
+   * normal case) is what makes "call it everywhere" affordable rather than a
+   * rule each method has to be trusted to remember.
+   */
+  private settle(): void {
+    this.deferredWriter?.settle();
+  }
+
+  /**
+   * The process-wide writer thread, or null when this store cannot use one.
+   *
+   * An in-memory database has no path a second connection could open, so it
+   * has no off-thread path either — see saveSnapshotDeferred's fallback.
+   */
+  private writer(): SnapshotWriterThread | null {
+    if (this.dbPath === IN_MEMORY_DB_PATH) return null;
+    // A thread that has died is not a thread to hand a snapshot to. Returning
+    // null puts this store back on the inline path for good rather than
+    // queueing writes at a worker that will never run them.
+    if (this.deferredWriter !== null && !this.deferredWriter.alive) return null;
+    this.deferredWriter ??= snapshotWriterThread();
+    return this.deferredWriter;
   }
 }

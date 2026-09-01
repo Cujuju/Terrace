@@ -40,6 +40,7 @@ import {
   openSession,
   releaseSession,
   snapshotIfDirty,
+  type SnapshotOptions,
   type SessionDeps,
   type WorldSession,
 } from './session.ts';
@@ -230,10 +231,16 @@ export class WorldManager {
     this.session?.host.tick(dt);
   }
 
-  /** Writes a snapshot of the live world if it changed. */
-  snapshotIfDirty(): boolean {
+  /**
+   * Writes a snapshot of the live world if it changed.
+   *
+   * `options.defer` hands the write to the writer thread instead of blocking
+   * on it — the periodic scheduler's mode, and nobody else's. See
+   * SnapshotOptions.
+   */
+  snapshotIfDirty(options?: SnapshotOptions): boolean {
     if (this.session === null) return false;
-    return snapshotIfDirty(this.session);
+    return snapshotIfDirty(this.session, options);
   }
 
   /**

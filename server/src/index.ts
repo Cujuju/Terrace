@@ -215,7 +215,12 @@ async function main(): Promise<void> {
   // if the world changed — an idle server writes nothing at all.
   const snapshotTimer = setInterval(() => {
     try {
-      if (manager.snapshotIfDirty()) logInfo('world snapshot written');
+      // DEFERRED: the copy happens here, the encode, the thumbnail pass and
+      // the transaction happen on the writer thread (issue #273). Everything
+      // else that snapshots — boot above, shutdown below, a world switch, an
+      // operator's save — still blocks, because each needs the row on disk
+      // before its next step.
+      if (manager.snapshotIfDirty({ defer: true })) logInfo('world snapshot handed to writer');
     } catch (error) {
       // A failed periodic snapshot must not kill a live world; the next tick
       // retries, and the world stays dirty until one succeeds.

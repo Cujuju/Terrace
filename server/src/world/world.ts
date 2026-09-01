@@ -645,9 +645,29 @@ export class World {
     return this.changedSinceSnapshot;
   }
 
-  /** Called by the snapshot store after a snapshot is committed. */
+  /**
+   * Called once a snapshot of this world has been handed to the writer.
+   *
+   * "HANDED TO", NOT "LANDED ON DISK" (issue #273). The off-thread write path
+   * clears the flag at handoff, because what the flag tracks is whether the
+   * CURRENT world state differs from the last one anybody undertook to store —
+   * waiting for the commit would let a sculpt that arrived during the write
+   * be swallowed by the acknowledgement of a snapshot taken before it.
+   */
   markSnapshotted(): void {
     this.changedSinceSnapshot = false;
+  }
+
+  /**
+   * Called when a snapshot that had been handed off FAILED to reach disk.
+   *
+   * Puts the world back in the state the synchronous path would have left it
+   * in — dirty, so the next cadence tick tries again. Without this a full disk
+   * would produce one logged error and then an hour of silence, because the
+   * world would look saved.
+   */
+  markSnapshotFailed(): void {
+    this.changedSinceSnapshot = true;
   }
 
   /**

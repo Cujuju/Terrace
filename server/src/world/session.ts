@@ -26,7 +26,7 @@
 // closed and another opened in a live process at all — and why two worlds
 // cannot be open AT ONCE (issue #78).
 
-import { logInfo } from '../log.ts';
+import { logError, logInfo } from '../log.ts';
 import type { ServerConfig } from '../config.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildThumbnail } from '../persistence/thumbnail.ts';
@@ -62,6 +62,23 @@ export interface SessionDeps {
   readonly plugins: InstalledPlugins;
 }
 
+/** How a caller wants the snapshot written. */
+export interface SnapshotOptions {
+  /**
+   * Hand the write to the writer thread and return, instead of blocking until
+   * it is on disk (issue #273).
+   *
+   * FOR THE CADENCE PATH ONLY. Every other caller — boot, close, world switch,
+   * an operator's explicit save — needs the row on disk before it takes its
+   * next step, and pays the block deliberately. Returning true from a deferred
+   * write means "handed over", not "durable"; SnapshotStore.close() and the
+   * shutdown save both settle the queue, so the only way to lose a handed-off
+   * snapshot is a process death that skips those, which is exactly the window
+   * the synchronous write had while it sat inside its transaction.
+   */
+  readonly defer?: boolean;
+}
+
 /**
  * Writes a snapshot if the world changed. Returns true when one was written.
  *
@@ -71,10 +88,10 @@ export interface SessionDeps {
  * `closeSession`, so a world being closed is saved by the same code that saves
  * a world being left running.
  */
-export function snapshotIfDirty(session: WorldSession): boolean {
+export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions): boolean {
   const { world, host, store } = session;
   if (!world.dirty) return false;
-  store.saveSnapshot({
+  const input = {
     worldSize: world.size,
     name: world.name,
     cells: world.heightsForPersistence(),
@@ -91,11 +108,28 @@ export function snapshotIfDirty(session: WorldSession): boolean {
     // The world's birthday, by contrast, never changes after the first write;
     // it rides along for the same reason and costs nothing to restate.
     genesisMillis: world.genesisMillis,
-    // The heightmap is already in memory here, so the picture costs only the
-    // averaging pass — the reason thumbnails are written rather than computed
-    // when somebody opens the worlds panel (persistence/thumbnail.ts).
-    thumbnail: buildThumbnail(world.map.cells, world.size),
-  });
+  };
+  if (options?.defer === true) {
+    // OFF THE TICK THREAD (issue #273). The thumbnail is deliberately NOT built
+    // here: it is a full worldSize² pass and the writer thread builds it from
+    // the heightmap copy it is already being handed. See
+    // SnapshotStore.saveSnapshotDeferred.
+    store.saveSnapshotDeferred(input, (error) => {
+      if (error === null) return;
+      logError(`snapshot of world "${session.id}" failed to write: ${error}`);
+      // Back to dirty, so the next cadence tick retries — the same outcome the
+      // synchronous path gets from throwing. See World.markSnapshotFailed.
+      world.markSnapshotFailed();
+    });
+  } else {
+    store.saveSnapshot({
+      ...input,
+      // The heightmap is already in memory here, so the picture costs only the
+      // averaging pass — the reason thumbnails are written rather than computed
+      // when somebody opens the worlds panel (persistence/thumbnail.ts).
+      thumbnail: buildThumbnail(world.map.cells, world.size),
+    });
+  }
   world.markSnapshotted();
   return true;
 }
