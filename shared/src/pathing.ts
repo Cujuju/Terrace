@@ -595,10 +595,18 @@ const EMPTY_REACHABLE_REGION: ReachableRegion = { has: () => false };
  * no Map/Set iteration anywhere, and the answer does not depend on visit order
  * in any case.
  *
- * A SEAM FOR THE OTHER CALLERS (2026-08-29 review, D3): "can this settlement
- * reach that viewpoint" is the same question, and answering it from a region
- * flooded once per catchment would delete pilgrimage.ts's per-tick replan of
- * unreachable monsters too. Not wired up here.
+ * FLOOD FROM THE SEARCH'S OWN START, NEVER FROM ITS GOAL (issue #266). It is
+ * tempting to flood once from a shared destination and let many origins ask
+ * about it — pilgrims' "which of these towns can reach that viewpoint" is
+ * exactly that shape — but reachability over a profile with a finite gradient
+ * limit IS NOT SYMMETRIC: the corner-cutting guard above tests a diagonal's
+ * flanks against the height of the cell being stood on, so a corner legal
+ * from one end can be illegal from the other. Demonstrated with the shipped
+ * code: two diagonal neighbours at base and base+MAX_STEP with both flanks at
+ * base−MAX_STEP give `findRoute` A→B a route and a flood from B no way back to
+ * A. A goal-side flood is therefore NOT a conservative prefilter for
+ * origin-side searches, and using it as one silently refuses trips that are
+ * walkable. Issue #266 memoises A*'s own answer instead.
  */
 export function floodReachableRegion(
   world: TerrainSampler,
