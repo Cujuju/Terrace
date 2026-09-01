@@ -7,7 +7,7 @@
 // server-side (server/index.ts's reactToTerrain).
 
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { grassVariation, type GrassCell } from '../protocol.ts';
+import { grassKey, grassVariation, type GrassCell } from '../protocol.ts';
 import type { GrassPlacement } from './grassModels.ts';
 
 /** Exactly GroundLookup from placement.ts, restated so this module has no cross-file type import to track. */
@@ -15,8 +15,16 @@ export type GrassGroundLookup = (x: number, y: number) => number | null;
 
 export interface GrassPlacementResult {
   readonly placements: GrassPlacement[];
-  /** How many tufts were skipped because their ground is unknown — see FLORA_GROUND_RETRY_SECONDS. */
-  readonly pendingGround: number;
+  /**
+   * WHICH tufts were skipped because their ground is unknown, as packed
+   * grassKeys — see FLORA_GROUND_RETRY_SECONDS.
+   *
+   * The keys rather than a count, because the caller now places tufts a DELTA
+   * at a time (GH #256): a count can only be recomputed by walking the whole
+   * population, where a set of keys can be maintained by the same delta that
+   * placed them.
+   */
+  readonly pendingCells: number[];
 }
 
 /**
@@ -30,12 +38,12 @@ export function grassPlacementsFor(
   groundAt: GrassGroundLookup,
 ): GrassPlacementResult {
   const placements: GrassPlacement[] = [];
-  let pendingGround = 0;
+  const pendingCells: number[] = [];
 
   for (const cell of cells) {
     const groundY = groundAt(cell.x, cell.y);
     if (groundY === null) {
-      pendingGround++;
+      pendingCells.push(grassKey(cell.x, cell.y));
       continue;
     }
 
@@ -51,5 +59,5 @@ export function grassPlacementsFor(
     });
   }
 
-  return { placements, pendingGround };
+  return { placements, pendingCells };
 }

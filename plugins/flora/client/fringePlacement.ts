@@ -14,7 +14,7 @@
 // what grows where.
 
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { fringeVariation, type FringeCell, type FringeSpecies } from '../protocol.ts';
+import { FLORA_CELL_KEY_STRIDE, fringeVariation, type FringeSpecies } from '../protocol.ts';
 import type { FringePlacement } from './fringeModels.ts';
 
 /** Exactly GroundLookup from placement.ts, restated so this module has no cross-file type import to track. */
@@ -22,35 +22,45 @@ export type FringeGroundLookup = (x: number, y: number) => number | null;
 
 export interface FringePlacementResult {
   readonly placements: FringePlacement[];
-  /** How many plants were skipped because their ground is unknown — see FLORA_GROUND_RETRY_SECONDS. */
-  readonly pendingGround: number;
+  /** WHICH plants were skipped because their ground is unknown, as packed fringeKeys — grassPlacement.ts's reason. */
+  readonly pendingCells: number[];
 }
 
 /**
  * Places every fringe plant whose ground this client knows. A plant over unknown
  * ground is OMITTED rather than drawn at a guessed height — placementsFor's
  * identical reasoning.
+ *
+ * TAKES PACKED KEYS, which is exactly the shape of the caller's own
+ * `Map<fringeKey, FringeSpecies>` — so the whole population can be passed as
+ * the map itself, with no intermediate array of decoded cells to allocate on
+ * every rebuild (GH #260).
  */
 export function fringePlacementsFor(
-  plants: Iterable<readonly [FringeCell, FringeSpecies]>,
+  plants: Iterable<readonly [number, FringeSpecies]>,
   groundAt: FringeGroundLookup,
 ): FringePlacementResult {
   const placements: FringePlacement[] = [];
-  let pendingGround = 0;
+  const pendingCells: number[] = [];
 
-  for (const [cell, species] of plants) {
-    const groundY = groundAt(cell.x, cell.y);
+  for (const [key, species] of plants) {
+    // Unpacked inline rather than through fringeCellOf: this is the hot loop
+    // over the whole population, and the decoded cell would be one short-lived
+    // object per plant for two numbers that are already here.
+    const cellX = key % FLORA_CELL_KEY_STRIDE;
+    const cellY = Math.floor(key / FLORA_CELL_KEY_STRIDE);
+    const groundY = groundAt(cellX, cellY);
     if (groundY === null) {
-      pendingGround++;
+      pendingCells.push(key);
       continue;
     }
 
-    const variation = fringeVariation(cell.x, cell.y);
+    const variation = fringeVariation(cellX, cellY);
     placements.push({
-      x: cell.x * CELL_WORLD_SIZE,
-      z: cell.y * CELL_WORLD_SIZE,
-      cellX: cell.x,
-      cellY: cell.y,
+      x: cellX * CELL_WORLD_SIZE,
+      z: cellY * CELL_WORLD_SIZE,
+      cellX,
+      cellY,
       groundY,
       species,
       scale: variation.scale,
@@ -58,5 +68,5 @@ export function fringePlacementsFor(
     });
   }
 
-  return { placements, pendingGround };
+  return { placements, pendingCells };
 }
