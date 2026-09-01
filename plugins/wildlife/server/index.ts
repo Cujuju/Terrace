@@ -100,6 +100,7 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import { WILDLIFE_ENTITIES_MESSAGE, WILDLIFE_PLUGIN_NAME } from '../protocol.ts';
 import { WILDLIFE_POPULATION_CAP, type HabitatWorld } from './census.ts';
+import { invalidateCensusIndex, markCensusCellsDirty } from './census-index.ts';
 import { MAX_BIRDS_ALOFT, advanceFlocks, birdStates, resetFlocks } from './flocks.ts';
 import {
   FLEE_DURATION_SECONDS,
@@ -279,6 +280,13 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   }
   startleNear(sumX / diff.length, sumY / diff.length, FLEE_RADIUS_CELLS);
 
+  // THE THIRD EFFECT (issue #268): the habitat census is incremental now, and
+  // this diff is the only notification that any cell's habitat class may have
+  // moved. Recording it here — the same cell-exact list the flee centroid is
+  // derived from — is what lets the 5 s census re-count these chunks instead
+  // of the whole world.
+  markCensusCellsDirty(diff);
+
   despawnInvalidHabitat(world);
 }
 
@@ -431,6 +439,14 @@ export const plugin: TerracePlugin = {
   name: WILDLIFE_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
+    // THE TERRAIN UNDERFOOT MAY BE BRAND NEW. This hook is replayed on a
+    // rollback (world/rollback.ts:204) right after `World.rewindTo` has
+    // replaced every height WITHOUT a terrain diff — the one way the
+    // incremental census's cached counts can go stale unannounced (see
+    // census-index.ts's header, reason 3). Dropping the index costs one full
+    // re-count on the next census and closes that hole.
+    invalidateCensusIndex();
+
     // THE CROSS-PLUGIN DEPENDENCY PATTERN, write-direction (./fire-bridge.ts):
     // the host answers who is running as fire here, and the registration is
     // still buffered and replayed by the bridge. The world is taken only to
@@ -513,6 +529,7 @@ export const plugin: TerracePlugin = {
  */
 export function resetWildlifeState(): void {
   tickCount = 0;
+  invalidateCensusIndex();
   resetPopulation();
   resetFlocks();
 }
