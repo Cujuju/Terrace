@@ -85,6 +85,54 @@ export const FLOW_RADIUS_CELLS = cellsAcross(FLOW_RADIUS_WORLD_UNITS);
 export const FLOW_CORE_FRACTION = 0.45;
 
 /**
+ * How much of the flow reaches a footprint cell that far, in cells, from the
+ * nearest cell the lava actually ran through — 1 in the core, easing to 0 at
+ * FLOW_RADIUS_CELLS.
+ */
+function edgeStrengthAt(distance: number): number {
+  const inner = FLOW_RADIUS_CELLS * FLOW_CORE_FRACTION;
+  if (distance <= inner) return 1;
+  const t = (distance - inner) / (FLOW_RADIUS_CELLS - inner);
+  // smoothstep, so the edge eases out instead of ending on a line.
+  return 1 - t * t * (3 - 2 * t);
+}
+
+/** One cell of the disc a single flow cell stamps onto the footprint. */
+interface FootprintOffset {
+  readonly dx: number;
+  readonly dy: number;
+  readonly distance: number;
+  /** edgeStrengthAt(distance) — a function of the OFFSET, so never recomputed. */
+  readonly strength: number;
+}
+
+/**
+ * The stencil one flow cell stamps: every offset within FLOW_RADIUS_CELLS, in
+ * the exact order the nested dy/dx loop used to visit them.
+ *
+ * BUILT ONCE, because none of it depends on the cell being stamped. This was a
+ * `Math.hypot` and a reject test per offset per flow cell per rebuild — 81 x
+ * LAVA_CELL_CAP = 15 552 of each, several times a second — to re-derive a
+ * fixed disc, and the edge falloff re-derived a smoothstep from a distance
+ * that could only ever be one of the values in this table. The ORDER matters
+ * and is preserved exactly: it decides the order the footprint Map is built
+ * in, which decides the order the quads are emitted in, which decides how they
+ * composite (the flow is near-opaque and writes no depth, so submission order
+ * IS paint order where two caps overlap on screen).
+ */
+const FOOTPRINT_STENCIL: readonly FootprintOffset[] = (() => {
+  const out: FootprintOffset[] = [];
+  for (let dy = -FLOW_RADIUS_CELLS; dy <= FLOW_RADIUS_CELLS; dy++) {
+    for (let dx = -FLOW_RADIUS_CELLS; dx <= FLOW_RADIUS_CELLS; dx++) {
+      const distance = Math.hypot(dx, dy);
+      if (distance > FLOW_RADIUS_CELLS) continue;
+      out.push({ dx, dy, distance, strength: edgeStrengthAt(distance) });
+    }
+  }
+  return out;
+})();
+
+/**
  * How far above the drawn cap the mesh sits, in world units.
  *
  * Coplanar geometry z-fights, so the flow cannot sit exactly on the surface it
@@ -249,6 +297,22 @@ const LAVA_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
+/**
+ * One cell of the flow's FOOTPRINT — a cell the mesh covers, which is a flow
+ * cell or one within FLOW_RADIUS_CELLS of one. Mutable because these are
+ * pooled and overwritten in place across rebuilds.
+ */
+interface CoveredCell {
+  x: number;
+  y: number;
+  /** Cells to the nearest flow cell, which is what sets `strength`. */
+  distance: number;
+  /** edgeStrengthAt(distance), carried rather than recomputed. */
+  strength: number;
+  /** The birth of that nearest flow cell, so the coverage cools with it. */
+  birth: number;
+}
+
 /** One cell the server says is lava, as this renderer remembers it. */
 interface FlowCell {
   readonly x: number;
@@ -346,13 +410,48 @@ export function createLavaFlow(): LavaFlowRenderer {
   let missingGround = false;
 
   /**
+   * The footprint and the heights, reused across rebuilds rather than
+   * reallocated — see rebuild's own header for why the rebuild stays WHOLE and
+   * what that costs. A rebuild clears them; the entry objects in `covered` are
+   * pooled and overwritten in place, so ~1 500 objects per rebuild several
+   * times a second stopped being garbage.
+   */
+  const covered = new Map<number, CoveredCell>();
+  const coveredPool: CoveredCell[] = [];
+  let coveredPoolUsed = 0;
+  const capY = new Map<number, number>();
+
+  /**
    * Rebuilds the whole mesh from `cells`.
    *
-   * WHOLE, NOT INCREMENTAL, and deliberately: a new cell changes the coverage
-   * and the risers of every cell within FLOW_RADIUS_CELLS of it, so an
-   * incremental update would have to find and rewrite that neighbourhood
-   * anyway. Rebuilding is O(covered cells), runs on a server delta rather than
-   * a frame, and cannot leave a stale triangle behind.
+   * WHOLE, NOT INCREMENTAL, and now for a reason that survives being asked
+   * twice. The obvious one is only half true: a new cell changes the coverage
+   * and the risers of every cell within FLOW_RADIUS_CELLS of it, which
+   * justifies re-stamping that NEIGHBOURHOOD — a couple of hundred cells —
+   * rather than the whole world's worth of them.
+   *
+   * WHAT ACTUALLY FORBIDS IT IS THE ORDER. The quads come out in the order
+   * `covered` was built in, which is: for each flow cell in the order the
+   * server sent it, for each offset of FOOTPRINT_STENCIL. The flow draws at
+   * alpha 0.96 and writes no depth (see the material), so where two caps at
+   * different terrace heights overlap on screen, SUBMISSION ORDER IS PAINT
+   * ORDER. Keeping the footprint between deltas and patching a neighbourhood
+   * into it leaves the Map in insertion order from an older history, which
+   * re-orders the emission and repaints those overlaps differently. That is a
+   * visible change to settle deliberately, not a side effect to take for a
+   * faster rebuild.
+   *
+   * So the rebuild stays whole and the CONSTANT was taken out of it instead:
+   * the stencil (and its edge strength) is a table rather than 15 552
+   * `Math.hypot` calls and smoothsteps per rebuild, and both maps and the
+   * footprint's entry objects are reused rather than reallocated. It still
+   * runs on a server delta rather than a frame, and it still cannot leave a
+   * stale triangle behind.
+   *
+   * RESIDUAL, stated rather than hidden: `cells` is world-lifetime and capped
+   * at LAVA_CELL_CAP, so a world with any eruption history pays a full-cap
+   * rebuild from the first new cell of the next eruption. Roughly halved here,
+   * not removed.
    */
   function rebuild(groundAt: DrawnGroundAtCell): void {
     missingGround = false;
@@ -366,30 +465,47 @@ export function createLavaFlow(): LavaFlowRenderer {
     // Every cell within FLOW_RADIUS_CELLS of some flow cell, carrying the
     // distance to the NEAREST one (which sets its edge falloff) and that
     // cell's birth (so the coverage cools with the lava that made it).
-    const covered = new Map<number, { x: number; y: number; distance: number; birth: number }>();
-    const radius = FLOW_RADIUS_CELLS;
+    covered.clear();
+    coveredPoolUsed = 0;
 
     for (const cell of cells.values()) {
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const distance = Math.hypot(dx, dy);
-          if (distance > radius) continue;
-          const x = cell.x + dx;
-          const y = cell.y + dy;
-          if (x < 0 || y < 0) continue;
-          const key = lavaKey(x, y);
-          const existing = covered.get(key);
-          // NEAREST WINS, and the birth travels with it: where two flows overlap
-          // the ground belongs to whichever ran closer to it, which is also the
-          // one whose heat it should be showing.
-          if (existing !== undefined && existing.distance <= distance) continue;
-          covered.set(key, { x, y, distance, birth: cell.birth });
+      for (const offset of FOOTPRINT_STENCIL) {
+        const x = cell.x + offset.dx;
+        const y = cell.y + offset.dy;
+        if (x < 0 || y < 0) continue;
+        const key = lavaKey(x, y);
+        const existing = covered.get(key);
+        // NEAREST WINS, and the birth travels with it: where two flows overlap
+        // the ground belongs to whichever ran closer to it, which is also the
+        // one whose heat it should be showing.
+        if (existing !== undefined) {
+          if (existing.distance <= offset.distance) continue;
+          // Overwritten IN PLACE. `Map.set` on a key it already holds does not
+          // move it, so mutating the entry it already holds is the same thing
+          // and allocates nothing.
+          existing.distance = offset.distance;
+          existing.strength = offset.strength;
+          existing.birth = cell.birth;
+          continue;
         }
+        let entry = coveredPool[coveredPoolUsed];
+        if (entry === undefined) {
+          entry = { x, y, distance: offset.distance, strength: offset.strength, birth: cell.birth };
+          coveredPool.push(entry);
+        } else {
+          entry.x = x;
+          entry.y = y;
+          entry.distance = offset.distance;
+          entry.strength = offset.strength;
+          entry.birth = cell.birth;
+        }
+        coveredPoolUsed++;
+        covered.set(key, entry);
       }
     }
 
     // ── 2. The heights ──────────────────────────────────────────────────────
-    const capY = new Map<number, number>();
+    capY.clear();
     for (const [key, cell] of covered) {
       const y = groundAt(cell.x, cell.y);
       if (y === null) {
@@ -414,14 +530,6 @@ export function createLavaFlow(): LavaFlowRenderer {
       births[vertex] = birth;
       strengths[vertex] = strength;
       vertex++;
-    }
-
-    function strengthOf(distance: number): number {
-      const inner = radius * FLOW_CORE_FRACTION;
-      if (distance <= inner) return 1;
-      const t = (distance - inner) / (radius - inner);
-      // smoothstep, so the edge eases out instead of ending on a line.
-      return 1 - t * t * (3 - 2 * t);
     }
 
     /**
@@ -467,7 +575,7 @@ export function createLavaFlow(): LavaFlowRenderer {
 
       // The face carries the WEAKER of the two cells' strengths, so the flow's
       // edge fades down a step as evenly as it fades across a tread.
-      const riserStrength = Math.min(strength, strengthOf(neighbour.distance));
+      const riserStrength = Math.min(strength, neighbour.strength);
       if (riserStrength <= 0) return;
       // The birth of whichever cell is on top — the face is lava running over
       // the lip, and that lava is the upper cell's.
@@ -488,7 +596,7 @@ export function createLavaFlow(): LavaFlowRenderer {
     for (const [key, cell] of covered) {
       const y = capY.get(key);
       if (y === undefined) continue;
-      const strength = strengthOf(cell.distance);
+      const strength = cell.strength;
       if (strength <= 0) continue;
 
       const x0 = cell.x * CELL_WORLD_SIZE - half;
