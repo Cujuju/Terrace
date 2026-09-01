@@ -52,13 +52,30 @@ import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   FLORA_GRASS_CAP,
   GRASS_BLADES_PER_TUFT,
+  GRASS_BLADE_HEIGHT_SPREAD,
   GRASS_BLADE_JITTER_IN_CLUSTER_SPANS,
   GRASS_BLADE_OFFSETS,
   GRASS_SCALE_MAX,
   GRASS_TUFT_CLUSTER_CELL_SPAN,
   grassBladeVariation,
   grassFlowerOf,
+  grassKey,
+  type GrassCell,
 } from '../protocol.ts';
+import {
+  COLOR_FLOATS_PER_INSTANCE,
+  MATRIX_FLOATS_PER_INSTANCE,
+  clearPlacementExtent,
+  clusteredReach,
+  createPlacementExtent,
+  geometryReach,
+  includePlacement,
+  scaledReach,
+  uploadAllInstances,
+  uploadInstanceRun,
+  writeInstanceSphere,
+  type InstanceReach,
+} from './instanceBounds.ts';
 
 /** One crop CELL's worth of world units — the unit every dimension below speaks. */
 const cells = (n: number): number => n * CELL_WORLD_SIZE;
@@ -248,6 +265,17 @@ export interface GrassModels {
   readonly root: Group;
   /** Replaces every drawn tuft with the given list. Order is irrelevant. */
   apply(placements: readonly GrassPlacement[]): void;
+  /**
+   * Adds and removes the named tufts, leaving every other tuft's instances
+   * untouched (GH #256). The delta path: cost is proportional to the change,
+   * not to the meadow, which is what a one-cell uproot arriving at the sculpt
+   * rate needs it to be.
+   *
+   * A sprout for a cell that is already standing REPLACES it rather than
+   * duplicating it, which is what makes this safe to call with whatever the
+   * server sent without first diffing it against the drawn set.
+   */
+  applyDelta(sprouted: readonly GrassPlacement[], withered: readonly GrassCell[]): void;
   /** Frees every geometry and material. Call once, at plugin dispose. */
   dispose(): void;
 }
@@ -399,6 +427,28 @@ function buildBlossom(tipCentre: Vector3): BlossomGeometry {
   };
 }
 
+/** The furthest lattice point a blade is planted at, in cluster spans. */
+function plantingRadiusInSpans(): number {
+  let radius = 0;
+  for (const [ox, oz] of GRASS_BLADE_OFFSETS) {
+    radius = Math.max(radius, Math.hypot(ox, oz));
+  }
+  return radius;
+}
+
+/**
+ * How far the outermost blade of a tuft is planted from the tuft's centre,
+ * INCLUDING its jitter, in world units at unit scale — the horizontal term the
+ * culling sphere has to add around the placement box, and the same quantity
+ * assertBladeFitsTuft checks against the cell.
+ */
+function clusterSpreadInWorld(): number {
+  return (
+    cells(CLUSTER_SPAN_IN_CELLS) *
+    (plantingRadiusInSpans() + GRASS_BLADE_JITTER_IN_CLUSTER_SPANS * Math.SQRT2)
+  );
+}
+
 /**
  * The cluster's worst-case reach from tuft centre, checked against the square
  * the tuft has to stay inside — wheatVariants.ts's assertClusterFitsBed, doing
@@ -410,12 +460,8 @@ function buildBlossom(tipCentre: Vector3): BlossomGeometry {
  * jitter axes at once, plus the blade's own horizontal run.
  */
 function assertBladeFitsTuft(horizontalReachInCells: number): void {
-  let plantedRadiusInSpans = 0;
-  for (const [ox, oz] of GRASS_BLADE_OFFSETS) {
-    plantedRadiusInSpans = Math.max(plantedRadiusInSpans, Math.hypot(ox, oz));
-  }
   const worstInSpans =
-    plantedRadiusInSpans +
+    plantingRadiusInSpans() +
     GRASS_BLADE_JITTER_IN_CLUSTER_SPANS * Math.SQRT2 +
     horizontalReachInCells / CLUSTER_SPAN_IN_CELLS;
 
@@ -456,10 +502,11 @@ export function createGrassModels(): GrassModels {
   // ≈ 2.6 MB of matrices next to the meadow's own ≈ 26 MB, which is why the
   // guarantee is worth more than the saving would be.
   const blossoms = new InstancedMesh(blossom.geometry, materials[2], FLORA_GRASS_CAP);
-  blossoms.instanceColor = new InstancedBufferAttribute(
-    new Float32Array(FLORA_GRASS_CAP * 3),
-    3,
+  const blossomColors = new InstancedBufferAttribute(
+    new Float32Array(FLORA_GRASS_CAP * COLOR_FLOATS_PER_INSTANCE),
+    COLOR_FLOATS_PER_INSTANCE,
   );
+  blossoms.instanceColor = blossomColors;
 
   const meshes = [blades, tips, blossoms];
   blades.name = 'flora:grass-blades';
@@ -487,86 +534,288 @@ export function createGrassModels(): GrassModels {
   const bladePosition = new Vector3();
   const bladeOffset = new Vector3();
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE SLOT TABLE (GH #256) — what makes a one-cell uproot cost one cell.
+  //
+  // index.ts's header used to argue that wholesale rebuilds were cheaper than
+  // this bookkeeping. That argument was made for the FOREST, where a rebuild is
+  // 3 000 composes; it does not survive the meadow, where it is 205 000 matrix
+  // writes plus a 28 MB upload, arriving at the sculpt rate. Measured before
+  // this table existed (three 0.185.1, headless, median of 15): 5.4 ms at
+  // 4 293 tufts, 12.6 ms at 10 846, and 64 ms at FLORA_GRASS_CAP. With it, one
+  // uprooted cell is 0.003 ms and 640 B.
+  //
+  // A TUFT OWNS A CONTIGUOUS RUN of GRASS_BLADES_PER_TUFT blade instances, so
+  // one tuft is one slot in every table here and one update range on the wire.
+  // Removal is swap-with-last (the drawn ORDER of tufts is irrelevant — nothing
+  // reads it), which keeps the live instances packed into [0, count) with no
+  // holes, which is what lets `mesh.count` stay the whole story for drawing.
+  //
+  // The BLOSSOMS need their own slot space rather than sharing the tuft's:
+  // only some tufts flower, and giving a flowerless tuft a slot would mean
+  // drawing FLORA_GRASS_CAP degenerate flower heads instead of the few thousand
+  // real ones. So there is a second swap-remove, and two maps between them.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** No flower on this tuft — the absent value in `blossomOfSlot`. */
+  const NO_BLOSSOM = -1;
+
+  /** Tuft slot of every drawn cell, keyed by grassKey. The delta path's index. */
+  const slotOfCell = new Map<number, number>();
+  /** The inverse of slotOfCell: which cell each live tuft slot draws. */
+  const cellOfSlot: number[] = [];
+  /** Blossom slot of each live tuft slot, or NO_BLOSSOM. */
+  const blossomOfSlot: number[] = [];
+  /** The inverse: which tuft slot owns each live blossom slot. */
+  const tuftOfBlossom: number[] = [];
+
+  let tuftCount = 0;
+  let blossomCount = 0;
+
+  /**
+   * The box the tufts stand in — the culling sphere's input, kept here instead
+   * of being re-derived from 205 000 instance matrices (GH #257).
+   *
+   * GROWS ON A DELTA AND SHRINKS ONLY ON A FULL REBUILD. Uprooting the
+   * westernmost tuft in the world leaves the box reaching west until the next
+   * full grass message (at most one FLORA_KEEPALIVE_SECONDS away), which costs
+   * a little culling and can never hide a tuft that is on screen — the error
+   * that matters is the one in the other direction.
+   */
+  const extent = createPlacementExtent();
+
+  const spread = clusterSpreadInWorld();
+  const reachOf = (geometry: BufferGeometry): InstanceReach =>
+    scaledReach(
+      clusteredReach(geometryReach(geometry), spread, 1 + GRASS_BLADE_HEIGHT_SPREAD),
+      GRASS_SCALE_MAX,
+    );
+  /** One reach per mesh, in `geometries`/`meshes` order — resolved once, at build. */
+  const reaches: InstanceReach[] = geometries.map(reachOf);
+
+  /**
+   * Writes one tuft's blades and tips into `slot`, and — if this cell flowers —
+   * its blossom into `blossomSlot`. Returns whether the blossom slot was used.
+   *
+   * Writes the ARRAYS only: the caller owns the counts, the tables and the
+   * update ranges, because those differ between a full rebuild (one range for
+   * everything) and a delta (one range per touched slot).
+   */
+  const writeTuft = (
+    slot: number,
+    placement: GrassPlacement,
+    blossomSlot: number,
+  ): boolean => {
+    // Which blade — if any — of this tuft carries a flower. Derived from
+    // the cell, never sent (../protocol.ts's wildflower section).
+    const flower = grassFlowerOf(placement.cellX, placement.cellY);
+    let flowered = false;
+
+    position.set(placement.x, placement.groundY, placement.z);
+    tuftRotation.setFromAxisAngle(UP, placement.yaw);
+
+    // The cluster's spread in WORLD units: the offsets are fractions of
+    // the cluster span, and `position` is world units (cropModels.ts's
+    // identical conversion, and the identical bug if it is skipped).
+    const clusterWidth = cells(CLUSTER_SPAN_IN_CELLS) * placement.scale;
+
+    let blade = slot * GRASS_BLADES_PER_TUFT;
+    for (let index = 0; index < GRASS_BLADES_PER_TUFT; index++) {
+      const [ox, oz] = GRASS_BLADE_OFFSETS[index]!;
+      const variation = grassBladeVariation(placement.cellX, placement.cellY, index);
+
+      bladeOffset
+        .set((ox + variation.jitterX) * clusterWidth, 0, (oz + variation.jitterZ) * clusterWidth)
+        .applyQuaternion(tuftRotation);
+      bladePosition.copy(position).add(bladeOffset);
+
+      // The blade's OWN yaw, not the tuft's — and since the arch is
+      // authored in the blade's local +X, its yaw is also WHICH WAY it
+      // leans. That is what makes three blades out of one crown fan
+      // outward instead of all falling the same way.
+      bladeRotation.setFromAxisAngle(UP, variation.yaw);
+
+      // Height varies per blade, width does not: a blade that grew taller
+      // did not also grow wider, and scaling all three axes would read as
+      // "the same blade, nearer the camera" (cropModels.ts's own note).
+      bladeScale.set(placement.scale, placement.scale * variation.height, placement.scale);
+
+      matrix.compose(bladePosition, bladeRotation, bladeScale);
+      blades.setMatrixAt(blade, matrix);
+      tips.setMatrixAt(blade++, matrix);
+
+      // THE SAME MATRIX, not a second one built from the same parts: the
+      // blossom's geometry is authored in this blade's local space, so
+      // reusing the transform is what guarantees the flower sits on the
+      // stem rather than merely near it.
+      if (flower !== null && flower.bladeIndex === index) {
+        blossoms.setMatrixAt(blossomSlot, matrix);
+        const color = flowerColors[Math.floor((flower.tintRoll / 256) * flowerColors.length)]!;
+        blossoms.setColorAt(blossomSlot, color);
+        flowered = true;
+      }
+    }
+
+    includePlacement(extent, placement.x, placement.groundY, placement.z);
+    return flowered;
+  };
+
+  /** Copies one run of instances within an attribute's array — the swap half of swap-remove. */
+  const moveInstances = (
+    attribute: BufferAttribute,
+    from: number,
+    to: number,
+    count: number,
+    floatsPerInstance: number,
+  ): void => {
+    attribute.array.copyWithin(
+      to * floatsPerInstance,
+      from * floatsPerInstance,
+      (from + count) * floatsPerInstance,
+    );
+  };
+
+  /** Swap-removes one blossom slot, keeping the live blossoms packed. */
+  const removeBlossom = (slot: number): void => {
+    const last = blossomCount - 1;
+    if (slot !== last) {
+      moveInstances(blossoms.instanceMatrix, last, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+      moveInstances(blossomColors, last, slot, 1, COLOR_FLOATS_PER_INSTANCE);
+      const owner = tuftOfBlossom[last]!;
+      tuftOfBlossom[slot] = owner;
+      blossomOfSlot[owner] = slot;
+      uploadInstanceRun(blossoms.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+      uploadInstanceRun(blossomColors, slot, 1, COLOR_FLOATS_PER_INSTANCE);
+    }
+    blossomCount = last;
+    tuftOfBlossom.length = last;
+  };
+
+  /** Swap-removes one cell's tuft. A cell that is not drawn is a no-op. */
+  const removeCell = (key: number): void => {
+    const slot = slotOfCell.get(key);
+    if (slot === undefined) return;
+    slotOfCell.delete(key);
+
+    // The blossom goes FIRST, while blossomOfSlot still describes this slot —
+    // and its own swap may rewrite the entry of the tuft that is about to move,
+    // which the tuft swap below then reads and remaps.
+    const blossom = blossomOfSlot[slot]!;
+    if (blossom !== NO_BLOSSOM) removeBlossom(blossom);
+
+    const last = tuftCount - 1;
+    if (slot !== last) {
+      const run = GRASS_BLADES_PER_TUFT;
+      moveInstances(blades.instanceMatrix, last * run, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+      moveInstances(tips.instanceMatrix, last * run, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+
+      const movedKey = cellOfSlot[last]!;
+      cellOfSlot[slot] = movedKey;
+      slotOfCell.set(movedKey, slot);
+      const movedBlossom = blossomOfSlot[last]!;
+      blossomOfSlot[slot] = movedBlossom;
+      if (movedBlossom !== NO_BLOSSOM) tuftOfBlossom[movedBlossom] = slot;
+
+      uploadInstanceRun(blades.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+      uploadInstanceRun(tips.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+    }
+
+    tuftCount = last;
+    cellOfSlot.length = last;
+    blossomOfSlot.length = last;
+  };
+
+  /**
+   * Appends one tuft. Over the cap it is DROPPED, exactly as the wholesale
+   * rebuild's `break` dropped it — with one named difference: the wholesale
+   * path re-picked WHICH cells lose out on every rebuild, where this one keeps
+   * dropping new arrivals until the next full grass message re-picks. The
+   * FLORA_KEEPALIVE_SECONDS resend is that re-pick.
+   */
+  const addCell = (key: number, placement: GrassPlacement): void => {
+    if (tuftCount >= FLORA_GRASS_CAP) return;
+    const slot = tuftCount++;
+    const flowered = writeTuft(slot, placement, blossomCount);
+
+    slotOfCell.set(key, slot);
+    cellOfSlot[slot] = key;
+    blossomOfSlot[slot] = flowered ? blossomCount : NO_BLOSSOM;
+    if (flowered) {
+      tuftOfBlossom[blossomCount] = slot;
+      uploadInstanceRun(blossoms.instanceMatrix, blossomCount, 1, MATRIX_FLOATS_PER_INSTANCE);
+      uploadInstanceRun(blossomColors, blossomCount, 1, COLOR_FLOATS_PER_INSTANCE);
+      blossomCount++;
+    }
+
+    const run = GRASS_BLADES_PER_TUFT;
+    uploadInstanceRun(blades.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+    uploadInstanceRun(tips.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+  };
+
+  /** Publishes the live counts and the culling spheres. Ends every apply, whole or partial. */
+  const publish = (): void => {
+    blades.count = tuftCount * GRASS_BLADES_PER_TUFT;
+    tips.count = blades.count;
+    blossoms.count = blossomCount;
+    for (let i = 0; i < meshes.length; i++) {
+      writeInstanceSphere(meshes[i]!, extent, reaches[i]!);
+    }
+  };
+
   return {
     root,
 
     apply(placements: readonly GrassPlacement[]): void {
-      let tuftCount = 0;
-      let bladeCount = 0;
-      let blossomCount = 0;
+      slotOfCell.clear();
+      cellOfSlot.length = 0;
+      blossomOfSlot.length = 0;
+      tuftOfBlossom.length = 0;
+      tuftCount = 0;
+      blossomCount = 0;
+      clearPlacementExtent(extent);
 
       for (const placement of placements) {
         if (tuftCount >= FLORA_GRASS_CAP) break;
-        tuftCount++;
-
-        // Which blade — if any — of this tuft carries a flower. Derived from
-        // the cell, never sent (../protocol.ts's wildflower section).
-        const flower = grassFlowerOf(placement.cellX, placement.cellY);
-
-        position.set(placement.x, placement.groundY, placement.z);
-        tuftRotation.setFromAxisAngle(UP, placement.yaw);
-
-        // The cluster's spread in WORLD units: the offsets are fractions of
-        // the cluster span, and `position` is world units (cropModels.ts's
-        // identical conversion, and the identical bug if it is skipped).
-        const spread = cells(CLUSTER_SPAN_IN_CELLS) * placement.scale;
-
-        // Safe without a per-iteration bound check: tuftCount is capped at
-        // FLORA_GRASS_CAP above, so bladeCount can advance at most
-        // FLORA_GRASS_CAP * GRASS_BLADES_PER_TUFT times — exactly the two
-        // meshes' shared instance allocation.
-        for (let index = 0; index < GRASS_BLADES_PER_TUFT; index++) {
-          const [ox, oz] = GRASS_BLADE_OFFSETS[index]!;
-          const blade = grassBladeVariation(placement.cellX, placement.cellY, index);
-
-          bladeOffset
-            .set((ox + blade.jitterX) * spread, 0, (oz + blade.jitterZ) * spread)
-            .applyQuaternion(tuftRotation);
-          bladePosition.copy(position).add(bladeOffset);
-
-          // The blade's OWN yaw, not the tuft's — and since the arch is
-          // authored in the blade's local +X, its yaw is also WHICH WAY it
-          // leans. That is what makes three blades out of one crown fan
-          // outward instead of all falling the same way.
-          bladeRotation.setFromAxisAngle(UP, blade.yaw);
-
-          // Height varies per blade, width does not: a blade that grew taller
-          // did not also grow wider, and scaling all three axes would read as
-          // "the same blade, nearer the camera" (cropModels.ts's own note).
-          bladeScale.set(placement.scale, placement.scale * blade.height, placement.scale);
-
-          matrix.compose(bladePosition, bladeRotation, bladeScale);
-          blades.setMatrixAt(bladeCount, matrix);
-          tips.setMatrixAt(bladeCount++, matrix);
-
-          // THE SAME MATRIX, not a second one built from the same parts: the
-          // blossom's geometry is authored in this blade's local space, so
-          // reusing the transform is what guarantees the flower sits on the
-          // stem rather than merely near it.
-          if (flower !== null && flower.bladeIndex === index) {
-            blossoms.setMatrixAt(blossomCount, matrix);
-            const color =
-              flowerColors[Math.floor((flower.tintRoll / 256) * flowerColors.length)]!;
-            blossoms.setColorAt(blossomCount++, color);
-          }
-        }
+        const key = grassKey(placement.cellX, placement.cellY);
+        const slot = tuftCount++;
+        const flowered = writeTuft(slot, placement, blossomCount);
+        slotOfCell.set(key, slot);
+        cellOfSlot[slot] = key;
+        blossomOfSlot[slot] = flowered ? blossomCount : NO_BLOSSOM;
+        if (flowered) tuftOfBlossom[blossomCount++] = slot;
       }
 
-      blades.count = bladeCount;
-      tips.count = bladeCount;
-      blossoms.count = blossomCount;
-      // setColorAt writes through instanceColor, which carries its own dirty
-      // flag — the instanceMatrix flag below does not cover it, and without
-      // this every flower renders in whatever colour it had last rebuild.
-      if (blossoms.instanceColor !== null) blossoms.instanceColor.needsUpdate = true;
+      publish();
+      // ONE RANGE PER BUFFER, sized by the live population rather than by
+      // FLORA_GRASS_CAP (GH #262): three uploads the WHOLE array whenever the
+      // range list is empty and never consults mesh.count, so a bare
+      // needsUpdate on these buffers is a 28 MB bufferSubData whatever is
+      // standing. setColorAt writes through instanceColor, which carries its
+      // own dirty flag — the matrix ranges do not cover it, and without this
+      // every flower renders in whatever colour it had last rebuild.
+      uploadAllInstances(blades.instanceMatrix, blades.count, MATRIX_FLOATS_PER_INSTANCE);
+      uploadAllInstances(tips.instanceMatrix, tips.count, MATRIX_FLOATS_PER_INSTANCE);
+      uploadAllInstances(blossoms.instanceMatrix, blossomCount, MATRIX_FLOATS_PER_INSTANCE);
+      uploadAllInstances(blossomColors, blossomCount, COLOR_FLOATS_PER_INSTANCE);
+    },
 
-      for (const mesh of meshes) {
-        mesh.instanceMatrix.needsUpdate = true;
-        // MANDATORY — see models.ts's identical note: the cached bounding
-        // sphere is from the PREVIOUS set of matrices, so skipping this makes
-        // the meadow vanish once the camera moves past where it used to be.
-        mesh.computeBoundingSphere();
+    applyDelta(
+      sprouted: readonly GrassPlacement[],
+      withered: readonly GrassCell[],
+    ): void {
+      // Withers first, for the reason index.ts's applyGrassChanges withers
+      // first: a message that named the same cell in both ends up with the
+      // tuft present, matching the server.
+      for (const cell of withered) removeCell(grassKey(cell.x, cell.y));
+      for (const placement of sprouted) {
+        const key = grassKey(placement.cellX, placement.cellY);
+        // A sprout for a cell already standing REPLACES it. Nothing on the
+        // wire produces that today for grass, but the alternative is a
+        // duplicate tuft that no later wither can ever remove.
+        removeCell(key);
+        addCell(key, placement);
       }
+      publish();
     },
 
     dispose(): void {
