@@ -26,7 +26,8 @@ import {
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
-import { createWildlifeModels, type CreatureModel, type WildlifeModels } from './models.ts';
+import { createWildlifeModels, type WildlifeModels } from './models.ts';
+import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
   SWIM_PROFILES,
   creatureWorldY,
@@ -51,9 +52,18 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
 /** A creature currently in the scene. */
 interface CreatureView {
-  readonly model: CreatureModel;
   /** Fixed at creation from the entity id — never recomputed per frame. */
   readonly phase: number;
+  /**
+   * Where this creature was last DRAWN, in world units.
+   *
+   * Held here because a creature no longer has a scene object to read it back
+   * off: it is one instance inside its species' herd (models.ts), and the
+   * instance buffer is rewritten from scratch every frame. This is the pose
+   * `drawnPoseOf` answers with — the one this loop last committed.
+   */
+  drawnX: number;
+  drawnZ: number;
   /**
    * World Y this creature was drawn at last frame, or null until it has been
    * drawn once. A SWIMMER's depth is eased frame to frame rather than
@@ -61,10 +71,9 @@ interface CreatureView {
    * SECOND), so it is the one part of a pose that has history; walkers and
    * flyers never read it.
    *
-   * Held HERE rather than read back off `model.root.position.y`, which would
-   * work today and would silently become wrong the moment anything else — an
-   * idle animation, a hit reaction — moved the root: the eased value has to be
-   * the one this loop last COMMITTED, not wherever the node ended up.
+   * Held HERE rather than read back off the drawn transform: the eased value
+   * has to be the one this loop last COMMITTED, not wherever anything else
+   * might have put it.
    */
   drawnY: number | null;
 }
@@ -86,30 +95,22 @@ let animationSeconds = 0;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
-/** Adds/removes scene objects so `views` matches the sampled population. */
+/**
+ * Keeps `views` matching the sampled population.
+ *
+ * Nothing is added to or removed from the SCENE here any more: a creature is an
+ * instance inside its species' herd, written afresh each frame (models.ts), so
+ * the only per-creature state left is the history this loop keeps — its phase
+ * and where it was last drawn.
+ */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void {
-  if (models === null || container === null) return;
-
-  for (const [id, entity] of sampled) {
+  for (const id of sampled.keys()) {
     if (views.has(id)) continue;
-    // Size is fixed for a creature's whole life (the server draws it at spawn),
-    // so it is baked into the model here rather than re-read every frame.
-    // `id` also seeds which of the three whale bodies this creature gets: it is
-    // stable for the creature's whole life, so an individual never changes
-    // species between frames.
-    const model = models.create(entity.species, sizeClassAt(entity.size), id);
-    container.add(model.root);
-    views.set(id, { model, phase: id * PHASE_RADIANS_PER_ID, drawnY: null });
+    views.set(id, { phase: id * PHASE_RADIANS_PER_ID, drawnX: 0, drawnZ: 0, drawnY: null });
   }
 
-  for (const [id, view] of views) {
-    if (sampled.has(id)) continue;
-    container.remove(view.model.root);
-    // Geometries and materials are shared per species and owned by `models`, so
-    // there is nothing to dispose here — dropping the Mesh objects is the whole
-    // teardown. Disposing them here would tear the resource out from under every
-    // other creature of the same species.
-    views.delete(id);
+  for (const id of views.keys()) {
+    if (!sampled.has(id)) views.delete(id);
   }
 }
 
@@ -122,12 +123,18 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
  * most a hundred — which is nothing next to the draw calls that follow it.
  */
 function renderFrame(ctx: ClientPluginCtx, dt: number): void {
+  if (models === null) return;
   const step = Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
   animationSeconds += step;
   interpolator.advance(dt);
 
   const sampled = interpolator.sample();
   reconcileViews(sampled);
+
+  // Every herd is rewritten from empty each frame: the population changes at
+  // 5 Hz and the placements change every frame, so there is no state worth
+  // carrying between frames and nothing to reconcile.
+  models.beginFrame(animationSeconds);
 
   for (const [id, entity] of sampled) {
     const view = views.get(id);
@@ -163,24 +170,38 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
             );
     const drawnY = creatureWorldY(entity.species, terrainY, sizeClass, view.drawnY, dt);
     view.drawnY = drawnY;
-    const root = view.model.root;
     // Cell coordinates scale to world X/Z by CELL_WORLD_SIZE (see placement.ts,
     // whose named residual this multiply is).
-    root.position.set(entity.x * CELL_WORLD_SIZE, drawnY, entity.y * CELL_WORLD_SIZE);
-    // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and the
-    // creature travels toward (cos heading, 0, sin heading) — hence the negation.
-    root.rotation.y = -entity.heading;
-
-    view.model.animate(animationSeconds, view.phase);
+    view.drawnX = entity.x * CELL_WORLD_SIZE;
+    view.drawnZ = entity.y * CELL_WORLD_SIZE;
+    models.draw(
+      entity.species,
+      sizeClass,
+      // `id` seeds which of the three whale bodies this creature gets: it is
+      // stable for the creature's whole life, so an individual never changes
+      // species between frames.
+      id,
+      view.phase,
+      view.drawnX,
+      drawnY,
+      view.drawnZ,
+      // Models face +X. Rotating +X about Y by θ yields (cos θ, 0, -sin θ), and
+      // the creature travels toward (cos heading, 0, sin heading) — hence the
+      // negation.
+      -entity.heading,
+    );
   }
+
+  models.endFrame();
 }
 
 /**
  * Where a creature is DRAWN, for anything that has to be drawn on it — a flame,
  * today (ClientPluginCtx.publishMovers).
  *
- * Read straight off the model's own root, so it is the pose this frame actually
- * put on screen: interpolated, ground-sampled, eased. That is the entire point
+ * Read straight off what this frame committed to the herd's instance buffer, so
+ * it is the pose actually on screen: interpolated, ground-sampled, eased —
+ * scale and heading excluded, which no consumer asks for. That is the entire point
  * of answering per id per frame instead of publishing positions — a second
  * consumer re-deriving this from the same wire messages would get a slightly
  * different answer every frame, and whatever it drew would crawl around the
@@ -191,18 +212,29 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
  */
 function drawnPoseOf(id: number): MoverPose | null {
   const view = views.get(id);
-  if (view === undefined) return null;
-  const at = view.model.root.position;
-  return { x: at.x, y: at.y, z: at.z };
+  // Null until the frame loop has drawn it once: `drawnY` is the flag, because
+  // it is the one component that has no meaningful value before then.
+  if (view === undefined || view.drawnY === null) return null;
+  return { x: view.drawnX, y: view.drawnY, z: view.drawnZ };
 }
 
 /**
- * Draw objects one creature costs at WORST: TWO. Most species bake to one
- * merged surface; the whale and the deep-sea creature carry a second (their
- * eye/gloss material cannot share the body's surface — see whaleSpecies.ts).
- * Measured 2026-08-29 over every (species, size class) pair.
+ * Draw objects the whole population costs, at any size: ONE INSTANCED MESH PER
+ * BAKED SURFACE PER HERD, and a herd is a species (three of them, for the three
+ * whale bodies — see models.ts). Most species bake to one merged surface; the
+ * whale and the deep-sea creature carry a second, their eye/gloss material
+ * being unable to share the body's surface (whaleSpecies.ts).
+ *
+ * NOT a per-creature cost any more, which is the point of the 2026-09-01
+ * change: fish 1 + whale 2×3 + deepsea 2 + grazer 1 + bird 1. The host counts
+ * an InstancedMesh as one object however many instances it carries
+ * (`countDrawObjects` in client/src/plugins/host.ts), and asserts this number
+ * against what the scene really holds, so a species gaining a surface shows up
+ * as a budget breach rather than as silence.
  */
-const CREATURE_DRAW_OBJECTS = 2;
+const SINGLE_SURFACE_SPECIES = 3; // fish, grazer, bird
+const TWO_SURFACE_SPECIES = 1 + WHALE_SPECIES.length; // deepsea, and each whale body
+const WILDLIFE_SPECIES_DRAW_OBJECTS = SINGLE_SURFACE_SPECIES + TWO_SURFACE_SPECIES * 2;
 
 export const clientPlugin: TerraceClientPlugin = {
   name: WILDLIFE_PLUGIN_NAME,
@@ -211,16 +243,19 @@ export const clientPlugin: TerraceClientPlugin = {
    * Its share of the frame's draw calls, from its own caps — see
    * TerraceClientPlugin.drawBudget and the constants above.
    */
-  drawBudget: (WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT) * CREATURE_DRAW_OBJECTS,
+  drawBudget: WILDLIFE_SPECIES_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    models = createWildlifeModels();
+    // Every herd sizes its instance buffers to the whole population: any one
+    // species may, in principle, be all of it.
+    models = createWildlifeModels(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
 
     // One child Group of our own inside the host's layer: it keeps every
     // creature under a single named node, which makes the scene graph legible in
     // the three.js inspector and gives dispose() one thing to clear.
     container = new Group();
     container.name = 'wildlife:creatures';
+    for (const object of models.objects) container.add(object);
     ctx.layer.add(container);
     // AN ANIMAL IS SOMETHING YOU CAN POINT AT — without this the torch aims
     // through a grazer at the ground behind it (ClientPluginCtx.pickWorldCell).
@@ -250,7 +285,6 @@ export const clientPlugin: TerraceClientPlugin = {
     unpublishMovers?.();
     unpublishMovers = null;
 
-    for (const view of views.values()) view.model.root.clear();
     views.clear();
     interpolator.clear();
 

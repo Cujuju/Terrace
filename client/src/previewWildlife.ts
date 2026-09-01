@@ -29,8 +29,10 @@ import {
   CircleGeometry,
   Color,
   DirectionalLight,
+  Group,
   HemisphereLight,
   Mesh,
+  type Object3D,
   MeshLambertMaterial,
   PerspectiveCamera,
   Scene,
@@ -45,7 +47,10 @@ import {
   type WildlifeSizeClass,
   type WildlifeSpecies,
 } from '../../plugins/wildlife/protocol.ts';
-import { createWildlifeModels, type CreatureModel } from '../../plugins/wildlife/client/models.ts';
+import { createWildlifeModels } from '../../plugins/wildlife/client/models.ts';
+
+/** Creatures this page ever draws at once. It is a portrait: exactly one. */
+const PREVIEW_POPULATION = 1;
 
 // ── Lighting rig, copied from previewStructures.ts / render/scene.ts ──────
 const SKY_COLOR = 0x9fc7e8;
@@ -145,9 +150,9 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   return { scene, camera, renderer };
 }
 
-/** Points `camera` at `model.root`'s bounding sphere, filling the frame with `CAMERA_FRAMING_PADDING` of headroom. */
-function frameCameraOn(camera: PerspectiveCamera, model: CreatureModel, view: CameraView): void {
-  const box = new Box3().setFromObject(model.root);
+/** Points `camera` at the drawn creature, filling the frame with `CAMERA_FRAMING_PADDING` of headroom. */
+function frameCameraOn(camera: PerspectiveCamera, drawn: Object3D, view: CameraView): void {
+  const box = new Box3().setFromObject(drawn);
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
   const radius = Math.max(size.x, size.y, size.z) * 0.5;
@@ -169,17 +174,21 @@ function main(): void {
 
   const { scene, camera, renderer } = buildScene();
 
-  const models = createWildlifeModels();
-  // The variant seed picks between whale bodies (models.ts); exposing it lets a
-  // screenshot driver ask for a specific one instead of taking whatever id 0
-  // happens to select.
-  const model = models.create(species, sizeClass, readVariant(query));
-  // Rest pose: an explicit animate(0, 0) call, not an unrotated default left
-  // implicit, so the frame captured is documented rather than incidental.
-  model.animate(0, 0);
-  scene.add(model.root);
+  const models = createWildlifeModels(PREVIEW_POPULATION);
+  const group = new Group();
+  for (const object of models.objects) group.add(object);
+  scene.add(group);
 
-  frameCameraOn(camera, model, view);
+  // ONE creature, at the origin, unyawed. Time zero and phase zero are the rest
+  // pose — stated rather than left implicit, so the frame captured is
+  // documented rather than incidental. The variant seed picks between whale
+  // bodies (models.ts); exposing it lets a screenshot driver ask for a specific
+  // one instead of taking whatever id 0 happens to select.
+  models.beginFrame(0);
+  models.draw(species, sizeClass, readVariant(query), 0, 0, 0, 0, 0);
+  models.endFrame();
+
+  frameCameraOn(camera, group, view);
 
   let framesRendered = 0;
   function renderFrame(): void {

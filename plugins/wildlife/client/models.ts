@@ -13,12 +13,13 @@
 //     swimmer, and the model faces +X (see index.ts for the heading → rotation.y
 //     mapping).
 //
-// RESIDUAL, stated rather than hidden: each creature is 2–7 Mesh objects (the
-// whale, at 7, is the ceiling — head/torso/tail-stock/flukes/dorsal/2
-// pectorals), so a full 512² population is roughly 330 draw calls. That sits alongside the
-// terrain's up-to-1024 chunk meshes, so it is not the bottleneck; if it ever
-// becomes one, merging each species' static parts into a single BufferGeometry
-// (three/addons BufferGeometryUtils) collapses it to ~2 per creature.
+//   * A CREATURE IS NOT A SCENE OBJECT. Every individual used to carry a root
+//     Group, a Skeleton, a Bone per joint and a SkinnedMesh per surface — ~8 300
+//     Object3Ds at the population cap, all of them walked by three's
+//     updateMatrixWorld before culling could reject any (perf review
+//     2026-08-29, A2). Now a whole species is one InstancedMesh per baked
+//     surface: `create` became `draw`, and the scene object count is O(species)
+//     rather than O(creatures). See client/src/render/rigHerd.ts.
 
 import {
   BoxGeometry,
@@ -35,7 +36,8 @@ import {
 } from 'three';
 // Render kit, reached the same way client/src/plugins/registry.ts reaches this
 // plugin — by path. See that module's header for why it lives there.
-import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
+import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
+import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
 import {
   assembleWhale,
   buildWhaleGeometrySets,
@@ -156,32 +158,88 @@ const BIRD_WING_ROOT_OFFSET = BIRD_WING_LENGTH / 2;
 
 const TWO_PI = Math.PI * 2;
 
-/** One creature's scene object plus its idle animation. */
-export interface CreatureModel {
-  /** Positioned and yawed by the caller; never touched by `animate`. */
-  readonly root: Group;
-  /** `seconds` is elapsed time; `phase` is a per-creature offset in radians. */
+/**
+ * Distinct animation phases one species is drawn with in a single frame.
+ *
+ * WHY QUANTISING PHASE IS SAFE. Every animation below is a loop driven by
+ * `seconds * HZ * TWO_PI + phase`, so slotting a creature's phase offset shifts
+ * it along the loop by at most one slot — it never changes what the animation
+ * IS. The bound that matters is the display: at the project's 140 fps target
+ * the fastest animation here (BIRD_WING_FLAP_HZ, 5.5) advances 5.5/140 ≈ 1/25
+ * of a cycle between two frames the player actually sees, so a quantisation
+ * step of 1/32 of a cycle is smaller than the step the animation already takes
+ * on its own. Anything the player could resolve, they resolve as motion.
+ *
+ * WHY IT IS WORTH IT. The pose palette is rebuilt once per SLOT per frame, not
+ * once per creature: at the population cap that is 32 poses per species instead
+ * of 850, and it is what makes the frame cost independent of how many creatures
+ * are alive (client/src/render/rigHerd.ts).
+ */
+const POSE_SLOTS_PER_HERD = 32;
+
+/**
+ * One species (or one whale body) as it is DRAWN: a herd of instances sharing
+ * one set of buffers, and the idle animation that poses them.
+ */
+interface SpeciesDrawable {
+  readonly herd: RigHerd;
+  /**
+   * Poses the herd's scratch rig. `seconds` is elapsed time; `phase` is the
+   * offset in radians of the pose slot being filled.
+   */
   animate(seconds: number, phase: number): void;
 }
 
 export interface WildlifeModels {
   /**
-   * Builds one creature. `sizeClass` scales the whole rig uniformly — the
-   * geometries stay shared and un-scaled (they are the medium-sized authoring,
-   * see WILDLIFE_SIZE_MODEL_SCALE), so a size class costs a transform on the
-   * root Group and not a second copy of every buffer.
+   * The drawn objects — one per species surface, NOT one per creature. Added to
+   * the scene once by the caller and never re-parented.
+   */
+  readonly objects: readonly Object3D[];
+  /** Opens a frame. `seconds` is the animation clock every pose is read at. */
+  beginFrame(seconds: number): void;
+  /**
+   * Draws one creature this frame.
+   *
+   * `sizeClass` scales the whole rig uniformly — the geometries stay shared and
+   * un-scaled (they are the medium-sized authoring, see
+   * WILDLIFE_SIZE_MODEL_SCALE), so a size class costs three numbers in an
+   * instance matrix and not a second copy of every buffer.
    *
    * `variantSeed` picks between bodies where a species has more than one — only
    * whales do. It must be STABLE for a creature's whole life (the caller passes
    * its entity id), or an individual would change species between frames.
+   *
+   * `phase` is the creature's own animation offset in radians; `yaw` is the
+   * rotation about Y the caller derives from the creature's heading.
+   *
+   * Positional arguments rather than a pose object, deliberately: this is
+   * called once per creature per frame, and a fresh object each time is 850
+   * allocations a frame for nothing.
    */
-  create(species: WildlifeSpecies, sizeClass: WildlifeSizeClass, variantSeed: number): CreatureModel;
+  draw(
+    species: WildlifeSpecies,
+    sizeClass: WildlifeSizeClass,
+    variantSeed: number,
+    phase: number,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+  ): void;
+  /** Closes a frame: uploads the poses and placements it collected. */
+  endFrame(): void;
   /** Frees every shared geometry and material. Call once, at plugin dispose. */
   dispose(): void;
 }
 
-/** Builds the shared geometry/material pool and the per-species constructors. */
-export function createWildlifeModels(): WildlifeModels {
+/**
+ * Builds the shared geometry/material pool and the per-species herds.
+ *
+ * `instanceCapacity` is the most creatures of ONE species that may be drawn in
+ * a frame; the caller's population cap is the honest value.
+ */
+export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
 
@@ -320,17 +378,52 @@ export function createWildlifeModels(): WildlifeModels {
     return rig;
   }
 
-  /** One creature of a baked species: its own skeleton, the species' buffers. */
-  function instantiateSpecies(rig: SpeciesRig): {
-    root: Group;
-    joints: Readonly<Record<string, Bone>>;
-  } {
-    const instance = instantiateRig(rig.blueprint);
+  const herds: RigHerd[] = [];
+
+  /**
+   * The whole species as one herd, plus the named handles its animation drives.
+   *
+   * Named joints rather than positional ones for the same reason bakeSpecies
+   * captures them by name: `joints.leftWing` reads, `joints[3]` does not.
+   */
+  function herdFor(rig: SpeciesRig): { herd: RigHerd; joints: Readonly<Record<string, Bone>> } {
+    const herd = createRigHerd(rig.blueprint, {
+      capacity: instanceCapacity,
+      poseSlots: POSE_SLOTS_PER_HERD,
+    });
+    herds.push(herd);
     const joints: Record<string, Bone> = {};
     for (const [name, index] of Object.entries(rig.jointIndices)) {
-      joints[name] = instance.joints[index]!;
+      joints[name] = herd.joints[index]!;
     }
-    return { root: instance.root, joints };
+    return { herd, joints };
+  }
+
+  /**
+   * THE ONE PLACE a creature turns into an instance.
+   *
+   * A pose is built at most once per slot per frame — the first creature to
+   * land in a slot pays for it and every other creature in that slot rides it
+   * free, which is the whole reason the frame cost stops scaling with the
+   * population.
+   */
+  function drawInto(
+    drawable: SpeciesDrawable,
+    seconds: number,
+    phase: number,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    scale: number,
+  ): void {
+    const herd = drawable.herd;
+    const slot = herd.poseSlotOf(phase);
+    if (herd.needsPose(slot)) {
+      drawable.animate(seconds, herd.poseSlotPhase(slot));
+      herd.capturePose(slot);
+    }
+    herd.place(slot, x, y, z, yaw, scale);
   }
 
   // ── The five rigs, authored once ───────────────────────────────────────────
@@ -421,14 +514,19 @@ export function createWildlifeModels(): WildlifeModels {
     return bakeSpecies(root, { rig, leftWing, rightWing });
   })();
 
-  // ── One creature each ──────────────────────────────────────────────────────
+  // ── One herd each ──────────────────────────────────────────────────────────
+  //
+  // Built ONCE, not per creature: what used to be a per-individual model is now
+  // a per-species drawable whose `animate` poses the shared scratch rig. The
+  // animation bodies themselves are unchanged — they still say
+  // `joint.rotation.z = …` against a Bone.
 
-  function createFish(): CreatureModel {
-    const { root, joints } = instantiateSpecies(fishRig);
+  const fishDrawable = ((): SpeciesDrawable => {
+    const { herd, joints } = herdFor(fishRig);
     const rig = joints.rig!;
     const tail = joints.tail!;
     return {
-      root,
+      herd,
       animate(seconds, phase) {
         // Tail sweeps side to side; the body counter-rolls a little so the whole
         // fish undulates instead of dragging a hinged flap.
@@ -437,17 +535,15 @@ export function createWildlifeModels(): WildlifeModels {
         rig.rotation.z = swing * FISH_TAIL_SWING_RADIANS * 0.15;
       },
     };
-  }
+  })();
 
-  function createWhale(variantSeed: number): CreatureModel {
-    const { root, joints } = instantiateSpecies(
-      whaleRigs[Math.abs(Math.trunc(variantSeed)) % whaleRigs.length]!,
-    );
+  const whaleDrawables: readonly SpeciesDrawable[] = whaleRigs.map((whaleRig) => {
+    const { herd, joints } = herdFor(whaleRig);
     const rig = joints.rig!;
     const flukes = joints.flukes!;
     return {
-      root,
-      animate(seconds, phase) {
+      herd,
+      animate(seconds: number, phase: number) {
         // Whales flap vertically, slowly. Pitch about Z, the axis across a model
         // that faces +X.
         const swing = Math.sin(seconds * WHALE_FLUKE_HZ * TWO_PI + phase);
@@ -455,15 +551,15 @@ export function createWildlifeModels(): WildlifeModels {
         rig.rotation.z = swing * WHALE_FLUKE_SWING_RADIANS * 0.12;
       },
     };
-  }
+  });
 
-  function createDeepsea(): CreatureModel {
-    const { root, joints } = instantiateSpecies(deepseaRig);
+  const deepseaDrawable = ((): SpeciesDrawable => {
+    const { herd, joints } = herdFor(deepseaRig);
     const rig = joints.rig!;
     const lure = joints.lure!;
     const lureRestY = lure.position.y;
     return {
-      root,
+      herd,
       animate(seconds, phase) {
         const sway = Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase);
         rig.rotation.y = sway * DEEPSEA_SWAY_RADIANS;
@@ -471,27 +567,27 @@ export function createWildlifeModels(): WildlifeModels {
         lure.position.y = lureRestY + Math.sin(seconds * DEEPSEA_SWAY_HZ * TWO_PI + phase - 1) * DEEPSEA_LURE_BOB;
       },
     };
-  }
+  })();
 
-  function createGrazer(): CreatureModel {
-    const { root, joints } = instantiateSpecies(grazerRig);
+  const grazerDrawable = ((): SpeciesDrawable => {
+    const { herd, joints } = herdFor(grazerRig);
     const rig = joints.rig!;
     return {
-      root,
+      herd,
       animate(seconds, phase) {
         // A walk bob: |sin| gives two rises per stride, one per pair of legs.
         rig.position.y = Math.abs(Math.sin(seconds * GRAZER_BOB_HZ * Math.PI + phase)) * GRAZER_BOB_AMPLITUDE;
       },
     };
-  }
+  })();
 
-  function createBird(): CreatureModel {
-    const { root, joints } = instantiateSpecies(birdRig);
+  const birdDrawable = ((): SpeciesDrawable => {
+    const { herd, joints } = herdFor(birdRig);
     const rig = joints.rig!;
     const leftWing = joints.leftWing!;
     const rightWing = joints.rightWing!;
     return {
-      root,
+      herd,
       animate(seconds, phase) {
         const swing = Math.sin(seconds * BIRD_WING_FLAP_HZ * TWO_PI + phase);
         // Rotation about X maps a point at +Z to y = -L·sin(θ), so the two wings
@@ -502,26 +598,56 @@ export function createWildlifeModels(): WildlifeModels {
         rig.position.y = swing * BIRD_BODY_BOB;
       },
     };
+  })();
+
+  /** The herd a creature of this species belongs to. */
+  function drawableOf(species: WildlifeSpecies, variantSeed: number): SpeciesDrawable {
+    switch (species) {
+      case 'fish':
+        return fishDrawable;
+      case 'whale':
+        return whaleDrawables[Math.abs(Math.trunc(variantSeed)) % whaleDrawables.length]!;
+      case 'deepsea':
+        return deepseaDrawable;
+      case 'grazer':
+        return grazerDrawable;
+      case 'bird':
+        return birdDrawable;
+    }
   }
 
-  const constructors: Readonly<Record<WildlifeSpecies, (variantSeed: number) => CreatureModel>> = {
-    fish: createFish,
-    whale: createWhale,
-    deepsea: createDeepsea,
-    grazer: createGrazer,
-    bird: createBird,
-  };
+  const objects: Object3D[] = [];
+  for (const herd of herds) objects.push(...herd.meshes);
+
+  let animationSeconds = 0;
 
   return {
-    create(species, sizeClass, variantSeed) {
-      const model = constructors[species](variantSeed);
-      // Uniform, on the ROOT: `animate` only ever touches the inner rig, and the
-      // caller only ever sets position and rotation.y, so nothing downstream can
-      // overwrite the scale on a later frame.
-      model.root.scale.setScalar(WILDLIFE_SIZE_MODEL_SCALE[sizeClass]);
-      return model;
+    objects,
+    beginFrame(seconds) {
+      animationSeconds = seconds;
+      for (const herd of herds) herd.beginFrame();
+    },
+    draw(species, sizeClass, variantSeed, phase, x, y, z, yaw) {
+      drawInto(
+        drawableOf(species, variantSeed),
+        animationSeconds,
+        phase,
+        x,
+        y,
+        z,
+        yaw,
+        // Uniform, in the instance matrix: the pose palette holds rig-space
+        // transforms only, so nothing an animation does can overwrite it.
+        WILDLIFE_SIZE_MODEL_SCALE[sizeClass],
+      );
+    },
+    endFrame() {
+      for (const herd of herds) herd.endFrame();
     },
     dispose() {
+      for (const herd of herds) herd.dispose();
+      herds.length = 0;
+      objects.length = 0;
       // The baked rigs own buffers of their own — the merged geometry and the
       // vertex-coloured material per species — on top of the authored pool the
       // two loops below free.
