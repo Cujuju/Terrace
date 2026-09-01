@@ -48,6 +48,7 @@ import {
   buildHabitatIndex,
   indexAnswers,
 } from './habitat-index.ts';
+import { hashToIndex } from './rng.ts';
 
 /**
  * The habitat regimes that exist, and the fixed order everything iterates them
@@ -457,6 +458,75 @@ export interface LairRegion {
    * both counters.
    */
   readonly summonableCells: readonly number[];
+  /**
+   * A bounded, uniform, DETERMINISTIC sample of the cell indices counted in
+   * `summonableCells` — the set `summonCellIn` (summoning.ts) picks the arrival
+   * cell out of. Index-aligned with the rule list like the two counts, and
+   * empty for a rule with no summonable cell in this region.
+   *
+   * WHY THE SURVEY CARRIES IT (2026-09-01, #270). The pick used to re-flood the
+   * whole region through the WorldApi and then re-filter every cell of it with
+   * `isLairPose` — nine probes per candidate for an answer the fit bitmap
+   * already holds, measured at 19.5 ms on a 68 000-cell basin and 176 ms on a
+   * 447 000-cell one, once per unfilled kind per summon roll. The walk that
+   * counts `summonableCells` visits exactly those cells anyway, so it samples
+   * them on the way past and the pick becomes a lookup.
+   *
+   * A SAMPLE AND NOT THE WHOLE SET, because the whole set is the region: an
+   * ocean basin would hand every survey a list of hundreds of thousands of
+   * integers, per rule, five seconds apart, to answer a question asked once
+   * every few minutes. See SUMMON_CANDIDATE_SAMPLE_CELLS for the size and the
+   * behavioural consequence.
+   */
+  readonly summonCandidates: readonly (readonly number[])[];
+}
+
+/**
+ * How many summonable cells of a region the survey keeps as arrival candidates.
+ *
+ * SIXTY-FOUR, and the number is a spread argument rather than a memory one.
+ * The rule this replaces (uniform over EVERY summonable cell of the region) was
+ * itself the fix for a spread defect — one player-dug pit owning every future
+ * arrival — so the sample only has to be wide enough that arrivals still look
+ * scattered. A kind arrives about once every SUMMON_MEAN_WAIT_SECONDS while its
+ * slot is empty (four minutes), so 64 is on the order of four hours of arrivals
+ * before a cell is expected to repeat, and two consecutive arrivals land on the
+ * same cell with probability 1/64. Against that it costs at most 64 integers
+ * per rule per region that has any summonable cell at all.
+ *
+ * The sample is drawn by reservoir (Algorithm R) with a hash in place of the
+ * random source, so it is uniform over the region's summonable cells AND a pure
+ * function of the region — see `candidateReservoirDraw`.
+ */
+export const SUMMON_CANDIDATE_SAMPLE_CELLS = 64;
+
+/**
+ * Odd 32-bit mixers that fold a region's identity, a rule's row and a cell's
+ * ordinal into one seed for `hashToIndex`. Golden-ratio and murmur3 constants:
+ * any odd word would do, but two DIFFERENT ones are what stop rule 0 of region
+ * r and rule r of region 0 from drawing the same sequence.
+ */
+const CANDIDATE_REGION_MIX = 0x9e3779b1;
+const CANDIDATE_RULE_MIX = 0x85ebca6b;
+
+/**
+ * Algorithm R's draw, made deterministic: which reservoir slot the `ordinal`-th
+ * summonable cell of this region claims, or a slot past the end (meaning "not
+ * sampled").
+ *
+ * Seeded from the region's SEED CELL rather than from its position in the
+ * survey's region list, because the list is scratch that re-orders as terrain
+ * moves while the seed cell is the region's own lowest cell index — so the same
+ * region samples the same cells across surveys, which is what makes a re-survey
+ * between the roll and the pick harmless.
+ */
+function candidateReservoirDraw(seedIndex: number, ruleIndex: number, ordinal: number): number {
+  const seed =
+    (Math.imul(seedIndex, CANDIDATE_REGION_MIX) ^
+      Math.imul(ruleIndex + 1, CANDIDATE_RULE_MIX) ^
+      ordinal) |
+    0;
+  return hashToIndex(seed, ordinal + 1);
 }
 
 /**
@@ -592,6 +662,8 @@ function floodRegion(
   /** One running count per fit rule each; see LairRegion.fittingCells. */
   const fittingCells = rules.map(() => 0);
   const summonableCells = rules.map(() => 0);
+  /** The arrival sample per rule; see LairRegion.summonCandidates. */
+  const summonCandidates: number[][] = rules.map(() => []);
 
   while (head < tail) {
     const cellIndex = queue[head++]!;
@@ -615,7 +687,19 @@ function floodRegion(
     for (let rule = 0; rule < rules.length; rule++) {
       if (fit[rule]![cellIndex] !== HABITAT_BIT_SET) continue;
       fittingCells[rule]!++;
-      if (reachesIntoHabitat(regime, height, rules[rule]!.minReachBands)) summonableCells[rule]!++;
+      if (!reachesIntoHabitat(regime, height, rules[rule]!.minReachBands)) continue;
+      // The ordinal of this cell among the region's summonable ones, which is
+      // what Algorithm R draws against. Read before the increment so the first
+      // one is ordinal 0.
+      const ordinal = summonableCells[rule]!;
+      summonableCells[rule]!++;
+      const reservoir = summonCandidates[rule]!;
+      if (ordinal < SUMMON_CANDIDATE_SAMPLE_CELLS) {
+        reservoir.push(cellIndex);
+        continue;
+      }
+      const slot = candidateReservoirDraw(seedIndex, rule, ordinal);
+      if (slot < SUMMON_CANDIDATE_SAMPLE_CELLS) reservoir[slot] = cellIndex;
     }
 
     // 4-neighbourhood, in a fixed order: west, east, north, south.
@@ -653,121 +737,15 @@ function floodRegion(
     }
   }
 
-  return { cells, x: extremeX, y: extremeY, extremeHeight, fittingCells, summonableCells };
-}
-
-/**
- * Every cell of ONE region that reaches at least `bands` into the habitat, as
- * row-major cell indices in flood order.
- *
- * WHY IT EXISTS (owner decision, 2026-08-19: spread the arrivals). A region's
- * survey carries one cell — the extreme one — and for a long time that was also
- * the summon point, which made the arrival cell a pure function of the terrain:
- * one player-dug pit one band deeper than anything else owned every future
- * arrival of every sea kind, forever. The fix is to summon among the cells that
- * QUALIFY rather than at the single cell that wins, so this reports the set and
- * summoning.ts picks from it.
- *
- * "QUALIFY" IS THE KIND'S OWN BAR, not the habitat's — `bands` is the caller's
- * `minLairReachBands`. That is what keeps the two sea kinds meaningfully
- * different after the change: the kraken's candidates are trench cells and
- * Cthulhu's are any deep water, exactly as their admission tests already differ.
- * It is also why this takes a band count rather than reading the regime's own
- * threshold — a function that spread every kind over the same set would have
- * quietly made them one animal again.
- *
- * SEEDED FROM A CELL, not from a region id, because the survey's regions are
- * scratch state that the next regime's walk overwrites: re-flooding from the
- * region's extreme cell re-derives exactly the same region (connectivity is
- * deterministic and the terrain has not moved within a tick), with no per-region
- * memory to keep alive across the tick.
- *
- * COST is one flood fill, and it is paid ONLY on a summon that has already won
- * its Poisson roll — a mean of once every SUMMON_MEAN_WAIT_SECONDS per kind, so
- * on the order of a millisecond every few minutes. That is why the set is built
- * on demand instead of being carried on every LairRegion of every survey, where
- * it would have cost a megabyte of cell lists per walk, five seconds apart,
- * forever, to answer a question almost no walk is ever asked.
- *
- * Returns an empty array if the seed cell is not habitat at all (the terrain
- * moved since the survey), which is the caller's signal to re-survey rather
- * than to summon into a stale cell.
- *
- * ORDER IS THE FLOOD'S — fixed (FIFO, west/east/north/south), so the same world
- * and the same seed cell produce the same list, and therefore the same pick.
- */
-export function qualifyingCellsIn(
-  regime: HabitatRegime,
-  world: LairWorld,
-  seedX: number,
-  seedY: number,
-  bands: number,
-): number[] {
-  const size = world.worldSize;
-  if (size <= 0) return [];
-
-  const x = Math.floor(seedX);
-  const y = Math.floor(seedY);
-  if (!isLairCell(regime, world, x, y)) return [];
-
-  const scratch = scratchFor(size * size);
-  scratch.labels.fill(UNLABELLED);
-
-  const { labels, queue } = scratch;
-  /** The one label this walk uses; the buffer is re-filled on every call. */
-  const VISITED = 0;
-
-  let head = 0;
-  let tail = 0;
-  const seedIndex = y * size + x;
-  labels[seedIndex] = VISITED;
-  queue[tail++] = seedIndex;
-
-  const qualifying: number[] = [];
-
-  while (head < tail) {
-    const index = queue[head++]!;
-    const cellX = index % size;
-    const cellY = (index - cellX) / size;
-
-    if (reachesIntoHabitat(regime, world.heightAt(cellX, cellY), bands)) {
-      qualifying.push(index);
-    }
-
-    // The same 4-neighbourhood, in the same fixed order, as floodRegion — the
-    // two must agree on what "one region" means or the candidate set could
-    // include a cell the survey counted in a different region.
-    if (cellX > 0 && labels[index - 1] === UNLABELLED && isLairCell(regime, world, cellX - 1, cellY)) {
-      labels[index - 1] = VISITED;
-      queue[tail++] = index - 1;
-    }
-    if (
-      cellX + 1 < size &&
-      labels[index + 1] === UNLABELLED &&
-      isLairCell(regime, world, cellX + 1, cellY)
-    ) {
-      labels[index + 1] = VISITED;
-      queue[tail++] = index + 1;
-    }
-    if (
-      cellY > 0 &&
-      labels[index - size] === UNLABELLED &&
-      isLairCell(regime, world, cellX, cellY - 1)
-    ) {
-      labels[index - size] = VISITED;
-      queue[tail++] = index - size;
-    }
-    if (
-      cellY + 1 < size &&
-      labels[index + size] === UNLABELLED &&
-      isLairCell(regime, world, cellX, cellY + 1)
-    ) {
-      labels[index + size] = VISITED;
-      queue[tail++] = index + size;
-    }
-  }
-
-  return qualifying;
+  return {
+    cells,
+    x: extremeX,
+    y: extremeY,
+    extremeHeight,
+    fittingCells,
+    summonableCells,
+    summonCandidates,
+  };
 }
 
 /**
