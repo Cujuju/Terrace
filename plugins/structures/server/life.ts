@@ -79,8 +79,9 @@ import { maybeAdvanceTier } from './tiers.ts';
 import { isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasNearbyFarmland } from './farmland.ts';
 import {
+  IncrementalLandmassLabeller,
+  LABEL_UNITS_PER_BOARD_CELL,
   computeLandmassLabels,
-  computeLandmassLabelsFromBuildable,
   wrappedNeighborIndex,
   type LandmassLabels,
 } from './topology.ts';
@@ -576,10 +577,20 @@ export class GenerationSurvey {
    * labelling took it all on the single tick a sweep began (59–671 ms at world
    * size 2048, stalling every plugin every CA_GENERATION_INTERVAL_SECONDS).
    * So `scanChunk` now records what it finds into `buildableThisSweep`, and
-   * the cheap half — the flood fill — runs over that bitmap when the sweep
-   * completes, producing the labelling the NEXT sweep reads. The board is
-   * surveyed once per generation instead of twice, and no tick costs more
-   * than its own chunk.
+   * the other half — the flood fill — runs over that bitmap, producing the
+   * labelling a LATER sweep reads. The board is surveyed once per generation
+   * instead of twice.
+   *
+   * AND THE FLOOD FILL IS ITSELF AMORTISED (issue #271). "The cheap half" was
+   * wishful: measured at 2048, one whole-board fill is 20.5 ms on an all-water
+   * board — a floor paid whatever the mask holds, since the 16.8 MB clear and
+   * both 4.19 M-cell passes do not care — 67–83 ms at a realistic buildability
+   * and 307 ms on all land, landing entire on the one tick in ~150 where the
+   * sweep's cursor came home. It now runs as `IncrementalLandmassLabeller`
+   * (topology.ts), driven a slice per tick out of `labelBudget` — the same
+   * per-tick chunk credit the scan is paced by, so the fill takes one
+   * generation, exactly as the scan does — and over two reused cell arrays,
+   * so a generation allocates nothing. No tick costs more than its own chunk.
    *
    * THE FIRST SWEEP OF A FRESH SURVEY LABELS FROM THE WORLD. There is no
    * previous bitmap then, and "no labelling" is not a usable stand-in: an
@@ -591,25 +602,62 @@ export class GenerationSurvey {
    * every single-shot CA test takes this path too.)
    *
    * THE LAG THIS BUYS. The labelling a sweep uses describes buildability as
-   * the PREVIOUS sweep found it, cell by cell, as that sweep reached each
-   * cell. So a terrain edit reaches the topology within two generations
-   * rather than one — the same bounded, self-correcting lag this file's
-   * header already documents and accepts for a neighbour's buildability, one
-   * generation longer. It cannot put a structure anywhere: `scanChunk`'s wall
-   * test asks `isBuildableCell` live and remains the sole authority on where
-   * a structure may stand. There is still no cache — see
-   * computeLandmassLabels' own comment for why an invalidate-on-terrain one
-   * was wrong — and the demolition path is instant and unaffected.
+   * an EARLIER sweep found it, cell by cell, as that sweep reached each cell.
+   * The mask is finished when its sweep ends; the fill over it then takes a
+   * generation of its own (see above), and its result is installed at the
+   * following sweep boundary — so the topology a sweep judges by is the mask
+   * gathered two sweeps back, and a terrain edit reaches the topology within
+   * three generations. One generation more than the amortised fill replaced,
+   * and the same bounded, self-correcting lag this file's header already
+   * documents and accepts for a neighbour's buildability. It cannot put a
+   * structure anywhere: `scanChunk`'s wall test asks `isBuildableCell` live
+   * and remains the sole authority on where a structure may stand. There is
+   * still no cache — see computeLandmassLabels' own comment for why an
+   * invalidate-on-terrain one was wrong — and the demolition path is instant
+   * and unaffected. (A caller with a whole tick to spend still gets the old
+   * timing: a budget covering the whole board finishes the fill inside the
+   * sweep that completed the mask, so `stepGeneration` is unchanged.)
    */
   private labels: LandmassLabels | null = null;
 
   /**
-   * WHAT `scanChunk` FOUND BUILDABLE THIS SWEEP, row-major over the whole
-   * board (`y * worldSize + x`, the labelling's own indexing). Filled a chunk
-   * at a time as the sweep advances, consumed by the flood fill when it
-   * completes, and dropped with the sweep in resetSweep. Null between sweeps.
+   * THE FILL OVER THE LAST COMPLETED SWEEP'S MASK, mid-flight — see `labels`.
+   * Driven a slice per tick and never read directly; it hands back a finished
+   * labelling, which is all this class ever sees of it.
    */
-  private buildableThisSweep: Uint8Array | null = null;
+  private readonly labeller = new IncrementalLandmassLabeller();
+
+  /**
+   * A LABELLING THE FILL HAS FINISHED, WAITING FOR A SWEEP BOUNDARY.
+   *
+   * THE COHERENCE MECHANISM, this half of it: the fill completes on whatever
+   * tick it happens to complete on, which is almost never a sweep boundary,
+   * and `labels` may not change mid-sweep (see its own header — the chunk
+   * scanned last must see the coastline the chunk scanned first did). So a
+   * finished labelling waits here and is installed by `advance` at the only
+   * instant a sweep is not reading one. The other half is in the labeller: it
+   * fills the cell array that is NOT under the labelling it last published,
+   * so what waits here cannot be scribbled on while it waits.
+   */
+  private pendingLabels: LandmassLabels | null = null;
+
+  /**
+   * WHAT `scanChunk` FOUND BUILDABLE, row-major over the whole board
+   * (`y * worldSize + x`, the labelling's own indexing) — TWO of them, and
+   * `maskThisSweep` says which one the current sweep is filling. The other is
+   * the one the fill in flight is reading, if there is one.
+   *
+   * TWO BECAUSE THE FILL OUTLIVES THE SWEEP THAT GATHERED THE MASK. It reads
+   * the mask by reference for a whole generation (topology.ts: copying it
+   * would put 4.19 MB back on the tick this is all about), and the next sweep
+   * starts filling one the instant the last one ended, so a single buffer
+   * would be two generations at once. They alternate; unlike the old
+   * per-sweep array they are allocated once and reused, and survive
+   * `resetSweep` for the same reason `labels` does.
+   */
+  private masks: [Uint8Array, Uint8Array] | null = null;
+  /** Index into `masks` of the buffer the current sweep is filling. */
+  private maskThisSweep = 0;
 
   /**
    * TELLS AN ACTIVE SWEEP THAT A CELL IS GONE — the eviction half of the
@@ -636,15 +684,16 @@ export class GenerationSurvey {
 
   /**
    * Drops everything scoped to ONE sweep. `labels` is deliberately NOT among
-   * it: the labelling a completed sweep produced is the next sweep's input
+   * it: the labelling a completed sweep produced is a later sweep's input
    * (see the field's own comment), so it must outlive the sweep that built it.
+   * Nor are `masks` — the fill in flight is still reading one of them, and the
+   * next sweep refills the other in place rather than allocating.
    */
   private resetSweep(): void {
     this.cursor = 0;
     this.staged.clear();
     this.demolishedThisSweep.clear();
     this.board = null;
-    this.buildableThisSweep = null;
   }
 
   /**
@@ -847,6 +896,30 @@ export class GenerationSurvey {
   }
 
   /**
+   * Spends up to `budget` work units on the fill in flight and returns what
+   * is left of it, parking a finished labelling in `pendingLabels` rather
+   * than installing it — installing is a sweep boundary's business alone.
+   */
+  private spendOnLabelling(budget: number): number {
+    if (!this.labeller.active) return budget;
+    const finished = this.labeller.advance(budget);
+    if (finished === null) return 0;
+    this.pendingLabels = finished;
+    // The fill charges at most LABEL_UNITS_PER_BOARD_CELL per cell over its
+    // whole life, and cannot say how much of the last slice it actually
+    // needed. Treating a completing slice as having spent the lot is the
+    // conservative read — it can only understate what this tick has left.
+    return 0;
+  }
+
+  /** Installs a finished labelling. Safe only at a sweep boundary. */
+  private installPendingLabels(): void {
+    if (this.pendingLabels === null) return;
+    this.labels = this.pendingLabels;
+    this.pendingLabels = null;
+  }
+
+  /**
    * Advances by at most `chunkBudget` chunks. Returns the generation's
    * outcome only on the tick that completes a full-board sweep (null
    * otherwise) — the same contract flora's Forest.advanceSurvey keeps.
@@ -871,20 +944,37 @@ export class GenerationSurvey {
       this.board = new Map(live);
     }
     const board = this.board;
-    // The coastline this generation is judged against — the previous sweep's,
+    // A WORLD RESIZE INVALIDATES EVERY BOARD-SHAPED THING HERE AT ONCE, so
+    // they are dropped together: the masks are the wrong length, a fill in
+    // flight is reading one of them and indexing it for another board, and so
+    // is anything that fill has already finished.
+    if (this.masks === null || this.masks[0].length !== cellCount) {
+      this.masks = [new Uint8Array(cellCount), new Uint8Array(cellCount)];
+      this.maskThisSweep = 0;
+      this.labeller.abandon();
+      this.pendingLabels = null;
+    }
+    // The coastline this generation is judged against — an earlier sweep's,
     // carried across resetSweep. Rebuilt from the world only when there is no
-    // usable one: the first sweep of a fresh survey, or (defensively) after a
-    // world resize, which would leave a labelling indexed for another board.
+    // usable one: the first sweep of a fresh survey, or (defensively) after
+    // the resize above.
     if (this.labels === null || this.labels.worldSize !== world.worldSize) {
       this.labels = computeLandmassLabels(world);
     }
+    // FIXED FOR THE WHOLE SWEEP, not just this tick: `labels` is only ever
+    // reassigned at a sweep boundary (see `pendingLabels`), so no later chunk
+    // of this sweep can see a different coastline from this one.
     const labels = this.labels;
-    // Allocated on the sweep's first tick (resetSweep dropped the last one),
-    // and re-allocated on the same resize guard the labelling uses.
-    if (this.buildableThisSweep === null || this.buildableThisSweep.length !== cellCount) {
-      this.buildableThisSweep = new Uint8Array(cellCount);
-    }
-    const buildable = this.buildableThisSweep;
+    const buildable = this.masks[this.maskThisSweep];
+
+    // THE FILL'S SHARE OF THIS TICK — the scan's own chunk credit, converted
+    // from chunks to the cells a chunk holds and then to the work units
+    // topology.ts charges per cell, so a whole-board fill spans exactly the
+    // ticks a whole-board sweep does. Spent before the scan, so a fill that
+    // completes on this tick is available to a sweep that also completes on
+    // it (which is what keeps `stepGeneration`'s single call unchanged).
+    const labelCredit = budget * CHUNK_SIZE * CHUNK_SIZE * LABEL_UNITS_PER_BOARD_CELL;
+    const labelBudgetLeft = this.spendOnLabelling(labelCredit);
 
     while (budget > 0 && this.cursor < totalChunks) {
       this.scanChunk(
@@ -969,10 +1059,27 @@ export class GenerationSurvey {
       died.push({ x: cell.x, y: cell.y });
     }
 
-    // THE NEXT GENERATION'S TOPOLOGY, from the survey this sweep just did.
-    // The flood fill alone, with no isBuildableCell in it — the reason the
-    // labelling no longer stalls the tick it lands on (see `labels`).
-    this.labels = computeLandmassLabelsFromBuildable(world.worldSize, buildable);
+    // A LATER GENERATION'S TOPOLOGY, from the survey this sweep just did.
+    // The flood fill alone, with no isBuildableCell in it, and now sliced
+    // across the generation rather than run whole here — which is what stops
+    // it stalling the tick it lands on (see `labels`, and #271 for what the
+    // old single call actually cost).
+    //
+    // A SWEEP BOUNDARY IS THE ONLY PLACE `labels` MAY CHANGE, so both the
+    // install and the handover of the finished mask happen here, in this
+    // order: publish what the fill finished, hand it the mask this sweep just
+    // gathered, then let it spend whatever credit this tick had left.
+    this.installPendingLabels();
+    if (!this.labeller.active) {
+      this.labeller.begin(world.worldSize, buildable);
+      // The next sweep fills the OTHER mask: this one is the fill's for as
+      // long as the fill lasts. If the fill is somehow still running, no
+      // handover happens and the next sweep simply refills this buffer — the
+      // topology stays a generation staler and nothing stalls.
+      this.maskThisSweep ^= 1;
+    }
+    this.spendOnLabelling(labelBudgetLeft);
+    this.installPendingLabels();
 
     const nextLive = new Map(this.staged);
     this.resetSweep();
