@@ -24,6 +24,7 @@
 // event and one broadcast, which is what keeps a mechanic this stateful out of
 // core's way.
 
+import type { CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   TerracePlugin,
@@ -45,6 +46,8 @@ import {
   forgetVillage,
   rememberVillage,
   resetFleet,
+  resurveyAllShipyards,
+  resurveyShipyardsNear,
   type KrakenTarget,
 } from './fleet.ts';
 import { closeFireBridge, loadFireBridge, registerBoatsFuel } from './fire-bridge.ts';
@@ -229,6 +232,32 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
+  },
+
+  /**
+   * A SCULPT CAN MAKE OR UNMAKE A HARBOUR, so it is what expires a village's
+   * cached coastal survey (./fleet.ts's `resurveyShipyardsNear`).
+   *
+   * The plugin had no terrain hook at all before, because nothing it kept was
+   * derived from the heightmap — the shipyard cache is the first thing that is,
+   * and it must not outlive the bay a player just filled in.
+   */
+  onTerrainChanged(_world: WorldApi, diff: readonly CellDiff[]): void {
+    resurveyShipyardsNear(diff);
+  },
+
+  /**
+   * The OTHER half of what `isSailable` reads: water in locked territory is not
+   * sailable, so a chunk joining the unlocked union can turn an inland village
+   * coastal without a single height changing.
+   *
+   * Every survey goes, not just the ones near the chunk — see
+   * `resurveyAllShipyards` for why localising this would cost more than it
+   * saves. The union mask has one further mover with no hook (a joining token's
+   * starter square); ./fleet.ts's COASTAL_RESURVEY_SECONDS is what covers it.
+   */
+  onChunkUnlockedForToken(): void {
+    resurveyAllShipyards();
   },
 
   onWorldEvent(_world: WorldApi, event: string, payload: unknown): void {

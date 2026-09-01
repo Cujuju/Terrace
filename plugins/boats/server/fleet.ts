@@ -160,6 +160,102 @@ const BOAT_TURN_RADIANS_PER_SECOND =
 const villages = new Map<string, Village>();
 let boats: Boat[] = [];
 let nextBoatId = 1;
+
+/**
+ * How often a village re-walks its coastal disc when nothing has told it to.
+ *
+ * THE CACHE BELOW IS INVALIDATED BY EVENTS — a sculpt near the village, a
+ * chunk joining the unlocked union — and this is the belt to those suspenders.
+ * The union mask can also move without any hook firing (a joining token's
+ * starter square, server/src/world/initial-unlock.ts's seedChunkForToken,
+ * mutates the union silently), and a village that stayed wrongly INLAND on
+ * that path would never launch a boat again for the life of the world.
+ *
+ * BOAT_REBUILD_SECONDS, because that is the scale the answer is used at: a
+ * village that becomes coastal still has to spend a whole rebuild before a
+ * hull exists, so a survey no staler than one rebuild cannot be the thing that
+ * delays a fleet.
+ */
+const COASTAL_RESURVEY_SECONDS = BOAT_REBUILD_SECONDS;
+
+/**
+ * A village's DERIVED shipyard state — everything `advanceShipyards` used to
+ * recompute from scratch every tick.
+ *
+ * SEPARATE FROM `Village` because Village is the PERSISTED fact (./persistence.
+ * ts validates exactly its three fields) and none of this belongs in a save
+ * file: it is all rederivable from the terrain and the fleet, and a stale copy
+ * restored from disk would be worse than no copy at all.
+ */
+interface Shipyard {
+  /**
+   * The cached answer from `launchCell` — null for INLAND. Meaningful only
+   * while `surveyedSeconds` is a number; see `surveyedLaunch`.
+   */
+  launch: KrakenTarget | null;
+  /** Seconds since the disc was last walked, or null when it never has been. */
+  surveyedSeconds: number | null;
+  /** Boats homed here, retallied once per tick from the fleet. */
+  afloat: number;
+}
+
+/**
+ * Parallel to `villages`, same keys. Kept as its own map rather than as fields
+ * on Village so the persisted shape cannot drift into carrying a cache.
+ */
+const shipyards = new Map<string, Shipyard>();
+
+/** A village with no survey yet — the state every new or restored one starts in. */
+function unsurveyedShipyard(): Shipyard {
+  return { launch: null, surveyedSeconds: null, afloat: 0 };
+}
+
+/**
+ * Throws away every cached coastal survey.
+ *
+ * Called when something has changed that could turn an inland village coastal
+ * or the reverse, and that is CHEAPER TO ASSUME WORLD-WIDE than to localise: a
+ * chunk unlock moves the unlocked-territory half of `isSailable` and arrives a
+ * handful of times per session, so re-walking every village's disc once is a
+ * millisecond against the bookkeeping of working out whose disc the chunk
+ * touched.
+ */
+export function resurveyAllShipyards(): void {
+  for (const shipyard of shipyards.values()) shipyard.surveyedSeconds = null;
+}
+
+/**
+ * Throws away the cached survey of every village whose coastal disc contains a
+ * changed cell — the terrain half of `isSailable` moving.
+ *
+ * The diff is reduced to ITS BOUNDING BOX first, so the cost is O(diff) +
+ * O(villages) rather than the product: a brush stamp is one contiguous blob,
+ * and a village whose disc misses the blob's box misses every cell in it.
+ */
+export function resurveyShipyardsNear(diff: readonly { readonly x: number; readonly y: number }[]): void {
+  if (diff.length === 0) return;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const cell of diff) {
+    if (cell.x < minX) minX = cell.x;
+    if (cell.x > maxX) maxX = cell.x;
+    if (cell.y < minY) minY = cell.y;
+    if (cell.y > maxY) maxY = cell.y;
+  }
+
+  for (const [key, village] of villages) {
+    const shipyard = shipyards.get(key);
+    if (shipyard === undefined) continue;
+    if (village.x + COASTAL_SEARCH_RADIUS_CELLS < minX) continue;
+    if (village.x - COASTAL_SEARCH_RADIUS_CELLS > maxX) continue;
+    if (village.y + COASTAL_SEARCH_RADIUS_CELLS < minY) continue;
+    if (village.y - COASTAL_SEARCH_RADIUS_CELLS > maxY) continue;
+    shipyard.surveyedSeconds = null;
+  }
+}
 /** Wounds on the kraken currently being fought. Shed while nothing engages. */
 let krakenWounds = 0;
 /** Seconds since the kraken last sank a boat. */
@@ -169,6 +265,7 @@ const villageKey = (x: number, y: number): string => `${x},${y}`;
 
 export function resetFleet(): void {
   villages.clear();
+  shipyards.clear();
   boats = [];
   nextBoatId = 1;
   krakenWounds = 0;
@@ -193,6 +290,7 @@ export function rememberVillage(x: number, y: number): void {
   const key = villageKey(x, y);
   if (villages.has(key)) return;
   villages.set(key, { x, y, rebuildSeconds: 0 });
+  shipyards.set(key, unsurveyedShipyard());
 }
 
 /**
@@ -204,6 +302,7 @@ export function rememberVillage(x: number, y: number): void {
  */
 export function forgetVillage(x: number, y: number): void {
   if (!villages.delete(villageKey(x, y))) return;
+  shipyards.delete(villageKey(x, y));
   boats = boats.filter((boat) => boat.homeX !== x || boat.homeY !== y);
 }
 
@@ -401,18 +500,65 @@ function fleetBerths(): Occupant[] {
 }
 
 /**
+ * Counts each village's boats, once, from one pass over the fleet.
+ *
+ * REDERIVED RATHER THAN MAINTAINED. An incrementing counter would have to be
+ * decremented on every path a boat leaves by — sunk, burned, scuttled with its
+ * village — and one missed path is a village that never rebuilds again. This
+ * costs O(boats) for the whole tick where the old `boats.filter(...)` cost
+ * O(villages x boats) and allocated an array per village.
+ */
+function tallyFleetHomes(): void {
+  for (const shipyard of shipyards.values()) shipyard.afloat = 0;
+  for (const boat of boats) {
+    const shipyard = shipyards.get(villageKey(boat.homeX, boat.homeY));
+    if (shipyard !== undefined) shipyard.afloat++;
+  }
+}
+
+/**
+ * This village's launch cell, from the cache when the cache is still good.
+ *
+ * A SURVEY IS RE-WALKED only when something could have changed its answer:
+ * never taken, invalidated by a sculpt in its disc or by a chunk unlock (see
+ * `resurveyShipyardsNear` / `resurveyAllShipyards`), or older than
+ * COASTAL_RESURVEY_SECONDS. Between those it is a field read.
+ */
+function surveyedLaunch(
+  world: BoatWorld,
+  village: Village,
+  shipyard: Shipyard,
+  dt: number,
+): KrakenTarget | null {
+  if (shipyard.surveyedSeconds !== null) {
+    shipyard.surveyedSeconds += dt;
+    if (shipyard.surveyedSeconds < COASTAL_RESURVEY_SECONDS) return shipyard.launch;
+  }
+  shipyard.launch = launchCell(world, village);
+  shipyard.surveyedSeconds = 0;
+  return shipyard.launch;
+}
+
+/**
  * Builds replacement boats. A village short of its fleet accumulates build
  * time and launches one boat per BOAT_REBUILD_SECONDS; a village at strength
  * banks nothing, so a long peace does not stockpile a burst of boats.
  */
 export function advanceShipyards(world: BoatWorld, dt: number): void {
-  for (const village of villages.values()) {
-    const afloat = boats.filter((b) => b.homeX === village.x && b.homeY === village.y).length;
-    if (afloat >= BOATS_PER_VILLAGE) {
+  tallyFleetHomes();
+
+  for (const [key, village] of villages) {
+    const shipyard = shipyards.get(key);
+    if (shipyard === undefined) continue;
+
+    if (shipyard.afloat >= BOATS_PER_VILLAGE) {
       village.rebuildSeconds = 0;
       continue;
     }
-    const launch = launchCell(world, village);
+    // THE CACHED SURVEY, not a fresh disc walk. `launchCell` early-returns only
+    // once it has found COASTAL_MIN_WATER_CELLS, so an INLAND village used to
+    // walk all of COASTAL_DISC — every tick, forever, producing nothing.
+    const launch = surveyedLaunch(world, village, shipyard, dt);
     // Inland, or its water is gone (a player filled the bay in): no progress,
     // and no partial build banked against the day the sea comes back.
     if (launch === null) {
@@ -431,6 +577,7 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
     if (berth === null) continue;
 
     village.rebuildSeconds -= BOAT_REBUILD_SECONDS;
+    shipyard.afloat++;
     boats.push({
       id: nextBoatId++,
       homeX: village.x,
@@ -893,7 +1040,12 @@ export function restoreFleet(saved: {
 }): void {
   resetFleet();
   for (const village of saved.villages) {
-    villages.set(villageKey(village.x, village.y), { ...village });
+    const key = villageKey(village.x, village.y);
+    villages.set(key, { ...village });
+    // NOT restored, rederived: a survey describes terrain and unlocked
+    // territory at the moment it was taken, and a snapshot may be a world
+    // older than either.
+    shipyards.set(key, unsurveyedShipyard());
   }
   boats = saved.boats.map((boat) => ({ ...boat }));
   nextBoatId = saved.nextBoatId;
