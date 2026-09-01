@@ -457,6 +457,7 @@ export function createClientPluginHost(
       layer,
       worldSize: () => world.worldSize(),
       terrainHeightAt: (x, y) => world.terrainHeightAt(x, y),
+      terrainRevisionAt: (x, y) => world.terrainRevisionAt(x, y),
       drawnGroundYAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
       onMessage(type, handler) {
         const key = `${plugin.name}:${type}`;
