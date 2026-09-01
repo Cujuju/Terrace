@@ -133,7 +133,6 @@ import {
   type LairWorld,
   isLairCell,
   isLairPose,
-  qualifyingCellsIn,
   reachesIntoHabitat,
   releaseSurveyScratch,
   surveyLairs,
@@ -631,6 +630,19 @@ function bestLairFor(kind: MonsterKind): LairRegion | null {
  * defined by the maximum would have the same single-cell failure the moment one
  * pit is one band deeper than the rest, which is the failure being fixed.
  *
+ * UNIFORM OVER A SAMPLE OF THAT SET SINCE 2026-09-01 (#270), not over the whole
+ * of it, and the difference is the only behavioural one this rewrite has. The
+ * set used to be re-derived here: a flood fill of the entire region through the
+ * WorldApi, then an `isLairPose` re-filter of every cell it returned — nine
+ * probes each, for the answer habitat-index.ts's fit bitmap already stores.
+ * Measured at 19.5 ms on a 68 000-cell basin, 176 ms on a 447 000-cell one,
+ * per roll that fires. The survey's walk already visits exactly those cells and
+ * now samples SUMMON_CANDIDATE_SAMPLE_CELLS of them on the way past
+ * (LairRegion.summonCandidates), so the pick is a lookup and a re-check.
+ * The sample is uniform over the qualifying set and deterministic, so arrivals
+ * are still scattered across the lair; what changed is that they scatter over
+ * 64 cells of it rather than all of them.
+ *
  * IT STAYS PER KIND, so the two sea kinds did not become one animal: the
  * kraken scatters across trench cells (7 bands) and Cthulhu across any deep
  * water (3), the same bars their admission tests already use. Overlap may still
@@ -659,6 +671,12 @@ function bestLairFor(kind: MonsterKind): LairRegion | null {
  * is what stops a stale count from placing a body in ground that arrived in the
  * last five seconds.
  *
+ * THE RE-CHECK WALKS THE SAMPLE, starting at the drawn index and wrapping, so
+ * a cell that has been filled in since the survey costs a neighbour rather than
+ * the whole roll: null — a refusal plus a re-survey — is reached only when
+ * every sampled cell has stopped qualifying, which is the same condition the
+ * old whole-set filter returned null on.
+ *
  * Returns null when the region has stopped qualifying since the survey named
  * it, which the caller answers with a re-survey rather than a stale summon.
  */
@@ -666,32 +684,41 @@ function summonCellIn(
   profile: MonsterProfile,
   world: LairWorld,
   region: LairRegion,
+  fitIndex: number,
 ): { readonly x: number; readonly y: number } | null {
-  const candidates = qualifyingCellsIn(
-    profile.habitat,
-    world,
-    region.x,
-    region.y,
-    profile.minLairReachBands,
-  );
+  const candidates = region.summonCandidates[fitIndex] ?? [];
+  if (candidates.length === 0) return null;
+
   const size = world.worldSize;
   const radiusCells = bodyRadiusCells(profile);
-  const fitting = candidates.filter((index) => {
-    const cellX = index % size;
-    const cellY = (index - cellX) / size;
-    return isLairPose(
-      profile.habitat,
-      world,
-      cellX + CELL_CENTRE_OFFSET,
-      cellY + CELL_CENTRE_OFFSET,
-      radiusCells,
-    );
-  });
-  if (fitting.length === 0) return null;
+  const start = hashToIndex(nextMonsterId, candidates.length);
 
-  const index = fitting[hashToIndex(nextMonsterId, fitting.length)]!;
-  const x = index % size;
-  return { x, y: (index - x) / size };
+  for (let step = 0; step < candidates.length; step++) {
+    const index = candidates[(start + step) % candidates.length]!;
+    const x = index % size;
+    const y = (index - x) / size;
+    // The live re-check, against the world as it is NOW rather than as the
+    // survey left it. Three clauses, and they are the three the sampled set was
+    // selected on: still habitat, still deep/high enough for this kind, still
+    // room for its body centred where `summon` will put it.
+    if (!isLairCell(profile.habitat, world, x, y)) continue;
+    if (!reachesIntoHabitat(profile.habitat, world.heightAt(x, y), profile.minLairReachBands)) {
+      continue;
+    }
+    if (
+      !isLairPose(
+        profile.habitat,
+        world,
+        x + CELL_CENTRE_OFFSET,
+        y + CELL_CENTRE_OFFSET,
+        radiusCells,
+      )
+    ) {
+      continue;
+    }
+    return { x, y };
+  }
+  return null;
 }
 
 function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
@@ -716,7 +743,7 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
   // The pick re-walks the region against the world as it is NOW, so it is also
   // the second half of that staleness check: a region whose qualifying cells
   // have all been filled in since the survey yields nothing to summon into.
-  const spot = summonCellIn(profile, world, cell);
+  const spot = summonCellIn(profile, world, cell, habitatKindIndex(kind));
   if (spot === null) {
     invalidateSurvey();
     return;
