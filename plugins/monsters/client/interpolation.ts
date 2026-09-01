@@ -71,6 +71,22 @@ interface Pose {
   x: number;
   y: number;
   heading: number;
+  /** The receive() generation that last listed this id; older entries are dead. */
+  generation: number;
+}
+
+/**
+ * One monster's pose record. Mutable and PERSISTENT: sample() refills these in
+ * place every frame instead of allocating a Map and an object per monster per
+ * frame (perf review 2026-08-29, A5). Consumers see it through the readonly
+ * InterpolatedMonster face and must not hold one across frames.
+ */
+interface PoseRecord extends InterpolatedMonster {
+  x: number;
+  y: number;
+  heading: number;
+  kind: InterpolatedMonster['kind'];
+  variant?: YetiVariant;
 }
 
 /**
@@ -95,6 +111,10 @@ interface Pose {
 export class MonsterInterpolator {
   /** Pose each monster is being interpolated FROM. */
   private from = new Map<number, Pose>();
+  /** The records sample() hands out, keyed by id — refilled, never rebuilt. */
+  private readonly poses = new Map<number, PoseRecord>();
+  /** Bumped per receive(); a `from` entry not stamped with it has despawned. */
+  private generation = 0;
   /** Newest authoritative poses. */
   private latest: readonly MonsterState[] = [];
   /** Seconds elapsed within the current segment. */
@@ -123,20 +143,30 @@ export class MonsterInterpolator {
     this.hasReceived = true;
     this.sinceLastMessage = 0;
 
-    const next = new Map<number, Pose>();
+    // Refilled in place; entries the message no longer lists are pruned below,
+    // and the sampled records for those ids go with them.
+    const generation = ++this.generation;
     for (const monster of monsters) {
       const current = rendered.get(monster.id);
+      let start = this.from.get(monster.id);
+      if (start === undefined) {
+        start = { x: 0, y: 0, heading: 0, generation };
+        this.from.set(monster.id, start);
+      }
       // One seen for the first time has no history: it starts where the server
       // says it is, which is the only honest answer.
-      next.set(
-        monster.id,
-        current === undefined
-          ? { x: monster.x, y: monster.y, heading: monster.heading }
-          : { x: current.x, y: current.y, heading: current.heading },
-      );
+      const source = current === undefined ? monster : current;
+      start.x = source.x;
+      start.y = source.y;
+      start.heading = source.heading;
+      start.generation = generation;
     }
-
-    this.from = next;
+    for (const [id, start] of this.from) {
+      if (start.generation !== generation) {
+        this.from.delete(id);
+        this.poses.delete(id);
+      }
+    }
     this.latest = monsters;
     this.elapsed = 0;
   }
@@ -159,24 +189,29 @@ export class MonsterInterpolator {
    * that may have stopped dead — and stopping dead is half its behaviour — is
    * worse than briefly holding still.
    */
-  sample(): Map<number, InterpolatedMonster> {
+  sample(): ReadonlyMap<number, InterpolatedMonster> {
     const t = this.progress();
-    const poses = new Map<number, InterpolatedMonster>();
+    const poses = this.poses;
 
     for (const monster of this.latest) {
+      let record = poses.get(monster.id);
+      if (record === undefined) {
+        record = { ...monster };
+        poses.set(monster.id, record);
+      }
+      record.kind = monster.kind;
+      if (monster.variant === undefined) delete record.variant;
+      else record.variant = monster.variant;
       const start = this.from.get(monster.id);
       if (start === undefined) {
-        poses.set(monster.id, monster);
+        record.x = monster.x;
+        record.y = monster.y;
+        record.heading = monster.heading;
         continue;
       }
-      poses.set(monster.id, {
-        id: monster.id,
-        kind: monster.kind,
-        variant: monster.variant,
-        x: lerp(start.x, monster.x, t),
-        y: lerp(start.y, monster.y, t),
-        heading: lerpAngle(start.heading, monster.heading, t),
-      });
+      record.x = lerp(start.x, monster.x, t);
+      record.y = lerp(start.y, monster.y, t);
+      record.heading = lerpAngle(start.heading, monster.heading, t);
     }
 
     return poses;
@@ -185,6 +220,7 @@ export class MonsterInterpolator {
   /** Forgets everything (used on dispose). */
   clear(): void {
     this.from.clear();
+    this.poses.clear();
     this.latest = [];
     this.elapsed = 0;
     this.sinceLastMessage = 0;

@@ -54,6 +54,21 @@ interface Pose {
   x: number;
   y: number;
   heading: number;
+  /** The receive() generation that last listed this id; older entries are dead. */
+  generation: number;
+}
+
+/**
+ * One boat's pose record. Mutable and PERSISTENT: sample() refills these in
+ * place every frame instead of allocating a Map and an object per boat per
+ * frame (perf review 2026-08-29, A5). Consumers see it through the readonly
+ * InterpolatedBoat face and must not hold one across frames.
+ */
+interface PoseRecord extends InterpolatedBoat {
+  x: number;
+  y: number;
+  heading: number;
+  fighting: InterpolatedBoat['fighting'];
 }
 
 /**
@@ -71,6 +86,10 @@ interface Pose {
  */
 export class BoatInterpolator {
   private from = new Map<number, Pose>();
+  /** The records sample() hands out, keyed by id — refilled, never rebuilt. */
+  private readonly poses = new Map<number, PoseRecord>();
+  /** Bumped per receive(); a `from` entry not stamped with it has despawned. */
+  private generation = 0;
   private latest: readonly BoatState[] = [];
   private elapsed = 0;
   private window = DEFAULT_INTERPOLATION_SECONDS;
@@ -93,18 +112,30 @@ export class BoatInterpolator {
     this.hasReceived = true;
     this.sinceLastMessage = 0;
 
-    const next = new Map<number, Pose>();
+    // Refilled in place; entries the message no longer lists are pruned below,
+    // and the sampled records for those ids go with them.
+    const generation = ++this.generation;
     for (const boat of boats) {
       const current = rendered.get(boat.id);
-      next.set(
-        boat.id,
-        current === undefined
-          ? { x: boat.x, y: boat.y, heading: boat.heading }
-          : { x: current.x, y: current.y, heading: current.heading },
-      );
+      let start = this.from.get(boat.id);
+      if (start === undefined) {
+        start = { x: 0, y: 0, heading: 0, generation };
+        this.from.set(boat.id, start);
+      }
+      // One seen for the first time has no history: it starts where the server
+      // says it is, which is the only honest answer.
+      const source = current === undefined ? boat : current;
+      start.x = source.x;
+      start.y = source.y;
+      start.heading = source.heading;
+      start.generation = generation;
     }
-
-    this.from = next;
+    for (const [id, start] of this.from) {
+      if (start.generation !== generation) {
+        this.from.delete(id);
+        this.poses.delete(id);
+      }
+    }
     this.latest = boats;
     this.elapsed = 0;
   }
@@ -129,23 +160,27 @@ export class BoatInterpolator {
    * `fighting` comes from the authoritative message, never interpolated — it is
    * a boolean, and half-fighting is not a state.
    */
-  sample(): Map<number, InterpolatedBoat> {
+  sample(): ReadonlyMap<number, InterpolatedBoat> {
     const t = this.progress();
-    const poses = new Map<number, InterpolatedBoat>();
+    const poses = this.poses;
 
     for (const boat of this.latest) {
+      let record = poses.get(boat.id);
+      if (record === undefined) {
+        record = { ...boat };
+        poses.set(boat.id, record);
+      }
+      record.fighting = boat.fighting;
       const start = this.from.get(boat.id);
       if (start === undefined) {
-        poses.set(boat.id, boat);
+        record.x = boat.x;
+        record.y = boat.y;
+        record.heading = boat.heading;
         continue;
       }
-      poses.set(boat.id, {
-        id: boat.id,
-        x: lerp(start.x, boat.x, t),
-        y: lerp(start.y, boat.y, t),
-        heading: lerpAngle(start.heading, boat.heading, t),
-        fighting: boat.fighting,
-      });
+      record.x = lerp(start.x, boat.x, t);
+      record.y = lerp(start.y, boat.y, t);
+      record.heading = lerpAngle(start.heading, boat.heading, t);
     }
 
     return poses;
@@ -153,6 +188,7 @@ export class BoatInterpolator {
 
   clear(): void {
     this.from.clear();
+    this.poses.clear();
     this.latest = [];
     this.elapsed = 0;
     this.sinceLastMessage = 0;
