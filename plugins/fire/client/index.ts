@@ -144,6 +144,22 @@ let pointerX = 0;
 let pointerY = 0;
 let pointerMoved = false;
 
+/** Where the cursor was the last time a pick actually ran. */
+let pickedAtX = 0;
+let pickedAtY = 0;
+
+/**
+ * How far the cursor must travel, in CSS pixels, before the torch re-picks.
+ *
+ * THE PICK ONLY ANSWERS A CELL, and a cell is a quarter of a world unit: at
+ * any camera distance the player can aim from, that is several pixels across.
+ * So a two-pixel drift cannot change the answer, and re-picking on it spent a
+ * cell march (and, for anything still raycast, a descent) to be told the same
+ * cell again. Four pixels is under half a cell at the closest zoom the camera
+ * allows, so the ring still follows the cursor without a visible step.
+ */
+const TORCH_REPICK_TRAVEL_PX = 4;
+
 /** Window pointer listener, live only for the plugin's lifetime. */
 let onPointerMove: ((event: PointerEvent) => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
@@ -463,11 +479,11 @@ export const clientPlugin: TerraceClientPlugin = {
     // arrangement, for its reasons.
     //
     // ONE PICK PER FRAME, NOT ONE PER EVENT. Pointer events arrive several
-    // times per frame, and a pick costs the whole declared world
-    // (ClientPluginCtx.pickWorldCell) — a mature forest measured at 2.28 ms a
-    // call, which a moving cursor was paying repeatedly for a ring that is only
-    // drawn once. So the handler does nothing but remember where the cursor is;
-    // the frame callback below resolves it.
+    // times per frame and the ring is drawn once, so the handler does nothing
+    // but remember where the cursor is; the frame callback below resolves it,
+    // and only when the cursor has moved far enough to mean a different cell.
+    // A pick was measured at 0.72–0.85 ms against a mature forest before the
+    // populations answered by cell lookup instead of by raycast (GH #252).
     onPointerMove = (event: PointerEvent): void => {
       if (!torchHeld) return;
       pointerX = event.clientX;
@@ -537,10 +553,23 @@ export const clientPlugin: TerraceClientPlugin = {
 
       elapsedSeconds += dt;
 
-      // The one pick per frame the pointer handler defers to us.
+      // The one pick per frame the pointer handler defers to us — and only
+      // when the cursor has actually travelled far enough to be pointing at a
+      // different cell (TORCH_REPICK_TRAVEL_PX). `pointerMoved` is left set
+      // when the travel is too small, so a slow drift still picks once it adds
+      // up rather than never.
       if (torchHeld && pointerMoved) {
-        pointerMoved = false;
-        torchCell = ctx.pickWorldCell(pointerX, pointerY);
+        const travelX = pointerX - pickedAtX;
+        const travelY = pointerY - pickedAtY;
+        const farEnough =
+          travelX * travelX + travelY * travelY >=
+          TORCH_REPICK_TRAVEL_PX * TORCH_REPICK_TRAVEL_PX;
+        if (torchCell === null || farEnough) {
+          pointerMoved = false;
+          pickedAtX = pointerX;
+          pickedAtY = pointerY;
+          torchCell = ctx.pickWorldCell(pointerX, pointerY);
+        }
       }
 
       // THE TORCH RING, before the early-out below: it is drawn while the player
@@ -629,6 +658,8 @@ export const clientPlugin: TerraceClientPlugin = {
     torchHeld = false;
     torchCell = null;
     pointerMoved = false;
+    pickedAtX = 0;
+    pickedAtY = 0;
 
     fires.clear();
     entityFires.clear();
