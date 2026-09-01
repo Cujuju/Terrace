@@ -179,10 +179,16 @@ export interface Monster {
  * Seconds between lair surveys.
  *
  * Five, the same interval the wildlife plugin's census uses and for the same
- * reason: the survey walks every cell of the world once PER HABITAT (see
+ * reason: the survey used to walk every cell of the world once PER HABITAT (see
  * surveyLairs for its measured cost), so it must not run per tick, but habitat
  * only changes when terrain or the unlock mask changes, and both are
- * human-paced. A five-second worst-case lag in noticing a drained basin or a
+ * human-paced.
+ *
+ * STILL FIVE AFTER THE REPAIRABLE TABLE (2026-09-01, #269), and that is a
+ * decision rather than an oversight: a pass over an unchanged board now costs a
+ * per-occupant lookup, so the interval no longer buys anything on the cost
+ * side — but it is still what bounds how stale gate 3 may be, and shortening it
+ * would change arrival timing for no gain. A five-second worst-case lag in noticing a drained basin or a
  * levelled peak is invisible next to the ten-minute cooldown that follows it,
  * and the reactive path (invalidateSurvey, called from onTerrainChanged)
  * collapses that lag to LAIR_SURVEY_DEBOUNCE_SECONDS whenever a player
@@ -268,16 +274,36 @@ let surveys: Record<HabitatRegimeId, LairSurvey> = emptySurveys();
 /** Accumulated simulated seconds — the only clock this plugin has. */
 let simSeconds = 0;
 
-/** Simulated time of the last survey; -Infinity forces one on the first tick. */
-let lastSurveySeconds = Number.NEGATIVE_INFINITY;
+/**
+ * Simulated time of each habitat's last survey; -Infinity forces one on the
+ * first tick.
+ *
+ * PER HABITAT SINCE 2026-09-01 (#269), and it has to be for the gate below to
+ * be sound: a habitat whose survey nothing would read is SKIPPED, and skipping
+ * it must not look like having surveyed it — otherwise the tick on which the
+ * last kind's cooldown expires would find a survey up to five seconds old and
+ * gate 3 would read it.
+ */
+function neverSurveyed(): Record<HabitatRegimeId, number> {
+  return { water: Number.NEGATIVE_INFINITY, land: Number.NEGATIVE_INFINITY };
+}
+
+let lastSurveySeconds: Record<HabitatRegimeId, number> = neverSurveyed();
 
 /**
  * Simulated time of the most recent terrain change still waiting on a survey,
  * or null when nothing is pending. The debounce's whole state: each new change
  * pushes it forward, so the survey fires LAIR_SURVEY_DEBOUNCE_SECONDS after the
  * LAST one rather than the first.
+ *
+ * Per habitat for the same reason as `lastSurveySeconds`: a skipped habitat
+ * keeps its pending deadline rather than having it cleared by the other one.
  */
-let terrainSettledDeadlineSeconds: number | null = null;
+function noTerrainPending(): Record<HabitatRegimeId, number | null> {
+  return { water: null, land: null };
+}
+
+let terrainSettledDeadlineSeconds: Record<HabitatRegimeId, number | null> = noTerrainPending();
 
 /**
  * The id the next summon will take. Persisted, so an id is never reused across a
@@ -371,6 +397,12 @@ export function cooldownRemainingSecondsFor(kind: MonsterKind): number {
   return stateOf(kind).cooldownSeconds;
 }
 
+/**
+ * MAY BE STALE, and since 2026-09-01 may be stale for a long time: a habitat
+ * whose survey nothing would read this tick is not surveyed at all (see
+ * `habitatSurveyHasReader`). Anything that starts reading it must go through
+ * `advanceSummoning`, which surveys on the tick the reader appears.
+ */
 export function lastLairSurvey(regime: HabitatRegime): LairSurvey {
   return surveys[regime.id];
 }
@@ -389,8 +421,8 @@ export function resetSummoning(): void {
   kindStates = emptyKindStates();
   surveys = emptySurveys();
   simSeconds = 0;
-  lastSurveySeconds = Number.NEGATIVE_INFINITY;
-  terrainSettledDeadlineSeconds = null;
+  lastSurveySeconds = neverSurveyed();
+  terrainSettledDeadlineSeconds = noTerrainPending();
   nextMonsterId = 1;
   pendingTransitions = [];
   releaseSurveyScratch();
@@ -415,7 +447,46 @@ export function resetSummoning(): void {
  * second later, and the roll that discovered it is spent either way.
  */
 export function invalidateSurvey(): void {
-  terrainSettledDeadlineSeconds = simSeconds + LAIR_SURVEY_DEBOUNCE_SECONDS;
+  for (const regime of HABITAT_REGIMES) {
+    terrainSettledDeadlineSeconds[regime.id] = simSeconds + LAIR_SURVEY_DEBOUNCE_SECONDS;
+  }
+}
+
+/**
+ * Would ANYTHING read this habitat's survey on this tick? GATE ZERO (2026-09-01,
+ * #269), and the only pass in this file that can be skipped outright.
+ *
+ * A survey answers exactly two questions, and a habitat can be in a state where
+ * neither is asked:
+ *
+ *   * THE COLLAPSE TEST, per occupant — and only for an occupant whose kind can
+ *     be driven off by losing the habitat around it (`banishment` non-null with
+ *     a `lairCollapseCells` bar). Cthulhu cannot be banished at all and the
+ *     kraken is not evicted by a shrinking sea, so neither of them ever asks;
+ *   * GATE 3, for a kind whose slot is empty — but `trySummon` returns on the
+ *     cooldown check BEFORE it reads `surveys[regime.id]`, so a kind still
+ *     serving its respawn cooldown does not ask either.
+ *
+ * PREDICATED ON THE COOLDOWN THE CONSUMER WOULD CONSUME, deliberately: this is
+ * read AFTER the per-kind cooldown decay of the same tick, so the tick on which
+ * a cooldown reaches zero is the tick this returns true, and the survey it then
+ * runs is the one that tick's `trySummon` reads. Reading it before the decay
+ * would leave gate 3 a tick behind.
+ *
+ * Skipping does NOT stamp `lastSurveySeconds`, so a skipped habitat is
+ * permanently due and surveys on the very tick something starts reading it.
+ */
+function habitatSurveyHasReader(regime: HabitatRegime): boolean {
+  for (const kind of kindsInHabitat(regime)) {
+    const state = stateOf(kind);
+    if (state.living === null) {
+      if (state.cooldownSeconds <= 0) return true;
+      continue;
+    }
+    const banishment = profileOf(kind).banishment;
+    if (banishment !== null && banishment.lairCollapseCells !== null) return true;
+  }
+  return false;
 }
 
 // ── Arrival and departure ────────────────────────────────────────────────────
@@ -759,6 +830,10 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
  *   1. clock;
  *   2. cooldown decay, per KIND — a banished monster's absence is measured in
  *      simulated seconds, so it survives a paused or slow server exactly;
+ *   2b. the survey GATE, per habitat: a habitat with no occupant that can be
+ *      collapsed and no kind off cooldown with an empty slot is skipped
+ *      entirely (habitatSurveyHasReader). Read AFTER step 2 on purpose — the
+ *      cooldown it consults is this tick's;
  *   3. survey, on its interval, PER HABITAT (one terrain walk each), and the
  *      COLLAPSE TEST per OCCUPANT of that habitat: if the region a monster is
  *      actually in has shrunk below its kind's collapse threshold, it leaves.
@@ -776,23 +851,25 @@ function trySummon(kind: MonsterKind, world: LairWorld, dt: number): void {
 export function advanceSummoning(world: LairWorld, dt: number): void {
   simSeconds += dt;
 
-  // Two independent reasons to survey: the periodic sweep, and terrain that has
-  // been quiet for the debounce since it last moved.
-  const periodicDue = simSeconds - lastSurveySeconds >= LAIR_SURVEY_INTERVAL_SECONDS;
-  const settledDue =
-    terrainSettledDeadlineSeconds !== null && simSeconds >= terrainSettledDeadlineSeconds;
-  const surveyDue = periodicDue || settledDue;
-  if (surveyDue) {
-    lastSurveySeconds = simSeconds;
-    terrainSettledDeadlineSeconds = null;
-  }
-
   for (const kind of MONSTER_KINDS) {
     const state = stateOf(kind);
     if (state.cooldownSeconds > 0) state.cooldownSeconds = Math.max(0, state.cooldownSeconds - dt);
   }
 
-  if (surveyDue) {
+  // Two independent reasons to survey a habitat — the periodic sweep and
+  // terrain that has been quiet for the debounce since it last moved — and one
+  // reason not to: nothing would read the answer (see habitatSurveyHasReader).
+  // Both timers are per habitat, so a skipped one stays due.
+  const due = HABITAT_REGIMES.filter((regime) => {
+    const deadline = terrainSettledDeadlineSeconds[regime.id];
+    const periodicDue =
+      simSeconds - lastSurveySeconds[regime.id] >= LAIR_SURVEY_INTERVAL_SECONDS;
+    const settledDue = deadline !== null && simSeconds >= deadline;
+    if (!periodicDue && !settledDue) return false;
+    return habitatSurveyHasReader(regime);
+  });
+
+  if (due.length > 0) {
     // One sync for the whole pass: the index covers both regimes, and building
     // it per regime would read the world's heights twice on the rare tick that
     // has to rebuild.
@@ -801,7 +878,9 @@ export function advanceSummoning(world: LairWorld, dt: number): void {
       HABITAT_REGIMES.map((regime) => ({ regime, fitRules: lairFitRulesInHabitat(regime) })),
     );
 
-    for (const regime of HABITAT_REGIMES) {
+    for (const regime of due) {
+      lastSurveySeconds[regime.id] = simSeconds;
+      terrainSettledDeadlineSeconds[regime.id] = null;
       // The occupants are surveyed together: one walk per habitat, one
       // occupiedRegionCells entry per monster, index-aligned (habitat.ts).
       const occupants = livingMonstersIn(regime);
