@@ -18,8 +18,10 @@
 
 import {
   LAND_WALKER_PROFILE,
+  ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  createRouteBudget,
   findRoute,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
@@ -171,6 +173,87 @@ export const LOOKAHEAD_SECONDS = 0.6;
  * was derived for.
  */
 export const ARRIVAL_RADIUS_CELLS = cellsAcross(0.75);
+
+/**
+ * A* node expansions ONE tick's DISPATCH may spend, shared across every settled
+ * monster and every catchment settlement it considers (shared's RouteBudget).
+ *
+ * ROUTE_NODE_BUDGET — exactly one whole search's worth per tick, and the size
+ * is forced rather than chosen. A route failure is only ever PROVEN by a search
+ * that exhausts a full ROUTE_NODE_BUDGET (shared/src/pathing.ts: A* can say
+ * "no" no other way), and the memo below may only record a failure that was
+ * proven. A pool smaller than one full budget could therefore never prove a
+ * single failure: every unreachable pair would come back "inconclusive — the
+ * pool ran out" and be retried on the next tick forever, which is the very
+ * bleed this constant exists to stop. Larger buys nothing either: the second
+ * exhausted search in one tick is the one that turns a 50 ms tick into a
+ * blown one (2026-08-29 perf review, D3: 44.9–58.1 ms per exhausted search
+ * against a 100 ms tick at TICK_HZ = 10).
+ *
+ * WHAT IT BOUNDS, THEN, is the tick: dispatch can cost at most one exhausted
+ * search however many settled monsters and cut-off towns the world holds,
+ * where before it cost one PER cut-off town PER tick, indefinitely. Successful
+ * routes are ~0.3 ms each (same measurement), so an ordinary tick spends a
+ * fraction of the pool and the cap is never felt.
+ */
+export const PILGRIM_DISPATCH_EXPANSION_POOL = ROUTE_NODE_BUDGET;
+
+/**
+ * Row stride for packing a settlement's (x, y) into one integer memo key.
+ *
+ * 65536 — structures' own key arithmetic (y × 65536 + x), restated by value
+ * for the same own-copy reason `blessedCellKeys` restates it: a plugin must
+ * build with its siblings deleted. Exact for every world size this engine
+ * ships (worldSize ≤ 65536 keeps x and y in their own lanes).
+ */
+const SETTLEMENT_KEY_STRIDE = 65536;
+
+/**
+ * What one settled monster's dispatch has already learned about its catchment.
+ *
+ * WHY IT EXISTS (2026-08-29 perf review, D3). `SettlednessTracker.advance`
+ * reports the CURRENTLY settled set every tick, not the newly-settled ones, so
+ * a monster that sits still is offered to the dispatch loop ten times a second
+ * for as long as it stays. Without a memory of what was already tried, every
+ * catchment town that CANNOT walk to the viewpoint — the ordinary case of a
+ * river or lake between them, since fresh water is a wall to
+ * LAND_WALKER_PROFILE — paid a fresh budget-exhausting A* (44.9–58.1 ms
+ * measured) on every one of those ticks, for as long as the beast stayed:
+ * ~50 % of every tick from ONE such town, and two blew the tick outright.
+ * Remembering the proven failure turns that into one search, once.
+ *
+ * WHY NOT `floodReachableRegion` (shared/src/pathing.ts), which is what that
+ * review's fix suggested and what settling.ts's site scan uses. A flood answers
+ * a whole box at once, so one flood per catchment would beat one search per
+ * town — but only if it were flooded from the VIEWPOINT, one flood serving
+ * every town, and that direction is not the direction the walker walks.
+ * REACHABILITY OVER THIS PROFILE IS NOT SYMMETRIC: the corner-cutting guard
+ * (findRoute's, and the flood's own) tests a diagonal's two flanking cells
+ * against the height of the cell it is standing ON, so a corner legal from one
+ * end can be illegal from the other. Verified against the shipped modules, not
+ * reasoned about: with heights base / base+MAX_STEP on the two diagonal cells
+ * and base−MAX_STEP on both flanks, `findRoute` A→B succeeds, a flood from A
+ * reaches B, and a flood from B does not reach A. A viewpoint-side flood would
+ * therefore sometimes prove nothing while claiming to, and the failure mode is
+ * a town silently barred from ever sending a pilgrim. Flooding per settlement
+ * instead would be one flood per town — worse than the one search per town it
+ * replaces. The memo is exact by construction: what it records is A*'s own
+ * answer to the very question that will be asked again.
+ */
+interface CatchmentMemo {
+  /** The anchor this memo was learned at. A monster that re-anchors is a
+   *  different question — new viewpoint, new routes — so the memo is dropped
+   *  rather than reused (SettlednessTracker re-anchors on leaving the settled
+   *  circle, which also unsettles it; this comparison is the belt to that
+   *  suspenders, and costs two number compares a tick). */
+  readonly anchorX: number;
+  readonly anchorY: number;
+  /** Packed keys (SETTLEMENT_KEY_STRIDE) of the settlements whose route to
+   *  this monster's viewpoint A* has PROVEN it cannot plan — never the ones it
+   *  merely ran out of pooled allowance on (see PILGRIM_DISPATCH_EXPANSION_
+   *  POOL). Cleared wholesale by `forgetRouteFailures` when the terrain moves. */
+  readonly unroutable: Set<number>;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Settledness — one anchor tracker per living monster id.
@@ -833,6 +916,9 @@ export class Pilgrimage {
   /** True when this sim minted its own allocator — then clear() may reset it.
    *  A SHARED allocator is never reset here: the other sim's walkers live on. */
   private readonly ownsIds: boolean;
+  /** One CatchmentMemo per settled monster id, dropped the tick that monster
+   *  stops being settled — so the map never outgrows the settled population. */
+  private readonly catchmentMemos = new Map<number, CatchmentMemo>();
 
   constructor(ids?: WalkerIdAllocator) {
     this.ids = ids ?? new WalkerIdAllocator();
@@ -862,9 +948,37 @@ export class Pilgrimage {
     }
 
     // ── Dispatch: one pilgrim per (settled monster, catchment settlement). ──
+    //
+    // ONE POOLED ROUTING ALLOWANCE FOR THE WHOLE TICK, minted here and handed
+    // to every plan below (see PILGRIM_DISPATCH_EXPANSION_POOL): the bound has
+    // to be on the tick, not on the call, because the loop below runs one
+    // search per (settled monster × catchment settlement) pair.
+    const dispatchBudget = createRouteBudget(PILGRIM_DISPATCH_EXPANSION_POOL);
+    // Monsters that stopped being settled take their memo with them.
+    for (const monsterId of this.catchmentMemos.keys()) {
+      if (!settledById.has(monsterId)) this.catchmentMemos.delete(monsterId);
+    }
+
+    // Set when the tick's pooled allowance can no longer fund a search whose
+    // answer would be trustworthy (see the two nulls below): no further
+    // dispatch this tick can be decided honestly, so dispatch stops here and
+    // the walk below still runs. The next tick starts with a fresh pool and,
+    // because the candidate order is fixed, resumes on the same candidate.
+    let dispatchAllowanceSpent = false;
+
     for (const monster of settled) {
+      if (dispatchAllowanceSpent) break;
       const viewpoint = pickViewpoint(world, monster.x, monster.y);
       if (viewpoint === null) continue;
+
+      // What this monster's dispatch has already proved about its catchment
+      // (see CatchmentMemo). A monster that re-anchored asks a different
+      // question, so its memo is dropped rather than trusted.
+      let memo = this.catchmentMemos.get(monster.monsterId);
+      if (memo !== undefined && (memo.anchorX !== monster.x || memo.anchorY !== monster.y)) {
+        this.catchmentMemos.delete(monster.monsterId);
+        memo = undefined;
+      }
 
       // Nearest-first, deterministic: sort by squared distance, then by cell
       // order, so which towns dispatch under the cap never depends on the
@@ -888,6 +1002,13 @@ export class Pilgrimage {
         if (!isWalkableCell(world, cell.x, cell.y)) continue;
         if (this.hasPilgrimFrom(cell.x, cell.y, monster.monsterId)) continue;
 
+        // THE CHEAP QUESTION FIRST: this town's road to this beast was already
+        // proved impossible, on terrain that has not moved since. Asking A*
+        // again would spend a whole budget re-deriving the same "no" (see
+        // CatchmentMemo for what that cost the tick).
+        const settlementKey = cell.y * SETTLEMENT_KEY_STRIDE + cell.x;
+        if (memo !== undefined && memo.unroutable.has(settlementKey)) continue;
+
         // NEVER DISPATCH A PILGRIM TO A TRIP IT CANNOT WALK: plan the route
         // before minting a walker, not after. A settlement with no legal
         // route to the viewpoint (walled in, an island, budget-exhausted —
@@ -896,8 +1017,31 @@ export class Pilgrimage {
         // candidate instead of the whole monster's dispatch failing.
         const homeX = cell.x + 0.5;
         const homeY = cell.y + 0.5;
-        const route = planRoute(world, homeX, homeY, viewpoint.x, viewpoint.y);
-        if (route === null) continue;
+        // What the pool held BEFORE this search: the test for whether its
+        // answer is knowledge (below). Read before, not after, because a
+        // search that fails spends everything it was offered either way.
+        const allowanceBefore = dispatchBudget.remaining;
+        const route = planRoute(world, homeX, homeY, viewpoint.x, viewpoint.y, dispatchBudget);
+        if (route === null) {
+          // TWO VERY DIFFERENT NULLS, and only one of them is knowledge. A
+          // search offered LESS than a whole ROUTE_NODE_BUDGET was cut off by
+          // this tick's pool rather than by its own limits: it proved nothing,
+          // and recording it would silence a town that may be perfectly able to
+          // walk. A search that was offered a whole budget and still said no
+          // said exactly what an unpooled `planRoute` would have said (shared's
+          // per-call default IS ROUTE_NODE_BUDGET) — and that is a fact about
+          // this terrain, not about this tick: remember it, and stop asking.
+          if (allowanceBefore < ROUTE_NODE_BUDGET) {
+            dispatchAllowanceSpent = true;
+            break;
+          }
+          if (memo === undefined) {
+            memo = { anchorX: monster.x, anchorY: monster.y, unroutable: new Set<number>() };
+            this.catchmentMemos.set(monster.monsterId, memo);
+          }
+          memo.unroutable.add(settlementKey);
+          continue;
+        }
 
         const id = this.ids.allocate();
         this.pilgrims.set(id, {
@@ -1080,9 +1224,37 @@ export class Pilgrimage {
     return this.pilgrims.delete(id);
   }
 
+  /**
+   * Forgets every proven route failure — the invalidation half of the memo
+   * above. The plugin wiring calls it from `onTerrainChanged`.
+   *
+   * DELIBERATELY COARSE: ANY terrain change clears ALL of them, rather than
+   * only the memos whose catchment the changed cells fall inside. The cheap
+   * box test would be UNSOUND, and that is the reason, not the effort: what
+   * makes a route illegal here is not only ground height but fresh water
+   * (LAND_WALKER_PROFILE treats a river or lake as a wall — shared/src/
+   * traversal.ts), and rivers are DERIVED from the whole heightmap by flow, so
+   * a sculpt in one valley can move a watercourse in another. There is no box
+   * around a sculpt that contains everything it can make walkable, so there is
+   * no sound narrowing — and a memo wrongly kept is a town silently barred
+   * from ever sending a pilgrim again, which is far worse than re-proving.
+   *
+   * THE COST OF THE COARSENESS IS BOUNDED AND TEMPORARY: re-proving happens
+   * lazily, only for pairs the dispatch loop actually reaches, and never more
+   * than one exhausted search per tick (PILGRIM_DISPATCH_EXPANSION_POOL). The
+   * residual failure mode, named: while a player DRAGS a brush, every tick of
+   * the drag clears the memo, so a catchment with a cut-off town pays that one
+   * exhausted search (~50 ms) per sculpting tick — the pre-fix steady state,
+   * now confined to the seconds a player is actively sculpting.
+   */
+  forgetRouteFailures(): void {
+    this.catchmentMemos.clear();
+  }
+
   clear(): void {
     this.tracker.clear();
     this.pilgrims.clear();
+    this.catchmentMemos.clear();
     if (this.ownsIds) this.ids.reset();
   }
 }

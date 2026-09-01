@@ -221,6 +221,18 @@ export const plugin: TerracePlugin = {
     simulate(world, dt);
   },
 
+  /**
+   * GROUND THAT MOVED CAN OPEN A ROAD THAT WAS SHUT. The pilgrimage sim
+   * remembers which towns provably cannot walk to which settled monster, so it
+   * stops re-deriving that answer ten times a second (issue #266); this is the
+   * only event that can make such an answer wrong, and so it is the whole of
+   * the invalidation. Deliberately ignores the diff and the sculptor — see
+   * `Pilgrimage.forgetRouteFailures` for why no narrower rule is sound.
+   */
+  onTerrainChanged(): void {
+    pilgrimage.forgetRouteFailures();
+  },
+
   onWorldEvent(_world: WorldApi, event: string, payload: unknown): void {
     if (event !== FIRE_IGNITED_EVENT_NAME) return;
     reactToFire(payload);
