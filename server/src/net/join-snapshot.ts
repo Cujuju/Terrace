@@ -18,6 +18,19 @@ import type { World } from '../world/world.ts';
 import { buildIdentity } from '../build-identity.ts';
 import { SERVER_VERSION } from '../version.ts';
 
+// STILL SYNCHRONOUS, AND STILL ON THE TICK THREAD (issue #272, half fixed).
+// The payload got much cheaper — chunk heights are little-endian Int16 bytes
+// rather than a boxed number[] (shared/src/chunks.ts, extractChunkPayload),
+// which measured build + msgpackr encode at 2048² down from 2.6 -> 1.0 ms at
+// the day-one 400 chunks, 21.8 -> 10.1 ms quarter-revealed, and 80.3 -> 29.9
+// ms at the fully-revealed 16 384-chunk ceiling. What is NOT fixed is that the
+// whole thing is still built and sent in one turn, once per joining player,
+// and the three loop paths (rollback.ts, world-manager.ts world switch and
+// plugin rebind) pay it N times in a row. Streaming the remainder across ticks
+// under a chunks-per-tick budget is the other half of the fix and is
+// deliberately NOT done here: it changes the client's join sequence, and the
+// remaining cost is a rare event on an already-2.7x-cheaper payload.
+
 /**
  * Builds the snapshot message for one token.
  *

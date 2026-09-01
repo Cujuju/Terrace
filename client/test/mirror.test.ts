@@ -207,12 +207,12 @@ describe('malformed chunk payloads', () => {
     const mirror = createTerrainMirror(WORLD);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const badChunk: ChunkPayload = {
-      cx: 0,
-      cy: 0,
-      heights: new Array<number>(CELLS_PER_CHUNK).fill(0),
-    };
-    badChunk.heights[3] = 1.5; // non-integer: invalid height
+    // Built before the payload rather than mutated through it: ChunkPayload's
+    // `heights` is the read-only wire union now (ChunkHeights), so the bad
+    // value goes in while the array is still a plain number[].
+    const badHeights = new Array<number>(CELLS_PER_CHUNK).fill(0);
+    badHeights[3] = 1.5; // non-integer: invalid height
+    const badChunk: ChunkPayload = { cx: 0, cy: 0, heights: badHeights };
 
     let dirty: Set<number> | undefined;
     expect(() => {
@@ -234,12 +234,9 @@ describe('malformed chunk payloads', () => {
     const mirror = createTerrainMirror(WORLD);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const badChunk: ChunkPayload = {
-      cx: 0,
-      cy: 0,
-      heights: new Array<number>(CELLS_PER_CHUNK).fill(0),
-    };
-    badChunk.heights[0] = NaN;
+    const badHeights = new Array<number>(CELLS_PER_CHUNK).fill(0);
+    badHeights[0] = NaN;
+    const badChunk: ChunkPayload = { cx: 0, cy: 0, heights: badHeights };
     const goodChunk = chunkPayload(1, 1, 50);
 
     const dirty = applyChunkUnlock(mirror, {

@@ -7,6 +7,9 @@
 // (mana, cooldowns) AFTER this structural validation passes.
 
 import { MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from './constants.ts';
+// Type-only, and so erased: chunks.ts already imports this module the same way,
+// and a type-only pair is not a cycle at runtime.
+import type { ChunkHeights } from './chunks.ts';
 import {
   MAX_BAND,
   MIN_BAND,
@@ -339,8 +342,14 @@ export interface ChunkLayeredSpans {
 /**
  * One chunk's terrain on the wire (see extractChunkPayload for the shape).
  *
- * `heights` is unchanged: CHUNK_SIZE² topmost ceilings, row-major, and its
- * fixed length is still the structural check that catches a truncated payload.
+ * `heights` is CHUNK_SIZE² topmost ceilings, row-major, and its fixed length
+ * is still the structural check that catches a truncated payload — but it is
+ * an `Int16Array` on the way out and, because msgpack carries a typed array as
+ * raw bytes, a `Uint8Array` of little-endian Int16 on the way in (issue #272;
+ * see ChunkHeights and chunkHeightsAsCells for the decode, and copyChunkHeights
+ * for the measurement that settled open question 7). `readonly number[]` stays
+ * in the union so a client can still read a payload from a server built before
+ * this change.
  *
  * ABSENT MEANS ONE SPAN. A cell not named by `layered.at` is the one-span
  * column `[BEDROCK_FLOOR, h)`, so applying a payload must clear any span list
@@ -351,7 +360,7 @@ export interface ChunkLayeredSpans {
 export interface ChunkPayload {
   cx: number;
   cy: number;
-  heights: number[];
+  heights: ChunkHeights;
   layered?: ChunkLayeredSpans;
 }
 

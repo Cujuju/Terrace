@@ -6,6 +6,7 @@ import {
   CHUNK_SIZE,
   DEFAULT_SCULPT_AMOUNT,
   NEIGHBOURHOOD_CELLS,
+  chunkHeightsAsCells,
   chunksPerEdge,
 } from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -114,7 +115,10 @@ describe('join snapshot chunk collection', () => {
       [2, 1],
     ]);
     for (const payload of payloads) {
-      expect(payload.heights).toHaveLength(CHUNK_SIZE * CHUNK_SIZE);
+      // Through chunkHeightsAsCells: the payload carries little-endian Int16
+      // BYTES since issue #272, so its own `.length` is twice the cell count.
+      // The contract under test is still "a full chunk of heights".
+      expect(chunkHeightsAsCells(payload.heights)).toHaveLength(CHUNK_SIZE * CHUNK_SIZE);
     }
   });
 

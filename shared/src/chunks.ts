@@ -77,11 +77,93 @@ export function unlockChunk(mask: Uint8Array, chunkIdx: number): void {
 }
 
 /**
- * Copies one chunk's heights out of the world, row-major within the chunk
- * (CHUNK_SIZE² entries). Plain number[] is the v1 wire shape — open question
- * 7 (schema vs binary encoding) defers leaner encodings until measured.
+ * ONE CHUNK'S HEIGHTS ON THE WIRE, in every shape a receiver may legally meet.
+ *
+ * `Uint8Array` — LITTLE-ENDIAN Int16, two bytes a cell — is what a sender
+ * produces and what a receiver gets back, so the LENGTH a reader sees is
+ * bytes, not cells.
+ *
+ * IT MUST BE A `Uint8Array` AND NOT AN `Int16Array`, and this is measured, not
+ * stylistic: @colyseus/msgpackr (1.11.3, the encoder Colyseus 0.17 uses for
+ * `client.send`) round-trips a Uint8Array byte-for-byte, but SILENTLY
+ * CORRUPTS an Int16Array — `[1, -2, 300, -4000]` comes back as
+ * `[1, 254, 44, 96, 241, 44, 112, 0]`. It only understands the byte view, so
+ * the byte view is what goes on the wire.
+ *
+ * `Int16Array` stays in the union because a same-process caller (a test, a
+ * server-side sink that never encodes) legitimately hands one over, and
+ * `readonly number[]` because it is the pre-2026-09-01 wire shape: a receiver
+ * refusing the shape it was written for is a version skew that costs a player
+ * their terrain rather than a warning.
  */
-export function extractChunkHeights(map: Heightmap, cx: number, cy: number): number[] {
+export type ChunkHeights = readonly number[] | Int16Array | Uint8Array;
+
+/** True on x86/ARM (i.e. everywhere this will realistically run). */
+const HOST_IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
+
+const BYTES_PER_HEIGHT = 2;
+
+/**
+ * The heights of a wire payload as cell values, whatever shape they arrived in.
+ *
+ * THE BYTE FORM IS DEFINED LITTLE-ENDIAN, the same discipline and for the same
+ * reason as the snapshot blob (server/src/persistence/codec.ts): a payload
+ * silently reinterpreted with the wrong byte order does not fail, it renders as
+ * plausible garbage terrain. Every realistic host is little-endian, so the
+ * common path is a view with no copy at all; the swap branch exists so the
+ * claim is true rather than merely usually true.
+ *
+ * A byte length that is not a whole number of heights comes back with a cell
+ * count that cannot match CHUNK_SIZE², which is exactly the truncation
+ * `writeChunkHeights` already refuses.
+ */
+export function chunkHeightsAsCells(heights: ChunkHeights): ArrayLike<number> {
+  if (!(heights instanceof Uint8Array)) return heights;
+  const cells = Math.floor(heights.byteLength / BYTES_PER_HEIGHT);
+  // Copy when the view is misaligned (an Int16Array must start on an even
+  // byte) or when the host reads the other way round; otherwise view in place.
+  if (!HOST_IS_LITTLE_ENDIAN || heights.byteOffset % BYTES_PER_HEIGHT !== 0) {
+    const bytes = new Uint8Array(cells * BYTES_PER_HEIGHT);
+    bytes.set(heights.subarray(0, bytes.length));
+    if (!HOST_IS_LITTLE_ENDIAN) {
+      for (let i = 0; i + 1 < bytes.length; i += BYTES_PER_HEIGHT) {
+        const low = bytes[i]!;
+        bytes[i] = bytes[i + 1]!;
+        bytes[i + 1] = low;
+      }
+    }
+    return new Int16Array(bytes.buffer, 0, cells);
+  }
+  return new Int16Array(heights.buffer, heights.byteOffset, cells);
+}
+
+/**
+ * One chunk's heights in wire form — little-endian Int16, two bytes a cell.
+ *
+ * The swap branch is for a big-endian host and nothing else; see
+ * chunkHeightsAsCells for why the format is pinned rather than left as
+ * "whatever this machine does".
+ */
+function chunkHeightsToWire(cells: Int16Array): Uint8Array {
+  const bytes = new Uint8Array(cells.buffer, cells.byteOffset, cells.byteLength);
+  if (HOST_IS_LITTLE_ENDIAN) return bytes;
+  for (let i = 0; i + 1 < bytes.length; i += BYTES_PER_HEIGHT) {
+    const low = bytes[i]!;
+    bytes[i] = bytes[i + 1]!;
+    bytes[i + 1] = low;
+  }
+  return bytes;
+}
+
+/**
+ * Copies one chunk's heights out of the world, row-major within the chunk
+ * (CHUNK_SIZE² entries).
+ *
+ * CELL VALUES, not the wire's bytes: this is the standalone form, for a caller
+ * that wants to look at heights. `extractChunkPayload` is what builds a
+ * message, and it is the one that converts.
+ */
+export function extractChunkHeights(map: Heightmap, cx: number, cy: number): Int16Array {
   chunkIndex(map.size, cx, cy); // bounds check
   // One height per cell is all THIS function can say, so a layered column in
   // this chunk would be silently flattened by whoever called it. Refuse
@@ -99,9 +181,16 @@ export function extractChunkHeights(map: Heightmap, cx: number, cy: number): num
   return copyChunkHeights(map, cx, cy);
 }
 
-/** The heights themselves, with no opinion about spans. */
-function copyChunkHeights(map: Heightmap, cx: number, cy: number): number[] {
-  const heights: number[] = new Array(CHUNK_SIZE * CHUNK_SIZE);
+/**
+ * The heights themselves, with no opinion about spans.
+ *
+ * AN `Int16Array`, NOT A BOXED `number[]` (issue #272, and the measurement
+ * open question 7 was waiting for). A join snapshot is one of these per
+ * unlocked chunk — up to 16 384 of them on a fully revealed 2048² world — and
+ * the boxed form cost both the allocation and a per-value msgpack integer.
+ */
+function copyChunkHeights(map: Heightmap, cx: number, cy: number): Int16Array {
+  const heights = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
   const x0 = cx * CHUNK_SIZE;
   const y0 = cy * CHUNK_SIZE;
   let k = 0;
@@ -161,7 +250,15 @@ export function extractChunkSpans(
 export function extractChunkPayload(map: Heightmap, cx: number, cy: number): ChunkPayload {
   chunkIndex(map.size, cx, cy); // bounds check
   const layered = extractChunkSpans(map, cx, cy);
-  const heights = copyChunkHeights(map, cx, cy);
+  // WIRE FORM HERE, at the one function that builds a message. Measured at
+  // 2048² through the real encoder (@colyseus/msgpackr), build + encode of a
+  // whole join snapshot: 400 chunks 2.6 -> 1.0 ms, 4 096 chunks 21.8 -> 10.1
+  // ms, the 16 384-chunk ceiling 80.3 -> 29.9 ms. Bytes are terrain-dependent
+  // and roughly a wash — 8.94 -> 8.75 MB at the ceiling, but 1.77 -> 2.19 MB
+  // over a quarter of the world, because two fixed bytes lose to a
+  // variable-width integer wherever heights sit in msgpack's 1-byte fixint
+  // range. See ChunkHeights.
+  const heights = chunkHeightsToWire(copyChunkHeights(map, cx, cy));
   return layered === undefined ? { cx, cy, heights } : { cx, cy, heights, layered };
 }
 
@@ -170,9 +267,10 @@ export function writeChunkHeights(
   map: Heightmap,
   cx: number,
   cy: number,
-  heights: readonly number[],
+  wire: ChunkHeights,
 ): void {
   chunkIndex(map.size, cx, cy); // bounds check
+  const heights = chunkHeightsAsCells(wire);
   if (heights.length !== CHUNK_SIZE * CHUNK_SIZE) {
     throw new RangeError(
       `chunk payload has ${heights.length} cells, expected ${CHUNK_SIZE * CHUNK_SIZE}`,
@@ -182,10 +280,14 @@ export function writeChunkHeights(
   // throwing on the first bad entry would leave the map holding half of a
   // rejected payload — worse than the payload never having arrived, and
   // silent until something reads the wrong half.
+  //
+  // STILL RUN FOR A TYPED-ARRAY PAYLOAD, even though NaN and non-integers
+  // cannot survive one: the RANGE half is the part that matters, and an Int16
+  // holds four times more range than a height is allowed to have.
   for (let k = 0; k < heights.length; k++) {
-    if (!isValidHeight(heights[k])) {
+    if (!isValidHeight(heights[k]!)) {
       throw new RangeError(
-        `chunk payload cell ${k} has height ${heights[k]}, expected an integer in [${MIN_HEIGHT}, ${MAX_HEIGHT}]`,
+        `chunk payload cell ${k} has height ${String(heights[k])}, expected an integer in [${MIN_HEIGHT}, ${MAX_HEIGHT}]`,
       );
     }
   }
@@ -197,7 +299,7 @@ export function writeChunkHeights(
   let k = 0;
   for (let y = 0; y < CHUNK_SIZE; y++) {
     for (let x = 0; x < CHUNK_SIZE; x++) {
-      map.cells[cellIndex(map, x0 + x, y0 + y)] = heights[k++];
+      map.cells[cellIndex(map, x0 + x, y0 + y)] = heights[k++]!;
     }
   }
 }
@@ -227,7 +329,7 @@ export function writeChunkPayload(
   map: Heightmap,
   cx: number,
   cy: number,
-  heights: readonly number[],
+  heights: ChunkHeights,
   layered?: ChunkLayeredSpans,
 ): number {
   writeChunkHeights(map, cx, cy, heights);
