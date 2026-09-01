@@ -72,11 +72,31 @@ const HABITAT_BIT_CLEAR = 0;
 const MAX_REPAIR_GENERATION = 0xffffffff;
 
 /**
- * What the unlock-generation check reports for a world that cannot answer it —
- * a hand-built test world with no chunk mask. Distinct from any real count, so
- * two such worlds never look like "the mask changed".
+ * How much of the board the survey's dirty list may cover before repairing it
+ * cell-by-cell stops being cheaper than re-flooding the whole thing.
+ *
+ * DERIVED, NOT PICKED. A whole-board survey pays about
+ * FULL_SURVEY_PASSES_PER_CELL whole-board passes before any flooding — the
+ * `fill(UNLABELLED)` and the row-major seed scan — while a repair pays about
+ * REPAIR_TOUCHES_PER_DIRTY_CELL touches per listed cell (the cell and its four
+ * neighbours) before it floods anything. So the repair can only win while
+ *
+ *     dirty × REPAIR_TOUCHES_PER_DIRTY_CELL < cells × FULL_SURVEY_PASSES_PER_CELL
+ *
+ * which is the fraction below. A sculpt diff is tens of cells and an unlocked
+ * chunk is CHUNK_SIZE² of them, so the cap is reached only by something
+ * board-scale — which is exactly the case a full re-flood should serve.
  */
-const UNLOCK_GENERATION_UNAVAILABLE = -1;
+const FULL_SURVEY_PASSES_PER_CELL = 2;
+const REPAIR_TOUCHES_PER_DIRTY_CELL = 5;
+
+/**
+ * The dirty-list length past which `surveyLairs` re-floods instead of repairing.
+ * Writers stop appending one past it, so the list never outgrows its own cap.
+ */
+export function repairableDirtyCellCap(cellCount: number): number {
+  return Math.floor((cellCount * FULL_SURVEY_PASSES_PER_CELL) / REPAIR_TOUCHES_PER_DIRTY_CELL);
+}
 
 /** One rule's rim probes, as the whole-cell offsets the identity above gives. */
 export interface FitProbe {
@@ -95,6 +115,19 @@ export interface RegimeIndex {
   readonly habitat: Uint8Array;
   /** The `isLairPose` answer per cell, one array per rule (index-aligned). */
   readonly fit: readonly Uint8Array[];
+  /**
+   * Cells whose height or habitat bit has moved since the lair survey last read
+   * this regime — the survey's repair list, drained by `surveyLairs`.
+   *
+   * PER REGIME AND NOT PER INDEX, because the two regimes are surveyed
+   * independently and one may be gated out (summoning.ts) for many ticks while
+   * the other keeps up: a shared list would be emptied by whichever regime ran
+   * first and the other would repair against nothing.
+   *
+   * Writers stop appending once the list is longer than
+   * `repairableDirtyCellCap`, which the survey reads as "re-flood whole".
+   */
+  readonly dirtyCells: number[];
 }
 
 /** The maintained world view a survey reads. */
@@ -122,8 +155,21 @@ export interface HabitatIndex {
    * read against an integer, which is what the window loop can afford.
    */
   readonly repairStamp: Uint32Array;
-  /** Unlocked chunk count this was built at; see `syncedHabitatIndex`. */
-  readonly unlockGeneration: number;
+  /**
+   * The unlock mask as this index last saw it: one byte per CHUNK, row-major
+   * over `chunksPerEdge²`, or null for a world that cannot report one (a
+   * hand-built test world).
+   *
+   * A MASK AND NOT A COUNT (2026-09-01). It used to be the count of unlocked
+   * chunks, and any change in it threw the whole index away and rebuilt it —
+   * 127-221 ms for ONE newly-opened chunk, and the reveal plugin opens a chunk
+   * for every sculpt that touches locked ground, so a frontier stroke paid it
+   * every time. The mask says WHICH chunks moved, which is what turns the
+   * rebuild into a diff (`applyNewlyUnlockedChunks`).
+   */
+  readonly unlockedChunks: Uint8Array | null;
+  /** Chunks per world edge for `unlockedChunks`; 0 when there is no mask. */
+  readonly chunksPerEdge: number;
 }
 
 /** One regime and the fit rules the caller wants counted in it. */
@@ -152,33 +198,36 @@ function fitProbeFor(rule: LairFitRule): FitProbe {
 }
 
 /**
- * How many chunks of this world are unlocked, as a change detector for the
- * unlock mask.
+ * The world's unlock mask, one byte per chunk, or null for a world that cannot
+ * report one (a hand-built test world, which has no chunk grid).
  *
- * A COUNT AND NOT A HOOK, deliberately. The plugin contract's only unlock hook
- * (`onChunkUnlockedForToken`) fires for per-token reveals and NEVER for
- * `WorldApi.unlockChunk`'s world-wide unlock, so a plugin that trusted it
- * would miss half the ways `isCellUnlocked` can change — and habitat is
- * defined against the union mask, which both paths grow. Within one world's
- * life unlocking is monotonic (nothing re-locks a chunk), so a count is a
- * sound generation number, and it is `chunksPerEdge²` reads — 256 on a 512²
- * world with 32-cell chunks — once per survey rather than per cell. The one
- * event that can SHRINK the mask is a rollback, which replaces the world
- * wholesale and drops this index outright (server/index.ts's onWorldCreate),
- * so a shrunk count never reaches a comparison here.
+ * A MASK AND NOT A COUNT (2026-09-01; it was `unlockGenerationOf`). The count
+ * was a sound CHANGE DETECTOR — unlocking is monotonic within one world's life,
+ * so the count only ever rises — but it is not a change DESCRIPTION, and the
+ * only repair a description-less change admits is a full rebuild. Keeping the
+ * bytes costs `chunksPerEdge²` of them (16 KB at 2048² with 16-cell chunks) and
+ * tells `syncedHabitatIndex` exactly which chunks to repair.
+ *
+ * STILL NOT A HOOK, for the reason the count was not: the plugin contract's
+ * only unlock hook (`onChunkUnlockedForToken`) fires for per-token reveals and
+ * NEVER for `WorldApi.unlockChunk`'s world-wide unlock (server/src/plugins/
+ * host.ts), so a plugin that trusted it would miss half the ways
+ * `isCellUnlocked` can change — and habitat is defined against the union mask,
+ * which both paths grow.
  */
-function unlockGenerationOf(world: LairWorld): number {
+function readUnlockedChunks(world: LairWorld): Uint8Array | null {
   const perEdge = world.chunksPerEdge;
-  if (perEdge === undefined || world.isChunkUnlocked === undefined) {
-    return UNLOCK_GENERATION_UNAVAILABLE;
-  }
-  let unlocked = 0;
+  const isChunkUnlocked = world.isChunkUnlocked;
+  if (perEdge === undefined || perEdge <= 0 || isChunkUnlocked === undefined) return null;
+  const mask = new Uint8Array(perEdge * perEdge);
   for (let cy = 0; cy < perEdge; cy++) {
     for (let cx = 0; cx < perEdge; cx++) {
-      if (world.isChunkUnlocked(cx, cy)) unlocked++;
+      mask[cy * perEdge + cx] = isChunkUnlocked.call(world, cx, cy)
+        ? HABITAT_BIT_SET
+        : HABITAT_BIT_CLEAR;
     }
   }
-  return unlocked;
+  return mask;
 }
 
 /**
@@ -278,16 +327,18 @@ export function buildHabitatIndex(
       return bits;
     });
 
-    regimes.set(regime.id, { regime, rules: fitRules, probes, habitat, fit });
+    regimes.set(regime.id, { regime, rules: fitRules, probes, habitat, fit, dirtyCells: [] });
   }
 
+  const unlockedChunks = readUnlockedChunks(world);
   return {
     size,
     heights,
     unlocked,
     regimes,
     repairStamp: new Uint32Array(cellCount),
-    unlockGeneration: unlockGenerationOf(world),
+    unlockedChunks,
+    chunksPerEdge: unlockedChunks === null ? 0 : (world.chunksPerEdge ?? 0),
   };
 }
 
@@ -334,24 +385,231 @@ let repairGeneration = 0;
 
 /**
  * The maintained index, rebuilt only when it cannot be repaired in place: no
- * index yet, a different world size (a world switch), a moved unlock mask, or
- * a fit-rule list this one was not built against.
+ * index yet, a different world size (a world switch), a fit-rule list this one
+ * was not built against, or an unlock mask that moved BACKWARDS.
  *
- * Called by the survey, so the rebuild lands on the survey's cadence and never
- * inside a sculpt.
+ * A MOVED UNLOCK MASK IS NOW A REPAIR, NOT A REBUILD (2026-09-01, #267). It
+ * used to be the fourth rebuild trigger, on a raw COUNT of unlocked chunks —
+ * so one newly-opened chunk threw away 56 MB of exact answers and re-derived
+ * every one of them: 223 ms measured on a synthetic 2048² board, and
+ * plugins/reveal opens a chunk for every sculpt that touches locked ground, so
+ * a player working the frontier paid it about once per stroke. The mask diff
+ * names the chunks that opened and `applyNewlyUnlockedChunks` repairs exactly
+ * those cells and the fit windows around them: 0.9 ms on the same board, and
+ * the arrays it leaves are byte-for-byte what the rebuild produced.
+ *
+ * Called by the survey, so any surviving rebuild lands on the survey's cadence
+ * and never inside a sculpt.
  */
 export function syncedHabitatIndex(
   world: LairWorld,
   specs: readonly HabitatIndexSpec[],
 ): HabitatIndex {
-  const stale =
+  const shapeStale =
     live === null ||
     live.size !== world.worldSize ||
-    live.unlockGeneration !== unlockGenerationOf(world) ||
     !specs.every(({ regime, fitRules }) => indexAnswers(live!, world, regime, fitRules));
 
-  if (stale) live = buildHabitatIndex(world, specs);
-  return live!;
+  if (shapeStale) {
+    live = buildHabitatIndex(world, specs);
+    return live;
+  }
+
+  const held = live!;
+  const mask = readUnlockedChunks(world);
+  // Neither side has a mask (a hand-built world): nothing can have unlocked.
+  if (mask === null && held.unlockedChunks === null) return held;
+  // The world gained or lost its chunk grid, or changed shape under us — the
+  // only honest answer is to read it all again.
+  if (mask === null || held.unlockedChunks === null || mask.length !== held.unlockedChunks.length) {
+    live = buildHabitatIndex(world, specs);
+    return live;
+  }
+
+  const opened: number[] = [];
+  for (let chunk = 0; chunk < mask.length; chunk++) {
+    const now = mask[chunk]!;
+    const before = held.unlockedChunks[chunk]!;
+    if (now === before) continue;
+    // A chunk that RE-LOCKED. Unlocking is a one-way ratchet within a world's
+    // life (the one event that reverses it is a rollback, which replaces the
+    // world and drops this index outright), so this is a world we do not
+    // understand — rebuild rather than repair half of it.
+    if (now !== HABITAT_BIT_SET) {
+      live = buildHabitatIndex(world, specs);
+      return live;
+    }
+    opened.push(chunk);
+  }
+
+  if (opened.length > 0) applyNewlyUnlockedChunks(held, world, mask, opened);
+  return held;
+}
+
+/**
+ * A fresh `repairStamp` generation, resetting the scratch on the one wrap that
+ * Uint32 allows (see MAX_REPAIR_GENERATION).
+ */
+function nextRepairGeneration(repairStamp: Uint32Array): number {
+  if (repairGeneration >= MAX_REPAIR_GENERATION) {
+    repairStamp.fill(0);
+    repairGeneration = 0;
+  }
+  return ++repairGeneration;
+}
+
+/** The widest fit window any of this regime's rules dirties around a cell. */
+function maxProbeReach(regimeIndex: RegimeIndex): number {
+  let reach = 0;
+  for (const probe of regimeIndex.probes) reach = Math.max(reach, probe.windowCells);
+  return reach;
+}
+
+/**
+ * Records, for the lair survey's region repair, every cell of this regime whose
+ * ANSWER moved because the cells in `rects` did.
+ *
+ * THE WINDOW AND NOT THE CHANGED CELLS THEMSELVES, and the difference is a
+ * correctness one rather than a margin: a region's `fittingCells` counts a fit
+ * bit per cell, and a fit bit belongs to a CENTRE up to `maxProbeReach` away
+ * from the habitat bit that decided it. A repair list of only the moved cells
+ * would leave a region whose fit counts changed unrepaired, and the count is
+ * what gate 3 (summoning.ts `bestLairFor`) reads.
+ *
+ * Deduplicated through `repairStamp` on its own generation, so overlapping
+ * windows list each centre once.
+ *
+ * Appends one past `repairableDirtyCellCap` and no further, which the survey
+ * reads as "this change is board-scale, re-flood whole".
+ */
+function markDirtyWindows(
+  index: HabitatIndex,
+  regimeIndex: RegimeIndex,
+  rects: readonly (readonly [number, number, number, number])[],
+  cap: number,
+): void {
+  const { size, repairStamp } = index;
+  const reach = maxProbeReach(regimeIndex);
+  const generation = nextRepairGeneration(repairStamp);
+  const dirty = regimeIndex.dirtyCells;
+
+  for (const [rectX0, rectY0, rectX1, rectY1] of rects) {
+    const minX = Math.max(0, rectX0 - reach);
+    const maxX = Math.min(size - 1, rectX1 + reach);
+    const minY = Math.max(0, rectY0 - reach);
+    const maxY = Math.min(size - 1, rectY1 + reach);
+    for (let y = minY; y <= maxY; y++) {
+      const row = y * size;
+      for (let x = minX; x <= maxX; x++) {
+        if (repairStamp[row + x] === generation) continue;
+        repairStamp[row + x] = generation;
+        if (dirty.length > cap) return;
+        dirty.push(row + x);
+      }
+    }
+  }
+}
+
+/**
+ * Folds newly-unlocked chunks into the maintained index in place — the repair
+ * that replaced "any change in the unlocked count rebuilds everything".
+ *
+ * THREE PASSES, IN THIS ORDER, and the order is the same correctness argument
+ * `noteTerrainChangedInIndex` makes one cell at a time: every `unlocked` and
+ * `heights` byte the unlock moves has to be settled before any habitat bit is
+ * derived from it, and every habitat bit has to be settled before any fit bit
+ * reads its rim. Interleaving them would recompute a fit window against a rim
+ * that is about to change.
+ *
+ * COST is bounded by the opened chunks, not by the world: one chunk is
+ * (size / chunksPerEdge)² cells for the first two passes, and that square grown
+ * by the rule's probe reach for the third. The whole-index build it replaces
+ * read every cell of the board through the host's `bound()` indirection.
+ */
+function applyNewlyUnlockedChunks(
+  index: HabitatIndex,
+  world: LairWorld,
+  mask: Uint8Array,
+  opened: readonly number[],
+): void {
+  const { size, heights, unlocked, regimes, repairStamp } = index;
+  const perEdge = index.chunksPerEdge;
+  if (perEdge <= 0) return;
+  /** Cells per chunk edge, derived from this world rather than assumed. */
+  const chunkCells = size / perEdge;
+  const cap = repairableDirtyCellCap(size * size);
+
+  for (const chunk of opened) {
+    const cx = chunk % perEdge;
+    const cy = (chunk - cx) / perEdge;
+    const x0 = cx * chunkCells;
+    const y0 = cy * chunkCells;
+    for (let y = y0; y < y0 + chunkCells; y++) {
+      const row = y * size;
+      for (let x = x0; x < x0 + chunkCells; x++) {
+        heights[row + x] = world.heightAt(x, y);
+        unlocked[row + x] = world.isCellUnlocked(x, y) ? HABITAT_BIT_SET : HABITAT_BIT_CLEAR;
+      }
+    }
+  }
+
+  /** The opened chunks as inclusive cell rectangles, for the dirty windows. */
+  const openedRects = opened.map((chunk) => {
+    const cx = chunk % perEdge;
+    const cy = (chunk - cx) / perEdge;
+    return [
+      cx * chunkCells,
+      cy * chunkCells,
+      cx * chunkCells + chunkCells - 1,
+      cy * chunkCells + chunkCells - 1,
+    ] as const;
+  });
+
+  for (const regimeIndex of regimes.values()) {
+    const { regime, habitat } = regimeIndex;
+    for (const chunk of opened) {
+      const cx = chunk % perEdge;
+      const cy = (chunk - cx) / perEdge;
+      const x0 = cx * chunkCells;
+      const y0 = cy * chunkCells;
+      for (let y = y0; y < y0 + chunkCells; y++) {
+        const row = y * size;
+        for (let x = x0; x < x0 + chunkCells; x++) {
+          const cellIndex = row + x;
+          habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
+        }
+      }
+    }
+    markDirtyWindows(index, regimeIndex, openedRects, cap);
+  }
+
+  for (const regimeIndex of regimes.values()) {
+    for (let rule = 0; rule < regimeIndex.fit.length; rule++) {
+      const probe = regimeIndex.probes[rule]!;
+      const bits = regimeIndex.fit[rule]!;
+      const reach = probe.windowCells;
+      const generation = nextRepairGeneration(repairStamp);
+
+      for (const chunk of opened) {
+        const cx = chunk % perEdge;
+        const cy = (chunk - cx) / perEdge;
+        const minX = Math.max(0, cx * chunkCells - reach);
+        const maxX = Math.min(size - 1, cx * chunkCells + chunkCells - 1 + reach);
+        const minY = Math.max(0, cy * chunkCells - reach);
+        const maxY = Math.min(size - 1, cy * chunkCells + chunkCells - 1 + reach);
+        for (let centreY = minY; centreY <= maxY; centreY++) {
+          const row = centreY * size;
+          for (let centreX = minX; centreX <= maxX; centreX++) {
+            if (repairStamp[row + centreX] === generation) continue;
+            repairStamp[row + centreX] = generation;
+            recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY);
+          }
+        }
+      }
+    }
+  }
+
+  index.unlockedChunks?.set(mask);
 }
 
 /**
@@ -404,11 +662,7 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
       const reach = probe.windowCells;
 
       // A fresh stamp per rule, so one rule's visits never mask another's.
-      if (repairGeneration >= MAX_REPAIR_GENERATION) {
-        repairStamp.fill(0);
-        repairGeneration = 0;
-      }
-      const generation = ++repairGeneration;
+      const generation = nextRepairGeneration(repairStamp);
 
       for (const cell of diff) {
         const x = cell.x;
@@ -431,6 +685,17 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
         }
       }
     }
+  }
+
+  // The survey's repair list, last: the windows are the same shape the fit
+  // recompute above just walked, so a change is listed exactly where an answer
+  // moved (see markDirtyWindows).
+  const cap = repairableDirtyCellCap(size * size);
+  const diffRects = diff
+    .filter((cell) => cell.x >= 0 && cell.y >= 0 && cell.x < size && cell.y < size)
+    .map((cell) => [cell.x, cell.y, cell.x, cell.y] as const);
+  for (const regimeIndex of regimes.values()) {
+    markDirtyWindows(index, regimeIndex, diffRects, cap);
   }
 }
 
