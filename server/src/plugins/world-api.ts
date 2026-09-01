@@ -143,18 +143,19 @@ export function createWorldApi(
   };
 
   const api: WorldApi = {
-    get worldSize(): number {
-      return bound('worldSize').world.size;
-    },
-    get chunksPerEdge(): number {
-      return bound('chunksPerEdge').world.chunksPerEdge;
-    },
-    // A getter like the rest, though the World's own field is readonly: keeping
-    // the whole surface one shape means no reader has to know which of these
-    // could move.
-    get difficulty(): number {
-      return bound('difficulty').world.difficulty;
-    },
+    // PLAIN DATA, CAPTURED AT CONSTRUCTION — the one deliberate exception to
+    // the throw-after-revoke rule below (owner decision 2026-09-01, #277).
+    // These three are fixed for the World's whole life: `map` is a readonly
+    // field so size and chunksPerEdge cannot move, and difficulty is stamped
+    // in the constructor. Read through a getter they cost a closure call plus
+    // the null test on every hot read — 4.1% of server busy time, mostly the
+    // structures tick reading worldSize once per scanned cell. An integer
+    // that outlives its World is harmless where a stale heightAt would not be,
+    // and three numbers pin nothing (the #164 concern is the heightmap, not
+    // its edge length). simMillis and genesisMillis stay getters: see each.
+    worldSize: world.size,
+    chunksPerEdge: world.chunksPerEdge,
+    difficulty: world.difficulty,
     // A GETTER, and here that is load-bearing rather than cosmetic: this one
     // genuinely moves every tick, so a captured value would freeze a plugin's
     // calendar at whatever time it first read.

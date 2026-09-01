@@ -4344,3 +4344,17 @@ world (`.sim-108/plugins.mjs`), driven through the same
   plume and the settings preview). Retuning to 6 or 8 bands would overshoot to
   11.4 or 12.4 bands on flat ground and make genesis dearer. Recorded on the
   constant, and on `VENT_SUMMIT_WORLD_UNITS`, which is now labelled nominal.
+
+### Decisions made 2026-09-01 (three world invariants are plain data on the plugin view, #277)
+
+**`WorldApi.worldSize`, `chunksPerEdge` and `difficulty` are captured at view
+construction, not read through the revocable getter.** The 2026-08-25 rule —
+a revoked view THROWS rather than no-ops — stands for every member that reads
+the World; these three are the deliberate exception, because they cannot
+change while the World exists (`map` is a readonly field; difficulty is set
+in the constructor) and a stale copy of an integer edge length can mislead
+nobody. The getter form cost a closure dispatch and a null test per read, and
+the structures tick reads `worldSize` once per scanned cell before any
+early-out: 4.1% of server busy time in the 2026-08-29 profile. `simMillis`
+moves every tick and `genesisMillis` is stamped after construction, so both
+stay getters.
