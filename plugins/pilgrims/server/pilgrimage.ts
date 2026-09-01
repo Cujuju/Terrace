@@ -26,6 +26,7 @@ import {
   steerWithShorteningProbe,
   type FreshwaterMap,
   type Occupant,
+  type RouteBudget,
   type RouteCell,
   type RoutedMover,
   type TraversalProfile,
@@ -298,6 +299,12 @@ export function pickViewpoint(
  * instead of over or through them"). Returns null when no route exists
  * within shared's search bounds/budget (ROUTE_SEARCH_MARGIN_CELLS /
  * ROUTE_NODE_BUDGET) — see `advanceWalker` for what a walker does about that.
+ *
+ * `budget` is shared's RouteBudget: a pool of node expansions this call draws
+ * from and pays back into, so a caller that plans SEVERAL routes in one
+ * synchronous turn (settling.ts's site scan) can cap the turn rather than each
+ * call. Omitted means the default per-call ROUTE_NODE_BUDGET, which is every
+ * one-route-at-a-time caller in this plugin.
  */
 export function planRoute(
   world: PilgrimWorld,
@@ -305,8 +312,15 @@ export function planRoute(
   fromY: number,
   toX: number,
   toY: number,
+  budget?: RouteBudget,
 ): RouteCell[] | null {
-  const plan = findRoute(world, PILGRIM_WALKER_PROFILE, { x: fromX, y: fromY }, { x: toX, y: toY });
+  const plan = findRoute(
+    world,
+    PILGRIM_WALKER_PROFILE,
+    { x: fromX, y: fromY },
+    { x: toX, y: toY },
+    budget,
+  );
   return plan === null ? null : [...plan.cells];
 }
 
