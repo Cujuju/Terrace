@@ -19,7 +19,7 @@ import {
   chunkIndexOfCell,
   chunksPerEdge,
   clearColumns,
-  computeRiverNetworkFromSprings,
+  RiverNetworkIndex,
   createChunkMask,
   createHeightmap,
   heightAt,
@@ -83,21 +83,23 @@ function normalizeDifficulty(value: number): number {
  * (mechanics card 27 — Rivers & Springs — see docs/DESIGN.md's "Decisions
  * made 2026-08-19" entry for the full cost argument this constant closes).
  *
- * A recompute is a bounded retrace of every spring the SpringIndex names —
- * measured at ~3.7 ms on a 2048² world with rivers running, dominated by
- * basin filling. Not expensive, but not free either, and a held brush emits
+ * A recompute re-traces only the rivers whose terrain moved (RiverNetworkIndex,
+ * issue #226 — it used to retrace all 24, measured at 11.33 ms on a sculpted
+ * 2048² world, dominated by basin filling). Cheap, but not free — the spring
+ * refresh still runs in front of it — and a held brush emits
  * an intent every ~120 ms (SCULPT_REPEAT_INTERVAL_MS, client/src/config.ts)
  * PER PLAYER while a sim plugin (mudslides, storm surge, volcanoes) sculpts
  * on every 10 Hz tick with nobody touching anything: a naive per-sculpt
  * recompute would scale the server's CPU with (sculpt rate), not with a fixed
  * budget.
  *
- * IT USED TO BE MUCH WORSE, and the fix for that is elsewhere. Until issue
+ * IT USED TO BE MUCH WORSE, and the fixes for that are elsewhere. Until issue
  * #235 the recompute also rescanned all size² cells for springs (~48 ms on a
- * 2048² world), so this throttle was the ONLY thing standing between a
- * sculpting plugin and 20% of a core. The rescan is now incremental
- * (SpringIndex, shared/src/rivers.ts) and this constant is back to being what
- * it says it is: a cadence, not a dam.
+ * 2048² world), and until #226 it re-traced every river whether or not
+ * anything under it had moved, so this throttle was the ONLY thing standing
+ * between a sculpting plugin and a fifth of a core. Both are now incremental
+ * (SpringIndex and RiverNetworkIndex, shared/src/rivers.ts) and this constant
+ * is back to being what it says it is: a cadence, not a dam.
  *
  * Throttling to a fixed wall-clock cadence instead decouples the cost from
  * both player count and sculpt rate: however many players are sculpting,
@@ -356,6 +358,14 @@ export class World {
    */
   private readonly springIndex: SpringIndex;
 
+  /**
+   * The rivers themselves, cached per spring and re-traced only where the
+   * terrain a trace read has moved (issue #226) — the other half of #235's
+   * split, and informed by this class on exactly the same three seams as
+   * `springIndex` above (`applySculpt`, `noteChunkBecameActive`, `rewindTo`).
+   */
+  private readonly riverIndex: RiverNetworkIndex;
+
   private constructor(
     map: Heightmap,
     mask: Uint8Array,
@@ -372,6 +382,7 @@ export class World {
     // Costs nothing here — it scans lazily, on the first `springs()` (see
     // SpringIndex), so a world whose rivers are never read never pays.
     this.springIndex = new SpringIndex(this.map, this.isCellUnlockedHere);
+    this.riverIndex = new RiverNetworkIndex(this.map, this.isCellUnlockedHere);
   }
 
   /**
@@ -762,6 +773,7 @@ export class World {
     // moved — every cell and every mask bit may have. Stale is the honest
     // answer, and it costs nothing until the next reader asks.
     this.springIndex.markStale();
+    this.riverIndex.markStale();
     this.freshwaterCache = null;
     this.freshwaterCacheNetwork = null;
 
@@ -872,6 +884,7 @@ export class World {
     const minX = cx * CHUNK_SIZE;
     const minY = cy * CHUNK_SIZE;
     this.springIndex.noteRegionChanged(minX, minY, minX + CHUNK_SIZE - 1, minY + CHUNK_SIZE - 1);
+    this.riverIndex.noteRegionChanged(minX, minY, minX + CHUNK_SIZE - 1, minY + CHUNK_SIZE - 1);
     this.riverNetworkStale = true;
   }
 
@@ -1066,6 +1079,10 @@ export class World {
       // value, rather than re-deriving a brush footprint that would have to
       // track every future edge profile.
       this.springIndex.noteCellsChanged(diff);
+      // The same diff, to the same standard: a river whose course (or the ring
+      // it reads around it) the sculpt touched is dropped; every other river's
+      // trace survives to be handed back unchanged.
+      this.riverIndex.noteCellsChanged(diff);
       this.riverNetworkStale = true;
     }
     return diff;
@@ -1082,8 +1099,10 @@ export class World {
    * see a river over land nobody has revealed. The scoping is a RULE, not a
    * cost bound — `isCellUnlockedHere` is asked per cell, so scoping alone
    * never made the pass cheaper than the world is big. What bounds the cost
-   * is `springIndex`, which re-tests only what changed (issue #235); the one
-   * O(size²) pass left is that index's first build, paid once per world.
+   * is the two indexes: `springIndex` re-tests only the candidacy of what
+   * changed (issue #235) and `riverIndex` re-traces only the rivers that
+   * change could have moved (issue #226); the one O(size²) pass left is the
+   * spring index's first build, paid once per world.
    *
    * A CACHE, NOT AUTHORITATIVE STATE: nothing here is persisted, nothing
    * here is on the wire (see the plugin surface in world-api.ts and
@@ -1093,7 +1112,10 @@ export class World {
    * intervening sculpt, whether or not the throttle window has passed,
    * return the SAME object (not merely an equal one) — plugins that read it
    * more than once per tick (mana's `regenerate`, `manaRegenFor`) never pay
-   * for a second computation or see it change mid-tick.
+   * for a second computation or see it change mid-tick. Since #226 a
+   * recompute that finds nothing to re-trace returns the same object too, so
+   * a sculpt away from every watercourse no longer forces the freshwater
+   * transpose below to rebuild either.
    */
   riverNetwork(): RiverNetwork {
     const now = Date.now();
@@ -1101,11 +1123,7 @@ export class World {
       this.riverNetworkCache === null ||
       (this.riverNetworkStale && now - this.riverNetworkComputedAtMs >= RIVER_RECOMPUTE_INTERVAL_MS)
     ) {
-      this.riverNetworkCache = computeRiverNetworkFromSprings(
-        this.map,
-        this.springIndex.springs(),
-        this.isCellUnlockedHere,
-      );
+      this.riverNetworkCache = this.riverIndex.networkFrom(this.springIndex.springs());
       this.riverNetworkComputedAtMs = now;
       this.riverNetworkStale = false;
     }

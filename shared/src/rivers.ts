@@ -644,6 +644,22 @@ interface CourseSeed {
 }
 
 /**
+ * One traced river, and the cells its trace CLAIMED along the way.
+ *
+ * `claimed` is `traceRiver`'s own `visited` set — every cell the trace stepped
+ * onto, queued as a branch head or absorbed into a pool. It is handed back
+ * because it is exactly what an incremental cache needs: a trace reads only
+ * the claimed cells and their 4-neighbours (`isTraceable` + the neighbour
+ * scans in the flow step and in `fillBasin`'s rim walk), so the trace is a
+ * pure function of the heights and activity of `claimed` ∪ N(`claimed`) and
+ * of nothing else. See RiverNetworkIndex, the one consumer.
+ */
+interface TracedRiver {
+  readonly river: River;
+  readonly claimed: ReadonlySet<number>;
+}
+
+/**
  * Traces one river from a spring to the sea, a permanent closed basin, or the
  * edge of its work budget — whichever comes first, DOWN EVERY PATH THE WATER
  * ACTUALLY HAS.
@@ -690,7 +706,11 @@ interface CourseSeed {
  * is a place rather than an event, so waterfalls are deduplicated by cell,
  * keeping the largest drop seen there.
  */
-function traceRiver(map: Heightmap, springIndex: number, isActive: (x: number, y: number) => boolean): River {
+function traceRiver(
+  map: Heightmap,
+  springIndex: number,
+  isActive: (x: number, y: number) => boolean,
+): TracedRiver {
   const budget = map.size * RIVER_TRACE_BUDGET_WORLD_SIZE_MULTIPLIER;
   const courses: RiverCourse[] = [];
   /** Plunge cell index → the largest band drop recorded there. Insertion-ordered. */
@@ -833,7 +853,7 @@ function traceRiver(map: Heightmap, springIndex: number, isActive: (x: number, y
   for (const [index, dropBands] of waterfallDrops) {
     waterfalls.push({ x: cellX(map.size, index), y: cellY(map.size, index), dropBands });
   }
-  return { courses, waterfalls, reachedSea, truncated };
+  return { river: { courses, waterfalls, reachedSea, truncated }, claimed: visited };
 }
 
 /**
@@ -876,6 +896,227 @@ export function computeRiverNetworkFromSprings(
   springs: readonly number[],
   isActive: (x: number, y: number) => boolean = ALWAYS_ACTIVE,
 ): RiverNetwork {
-  const rivers = springs.map((springIndex) => traceRiver(map, springIndex, isActive));
+  const rivers = springs.map((springIndex) => traceRiver(map, springIndex, isActive).river);
   return { rivers };
+}
+
+/**
+ * The same network again, but retracing only the rivers a change could have
+ * moved (issue #226).
+ *
+ * WHY. `computeRiverNetworkFromSprings` is `springs.map(traceRiver)` — nothing
+ * is reused across calls, so a 15-cell sculpt re-traced all 24 rivers against
+ * their `2 × worldSize` budgets: measured 11.33 ms per recompute on a 2048²
+ * world, paid synchronously inside the server's sculpt fan-out. Issue #235
+ * made spring SELECTION incremental and left the TRACE whole; this is the
+ * other half, and it is the same shape — the cost of a refresh becomes
+ * proportional to the terrain CHANGE rather than to the world.
+ *
+ * EXACT, NOT APPROXIMATE, and for a structural reason: `traceRiver` is a pure
+ * function of one spring, so two rivers never share state and a cached river
+ * is still the river a full recompute would trace, byte for byte — it is the
+ * SAME object, not an equal one. The only question is when a cached trace has
+ * gone out of date, and that question has an exact answer: a trace reads the
+ * heights and the activity of the cells it CLAIMED and of their 4-neighbours,
+ * and nothing else (see TracedRiver). So a river is dropped when a changed
+ * cell is claimed by it OR is a 4-neighbour of a cell it claimed — the test
+ * is symmetric, which is why the claimed set alone answers it and no
+ * dilated copy is stored.
+ *
+ * THE CALLER OWES IT EVERY CHANGE, exactly as SpringIndex's does: every write
+ * to `map.cells` as `noteCellsChanged`, every change in what `isActive`
+ * answers as `noteRegionChanged`, and any wholesale replacement as
+ * `markStale`. On the server that duty is discharged in the one place that
+ * owns both the heightmap and the unlock mask (`World`).
+ *
+ * WHAT IT DOES NOT DO: it does not decide the springs (that is `SpringIndex`)
+ * and it does not decide cadence (the server still throttles — a cheaper
+ * recompute is not a free one, and the spring refresh in front of it is not
+ * this class's to bound).
+ */
+export class RiverNetworkIndex {
+  private readonly map: Heightmap;
+  private readonly isActive: (x: number, y: number) => boolean;
+  /** Spring cell → its still-valid trace. A miss is a river to re-trace. */
+  private readonly traced = new Map<number, CachedRiver>();
+  /** The last network handed out, or null when the next call must build one. */
+  private cachedNetwork: RiverNetwork | null = null;
+  /** The spring list `cachedNetwork` was built from — order included. */
+  private cachedSprings: readonly number[] = [];
+
+  constructor(map: Heightmap, isActive: (x: number, y: number) => boolean = ALWAYS_ACTIVE) {
+    this.map = map;
+    this.isActive = isActive;
+  }
+
+  /**
+   * Declares every cached trace worthless — the next `networkFrom` re-traces
+   * all of them. For the changes that arrive with no diff to work from: a
+   * rollback, a restore, anything that replaces the terrain wholesale.
+   */
+  markStale(): void {
+    this.traced.clear();
+    this.cachedNetwork = null;
+  }
+
+  /**
+   * A scattered set of cells moved — a sculpt's diff, in practice.
+   *
+   * Costs (changed cells × rivers still cached), and a river whose bounding
+   * box the cell misses is rejected in four comparisons, so a sculpt nowhere
+   * near a watercourse pays almost nothing and a sculpt that cuts one pays
+   * for that one river's re-trace.
+   */
+  noteCellsChanged(cells: Iterable<{ readonly x: number; readonly y: number }>): void {
+    for (const cell of cells) {
+      if (this.traced.size === 0) return;
+      this.dropDependents(cell.x, cell.y);
+    }
+  }
+
+  /**
+   * A whole inclusive rectangle moved, or became active — a chunk unlock, in
+   * practice. Activity is an input to a trace exactly as height is: a
+   * neighbour that was inactive was not traceable, and now is.
+   */
+  noteRegionChanged(minX: number, minY: number, maxX: number, maxY: number): void {
+    // Grown by the one ring a trace reads beyond what it claims, so the test
+    // below is a plain "does any claimed cell fall inside this rectangle".
+    const x0 = minX - RIVER_TRACE_READ_REACH_CELLS;
+    const x1 = maxX + RIVER_TRACE_READ_REACH_CELLS;
+    const y0 = minY - RIVER_TRACE_READ_REACH_CELLS;
+    const y1 = maxY + RIVER_TRACE_READ_REACH_CELLS;
+    for (const [spring, cached] of this.traced) {
+      if (cached.maxX < x0 || cached.minX > x1 || cached.maxY < y0 || cached.minY > y1) continue;
+      let hit = false;
+      for (const index of cached.traced.claimed) {
+        const x = cellX(this.map.size, index);
+        if (x < x0 || x > x1) continue;
+        const y = cellY(this.map.size, index);
+        if (y < y0 || y > y1) continue;
+        hit = true;
+        break;
+      }
+      if (!hit) continue;
+      this.traced.delete(spring);
+      this.cachedNetwork = null;
+    }
+  }
+
+  /**
+   * The network these springs produce right now — identical, river for river,
+   * to `computeRiverNetworkFromSprings(map, springs, isActive)`.
+   *
+   * Returns the SAME object as the previous call when neither the spring list
+   * nor any surviving trace changed, which is the identity contract the
+   * server's cache already advertises (see World.riverNetwork).
+   */
+  networkFrom(springs: readonly number[]): RiverNetwork {
+    let retraced = 0;
+    const rivers: River[] = [];
+    for (const spring of springs) {
+      let cached = this.traced.get(spring);
+      if (cached === undefined) {
+        cached = cacheEntryFor(this.map, traceRiver(this.map, spring, this.isActive));
+        this.traced.set(spring, cached);
+        retraced++;
+      }
+      rivers.push(cached.traced.river);
+    }
+    // A spring that no longer ranks keeps nothing alive: its trace is the
+    // only thing holding a claimed-cell set of up to the trace budget.
+    if (this.traced.size > springs.length) {
+      const live = new Set(springs);
+      for (const spring of this.traced.keys()) {
+        if (!live.has(spring)) this.traced.delete(spring);
+      }
+    }
+    if (
+      this.cachedNetwork !== null &&
+      retraced === 0 &&
+      sameSpringOrder(this.cachedSprings, springs)
+    ) {
+      return this.cachedNetwork;
+    }
+    this.cachedNetwork = { rivers };
+    // `springs` is a fresh array from `rankSprings` on every call, so the
+    // comparison above needs a copy of the contents, not the reference.
+    this.cachedSprings = springs.slice();
+    return this.cachedNetwork;
+  }
+
+  /** Drops every cached river whose trace could have read this cell. */
+  private dropDependents(x: number, y: number): void {
+    for (const [spring, cached] of this.traced) {
+      // The box the trace claimed, widened by the one ring it reads: a cell
+      // outside it cannot have been read, and rejecting on it is what keeps a
+      // sculpt far from every watercourse at four comparisons per river.
+      if (
+        x < cached.minX - RIVER_TRACE_READ_REACH_CELLS ||
+        x > cached.maxX + RIVER_TRACE_READ_REACH_CELLS ||
+        y < cached.minY - RIVER_TRACE_READ_REACH_CELLS ||
+        y > cached.maxY + RIVER_TRACE_READ_REACH_CELLS
+      ) {
+        continue;
+      }
+      if (!claimsWithinReach(this.map, cached.traced, x, y)) continue;
+      this.traced.delete(spring);
+      this.cachedNetwork = null;
+    }
+  }
+}
+
+/**
+ * One cached trace, plus the bounding box of the cells it claimed — the cheap
+ * reject that answers "could this change have touched this river at all".
+ */
+interface CachedRiver {
+  readonly traced: TracedRiver;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+/** Wraps a fresh trace with the bounding box of its claimed cells. */
+function cacheEntryFor(map: Heightmap, traced: TracedRiver): CachedRiver {
+  let minX = map.size, minY = map.size, maxX = -1, maxY = -1;
+  for (const index of traced.claimed) {
+    const x = cellX(map.size, index);
+    const y = cellY(map.size, index);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { traced, minX, minY, maxX, maxY };
+}
+
+/**
+ * How far beyond the cells it claims a trace reads: one 4-neighbour ring, and
+ * exactly one — every height and activity test in `traceRiver` and
+ * `fillBasin` is against a neighbour of a cell the trace has claimed.
+ */
+const RIVER_TRACE_READ_REACH_CELLS = 1;
+
+/** Whether a changed cell is one this trace claimed, or a 4-neighbour of one. */
+function claimsWithinReach(map: Heightmap, traced: TracedRiver, x: number, y: number): boolean {
+  const index = cellIndex(map, x, y);
+  if (traced.claimed.has(index)) return true;
+  for (const [dx, dy] of FLOW_DIRECTIONS) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= map.size || ny >= map.size) continue;
+    if (traced.claimed.has(cellIndex(map, nx, ny))) return true;
+  }
+  return false;
+}
+
+/** Same springs, same order — the cheap test behind the identity contract. */
+function sameSpringOrder(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
