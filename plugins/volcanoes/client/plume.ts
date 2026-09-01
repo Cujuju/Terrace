@@ -252,6 +252,14 @@ interface Plume {
   alive: boolean;
   /** 0…1. Rises over PLUME_RISE_SECONDS, falls over PLUME_DISPERSE_SECONDS. */
   strength: number;
+  /**
+   * First instance slot this column occupies, set by the last full rewrite —
+   * so a frame that only needs to move one column's strength knows where to
+   * write it without walking the others.
+   */
+  slotBase: number;
+  /** The strength value currently sitting in the buffer for those slots. */
+  writtenStrength: number;
 }
 
 /** One erupting vent, as ./index.ts hands it over. */
@@ -337,6 +345,61 @@ export function createPlume(): PlumeRenderer {
   const rotation = new Quaternion();
   const scale = new Vector3(1, 1, 1);
 
+  /**
+   * Set whenever the instance LAYOUT stops matching the buffers — a column
+   * added or dropped. A vent never moves, so nothing else can dirty it.
+   *
+   * The matrix, phase and seed buffers are functions of that layout alone;
+   * only `strength` moves between pushes, and it stops moving the moment a
+   * column has finished rising. Without this the whole capacity-sized pool of
+   * all four buffers was re-uploaded every frame. See ../../storms/client/
+   * spiral.ts, which had the same defect at a larger scale.
+   */
+  let layoutDirty = false;
+  /** Instances the buffers currently describe — mesh.count, remembered. */
+  let drawn = 0;
+
+  /** Queues `instances` worth of `attribute` for upload, and nothing beyond. */
+  function markUploaded(attribute: InstancedBufferAttribute, instances: number): void {
+    attribute.clearUpdateRanges();
+    // In ARRAY ELEMENTS, not instances: three multiplies the start by the
+    // array's BYTES_PER_ELEMENT itself, so the count carries the itemSize.
+    attribute.addUpdateRange(0, instances * attribute.itemSize);
+    attribute.needsUpdate = true;
+  }
+
+  /** Writes every buffer for every live column, and records where each landed. */
+  function writeLayout(): void {
+    const phaseArray = phases.array as Float32Array;
+    const seedArray = seeds.array as Float32Array;
+    const strengthArray = strengths.array as Float32Array;
+    drawn = 0;
+
+    for (const plume of plumes.values()) {
+      position.set(plume.x * CELL_WORLD_SIZE, plume.groundY, plume.y * CELL_WORLD_SIZE);
+      matrix.compose(position, rotation, scale);
+      plume.slotBase = drawn;
+      plume.writtenStrength = plume.strength;
+
+      for (let i = 0; i < PARTICLES_PER_PLUME; i++) {
+        mesh.setMatrixAt(drawn, matrix);
+        // Evenly spaced around the life cycle, so the column is continuous.
+        phaseArray[drawn] = i / PARTICLES_PER_PLUME;
+        // Offset by the particle index so two vents with adjacent ids do not
+        // scatter their particles into the same places.
+        seedArray[drawn] = (plume.seed + i * 0.6180339887) % 1;
+        strengthArray[drawn] = plume.strength;
+        drawn++;
+      }
+    }
+
+    mesh.count = drawn;
+    markUploaded(mesh.instanceMatrix, drawn);
+    markUploaded(phases, drawn);
+    markUploaded(seeds, drawn);
+    markUploaded(strengths, drawn);
+  }
+
   /** Stable 0…1 from a vent id. */
   function unitFromId(id: number): number {
     let h = id >>> 0;
@@ -368,7 +431,10 @@ export function createPlume(): PlumeRenderer {
           seed: unitFromId(vent.id),
           alive: true,
           strength: 0,
+          slotBase: 0,
+          writtenStrength: Number.NaN,
         });
+        layoutDirty = true;
       }
     },
 
@@ -377,14 +443,11 @@ export function createPlume(): PlumeRenderer {
 
       if (plumes.size === 0) {
         mesh.count = 0;
+        drawn = 0;
         return;
       }
 
-      const phaseArray = phases.array as Float32Array;
-      const seedArray = seeds.array as Float32Array;
-      const strengthArray = strengths.array as Float32Array;
-      let drawn = 0;
-
+      // ── The life cycle, which is the only thing a frame actually advances ──
       for (const [id, plume] of plumes) {
         if (plume.alive) {
           plume.strength = Math.min(1, plume.strength + dt / PLUME_RISE_SECONDS);
@@ -393,30 +456,35 @@ export function createPlume(): PlumeRenderer {
           if (plume.strength <= 0) {
             // Dispersed. Deleting DURING the iteration is safe on a Map.
             plumes.delete(id);
-            continue;
+            layoutDirty = true;
           }
-        }
-
-        position.set(plume.x * CELL_WORLD_SIZE, plume.groundY, plume.y * CELL_WORLD_SIZE);
-        matrix.compose(position, rotation, scale);
-
-        for (let i = 0; i < PARTICLES_PER_PLUME; i++) {
-          mesh.setMatrixAt(drawn, matrix);
-          // Evenly spaced around the life cycle, so the column is continuous.
-          phaseArray[drawn] = i / PARTICLES_PER_PLUME;
-          // Offset by the particle index so two vents with adjacent ids do not
-          // scatter their particles into the same places.
-          seedArray[drawn] = (plume.seed + i * 0.6180339887) % 1;
-          strengthArray[drawn] = plume.strength;
-          drawn++;
         }
       }
 
-      mesh.count = drawn;
-      mesh.instanceMatrix.needsUpdate = true;
-      phases.needsUpdate = true;
-      seeds.needsUpdate = true;
-      strengths.needsUpdate = true;
+      if (plumes.size === 0) {
+        mesh.count = 0;
+        drawn = 0;
+        layoutDirty = false;
+        return;
+      }
+
+      if (layoutDirty) {
+        writeLayout();
+        layoutDirty = false;
+        return;
+      }
+
+      // ── The steady state: one float per particle, and none once a column has
+      // finished rising and is holding at full strength.
+      const strengthArray = strengths.array as Float32Array;
+      let touched = false;
+      for (const plume of plumes.values()) {
+        if (plume.strength === plume.writtenStrength) continue;
+        strengthArray.fill(plume.strength, plume.slotBase, plume.slotBase + PARTICLES_PER_PLUME);
+        plume.writtenStrength = plume.strength;
+        touched = true;
+      }
+      if (touched) markUploaded(strengths, drawn);
     },
 
     dispose(): void {

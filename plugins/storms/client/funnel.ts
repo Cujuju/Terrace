@@ -371,6 +371,15 @@ interface Funnel {
   presence: number;
   /** The storm's own intensity, as last broadcast. */
   intensity: number;
+  /**
+   * Cone slot and first debris slot this funnel occupies, set by the last full
+   * rewrite — so a frame that only needs to change one funnel's strength knows
+   * where to write it without walking the others.
+   */
+  coneSlot: number;
+  debrisBase: number;
+  /** The strength value currently sitting in the buffers for those slots. */
+  writtenStrength: number;
 }
 
 /** One live tornado, as ./index.ts hands it over. */
@@ -489,6 +498,78 @@ export function createFunnel(): FunnelRenderer {
   const rotation = new Quaternion();
   const scale = new Vector3(1, 1, 1);
 
+  /**
+   * Set whenever the instance LAYOUT stops matching the buffers — a funnel
+   * added, dropped, or moved by a server push.
+   *
+   * Everything the five buffers hold is a function of the push (position,
+   * seed, debris phase); only `strength` moves between pushes, and only while
+   * a funnel is dispersing. See ./spiral.ts, which had the same defect at a
+   * larger scale and is fixed the same way.
+   */
+  let layoutDirty = false;
+  let drawnCones = 0;
+  let drawnDebris = 0;
+
+  /** Queues `instances` worth of `attribute` for upload, and nothing beyond. */
+  function markUploaded(attribute: InstancedBufferAttribute, instances: number): void {
+    attribute.clearUpdateRanges();
+    // In ARRAY ELEMENTS, not instances: three multiplies the start by the
+    // array's BYTES_PER_ELEMENT itself, so the count carries the itemSize.
+    attribute.addUpdateRange(0, instances * attribute.itemSize);
+    attribute.needsUpdate = true;
+  }
+
+  /** Writes every buffer for every live funnel, and records where each landed. */
+  function writeLayout(): void {
+    const coneSeedArray = coneSeeds.array as Float32Array;
+    const coneStrengthArray = coneStrengths.array as Float32Array;
+    const phaseArray = debrisPhases.array as Float32Array;
+    const seedArray = debrisSeeds.array as Float32Array;
+    const strengthArray = debrisStrengths.array as Float32Array;
+    drawnCones = 0;
+    drawnDebris = 0;
+
+    for (const funnel of funnels.values()) {
+      position.set(funnel.x, funnel.groundY, funnel.z);
+      matrix.compose(position, rotation, scale);
+      // The storm's own intensity times how far into its touchdown it is: a
+      // weak tornado is a thin funnel, and a dispersing one thins out.
+      const strength = funnel.presence * funnel.intensity;
+      funnel.coneSlot = drawnCones;
+      funnel.debrisBase = drawnDebris;
+      funnel.writtenStrength = strength;
+
+      cone.setMatrixAt(drawnCones, matrix);
+      coneSeedArray[drawnCones] = funnel.seed;
+      coneStrengthArray[drawnCones] = strength;
+      drawnCones++;
+
+      for (let i = 0; i < DEBRIS_PER_FUNNEL; i++) {
+        debris.setMatrixAt(drawnDebris, matrix);
+        // Evenly spaced around the life cycle, so the skirt is continuous
+        // rather than pulsing.
+        phaseArray[drawnDebris] = i / DEBRIS_PER_FUNNEL;
+        // Offset by the golden ratio per sprite, so two tornadoes with
+        // adjacent ids do not throw their debris into the same places.
+        seedArray[drawnDebris] = (funnel.seed + i * 0.6180339887) % 1;
+        strengthArray[drawnDebris] = strength;
+        drawnDebris++;
+      }
+    }
+
+    cone.count = drawnCones;
+    markUploaded(cone.instanceMatrix, drawnCones);
+    markUploaded(coneSeeds, drawnCones);
+    markUploaded(coneStrengths, drawnCones);
+
+    debris.count = drawnDebris;
+    markUploaded(debris.instanceMatrix, drawnDebris);
+    markUploaded(debrisPhases, drawnDebris);
+    markUploaded(debrisSeeds, drawnDebris);
+    markUploaded(debrisStrengths, drawnDebris);
+  }
+
   return {
     root,
 
@@ -502,6 +583,12 @@ export function createFunnel(): FunnelRenderer {
         const existing = funnels.get(storm.id);
         if (existing !== undefined) {
           existing.alive = true;
+          // A MOVE IS A LAYOUT CHANGE; a change of intensity is not — intensity
+          // only reaches the buffers through `strength`, which has its own
+          // two-buffer path in update().
+          if (existing.x !== storm.x || existing.groundY !== storm.groundY || existing.z !== storm.z) {
+            layoutDirty = true;
+          }
           existing.x = storm.x;
           existing.groundY = storm.groundY;
           existing.z = storm.z;
@@ -518,7 +605,11 @@ export function createFunnel(): FunnelRenderer {
           // BORN AT FULL PRESENCE — see FUNNEL_DISPERSE_SECONDS.
           presence: 1,
           intensity: storm.intensity,
+          coneSlot: 0,
+          debrisBase: 0,
+          writtenStrength: Number.NaN,
         });
+        layoutDirty = true;
       }
     },
 
@@ -531,17 +622,12 @@ export function createFunnel(): FunnelRenderer {
       if (funnels.size === 0) {
         cone.count = 0;
         debris.count = 0;
+        drawnCones = 0;
+        drawnDebris = 0;
         return;
       }
 
-      const coneSeedArray = coneSeeds.array as Float32Array;
-      const coneStrengthArray = coneStrengths.array as Float32Array;
-      const phaseArray = debrisPhases.array as Float32Array;
-      const seedArray = debrisSeeds.array as Float32Array;
-      const strengthArray = debrisStrengths.array as Float32Array;
-      let drawnCones = 0;
-      let drawnDebris = 0;
-
+      // ── The life cycle, which is the only thing a frame actually advances ──
       for (const [id, funnel] of funnels) {
         if (funnel.alive) {
           // A funnel that was dispersing and came back (a dropped message, a
@@ -552,44 +638,42 @@ export function createFunnel(): FunnelRenderer {
           if (funnel.presence <= 0) {
             // Dispersed. Deleting DURING the iteration is safe on a Map.
             funnels.delete(id);
-            continue;
+            layoutDirty = true;
           }
-        }
-
-        position.set(funnel.x, funnel.groundY, funnel.z);
-        matrix.compose(position, rotation, scale);
-        // The storm's own intensity times how far into its touchdown it is: a
-        // weak tornado is a thin funnel, and a dispersing one thins out.
-        const strength = funnel.presence * funnel.intensity;
-
-        cone.setMatrixAt(drawnCones, matrix);
-        coneSeedArray[drawnCones] = funnel.seed;
-        coneStrengthArray[drawnCones] = strength;
-        drawnCones++;
-
-        for (let i = 0; i < DEBRIS_PER_FUNNEL; i++) {
-          debris.setMatrixAt(drawnDebris, matrix);
-          // Evenly spaced around the life cycle, so the skirt is continuous
-          // rather than pulsing.
-          phaseArray[drawnDebris] = i / DEBRIS_PER_FUNNEL;
-          // Offset by the golden ratio per sprite, so two tornadoes with
-          // adjacent ids do not throw their debris into the same places.
-          seedArray[drawnDebris] = (funnel.seed + i * 0.6180339887) % 1;
-          strengthArray[drawnDebris] = strength;
-          drawnDebris++;
         }
       }
 
-      cone.count = drawnCones;
-      cone.instanceMatrix.needsUpdate = true;
-      coneSeeds.needsUpdate = true;
-      coneStrengths.needsUpdate = true;
+      if (funnels.size === 0) {
+        cone.count = 0;
+        debris.count = 0;
+        drawnCones = 0;
+        drawnDebris = 0;
+        layoutDirty = false;
+        return;
+      }
 
-      debris.count = drawnDebris;
-      debris.instanceMatrix.needsUpdate = true;
-      debrisPhases.needsUpdate = true;
-      debrisSeeds.needsUpdate = true;
-      debrisStrengths.needsUpdate = true;
+      if (layoutDirty) {
+        writeLayout();
+        layoutDirty = false;
+        return;
+      }
+
+      // ── The steady state: one float per instance, and usually none ────────
+      const coneStrengthArray = coneStrengths.array as Float32Array;
+      const strengthArray = debrisStrengths.array as Float32Array;
+      let touched = false;
+      for (const funnel of funnels.values()) {
+        const strength = funnel.presence * funnel.intensity;
+        if (strength === funnel.writtenStrength) continue;
+        coneStrengthArray[funnel.coneSlot] = strength;
+        strengthArray.fill(strength, funnel.debrisBase, funnel.debrisBase + DEBRIS_PER_FUNNEL);
+        funnel.writtenStrength = strength;
+        touched = true;
+      }
+      if (touched) {
+        markUploaded(coneStrengths, drawnCones);
+        markUploaded(debrisStrengths, drawnDebris);
+      }
     },
 
     dispose(): void {
