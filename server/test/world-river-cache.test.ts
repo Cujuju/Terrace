@@ -7,8 +7,10 @@
 //
 //   1. COALESCED. However many sculpts arrive between two recomputes, the
 //      readers between them share ONE network. The proof used here is object
-//      identity: `computeRiverNetworkFromSprings` always returns a fresh
-//      object, so a reader seeing the same object saw no recompute.
+//      identity — but since #226 a recompute that finds no river to re-trace
+//      hands BACK the same object, so the fixture below sculpts terrain a
+//      river actually runs over: identity proves "no recompute" only where a
+//      recompute would have produced a different network.
 //
 //   2. HONEST. The cached network is byte-identical to what a full rescan of
 //      the same terrain, under the same unlock mask, would have produced —
@@ -72,16 +74,22 @@ describe('World.riverNetwork caching', () => {
   it('recomputes once for many sculpts landing inside one tick', () => {
     vi.useFakeTimers();
     const world = worldWithUnlockedChunks(WORLD_SIZE, CHUNKS_EXCEPT_LAST_ROW);
+    // A spring, so the sculpts below have a river to move. Without one the
+    // network is empty however the terrain changes, and since #226 an
+    // unchanged network is returned as the same object — which would make the
+    // identity check below pass for the wrong reason.
+    raisePeak(world, 8, 8);
     // Past the throttle window and read once, so the cache is warm and the
     // count below is about coalescing rather than about the first-ever build.
     vi.advanceTimersByTime(RIVER_RECOMPUTE_INTERVAL_MS);
     const warm = world.riverNetwork();
+    expect(warm.rivers.length).toBeGreaterThan(0);
 
     // A whole tick's worth of sculpts, each read back the way a plugin's
     // onTerrainChanged listener would read it (wildlife via freshwater, mana
     // via riverNetwork) — no wall-clock time passes inside a tick.
     for (let i = 0; i < SCULPTS_PER_TICK; i++) {
-      world.applySculpt(4 + i, 8, 1, BAND_HEIGHT, STAMP);
+      world.applySculpt(8, 9 + i, 1, BAND_HEIGHT, STAMP);
       expect(world.riverNetwork()).toBe(warm);
       expect(world.freshwaterMap()).toBe(world.freshwaterMap());
     }
