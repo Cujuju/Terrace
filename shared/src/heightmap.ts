@@ -1946,12 +1946,19 @@ type SpillBoundsOf = (index: number) => SpillBand | null;
  */
 function movePair(
   cells: Int16Array,
+  base: number,
   hiIdx: number,
   loIdx: number,
   e: number,
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
 ): boolean {
+  // Cell indices are the world's throughout; `base` is the global index the
+  // working array starts at (0 for `map.cells`, the band's first cell for a
+  // layer view — see LayerView). One subtraction, no other translation: a
+  // view covers whole rows, so it keeps the world's own stride.
+  const hi = hiIdx - base;
+  const lo = loIdx - base;
   // EXACTLY half each way — never `e - drop` for the low side (#108). The
   // caller guarantees e >= 2 (relaxPair's trigger), so this is never a
   // zero move on the unbanded path.
@@ -1964,15 +1971,15 @@ function movePair(
     // happens before a cell's first move, and every later move stays inside
     // the captured band, so on THAT path these are never negative — the
     // coupled clamp below no longer relies on it being true of every path.
-    let dropCap = hiBand === null ? drop : Math.min(drop, cells[hiIdx] - hiBand.lo);
-    let riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[loIdx]);
+    let dropCap = hiBand === null ? drop : Math.min(drop, cells[hi] - hiBand.lo);
+    let riseCap = loBand === null ? rise : Math.min(rise, loBand.hi - cells[lo]);
     // A LAYERED CELL'S SPAN BOUNDS (step 4.6), intersected with the above: its
     // span may not thin past drawing, and may not close the gap to the span
     // over it. Same coupled clamping, so a capped side never orphans a half.
     const hiSpan = spanCaps === null ? undefined : spanCaps.get(hiIdx);
     const loSpan = spanCaps === null ? undefined : spanCaps.get(loIdx);
-    if (hiSpan !== undefined) dropCap = Math.min(dropCap, cells[hiIdx] - hiSpan.lo);
-    if (loSpan !== undefined) riseCap = Math.min(riseCap, loSpan.hi - cells[loIdx]);
+    if (hiSpan !== undefined) dropCap = Math.min(dropCap, cells[hi] - hiSpan.lo);
+    if (loSpan !== undefined) riseCap = Math.min(riseCap, loSpan.hi - cells[lo]);
     if (dropCap < drop || riseCap < rise) {
       const t = Math.min(dropCap, riseCap);
       // A NEGATIVE `t` WOULD MOVE THE PAIR APART, which is the one thing this
@@ -2000,8 +2007,8 @@ function movePair(
     }
     if (drop === 0 && rise === 0) return false;
   }
-  cells[hiIdx] -= drop;
-  cells[loIdx] += rise;
+  cells[hi] -= drop;
+  cells[lo] += rise;
   return true;
 }
 
@@ -2030,6 +2037,7 @@ function movePair(
  */
 function relaxPair(
   cells: Int16Array,
+  base: number,
   i: number,
   j: number,
   changed: Set<number>,
@@ -2038,14 +2046,14 @@ function relaxPair(
 ): boolean {
   // Open-neighbour exclusion (step 4.6): a cell with no ground at the grasped
   // level is not in the relaxation at all — neither moved nor leaned on.
-  if (layer !== null && (layer.excluded[i] === 1 || layer.excluded[j] === 1)) return false;
+  if (layer !== null && (layer.excluded[i - base] === 1 || layer.excluded[j - base] === 1)) return false;
   const spanCaps = layer === null ? null : layer.spanCaps;
-  const d = cells[i] - cells[j];
+  const d = cells[i - base] - cells[j - base];
   let moved = false;
   if (d > MAX_STEP + RELAX_SLACK) {
-    moved = movePair(cells, i, j, d - MAX_STEP, boundsOf, spanCaps);
+    moved = movePair(cells, base, i, j, d - MAX_STEP, boundsOf, spanCaps);
   } else if (d < -(MAX_STEP + RELAX_SLACK)) {
-    moved = movePair(cells, j, i, -d - MAX_STEP, boundsOf, spanCaps);
+    moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps);
   }
   if (moved) {
     changed.add(i);
@@ -2080,24 +2088,63 @@ interface LayerView {
   readonly heights: Int16Array;
   readonly excluded: Uint8Array;
   readonly spanCaps: ReadonlyMap<number, SpillBand>;
+  /**
+   * The view covers a BAND OF WHOLE ROWS, `firstRow..lastRow`, not the world
+   * (issue #275). `base` is the global index of the band's first cell, so a
+   * global cell index reads as `heights[i - base]` and nothing else changes:
+   * whole rows keep the world's stride, so the sweep's `i + 1` / `i + size`
+   * neighbour arithmetic is the same arithmetic it always was.
+   *
+   * WHY A BAND AND NOT THE BOX. A 2D window would be tighter, but it changes
+   * the stride, and the stride is wired through relaxPair, movePair and the
+   * spill capture. A band is one subtraction, and it already turns the copy
+   * from O(world) into O(rows the sweep reaches) — 2048² fell from ~12.6 MB
+   * per sculpt to a few tens of KB for a brush-sized stroke.
+   */
+  readonly base: number;
+  readonly firstRow: number;
+  readonly lastRow: number;
 }
 
-function buildLayerView(map: Heightmap, spanBand: number | null): LayerView {
-  const heights = map.cells.slice();
-  const excluded = new Uint8Array(map.cells.length);
+/**
+ * Rows kept above and below the sweep box when a view is built, so the box's
+ * one-ring-per-pass growth does not rebuild the band on every pass. On a
+ * rebuild the slack is at least the whole band that came before, which makes
+ * the band at least double each time and bounds the total copying by a
+ * constant factor of the final band's size.
+ */
+const LAYER_VIEW_SLACK_ROWS = 8;
+
+/**
+ * Builds the view over rows `firstRow..lastRow`. `previous`, when given, is a
+ * view this one grows from: its band is contained in the new one and its
+ * heights are the working values the sweep has already moved.
+ */
+function buildLayerView(
+  map: Heightmap,
+  spanBand: number | null,
+  firstRow: number,
+  lastRow: number,
+  previous: LayerView | null,
+): LayerView {
+  const base = firstRow * map.size;
+  const end = (lastRow + 1) * map.size;
+  const heights = map.cells.slice(base, end);
+  const excluded = new Uint8Array(end - base);
   const spanCaps = new Map<number, SpillBand>();
   // Unlayered columns resolve to span 0 in every case, whose ceiling is
   // `cells[i]` already; only layered columns need resolving.
   for (const i of map.columnSpans.keys()) {
+    if (i < base || i >= end) continue;
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
     const k = layerSpanIndex(map, i, spanBand);
     if (k === null) {
-      excluded[i] = 1;
+      excluded[i - base] = 1;
       continue;
     }
     const span = spanAt(map, x, y, k);
-    heights[i] = span.ceiling;
+    heights[i - base] = span.ceiling;
     const isTop = k === spanCount(map, x, y) - 1;
     spanCaps.set(i, {
       lo: spanLowestBandHeight(span),
@@ -2106,7 +2153,14 @@ function buildLayerView(map: Heightmap, spanBand: number | null): LayerView {
       hi: isTop ? MAX_HEIGHT : spanUndersideHeight(spanAt(map, x, y, k + 1)) - 1,
     });
   }
-  return { heights, excluded, spanCaps };
+  // A GROWN VIEW INHERITS THE HEIGHTS IT ALREADY HELD. The rows the old band
+  // covered may hold cells the sweep has already moved; `map.cells` does not
+  // know about those moves (they are committed once, at the end), and the
+  // span resolution above would roll them back to the ceiling the column
+  // still records. Copying the old band over the overlap restores the working
+  // values for every cell in it, layered or not.
+  if (previous !== null) heights.set(previous.heights, previous.base - base);
+  return { heights, excluded, spanCaps, base, firstRow, lastRow };
 }
 
 /**
@@ -2118,14 +2172,23 @@ function buildLayerView(map: Heightmap, spanBand: number | null): LayerView {
  */
 function commitLayerView(map: Heightmap, view: LayerView, spanBand: number | null, changed: ReadonlySet<number>): void {
   for (const i of changed) {
-    if (view.excluded[i] === 1) continue;
+    // Every cell that can be here is inside the band: the view is built to
+    // cover the rows of the incoming `changed` set and of the sweep box, the
+    // band only ever grows, and relaxation adds nothing from outside the box.
+    // A cell outside it would silently read `undefined` and write NaN, so it
+    // is refused loudly instead — the same choice `setColumn` makes.
+    const v = i - view.base;
+    if (v < 0 || v >= view.heights.length) {
+      throw new RangeError(`layer view does not cover changed cell ${i}`);
+    }
+    if (view.excluded[v] === 1) continue;
     if (!map.columnSpans.has(i)) {
-      map.cells[i] = view.heights[i]!;
+      map.cells[i] = view.heights[v]!;
       continue;
     }
     const k = layerSpanIndex(map, i, spanBand);
     if (k === null) continue;
-    moveSpanCeiling(map, cellX(map.size, i), cellY(map.size, i), k, view.heights[i]!);
+    moveSpanCeiling(map, cellX(map.size, i), cellY(map.size, i), k, view.heights[v]!);
   }
 }
 
@@ -2210,11 +2273,15 @@ export function smooth(
   // A BANDED STROKE ALWAYS NEEDS THE VIEW — it has hold of a span the cell
   // index cannot name — but a SURFACE stroke needs it only where a layered
   // column actually stands, and "stands somewhere in the world" is not that
-  // question: the view costs a copy and a clear of the whole grid, so asking
-  // `columnSpans.size` made one carve anywhere make every later surface
-  // stroke pay world-sized. The question is whether a layered column stands
-  // in the box THIS sweep touches, and the box is only known as it grows, so
-  // the view is adopted lazily below, one ring at a time.
+  // question: asking `columnSpans.size` made one carve anywhere make every
+  // later surface stroke build a view. The question is whether a layered
+  // column stands in the box THIS sweep touches, and the box is only known as
+  // it grows, so the view is adopted lazily below, one ring at a time.
+  //
+  // AND THE VIEW ITSELF IS SIZED TO THE SWEEP (issue #275). It covers the
+  // band of rows the box can reach, not the world, so a stroke that does
+  // need one — a banded stroke, or a surface stroke that meets a carved
+  // column — pays for its own rows and not for 2048² of them.
   //
   // Adopting it late is exact, not an approximation. Where the swept box
   // holds no layered column, every cell the view could differ on is one it
@@ -2222,12 +2289,47 @@ export function smooth(
   // the top span, whose ceiling IS `map.cells[i]` (setColumn keeps that
   // identity, columns.ts), nothing is excluded, no `spanCaps` entry is ever
   // looked up, and `commitLayerView` writes unlayered columns straight back.
-  let layer: LayerView | null = spanBand === null ? null : buildLayerView(map, spanBand);
-  let cells: Int16Array = layer === null ? map.cells : layer.heights;
+  let layer: LayerView | null = null;
+  let cells: Int16Array = map.cells;
+  // The global index the working array starts at: 0 while it is `map.cells`,
+  // the band's first cell once a view is adopted (see LayerView).
+  let viewBase = 0;
+
+  /**
+   * Builds — or grows — the view over the rows the sweep can currently reach,
+   * plus slack (issue #275). `previous` is the view being grown, or null for
+   * the first build; on a first build the band also covers the rows of the
+   * incoming `changed` set, because `commitLayerView` writes every one of
+   * them back through the view.
+   */
+  const rebuildLayerView = (previous: LayerView | null): void => {
+    const slack = previous === null
+      ? LAYER_VIEW_SLACK_ROWS
+      : Math.max(LAYER_VIEW_SLACK_ROWS, previous.lastRow - previous.firstRow + 1);
+    let first = minY;
+    let last = maxY;
+    if (previous === null) {
+      for (const i of changed) {
+        const y = cellY(size, i);
+        if (y < first) first = y;
+        if (y > last) last = y;
+      }
+    } else {
+      if (previous.firstRow < first) first = previous.firstRow;
+      if (previous.lastRow > last) last = previous.lastRow;
+    }
+    first = Math.max(0, first - slack);
+    last = Math.min(size - 1, last + slack);
+    layer = buildLayerView(map, spanBand, first, last, previous);
+    cells = layer.heights;
+    viewBase = layer.base;
+  };
 
   /**
    * Builds the layer view if the rectangle holds a layered column and the
-   * sweep is not already working on one.
+   * sweep is not already working on one. A BANDED stroke always needs one —
+   * it has hold of a span the cell index cannot name — so it adopts on the
+   * first call, whatever the rectangle holds.
    *
    * Switching mid-sweep loses nothing: the passes already run wrote
    * `map.cells` in place, which for an unlayered column is exactly the write
@@ -2237,11 +2339,16 @@ export function smooth(
    * keeps its entries, and every one of them still reads the same height
    * (the fresh `heights` starts as a copy of `map.cells`).
    */
+  /** Grows the adopted view when the box has outrun the band it covers. */
+  const growLayerView = (): void => {
+    if (layer === null) return;
+    if (minY < layer.firstRow || maxY > layer.lastRow) rebuildLayerView(layer);
+  };
+
   const adoptLayerView = (x0: number, y0: number, width: number, height: number): void => {
     if (layer !== null) return;
-    if (!anyColumnLayered(map, x0, y0, width, height)) return;
-    layer = buildLayerView(map, spanBand);
-    cells = layer.heights;
+    if (spanBand === null && !anyColumnLayered(map, x0, y0, width, height)) return;
+    rebuildLayerView(null);
   };
 
   let boundsOf: SpillBoundsOf | null = null;
@@ -2261,7 +2368,7 @@ export function smooth(
         // No clamping to [MIN_HEIGHT, MAX_HEIGHT]: relaxation moves cells
         // strictly toward a neighbour, which is itself in range, so a cap
         // endpoint outside the range is simply never reached.
-        const lo = bandOf(cells[index]) * BAND_HEIGHT;
+        const lo = bandOf(cells[index - viewBase]) * BAND_HEIGHT;
         band = { lo, hi: lo + BAND_HEIGHT - 1 };
         captured.set(index, band);
       }
@@ -2293,6 +2400,10 @@ export function smooth(
     if (maxX < size - 1) maxX++;
     if (maxY < size - 1) maxY++;
 
+    // The box may now reach past the band the view covers; grow it before any
+    // pair in the new ring is read (issue #275).
+    growLayerView();
+
     // Only the ring just gained is new ground for the layered-column test —
     // the seed box was tested above and every earlier ring on its own pass —
     // so the whole test costs O(cells the sweep reaches), never O(world).
@@ -2310,8 +2421,8 @@ export function smooth(
       for (let x = minX; x <= maxX; x++) {
         const i = row + x;
         // Each pair visited once, via its "forward" (right/down) neighbor.
-        if (x < maxX && relaxPair(cells, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
-        if (y < maxY && relaxPair(cells, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
+        if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
+        if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
       }
     }
 

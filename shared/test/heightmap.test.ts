@@ -2658,9 +2658,12 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
     const real = map.cells.slice.bind(map.cells);
     Object.defineProperty(map.cells, 'slice', {
       configurable: true,
-      value: (): Int16Array => {
+      // Arguments forwarded: since #275 the view copies a BAND of rows
+      // (`slice(base, end)`), not the whole grid, and a stub that dropped the
+      // range would hand the sweep an array indexed from the wrong origin.
+      value: (...args: readonly number[]): Int16Array => {
         copies++;
-        return real();
+        return real(...args);
       },
     });
     return () => copies;
