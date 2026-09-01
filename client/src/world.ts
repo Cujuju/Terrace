@@ -65,7 +65,10 @@ import type { Viewport } from './render/scene.ts';
 import { createWater, WATER_DRAW_OBJECTS, type Water } from './render/water.ts';
 import type { ChartSource } from './terrain/chart.ts';
 import {
+  pickPointedCellByRay,
   pickTerrainCellByRay,
+  type CellOccupancy,
+  type PointedCellPick,
   type TerrainRayPick,
   type Vec3,
 } from './terrain/picking.ts';
@@ -128,6 +131,20 @@ export interface World extends TerrainSink {
    * snapshot, and for a ray that meets no revealed terrain.
    */
   pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null;
+  /**
+   * The first cell a ray meets that has either something STANDING on it or
+   * terrain under it — `pickCell`'s question with the world's contents
+   * included, for plugins/host.ts's pickWorldCell (GH #252).
+   *
+   * `occupants` is what the plugins have declared standing on the ground; each
+   * is asked once per cell the march crosses. An empty list makes this
+   * `pickCell` with a distance attached.
+   */
+  pickPointedCell(
+    origin: Vec3,
+    direction: Vec3,
+    occupants: readonly CellOccupancy[],
+  ): PointedCellPick | null;
   /**
    * Lights up the terrace lip this PICK is pointing at and returns the band a
    * pull starting there would grab, or null when there is none
@@ -933,6 +950,14 @@ export function createWorld(viewport: Viewport): World {
     pickCell(origin: Vec3, direction: Vec3): TerrainRayPick | null {
       if (mirror === null) return null;
       return pickTerrainCellByRay(mirror, origin, direction);
+    },
+    pickPointedCell(
+      origin: Vec3,
+      direction: Vec3,
+      occupants: readonly CellOccupancy[],
+    ): PointedCellPick | null {
+      if (mirror === null) return null;
+      return pickPointedCellByRay(mirror, origin, direction, occupants);
     },
 
     drawBudget(): number {
