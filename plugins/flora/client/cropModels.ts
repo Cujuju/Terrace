@@ -45,11 +45,26 @@ import {
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   CROP_PLOT_CLUSTER_CELL_SPAN,
+  CROP_SCALE_MAX,
   CROP_STALKS_PER_PLOT,
+  CROP_STALK_HEIGHT_SPREAD,
+  CROP_STALK_JITTER_IN_CLUSTER_SPANS,
   CROP_STALK_OFFSETS,
   FLORA_CROP_CAP,
   cropStalkVariation,
 } from '../protocol.ts';
+import {
+  MATRIX_FLOATS_PER_INSTANCE,
+  clearPlacementExtent,
+  clusteredReach,
+  createPlacementExtent,
+  geometryReach,
+  includePlacement,
+  scaledReach,
+  uploadAllInstances,
+  writeInstanceSphere,
+  type InstanceReach,
+} from './instanceBounds.ts';
 import { SHIPPED_WHEAT_VARIANT, WHEAT_VARIANT_BUILDERS } from './wheatVariants.ts';
 
 // ── Dimensions — authored as fractions of a crop CELL, then converted once
@@ -150,16 +165,44 @@ export function createCropModels(): CropModels {
   const stalkPosition = new Vector3();
   const stalkOffset = new Vector3();
 
+  /** The box the plots stand in — the culling sphere's input (GH #257). */
+  const extent = createPlacementExtent();
+
+  // The horizontal room one plot needs around its own centre: the outermost
+  // lattice point plus its jitter, in world units at unit scale.
+  let plantedRadiusInSpans = 0;
+  for (const [ox, oz] of CROP_STALK_OFFSETS) {
+    plantedRadiusInSpans = Math.max(plantedRadiusInSpans, Math.hypot(ox, oz));
+  }
+  const clusterSpreadInWorld =
+    cells(CLUSTER_SPAN_IN_CELLS) *
+    (plantedRadiusInSpans + CROP_STALK_JITTER_IN_CLUSTER_SPANS * Math.SQRT2);
+
+  /** One reach per mesh, in `meshes` order — all constants, so resolved once at build. */
+  const reaches: InstanceReach[] = geometries.map(
+    (geometry): InstanceReach =>
+      scaledReach(
+        clusteredReach(
+          geometryReach(geometry),
+          clusterSpreadInWorld,
+          1 + CROP_STALK_HEIGHT_SPREAD,
+        ),
+        CROP_SCALE_MAX,
+      ),
+  );
+
   return {
     root,
 
     apply(placements: readonly CropPlacement[]): void {
       let plotCount = 0;
       let stalkCount = 0;
+      clearPlacementExtent(extent);
 
       for (const placement of placements) {
         if (plotCount >= FLORA_CROP_CAP) break;
         plotCount++;
+        includePlacement(extent, placement.x, placement.groundY, placement.z);
 
         position.set(placement.x, placement.groundY, placement.z);
         plotRotation.setFromAxisAngle(UP, placement.yaw);
@@ -207,13 +250,19 @@ export function createCropModels(): CropModels {
       stalks.count = stalkCount;
       ears.count = stalkCount;
 
-      for (const mesh of meshes) {
-        mesh.instanceMatrix.needsUpdate = true;
+      for (let i = 0; i < meshes.length; i++) {
+        const mesh = meshes[i]!;
+      // ONE RANGE PER BUFFER, sized by the live population (GH #262): three's
+      // updateBuffer uploads the WHOLE array whenever the range list is empty
+      // and never consults mesh.count, so a bare needsUpdate on a CAP-sized
+      // buffer re-sends the cap however few instances are standing.
+        uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
         // MANDATORY — see models.ts's identical note: an InstancedMesh's
         // frustum-culling bounding sphere is cached from the PREVIOUS set of
         // matrices, so skipping this makes a field vanish when the camera
-        // moves past where the crops used to be.
-        mesh.computeBoundingSphere();
+        // moves past where the crops used to be. Only the DERIVATION changed
+        // (GH #257) — see instanceBounds.ts.
+        writeInstanceSphere(mesh, extent, reaches[i]!);
       }
     },
 

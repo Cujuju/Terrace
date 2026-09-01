@@ -47,7 +47,18 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
-import { FLORA_TREE_CAP, type FloraTreeKind } from '../protocol.ts';
+import { FLORA_TREE_CAP, FLORA_TREE_SCALE_MAX, type FloraTreeKind } from '../protocol.ts';
+import {
+  MATRIX_FLOATS_PER_INSTANCE,
+  clearPlacementExtent,
+  createPlacementExtent,
+  geometryReach,
+  includePlacement,
+  scaledReach,
+  uploadAllInstances,
+  writeInstanceSphere,
+  type InstanceReach,
+} from './instanceBounds.ts';
 
 // ── Dimensions, in world units. CELL_WORLD_SIZE is 1 (client/src/config.ts) and
 // one terrace band is one world unit (MAX_HEIGHT / BAND_HEIGHT = 16 units of
@@ -194,6 +205,18 @@ export function createFloraModels(): FloraModels {
   const rotation = new Quaternion();
   const scale = new Vector3();
 
+  /**
+   * The box each mesh's trees stand in — the culling sphere's input (GH #257).
+   * THREE boxes, not one: a valley of conifers and a ridge of broadleaves are
+   * different regions, and a shared box would give each crown mesh the other's
+   * extent for nothing.
+   */
+  const extents = [createPlacementExtent(), createPlacementExtent(), createPlacementExtent()];
+  /** One reach per mesh, in `meshes` order — all constants, so resolved once at build. */
+  const reaches: InstanceReach[] = geometries.map(
+    (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_TREE_SCALE_MAX),
+  );
+
   return {
     root,
 
@@ -201,6 +224,7 @@ export function createFloraModels(): FloraModels {
       let trunkCount = 0;
       let coniferCount = 0;
       let broadleafCount = 0;
+      for (const extent of extents) clearPlacementExtent(extent);
 
       for (const placement of placements) {
         if (trunkCount >= FLORA_TREE_CAP) break;
@@ -211,21 +235,34 @@ export function createFloraModels(): FloraModels {
         matrix.compose(position, rotation, scale);
 
         trunks.setMatrixAt(trunkCount++, matrix);
-        if (placement.kind === 'conifer') conifers.setMatrixAt(coniferCount++, matrix);
-        else broadleaves.setMatrixAt(broadleafCount++, matrix);
+        includePlacement(extents[0]!, placement.x, placement.groundY, placement.z);
+        if (placement.kind === 'conifer') {
+          conifers.setMatrixAt(coniferCount++, matrix);
+          includePlacement(extents[1]!, placement.x, placement.groundY, placement.z);
+        } else {
+          broadleaves.setMatrixAt(broadleafCount++, matrix);
+          includePlacement(extents[2]!, placement.x, placement.groundY, placement.z);
+        }
       }
 
       trunks.count = trunkCount;
       conifers.count = coniferCount;
       broadleaves.count = broadleafCount;
 
-      for (const mesh of meshes) {
-        mesh.instanceMatrix.needsUpdate = true;
-        // MANDATORY, not tidiness: frustum culling tests an InstancedMesh against
-        // its own cached bounding sphere, which was computed from the PREVIOUS
-        // set of matrices. Skipping this makes a forest vanish when the camera
-        // moves past where the trees used to be.
-        mesh.computeBoundingSphere();
+      for (let i = 0; i < meshes.length; i++) {
+        const mesh = meshes[i]!;
+      // ONE RANGE PER BUFFER, sized by the live population (GH #262): three's
+      // updateBuffer uploads the WHOLE array whenever the range list is empty
+      // and never consults mesh.count, so a bare needsUpdate on a CAP-sized
+      // buffer re-sends the cap however few instances are standing.
+        uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
+        // MANDATORY, not tidiness: frustum culling tests an InstancedMesh
+        // against its own cached bounding sphere, which was computed from the
+        // PREVIOUS set of matrices. Skipping this makes a forest vanish when
+        // the camera moves past where the trees used to be — it is only the
+        // DERIVATION that changed (GH #257), from a read-back of every matrix
+        // to the placement box the loop above already accumulated.
+        writeInstanceSphere(mesh, extents[i]!, reaches[i]!);
       }
     },
 

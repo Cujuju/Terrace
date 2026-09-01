@@ -45,6 +45,17 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { FLORA_STUMP_CAP, FLORA_STUMP_SCALE_MAX, STUMP_MAX_REACH_CELLS } from '../protocol.ts';
+import {
+  MATRIX_FLOATS_PER_INSTANCE,
+  clearPlacementExtent,
+  createPlacementExtent,
+  geometryReach,
+  includePlacement,
+  scaledReach,
+  uploadAllInstances,
+  writeInstanceSphere,
+  type InstanceReach,
+} from './instanceBounds.ts';
 import { TRUNK_BOTTOM_RADIUS, TRUNK_COLOR, TRUNK_HEIGHT } from './models.ts';
 
 // ── Dimensions, in WORLD UNITS — models.ts's unit, because every number here
@@ -268,13 +279,22 @@ export function createStumpModels(): StumpModels {
   const scale = new Vector3();
   const up = new Vector3(0, 1, 0);
 
+  /** The box the stumps stand in — the culling sphere's input (GH #257). */
+  const extent = createPlacementExtent();
+  /** One reach per mesh, in `[bark, core]` order — constants, resolved once at build. */
+  const reaches: readonly InstanceReach[] = [built.bark, built.core].map(
+    (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_STUMP_SCALE_MAX),
+  );
+
   return {
     root,
 
     apply(placements: readonly StumpPlacement[]): void {
       let written = 0;
+      clearPlacementExtent(extent);
       for (const placement of placements) {
         if (written >= FLORA_STUMP_CAP) break;
+        includePlacement(extent, placement.x, placement.groundY, placement.z);
         position.set(placement.x, placement.groundY, placement.z);
         rotation.setFromAxisAngle(up, placement.yaw);
         // Uniform: a stump that grew wider also grew taller, because it is a
@@ -287,12 +307,19 @@ export function createStumpModels(): StumpModels {
 
       bark.count = written;
       core.count = written;
-      for (const mesh of [bark, core]) {
-        mesh.instanceMatrix.needsUpdate = true;
+      const meshes = [bark, core];
+      for (let i = 0; i < meshes.length; i++) {
+        const mesh = meshes[i]!;
+      // ONE RANGE PER BUFFER, sized by the live population (GH #262): three's
+      // updateBuffer uploads the WHOLE array whenever the range list is empty
+      // and never consults mesh.count, so a bare needsUpdate on a CAP-sized
+      // buffer re-sends the cap however few instances are standing.
+        uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
         // MANDATORY — see models.ts's identical note: the cached bounding
         // sphere is from the PREVIOUS set of matrices, so skipping this makes
         // the burn scar vanish once the camera moves past where it used to be.
-        mesh.computeBoundingSphere();
+        // Only the DERIVATION changed (GH #257) — see instanceBounds.ts.
+        writeInstanceSphere(mesh, extent, reaches[i]!);
       }
     },
 
