@@ -35,13 +35,20 @@
 // rather than the world keeping a ruin.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { cellsAcross } from '@terrace/shared';
-import type { Occupant, RouteCell } from '@terrace/shared';
+import {
+  ROUTE_NODE_BUDGET,
+  ROUTE_SEARCH_MARGIN_CELLS,
+  cellsAcross,
+  createRouteBudget,
+  floodReachableRegion,
+} from '@terrace/shared';
+import type { Occupant, ReachableRegion, RouteBudget, RouteCell } from '@terrace/shared';
 import { SETTLERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import type { SettlerRace } from '../protocol.ts';
 import {
   ARRIVAL_RADIUS_CELLS,
   PILGRIM_STUCK_SECONDS,
+  PILGRIM_WALKER_PROFILE,
   WalkerIdAllocator,
   advanceWalker,
   isWalkableCell,
@@ -111,13 +118,82 @@ export const SETTLE_MAX_DISTANCE_CELLS = cellsAcross(20);
  * site more, so 768 probes is where the ground itself, rather than the sample,
  * becomes the limit.
  *
- * The cost at that resolution is 1.5 ms for a scan that finds nothing (the
- * worst case; a scan that succeeds stops early), paid once per dispatch
- * — one every SETTLER_DISPATCH_SECONDS — and once per temple placement press.
+ * THE COST CLAIM THAT USED TO STAND HERE — "1.5 ms for a scan that finds
+ * nothing" — WAS WRONG BY THREE ORDERS OF MAGNITUDE, and it was wrong because
+ * it counted the 768 ground tests and not the route planning the scan did per
+ * candidate: measured, a scan on a 2048² world with a watercourse ten cells
+ * from the origin cost 4.5–9.4 s on the placement press and up to 35.8 s on an
+ * epoch dispatch (2026-08-29 perf review, D1/D2). The number of PROBES was
+ * never the problem; asking A* to prove each one unreachable was. With the
+ * reachability flood in `scanSettleSites` the probe count is once again what
+ * this comment always assumed it was — a per-cell ground test — and 768 of them
+ * is genuinely cheap.
  */
 export const SETTLE_RING_SAMPLES = 48;
 
 export const SETTLE_DISTANCE_STEPS = 16;
+
+/**
+ * How far outside the settle ring the scan's reachability flood reaches, in
+ * cells.
+ *
+ * ROUTE_SEARCH_MARGIN_CELLS — EXACTLY the swing shared's A* is allowed off the
+ * straight line between start and goal. The flood is a PREFILTER in front of
+ * `findRoute`, and a prefilter that refused a site `findRoute` would have
+ * accepted would silently shrink where settlers may go. `findRoute`'s own
+ * search box is the start-to-goal box grown by this margin, so flooding the
+ * ring (plus the walker's own position) grown by the same margin makes the
+ * flood a strict superset of every search box the scan can use: any route A*
+ * could have found lies inside the flood, so "the flood did not reach it"
+ * proves "A* would not have reached it either". The converse is allowed and
+ * paid for out of the scan's expansion pool below.
+ */
+const SETTLE_REACHABILITY_MARGIN_CELLS = ROUTE_SEARCH_MARGIN_CELLS;
+
+/**
+ * Total A* node expansions ONE site scan may spend, shared across every
+ * candidate it routes to (shared's RouteBudget).
+ *
+ * ROUTE_NODE_BUDGET / 4 = 16 384 expansions. WHY A QUARTER: the 2026-08-29
+ * perf review measured shared's A* exhausting a full ROUTE_NODE_BUDGET
+ * (65 536) in ~29 ms, i.e. roughly 2 260 expansions per millisecond, so a
+ * quarter caps one scan's routing at about 7 ms. The server tick is 100 ms
+ * (DEFAULT_TICK_HZ = 10) and a scan runs at most once per SETTLER_DISPATCH_
+ * SECONDS epoch, once per settler retry, or once on a temple-placement press —
+ * so under a tenth of a tick is the share it may take without a player feeling
+ * the press. Held in an integer POOL rather than a millisecond deadline so the
+ * decision stays deterministic (see shared's RouteBudget): the same world and
+ * the same roll pick the same site on every machine.
+ *
+ * IT IS THE REACHABILITY FLOOD THAT MAKES THIS AFFORDABLE. Before the flood,
+ * every unreachable candidate cost a whole budget to disprove and a scan could
+ * spend hundreds of them; now A* is only asked about candidates a walker
+ * demonstrably can reach, where it succeeds in ~0.3 ms, so a quarter-budget
+ * pool is dozens of successful routes rather than a quarter of one failure.
+ */
+const SETTLE_SCAN_EXPANSION_POOL = ROUTE_NODE_BUDGET / 4;
+
+/**
+ * Expansions the scan will spend GUESSING — routing to a candidate before it
+ * has flooded reachability — before it gives up guessing and pays for the
+ * flood.
+ *
+ * ROUTE_NODE_BUDGET / 16 = 4096, which is not an arbitrary fraction: it is what
+ * ROUTE_NODE_BUDGET itself was before the 2026-08-21 re-sample quadrupled the
+ * cell density, i.e. one world unit's worth of searched area, ~1.8 ms at the
+ * measured expansion rate.
+ *
+ * WHY GUESS AT ALL. On ordinary open ground the very first settleable anchor is
+ * reachable and routes in a fraction of a millisecond, and flooding a 400-cell
+ * box first would turn that into milliseconds for nothing — a scan runs on the
+ * placement press, so that cost would be paid by the common case to protect the
+ * rare one. So the scan tries once, cheaply, and the moment that guess fails it
+ * stops guessing: one failed probe is the evidence that this ground has a
+ * barrier in it, and from there the flood is the cheaper way to ask. The probe
+ * can never LOSE a site — a candidate it fails on is re-offered from the full
+ * pool once the flood confirms a walker can reach it.
+ */
+const SETTLE_PROBE_EXPANSIONS = ROUTE_NODE_BUDGET / 16;
 
 /**
  * How many sites one settler may try before giving up and going home to the
@@ -233,15 +309,57 @@ function doorOf(temple: BridgedTemple): { x: number; y: number } {
  * another settlement can take the cell first. That is now a rare race rather
  * than the common case, which is exactly what SETTLER_SITE_ATTEMPTS was always
  * meant to pay for.
+ *
+ * REACHABILITY IS FLOODED ONCE, NOT SEARCHED 768 TIMES (2026-08-29 perf review,
+ * D1/D2). "Is there a way to this site" used to be answered by running the
+ * route planner at the site and seeing whether it came back null — and that is
+ * the most expensive way to ask, because A* can only say "no" by exhausting its
+ * whole node budget (~29 ms measured). Every settleable-but-cut-off anchor the
+ * ring passed before the first reachable one paid one of those, so a scan over
+ * ground with a river through it cost SECONDS: measured on a synthetic 2048²
+ * world with a temple ten cells from a watercourse, one `canDispatchSettler`
+ * press blocked for 4.5–9.4 s and one epoch dispatch for as long as 35.8 s —
+ * 45 to 358 dropped server ticks, with every other player's intents behind it.
+ *
+ * The fix is to ask the cheap question first. `floodReachableRegion` sweeps the
+ * whole settle box ONCE (one pass, eight edge tests per cell, no budget to
+ * exhaust) and every one of the 768 anchors is then an O(1) lookup, so the
+ * route planner is only ever handed candidates a walker demonstrably can walk
+ * to — where it succeeds in a fraction of a millisecond. What routing remains
+ * draws on ONE pooled allowance for the whole scan (SETTLE_SCAN_EXPANSION_
+ * POOL), so no scan, on any terrain, can cost more than that pool's worth of
+ * search however many candidates it tries.
+ *
+ * `start` IS THE ROUTE'S START, WHICH IS NOT THE RING'S CENTRE: a temple's
+ * settler leaves by the door, a retrying settler leaves from wherever it is
+ * standing. Both must be flooded FROM, because reachability is a fact about the
+ * walker's own position, not about the building that sent it.
  */
 function scanSettleSites<T>(
   world: PilgrimWorld,
   origin: SettleOrigin,
+  start: { readonly x: number; readonly y: number },
   roll: number,
-  plan: (site: SettleSite) => T | null,
+  plan: (site: SettleSite, budget: RouteBudget) => T | null,
 ): { site: SettleSite; planned: T } | null {
   const bearingOffset = roll % SETTLE_RING_SAMPLES;
   const span = SETTLE_MAX_DISTANCE_CELLS - SETTLE_MIN_DISTANCE_CELLS;
+
+  // The box every candidate route can possibly occupy: the ring around the
+  // origin, plus the walker's own cell, plus the far corner of a homestead
+  // block, all grown by the planner's own swing margin. See
+  // SETTLE_REACHABILITY_MARGIN_CELLS for why nothing narrower is safe.
+  const ringReach = SETTLE_MAX_DISTANCE_CELLS + HOMESTEAD_EDGE_CELLS;
+  const floodBounds = () => ({
+    minX: Math.floor(Math.min(origin.x - ringReach, start.x)) - SETTLE_REACHABILITY_MARGIN_CELLS,
+    minY: Math.floor(Math.min(origin.y - ringReach, start.y)) - SETTLE_REACHABILITY_MARGIN_CELLS,
+    maxX: Math.floor(Math.max(origin.x + ringReach, start.x)) + SETTLE_REACHABILITY_MARGIN_CELLS,
+    maxY: Math.floor(Math.max(origin.y + ringReach, start.y)) + SETTLE_REACHABILITY_MARGIN_CELLS,
+  });
+  /** Built on the first failed probe and never rebuilt — see the probe below. */
+  let reachable: ReachableRegion | null = null;
+  const probeBudget = createRouteBudget(SETTLE_PROBE_EXPANSIONS);
+  const scanBudget = createRouteBudget(SETTLE_SCAN_EXPANSION_POOL);
 
   for (let s = 0; s < SETTLE_RING_SAMPLES; s++) {
     const bearing = ((bearingOffset + s) % SETTLE_RING_SAMPLES) / SETTLE_RING_SAMPLES;
@@ -266,7 +384,19 @@ function scanSettleSites<T>(
         goalX: anchorX + HOMESTEAD_EDGE_CELLS / 2,
         goalY: anchorY + HOMESTEAD_EDGE_CELLS / 2,
       };
-      const planned = plan(site);
+      if (reachable === null) {
+        // No barrier seen yet, so guess: on open ground this routes at once and
+        // the scan never pays for a flood. SETTLE_PROBE_EXPANSIONS bounds the
+        // guess, so being wrong is cheap.
+        const probed = plan(site, probeBudget);
+        if (probed !== null) return { site, planned: probed };
+        // Wrong. Stop guessing and buy the answer for the whole ring at once.
+        reachable = floodReachableRegion(world, PILGRIM_WALKER_PROFILE, start, floodBounds());
+      }
+      // The cheap question before the expensive one: a site nobody can walk to
+      // is not a site, and the flood already knows which those are.
+      if (!reachable.has(site.goalX, site.goalY)) continue;
+      const planned = plan(site, scanBudget);
       if (planned !== null) return { site, planned };
     }
   }
@@ -305,13 +435,20 @@ function isBlockSettleable(world: PilgrimWorld, anchorX: number, anchorY: number
  *
  * PURE AND SYNCHRONOUS: no settler is created and no state is touched, so the
  * placement path may call it on the press.
+ *
+ * AND BOUNDED, which is what makes "on the press" honest (2026-08-29 perf
+ * review, D1). This ran the route planner at every settleable anchor until one
+ * of them routed, so a temple beside a river answered a press in seconds. It
+ * now asks exactly the same question through the same scan — which floods
+ * reachability once and caps its routing at SETTLE_SCAN_EXPANSION_POOL — so the
+ * press costs one sweep of the settle box and, at worst, a pool's worth of A*.
  */
 export function canDispatchSettler(world: PilgrimWorld, temple: BridgedTemple): boolean {
   const door = doorOf(temple);
   if (!isWalkableCell(world, Math.floor(door.x), Math.floor(door.y))) return false;
   return (
-    scanSettleSites(world, temple, 0, (site) =>
-      planRoute(world, door.x, door.y, site.goalX, site.goalY),
+    scanSettleSites(world, temple, door, 0, (site, budget) =>
+      planRoute(world, door.x, door.y, site.goalX, site.goalY, budget),
     ) !== null
   );
 }
@@ -534,8 +671,10 @@ export class Settling {
     const found = scanSettleSites(
       world,
       settler.origin,
+      settler,
       hashCell(epoch, settler.id + settler.attempts),
-      (candidate) => planRoute(world, settler.x, settler.y, candidate.goalX, candidate.goalY),
+      (candidate, budget) =>
+        planRoute(world, settler.x, settler.y, candidate.goalX, candidate.goalY, budget),
     );
     if (found === null) {
       this.settlers.delete(settler.id);
@@ -563,9 +702,10 @@ export class Settling {
     // enforces the second while it picks for the first, so a temple sends
     // nobody this epoch only when its whole county is unreachable, not when
     // one rolled bearing was.
-    const { x: doorX, y: doorY } = doorOf(temple);
-    const found = scanSettleSites(world, temple, roll, (candidate) =>
-      planRoute(world, doorX, doorY, candidate.goalX, candidate.goalY),
+    const door = doorOf(temple);
+    const { x: doorX, y: doorY } = door;
+    const found = scanSettleSites(world, temple, door, roll, (candidate, budget) =>
+      planRoute(world, doorX, doorY, candidate.goalX, candidate.goalY, budget),
     );
     if (found === null) return;
     const { site, planned: route } = found;
@@ -630,8 +770,13 @@ export class Settling {
     const startY = y + 0.5;
 
     const id = this.ids.allocate();
-    const found = scanSettleSites(world, origin, hashCell(hashCell(x, y), id), (candidate) =>
-      planRoute(world, startX, startY, candidate.goalX, candidate.goalY),
+    const found = scanSettleSites(
+      world,
+      origin,
+      { x: startX, y: startY },
+      hashCell(hashCell(x, y), id),
+      (candidate, budget) =>
+        planRoute(world, startX, startY, candidate.goalX, candidate.goalY, budget),
     );
     if (found === null) return false;
     const { site, planned: route } = found;
