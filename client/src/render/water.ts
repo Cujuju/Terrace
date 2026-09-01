@@ -32,7 +32,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   NearestFilter,
-  RedFormat,
+  RGBAFormat,
   Sphere,
   UnsignedByteType,
   Vector3,
@@ -40,6 +40,7 @@ import {
 } from 'three';
 import {
   CHUNK_SIZE,
+  MAX_BRUSH_RADIUS,
   SEA_LEVEL,
   chunksPerEdge,
 } from '@terrace/shared';
@@ -50,15 +51,14 @@ import {
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
+  WATER_CURVE_BYTES_PER_TEXEL,
   WATER_SELF_LIGHT_RADIANCE,
   WATER_SHADE_FLOOR_MIX,
   WATER_TRENCH_TINT,
   WATER_DEEP_TINT,
-  WATER_DEPTH_ALPHA_DEFAULT_BYTE,
-  WATER_SHADE_MIX_DEFAULT_BYTE,
   WATER_SHALLOW_TINT,
-  WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
-  writeWaterDepthTexels,
+  createWaterCurveBuffer,
+  writeWaterCurveTexels,
 } from '../terrain/waterDepth.ts';
 import { spliceShader } from './shaderSplice.ts';
 import { makeBanded } from './water/waterBands.ts';
@@ -180,7 +180,7 @@ export interface Water {
    * the same set `terrainMeshes.update` and `frontierFog.refresh` are
    * already called with (world.ts's `applyDirty`, and the snapshot/
    * chunk-unlock handlers). Cheap and chunk-scoped, never a world-sized
-   * rescan; see terrain/waterDepth.ts's writeWaterDepthTexels.
+   * rescan; see terrain/waterDepth.ts's writeWaterCurveTexels.
    */
   refresh(mirror: TerrainMirror, dirty: Iterable<number>): void;
   dispose(): void;
@@ -211,18 +211,23 @@ export interface Water {
  * minification aliasing is not a concern worth a mip chain for an NPOT
  * (world sizes are multiples of CHUNK_SIZE, not necessarily of 2) texture.
  *
- * AMENDMENT (2026-08-20): every word above applies unchanged to a SECOND
- * texture of the identical shape — the specular-factor lookup created by the
- * same factory just below (waterDepth.ts's depthToSpecularFactor is the
- * other half of the milky-water fix; see its module comment for why it is a
- * second texture rather than a second channel squeezed out of this one).
+ * AMENDMENT (2026-08-20): every word above applies unchanged to the
+ * specular-factor lookup (waterDepth.ts's depthToSpecularFactor is the
+ * other half of the milky-water fix), and (2026-08-24) to the shade mix.
+ *
+ * AMENDMENT (2026-09-01, issue #259): those are no longer three textures.
+ * All three curves are channels of ONE RGBA texture — see
+ * waterDepth.ts's WATER_CURVE_BYTES_PER_TEXEL for why (three's ranged texture
+ * upload only supports a 4-byte stride, so single-channel textures could
+ * never be patched, only re-uploaded whole). RedFormat is gone with them;
+ * the earlier "smallest texture three supports for a single scalar channel"
+ * paragraph now reads as: smallest texture three supports for THREE scalar
+ * channels that a ranged upload can patch. The VRAM caveat this trades
+ * against is named on `refresh` below.
  */
-function createDepthTexture(
-  worldSize: number,
-  defaultByte: number,
-): { texture: DataTexture; buffer: Uint8Array } {
-  const buffer = new Uint8Array(worldSize * worldSize).fill(defaultByte);
-  const texture = new DataTexture(buffer, worldSize, worldSize, RedFormat, UnsignedByteType);
+function createCurveTexture(worldSize: number): { texture: DataTexture; buffer: Uint8Array } {
+  const buffer = createWaterCurveBuffer(worldSize);
+  const texture = new DataTexture(buffer, worldSize, worldSize, RGBAFormat, UnsignedByteType);
   texture.generateMipmaps = false;
   texture.minFilter = NearestFilter;
   texture.magFilter = NearestFilter;
@@ -241,14 +246,14 @@ function createDepthTexture(
  * back-face render) exactly as tuned — see the 2026-08-14 sun-glare comments
  * above, which this patch does not touch.
  *
- * uWaterDepthAlpha and uWorldSizeCells are plain objects the caller mutates
+ * uWaterCurves and uWorldSizeCells are plain objects the caller mutates
  * in place (texture.image swapped, .value reassigned) rather than reassigned
  * wholesale, so nothing here needs to run again after the first compile.
  *
  * AMENDMENT (2026-08-20, specular suppression — the other half of the
  * milky-water-over-Deep-Strata fix, see waterDepth.ts's "SPECULAR
  * SUPPRESSION" comment for why this needs its own texture rather than
- * reusing uWaterDepthAlpha's own sample). A second splice, at the exact spot
+ * reusing the depth-alpha channel's own sample). A second splice, at the exact spot
  * three's meshphysical fragment shader finishes summing
  * `reflectedLight.directSpecular + reflectedLight.indirectSpecular` into
  * `totalSpecular` — i.e. before that value is folded into `outgoingLight`
@@ -279,15 +284,11 @@ function glslVec3(value: readonly [number, number, number]): string {
 
 function makeDepthAware(
   material: MeshStandardMaterial,
-  depthAlphaTexture: DataTexture,
-  specularFactorTexture: DataTexture,
-  shadeMixTexture: DataTexture,
+  curveTexture: DataTexture,
   worldSizeUniform: { value: number },
 ): void {
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uWaterDepthAlpha = { value: depthAlphaTexture };
-    shader.uniforms.uWaterSpecularFactor = { value: specularFactorTexture };
-    shader.uniforms.uWaterShadeMix = { value: shadeMixTexture };
+    shader.uniforms.uWaterCurves = { value: curveTexture };
     shader.uniforms.uWorldSizeCells = worldSizeUniform;
     shader.vertexShader = spliceShader(
       spliceShader(
@@ -311,7 +312,15 @@ function makeDepthAware(
         spliceShader(
           shader.fragmentShader,
           '#include <common>',
-          '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterDepthAlpha;\nuniform sampler2D uWaterSpecularFactor;\nuniform sampler2D uWaterShadeMix;\nuniform float uWorldSizeCells;',
+          // ONE sampler since 2026-09-01 (issue #259): the depth alpha, the
+          // specular factor and the shade mix are the .r/.g/.b channels of a
+          // single RGBA lookup (waterDepth.ts's WATER_CURVE_* channels).
+          // Each splice below still takes its own texture2D of the same
+          // sampler, exactly where it used to take one of the three — so no
+          // splice depends on another having run first, and the sampled value
+          // for a given world state is bit-identical to what the three
+          // separate textures gave.
+          '#include <common>\nvarying vec2 vWaterCellXZ;\nuniform sampler2D uWaterCurves;\nuniform float uWorldSizeCells;',
           'water',
         ),
         // Exact anchor copied verbatim from this project's installed three
@@ -325,7 +334,7 @@ function makeDepthAware(
         'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;',
         // ClampToEdgeWrapping (DataTexture's default) handles the margin ring
         // beyond the world border, same as the depth-alpha sample below.
-        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterSpecularFactor, wDepthUv ).r;',
+        'vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;\ntotalSpecular *= texture2D( uWaterCurves, wDepthUv ).g;',
         'water',
       ),
       // Spliced at <color_fragment> — the base colour BEFORE lighting, the same
@@ -356,12 +365,12 @@ function makeDepthAware(
         // beyond the world border: UVs past [0,1] just hold the edge cell's
         // depth, the same "clamp to world" rule terrain/mirror.ts's own
         // sampleHeight applies to any out-of-bounds read.
-        'float wDepthAlpha = texture2D( uWaterDepthAlpha, wDepthUv ).r;',
+        'float wDepthAlpha = texture2D( uWaterCurves, wDepthUv ).r;',
         // A COLOUR range, not a scalar one, since 2026-08-27 — see
         // terrain/waterDepth.ts's WATER_SHALLOW_TINT for why hue carries part
         // of the depth signal now.
         // Two segments joined at the ordinary floor — see WATER_TRENCH_TINT.
-        'float wShadeMix = texture2D( uWaterShadeMix, wDepthUv ).r;',
+        'float wShadeMix = texture2D( uWaterCurves, wDepthUv ).b;',
         `float wFloorMix = ${glslFloat(WATER_SHADE_FLOOR_MIX)};`,
         `vec3 wTrenchSide = mix( ${glslVec3(WATER_TRENCH_TINT)}, ${glslVec3(
           WATER_DEEP_TINT,
@@ -408,34 +417,52 @@ export interface WaterOptions {}
  */
 export const WATER_DRAW_OBJECTS = 1;
 
+/**
+ * Chunks a single max-radius brush can touch, worst case: its edit spans
+ * `2 * MAX_BRUSH_RADIUS + 1` cells, and an arbitrarily aligned span of N cells
+ * covers at most `ceil(N / CHUNK_SIZE) + 1` chunks on an axis.
+ */
+const MAX_BRUSH_FOOTPRINT_CHUNKS =
+  (Math.ceil((MAX_BRUSH_RADIUS * 2 + 1) / CHUNK_SIZE) + 1) ** 2;
+/**
+ * How many sculpt steps' footprints one authoritative diff may plausibly
+ * carry: the server coalesces the steps of a drag that land inside one tick
+ * (SCULPT_REPEAT_INTERVAL_MS against the tick period), and a diff is applied
+ * as a single dirty set.
+ */
+const COALESCED_SCULPT_STEPS = 4;
+/**
+ * Past this many dirty chunks, `refresh` re-uploads the whole texture instead
+ * of naming rows. Each dirty chunk costs CHUNK_SIZE `texSubImage2D` calls, so
+ * a world-sized dirty set (a join snapshot: every received chunk) would issue
+ * hundreds of thousands of calls to move the same bytes one whole-image
+ * upload moves in one. Sized off the path the ranged upload exists for — no
+ * real edit comes close, and everything above it is a snapshot or a
+ * chunk-unlock burst, which is a full upload's natural shape anyway.
+ */
+const MAX_RANGED_REFRESH_CHUNKS = MAX_BRUSH_FOOTPRINT_CHUNKS * COALESCED_SCULPT_STEPS;
+
 export function createWater(
   parent: Object3D,
   initialWorldSize: number,
   options: WaterOptions = {},
 ): Water {
-  const { texture: depthAlphaTexture, buffer: initialDepthAlphaBuffer } = createDepthTexture(
-    initialWorldSize,
-    WATER_DEPTH_ALPHA_DEFAULT_BYTE,
-  );
-  // Second depth-derived texture (2026-08-20) — see makeDepthAware's
-  // amendment and waterDepth.ts's "SPECULAR SUPPRESSION" comment.
-  const { texture: specularFactorTexture, buffer: initialSpecularFactorBuffer } =
-    createDepthTexture(initialWorldSize, WATER_SPECULAR_FACTOR_DEFAULT_BYTE);
-  // Third depth-derived texture (2026-08-24) — the depth SHADE, which gives the
-  // sea its own light-to-dark structure. See waterDepth.ts's depthToShadeMix
-  // for why it is a third curve and not a reuse of either of the two above.
-  const { texture: shadeMixTexture, buffer: initialShadeMixBuffer } = createDepthTexture(
-    initialWorldSize,
-    WATER_SHADE_MIX_DEFAULT_BYTE,
-  );
-  // Reassigned wholesale by setWorldSize; depthAlphaTexture/specularFactorTexture
-  // themselves never are (see makeDepthAware's doc comment).
-  let depthAlphaBuffer = initialDepthAlphaBuffer;
-  let specularFactorBuffer = initialSpecularFactorBuffer;
-  let shadeMixBuffer = initialShadeMixBuffer;
+  // ONE texture carrying all three depth-derived curves: the depth alpha
+  // (2026-08-19), the specular factor (2026-08-20, see waterDepth.ts's
+  // "SPECULAR SUPPRESSION" comment) and the shade mix (2026-08-24, see
+  // depthToShadeMix). They were three RedFormat textures until 2026-09-01;
+  // createCurveTexture's amendment says why they are channels now.
+  const { texture: curveTexture, buffer: initialCurveBuffer } =
+    createCurveTexture(initialWorldSize);
+  // Reassigned wholesale by setWorldSize; curveTexture itself never is (see
+  // makeDepthAware's doc comment).
+  let curveBuffer = initialCurveBuffer;
   // Mutated in place on every setWorldSize; the compiled shader holds this
   // same object by reference, so no re-wiring is needed after a resize.
   const worldSizeUniform = { value: initialWorldSize };
+  // Reused by every `refresh` — see the comment there for why the dirty set
+  // has to be materialised at all.
+  const dirtyChunkScratch: number[] = [];
 
   const material = new MeshStandardMaterial({
     color: WATER_COLOR,
@@ -451,13 +478,7 @@ export function createWater(
     // Visible from below, for when the camera dips toward the horizon.
     side: DoubleSide,
   });
-  makeDepthAware(
-    material,
-    depthAlphaTexture,
-    specularFactorTexture,
-    shadeMixTexture,
-    worldSizeUniform,
-  );
+  makeDepthAware(material, curveTexture, worldSizeUniform);
   // The sea gets the same painted bands the rivers do — one rule, in
   // water/waterBands.ts, precisely so the ocean cannot be left behind when the
   // rivers get a treatment. Applied AFTER makeDepthAware because makeBanded
@@ -526,25 +547,15 @@ export function createWater(
     // See the Water.setWorldSize doc comment: reallocated unconditionally,
     // every call — the caller's next `refresh` with the fresh snapshot's
     // dirty set repopulates every texel a revealed chunk needs.
-    depthAlphaBuffer = new Uint8Array(worldSize * worldSize).fill(
-      WATER_DEPTH_ALPHA_DEFAULT_BYTE,
-    );
-    depthAlphaTexture.image = { data: depthAlphaBuffer, width: worldSize, height: worldSize };
-    depthAlphaTexture.needsUpdate = true;
-    // Same reallocate-unconditionally contract as depthAlphaBuffer above.
-    specularFactorBuffer = new Uint8Array(worldSize * worldSize).fill(
-      WATER_SPECULAR_FACTOR_DEFAULT_BYTE,
-    );
-    specularFactorTexture.image = {
-      data: specularFactorBuffer,
-      width: worldSize,
-      height: worldSize,
-    };
-    specularFactorTexture.needsUpdate = true;
-    // Same reallocate-unconditionally contract again.
-    shadeMixBuffer = new Uint8Array(worldSize * worldSize).fill(WATER_SHADE_MIX_DEFAULT_BYTE);
-    shadeMixTexture.image = { data: shadeMixBuffer, width: worldSize, height: worldSize };
-    shadeMixTexture.needsUpdate = true;
+    curveBuffer = createWaterCurveBuffer(worldSize);
+    curveTexture.image = { data: curveBuffer, width: worldSize, height: worldSize };
+    // RANGES FIRST, then the flag. `needsUpdate` does not clear whatever
+    // ranges a `refresh` queued since the last render, and those offsets
+    // address the OLD image — three would happily texSubImage2D them into the
+    // freshly allocated one. Dropping them is also free: the full upload this
+    // flag asks for covers every texel they named.
+    curveTexture.clearUpdateRanges();
+    curveTexture.needsUpdate = true;
     worldSizeUniform.value = worldSize;
   };
 
@@ -607,52 +618,75 @@ export function createWater(
       mesh.visible = quad > 0;
     },
     refresh(mirror: TerrainMirror, dirty: Iterable<number>): void {
-      // NOTHING DIRTY MEANS NOTHING UPLOADED. The three `needsUpdate` flags
-      // below cost a FULL re-upload of three world-sized textures each
-      // (768 KB on a 512² world) whether or not a texel changed, so a call
-      // with an empty set is the single most expensive no-op in the refresh
+      // NOTHING DIRTY MEANS NOTHING UPLOADED. Even ranged, a `needsUpdate`
+      // with no ranges is a FULL re-upload of a world-sized texture (16.8 MB
+      // on a 2048² world) whether or not a texel changed, so a call with an
+      // empty set would be the single most expensive no-op in the refresh
       // path. world.ts's `applyDirty` already returns before reaching here on
       // an empty set; this is the second layer, because `refresh` is public
       // and the snapshot/chunk-unlock paths call it directly.
       //
-      // WHY NOT RANGED UPLOADS for the rows a sculpt actually touches: all
-      // three textures are RedFormat/UnsignedByteType (createDepthTexture,
-      // above) — one byte per texel. three's `updateTexture`
-      // (WebGLTextures.js:799 in three 0.185.1) hard-codes
-      // `componentStride = 4` with the comment "only RGBA supported" and
-      // derives the uploaded pixel window as `range.start / 4` …
-      // `ceil(range.count / 4)`. For a single-channel texture that addresses
-      // the WRONG texels — it does not degrade to a full upload, it uploads a
-      // quarter-width window at a quarter offset — so `addUpdateRange` is not
-      // usable on these three until three supports non-RGBA strides. The win
-      // ranged uploads were meant to buy is bought instead by this guard plus
-      // the prediction filter: the echo that used to re-upload everything for
-      // no change now does not call `refresh` at all.
-      // Counted, never CONSUMED: `dirty` is typed `Iterable`, and probing a
-      // one-shot iterator for emptiness would eat the element it found. Only
-      // the sized collections every real caller passes are short-circuited;
-      // anything else falls through to the full path.
-      if (dirty instanceof Set && dirty.size === 0) return;
-      if (Array.isArray(dirty) && dirty.length === 0) return;
-      writeWaterDepthTexels(
-        depthAlphaBuffer,
-        worldSizeUniform.value,
-        mirror,
-        dirty,
-        specularFactorBuffer,
-        shadeMixBuffer,
-      );
-      depthAlphaTexture.needsUpdate = true;
-      specularFactorTexture.needsUpdate = true;
-      shadeMixTexture.needsUpdate = true;
+      // The dirty set is materialised once into a reusable array because it
+      // is needed TWICE — once to write the texels, once to name the rows
+      // three should upload — and `dirty` is typed `Iterable`, so a one-shot
+      // iterator could not be walked a second time. The array is module-free
+      // scratch reused across calls, so a held stroke allocates nothing.
+      dirtyChunkScratch.length = 0;
+      for (const chunkIdx of dirty) dirtyChunkScratch.push(chunkIdx);
+      if (dirtyChunkScratch.length === 0) return;
+      const worldSize = worldSizeUniform.value;
+      writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
+      // RANGED UPLOADS, NOT A FLAG (2026-09-01, issue #259 — this comment used
+      // to explain why they were impossible). three's `updateTexture`
+      // (three.cjs:71778-71786 in the installed 0.185.1) uploads the whole
+      // image when `updateRanges` is empty, and otherwise one
+      // `texSubImage2D` per range, deriving the pixel window as
+      // `floor(range.start / componentStride)` … `ceil(range.count /
+      // componentStride)` with `const componentStride = 4; // only RGBA
+      // supported`. That stride is exactly right for the packed RGBA curve
+      // texture (waterDepth.ts's WATER_CURVE_BYTES_PER_TEXEL) — it is what
+      // made this fix a repacking rather than a three upgrade. Same
+      // range-not-flag pattern, and the same reasoning, as
+      // render/terrainMeshes.ts's addVertexRange.
+      //
+      // ONE RANGE PER CHUNK ROW, never one per chunk: three assumes a range
+      // is contiguous memory on ONE texture row (it uploads height 1 and
+      // merges only same-row ranges), and a chunk's rows are worldSize texels
+      // apart. Three merges adjacent same-row ranges itself, so two
+      // side-by-side dirty chunks cost one upload per row, not two.
+      //
+      // THE CAVEAT THIS TRADES AGAINST: RGBA is 4 bytes per cell where the
+      // three RedFormat textures were 3, so a 2048² world holds 16.8 MB of
+      // texture instead of 12.58 MB, and every FULL upload (setWorldSize, and
+      // the >MAX_RANGED_REFRESH_CHUNKS fallback just below — i.e. the join
+      // snapshot and chunk unlocks) moves 33 % more bytes. Paid back many
+      // times over on the sculpt path, which is ~8 uploads a second on a held
+      // stroke against one per snapshot.
+      if (dirtyChunkScratch.length > MAX_RANGED_REFRESH_CHUNKS) {
+        // Same ranges-first rule as setWorldSize: the full upload supersedes
+        // anything queued, and leaving ranges behind would make three take
+        // the ranged path instead of the whole-image one.
+        curveTexture.clearUpdateRanges();
+      } else {
+        const chunkCols = chunksPerEdge(worldSize);
+        for (const chunkIdx of dirtyChunkScratch) {
+          const x0 = (chunkIdx % chunkCols) * CHUNK_SIZE;
+          const y0 = Math.floor(chunkIdx / chunkCols) * CHUNK_SIZE;
+          for (let y = y0; y < y0 + CHUNK_SIZE; y++) {
+            curveTexture.addUpdateRange(
+              (y * worldSize + x0) * WATER_CURVE_BYTES_PER_TEXEL,
+              CHUNK_SIZE * WATER_CURVE_BYTES_PER_TEXEL,
+            );
+          }
+        }
+      }
+      curveTexture.needsUpdate = true;
     },
     dispose(): void {
       parent.remove(mesh);
       mesh.geometry.dispose();
       material.dispose();
-      shadeMixTexture.dispose();
-      depthAlphaTexture.dispose();
-      specularFactorTexture.dispose();
+      curveTexture.dispose();
     },
   };
 }
