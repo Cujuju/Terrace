@@ -92,6 +92,7 @@ import {
   SphereGeometry,
   Vector3,
   type BufferGeometry,
+  type InstancedBufferAttribute,
   type Material,
 } from 'three';
 import {
@@ -2977,6 +2978,52 @@ export interface StructureModels {
   dispose(): void;
 }
 
+/** Floats one instance matrix occupies in an InstancedMesh's `instanceMatrix` — one Matrix4. */
+const MATRIX_ELEMENT_COUNT = 16;
+
+/** Floats one instance colour occupies in an InstancedMesh's `instanceColor` — one RGB triple. */
+const COLOR_ELEMENT_COUNT = 3;
+
+/**
+ * Marks the LIVE PREFIX of an instance attribute for upload, and nothing beyond
+ * it — the replacement for a bare `needsUpdate = true` (GH #263).
+ *
+ * WHY A BARE FLAG WAS EXPENSIVE. three's `WebGLAttributes.updateBuffer` takes
+ * its "whole array" branch whenever `updateRanges` is empty, and it never looks
+ * at `mesh.count` — so these meshes, allocated at STRUCTURES_CAP × the part's
+ * local-matrix count, re-uploaded their whole CAPACITY every time one building
+ * was founded or felled: 36 meshes, 102 400 slots, 6.55 MB of `instanceMatrix`
+ * plus up to 1.23 MB of `instanceColor`, for a delta that may hold one cell.
+ * Same defect and same fix as the flora rigs (plugins/flora/client/
+ * instanceBounds.ts) and this plugin's own skiffModels.ts.
+ *
+ * CLEARED BEFORE THE RANGE IS ADDED, for skiffModels.ts's reason: three only
+ * clears an attribute's ranges when it actually uploads, so a pass whose mesh
+ * was frustum-culled would otherwise leave its range behind for this one to
+ * accumulate onto.
+ *
+ * AN EMPTY MESH IS LEFT ALONE ENTIRELY — not even its ranges cleared. Nothing
+ * is drawn at `count === 0`, so there is nothing to upload; and clearing the
+ * ranges of an attribute whose version is still ahead of the uploaded buffer is
+ * exactly how a later render falls back into the whole-array branch this
+ * function exists to avoid.
+ *
+ * NOT ATTEMPTED, and named rather than left implicit: skipping the upload for a
+ * mesh whose CONTENTS did not change. Knowing that needs a shadow copy of every
+ * matrix to compare against — more memory than the buffer itself and a compare
+ * per float — so a full apply() pass always re-uploads its own live prefix.
+ */
+function uploadInstancePrefix(
+  attribute: InstancedBufferAttribute,
+  instanceCount: number,
+  elementsPerInstance: number,
+): void {
+  if (instanceCount === 0) return;
+  attribute.clearUpdateRanges();
+  attribute.addUpdateRange(0, instanceCount * elementsPerInstance);
+  attribute.needsUpdate = true;
+}
+
 export function createStructureModels(): StructureModels {
   // MERGED, not as authored: a tier is written as ~100 parts because that is
   // how a building is legible to write, and drawn as a handful because that is
@@ -3153,11 +3200,14 @@ export function createStructureModels(): StructureModels {
     for (let partIndex = 0; partIndex < meshes.length; partIndex++) {
       const mesh = meshes[partIndex];
       mesh.count = counts[partIndex];
-      mesh.instanceMatrix.needsUpdate = true;
+      uploadInstancePrefix(mesh.instanceMatrix, mesh.count, MATRIX_ELEMENT_COUNT);
       // Present exactly when writeInstances tinted this mesh at least once in
-      // its lifetime (setColorAt allocates it) — flagged every pass for the
-      // same reason the matrix is.
-      if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
+      // its lifetime (setColorAt allocates it) — uploaded every pass for the
+      // same reason the matrix is, and over the same prefix: writeInstances
+      // writes a colour at every index below `count` on a tinted mesh.
+      if (mesh.instanceColor !== null) {
+        uploadInstancePrefix(mesh.instanceColor, mesh.count, COLOR_ELEMENT_COUNT);
+      }
       // MANDATORY, not tidiness — see flora's identical call: an
       // InstancedMesh's cached bounding sphere is stale after any matrix
       // change, and frustum culling against a stale sphere makes a building
