@@ -125,6 +125,16 @@ export interface CropPlacement {
 export interface CropModels {
   /** Parent of the instanced meshes; add this to the plugin's layer. */
   readonly root: Group;
+  /**
+   * How far one PLOT reaches around its own cell — the cluster spread out and
+   * the tallest stalk up, at the biggest scale the variation rolls.
+   *
+   * Exposed for ./occupancy.ts (GH #252), which needs the same shape to answer
+   * "what stands over this cell?" for the pointed-at pick. It is the very reach
+   * the culling sphere is built from, so a crop is pointable exactly where it
+   * is drawn.
+   */
+  readonly plotReach: InstanceReach;
   /** Replaces every drawn crop cluster with the given list. Order is irrelevant. */
   apply(placements: readonly CropPlacement[]): void;
   /** Frees every geometry and material. Call once, at plugin dispose. */
@@ -191,8 +201,20 @@ export function createCropModels(): CropModels {
       ),
   );
 
+  /**
+   * The union of the per-mesh reaches: the ear geometry reaches higher than the
+   * stalk it is mounted on, and either could be the widest, so one plot's
+   * extent is the widest and tallest of them.
+   */
+  const plotReach: InstanceReach = {
+    horizontal: Math.max(...reaches.map((r) => r.horizontal)),
+    up: Math.max(...reaches.map((r) => r.up)),
+    down: Math.max(...reaches.map((r) => r.down)),
+  };
+
   return {
     root,
+    plotReach,
 
     apply(placements: readonly CropPlacement[]): void {
       let plotCount = 0;

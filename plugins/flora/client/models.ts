@@ -84,17 +84,24 @@ export const TRUNK_BOTTOM_RADIUS = 0.085;
 /** Five sides. A trunk is three pixels wide at play distance; six would be waste. */
 const TRUNK_SEGMENTS = 5;
 
-/** Cone crown: 6-sided, so a fir has a silhouette instead of a circle. */
-const CONIFER_CROWN_RADIUS = 0.38;
-const CONIFER_CROWN_HEIGHT = 1.05;
-const CONIFER_CROWN_SEGMENTS = 6;
+/**
+ * Cone crown: 6-sided, so a fir has a silhouette instead of a circle.
+ *
+ * EXPORTED alongside the broadleaf pair below for ./occupancy.ts, which
+ * evaluates the same cone and sphere ANALYTICALLY to answer "what stands over
+ * this cell?" without a raycast (GH #252). One set of numbers, two readers —
+ * the drawn tree and the pointable tree cannot be different trees.
+ */
+export const CONIFER_CROWN_RADIUS = 0.38;
+export const CONIFER_CROWN_HEIGHT = 1.05;
+export const CONIFER_CROWN_SEGMENTS = 6;
 
 /**
  * Sphere crown, at the same tessellation wildlife's bodies use (6 around, 4
  * tall). Faceted enough to read as a low-poly canopy rather than a ball.
  */
-const BROADLEAF_CROWN_RADIUS = 0.46;
-const BROADLEAF_CROWN_SEGMENTS = 6;
+export const BROADLEAF_CROWN_RADIUS = 0.46;
+export const BROADLEAF_CROWN_SEGMENTS = 6;
 const BROADLEAF_CROWN_RINGS = 4;
 
 /**
@@ -106,7 +113,7 @@ const BROADLEAF_CROWN_TRUNK_OVERLAP = 0.95;
 
 /** Total height either kind reaches at scale 1: 1.5 and ~1.36 world units. */
 const CONIFER_CROWN_CENTRE_Y = TRUNK_HEIGHT + CONIFER_CROWN_HEIGHT / 2;
-const BROADLEAF_CROWN_CENTRE_Y = TRUNK_HEIGHT + BROADLEAF_CROWN_RADIUS * BROADLEAF_CROWN_TRUNK_OVERLAP;
+export const BROADLEAF_CROWN_CENTRE_Y = TRUNK_HEIGHT + BROADLEAF_CROWN_RADIUS * BROADLEAF_CROWN_TRUNK_OVERLAP;
 
 /**
  * Colours, picked against the ground each kind stands on rather than in
