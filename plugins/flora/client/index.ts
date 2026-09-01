@@ -9,13 +9,14 @@
 // (see ../protocol.ts).
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHEN THE SCENE IS REBUILT, AND WHY THAT IS ALL OF IT.
+// WHEN THE SCENE IS REBUILT, AND WHERE THAT STOPPED BEING ALL OF IT.
 //
-// Every instance matrix is recomputed whenever the tree list changes. The
-// obvious alternative — patching only the changed instances — needs a free-list
-// mapping cell → instance slot per mesh, plus compaction when a tree in the
-// middle is felled, plus a way to keep two meshes' slots consistent. That is
-// real bookkeeping to save work that measures as follows:
+// THE FOREST, THE CROPS AND THE STUMPS still recompute every instance matrix
+// whenever their list changes. The obvious alternative — patching only the
+// changed instances — needs a free list mapping cell → instance slot per mesh,
+// plus compaction when a tree in the middle is felled, plus a way to keep two
+// meshes' slots consistent. That is real bookkeeping to save work that measures
+// as follows:
 //
 //   3000 trees × (one compose + two setMatrixAt) ≈ tens of microseconds,
 //   plus a 192 KB instance-matrix upload per mesh.
@@ -24,7 +25,20 @@
 // the sculpt rate, ~10 Hz while a player is actively digging), and on the 60 s
 // keepalive. The worst case is therefore a few milliseconds per second during
 // sustained sculpting, on the CPU side of a frame that is drawing a thousand
-// terrain chunks. Bookkeeping loses.
+// terrain chunks. At THIS population, bookkeeping loses.
+//
+// THE MEADOW AND THE FRINGE DO NOT (GH #256, #260). Reread the arithmetic above
+// at their populations and it inverts: the meadow is FLORA_GRASS_CAP ×
+// GRASS_BLADES_PER_TUFT ≈ 205 000 matrices and a 28 MB upload, the fringe
+// 164 000 and 10.5 MB — measured at 5.4 ms for one uprooted cell on a
+// 4 293-tuft world and 12.6 ms at 10 846, arriving at the same ~10 Hz sculpt
+// rate against a 7.1 ms frame budget. So those two carry exactly the slot table
+// the paragraph above declined to build, and their CHANGES messages take a
+// delta path (applyGrassDelta, applyFringeDelta) that touches only the cells
+// named. One uprooted tuft is 0.003 ms and 640 B.
+//
+// Their FULL messages — join, unlock, the FLORA_KEEPALIVE_SECONDS repair —
+// still rebuild wholesale, which is also what resyncs the slot table.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type {
@@ -44,7 +58,6 @@ import {
   FLORA_STUMP_CHANGES_MESSAGE,
   FLORA_PLUGIN_NAME,
   cropKey,
-  fringeCellOf,
   fringeKey,
   grassKey,
   parseChangesPayload,
@@ -143,11 +156,21 @@ let sinceRetrySeconds = 0;
 /** Crops whose ground was unknown at the last rebuild — its own counter, since it is a different map on the same retry clock. */
 let pendingCropGround = 0;
 
-/** Tufts whose ground was unknown at the last rebuild. Third map, third counter, same clock. */
-let pendingGrassGround = 0;
+/**
+ * Tufts whose ground was unknown when they were last placed — the third map's
+ * retry state, on the same clock, but a SET rather than a counter.
+ *
+ * Because grass is now placed a delta at a time (GH #256), nothing walks the
+ * whole meadow to recount. A set is maintained by the same delta that placed
+ * the tufts: a sprout over unknown ground joins it, a sprout that resolves or a
+ * wither leaves it, and a full rebuild refills it from scratch. A bare counter
+ * cannot do that — it would double-count a cell that sprouts twice without an
+ * intervening wither.
+ */
+const pendingGrassGround = new Set<number>();
 
-/** Fringe plants whose ground was unknown at the last rebuild. Fourth map, fourth counter, same clock. */
-let pendingFringeGround = 0;
+/** Fringe plants whose ground was unknown when they were last placed. Fourth map, same clock, same set-not-counter reason. */
+const pendingFringeGround = new Set<number>();
 
 /** Stumps whose ground was unknown at the last rebuild. Fifth map, fifth counter, same clock. */
 let pendingStumpGround = 0;
@@ -160,42 +183,105 @@ function rebuild(ctx: ClientPluginCtx): void {
   sinceRetrySeconds = 0;
 }
 
+/** The one ground lookup every placement pass shares — hoisted so each pass allocates one closure, not one per cell. */
+function groundLookup(ctx: ClientPluginCtx): (x: number, y: number) => number | null {
+  return (x, y) => ctx.terrainHeightAt(x, y);
+}
+
 /**
- * REBUILDS ARE WHOLESALE HERE TOO, and this is the population where that
- * deserves a number rather than a shrug. The header's argument is
- * "3000 trees × one compose is tens of microseconds"; the meadow is up to
- * FLORA_GRASS_CAP × GRASS_BLADES_PER_TUFT ≈ 205k matrices, i.e. roughly
- * seventy times that — low single-digit milliseconds on a fully unlocked 512²
- * world, and only on a message that actually changed something.
+ * THE WHOLESALE REBUILD, and it is now the RARE path (GH #256): a full grass
+ * message — the join snapshot, an unlock, the FLORA_KEEPALIVE_SECONDS repair —
+ * replaces the meadow outright, because that message IS the whole population
+ * and there is nothing to diff it against.
  *
- * The frequency is what keeps it affordable: a survey delta at most every 5 s,
- * a sculpt delta at the sculpt rate, and the 60 s keepalive. It is the SCULPT
- * case that is worth naming — digging near grass rebuilds the whole meadow at
- * up to 10 Hz — and it is bounded by the same thing that bounds the cap: a
- * client only ever holds the grass on ground it has unlocked.
+ * It is the expensive one and it stays expensive: up to FLORA_GRASS_CAP ×
+ * GRASS_BLADES_PER_TUFT ≈ 205k matrices, measured at 3.93 ms for 4 293 tufts
+ * and 64 ms at the cap. What changed is that it no longer runs on every
+ * one-cell uproot — see applyGrassDelta, which is what the sculpt rate hits.
+ *
+ * It is also the RESYNC: the delta path's slot table, its conservative culling
+ * box and its over-cap drops are all repaired here, so any divergence lasts at
+ * most one keepalive.
  */
 function rebuildGrass(ctx: ClientPluginCtx): void {
   if (grassModels === null) return;
-  const result = grassPlacementsFor(grass.values(), (x, y) => ctx.terrainHeightAt(x, y));
+  const result = grassPlacementsFor(grass.values(), groundLookup(ctx));
   grassModels.apply(result.placements);
-  pendingGrassGround = result.pendingGround;
+  pendingGrassGround.clear();
+  for (const key of result.pendingCells) pendingGrassGround.add(key);
   sinceRetrySeconds = 0;
 }
 
 /**
- * REBUILDS ARE WHOLESALE HERE TOO, for rebuildGrass' reasons and at a quarter
- * of its worst case: FLORA_FRINGE_CAP × FRINGE_MAX_STEMS_PER_PLANT is under
- * 60k matrices against the meadow's ≈ 205k.
+ * THE DELTA PATH — what a sculpt actually hits, and the reason this plugin
+ * stopped costing a whole meadow per dug cell (GH #256).
+ *
+ * Correct only because a standing tuft's ground CANNOT move: the server uproots
+ * the grass on every cell it edits (server/index.ts's reactToTerrain) and
+ * `terrainHeightAt` is a per-cell lattice read, so a tuft that survives a
+ * sculpt has exactly the height it was placed at. Nothing else here needs
+ * re-placing, which is the whole licence for touching only the delta.
+ */
+function applyGrassDelta(
+  ctx: ClientPluginCtx,
+  sprouted: readonly GrassCell[],
+  withered: readonly GrassCell[],
+): void {
+  if (grassModels === null) return;
+  for (const cell of withered) pendingGrassGround.delete(grassKey(cell.x, cell.y));
+
+  const result = grassPlacementsFor(sprouted, groundLookup(ctx));
+  // A sprout that resolved CLEARS an earlier pending mark for the same cell:
+  // the retry clock must stop for a tuft that is now standing.
+  for (const placement of result.placements) {
+    pendingGrassGround.delete(grassKey(placement.cellX, placement.cellY));
+  }
+  for (const key of result.pendingCells) pendingGrassGround.add(key);
+
+  grassModels.applyDelta(result.placements, withered);
+  sinceRetrySeconds = 0;
+}
+
+/**
+ * THE WHOLESALE REBUILD, rebuildGrass' rare path at a quarter of its worst case
+ * (FLORA_FRINGE_CAP × FRINGE_MAX_STEMS_PER_PLANT is under 60k matrices against
+ * the meadow's ≈ 205k), and the same resync for the same reasons.
+ *
+ * The map goes STRAIGHT IN. It is already `Map<fringeKey, FringeSpecies>`,
+ * which is exactly what fringePlacementsFor now takes, so the array of decoded
+ * cells this used to build per rebuild is gone (GH #260).
  */
 function rebuildFringe(ctx: ClientPluginCtx): void {
   if (fringeModels === null) return;
-  const plants = Array.from(
-    fringe,
-    ([key, species]): readonly [FringeCell, FringeSpecies] => [fringeCellOf(key), species],
-  );
-  const result = fringePlacementsFor(plants, (x, y) => ctx.terrainHeightAt(x, y));
+  const result = fringePlacementsFor(fringe, groundLookup(ctx));
   fringeModels.apply(result.placements);
-  pendingFringeGround = result.pendingGround;
+  pendingFringeGround.clear();
+  for (const key of result.pendingCells) pendingFringeGround.add(key);
+  sinceRetrySeconds = 0;
+}
+
+/** applyGrassDelta, for the fringe — same licence, same server rule (reactToEdit strips the fringe on an edited cell). */
+function applyFringeDelta(
+  ctx: ClientPluginCtx,
+  sprouted: FringeBySpecies,
+  withered: readonly FringeCell[],
+): void {
+  if (fringeModels === null) return;
+  for (const cell of withered) pendingFringeGround.delete(fringeKey(cell.x, cell.y));
+
+  // Delta-sized, not population-sized: the two per-species lists flattened into
+  // the [key, species] pairs fringePlacementsFor reads.
+  const plants: Array<readonly [number, FringeSpecies]> = [];
+  for (const cell of sprouted.reed) plants.push([fringeKey(cell.x, cell.y), 'reed']);
+  for (const cell of sprouted.heather) plants.push([fringeKey(cell.x, cell.y), 'heather']);
+
+  const result = fringePlacementsFor(plants, groundLookup(ctx));
+  for (const placement of result.placements) {
+    pendingFringeGround.delete(fringeKey(placement.cellX, placement.cellY));
+  }
+  for (const key of result.pendingCells) pendingFringeGround.add(key);
+
+  fringeModels.applyDelta(result.placements, withered);
   sinceRetrySeconds = 0;
 }
 
@@ -334,8 +420,8 @@ export const clientPlugin: TerraceClientPlugin = {
     stumps.clear();
     pendingGround = 0;
     pendingCropGround = 0;
-    pendingGrassGround = 0;
-    pendingFringeGround = 0;
+    pendingGrassGround.clear();
+    pendingFringeGround.clear();
     pendingStumpGround = 0;
     sinceRetrySeconds = 0;
 
@@ -426,7 +512,9 @@ export const clientPlugin: TerraceClientPlugin = {
         const changes = parseGrassChangesPayload(payload);
         if (changes === null) return;
         applyGrassChanges(changes.sprouted, changes.withered);
-        rebuildGrass(ctx);
+        // The DELTA, not a rebuild: this is the message a sculpt produces, at
+        // up to the sculpt rate, and it names one or two cells (GH #256).
+        applyGrassDelta(ctx, changes.sprouted, changes.withered);
       }),
 
       // The fringe, on its own message pair — same shape a fourth time, with
@@ -442,7 +530,8 @@ export const clientPlugin: TerraceClientPlugin = {
         const changes = parseFringeChangesPayload(payload);
         if (changes === null) return;
         applyFringeChanges(changes.sprouted, changes.withered);
-        rebuildFringe(ctx);
+        // The DELTA, for rebuildGrass' handler's reason (GH #260).
+        applyFringeDelta(ctx, changes.sprouted, changes.withered);
       }),
 
       // The stumps, on their own message pair — same shape a fifth time.
@@ -465,8 +554,8 @@ export const clientPlugin: TerraceClientPlugin = {
       if (
         pendingGround === 0 &&
         pendingCropGround === 0 &&
-        pendingGrassGround === 0 &&
-        pendingFringeGround === 0 &&
+        pendingGrassGround.size === 0 &&
+        pendingFringeGround.size === 0 &&
         pendingStumpGround === 0
       ) {
         return;
@@ -475,8 +564,10 @@ export const clientPlugin: TerraceClientPlugin = {
       if (sinceRetrySeconds < FLORA_GROUND_RETRY_SECONDS) return;
       if (pendingGround !== 0) rebuild(ctx);
       if (pendingCropGround !== 0) rebuildCrops(ctx);
-      if (pendingGrassGround !== 0) rebuildGrass(ctx);
-      if (pendingFringeGround !== 0) rebuildFringe(ctx);
+      // The WHOLESALE rebuilds, deliberately: a chunk's heights have just
+      // arrived, so this is exactly the event the delta path cannot see.
+      if (pendingGrassGround.size !== 0) rebuildGrass(ctx);
+      if (pendingFringeGround.size !== 0) rebuildFringe(ctx);
       if (pendingStumpGround !== 0) rebuildStumps(ctx);
     });
   },
@@ -496,8 +587,8 @@ export const clientPlugin: TerraceClientPlugin = {
     stumps.clear();
     pendingGround = 0;
     pendingCropGround = 0;
-    pendingGrassGround = 0;
-    pendingFringeGround = 0;
+    pendingGrassGround.clear();
+    pendingFringeGround.clear();
     pendingStumpGround = 0;
     sinceRetrySeconds = 0;
 
