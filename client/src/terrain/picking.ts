@@ -25,6 +25,10 @@ import {
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
+import type { CellOccupancy, CellRayChord } from './occupancy.ts';
+
+/** Re-exported so a caller of the pick below needs one import, not two. */
+export type { CellColumn, CellOccupancy, CellRayChord } from './occupancy.ts';
 
 export interface Ndc {
   x: number;
@@ -326,24 +330,53 @@ function cellRevealed(mirror: TerrainMirror, x: number, y: number): boolean {
 }
 
 /**
- * The first terrain cell a world-space ray meets, or null if it meets none.
+ * One cell the ray passes through, in ray order.
  *
- * Cells in chunks the server has never sent are SKIPPED, not treated as
- * ground: they have no mesh, so the ray passes through unrevealed territory
- * and lands on revealed terrain behind it — exactly what the mesh raycast did,
- * and what keeps a click from sculpting land the client was never shown
- * (mirror.ts invariant 1).
+ * `tEnter`/`tExit` are the parameters at which the ray enters and leaves this
+ * cell's column, on the SAME ray the caller passed (see the scaling note in
+ * `marchCells`), so `origin + t·direction` is a world point for either of them.
+ * Return true to stop the walk.
+ */
+type CellVisitor = (i: number, j: number, tEnter: number, tExit: number) => boolean;
+
+/**
+ * How far above the terrain's own ceiling anything declared pickable may
+ * stand, in world units — the vertical headroom the march adds to the terrain
+ * slab so a canopy on a summit is still reachable.
+ *
+ * Four world units is sixteen terrace bands, comfortably over flora's tallest
+ * tree (1.5 units at scale 1, plugins/flora/client/models.ts) and over every
+ * creature and structure that stands on the ground. Anything taller than this
+ * is not something a player points at from across the map.
+ *
+ * The TERRAIN pick does not pay it: it passes the terrain's own ceiling, so
+ * that walk is byte-for-byte the one it was before this parameter existed.
+ */
+const MAX_STANDING_WORLD_HEIGHT = 4;
+
+/**
+ * Walks the cells a world-space ray crosses, nearest first, and hands each to
+ * `visit`.
+ *
+ * EXTRACTED (GH #252) rather than copied: two picks now march this lattice —
+ * the terrain pick below and the pointed-at pick after it — and a second copy
+ * of an Amanatides & Woo traverse is exactly the kind of duplication that lets
+ * one of them drift a cell away from the other. The traverse itself is
+ * unchanged; every comment on it is the original.
+ *
+ * `ceilingY` is the top of the vertical slab to clip against, in world units —
+ * the terrain's own ceiling for a terrain pick, that plus the headroom above
+ * for a pick that must also meet what stands on the terrain.
  *
  * `direction` need not be normalised; only its direction matters.
  */
-export function pickTerrainCellByRay(
-  mirror: TerrainMirror,
+function marchCells(
+  size: number,
   origin: Vec3,
   direction: Vec3,
-): TerrainRayPick | null {
-  const size = mirror.map.size;
-  if (size <= 0) return null;
-
+  ceilingY: number,
+  visit: CellVisitor,
+): void {
   // X/Z into CELL units; Y stays in world units. Scaling origin and direction
   // by the same factor on the same axes maps the ray to a ray with the SAME
   // parameter t, so one t indexes this mixed space consistently.
@@ -357,9 +390,9 @@ export function pickTerrainCellByRay(
     !Number.isFinite(ox) || !Number.isFinite(oz) || !Number.isFinite(oy) ||
     !Number.isFinite(dx) || !Number.isFinite(dz) || !Number.isFinite(dy)
   ) {
-    return null;
+    return;
   }
-  if (dx === 0 && dz === 0 && dy === 0) return null;
+  if (dx === 0 && dz === 0 && dy === 0) return;
 
   // Clip to the slab the world occupies before stepping. The Y clip is what
   // makes a near-horizon ray cheap: a camera high above the terrain starts
@@ -377,11 +410,11 @@ export function pickTerrainCellByRay(
     if (far < tMax) tMax = far;
     return tMin <= tMax;
   };
-  if (!clipSlab(ox, dx, 0, size)) return null;
-  if (!clipSlab(oz, dz, 0, size)) return null;
-  if (!clipSlab(oy, dy, MIN_TERRAIN_WORLD_Y, MAX_TERRAIN_WORLD_Y)) return null;
+  if (!clipSlab(ox, dx, 0, size)) return;
+  if (!clipSlab(oz, dz, 0, size)) return;
+  if (!clipSlab(oy, dy, MIN_TERRAIN_WORLD_Y, ceilingY)) return;
   if (tMin < 0) tMin = 0;
-  if (tMin > tMax) return null;
+  if (tMin > tMax) return;
 
   // Amanatides & Woo grid traversal over the cell lattice.
   const u = ox + tMin * dx;
@@ -406,65 +439,13 @@ export function pickTerrainCellByRay(
   const limit = marchStepLimit(size);
   let tEnter = tMin;
   for (let step = 0; step < limit; step++) {
-    if (i < 0 || i >= size || j < 0 || j >= size) return null;
+    if (i < 0 || i >= size || j < 0 || j >= size) return;
     const tExit = Math.min(tNextU, tNextV, tMax);
-    if (tExit < tEnter) return null;
+    if (tExit < tEnter) return;
 
-    if (cellRevealed(mirror, i, j)) {
-      const entryY = oy + tEnter * dy;
-      const exitY = oy + tExit * dy;
-      // Every span of this column, TOPMOST FIRST. A ray that crosses a cave
-      // meets the roof before the floor, and only the first one it meets is
-      // the one the player is pointing at — but "first" is along the ray, not
-      // up the column, so a rising ray meets them in the other order. Scanning
-      // all of them and keeping the earliest is the one rule that is right for
-      // both, and a column of one span makes it a single pass.
-      const count = spanCount(mirror.map, i, j);
-      let hit: TerrainRayPick | null = null;
-      let hitT = Infinity;
-      for (let k = count - 1; k >= 0; k--) {
-        const span = spanAt(mirror.map, i, j, k);
-        // A span too thin to reach a band boundary draws nothing, so there is
-        // nothing here to click.
-        if (!isSpanDrawn(span)) continue;
-        const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
-        const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
-        // The ray meets this span iff its Y sweep across the cell overlaps the
-        // span's drawn extent. Y is linear in t, so the two endpoints decide
-        // it: the sweep is [min, max] of them.
-        const lowY = entryY < exitY ? entryY : exitY;
-        const highY = entryY < exitY ? exitY : entryY;
-        if (lowY > capY || highY < baseY) continue;
-        // Where it met it, and how. Entering the cell already INSIDE the span
-        // means it came in through the riser; otherwise it crossed a
-        // horizontal face on the way through — the cap when it arrived from
-        // above, the underside when it arrived from below.
-        const insideOnEntry = entryY <= capY && entryY >= baseY;
-        const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
-        // dy === 0 is a level ray: it never crosses a face, so it can only be
-        // inside on entry, and then it met the span where it came in.
-        const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
-        if (t >= hitT) continue;
-        hitT = t;
-        hit = {
-          x: i,
-          y: j,
-          surfaceY: capY,
-          spanIndex: k,
-          hitRiser: insideOnEntry,
-          hitY: faceY,
-          // The SAME t that gave faceY, evaluated on the unscaled ray — the
-          // X/Z scaling above divides origin and direction by the same factor,
-          // which leaves t unchanged, so this is the world-space point the
-          // march just found rather than a re-derivation of it.
-          hitX: origin.x + t * direction.x,
-          hitZ: origin.z + t * direction.z,
-        };
-      }
-      if (hit !== null) return hit;
-    }
+    if (visit(i, j, tEnter, tExit)) return;
 
-    if (tExit >= tMax) return null;
+    if (tExit >= tMax) return;
     if (tNextU < tNextV) {
       i += stepI;
       tEnter = tNextU;
@@ -475,5 +456,190 @@ export function pickTerrainCellByRay(
       tNextV += tDeltaV;
     }
   }
-  return null;
+}
+
+/**
+ * The terrain hit inside ONE marched cell, or null when the ray passes through
+ * the column without meeting a drawn span.
+ *
+ * Cells in chunks the server has never sent are SKIPPED, not treated as
+ * ground: they have no mesh, so the ray passes through unrevealed territory
+ * and lands on revealed terrain behind it — exactly what the mesh raycast did,
+ * and what keeps a click from sculpting land the client was never shown
+ * (mirror.ts invariant 1).
+ */
+function terrainHitInCell(
+  mirror: TerrainMirror,
+  i: number,
+  j: number,
+  origin: Vec3,
+  direction: Vec3,
+  tEnter: number,
+  tExit: number,
+): TerrainRayPick | null {
+  if (!cellRevealed(mirror, i, j)) return null;
+
+  const oy = origin.y;
+  const dy = direction.y;
+  const entryY = oy + tEnter * dy;
+  const exitY = oy + tExit * dy;
+  // Every span of this column, TOPMOST FIRST. A ray that crosses a cave
+  // meets the roof before the floor, and only the first one it meets is
+  // the one the player is pointing at — but "first" is along the ray, not
+  // up the column, so a rising ray meets them in the other order. Scanning
+  // all of them and keeping the earliest is the one rule that is right for
+  // both, and a column of one span makes it a single pass.
+  const count = spanCount(mirror.map, i, j);
+  let hit: TerrainRayPick | null = null;
+  let hitT = Infinity;
+  for (let k = count - 1; k >= 0; k--) {
+    const span = spanAt(mirror.map, i, j, k);
+    // A span too thin to reach a band boundary draws nothing, so there is
+    // nothing here to click.
+    if (!isSpanDrawn(span)) continue;
+    const capY = spanCapHeight(span) * HEIGHT_WORLD_SCALE;
+    const baseY = spanUndersideHeight(span) * HEIGHT_WORLD_SCALE;
+    // The ray meets this span iff its Y sweep across the cell overlaps the
+    // span's drawn extent. Y is linear in t, so the two endpoints decide
+    // it: the sweep is [min, max] of them.
+    const lowY = entryY < exitY ? entryY : exitY;
+    const highY = entryY < exitY ? exitY : entryY;
+    if (lowY > capY || highY < baseY) continue;
+    // Where it met it, and how. Entering the cell already INSIDE the span
+    // means it came in through the riser; otherwise it crossed a
+    // horizontal face on the way through — the cap when it arrived from
+    // above, the underside when it arrived from below.
+    const insideOnEntry = entryY <= capY && entryY >= baseY;
+    const faceY = insideOnEntry ? entryY : entryY > capY ? capY : baseY;
+    // dy === 0 is a level ray: it never crosses a face, so it can only be
+    // inside on entry, and then it met the span where it came in.
+    const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
+    if (t >= hitT) continue;
+    hitT = t;
+    hit = {
+      x: i,
+      y: j,
+      surfaceY: capY,
+      spanIndex: k,
+      hitRiser: insideOnEntry,
+      hitY: faceY,
+      // The SAME t that gave faceY, evaluated on the unscaled ray — the
+      // X/Z scaling above divides origin and direction by the same factor,
+      // which leaves t unchanged, so this is the world-space point the
+      // march just found rather than a re-derivation of it.
+      hitX: origin.x + t * direction.x,
+      hitZ: origin.z + t * direction.z,
+    };
+  }
+  return hit;
+}
+
+/**
+ * The first terrain cell a world-space ray meets, or null if it meets none.
+ *
+ * `direction` need not be normalised; only its direction matters.
+ */
+export function pickTerrainCellByRay(
+  mirror: TerrainMirror,
+  origin: Vec3,
+  direction: Vec3,
+): TerrainRayPick | null {
+  const size = mirror.map.size;
+  if (size <= 0) return null;
+
+  let found: TerrainRayPick | null = null;
+  marchCells(size, origin, direction, MAX_TERRAIN_WORLD_Y, (i, j, tEnter, tExit) => {
+    found = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
+    return found !== null;
+  });
+  return found;
+}
+
+/** Where a pointed-at pick landed: the cell, and how far away it was. */
+export interface PointedCellPick {
+  readonly x: number;
+  readonly y: number;
+  /** World-space distance from the ray origin to the hit point. */
+  readonly distance: number;
+}
+
+/**
+ * The cell the player is POINTING AT: the first cell where the ray meets
+ * either something standing on the ground (`occupants`) or the terrain itself.
+ *
+ * ONE MARCH, BOTH QUESTIONS, and that is what this exists for (GH #252). The
+ * alternative — a Three.js raycast over every declared object — costs the whole
+ * declared world per call, because an `InstancedMesh` is tested per instance
+ * and a world-spanning forest's bounding sphere accepts every on-canvas ray
+ * (and every off-canvas one). This walks the cells the ray actually crosses,
+ * which is tens of them, and asks each registrant one question per cell.
+ *
+ * WITHIN one cell an occupant wins over the terrain, which costs nothing to
+ * decide: both hits are inside the same column, so the CELL is the same either
+ * way and only `distance` could differ.
+ */
+export function pickPointedCellByRay(
+  mirror: TerrainMirror,
+  origin: Vec3,
+  direction: Vec3,
+  occupants: readonly CellOccupancy[],
+): PointedCellPick | null {
+  const size = mirror.map.size;
+  if (size <= 0) return null;
+
+  // `distance` is world-space, so t is scaled by the ray's own length — the
+  // caller is not required to hand over a unit direction.
+  const dirLength = Math.hypot(direction.x, direction.y, direction.z);
+  if (!(dirLength > 0)) return null;
+
+  const oy = origin.y;
+  const dy = direction.y;
+
+  const ceilingY = MAX_TERRAIN_WORLD_Y + MAX_STANDING_WORLD_HEIGHT;
+  // Refilled per cell rather than allocated per cell: the march visits tens of
+  // them per pick and this runs on pointer events.
+  const chord = { fromX: 0, fromZ: 0, toX: 0, toZ: 0 };
+
+  let found: PointedCellPick | null = null;
+  marchCells(size, origin, direction, ceilingY, (i, j, tEnter, tExit) => {
+    const entryY = oy + tEnter * dy;
+    const exitY = oy + tExit * dy;
+    const lowY = entryY < exitY ? entryY : exitY;
+    const highY = entryY < exitY ? exitY : entryY;
+
+    if (occupants.length > 0) {
+      chord.fromX = origin.x + tEnter * direction.x;
+      chord.fromZ = origin.z + tEnter * direction.z;
+      chord.toX = origin.x + tExit * direction.x;
+      chord.toZ = origin.z + tExit * direction.z;
+    }
+
+    for (const occupant of occupants) {
+      const column = occupant(i, j, chord);
+      if (column === null) continue;
+      if (lowY > column.hiY || highY < column.loY) continue;
+      // The same face arithmetic the terrain spans get: inside on entry means
+      // the ray came in through the side of the column, otherwise it crossed
+      // the top or the bottom on the way through.
+      const insideOnEntry = entryY <= column.hiY && entryY >= column.loY;
+      const faceY = insideOnEntry ? entryY : entryY > column.hiY ? column.hiY : column.loY;
+      const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
+      found = { x: i, y: j, distance: t * dirLength };
+      return true;
+    }
+
+    const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit);
+    if (terrain === null) return false;
+    found = {
+      x: terrain.x,
+      y: terrain.y,
+      distance: Math.hypot(
+        terrain.hitX - origin.x,
+        terrain.hitY - origin.y,
+        terrain.hitZ - origin.z,
+      ),
+    };
+    return true;
+  });
+  return found;
 }
