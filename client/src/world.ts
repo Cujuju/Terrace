@@ -17,6 +17,8 @@ import {
   bandOf,
   cellIndex,
   chunkIndex,
+  chunkIndexOfCell,
+  chunksPerEdge,
   quantizeToBand,
   spanAt,
   spanCapHeight,
@@ -198,6 +200,33 @@ export interface World extends TerrainSink {
    */
   terrainHeightAt(x: number, y: number): number | null;
   /**
+   * AN OPAQUE COUNTER THAT CHANGES WHENEVER THE RENDERED TERRAIN NEAR (x, y)
+   * MAY HAVE CHANGED — the cache key for anything derived from the ground.
+   *
+   * WHAT IT IS FOR. A reader that computes something from a patch of terrain (a
+   * settlement's site classification, say) has no cheap way to ask "is my
+   * answer still good?", so it either recomputes on every event that might have
+   * touched the ground or goes stale. This answers exactly that question, in
+   * one array read: equal values mean the chunk holding this cell has not been
+   * rewritten since; a different value means it may have been.
+   *
+   * PER CHUNK, NOT PER CELL, and deliberately: the dirty sets this file already
+   * derives to patch the terrain meshes are chunk sets, so a chunk-granular
+   * counter is a re-use of work rather than a second derivation of "what
+   * changed" that could disagree with the meshes. A reader whose patch spans
+   * several chunks asks about each of them.
+   *
+   * CONSERVATIVE IN THE SAFE DIRECTION: a chunk is marked whenever the meshes
+   * are, which includes a predicted sculpt and its authoritative echo, and a
+   * chunk's back-neighbours across a shared border. It may therefore report a
+   * change where a particular reader would have seen none; it never misses one.
+   *
+   * COMPARE FOR EQUALITY ONLY. The value is monotonic within a session, but its
+   * magnitude, its step size and its behaviour across a rejoin are not part of
+   * the contract. 0 before the first snapshot.
+   */
+  terrainRevisionAt(x: number, y: number): number;
+  /**
    * World-space Y of the cap of ONE span — the `spanIndex` a pick reported —
    * at cell (x, y), or null when that span no longer exists (the column was
    * carved, welded or the chunk left). The surface a cached pick must be
@@ -328,6 +357,38 @@ export function createWorld(viewport: Viewport): World {
   let meshes: TerrainMeshes | null = null;
   let layerEdges: LayerEdgeOverlay | null = null;
   let predictions: PredictionStore | null = null;
+
+  /**
+   * PER-CHUNK TERRAIN-CHANGE COUNTERS — the cheap "has the ground here moved?"
+   * question, for readers that cache something derived from terrain and need to
+   * know when to throw it away (`terrainRevisionAt` below is the only way to
+   * read them).
+   *
+   * ONE COUNTER PER CHUNK, BUMPED WHEREVER THE DIRTY SET IS ALREADY KNOWN —
+   * `applyDirty`, the snapshot and the chunk unlock, which are the three places
+   * this file changes rendered heights. Every one of them already computes the
+   * chunks that moved (a dirty set is what patches the meshes), so this adds an
+   * increment per dirty chunk and no new derivation that could disagree with
+   * the meshes about what changed.
+   *
+   * MONOTONIC, NEVER RESET IN PLACE. Readers are contracted to compare values
+   * for equality only, and several of them fingerprint a NEIGHBOURHOOD by
+   * summing the counters of the chunks it covers — which is only collision-free
+   * because a counter can never come back down. A rejoin therefore reallocates
+   * the array AND bumps `terrainEpoch`, so every chunk of the new world reads
+   * higher than any value the old one ever showed rather than restarting at 0.
+   */
+  let chunkRevisions: Int32Array | null = null;
+  let terrainEpoch = 0;
+
+  /** Marks a dirty set's chunks as changed. Safe with an empty set. */
+  const noteTerrainRevisions = (dirty: ReadonlySet<number>): void => {
+    if (chunkRevisions === null) return;
+    for (const idx of dirty) {
+      if (idx >= 0 && idx < chunkRevisions.length) chunkRevisions[idx]++;
+    }
+  };
+
   /**
    * World size the camera has already been aimed at — framed OR restored from
    * a saved pose; 0 before the first snapshot.
@@ -420,6 +481,7 @@ export function createWorld(viewport: Viewport): World {
     // correctly predicted sculpt arrives with an empty set several times a
     // second, and this guard is what makes that echo free.
     if (dirty.size > 0) {
+      noteTerrainRevisions(dirty);
       meshes?.update(dirty);
       // WHAT THIS SET IS GOOD FOR, and what it is not. `fog` and `water` read
       // the MIRROR — heights and `received` — which the caller has already
@@ -481,6 +543,12 @@ export function createWorld(viewport: Viewport): World {
     ground: DrawnGround;
   } => {
     meshes?.dispose();
+    // A NEW WORLD IS ENTIRELY NEW TERRAIN. Fresh counters, and an epoch bump so
+    // no chunk of it can read equal to a value the previous world published —
+    // see chunkRevisions' declaration for why that matters to a reader summing
+    // several of them.
+    terrainEpoch++;
+    chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
     const nextMirror = createTerrainMirror(worldSize);
     // The frame hook is what turns chunk meshing into a multi-frame job
     // (render/terrainMeshes.ts, issue #47): heavy chunks queue instead of
@@ -629,6 +697,7 @@ export function createWorld(viewport: Viewport): World {
         },
         nowMs(),
       );
+      noteTerrainRevisions(snapshotDirty);
       fresh.meshes.update(snapshotDirty);
       // No lip refresh here: the overlay follows build completion, and these
       // chunks have only just been queued (see applyDirty's note).
@@ -702,6 +771,7 @@ export function createWorld(viewport: Viewport): World {
       // `onChunkDrawn`, wired in resetWorld. The exception is the direct build
       // source, where `update` flushes and the publish happens inside the call;
       // that is what the tests and the preview harnesses run on.
+      noteTerrainRevisions(unlockDirty);
       meshes.update(unlockDirty);
       // Same as the snapshot path: the lips follow the builds, not the queue.
       // Territory just crept outward — move the mist with it. `received`
@@ -772,6 +842,18 @@ export function createWorld(viewport: Viewport): World {
     terrainHeightAt(x: number, y: number): number | null {
       if (mirror === null) return null;
       return quantizeToBand(sampleHeight(mirror, x, y)) * HEIGHT_WORLD_SCALE;
+    },
+
+    terrainRevisionAt(x: number, y: number): number {
+      if (mirror === null || chunkRevisions === null) return 0;
+      // CLAMPED EXACTLY AS `sampleHeight` CLAMPS, so that a caller sampling one
+      // cell past the world border gets the revision of the very chunk that
+      // answered its height query. Asking the two for different cells is the
+      // one way this could report "unchanged" over ground that had moved.
+      const max = mirror.map.size - 1;
+      const cx = x < 0 ? 0 : x > max ? max : x;
+      const cy = y < 0 ? 0 : y > max ? max : y;
+      return terrainEpoch + chunkRevisions[chunkIndexOfCell(mirror.map.size, cx, cy)];
     },
 
     spanCapAt(x: number, y: number, spanIndex: number): number | null {

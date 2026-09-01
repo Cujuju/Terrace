@@ -15,12 +15,15 @@
 // rather than inside models.ts, which only ever consumes the answer. A
 // coastal placement also seeds this settlement's SKIFFS (skiffs.ts) from the
 // SAME neighbourhood survey site.ts already did to answer the site question
-// — one scan of the search disc, not two.
+// — one scan of the search disc, not two. That scan is MEMOISED across
+// rebuilds when the caller supplies a SiteSurveyCache (site.ts): the answer
+// only moves when the terrain under the disc does, and a delta of one
+// structure otherwise pays for a survey of every structure (GH #258).
 
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { settlementRace, structureVariation, type StructureCell } from '../protocol.ts';
 import type { StructurePlacement } from './models.ts';
-import { surveySite } from './site.ts';
+import { surveySite, type SiteSurveyCache } from './site.ts';
 import { skiffsForSettlement, type SkiffPlacement } from './skiffs.ts';
 
 /**
@@ -53,12 +56,17 @@ export interface PlacementResult {
  * floating in the ocean or hanging in the air, and both are worse than simply
  * not drawing it until its chunk streams in.
  */
-export function placementsFor(cells: Iterable<StructureCell>, groundAt: GroundLookup): PlacementResult {
+export function placementsFor(
+  cells: Iterable<StructureCell>,
+  groundAt: GroundLookup,
+  surveys?: SiteSurveyCache,
+): PlacementResult {
   const placements: StructurePlacement[] = [];
   const skiffs: SkiffPlacement[] = [];
   let pendingGround = 0;
   let pendingSite = 0;
 
+  surveys?.beginPass();
   for (const cell of cells) {
     const groundY = groundAt(cell.x, cell.y);
     if (groundY === null) {
@@ -66,7 +74,15 @@ export function placementsFor(cells: Iterable<StructureCell>, groundAt: GroundLo
       continue;
     }
 
-    const survey = surveySite(groundAt, cell.x, cell.y);
+    // THE ONE EXPENSIVE STEP IN THIS LOOP, and the reason the cache exists
+    // (GH #258): a survey is 748 ground samples, and this loop runs over every
+    // structure on every delta. An uncached caller — the tests, and anything
+    // with no terrain-revision source — still gets the identical answer from
+    // the identical call.
+    const survey =
+      surveys === undefined
+        ? surveySite(groundAt, cell.x, cell.y)
+        : surveys.surveyAt(groundAt, cell.x, cell.y);
     if (survey.pending) pendingSite++;
 
     const variation = structureVariation(cell.x, cell.y);
@@ -94,5 +110,6 @@ export function placementsFor(cells: Iterable<StructureCell>, groundAt: GroundLo
     }
   }
 
+  surveys?.endPass();
   return { placements, skiffs, pendingGround, pendingSite };
 }

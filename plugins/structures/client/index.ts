@@ -29,6 +29,7 @@ import {
 } from '../protocol.ts';
 import { createStructureModels, type StructureModels } from './models.ts';
 import { placementsFor } from './placement.ts';
+import { createSiteSurveyCache, type SiteSurveyCache } from './site.ts';
 import { createSkiffModels, type SkiffModels } from './skiffModels.ts';
 
 /**
@@ -46,6 +47,11 @@ export const STRUCTURES_GROUND_RETRY_SECONDS = 0.5;
 let models: StructureModels | null = null;
 /** Card 33 ("Fishing Villages"): the boats coastal settlements float — see skiffs.ts/skiffModels.ts. */
 let skiffModels: SkiffModels | null = null;
+/**
+ * Card 33's SITE survey, memoised across rebuilds (GH #258) — see site.ts.
+ * Session-scoped exactly like `models`: attach builds it, dispose drops it.
+ */
+let siteSurveys: SiteSurveyCache | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 
@@ -59,7 +65,17 @@ let sinceRetrySeconds = 0;
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
-  const result = placementsFor(buildings.values(), (x, y) => ctx.terrainHeightAt(x, y));
+  // EVERY STRUCTURE IS RE-PLACED, AND THAT PART IS CHEAP: a placement is one
+  // ground lookup and some arithmetic. What was not cheap is the SITE SURVEY
+  // each placement used to redo — 748 ground samples per structure, on a delta
+  // that may hold one founding (GH #258). The cache answers from the previous
+  // pass for every structure whose surrounding terrain has not moved, which on
+  // a CA generation or a keepalive is all of them.
+  const result = placementsFor(
+    buildings.values(),
+    (x, y) => ctx.terrainHeightAt(x, y),
+    siteSurveys ?? undefined,
+  );
   models.apply(result.placements);
   skiffModels?.apply(result.skiffs);
   pendingGround = result.pendingGround;
@@ -116,6 +132,7 @@ export const clientPlugin: TerraceClientPlugin = {
     pendingSite = 0;
     sinceRetrySeconds = 0;
 
+    siteSurveys = createSiteSurveyCache((x, y) => ctx.terrainRevisionAt(x, y));
     models = createStructureModels();
     ctx.layer.add(models.root);
     skiffModels = createSkiffModels();
@@ -165,6 +182,8 @@ export const clientPlugin: TerraceClientPlugin = {
     pendingSite = 0;
     sinceRetrySeconds = 0;
 
+    siteSurveys?.clear();
+    siteSurveys = null;
     models?.dispose();
     models = null;
     skiffModels?.dispose();

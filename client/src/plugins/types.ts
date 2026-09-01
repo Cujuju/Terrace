@@ -100,6 +100,35 @@ export interface ClientPluginCtx {
   terrainHeightAt(x: number, y: number): number | null;
 
   /**
+   * AN OPAQUE COUNTER THAT CHANGES WHENEVER THE TERRAIN NEAR CELL (x, y) MAY
+   * HAVE CHANGED — the cache key for anything a plugin derives from the ground.
+   *
+   * WHY A PLUGIN WANTS THIS. A plugin that reads a patch of terrain to decide
+   * something (structures classifies each settlement's SITE from a 748-cell
+   * disc, plugins/structures/client/site.ts) otherwise has to redo that read on
+   * every event that could conceivably have moved the ground — which, for a
+   * plugin driven by its own server deltas, means on every delta, however
+   * small. Comparing this value against the one held alongside a cached answer
+   * turns that into one array read per chunk the patch covers.
+   *
+   * PER CHUNK (`CHUNK_SIZE`, @terrace/shared), not per cell: it mirrors the
+   * dirty sets core already derives to patch the terrain meshes. A plugin whose
+   * patch spans more than one chunk asks about each of them — stepping by
+   * CHUNK_SIZE across the patch is enough to touch every one.
+   *
+   * CONSERVATIVE IN THE SAFE DIRECTION: it may report a change where a
+   * particular reader would have seen none (a predicted sculpt, its
+   * authoritative echo, a neighbouring chunk across a shared border). It never
+   * misses one.
+   *
+   * COMPARE FOR EQUALITY ONLY. The value is monotonic within a session, so
+   * summing it over a FIXED set of chunks is a collision-free fingerprint of
+   * that neighbourhood; nothing else about its magnitude or step size is
+   * promised. 0 until the first snapshot arrives.
+   */
+  terrainRevisionAt(x: number, y: number): number;
+
+  /**
    * World-space Y of the cap the terrain ACTUALLY DRAWS at a (fractional) cell
    * coordinate. Null until the first snapshot arrives.
    *

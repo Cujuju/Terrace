@@ -284,7 +284,9 @@ describe('site survey (card 33, coastal classification)', () => {
     const survey = surveySite(worldWithWater(waterCells), CENTER.x, CENTER.y);
     expect(survey.kind).toBe('coastal');
     expect(survey.pending).toBe(false);
-    expect(survey.waterCells.length).toBe(COASTAL_MIN_WATER_CELLS);
+    // A survey KEEPS only the anchors a fleet can use, not the whole shoreline
+    // it counted (GH #258, site.ts's SURVEY_WATER_CELLS_RETAINED).
+    expect(survey.waterCells.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
   });
 
   it('classifies a fully dry, fully known neighbourhood inland — never pending', () => {
@@ -335,7 +337,7 @@ describe('site survey (card 33, coastal classification)', () => {
 
     const distanceOf = (cell: { x: number; y: number }): number =>
       (cell.x - CENTER.x) ** 2 + (cell.y - CENTER.y) ** 2;
-    expect(survey.waterCells.length).toBe(COASTAL_MIN_WATER_CELLS);
+    expect(survey.waterCells.length).toBe(SKIFF_MAX_PER_SETTLEMENT);
     for (let i = 1; i < survey.waterCells.length; i++) {
       expect(distanceOf(survey.waterCells[i]!)).toBeGreaterThanOrEqual(
         distanceOf(survey.waterCells[i - 1]!),
