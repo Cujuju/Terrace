@@ -10,6 +10,14 @@
 // matrix write per puff per server push — twice a second — and nothing per
 // frame in between.
 //
+// THAT LAST CLAUSE WAS A LIE FOR A WHILE, and the fix is `layoutDirty` below:
+// update() rewrote all six buffers every frame, with no update range, so a
+// single 810-puff cyclone re-uploaded all 1 620 capacity slots of all six at
+// frame rate to redraw data that had not moved since the push. The one value
+// that genuinely does move between pushes is a deck's `strength` while it
+// disperses, and that is one float per puff on one buffer — handled on its own
+// path, so a steady cyclone once again costs a frame nothing but two uniforms.
+//
 // The alternative, a puff per Sprite, is PUFFS_PER_SPIRAL draw calls of two
 // triangles each against a 7 ms frame budget: the project's standing render
 // defect (low triangles-per-call over a shared material) in its purest form.
@@ -253,6 +261,15 @@ interface Spiral {
   /** 1 while the server is broadcasting it; falls over SPIRAL_DISPERSE_SECONDS. */
   presence: number;
   intensity: number;
+  /**
+   * First instance slot this deck occupies, set by the last full rewrite.
+   *
+   * Remembered rather than recomputed so a frame that only needs to change one
+   * deck's strength knows where to write it without walking the others.
+   */
+  slotBase: number;
+  /** The strength value currently sitting in the buffer for those slots. */
+  writtenStrength: number;
 }
 
 /**
@@ -346,6 +363,94 @@ export function createSpiral(): SpiralRenderer {
   const rotation = new Quaternion();
   const scale = new Vector3(1, 1, 1);
 
+  /**
+   * Set whenever the instance LAYOUT stops matching the buffers — a deck
+   * added, dropped, or moved/resized by a server push.
+   *
+   * This is what makes the file's own header true again (see it: "one matrix
+   * write per puff per server push — twice a second — and nothing per frame in
+   * between"). Everything the six buffers hold is a function of the push:
+   * position, arm, distance along the arm, seed and radius. Only `strength`
+   * moves between pushes, and only while a deck is dispersing.
+   */
+  let layoutDirty = false;
+  /** Instances the buffers currently describe — mesh.count, remembered. */
+  let drawn = 0;
+
+  /**
+   * Writes every buffer for every live deck, and records where each one landed.
+   *
+   * Called only when layoutDirty says the slot assignment or the push data
+   * changed, which on a live world is twice a second and not 140 times.
+   */
+  function writeLayout(): void {
+    const armArray = arms.array as Float32Array;
+    const alongArray = alongs.array as Float32Array;
+    const seedArray = seeds.array as Float32Array;
+    const radiusArray = radii.array as Float32Array;
+    const strengthArray = strengths.array as Float32Array;
+    drawn = 0;
+
+    for (const spiral of spirals.values()) {
+      // THE DECK IS PLACED AT A FIXED HEIGHT, not on the ground: it is a
+      // cloud layer, and where the ground under it happens to be is
+      // irrelevant. That is also why this renderer never asks for a ground Y
+      // — the funnel does, because a funnel stands on something.
+      position.set(spiral.x, 0, spiral.z);
+      matrix.compose(position, rotation, scale);
+      const strength = spiral.presence * spiral.intensity;
+      spiral.slotBase = drawn;
+      spiral.writtenStrength = strength;
+
+      for (let arm = 0; arm < ARMS_PER_SPIRAL; arm++) {
+        for (let i = 0; i < PUFFS_PER_ARM; i++) {
+          mesh.setMatrixAt(drawn, matrix);
+          armArray[drawn] = arm / ARMS_PER_SPIRAL;
+          // EVENLY SPACED ALONG THE ARM, which is what makes an arm read as an
+          // arm.
+          //
+          // IT WAS SQUARE-ROOTED FIRST, on the reasoning that area grows with
+          // radius so the puffs should bunch outward to keep the density even.
+          // That reasoning is right about DENSITY and wrong about this
+          // picture: even density is a uniform disc, and the preview showed
+          // exactly that — a bright annulus with no arms in it, because sqrt
+          // piles most of the puffs into the outer third. Even spacing along
+          // the arm keeps each arm a continuous line at every radius, and the
+          // gaps between arms are the whole point.
+          alongArray[drawn] = (i + 0.5) / PUFFS_PER_ARM;
+          seedArray[drawn] = (spiral.seed + drawn * 0.6180339887) % 1;
+          radiusArray[drawn] = spiral.radiusWorldUnits;
+          strengthArray[drawn] = strength;
+          drawn++;
+        }
+      }
+    }
+
+    mesh.count = drawn;
+    // NAMED RANGES, not the whole pool. The buffers are capacity-sized
+    // (MAX_SPIRALS x PUFFS_PER_SPIRAL) and three's WebGLAttributes.updateBuffer
+    // falls back to `bufferSubData(target, 0, array)` for an attribute with no
+    // update range, so one 810-puff cyclone used to move all 1 620 slots of
+    // all six buffers. Cleared first for the reason lavaFlow.ts's rebuild
+    // states: three clears ranges only when it actually uploads, so a rewrite
+    // driven by a message rather than by a frame would otherwise stack them.
+    markUploaded(mesh.instanceMatrix, drawn);
+    markUploaded(arms, drawn);
+    markUploaded(alongs, drawn);
+    markUploaded(seeds, drawn);
+    markUploaded(radii, drawn);
+    markUploaded(strengths, drawn);
+  }
+
+  /** Queues `instances` worth of `attribute` for upload, and nothing beyond. */
+  function markUploaded(attribute: InstancedBufferAttribute, instances: number): void {
+    attribute.clearUpdateRanges();
+    // In ARRAY ELEMENTS, not instances: three multiplies the start by the
+    // array's BYTES_PER_ELEMENT itself, so the count carries the itemSize.
+    attribute.addUpdateRange(0, instances * attribute.itemSize);
+    attribute.needsUpdate = true;
+  }
+
   return {
     root,
 
@@ -357,6 +462,12 @@ export function createSpiral(): SpiralRenderer {
         const existing = spirals.get(storm.id);
         if (existing !== undefined) {
           existing.alive = true;
+          // A MOVE OR A RESIZE IS A LAYOUT CHANGE; a change of intensity is
+          // not — intensity only reaches the buffers through `strength`, which
+          // has its own one-buffer path in update().
+          if (existing.x !== storm.x || existing.z !== storm.z || existing.radiusWorldUnits !== radiusWorldUnits) {
+            layoutDirty = true;
+          }
           existing.x = storm.x;
           existing.z = storm.z;
           existing.radiusWorldUnits = radiusWorldUnits;
@@ -374,7 +485,10 @@ export function createSpiral(): SpiralRenderer {
           // own intensity is the fade-in.
           presence: 1,
           intensity: storm.intensity,
+          slotBase: 0,
+          writtenStrength: Number.NaN,
         });
+        layoutDirty = true;
       }
     },
 
@@ -384,16 +498,11 @@ export function createSpiral(): SpiralRenderer {
 
       if (spirals.size === 0) {
         mesh.count = 0;
+        drawn = 0;
         return;
       }
 
-      const armArray = arms.array as Float32Array;
-      const alongArray = alongs.array as Float32Array;
-      const seedArray = seeds.array as Float32Array;
-      const radiusArray = radii.array as Float32Array;
-      const strengthArray = strengths.array as Float32Array;
-      let drawn = 0;
-
+      // ── The life cycle, which is the only thing a frame actually advances ──
       for (const [id, spiral] of spirals) {
         if (spiral.alive) {
           // A storm that was dispersing and came back (a dropped message, a
@@ -403,49 +512,37 @@ export function createSpiral(): SpiralRenderer {
           spiral.presence -= dt / SPIRAL_DISPERSE_SECONDS;
           if (spiral.presence <= 0) {
             spirals.delete(id);
-            continue;
-          }
-        }
-
-        // THE DECK IS PLACED AT A FIXED HEIGHT, not on the ground: it is a
-        // cloud layer, and where the ground under it happens to be is
-        // irrelevant. That is also why this renderer never asks for a ground Y
-        // — the funnel does, because a funnel stands on something.
-        position.set(spiral.x, 0, spiral.z);
-        matrix.compose(position, rotation, scale);
-        const strength = spiral.presence * spiral.intensity;
-
-        for (let arm = 0; arm < ARMS_PER_SPIRAL; arm++) {
-          for (let i = 0; i < PUFFS_PER_ARM; i++) {
-            mesh.setMatrixAt(drawn, matrix);
-            armArray[drawn] = arm / ARMS_PER_SPIRAL;
-            // EVENLY SPACED ALONG THE ARM, which is what makes an arm read as an
-            // arm.
-            //
-            // IT WAS SQUARE-ROOTED FIRST, on the reasoning that area grows with
-            // radius so the puffs should bunch outward to keep the density even.
-            // That reasoning is right about DENSITY and wrong about this
-            // picture: even density is a uniform disc, and the preview showed
-            // exactly that — a bright annulus with no arms in it, because sqrt
-            // piles most of the puffs into the outer third. Even spacing along
-            // the arm keeps each arm a continuous line at every radius, and the
-            // gaps between arms are the whole point.
-            alongArray[drawn] = (i + 0.5) / PUFFS_PER_ARM;
-            seedArray[drawn] = (spiral.seed + drawn * 0.6180339887) % 1;
-            radiusArray[drawn] = spiral.radiusWorldUnits;
-            strengthArray[drawn] = strength;
-            drawn++;
+            layoutDirty = true;
           }
         }
       }
 
-      mesh.count = drawn;
-      mesh.instanceMatrix.needsUpdate = true;
-      arms.needsUpdate = true;
-      alongs.needsUpdate = true;
-      seeds.needsUpdate = true;
-      radii.needsUpdate = true;
-      strengths.needsUpdate = true;
+      if (spirals.size === 0) {
+        mesh.count = 0;
+        drawn = 0;
+        layoutDirty = false;
+        return;
+      }
+
+      if (layoutDirty) {
+        writeLayout();
+        layoutDirty = false;
+        return;
+      }
+
+      // ── The steady state: at most one float per puff, and usually none ────
+      // A deck that is neither dispersing nor newly pushed has the strength it
+      // already has in the buffer, so this writes nothing at all.
+      const strengthArray = strengths.array as Float32Array;
+      let touched = false;
+      for (const spiral of spirals.values()) {
+        const strength = spiral.presence * spiral.intensity;
+        if (strength === spiral.writtenStrength) continue;
+        strengthArray.fill(strength, spiral.slotBase, spiral.slotBase + PUFFS_PER_SPIRAL);
+        spiral.writtenStrength = strength;
+        touched = true;
+      }
+      if (touched) markUploaded(strengths, drawn);
     },
 
     dispose(): void {
