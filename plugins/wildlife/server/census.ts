@@ -88,11 +88,19 @@ import { WILDLIFE_POPULATION_CAP } from '../protocol.ts';
 export { WILDLIFE_POPULATION_CAP };
 
 /**
- * Seconds between habitat censuses. The census walks every cell of every
- * unlocked chunk (262 144 cells on a fully revealed 512² world, ~1 ms), so it
- * must not run per tick; but habitat only changes when terrain or the unlock
- * mask changes, both of which are human-paced. 5 s is imperceptible for
- * population drift and costs on the order of 0.02% of a core.
+ * Seconds between habitat censuses. Habitat only changes when terrain or the
+ * unlock mask changes, both of which are human-paced, so a per-tick census
+ * would be answering the same question 50 times over.
+ *
+ * COST, MEASURED (issue #268, 2026-09-01) — the previous note here claimed
+ * "262 144 cells on a fully revealed 512² world, ~1 ms" and was stale on both
+ * axes: worlds are 2048² now (4 194 304 cells over 16 384 chunks), and a full
+ * scan of one measures **94.6 ms**, ~95% of a 100 ms tick, not 1 ms. The scan
+ * is gone: ./census-index.ts holds per-chunk habitat counts and re-counts only
+ * the chunks a sculpt or an unlock actually touched, so what runs on this
+ * timer is an O(chunks) sum over cached counts (sub-millisecond) plus the
+ * dirty chunks themselves. The interval stays at 5 s because it now bounds
+ * how stale a population target may be, not how often the world is walked.
  */
 export const HABITAT_CENSUS_INTERVAL_SECONDS = 5;
 
@@ -219,22 +227,85 @@ export interface Census {
   readonly chunks: ReadonlyArray<readonly [number, number]>;
 }
 
-/** Counts habitat cells and collects unlocked chunks in one pass. */
+/**
+ * The habitat classes in their storage order — the one place the mapping from
+ * `Habitat` to a slot in a counts array is decided. `census-index.ts` stores
+ * three Int32 counts per chunk against these positions; `takeCensus` below
+ * reads them back through the same table, so the cached and the scanned answer
+ * cannot disagree about which number is which.
+ */
+export const HABITAT_CLASSES = ['land', 'shallow', 'deep'] as const;
+
+/** How many counts one chunk's slice of a habitat-counts array holds. */
+export const HABITAT_CLASS_COUNT = HABITAT_CLASSES.length;
+
+/**
+ * Which slot in a counts array each habitat class occupies. Exported so
+ * `census-index.ts` can read a chunk's three counts back by name instead of by
+ * a literal offset — the mapping is decided here, once.
+ */
+export const HABITAT_CLASS_SLOT: Readonly<Record<Habitat, number>> = {
+  land: 0,
+  shallow: 1,
+  deep: 2,
+};
+
+/**
+ * Classifies every cell of ONE chunk into `out[offset + slot]`, overwriting
+ * whatever was there.
+ *
+ * THE SINGLE COUNTING LOOP in this plugin, deliberately (issue #268): the
+ * incremental index re-counts a dirty chunk with this, and `takeCensus` below
+ * scans a whole world with it, so "what the cache holds" and "what a full scan
+ * would find" are the same arithmetic over the same cells in the same order —
+ * which is the property the incremental census is only correct because of.
+ *
+ * The caller has already established that (cx, cy) is in range; this reads
+ * `CHUNK_SIZE²` heights and nothing else.
+ */
+export function countChunkHabitat(
+  world: HabitatWorld,
+  cx: number,
+  cy: number,
+  out: Int32Array,
+  offset: number,
+): void {
+  out[offset] = 0;
+  out[offset + 1] = 0;
+  out[offset + 2] = 0;
+
+  const baseX = cx * CHUNK_SIZE;
+  const baseY = cy * CHUNK_SIZE;
+  for (let dy = 0; dy < CHUNK_SIZE; dy++) {
+    for (let dx = 0; dx < CHUNK_SIZE; dx++) {
+      out[offset + HABITAT_CLASS_SLOT[habitatOf(world.heightAt(baseX + dx, baseY + dy))]]++;
+    }
+  }
+}
+
+/**
+ * Counts habitat cells and collects unlocked chunks in one pass — a FULL scan
+ * of every unlocked cell.
+ *
+ * NOT THE PER-TICK PATH ANY MORE (issue #268). `population.ts` reconciles
+ * through `census-index.ts`, which re-counts only dirty chunks; this stays as
+ * the reference implementation that definition is checked against (the tests
+ * and the equivalence bench both compare the two), and as the answer for any
+ * caller that holds no index.
+ */
 export function takeCensus(world: HabitatWorld): Census {
   const cellsByHabitat: Record<Habitat, number> = { land: 0, shallow: 0, deep: 0 };
   const chunks: Array<readonly [number, number]> = [];
+  const chunkCounts = new Int32Array(HABITAT_CLASS_COUNT);
 
   for (let cy = 0; cy < world.chunksPerEdge; cy++) {
     for (let cx = 0; cx < world.chunksPerEdge; cx++) {
       if (!world.isChunkUnlocked(cx, cy)) continue;
       chunks.push([cx, cy]);
 
-      const baseX = cx * CHUNK_SIZE;
-      const baseY = cy * CHUNK_SIZE;
-      for (let dy = 0; dy < CHUNK_SIZE; dy++) {
-        for (let dx = 0; dx < CHUNK_SIZE; dx++) {
-          cellsByHabitat[habitatOf(world.heightAt(baseX + dx, baseY + dy))]++;
-        }
+      countChunkHabitat(world, cx, cy, chunkCounts, 0);
+      for (let slot = 0; slot < HABITAT_CLASS_COUNT; slot++) {
+        cellsByHabitat[HABITAT_CLASSES[slot]] += chunkCounts[slot];
       }
     }
   }

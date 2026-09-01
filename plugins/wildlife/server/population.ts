@@ -87,9 +87,9 @@ import {
   emptySpeciesCounts,
   isValidCellFor,
   openDirectionCount,
-  takeCensus,
   targetsFor,
 } from './census.ts';
+import { reconcileCensus } from './census-index.ts';
 import { randomSigned } from './rng.ts';
 import { type SizeWeights, type SpeciesProfile, profileOf } from './species.ts';
 
@@ -924,7 +924,9 @@ export function advancePopulation(world: HabitatWorld, dt: number): void {
 
   if (simSeconds - lastCensusSeconds >= HABITAT_CENSUS_INTERVAL_SECONDS) {
     lastCensusSeconds = simSeconds;
-    const census = takeCensus(world);
+    // INCREMENTAL, not a full scan (issue #268): identical result, re-counting
+    // only the chunks a sculpt or an unlock touched. See census-index.ts.
+    const census = reconcileCensus(world);
     spawnChunks = census.chunks;
     targets = targetsFor(census.cellsByHabitat);
     // BEFORE reconciling, so a creature the terrain has walled in is counted as
