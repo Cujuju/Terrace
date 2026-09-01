@@ -47,6 +47,7 @@ import {
   type RegimeIndex,
   buildHabitatIndex,
   indexAnswers,
+  repairableDirtyCellCap,
 } from './habitat-index.ts';
 import { hashToIndex } from './rng.ts';
 
@@ -587,38 +588,129 @@ export const EMPTY_LAIR_SURVEY: LairSurvey = {
 };
 
 /**
- * Scratch buffers for the flood fill, cached across surveys.
+ * The lair survey's REGION TABLE, kept across surveys and repaired in place.
  *
- * A 512² world needs a 1 MB label array and a 1 MB queue. Allocating those every
- * survey would hand the GC 2 MB every few seconds forever, for a job whose
- * working set never changes size; they are reallocated only when the world size
- * does (which is once, at boot, in practice).
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT IS KEPT (2026-09-01, #269, measured).
  *
- * ONE pair for ALL regimes, and that is safe because surveys are SEQUENTIAL: a
- * survey fills the labels, reads them and returns before the next one starts.
- * Nothing here is re-entrant and nothing holds a reference to the buffers past
- * its own call.
+ * The survey used to start from nothing every time: `labels.fill(UNLABELLED)`
+ * over the whole board, then an unconditional row-major scan of every cell to
+ * find seeds, then a BFS over every habitat cell — on a 2048² world, 32 ms of
+ * it per pass before a single region had been measured, and a hard floor of
+ * that much even on a board with no habitat at all. It ran on the five-second
+ * timer AND half a second after every sculpt burst, to re-derive a table that a
+ * 29-cell diff had changed almost none of.
+ *
+ * So the labels and the components survive, and a survey does one of three
+ * things:
+ *
+ *   * NOTHING CHANGED (the ordinary five-second tick) — reuse the table
+ *     outright and answer only the per-occupant question, which is O(monsters);
+ *   * A BOUNDED CHANGE (a sculpt, an unlocked chunk) — delete the components
+ *     the changed cells belong to or touch, and re-flood just those. The
+ *     changed cells are habitat-index.ts's `dirtyCells`, which lists a cell
+ *     only when its height, its habitat bit or one of its fit bits actually
+ *     moved;
+ *   * A BOARD-SCALE CHANGE (the list outgrew `repairableDirtyCellCap`, or the
+ *     index itself was rebuilt) — the old whole-board walk, unchanged.
+ *
+ * THE OUTPUT IS THE SAME IN ALL THREE, and two rules are what make it so:
+ * a component's identity is its LOWEST CELL INDEX (`seedIndex`), which is
+ * exactly the seed a row-major scan would have found it at, so sorting the
+ * components by it reproduces the scan order the regions used to come back in;
+ * and a repaired component is re-walked FROM that seed before its region is
+ * measured, so the FIFO visit order — which breaks ties on the extreme cell and
+ * orders the arrival sample — is the order a full survey would have walked it
+ * in.
+ *
+ * A STALE LABEL IS NOT CLEARED, IT IS ORPHANED. Clearing is the cost being
+ * avoided: a `fill` over 4.19 M cells is a third of the floor this file is
+ * removing. Component ids are never reused, so a cell whose component has been
+ * deleted reads as unowned (`components.has(labels[cell])` is false) with no
+ * write at all.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-let labels: Int32Array | null = null;
-let queue: Int32Array | null = null;
-
-const UNLABELLED = -1;
-
-function scratchFor(cellCount: number): { labels: Int32Array; queue: Int32Array } {
-  if (labels === null || labels.length !== cellCount) labels = new Int32Array(cellCount);
-  if (queue === null || queue.length !== cellCount) queue = new Int32Array(cellCount);
-  return { labels, queue };
+interface SurveyComponent {
+  /** Never reused, which is what lets a deleted component orphan its labels. */
+  id: number;
+  /** Lowest cell index in the component — its seed under a row-major scan. */
+  seedIndex: number;
+  region: LairRegion;
 }
 
-/** Frees the scratch buffers (used by the plugin's reset seam). */
-export function releaseSurveyScratch(): void {
-  labels = null;
-  queue = null;
+interface SurveyTable {
+  /** Owning component id per cell, or a dead/never-written id (see above). */
+  readonly labels: Int32Array;
+  readonly components: Map<number, SurveyComponent>;
+  nextComponentId: number;
+  /** The components' regions, in seed order — what a survey returns. */
+  regions: LairRegion[];
 }
 
 /**
- * Floods one connected region from `seedIndex`, writing `label` into every cell
- * it reaches.
+ * The kept tables, one per regime, and the index they were built against.
+ *
+ * KEYED ON THE INDEX OBJECT, not on the world: `surveyLairs` builds a throwaway
+ * index when the caller hands it none (every test does), and a throwaway is a
+ * new object every call — so those callers miss the cache and get the
+ * whole-board walk, which is the same answer for the same work they always
+ * paid. The server hands in the maintained index, which is one object for the
+ * life of a world.
+ */
+let tableIndex: HabitatIndex | null = null;
+const tables = new Map<HabitatRegimeId, SurveyTable>();
+
+/**
+ * BFS scratch, cached across surveys: a 2048² world needs 16 MB of it and the
+ * working set never changes size.
+ *
+ * ONE queue for ALL regimes, and that is safe because surveys are SEQUENTIAL: a
+ * survey fills it, reads it and returns before the next one starts. Nothing
+ * here is re-entrant and nothing holds a reference past its own call.
+ */
+let queue: Int32Array | null = null;
+
+/** No component owns this cell, and none ever has. */
+const UNLABELLED = -1;
+
+function queueFor(cellCount: number): Int32Array {
+  if (queue === null || queue.length !== cellCount) queue = new Int32Array(cellCount);
+  return queue;
+}
+
+/** Frees the scratch and the kept tables (used by the plugin's reset seam). */
+export function releaseSurveyScratch(): void {
+  queue = null;
+  tableIndex = null;
+  tables.clear();
+}
+
+/** Is this cell owned by a component that is still part of the table? */
+function isOwned(table: SurveyTable, cellIndex: number): boolean {
+  const owner = table.labels[cellIndex]!;
+  return owner !== UNLABELLED && table.components.has(owner);
+}
+
+/**
+ * `walkComponent`'s two CLAIMING modes, as values of its `claimFrom` argument.
+ * Any other value is a component id, and means "relabel that component's cells,
+ * do not claim anything new".
+ *
+ * TWO CLAIMING MODES AND NOT ONE, because the membership test differs in cost
+ * by a hash lookup per neighbour. A whole-board walk starts from a cleared label
+ * array, so "nobody owns this cell" is the array read `labels[n] === UNLABELLED`
+ * — four of those per cell over four million cells is the walk's whole inner
+ * loop, and asking the component map instead would put a `Map.has` there. A
+ * repair walks a board whose labels are full of orphaned ids, where only the map
+ * can tell an orphan from a live owner; it pays the lookup, over the handful of
+ * components the repair actually touches.
+ */
+const WALK_CLAIM_FRESH = -2;
+const WALK_CLAIM_UNOWNED = -3;
+
+/**
+ * Walks one connected component of habitat from `seedIndex`, writing `ownerId`
+ * into every cell it reaches and measuring the region as it goes.
  *
  * A module-scope function rather than a closure inside the scan loop: the scan
  * calls it once per region, and a pathological world (a checkerboard of
@@ -632,26 +724,37 @@ export function releaseSurveyScratch(): void {
  * terrain diff that changed it. The 4-neighbour order, the FIFO queue and the
  * tie-break on the extreme cell are unchanged, so the regions and the counts
  * are bit-for-bit what the classifying walk reported for the same world.
+ *
+ * `minIndex` comes back with the region because a repair does not get to choose
+ * its seed — it starts from a cell near the change — and a component's IDENTITY
+ * and its measurement order are both defined by its lowest cell index. The
+ * caller re-walks in RELABEL mode from `minIndex` when the two differ; see
+ * `repairTable`.
  */
-function floodRegion(
+function walkComponent(
   regime: HabitatRegime,
   index: HabitatIndex,
   regimeIndex: RegimeIndex,
-  size: number,
-  labels: Int32Array,
+  table: SurveyTable,
   queue: Int32Array,
   seedIndex: number,
-  label: number,
-): LairRegion {
+  ownerId: number,
+  claimFrom: number,
+): { readonly minIndex: number; readonly region: LairRegion } {
+  const size = index.size;
   const { heights } = index;
   const { habitat, fit, rules } = regimeIndex;
+  const labels = table.labels;
+  const claimFresh = claimFrom === WALK_CLAIM_FRESH;
+  const claimUnowned = claimFrom === WALK_CLAIM_UNOWNED;
 
   let head = 0;
   let tail = 0;
-  labels[seedIndex] = label;
+  labels[seedIndex] = ownerId;
   queue[tail++] = seedIndex;
 
   let cells = 0;
+  let minIndex = seedIndex;
   // Reach of the most extreme cell seen so far. Starts below every real reach:
   // the seed itself is habitat, so its reach is at least thresholdBands, and
   // the first iteration always replaces this.
@@ -670,6 +773,7 @@ function floodRegion(
     const x = cellIndex % size;
     const y = (cellIndex - x) / size;
     cells++;
+    if (cellIndex < minIndex) minIndex = cellIndex;
 
     const height = heights[cellIndex]!;
     const reach = habitatReachHeightUnits(regime, height);
@@ -702,51 +806,302 @@ function floodRegion(
       if (slot < SUMMON_CANDIDATE_SAMPLE_CELLS) reservoir[slot] = cellIndex;
     }
 
-    // 4-neighbourhood, in a fixed order: west, east, north, south.
-    if (
-      x > 0 &&
-      labels[cellIndex - 1] === UNLABELLED &&
-      habitat[cellIndex - 1] === HABITAT_BIT_SET
-    ) {
-      labels[cellIndex - 1] = label;
-      queue[tail++] = cellIndex - 1;
+    // 4-neighbourhood, in a fixed order: west, east, north, south. The
+    // admission test is spelled out at each rather than lifted into a helper:
+    // this is the file's innermost loop, and the three modes differ by whether
+    // they read an array, a map or an id (see WALK_CLAIM_FRESH).
+    if (x > 0) {
+      const next = cellIndex - 1;
+      if (
+        claimFresh
+          ? habitat[next] === HABITAT_BIT_SET && labels[next] === UNLABELLED
+          : claimUnowned
+            ? habitat[next] === HABITAT_BIT_SET && !isOwned(table, next)
+            : labels[next] === claimFrom
+      ) {
+        labels[next] = ownerId;
+        queue[tail++] = next;
+      }
     }
-    if (
-      x + 1 < size &&
-      labels[cellIndex + 1] === UNLABELLED &&
-      habitat[cellIndex + 1] === HABITAT_BIT_SET
-    ) {
-      labels[cellIndex + 1] = label;
-      queue[tail++] = cellIndex + 1;
+    if (x + 1 < size) {
+      const next = cellIndex + 1;
+      if (
+        claimFresh
+          ? habitat[next] === HABITAT_BIT_SET && labels[next] === UNLABELLED
+          : claimUnowned
+            ? habitat[next] === HABITAT_BIT_SET && !isOwned(table, next)
+            : labels[next] === claimFrom
+      ) {
+        labels[next] = ownerId;
+        queue[tail++] = next;
+      }
     }
-    if (
-      y > 0 &&
-      labels[cellIndex - size] === UNLABELLED &&
-      habitat[cellIndex - size] === HABITAT_BIT_SET
-    ) {
-      labels[cellIndex - size] = label;
-      queue[tail++] = cellIndex - size;
+    if (y > 0) {
+      const next = cellIndex - size;
+      if (
+        claimFresh
+          ? habitat[next] === HABITAT_BIT_SET && labels[next] === UNLABELLED
+          : claimUnowned
+            ? habitat[next] === HABITAT_BIT_SET && !isOwned(table, next)
+            : labels[next] === claimFrom
+      ) {
+        labels[next] = ownerId;
+        queue[tail++] = next;
+      }
     }
-    if (
-      y + 1 < size &&
-      labels[cellIndex + size] === UNLABELLED &&
-      habitat[cellIndex + size] === HABITAT_BIT_SET
-    ) {
-      labels[cellIndex + size] = label;
-      queue[tail++] = cellIndex + size;
+    if (y + 1 < size) {
+      const next = cellIndex + size;
+      if (
+        claimFresh
+          ? habitat[next] === HABITAT_BIT_SET && labels[next] === UNLABELLED
+          : claimUnowned
+            ? habitat[next] === HABITAT_BIT_SET && !isOwned(table, next)
+            : labels[next] === claimFrom
+      ) {
+        labels[next] = ownerId;
+        queue[tail++] = next;
+      }
     }
   }
 
   return {
-    cells,
-    x: extremeX,
-    y: extremeY,
-    extremeHeight,
-    fittingCells,
-    summonableCells,
-    summonCandidates,
+    minIndex,
+    region: {
+      cells,
+      x: extremeX,
+      y: extremeY,
+      extremeHeight,
+      fittingCells,
+      summonableCells,
+      summonCandidates,
+    },
   };
 }
+
+/**
+ * A region measured from a walk whose seed was not the component's lowest cell,
+ * re-walked from that cell so its measurement order is the one a whole-board
+ * scan would have used.
+ *
+ * TWO WALKS AND NOT ONE, and only on the repair path. The tie-break on the
+ * extreme cell and the ordinals the arrival sample is drawn against are both
+ * FIFO visit order, so a component walked from a cell near a sculpt would
+ * report a different (equally valid, but different) extreme cell than the same
+ * component walked from its scan seed. The re-walk costs a second pass over one
+ * component; disagreeing with the whole-board path would cost the guarantee
+ * that a repair and a rebuild produce the same table.
+ *
+ * The re-walk RELABELS to a fresh id, which is what marks its own visited
+ * cells: the cells it may enter are exactly those the claiming walk labelled,
+ * and rewriting each on arrival is the same test the claiming walk got from
+ * `labels[n] === UNLABELLED`.
+ */
+function remeasureFromSeed(
+  regime: HabitatRegime,
+  index: HabitatIndex,
+  regimeIndex: RegimeIndex,
+  table: SurveyTable,
+  queue: Int32Array,
+  minIndex: number,
+  claimedId: number,
+): { readonly id: number; readonly region: LairRegion } {
+  const id = table.nextComponentId++;
+  const walk = walkComponent(regime, index, regimeIndex, table, queue, minIndex, id, claimedId);
+  return { id, region: walk.region };
+}
+
+/** The region a component is given while its own walk is still running. */
+const EMPTY_LAIR_REGION: LairRegion = {
+  cells: 0,
+  x: 0,
+  y: 0,
+  extremeHeight: 0,
+  fittingCells: [],
+  summonableCells: [],
+  summonCandidates: [],
+};
+
+/**
+ * Walks the whole board and rebuilds this regime's table from nothing — the
+ * path a first survey, a rebuilt index and a board-scale change all take, and
+ * the path every caller that hands in no index takes.
+ */
+function rebuildTable(
+  regime: HabitatRegime,
+  index: HabitatIndex,
+  regimeIndex: RegimeIndex,
+  table: SurveyTable,
+): void {
+  const size = index.size;
+  const { labels, components } = table;
+  const cellQueue = queueFor(size * size);
+
+  labels.fill(UNLABELLED);
+  components.clear();
+  table.nextComponentId = 0;
+
+  const regions: LairRegion[] = [];
+  for (let seedY = 0; seedY < size; seedY++) {
+    for (let seedX = 0; seedX < size; seedX++) {
+      const seedIndex = seedY * size + seedX;
+      if (labels[seedIndex] !== UNLABELLED) continue;
+      if (regimeIndex.habitat[seedIndex] !== HABITAT_BIT_SET) continue;
+
+      const id = table.nextComponentId++;
+      const walk = walkComponent(
+        regime,
+        index,
+        regimeIndex,
+        table,
+        cellQueue,
+        seedIndex,
+        id,
+        WALK_CLAIM_FRESH,
+      );
+      // The scan reaches a component at its lowest cell index by construction,
+      // so this walk's seed IS the canonical one and its measurement stands.
+      components.set(id, { id, seedIndex, region: walk.region });
+      regions.push(walk.region);
+    }
+  }
+  table.regions = regions;
+}
+
+/**
+ * Repairs this regime's table for the cells habitat-index.ts listed as moved.
+ *
+ * TWO PHASES, AND THEY CANNOT BE ONE. Every component a listed cell belongs to
+ * or touches is deleted FIRST, and only then is anything re-flooded — because a
+ * change can MERGE two components (a cell that became habitat between them) and
+ * a re-flood that met a still-live neighbour would either stop at it and split
+ * one component in two, or absorb its cells without deleting its entry.
+ *
+ * WHY DELETING THE NEIGHBOURS' COMPONENTS IS ENOUGH. A component can only lose
+ * cells at a listed cell, so any piece it breaks into is adjacent to one; and a
+ * component can only gain cells at a listed cell, so any component it merges
+ * with is adjacent to one too. A component that is neither adjacent to nor
+ * containing a listed cell is untouched, and keeping it is the whole saving.
+ *
+ * WHY A DELETED COMPONENT'S CELLS ARE NOT UNLABELLED. They read as unowned
+ * through `isOwned` because ids are never reused; clearing them would be the
+ * whole-board write this repair exists to avoid.
+ */
+function repairTable(
+  regime: HabitatRegime,
+  index: HabitatIndex,
+  regimeIndex: RegimeIndex,
+  table: SurveyTable,
+  dirtyCells: readonly number[],
+): void {
+  const size = index.size;
+  const cellCount = size * size;
+  const { labels, components } = table;
+  const habitat = regimeIndex.habitat;
+  const cellQueue = queueFor(cellCount);
+
+  for (const cell of dirtyCells) {
+    if (cell < 0 || cell >= cellCount) continue;
+    // The cell's OWN component, whether or not it is still habitat: a cell that
+    // stopped being habitat still has to take its old component apart.
+    const owner = labels[cell]!;
+    if (owner !== UNLABELLED) components.delete(owner);
+    const x = cell % size;
+    const y = (cell - x) / size;
+    if (x > 0 && habitat[cell - 1] === HABITAT_BIT_SET) components.delete(labels[cell - 1]!);
+    if (x + 1 < size && habitat[cell + 1] === HABITAT_BIT_SET) {
+      components.delete(labels[cell + 1]!);
+    }
+    if (y > 0 && habitat[cell - size] === HABITAT_BIT_SET) {
+      components.delete(labels[cell - size]!);
+    }
+    if (y + 1 < size && habitat[cell + size] === HABITAT_BIT_SET) {
+      components.delete(labels[cell + size]!);
+    }
+  }
+
+  for (const cell of dirtyCells) {
+    if (cell < 0 || cell >= cellCount) continue;
+    const x = cell % size;
+    const y = (cell - x) / size;
+    // The listed cell and its four neighbours, in the same fixed order the walk
+    // uses. Seed order does not change the components — connectivity is a
+    // property of the board — but a fixed order keeps two runs identical.
+    reclaimFrom(regime, index, regimeIndex, table, cellQueue, cell);
+    if (x > 0) reclaimFrom(regime, index, regimeIndex, table, cellQueue, cell - 1);
+    if (x + 1 < size) reclaimFrom(regime, index, regimeIndex, table, cellQueue, cell + 1);
+    if (y > 0) reclaimFrom(regime, index, regimeIndex, table, cellQueue, cell - size);
+    if (y + 1 < size) reclaimFrom(regime, index, regimeIndex, table, cellQueue, cell + size);
+  }
+
+  // Scan order, restored: a component's seed index is the cell a whole-board
+  // scan would have found it at, so this IS the order `rebuildTable` produces.
+  const ordered = [...components.values()].sort((a, b) => a.seedIndex - b.seedIndex);
+  table.regions = ordered.map((component) => component.region);
+}
+
+/**
+ * Claims the component containing `seedIndex` if it is habitat that no live
+ * component owns, and measures it from its own lowest cell.
+ *
+ * A no-op for a cell that is not habitat or is already owned, which is what
+ * makes the repair's seed list free to contain duplicates and neighbours of
+ * neighbours.
+ */
+function reclaimFrom(
+  regime: HabitatRegime,
+  index: HabitatIndex,
+  regimeIndex: RegimeIndex,
+  table: SurveyTable,
+  cellQueue: Int32Array,
+  seedIndex: number,
+): void {
+  if (regimeIndex.habitat[seedIndex] !== HABITAT_BIT_SET) return;
+  if (isOwned(table, seedIndex)) return;
+
+  const claimedId = table.nextComponentId++;
+  // Registered before the walk so its own claimed cells read as OWNED, which is
+  // what stops the walk re-entering them through `isOwned`.
+  table.components.set(claimedId, {
+    id: claimedId,
+    seedIndex,
+    region: EMPTY_LAIR_REGION,
+  });
+  const walk = walkComponent(
+    regime,
+    index,
+    regimeIndex,
+    table,
+    cellQueue,
+    seedIndex,
+    claimedId,
+    WALK_CLAIM_UNOWNED,
+  );
+
+  if (walk.minIndex === seedIndex) {
+    table.components.set(claimedId, { id: claimedId, seedIndex, region: walk.region });
+    return;
+  }
+
+  // The claim started somewhere other than the component's scan seed, so its
+  // visit order is not the one a whole-board walk would have used. Re-walk from
+  // the seed, relabelling as it goes (see remeasureFromSeed).
+  table.components.delete(claimedId);
+  const measured = remeasureFromSeed(
+    regime,
+    index,
+    regimeIndex,
+    table,
+    cellQueue,
+    walk.minIndex,
+    claimedId,
+  );
+  table.components.set(measured.id, {
+    id: measured.id,
+    seedIndex: walk.minIndex,
+    region: measured.region,
+  });
+}
+
 
 /**
  * Labels every connected region of one habitat and reports all of them, plus the
@@ -765,12 +1120,24 @@ function floodRegion(
  * getter through the plugin host's `bound()` indirection — which profiled at
  * ~100 ms per regime on a full 512² world, not the "~1 ms" the comment used to
  * claim. It now floods habitat-index.ts's maintained bitmaps and reads no
- * WorldApi at all per cell: one pass over every cell plus a BFS over the
- * habitat ones, MEASURED AT 3–6 ms for BOTH regimes together on a generated
- * 512² world (~34 ms for the first one of a process, which pays for the index
- * build itself). Re-measure with the profiling rig, not by reasoning from
- * these: the walk is proportional to how much of the board is habitat, so a
- * world that is mostly ocean costs more than one that is mostly hillside.
+ * WorldApi at all per cell.
+ *
+ * RE-MEASURED 2026-09-01 (#269) on a generated 2048² world, BOTH regimes per
+ * pass. The bitmap walk was still a whole-board one, and that was still 32 ms
+ * per pass — every five seconds, and again half a second after every sculpt
+ * burst. With the kept region table (see SurveyComponent above):
+ *
+ *   * nothing changed since the last pass — 0.00 ms (a per-occupant lookup);
+ *   * a 29-cell sculpt diff — 0.26 ms typical, 8.0 ms worst case (the diff
+ *     landed inside the board's biggest basin, 67 769 cells, so that whole
+ *     component is re-flooded);
+ *   * a held stroke of sixty diffs, debounced into one pass — 6.5 ms;
+ *   * a board-scale change or a rebuilt index — the whole-board walk, 32 ms,
+ *     unchanged.
+ *
+ * Re-measure with the profiling rig, not by reasoning from these: both the walk
+ * and the repair are proportional to how much of the board is habitat and to
+ * how big the components a change lands in are.
  *
  * The interval (LAIR_SURVEY_INTERVAL_SECONDS) and the debounced reactive path
  * (LAIR_SURVEY_DEBOUNCE_SECONDS, summoning.ts) remain the cadence: habitat
@@ -827,41 +1194,47 @@ export function surveyLairs(
   const regimeIndex = view.regimes.get(regime.id)!;
 
   const cellCount = size * size;
-  const scratch = scratchFor(cellCount);
-  scratch.labels.fill(UNLABELLED);
+  // A different index object means a different world (or a rebuilt one), and
+  // every kept table describes the old one.
+  if (tableIndex !== view) {
+    tableIndex = view;
+    tables.clear();
+  }
 
-  /** Regions, in scan order. A region's index in here IS its label. */
-  const regions: LairRegion[] = [];
-
-  for (let seedY = 0; seedY < size; seedY++) {
-    for (let seedX = 0; seedX < size; seedX++) {
-      const seedIndex = seedY * size + seedX;
-      if (scratch.labels[seedIndex] !== UNLABELLED) continue;
-      if (regimeIndex.habitat[seedIndex] !== HABITAT_BIT_SET) continue;
-
-      regions.push(
-        floodRegion(
-          regime,
-          view,
-          regimeIndex,
-          size,
-          scratch.labels,
-          scratch.queue,
-          seedIndex,
-          regions.length,
-        ),
-      );
+  let table = tables.get(regime.id);
+  if (table === undefined || table.labels.length !== cellCount) {
+    table = {
+      labels: new Int32Array(cellCount),
+      components: new Map<number, SurveyComponent>(),
+      nextComponentId: 0,
+      regions: [],
+    };
+    tables.set(regime.id, table);
+    rebuildTable(regime, view, regimeIndex, table);
+    regimeIndex.dirtyCells.length = 0;
+  } else {
+    const dirtyCells = regimeIndex.dirtyCells;
+    if (dirtyCells.length > repairableDirtyCellCap(cellCount)) {
+      rebuildTable(regime, view, regimeIndex, table);
+    } else if (dirtyCells.length > 0) {
+      repairTable(regime, view, regimeIndex, table, dirtyCells);
     }
+    dirtyCells.length = 0;
   }
 
   // One answer per queried occupant, in the caller's order (see LairSurvey).
+  const labels = table.labels;
+  const components = table.components;
   const occupiedRegionCells = occupied.map((position) => {
     const x = Math.floor(position.x);
     const y = Math.floor(position.y);
     if (x < 0 || y < 0 || x >= size || y >= size) return 0;
-    const label = scratch.labels[y * size + x];
-    return label === UNLABELLED ? 0 : regions[label]!.cells;
+    const component = components.get(labels[y * size + x]!);
+    // An orphaned label — a component the last repair took apart and did not
+    // put this cell back into — means the cell is not habitat any more, which
+    // is the same answer UNLABELLED gave.
+    return component === undefined ? 0 : component.region.cells;
   });
 
-  return { regions, occupiedRegionCells };
+  return { regions: table.regions, occupiedRegionCells };
 }

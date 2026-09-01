@@ -252,7 +252,14 @@ function habitatBitAt(
   return isHabitatHeight(regime, heights[index]!) ? HABITAT_BIT_SET : HABITAT_BIT_CLEAR;
 }
 
-/** Recomputes one regime's fit bit for one centre cell from its habitat bits. */
+/**
+ * Recomputes one regime's fit bit for one centre cell from its habitat bits.
+ *
+ * Returns whether the bit actually MOVED, which is what the lair survey's
+ * repair list is built out of: the fit windows a diff dirties are far wider
+ * than the answers inside them that change, and listing a cell whose answer is
+ * the same as it was costs the survey a whole component re-flood for nothing.
+ */
 function recomputeFitBit(
   size: number,
   habitat: Uint8Array,
@@ -260,25 +267,28 @@ function recomputeFitBit(
   probe: FitProbe,
   x: number,
   y: number,
-): void {
+): boolean {
   const index = y * size + x;
+  const before = fit[index];
+  let after = HABITAT_BIT_SET;
   if (habitat[index] !== HABITAT_BIT_SET) {
-    fit[index] = HABITAT_BIT_CLEAR;
-    return;
-  }
-  for (const [dx, dy] of probe.offsets) {
-    const rimX = x + dx;
-    const rimY = y + dy;
-    if (rimX < 0 || rimY < 0 || rimX >= size || rimY >= size) {
-      fit[index] = HABITAT_BIT_CLEAR;
-      return;
+    after = HABITAT_BIT_CLEAR;
+  } else {
+    for (const [dx, dy] of probe.offsets) {
+      const rimX = x + dx;
+      const rimY = y + dy;
+      if (rimX < 0 || rimY < 0 || rimX >= size || rimY >= size) {
+        after = HABITAT_BIT_CLEAR;
+        break;
+      }
+      if (habitat[rimY * size + rimX] !== HABITAT_BIT_SET) {
+        after = HABITAT_BIT_CLEAR;
+        break;
+      }
     }
-    if (habitat[rimY * size + rimX] !== HABITAT_BIT_SET) {
-      fit[index] = HABITAT_BIT_CLEAR;
-      return;
-    }
   }
-  fit[index] = HABITAT_BIT_SET;
+  fit[index] = after;
+  return after !== before;
 }
 
 /**
@@ -458,56 +468,24 @@ function nextRepairGeneration(repairStamp: Uint32Array): number {
   return ++repairGeneration;
 }
 
-/** The widest fit window any of this regime's rules dirties around a cell. */
-function maxProbeReach(regimeIndex: RegimeIndex): number {
-  let reach = 0;
-  for (const probe of regimeIndex.probes) reach = Math.max(reach, probe.windowCells);
-  return reach;
-}
-
 /**
- * Records, for the lair survey's region repair, every cell of this regime whose
- * ANSWER moved because the cells in `rects` did.
+ * Records, for the lair survey's region repair, one cell of this regime whose
+ * ANSWER moved — its height, its habitat bit, or its fit bit for some rule.
  *
- * THE WINDOW AND NOT THE CHANGED CELLS THEMSELVES, and the difference is a
- * correctness one rather than a margin: a region's `fittingCells` counts a fit
- * bit per cell, and a fit bit belongs to a CENTRE up to `maxProbeReach` away
- * from the habitat bit that decided it. A repair list of only the moved cells
- * would leave a region whose fit counts changed unrepaired, and the count is
- * what gate 3 (summoning.ts `bestLairFor`) reads.
- *
- * Deduplicated through `repairStamp` on its own generation, so overlapping
- * windows list each centre once.
+ * THOSE THREE AND NOTHING ELSE, because they are exactly what a LairRegion is
+ * derived from: which cells are in it (habitat bits), how far into the habitat
+ * they reach (heights), and how many of them a body fits on (fit bits). A cell
+ * inside a dirtied fit WINDOW whose bit did not actually move is not a repair —
+ * listing it would cost the survey a whole component re-flood for an answer
+ * that did not change.
  *
  * Appends one past `repairableDirtyCellCap` and no further, which the survey
- * reads as "this change is board-scale, re-flood whole".
+ * reads as "this change is board-scale, re-flood whole". Duplicates are
+ * allowed: a cell may move for two rules, and the repair is idempotent per
+ * cell, so deduplicating here would cost more than it saves.
  */
-function markDirtyWindows(
-  index: HabitatIndex,
-  regimeIndex: RegimeIndex,
-  rects: readonly (readonly [number, number, number, number])[],
-  cap: number,
-): void {
-  const { size, repairStamp } = index;
-  const reach = maxProbeReach(regimeIndex);
-  const generation = nextRepairGeneration(repairStamp);
-  const dirty = regimeIndex.dirtyCells;
-
-  for (const [rectX0, rectY0, rectX1, rectY1] of rects) {
-    const minX = Math.max(0, rectX0 - reach);
-    const maxX = Math.min(size - 1, rectX1 + reach);
-    const minY = Math.max(0, rectY0 - reach);
-    const maxY = Math.min(size - 1, rectY1 + reach);
-    for (let y = minY; y <= maxY; y++) {
-      const row = y * size;
-      for (let x = minX; x <= maxX; x++) {
-        if (repairStamp[row + x] === generation) continue;
-        repairStamp[row + x] = generation;
-        if (dirty.length > cap) return;
-        dirty.push(row + x);
-      }
-    }
-  }
+function markDirtyCell(regimeIndex: RegimeIndex, cellIndex: number, cap: number): void {
+  if (regimeIndex.dirtyCells.length <= cap) regimeIndex.dirtyCells.push(cellIndex);
 }
 
 /**
@@ -553,18 +531,6 @@ function applyNewlyUnlockedChunks(
     }
   }
 
-  /** The opened chunks as inclusive cell rectangles, for the dirty windows. */
-  const openedRects = opened.map((chunk) => {
-    const cx = chunk % perEdge;
-    const cy = (chunk - cx) / perEdge;
-    return [
-      cx * chunkCells,
-      cy * chunkCells,
-      cx * chunkCells + chunkCells - 1,
-      cy * chunkCells + chunkCells - 1,
-    ] as const;
-  });
-
   for (const regimeIndex of regimes.values()) {
     const { regime, habitat } = regimeIndex;
     for (const chunk of opened) {
@@ -577,10 +543,12 @@ function applyNewlyUnlockedChunks(
         for (let x = x0; x < x0 + chunkCells; x++) {
           const cellIndex = row + x;
           habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
+          // Every cell of an opened chunk moved: it was locked, so it was not
+          // habitat, and its height was never read against the live world.
+          markDirtyCell(regimeIndex, cellIndex, cap);
         }
       }
     }
-    markDirtyWindows(index, regimeIndex, openedRects, cap);
   }
 
   for (const regimeIndex of regimes.values()) {
@@ -602,7 +570,9 @@ function applyNewlyUnlockedChunks(
           for (let centreX = minX; centreX <= maxX; centreX++) {
             if (repairStamp[row + centreX] === generation) continue;
             repairStamp[row + centreX] = generation;
-            recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY);
+            if (recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY)) {
+              markDirtyCell(regimeIndex, row + centreX, cap);
+            }
           }
         }
       }
@@ -645,13 +615,18 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
     heights[y * size + x] = cell.h;
   }
 
-  for (const { regime, habitat } of regimes.values()) {
+  const cap = repairableDirtyCellCap(size * size);
+  for (const regimeIndex of regimes.values()) {
+    const { regime, habitat } = regimeIndex;
     for (const cell of diff) {
       const x = cell.x;
       const y = cell.y;
       if (x < 0 || y < 0 || x >= size || y >= size) continue;
       const cellIndex = y * size + x;
       habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
+      // The height moved whether or not the habitat bit did, and a region's
+      // extreme cell and summonable count are both read off heights.
+      markDirtyCell(regimeIndex, cellIndex, cap);
     }
   }
 
@@ -680,22 +655,13 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
           for (let centreX = minX; centreX <= maxX; centreX++) {
             if (repairStamp[row + centreX] === generation) continue;
             repairStamp[row + centreX] = generation;
-            recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY);
+            if (recomputeFitBit(size, regimeIndex.habitat, bits, probe, centreX, centreY)) {
+              markDirtyCell(regimeIndex, row + centreX, cap);
+            }
           }
         }
       }
     }
-  }
-
-  // The survey's repair list, last: the windows are the same shape the fit
-  // recompute above just walked, so a change is listed exactly where an answer
-  // moved (see markDirtyWindows).
-  const cap = repairableDirtyCellCap(size * size);
-  const diffRects = diff
-    .filter((cell) => cell.x >= 0 && cell.y >= 0 && cell.x < size && cell.y < size)
-    .map((cell) => [cell.x, cell.y, cell.x, cell.y] as const);
-  for (const regimeIndex of regimes.values()) {
-    markDirtyWindows(index, regimeIndex, diffRects, cap);
   }
 }
 
