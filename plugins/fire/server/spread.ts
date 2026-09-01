@@ -534,6 +534,185 @@ function stoodStill(at: Position): Position {
   return at;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SPATIAL REJECT, AND WHY IT CANNOT CHANGE A FIRE.
+//
+// `spreadToIndividuals` used to ask `exposureAlongPaths` about EVERY candidate
+// for EVERY source: FIRE_CELL_CAP burning cells against every flammable
+// individual in the world is a third of a million quadratics a second — plus
+// two template-string map keys per pair, which measured as about half of it —
+// for a flame that can only ever reach its own neighbourhood.
+//
+// WHAT MAKES A CHEAP REJECT SOUND. `exposureAlongPaths` returns non-null only
+// when there is some s in [0, 1] with |to(s) - from(s)| <= reach, where reach
+// is SPREAD_REACH_CELLS plus the target's radius. At that s the flame stands at
+// from(s), a point of the SOURCE's swept segment, and the target stands at
+// to(s), a point of the TARGET's swept segment. So
+//
+//   exposure != null  =>  bbox(source segment) meets bbox(target segment grown
+//                         by reach)
+//
+// and the contrapositive — boxes apart, exposure null — is the reject. The
+// converse does NOT hold, which is exactly what makes this a reject and not a
+// test: everything it keeps still goes through the same quadratic, unchanged.
+//
+// THE SEGMENT AND NOT THE POINT is the part that is easy to get wrong. A grazer
+// crosses at 6.4 cells/s and at x3 when fleeing, so over one
+// SPREAD_INTERVAL_SECONDS it can be twenty cells from where it was; a reject
+// built on current positions alone would drop the fast crossings this file was
+// rewritten to catch. Both ends are boxed over their whole interval instead.
+//
+// THE ROLL STREAM IS UNTOUCHED. A rejected pair is one `exposureAlongPaths`
+// would have returned null for, and a null exposure spends no randomness
+// (./rng.ts is reached only past `exposure !== null` and `rate > 0`). Candidates
+// are visited in the order `flammableNow` gathered them, as before. Same
+// history, same fires.
+//
+// THE GRID IS ONLY AN INDEX over that reject: each candidate is filed in every
+// bucket its grown box touches, and a source looks in every bucket its own box
+// touches. Two overlapping boxes share a point and that point sits in exactly
+// one bucket, so nothing the reject would keep can be missed. Bucket size is
+// therefore a TUNING number, not a correctness bound.
+
+/**
+ * The side of one bucket, in cells.
+ *
+ * Chosen as a small multiple of the standing reach — SPREAD_REACH_CELLS (root
+ * two) plus the largest hull radius anything registers, so about 1.5-2 cells —
+ * which is the scale a motionless fire's box has. That keeps a still source
+ * inside a 2x2 range of buckets while leaving each bucket sparse enough that
+ * the visit is a handful of candidates rather than a scan of the world. Smaller
+ * buckets cost more empty lookups per source; larger ones hand back candidates
+ * the quadratic then rejects. Neither is a correctness question.
+ */
+const SPREAD_BUCKET_CELLS = 4;
+
+/**
+ * One candidate with everything the pairing loop needs precomputed once per
+ * step: its previous sample, its identity key, and the box the reject uses.
+ */
+interface SweptCandidate {
+  readonly individual: FlammableIndividual;
+  /** `fireEntityKey` built ONCE per step rather than twice per pair. */
+  readonly key: string;
+  /** Where it was one step ago — itself, when there is no previous sample. */
+  readonly was: Position;
+  /** Its swept segment, grown by its own reach. */
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+/** Boxes every candidate for the step, resolving its previous sample once. */
+function sweptCandidates(candidates: readonly FlammableIndividual[]): SweptCandidate[] {
+  const swept: SweptCandidate[] = [];
+  for (const individual of candidates) {
+    const key = fireEntityKey(individual.sourceName, individual.id);
+    const was = previousSweep.get(key) ?? individual;
+    // The same reach `exposureAlongPaths` will use, so the box is exactly the
+    // one the proof above is about rather than an approximation of it.
+    const reach = SPREAD_REACH_CELLS + Math.max(0, individual.radiusCells);
+    swept.push({
+      individual,
+      key,
+      was,
+      minX: Math.min(was.x, individual.x) - reach,
+      minY: Math.min(was.y, individual.y) - reach,
+      maxX: Math.max(was.x, individual.x) + reach,
+      maxY: Math.max(was.y, individual.y) + reach,
+    });
+  }
+  return swept;
+}
+
+/** Numeric sort, named so `hits.sort` reads as the ordering it restores. */
+function ascending(a: number, b: number): number {
+  return a - b;
+}
+
+/**
+ * A uniform bucket index over one step's candidates. Built once, queried once
+ * per source. Lives exactly as long as the step does.
+ */
+class CandidateGrid {
+  readonly candidates: readonly SweptCandidate[];
+
+  private readonly bucketsPerSide: number;
+  private readonly buckets = new Map<number, number[]>();
+  /** Which query last saw each candidate — dedupes a candidate filed in more
+   * than one of the buckets a single source visits, without clearing a set. */
+  private readonly seen: Int32Array;
+  private queries = 0;
+  /** Reused result buffer; valid only until the next `near` call. */
+  private readonly hits: number[] = [];
+
+  constructor(worldSize: number, candidates: readonly SweptCandidate[]) {
+    this.candidates = candidates;
+    this.bucketsPerSide = Math.max(1, Math.ceil(worldSize / SPREAD_BUCKET_CELLS));
+    this.seen = new Int32Array(candidates.length);
+
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index]!;
+      const lastX = this.bucketOf(candidate.maxX);
+      const lastY = this.bucketOf(candidate.maxY);
+      for (let bx = this.bucketOf(candidate.minX); bx <= lastX; bx++) {
+        for (let by = this.bucketOf(candidate.minY); by <= lastY; by++) {
+          const key = bx * this.bucketsPerSide + by;
+          const list = this.buckets.get(key);
+          if (list === undefined) this.buckets.set(key, [index]);
+          else list.push(index);
+        }
+      }
+    }
+  }
+
+  /**
+   * Every candidate whose grown box could overlap the segment from `start` to
+   * `end`, in `flammableNow` order — which is the order the pairing loop ran in
+   * before there was a grid, and therefore the order the seeded rolls come off
+   * the stream in.
+   */
+  near(start: Position, end: Position): readonly number[] {
+    const stamp = ++this.queries;
+    const hits = this.hits;
+    hits.length = 0;
+
+    const lastX = this.bucketOf(Math.max(start.x, end.x));
+    const lastY = this.bucketOf(Math.max(start.y, end.y));
+    for (let bx = this.bucketOf(Math.min(start.x, end.x)); bx <= lastX; bx++) {
+      for (let by = this.bucketOf(Math.min(start.y, end.y)); by <= lastY; by++) {
+        const list = this.buckets.get(bx * this.bucketsPerSide + by);
+        if (list === undefined) continue;
+        for (const index of list) {
+          if (this.seen[index] === stamp) continue;
+          this.seen[index] = stamp;
+          hits.push(index);
+        }
+      }
+    }
+
+    hits.sort(ascending);
+    return hits;
+  }
+
+  /**
+   * Which bucket a coordinate falls in, CLAMPED to the grid.
+   *
+   * Clamping rather than discarding is what keeps something standing off the
+   * edge of the world — or a box grown past it — findable. It is safe because
+   * clamping is monotone and both ends of a pair go through it: two overlapping
+   * ranges still overlap after clamping, so the reject can only ever hand back
+   * MORE pairs at the border, never fewer.
+   */
+  private bucketOf(coord: number): number {
+    const bucket = Math.floor(coord / SPREAD_BUCKET_CELLS);
+    if (bucket < 0) return 0;
+    if (bucket >= this.bucketsPerSide) return this.bucketsPerSide - 1;
+    return bucket;
+  }
+}
+
 /** How long two things were within reach of each other, and how close. */
 interface Exposure {
   /** Seconds of the interval spent within reach. Never 0 — see the null. */
@@ -646,18 +825,24 @@ function spreadToIndividuals(
   entityBlaze: EntityBlaze,
   from: SpreadSource,
   fromWas: Position,
-  candidates: readonly FlammableIndividual[],
+  grid: CandidateGrid,
   wind: { readonly heading: number; readonly speed: number },
   dt: number,
   caught: FireEntityState[],
 ): void {
-  for (const candidate of candidates) {
-    if (entityBlaze.isBurning(candidate.sourceName, candidate.id)) continue;
+  // Only the candidates whose swept box could reach this source's — see THE
+  // SPATIAL REJECT above for why everything else is provably a null exposure.
+  for (const index of grid.near(fromWas, from)) {
+    const swept = grid.candidates[index]!;
+    const candidate = swept.individual;
+    // Still asked per pair, because this changes DURING the step: something lit
+    // by an earlier source must not be rolled for again by a later one.
+    if (entityBlaze.isBurningKey(swept.key)) continue;
 
     const exposure = exposureAlongPaths(
       fromWas,
       from,
-      whereItWas(candidate.sourceName, candidate.id, candidate),
+      swept.was,
       candidate,
       candidate.radiusCells,
       dt,
@@ -742,14 +927,15 @@ export function spreadOnce(
   const wind = currentWind();
   const cellSources = blaze.fires();
   const entitySources = entityBlaze.burningWithAge();
-  const candidates = flammableNow();
+  const candidates = sweptCandidates(flammableNow());
+  const grid = new CandidateGrid(world.worldSize, candidates);
 
   const cells: FireCellState[] = [];
   const entities: FireEntityState[] = [];
 
   for (const fire of cellSources) {
     spreadToCells(world, blaze, fire, fire, NEIGHBOUR_OFFSETS, wind, dt, cells);
-    spreadToIndividuals(world, entityBlaze, fire, stoodStill(fire), candidates, wind, dt, entities);
+    spreadToIndividuals(world, entityBlaze, fire, stoodStill(fire), grid, wind, dt, entities);
   }
 
   for (const fire of entitySources) {
@@ -762,7 +948,7 @@ export function spreadOnce(
       entityBlaze,
       fire,
       whereItWas(fire.sourceName, fire.id, fire),
-      candidates,
+      grid,
       wind,
       dt,
       entities,
@@ -776,8 +962,7 @@ export function spreadOnce(
   // no registrant still lists in `flammable` would otherwise have no memory.
   const sweep = new Map<string, Position>();
   for (const candidate of candidates) {
-    const key = fireEntityKey(candidate.sourceName, candidate.id);
-    sweep.set(key, { x: candidate.x, y: candidate.y });
+    sweep.set(candidate.key, { x: candidate.individual.x, y: candidate.individual.y });
   }
   for (const fire of entitySources) {
     sweep.set(fireEntityKey(fire.sourceName, fire.id), { x: fire.x, y: fire.y });
