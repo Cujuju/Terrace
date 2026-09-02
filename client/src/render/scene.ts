@@ -216,6 +216,11 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   (globalThis as unknown as { __terraceRenderer: unknown }).__terraceRenderer = renderer;
   (globalThis as unknown as { __terraceScene: unknown }).__terraceScene = scene0Holder;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
+  // Per-material clipping planes are ignored until this is on. The brush
+  // preview (render/brushPreview.ts) is the one user, cutting its outline at
+  // the world's edge (issue #281); a material with no clippingPlanes set pays
+  // nothing for the flag.
+  renderer.localClippingEnabled = true;
   renderer.outputColorSpace = SRGBColorSpace;
   // ACES keeps the bright snow band and the dark seabed both readable without
   // per-material tuning.
