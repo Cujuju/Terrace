@@ -8,6 +8,7 @@ export * from './columns.ts';
 export * from './chunks.ts';
 export * from './protocol.ts';
 export * from './wire.ts';
+export * from './discWire.ts';
 export * from './rng.ts';
 export * from './parse.ts';
 export * from './rivers.ts';
