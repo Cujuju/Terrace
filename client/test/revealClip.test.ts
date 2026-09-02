@@ -95,22 +95,28 @@ describe('the reveal mask texture', () => {
   });
 
   it('uploads only when a sync actually changed a texel', () => {
+    // `needsUpdate` is WRITE-ONLY on a three Texture (`set needsUpdate`
+    // increments `version`, and there is no getter), so the upload request is
+    // observed as a version bump — which is the thing the renderer itself
+    // compares against.
     const mask = createRevealMask(WORLD_SIZE);
     const texture = mask.uniforms().uRevealMask.value;
     const mirror = mirrorWithChunks(0);
 
+    const built = texture.version;
     mask.sync(mirror);
-    expect(texture.needsUpdate).toBe(true);
-    // three clears the flag when it uploads; a node test has no renderer, so
-    // clearing it by hand is what standing in for that upload means.
-    texture.needsUpdate = false;
+    expect(texture.version).toBeGreaterThan(built);
 
+    // A SECOND SYNC OF THE SAME SET COSTS NOTHING: world.ts calls sync at both
+    // terrain sites unconditionally, and a snapshot that revealed nothing new
+    // must not re-upload 16 KB.
+    const uploaded = texture.version;
     mask.sync(mirror);
-    expect(texture.needsUpdate).toBe(false);
+    expect(texture.version).toBe(uploaded);
 
     mirror.received.add(1);
     mask.sync(mirror);
-    expect(texture.needsUpdate).toBe(true);
+    expect(texture.version).toBeGreaterThan(uploaded);
     mask.dispose();
   });
 

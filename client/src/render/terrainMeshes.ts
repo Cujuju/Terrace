@@ -158,6 +158,7 @@ import {
   type DrawnGroundStore,
 } from '../terrain/drawnGroundStore.ts';
 import { spliceShader } from './shaderSplice.ts';
+import { applyGroundShade } from './groundShade.ts';
 
 /**
  * How long a frame may spend SPLICING finished chunk jobs, in milliseconds.
@@ -783,6 +784,13 @@ export function createTerrainMeshes(
     side: DoubleSide,
   });
   makeSelfLitAware(material);
+  // The ground darkens under whatever the plugins have put in the sky (#284).
+  // AFTER makeSelfLitAware, and it chains rather than replacing: the shade
+  // multiplies `outgoingLight` at <opaque_fragment>, which is the same anchor
+  // the self-lit mix uses and immediately after it, so a rim triangle that has
+  // just been mixed toward its own unlit colour is then shaded like everything
+  // else — a cloud's shadow crossing a terrace outline must not stop at it.
+  applyGroundShade(material, 'terrain');
 
   const superMeshes = new Map<number, SuperMesh>();
 
