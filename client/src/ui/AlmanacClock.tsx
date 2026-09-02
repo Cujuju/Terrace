@@ -117,12 +117,12 @@ const SUN_HALO_OPACITY = 0.18;
 const MOON_RADIUS = 3.4;
 
 /**
- * The pinned time tag, centred at the bottom of the ground. It is an HTML
- * element floated over the SVG, not a drawn rect (owner ask, 2026-09-01):
- * it wears the same frosted chrome as the title band, and `backdrop-filter`
- * does not apply to SVG content. The type is 8.5px (hud.css .almanac__time);
- * the tag is as wide as the time it holds. Its vertical place is set here,
- * in the painting's own pixels, so the geometry has one home.
+ * The pinned time, centred at the bottom of the ground. It is an HTML
+ * element floated over the SVG, not SVG text (owner ask, 2026-09-01), so it
+ * renders like the title; it went from a stroked tag to frosted to bare text
+ * the same day. The type is 8.5px (hud.css .almanac__time). Its vertical
+ * place is set here, in the painting's own pixels, so the geometry has one
+ * home; TAG_HEIGHT is the row every word over the painting is laid out in.
  */
 const TAG_HEIGHT = 12;
 const TAG_TOP_Y = TOTAL_HEIGHT - STRIP_INSET - TAG_HEIGHT - 3;
@@ -420,8 +420,8 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
     <span class="almanac__day" style={{ left: `${CAPTION_X}px`, top: `${DAY_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
       {props.reading.day !== null ? `DAY ${props.reading.day}` : ''}
     </span>
-    {/* The time, pinned: the title band's blur, without its tint (hud.css) */}
-    <span class="almanac__time hud-frost" style={{ top: `${TAG_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
+    {/* The time, pinned, bare over the ground */}
+    <span class="almanac__time" style={{ top: `${TAG_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
       {props.reading.time}
     </span>
     </>
