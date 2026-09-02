@@ -673,6 +673,18 @@ Dated decisions moved out of `docs/DESIGN.md` on 2026-09-01. Settled with the ow
   ground was already level is the same request landing on flatter ground, not a
   cheaper request.
 
+  **The drag's price is accepted as a stamp's (2026-09-01, issue #279).** The
+  sculpt audit measured a pull at up to ~56x the units a stamp of the same
+  radius is priced for. Not fixed, on purpose: a drag emits once per cursor
+  cell crossed and each intent is priced in full, so the moved-to-priced ratio
+  is a function of cursor speed and band gap — a slow one-band pull is ~23x
+  OVER-priced at r=16, a flick toward a high band ~56x under. No fixed multiple
+  (`DRAG_BANDS_PER_STROKE`, carve-style) is right at both ends, and pricing by
+  `targetBand` would make a high terrace un-extendable (r=16 to band 60 ≈ 20x
+  the pool). The real mismatch is the UNIT: a per-intent price for a
+  motion-driven stream. If intents are coalesced per tick (issue #282) the
+  drag's unit of work changes and its price is chosen then, once.
+
   **Determinism is unaffected.** Integer-only throughout, two passes over the one
   fixed-order footprint iterator (min/max over a set is order-independent), and
   both sides reach it through the same `applySculpt`, so client prediction and

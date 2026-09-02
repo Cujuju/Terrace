@@ -1814,6 +1814,17 @@ function applyDragRegion(
  * is a balance decision for the owner rather than an arithmetic one. Until
  * then a held pull is the cheapest terrain in the game per unit moved.
  *
+ * DECIDED 2026-09-01 (issue #279): ACCEPTED AS IS, deliberately. A drag emits
+ * once per cursor cell crossed (client sculptInput.ts), each intent priced in
+ * full, so what a pull "really" moves per priced intent depends on cursor
+ * speed and band gap, not on any multiple: a slow pull extending a one-band
+ * lip admits ~2r new cells against a 749-cell price (~23x OVER-priced at
+ * r=16), while a flick across a plain toward a high band is the ~56x
+ * UNDER-priced case above. No fixed multiple is right at both ends, so none
+ * is chosen. The mismatch is that a per-INTENT price is the wrong unit for a
+ * motion-driven STREAM; if intents are ever coalesced per tick (issue #282)
+ * the drag's unit of work changes and its price is decided then, once.
+ *
  * This function is therefore about `applyBrush`'s arithmetic specifically, and
  * is pinned to it by test rather than to whatever applySculpt dispatches to.
  *
