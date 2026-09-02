@@ -39,8 +39,9 @@ CONFIG = {
     # THE SIZE *NEW* WORLDS ARE CREATED AT - not the size of the world that
     # loads (multi-world, 2026-08-22). Every world keeps whatever size it was
     # made with, and a server can hold worlds of several sizes at once, so this
-    # no longer describes what you are about to play. See issue #75 for whether
-    # 512 is still the right default after the quarter-cell re-sample.
+    # no longer describes what you are about to play. 2048 cells is 512 world
+    # units after the quarter-cell re-sample (issue #75); 512 cells would be a
+    # sixteenth of that area.
     "WORLD_SIZE": 2048,           # cells (4 per world unit); multiple of 16, 448-4096
     "WORLD_DIFFICULTY": 50,       # 1-100 (out of range clamps with a warning)
     # WHERE THE WORLDS LIVE - one SQLite file per world, plus .trash/ and the
