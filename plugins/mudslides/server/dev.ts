@@ -50,6 +50,10 @@
 //
 // Unset — which is every real deployment — this module does nothing at all.
 
+import {
+  DEV_SEARCH_RADIUS_CELLS,
+  DEV_SEARCH_STEP_CELLS,
+} from '../../../server/src/plugins/kit/devSite.ts';
 import { MUDSLIDE_MAX_PATH_CELLS } from '../protocol.ts';
 import {
   MUDSLIDE_BRUSH_RADIUS_CELLS,
@@ -80,21 +84,12 @@ export const MUDSLIDES_DEV_PERIOD_ENV = 'MUDSLIDES_DEV_FORCE_PERIOD_SECONDS';
  */
 export const MUDSLIDES_DEV_SLOW_ENV = 'MUDSLIDES_DEV_SLOW';
 
-/**
- * How far from the centre a site is searched, in cells.
- *
- * 160 — half the edge of a fresh world's revealed square (that square is
- * INITIAL_UNLOCK_CHUNK_SPAN × CHUNK_SIZE = 320 cells), so the search covers the
- * territory a new player can see and stops at its edge rather than wandering into
- * fog. Restated rather than imported, for storms/server/dev.ts's reason: core's
- * unlock policy is not part of the plugin contract, and if it changes, a forced
- * slide lands somewhere slightly less convenient — the correct blast radius for a
- * development aid.
- */
-export const DEV_SEARCH_RADIUS_CELLS = 160;
-
-/** Cells between samples of the outward scan. */
-const DEV_SEARCH_STEP_CELLS = 4;
+// The reach — how far out a forced site may be looked for, and how coarsely —
+// is the plugin kit's (server/src/plugins/kit/devSite.ts), because storms'
+// force-spawn wanted exactly the same two numbers for exactly the same reason.
+// THE SCAN ITSELF STAYED HERE, and `scanForSite` below says why it is a grid
+// scan and not storms' ring of spokes.
+export { DEV_SEARCH_RADIUS_CELLS, DEV_SEARCH_STEP_CELLS };
 
 /**
  * The shortest run worth forcing, in cells.
