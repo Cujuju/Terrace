@@ -134,7 +134,7 @@ import {
   type OccupancyPredicate,
 } from './forest.ts';
 import { CropField, cropSurveyChunksPerTick } from './crops.ts';
-import { GrassField, grassSurveyChunksPerTick } from './grass.ts';
+import { GrassField, grassSurveyChunksPerTick, isMeadowCell } from './grass.ts';
 import { FringeField, fringeSurveyChunksPerTick, type FringePlant } from './fringe.ts';
 import { closeFireBridge, loadFireBridge, registerFloraFuel } from './fire-bridge.ts';
 import { StumpField } from './stumps.ts';
@@ -207,6 +207,54 @@ let rng: FloraRng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
 
 /** Accumulated simulated seconds — the only clock this plugin has. */
 let simSeconds = 0;
+
+/**
+ * Sim steps elapsed. NOT A CLOCK — `simSeconds` is the clock, and nothing may
+ * read this as time. It is a monotonic STAMP, and its only job is to tell
+ * structureOccupiedCells' snapshot that a new tick has begun.
+ *
+ * A counter rather than `simSeconds` itself, because a suite is free to tick
+ * with dt = 0 (and `simulate` is called for its other effects when it does):
+ * a stamp that did not move would hand back a snapshot from before whatever the
+ * test had just founded.
+ */
+let simTick = 0;
+
+/**
+ * The stamp `structureOccupiedCells`' snapshot was taken under, or
+ * STRUCTURE_SNAPSHOT_UNSET when there is no snapshot yet.
+ */
+const STRUCTURE_SNAPSHOT_UNSET = -1;
+let structureSnapshotTick = STRUCTURE_SNAPSHOT_UNSET;
+const structureSnapshot = new Set<number>();
+
+/**
+ * Every cell a building currently occupies, as grass keys — rebuilt AT MOST
+ * ONCE PER SIM TICK and handed back unchanged for the rest of it.
+ *
+ * WHY A SNAPSHOT AT ALL, when the other two occupancy terms answer straight out
+ * of their own collections: `bridgedStructures()` has no membership query. It
+ * returns a freshly built ARRAY of up to STRUCTURES_CAP (512) records
+ * (plugins/structures/server/index.ts's standingStructures walks its whole live
+ * Map), so asking it per cell would allocate that array per cell. The Set is
+ * the membership index structures does not publish.
+ *
+ * ONE TICK OF STALENESS IS THE CONTRACT, and it is the freshness the callers
+ * already had: the surveys used to rebuild this per call, twice per tick, and
+ * they read it from inside the very tick that stamps it. Fire's ignitions land
+ * between flora's ticks and so may see a building founded up to one tick (0.1 s
+ * at TICK_HZ 10) ago as absent — against a grass survey whose own answer is up
+ * to GRASS_SURVEY_INTERVAL_SECONDS (5 s) old, which is what a player would
+ * actually notice.
+ */
+function structureOccupiedCells(): ReadonlySet<number> {
+  if (structureSnapshotTick !== simTick) {
+    structureSnapshot.clear();
+    for (const cell of bridgedStructures()) structureSnapshot.add(grassKey(cell.x, cell.y));
+    structureSnapshotTick = simTick;
+  }
+  return structureSnapshot;
+}
 
 /**
  * Simulated time of the last keepalive. The SURVEY needs no equivalent: its
@@ -771,25 +819,32 @@ function occupiedCells(): OccupancyPredicate {
  * exactly as long as the stump does, and the meadow closing back over it is
  * what "the world healed" looks like.
  *
- * ONE PREDICATE FOR BOTH, not one per field. The two populations can never
- * share a cell (their height windows are disjoint), so what would be gained by
- * splitting it is two identical Sets built twice per tick. If the fringe ever
- * needs a rule of its own, it gets its own function then — what it must not do
- * is start life as a copy of this one. Built on top of the structure occupancy the other
- * two surveys already use, so "a building was founded this tick" reaches all
- * three sweeps identically — the difference is only the extra crop term.
+ * ONE PREDICATE FOR ALL THREE ASKERS, not one per field — the meadow survey,
+ * the fringe survey and, since issue #289, the FUEL answer (floraFuelAt, via
+ * grass.ts's isMeadowCell). The two populations can never share a cell (their
+ * height windows are disjoint), so what would be gained by splitting it is two
+ * identical answers written twice; and a fuel answer that disagreed with the
+ * survey about what a building covers is the exact drift #289 exists to close.
+ * If the fringe ever needs a rule of its own, it gets its own function then —
+ * what it must not do is start life as a copy of this one. Built on top of the
+ * structure occupancy the other two surveys already use, so "a building was
+ * founded this tick" reaches all of them identically — the difference is only
+ * the extra crop term.
  *
- * Rebuilt per call for occupiedCells' own reason, with two extra bounds: the
- * crop field is capped at FLORA_CROP_CAP (2048) and the stumps at
- * FLORA_STUMP_CAP (4096), so this Set costs at most ~6656 inserts against a
- * sweep that visits tens of thousands of cells.
+ * QUERIED PER CELL, NOT SNAPSHOT PER CALL — changed for #289. Until then this
+ * built a fresh Set of every occupied cell and closed over it, which was right
+ * when the only callers were two sweeps per tick. `floraFuelAt` asks from
+ * FIRE's tick, once per ignition (plugins/fire/server/blaze.ts's `ignite`),
+ * and a Set rebuild there would allocate up to STRUCTURES_CAP (512) cell
+ * objects per spark. Two of the three terms already answer in O(1) from their
+ * own collections, so only the structures term needs help — see
+ * structureOccupiedCells below. Per cell this is now three lookups instead of
+ * one, against a per-tick rebuild of ~6656 inserts saved twice over: the same
+ * order of work for the sweeps, and O(1) for fire.
  */
-function groundCoverOccupiedCells(): OccupancyPredicate {
-  const occupied = new Set<number>();
-  for (const cell of bridgedStructures()) occupied.add(grassKey(cell.x, cell.y));
-  for (const cell of cropField.cells()) occupied.add(grassKey(cell.x, cell.y));
-  for (const cell of stumpField.cells()) occupied.add(grassKey(cell.x, cell.y));
-  return (x: number, y: number): boolean => occupied.has(grassKey(x, y));
+function groundCoverOccupied(x: number, y: number): boolean {
+  const key = grassKey(x, y);
+  return structureOccupiedCells().has(key) || cropField.has(x, y) || stumpField.has(x, y);
 }
 
 /**
@@ -808,6 +863,10 @@ function groundCoverOccupiedCells(): OccupancyPredicate {
  */
 function simulate(world: WorldApi, dt: number): void {
   simSeconds += dt;
+  // Before the stability guard below, not after: the stamp must advance on
+  // every step this plugin is ticked, or a world whose stability map is not up
+  // yet would serve one snapshot forever.
+  simTick++;
   if (stability === null) return;
 
   // Whole chunks are spent out of a fractional credit (see chunksPerTick). The
@@ -854,7 +913,7 @@ function simulate(world: WorldApi, dt: number): void {
   const grassBudget = Math.floor(grassScanCredit);
   if (grassBudget > 0) {
     grassScanCredit -= grassBudget;
-    const outcome = grassField.advance(world, groundCoverOccupiedCells(), grassBudget);
+    const outcome = grassField.advance(world, groundCoverOccupied, grassBudget);
     if (outcome !== null) broadcastGrassChanges(world, outcome.sprouted, outcome.withered);
   }
 
@@ -866,7 +925,7 @@ function simulate(world: WorldApi, dt: number): void {
   const fringeBudget = Math.floor(fringeScanCredit);
   if (fringeBudget > 0) {
     fringeScanCredit -= fringeBudget;
-    const outcome = fringeField.advance(world, groundCoverOccupiedCells(), fringeBudget);
+    const outcome = fringeField.advance(world, groundCoverOccupied, fringeBudget);
     if (outcome !== null) broadcastFringeChanges(world, outcome.sprouted, outcome.withered);
   }
 
@@ -980,6 +1039,12 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   const occupation = parseStructuresOccupation(payload);
   if (occupation === null) return;
 
+  // The one thing that can invalidate structureOccupiedCells' snapshot WITHOUT
+  // a tick having passed. Belt and suspenders next to that snapshot's own
+  // per-tick stamp: this event is the moment the answer actually changes, and
+  // on a world whose sim is paused it is the only moment there is.
+  structureSnapshotTick = STRUCTURE_SNAPSHOT_UNSET;
+
   const felled: TreeCell[] = [];
   const withered: CropCell[] = [];
   const uprooted: GrassCell[] = [];
@@ -1067,6 +1132,28 @@ export const FLORA_CROP_FUEL_HEIGHT = 0.35;
  * of the reasoning. 3 s buys it ~2.5 spread rolls (see below), which is enough
  * to hand the fire to a neighbouring tuft or to the tree it grows under.
  *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE DENSITY HALF OF EVERYTHING BELOW IS SUPERSEDED (issue #289, 2026-09-01).
+ *
+ * The sweep is kept because its BURN-TIME axis and its site-bond mechanism are
+ * still the reasoning behind the 22 s above, and because it is the measured
+ * record of how this bed behaves. What no longer applies is its DENSITY axis as
+ * a lever anyone can pull. Every "density" row below is the fraction of green
+ * cells that were FUEL, and until #289 that fraction was the tuft roll's —
+ * GRASS_CELLS_PER_TUFT = 1.78, a density of 0.5625, which is why the pair
+ * (0.5625, 22 s) was chosen. Since #289 the roll decides only what is DRAWN and
+ * every unoccupied green cell is fuel, so the shipped meadow IS the density-1.0
+ * row and nothing short of re-authoring the green band can move it there.
+ *
+ * WHAT THAT MEANS FOR THIS NUMBER, read off the table: at density 1.0 the bed
+ * runs away at 6 s and burns 13-19 cells at 4 s. 22 s is therefore far past the
+ * runaway threshold rather than at the cheapest point on it, which is the
+ * owner's call of 2026-08-29 carried through — "a burning meadow should run" —
+ * with more margin than it had. Anyone tuning grass fire from here has ONE
+ * lever, this constant, and the row to read is density 1.0. Re-measure before
+ * moving it; the table's density column can no longer be used to trade against.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
  * A MEADOW FIRE DOES NOT RUN, AND BOTH EARLIER DRAFTS OF THIS COMMENT NAMED
  * THE WRONG REASON. The first said this burn time was the brake; the second
  * (2026-08-25) said the brake was the meadow's SPARSENESS — grass is thinned to
@@ -1116,12 +1203,17 @@ export const FLORA_CROP_FUEL_HEIGHT = 0.35;
  *     ≤6s    none, even at 0.875
  *
  * OWNER'S CALL, 2026-08-29: a burning meadow should run. Set to the cheapest
- * pair — 0.5625 density (GRASS_CELLS_PER_TUFT = 1.78, ../protocol.ts) and 22 s
- * here, 3 → 22. A gale makes it LESS likely to run (the front goes one way and
- * burns out behind itself), and the rig's bed is flat, dry and all grass, so a
- * real meadow broken by trees, water and rain runs somewhat less readily than
- * the table says. This is the firestorm the old "grass is not fuel" comment
- * feared, chosen deliberately.
+ * pair the table offered — 0.5625 density (GRASS_CELLS_PER_TUFT = 1.78,
+ * ../protocol.ts) and 22 s here, 3 → 22. A gale makes it LESS likely to run
+ * (the front goes one way and burns out behind itself), and the rig's bed is
+ * flat, dry and all grass, so a real meadow broken by trees, water and rain
+ * runs somewhat less readily than the table says. This is the firestorm the old
+ * "grass is not fuel" comment feared, chosen deliberately.
+ *
+ * THE PAIR IS NOW A SINGLE NUMBER, per the superseded note at the top: #289
+ * moved the shipped bed from the 0.5625 row to the 1.000 row, and 22 s stayed.
+ * The half of this paragraph that still binds is the last three sentences —
+ * gale, rig, deliberate.
  */
 export const FLORA_GRASS_BURN_SECONDS = 22;
 
@@ -1138,21 +1230,40 @@ export const FLORA_GRASS_FUEL_HEIGHT = 0.15;
  * GRASS IS FUEL AS OF 2026-08-25 (owner: "fire should spread across wheat,
  * grass, boats, buildings — anything that gets close enough"). This comment
  * used to say the opposite, and the reasoning it gave was sound about the
- * CONSEQUENCE and wrong about whether the consequence was wanted: grass is a
- * CONTINUOUS bed and warned that a torch in a meadow would then have a path to
- * the horizon. Measured (FLORA_GRASS_BURN_SECONDS's table), it does not: the
- * thinning puts grass just under the lattice's percolation threshold, so a
- * meadow fire stays a local scorch and the firestorm was never reachable. What
- * the old comment got right is that the consequence would be structural if the
- * meadow were denser — which is why the density, not the burn time, is the
- * number that carries the warning now.
+ * CONSEQUENCE and wrong about whether the consequence was wanted: it called
+ * grass a CONTINUOUS bed and warned that a torch in a meadow would then have a
+ * path to the horizon. That is now the intended behaviour, deliberately chosen
+ * twice over — see FLORA_GRASS_BURN_SECONDS.
+ *
+ * THE MEADOW IS FUEL, NOT THE TUFTS (issue #289, owner 2026-09-01: "make meadow
+ * regions count as fuel on every cell with the tuft roll deciding only what is
+ * drawn"). Until then this asked `grassField.has`, the set of cells with a
+ * BLADE RENDERED on them, which the thinning roll (`grassCoversCell`,
+ * ../protocol.ts) keeps only ~56% of. So ~44% of every meadow was a hole in the
+ * fuel bed, scattered at the roll's own hash frequency — a fire crossing a
+ * meadow had to hop them and spread in splotches, which is what the eye
+ * actually reported (issue #288). The roll is a DRAWING decision and was never
+ * meant to be a physical one; the physical question is "is this ground meadow",
+ * and ../server/grass.ts's `isMeadowCell` is the single statement of it that
+ * this and the survey both ask. What a tuft still decides is what a burn
+ * SCORCHES (floraBurnedOut) and what the client draws.
  *
  * THE ORDER IS TALLEST FIRST, and here it carries meaning rather than being
  * arbitrary: grass GROWS UNDER TREES (../server/grass.ts), so a cell really can
  * hold both, and the answer has to be the tree — it is the taller flame, the
  * longer burn, and the thing a player would say was on fire. Trees before crops
  * remains the case that cannot arise, since flora will not plant a crop under a
- * tree.
+ * tree. Crops before grass is now a case that DOES arise and is decided here
+ * rather than by the occupancy term: `groundCoverOccupied` counts a crop cell
+ * as occupied, so the meadow test would refuse it anyway — but the crop branch
+ * above has already answered by then, with the taller flame and the shorter
+ * burn a field of grain deserves.
+ *
+ * NO WORLD, NO GRASS. `fuelWorld` is null before onWorldCreate and after close,
+ * and the meadow test needs a heightmap. Trees and crops still answer from
+ * their own collections, which is the honest degradation: this plugin knows
+ * what it planted without a world, and cannot tell green ground from rock
+ * without one.
  */
 function floraFuelAt(x: number, y: number): { burnSeconds: number; height: number } | null {
   if (forest.has(x, y)) {
@@ -1161,7 +1272,8 @@ function floraFuelAt(x: number, y: number): { burnSeconds: number; height: numbe
   if (cropField.has(x, y)) {
     return { burnSeconds: FLORA_CROP_BURN_SECONDS, height: FLORA_CROP_FUEL_HEIGHT };
   }
-  if (grassField.has(x, y)) {
+  const world = fuelWorld;
+  if (world !== null && isMeadowCell(world, groundCoverOccupied, x, y)) {
     return { burnSeconds: FLORA_GRASS_BURN_SECONDS, height: FLORA_GRASS_FUEL_HEIGHT };
   }
   return null;
@@ -1205,6 +1317,13 @@ function floraBurnedOut(cells: readonly { readonly x: number; readonly y: number
     // shares its cell with a tree, so a burn that consumed the tree took the
     // tuft under it with it. Asking only the tallest would leave grass standing
     // in the middle of a burn scar.
+    //
+    // AND MOST BURNT MEADOW CELLS HAVE NO TUFT TO TAKE (issue #289): the whole
+    // meadow is fuel, the thinning roll draws ~56% of it, so `reactToEdit`
+    // answers null on the rest and nothing is broadcast for them. That is the
+    // correct outcome and not a gap — the mark a fire leaves on bare meadow is
+    // the client's burn scar (plugins/fire/client/scar.ts), which keys on the
+    // FIRE and never asks flora whether a blade stood there.
     const scorchedCell = grassField.reactToEdit(cell.x, cell.y);
     if (scorchedCell !== null) scorched.push(scorchedCell);
   }
@@ -1500,6 +1619,11 @@ export function resetFloraState(): void {
   stumpField.clear();
   rng = createFloraRng(FLORA_RNG_DEFAULT_SEED);
   simSeconds = 0;
+  simTick = 0;
+  // Dropped, not merely emptied: the stamp has to say "no snapshot" so that the
+  // reset tick 0 rebuilds rather than reusing the previous world's buildings.
+  structureSnapshotTick = STRUCTURE_SNAPSHOT_UNSET;
+  structureSnapshot.clear();
   lastKeepaliveSeconds = 0;
   scanCredit = 0;
   cropScanCredit = 0;
