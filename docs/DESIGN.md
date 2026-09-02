@@ -283,3 +283,14 @@ off — is invisible in source by nature. The "button beside serverRestart, not
 instead of it" decision above stands unchanged. The two dead exports the review
 named in discovery.ts (`PLUGIN_EXPORT_NAME`, `PLUGIN_SERVER_ENTRY_CANDIDATES`)
 are module-local now.
+
+### Decisions made 2026-09-01 (cooled lava is an overlay, not a terrain band, #214)
+
+**Cooled lava stays a plugin-rendered overlay** (owner). The alternative — a
+new terrain band in `shared/` — would need a per-cell material channel through
+the heightmap, the chunk wire (Int16 heights only today) and the chunk mesher,
+touching the deterministic terrain contract for a picture; nothing in core or
+another plugin needs "this cell is lava rock" as terrain fact. The overlay's
+cost is measured (#261): 0.134 ms median per delta at the 192-cell cap after
+the incremental re-stamp, 41 KB uploaded per apply. The band's cost was never
+measured and the decision does not rest on it.
