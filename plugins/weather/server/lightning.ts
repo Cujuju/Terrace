@@ -28,17 +28,38 @@ import { randomInRange, rollEvent, weatherRandom } from './rng.ts';
 import { livingSystems, type WeatherSystem, type WeatherWorld } from './systems.ts';
 
 /**
- * Strikes per second from ONE storm at full intensity.
+ * Strikes per second the WHOLE SKY may throw — a world-wide budget, shared out
+ * across the living storms by intensity (owner, issue #232, 2026-09-01).
  *
- * Sized against the storm's own life, not chosen for feel alone: a system lives
- * SYSTEM_MEAN_LIFETIME_SECONDS (240 s), so at 0.06/s a typical storm throws
- * something like a dozen bolts over its whole passage. Frequent enough that a
- * storm overhead reads as dangerous, rare enough that each one is an event —
- * and far below the client governor's MIN_FLASH_INTERVAL_SECONDS floor of one
- * flash per 3 s, so the photosensitivity limit stays a backstop rather than
- * becoming the thing that actually sets the rhythm.
+ * WHY A BUDGET AND NOT A PER-STORM RATE. This constant was per storm until the
+ * spawner retune (a5d3b7f) lifted the mean number of storms alive from 0.4 to
+ * ~2.1: nothing about lightning changed and the world's bolts — and `fire`'s
+ * ignitions from `weather:strikes` — went up ~5×. A per-storm rate makes "how
+ * often does lightning start a fire" a function of the system cap, the world
+ * size and the spawner tuning, none of which are lightning decisions. The sky
+ * coverage target (systems.ts, TARGET_SKY_COVERAGE_FRACTION) already normalises
+ * weather per WORLD rather than per system; lightning follows the same rule.
+ *
+ * HOW IT IS SHARED. Each storm's rate is
+ *   STRIKE_BUDGET × intensity_i / max(1, Σ intensity)
+ * so a LONE storm behaves exactly as the old per-storm rule did — at full
+ * intensity it throws the budget, while gathering or dissipating it throws
+ * proportionally less — and the budget only bites when storms STACK: two full
+ * storms throw the budget between them, not twice it. The max(1, ·) is what
+ * keeps a single half-strength storm from being handed the whole budget.
+ *
+ * 0.06/s, unchanged in value: sized against ONE storm's own life, a system
+ * lives SYSTEM_MEAN_LIFETIME_SECONDS (240 s), so a lone storm still throws
+ * something like a dozen bolts over its passage — frequent enough that a storm
+ * overhead reads as dangerous, rare enough that each one is an event. Far below
+ * the client governor's MIN_FLASH_INTERVAL_SECONDS floor of one flash per 3 s,
+ * so the photosensitivity limit stays a backstop. By arithmetic, at the
+ * retuned population (~2.1 storms alive): a bolt every ~17 s of storm-time,
+ * against ~8 s per-storm and ~40 s before the retune, when a storm was in the
+ * sky 40% of the time — the difference from 40 s is that there is more
+ * storm-time now, which is the coverage decision, not this one.
  */
-export const STRIKE_RATE_PER_SECOND = 0.06;
+export const STRIKE_BUDGET_PER_SECOND = 0.06;
 
 /**
  * Candidate cells sampled inside the storm before one is struck.
@@ -75,11 +96,10 @@ export const STRIKE_TARGET_SAMPLES = 6;
 /**
  * Chance per second that a dry bolt lands somewhere in the world.
  *
- * One every ~4 minutes of simulated time. Sized against a STORM's own output
- * rather than picked: a storm throws STRIKE_RATE_PER_SECOND (0.06/s) while it
- * lasts and there is a storm in the sky roughly 40% of the time
- * (SYSTEM_KIND_WEIGHTS), so dry lightning at 1/240 s adds a few percent to the
- * world's total bolts. It is a punctuation mark, not a second weather system:
+ * One every ~4 minutes of simulated time. Sized against the SKY's own output
+ * rather than picked: the storms between them throw up to
+ * STRIKE_BUDGET_PER_SECOND (0.06/s) whenever one is in the sky, so dry
+ * lightning at 1/240 s adds a few percent to the world's total bolts. It is a punctuation mark, not a second weather system:
  * often enough that a long session sees several, rare enough that one is
  * startling.
  */
@@ -215,15 +235,21 @@ export function chooseStrikeCell(
   return best;
 }
 
+/** A storm's current strength in [0, 1]: its peak, shaped by its life envelope. */
+function stormIntensity(system: { readonly peakIntensity: number; readonly envelope: number }): number {
+  return system.peakIntensity * system.envelope;
+}
+
 /**
  * Rolls this step's strikes across every living storm. Returns them in system
  * order; the empty array is the overwhelmingly common answer.
  *
  * Only `storm` throws bolts — the kind exists for exactly that reason
  * (../protocol.ts: "`storm` is `rain` plus lightning rather than a
- * `hasLightning` flag on rain"). Intensity scales the rate, so a system that is
- * still gathering or already dissipating throws proportionally fewer, and one
- * at zero throws none.
+ * `hasLightning` flag on rain"). The storms share STRIKE_BUDGET_PER_SECOND by
+ * intensity (see its doc comment), so a system that is still gathering or
+ * already dissipating gets proportionally less of it, one at zero gets none,
+ * and stacking storms never multiplies the world's bolts.
  */
 export function rollStrikes(world: WeatherWorld, dt: number): Strike[] {
   const strikes: Strike[] = [];
@@ -235,11 +261,20 @@ export function rollStrikes(world: WeatherWorld, dt: number): Strike[] {
     if (cell !== null) strikes.push({ systemId: STRIKE_NO_SYSTEM, x: cell.x, y: cell.y });
   }
 
+  // The budget's denominator: total storm intensity in the sky this step, floored
+  // at 1 so a lone storm below full strength is not handed the whole budget.
+  let totalIntensity = 0;
   for (const system of livingSystems()) {
     if (system.kind !== 'storm') continue;
-    const intensity = system.peakIntensity * system.envelope;
+    totalIntensity += stormIntensity(system);
+  }
+  const budgetShareDenominator = Math.max(1, totalIntensity);
+
+  for (const system of livingSystems()) {
+    if (system.kind !== 'storm') continue;
+    const intensity = stormIntensity(system);
     if (intensity <= 0) continue;
-    if (!rollEvent(STRIKE_RATE_PER_SECOND * intensity, dt)) continue;
+    if (!rollEvent((STRIKE_BUDGET_PER_SECOND * intensity) / budgetShareDenominator, dt)) continue;
 
     const cell = chooseStrikeCell(system, world);
     if (cell === null) continue;
