@@ -114,6 +114,20 @@ export type SiblingResolver = (name: string) => SiblingModule | null;
 /** A view with no siblings to offer — a host of one, and every test that is. */
 export const NO_SIBLINGS: SiblingResolver = () => null;
 
+/**
+ * Is this cell inside the world at all? The one question `broadcastVisible` has
+ * to answer before a fog-of-war lookup, and the whole of the #291 contract.
+ *
+ * A FRACTIONAL POSITION IS ALLOWED — plugins broadcast fractional centres — so
+ * the test is against the open interval [0, size) the chunk grid covers, exactly
+ * as `chunkIndexOfCell` floors it. A non-finite coordinate is outside too: a NaN
+ * fails every comparison here, which is the right answer for a position that
+ * says nothing about anywhere.
+ */
+function isInsideWorld(worldSize: number, x: number, y: number): boolean {
+  return x >= 0 && y >= 0 && x < worldSize && y < worldSize;
+}
+
 export function createWorldApi(
   world: World,
   listener: TerrainChangeListener & ChunkUnlockListener & WorldEventListener,
@@ -258,6 +272,15 @@ export function createWorldApi(
         const visible: T[] = [];
         for (const item of items) {
           const { x, y } = positionOf(item);
+          // OFF THE MAP IS VISIBLE TO NOBODY (#291). Some things a plugin
+          // broadcasts are legitimately outside the world — a cyclone is born
+          // over the sea beyond the coast and drifts in — and the fog-of-war
+          // test below resolves a chunk index, which throws a RangeError for a
+          // cell that has no chunk (shared/src/chunks.ts). Said ONCE here
+          // rather than clamped at each callsite: a clamp would put the thing
+          // on the edge, which is a different and false statement, and a rule
+          // every plugin has to remember is a rule the next one forgets.
+          if (!isInsideWorld(live.world.size, x, y)) continue;
           if (live.world.isCellVisibleTo(player.id, x, y)) visible.push(item);
         }
         if (skipEmpty && visible.length === 0) continue;
