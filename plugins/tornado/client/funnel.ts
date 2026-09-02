@@ -419,7 +419,7 @@ function unitFromId(id: number): number {
 
 export function createFunnel(): FunnelRenderer {
   const root = new Group();
-  root.name = 'storms:funnel';
+  root.name = 'tornado:funnel';
 
   // ── The vortex sheet ──────────────────────────────────────────────────────
   // A UNIT open cylinder, reshaped entirely in the vertex shader: the taper is
@@ -448,7 +448,7 @@ export function createFunnel(): FunnelRenderer {
     // silhouette, and additive blending can only ever lighten.
   });
   const cone = new InstancedMesh(coneGeometry, coneMaterial, MAX_FUNNELS);
-  cone.name = 'storms:funnel:vortex';
+  cone.name = 'tornado:funnel:vortex';
   cone.count = 0;
   cone.renderOrder = FUNNEL_RENDER_ORDER;
   // Every vertex is displaced in the shader, so three's bounding sphere — which
@@ -475,7 +475,7 @@ export function createFunnel(): FunnelRenderer {
     side: DoubleSide,
   });
   const debris = new InstancedMesh(debrisGeometry, debrisMaterial, debrisCapacity);
-  debris.name = 'storms:funnel:debris';
+  debris.name = 'tornado:funnel:debris';
   debris.count = 0;
   debris.renderOrder = DEBRIS_RENDER_ORDER;
   debris.frustumCulled = false;

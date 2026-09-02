@@ -8,6 +8,7 @@
 
 import { clientPlugin as boats } from '../../../plugins/boats/client/index.ts';
 import { clientPlugin as chronicle } from '../../../plugins/chronicle/client/index.ts';
+import { clientPlugin as cyclone } from '../../../plugins/cyclone/client/index.ts';
 import { clientPlugin as daynight } from '../../../plugins/daynight/client/index.ts';
 import { clientPlugin as fire } from '../../../plugins/fire/client/index.ts';
 import { clientPlugin as flora } from '../../../plugins/flora/client/index.ts';
@@ -20,10 +21,10 @@ import { clientPlugin as pilgrims } from '../../../plugins/pilgrims/client/index
 import { clientPlugin as rain } from '../../../plugins/rain/client/index.ts';
 import { clientPlugin as relics } from '../../../plugins/relics/client/index.ts';
 import { clientPlugin as snow } from '../../../plugins/snow/client/index.ts';
-import { clientPlugin as storms } from '../../../plugins/storms/client/index.ts';
 import { clientPlugin as structures } from '../../../plugins/structures/client/index.ts';
 import { clientPlugin as temples } from '../../../plugins/temples/client/index.ts';
 import { clientPlugin as thunderstorm } from '../../../plugins/thunderstorm/client/index.ts';
+import { clientPlugin as tornado } from '../../../plugins/tornado/client/index.ts';
 import { clientPlugin as volcanoes } from '../../../plugins/volcanoes/client/index.ts';
 import { clientPlugin as wildlife } from '../../../plugins/wildlife/client/index.ts';
 import type { TerraceClientPlugin } from './types.ts';
@@ -49,7 +50,11 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   thunderstorm,
   snow,
   fog,
-  storms,
+  // The two rotating storms, since the 2026-09-02 split (#283). They were one
+  // `storms` plugin over one parametric sim; the sim is now core's plugin kit
+  // and each of these holds an instance of it.
+  tornado,
+  cyclone,
   mudslides,
   volcanoes,
   chronicle,

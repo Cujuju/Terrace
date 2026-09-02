@@ -27,14 +27,19 @@
 // re-terraformed the island", and it is the reason the depth is stated as a
 // FRACTION of a band rather than as a height.
 //
-// TORNADOES DO NOT SURGE. A surge is water driven ashore by a storm that has
-// been standing over the sea for hours; a funnel that came out of a cloud over
-// a wheat field has no sea to drive. Only cyclones reach here.
+// ONLY A CYCLONE SURGES, which since the 2026-09-02 split (#283) is a fact about
+// which FOLDER this file is in rather than a branch inside it: a surge is water
+// driven ashore by a storm that has been standing over the sea for hours, and a
+// funnel that came out of a cloud over a wheat field has no sea to drive. The
+// kind test that used to open this function is gone with the kind.
 
 import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
 import { footprintUnlocked } from '../../../server/src/plugins/footprint.ts';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
-import type { Storm, StormWorld } from './storms.ts';
+import type {
+  RotatingStorm,
+  RotatingStormWorld,
+} from '../../../server/src/plugins/kit/rotatingStorms.ts';
 
 /**
  * How deep one surge scours, in HEIGHT UNITS — half a terrace band.
@@ -119,7 +124,7 @@ const NEIGHBOUR_OFFSETS: readonly (readonly [number, number])[] = [
 ];
 
 /** Is (x, y) land with sea in one of the four cells beside it? */
-function isShoreline(world: StormWorld, x: number, y: number): boolean {
+function isShoreline(world: RotatingStormWorld, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (world.heightAt(x, y) <= SEA_LEVEL) return false;
   for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
@@ -131,10 +136,11 @@ function isShoreline(world: StormWorld, x: number, y: number): boolean {
   return false;
 }
 
-// The surge timer lives on the Storm record (`surgeDebtSeconds`) rather than in
-// a side table here: it is state of the storm, it must persist with it, and a
-// side table needed its own reset and prune to stay in step with the roster
-// (review 2026-08-28).
+// The surge timer lives on the storm record (the kit engine's
+// `ownerDebtSeconds`, which is exactly what that field is for) rather than in a
+// side table here: it is state of the storm, it must persist with it, and a side
+// table needed its own reset and prune to stay in step with the roster (review
+// 2026-08-28).
 
 /**
  * Runs one tick of surge for one storm. Returns the cell it scoured, or null.
@@ -147,25 +153,23 @@ function isShoreline(world: StormWorld, x: number, y: number): boolean {
  * silently did nothing depending on a global would be the harder thing to read.
  */
 export function tickSurge(
-  world: WorldApi & StormWorld,
-  storm: Storm,
+  world: WorldApi & RotatingStormWorld,
+  storm: RotatingStorm,
   intensity: number,
   dt: number,
   random: () => number,
 ): { x: number; y: number } | null {
-  if (storm.kind !== 'cyclone') return null;
-
-  storm.surgeDebtSeconds += dt;
-  if (storm.surgeDebtSeconds < SURGE_INTERVAL_SECONDS) return null;
+  storm.ownerDebtSeconds += dt;
+  if (storm.ownerDebtSeconds < SURGE_INTERVAL_SECONDS) return null;
   // The debt is cleared whether or not a site is found, so a storm at sea does
   // not bank up ten minutes of surge and spend it all on the first rock it
   // passes.
-  storm.surgeDebtSeconds = 0;
+  storm.ownerDebtSeconds = 0;
   if (intensity < SURGE_MIN_INTENSITY) return null;
 
   for (let attempt = 0; attempt < SURGE_SITING_ATTEMPTS; attempt++) {
     const angle = random() * Math.PI * 2;
-    // Uniform over the disc's area — see the same sqrt in ./storms.ts.
+    // Uniform over the disc's area — see the same sqrt in the kit engine.
     const distance = Math.sqrt(random()) * storm.radius;
     const x = Math.round(storm.x + Math.cos(angle) * distance);
     const y = Math.round(storm.y + Math.sin(angle) * distance);

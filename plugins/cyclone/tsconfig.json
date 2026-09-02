@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is needed by the CLIENT half's contract, not by anything in this
+    // plugin directly: client/src/plugins/types.ts types onCanvasPress with
+    // PointerEvent. Same reason client/tsconfig.json and the wildlife and
+    // monsters plugins carry it. `window.matchMedia` in client/rig.ts needs it
+    // too — the reduced-motion watcher is guarded for the node test run.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
+    // nested workspace package (it does for server/, one level up), and these
+    // tests compile server sources that use node: builtins. Naming the types
+    // explicitly is deterministic and costs nothing.
+    "types": ["node"]
+  },
+  "include": ["protocol.ts", "server", "client", "test"]
+}
