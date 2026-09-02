@@ -7,7 +7,8 @@
 // seam is auditable, and a harness can drive the sim with an object literal.
 // WorldApi satisfies it structurally — there is no adapter and no cast.
 
-import { CHUNK_SIZE, SEA_LEVEL, type CellDiff, type FreshwaterMap } from '@terrace/shared';
+import { SEA_LEVEL, type CellDiff, type FreshwaterMap } from '@terrace/shared';
+import { footprintUnlocked } from '../../../server/src/plugins/footprint.ts';
 import {
   MUDSLIDE_SLOPE_SPAN_CELLS,
   MUDSLIDE_TRIGGER_DROP,
@@ -49,51 +50,13 @@ export function cellKey(x: number, y: number): number {
   return x * 0x10000 + y;
 }
 
-/**
- * THE ONE GUARD THAT KEEPS THIS PLUGIN OUT OF LOCKED TERRITORY, and the answer
- * to issue #212's open question about `reveal` masks.
- *
- * WHY IT HAS TO EXIST AT ALL. `WorldApi.sculpt` writes heights whatever the
- * mask says — the mask is applied to the BROADCAST, not to the write (see
- * server/src/world/sculpt-service.ts). That is right for a player intent, whose
- * brush core has already validated, and wrong for a plugin that picked its own
- * coordinates: a slide that ran into fog would silently regrade ground the world
- * has not revealed, and a player unlocking that chunk later would be handed a
- * scar with no history.
- *
- * SO THE FOOTPRINT, NOT THE CENTRE, IS WHAT IS TESTED. A sculpt of radius r
- * touches every cell in the square [x−r, x+r] × [y−r, y+r] (the brush is round,
- * but the square is the cheap superset and erring outward is the safe direction
- * here). Tested by CHUNK rather than by cell: the mask's quantum IS the chunk,
- * so a radius-3 brush costs at most four `isChunkUnlocked` calls instead of
- * forty-nine `isCellUnlocked` ones, and the two can never disagree.
- *
- * Every sculpt in this plugin goes through `sculptGuarded` below; there is no
- * second call site that could forget this.
- */
-export function footprintUnlocked(
-  world: MudslideWorld,
-  x: number,
-  y: number,
-  radius: number,
-): boolean {
-  const minX = x - radius;
-  const maxX = x + radius;
-  const minY = y - radius;
-  const maxY = y + radius;
-  if (!inBounds(world, minX, minY) || !inBounds(world, maxX, maxY)) return false;
-
-  const minCx = Math.floor(minX / CHUNK_SIZE);
-  const maxCx = Math.floor(maxX / CHUNK_SIZE);
-  const minCy = Math.floor(minY / CHUNK_SIZE);
-  const maxCy = Math.floor(maxY / CHUNK_SIZE);
-  for (let cy = minCy; cy <= maxCy; cy++) {
-    for (let cx = minCx; cx <= maxCx; cx++) {
-      if (!world.isChunkUnlocked(cx, cy)) return false;
-    }
-  }
-  return true;
-}
+// THE ONE GUARD THAT KEEPS THIS PLUGIN OUT OF LOCKED TERRITORY, and the answer
+// to issue #212's open question about `reveal` masks, is `footprintUnlocked` in
+// server/src/plugins/footprint.ts — it moved there when storm surge needed the
+// same guard (issue #230, 2026-09-01). Re-exported so this file stays the whole
+// of the plugin's terrain seam. Every sculpt in this plugin goes through
+// `sculptGuarded` below; there is no second call site that could forget it.
+export { footprintUnlocked };
 
 /**
  * How far past the brush edge the mass measurement below reads, in cells.
@@ -284,7 +247,7 @@ export function freshwaterAdjacent(world: MudslideWorld, x: number, y: number): 
  *
  * THE STOP TESTS ARE ON THE CELL THE FRONT IS ABOUT TO ENTER, not the one it is
  * in, so a slide reaching a river stops ON THE BANK — which is where the debris
- * dam a player can see would be.
+ * dam a player can see would be. Reaching the SEA is not a stop — see below.
  */
 export function nextFlowCell(
   world: MudslideWorld,
@@ -317,9 +280,13 @@ export function nextFlowCell(
 
   if (bestX < 0) return 'basin';
   if (world.freshwater.at(bestX, bestY) !== 'none') return 'water';
-  if (bestHeight <= SEA_LEVEL) return 'sea';
-  // Locked LAST of the four, so a front that would have stopped at the water's
-  // edge anyway reports the reason a player can see rather than one they cannot.
+  // THE SEA IS NOT A STOP (owner, issue #231, 2026-09-01): a coastal cliff is the
+  // steepest ground on a genesis world and its mud goes into the water, so the
+  // front keeps walking the seabed downhill and its deposits land there — enough
+  // of them build a fan a player can see break the surface. Fresh water still
+  // stops it, on the bank, for the debris-dam reason in the doc comment above.
+  // Locked LAST, so a front that would have stopped at a river anyway reports the
+  // reason a player can see rather than one they cannot.
   if (!world.isCellUnlocked(bestX, bestY)) return 'locked';
 
   return { x: bestX, y: bestY };
