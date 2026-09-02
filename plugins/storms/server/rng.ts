@@ -22,6 +22,13 @@
 // seeding this generator alone reproduces where and when tornadoes are SITED
 // relative to a cell, not which cells exist to be sited against.
 
+import {
+  createSeededRng,
+  exponentialWaitSeconds as sharedExponentialWait,
+  randomInRange as sharedRandomInRange,
+  rollEvent as sharedRollEvent,
+} from '@terrace/shared';
+
 /** A seeded PRNG whose whole state is one uint32, so it persists trivially. */
 export interface StormRng {
   /** Next value in [0, 1). */
@@ -41,28 +48,18 @@ export interface StormRng {
 export const STORM_RNG_DEFAULT_SEED = 0x57_07_3d_51;
 
 /**
- * mulberry32 — the generator relics, volcanoes and weather each carry.
+ * mulberry32, from @terrace/shared.
  *
- * RESTATED RATHER THAN IMPORTED, and that is the plugin boundary rather than an
- * oversight: a plugin is a distributable unit a self-hoster may install without
- * its neighbours, so plugins do not depend on each other's internals. The same
- * rule has wildlife and monsters each carrying their own
- * roundBroadcastPosition.
+ * IMPORTED, NOT RESTATED. This was a byte-identical copy of the body seven
+ * other files carried, kept as a copy on the plugin-boundary argument — a
+ * plugin is a distributable unit and must not depend on a NEIGHBOUR's
+ * internals. That argument is about plugins, and shared/ is not one: it has no
+ * name, no lifecycle, cannot be disabled for a world and is not re-imported by
+ * a plugin reload. The seed and the stream are unchanged, which is what the
+ * persistence slice needs (see shared/src/rng.ts's header).
  */
 export function createStormRng(seed: number): StormRng {
-  let a = seed >>> 0;
-  return {
-    next(): number {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
-    },
-    state(): number {
-      return a;
-    },
-  };
+  return createSeededRng(seed);
 }
 
 /**
@@ -83,8 +80,7 @@ export function createStormRng(seed: number): StormRng {
  * rather than as certainty.
  */
 export function rollEvent(rng: StormRng, ratePerSecond: number, dt: number): boolean {
-  if (!(ratePerSecond > 0) || !(dt > 0) || !Number.isFinite(dt)) return false;
-  return rng.next() < 1 - Math.exp(-ratePerSecond * dt);
+  return sharedRollEvent(rng.next, ratePerSecond, dt);
 }
 
 /**
@@ -108,11 +104,10 @@ export function rollEvent(rng: StormRng, ratePerSecond: number, dt: number): boo
  * `log(0)` is -Infinity, which would give a storm eternal life.
  */
 export function exponentialWaitSeconds(rng: StormRng, meanSeconds: number): number {
-  if (!(meanSeconds > 0)) return 0;
-  return -Math.log(1 - rng.next()) * meanSeconds;
+  return sharedExponentialWait(rng.next, meanSeconds);
 }
 
 /** A uniform draw in [min, max). */
 export function randomInRange(rng: StormRng, min: number, max: number): number {
-  return min + rng.next() * (max - min);
+  return sharedRandomInRange(rng.next, min, max);
 }

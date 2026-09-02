@@ -102,6 +102,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from '@terrace/shared';
+import { isFiniteNumber } from '@terrace/shared';
 
 /** The two settler races. Order is meaningful: index = the race hash bit. */
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
@@ -173,10 +174,6 @@ export interface PilgrimEntityState {
 
 export interface PilgrimsEntitiesPayload {
   readonly pilgrims: readonly PilgrimEntityState[];
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**

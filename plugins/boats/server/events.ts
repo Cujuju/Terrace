@@ -28,6 +28,7 @@
 // kraken is ever seen and the fleet sits at home. Neither is an error path.
 
 import { VILLAGE_MIN_TIER } from '../protocol.ts';
+import { isFiniteNumber } from '@terrace/shared';
 
 /**
  * Defensive bound on any list inside a payload. Matched to the largest real
@@ -41,10 +42,6 @@ const EVENT_LIST_CAP = 4096;
 export interface EventCell {
   readonly x: number;
   readonly y: number;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function parseCellList(value: unknown): EventCell[] | null {

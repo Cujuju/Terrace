@@ -611,3 +611,38 @@ export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_
  * binary and identical on every platform.
  */
 export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
+
+/**
+ * The tallest a world's relief may draw, in world units — the render scale that
+ * turns a height field into a landscape.
+ *
+ * IN WORLD UNITS SINCE 2026-08-21, having been "in cells" while a cell WAS a
+ * world unit. Left in cells it would have shrunk the world's relief to a quarter
+ * the moment the cell did — the same trap the derivation note below records on
+ * the vertical axis.
+ *
+ * THE DERIVATION USED TO RUN THE OTHER WAY (2026-08-20). BAND_WORLD_HEIGHT was
+ * primary at one cell per band and this scale fell out of it, which made the
+ * world's relief a function of BAND_HEIGHT — the render quantum. Re-terracing
+ * 64 → 16 would then have quadrupled every mountain in the game. Relief is the
+ * physical fact and the band is the quantum, so the band is what derives.
+ *
+ * WHY IT IS HERE AND NOT IN client/src/config.ts, where it was authored. Four
+ * plugin protocols and one client rig each restated the literal 16 with a
+ * "RESIDUAL, NAMED: if config.ts's MAX_RELIEF_WORLD_UNITS changes, this drifts"
+ * note attached, because a plugin cannot import the client's config from its
+ * SERVER half. A number a server and a client must agree on is a protocol
+ * constant, which is what this package holds. config.ts re-exports it, so
+ * nothing that reads it there had to move.
+ */
+export const MAX_RELIEF_WORLD_UNITS = 16;
+
+/**
+ * World units per terrace band — DERIVED, so a BAND_HEIGHT re-tune cannot
+ * silently change how tall the world is.
+ *
+ * A band is the render quantum and the relief is the physical fact, so the band
+ * is what falls out: MAX_RELIEF_WORLD_UNITS spread over MAX_HEIGHT / BAND_HEIGHT
+ * terraces. Never write this ratio by hand.
+ */
+export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);

@@ -67,23 +67,15 @@ export type WeatherKind = (typeof WEATHER_KINDS)[number];
 // and dies well outside the map by design, exactly like wildlife's birds. There
 // is no cell for shared's `roundBroadcastCell` to keep it inside of.
 export { BROADCAST_POSITION_DECIMALS, roundBroadcastPosition } from '@terrace/shared';
+import { isFiniteNumber } from '@terrace/shared';
 
-/**
- * Decimal places kept on broadcast intensity, which is a fraction in [0, 1]
- * rather than a distance — so 1/100 would be a visible quantisation of the
- * 30-second fade a system gathers over (0.03 of the ramp per broadcast at the
- * 1 Hz cadence). Three places is a thousandth of full strength, well under one
- * step of 8-bit alpha, so the fade reads as continuous.
- */
-export const WEATHER_INTENSITY_DECIMALS = 3;
-
-const INTENSITY_QUANTUM = 10 ** WEATHER_INTENSITY_DECIMALS;
-
-/** Rounds an intensity for the wire and clamps it into [0, 1]. */
-export function roundBroadcastIntensity(value: number): number {
-  const clamped = Math.min(1, Math.max(0, value));
-  return Math.round(clamped * INTENSITY_QUANTUM) / INTENSITY_QUANTUM;
-}
+// Broadcast INTENSITY precision lives in @terrace/shared (shared/src/wire.ts)
+// alongside the position precision, for the same reason #180 put that there:
+// weather and storms each carried a byte-identical copy of the constant and the
+// rounding, and the precision of a wire value is a property of the protocol.
+// Re-exported under this plugin's own name so nothing that reads it here moved.
+export { roundBroadcastIntensity } from '@terrace/shared';
+export { BROADCAST_INTENSITY_DECIMALS as WEATHER_INTENSITY_DECIMALS } from '@terrace/shared';
 
 /** One weather system, as it appears on the wire. */
 export interface WeatherSystemState {
@@ -127,10 +119,6 @@ export interface WeatherSystemsPayload {
 
 export function isWeatherKind(value: unknown): value is WeatherKind {
   return (WEATHER_KINDS as readonly string[]).includes(value as string);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**

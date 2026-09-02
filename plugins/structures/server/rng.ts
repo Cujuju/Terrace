@@ -3,11 +3,15 @@
 // persisted sequence — exactly one generator, the same way flora and relics
 // each keep exactly one.
 //
-// mulberry32, a COPY of flora's/relics' (own copy per plugin: every plugin
-// must build and run with any other plugin deleted). Chosen over Math.random
-// because Math.random cannot be seeded and therefore cannot be persisted or
-// reproduced — a self-hoster reporting "my first town spawned in a weird spot"
-// needs a reproducible run, and so do the tests.
+// mulberry32, from @terrace/shared — imported now rather than copied per
+// plugin. The "own copy per plugin" rule is about a plugin depending on a
+// NEIGHBOUR; shared/ is core, so this plugin still builds and runs with every
+// other plugin deleted. Chosen over Math.random because Math.random cannot be
+// seeded and therefore cannot be persisted or reproduced — a self-hoster
+// reporting "my first town spawned in a weird spot" needs a reproducible run,
+// and so do the tests.
+
+import { createSeededRng } from '@terrace/shared';
 
 export interface StructuresRng {
   /** Next value in [0, 1). */
@@ -20,17 +24,5 @@ export interface StructuresRng {
 export const STRUCTURES_RNG_DEFAULT_SEED = 0x57a7e5;
 
 export function createStructuresRng(seed: number): StructuresRng {
-  let a = seed >>> 0;
-  return {
-    next(): number {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
-    },
-    state(): number {
-      return a;
-    },
-  };
+  return createSeededRng(seed);
 }

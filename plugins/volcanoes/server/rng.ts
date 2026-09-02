@@ -13,6 +13,12 @@
 // CLAUDE.md (which governs shared/'s heightmap ops) does not apply. What DOES
 // apply is that the same seed must give the same world twice on the same build.
 
+import {
+  createSeededRng,
+  exponentialWaitSeconds as sharedExponentialWait,
+  rollEvent as sharedRollEvent,
+} from '@terrace/shared';
+
 /** A seeded PRNG whose whole state is one uint32, so it persists trivially. */
 export interface VolcanoRng {
   /** Next value in [0, 1). */
@@ -31,29 +37,18 @@ export interface VolcanoRng {
 export const VOLCANO_RNG_DEFAULT_SEED = 0x5ea1_f14e;
 
 /**
- * mulberry32 — relics' generator, restated rather than imported.
+ * mulberry32, from @terrace/shared.
  *
- * NOT imported from ../../relics/server/spawn.ts, and that is the plugin
- * boundary rather than an oversight: a plugin is a distributable unit a
- * self-hoster may install without its neighbours, so plugins do not depend on
- * each other's internals. The same rule has wildlife and monsters each carrying
- * their own roundBroadcastPosition, and weather carrying its own copy of
- * monsters' rng.ts.
+ * IMPORTED, NOT RESTATED. This was a byte-identical copy of the body seven
+ * other files carried, kept as a copy on the plugin-boundary argument — a
+ * plugin is a distributable unit and must not depend on a NEIGHBOUR's
+ * internals. That argument is about plugins, and shared/ is not one: it has no
+ * name, no lifecycle, cannot be disabled for a world and is not re-imported by
+ * a plugin reload. The seed and the stream are unchanged, which is what the
+ * persistence slice needs (see shared/src/rng.ts's header).
  */
 export function createVolcanoRng(seed: number): VolcanoRng {
-  let a = seed >>> 0;
-  return {
-    next(): number {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
-    },
-    state(): number {
-      return a;
-    },
-  };
+  return createSeededRng(seed);
 }
 
 /**
@@ -74,8 +69,7 @@ export function createVolcanoRng(seed: number): VolcanoRng {
  * rather than as certainty.
  */
 export function rollEvent(rng: VolcanoRng, ratePerSecond: number, dt: number): boolean {
-  if (!(ratePerSecond > 0) || !(dt > 0) || !Number.isFinite(dt)) return false;
-  return rng.next() < 1 - Math.exp(-ratePerSecond * dt);
+  return sharedRollEvent(rng.next, ratePerSecond, dt);
 }
 
 /**
@@ -99,6 +93,5 @@ export function rollEvent(rng: VolcanoRng, ratePerSecond: number, dt: number): b
  * `log(0)` is -Infinity, which would park a vent for the rest of time.
  */
 export function exponentialWaitSeconds(rng: VolcanoRng, meanSeconds: number): number {
-  if (!(meanSeconds > 0)) return 0;
-  return -Math.log(1 - rng.next()) * meanSeconds;
+  return sharedExponentialWait(rng.next, meanSeconds);
 }

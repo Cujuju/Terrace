@@ -9,6 +9,7 @@
 // import it and so can the browser bundle.
 
 import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, RELAX_SLACK, WORLD_UNIT_CELLS } from '@terrace/shared';
+import { isFiniteNumber } from '@terrace/shared';
 
 /** The host's key for this plugin: the message and event namespace. */
 export const MUDSLIDES_PLUGIN_NAME = 'mudslides';
@@ -87,18 +88,17 @@ export function parseFrequency(value: string | undefined): MudslideFrequency {
 /**
  * World units one terrace band rises.
  *
- * RESTATED, NOT IMPORTED, and the same restatement plugins/storms/protocol.ts
- * and plugins/weather/client/sky.ts both make: the client derives its vertical
- * scale in client/src/config.ts, and a plugin cannot import that file without
- * dragging `import.meta.env` into its node test run. Written as the DERIVATION
- * rather than as 0.25, so the two agree by construction.
- *
- * RESIDUAL, NAMED: if client/src/config.ts's MAX_RELIEF_WORLD_UNITS moves and
- * this does not, every vertical measurement in this plugin's client half is
- * wrong by that ratio and nothing fails loudly.
+ * NOW IMPORTED, NOT RESTATED. This file used to carry `MAX_RELIEF_WORLD_UNITS =
+ * 16` and this derivation as a copy of client/src/config.ts's, with the residual
+ * named in the header: if the client's relief moved and this did not, every
+ * vertical measurement in this plugin was wrong by that ratio and nothing failed
+ * loudly. Four plugins carried that same residual. The constant moved into
+ * @terrace/shared — which a plugin CAN import from either half, where
+ * client/src/config.ts is unreachable from a server file — so the residual is
+ * closed rather than merely named. Re-exported here so nothing that reads it
+ * from this protocol moved.
  */
-const MAX_RELIEF_WORLD_UNITS = 16;
-export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 /** A length of GROUND in world units, expressed in the cells that sample it. */
 export function cellsAcross(worldUnits: number): number {
@@ -286,10 +286,6 @@ export type MudslideStop = (typeof MUDSLIDE_STOPS)[number];
 // Structural, total, and a bad payload is dropped WHOLE rather than half
 // applied — the rule every plugin in this repo follows. The previous state keeps
 // rendering until the next good message, which is at most one broadcast away.
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
 
 function parseSlide(value: unknown): SlideState | null {
   if (typeof value !== 'object' || value === null) return null;

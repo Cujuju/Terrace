@@ -65,3 +65,34 @@ export function roundBroadcastCell(value: number, worldSize: number): number {
   const lastRepresentableInside = worldSize - 1 / POSITION_QUANTUM;
   return rounded > lastRepresentableInside ? lastRepresentableInside : rounded;
 }
+
+/**
+ * Decimal places kept on a broadcast INTENSITY — a fraction of full strength,
+ * not a distance, which is why it is not the position precision above.
+ *
+ * WHY IT IS HERE. weather's and storms' protocol.ts each carried a
+ * byte-identical copy of the constant and the rounding below, under the same
+ * argument the position rounding makes: the precision of a broadcast value is a
+ * property of the PROTOCOL, and this package is what the protocol is the single
+ * source of truth for.
+ *
+ * THREE. 1/100 would be a visible quantisation of the 30-second fade a weather
+ * system gathers over (0.03 of the ramp per broadcast at the 1 Hz cadence).
+ * Three places is a thousandth of full strength, well under one step of 8-bit
+ * alpha, so a fade reads as continuous.
+ */
+export const BROADCAST_INTENSITY_DECIMALS = 3;
+
+const INTENSITY_QUANTUM = 10 ** BROADCAST_INTENSITY_DECIMALS;
+
+/**
+ * Rounds an intensity for the wire and CLAMPS it into [0, 1].
+ *
+ * The clamp is not decoration: an intensity is a fraction of full strength, so a
+ * sim that overshoots by a rounding error must not put a value on the wire that
+ * a client will multiply an alpha or a colour by.
+ */
+export function roundBroadcastIntensity(value: number): number {
+  const clamped = Math.min(1, Math.max(0, value));
+  return Math.round(clamped * INTENSITY_QUANTUM) / INTENSITY_QUANTUM;
+}

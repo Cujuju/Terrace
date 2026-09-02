@@ -6,23 +6,24 @@
 // sim). What is NOT fine is each caller inventing its own "did it happen this
 // tick?" arithmetic, so there is exactly one function for that.
 //
-// This is the weather plugin's server/rng.ts, restated. It is NOT imported from
-// there: a plugin is a distributable unit a self-hoster may install without its
-// neighbours, so plugins do not depend on each other's internals. The reasoning
-// is copied deliberately, because the reasoning is the thing worth keeping in
-// step.
+// THE ARITHMETIC LIVES IN @terrace/shared NOW. It used to be weather's
+// server/rng.ts restated here, on the plugin boundary — plugins do not depend on
+// each other's internals. That is a rule about a NEIGHBOUR, and shared/ is core.
+// What stays here is this plugin's own SEAM: `fireRandom` and
+// `setFireRandomSource` are what this plugin's suite installs a generator
+// through.
+
+import { createRandomSource, rollEvent } from '@terrace/shared';
 
 /**
  * The source of randomness. Swappable so tests can be deterministic — spread is
  * this plugin's central mechanic, and a mechanic that can only be tested
  * statistically is a mechanic that is untested.
  */
-let randomSource: () => number = Math.random;
+const source = createRandomSource();
 
 /** Returns a float in [0, 1). */
-export function fireRandom(): number {
-  return randomSource();
-}
+export const fireRandom = source.random;
 
 /**
  * TEST SEAM. Installs a random source; `null` restores Math.random.
@@ -32,9 +33,7 @@ export function fireRandom(): number {
  * silently re-arm Math.random would make those tests flaky in a way that looks
  * like a sim bug.
  */
-export function setFireRandomSource(source: (() => number) | null): void {
-  randomSource = source ?? Math.random;
-}
+export const setFireRandomSource = source.setSource;
 
 /**
  * Did an event of rate `perSecond` happen during `dt` seconds?
@@ -46,8 +45,14 @@ export function setFireRandomSource(source: (() => number) | null): void {
  * chops up time — two half-second steps and one one-second step give the same
  * distribution, so changing the spread cadence cannot quietly change the game's
  * balance.
+ *
+ * ONE GUARD IS STRICTER THAN THIS PLUGIN'S OWN COPY WAS. The copy rejected only
+ * `perSecond <= 0 || dt <= 0`; shared's `rollEvent` also rejects a NON-FINITE
+ * dt, where the copy would have fired with certainty. Every caller here passes
+ * either the tick's dt or an accumulated dwell time, both finite by
+ * construction, so the difference is unreachable — and the shared guard is the
+ * one that is right if it ever stops being.
  */
 export function happensWithin(perSecond: number, dt: number): boolean {
-  if (perSecond <= 0 || dt <= 0) return false;
-  return fireRandom() < 1 - Math.exp(-perSecond * dt);
+  return rollEvent(fireRandom, perSecond, dt);
 }

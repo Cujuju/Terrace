@@ -30,16 +30,13 @@ import {
   type Site,
   type SlidesSnapshot,
 } from './slides.ts';
+import { isFiniteNumber, parseRecordArray } from '@terrace/shared';
 
 /** Bumped when `save`'s shape changes in a way `load` cannot read blind. */
 export const MUDSLIDES_SLICE_VERSION = 1;
 
 export function saveSlides(): unknown {
   return slidesSnapshot();
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function parseCell(value: unknown): { x: number; y: number } | null {
@@ -118,13 +115,9 @@ function parseSlide(value: unknown): SerializedSlide | null {
   const parsedStop = parseStop(stop);
   if (parsedStop === undefined) return null;
 
-  if (!Array.isArray(path) || path.length === 0) return null;
-  const parsedPath: Array<{ x: number; y: number }> = [];
-  for (const step of path) {
-    const cell = parseCell(step);
-    if (cell === null) return null;
-    parsedPath.push(cell);
-  }
+  const parsedPath = parseRecordArray(path, parseCell);
+  // An EMPTY path is not a slide: the run is the thing being restored.
+  if (parsedPath === null || parsedPath.length === 0) return null;
 
   return {
     id: id as number,
@@ -157,28 +150,14 @@ export function loadSlides(data: unknown): void {
   if (typeof data !== 'object' || data === null) return;
   const { nextSlideId, rngState, sites, slides, debris } = data as Record<string, unknown>;
   if (!Number.isInteger(nextSlideId) || !Number.isInteger(rngState)) return;
-  if (!Array.isArray(sites) || !Array.isArray(slides) || !Array.isArray(debris)) return;
+  const parsedSites = parseRecordArray(sites, parseSite);
+  if (parsedSites === null) return;
 
-  const parsedSites: Site[] = [];
-  for (const value of sites) {
-    const site = parseSite(value);
-    if (site === null) return;
-    parsedSites.push(site);
-  }
+  const parsedSlides = parseRecordArray(slides, parseSlide);
+  if (parsedSlides === null) return;
 
-  const parsedSlides: SerializedSlide[] = [];
-  for (const value of slides) {
-    const slide = parseSlide(value);
-    if (slide === null) return;
-    parsedSlides.push(slide);
-  }
-
-  const parsedDebris: DebrisCell[] = [];
-  for (const value of debris) {
-    const cell = parseDebris(value);
-    if (cell === null) return;
-    parsedDebris.push(cell);
-  }
+  const parsedDebris = parseRecordArray(debris, parseDebris);
+  if (parsedDebris === null) return;
 
   const snapshot: SlidesSnapshot = {
     nextSlideId: nextSlideId as number,

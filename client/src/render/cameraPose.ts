@@ -22,6 +22,7 @@ import {
   CELL_WORLD_SIZE,
   HEIGHT_WORLD_SCALE,
 } from '../config.ts';
+import { isFiniteNumber } from '@terrace/shared';
 
 /** Plain-data stand-in for three's Vector3; no three import needed. */
 export interface Vec3Like {
@@ -98,10 +99,6 @@ export function cameraPoseStorageKey(
   worldSize: number,
 ): string {
   return `${CAMERA_POSE_KEY_PREFIX}:${serverUrl}:${worldSize}`;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /** Accepts only an object carrying three finite numeric components. */

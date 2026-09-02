@@ -6,12 +6,26 @@
 // plugin sim). What is NOT fine is each caller inventing its own "did it happen
 // this tick?" arithmetic, so there is exactly one function for that.
 //
-// This is the monsters plugin's server/rng.ts, restated. It is NOT imported from
-// there: a plugin is a distributable unit that a self-hoster may install without
-// its neighbours, so plugins do not depend on each other's internals — the same
-// boundary that has wildlife and monsters each carry their own
-// roundBroadcastPosition. The reasoning below is copied deliberately, because
-// the reasoning is the thing worth keeping in step.
+// THE ARITHMETIC LIVES IN @terrace/shared NOW. It used to be monsters'
+// server/rng.ts restated here, on the plugin boundary — a plugin is a
+// distributable unit a self-hoster may install without its neighbours, so
+// plugins do not depend on each other's internals. That is a rule about a
+// NEIGHBOUR, and shared/ is core: it has no name, cannot be disabled for a
+// world, and is not re-imported by a plugin reload. Three plugins carried the
+// same six-line swappable source and six carried the same Poisson roll; the
+// reasoning that kept those copies honest now lives on the one definition.
+//
+// WHAT STAYS HERE is this plugin's own SEAM — `weatherRandom` and
+// `setWeatherRandomSource` are what this plugin's suite installs a generator
+// through, and the names are part of how its tests read.
+
+import {
+  createRandomSource,
+  pickWeightedIndex as sharedPickWeightedIndex,
+  randomInRange as sharedRandomInRange,
+  randomSigned as sharedRandomSigned,
+  rollEvent as sharedRollEvent,
+} from '@terrace/shared';
 
 /**
  * The source of randomness. Swappable so tests can be deterministic in CI (see
@@ -19,12 +33,10 @@
  * behaviour, and a plugin whose central mechanic can only be tested
  * statistically is a plugin whose central mechanic is untested.
  */
-let randomSource: () => number = Math.random;
+const source = createRandomSource();
 
 /** Returns a float in [0, 1). */
-export function weatherRandom(): number {
-  return randomSource();
-}
+export const weatherRandom = source.random;
 
 /**
  * TEST SEAM. Installs a random source; `null` restores Math.random.
@@ -34,41 +46,29 @@ export function weatherRandom(): number {
  * silently re-arm Math.random would make those tests flaky in a way that looks
  * like a sim bug.
  */
-export function setWeatherRandomSource(source: (() => number) | null): void {
-  randomSource = source ?? Math.random;
-}
+export const setWeatherRandomSource = source.setSource;
 
 /** Uniform float in [min, max). */
 export function randomInRange(min: number, max: number): number {
-  return min + weatherRandom() * (max - min);
+  return sharedRandomInRange(weatherRandom, min, max);
 }
 
 /** Uniform float in [-magnitude, +magnitude). */
 export function randomSigned(magnitude: number): number {
-  return (weatherRandom() * 2 - 1) * magnitude;
+  return sharedRandomSigned(weatherRandom, magnitude);
 }
 
 /**
  * Did a Poisson event of rate `ratePerSecond` fire during `dt` seconds?
  *
- * THE FORM MATTERS. The naive version — `random() < rate * dt` — is a linear
- * approximation of the same thing, and it is WRONG in a way that bites exactly
- * this codebase: its outcome depends on how finely time is sliced, so a server
- * running at TICK_HZ 20 would grow weather at a measurably different rate than
- * one at 10, and a rate × dt above 1 would silently become certainty.
- *
- * 1 - e^(-λΔt) is the exact probability of at least one arrival of a Poisson
- * process in the interval. Chaining intervals composes exactly (e^-λa · e^-λb =
- * e^-λ(a+b)), so the expected wait is 1/λ seconds however the ticks fall —
- * which is what lets every constant in ./systems.ts be stated as "mean seconds"
- * and mean it.
- *
- * A non-positive rate never fires; a non-finite dt is treated as no time at all
- * rather than as certainty.
+ * THE FORM MATTERS — see shared/src/rng.ts for the whole argument. In short:
+ * `random() < rate * dt` is a linear approximation whose outcome depends on how
+ * finely time is sliced, so a server at TICK_HZ 20 would grow weather at a
+ * measurably different rate than one at 10. The exact form is what lets every
+ * constant in ./systems.ts be stated as "mean seconds" and mean it.
  */
 export function rollEvent(ratePerSecond: number, dt: number): boolean {
-  if (!(ratePerSecond > 0) || !(dt > 0) || !Number.isFinite(dt)) return false;
-  return weatherRandom() < 1 - Math.exp(-ratePerSecond * dt);
+  return sharedRollEvent(weatherRandom, ratePerSecond, dt);
 }
 
 /**
@@ -77,16 +77,5 @@ export function rollEvent(ratePerSecond: number, dt: number): boolean {
  * caller can never be handed an out-of-range kind.
  */
 export function pickWeightedIndex(weights: readonly number[]): number {
-  let total = 0;
-  for (const weight of weights) total += Math.max(0, weight);
-  if (!(total > 0)) return weights.length - 1;
-
-  let roll = weatherRandom() * total;
-  for (let index = 0; index < weights.length; index++) {
-    roll -= Math.max(0, weights[index]!);
-    if (roll < 0) return index;
-  }
-  // Only reachable through floating-point round-off at the very top of the
-  // range; the last bucket is the honest answer there.
-  return weights.length - 1;
+  return sharedPickWeightedIndex(weatherRandom, weights);
 }

@@ -6,6 +6,8 @@
 // in the OTHER would invent a dependency cycle. flocks.ts needs it too. This
 // file depends on nothing in the plugin, so everything can depend on it.
 
+import { randomSigned as sharedRandomSigned } from '@terrace/shared';
+
 /**
  * A uniform random value in [-magnitude, +magnitude).
  *
@@ -16,7 +18,11 @@
  * toward positive values, with no seeded test to catch it, since this plugin
  * deliberately runs on unseeded RNG). One named helper makes the shape
  * impossible to get wrong at more than one of them.
+ *
+ * The shape itself is @terrace/shared's now — weather carried the same helper —
+ * and the source stays Math.random here, which is what "deliberately unseeded"
+ * means for this plugin.
  */
 export function randomSigned(magnitude: number): number {
-  return (Math.random() * 2 - 1) * magnitude;
+  return sharedRandomSigned(Math.random, magnitude);
 }

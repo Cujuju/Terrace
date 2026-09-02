@@ -39,6 +39,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
   cellsOverArea,
+  createSeededRng,
 } from '@terrace/shared';
 import { FLORA_TREE_CAP, treeCellOf, treeKey, type TreeCell } from '../protocol.ts';
 import { isGreenBand, isPlantableCell, type FloraWorld } from './bands.ts';
@@ -169,25 +170,14 @@ export interface FloraRng {
  * to read. Chosen over Math.random because Math.random cannot be seeded and
  * therefore cannot be persisted or reproduced.
  *
- * This is a COPY of the generator in plugins/relics/server/spawn.ts, not an
- * import, and that is deliberate: every plugin must build and run with any other
- * plugin deleted, so a cross-plugin import for eight lines of arithmetic would
- * trade a real independence guarantee for a trivial saving.
+ * IMPORTED FROM @terrace/shared, where it used to be a COPY of the generator in
+ * plugins/relics/server/spawn.ts. The independence guarantee that argued for the
+ * copy is about a NEIGHBOURING PLUGIN — this plugin still builds and runs with
+ * every other plugin deleted, because shared/ is core. The stream is unchanged,
+ * which is what the persisted seed needs.
  */
 export function createFloraRng(seed: number): FloraRng {
-  let a = seed >>> 0;
-  return {
-    next(): number {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
-    },
-    state(): number {
-      return a;
-    },
-  };
+  return createSeededRng(seed);
 }
 
 // ────────────────────────────────────────────────────────────────────────────

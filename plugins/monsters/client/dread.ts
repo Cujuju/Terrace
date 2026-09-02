@@ -16,6 +16,7 @@
 //
 // UNITS: cells (== world units, CELL_WORLD_SIZE is 1) and seconds.
 
+import { createSeededRng } from '@terrace/shared';
 import {
   CTHULHU_EYE_HEIGHT,
   CTHULHU_LURK_DEPTH,
@@ -467,14 +468,10 @@ export interface Strike {
  * needs a reproducible sequence.
  */
 export function createStrikeRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  // mulberry32, from @terrace/shared — the same eight lines seven other files
+  // carried. The stream is unchanged, which is what the reproducibility this
+  // function exists for depends on.
+  return createSeededRng(seed).next;
 }
 
 /**

@@ -5,7 +5,7 @@
 // (CHUNK_SIZE, BAND_HEIGHT, SEA_LEVEL, brush radius bounds…) live in
 // @terrace/shared and are never re-declared here.
 
-import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 
 /** 2567 is the Colyseus convention and the server's `PORT` default. */
 export const DEFAULT_SERVER_PORT = 2567;
@@ -98,18 +98,16 @@ export { CELL_WORLD_SIZE };
  * changes were about how finely the world steps and how finely it is sampled,
  * never about how high it stands.
  *
- * IN WORLD UNITS SINCE 2026-08-21, having been "in cells" while a cell WAS a
- * world unit. Left in cells it would have shrunk the world's relief to a
- * quarter the moment the cell did — the same trap the derivation note below
- * records on the vertical axis.
- *
- * THE DERIVATION USED TO RUN THE OTHER WAY (2026-08-20). BAND_WORLD_HEIGHT was
- * primary at one cell per band and this scale fell out of it, which made the
- * world's relief a function of BAND_HEIGHT — the render quantum. Re-terracing
- * 64 → 16 would then have quadrupled every mountain in the game. Relief is the
- * physical fact and the band is the quantum, so the band is what derives.
+ * IT LIVES IN @terrace/shared NOW, and is re-exported here so every reader in
+ * the client is unchanged. Four plugin protocols and two plugin client rigs each
+ * carried a copy of the literal 16 with the same residual named beside it — a
+ * plugin cannot import this file from its SERVER half without dragging
+ * `import.meta.env` into a node test run — so the number that both halves must
+ * agree on became a shared constant, which is what closes that residual rather
+ * than merely recording it. Its full derivation note is on the shared
+ * definition.
  */
-export const MAX_RELIEF_WORLD_UNITS = 16;
+export { MAX_RELIEF_WORLD_UNITS };
 
 /** Height units → world units. Derived; never write this ratio by hand. */
 export const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;

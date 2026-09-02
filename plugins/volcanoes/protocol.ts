@@ -39,7 +39,7 @@
 // The one import this file allows itself, and for boats/protocol.ts's reason:
 // every measurement below is a fact about the WORLD, and @terrace/shared owns
 // the world's own scale.
-import { BAND_HEIGHT, MAX_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SHAPE OF A VOLCANO, IN THE UNITS BOTH HALVES MEASURE IN.
@@ -53,21 +53,17 @@ import { BAND_HEIGHT, MAX_HEIGHT } from '@terrace/shared';
 /**
  * World units one terrace band rises.
  *
- * RESTATED, NOT IMPORTED, and the same restatement plugins/weather/client/sky.ts
- * makes with the same reasoning: the client derives its vertical scale in
- * client/src/config.ts (MAX_RELIEF_WORLD_UNITS / the range in bands), and a
- * plugin cannot import that file without dragging `import.meta.env` into its
- * node test run. Restated as the DERIVATION rather than as 0.25, so the two
- * agree by construction and not by coincidence.
- *
- * RESIDUAL, NAMED: if client/src/config.ts's MAX_RELIEF_WORLD_UNITS changes and
- * this does not, every vertical measurement in this plugin's client half is
- * wrong by that ratio and nothing fails loudly. It is the same residual weather
- * carries, and the same one that came true once already (2026-08-20, when a
- * band stopped being one world unit).
+ * NOW IMPORTED, NOT RESTATED. This file used to carry `MAX_RELIEF_WORLD_UNITS =
+ * 16` and this derivation as a copy of client/src/config.ts's, with the residual
+ * named in the header: if the client's relief moved and this did not, every
+ * vertical measurement in this plugin was wrong by that ratio and nothing failed
+ * loudly. Four plugins carried that same residual. The constant moved into
+ * @terrace/shared — which a plugin CAN import from either half, where
+ * client/src/config.ts is unreachable from a server file — so the residual is
+ * closed rather than merely named. Re-exported here so nothing that reads it
+ * from this protocol moved.
  */
-const MAX_RELIEF_WORLD_UNITS = 16;
-export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 /**
  * How high above sea level a GENESIS vent's ground has to be, in terrace bands.

@@ -15,7 +15,7 @@
 // is persisted, so a world's relic sequence is reproducible across a restart
 // and in tests — which is worth far more than the entropy would be.
 
-import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { BAND_HEIGHT, SEA_LEVEL, createSeededRng } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The read-only slice of the world this module needs. Keeps stubs one-line. */
@@ -64,21 +64,12 @@ export interface RelicRng {
  * enough to read. Chosen over Math.random because Math.random cannot be seeded
  * and therefore cannot be persisted or reproduced; chosen over anything larger
  * because a relic position does not need cryptographic or statistical rigour.
+ *
+ * IMPORTED FROM @terrace/shared since seven files carried the same eight lines.
+ * The stream is unchanged, which is what the persisted seed needs.
  */
 export function createRelicRng(seed: number): RelicRng {
-  let a = seed >>> 0;
-  return {
-    next(): number {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
-    },
-    state(): number {
-      return a;
-    },
-  };
+  return createSeededRng(seed);
 }
 
 /** The two terrain flavours a relic can prefer. */

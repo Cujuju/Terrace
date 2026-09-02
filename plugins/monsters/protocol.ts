@@ -140,6 +140,7 @@ export {
   roundBroadcastCell,
   roundBroadcastPosition,
 } from '@terrace/shared';
+import { isFiniteNumber } from '@terrace/shared';
 
 /**
  * One monster, as it appears on the wire.
@@ -177,10 +178,6 @@ export interface MonstersStatePayload {
 
 export function isMonsterKind(value: unknown): value is MonsterKind {
   return (MONSTER_KINDS as readonly string[]).includes(value as string);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**
