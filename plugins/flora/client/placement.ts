@@ -2,7 +2,7 @@
 // transform" — the client half's only real logic.
 //
 // Pure arithmetic: no three, no DOM, so it runs in the same node environment as
-// the server tests (the project ships no headless GL rig; design §8 puts
+// the server tests (the project ships no headless GL rig; design doc puts
 // rendering itself under manual verification). The `TreePlacement` import is
 // type-only and therefore erased, so nothing here pulls three in at runtime.
 //

@@ -1,4 +1,4 @@
-// The CLIENT half of the plugin contract (design §3.5: "client-side plugins
+// The CLIENT half of the plugin contract (design doc: "client-side plugins
 // register HUD panels (Solid components) and Three.js scene layers"; decision
 // Q6: client halves are compiled in, against this stable module signature, so
 // runtime loading can be added later without changing plugins).

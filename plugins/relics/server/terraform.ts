@@ -84,7 +84,7 @@ export const GENESIS_PEAK_BANDS = QUAKE_CORE_DEPTH_BANDS;
  * Bands Genesis raises at its shore ring. Lower than the Quake's rim ratio (2
  * of 6 rather than 3 of 6) because an island wants a beach: a shallow ring
  * lands the shoreline near sea level, which is the band that renders as
- * buildable flat land (MVP criterion 4), instead of dropping straight from
+ * buildable flat land, instead of dropping straight from
  * peak to water.
  */
 export const GENESIS_SHORE_BANDS = 2;

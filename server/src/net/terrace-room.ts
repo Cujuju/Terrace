@@ -163,7 +163,7 @@ export interface RoomContext {
 /**
  * The process-wide room context. Colyseus's matchmaker constructs rooms itself,
  * so dependencies have to reach them somehow; a module-level binding is honest
- * about the design (one world LIVE per process — §3.2) and, more importantly,
+ * about the design (one world LIVE per process) and, more importantly,
  * it is NOT the room's `options` object. Room options are `merge({},
  * clientOptions, handlerOptions)` in @colyseus/core 0.17.50 — server defaults
  * win today, but the manager must not travel on any channel a client can write
@@ -508,7 +508,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // TOKEN (issue #17 decision 2) — never the union of everything anyone has
     // ever unlocked, or one adventurous player's progress would leak into
     // every other join. A client is never sent terrain it has not personally
-    // been granted, so there is nothing in its memory to reveal (design §3.4,
+    // been granted, so there is nothing in its memory to reveal (design doc,
     // "anti-cheat by omission").
     // World IDENTITY rides along with the geometry: the name and the difficulty
     // rating are both constant for the life of the world, so the join snapshot

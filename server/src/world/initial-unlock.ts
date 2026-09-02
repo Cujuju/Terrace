@@ -1,6 +1,6 @@
 // Initial unlock policy for a FRESH world.
 //
-// PROVISIONAL AND TEMPORARY. Design §3.5 is explicit that "the reveal mechanic
+// PROVISIONAL AND TEMPORARY. Design doc is explicit that "the reveal mechanic
 // ships as the flagship example plugin, not core: core knows about the mask, a
 // plugin decides *when* territory unlocks." This file is the minimum that makes
 // a brand-new world usable before any plugin exists — without it every chunk is

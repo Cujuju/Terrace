@@ -199,7 +199,7 @@ const sculptInput = createSculptInput({
   bandAtCell: (x, y) => world.bandAtCell(x, y),
   graspSpanBand: (pick) => world.graspSpanBand(pick),
   carveBand: (pick) => world.carveBand(pick),
-  // CLIENT-SIDE PREDICTION (design §3.3). Send first, then apply the very same
+  // CLIENT-SIDE PREDICTION (design doc). Send first, then apply the very same
   // intent locally with the shared terrain math so the brush responds this
   // frame instead of a round trip later; the world reconciles it against the
   // authoritative diff when that arrives. Predicting only when the intent

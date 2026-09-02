@@ -1,5 +1,5 @@
 // relics — the third example plugin, and the one that stresses the parts of the
-// plugin API the first two left alone (design §3.5).
+// plugin API the first two left alone (design doc).
 //
 //   reveal : onWorldCreate + onTerrainChanged + persistence, no player identity
 //   mana   : onWorldCreate + onPlayerJoin/Leave + onTick + onIntent (DENY)
@@ -19,7 +19,7 @@
 //            Spring of Aether)     API, optionally, over a dynamic import.
 //
 // ────────────────────────────────────────────────────────────────────────────
-// TWO IDENTITY DECISIONS, BOTH FORCED BY §3.7 (accounts are deferred).
+// TWO IDENTITY DECISIONS, BOTH FORCED BY THE DESIGN (accounts are deferred).
 //
 // 1. A CLICK IS THE CLAIM. Players have no position — `Player` is { id, name }
 //    and core tracks nothing else — so the server cannot check that a collector
@@ -40,7 +40,7 @@
 //    is no player to key them by). A reconnecting player finds the world's
 //    relics exactly where they left them and re-earns their skills, which is
 //    the friendlier of the two wrong answers — the same call mana made for its
-//    balances. The gap closes when the deferred auth plugin (§3.7) supplies a
+//    balances. The gap closes when the deferred auth plugin supplies a
 //    stable identity; at that point `sessionKeyFor` below becomes the one line
 //    to change, and skills gain a persistence slice.
 // ────────────────────────────────────────────────────────────────────────────

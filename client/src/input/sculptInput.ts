@@ -1,7 +1,7 @@
 // Pointer → sculpt intent.
 //
 // CRITICAL CODE — this is the only place the client originates network
-// traffic, and the client sends INTENTS, never heights (design doc §3.2). The
+// traffic, and the client sends INTENTS, never heights (design doc). The
 // brush amount is not ours to choose: the server owns DEFAULT_SCULPT_AMOUNT.
 //
 // Control scheme (user-configurable — state/controlPrefs.ts; defaults):

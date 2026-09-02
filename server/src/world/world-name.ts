@@ -6,7 +6,7 @@
 // ever joins sees the same name. Nothing reads it back into the world model.
 //
 // WHY RANDOMNESS IS SAFE HERE. Terrain math is a determinism contract shared by
-// client and server (design §3.3) and lives in shared/, which this file never
+// client and server (design doc) and lives in shared/, which this file never
 // touches; world GENESIS (world.ts) draws a random seed too, for the same
 // reason this file draws a random name, but turns that one draw into a pure
 // function from then on (same seed, same heightmap) so a world can still be

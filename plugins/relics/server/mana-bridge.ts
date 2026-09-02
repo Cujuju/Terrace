@@ -4,7 +4,7 @@
 // of it is the point, not the mana perks it happens to carry. Read this before
 // writing the second one.
 //
-// THE PROBLEM. `plugins/` is auto-discovered from the filesystem (design §3.5)
+// THE PROBLEM. `plugins/` is auto-discovered from the filesystem (design doc)
 // and a self-hoster is invited to delete folders they do not want — and, since
 // per-world enablement, to switch one off for a world without deleting
 // anything. So another plugin is not a dependency in the package-manager sense

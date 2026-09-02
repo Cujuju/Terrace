@@ -3,7 +3,7 @@
 //
 // Pure arithmetic, no three, no DOM — which is what lets it be tested in the
 // same node environment as the rest of the suite (the project ships no headless
-// GL rig; see design §8).
+// GL rig; see design doc).
 //
 // HORIZONTAL placement needs no code: CELL_WORLD_SIZE is 1 (client/src/
 // config.ts), so a monster's cell position is its world X/Z. RESIDUAL, stated

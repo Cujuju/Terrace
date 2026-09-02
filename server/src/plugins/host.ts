@@ -312,7 +312,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   }
 
   /**
-   * THE VERDICT PHASE of the two-phase intent pipeline (design §3.5; split
+   * THE VERDICT PHASE of the two-phase intent pipeline (design doc; split
    * from a single side-effecting pass for issue #19 — see onIntent's own doc
    * comment in types.ts for the full contract this enforces). Each plugin
    * sees the intent as the previous plugin left it:

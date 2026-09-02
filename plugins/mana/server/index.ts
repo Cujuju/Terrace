@@ -1,4 +1,4 @@
-// mana — the second example plugin (design §3.5, MVP criterion 8): proof that
+// mana — the second example plugin (design doc): proof that
 // the plugin API generalizes past the reveal mechanic it was designed around.
 //
 // It exercises a different quadrant of the contract than reveal does:
@@ -10,7 +10,7 @@
 // The economy itself is deliberately the simplest thing that is still a real
 // veto: every player holds a pool, the pool regenerates on the server's fixed
 // tick, and a sculpt intent that cannot pay is DENIED in the interceptor chain —
-// the sim is never patched, exactly as design §3.5 requires ("a mana plugin
+// the sim is never patched, exactly as design doc requires ("a mana plugin
 // vetoes/modifies intents rather than patching the sim").
 //
 // TWO-PHASE INTENT PROCESSING (issue #19, 2026-08-18): checking affordability
@@ -478,7 +478,7 @@ export function manaRegenPerSecond(): number {
 // PERK API section below for the seam that exists for OTHER plugins; this is
 // mana reading one more fact about its OWN world, not a second plugin.
 //
-// NO PLAYER AVATARS EXIST IN THIS GAME (design §3.1 — players are gods
+// NO PLAYER AVATARS EXIST IN THIS GAME (design doc — players are gods
 // sculpting a world, never embodied in it), so "standing at the plunge pool"
 // cannot mean spatial proximity the way it would for a walking character. The
 // aura is instead read against each player's own REVEALED TERRITORY
@@ -597,7 +597,7 @@ const NO_BALANCE_SENT = -1;
  * Pools keyed by Player.id — currently the Colyseus sessionId, which is
  * per-connection. That is why this plugin has no `persistence` slice: there is
  * no stable player identity to key persisted balances by, so a snapshot of them
- * could not be restored to the right people (design §3.7 defers accounts to a
+ * could not be restored to the right people (design doc defers accounts to a
  * future auth plugin). A reconnecting player starts rested, which is the
  * friendlier of the two wrong answers.
  */
@@ -606,7 +606,7 @@ const poolsByPlayer = new Map<string, ManaPool>();
 // ────────────────────────────────────────────────────────────────────────────
 // PERK API — the seam other plugins extend the economy through.
 //
-// Design §3.5 says the plugin API is right only if a mechanic can be built
+// Design doc says the plugin API is right only if a mechanic can be built
 // WITHOUT touching core. The relics plugin's mana perks (Azure Heart, Spring of
 // Aether) are the first mechanic that has to touch ANOTHER PLUGIN, and this is
 // how: mana exports a tiny, total function pair, and relics imports it. Core is
@@ -649,7 +649,7 @@ const NEUTRAL_PERK: EffectiveManaPerk = {
 
 /**
  * Perks by Player.id. Same per-connection keying as the pools above, and the
- * same reason for it: there is no stable player identity yet (design §3.7).
+ * same reason for it: there is no stable player identity yet (design doc).
  */
 const perksByPlayer = new Map<string, EffectiveManaPerk>();
 
@@ -1018,7 +1018,7 @@ export const plugin: TerracePlugin = {
   onPlayerLeave(_world: WorldApi, player: Player): void {
     poolsByPlayer.delete(player.id);
     // Perks die with the connection, exactly like the pool. Player.id is a
-    // per-connection sessionId (design §3.7), so leaving a perk behind would
+    // per-connection sessionId (design doc), so leaving a perk behind would
     // not "remember" that player — it would sit in the map forever, and would
     // apply to whoever the transport eventually hands the same id to. Neither
     // outcome is acceptable, so the plugin that granted it does not have to

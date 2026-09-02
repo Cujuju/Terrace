@@ -1,4 +1,4 @@
-// HUD panels registered by client plugins (design §3.5). Module-scope signal
+// HUD panels registered by client plugins (design doc). Module-scope signal
 // for the same reason as hudState.ts: the plugin host writes it from outside
 // any reactive root, and the HUD reads it via the accessor at point of use.
 
@@ -119,7 +119,7 @@ export function removePluginDrawRow(pluginName: string): void {
  * panel row for the banner). Core renders the claimant's icon to the right of
  * the world name and turns the whole banner into a button; unclaimed, the
  * banner stays the inert title card it always was — so core still knows no
- * particular plugin (design §3.5), only the shape of an action.
+ * particular plugin (design doc), only the shape of an action.
  *
  * SINGLE CLAIMANT, FIRST REGISTRATION WINS — the precedence rule this client
  * already uses for canvas presses ("handlers run in plugin registration

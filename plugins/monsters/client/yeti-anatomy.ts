@@ -4,7 +4,7 @@
 //
 //   * every dimension of the model lives here rather than inside the builder,
 //     because the placement maths needs some of them and a node test can read
-//     them without importing three (design §8 — no headless GL rig);
+//     them without importing three (design doc — no headless GL rig);
 //   * UNITS are WORLD UNITS. HEIGHT_WORLD_SCALE maps one terrace band to one
 //     world unit, so a number here is simultaneously world units across the
 //     board and terrace bands of height.

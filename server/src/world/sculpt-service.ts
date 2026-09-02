@@ -27,7 +27,7 @@ export interface TerrainChangeListener {
  * Applies an authoritative sculpt and publishes it.
  *
  * 1. shared/applySculpt: brush, plus gradient relaxation when the options say
- *    so (the same math the client predicts with — design §3.3). `options` is
+ *    so (the same math the client predicts with — design doc). `options` is
  *    passed through verbatim; an OMITTED options argument is the shared
  *    library's compatibility default, smooth+soft, which is exactly what the
  *    plugin WorldApi path wants (world-api.ts). Player intents arrive here

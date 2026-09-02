@@ -2,7 +2,7 @@
 //
 // Everything in this module is deliberately free of Three.js, the DOM and
 // Solid, so it is unit-testable headless — the same split the core client
-// makes (design §8 "Testing": rendering is verified manually, the maths under
+// makes (design doc "Testing": rendering is verified manually, the maths under
 // it is tested). client/index.ts is the thin imperative shell that calls into
 // this.
 

@@ -1,4 +1,4 @@
-// Boot sequence for a Terrace server (design §3.2, amended 2026-08-22: one
+// Boot sequence for a Terrace server (design doc, amended 2026-08-22: one
 // world LIVE per process, many worlds on disk — see the WORLD MANAGEMENT
 // section in shared/src/protocol.ts).
 //

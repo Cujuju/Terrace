@@ -1,8 +1,8 @@
 // Colyseus connection: join the world room, route the three terrain messages,
 // send sculpt intents.
 //
-// CRITICAL CODE — this is the client half of the sync contract (design doc
-// §3.2). Notes on the API, verified against the installed @colyseus/sdk
+// CRITICAL CODE — this is the client half of the sync contract (design
+// doc). Notes on the API, verified against the installed @colyseus/sdk
 // 0.17.43 sources (build/Client.d.ts, build/Room.d.ts) rather than from
 // memory:
 //

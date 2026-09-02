@@ -1,6 +1,6 @@
 // Per-chunk terrain meshes and the in-place vertex patch path.
 //
-// CRITICAL CODE — this is the client performance contract (design doc §8):
+// CRITICAL CODE — this is the client performance contract (design doc):
 // "mesh updates must patch vertex buffers in place — never rebuild geometry
 // per edit". A chunk's BufferGeometry, its attributes and their backing
 // Float32Arrays are allocated once, when the chunk's data first arrives, and
@@ -120,7 +120,7 @@
 // DRAW-CALL TRADEOFF, known and accepted for v1: one mesh per 16×16 chunk
 // means a fully revealed 512² world would be 1024 draw calls. That is a lot,
 // but (a) worlds start with a handful of unlocked chunks and grow slowly by
-// design (§3.4), and (b) per-chunk meshes are what make streaming and
+// design, and (b) per-chunk meshes are what make streaming and
 // locked-chunk omission trivial — a chunk we have never received simply has no
 // mesh, so it cannot be drawn, picked, or peeked at. The Phase 2+ fix, if
 // measurement demands one, is to merge chunks into larger super-meshes (or one

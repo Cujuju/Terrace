@@ -11,7 +11,7 @@
 //
 // DETERMINISM. Both functions are `Math.round` on an integer-scaled value —
 // exactly specified IEEE, no accumulation, no iteration order — so server and
-// client agree byte for byte, as terrain math must (docs/DESIGN.md §3.3).
+// client agree byte for byte, as terrain math must (docs/DESIGN.md).
 
 /**
  * Decimal places kept on broadcast cell coordinates. 1/100 of a cell is far

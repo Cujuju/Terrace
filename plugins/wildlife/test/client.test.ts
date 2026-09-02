@@ -1,5 +1,5 @@
 // The client half's PURE logic: payload validation, interpolation, and vertical
-// placement. Rendering is verified by eye per design §8 ("no headless GL rig"),
+// placement. Rendering is verified by eye per design doc ("no headless GL rig"),
 // so nothing here imports three — which is also what lets this run in the same
 // node environment as the server tests.
 

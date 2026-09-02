@@ -1,4 +1,4 @@
-// The Player object. Deliberately minimal and account-free (design §3.7:
+// The Player object. Deliberately minimal and account-free (design doc:
 // accounts are deferred and will arrive as an auth plugin, not as core). The
 // shape must stay stable enough that such a plugin can attach identity later
 // without core changes — hence `id` is an opaque string, not a database key.
@@ -10,7 +10,7 @@
 // resends on every join — the thing per-player unlock masks are actually keyed
 // by (see World.unlockChunkForToken), so a reconnect with the same token gets
 // the same territory back even though it lands on a brand-new sessionId. This
-// is deliberately still pre-auth and §3.7-compatible: a client-generated token
+// is deliberately still pre-auth and auth-plugin-compatible: a client-generated token
 // proves nothing about who is holding it, exactly like today's opaque
 // sessionId proves nothing — it is a stronger LOCAL-BROWSER identity, not an
 // account, and an auth plugin can still slot in ahead of it later without

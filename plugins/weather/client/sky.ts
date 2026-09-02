@@ -6,7 +6,7 @@
 // of numbers — where in its fall a drop is at this instant, how long until the
 // next flash, how bright a flash is this many milliseconds in — so a node test
 // can read it without importing three (this project ships no headless GL rig,
-// design §8). rig.ts owns the meshes and the resolution they are built at; this
+// design doc). rig.ts owns the meshes and the resolution they are built at; this
 // file owns every value that decides how the weather BEHAVES.
 //
 // PRESENTATION ONLY, AND CLIENT-ONLY. Nothing here is on the wire and nothing

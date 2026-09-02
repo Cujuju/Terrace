@@ -1,6 +1,6 @@
 // The client half's PURE logic: the wire format, the deterministic per-
 // building variation, and vertical placement. No three import here, so this
-// runs in the same node environment as the server tests (design §8 — no
+// runs in the same node environment as the server tests (design doc — no
 // headless GL rig). Mirrors flora/test/client.test.ts's shape.
 
 import { describe, expect, it } from 'vitest';

@@ -1,5 +1,5 @@
 // The World — the single authoritative world object owned by the process
-// (design §3.2, glossary §7). It owns exactly three things: the heightmap, the
+// (design doc, glossary). It owns exactly three things: the heightmap, the
 // unlocked-chunk mask, and the connected players.
 //
 // It knows NOTHING about Colyseus. Outgoing traffic goes through a MessageSink,
@@ -1052,7 +1052,7 @@ export class World {
 
   /**
    * Applies an authoritative sculpt from the shared math (never re-implemented
-   * here — design §3.3). `options` selects the brush tool and edge profile;
+   * here — design doc). `options` selects the brush tool and edge profile;
    * omitting it means smooth+soft, the shared library's compatibility default
    * (LIBRARY_DEFAULT_SCULPT_OPTIONS). Player intents never omit it: the intent
    * pipeline resolves them through `sculptOptionsOf` first.

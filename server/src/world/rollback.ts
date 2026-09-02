@@ -4,7 +4,7 @@
 // state on purpose, so the guarantees it owns are:
 //
 //   1. Nothing happens without the operator key (design: v1 has no accounts,
-//      §3.7, so a shared secret is the only gate available — see the WORLD
+//      so a shared secret is the only gate available — see the WORLD
 //      ROLLBACK section in shared/src/protocol.ts).
 //   2. The state being rolled AWAY from is written as a restore point FIRST.
 //      A rollback is therefore itself undoable; a mis-aimed one costs a click.

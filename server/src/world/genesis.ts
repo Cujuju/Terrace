@@ -294,7 +294,7 @@ const GENESIS_NOISE_MAX_BAND_OFFSET = GENESIS_NOISE_MAX_HEIGHT_ABOVE_SEA / BAND_
  * a quarter of the noise ceiling] the TYPICAL world is an ocean whose floor
  * sits between the deep-water line and the shallows, and the octaves' full
  * amplitude is what lifts parts of it into islands — which is the world the
- * design has always described (§1, "an ocean with a coast") and the one the
+ * design has always described ("an ocean with a coast") and the one the
  * owner asked for.
  *
  * The floor is the seabed depth rather than a number of its own, because that

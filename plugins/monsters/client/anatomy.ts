@@ -3,7 +3,7 @@
 // Every dimension of the model lives here rather than inside models.ts for two
 // reasons: the placement maths needs some of them (how deep the thing sits is
 // derived from where its head is, not guessed), and a node test can read them
-// without importing three — this project ships no headless GL rig (design §8),
+// without importing three — this project ships no headless GL rig (design doc),
 // so the numbers are the only part of the visual that CAN be tested.
 //
 // UNITS: cells. CELL_WORLD_SIZE is 1 (client/src/config.ts — "world-space X/Z

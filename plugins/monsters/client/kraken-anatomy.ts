@@ -4,7 +4,7 @@
 //   * every dimension of the model lives here rather than inside the builder,
 //     because the placement maths needs some of them (how deep the thing sits is
 //     DERIVED from where its eyes are, not guessed) and a node test can read
-//     them without importing three (design §8 — no headless GL rig);
+//     them without importing three (design doc — no headless GL rig);
 //   * UNITS are cells. CELL_WORLD_SIZE is 1 and HEIGHT_WORLD_SCALE maps one
 //     terrace band to one world unit, so a number here is simultaneously cells
 //     across the board and world units of height;
