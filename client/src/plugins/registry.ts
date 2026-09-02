@@ -11,17 +11,20 @@ import { clientPlugin as chronicle } from '../../../plugins/chronicle/client/ind
 import { clientPlugin as daynight } from '../../../plugins/daynight/client/index.ts';
 import { clientPlugin as fire } from '../../../plugins/fire/client/index.ts';
 import { clientPlugin as flora } from '../../../plugins/flora/client/index.ts';
+import { clientPlugin as fog } from '../../../plugins/fog/client/index.ts';
 import { clientPlugin as invite } from '../../../plugins/invite/client/index.ts';
 import { clientPlugin as mana } from '../../../plugins/mana/client/index.ts';
 import { clientPlugin as monsters } from '../../../plugins/monsters/client/index.ts';
 import { clientPlugin as mudslides } from '../../../plugins/mudslides/client/index.ts';
 import { clientPlugin as pilgrims } from '../../../plugins/pilgrims/client/index.ts';
+import { clientPlugin as rain } from '../../../plugins/rain/client/index.ts';
 import { clientPlugin as relics } from '../../../plugins/relics/client/index.ts';
+import { clientPlugin as snow } from '../../../plugins/snow/client/index.ts';
 import { clientPlugin as storms } from '../../../plugins/storms/client/index.ts';
 import { clientPlugin as structures } from '../../../plugins/structures/client/index.ts';
 import { clientPlugin as temples } from '../../../plugins/temples/client/index.ts';
+import { clientPlugin as thunderstorm } from '../../../plugins/thunderstorm/client/index.ts';
 import { clientPlugin as volcanoes } from '../../../plugins/volcanoes/client/index.ts';
-import { clientPlugin as weather } from '../../../plugins/weather/client/index.ts';
 import { clientPlugin as wildlife } from '../../../plugins/wildlife/client/index.ts';
 import type { TerraceClientPlugin } from './types.ts';
 
@@ -38,7 +41,14 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   boats,
   pilgrims,
   daynight,
-  weather,
+  // The four weather kinds, since the 2026-09-02 split (#283). The `weather`
+  // plugin still exists on the SERVER as the hub that owns the wind and the
+  // sky-kind register, and has no client half at all: nothing about a wind or a
+  // register is something to draw.
+  rain,
+  thunderstorm,
+  snow,
+  fog,
   storms,
   mudslides,
   volcanoes,

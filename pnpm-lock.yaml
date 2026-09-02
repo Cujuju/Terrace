@@ -155,6 +155,31 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
 
+  plugins/fog:
+    dependencies:
+      '@terrace/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
+
   plugins/invite:
     dependencies:
       solid-js:
@@ -272,6 +297,31 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
 
+  plugins/rain:
+    dependencies:
+      '@terrace/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
+
   plugins/relics:
     dependencies:
       '@terrace/shared':
@@ -306,6 +356,31 @@ importers:
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
+
+  plugins/snow:
+    dependencies:
+      '@terrace/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -361,6 +436,31 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
 
   plugins/temples:
+    dependencies:
+      '@terrace/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
+
+  plugins/thunderstorm:
     dependencies:
       '@terrace/shared':
         specifier: workspace:*
