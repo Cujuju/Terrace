@@ -1,0 +1,37 @@
+seed 12345: steep pairs (>1 band) 1652 of 261632
+  stamp soft r16   median     0.44 ms  p90     3.08 ms  max      3.1 ms
+  smooth soft r4   median     1.52 ms  p90    65.82 ms  max     65.8 ms
+  smooth soft r8   median     5.13 ms  p90  1109.07 ms  max   1109.1 ms
+  smooth soft r16  median   198.07 ms  p90  3091.68 ms  max   3091.7 ms
+  smooth hard r16  median    37.53 ms  p90  1087.83 ms  max   1087.8 ms
+seed 777: steep pairs (>1 band) 574 of 261632
+  stamp soft r16   median     0.18 ms  p90     0.25 ms  max      0.2 ms
+  smooth soft r4   median     0.05 ms  p90     0.13 ms  max      0.1 ms
+  smooth soft r8   median     0.10 ms  p90     0.31 ms  max      0.3 ms
+  smooth soft r16  median     0.44 ms  p90   167.06 ms  max    167.1 ms
+  smooth hard r16  median     0.80 ms  p90   151.72 ms  max    151.7 ms
+seed 4242: steep pairs (>1 band) 504 of 261632
+  stamp soft r16   median     0.36 ms  p90     1.44 ms  max      1.4 ms
+  smooth soft r4   median     0.10 ms  p90    15.09 ms  max     15.1 ms
+  smooth soft r8   median     0.15 ms  p90    15.12 ms  max     15.1 ms
+  smooth soft r16  median     0.35 ms  p90   512.04 ms  max    512.0 ms
+  smooth hard r16  median     1.44 ms  p90   533.85 ms  max    533.8 ms
+seed 90210: steep pairs (>1 band) 60 of 261632
+  stamp soft r16   median     0.55 ms  p90     0.89 ms  max      0.9 ms
+  smooth soft r4   median     0.14 ms  p90    42.12 ms  max     42.1 ms
+  smooth soft r8   median     0.27 ms  p90  1898.16 ms  max   1898.2 ms
+  smooth soft r16  median     0.45 ms  p90  6738.84 ms  max   6738.8 ms
+  smooth hard r16  median     1.53 ms  p90  6394.95 ms  max   6395.0 ms
+seed 31337: steep pairs (>1 band) 2250 of 261632
+  stamp soft r16   median     0.17 ms  p90     3.04 ms  max      3.0 ms
+  smooth soft r4   median     0.26 ms  p90    50.68 ms  max     50.7 ms
+  smooth soft r8   median     2.50 ms  p90   301.32 ms  max    301.3 ms
+  smooth soft r16  median    57.39 ms  p90  1965.57 ms  max   1965.6 ms
+  smooth hard r16  median    22.91 ms  p90  2600.12 ms  max   2600.1 ms
+
+ALL SEEDS (5 × 10 strokes)
+  stamp soft r16   median     0.25 ms  p90     0.93 ms  max      3.1 ms  >100ms: 0/50
+  smooth soft r4   median     0.13 ms  p90    15.09 ms  max     65.8 ms  >100ms: 0/50
+  smooth soft r8   median     0.30 ms  p90   251.43 ms  max   1898.2 ms  >100ms: 7/50
+  smooth soft r16  median     1.03 ms  p90  1044.62 ms  max   6738.8 ms  >100ms: 11/50
+  smooth hard r16  median     1.77 ms  p90   864.01 ms  max   6395.0 ms  >100ms: 9/50
