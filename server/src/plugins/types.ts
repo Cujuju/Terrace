@@ -220,6 +220,13 @@ export interface WorldApi {
    *     the SAME flag for the SAME reason, so the two paths cannot disagree
    *     about what a silent, empty response means.
    *
+   * OFF THE MAP IS VISIBLE TO NOBODY (#291). An item whose `positionOf` cell
+   * lies outside the world is filtered out of every recipient's subset and
+   * never throws — a plugin may broadcast a thing that is legitimately off the
+   * map (a cyclone born over the sea beyond the coast, a front drifting out the
+   * far side) and does not have to clamp it first. Clamping would be a
+   * different, false statement anyway: "at the edge" is not "not on the map".
+   *
    * `positionOf` and `buildPayload` are pure: `positionOf` maps one item to
    * the cell that gates its visibility, and `buildPayload` turns one
    * recipient's own filtered subset into that message type's wire shape (a
