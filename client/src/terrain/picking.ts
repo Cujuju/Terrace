@@ -85,8 +85,20 @@ export function pointerToNdc(
  * click on the right half of a tread lift the tread to its left, which reads
  * as an off-by-one to the player.
  *
- * Returns null outside the terrain's extent, [0, worldSize-1] on both axes
- * (the far row/column is a shared border vertex — see vertexGrid.ts).
+ * CLAMPS TO THE EDGE CELL, never rejects a finite point (owner decision
+ * 2026-09-01, issue #281 A). The one caller is the drag's plane intersection
+ * (input/sculptInput.ts dragPlaneCell): the grab-height plane is infinite and
+ * the world is not, and this used to answer a point past half a cell beyond
+ * the last cell centre with null, which the drag treated as "hold". A slow
+ * pull never noticed — its last cell crossing had already landed on the edge
+ * cell — but a flick from well inside straight onto the drawn rim, or off the
+ * world, dropped that sample and left the lip one or more cells short of the
+ * border until the cursor came back. Pulling past the edge means pulling TO
+ * the edge, so the nearest edge cell is the answer. Only a non-finite input
+ * has no nearest cell and returns null.
+ *
+ * (The click/hover pick never went through here: pickTerrainCellByRay returns
+ * the cell it marched, so it had no edge gap to close.)
  */
 export function worldPointToCell(
   worldX: number,
@@ -96,19 +108,7 @@ export function worldPointToCell(
   const max = worldSize - 1;
   const cellX = worldX / CELL_WORLD_SIZE;
   const cellZ = worldZ / CELL_WORLD_SIZE;
-  // Half a cell of tolerance on each side matches the rounding below, so the
-  // outermost half-cell of the mesh still picks the edge cell instead of
-  // failing.
-  const lowerBound = -0.5;
-  const upperBound = max + 0.5;
-  if (
-    !Number.isFinite(cellX) ||
-    !Number.isFinite(cellZ) ||
-    cellX < lowerBound ||
-    cellZ < lowerBound ||
-    cellX > upperBound ||
-    cellZ > upperBound
-  ) {
+  if (!Number.isFinite(cellX) || !Number.isFinite(cellZ)) {
     return null;
   }
 

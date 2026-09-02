@@ -393,7 +393,9 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     // THE ONE PLAN-POINT → CELL RULE (terrain/picking.ts). This used to floor
     // where every other pick rounds, which is half a cell of bias in one
     // direction for the whole length of every pull. `worldPointToCell` also
-    // owns the off-the-world test — the plane is infinite, the world is not.
+    // owns the off-the-world rule — the plane is infinite, the world is not,
+    // and a point past the border is the EDGE cell (issue #281 A), so a pull
+    // flicked off the world lands on the border rather than holding short.
     return worldPointToCell(worldX, worldZ, size);
   };
 
