@@ -17,21 +17,18 @@
 //
 // UNITS: cells (== world units, CELL_WORLD_SIZE is 1) and seconds.
 
-import { BAND_HEIGHT, MAX_HEIGHT } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  MAX_HEIGHT,
+  MAX_RELIEF_WORLD_UNITS,
+  WORLD_UNITS_PER_BAND,
+  createSeededRng,
+} from '@terrace/shared';
 import type { WeatherKind } from '../protocol.ts';
 
 const TWO_PI = Math.PI * 2;
 
 // ── The vertical layout of the sky ───────────────────────────────────────────
-
-/**
- * World units of height the full above-sea range stands — the client's
- * MAX_RELIEF_WORLD_UNITS (client/src/config.ts), restated here for the same
- * import reason as everything else in this block. THE relief fact: it alone
- * decides how mountainous the world looks, and since 2026-08-20 it is what the
- * client's whole vertical scale derives from.
- */
-const MAX_RELIEF_WORLD_UNITS = 16;
 
 /**
  * Height units per world unit — the client's WORLD_UNIT_HEIGHT_UNITS
@@ -51,11 +48,12 @@ const WORLD_UNIT_HEIGHT_UNITS = MAX_HEIGHT / MAX_RELIEF_WORLD_UNITS;
  *
  * THAT RESIDUAL CAME TRUE ON 2026-08-20 and this constant moved with it: the
  * client derives BAND_WORLD_HEIGHT from the world's relief now
- * (config.ts's MAX_RELIEF_WORLD_UNITS), so a band draws a QUARTER of a cell at
- * BAND_HEIGHT 16. Restated as the same derivation rather than as 0.25, so the
- * two files agree by construction and not by coincidence.
+ * (MAX_RELIEF_WORLD_UNITS), so a band draws a QUARTER of a cell at BAND_HEIGHT
+ * 16. The derivation is IMPORTED now rather than restated: both constants moved
+ * into @terrace/shared, which a plugin can import from either half, so the named
+ * residual above is closed instead of merely recorded.
  */
-export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 /**
  * World-space Y of the highest terrain this game can contain.
@@ -604,14 +602,10 @@ export interface Flash {
  * needs a reproducible sequence.
  */
 export function createFlashRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  // mulberry32, from @terrace/shared — the same eight lines seven other files
+  // carried. The stream is unchanged, which is what the reproducibility this
+  // function exists for depends on.
+  return createSeededRng(seed).next;
 }
 
 /**

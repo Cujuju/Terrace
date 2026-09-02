@@ -88,6 +88,7 @@ import {
   SEA_LEVEL,
   WORLD_UNIT_CELLS,
   cellsOverArea,
+  createSeededRng,
   type Heightmap,
 } from '@terrace/shared';
 import { initialUnlockFootprint } from './initial-unlock.ts';
@@ -176,15 +177,18 @@ export function drawGenesisSeed(): number {
  * finite JS number — including a negative one, or one out of 32-bit range, both
  * of which a test may reasonably pass — is a valid seed rather than a silent
  * NaN cascade.
+ *
+ * FROM @terrace/shared NOW, where the same eight lines that seven files carried
+ * moved. The body here differed from the others in one keystroke — it carried
+ * its state as `| 0` where they carried it as `>>> 0` — and the two forms take
+ * the same low 32 bits, so the STREAM IS BIT-IDENTICAL: verified over 200 000
+ * draws each from nine seeds including negative, zero and 0xffffffff before this
+ * call replaced the body. That matters more here than anywhere else in the repo:
+ * an existing world regenerates from its saved seed, so a stream that shifted by
+ * one bit would silently rewrite everyone's terrain.
  */
 function mulberry32Rng(seed: number): () => number {
-  let state = seed >>> 0;
-  return function nextRandom(): number {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = Math.imul(state ^ (state >>> 15), 1 | state);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  return createSeededRng(seed).next;
 }
 
 /**

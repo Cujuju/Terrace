@@ -31,6 +31,7 @@ import {
   cellsAcross,
   cellsOverArea,
 } from '@terrace/shared';
+import { isFiniteNumber } from '@terrace/shared';
 
 /** Plugin name on both sides. Also the message namespace. */
 export const BOATS_PLUGIN_NAME = 'boats';
@@ -292,10 +293,6 @@ export const BOATS_PAYLOAD_CAP = 2048;
 
 export interface BoatsStatePayload {
   readonly boats: readonly BoatState[];
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**

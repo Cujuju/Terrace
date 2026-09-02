@@ -12,7 +12,13 @@
 // stops being 1, every size and position in this plugin's client half needs a
 // multiply, and nothing here will fail loudly to tell you so.
 
-import { BAND_HEIGHT, MAX_HEIGHT, SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import {
+  BAND_HEIGHT,
+  MAX_HEIGHT,
+  MAX_RELIEF_WORLD_UNITS,
+  SEA_LEVEL,
+  cellsAcross,
+} from '@terrace/shared';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
   type WildlifeSizeClass,
@@ -114,15 +120,6 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
 // ── Flight ───────────────────────────────────────────────────────────────────
 
 /**
- * World units of height the full above-sea range stands — the client's
- * MAX_RELIEF_WORLD_UNITS (client/src/config.ts), restated here for the same
- * import reason as everything else in this block. THE relief fact: it alone
- * decides how mountainous the world looks, and since 2026-08-20 it is what the
- * client's whole vertical scale derives from.
- */
-const MAX_RELIEF_WORLD_UNITS = 16;
-
-/**
  * World-space Y of the highest terrain this game can contain.
  *
  * MAX_HEIGHT (@terrace/shared) is the sculpt ceiling in HEIGHT UNITS; the
@@ -146,10 +143,10 @@ const MAX_RELIEF_WORLD_UNITS = 16;
  * the ceiling in world units — it is 64 where the ceiling is still 16. The
  * quotient was only ever accidentally right.
  *
- * So the relief is restated directly, the same way this file already restates
- * everything else it cannot import. It is the ONE number the client's vertical
- * scale is built from now, which makes it a better thing to restate than a
- * ratio that happened to equal it.
+ * So the relief itself is what this is. It is IMPORTED rather than restated
+ * since the constant moved into @terrace/shared (which a plugin can import from
+ * either half, where client/src/config.ts cannot be reached from a server file),
+ * so the named residual above is closed rather than merely recorded.
  */
 export const MAX_TERRAIN_WORLD_Y = MAX_RELIEF_WORLD_UNITS;
 

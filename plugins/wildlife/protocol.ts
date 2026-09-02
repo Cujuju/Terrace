@@ -149,6 +149,7 @@ export {
   roundBroadcastCell,
   roundBroadcastPosition,
 } from '@terrace/shared';
+import { isFiniteNumber } from '@terrace/shared';
 
 /** One creature, as it appears on the wire. */
 export interface WildlifeEntityState {
@@ -186,10 +187,6 @@ export function isWildlifeSpecies(value: unknown): value is WildlifeSpecies {
 /** Narrower guard: is this one of the census-driven, habitat-bound species? */
 export function isWildlifeHabitatSpecies(value: unknown): value is WildlifeHabitatSpecies {
   return (WILDLIFE_HABITAT_SPECIES as readonly string[]).includes(value as string);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**

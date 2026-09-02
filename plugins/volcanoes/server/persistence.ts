@@ -15,6 +15,7 @@
 // half-loads gets two generations of mountains, which is neither.
 
 import { restoreVolcanoes, volcanoSnapshot, type Vent, type VolcanoSnapshot } from './vents.ts';
+import { parseRecordArray } from '@terrace/shared';
 
 /**
  * Bumped when `save`'s shape changes in a way `load` cannot read blind.
@@ -95,34 +96,21 @@ export function loadVolcanoes(data: unknown): void {
   >;
   if (typeof seeded !== 'boolean') return;
   if (!Number.isInteger(nextVentId) || !Number.isInteger(rngState)) return;
-  if (!Array.isArray(vents) || !Array.isArray(lava)) return;
+  const parsedVents = parseRecordArray(vents, parseVent);
+  if (parsedVents === null) return;
 
-  const parsedVents: Vent[] = [];
-  for (const value of vents) {
-    const vent = parseVent(value);
-    if (vent === null) return;
-    parsedVents.push(vent);
-  }
-
-  const parsedLava: Array<{ x: number; y: number; ageSeconds: number }> = [];
-  for (const value of lava) {
-    const cell = parseLavaCell(value);
-    if (cell === null) return;
-    parsedLava.push(cell);
-  }
+  const parsedLava = parseRecordArray(lava, parseLavaCell);
+  if (parsedLava === null) return;
 
   // ABSENT IS LEGAL, and only absent: a blob written before cone rings were
   // queued has no such field and owes the world nothing. A field that is
   // present but not an array is a shape this code does not understand, which is
   // the discard case the header argues for.
-  const parsedPending: Array<{ x: number; y: number; radius: number; amount: number }> = [];
+  let parsedPending: Array<{ x: number; y: number; radius: number; amount: number }> = [];
   if (pendingConeSculpts !== undefined) {
-    if (!Array.isArray(pendingConeSculpts)) return;
-    for (const value of pendingConeSculpts) {
-      const step = parsePendingConeSculpt(value);
-      if (step === null) return;
-      parsedPending.push(step);
-    }
+    const steps = parseRecordArray(pendingConeSculpts, parsePendingConeSculpt);
+    if (steps === null) return;
+    parsedPending = steps;
   }
 
   const snapshot: VolcanoSnapshot = {

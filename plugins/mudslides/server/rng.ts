@@ -12,6 +12,8 @@
 // CLAUDE.md (which governs shared/'s heightmap ops) does not apply. What DOES
 // apply is that the same seed must give the same world twice on the same build.
 
+import { createSeededRng, rollEvent as sharedRollEvent } from '@terrace/shared';
+
 /** A seeded PRNG whose whole state is one uint32, so it persists trivially. */
 export interface MudslideRng {
   /** Next value in [0, 1). */
@@ -31,26 +33,18 @@ export interface MudslideRng {
 export const MUDSLIDE_RNG_DEFAULT_SEED = 0x4d_55_44_21;
 
 /**
- * mulberry32 — the generator relics, volcanoes, weather and storms each carry.
+ * mulberry32, from @terrace/shared.
  *
- * RESTATED RATHER THAN IMPORTED, and that is the plugin boundary rather than an
- * oversight: a plugin is a distributable unit a self-hoster may install without
- * its neighbours, so plugins do not depend on each other's internals.
+ * IMPORTED, NOT RESTATED. This was a byte-identical copy of the body seven
+ * other files carried, kept as a copy on the plugin-boundary argument — a
+ * plugin is a distributable unit and must not depend on a NEIGHBOUR's
+ * internals. That argument is about plugins, and shared/ is not one: it has no
+ * name, no lifecycle, cannot be disabled for a world and is not re-imported by
+ * a plugin reload. The seed and the stream are unchanged, which is what the
+ * persistence slice needs (see shared/src/rng.ts's header).
  */
 export function createMudslideRng(seed: number): MudslideRng {
-  let a = seed >>> 0;
-  return {
-    next(): number {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
-    },
-    state(): number {
-      return a;
-    },
-  };
+  return createSeededRng(seed);
 }
 
 /**
@@ -71,8 +65,7 @@ export function createMudslideRng(seed: number): MudslideRng {
  * rather than as certainty.
  */
 export function rollEvent(rng: MudslideRng, ratePerSecond: number, dt: number): boolean {
-  if (!(ratePerSecond > 0) || !(dt > 0) || !Number.isFinite(dt)) return false;
-  return rng.next() < 1 - Math.exp(-ratePerSecond * dt);
+  return sharedRollEvent(rng.next, ratePerSecond, dt);
 }
 
 /** A uniform integer draw in [0, count). */

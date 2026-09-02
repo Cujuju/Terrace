@@ -8,6 +8,7 @@
 // corrupt village list would be wrong forever.
 
 import { fleetSnapshot, restoreFleet, type Boat, type Village } from './fleet.ts';
+import { parseRecordArray } from '@terrace/shared';
 
 interface SavedFleet {
   villages: Village[];
@@ -52,21 +53,12 @@ function parseBoat(value: unknown): Boat | null {
 export function loadBoats(data: unknown): void {
   if (typeof data !== 'object' || data === null) return;
   const { villages, boats, nextBoatId } = data as Record<string, unknown>;
-  if (!Array.isArray(villages) || !Array.isArray(boats)) return;
   if (!Number.isInteger(nextBoatId)) return;
 
-  const parsedVillages: Village[] = [];
-  for (const value of villages) {
-    const village = parseVillage(value);
-    if (village === null) return;
-    parsedVillages.push(village);
-  }
-  const parsedBoats: Boat[] = [];
-  for (const value of boats) {
-    const boat = parseBoat(value);
-    if (boat === null) return;
-    parsedBoats.push(boat);
-  }
+  const parsedVillages = parseRecordArray(villages, parseVillage);
+  if (parsedVillages === null) return;
+  const parsedBoats = parseRecordArray(boats, parseBoat);
+  if (parsedBoats === null) return;
 
   const restored: SavedFleet = {
     villages: parsedVillages,

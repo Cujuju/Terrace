@@ -240,20 +240,17 @@ export function givenNameFor(index: number): string {
 /**
  * World units one terrace band rises.
  *
- * RESTATED, NOT IMPORTED, and the same restatement plugins/weather/client/
- * sky.ts makes with the same reasoning: the client derives its vertical scale
- * in client/src/config.ts (MAX_RELIEF_WORLD_UNITS / the range in bands), and a
- * plugin cannot import that file without dragging `import.meta.env` into its
- * node test run. Restated as the DERIVATION rather than as 0.25, so the two
- * agree by construction and not by coincidence.
- *
- * RESIDUAL, NAMED: if client/src/config.ts's MAX_RELIEF_WORLD_UNITS changes and
- * this does not, every vertical measurement in this plugin's client half is
- * wrong by that ratio and nothing fails loudly. It is the same residual weather
- * and volcanoes both carry.
+ * NOW IMPORTED, NOT RESTATED. This file used to carry `MAX_RELIEF_WORLD_UNITS =
+ * 16` and this derivation as a copy of client/src/config.ts's, with the residual
+ * named in the header: if the client's relief moved and this did not, every
+ * vertical measurement in this plugin was wrong by that ratio and nothing failed
+ * loudly. Four plugins carried that same residual. The constant moved into
+ * @terrace/shared — which a plugin CAN import from either half, where
+ * client/src/config.ts is unreachable from a server file — so the residual is
+ * closed rather than merely named. Re-exported here so nothing that reads it
+ * from this protocol moved.
  */
-const MAX_RELIEF_WORLD_UNITS = 16;
-export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
 
 /**
  * A tornado's radius, in cells — how much ground the funnel's damage covers.
@@ -341,21 +338,12 @@ export const CYCLONE_DECK_HEIGHT_WORLD_UNITS = 10;
 // no cell for shared's `roundBroadcastCell` to keep it inside of.
 export { BROADCAST_POSITION_DECIMALS, roundBroadcastPosition } from '@terrace/shared';
 
-/**
- * Decimal places kept on broadcast intensity, which is a fraction in [0, 1]
- * rather than a distance. Three, matching weather's own
- * WEATHER_INTENSITY_DECIMALS and for its reason: a thousandth of full strength
- * is well under one step of 8-bit alpha, so a fade reads as continuous.
- */
-export const STORM_INTENSITY_DECIMALS = 3;
-
-const INTENSITY_QUANTUM = 10 ** STORM_INTENSITY_DECIMALS;
-
-/** Rounds an intensity for the wire and clamps it into [0, 1]. */
-export function roundBroadcastIntensity(value: number): number {
-  const clamped = Math.min(1, Math.max(0, value));
-  return Math.round(clamped * INTENSITY_QUANTUM) / INTENSITY_QUANTUM;
-}
+// Broadcast INTENSITY precision lives in @terrace/shared (shared/src/wire.ts),
+// where weather's byte-identical copy of it went too — the precision of a wire
+// value is a property of the protocol, which is what that package owns (#180).
+// Re-exported under this plugin's own name so nothing that reads it here moved.
+export { roundBroadcastIntensity } from '@terrace/shared';
+export { BROADCAST_INTENSITY_DECIMALS as STORM_INTENSITY_DECIMALS } from '@terrace/shared';
 
 /** One storm, as it appears on the wire. */
 export interface StormState {

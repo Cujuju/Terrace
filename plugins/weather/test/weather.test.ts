@@ -16,7 +16,7 @@
 // here is a flaky statistical assertion where a deterministic one would do.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, cellsAcross, createSeededRng } from '@terrace/shared';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import { World } from '../../../server/src/world/world.ts';
 import { RecordingSink, asLoadedPlugin } from '../../../server/test/support/harness.ts';
@@ -107,14 +107,7 @@ function asWeatherWorld(world: World): WeatherWorld {
 
 /** mulberry32 — a named stream, so every stochastic assertion is reproducible. */
 function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  return createSeededRng(seed).next;
 }
 
 /** A source that yields a fixed list and then repeats its last value forever. */

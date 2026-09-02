@@ -28,16 +28,13 @@ import {
   type Storm,
   type StormSnapshot,
 } from './storms.ts';
+import { isFiniteNumber, parseRecordArray } from '@terrace/shared';
 
 /** Bumped when `save`'s shape changes in a way `load` cannot read blind. */
 export const STORMS_SLICE_VERSION = 1;
 
 export function saveStorms(): unknown {
   return stormSnapshot();
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function parseStorm(value: unknown): Storm | null {
@@ -106,14 +103,8 @@ export function loadStorms(data: unknown): void {
   const { nextStormId, namedCycloneCount, rngState, storms } = data as Record<string, unknown>;
   if (!Number.isInteger(nextStormId) || !Number.isInteger(namedCycloneCount)) return;
   if (!Number.isInteger(rngState)) return;
-  if (!Array.isArray(storms)) return;
-
-  const parsed: Storm[] = [];
-  for (const value of storms) {
-    const storm = parseStorm(value);
-    if (storm === null) return;
-    parsed.push(storm);
-  }
+  const parsed = parseRecordArray(storms, parseStorm);
+  if (parsed === null) return;
 
   const snapshot: StormSnapshot = {
     nextStormId: nextStormId as number,
