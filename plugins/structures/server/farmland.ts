@@ -5,7 +5,7 @@
 // The PREDICATE ("is this cell farmland") lives in @terrace/shared's
 // farmland.ts, not here. It is pure terrain math with two consumers — this
 // plugin's CA birth rule and flora's crop renderer — and shared/ is this
-// project's single source of truth for exactly that (CLAUDE.md, design §3.3).
+// project's single source of truth for exactly that (CLAUDE.md, design doc).
 // It briefly shipped as two identical per-plugin copies; read shared/src/
 // farmland.ts's header for why that was collapsed, and shared/src/traversal.ts
 // for the pilgrim-walking-up-a-cliff bug that duplicated terrain math caused

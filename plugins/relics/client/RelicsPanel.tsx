@@ -1,4 +1,4 @@
-// The relics HUD panel (design §3.5: "client-side plugins register HUD panels
+// The relics HUD panel (design doc: "client-side plugins register HUD panels
 // (Solid components)"). It is mounted by the core HUD's plugin-panel stack —
 // see client/src/ui/Hud.tsx — and gets no props.
 //

@@ -1,5 +1,5 @@
 // The HUD. Solid owns this and nothing else — the canvas underneath belongs to
-// the imperative renderer (design doc §3.1).
+// the imperative renderer (design doc).
 //
 // LAYOUT (owner redesign, 2026-08-19): three sections in three corners —
 //   * TOP LEFT      the info panel: 'panel'-placed plugin panels (relics'
@@ -639,7 +639,7 @@ export function Hud(props: {
             <span class="panel-chevron">▴</span>
           </button>
 
-          {/* Plugin panels (design §3.5): each client plugin may register
+          {/* Plugin panels (design doc): each client plugin may register
               components; 'panel'-placed ones stack inside the info panel —
               the placement contract's meaning ("the corner panel",
               client/src/plugins/types.ts) is unchanged, only the corner's

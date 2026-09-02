@@ -44,7 +44,7 @@ export const FIRE_PLUGIN_NAME = 'fire';
  *
  * A MESSAGE, NOT A SCULPT INTENT. The intent pipeline is for edits to the
  * heightmap — it validates a brush, prices terrain and reconciles a client's
- * predicted terrain (design §3.5, and server/src/intent/pipeline.ts). Lighting a
+ * predicted terrain (design doc, and server/src/intent/pipeline.ts). Lighting a
  * fire moves no ground and predicts nothing: the client asks, the server answers
  * by broadcasting a fire or by staying silent, which is exactly what a plugin
  * message is for.

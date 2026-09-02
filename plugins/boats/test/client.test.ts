@@ -1,6 +1,6 @@
 // Client-half tests: the wire validator and the interpolator. Both are pure
 // logic (no three, no DOM, no clock), which is the half of a render feature
-// this project tests — design §8 ships no headless GL rig.
+// this project tests — design doc ships no headless GL rig.
 
 import { describe, expect, it } from 'vitest';
 import {

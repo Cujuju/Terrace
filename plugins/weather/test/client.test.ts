@@ -1,7 +1,7 @@
 // The client half's PURE logic: payload validation, interpolation, the fall
 // maths, and — the one that matters most — the photosensitivity floor.
 //
-// Rendering is verified by eye per design §8 ("no headless GL rig"), so nothing
+// Rendering is verified by eye per design doc ("no headless GL rig"), so nothing
 // here imports three, which is also what lets it run in the same node
 // environment as the server tests. That split is why sky.ts exists separately
 // from rig.ts: every value that decides how the weather BEHAVES is reachable

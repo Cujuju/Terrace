@@ -1,7 +1,7 @@
 // Protocol: message types and intent validation.
 //
 // CRITICAL CODE — validateSculptIntent is the server's first line of defense
-// against hostile clients (design §3.2: clients send intents, never heights).
+// against hostile clients (design doc: clients send intents, never heights).
 // Every field of an inbound intent is checked for type, integrality, and
 // range before any of it touches the world. Plugins add further verdicts
 // (mana, cooldowns) AFTER this structural validation passes.
@@ -379,7 +379,7 @@ export interface ChunkUnlockMessage {
  * and the difficulty is the neutral 1–100 dial core already publishes to
  * plugins as WorldApi.difficulty. Core attaches no mechanic to either — it
  * only tells a joining client which world it is looking at — so carrying them
- * here does not put anything "gamey" in core (design §3.5).
+ * here does not put anything "gamey" in core (design doc).
  *
  * Both are OPTIONAL and additive, exactly like SculptIntent's `seq`: a
  * snapshot from a server built before this change is still a valid message,
@@ -434,7 +434,7 @@ export interface JoinSnapshotMessage {
    * plugin enablement, 2026-08-25). Core states a fact about its own
    * configuration here; it attaches no mechanic to the names and does not know
    * what any of them do, so this stays as un-gamey as `difficulty` (design
-   * §3.5).
+   * doc).
    *
    * It rides the snapshot because a toggle REOPENS the live world, and a
    * reopen already re-sends this message to every connected player — so the
@@ -601,13 +601,13 @@ export function validateSculptIntent(
 // WORLD ROLLBACK (2026-08-21). Restore points — "put the world back the way it
 // was at 19:16" — after a bad edit or a misbehaving plugin terraform.
 //
-// CORE, NOT A PLUGIN, and that is the same call §3.6 already made for
+// CORE, NOT A PLUGIN, and that is the same call the design already made for
 // snapshots: a restore point IS a snapshot, the thing core already writes
 // every SNAPSHOT_INTERVAL_S, so listing and re-applying one is persistence
 // housekeeping rather than a game mechanic. Nothing here attaches a rule, a
-// cost or a reward to rolling back (design §3.5, "nothing gamey in core").
+// cost or a reward to rolling back (design doc, "nothing gamey in core").
 //
-// OPERATOR-GATED, NOT PLAYER-GATED. v1 has no accounts (§3.7), so the server
+// OPERATOR-GATED, NOT PLAYER-GATED. v1 has no accounts, so the server
 // cannot tell the self-hoster from anyone holding the invite link, and
 // rolling the world back is the single most destructive thing it can be asked
 // to do. The gate is therefore a shared secret the self-hoster puts in their
@@ -791,7 +791,7 @@ export function validateRollbackRequest(msg: unknown): RollbackRequestMessage | 
 // can reach a row belonging to world A. That is a structural guarantee, not a
 // carefully-maintained one.
 //
-// ONE LIVE WORLD PER PROCESS, still (design §3.2, amended not abandoned).
+// ONE LIVE WORLD PER PROCESS, still (design doc, amended not abandoned).
 // Loading a world saves and closes the current one before opening the next;
 // two worlds are never simulating at once, because every server plugin keeps
 // its state at module scope and would silently share it between them

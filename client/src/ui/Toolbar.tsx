@@ -8,7 +8,7 @@
 // all.
 //
 // CORE RENDERS IT, PLUGINS FILL IT. The bar knows no particular plugin — the
-// same rule the corner panel's plugin stack keeps (design §3.5). It renders
+// same rule the corner panel's plugin stack keeps (design doc). It renders
 // one built-in face (Sculpt, which is the ABSENCE of a plugin tool) plus
 // whatever plugins registered, in registration order, which is the host's
 // plugin load order and therefore deterministic per server configuration.

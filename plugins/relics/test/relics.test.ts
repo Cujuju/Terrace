@@ -653,7 +653,7 @@ describe('relics plugin', () => {
 
       expect(currentRelics()).toEqual(before);
       // Skills are player state with no stable identity to key them by, so they
-      // are deliberately NOT in the slice (design §3.7).
+      // are deliberately NOT in the slice (design doc).
       expect(skillsOf(PLAYER.id)).toEqual([]);
 
       // The respawn timer resumed where it left off rather than restarting.

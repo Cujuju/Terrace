@@ -1,4 +1,4 @@
-// The client half's pure logic. Rendering is verified manually per design §8
+// The client half's pure logic. Rendering is verified manually per design doc
 // ("Client rendering is verified manually in v1; don't build a headless GL test
 // rig"), so what is tested here is everything the meshes are driven FROM: the
 // bob/spin maths, the colour mapping, and the click → relic resolution that

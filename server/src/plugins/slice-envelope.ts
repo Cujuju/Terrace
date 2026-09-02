@@ -13,8 +13,8 @@
 // and handed to `load(data, 1)`; the host rewrites it in envelope form on the
 // next save. Without this rule, unwrapping a raw value yields `v === undefined`
 // and `data === undefined`, `load(undefined, undefined)` runs, and every plugin
-// comes up EMPTY on the first boot after the change — breaching MVP criterion 6
-// ("restart; the world comes back from SQLite intact") and DESIGN's "nothing
+// comes up EMPTY on the first boot after the change — breaching the persistence
+// promise ("restart; the world comes back from SQLite intact") and DESIGN's "nothing
 // deletes a world implicitly".
 //
 // It is PERMANENT, not a one-boot migration: `restore_points` rows hold old

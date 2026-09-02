@@ -4,7 +4,7 @@
 //
 // CRITICAL CODE — this is where terrain becomes geometry, and it is
 // feel-critical: the terraced silhouette is the app's namesake look
-// (docs/DESIGN.md §3.4).
+// (docs/DESIGN.md).
 //
 // WHY THIS REPLACED THE PER-CELL WALL RENDERER (2026-08-14). The previous
 // builder emitted one axis-aligned flat quad per cell plus vertical wall quads

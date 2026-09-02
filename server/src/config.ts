@@ -1,4 +1,4 @@
-// Environment configuration. Every value has a working default (design §8:
+// Environment configuration. Every value has a working default (design doc:
 // "nothing sensitive should ever be required to boot a world"), and every value
 // is validated at boot so a typo fails fast with an actionable message rather
 // than corrupting a world hours later.
@@ -101,12 +101,12 @@ export const MAX_WORLD_SWITCH_COUNTDOWN_S = 300;
  * blast radii: a rollback rewinds the live world (and is itself undoable),
  * while world management can archive one. An operator may reasonably hand out
  * the first and not the second. Defaulted rather than required for the reason
- * design §8 gives — nothing sensitive should be needed to boot a world — and
+ * design doc gives — nothing sensitive should be needed to boot a world — and
  * warned about loudly at boot for the reason the rollback default is.
  */
 export const DEFAULT_WORLD_ADMIN_KEY = 'terrace';
 
-/** Design §3.2: fixed ~10 Hz simulation tick. */
+/** Design doc: fixed ~10 Hz simulation tick. */
 export const DEFAULT_TICK_HZ = 10;
 
 /** Design open question 4, decided 2026-08-13: snapshot every 60 s if dirty. */
@@ -115,7 +115,7 @@ export const DEFAULT_SNAPSHOT_INTERVAL_S = 60;
 /**
  * Tick-rate bounds. Below 1 Hz a "fixed tick" stops being a simulation clock in
  * any useful sense; above 60 Hz the loop would out-run the 20 fps patch rate and
- * burn CPU for no visible benefit (rendering interpolates — design §3.2).
+ * burn CPU for no visible benefit (rendering interpolates — design doc).
  */
 export const MIN_TICK_HZ = 1;
 export const MAX_TICK_HZ = 60;
@@ -210,7 +210,7 @@ export const DEFAULT_WORLD_DIFFICULTY = 50;
 const MIN_PORT = 1;
 const MAX_PORT = 65535;
 
-/** Directory name of the auto-discovered plugin folder (design §3.5). */
+/** Directory name of the auto-discovered plugin folder (design doc). */
 const PLUGINS_DIR_NAME = 'plugins';
 
 /** Sibling-of-`server/` path to a `vite build` of the client (issue #20). */

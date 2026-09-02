@@ -1,4 +1,4 @@
-// Client-side prediction and reconciliation (design doc §3.3, MVP criterion 2).
+// Client-side prediction and reconciliation (design doc).
 //
 // CRITICAL CODE — this is the other half of the sync path. The mirror applies
 // what the server said; this module makes the local player's own sculpts appear
@@ -94,7 +94,7 @@ import {
  * agreeing with it, in milliseconds.
  *
  * This is the deadline on the whole round trip: intent out, up to one server
- * tick of scheduling delay (TICK_HZ 10 → 100 ms, design §3.2), diff back. One
+ * tick of scheduling delay (TICK_HZ 10 → 100 ms, design doc), diff back. One
  * second leaves ~900 ms for the network, which covers any link a real-time
  * sculpting session is playable on at all. Past it, the prediction is assumed
  * lost — the server may have rejected the intent outright (locked chunk, a
@@ -270,7 +270,7 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
   /**
    * The authoritative copy. Allocated once, alongside the mirror it shadows —
    * 512 KB at a 512² world, the same trivial cost the mirror itself accepts
-   * (design §3.4), and it means reconciliation never allocates.
+   * (design doc), and it means reconciliation never allocates.
    */
   const base = new Int16Array(rendered);
 

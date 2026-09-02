@@ -2,7 +2,7 @@
 //
 // WHAT THIS FILE IS FOR. Every value that decides how the sky LOOKS at a given
 // phase is a pure function of that one number — no three, no DOM, no clock of
-// its own — so a node test can read it directly (design §8: no headless GL
+// its own — so a node test can read it directly (design doc: no headless GL
 // rig). This is the weather plugin's client/sky.ts split, restated for this
 // plugin: rig.ts (absent here — see index.ts's header for why) would own
 // meshes and resolution; this file owns everything about what the rig would

@@ -1,7 +1,7 @@
 // THE ANTI-CHEAT BOUNDARY. Read this before touching anything that sends
 // terrain to a client.
 //
-// Design §3.4: the unlocked-chunk mask is server-side only, and locked terrain
+// Design doc: the unlocked-chunk mask is server-side only, and locked terrain
 // is protected "by omission" — a hacked client cannot render or peek at terrain
 // it never received. Two facts make filtering mandatory rather than optional:
 //
@@ -131,7 +131,7 @@ export function chunkPayloadOf(terrain: MaskedTerrain, cx: number, cy: number): 
  * ANTI-CHEAT FILTER — every unlocked chunk, and nothing else. This is the
  * entire terrain content of a join snapshot: an early-game world sends a
  * handful of chunks (tens of KB) rather than the whole 512 KB map, which is
- * both the bandwidth win (design §3.2) and the security property.
+ * both the bandwidth win (design doc) and the security property.
  *
  * Iteration is row-major over chunk coordinates so the payload order is
  * deterministic (useful for tests and for client-side progressive upload).

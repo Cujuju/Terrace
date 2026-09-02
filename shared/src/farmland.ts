@@ -10,7 +10,7 @@
 //
 // That argument is true and does not apply. The rule forbids plugin→PLUGIN
 // imports; every plugin already imports @terrace/shared, which is the single
-// source of truth for terrain math (CLAUDE.md, design §3.3) and the one
+// source of truth for terrain math (CLAUDE.md, design doc) and the one
 // dependency they are all permitted to share. Both former copies already
 // imported isWater and bandOf from here.
 //

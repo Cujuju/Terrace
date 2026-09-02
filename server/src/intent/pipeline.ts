@@ -1,5 +1,5 @@
 // THE INTENT PIPELINE — the anti-cheat model and the sync model in one place
-// (design §3.2: "clients send intents, never raw heightmap values").
+// (design doc: "clients send intents, never raw heightmap values").
 //
 // Everything a client can do to the terrain enters here, in this fixed order:
 //

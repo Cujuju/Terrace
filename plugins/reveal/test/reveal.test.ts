@@ -1,5 +1,5 @@
 // reveal, driven through the REAL intent pipeline and the REAL plugin host with
-// both shipped example plugins registered. This is MVP criterion 5's test: the
+// both shipped example plugins registered. This is the reveal contract's test: the
 // PLUGIN unlocks territory (core never decides when), and — since issue #17 —
 // it does so PER PLAYER: a chunk streams only to the token that earned it.
 

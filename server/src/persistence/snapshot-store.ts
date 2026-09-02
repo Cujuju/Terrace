@@ -1,4 +1,4 @@
-// World persistence: SQLite via better-sqlite3 (design §3.6 — zero-config for
+// World persistence: SQLite via better-sqlite3 (design doc — zero-config for
 // self-hosters, no server to run alongside).
 //
 // CRITICAL CODE (persistence path). Acceptance criterion 6 is "kill the server

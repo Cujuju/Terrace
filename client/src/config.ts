@@ -7,7 +7,7 @@
 
 import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT } from '@terrace/shared';
 
-/** 2567 is the Colyseus convention and the server's `PORT` default (§8). */
+/** 2567 is the Colyseus convention and the server's `PORT` default. */
 export const DEFAULT_SERVER_PORT = 2567;
 
 /**
@@ -62,7 +62,7 @@ export const DEFAULT_SERVER_URL = import.meta.env.DEV
 
 /**
  * Room name passed to `joinOrCreate`. Core has no lobby — one process is one
- * world (design doc §3.2) — so a single fixed name is all that is needed. It
+ * world (design doc) — so a single fixed name is all that is needed. It
  * must match the server's `gameServer.define(...)` name.
  */
 export const DEFAULT_ROOM_NAME = 'world';
@@ -245,7 +245,7 @@ export const WORLD_UNIT_HEIGHT_UNITS = 1 / HEIGHT_WORLD_SCALE;
  * The band-relative consequence noted here before has moved with it: clearing
  * the water now takes four clicks rather than one, because a click is a band
  * and a band is four times finer, which is the re-terrace working as intended
- * and still leaves "raising land out of water" legible (MVP criterion 4).
+ * and still leaves "raising land out of water" legible.
  */
 export const WATER_SURFACE_LIFT = 1 / 32;
 
@@ -256,7 +256,7 @@ export const WATER_SURFACE_LIFT = 1 / 32;
  * owns the schedule).
  *
  * Chosen at 120 ms — deliberately just above the server's 100 ms tick period
- * (TICK_HZ 10, design doc §3.2) — so a held brush can never queue more than
+ * (TICK_HZ 10, design doc) — so a held brush can never queue more than
  * one intent per tick. Because it is the FLOOR, no ramped interval is ever
  * shorter than it, which is what keeps terrain/prediction.ts's in-flight cap
  * (derived from this constant) a true upper bound rather than an estimate.

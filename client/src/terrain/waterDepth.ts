@@ -1,7 +1,7 @@
 // Depth-derived water translucency: the pure numeric core behind the sea's
 // per-cell alpha. render/water.ts owns the Three.js DataTexture and shader
 // patch that consume this; everything here is plain arithmetic over the
-// TerrainMirror, so it is unit-testable without a GL context (design doc §8
+// TerrainMirror, so it is unit-testable without a GL context (design doc
 // — no headless GL rig ships; pure-numbers modules are the tested half of a
 // render feature, matching plugins/weather/client/sky.ts vs rig.ts).
 //
@@ -398,7 +398,7 @@ export const WATER_DEPTH_ALPHA_DEFAULT_BYTE = depthAlphaByte(0);
  *
  * ZERO, not a smaller film. A dry cell has no water column over it — that is
  * what dry means — and the design record's own words for this ground are
- * "raising land out of water creates buildable-looking flats" (§ acceptance 4).
+ * "raising land out of water creates buildable-looking flats".
  * A waterline flat should look like a flat.
  *
  * NOTE THE ASYMMETRY WITH WATER_MIN_ALPHA, which is deliberate: a cell at

@@ -2,7 +2,7 @@
 // (sky.ts) and interpolation across a broadcast gap — the same split weather's
 // own test/client.test.ts documents, for the same reason: nothing here
 // imports three, so it runs in the same node environment as the server tests
-// (design §8, no headless GL rig).
+// (design doc, no headless GL rig).
 
 import { describe, expect, it } from 'vitest';
 import {

@@ -70,7 +70,7 @@ import {
 } from '../server/systems.ts';
 import { worldWithTerrain } from './support/world.ts';
 
-/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md §8). */
+/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md). */
 const TICK_SECONDS = 0.1;
 
 /**
@@ -268,7 +268,7 @@ describe('spawn and decay', () => {
   });
 
   it('caps the radius against the WORLD on a small world, not only the band', () => {
-    // A 128-unit world is explicitly supported (docs/DESIGN.md §3.4) and is
+    // A 128-unit world is explicitly supported (docs/DESIGN.md) and is
     // where the fraction binds: 0.35 of its edge is under SYSTEM_MAX_RADIUS.
     // maxRadiusFor takes a size IN CELLS — it multiplies a fraction by it and
     // compares the result against cell radii — so every world here is a span

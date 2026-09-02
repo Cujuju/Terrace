@@ -1,6 +1,6 @@
 // The seam between the World and the network.
 //
-// The World must stay independent of Colyseus (design §3.2: "the server is
+// The World must stay independent of Colyseus (design doc: "the server is
 // structured around a single `World` object so a rooms layer could be added
 // later without rework"). It therefore talks to this interface, never to a
 // Room. The Colyseus room installs a real sink on create; tests install a

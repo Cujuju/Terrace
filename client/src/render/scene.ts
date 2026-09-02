@@ -1,7 +1,7 @@
 // Three.js scene, camera, orbit controls and the render loop.
 //
 // This module and everything under render/ and input/ is plain imperative TS:
-// it owns the canvas outright and Solid never re-renders it (design doc §3.1).
+// it owns the canvas outright and Solid never re-renders it (design doc).
 // The HUD talks to it only through explicit function calls.
 
 import {

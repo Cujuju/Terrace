@@ -1,4 +1,4 @@
-// The plugin contract (design §3.5). Core is terrain sim + sync + persistence +
+// The plugin contract (design doc). Core is terrain sim + sync + persistence +
 // this host; everything "gamey" lives behind these types.
 //
 // The acceptance test for this file is the design's own: reveal-of-territory, a
@@ -722,7 +722,7 @@ export interface TerracePlugin {
   readonly persistence?: PersistenceSlice;
 
   // state?: SchemaSlice;
-  // DELIBERATELY ABSENT IN PHASE 1. The design sketch (§3.5) included a
+  // DELIBERATELY ABSENT IN PHASE 1. The original design sketch included a
   // plugin-owned Colyseus schema slice, but decision Q7 (2026-08-13) rules that
   // terrain never travels as schema state, and Phase 1 core has no other
   // synced state to anchor the feature on. Plugins that need synced state today

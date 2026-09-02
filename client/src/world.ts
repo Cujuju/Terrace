@@ -113,7 +113,7 @@ export interface LayerEdgeLight {
 export interface World extends TerrainSink {
   /**
    * Applies the local player's sculpt immediately, before the server has
-   * answered (design §3.3 client-side prediction). Call this ONLY for an intent
+   * answered (design doc client-side prediction). Call this ONLY for an intent
    * that actually went out on the wire — see main.tsx.
    */
   predictSculpt(intent: SculptIntent): void;

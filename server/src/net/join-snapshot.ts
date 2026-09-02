@@ -36,7 +36,7 @@ import { SERVER_VERSION } from '../version.ts';
  *
  * ANTI-CHEAT: the chunks are the ones unlocked FOR THIS TOKEN (issue #17
  * decision 2), never the union of everyone's territory — locked terrain is
- * never on the wire (design §3.4). Keeping that rule inside this function is
+ * never on the wire (design doc). Keeping that rule inside this function is
  * the reason it exists: a second hand-rolled snapshot builder is exactly how a
  * server starts leaking terrain, and the rollback path would have been the
  * second one.

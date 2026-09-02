@@ -27,7 +27,7 @@ let cachedToken: string | null = null;
  * Best-effort localStorage read. Private-mode Safari and disabled storage
  * both throw on ANY access (not just .setItem), and a non-browser context —
  * this module's own test run included, client tests execute in a plain Node
- * environment (design §8, client/vite.config.ts) with no `localStorage`
+ * environment (design doc, client/vite.config.ts) with no `localStorage`
  * global at all — must degrade to "no persisted token" rather than throw.
  */
 function readStoredToken(): string | null {

@@ -209,7 +209,7 @@ export const SYSTEM_MAX_RADIUS_CELLS = cellsAcross(56);
  * Ceiling on a system's radius as a fraction of the world edge.
  *
  * WORLD_SIZE is a self-hoster's setting and a 128-unit world is explicitly
- * supported (docs/DESIGN.md §3.4), where a 56-unit radius would blanket the
+ * supported (docs/DESIGN.md), where a 56-unit radius would blanket the
  * entire map and "clear weather" would stop existing. 0.35 keeps the largest
  * system's diameter at 70% of the world edge, so there is always somewhere else
  * to stand. It is a FRACTION, so it needs no conversion and binds identically
@@ -325,8 +325,7 @@ export const SYSTEM_DESPAWN_MARGIN_RADII = 1.5;
  * snow. There is no honest argument for the cheap version at this price.
  *
  * ANTI-CHEAT, AND WHY THE UNLOCK MASK IS CHECKED HERE. Terrain in locked chunks
- * is never sent to clients at all — "anti-cheat by omission" (docs/DESIGN.md
- * §3.4). Snow that formed over hidden mountains would be a side channel: a
+ * is never sent to clients at all — "anti-cheat by omission" (docs/DESIGN.md). Snow that formed over hidden mountains would be a side channel: a
  * player could read the shape of unrevealed terrain off the sky. So the
  * elevation test counts UNLOCKED samples only, and a candidate with no unlocked
  * sample fails. Consequence, accepted and symmetrical with the wildlife

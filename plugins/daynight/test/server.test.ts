@@ -27,7 +27,7 @@ import {
   resetDayNightState,
 } from '../server/index.ts';
 
-/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md §8), same as weather's suite. */
+/** The shipped tick period: TICK_HZ 10 (docs/DESIGN.md), same as weather's suite. */
 const TICK_SECONDS = 0.1;
 const WORLD_SIZE = 64;
 

@@ -1,4 +1,4 @@
-// The fixed simulation tick (design §3.2: "fixed tick loop (~10 Hz) runs ongoing
+// The fixed simulation tick (design doc: "fixed tick loop (~10 Hz) runs ongoing
 // sim so all clients see identical physics; rendering interpolates, simulation
 // never runs client-side as truth").
 //

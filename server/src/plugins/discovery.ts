@@ -1,4 +1,4 @@
-// Folder-based plugin discovery (design §3.5: "plugins/ folder, auto-discovered
+// Folder-based plugin discovery (design doc: "plugins/ folder, auto-discovered
 // at boot — v1, friendliest for self-hosters"). npm-package plugins come later;
 // nothing here forecloses that, because the loader's product is a plain
 // TerracePlugin object and its input is just a module specifier.
@@ -165,7 +165,7 @@ async function loadPlugin(
   const pluginDir = join(pluginsDir, directory);
   const entryPath = await findServerEntry(pluginDir);
   if (entryPath === null) {
-    // A plugin may legitimately be client-only (design §3.5 allows client-side
+    // A plugin may legitimately be client-only (design doc allows client-side
     // HUD/scene plugins), so a missing server half is a note, not an error.
     logInfo(`plugin "${directory}" has no server entry — skipped`);
     return null;

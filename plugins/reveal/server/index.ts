@@ -1,4 +1,4 @@
-// reveal — the flagship example plugin (design §3.5, MVP criterion 5).
+// reveal — the flagship example plugin (design doc).
 //
 // Core knows about per-token unlock (World.unlockChunkForToken, published to
 // plugins as WorldApi.unlockChunkForToken — issue #17). Core does NOT know

@@ -9,7 +9,7 @@
 // world-admin key as the Worlds panel, because it is the same kind of thing:
 // an operator reaching into the world.
 //
-// CORE KNOWS NO PLUGIN (design §3.5). Nothing here names a volcano. The cards
+// CORE KNOWS NO PLUGIN (design doc). Nothing here names a volcano. The cards
 // are rendered from the listing the server sends — plugin, key, label,
 // description — and the only thing this file adds is a colour, derived from
 // the plugin's NAME so every plugin gets a stable accent without core keeping

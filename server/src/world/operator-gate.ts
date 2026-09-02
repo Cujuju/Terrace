@@ -14,7 +14,7 @@
 // contract, so the contract now exists.
 //
 // WHAT IT PROTECTS AGAINST, AND WHAT IT DOES NOT. v1 has no accounts (design
-// §3.7), so the server cannot tell the self-hoster from anyone else holding
+// doc), so the server cannot tell the self-hoster from anyone else holding
 // the invite link. A shared secret in the environment is the only gate
 // available. It is not an identity system, it does not survive a determined
 // attacker who can read the operator's environment, and it is not a substitute

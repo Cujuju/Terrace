@@ -83,8 +83,9 @@ docker compose up --build      # --build is required: the URL is baked into the 
 Open **two** ports on the box/firewall: `8080` (the client page) and `2567` (the world
 server). They are separate services on purpose — see *How the pieces fit*.
 
-Terrace v1 has no accounts and no authentication (deliberately — see `docs/DESIGN.md`
-§3.7). Anyone who can reach those ports can sculpt your world. On the public internet,
+Terrace has no accounts and no authentication: players are anonymous, identified by a
+display name and a durable browser-generated token. Accounts, if ever, will be a
+plugin. Anyone who can reach those ports can sculpt your world. On the public internet,
 put it behind something that limits who gets in.
 
 ---
@@ -121,11 +122,15 @@ browser ──HTTP:8080──▶ client   (nginx serving the Vite-built bundle)
    └─────WS:2567─────▶ server   (Colyseus, authoritative world, SQLite) ──▶ volume terrace_world-data
 ```
 
-Two containers, because the core server speaks Colyseus and nothing else — it serves no
-static files, by design (core stays a substrate, not a web framework). The `client`
-service is a plain nginx layer holding the built bundle; the browser talks to the
-server directly over WebSocket. Both are built from the one root `Dockerfile`
-(`--target client` / `--target server`).
+Compose runs two containers: the `client` service is a plain nginx layer holding the
+built bundle, and the browser talks to the server directly over WebSocket. Both are
+built from the one root `Dockerfile` (`--target client` / `--target server`).
+
+Outside Compose, **one process is one playable URL**: when a built client exists at
+`CLIENT_DIST_PATH` (default `client/dist`), the game server serves it over its own
+port with SPA fallback, and the client dials `ws://<its own host>` unless
+`VITE_SERVER_URL` / `PUBLIC_WS_URL` override it. `http://host:PORT` is then the
+whole game.
 
 If you front this with a reverse proxy for TLS, the server side needs both the
 `/matchmake/*` HTTP routes and the WebSocket upgrade proxied to port 2567, and

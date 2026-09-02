@@ -1,6 +1,6 @@
 // Chunk geometry, the unlocked-region mask, and chunk height extraction.
 //
-// CRITICAL CODE — the mask is the anti-cheat boundary (design §3.4): locked
+// CRITICAL CODE — the mask is the anti-cheat boundary (design doc): locked
 // chunks are NEVER sent to clients, and sculpt intents on locked cells are
 // rejected server-side. The mask itself lives only on the server; this module
 // is in shared/ because the client needs the same chunk geometry to place
@@ -20,7 +20,7 @@ import type { ChunkLayeredSpans, ChunkPayload } from './protocol.ts';
 /**
  * True for a height that is safe to store: a whole number within
  * [MIN_HEIGHT, MAX_HEIGHT]. This is the Int16 wire/storage contract — the
- * heightmap backing store is an `Int16Array` (design doc §3.3), and a plain
+ * heightmap backing store is an `Int16Array` (design doc), and a plain
  * `number` assigned into it is silently coerced: non-integers truncate,
  * out-of-Int16-range values wrap (`40000` -> `-25536`), and `NaN` becomes
  * `0`. Every height that reaches an `Int16Array` write MUST pass this check

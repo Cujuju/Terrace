@@ -1,12 +1,12 @@
 // The client's local mirror of the authoritative heightmap.
 //
-// CRITICAL CODE — this is the client half of the sync path (design doc §3.2).
+// CRITICAL CODE — this is the client half of the sync path (design doc).
 // Everything the client draws is derived from this mirror, so a mis-applied
 // message is a permanently wrong world until the next join. Two invariants
 // carry the whole module:
 //
 //   1. The mirror only ever contains data the SERVER sent. Locked chunks are
-//      never on the wire (anti-cheat by omission, §3.4), so "which chunks have
+//      never on the wire (anti-cheat by omission), so "which chunks have
 //      we received" IS the client's notion of what exists. `received` is that
 //      set; the renderer draws exactly those chunks and nothing else.
 //   2. Cells of never-received chunks stay at their allocated zero, which is
@@ -50,7 +50,7 @@ export interface TerrainMirror {
 /**
  * Allocates the mirror up front for the world size the server reported in its
  * join snapshot. 512² Int16 is 512 KB — trivial, and it means no reallocation
- * ever happens as territory is revealed (design doc §3.4).
+ * ever happens as territory is revealed (design doc).
  */
 export function createTerrainMirror(worldSize: number): TerrainMirror {
   chunksPerEdge(worldSize); // throws unless worldSize is a positive multiple of CHUNK_SIZE

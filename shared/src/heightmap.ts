@@ -1304,7 +1304,7 @@ const SOFT_DRAG_LOBE_SHARE = 0.65;
  * same way, so the ragged edge a pull leaves behind STAYS ragged, and pushing
  * the same place twice reproduces it exactly.
  *
- * INTEGER-ONLY, therefore safe for the determinism contract (design §3.1).
+ * INTEGER-ONLY, therefore safe for the determinism contract (design doc).
  * `Math.imul` is exact 32-bit multiplication on every platform, the shifts and
  * xors are integer ops, and the final divisor is a power of two so the scaling
  * is exact in binary floating point. Client and server get the same bits.
