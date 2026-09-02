@@ -76,9 +76,11 @@ export class Blaze {
    * `ignite` is the ONE place a cell fire exists that did not exist before, so
    * it is the one place the announcement can be owed from.
    *
-   * An ARRAY, appended in ignition order — which is `spreadOnce`'s fixed roll
-   * order — because this event's consumers are sim code and a Map's incidental
-   * iteration order has no business reaching them (design § determinism).
+   * An ARRAY, appended in ignition order — which is the fixed, deterministic
+   * order `spreadOnce` hands out slots in (hottest crossing first, ties on
+   * (x, y): ./spread.ts's `igniteInHeatOrder`) — because this event's consumers
+   * are sim code and a Map's incidental iteration order has no business
+   * reaching them (design § determinism).
    */
   private ignitedSinceDrain: Array<{ readonly x: number; readonly y: number }> = [];
 

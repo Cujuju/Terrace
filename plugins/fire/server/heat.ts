@@ -132,7 +132,7 @@ export class HeatLedger {
 
   /**
    * Adds `rate x seconds` of heat to one target and says whether that is enough
-   * to light it.
+   * for it to catch — if anything will have it (see below).
    *
    * THE ONE WAY A TARGET CATCHES, for cells and individuals both. A caller that
    * has computed a rate has nothing else to ask.
@@ -142,9 +142,19 @@ export class HeatLedger {
    * applies: a target no flame is actually heating must not be given a ledger
    * entry, or a fire's memory would grow with everything it has ever been near.
    *
-   * On ignition the entry is deleted rather than zeroed, so a thing that burns
-   * out and becomes fuel again starts from a freshly drawn threshold instead of
-   * inheriting the one it already spent.
+   * ABSORBING DOES NOT SPEND THE HEAT. True means "this target has taken
+   * enough"; it does NOT mean the target caught, because whether a fire is
+   * actually created is a question only ./blaze.ts can answer (it may be at
+   * FIRE_CELL_CAP, or the fuel may be gone). The entry is therefore KEPT here
+   * and forgotten by `consume` on the step something really was lit — see that
+   * method for why the two must not be one call.
+   *
+   * A target that keeps crossing without catching keeps crossing with MORE
+   * heat each step, which is exactly the queue `../server/spread.ts` orders by:
+   * the accumulation is the memory the whole file exists to give it, and
+   * throwing it away because a ceiling happened to be full would reinstate the
+   * memoryless lottery described at the top of this file for every ignition
+   * attempt made while that ceiling binds.
    */
   absorb(key: HeatTargetKey, ratePerSecond: number, seconds: number): boolean {
     if (!(ratePerSecond > 0) || !(seconds > 0) || !Number.isFinite(seconds)) return false;
@@ -161,10 +171,48 @@ export class HeatLedger {
 
     entry.heat += ratePerSecond * seconds;
     entry.step = this.step;
-    if (entry.heat < entry.threshold) return false;
+    return entry.heat >= entry.threshold;
+  }
 
+  /**
+   * How far past its threshold a target has gone, in threshold units — zero for
+   * one that has not crossed, or that this ledger has never heard of.
+   *
+   * THE RANKING `../server/spread.ts` USES WHEN SLOTS ARE SCARCE, and the
+   * reason it is an EXCESS rather than a ratio `heat / threshold`. Both order
+   * the same set; they differ in what they divide by. In the step a target
+   * crosses, its overshoot is at most the heat it took that step — the sum of
+   * its sources' rates times dt — so the excess is a direct reading of HOW HARD
+   * THE FRONT IS HEATING IT, which is what "the leading edge first" means. The
+   * ratio divides that reading by the target's own threshold, a random draw
+   * (IGNITION_THRESHOLD_SHAPE), so it is the same signal with noise mixed in.
+   *
+   * And because a crossed entry is kept, the excess of a target left waiting
+   * grows every step it stays beside a flame — so the ordering is "hottest, and
+   * among equals longest-waiting", which is what keeps a queue from starving.
+   */
+  excessHeat(key: HeatTargetKey): number {
+    const entry = this.entries.get(key);
+    if (entry === undefined) return 0;
+    return Math.max(0, entry.heat - entry.threshold);
+  }
+
+  /**
+   * Forgets one target because it really did catch — the other half of
+   * `absorb`, and the ONLY thing that spends accumulated heat.
+   *
+   * SEPARATE FROM `absorb` BECAUSE ONLY THE CALLER KNOWS. Folding the delete
+   * into `absorb`'s true branch was the original shape and it is the defect
+   * this pair exists to remove: `absorb` cannot see ./blaze.ts's answer, so it
+   * charged every target that reached its threshold and left the refused ones
+   * to start again from zero.
+   *
+   * Deleted rather than zeroed, so a thing that burns out and becomes fuel
+   * again starts from a freshly drawn threshold instead of inheriting the one
+   * it already spent.
+   */
+  consume(key: HeatTargetKey): void {
     this.entries.delete(key);
-    return true;
   }
 
   /**

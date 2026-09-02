@@ -913,12 +913,48 @@ function spreadToIndividuals(
     // May still decline — the entity cap is full, or something took it in the
     // meantime. An ordinary answer, exactly as Blaze.ignite's null is.
     const lit = entityBlaze.igniteIndividual(candidate);
-    if (lit !== null) caught.push(lit);
+    if (lit === null) continue;
+    // THE HEAT IS SPENT ONLY ON THE ANSWER "yes" (./heat.ts's absorb/consume
+    // pair). FIRE_ENTITY_CAP refuses in exactly the way FIRE_CELL_CAP does, so
+    // the same defect lived here: an animal that had stood in the fire long
+    // enough to catch, turned away because 48 other things were already alight,
+    // used to lose every second of it and start again from a fresh threshold.
+    //
+    // The cell path additionally ORDERS its refused targets by heat; this one
+    // does not, and deliberately. That ordering is what makes a FRONT a front —
+    // a geometric claim about a contiguous edge of cells — and a set of at most
+    // FIRE_ENTITY_CAP individuals scattered across a world has no edge for it to
+    // be about. Retaining the heat is the whole of the fix that applies here.
+    heatLedger.consume(swept.key);
+    caught.push(lit);
   }
 }
 
-/** Heats the cells around one source's position, and reports the ones that
- * reached their threshold. */
+/**
+ * One cell that has taken enough heat to catch, and is waiting to be let.
+ *
+ * `excess` is filled in once, when the step's whole set is ordered — see
+ * `igniteInHeatOrder`.
+ */
+interface HeatedCell {
+  readonly key: number;
+  readonly x: number;
+  readonly y: number;
+  readonly excess: number;
+}
+
+/**
+ * Heats the cells around one source's position, and records the ones that
+ * reached their threshold.
+ *
+ * IT DOES NOT LIGHT THEM. Which of the step's crossings actually catch is a
+ * decision that cannot be made one source at a time: at FIRE_CELL_CAP there
+ * are fewer slots than crossings, and handing them out as the loop happens to
+ * reach them makes the burning set's SHAPE a function of `blaze.fires()`
+ * iteration order rather than of the fire. So a crossing is filed, keyed by the
+ * cell — the same cell crossed for two different sources is one crossing — and
+ * `spreadOnce` resolves the whole set at the end of the step.
+ */
 function spreadToCells(
   world: WorldApi,
   blaze: Blaze,
@@ -927,7 +963,7 @@ function spreadToCells(
   offsets: readonly (readonly [number, number])[],
   wind: { readonly heading: number; readonly speed: number },
   dt: number,
-  caught: FireCellState[],
+  crossed: Map<number, { readonly x: number; readonly y: number }>,
 ): void {
   for (const [dx, dy] of offsets) {
     const x = cellOf(origin.x) + dx;
@@ -939,13 +975,68 @@ function spreadToCells(
     if (rate <= 0) continue;
     // A cell stands where it is for the whole step, so its exposure is the
     // step. Same ledger, same units as the individual path above.
-    if (!heatLedger.absorb(fireKey(x, y), rate, dt)) continue;
+    const key = fireKey(x, y);
+    if (!heatLedger.absorb(key, rate, dt)) continue;
 
-    // May still decline: nothing flammable there, or the world is already
-    // burning at FIRE_CELL_CAP. Both are ordinary answers — see Blaze.ignite.
-    const lit = blaze.ignite(x, y);
-    if (lit !== null) caught.push(lit);
+    if (!crossed.has(key)) crossed.set(key, { x, y });
   }
+}
+
+/**
+ * Lights this step's crossings, HOTTEST FIRST, and reports the ones that took.
+ *
+ * WHY AN ORDER AT ALL. Below FIRE_CELL_CAP there are always enough slots and
+ * the order is invisible. At the cap the burning set is conserved — a cell can
+ * only be lit when another burns out — so a step offers a few slots to a
+ * crossing list several times longer, and the order IS the policy. Handed out
+ * in `blaze.fires()` order (oldest fire first) the slots went to whatever the
+ * REAR of the burn happened to be beside, and a front several hundred cells
+ * around dissolved into scattered clumps (issue diagnosed 2026-09-02, live).
+ *
+ * WHY HEAT IS THE RIGHT ORDER. A cell at the leading edge of a dense front is
+ * heated by several burning neighbours at once and accumulates fastest; a
+ * straggler behind the front is heated by one dying neighbour and accumulates
+ * slowest. Excess heat — how far past its own threshold a target has gone
+ * (./heat.ts's `excessHeat`, which states why excess and not a ratio) — is
+ * therefore a direct reading of how much fire is pressed against a cell, and
+ * "the most heated cells first" is what "the front first" means arithmetically.
+ * Because a refused crossing now KEEPS its heat, a cell left waiting climbs the
+ * order every step, so the rule cannot starve anybody either.
+ *
+ * DETERMINISTIC. `excess` is read once per cell before the sort rather than
+ * inside the comparator, ties break on (x, y), and no two entries share a cell
+ * — so the result is a total order fixed by the step's numbers, not by the
+ * Map's iteration order (design § determinism).
+ *
+ * THE LIST IS WALKED TO ITS END rather than stopped at the first refusal.
+ * `Blaze.ignite` returns the same null for three unrelated reasons (its own doc
+ * comment): cap full, nothing flammable there, already alight. Stopping on it
+ * would let one burned-out cell at the head of the order block every real
+ * candidate behind it. The list is bounded by the front's perimeter and a
+ * refusal is a Map lookup, so walking it whole costs nothing worth the bug.
+ */
+function igniteInHeatOrder(
+  blaze: Blaze,
+  crossed: ReadonlyMap<number, { readonly x: number; readonly y: number }>,
+): FireCellState[] {
+  const caught: FireCellState[] = [];
+  if (crossed.size === 0) return caught;
+
+  const ordered: HeatedCell[] = [];
+  for (const [key, cell] of crossed) {
+    ordered.push({ key, x: cell.x, y: cell.y, excess: heatLedger.excessHeat(key) });
+  }
+  ordered.sort((a, b) => b.excess - a.excess || a.x - b.x || a.y - b.y);
+
+  for (const cell of ordered) {
+    const lit = blaze.ignite(cell.x, cell.y);
+    if (lit === null) continue;
+    // The heat is spent HERE and only here, on the one answer that means the
+    // target actually caught — ./heat.ts's absorb/consume pair.
+    heatLedger.consume(cell.key);
+    caught.push(lit);
+  }
+  return caught;
 }
 
 /**
@@ -968,6 +1059,12 @@ function spreadToCells(
  * fire surrounded by fire spends no randomness and keeps no ledger entries at
  * all — which is what keeps the cost of a large burn proportional to its
  * PERIMETER rather than its area.
+ *
+ * HEATING AND LIGHTING ARE TWO PHASES, not one. Every source heats every target
+ * first; only then is the set of cells that crossed their threshold resolved
+ * into actual fires, hottest first (`igniteInHeatOrder`). Individuals are still
+ * lit in place, because their cap is about a scattered set with no edge to
+ * order — see `spreadToIndividuals`.
  */
 export function spreadOnce(
   world: WorldApi,
@@ -981,16 +1078,19 @@ export function spreadOnce(
   const candidates = sweptCandidates(flammableNow());
   const grid = new CandidateGrid(world.worldSize, candidates);
 
-  const cells: FireCellState[] = [];
+  // Every cell that reaches its threshold this step, gathered rather than lit
+  // as it is found: see `spreadToCells` and `igniteInHeatOrder` for why the
+  // decision has to be made over the whole set at once.
+  const crossed = new Map<number, { readonly x: number; readonly y: number }>();
   const entities: FireEntityState[] = [];
 
   for (const fire of cellSources) {
-    spreadToCells(world, blaze, fire, fire, NEIGHBOUR_OFFSETS, wind, dt, cells);
+    spreadToCells(world, blaze, fire, fire, NEIGHBOUR_OFFSETS, wind, dt, crossed);
     spreadToIndividuals(world, entityBlaze, fire, stoodStill(fire), grid, wind, dt, entities);
   }
 
   for (const fire of entitySources) {
-    spreadToCells(world, blaze, fire, fire, SELF_AND_NEIGHBOUR_OFFSETS, wind, dt, cells);
+    spreadToCells(world, blaze, fire, fire, SELF_AND_NEIGHBOUR_OFFSETS, wind, dt, crossed);
     // A burning individual moved too, so its own previous sample is the start
     // of ITS segment — which is what makes a fire that runs through a herd the
     // same computation as a herd that runs through a fire.
@@ -1019,6 +1119,12 @@ export function spreadOnce(
     sweep.set(fireEntityKey(fire.sourceName, fire.id), { x: fire.x, y: fire.y });
   }
   previousSweep = sweep;
+
+  // NOW that every source has been offered to every cell, hand out the slots —
+  // most-heated first, which is the front's leading edge. Before `endStep`,
+  // because a crossing that is refused must still count as touched this step or
+  // the ledger would drop the very heat this ordering is built on.
+  const cells = igniteInHeatOrder(blaze, crossed);
 
   // CLOSE THE LEDGER AFTER EVERY SOURCE HAS BEEN OFFERED, never before: a
   // target heated by the last source of the step must count as touched, or it

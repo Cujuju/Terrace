@@ -32,9 +32,14 @@
 //
 // Reusing the rise as well as the afterlife is not laziness — it is the same
 // arithmetic ./smoke.ts already recorded. A tree burns 22 s and reaches full
-// strength; a crop burns 4 s and grass 3 s, so neither ever gets there. A tuft
-// leaving the same black patch as a burned wood is the version of this feature
-// that cries wolf, and the shared clock rules it out for free.
+// strength; a crop burns 4 s, so it never gets there. (Grass was 3 s when this
+// was written; FLORA_GRASS_BURN_SECONDS is 22 today — plugins/flora/server/
+// index.ts, and every grass fire on the wire in the 2026-09-02 capture carried
+// burnSeconds 22.0 — so a tuft now reaches full strength exactly as a tree
+// does. Nothing here reads either number; this paragraph is the whole of the
+// claim, and it was wrong about grass.) A crop leaving the same black patch as
+// a burned wood is the version of this feature that cries wolf, and the shared
+// clock rules it out for free.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHY IT KEEPS ITS OWN MAP RATHER THAN SHARING SMOKE'S.
