@@ -98,7 +98,7 @@ nothing is required to boot a world.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `WORLD_SIZE` | `512` under Compose, `2048` otherwise | Cells per world edge. **Cells are not world units**: four cells make one world unit, so `512` cells is the 128-unit Populous-proven minimum that fits a small VPS and `2048` cells (512 units) is the server's own default. Must be a multiple of 16 (the chunk size), at least 448 and at most 4096. This is the size **new** worlds are created at; an existing world keeps the size it was made with, and worlds of different sizes coexist happily. |
+| `WORLD_SIZE` | `2048` | Cells per world edge. **Cells are not world units**: four cells make one world unit, so the default is a 512-unit world and wants a mid-size box; `512` cells is the 128-unit Populous-proven minimum that fits a small VPS. Must be a multiple of 16 (the chunk size), at least 448 and at most 4096. This is the size **new** worlds are created at; an existing world keeps the size it was made with, and worlds of different sizes coexist happily. |
 | `WORLD_DIFFICULTY` | `50` | How hard this world is meant to be, 1 (warm) to 100 (punishing). Core stores it and attaches no mechanics; plugins read it (today: mana's default regen rate). Out-of-range values clamp with a warning. |
 | `PORT` | `2567` | Port the world server listens on. Compose maps the same number on the host, so host and container never disagree. Change it and you must update `PUBLIC_WS_URL` too. |
 | `WORLDS_DIR` | `/data/worlds` | Where your worlds live — **one SQLite file per world**, plus `.trash/` for archived ones and `.active` naming the one to load at boot. Must be under the mounted volume or it is lost on the next rebuild. |
@@ -283,7 +283,7 @@ docker compose logs -f server
 
 ```
 [terrace] loaded 1 plugin(s): hello
-[hello] world is 512x512 cells
+[hello] world is 2048x2048 cells
 [hello] edit #1 changed 37 cells
 ```
 
