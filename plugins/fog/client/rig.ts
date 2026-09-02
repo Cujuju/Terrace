@@ -16,6 +16,7 @@ import {
   type DiscRig,
   type RigPool,
 } from '../../../client/src/plugins/kit/discRig.ts';
+import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import { FOG_PLUGIN_NAME } from '../protocol.ts';
 
 /**
@@ -35,7 +36,7 @@ export const FOG_RIG_DRAW_OBJECTS = 4;
 /** The pool, and the one geometry every rig in it shares. */
 export type FogRigs = RigPool<DiscRig>;
 
-export function createFogRigs(): FogRigs {
+export function createFogRigs(ctx: ClientPluginCtx): FogRigs {
   // ONE OWNER: the sheet geometry is built once here and freed once here.
   const hazeGeometry: BufferGeometry = buildHazeGeometry();
 
@@ -46,6 +47,14 @@ export function createFogRigs(): FogRigs {
       // No precipitation: fog is a haze and nothing falls out of it.
       profile: null,
       name: `${FOG_PLUGIN_NAME}:system`,
+      // NO DECK AND NO SHADE (owner, 2026-09-02). Fog is ground haze from a
+      // quarter of a world unit to two and a half — it is not overhead, so
+      // there is nothing above the player for a cloud to be and nothing
+      // between the ground and the sun for a shadow to come from. The clip
+      // still applies: a fog bank straddling the frontier must stop at it like
+      // everything else.
+      deck: null,
+      applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
     }),
   );
 

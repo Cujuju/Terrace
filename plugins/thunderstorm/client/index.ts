@@ -14,8 +14,10 @@
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
+  GroundShadeDisc,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
+import { deckShadeDisc } from '../../../client/src/plugins/kit/cumulusDeck.ts';
 import { createDiscSystemsView } from '../../../client/src/plugins/kit/discSystemsView.ts';
 import {
   MAX_ACTIVE_SYSTEMS,
@@ -30,7 +32,9 @@ import {
   createThunderstormRigs,
   DRY_BOLT_DRAW_OBJECTS,
   LIGHT_BANK_DRAW_OBJECTS,
+  THUNDERSTORM_DECK_DRAW_OBJECTS,
   THUNDERSTORM_RIG_DRAW_OBJECTS,
+  THUNDERSTORM_SHADE_DARKNESS,
   type ThunderstormRig,
   type ThunderstormRigs,
 } from './rig.ts';
@@ -49,12 +53,13 @@ const governor = new LightningGovernor();
  */
 let rigs: ThunderstormRigs | null = null;
 let unsubscribeStrikes: (() => void) | null = null;
+let unpublishShade: (() => void) | null = null;
 
 const view = createDiscSystemsView<ThunderstormRig>({
   systemsMessage: THUNDERSTORM_SYSTEMS_MESSAGE,
   containerName: `${THUNDERSTORM_PLUGIN_NAME}:systems`,
-  createPool: () => {
-    rigs = createThunderstormRigs();
+  createPool: (ctx) => {
+    rigs = createThunderstormRigs(ctx);
     return rigs;
   },
   update: (rig, disc, elapsed, dt, reduced) => {
@@ -69,6 +74,9 @@ const view = createDiscSystemsView<ThunderstormRig>({
     // The storm flash lights, all of them, dark, for the plugin's whole life —
     // so the scene's light count is fixed from here on (rig.ts, lightBank).
     ctx.layer.add(pool.lightBank);
+    // Beside the systems as well: ONE instanced draw carries every storm's
+    // cloud, so it belongs to the layer and not to any rig.
+    ctx.layer.add(pool.deck.object);
   },
   frameExtras: (dt, reduced) => {
     // Advanced once per frame, BEFORE any rig asks it for permission, so every
@@ -110,6 +118,18 @@ function applyStrike(systemId: number, cellX: number, cellY: number): void {
   rig.strike((cellX - disc.x) * CELL_WORLD_SIZE, (cellY - disc.y) * CELL_WORLD_SIZE, governor);
 }
 
+/** The shade this plugin's clouds throw — see rain's copy for the reasoning. */
+const shade: GroundShadeDisc[] = [];
+
+function shadeDiscs(): readonly GroundShadeDisc[] {
+  shade.length = 0;
+  for (const disc of view.poses().values()) {
+    if (disc.intensity <= 0) continue;
+    shade.push(deckShadeDisc(disc, THUNDERSTORM_SHADE_DARKNESS));
+  }
+  return shade;
+}
+
 export const clientPlugin: TerraceClientPlugin = {
   name: THUNDERSTORM_PLUGIN_NAME,
 
@@ -120,10 +140,15 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget:
     MAX_ACTIVE_SYSTEMS * THUNDERSTORM_RIG_DRAW_OBJECTS +
     DRY_BOLT_DRAW_OBJECTS +
-    LIGHT_BANK_DRAW_OBJECTS,
+    LIGHT_BANK_DRAW_OBJECTS +
+    THUNDERSTORM_DECK_DRAW_OBJECTS,
+
+  /** One shade disc per living storm, so the budget IS the storm cap. */
+  groundShadeBudget: MAX_ACTIVE_SYSTEMS,
 
   attach(ctx: ClientPluginCtx): void {
     view.attach(ctx);
+    unpublishShade = ctx.publishGroundShade(shadeDiscs);
 
     unsubscribeStrikes = ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
       const strikes = parseStrikesPayload(payload);
@@ -140,6 +165,8 @@ export const clientPlugin: TerraceClientPlugin = {
   dispose(): void {
     unsubscribeStrikes?.();
     unsubscribeStrikes = null;
+    unpublishShade?.();
+    unpublishShade = null;
     view.dispose();
   },
 };
