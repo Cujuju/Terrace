@@ -108,8 +108,8 @@ function presenceForShare(share: number): number {
  *
  * The compositor hands each sub-renderer the same fires with a different
  * `presence`, and it does that EVERY FRAME for up to FIRE_CELL_CAP fires. Built
- * by spreading (`{...fire, presence}`) that would be 800 short-lived objects a
- * frame — precisely the churn ./types.ts's allocation-free rule exists to
+ * by spreading (`{...fire, presence}`) that would be two per fire — 4000 short-
+ * lived objects a frame at FIRE_CELL_CAP — precisely the churn ./types.ts's allocation-free rule exists to
  * forbid. So each side keeps a pool of mutable instances that is grown once and
  * then written in place forever.
  */

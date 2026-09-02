@@ -20,12 +20,12 @@
 // snapshot on join and the keepalive re-anchor it, so drift is bounded by the
 // keepalive rather than accumulating.
 //
-// THE ARITHMETIC at the shipped FIRE_CELL_CAP of 400. A fire on the wire is
+// THE ARITHMETIC at the shipped FIRE_CELL_CAP of 2000. A fire on the wire is
 // five integers — cell x, cell y, and three decisecond/decimetre fixed-point
 // values, all under 65536 and therefore ≤3 B each under msgpack:
 //
-//   full snapshot   400 × ~11 B                 = 4.4 KB, at join and keepalive
-//   ignition delta  a spreading front, ~10/s    = ~110 B/s ≈ 0.9 kbit/s
+//   full snapshot   2000 × ~11 B                = 22 KB, at join and keepalive
+//   ignition delta  a spreading front, ~50/s    = ~550 B/s ≈ 4.4 kbit/s
 //
 // which is a third of what flora spends, for a thing that only exists while
 // something is actually on fire.
@@ -82,23 +82,54 @@ export const FIRE_CHANGES_MESSAGE = 'changes';
 /**
  * Hard ceiling on cells alight at once.
  *
- * 400 is a wire-and-play number, three ways:
+ * 2000 is a budget number, three ways:
  *
- *   * WIRE — 400 × 11 B = 4.4 KB for the snapshot, well inside the design's
- *     "tens of KB" join budget even stacked on flora's 18 KB.
- *   * DRAW — the client draws every fire from one instanced flame renderer
- *     (client/flames/), so 400 fires are a fixed handful of draw calls; the
- *     number that would actually hurt is the pooled fire-light count, which is
- *     capped separately and far lower.
- *   * PLAY — 400 burning cells is a catastrophe a player can still fight with
- *     a firebreak. Uncapped, a dry 512² world could put 3000 trees alight at
- *     once, which is not a harder version of the same event; it is a different
- *     event, and not one anybody chose to design.
+ *   * WIRE — 2000 × 11 B = 22 KB worst case for the snapshot (five msgpack
+ *     integers per fire: two cell coordinates at 3 B, three fixed-point values
+ *     at 1-3 B). MEASURED at 18.7 KB — 9.59 B/fire — packing a full 2000-fire
+ *     meadow through `packFires` and @colyseus/msgpackr. Inside the design's
+ *     "tens of KB" join budget stacked on flora's 18 KB, and paid only while
+ *     something is actually alight.
+ *   * DRAW — the client draws every fire, column and scar from instanced pools
+ *     sized at FIRE_FLAME_INSTANCE_CAP (client/index.ts's drawBudget), so the
+ *     DRAW CALL count does not move at all: 5, whatever is burning. What moves
+ *     is the vertex work of a full world — at 2000 fires the two flame looks
+ *     are 280k and 720k triangles and the smoke is 384k, against 5 draw calls —
+ *     and the fill of the transparent pass, which is bounded by the VIEWPORT
+ *     rather than the cap: a burn ten times larger is not ten times more fire
+ *     on screen, it is a larger region the camera sees the same slice of.
+ *     The number that would actually hurt is the pooled fire-light count,
+ *     which is capped separately (FIRE_LIGHT_POOL_SIZE = 4) and far lower.
+ *   * SPREAD — the server cost is O(cells alight) per SPREAD_INTERVAL_SECONDS
+ *     (eight neighbours each) and O(cells alight) per tick to age them.
+ *     Measured on the solid-bed rig: a spread step at ~400 alight is under
+ *     3 ms and the work is linear, so ~2000 is single-digit milliseconds once
+ *     a second, against a 10 Hz tick. The reactive consumers are cheaper still:
+ *     pilgrims startles its walkers per IGNITION, not per fire, over a
+ *     population capped at 46 (PILGRIMS_CAP + WANDERERS_CAP + SETTLERS_CAP),
+ *     which is ~9 ignitions x 46 distance tests a tick at this ceiling.
+ *
+ * WHY NOT 400 (the value this replaced, and its stale PLAY paragraph). 400 was
+ * sized for a world whose fuel was TREES — scattered, so 400 alight was a whole
+ * forest and a catastrophe a player could still fight with a firebreak. Grass
+ * changed the premise: every green cell is fuel now, and a single ordinary
+ * meadow measures 4266 contiguous burnable cells (live capture, 2026-09-02).
+ * At 400 the cap bound within a minute of every wildfire, and a bound cap does
+ * not make a fire smaller — it makes it a DIFFERENT SHAPE, because the burning
+ * set becomes conserved and the front can only advance where a slot has just
+ * been freed. The observed result was ~55 disconnected clumps of flame instead
+ * of one advancing edge, plus a torch that silently did nothing.
+ *
+ * SO THE CAP IS A BUDGET AND NOT A GAME RULE, and 2000 is where the budget
+ * runs out, not where the fire ought to stop. A big enough meadow can still
+ * reach it; server/spread.ts's `igniteInHeatOrder` is what makes that survivable
+ * — at the ceiling the freed slots go to the hottest cells, which is the
+ * leading edge, so a capped fire is a slower front rather than a scatter.
  *
  * When the cap binds, further ignitions simply fail. A fire that cannot start
  * is invisible; a fire that starts and then blows the frame is not.
  */
-export const FIRE_CELL_CAP = 400;
+export const FIRE_CELL_CAP = 2000;
 
 /**
  * Fixed-point scale for the seconds and world-unit values on the wire: tenths.

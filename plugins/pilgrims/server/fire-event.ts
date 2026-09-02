@@ -33,15 +33,20 @@ export const FIRE_IGNITED_EVENT_NAME = 'fire:ignited';
 /**
  * Defensive bound on how many ignitions one event may carry.
  *
- * Fire's own ceiling on things alight at once is 400 cells plus 48 individuals
+ * Fire's own ceiling on things alight at once is 2000 cells plus 48 individuals
  * (its FIRE_CELL_CAP and FIRE_ENTITY_CAP), so a tick in which EVERY fire in a
- * capped world started at once is 448 — and no honest event can exceed it. The
+ * capped world started at once is 2048 — and no honest event can exceed it. The
  * value is restated rather than derived, because deriving it would mean
  * importing fire; being a little generous costs nothing, and the bound exists
  * to stop a malformed or hostile payload making this plugin walk an unbounded
  * list, not to police fire's arithmetic.
+ *
+ * IT TRACKS FIRE'S CAP AND MUST BE RAISED WITH IT. A restated bound that fell
+ * BELOW fire's real ceiling would stop being defensive and start silently
+ * dropping the tail of an honest event — which is why the number above is
+ * spelled out rather than left at a round figure someone might not revisit.
  */
-const MAX_IGNITIONS_PER_EVENT = 448;
+const MAX_IGNITIONS_PER_EVENT = 2048;
 
 /** How many numbers one ignition occupies in fire's flat form: x, then y. */
 const IGNITION_STRIDE = 2;
