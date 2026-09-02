@@ -80,6 +80,31 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
 
+  plugins/cyclone:
+    dependencies:
+      '@terrace/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
+
   plugins/daynight:
     dependencies:
       '@terrace/shared':
@@ -388,28 +413,6 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
 
-  plugins/storms:
-    dependencies:
-      '@terrace/shared':
-        specifier: workspace:*
-        version: link:../../shared
-      three:
-        specifier: ^0.185.1
-        version: 0.185.1
-    devDependencies:
-      '@types/node':
-        specifier: ^24.13.3
-        version: 24.13.3
-      '@types/three':
-        specifier: ^0.185.4
-        version: 0.185.4
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      vitest:
-        specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
-
   plugins/structures:
     dependencies:
       '@terrace/shared':
@@ -461,6 +464,31 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
 
   plugins/thunderstorm:
+    dependencies:
+      '@terrace/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      solid-js:
+        specifier: ^1.9.14
+        version: 1.9.14
+      three:
+        specifier: ^0.185.1
+        version: 0.185.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      '@types/three':
+        specifier: ^0.185.4
+        version: 0.185.4
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3))
+
+  plugins/tornado:
     dependencies:
       '@terrace/shared':
         specifier: workspace:*

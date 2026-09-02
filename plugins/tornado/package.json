@@ -1,14 +1,15 @@
 {
-  "name": "@terrace/plugin-storms",
+  "name": "@terrace/plugin-tornado",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@terrace/shared": "workspace:*",
+    "solid-js": "^1.9.14",
     "three": "^0.185.1"
   },
   "devDependencies": {

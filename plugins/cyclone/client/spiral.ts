@@ -323,7 +323,7 @@ function unitFromId(id: number): number {
 
 export function createSpiral(): SpiralRenderer {
   const root = new Group();
-  root.name = 'storms:spiral';
+  root.name = 'cyclone:spiral';
 
   const capacity = MAX_SPIRALS * PUFFS_PER_SPIRAL;
   const geometry = new PlaneGeometry(2, 2, 1, 1);
@@ -338,7 +338,7 @@ export function createSpiral(): SpiralRenderer {
   });
 
   const mesh = new InstancedMesh(geometry, material, capacity);
-  mesh.name = 'storms:spiral:puffs';
+  mesh.name = 'cyclone:spiral:puffs';
   mesh.count = 0;
   mesh.renderOrder = SPIRAL_RENDER_ORDER;
   mesh.frustumCulled = false;
