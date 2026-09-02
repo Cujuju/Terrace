@@ -87,11 +87,12 @@ import {
   emptySpeciesCounts,
   isValidCellFor,
   openDirectionCount,
+  satisfiesSpawnGround,
   targetsFor,
 } from './census.ts';
 import { reconcileCensus } from './census-index.ts';
 import { randomSigned } from './rng.ts';
-import { type SizeWeights, type SpeciesProfile, profileOf } from './species.ts';
+import { type SizeWeights, type SpeciesProfile, profileOf, spawnGroundConstrains } from './species.ts';
 
 /** A living creature. Mutable — the tick loop writes these in place. */
 export interface WildlifeEntity {
@@ -126,6 +127,31 @@ export interface WildlifeEntity {
   heading: number;
   /** Seconds of burst-speed flight left; 0 when calm. */
   fleeSecondsRemaining: number;
+
+  /**
+   * Is this creature in an idle bout right now — perched, grazing, or resting
+   * on the seabed (movement.ts's `advanceIdleState`)?
+   *
+   * ALWAYS PRESENT, even on a species that never idles: the flag is what the
+   * movement step reads, and making it optional would put a `?? false` at the
+   * read site and let a species' `idle` rates and this field disagree about
+   * whether the creature has one. For a species with no `idle` rates it is
+   * false from spawn and is never written.
+   *
+   * NEVER ON THE WIRE, and that is a decision rather than an omission. The
+   * client draws a creature where the server says it is; an idling animal is
+   * one whose position stops changing, and the interpolator already renders
+   * that as a creature standing still. Sending the flag would cost a byte per
+   * creature per broadcast (the whole payload is 58 B — see index.ts) to tell
+   * the client something it can see.
+   *
+   * NOT PERSISTED, deliberately, and the same reasoning `fleeSecondsRemaining`
+   * has: a bout is a moment, not a fact about the animal, and every restored
+   * creature starting in motion is both correct-looking and self-correcting —
+   * the onset roll puts them back into bouts within a few seconds of the first
+   * tick. See ./persistence.ts.
+   */
+  idle: boolean;
 }
 
 /** A pending spawn. `readyAt` is accumulated SIMULATED seconds, never wall-clock. */
@@ -405,9 +431,12 @@ function canSettleAt(
   y: number,
 ): boolean {
   if (!isValidCellFor(world, species, x, y)) return false;
-  const required = profileOf(species).spawnOpenDirectionsRequired;
-  if (required <= 0) return true;
-  return openDirectionCount(world, species, x, y) >= required;
+  // The species' own spawn-ground rule — "enough of the compass is walkable"
+  // for the grazer and the bison, "enough of it is ground only I can cross" for
+  // the ibex, nothing at all for every swimmer. census.ts interprets it; this
+  // call site deliberately cannot tell which reading applied (SpawnGround,
+  // species/profile.ts).
+  return satisfiesSpawnGround(world, species, x, y);
 }
 
 /** Rejection-samples a spawn point for `species`. Null when none was found. */
@@ -536,6 +565,9 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
       y,
       heading,
       fleeSecondsRemaining: 0,
+      // Born moving. A group that appeared already idling would read as a group
+      // that spawned broken; the onset roll starts the first bout soon enough.
+      idle: false,
     });
     created++;
   }
@@ -727,7 +759,12 @@ export function despawnWedged(world: HabitatWorld): number {
   let despawned = 0;
   for (let i = entities.length - 1; i >= 0; i--) {
     const entity = entities[i];
-    if (profileOf(entity.species).spawnOpenDirectionsRequired <= 0) continue;
+    // Exempt: every species whose spawn-ground rule constrains nothing, which
+    // is every swimmer. The ibex is NOT exempt — it declares a rule, and an ibex
+    // with no legal step in any of the eight directions is walled in by ITS OWN
+    // (doubled) gradient limit, which is a genuinely impossible position rather
+    // than merely a steep one.
+    if (!spawnGroundConstrains(profileOf(entity.species).spawnGround)) continue;
     if (openDirectionCount(world, entity.species, entity.x, entity.y) > 0) continue;
     despawnWithCredit(i);
     despawned++;

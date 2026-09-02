@@ -113,6 +113,32 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
   },
   // Land species stand on the ground; they have no water column to sit in.
   grazer: null,
+  ibex: null,
+  bison: null,
+  // INTERIM ENVELOPES (2026-09-02). The ray and the shark have server
+  // behaviour but not yet a model — the two are being authored in parallel
+  // (client/species/), and the wiring phase of this arc replaces these figures
+  // with the ones measured off the finished geometry. They are the envelopes
+  // the models are being authored TO, so the drift they can carry is bounded
+  // by that agreement rather than being a guess.
+  //
+  // The ray sits deepest of the shelf species (0.85) because it rests on the
+  // seabed (server/species/ray.ts's idle bouts); the shark cruises the middle
+  // of the column (0.4) and is the longer, narrower body of the two.
+  ray: {
+    depthFraction: 0.85,
+    minClearance: 0.2,
+    minSubmergence: 0.3,
+    halfLength: 0.5,
+    halfWidth: 0.5,
+  },
+  shark: {
+    depthFraction: 0.4,
+    minClearance: 0.35,
+    minSubmergence: 0.35,
+    halfLength: 0.75,
+    halfWidth: 0.15,
+  },
   // Flyers have no water column either — see FLIGHT_ALTITUDES.
   bird: null,
 };
@@ -192,6 +218,10 @@ export const FLIGHT_ALTITUDES: Readonly<Record<WildlifeSpecies, number | null>> 
   whale: null,
   deepsea: null,
   grazer: null,
+  ibex: null,
+  bison: null,
+  ray: null,
+  shark: null,
   bird: BIRD_FLIGHT_WORLD_Y,
 };
 

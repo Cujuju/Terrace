@@ -33,13 +33,14 @@ import {
   withoutSelf,
   type Occupant,
 } from '@terrace/shared';
-import { WILDLIFE_SIZE_MODEL_SCALE } from '../protocol.ts';
+import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
 import { type WildlifeEntity, livingEntities } from './population.ts';
-import { randomSigned } from './rng.ts';
+import { randomSigned, rollEvent } from './rng.ts';
 import {
   SCHOOL_LOOSENESS_BY_SIZE,
   SCHOOL_SPACING_BASELINE_BODY_LENGTH_CELLS,
+  TURN_RADIUS_BODY_LENGTHS,
   profileOf,
 } from './species.ts';
 
@@ -84,37 +85,16 @@ export const CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR = SHARED_CONTOUR_FALLBACK_LOOKAH
 
 /**
  * The tightest arc a creature will turn through, as a fraction of its own body
- * length — the radius of its turning circle.
+ * length — SPECIES/PROFILE.TS'S NOW, re-exported.
  *
- * ROOT CAUSE THIS FIXES (owner, 2026-08-24: whales "will do 90-degree turns in
- * place"; sea creatures should "travel in smooth polylines"). Nothing bounded
- * how far a creature's heading could move in ONE tick. Every steering term
- * ABOVE the habitat veto is rate-limited — turn noise by
- * turnNoiseRadiansPerSecond, cohesion by SCHOOL_MAX_PULL_RADIANS_PER_SECOND,
- * alignment by SCHOOL_ALIGNMENT_RADIANS_PER_SECOND — and then the veto itself,
- * which is the term that actually decides where a creature near anything goes,
- * committed whichever compass candidate it liked with no rate at all. A whale
- * pressed against a ridge went from heading east to heading north in 100 ms.
- *
- * HALF A BODY LENGTH. An animal that pivots inside its own hull reads as a
- * sprite being rotated; one that needs several body lengths of water to come
- * about reads as a barge. Half its length is the arc that looks like an animal
- * turning — tight, but visibly an arc — and it is a RATIO rather than a
- * per-species dial so that "a whale turns like a whale and a fish turns like a
- * fish" is a consequence of how long they are, which is already stated once
- * (SPECIES_PROFILES.bodyLengthCells), rather than a fourth table to keep in
- * step with the other three.
- *
- * IT IS ALSO WHY THE LOOK-AHEAD IS ALREADY LONG ENOUGH, and that relation is
- * the reason this number is not free. A mover must see an obstacle while it
- * still has room to arc around it, i.e. at no less than its turning radius;
- * `lookaheadCellsFor` floors the probe at a full body length, which at this
- * ratio is exactly twice that radius. Raising this above 0.5 would make a
- * creature's turning circle wider than its own sightline and it would arc into
- * things it had already seen — so if it ever moves up, the look-ahead floor
- * moves with it.
+ * It stopped being a global on 2026-09-02: it is the value every row but the
+ * ray's states for its own `turnRadiusBodyLengths`, and a value a row declares
+ * has to live where the rows can read it (./species/profile.ts). The reasoning
+ * — why half a body length, and why the look-ahead floor is what stops it
+ * rising — travelled with it. Re-exported under the old name because it is the
+ * figure boats' own turning circle cites (plugins/boats/server/fleet.ts).
  */
-export const TURN_RADIUS_BODY_LENGTHS = 0.5;
+export { TURN_RADIUS_BODY_LENGTHS };
 
 /**
  * Multiplier on cruise speed while fleeing, and how long the panic lasts.
@@ -315,7 +295,12 @@ export function personalSpaceCellsOf(entity: WildlifeEntity): number {
  * does not quietly become a second, tighter noise limit.
  */
 export function maxTurnRadiansPerSecondOf(entity: WildlifeEntity): number {
-  return speedOf(entity) / (TURN_RADIUS_BODY_LENGTHS * bodyLengthCellsOf(entity));
+  // The RADIUS is the species' own since 2026-09-02 — TURN_RADIUS_BODY_LENGTHS
+  // is what every row but the ray's declares, and the ray banks three times as
+  // wide (./species/ray.ts). The two inputs beside it are unchanged and are
+  // still the live ones.
+  const radiusBodyLengths = profileOf(entity.species).turnRadiusBodyLengths;
+  return speedOf(entity) / (radiusBodyLengths * bodyLengthCellsOf(entity));
 }
 
 /**
@@ -629,12 +614,50 @@ function steerThisTick(
 }
 
 /**
+ * Flips this creature's idle bout on or off for this step, and cancels one
+ * outright while it is fleeing.
+ *
+ * A TWO-STATE POISSON PROCESS (the rates live on the species' `idle`, see
+ * IdleBouts in ./species/profile.ts): while moving it may stall, while stalled
+ * it may resume, and both are memoryless — there is no countdown to store and
+ * no phase for a player to learn. The shape is the one monsters' `lurk.ts`
+ * settled on; nothing is imported from that plugin.
+ *
+ * FLEEING CANCELS IT, and cancels it rather than merely masking it. A startled
+ * animal has stopped grazing by definition, and if the flag were only ignored
+ * during the panic the animal would drop straight back into a bout the instant
+ * it calmed — which reads as an animal that ran ten cells and then froze. The
+ * bout it is in is over; it may start a new one on any tick after the panic
+ * ends, at the ordinary onset rate.
+ *
+ * A SPECIES WITH NO `idle` NEVER ENTERS ONE. The field is absent rather than a
+ * pair of zeroes, so this is a shape test and not an arithmetic one — and the
+ * flag on such a creature is false from spawn and can never be written.
+ *
+ * Exported for the same reason monsters export theirs: it is the whole of the
+ * behaviour, and the alternative is asserting it through a full tick.
+ */
+export function advanceIdleState(entity: WildlifeEntity, dt: number): void {
+  if (entity.fleeSecondsRemaining > 0) {
+    entity.idle = false;
+    return;
+  }
+  const idle = profileOf(entity.species).idle;
+  if (idle === undefined) return;
+  const rate = entity.idle ? idle.endPerSecond : idle.onsetPerSecond;
+  if (rollEvent(rate, dt)) entity.idle = !entity.idle;
+}
+
+/**
  * Advances one creature by `dt`.
  *
  * Order matters, and it is the order the priorities are stated in:
  *
  *   1. the flee timer decays (so a creature that just calmed down moves at
- *      cruise speed this very tick);
+ *      cruise speed this very tick), and the idle bout resolves — a creature in
+ *      one returns here and does nothing else: it neither translates NOR turns,
+ *      which is the difference between an animal that has stopped to graze and
+ *      one treading water on the spot (see `advanceIdleState`);
  *   2. turn noise perturbs the heading — the creature's own wander;
  *   3. its school pulls on that, UNLESS it is fleeing, in which case panic
  *      overrides the school entirely and the group scatters;
@@ -676,6 +699,13 @@ export function advanceEntity(
 
   const profile = profileOf(entity.species);
   const fleeing = entity.fleeSecondsRemaining > 0;
+
+  // THE IDLE BOUT, resolved before anything else moves — so an animal that just
+  // resumed walks this very tick rather than standing through the tick it woke
+  // in. See `advanceIdleState` for the state machine and for why fleeing wins.
+  advanceIdleState(entity, dt);
+  if (entity.idle) return;
+
   // A fleeing creature swims straight: panic suppresses idle meandering.
   const noise = fleeing ? 0 : randomSigned(profile.turnNoiseRadiansPerSecond * dt);
 
@@ -808,6 +838,52 @@ export function advanceMovement(world: HabitatWorld, dt: number): void {
       withoutSelf(occupants, occupants[index]),
     );
   }
+
+  applyPredatorAlarms();
+}
+
+/**
+ * Every hunter frightens its prey, from where it has just arrived.
+ *
+ * AFTER MOVEMENT, NOT DURING IT, and that is the same snapshot discipline the
+ * two loops above keep: a hunter startles from its END-of-tick position, so
+ * whether a fish is alarmed does not depend on whether its hunter happened to
+ * sit earlier or later in the population array. Prey react on the NEXT tick,
+ * which is also physically the right order — an animal reacts to where the
+ * shark got to, not to where it is going.
+ *
+ * REUSES `startleNear` rather than growing a second reaction: everything a
+ * startle already guarantees applies unchanged — headings are pointed away from
+ * the hunter, an existing panic is never shortened, and the flee heading is
+ * still vetoed against the habitat by `advanceEntity`, so a fish driven at a
+ * beach turns along the shore instead of stranding itself.
+ *
+ * COST is O(hunters × population) per tick and is affordable only because
+ * hunters are rare by density (species/shark.ts's own note). Species that
+ * declare no `hunts` cost one property read each.
+ */
+function applyPredatorAlarms(): void {
+  for (const hunter of livingEntities()) {
+    const hunts = profileOf(hunter.species).hunts;
+    if (hunts === undefined) continue;
+    startleNear(hunter.x, hunter.y, hunts.alarmRadiusCells, { species: hunts.preySpecies });
+  }
+}
+
+/**
+ * Narrowing for `startleNear`.
+ *
+ * IT EXISTS FOR THE HUNTER (species/profile.ts's `Predation`), which is the
+ * first caller that startles SOME of what is near a point rather than all of
+ * it: a shark frightens the fish and the rays around it and must not frighten
+ * itself. The two original callers — a sculpt's diff and a new flame
+ * (../index.ts) — pass nothing and get exactly the behaviour they always had,
+ * which is why this is an options object with one optional field rather than a
+ * required argument that every call site would have to answer.
+ */
+export interface StartleOptions {
+  /** Startle only these species. Omitted means every species. */
+  readonly species?: readonly WildlifeHabitatSpecies[];
 }
 
 /**
@@ -824,15 +900,47 @@ export function advanceMovement(world: HabitatWorld, dt: number): void {
  *
  * Returns how many creatures were startled.
  */
-export function startleNear(centerX: number, centerY: number, radius: number): number {
+export function startleNear(
+  centerX: number,
+  centerY: number,
+  radius: number,
+  options: StartleOptions = {},
+): number {
   const radiusSquared = radius * radius;
-  let startled = 0;
+  const only = options.species;
+  const population = livingEntities();
 
-  for (const entity of livingEntities()) {
+  // PASS 1 — who the disturbance itself reaches. Recorded rather than acted on,
+  // because a herd's answer depends on whether ANY of its members were reached
+  // (pass 2), and a single loop would startle the early members of a herd from
+  // the disturbance and the late ones from the herd, in array order.
+  const reached = new Set<number>();
+  const herds = new Set<number>();
+  for (const entity of population) {
+    if (only !== undefined && !only.includes(entity.species)) continue;
     const dx = entity.x - centerX;
     const dy = entity.y - centerY;
     if (dx * dx + dy * dy > radiusSquared) continue;
+    reached.add(entity.id);
+    if (profileOf(entity.species).groupStartle) herds.add(entity.schoolId);
+  }
 
+  // PASS 2 — the herds. Every living member of a school one of whose members
+  // was reached is startled FROM THE SAME ORIGIN as the ones that were, so the
+  // whole herd runs the same way rather than fanning out from a point none of
+  // them can see. The species filter still applies: a school is single-species
+  // by construction, so this can only ever confirm what pass 1 decided, and
+  // applying it uniformly means there is one rule rather than two.
+  //
+  // Only a species that DECLARES groupStartle propagates (species/bison.ts);
+  // for everything else `herds` is empty and this is a set lookup per creature.
+  let startled = 0;
+  for (const entity of population) {
+    if (only !== undefined && !only.includes(entity.species)) continue;
+    if (!reached.has(entity.id) && !herds.has(entity.schoolId)) continue;
+
+    const dx = entity.x - centerX;
+    const dy = entity.y - centerY;
     if (dx !== 0 || dy !== 0) entity.heading = Math.atan2(dy, dx);
     // NEVER SHORTENS AN EXISTING PANIC, on `panicIndividuals`' rule below and
     // for a failure that was MEASURED, not imagined (in-world, 2026-08-26: a
@@ -844,6 +952,12 @@ export function startleNear(centerX: number, centerY: number, radius: number): n
     // burst. `fleeSecondsRemaining` has two writers and both must refuse to
     // shorten, or the shorter one silently wins whenever they coincide.
     entity.fleeSecondsRemaining = Math.max(entity.fleeSecondsRemaining, FLEE_DURATION_SECONDS);
+    // A startled animal is not grazing. `advanceIdleState` would clear this on
+    // the creature's next step anyway (fleeing cancels a bout); clearing it
+    // here as well means the flag is never observably true and fleeing at the
+    // same instant, which is what a caller reading the population between two
+    // ticks would otherwise see.
+    entity.idle = false;
     startled++;
   }
   return startled;

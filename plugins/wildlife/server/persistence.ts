@@ -29,6 +29,9 @@ export const WILDLIFE_SLICE_VERSION = 1;
  * The persisted entity. Deliberately NOT the live WildlifeEntity: it omits
  * `fleeSecondsRemaining`, because a panic that began before a server restart has
  * no meaning after it, and calm is the state a returning player expects to see.
+ * It omits `idle` (2026-09-02) on the same argument — a bout is a moment, and a
+ * world that came back with a third of its animals frozen mid-graze would look
+ * worse than one where every animal starts walking.
  *
  * `schoolId` and `size` ARE persisted, and both are additive optional fields
  * rather than a version bump. They have to be persisted because neither is
@@ -150,6 +153,11 @@ export function loadPopulation(data: unknown): void {
           y: entry.y as number,
           heading: entry.heading as number,
           fleeSecondsRemaining: 0,
+          // Not persisted, like the panic above and for the same reason: an
+          // idle bout is a moment, not a fact about the animal. A restored
+          // creature starts moving and rolls its way back into bouts within a
+          // few seconds. See the field's note on WildlifeEntity.
+          idle: false,
         });
       }
 

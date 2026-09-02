@@ -611,6 +611,17 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         return deepseaDrawable;
       case 'grazer':
         return grazerDrawable;
+      // INTERIM until the species models land (wiring phase, same arc): the
+      // four species added on 2026-09-02 have server behaviour and no geometry
+      // yet, so each borrows the herd of the species it is a variant of. They
+      // are drawn — wrongly, but drawn — rather than silently absent, which is
+      // what a `default:` returning nothing would have given.
+      case 'ibex':
+      case 'bison':
+        return grazerDrawable;
+      case 'ray':
+      case 'shark':
+        return fishDrawable;
       case 'bird':
         return birdDrawable;
     }

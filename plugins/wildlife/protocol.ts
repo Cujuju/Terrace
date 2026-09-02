@@ -32,7 +32,20 @@ export const WILDLIFE_ENTITIES_MESSAGE = 'entities';
  * written against. Birds are not (see WILDLIFE_FLOCK_SPECIES): the sky is not a
  * cell class, so there is nothing for a census to count.
  */
-export const WILDLIFE_HABITAT_SPECIES = ['fish', 'whale', 'deepsea', 'grazer'] as const;
+export const WILDLIFE_HABITAT_SPECIES = [
+  'fish',
+  'whale',
+  'deepsea',
+  'grazer',
+  // Added 2026-09-02 (owner: two more grazer types, two more fish types). They
+  // are APPENDED rather than sorted in: this order is the order spawning
+  // considers species in, so inserting a name in the middle would quietly
+  // change which species a nearly-full habitat fills with.
+  'ibex',
+  'bison',
+  'ray',
+  'shark',
+] as const;
 
 export type WildlifeHabitatSpecies = (typeof WILDLIFE_HABITAT_SPECIES)[number];
 
