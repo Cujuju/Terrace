@@ -102,6 +102,18 @@ Dated decisions moved out of `docs/DESIGN.md` on 2026-09-01. Settled with the ow
   per-player masks exist to close — closing it is the SAME fog-of-war
   follow-up, not a gap in this one.
 
+  **`terrainDiff` half of that follow-up CLOSED 2026-09-01 (issue #280).**
+  `applyServerSculpt` now partitions each diff per connected player against
+  THEIR OWN token mask (`partitionDiffByViewer`, mask-filter.ts) and sends
+  each their share via `sendTo` — no broadcast, nothing at all to a player
+  whose share is empty. Nothing is lost: `unlockChunkForToken` already sends
+  a token the chunk's current heights when it earns the chunk. The
+  sculpt-PERMISSION check stays on the union mask, as ruled above: aiming
+  into a chunk someone else earned is shared-world behaviour, and a client
+  cannot aim at a chunk it was never sent. Rejected: re-affirming the
+  deferral — the entity half closed in #18, the per-player-reveal arc is
+  closed, and the fix is one caller of the primitive #17 added for it.
+
 ## Decisions made 2026-08-19 (settled with owner, issue #18)
 
 - **Strict fog of war: one fan-out primitive, not per-plugin filtering.**

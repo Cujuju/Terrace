@@ -7,7 +7,12 @@ import { handleSculptIntent, type IntentPipelineDeps } from '../src/intent/pipel
 import { PluginHost } from '../src/plugins/host.ts';
 import type { IntentVerdict, TerracePlugin } from '../src/plugins/types.ts';
 import type { World } from '../src/world/world.ts';
-import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
+import {
+  RecordingSink,
+  asLoadedPlugin,
+  grantTokenEveryUnlockedChunk,
+  worldWithUnlockedChunks,
+} from './support/harness.ts';
 
 /** 4×4 chunks: chunk (0,0) covers cells [0..CHUNK_SIZE-1]². */
 const WORLD_SIZE = CHUNK_SIZE * 4;
@@ -37,7 +42,9 @@ describe('handleSculptIntent', () => {
     world.setSink(sink);
   });
 
-  it('applies a valid intent, broadcasts the diff, and marks the world dirty', () => {
+  it('applies a valid intent, sends the sculptor the diff, and marks the world dirty', () => {
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
     const outcome = handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
 
     expect(outcome.applied).toBe(true);
@@ -46,7 +53,8 @@ describe('handleSculptIntent', () => {
 
     const broadcasts = sink.ofType('terrainDiff');
     expect(broadcasts).toHaveLength(1);
-    expect(broadcasts[0].target).toBe('broadcast');
+    // Per player since issue #280: the sculptor's own share, not a broadcast.
+    expect(broadcasts[0].target).toBe(PLAYER.id);
   });
 
   it('uses the server-side sculpt amount and only the direction from the client', () => {
@@ -579,13 +587,16 @@ describe('sculptApplied ack', () => {
     world.setSink(sink);
   });
 
-  it('acks an applied intent to the sender only, AFTER the diff broadcast', () => {
+  it('acks an applied intent to the sender only, AFTER the diff', () => {
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear(); // the grant itself streams chunkUnlock; the transcript under test starts here
     const outcome = handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage({ seq: 7 }));
     expect(outcome.applied).toBe(true);
 
     // Order IS the contract, so the whole transcript is asserted, not a filter.
     expect(sink.messages.map((message) => [message.target, message.type])).toEqual([
-      ['broadcast', 'terrainDiff'],
+      [PLAYER.id, 'terrainDiff'],
       [PLAYER.id, 'sculptApplied'],
     ]);
     expect(sink.ofType('sculptApplied')[0].payload).toEqual({
@@ -606,12 +617,13 @@ describe('sculptApplied ack', () => {
       },
     };
     world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
     sink.clear();
 
     handleSculptIntent(makeDeps(world, [creeper]), PLAYER, sculptMessage({ seq: 8 }));
 
     expect(sink.messages.map((message) => [message.target, message.type])).toEqual([
-      ['broadcast', 'terrainDiff'],
+      [PLAYER.id, 'terrainDiff'],
       [PLAYER.id, 'chunkUnlock'],
       [PLAYER.id, 'sculptApplied'],
     ]);

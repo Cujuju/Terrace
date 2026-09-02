@@ -19,7 +19,12 @@ import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { namespacedMessageType } from '../src/plugins/world-api.ts';
 import type { Player } from '../src/player.ts';
 import type { World } from '../src/world/world.ts';
-import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from './support/harness.ts';
+import {
+  RecordingSink,
+  asLoadedPlugin,
+  grantTokenEveryUnlockedChunk,
+  worldWithUnlockedChunks,
+} from './support/harness.ts';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 // Four chunks to a side, whatever a chunk is sampled at (2026-08-21: the
@@ -156,7 +161,7 @@ describe('PluginHost', () => {
     expect(received).toEqual([{ amount: 3 }]);
   });
 
-  it('gives plugins a WorldApi whose edits broadcast filtered diffs and whose sends are namespaced', () => {
+  it('gives plugins a WorldApi whose edits send per-player filtered diffs and whose sends are namespaced', () => {
     let api: WorldApi | undefined;
     const plugin: TerracePlugin = {
       name: 'terraformer',
@@ -168,6 +173,11 @@ describe('PluginHost', () => {
     const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
     const sink = new RecordingSink();
     world.setSink(sink);
+    // A viewer who has personally earned the unlocked chunk, so the diff a
+    // plugin edit produces has someone to reach (per player since issue #280).
+    world.addPlayer(PLAYER);
+    grantTokenEveryUnlockedChunk(world, PLAYER.token);
+    sink.clear(); // the grant itself streams chunkUnlock; the messages under test start here
     new PluginHost(world, [plugin].map(asLoadedPlugin)).worldCreate();
 
     expect(api).toBeDefined();
