@@ -104,12 +104,24 @@ export type GrassWorld = FloraWorld & {
  * consulting the drawn set. Neither can drift from the other about what ground
  * is meadow, because there is only one statement of it.
  *
- * WHAT IT DOES NOT ASK. Not the chunk unlock state — that is the survey's own
- * concern (`advance` hoists it out of 256 cells) and fire never reaches locked
- * ground anyway, since nothing there can be torched, struck or spread to from
- * unlocked land. Not the world bounds, for the same reason both callers already
- * hold them: the survey walks chunks of this world, and fire's spread clamps to
- * `world.worldSize` (plugins/fire/server/spread.ts's `spreadToCells`).
+ * THE UNLOCK TEST IS PART OF THE ANSWER, not the survey's private business, and
+ * an earlier draft of this comment got that wrong. It claimed fire could never
+ * reach locked ground; it can. `spreadToCells`
+ * (plugins/fire/server/spread.ts) clamps a neighbour only to `world.worldSize`,
+ * so a cell burning on the last row of an unlocked chunk rolls against the cell
+ * across the boundary — and lightning is a second path in. That cost nothing
+ * before #289, because the survey never planted a tuft on locked ground and so
+ * there was no fuel there to catch; the moment the fuel answer stopped reading
+ * the drawn set, "unlocked" stopped being enforced by accident and had to be
+ * enforced on purpose. It belongs HERE rather than at fire's door for the same
+ * reason the occupancy term does: this predicate is the single statement of
+ * what ground is meadow, and a caller that could forget the rule is the bug.
+ * (bands.ts's isPlantableCell asks `isCellUnlocked` per cell for exactly this
+ * reason — it is the same anti-leak rule, stated there for trees.)
+ *
+ * WHAT IT DOES NOT ASK: the world bounds, because both callers already hold
+ * them — the survey walks chunks of this world, and fire's spread clamps to
+ * `world.worldSize`.
  */
 export function isMeadowCell(
   world: FloraWorld,
@@ -117,6 +129,7 @@ export function isMeadowCell(
   x: number,
   y: number,
 ): boolean {
+  if (!world.isCellUnlocked(x, y)) return false;
   // Crops and buildings win; trees do not (owner, 2026-08-24: grass grows
   // under trees). The caller composes that union — see ./index.ts's
   // groundCoverOccupied.
@@ -222,6 +235,12 @@ export class GrassField {
       // Hoisted out of 256 cells, exactly as Forest.scanChunk and
       // CropField.advance hoist it, and exact for the same reason: a cell's
       // unlock state IS its chunk's.
+      //
+      // A SKIP, NOT THE RULE (issue #289). The authoritative unlock test is the
+      // per-cell one inside isMeadowCell, which every asker goes through; this
+      // only avoids walking 256 cells that would all answer false. Deleting it
+      // would cost time and change no answer — deleting the one in isMeadowCell
+      // would let fire spread onto locked ground.
       if (world.isChunkUnlocked(cx, cy)) this.scanChunk(world, isOccupied, cx, cy);
       this.cursor++;
       budget--;
