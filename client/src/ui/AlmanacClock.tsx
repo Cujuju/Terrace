@@ -96,12 +96,17 @@ const SUN_HALO_OPACITY = 0.18;
  *  side — see MOON_MASK below. */
 const MOON_RADIUS = 3.4;
 
-/** The pinned time tag, centred at the bottom of the ground. */
-const TAG_WIDTH = 34;
-const TAG_HEIGHT = 10;
+/** The pinned time tag, centred at the bottom of the ground. Sized for the
+ *  8.5-unit time in hud.css (.almanac__time) — enlarged with the day caption
+ *  on the owner's ask, 2026-09-01, after the first in-world look. */
+const TAG_WIDTH = 40;
+const TAG_HEIGHT = 12;
 const TAG_RADIUS = 2;
 const TAG_X = STRIP_WIDTH / 2 - TAG_WIDTH / 2;
 const TAG_Y = TOTAL_HEIGHT - TAG_HEIGHT - 3;
+/** Where the time's baseline sits inside the tag: 3 units of tag below the
+ *  baseline balances the ~3 above the caps at the 8.5-unit type size. */
+const TAG_TEXT_BASELINE_Y = TAG_HEIGHT - 3;
 
 /** Caption baselines: weekday in the sky's top-left, day in the ground's
  *  bottom-left. */
@@ -379,7 +384,7 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
           stroke={TAG_STROKE}
           stroke-width={0.6}
         />
-        <text class="almanac__time" x={TAG_WIDTH / 2} y={TAG_HEIGHT - 2.5}>
+        <text class="almanac__time" x={TAG_WIDTH / 2} y={TAG_TEXT_BASELINE_Y}>
           {props.reading.time}
         </text>
       </g>
