@@ -277,6 +277,11 @@ export function Hud(props: {
           anything a plugin places here, whatever plugins are installed. */}
       <div class="hud-top-center">
         <WorldHeader />
+        {/* The admin aim strip, IN THE STACK under the header rather than a
+            fixed banner (owner, 2026-09-01: a fixed one drew over the world
+            name). It exists precisely while the admin panel is closed, so it
+            is never gated on it. */}
+        <AdminAim />
         <For each={pluginHudPanels().filter((p) => p.placement === 'top-center')}>
           {(panel) => <Dynamic component={panel.component} />}
         </For>
@@ -674,10 +679,6 @@ export function Hud(props: {
         <AdminPanel actions={props.worlds} />
       </Show>
 
-      {/* The aim strip: what is armed and where to click, then the receipt.
-          Never gated on the panel — it exists precisely while the panel is
-          closed. */}
-      <AdminAim />
 
       {/* Not gated on the panel: a switch countdown and "no world loaded" are
           shown to every player, whether or not they hold a key. */}

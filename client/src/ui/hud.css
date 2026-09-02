@@ -1419,17 +1419,22 @@ button.world-header {
 
 }
 
-/* THE AIM STRIP (AdminAim.tsx): the world banner's slot, top-centre, made
-   interactive for its Cancel. The receipt reuses the panel's receipt tones so
-   an outcome looks the same wherever it is read. */
+/* THE AIM STRIP (AdminAim.tsx): a pill IN the top-centre stack, under the
+   world header — not the fixed world-banner slot, which sits at the same
+   12px and drew over the world name (owner, 2026-09-01). The receipt reuses
+   the panel's receipt tones so an outcome looks the same wherever it is read. */
 .admin-aim-banner {
   pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px 8px 14px;
+  border: 1px solid var(--hud-border);
   border-radius: 999px;
+  background: var(--hud-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .admin-aim-banner.admin-receipt {
