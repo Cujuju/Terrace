@@ -195,10 +195,13 @@ const MAX_DIFFICULTY = 100;
  *
  * `common` IS THE UNSCALED RATE and `rare` is six times the wait — the same ratio
  * storms uses, chosen there so the two settings are recognisably different kinds
- * of world rather than two nearby dials. `off` never reaches any caller of this:
- * the tick returns before the trigger runs.
+ * of world rather than two nearby dials. `uncommon`, the shipped default, is
+ * THREE: halfway between them on a log scale is 2.45, and 3 is the integer that
+ * keeps both relations sayable — half `rare`'s wait, three times `common`'s.
+ * `off` never reaches any caller of this: the tick returns before the trigger
+ * runs.
  */
-export const FREQUENCY_INTERVAL_MULTIPLIERS = { rare: 6, common: 1 } as const;
+export const FREQUENCY_INTERVAL_MULTIPLIERS = { rare: 6, uncommon: 3, common: 1 } as const;
 
 // MAX_ACTIVE_SLIDES lives in ../protocol.ts (2026-08-28): the client sizes its
 // front-instance buffer from it, and a cap the client cannot import is a cap the

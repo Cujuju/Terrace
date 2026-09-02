@@ -113,17 +113,16 @@ export const STORM_SURGE_MODES = ['off', 'on'] as const;
 export type StormSurgeMode = (typeof STORM_SURGE_MODES)[number];
 
 /**
- * Surge ships OFF, and it is the one setting here that defaults to the timid
- * value.
+ * Surge ships ON (owner, issue #230, 2026-09-01; it shipped off before that).
  *
- * Everything else this plugin does is transient — a funnel passes, an event is
- * emitted, the world is exactly as it was. SURGE IS NOT: it is a `sculpt`, and
- * a sculpt is permanent terrain a player did not ask for. Issue #213 already
- * calls surge optional; defaulting it on would mean a world that quietly loses
- * its shoreline while nobody is watching it, which is the one outcome a
- * self-hoster cannot undo.
+ * It is still the one thing this plugin does that is permanent — a `sculpt`, and
+ * a sculpt is terrain a player did not ask for. What made defaulting it on
+ * acceptable is the guard that came with the decision: a surge scours only a
+ * shoreline whose whole brush footprint is REVEALED (server/surge.ts,
+ * `footprintUnlocked`), so a coast nobody has seen is never quietly rewritten.
+ * A self-hoster who wants an unchanging shoreline sets `off`.
  */
-export const DEFAULT_STORM_SURGE_MODE: StormSurgeMode = 'off';
+export const DEFAULT_STORM_SURGE_MODE: StormSurgeMode = 'on';
 
 /**
  * Parses a setting value the host handed back, falling back to the default for

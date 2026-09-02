@@ -2,14 +2,18 @@
 // only reason it has a setting of its own.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHY IT IS BEHIND A SETTING THAT SHIPS OFF.
+// WHY IT HAS A SETTING, AND WHY IT ONLY TOUCHES REVEALED GROUND.
 //
 // Everything else a storm does is transient: a funnel passes and the world is
 // exactly as it was. A surge is a `sculpt`, and a sculpt is PERMANENT terrain
 // the player did not ask for — it goes through the same authoritative path, the
 // same relaxation, the same snapshot as a player's own click, and there is no
 // undo. Issue #213 already calls surge optional; ../protocol.ts's
-// DEFAULT_STORM_SURGE_MODE says why the default is `off`.
+// DEFAULT_STORM_SURGE_MODE says why it nonetheless ships `on` (owner, issue
+// #230, 2026-09-01). The condition of that decision is enforced here: a surge
+// scours only a shoreline whose whole brush footprint is unlocked
+// (`footprintUnlocked`), so terrain nobody has revealed is never rewritten
+// behind the fog.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT IT DOES: SHALLOW SCOUR, AT THE WATERLINE, UNDER A LANDFALLING CYCLONE.
@@ -28,6 +32,7 @@
 // a wheat field has no sea to drive. Only cyclones reach here.
 
 import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
+import { footprintUnlocked } from '../../../server/src/plugins/footprint.ts';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import type { Storm, StormWorld } from './storms.ts';
 
@@ -165,6 +170,12 @@ export function tickSurge(
     const x = Math.round(storm.x + Math.cos(angle) * distance);
     const y = Math.round(storm.y + Math.sin(angle) * distance);
     if (!isShoreline(world, x, y)) continue;
+    // REVEALED GROUND ONLY — the whole brush, not just the centre cell, so the
+    // skirt of the sculpt cannot bleed into a locked chunk either (the same
+    // guard mudslides' `sculptGuarded` uses). A locked shore counts as a miss
+    // for this interval, not as a reason to keep drawing: a cyclone over an
+    // unrevealed coast simply does nothing to it.
+    if (!footprintUnlocked(world, x, y, SURGE_BRUSH_RADIUS_CELLS)) continue;
 
     // NEGATIVE: the sea takes ground away. Scaled by how hard the storm is
     // blowing, so a weakening cyclone scours less than one at full strength —

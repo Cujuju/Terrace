@@ -63,17 +63,17 @@ export const MUDSLIDES_FREQUENCY_SETTING_KEY = 'mudslide-frequency';
  * from the slice and would otherwise creep downhill forever with nothing to
  * finish it.
  */
-export const MUDSLIDE_FREQUENCIES = ['off', 'rare', 'common'] as const;
+export const MUDSLIDE_FREQUENCIES = ['off', 'rare', 'uncommon', 'common'] as const;
 export type MudslideFrequency = (typeof MUDSLIDE_FREQUENCIES)[number];
 
 /**
- * `rare`, shipped. A mudslide moves the ground under whatever a player built
- * there, which is the most destructive thing any plugin in this repo does
- * without being asked; the default has to be the one a self-hoster is not
- * surprised by. `common` is a sixth of the wait — see
- * FREQUENCY_INTERVAL_MULTIPLIERS in server/slides.ts.
+ * `uncommon`, shipped (owner, issue #231, 2026-09-01; `rare` before that). A
+ * mudslide moves the ground under whatever a player built there, so the
+ * default is not `common` — but a hazard nobody meets in a session is not a
+ * hazard, and `rare` was that. `uncommon` is half `rare`'s wait and three times
+ * `common`'s — see FREQUENCY_INTERVAL_MULTIPLIERS in server/slides.ts.
  */
-export const DEFAULT_MUDSLIDE_FREQUENCY: MudslideFrequency = 'rare';
+export const DEFAULT_MUDSLIDE_FREQUENCY: MudslideFrequency = 'uncommon';
 
 export function parseFrequency(value: string | undefined): MudslideFrequency {
   return MUDSLIDE_FREQUENCIES.includes(value as MudslideFrequency)
@@ -271,7 +271,12 @@ export interface MudslideFlowEvent {
   readonly stop: MudslideStop;
 }
 
-/** Why a front stopped. */
+/**
+ * Why a front stopped.
+ *
+ * `sea` is no longer produced (issue #231, 2026-09-01: mud runs on into the
+ * sea) but stays in the set so a slice written before that still parses.
+ */
 export const MUDSLIDE_STOPS = ['water', 'sea', 'basin', 'locked', 'length', 'spent'] as const;
 export type MudslideStop = (typeof MUDSLIDE_STOPS)[number];
 
