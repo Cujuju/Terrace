@@ -38,8 +38,16 @@ import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.
  */
 const WEATHER_PLUGIN_NAME = 'weather';
 
-/** The kind name weather gives a thundering system. Duck-typed, so restated. */
-const WEATHER_STORM_KIND = 'storm';
+/**
+ * The kind name weather gives a thundering system. Duck-typed, so restated.
+ *
+ * `thunderstorm` since 2026-09-02: the weather plugin was split into a hub and
+ * one plugin per kind (#283), and the hub stamps a living system's `kind` with
+ * the name of the plugin that owns it — which for thundering systems is
+ * `thunderstorm`, not the old `storm`. A STRING, as it always was: this plugin
+ * still knows nothing about any thunderstorm plugin.
+ */
+const WEATHER_STORM_KIND = 'thunderstorm';
 
 /**
  * One weather system, as much of it as this plugin reads.

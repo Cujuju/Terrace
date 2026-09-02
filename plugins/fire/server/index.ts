@@ -951,10 +951,14 @@ export const plugin: TerracePlugin = {
 
   onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
     // By-name subscription (server/src/plugins/types.ts's emitEvent doc
-    // comment): weather's plugin name is the coupling, exactly like a wire
-    // message namespace — never an import of weather's code. A world with no
-    // weather plugin simply never sees this event, and nothing here fires.
-    if (event !== 'weather:strikes') return;
+    // comment): the emitting plugin's name is the coupling, exactly like a wire
+    // message namespace — never an import of its code. A world with no
+    // thunderstorm plugin simply never sees this event, and nothing here fires.
+    //
+    // `thunderstorm`, not `weather`, since 2026-09-02: the weather plugin was
+    // split and lightning moved to the kind that has it (#283). The payload is
+    // unchanged, which is why only this string moved.
+    if (event !== 'thunderstorm:strikes') return;
     const struck = parseStruckCells(payload);
     if (struck === null) return;
     // ONE BATCH FOR THE WHOLE VOLLEY — a squall lands several bolts in one
