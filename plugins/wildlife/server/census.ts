@@ -19,7 +19,7 @@ import {
   type TraversalProfile,
 } from '@terrace/shared';
 import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
-import { type Habitat, habitatOf, profileOf } from './species.ts';
+import { type Habitat, habitatOf, profileOf, spawnGroundConstrains } from './species.ts';
 
 /**
  * Adapts one species onto a shared traversal archetype (shared/src/
@@ -47,12 +47,53 @@ import { type Habitat, habitatOf, profileOf } from './species.ts';
  * archetype to shared's `steerAvoiding`. One resolution of species → archetype,
  * read by both the census predicates here and the steering there, so the cell a
  * creature may STAND on and the cell it may STEER toward cannot come apart.
+ *
+ * ONE AXIS OF THE ARCHETYPE IS NOW OVERRIDDEN BY THE ROW — the gradient limit,
+ * so the ibex can climb what the archetype refuses. See `walkerProfileFor`
+ * below for why that is a fix rather than the drift this note warns about: the
+ * other three axes are still the archetype's, untouched.
  */
 export function walkerProfileOf(species: WildlifeHabitatSpecies): TraversalProfile {
-  const profile = profileOf(species);
-  if (profile.habitat === 'land') return LAND_WALKER_PROFILE;
-  return waterBandProfile(profile.habitat);
+  return WALKER_PROFILES[species];
 }
+
+/**
+ * The archetype for one species, with its DECLARED gradient limit written in.
+ *
+ * THE OVERRIDE IS A BUG FIX, not a generalisation (2026-09-02). Every profile
+ * declared `maxGradientPerCell` and this function never read it: it picked an
+ * archetype by habitat and handed the archetype's own limit on. That was
+ * invisible while the four original rows all happened to state exactly the
+ * limit their archetype already carried — the water species Infinity, the
+ * grazer LAND_WALKER_MAX_GRADIENT_PER_CELL — and it would have silently
+ * discarded the ibex's doubled limit (./species/ibex.ts), which is the entire
+ * species. So the row wins, and for the four rows that already agreed this
+ * builds a profile identical field for field to the one they got before.
+ *
+ * The other three axes stay the ARCHETYPE'S, and that is still the 2026-08-20
+ * decision: which ground classes count, the band-0 fringe, and rivers-vs-lakes
+ * are facts about a kind of mover, not per-species dials, and building a
+ * literal here is how this contract drifted the first time.
+ */
+function walkerProfileFor(species: WildlifeHabitatSpecies): TraversalProfile {
+  const profile = profileOf(species);
+  const archetype =
+    profile.habitat === 'land' ? LAND_WALKER_PROFILE : waterBandProfile(profile.habitat);
+  return { ...archetype, maxGradientPerCell: profile.maxGradientPerCell };
+}
+
+/**
+ * Built once at module load, in WILDLIFE_HABITAT_SPECIES order.
+ *
+ * `walkerProfileOf` is on the steering hot path — shared's `steerAvoiding` asks
+ * for it once per candidate heading per creature per tick — so the spread in
+ * `walkerProfileFor` must not run there. Nothing mutates a profile, so one
+ * object per species is safe to share.
+ */
+const WALKER_PROFILES: Readonly<Record<WildlifeHabitatSpecies, TraversalProfile>> =
+  Object.fromEntries(
+    WILDLIFE_HABITAT_SPECIES.map((species) => [species, walkerProfileFor(species)]),
+  ) as Record<WildlifeHabitatSpecies, TraversalProfile>;
 
 /** The slice of the server's WorldApi this plugin actually reads. */
 export interface HabitatWorld {
@@ -220,6 +261,79 @@ export function openDirectionCount(
   return open;
 }
 
+/**
+ * How many of the eight compass directions from (cellX, cellY) are steps a
+ * PLAIN LAND WALKER could not take but `species` can — the measure of BROKEN
+ * ground.
+ *
+ * WHY IT IS THE MIRROR OF `openDirectionCount` AND NOT ITS COMPLEMENT. The
+ * complement of "open to me" is "closed to me", which counts the world's edge,
+ * locked territory and the sea alongside the risers — every one of them a
+ * direction this species cannot go, none of them the thing being asked about.
+ * What the ibex's spawn rule wants (./species/ibex.ts) is ground that is
+ * IMPASSABLE TO ORDINARY ANIMALS AND PASSABLE TO THIS ONE, which is a
+ * difference between two profiles over the same direction, so both have to be
+ * probed.
+ *
+ * The reference is shared's LAND_WALKER_PROFILE itself rather than another
+ * species' row: "steep" means steeper than a legged animal on dry ground can
+ * cross, which is a fact about the terrain contract (its gradient limit is half
+ * the terrain's own relaxation cap), not about whichever species happens to sit
+ * in the table today. A world with no grazer in it would still have risers.
+ *
+ * Same probe as `openDirectionCount` in every other respect — the same eight
+ * headings, the same one-body-length distance, the same `isValidCellFor` veto
+ * at the far end — so "steep" and "open" are answers to the same question asked
+ * of two movers, and a direction can be neither (off the map) but never both.
+ */
+export function steepDirectionCount(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  cellX: number,
+  cellY: number,
+): number {
+  const profile = walkerProfileOf(species);
+  const probeCells = profileOf(species).bodyLengthCells;
+  let steep = 0;
+
+  for (let direction = 0; direction < AVOID_TURN_ATTEMPTS; direction++) {
+    const heading = direction * AVOID_TURN_STEP_RADIANS;
+    const toX = cellX + Math.cos(heading) * probeCells;
+    const toY = cellY + Math.sin(heading) * probeCells;
+    // Passable to an ordinary walker — then it is not broken ground, whatever
+    // else it is.
+    if (canProceedAlong(world, LAND_WALKER_PROFILE, cellX, cellY, toX, toY)) continue;
+    if (!canProceedAlong(world, profile, cellX, cellY, toX, toY)) continue;
+    if (!isValidCellFor(world, species, toX, toY)) continue;
+    steep++;
+  }
+
+  return steep;
+}
+
+/**
+ * Does the ground around (cellX, cellY) satisfy this species' spawn-ground rule
+ * (species/profile.ts's `SpawnGround`)?
+ *
+ * THE ONE PLACE THE RULE IS INTERPRETED. Both placement call sites — the seed
+ * cell and the scattered members of a group (population.ts) — ask this rather
+ * than reading a threshold off the profile themselves, which is what makes
+ * adding a THIRD reading of the eight-direction probe a change to one function
+ * instead of a change to every caller that thought it knew what the field meant.
+ */
+export function satisfiesSpawnGround(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  cellX: number,
+  cellY: number,
+): boolean {
+  const rule = profileOf(species).spawnGround;
+  if (!spawnGroundConstrains(rule)) return true;
+  return rule.kind === 'open'
+    ? openDirectionCount(world, species, cellX, cellY) >= rule.minOpenDirections
+    : steepDirectionCount(world, species, cellX, cellY) >= rule.minSteepDirections;
+}
+
 export interface Census {
   /** Habitat cells inside unlocked chunks, by class. */
   readonly cellsByHabitat: Readonly<Record<Habitat, number>>;
@@ -313,9 +427,21 @@ export function takeCensus(world: HabitatWorld): Census {
   return { cellsByHabitat, chunks };
 }
 
-/** All-zero per-species counts, over the census-driven species only. */
+/**
+ * All-zero per-species counts, over the census-driven species only.
+ *
+ * DERIVED FROM THE SPECIES LIST, not typed out (2026-09-02). It used to be an
+ * object literal of four names, which the compiler did check for completeness —
+ * but only because the return type says so, and the failure it produces is four
+ * unrelated type errors in the file a species was NOT added to. Built from
+ * WILDLIFE_HABITAT_SPECIES, "every species starts at zero" is true by
+ * construction and adding a row to the table is one edit.
+ */
 export function emptySpeciesCounts(): Record<WildlifeHabitatSpecies, number> {
-  return { fish: 0, whale: 0, deepsea: 0, grazer: 0 };
+  return Object.fromEntries(WILDLIFE_HABITAT_SPECIES.map((species) => [species, 0])) as Record<
+    WildlifeHabitatSpecies,
+    number
+  >;
 }
 
 /**

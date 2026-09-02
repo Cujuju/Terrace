@@ -6,7 +6,10 @@
 // in the OTHER would invent a dependency cycle. flocks.ts needs it too. This
 // file depends on nothing in the plugin, so everything can depend on it.
 
-import { randomSigned as sharedRandomSigned } from '@terrace/shared';
+import {
+  randomSigned as sharedRandomSigned,
+  rollEvent as sharedRollEvent,
+} from '@terrace/shared';
 
 /**
  * A uniform random value in [-magnitude, +magnitude).
@@ -25,4 +28,24 @@ import { randomSigned as sharedRandomSigned } from '@terrace/shared';
  */
 export function randomSigned(magnitude: number): number {
   return sharedRandomSigned(Math.random, magnitude);
+}
+
+/**
+ * Did a Poisson event of rate `ratePerSecond` fire during `dt` seconds?
+ *
+ * THE FORM MATTERS — the derivation lives on shared's own `rollEvent`. In
+ * short: the naive `random() < rate * dt` is a linear approximation whose
+ * outcome depends on how finely time is sliced, so a server at TICK_HZ 20 would
+ * take idle bouts at a measurably different rate than one at 10. The exact form
+ * is what lets the rates in ./species/*.ts be stated as "per second" and mean
+ * it.
+ *
+ * ADDED 2026-09-02 for the idle bouts. The other two stochastic rates in this
+ * plugin — the spawn hazard and the natural-turnover roll (population.ts) —
+ * still use the linear form, deliberately and separately: their constants were
+ * calibrated against it and swapping the arithmetic underneath them would
+ * silently retune the ecosystem. This is the one function new rates go through.
+ */
+export function rollEvent(ratePerSecond: number, dt: number): boolean {
+  return sharedRollEvent(Math.random, ratePerSecond, dt);
 }
