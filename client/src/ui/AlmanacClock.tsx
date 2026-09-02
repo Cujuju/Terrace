@@ -127,12 +127,16 @@ const MOON_RADIUS = 3.4;
 const TAG_HEIGHT = 12;
 const TAG_TOP_Y = TOTAL_HEIGHT - STRIP_INSET - TAG_HEIGHT - 3;
 
-/** Caption baselines: weekday in the sky's top-left, day in the ground's
- *  bottom-left. The x inset clears the banner's rounded corner, which
- *  otherwise bites the day number's first letter. */
+/**
+ * The captions — weekday in the sky's top-left, day number in the ground's
+ * bottom-left — are HTML like the tag (owner ask, 2026-09-01: the words over
+ * the painting all render the same way), each a row TAG_HEIGHT tall so the
+ * day number and the time share one line. The x inset clears the banner's
+ * rounded corner, which otherwise bites the day number's first letter.
+ */
 const CAPTION_X = 6;
-const WEEKDAY_BASELINE_Y = STRIP_TOP_Y + 7.5;
-const DAY_BASELINE_Y = TOTAL_HEIGHT - STRIP_INSET - 3;
+const WEEKDAY_TOP_Y = STRIP_TOP_Y + 2;
+const DAY_TOP_Y = TAG_TOP_Y;
 
 /** Horizon ticks at the two crossings. */
 const TICK_HALF_HEIGHT = 3;
@@ -399,14 +403,6 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
         stroke-width={1.2}
       />
 
-      {/* Captions */}
-      <text class="almanac__weekday" x={CAPTION_X} y={WEEKDAY_BASELINE_Y}>
-        {props.reading.weekday?.toUpperCase() ?? ''}
-      </text>
-      <text class="almanac__day" x={CAPTION_X} y={DAY_BASELINE_Y}>
-        {props.reading.day !== null ? `DAY ${props.reading.day}` : ''}
-      </text>
-
       {/* The bodies — both always in the tree, crossfading at the horizons */}
       <g transform={`translate(${f1(x())} ${f1(sunY())})`} opacity={f1(sunAlpha())}>
         <circle r={SUN_HALO_RADIUS} fill={SUN} opacity={SUN_HALO_OPACITY} />
@@ -417,6 +413,13 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
       </g>
 
     </svg>
+    {/* The words over the painting, placed in its own pixels */}
+    <span class="almanac__weekday" style={{ left: `${CAPTION_X}px`, top: `${WEEKDAY_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
+      {props.reading.weekday?.toUpperCase() ?? ''}
+    </span>
+    <span class="almanac__day" style={{ left: `${CAPTION_X}px`, top: `${DAY_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
+      {props.reading.day !== null ? `DAY ${props.reading.day}` : ''}
+    </span>
     {/* The time, pinned: frosted like the title band (hud.css) */}
     <span class="almanac__time hud-frost" style={{ top: `${TAG_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
       {props.reading.time}
