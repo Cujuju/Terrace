@@ -121,9 +121,17 @@ export const PLUME_RISE_SECONDS = 3;
 export const PLUME_DISPERSE_SECONDS = 12;
 
 /**
- * Where the plume sits in the transparent pass — above ./lavaFlow.ts's decals.
- * Both are depth-write-off transparent geometry, so submission order IS
- * composite order, and ash rising out of a flow must be painted over it.
+ * Where the plume sits in the transparent pass, against other TRANSPARENT
+ * geometry — which no longer includes ./lavaFlow.ts.
+ *
+ * That flow was transparent depth-write-off geometry sorted into the same list
+ * as this column, and this number was what kept ash rising out of a flow
+ * painted over it. The flow is opaque now (see lavaFlow.ts's header), and
+ * three renders the whole opaque list before the transparent one, so the
+ * column is drawn after the flow whatever either renderOrder says. What this
+ * still orders is the plume against the other transparent things a world
+ * draws — weather sheets, smoke, monster atmosphere — and against nothing in
+ * this plugin at all.
  */
 export const PLUME_RENDER_ORDER = 2;
 

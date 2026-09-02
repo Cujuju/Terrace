@@ -40,6 +40,31 @@
 // defect it is written against: the streaming unit keeps becoming the drawing
 // unit. A quad per cell would have been one draw call too, but it would have
 // been re-uploaded every frame to animate the heat.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FLOW IS OPAQUE GEOMETRY, AND ITS SOFT EDGE IS COVERAGE, NOT BLENDING.
+//
+// This used to be transparent geometry that wrote no depth, drawn at alpha
+// 0.96 so the terrace lip underneath showed faintly through the rock. The
+// owner settled that look against it (2026-09-01): cooled lava is new ground,
+// and ground you can see the old ground through reads as a stain rather than
+// as rock. So the material is `transparent: false`, `depthWrite: true`, and
+// the edge falloff that used to arrive as blended alpha now arrives as
+// ALPHA-TO-COVERAGE: the fragment still writes vStrength into gl_FragColor.a,
+// and the GPU converts that alpha into a fraction of the pixel's MSAA samples
+// (the renderer asks for `antialias: true`, so the samples exist). A rim at
+// 40% strength lights 40% of the samples and resolves to a soft edge, without
+// any of it depending on what was drawn before it.
+//
+// THE CONSEQUENCE THAT MATTERS BEYOND THE LOOK: EMISSION ORDER NO LONGER
+// AFFECTS THE PICTURE. Every fragment now competes on depth alone, so which
+// order the quads were written into the buffers in — and therefore which order
+// the footprint Map was built in — cannot change a single pixel. Two caps at
+// different terrace heights overlapping on screen resolve by which is nearer
+// the camera, as they always should have. That is what unblocks the follow-on
+// (issue #261 phase 2): re-stamping only the NEIGHBOURHOOD a delta touched
+// instead of rebuilding the whole footprint, which the old paint-order
+// contract forbade. It is not implemented here.
 
 import {
   BufferAttribute,
@@ -114,11 +139,17 @@ interface FootprintOffset {
  * `Math.hypot` and a reject test per offset per flow cell per rebuild — 81 x
  * LAVA_CELL_CAP = 15 552 of each, several times a second — to re-derive a
  * fixed disc, and the edge falloff re-derived a smoothstep from a distance
- * that could only ever be one of the values in this table. The ORDER matters
- * and is preserved exactly: it decides the order the footprint Map is built
- * in, which decides the order the quads are emitted in, which decides how they
- * composite (the flow is near-opaque and writes no depth, so submission order
- * IS paint order where two caps overlap on screen).
+ * that could only ever be one of the values in this table.
+ *
+ * THE ORDER IS PRESERVED EXACTLY, BUT IT IS NO LONGER LOAD-BEARING FOR THE
+ * PICTURE. It decides the order the footprint Map is built in, which decides
+ * the order the quads are emitted in — and since the flow became opaque
+ * geometry that writes depth (see the material and the file header), where two
+ * caps overlap on screen is settled by depth, not by which was submitted
+ * first. What the order still buys is DETERMINISM: the same flow rebuilt from
+ * the same cells produces byte-identical buffers, which is what makes a
+ * rebuild comparable against the one before it. Changing it would change
+ * nothing a player can see.
  */
 const FOOTPRINT_STENCIL: readonly FootprintOffset[] = (() => {
   const out: FootprintOffset[] = [];
@@ -162,9 +193,24 @@ export const LAVA_HOVER_HEIGHT = 0.019;
 export const LAVA_VERTEX_CAP = 54_000;
 
 /**
- * Where the flow sits in the transparent pass — below ./plume.ts's column, so
- * that ash rising out of a flow is painted over it. Both are depth-write-off
- * transparent geometry, so submission order IS composite order.
+ * Where the flow sits WITHIN THE OPAQUE PASS — after the terrain, which draws
+ * at the default renderOrder 0.
+ *
+ * IT NO LONGER DECIDES ANYTHING A PLAYER SEES, and the reason it used to is
+ * gone. The old justification was that the flow and ./plume.ts's column were
+ * both depth-write-off transparent geometry sorted into one list, so this
+ * number chose which was painted over which. Now the flow is opaque: three
+ * files a mesh into `opaque`, `transmissive` or `transparent` purely by
+ * `material.transparent`, and renders those three lists in that fixed order —
+ * so the plume is painted after the flow because it is transparent and the
+ * flow is not, whatever either renderOrder says.
+ *
+ * WHAT IT STILL DOES is order the flow against other OPAQUE meshes, which is a
+ * depth-rejection question and not a correctness one: drawing after the
+ * terrain means terrain depth is already in the buffer, so flow fragments that
+ * lost to it are rejected before the (noisy, several-octave) fragment shader
+ * runs. Kept at 1 for that, and because a plugin that draws ground-level
+ * decoration after the ground is the least surprising thing to read.
  */
 export const LAVA_RENDER_ORDER = 1;
 
@@ -290,10 +336,16 @@ const LAVA_FRAGMENT_SHADER = /* glsl */ `
     // flow reading as a single flat orange.
     color = mix(color, vec3(${LAVA_CORE_RGB}), smoothstep(0.86, 1.0, lit) * 0.7);
 
-    // Opaque MATTER: this is new ground, and a translucent flow would show the
-    // grass through the rock that buried it. It stops short of 1 only so the
-    // terrace step under it still reads through.
-    gl_FragColor = vec4(color, vStrength * 0.96);
+    // OPAQUE MATTER, AND THE ALPHA IS COVERAGE. This is new ground: nothing it
+    // buried should read through it, so the alpha here is never a see-through
+    // factor. The material is opaque with alphaToCoverage on, so this value is
+    // consumed as the FRACTION OF THE PIXEL'S MSAA SAMPLES the flow occupies —
+    // 1 across the body of the flow, easing to 0 at the rim, which resolves to
+    // a soft edge made of geometry coverage rather than of blending. Full
+    // strength therefore writes a fully opaque pixel (the 0.96 that used to sit
+    // here existed only to let the terrace lip read through, which the owner
+    // settled against on 2026-09-01).
+    gl_FragColor = vec4(color, vStrength);
   }
 `;
 
@@ -387,11 +439,26 @@ export function createLavaFlow(): LavaFlowRenderer {
     uniforms: { uElapsed: { value: 0 } },
     vertexShader: LAVA_VERTEX_SHADER,
     fragmentShader: LAVA_FRAGMENT_SHADER,
-    transparent: true,
-    // Ground, not a surface of its own: writing depth would let the flow occlude
-    // the plume, a flame or a tree standing in it.
-    depthWrite: false,
+    // OPAQUE, WITH THE EDGE DONE BY COVERAGE. Cooled lava is new ground and
+    // reads as rock only if it hides what it buried, so the flow is not
+    // blended: it takes part in the opaque pass and writes depth like any other
+    // solid surface, which is also what lets a flame or a tree standing in it
+    // be occluded by the rock in front of them instead of showing through it.
+    //
+    // The soft rim survives because `alphaToCoverage` reinterprets the
+    // fragment's alpha as MSAA sample coverage rather than as a blend weight —
+    // the shader's vStrength falloff now lights a fraction of the samples in a
+    // rim pixel and none beyond the footprint. This is only a soft edge because
+    // the renderer is built with `antialias: true` (client/src/render/scene.ts
+    // and client/src/previewVolcano.ts); on a single-sample target the same
+    // material would give a hard, aliased boundary rather than a wrong picture.
+    transparent: false,
+    depthWrite: true,
+    alphaToCoverage: true,
     // Risers are vertical quads and a player can orbit to either side of one.
+    // (Cheaper than it was, too: three draws a DoubleSide material in two
+    // passes — back faces then front — only while it is also transparent, and
+    // this one no longer is.)
     side: DoubleSide,
   });
 
@@ -424,24 +491,25 @@ export function createLavaFlow(): LavaFlowRenderer {
   /**
    * Rebuilds the whole mesh from `cells`.
    *
-   * WHOLE, NOT INCREMENTAL, and now for a reason that survives being asked
-   * twice. The obvious one is only half true: a new cell changes the coverage
-   * and the risers of every cell within FLOW_RADIUS_CELLS of it, which
-   * justifies re-stamping that NEIGHBOURHOOD — a couple of hundred cells —
-   * rather than the whole world's worth of them.
+   * WHOLE, NOT INCREMENTAL — but only until phase 2, and the reason it had to
+   * be whole no longer exists. A new cell changes the coverage and the risers
+   * of every cell within FLOW_RADIUS_CELLS of it, which justifies re-stamping
+   * that NEIGHBOURHOOD — a couple of hundred cells — rather than the whole
+   * world's worth of them.
    *
-   * WHAT ACTUALLY FORBIDS IT IS THE ORDER. The quads come out in the order
-   * `covered` was built in, which is: for each flow cell in the order the
-   * server sent it, for each offset of FOOTPRINT_STENCIL. The flow draws at
-   * alpha 0.96 and writes no depth (see the material), so where two caps at
-   * different terrace heights overlap on screen, SUBMISSION ORDER IS PAINT
-   * ORDER. Keeping the footprint between deltas and patching a neighbourhood
-   * into it leaves the Map in insertion order from an older history, which
-   * re-orders the emission and repaints those overlaps differently. That is a
-   * visible change to settle deliberately, not a side effect to take for a
-   * faster rebuild.
+   * WHAT USED TO FORBID THAT WAS THE ORDER, AND IT DOES NOT ANY MORE. The
+   * quads come out in the order `covered` was built in, which is: for each
+   * flow cell in the order the server sent it, for each offset of
+   * FOOTPRINT_STENCIL. While the flow was blended at alpha 0.96 and wrote no
+   * depth, submission order was paint order where two caps at different
+   * terrace heights overlapped on screen, so patching a neighbourhood into a
+   * footprint carried over from an older history would have repainted those
+   * overlaps differently. The flow is now opaque and writes depth (see the
+   * material), so overlaps are settled by depth and the emission order cannot
+   * change a pixel — an incremental re-stamp is a pure win with no look to
+   * settle first. That is issue #261 phase 2, deliberately NOT done here.
    *
-   * So the rebuild stays whole and the CONSTANT was taken out of it instead:
+   * So for now the rebuild stays whole and the CONSTANT was taken out of it:
    * the stencil (and its edge strength) is a table rather than 15 552
    * `Math.hypot` calls and smoothsteps per rebuild, and both maps and the
    * footprint's entry objects are reused rather than reallocated. It still
