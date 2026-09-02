@@ -27,10 +27,10 @@ import type { LoadedPlugin, TerracePlugin } from './types.ts';
  * TypeScript directly via type stripping, which is how a plugin author works;
  * `.js` covers plugins shipped pre-compiled.
  */
-export const PLUGIN_SERVER_ENTRY_CANDIDATES = ['server/index.ts', 'server/index.js'] as const;
+const PLUGIN_SERVER_ENTRY_CANDIDATES = ['server/index.ts', 'server/index.js'] as const;
 
 /** Preferred export name for the plugin object. */
-export const PLUGIN_EXPORT_NAME = 'plugin';
+const PLUGIN_EXPORT_NAME = 'plugin';
 
 /**
  * Plugin names are message namespaces and snapshot keys, so they are restricted

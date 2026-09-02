@@ -147,65 +147,37 @@ bands — on an integer terrain model whose relaxation routine descends from
 
 ---
 
-## 4. Repository layout (agreed)
+## 4. Repository layout
+
+pnpm workspaces: `shared`, `client`, `server`, `plugins/*`.
 
 ```
 terrace/
-├── shared/            # terrain math + protocol types (imported by client AND server)
-│   ├── heightmap.ts   #   grid type, raise/lower, gradient smoothing, water, terracing
-│   └── protocol.ts    #   intents, diffs, snapshots, join messages
-├── client/            # Vite + Solid + TS + Three.js
-├── server/            # Node + Colyseus; one live World per process; tick loop;
-│                     one SQLite file per world under WORLDS_DIR
-├── plugins/           # auto-discovered at boot; ships with example plugins
-│   └── reveal/        #   flagship example: progressive territory unlock
-├── Dockerfile
-├── docker-compose.yml
-└── README.md          # written for self-hosters: docker compose up = your instance
+├── shared/src/        # terrain math + protocol types, imported by client AND server
+├── client/src/        # Vite + Solid + TS + Three.js
+├── server/src/        # Node + Colyseus; one live World per process
+├── plugins/<name>/    # server/index.ts (auto-discovered) and/or a client half
+├── docs/              # DESIGN.md, decisions/<arc>.md, plans/
+├── scripts/
+├── Dockerfile, docker-compose.yml
+└── README.md          # written for self-hosters
 ```
 
 ---
 
-## 5. Development process (agreed with owner)
+## 5. Development process
 
-- **The session assistant orchestrates and reviews; background Opus subagents
-  implement.** No agent output lands unreviewed.
-- **Phase 0 (sequential, gated):** monorepo scaffold + the complete `shared/` package.
-  Reviewed hardest; locked before any fan-out.
-- **Phase 1 (parallel, two background agents):**
-  - Agent A — server: Colyseus room/World, tick loop, intent pipeline, mask, SQLite
-    snapshots, plugin host, `WORLD_SIZE` config.
-  - Agent B — client: Vite+Solid+Three.js, mesh from heightmap, orbit camera, sculpt
-    input, Colyseus client, terraced rendering.
-- **Phase 2 (integration):** end-to-end wiring, client-side prediction/reconciliation
-  reusing `shared/` math, reveal example plugin, Docker Compose, README.
-- Between phases: orchestrator reviews diffs, runs typecheck/build, reports to owner.
-  Owner stays in the loop at phase boundaries.
-- **Do not start building until the owner explicitly says go.**
-
-### Code style (owner's standing conventions, from their CLAUDE.md)
-- TypeScript strict everywhere; no `any` without an explanatory comment.
-- Functional components only; **named exports** over default exports.
-- Conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`, `docs:`).
-- Verbose comments on critical code — for Terrace, the terrain math, intent
-  validation, and sync/persistence paths count as critical. Moderate comments on UI.
-- Keep files focused; consider splitting past ~300 lines.
+- The session assistant orchestrates, reviews and decides design; implementation
+  agents work in worktrees. No agent output lands unreviewed, and visual work is
+  verified with in-world screenshots before merge.
+- The owner is in the loop at every phase boundary and says go before building
+  starts.
+- Typecheck and tests pass before any commit that touches `shared/`; commit as
+  soon as work is done (shared checkout, concurrent agents).
+- Code style, testing and git rules are in the project `CLAUDE.md` and §8; they
+  are not repeated here.
 
 ---
-
-## 6. Non-goals for v1 (explicitly out of scope — do not build)
-
-- Accounts/auth (deferred; future plugin — see 3.7)
-- Lobbies, matchmaking, or multi-world routing in core (one process = one world)
-- Any game mechanics in core: mana, followers, combat, win conditions (plugins only)
-- Mobile/touch-first UI **redesign** (desktop browser first). ~~touch can come
-  later~~ — SUPERSEDED 2026-08-14: smooth touch *input* (one-finger sculpt,
-  two-finger camera) is in scope for v1 by owner request; only a touch-first
-  UI layout remains out of scope. See the Phase 2 decisions below.
-- npm plugin distribution (folder-based first; design the loader so npm can be added)
-- Erosion or advanced fluid sim (static/simple water first — see open question 3)
-- Horizontal scaling infrastructure, k8s, etc. (docker compose is the deployment story)
-- Spectator/replay systems
 
 ## 7. Glossary (use these terms consistently in code and docs)
 
@@ -224,47 +196,41 @@ terrace/
 ## 8. Engineering conventions
 
 ### Testing
-- **Vitest everywhere** (owner's standing convention). The `shared/` terrain math is
-  the highest-value test target: it is pure and deterministic — unit-test raise/lower,
-  gradient smoothing (converges, respects MAX_STEP, is symmetric), terrace
-  quantization, and protocol encode/decode round-trips. Phase 0 is not "locked" until
-  `shared/` has passing tests.
-- Server: test the intent pipeline (validation → apply → diff) and the plugin
-  interceptor chain with an in-memory world. Client rendering is verified manually in
-  v1; don't build a headless GL test rig.
-- **Determinism rule:** terrain math must be integer-only or fixed-order float ops —
-  identical inputs must give identical outputs on server and client, or prediction
-  reconciliation will drift.
+- Vitest across the workspace (`pnpm test`). `shared/` terrain math is the
+  highest-value target: pure and deterministic, so it is tested exhaustively
+  (sculpt tools, relaxation, quantization, wire round-trips). Server tests
+  cover the intent pipeline and the plugin interceptor chain on an in-memory
+  world. Client rendering is verified by eye with in-world screenshots; there
+  is no headless GL rig.
+- **Determinism rule:** terrain math is integer-only or exactly-specified IEEE
+  ops with fixed iteration order. Identical inputs give identical outputs on
+  server and client, or prediction drifts.
 
 ### Configuration
-- Server config via environment variables with sane defaults, `.env.example` in repo:
-  `WORLD_SIZE` (default 512), `PORT` (default 2567 — Colyseus convention),
-  `DB_PATH` (default `./data/world.db`), `TICK_HZ` (default 10),
-  `SNAPSHOT_INTERVAL_S` (default: open question 4), `WORLD_DIFFICULTY`
-  (default 50 — added 2026-08-14; the one setting that clamps rather than
-  refusing, see the decision entry).
-- No secrets exist in v1 (no accounts); keep it that way — nothing sensitive should
-  ever be required to boot a world.
+- Server config is environment variables, every one with a working default,
+  documented in `.env.example` and read in `server/src/config.ts`: `PORT`,
+  `WORLD_SIZE`, `WORLDS_DIR`, `TICK_HZ`, `SNAPSHOT_INTERVAL_S`,
+  `SNAPSHOT_RETENTION`, `WORLD_DIFFICULTY`, `WORLD_ADMIN_KEY`, `ROLLBACK_KEY`,
+  `PLUGINS_DIR`, `CLIENT_DIST_PATH`; `DB_PATH` is legacy (pre-worlds-dir).
+- Nothing sensitive is required to boot a world.
 
-### Dependencies & versions
-- Pin **latest stable at scaffold time** and record exact versions in the Phase 0
-  commit: Node LTS, Colyseus (check current major — 0.15 vs 0.16 APIs differ
-  significantly; verify against current docs before writing room code), Three.js,
-  SolidJS, Vite, Tailwind (v4 if used for HUD), better-sqlite3, pnpm.
-- Prefer few dependencies; every dep is a cost for self-hosters and contributors.
+### Dependencies
+- Few dependencies; every one is a cost for self-hosters and contributors.
+  Do not add one without the owner's approval.
 
 ### Git & CI
-- Feature-branch workflow; conventional commits; the repo's default branch starts
-  empty — Phase 0 initializes it (this doc as `docs/DESIGN.md`, plus scaffold).
-- Add a minimal GitHub Actions workflow in Phase 0: `pnpm install`, typecheck, and
-  Vitest across the workspace on PR/push. Keep CI under a minute; no deploy jobs.
+- Conventional commits. CI (`.github/workflows/ci.yml`) runs
+  `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` on push and
+  PR; no deploy jobs.
 
-### Performance targets (sanity bounds, not hard SLAs)
-- Client: 60 fps orbit/sculpt on a mid-range laptop at 512² (mesh updates must patch
-  vertex buffers in place — never rebuild geometry per edit).
-- Server: a sculpt intent should validate→apply→broadcast in well under one tick;
-  diffs after smoothing should stay in the hundreds of cells, not thousands.
-- Join: snapshot of a typical early world (few chunks unlocked) should be tens of KB.
+### Performance
+- The benchmark is **≥ 140 fps on the owner's machine** (≈ 7 ms per frame).
+  Anything that cannot fit is budgeted (`docs/decisions/mesh-budgets.md`) or
+  moved off the frame. Chunk geometry is built off the main thread
+  (`chunkBuildWorker.ts`); a terrain diff patches the affected chunks' vertex
+  buffers in place (`terrainMeshes.ts`), growing a chunk's capacity only on
+  the rare edit that overflows it, never rebuilding geometry per edit.
+- A sculpt intent validates, applies and broadcasts well within one tick.
 
 ## 9. MVP acceptance criteria ("Phase 2 done" means all of these)
 
@@ -305,3 +271,15 @@ rules and architecture only; do not append decisions here.
   reading as dangerous); a budget without the `max(1, ·)` floor (a single
   half-strength storm would be handed the whole budget). Residual, named: a lone
   storm throws every bolt, so one storm alone feels fiercer than one of three.
+
+### Decisions made 2026-09-01 (the plugin-system review closes; Phase 4 reload stays, #202)
+
+The 2026-08-27 multi-agent review (22 agents, 3 lenses, Opus refute-by-default
+verify; 19 findings, 9 confirmed) filed its six bugs as #206–#211, all since
+fixed. The owner's remaining call: **Phase 4 in-process plugin reload is KEPT.**
+It is fully wired, four of the six bugs the review found were in that path and
+are now fixed, and its use — a plugin author iterating without kicking players
+off — is invisible in source by nature. The "button beside serverRestart, not
+instead of it" decision above stands unchanged. The two dead exports the review
+named in discovery.ts (`PLUGIN_EXPORT_NAME`, `PLUGIN_SERVER_ENTRY_CANDIDATES`)
+are module-local now.
