@@ -9,241 +9,141 @@ do not relitigate without new information. Dated decision records are in
 ## 1. Vision
 
 Terrace is an **open-source, self-hostable, multiplayer terrain-sculpting platform**
-inspired by the god-game terrain of *Populous* (1989) and *Godus* (2013). It is
-deliberately **not a game** — it is the substrate others build games on:
+inspired by the god-game terrain of *Populous* (1989) and *Godus* (2013). 
 
-- The core ships only terrain simulation, real-time sync, persistence, and a plugin host.
+- The core ships terrain simulation, real-time sync, persistence, and a plugin host.
 - Everything "gamey" (mana, followers, combat, win conditions, accounts) is a plugin.
 - The success criterion for the architecture: reveal-of-territory, a mana economy, and
   a follower stub can each be built as plugins **without touching core**. If they can't,
   the plugin API is wrong.
-- Self-hosting must be one command (`docker compose up`). The README is written for
-  self-hosters first.
 
-Repo: `github.com/Cujuju/Terrace` (created, currently empty). License: **MIT** —
-chosen over AGPL to maximize adoption; people may build closed-source games on top.
+Repo: `github.com/Cujuju/Terrace` (created, currently empty). License: **MIT**.
 
 ---
 
 ## 2. Domain background (why the terrain design looks like this)
 
-### Populous (1989)
-- Terrain was a **128×128 integer heightmap**. The whole series stayed on 128×128
-  (Populous II, and Populous: The Beginning wrapped 128×128 onto a globe).
-  Community tools export Populous maps as literal 128×128 images, one pixel per tile.
-- Three rules produce the entire mechanic:
-  1. **Raise/lower** — add/subtract height at a point.
-  2. **Gradient limiting** — no slope may exceed a max step; after an edit, an
-     iterative relaxation pass pulls neighbors toward each other. This is what makes
-     land "flow" outward and is **the single most important element of the feel**.
-     — PARTLY SUPERSEDED 2026-08-14: still true of the `smooth` tool, but
-     relaxation is no longer what the DEFAULT brush does. See the Phase 2
-     decision "Sculpting gains brush TOOLS and edge PROFILES" below.
-     — **SUPERSEDED OUTRIGHT 2026-08-20** (owner: "I don't want populace
-     anymore. I want godus"). The Populous signature is retired as the feel of
-     this game. `DEFAULT_SCULPT_AMOUNT` is one BAND and `MAX_STEP` is one band
-     per WORLD UNIT (`BAND_HEIGHT / WORLD_UNIT_CELLS`), so a click lands exactly
-     ON the gradient limit and there is no excess to push outward: **one click,
-     one crisp terrace, no outward slump.** (Both were literally `BAND_HEIGHT`
-     between the 2026-08-20 re-terrace and the 2026-08-21 re-sample, which is
-     what this line used to say; the RATIO is what the claim rests on and the
-     re-sample kept it — see `DEFAULT_SCULPT_AMOUNT` in shared/src/constants.ts.
-     The gradient limit a pair actually comes to REST at is one unit looser
-     still, `MAX_STEP + RELAX_SLACK`, since 2026-08-29 — issue #108, below.)
-     Relaxation still exists and still does its job — it is what keeps the
-     invariant when terrain that ALREADY violates it is disturbed, and what the
-     `smooth` tool is for — but it is no longer the signature. See "The world
-     re-terraced" below.
-  3. **Sea level** — height ≤ 0 is water; flat land above water is buildable.
-- The signature relaxation loop, roughly:
+Terrace targets the **Godus** look — terraced land built from discrete contour
+bands — on an integer terrain model whose relaxation routine descends from
+**Populous**. Everything below is the current model; constants are in
+`shared/src/constants.ts`, the math in `shared/src/heightmap.ts` and
+`shared/src/columns.ts`.
 
-  ```
-  raise(x, y, amount):
-      height[x][y] += amount
-      repeat N smoothing passes:
-          for each cell, for each neighbor:
-              if |height diff| > MAX_STEP + RELAX_SLACK:
-                  e = |height diff| - MAX_STEP
-                  high -= e >> 1 ; low += e >> 1     # EXACTLY half each way
-  ```
+### The terrain model
+- A cell is a **column: an ascending list of solid spans** `[floor, ceiling)`.
+  `map.cells[i]` holds the ceiling of the topmost span (the walkable surface);
+  columns with more than one span (overhangs, arches, caves) live in a sparse
+  side table. Heights are integers in `[MIN_HEIGHT, MAX_HEIGHT]`.
+- **Bands.** Rendered terraces are `BAND_HEIGHT` tall. A player click moves
+  one band (`DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT`); a terrace tread is one
+  world unit wide (`MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS`).
+- **Sea.** `SEA_LEVEL = 0`; a column is under sea water where the solid at the
+  waterline sits at or below it. Sea is derived from the terrain, never
+  simulated. Below the seabed the world continues through named **deep
+  strata** (basalt, obsidian, lava) down to `MIN_HEIGHT`.
+- **Freshwater.** Rivers, lakes and falls are derived from the terrain by
+  `shared/src/rivers.ts` and rebuilt when the terrain changes; they are not
+  simulated state either.
 
-  Tuning this (pass count, MAX_STEP, brush falloff) is feel-critical. Bad tuning reads
-  as "gummy" or "jittery".
+### Sculpting
+- Four tools (`SCULPT_TOOLS`): **stamp** edits exactly its footprint and runs
+  no relaxation — a spire stays a spire; **smooth** edits the footprint, then
+  runs gradient-limit relaxation; **drag** levels cells to the band whose lip
+  the player grabbed, in one intent; **carve** removes material from a grasped
+  span. Two edge profiles: **soft** (linear falloff) and **hard** (level fill).
+- The **player default is stamp + soft**; the library default for plugins
+  calling `applySculpt` directly is smooth + soft. Player strokes are
+  band-contained: relaxation spill may slope terrain outside the brush but
+  never creates or erases a rendered level there.
+- **Relaxation** (smooth tool only). Any 4-neighbour pair differing by more
+  than `MAX_STEP + RELAX_SLACK` is pulled together by equal and opposite
+  amounts, so the pass moves height and never creates it; it sweeps a bounding
+  box that grows one cell per pass, stops when a pass changes nothing, and is
+  capped at `SMOOTH_PASS_LIMIT`. Because the stamp does not relax, the gradient
+  limit is a property the smooth tool enforces where it runs, not a world-wide
+  invariant.
 
-### Godus (2013)
-- **No canonical grid size exists** — 22Cans never published one and the
-  wiki/modding community documents worlds in "plots" and regions, not N×N. We
-  searched; do not invent a number.
-- Its terrain is **discrete stacked layers** (contour bands) — you drag whole layers
-  out/in, producing the terraced look. Under the hood it is still a heightmap,
-  quantized into bands.
-- Its world model: start small on a "Homeworld", territory **reveals/unlocks
-  progressively** as the player advances. The world felt huge but was streamed in
-  chunks gated by progression.
-- **The takeaway we adopted is the pattern, not a number**: modest active area, large
-  potential area, revealed over time.
+### World extent
+- A world is `DEFAULT_WORLD_SPAN` world units square, streamed in chunks.
+  Chunks unlock **per player**; the simulation runs on the union of every
+  player's unlocked chunks. Core knows how to unlock a chunk for a player;
+  **when** to unlock is a plugin's decision (`plugins/reveal`: instant creep
+  when a player's own edit reaches a locked chunk).
+- Godus has no canonical grid size. Do not invent one.
 
 ---
 
-## 3. Architecture decisions (with rationale and rejected alternatives)
+## 3. Architecture
 
-### 3.1 Client: Vite + SolidJS + TypeScript + Three.js
-- **Three.js** renders the heightmap as a mesh whose vertices are updated imperatively
-  per frame. A real 3D orbit camera is essential for the terraced look.
-- **SolidJS** (owner preference; explicitly *not* React) handles HUD/UI. Solid's
-  fine-grained reactivity coexists with an imperative render loop without a virtual-DOM
-  re-render fighting it every frame. The render loop is plain TS; Solid never owns the
-  canvas.
-- **Rejected:**
-  - *React / React Three Fiber* — owner dislikes React; R3F's declarative layer fights
-    per-frame vertex updates.
-  - *Canvas 2D isometric* — most retro-faithful but no real camera, fiddly sorting,
-    hard to look modern.
-  - *Godot / Unity / Bevy (native engines, WASM export)* — all can be web-hosted, but
-    a WASM blob is unreadable to contributors; with the web stack the readable source
-    IS the running app, which is the best open-source contribution story. Unity is
-    additionally closed-source and ships 10–30 MB+ bundles. Revisit only if this
-    becomes a content-heavy shipped game.
+### 3.1 Client — Vite + SolidJS + TypeScript + Three.js
+- Three.js renders the terrain as per-chunk meshes under a 3D orbit camera.
+  The render loop is plain TypeScript; Solid never owns the canvas.
+- SolidJS (not React) owns the HUD. Its fine-grained reactivity does not
+  re-render against the imperative frame loop.
 
-### 3.2 Server: Node + Colyseus, authoritative, one world LIVE per process
-- **Colyseus** (owner choice) provides rooms, schema sync, and reconnection handling.
-- **Node over Bun** because Colyseus officially targets Node (Bun was considered and
-  dropped for support reasons).
-- **One world LIVE per process** (owner decision, crash isolation; amended
-  2026-08-22): a crash takes down exactly one world. Scaling = run more processes.
-  There is no lobby layer in core. The server is structured around a single live
-  `World` so a rooms layer could be added later without rework.
-- **A world is a FILE, and a server may hold many** (owner decision, 2026-08-22,
-  after an incident). One SQLite database per world under `WORLDS_DIR`; the
-  operator creates, loads, renames, duplicates and archives them from an in-game
-  panel gated by `WORLD_ADMIN_KEY`. Exactly one is loaded and simulating at a
-  time — loading another saves and closes the current one first.
-  - *Why it changed.* A world used to be a ROW: every world a deployment had ever
-    run shared one `snapshots` table, distinguished only by a `world_name`
-    column, while retention kept "the newest N rows" **across the whole table**.
-    A world that stopped being written to was therefore evicted by whichever
-    world was written to next. This was not hypothetical: a world called
-    Frostwick Hollows lost 298 of its 308 snapshots exactly this way. With one
-    file per world, retention runs inside a file and cannot reach another's
-    history — a structural guarantee rather than a maintained one.
-  - *Nothing deletes a world implicitly.* Archiving MOVES a world's file to
-    `WORLDS_DIR/.trash`; the only code path that unlinks one is an explicit
-    purge of an already-archived world whose name the operator has typed back.
-    Boot never treats "I cannot find the world I expected" as "make a new one" —
-    it loads nothing and says which world it could not open.
-  - *Restore points can be PINNED*, exempting them from retention entirely, so a
-    moment worth keeping is not on a conveyor belt towards deletion.
-  - *One live world, not many, because plugin state is module-scoped.* Every
-    server plugin keeps its state in module variables, so two simultaneous worlds
-    would share forests, chronicles and mana pools. Switching works because
-    `restorePersistence` + `onWorldCreate` reset that state — the same replay a
-    rollback already relies on. Running several worlds at once is issue #78.
-- **Authoritative server is non-negotiable**: clients send *intents* ("raise at cell
-  x,y"), never raw heightmap values. The server validates (bounds, unlock mask, and —
-  via plugins — mana/cooldowns), applies the edit, runs the smoothing pass, and
-  broadcasts **cell diffs** `[{x, y, h}, ...]`. This is both the anti-cheat model and
-  the sync model.
-- **Fixed tick loop (~10 Hz)** runs ongoing sim (water settling, later erosion) so all
-  clients see identical physics. Rendering interpolates; simulation never runs
-  client-side as truth.
-- **Bandwidth reality check** (why this design is comfortably cheap): edits are local,
-  so diffs are a few hundred bytes; a full 512² heightmap snapshot is 512 KB of
-  Int16 — sent once on join, chunked by unlock mask so early-game joins are far smaller.
+### 3.2 Server — Node + Colyseus, authoritative
+- `@colyseus/core` + `@colyseus/ws-transport` for rooms, transport and
+  reconnection. State is synced by messages, not Colyseus schema. Node, not
+  Bun: Colyseus targets Node.
+- **Clients send intents, never heights.** The server validates (bounds,
+  unlock mask, plugin verdicts), applies the edit via `shared/`, and broadcasts
+  `CellDiff[]` (`{x, y, h, spans?}`). The client predicts with the same
+  `shared/` math and reconciles against the diff.
+- **Fixed tick loop** (`TICK_HZ`, default 10). Core has no ongoing simulation
+  of its own; plugin `onTick` is where simulation lives.
+- **One world live per process.** A crash takes down one world; scaling is
+  more processes. No lobby layer in core. Plugin state is module-scoped, so
+  running several worlds at once in one process is not supported (issue #78).
+- **A world is a file.** One SQLite database per world under `WORLDS_DIR`.
+  An in-game panel gated by `WORLD_ADMIN_KEY` creates, loads, renames,
+  duplicates and archives worlds; loading one saves and closes the current
+  one. Retention runs inside a file and cannot touch another world's history.
+  Archiving moves the file to `WORLDS_DIR/.trash`; only an explicit purge of an
+  archived world unlinks it. Boot never replaces a missing world with a new
+  one. Restore points can be pinned, exempting them from retention.
 
-### 3.3 `shared/` package — the contract
-- A workspace package imported by **both** client and server containing:
-  - the heightmap type and all terrain math (raise/lower, gradient-limit smoothing,
-    water/sea-level logic, terrace quantization);
-  - the protocol/message types (intents, diffs, snapshots, join).
-- Single source of truth: no drift between client and server math. This enables
-  **client-side prediction** — the client runs the same smoothing locally for instant
-  feedback, then reconciles against the server's authoritative diff.
-- Phase-0-gated: this package is written and reviewed FIRST; nothing fans out until
-  it is locked, because both sides compile against it.
+### 3.3 `shared/` — the contract
+- One workspace package imported by client and server: terrain math (columns,
+  sculpting, relaxation, sea and freshwater, band quantization) and the
+  protocol types (intents, diffs, snapshots, join). Never duplicate its math;
+  see the determinism rules in the project `CLAUDE.md`.
 
-### 3.4 Terrain model
-- **512×512 `Int16Array`, allocated up front** (512 KB — trivial). `WORLD_SIZE` is
-  server config; self-hosters on small VPSes can run 128² (Populous-proven playable),
-  big boxes 512². No live resizing/reallocation ever.
-- **Server-side-only unlocked-region mask.** Chosen explicitly for anti-cheat (owner
-  raised this): locked chunks are **never sent to clients at all** — anti-cheat by
-  omission. A hacked client cannot render or peek at terrain it never received; sculpt
-  intents on locked cells are rejected server-side. Reveal = server flips mask bits and
-  streams the newly unlocked chunk. Clients hold no full-map data to protect.
-- **Terraced (Godus) rendering first** — it is the app's namesake and the distinctive
-  look. Heights quantize into discrete bands for rendering. Smooth-Populous rendering
-  becomes a later toggle (the underlying heightmap is smooth either way; terracing is
-  a render/interaction mode).
-- **One height per cell — superseded in principle, not yet in code (2026-08-24).**
-  A single height cannot express a cell that is empty below and solid above, so
-  overhangs, arches and caves are unrepresentable. The agreed replacement is a
-  list of solid spans per column, of which today's world is the one-span special
-  case; see "Decisions made 2026-08-24 (overhangs, arches and caves)" at the end
-  of this document for the model, the rejected alternatives, the measured blast
-  radius and the staging. Nothing below changes until that work starts.
+### 3.4 Terrain storage and visibility
+- `createHeightmap(size)` allocates the whole world up front; no live
+  resizing. `WORLD_SIZE` is server config, clamped to
+  `[MIN_WORLD_SIZE, MAX_WORLD_SIZE]`.
+- **Locked chunks are never sent.** The join snapshot carries only the joining
+  player's own unlocked chunks; sculpt intents on locked cells are rejected
+  server-side. A client holds no full-map data to protect.
+- Rendering is terraced: heights quantize into `BAND_HEIGHT` bands.
 
 ### 3.5 Plugin platform (the core product)
 - **Core = terrain sim + sync + persistence + plugin host. Nothing else.**
-- Server plugin interface (shape agreed; exact types are Phase 0 work):
-
-  ```ts
-  interface TerracePlugin {
-    name: string;
-    onWorldCreate?(world: WorldApi): void;
-    onTick?(world: WorldApi, dt: number): void;
-    onIntent?(intent: SculptIntent, ctx: IntentCtx): IntentVerdict; // allow/deny/modify
-    onTerrainChanged?(diff: CellDiff[]): void;
-    onPlayerJoin?(player: Player): void;
-    onPlayerLeave?(player: Player): void;
-    messages?: Record<string, MessageHandler>;  // namespaced client<->server messages
-    state?: SchemaSlice;                        // plugin-owned synced Colyseus state
-    persistence?: PersistenceSlice;             // plugin-owned snapshot data
-  }
-  ```
-
-- The two hooks that make it a real platform:
-  - **`onIntent` as an interceptor chain** — a mana plugin vetoes/modifies intents
-    rather than patching the sim (exactly how Populous's spell economy worked);
-  - **plugin-owned synced state + namespaced messages** — a followers plugin ships its
-    own entities to clients without touching core protocol.
-- Client-side plugins register **HUD panels (Solid components)** and **Three.js scene
-  layers**.
-- **Distribution:** `plugins/` folder, auto-discovered at boot (v1, friendliest for
-  self-hosters — mirrors the StockApp plugin host the owner already runs). npm
-  packages (`terrace-plugin-*`) later; design the loader so both coexist.
-- **The reveal mechanic ships as the flagship example plugin, not core.** Core knows
-  about the mask; a plugin decides *when* territory unlocks. Reveal + mana + follower
-  stub are the three validation plugins for the API.
+- Server plugins are discovered at boot from `plugins/<name>/server/index.ts`
+  and implement `TerracePlugin` (`server/src/plugins/types.ts`): world
+  lifecycle, `onTick`, an `onIntent` interceptor chain (allow / deny /
+  modify), post-apply and terrain-change hooks, player join/leave, per-token
+  chunk unlock, namespaced messages, a persistence slice, and operator-facing
+  settings and actions. Load order is interceptor and tick order.
+- Client plugins implement `TerraceClientPlugin` (`client/src/plugins/types.ts`):
+  `attach(ctx)` with a Three.js layer, terrain queries and message routing,
+  plus HUD panels (Solid components) and a draw budget.
+- Reveal policy lives in `plugins/reveal`, not core (§2).
 
 ### 3.6 Persistence & self-hosting
-- **SQLite** via better-sqlite3: periodic world snapshots + plugin persistence slices.
-  Zero-config for self-hosters; the owner already runs this stack in StockApp.
-- **Docker Compose** as the canonical self-host path: clone → `docker compose up` →
-  your own world. Dockerfile + compose in repo root. Still two containers today
-  (nginx `client` + `server`) — the item below is the first step of the release
-  track toward collapsing that, not the collapse itself.
-- **One process = one playable URL (issue #20, 2026-08-18):** when a `vite build`
-  of the client exists (`CLIENT_DIST_PATH`, default `client/dist` next to
-  `server/`), the game server serves it over its own HTTP port with SPA
-  index-fallback — `http://host:PORT` is then the whole game, no separate static
-  server. Absent a build, the server logs that it is unbuilt and does nothing
-  else; `pnpm --dir client dev` (Vite) remains the dev path, unchanged. Built on
-  Colyseus's `ServerOptions.express` hook rather than a new `express`
-  dependency — `express` is only ever a peer of `@colyseus/core`/`@colyseus/
-  ws-transport`, never a declared dependency of `@terrace/server`, so the hook
-  is used the way Colyseus itself constructs and hands over the app, never via
-  a direct `import express` from this codebase. The client resolves its own
-  WebSocket endpoint the same way: `ws://<page's own host>` when running from a
-  built bundle (any origin, any port), the pre-#20 `ws://<page hostname>:2567`
-  only in Vite's own dev server. `VITE_SERVER_URL`/`PUBLIC_WS_URL` still
-  override this outright, which is what keeps Docker Compose's two-container
-  path (client and server on different ports) working unchanged.
-- **pnpm workspaces** (owner choice) for the monorepo.
+- SQLite via `better-sqlite3`: periodic world snapshots plus plugin
+  persistence slices. pnpm workspaces for the monorepo.
+- **One process, one URL.** With a built client at `CLIENT_DIST_PATH`
+  (default `client/dist`), the server serves it with SPA fallback on its own
+  port, via Colyseus's `express` hook (no direct `express` dependency). The
+  client connects to its own page host unless `VITE_SERVER_URL` /
+  `PUBLIC_WS_URL` override it. `pnpm --dir client dev` remains the dev path.
+- Docker Compose still runs two containers (nginx `client` + `server`).
 
 ### 3.7 Players & accounts
-- **Deferred** (owner decision, to keep scope tight): v1 is anonymous players with
-  display names. The `Player` object must be designed so an **auth plugin** can slot
-  in later — accounts will likely be a plugin, not core.
+- Anonymous players with display names and a durable client-generated token
+  (`Player.token`) used for per-player chunk ownership. Accounts, if ever,
+  are an auth plugin; `Player` is designed to allow it.
 
 ---
 
@@ -388,3 +288,20 @@ terrace/
 Dated decision records live in `docs/decisions/`, one file per arc (index in
 `docs/decisions/README.md`). They are settled with the owner. This file holds standing
 rules and architecture only; do not append decisions here.
+
+### Decisions made 2026-09-01 (sky coverage stays 0.18; lightning is a world budget, #232)
+
+- **`TARGET_SKY_COVERAGE_FRACTION` stays 0.18.** It is the sky the owner signed
+  off on. The 14-system ceiling binding on a 2048 world with no headroom, and a
+  4096 world getting ~5%, is a ceiling question to be settled by a measurement
+  on a developed world, not by lowering the target.
+- **Lightning is a world-wide budget, not a per-storm rate.** `rollStrikes`
+  shares `STRIKE_BUDGET_PER_SECOND` (0.06/s, the old per-storm value) across
+  living storms as `budget × intensity_i / max(1, Σ intensity)`. A lone storm is
+  therefore unchanged — a dozen bolts over its life — and stacked storms split
+  the budget instead of multiplying it, so `fire`'s ignition cadence no longer
+  follows the system cap or the spawner tuning. Rejected: lowering the per-storm
+  rate to restore the old world total (a lone storm would throw ~6 bolts and stop
+  reading as dangerous); a budget without the `max(1, ·)` floor (a single
+  half-strength storm would be handed the whole budget). Residual, named: a lone
+  storm throws every bolt, so one storm alone feels fiercer than one of three.
