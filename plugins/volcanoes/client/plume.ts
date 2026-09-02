@@ -44,6 +44,12 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { VENT_SUMMIT_WORLD_UNITS } from '../protocol.ts';
+import {
+  PUFF_ALPHA_DISCARD_GLSL,
+  PUFF_BILLBOARD_GLSL,
+  PUFF_INSTANCE_BASE_GLSL,
+  puffMaskGlsl,
+} from '../../../client/src/plugins/kit/puffDeck.ts';
 
 /** Particles in one vent's column. */
 export const PARTICLES_PER_PLUME = 48;
@@ -160,7 +166,7 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
 
     // The instance matrix carries ONLY the vent's position; everything else
     // about where this particle is happens here.
-    vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    ${PUFF_INSTANCE_BASE_GLSL}
 
     // Rise, eased so particles bunch near the MOUTH and thin out at the top —
     // a column dense where it leaves the vent, which is what a real one looks
@@ -204,9 +210,7 @@ const PLUME_VERTEX_SHADER = /* glsl */ `
       ${PLUME_START_SIZE.toFixed(2)},
       ${PLUME_END_SIZE.toFixed(2)},
       life);
-    vec4 viewPosition = viewMatrix * vec4(world, 1.0);
-    viewPosition.xy += position.xy * size;
-    gl_Position = projectionMatrix * viewPosition;
+    ${PUFF_BILLBOARD_GLSL}
   }
 `;
 
@@ -219,9 +223,7 @@ const PLUME_FRAGMENT_SHADER = /* glsl */ `
   void main() {
     // A soft round puff. The quad is authored two units across, so vQuad is the
     // offset from its centre in half-widths and everything past 1 discards.
-    float radius = length(vQuad);
-    float puff = 1.0 - smoothstep(0.15, 1.0, radius);
-    if (puff <= 0.0) discard;
+    ${puffMaskGlsl('0.15')}
 
     // GLOWING AT THE MOUTH, ASH ABOVE IT. The first fifth of the column is
     // lit by what it came out of; past that it is cooling dust. Two colours
@@ -244,7 +246,7 @@ const PLUME_FRAGMENT_SHADER = /* glsl */ `
     // running away to white. Still well under 1 so the column is something you
     // see the sky through, which is what fire's smoke means by a thin volume.
     float alpha = puff * fade * vStrength * 0.30;
-    if (alpha <= 0.004) discard;
+    ${PUFF_ALPHA_DISCARD_GLSL}
     gl_FragColor = vec4(color, alpha);
   }
 `;

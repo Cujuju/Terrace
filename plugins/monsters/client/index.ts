@@ -34,6 +34,7 @@ import {
 } from '../protocol.ts';
 import { createDread, type Dread } from './atmosphere.ts';
 import { dreadSpecOf } from './dread.ts';
+import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { MonsterInterpolator, type InterpolatedMonster } from './interpolation.ts';
 import { createMonsterModels, type MonsterModel, type MonsterModels } from './models.ts';
 import { SEA_SURFACE_WORLD_Y, monsterOriginY, placementRuleOf } from './placement.ts';
@@ -126,10 +127,24 @@ let unsubscribeFrames: (() => void) | null = null;
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void {
   if (models === null || container === null) return;
 
-  for (const [id, monster] of sampled) {
-    const existing = views.get(id);
-    if (existing !== undefined) {
-      if (existing.variant === monster.variant) continue;
+  const bank = models;
+  const scene = container;
+
+  reconcileById(sampled, views, {
+    acquire: (id, monster) => {
+      const model = bank.create(monster.kind, monster.variant);
+      scene.add(model.root);
+      // Each swimmer's weather is derived from its OWN anatomy (dreadSpecOf —
+      // 2026-08-19: a bank authored for Cthulhu's 2.4-cell eye height sat over
+      // the kraken's waterline eyes). A kind with no spec gets no dread, which
+      // is the same set as the non-swimmers.
+      const spec = dreadSpecOf(monster.kind);
+      const dread = spec !== null ? createDread(spec) : null;
+      if (dread !== null) scene.add(dread.root);
+      return { model, dread, phase: id * PHASE_RADIANS_PER_ID, variant: monster.variant };
+    },
+    replace: (_id, monster, existing) => {
+      if (existing.variant === monster.variant) return null;
       // A LIVE ID WHOSE BODY CHANGED. The server never does this — a variant is
       // chosen once at summon and is readonly for the monster's life
       // (server/summoning.ts) — so this is the belt-and-suspenders half of that
@@ -143,44 +158,30 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
       // placement, not of the body, and tearing it down would blink the weather
       // for a change that is invisible on a swimmer anyway (no sea kind has
       // variants).
-      container.remove(existing.model.root);
-      const rebuilt = models.create(monster.kind, monster.variant);
-      views.set(id, {
+      scene.remove(existing.model.root);
+      const rebuilt = bank.create(monster.kind, monster.variant);
+      scene.add(rebuilt.root);
+      return {
         model: rebuilt,
         dread: existing.dread,
         phase: existing.phase,
         variant: monster.variant,
-      });
-      container.add(rebuilt.root);
-      continue;
-    }
-    const model = models.create(monster.kind, monster.variant);
-    container.add(model.root);
-    // Each swimmer's weather is derived from its OWN anatomy (dreadSpecOf —
-    // 2026-08-19: a bank authored for Cthulhu's 2.4-cell eye height sat over
-    // the kraken's waterline eyes). A kind with no spec gets no dread, which
-    // is the same set as the non-swimmers.
-    const spec = dreadSpecOf(monster.kind);
-    const dread = spec !== null ? createDread(spec) : null;
-    if (dread !== null) container.add(dread.root);
-    views.set(id, { model, dread, phase: id * PHASE_RADIANS_PER_ID, variant: monster.variant });
-  }
-
-  for (const [id, view] of views) {
-    if (sampled.has(id)) continue;
-    container.remove(view.model.root);
-    // Geometries and materials are shared per kind and owned by `models`, so
-    // there is nothing to dispose here — dropping the Mesh objects is the whole
-    // teardown. Disposing them here would tear the resource out from under the
-    // next monster of the same kind.
-    //
-    // The dread is the opposite case: it owns its geometry, its materials and
-    // its light outright, so it stays in the scene until it has faded and is
-    // then disposed — by renderFrame, which is the only thing here with a dt.
-    // A kind that wore none leaves nothing behind.
-    if (view.dread !== null) retiringDread.push(view.dread);
-    views.delete(id);
-  }
+      };
+    },
+    release: (_id, view) => {
+      scene.remove(view.model.root);
+      // Geometries and materials are shared per kind and owned by `models`, so
+      // there is nothing to dispose here — dropping the Mesh objects is the whole
+      // teardown. Disposing them here would tear the resource out from under the
+      // next monster of the same kind.
+      //
+      // The dread is the opposite case: it owns its geometry, its materials and
+      // its light outright, so it stays in the scene until it has faded and is
+      // then disposed — by renderFrame, which is the only thing here with a dt.
+      // A kind that wore none leaves nothing behind.
+      if (view.dread !== null) retiringDread.push(view.dread);
+    },
+  });
 }
 
 /**
