@@ -149,7 +149,55 @@ export function rollEvent(random: () => number, ratePerSecond: number, dt: numbe
  */
 export function exponentialWaitSeconds(random: () => number, meanSeconds: number): number {
   if (!(meanSeconds > 0)) return 0;
-  return -Math.log(1 - random()) * meanSeconds;
+  return unitExponential(random) * meanSeconds;
+}
+
+/**
+ * One exponential draw with mean 1 — the arithmetic both exponential forms are
+ * built from, in one place so the `1 - random()` guard cannot be present in one
+ * and missing from the other.
+ *
+ * The `1 - random()` is not superstition: the draw can return exactly 0, and
+ * `log(0)` is -Infinity.
+ */
+function unitExponential(random: () => number): number {
+  return -Math.log(1 - random());
+}
+
+/**
+ * An ERLANG draw — a Gamma with an INTEGER shape `k` — with the given mean.
+ *
+ * WHAT IT IS FOR. An exponential wait (above) is MEMORYLESS: however long a
+ * thing has already been exposed, its remaining wait has the same distribution,
+ * so two identically-exposed things resolve at times that are independent of
+ * one another (coefficient of variation 1). That is right for a world-level
+ * arrival and WRONG for a threshold something accumulates towards — a target
+ * heated by a flame has a history, and the spread of its ignition time should
+ * be narrower than its mean, not equal to it. Summing k exponentials of mean
+ * `mean / k` gives exactly that: the same mean, a coefficient of variation of
+ * 1/√k, and k = 1 reproduces the exponential exactly.
+ *
+ * THE ALGORITHM IS THE SUM OF k EXPONENTIALS, not Marsaglia–Tsang. Both are
+ * standard; the sum is chosen because it is exact for integer k (no rejection
+ * loop, so a seeded stream consumes a FIXED number of draws per sample, which
+ * is what keeps a replay reproducible), needs no normal sampler, and is six
+ * lines. Marsaglia–Tsang's advantage is a non-integer shape and an O(1) draw
+ * count for large k, and no caller here has either need — this repo's only
+ * shape is a small named integer constant.
+ *
+ * `shape` is taken as an integer count of stages: a non-finite or below-one
+ * shape is treated as 1 (the exponential), and a fractional one is FLOORED
+ * rather than silently rounded up, so the sample can never consume more stages
+ * than the caller asked for. A non-positive mean yields 0.
+ */
+export function erlangSample(random: () => number, shape: number, mean: number): number {
+  if (!(mean > 0)) return 0;
+  const stages = Number.isFinite(shape) && shape >= 1 ? Math.floor(shape) : 1;
+  const stageMean = mean / stages;
+
+  let total = 0;
+  for (let stage = 0; stage < stages; stage++) total += unitExponential(random) * stageMean;
+  return total;
 }
 
 /** A uniform draw in [min, max). */

@@ -1005,9 +1005,11 @@ export function resetFireState(): void {
   restoredEntities = [];
   blaze.clear();
   entityBlaze.clear();
-  // Spread remembers where everything was one step ago (./spread.ts). After a
-  // reset or a rollback that memory is of a world that no longer exists, and
-  // the segment from there to here is a path nothing walked.
+  // Spread remembers where everything was one step ago and how much heat every
+  // thing in reach of a flame has taken on (./spread.ts, ./heat.ts). After a
+  // reset or a rollback both are memories of a world that no longer exists: the
+  // segment from there to here is a path nothing walked, and a target that was
+  // nearly alight there must not catch instantly here.
   resetSpreadSweep();
 }
 
@@ -1035,8 +1037,10 @@ function tick(world: WorldApi, dt: number): void {
     // everything one step ago" would span the whole quiet stretch the next
     // time something catches. Dropping it here is what keeps that memory one
     // spread interval old, which is the only age its arithmetic is true for
-    // (./spread.ts). A no-op once it is empty, so a quiet world still pays
-    // only the comparisons.
+    // (./spread.ts). The same call drops the accumulated heat, which is right
+    // for the same reason: nothing was being heated during the quiet stretch.
+    // A no-op once both are empty, so a quiet world still pays only the
+    // comparisons.
     resetSpreadSweep();
     return;
   }
