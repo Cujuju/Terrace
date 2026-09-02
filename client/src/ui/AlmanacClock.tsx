@@ -116,16 +116,16 @@ const SUN_HALO_OPACITY = 0.18;
  *  side — see MOON_MASK below. */
 const MOON_RADIUS = 3.4;
 
-/** The pinned time tag, centred at the bottom of the ground. Sized for the
- *  8.5-unit time in hud.css (.almanac__time) — enlarged with the day caption
- *  on the owner's ask, 2026-09-01, after the first in-world look. */
-const TAG_WIDTH = 40;
+/**
+ * The pinned time tag, centred at the bottom of the ground. It is an HTML
+ * element floated over the SVG, not a drawn rect (owner ask, 2026-09-01):
+ * it wears the same frosted chrome as the title band, and `backdrop-filter`
+ * does not apply to SVG content. The type is 8.5px (hud.css .almanac__time);
+ * the tag is as wide as the time it holds. Its vertical place is set here,
+ * in the painting's own pixels, so the geometry has one home.
+ */
 const TAG_HEIGHT = 12;
-const TAG_RADIUS = 2;
-const TAG_Y = TOTAL_HEIGHT - STRIP_INSET - TAG_HEIGHT - 3;
-/** Where the time's baseline sits inside the tag: 3 units of tag below the
- *  baseline balances the ~3 above the caps at the 8.5-unit type size. */
-const TAG_TEXT_BASELINE_Y = TAG_HEIGHT - 3;
+const TAG_TOP_Y = TOTAL_HEIGHT - STRIP_INSET - TAG_HEIGHT - 3;
 
 /** Caption baselines: weekday in the sky's top-left, day in the ground's
  *  bottom-left. The x inset clears the banner's rounded corner, which
@@ -154,13 +154,12 @@ const GROUND_BOTTOM = '#0c1020';
 const SUN = '#f2c14e';
 const SUN_HOT = '#ffe58f';
 const MOON = '#e6edf7';
-/** The tag's fill is the HUD's own slate so it reads as chrome, not sky. */
-const TAG_FILL = '#0f141b';
+/** The scrim's tint is the HUD's own slate so it reads as chrome, not sky. */
+const SCRIM_TINT = '#0f141b';
 const SKY_OPACITY = 0.8;
 /** The horizon line and the dotted day path, both white at a whisper. */
 const HORIZON_STROKE = 'rgba(255, 255, 255, 0.35)';
 const CURVE_STROKE = 'rgba(255, 255, 255, 0.28)';
-const TAG_STROKE = 'rgba(255, 255, 255, 0.18)';
 
 /** Stars: how many in each night half of the ground, and the seeds that fix
  *  their places so the sky is the same on every render. */
@@ -303,7 +302,6 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
 
   const sunriseX = createMemo(() => SUNRISE_FRACTION * width());
   const sunsetX = createMemo(() => SUNSET_FRACTION * width());
-  const tagX = createMemo(() => width() / 2 - TAG_WIDTH / 2);
   const path = createMemo(() => curvePath(width()));
   const skyStars = createMemo(() => stars(width()));
 
@@ -316,6 +314,7 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
   const moonY = (): number => (isDaytime(phase()) ? BELOW_HORIZON_Y : y());
 
   return (
+    <>
     <svg
       ref={svg}
       class="almanac"
@@ -343,8 +342,8 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
           <stop offset={1} stop-color={GROUND_BOTTOM} />
         </linearGradient>
         <linearGradient id={TITLE_SCRIM_ID} x1="0" y1="0" x2="0" y2="1">
-          <stop offset={0} stop-color={TAG_FILL} stop-opacity={TITLE_SCRIM_OPACITY} />
-          <stop offset={1} stop-color={TAG_FILL} stop-opacity={0} />
+          <stop offset={0} stop-color={SCRIM_TINT} stop-opacity={TITLE_SCRIM_OPACITY} />
+          <stop offset={1} stop-color={SCRIM_TINT} stop-opacity={0} />
         </linearGradient>
         <mask id={MOON_MASK_ID}>
           <rect
@@ -417,20 +416,11 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
         <circle r={MOON_RADIUS} fill={MOON} mask={`url(#${MOON_MASK_ID})`} />
       </g>
 
-      {/* The time, pinned */}
-      <g transform={`translate(${f1(tagX())} ${TAG_Y})`}>
-        <rect
-          width={TAG_WIDTH}
-          height={TAG_HEIGHT}
-          rx={TAG_RADIUS}
-          fill={TAG_FILL}
-          stroke={TAG_STROKE}
-          stroke-width={0.6}
-        />
-        <text class="almanac__time" x={TAG_WIDTH / 2} y={TAG_TEXT_BASELINE_Y}>
-          {props.reading.time}
-        </text>
-      </g>
     </svg>
+    {/* The time, pinned: frosted like the title band (hud.css) */}
+    <span class="almanac__time hud-frost" style={{ top: `${TAG_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
+      {props.reading.time}
+    </span>
+    </>
   );
 }
