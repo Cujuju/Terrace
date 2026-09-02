@@ -1,14 +1,16 @@
-// Structural parse of weather's `strikes` world-event (plugins/weather/server/
-// index.ts, emitted as 'weather:strikes' via WorldApi.emitEvent), scoped to
-// exactly what fire needs from it: the cells bolts landed on.
+// Structural parse of the thunderstorm plugin's `strikes` world-event
+// (plugins/thunderstorm/server/index.ts, emitted as 'thunderstorm:strikes' via
+// WorldApi.emitEvent), scoped to exactly what fire needs from it: the cells
+// bolts landed on. It was `weather:strikes` until the 2026-09-02 split moved
+// lightning to the kind that has it (#283); the payload is unchanged.
 //
-// AN OWN COPY, not an import from weather's protocol.ts — every plugin builds
+// AN OWN COPY, not an import from that plugin's protocol.ts — every plugin builds
 // and runs with every other plugin deleted (server/src/plugins/types.ts's
 // emitEvent doc comment, and the by-name subscription rule it states). flora
 // keeps its own copy of structures' event shape for the same reason
 // (plugins/flora/server/structures-event.ts).
 //
-// The system id weather puts on each strike is READ AND DISCARDED here: it
+// The system id the sender puts on each strike is READ AND DISCARDED here: it
 // exists so a client can find the rig to flash, and fire has no rigs. Only the
 // cell matters.
 
