@@ -85,10 +85,10 @@ export const MUDSLIDES_DEV_PERIOD_ENV = 'MUDSLIDES_DEV_FORCE_PERIOD_SECONDS';
 export const MUDSLIDES_DEV_SLOW_ENV = 'MUDSLIDES_DEV_SLOW';
 
 // The reach — how far out a forced site may be looked for, and how coarsely —
-// is the plugin kit's (server/src/plugins/kit/devSite.ts), because storms'
-// force-spawn wanted exactly the same two numbers for exactly the same reason.
-// THE SCAN ITSELF STAYED HERE, and `scanForSite` below says why it is a grid
-// scan and not storms' ring of spokes.
+// is the plugin kit's (server/src/plugins/kit/devSite.ts), because the rotating-
+// storm plugins' force-spawn wanted exactly the same two numbers for exactly the
+// same reason. THE SCAN ITSELF STAYED HERE, and `scanForSite` below says why it
+// is a grid scan and not the kit's ring of spokes.
 export { DEV_SEARCH_RADIUS_CELLS, DEV_SEARCH_STEP_CELLS };
 
 /**
