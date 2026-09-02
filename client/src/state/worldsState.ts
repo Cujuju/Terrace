@@ -71,6 +71,15 @@ const [worldPanelOpen, setWorldPanelOpen] = createSignal(false);
  */
 const [adminPanelOpen, setAdminPanelOpen] = createSignal(false);
 
+/**
+ * The action the operator picked and is now AIMING (owner, 2026-09-01): the
+ * panel closes, the next press on the ground fires it there. Null when
+ * nothing is armed. Here rather than in the panel because the panel is
+ * unmounted while the aim happens — the canvas listener (main.tsx) and the
+ * aim banner (ui/AdminAim.tsx) are what read it.
+ */
+const [armedAction, setArmedAction] = createSignal<WorldPluginAction | null>(null);
+
 const [worlds, setWorlds] = createSignal<readonly WorldSummary[]>([]);
 const [archivedWorlds, setArchivedWorlds] = createSignal<readonly WorldSummary[]>([]);
 
@@ -160,11 +169,13 @@ export {
   activeWorldId,
   adminPanelOpen,
   archivedWorlds,
+  armedAction,
   pendingRestartSeconds,
   setPendingRestartSeconds,
   pendingSwitch,
   setPendingSwitch,
   setAdminPanelOpen,
+  setArmedAction,
   setWorldAdminKey,
   setWorldFeedback,
   setWorldLoaded,

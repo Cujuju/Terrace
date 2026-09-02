@@ -5,14 +5,16 @@
 // loop starts immediately, so the app is a usable (if empty) sea before any
 // network activity. Nothing here blocks on the server being reachable.
 
+import { createEffect } from 'solid-js';
 import { render } from 'solid-js/web';
+import { Raycaster, Vector2 } from 'three';
 import { connect, type ConnectionStatus } from './net/connection.ts';
 import { bindCameraControls } from './input/cameraBindings.ts';
 import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
-import { worldPointToCell } from './terrain/picking.ts';
+import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
 import {
@@ -29,8 +31,12 @@ import {
   applyWorldListing,
   applyWorldPluginListing,
   applyWorldSwitchNotice,
+  armedAction,
+  setArmedAction,
   setPendingRestartSeconds,
+  setWorldFeedback,
   setWorldLoaded,
+  worldAdminKey,
 } from './state/worldsState.ts';
 import { BRUSH_PREVIEW_DRAW_OBJECTS, createBrushPreview } from './render/brushPreview.ts';
 import { SCULPT_TOOL_ID, activeToolId } from './plugins/toolbar.ts';
@@ -50,6 +56,46 @@ if (canvas === null || hudRoot === null) {
 
 const viewport = createViewport(canvas);
 const world = createWorld(viewport);
+
+// THE PLACEMENT LISTENER — where an armed admin action lands (owner,
+// 2026-09-01; ui/AdminPanel.tsx arms, ui/AdminAim.tsx explains). Capture
+// phase, and registered BEFORE the plugin host's capture listener below so
+// it is consulted first: while an action is armed the press belongs to it,
+// not to a relic under the pointer, the brush or the camera. Only the
+// primary button — a right-drag mid-aim still orbits, so the operator can
+// line the shot up. The pick is the same height-field ray the brush uses.
+const placementRaycaster = new Raycaster();
+const placementNdc = new Vector2();
+const onPlacementPointerDown = (event: PointerEvent): void => {
+  const armed = armedAction();
+  if (armed === null || event.button !== 0) return;
+  event.stopImmediatePropagation();
+  event.preventDefault();
+  const device = pointerToNdc(event.clientX, event.clientY, canvas.getBoundingClientRect());
+  if (device === null) return;
+  placementNdc.set(device.x, device.y);
+  placementRaycaster.setFromCamera(placementNdc, viewport.camera);
+  const pick = world.pickCell(placementRaycaster.ray.origin, placementRaycaster.ray.direction);
+  // A miss (the sky, fog) leaves the action armed: the operator meant to
+  // aim, and has not yet.
+  if (pick === null) return;
+  setArmedAction(null);
+  setWorldFeedback({ kind: 'working' });
+  connection.sendWorldAdmin({
+    type: 'worldPluginAct',
+    key: worldAdminKey(),
+    plugin: armed.plugin,
+    action: armed.key,
+    x: pick.x,
+    y: pick.y,
+  });
+};
+canvas.addEventListener('pointerdown', onPlacementPointerDown, { capture: true });
+// A crosshair while aiming, so the arm is visible at the pointer and not
+// only in the banner.
+createEffect(() => {
+  canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
+});
 // The camera's ground floor (render/cameraClearance.ts). Wired here because
 // this is the only place that holds both halves: the viewport owns the camera
 // and knows nothing of terrain, the world owns the height field and knows
@@ -271,17 +317,6 @@ render(
       }}
       worlds={{
         send: (message) => connection.sendWorldAdmin(message),
-      }}
-      // The cell under the orbit target — the inverse of scene.ts's
-      // focusWorld, which puts the target at (cell × CELL_WORLD_SIZE). Read
-      // at call time, never cached: the camera moves every frame.
-      focusCell={() => {
-        if (world.worldSize() === 0) return null;
-        const target = viewport.controls.target;
-        return {
-          x: Math.round(target.x / CELL_WORLD_SIZE),
-          y: Math.round(target.z / CELL_WORLD_SIZE),
-        };
       }}
     />
   ),

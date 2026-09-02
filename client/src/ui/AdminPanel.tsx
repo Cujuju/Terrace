@@ -4,8 +4,8 @@
 // mean is minutes to hours — an eruption, a slide, a cyclone, the kraken. That
 // is right for a game and useless for looking at the thing you just wrote.
 // This panel lists every action the installed server plugins DECLARE
-// (server plugins/types.ts, PluginActionDeclaration) and fires one on a
-// click, sited where the camera is looking. It is gated by the same
+// (server plugins/types.ts, PluginActionDeclaration) and arms one on a
+// click, to be fired where the next ground press lands. It is gated by the same
 // world-admin key as the Worlds panel, because it is the same kind of thing:
 // an operator reaching into the world.
 //
@@ -15,10 +15,12 @@
 // the plugin's NAME so every plugin gets a stable accent without core keeping
 // a palette of plugins. The server refuses an action nobody declares.
 //
-// WHERE THE EVENT LANDS. The server never learns where a camera points, so
-// the request carries the cell under the orbit target (`props.focusCell`),
-// and the panel shows that cell in its header so the operator can see where
-// the next event will be aimed before pressing anything.
+// WHERE THE EVENT LANDS — AIMED, IN TWO STEPS (owner, 2026-09-01). Pressing a
+// card does not fire it: it ARMS it (state/worldsState.ts's armedAction) and
+// closes this panel, and the next press on the ground fires it at the cell
+// under the pointer (main.tsx's placement listener). Firing at "wherever the
+// camera points" was tried first and rejected: the panel's own button sits
+// in a corner, so reaching it moves the view off the thing you meant.
 //
 // SOLID REACTIVITY: every reactive value is read by calling its accessor at
 // the point of use — see Hud.tsx's header. There are no frozen consts here.
@@ -28,6 +30,7 @@ import type { WorldAdminRequestMessage, WorldPluginAction } from '@terrace/share
 import {
   activeWorldId,
   setAdminPanelOpen,
+  setArmedAction,
   setWorldAdminKey,
   setWorldFeedback,
   worldAdminKey,
@@ -37,12 +40,6 @@ import {
 } from '../state/worldsState.ts';
 import type { WorldActions } from './WorldManager.tsx';
 import { refusalText } from './worldAdminCopy.ts';
-
-/** A cell of the live world, as the camera's orbit target lands on one. */
-export interface FocusCell {
-  readonly x: number;
-  readonly y: number;
-}
 
 /**
  * A stable hue for a plugin, from its name — so "volcanoes" is always the
@@ -82,14 +79,7 @@ function isActionFeedback(feedback: WorldFeedback): boolean {
   return (feedback.kind === 'done' || feedback.kind === 'refused') && feedback.action === 'actPlugin';
 }
 
-export function AdminPanel(props: {
-  actions: WorldActions;
-  /** The cell under the camera's orbit target; null before the world arrives. */
-  focusCell: () => FocusCell | null;
-}): JSX.Element {
-  // Which card was pressed last, as `plugin:key`, so it can show the working
-  // state and then the receipt beside the thing that produced it.
-  const [pressed, setPressed] = createSignal<string | null>(null);
+export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
   // Whether the operator has submitted a key from THIS panel (or arrived with
   // one already typed in the Worlds panel) — what the listing effect waits on.
   const [unlocked, setUnlocked] = createSignal(worldAdminKey() !== '');
@@ -130,38 +120,20 @@ export function AdminPanel(props: {
   const listedForLiveWorld = (): boolean =>
     activeWorldId() !== null && worldPlugins()?.id === activeWorldId();
 
-  const fire = (action: WorldPluginAction): void => {
-    const cell = props.focusCell();
-    if (cell === null) return;
-    setPressed(`${action.plugin}:${action.key}`);
-    send({
-      type: 'worldPluginAct',
-      key: worldAdminKey(),
-      plugin: action.plugin,
-      action: action.key,
-      x: cell.x,
-      y: cell.y,
-    });
+  /** Arms the action and gets out of the way; the ground press does the rest. */
+  const arm = (action: WorldPluginAction): void => {
+    setArmedAction(action);
+    setAdminPanelOpen(false);
   };
 
   return (
     <div class="restore-overlay" role="dialog" aria-label="Admin: world events">
       <div class="restore-sheet admin-sheet">
-        {/* HEADER: an eyebrow naming the mode, the title, the aim readout,
-            and the close — one row, the aim on the right where the eye goes
-            after reading the title. */}
+        {/* HEADER: an eyebrow naming the mode, the title, and the close. */}
         <header class="admin-header">
           <div class="admin-title-block">
             <span class="admin-eyebrow">Admin</span>
             <h2 class="admin-title">World events</h2>
-          </div>
-          <div class="admin-aim" title="Events land at the cell under the centre of your view. Move the camera to aim.">
-            <span class="admin-aim-label">Aimed at</span>
-            <span class="admin-aim-cell">
-              <Show when={props.focusCell()} fallback={'—'}>
-                {(cell) => `${cell().x}, ${cell().y}`}
-              </Show>
-            </span>
           </div>
           <button
             type="button"
@@ -175,8 +147,9 @@ export function AdminPanel(props: {
         </header>
 
         <p class="admin-lede">
-          Fire the events that would otherwise wait on chance. Each lands near
-          where you are looking, and behaves exactly as the real thing would.
+          Fire the events that would otherwise wait on chance. Pick one, then
+          click the ground where it should happen; it behaves exactly as the
+          real thing would.
         </p>
 
         {/* THE KEY, only until it has been accepted. A password field so it is
@@ -251,7 +224,7 @@ export function AdminPanel(props: {
         </Show>
 
         {/* THE CARDS, grouped by plugin. Each group gets a hue from its name
-            (hueFor) — an accent bar and a tinted glow — so the eye can find
+            (hueFor) — a swatch and a tinted hover glow — so the eye can find
             "the storms ones" without reading, and every card is one button:
             the whole surface fires, not a small control inside it. */}
         <Show when={listedForLiveWorld()}>
@@ -265,27 +238,18 @@ export function AdminPanel(props: {
                   </h3>
                   <div class="admin-cards">
                     <For each={group.actions}>
-                      {(action) => {
-                        const id = `${action.plugin}:${action.key}`;
-                        const working = (): boolean =>
-                          pressed() === id && worldFeedback().kind === 'working';
-                        return (
-                          <button
-                            type="button"
-                            class="admin-card"
-                            classList={{ working: working() }}
-                            disabled={props.focusCell() === null || worldFeedback().kind === 'working'}
-                            title={action.description}
-                            onClick={() => fire(action)}
-                          >
-                            <span class="admin-card-label">{action.label}</span>
-                            <span class="admin-card-description">{action.description}</span>
-                            <span class="admin-card-go" aria-hidden="true">
-                              {working() ? '…' : '→'}
-                            </span>
-                          </button>
-                        );
-                      }}
+                      {(action) => (
+                        <button
+                          type="button"
+                          class="admin-card"
+                          title={`${action.description} Click, then click the ground.`}
+                          onClick={() => arm(action)}
+                        >
+                          <span class="admin-card-label">{action.label}</span>
+                          <span class="admin-card-description">{action.description}</span>
+                          <span class="admin-card-go" aria-hidden="true">→</span>
+                        </button>
+                      )}
                     </For>
                   </div>
                 </section>
