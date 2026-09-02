@@ -42,6 +42,7 @@
 // economy. One warning is logged, once. That is the right failure mode: a
 // self-hoster who removed the mana plugin removed mana, not relics.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 import type { ManaPerk } from './perk.ts';
 
@@ -70,12 +71,6 @@ export const MANA_UNAVAILABLE_WARNING =
   '[relics] mana plugin not available — mana perks (Azure Heart, Spring of Aether) ' +
   'will be granted but have no effect';
 
-/** The resolved API, or null when no usable mana is running in this world. */
-let manaApi: ManaPerkApi | null = null;
-
-/** True once the "mana is missing" warning has been emitted. */
-let warned = false;
-
 /**
  * Desired perks, by player id — rule 3 above. This map is the source of truth
  * even when mana IS here, because it is also what gets replayed to a mana that
@@ -91,15 +86,26 @@ function asManaPerkApi(module: SiblingModule | null): ManaPerkApi | null {
   return module as unknown as ManaPerkApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  // console rather than the server's logger: plugins do not import server
-  // internals at runtime (mana and reveal take the contract as `import type`
-  // only), and a plugin that reached into server/src/log.ts would be a runtime
-  // coupling to core that the plugin API is meant to make unnecessary.
-  console.warn(MANA_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<ManaPerkApi>({
+  pluginName: MANA_PLUGIN_NAME,
+  duckType: asManaPerkApi,
+  unavailableWarning: MANA_UNAVAILABLE_WARNING,
+  // Rule 3, buffer-don't-drop: what this plugin already wanted said,
+  // replayed into a sibling that has only just started running.
+  onResolved: (api): void => {
+    flushDesiredPerks(api);
+  },
+});
 
 /** Pushes every buffered perk into a freshly-resolved mana. */
 function flushDesiredPerks(target: ManaPerkApi): void {
@@ -120,24 +126,12 @@ function flushDesiredPerks(target: ManaPerkApi): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadManaBridge(world: WorldApi): void {
-  const resolved = asManaPerkApi(world.sibling(MANA_PLUGIN_NAME));
-  if (resolved === null) {
-    // The folder is there but does not export the perk API: an older mana,
-    // or a fork. Same degraded path as no folder at all.
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    manaApi = null;
-    warnUnavailable();
-    return;
-  }
-  manaApi = resolved;
-  flushDesiredPerks(resolved);
+  bridge.load(world);
 }
 
 /** Whether perks are actually reaching a mana economy right now. */
 export function isManaAvailable(): boolean {
-  return manaApi !== null;
+  return bridge.api() !== null;
 }
 
 /**
@@ -147,7 +141,7 @@ export function isManaAvailable(): boolean {
  */
 export function applyManaPerk(playerId: string, perk: ManaPerk): void {
   desiredPerks.set(playerId, perk);
-  manaApi?.setManaPerk(playerId, perk);
+  bridge.api()?.setManaPerk(playerId, perk);
 }
 
 /**
@@ -157,12 +151,11 @@ export function applyManaPerk(playerId: string, perk: ManaPerk): void {
  */
 export function revokeManaPerk(playerId: string): void {
   desiredPerks.delete(playerId);
-  manaApi?.clearManaPerk(playerId);
+  bridge.api()?.clearManaPerk(playerId);
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetManaBridge(): void {
-  manaApi = null;
-  warned = false;
+  bridge.reset();
   desiredPerks.clear();
 }

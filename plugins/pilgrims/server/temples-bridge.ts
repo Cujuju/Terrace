@@ -16,6 +16,7 @@
 // who removed the temples plugin removed the building, not a working pilgrims
 // plugin.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** Where the temple stands, structurally typed (never imported). */
@@ -59,20 +60,27 @@ const TEMPLES_PLUGIN_NAME = 'temples';
 export const TEMPLES_UNAVAILABLE_WARNING =
   '[pilgrims] temples plugin not available — no temple means no settlers';
 
-let templesApi: TemplesApi | null = null;
-let warned = false;
-
 function asTemplesApi(module: SiblingModule | null): TemplesApi | null {
   if (module === null) return null;
   if (typeof module.standingTemple !== 'function') return null;
   return module as unknown as TemplesApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(TEMPLES_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<TemplesApi>({
+  pluginName: TEMPLES_PLUGIN_NAME,
+  duckType: asTemplesApi,
+  unavailableWarning: TEMPLES_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves temples through the host, from onWorldCreate.
@@ -88,16 +96,7 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadTemplesBridge(world: WorldApi): void {
-  const resolved = asTemplesApi(world.sibling(TEMPLES_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    templesApi = null;
-    warnUnavailable();
-    return;
-  }
-  templesApi = resolved;
+  bridge.load(world);
 }
 
 /**
@@ -106,11 +105,10 @@ export function loadTemplesBridge(world: WorldApi): void {
  * sim — nobody walks out today — so they are deliberately one answer.
  */
 export function bridgedTemple(): BridgedTemple | null {
-  return templesApi?.standingTemple() ?? null;
+  return bridge.api()?.standingTemple() ?? null;
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetTemplesBridge(): void {
-  templesApi = null;
-  warned = false;
+  bridge.reset();
 }

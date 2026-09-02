@@ -16,6 +16,7 @@
 // BUFFER, DON'T DROP (rule 3): the model is registered into a structures module
 // that finishes loading after this plugin's onWorldCreate has already run.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of structures this plugin uses — deliberately one function. */
@@ -36,9 +37,6 @@ const STRUCTURES_PLUGIN_NAME = 'structures';
 export const STRUCTURES_UNAVAILABLE_WARNING =
   '[populous] structures plugin not available (or too old for the growth-model seam) — nothing to grow';
 
-let structuresApi: StructuresGrowthApi | null = null;
-let warned = false;
-
 /** The model this plugin wants registered — rule 3's buffer. */
 let desiredModel: unknown = null;
 
@@ -48,11 +46,26 @@ function asStructuresGrowthApi(module: SiblingModule | null): StructuresGrowthAp
   return module as unknown as StructuresGrowthApi;
 }
 
-function warnUnavailable(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(STRUCTURES_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<StructuresGrowthApi>({
+  pluginName: STRUCTURES_PLUGIN_NAME,
+  duckType: asStructuresGrowthApi,
+  unavailableWarning: STRUCTURES_UNAVAILABLE_WARNING,
+  // Rule 3, buffer-don't-drop: what this plugin already wanted said,
+  // replayed into a sibling that has only just started running.
+  onResolved: (api): void => {
+    if (desiredModel !== null) api.setGrowthModel(desiredModel);
+  },
+});
 
 /**
  * Resolves structures through the host, from onWorldCreate.
@@ -68,23 +81,13 @@ function warnUnavailable(): void {
  * picked up then. The warning still happens at most once.
  */
 export function loadStructuresBridge(world: WorldApi): void {
-  const resolved = asStructuresGrowthApi(world.sibling(STRUCTURES_PLUGIN_NAME));
-  if (resolved === null) {
-    // CLEARED, not left standing: this runs again on every reopen, and a
-    // sibling that WAS running and is not any more (the operator disabled it)
-    // must stop being reachable through a stale reference here.
-    structuresApi = null;
-    warnUnavailable();
-    return;
-  }
-  structuresApi = resolved;
-  if (desiredModel !== null) resolved.setGrowthModel(desiredModel);
+  bridge.load(world);
 }
 
 /** Records and forwards the model this plugin wants driving the board. */
 export function registerGrowthModel(model: unknown): void {
   desiredModel = model;
-  structuresApi?.setGrowthModel(model);
+  bridge.api()?.setGrowthModel(model);
 }
 
 /**
@@ -99,12 +102,11 @@ export function registerGrowthModel(model: unknown): void {
  */
 export function clearGrowthModel(): void {
   desiredModel = null;
-  structuresApi?.setGrowthModel(null);
+  bridge.api()?.setGrowthModel(null);
 }
 
 /** Test seam: drops all bridge state so a suite can start from zero. */
 export function resetStructuresBridge(): void {
-  structuresApi = null;
-  warned = false;
+  bridge.reset();
   desiredModel = null;
 }

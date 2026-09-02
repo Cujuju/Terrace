@@ -25,6 +25,7 @@
 // and a plugin that invented them anyway would be quietly overriding their
 // choice.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /**
@@ -63,9 +64,6 @@ interface WeatherSystemsApi {
 export const WEATHER_UNAVAILABLE_WARNING =
   '[storms] weather plugin not available — no tornadoes will form (cyclones are unaffected)';
 
-let weatherApi: WeatherSystemsApi | null = null;
-let warned = false;
-
 /** Duck-types the sibling's module namespace into the API we need. */
 function asWeatherApi(module: SiblingModule | null): WeatherSystemsApi | null {
   if (module === null) return null;
@@ -73,11 +71,21 @@ function asWeatherApi(module: SiblingModule | null): WeatherSystemsApi | null {
   return module as unknown as WeatherSystemsApi;
 }
 
-function warnOnce(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(WEATHER_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<WeatherSystemsApi>({
+  pluginName: WEATHER_PLUGIN_NAME,
+  duckType: asWeatherApi,
+  unavailableWarning: WEATHER_UNAVAILABLE_WARNING,
+});
 
 /**
  * Resolves weather through the host, from onWorldCreate.
@@ -89,8 +97,7 @@ function warnOnce(): void {
  * picked up on the reopen.
  */
 export function loadWeatherBridge(world: WorldApi): void {
-  weatherApi = asWeatherApi(world.sibling(WEATHER_PLUGIN_NAME));
-  if (weatherApi === null) warnOnce();
+  bridge.load(world);
 }
 
 /**
@@ -105,8 +112,9 @@ export function loadWeatherBridge(world: WorldApi): void {
  * would propagate straight into a funnel's position and put a tornado nowhere.
  */
 export function stormCells(): readonly WeatherCell[] {
-  if (weatherApi === null) return [];
-  const systems = weatherApi.livingSystems();
+  const api = bridge.api();
+  if (api === null) return [];
+  const systems = api.livingSystems();
   if (!Array.isArray(systems)) return [];
   const cells: WeatherCell[] = [];
   for (const system of systems) {
@@ -121,6 +129,5 @@ export function stormCells(): readonly WeatherCell[] {
 
 /** Test seam: forgets the resolved sibling and the warning. */
 export function resetWeatherBridge(): void {
-  weatherApi = null;
-  warned = false;
+  bridge.reset();
 }

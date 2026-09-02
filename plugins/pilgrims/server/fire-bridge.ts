@@ -14,6 +14,7 @@
 // DEGRADED BEHAVIOUR when fire is absent: peeps do not burn. One warning,
 // once.
 
+import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
 
 /** The slice of fire this plugin uses — a registration, and its withdrawal. */
@@ -46,12 +47,6 @@ const FIRE_PLUGIN_NAME = 'fire';
 export const FIRE_UNAVAILABLE_WARNING =
   '[pilgrims] fire plugin not available — peeps will not burn';
 
-/** The resolved API, or null when fire is not running in this session. */
-let fireApi: FireFuelApi | null = null;
-
-/** True once the "fire is missing" warning has been emitted. */
-let warned = false;
-
 /**
  * RULE 3'S BUFFER — the registration this plugin wants fire to have, held until
  * fire exists. One slot, not a queue: there is only ever one answer to "what of
@@ -71,11 +66,26 @@ function asFireApi(module: SiblingModule | null): FireFuelApi | null {
   return module as unknown as FireFuelApi;
 }
 
-function warnOnce(): void {
-  if (warned) return;
-  warned = true;
-  console.warn(FIRE_UNAVAILABLE_WARNING);
-}
+/**
+ * The sibling, resolved through the host — the MECHANISM only: the name lookup,
+ * the warn-once, the re-resolve on every load, the clear on close.
+ *
+ * It lives in core's plugin kit (server/src/plugins/kit/bridge.ts) because
+ * nineteen bridges each carried a copy of it. What stays HERE is the duck-typed
+ * interface above and the accessors below, because those are the CONTRACT
+ * between two independently-deletable folders — the thing that has to survive
+ * one side being absent or older.
+ */
+const bridge = createSiblingBridge<FireFuelApi>({
+  pluginName: FIRE_PLUGIN_NAME,
+  duckType: asFireApi,
+  unavailableWarning: FIRE_UNAVAILABLE_WARNING,
+  // Rule 3, buffer-don't-drop: what this plugin already wanted said,
+  // replayed into a sibling that has only just started running.
+  onResolved: (api): void => {
+    if (pendingSource !== null) api.registerEntityFuel(pendingSource);
+  },
+});
 
 /**
  * Resolves fire through the host, from onWorldCreate.
@@ -88,16 +98,11 @@ function warnOnce(): void {
  *
  * RE-RESOLVED ON EVERY CALL, deliberately: onWorldCreate replays on a reopen
  * and on a rollback, and a fire the operator has just enabled for this world
- * must be picked up then. `warnOnce` keeps a permanently absent fire to one
+ * must be picked up then. the bridge's warn-once keeps a permanently absent fire to one
  * line however often that happens.
  */
 export function loadFireBridge(world: WorldApi): void {
-  fireApi = asFireApi(world.sibling(FIRE_PLUGIN_NAME));
-  if (fireApi === null) {
-    warnOnce();
-    return;
-  }
-  if (pendingSource !== null) fireApi.registerEntityFuel(pendingSource);
+  bridge.load(world);
 }
 
 /**
@@ -105,8 +110,9 @@ export function loadFireBridge(world: WorldApi): void {
  * loaded, on arrival otherwise. Callers never branch on "is it loaded yet".
  */
 export function registerPilgrimsFuel(source: NamedFuelSource): void {
+  const api = bridge.api();
   pendingSource = source;
-  if (fireApi !== null) fireApi.registerEntityFuel(source);
+  if (api !== null) api.registerEntityFuel(source);
 }
 
 /**
@@ -115,17 +121,17 @@ export function registerPilgrimsFuel(source: NamedFuelSource): void {
  * reasoning for why the BRIDGE owns withdrawal rather than the plugin.
  */
 export function closeFireBridge(): void {
+  const api = bridge.api();
   // A no-op when fire never resolved, and harmless when fire has already
   // dropped every source in its own close hook: withdrawal is BY NAME, and a
   // name that is not registered is not an error.
-  if (fireApi !== null && pendingSource !== null) fireApi.unregisterEntityFuel(pendingSource.name);
-  fireApi = null;
+  if (api !== null && pendingSource !== null) api.unregisterEntityFuel(pendingSource.name);
+  bridge.clear();
   pendingSource = null;
 }
 
 /** Test seam: forgets the resolved sibling, the buffer and the warning. */
 export function resetFireBridge(): void {
-  fireApi = null;
-  warned = false;
+  bridge.reset();
   pendingSource = null;
 }
