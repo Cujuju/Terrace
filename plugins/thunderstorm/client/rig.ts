@@ -37,6 +37,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   PointLight,
+  type Material,
 } from 'three';
 import {
   buildHazeGeometry,
@@ -49,6 +50,13 @@ import {
   DISC_RENDER_ORDER,
   type DiscRig,
 } from '../../../client/src/plugins/kit/discRig.ts';
+import {
+  createCumulusDeck,
+  CUMULUS_DECK_DRAW_OBJECTS,
+  puffsForCoverage,
+  type CumulusDeck,
+} from '../../../client/src/plugins/kit/cumulusDeck.ts';
+import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import type { PrecipitationProfile } from '../../../client/src/plugins/kit/precipitation.ts';
 import type { InterpolatedDisc } from '../../../client/src/plugins/kit/discInterpolator.ts';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
@@ -87,6 +95,41 @@ export const THUNDERSTORM_PROFILE: PrecipitationProfile = {
   swayCells: 0,
   swayHz: 0,
 };
+
+/**
+ * A thunderstorm puff's half-width, as a fraction of the mass's radius.
+ *
+ * 0.12 — the same as rain's, and deliberately so: what makes a thunderhead read
+ * as one is that it is DARK and that it lights itself, not that its puffs are a
+ * different size. The COUNT follows from it (`puffsForCoverage`): 139 puffs.
+ */
+export const THUNDERSTORM_PUFF_SIZE_FRACTION = 0.12;
+
+/** Puffs in one storm's deck — derived from the size, never chosen. */
+export const THUNDERSTORM_PUFFS_PER_MASS = puffsForCoverage(THUNDERSTORM_PUFF_SIZE_FRACTION);
+
+/**
+ * The thunderhead's own colour, before any of the scene's light reaches it.
+ *
+ * A DARK SLATE, and much darker than rain's grey: this is the one deck in the
+ * set whose whole picture is a black cloud with light inside it. Because the
+ * material is Lambert-lit, that flash reaches it for free — the storm's own
+ * PointLight (STORM_FLASH_LIGHT_BANK_SIZE above) now lights the cloud it comes
+ * out of, which is the reason the decks are lit rather than shaded by a
+ * hand-fed daylight number.
+ */
+export const THUNDERSTORM_DECK_COLOR = 0x51565f;
+
+/**
+ * How much of the light a thunderhead takes off the ground under it, at full
+ * intensity.
+ *
+ * 0.45 — nearly half, and by far the deepest of the three. A thunderstorm is
+ * the kind a player is meant to see coming across the map, and the shadow is
+ * the first thing that arrives. It stops well short of the cyclone's global
+ * gloom, which darkens the whole world rather than a disc of it.
+ */
+export const THUNDERSTORM_SHADE_DARKNESS = 0.45;
 
 /**
  * How many storm flash lights exist IN THE SCENE, for the plugin's whole life.
@@ -198,12 +241,16 @@ function createThunderstormRig(
   hazeGeometry: BufferGeometry,
   boltGeometry: BufferGeometry,
   lentLight: PointLight | null,
+  deck: CumulusDeck,
+  applyRevealClip: (material: Material, label: string) => void,
 ): ThunderstormRig {
   const body: DiscRig = createDiscRig({
     hazeGeometry,
     hazeStrength: PRECIPITATION_HAZE_SCALE,
     profile: THUNDERSTORM_PROFILE,
     name: `${THUNDERSTORM_PLUGIN_NAME}:system`,
+    deck,
+    applyRevealClip,
   });
   const root = body.root;
 
@@ -243,6 +290,15 @@ function createThunderstormRig(
    * and so its jag is authored once, in its own space, instead of being rebuilt
    * per strike.
    */
+  // THE ELECTRICAL PARTS ARE CLIPPED TOO, and they are this rig's own
+  // materials rather than the body's — `createDiscRig` above clipped the column
+  // and the haze it built, and knows nothing about a bolt. A bolt over floor
+  // this client was never sent is exactly the geometry #284 is about; the flash
+  // POINT LIGHT is not geometry and cannot be clipped, which is stated in
+  // ./lightning.ts.
+  applyRevealClip(glowMaterial, `${THUNDERSTORM_PLUGIN_NAME} glow`);
+  applyRevealClip(boltMaterial, `${THUNDERSTORM_PLUGIN_NAME} bolt`);
+
   const boltPivot = new Group();
   const bolt = new Mesh(boltGeometry, boltMaterial);
   bolt.visible = false;
@@ -321,6 +377,10 @@ function createThunderstormRig(
 
     reset(): void {
       lightning.reset();
+      // The rig is going back to the pool, so its slot in the plugin's deck
+      // must be put out with it — the deck is drawn from uniforms, not from
+      // this rig's root, so unparenting the root leaves the cloud in the sky.
+      body.park();
       // The light stays in the scene after this rig's root has left it, so a rig
       // released mid-flash must put its light out itself — nothing else will
       // update it until a later storm acquires this rig.
@@ -368,7 +428,10 @@ export interface DryBoltRig {
   dispose(): void;
 }
 
-export function createDryBoltRig(boltGeometry: BufferGeometry): DryBoltRig {
+export function createDryBoltRig(
+  boltGeometry: BufferGeometry,
+  applyRevealClip: (material: Material, label: string) => void,
+): DryBoltRig {
   const root = new Group();
   root.name = `${THUNDERSTORM_PLUGIN_NAME}:dry-bolt`;
 
@@ -380,6 +443,8 @@ export function createDryBoltRig(boltGeometry: BufferGeometry): DryBoltRig {
     blending: AdditiveBlending,
     depthWrite: false,
   });
+  applyRevealClip(material, `${THUNDERSTORM_PLUGIN_NAME} dry bolt`);
+
   const bolt = new Mesh(boltGeometry, material);
   bolt.visible = false;
   bolt.renderOrder = DISC_RENDER_ORDER;
@@ -435,6 +500,8 @@ export interface ThunderstormRigs {
    * point-light count is constant for the plugin's life.
    */
   readonly lightBank: Group;
+  /** One instanced draw for every storm's cloud; parented at attach. */
+  readonly deck: CumulusDeck;
   /** The world's single dry bolt — lightning that belongs to no system. */
   readonly dryBolt: DryBoltRig;
   acquire(): ThunderstormRig;
@@ -442,10 +509,22 @@ export interface ThunderstormRigs {
   dispose(): void;
 }
 
-export function createThunderstormRigs(): ThunderstormRigs {
+export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
   const hazeGeometry = buildHazeGeometry();
   const boltGeometry = buildBoltGeometry();
-  const dryBolt = createDryBoltRig(boltGeometry);
+  const clip = (material: Material, label: string): void => {
+    ctx.applyRevealClip(material, label);
+  };
+  const dryBolt = createDryBoltRig(boltGeometry, clip);
+
+  const deck = createCumulusDeck({
+    maxMasses: MAX_ACTIVE_SYSTEMS,
+    puffSizeFraction: THUNDERSTORM_PUFF_SIZE_FRACTION,
+    color: THUNDERSTORM_DECK_COLOR,
+    name: `${THUNDERSTORM_PLUGIN_NAME}:deck`,
+    renderOrder: DISC_RENDER_ORDER,
+    applyRevealClip: (material, label) => ctx.applyRevealClip(material, label),
+  });
 
   const lightBank = new Group();
   lightBank.name = `${THUNDERSTORM_PLUGIN_NAME}:flash-lights`;
@@ -461,7 +540,8 @@ export function createThunderstormRigs(): ThunderstormRigs {
   }
 
   const pool = createRigPool<ThunderstormRig>(
-    () => createThunderstormRig(hazeGeometry, boltGeometry, unlent.pop() ?? null),
+    () =>
+      createThunderstormRig(hazeGeometry, boltGeometry, unlent.pop() ?? null, deck, clip),
     // A rig re-enters the pool dark: without this, a rig freed mid-flash would
     // hand its stale LightningSchedule state to whatever system acquires it
     // next, lighting an ungoverned phantom flash at the OLD storm's bolt
@@ -471,6 +551,7 @@ export function createThunderstormRigs(): ThunderstormRigs {
 
   return {
     lightBank,
+    deck,
     dryBolt,
     acquire: pool.acquire,
     release: pool.release,
@@ -479,6 +560,7 @@ export function createThunderstormRigs(): ThunderstormRigs {
       // PointLight owns no GPU resource; clearing the group is the whole of it.
       lightBank.clear();
       dryBolt.dispose();
+      deck.dispose();
       hazeGeometry.dispose();
       boltGeometry.dispose();
     },
@@ -497,3 +579,6 @@ export const DRY_BOLT_DRAW_OBJECTS = 1;
 
 /** The light bank holds PointLights, which are not drawn objects. */
 export const LIGHT_BANK_DRAW_OBJECTS = 0;
+
+/** Draw objects the whole plugin costs beyond its rigs: the deck. */
+export const THUNDERSTORM_DECK_DRAW_OBJECTS = CUMULUS_DECK_DRAW_OBJECTS;
