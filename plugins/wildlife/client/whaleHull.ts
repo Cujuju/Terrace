@@ -134,8 +134,16 @@ export function sweptHull(options: SweptHullOptions): BufferGeometry {
     const next = ringStart[r + 1]!;
     for (let j = 0; j < segments; j++) {
       const k = (j + 1) % segments;
-      indices.push(cur + j, next + j, cur + k);
-      indices.push(next + j, next + k, cur + k);
+      // Counter-clockwise seen from OUTSIDE the body — three's front face.
+      // Rings run nose to tail (x decreasing) and theta runs +Z toward +Y, so
+      // the outward winding is (cur, cur+1, next), not (cur, next, cur+1).
+      // The body shipped wound the other way (2026-09-02): every flank
+      // triangle faced inward while the two caps faced out, so the renderer
+      // culled the near flank and drew the far wall's inside — a convex hull
+      // looks the same either way, which is how it went unnoticed, but any
+      // part seated inside the body (a fin root) showed through the skin.
+      indices.push(cur + j, cur + k, next + j);
+      indices.push(next + j, cur + k, next + k);
     }
   }
   const last = ringStart[ringStart.length - 1]!;
