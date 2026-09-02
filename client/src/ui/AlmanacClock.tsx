@@ -50,12 +50,23 @@ const STRIP_WIDTH = 220;
  * hud.css's .world-header--almanac positions the title row over this band.
  */
 const TITLE_BAND_HEIGHT = 28;
-/** The clock strip itself, below the title band. */
-const STRIP_HEIGHT = 48;
+/**
+ * Breathing room above and below the clock's words (owner ask, 2026-09-01,
+ * after the first in-world look: the weekday sat hard under the title and the
+ * banner's rounded corner clipped the day number). The sky and ground still
+ * paint through the inset; only the captions, curve and tag keep clear of it.
+ */
+const STRIP_INSET = 5;
+/** The clock strip itself, below the title band: the inset at both ends
+ *  around the drawing proper. */
+const STRIP_DRAWING_HEIGHT = 48;
+const STRIP_HEIGHT = STRIP_INSET + STRIP_DRAWING_HEIGHT + STRIP_INSET;
 const TOTAL_HEIGHT = TITLE_BAND_HEIGHT + STRIP_HEIGHT;
+/** The top of the drawing proper, under the title band and the inset. */
+const STRIP_TOP_Y = TITLE_BAND_HEIGHT + STRIP_INSET;
 /** Where the horizon line sits: the strip's sky gets a little less than half of
  *  it, the ground the rest, because the ground also has to hold the time tag. */
-const HORIZON_Y = TITLE_BAND_HEIGHT + 21;
+const HORIZON_Y = STRIP_TOP_Y + 21;
 /** How high the day arc climbs above the horizon at noon … */
 const DAY_ARC_HEIGHT = 12;
 /** … and how deep the night arc dips at midnight. Shallower than the day arc so
@@ -103,16 +114,17 @@ const TAG_WIDTH = 40;
 const TAG_HEIGHT = 12;
 const TAG_RADIUS = 2;
 const TAG_X = STRIP_WIDTH / 2 - TAG_WIDTH / 2;
-const TAG_Y = TOTAL_HEIGHT - TAG_HEIGHT - 3;
+const TAG_Y = TOTAL_HEIGHT - STRIP_INSET - TAG_HEIGHT - 3;
 /** Where the time's baseline sits inside the tag: 3 units of tag below the
  *  baseline balances the ~3 above the caps at the 8.5-unit type size. */
 const TAG_TEXT_BASELINE_Y = TAG_HEIGHT - 3;
 
 /** Caption baselines: weekday in the sky's top-left, day in the ground's
- *  bottom-left. */
-const CAPTION_X = 3;
-const WEEKDAY_BASELINE_Y = TITLE_BAND_HEIGHT + 7.5;
-const DAY_BASELINE_Y = TOTAL_HEIGHT - 3;
+ *  bottom-left. The x inset clears the banner's rounded corner, which
+ *  otherwise bites the day number's first letter. */
+const CAPTION_X = 6;
+const WEEKDAY_BASELINE_Y = STRIP_TOP_Y + 7.5;
+const DAY_BASELINE_Y = TOTAL_HEIGHT - STRIP_INSET - 3;
 
 /** Horizon ticks at the two crossings. */
 const TICK_HALF_HEIGHT = 3;
@@ -220,7 +232,7 @@ function starField(xFrom: number, xTo: number, seed: number): readonly Star[] {
     return state / 233280;
   };
   const yFrom = HORIZON_Y + 2;
-  const yTo = TOTAL_HEIGHT - 2;
+  const yTo = TOTAL_HEIGHT - STRIP_INSET - 2;
   const stars: Star[] = [];
   for (let i = 0; i < STARS_PER_NIGHT_HALF; i++) {
     stars.push({
