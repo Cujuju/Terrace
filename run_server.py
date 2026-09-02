@@ -41,7 +41,7 @@ CONFIG = {
     # made with, and a server can hold worlds of several sizes at once, so this
     # no longer describes what you are about to play. See issue #75 for whether
     # 512 is still the right default after the quarter-cell re-sample.
-    "WORLD_SIZE": 512,            # multiple of CHUNK_SIZE (16), max 4096
+    "WORLD_SIZE": 2048,           # cells (4 per world unit); multiple of 16, 448-4096
     "WORLD_DIFFICULTY": 50,       # 1-100 (out of range clamps with a warning)
     # WHERE THE WORLDS LIVE - one SQLite file per world, plus .trash/ and the
     # .active pointer. Replaces DB_PATH, which named a single world file back

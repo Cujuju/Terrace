@@ -30,12 +30,12 @@ services:
         TERRACE_VERSION: ${TERRACE_VERSION:-}
     environment:
       # Cells per world edge, and CELLS ARE NOT WORLD UNITS: four cells make one
-      # world unit. 512 cells (128 units) is the Populous-proven minimum that
-      # fits a small VPS; 2048 cells (512 units) is the server's own default
-      # and wants a mid-size box. Must be a multiple of 16 (the chunk size),
+      # world unit. 2048 cells (512 units) is the default everywhere and wants
+      # a mid-size box; 512 cells (128 units) is the Populous-proven minimum
+      # that fits a small VPS. Must be a multiple of 16 (the chunk size),
       # at least 448 and at most 4096. Applies to NEW worlds only; an existing
       # world keeps the size it was made with.
-      WORLD_SIZE: ${WORLD_SIZE:-512}
+      WORLD_SIZE: ${WORLD_SIZE:-2048}
       # How hard this world is meant to be, 1–100 (1 = warm, 100 = punishing).
       # Core attaches no mechanics to it; plugins read it and decide what it
       # means for them. mana derives its default regen rate from it: 200/s at 1,
