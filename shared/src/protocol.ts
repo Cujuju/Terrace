@@ -968,6 +968,25 @@ export type WorldAdminRefusal =
   /** Refused because it would archive the live world; unload or switch first. */
   | 'worldIsActive'
   /**
+   * The plugin is installed but declares no action of that key. The plugin's
+   * own declaration is the authority, exactly as it is for a setting; told
+   * apart from 'unknownSetting' because the admin panel and the world panel
+   * are different screens and the operator needs to know which list is stale.
+   */
+  | 'unknownAction'
+  /**
+   * The plugin declares the action but is switched off for the live world, so
+   * there is no running instance to perform it. Enable it in the world panel.
+   */
+  | 'pluginDisabled'
+  /**
+   * The plugin ran the action and found nothing to do — no hillside steep
+   * enough near the operator, no dormant vent, no lair. `detail` on the
+   * receipt says which, in the plugin's own words: this is a development
+   * aid, and its audience is exactly the person who wants the diagnostic.
+   */
+  | 'actionDeclined'
+  /**
    * A restart is already announced and counting down. There is no cancel for
    * it (unlike a world switch): the process is going down either way, so a
    * second press is told the first one is still in hand rather than being
@@ -992,6 +1011,7 @@ export type WorldAdminAction =
   | 'setPlugin'
   | 'configurePlugin'
   | 'reloadPlugin'
+  | 'actPlugin'
   | 'restart';
 
 /** Client → server: "list every world you have". Answered to the sender only. */
@@ -1160,6 +1180,45 @@ export interface WorldPluginConfigureRequestMessage {
 }
 
 /**
+ * Client → server: "make this plugin do this, now, near where I am looking"
+ * (the admin panel, 2026-09-01).
+ *
+ * THE DEBUG SPAWN. Everything the event plugins do — eruptions, slides,
+ * storms, weather, monsters, fire — arrives by a Poisson clock whose mean is
+ * minutes to hours, which is right for a game and useless for looking at the
+ * thing you just wrote. Each plugin already had a boot-time environment
+ * variable for this (`STORMS_DEV_FORCE` and friends); this is the same act
+ * made available at run time, gated by the world-admin key like everything
+ * else an operator can do, and sited where the operator is looking rather
+ * than at the middle of the world.
+ *
+ * THE DECLARING PLUGIN IS THE AUTHORITY on which actions exist (server
+ * plugins/types.ts's PluginActionDeclaration), exactly as it is for settings:
+ * this message carries strings, the server refuses an action nobody declared,
+ * and no plugin's vocabulary is written down in core or on the wire.
+ *
+ * ALWAYS THE LIVE WORLD, so there is no world id: an action is a thing that
+ * happens, not a property of a file, and a world that is not loaded has no
+ * plugin instance to perform one.
+ *
+ * `x`/`y` is the cell the operator's camera is looking at — where the event
+ * should land, or start its search for a site. The client supplies it because
+ * the server never learns where a camera points; the server clamps it to the
+ * live world's bounds.
+ */
+export interface WorldPluginActRequestMessage {
+  type: 'worldPluginAct';
+  key: string;
+  /** Installed plugin name; see PLUGIN_NAME_PATTERN. */
+  plugin: string;
+  /** An action key that plugin declared; see PLUGIN_SETTING_TOKEN_PATTERN. */
+  action: string;
+  /** The cell under the operator's view, in cells. Non-negative integers. */
+  x: number;
+  y: number;
+}
+
+/**
  * Client → server: "re-import this plugin's server code, without restarting".
  *
  * THE UPDATE BUTTON FOR ONE PLUGIN (issue #198, Option B). The server drops the
@@ -1255,6 +1314,18 @@ export interface WorldPluginSetting {
 }
 
 /**
+ * One plugin action as the admin panel sees it: who declared it, what to call
+ * it, and one sentence on what it does. Rendered generically, on
+ * WorldPluginSetting's rule — nothing in core knows what `erupt` means.
+ */
+export interface WorldPluginAction {
+  plugin: string;
+  key: string;
+  label: string;
+  description: string;
+}
+
+/**
  * Server → the requesting client only: one world's plugin enablement.
  *
  * `installed` is every plugin this SERVER has discovered; `disabled` is the
@@ -1276,6 +1347,13 @@ export interface WorldPluginListMessage {
    * this world. Empty when no installed plugin declares one.
    */
   settings: WorldPluginSetting[];
+  /**
+   * Every action the installed plugins declare (the admin panel's spawn
+   * list). Server-wide, not per world — a declaration is a property of the
+   * code — but carried here because this is the message that already lists
+   * what the installed plugins offer. Empty when none declares one.
+   */
+  actions: WorldPluginAction[];
   /**
    * Which BUILD of each installed plugin is running, keyed by plugin name —
    * `<package version>+<derived>` (server plugins/plugin-version.ts).
@@ -1313,6 +1391,15 @@ export interface WorldAdminResultMessage {
    * plugin, and confirming which code is live is the reload's whole purpose.
    */
   plugin?: string;
+  /**
+   * The plugin's own one-line account of an `actPlugin` — where the slide
+   * started, why no site qualified. Set on success and on 'actionDeclined';
+   * never on any other action. Plugin-composed prose, shown verbatim, which
+   * WorldAdminRefusal's closed set deliberately avoids for players: this
+   * reaches only an operator holding the admin key, using a debugging aid,
+   * and the diagnostic IS the product.
+   */
+  detail?: string;
   /** Why it did not happen, when `!ok`. */
   refused?: WorldAdminRefusal;
 }
@@ -1382,6 +1469,7 @@ export type WorldAdminRequestMessage =
   | WorldPluginListRequestMessage
   | WorldPluginSetRequestMessage
   | WorldPluginConfigureRequestMessage
+  | WorldPluginActRequestMessage
   | WorldPluginReloadRequestMessage
   | ServerRestartRequestMessage
   | WorldSwitchCancelRequestMessage;
@@ -1467,6 +1555,11 @@ export const MAX_PLUGIN_SETTING_TOKEN_LENGTH = 64;
  * escape. A plugin whose vocabulary needs prose wants a label, not a value.
  */
 export const PLUGIN_SETTING_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** A non-negative safe integer — the shape every cell coordinate has. */
+function isCellCoordinate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
 
 /** Validates an untrusted setting key or value; null when it could not be one. */
 export function validatePluginSettingToken(value: unknown): string | null {
@@ -1624,6 +1717,18 @@ export function validateWorldAdminRequest(msg: unknown): WorldAdminRequestMessag
       // own declaration answers — checked by the server (world-manager.ts) and
       // refused as 'unknownSetting'. Shared code cannot know: it has no plugins.
       return { type: 'worldPluginConfigure', key, id, plugin, setting, value };
+    }
+
+    case 'worldPluginAct': {
+      const plugin = validatePluginName(m.plugin);
+      const action = validatePluginSettingToken(m.action);
+      if (plugin === null || action === null) return null;
+      // A cell is a non-negative integer; the UPPER bound is the live world's
+      // size, which shared code cannot know — the server clamps.
+      if (!isCellCoordinate(m.x) || !isCellCoordinate(m.y)) return null;
+      // Whether the plugin declares this action is, as for a setting, a
+      // question only its own declaration answers (world-manager.ts).
+      return { type: 'worldPluginAct', key, plugin, action, x: m.x, y: m.y };
     }
 
     case 'worldPin': {

@@ -60,6 +60,8 @@ import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
+  PluginActionOutcome,
+  PluginActionSite,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -185,6 +187,9 @@ const entityBlaze = new EntityBlaze();
  * for "something tried to light a fire before there was anywhere to put it".
  */
 let currentWorld: WorldApi | null = null;
+
+/** The admin panel's action key (PluginActionDeclaration). */
+const IGNITE_ACTION = 'ignite';
 
 /** Accumulated simulated seconds — this plugin's only clock. */
 let simSeconds = 0;
@@ -901,6 +906,28 @@ export const plugin: TerracePlugin = {
    */
   onTick(world: WorldApi, dt: number): void {
     inIgnitionBatch(world, () => tick(world, dt));
+  },
+
+  // THE ADMIN PANEL'S DEBUG SPAWN (server plugins/types.ts,
+  // PluginActionDeclaration): `igniteAt`, the one way a fire ever starts, so
+  // a forced fire is a lightning strike's in everything but its cause.
+  actions: [
+    {
+      key: IGNITE_ACTION,
+      label: 'Light a fire',
+      description: 'Sets the cell you are looking at alight, if there is anything there to burn.',
+    },
+  ],
+
+  onAction(_world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
+    if (key !== IGNITE_ACTION) return { ok: false, detail: `no such action "${key}"` };
+    if (igniteAt(site.x, site.y)) return { ok: true, detail: `(${site.x}, ${site.y}) is alight` };
+    return {
+      ok: false,
+      detail:
+        `nothing caught at (${site.x}, ${site.y}) — bare rock, water, wet ground, ` +
+        `already burning, or ${FIRE_CELL_CAP} fires are already burning`,
+    };
   },
 
   /**

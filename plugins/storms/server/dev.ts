@@ -35,7 +35,7 @@
 // Unset — which is every real deployment — this module does nothing at all.
 
 import { SEA_LEVEL } from '@terrace/shared';
-import { clearStorms, setDevFrozen, spawnStormAt, type StormWorld } from './storms.ts';
+import { clearStorms, setDevFrozen, spawnStormAt, type Storm, type StormWorld } from './storms.ts';
 import type { StormKind } from '../protocol.ts';
 
 /** The variable, and the three values it accepts. */
@@ -96,15 +96,20 @@ function matchesKind(world: StormWorld, x: number, y: number, wantWater: boolean
 function findSite(
   world: StormWorld,
   wantWater: boolean,
+  // The boot-time force searches from the middle of the world; the admin
+  // panel's action (`forceStormNear`) from wherever the operator is looking.
+  centre: { x: number; y: number } = {
+    x: Math.floor(world.worldSize / 2),
+    y: Math.floor(world.worldSize / 2),
+  },
 ): { x: number; y: number } | null {
-  const centre = Math.floor(world.worldSize / 2);
   for (let radius = 0; radius <= DEV_SEARCH_RADIUS_CELLS; radius += DEV_SEARCH_STEP_CELLS) {
     // The centre itself is one sample, not sixteen of the same cell.
     const spokes = radius === 0 ? 1 : DEV_SEARCH_SPOKES;
     for (let spoke = 0; spoke < spokes; spoke++) {
       const angle = (spoke * 2 * Math.PI) / spokes;
-      const x = Math.round(centre + Math.cos(angle) * radius);
-      const y = Math.round(centre + Math.sin(angle) * radius);
+      const x = Math.round(centre.x + Math.cos(angle) * radius);
+      const y = Math.round(centre.y + Math.sin(angle) * radius);
       if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) continue;
       if (!matchesKind(world, x, y, wantWater)) continue;
       // Clearance: the same kind of ground DEV_SITE_CLEARANCE_CELLS away on
@@ -198,4 +203,34 @@ export function forceSpawnFromEnv(
         `at (${site.x}, ${site.y})`,
     );
   }
+}
+
+/**
+ * THE ADMIN PANEL'S STORM (2026-09-01): one storm of `kind` on the nearest
+ * qualifying ground to `centre` — the cell the operator is looking at — at
+ * full strength, and one line saying where it went.
+ *
+ * NOT `forceSpawnFromEnv`: that clears the sky and freezes every storm in it,
+ * because it is building a photographic fixture. This adds one storm to a
+ * world that goes on being a world; the ordinary despawn cleans up after it.
+ */
+export function forceStormNear(
+  world: StormWorld,
+  kind: StormKind,
+  centre: { x: number; y: number },
+): { readonly storm: Storm | null; readonly detail: string } {
+  const site = findSite(world, kind === 'cyclone', centre);
+  if (site === null) {
+    return {
+      storm: null,
+      detail:
+        `no ${kind === 'cyclone' ? 'open water' : 'land'} within ${DEV_SEARCH_RADIUS_CELLS} ` +
+        `cells of (${centre.x}, ${centre.y})`,
+    };
+  }
+  const storm = spawnStormAt(world, kind, site.x, site.y);
+  // Straight to full strength, for the boot-time force's reason: a forced
+  // storm exists to be looked at now.
+  storm.envelope = 1;
+  return { storm, detail: `${storm.name ?? storm.kind} spawned at (${site.x}, ${site.y})` };
 }

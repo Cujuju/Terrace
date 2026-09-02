@@ -128,6 +128,7 @@ describe('containWorldAdminMessage', () => {
         installed: [],
         disabled: [],
         settings: [],
+        actions: [],
         versions: {},
         refused: 'failed',
       },
@@ -144,6 +145,7 @@ describe('containWorldAdminMessage', () => {
         installed: ['fire'],
         disabled: ['fire'],
         settings: [],
+        actions: [],
         versions: { fire: '1' },
       });
     });

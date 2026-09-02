@@ -61,6 +61,8 @@
 import type {
   PersistenceSlice,
   Player,
+  PluginActionOutcome,
+  PluginActionSite,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -99,7 +101,7 @@ import {
   trySpawnCyclone,
   trySpawnTornado,
 } from './storms.ts';
-import { forceSpawnFromEnv } from './dev.ts';
+import { forceSpawnFromEnv, forceStormNear } from './dev.ts';
 import { loadWeatherBridge, resetWeatherBridge } from './weather-bridge.ts';
 import { tickSurge } from './surge.ts';
 
@@ -223,8 +225,7 @@ function simulate(world: WorldApi, dt: number): void {
   // SURGE, after the storms have moved, so a cyclone scours the shore it is
   // over now rather than the one it was over a tick ago. Gated on the setting
   // here rather than inside ./surge.ts, so the whole cost — including the
-  // per-storm loop — is skipped on a world that turned it off, which is every
-  // world by default.
+  // per-storm loop — is skipped on a world that turned it off.
   const alive = livingStorms();
   if (surgeMode === 'on') {
     for (const storm of alive) {
@@ -307,6 +308,41 @@ export const plugin: TerracePlugin = {
     // release — but its sim state belongs to the world that is closing, and
     // leaving it standing would hand the next world this one's hurricanes.
     resetSessionState();
+  },
+
+  // THE ADMIN PANEL'S DEBUG SPAWNS (server plugins/types.ts,
+  // PluginActionDeclaration): `spawnStormAt`, the same birth the spawn roll
+  // uses, on the ground ./dev.ts's search picks near the operator's view.
+  actions: [
+    {
+      key: 'tornado',
+      label: 'Spawn a tornado',
+      description: 'A funnel on the nearest land to where you are looking, at full strength.',
+    },
+    {
+      key: 'cyclone',
+      label: 'Spawn a cyclone',
+      description: 'A cyclone over the nearest open water to where you are looking, at full strength.',
+    },
+  ],
+
+  onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
+    if (key !== 'tornado' && key !== 'cyclone') return { ok: false, detail: `no such action "${key}"` };
+    // `off` stops the sim as well as the spawner (onTick), so a storm born now
+    // would hang in the sky unmoving — refused rather than left there.
+    if (frequency === 'off') {
+      return { ok: false, detail: 'storms are off for this world — set the frequency first' };
+    }
+    const cap = profileFor(key).maxActive;
+    if (stormCount(key) >= cap) {
+      return { ok: false, detail: `${cap} ${key}${cap === 1 ? ' is' : 's are'} already in the air` };
+    }
+    const { storm, detail } = forceStormNear(world, key, site);
+    if (storm === null) return { ok: false, detail };
+    // Clients are told now rather than on the next broadcast tick.
+    broadcastPending = false;
+    broadcastStorms(world);
+    return { ok: true, detail };
   },
 
   onTick(world: WorldApi, dt: number): void {

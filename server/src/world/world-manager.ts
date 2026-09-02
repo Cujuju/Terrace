@@ -25,12 +25,12 @@
 // and it can be called off during the count.
 
 import type { MessageSink } from '../net/message-sink.ts';
-import type { WorldPluginSetting, WorldSwitchStatus } from '@terrace/shared';
+import type { WorldPluginAction, WorldPluginSetting, WorldSwitchStatus } from '@terrace/shared';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
 import { buildIdentity, rebindBuildIdentity } from '../build-identity.ts';
 import { logError, logInfo, logWarn } from '../log.ts';
-import type { LoadedPlugin } from '../plugins/types.ts';
+import type { LoadedPlugin, PluginActionOutcome, PluginActionSite } from '../plugins/types.ts';
 import { reimportPlugin } from '../plugins/reload.ts';
 import type { Player } from '../player.ts';
 import { applyInitialUnlockForToken } from './initial-unlock.ts';
@@ -104,6 +104,17 @@ export type PluginToggleRefusal =
  * installed but declares no such key, or does not accept that value for it.
  */
 export type PluginSettingRefusal = PluginToggleRefusal | 'unknownSetting';
+
+/**
+ * Why one plugin action could not be performed (the admin panel, 2026-09-01).
+ * 'failed' is a throw inside the plugin, already logged by the host.
+ */
+export type PluginActionRefusal =
+  | 'noWorldLoaded'
+  | 'unknownPlugin'
+  | 'unknownAction'
+  | 'pluginDisabled'
+  | 'failed';
 
 /**
  * Why one plugin could not be reloaded in place (issue #198).
@@ -437,6 +448,44 @@ export class WorldManager {
       }
     }
     return listing;
+  }
+
+  /**
+   * Every action the installed plugins declare, for the admin panel
+   * (2026-09-01). Server-wide: a declaration is a property of the code, so
+   * unlike `pluginSettingsFor` there is no world to read a value from.
+   */
+  get pluginActions(): WorldPluginAction[] {
+    const listing: WorldPluginAction[] = [];
+    for (const { plugin } of this.deps.plugins.list) {
+      for (const declaration of plugin.actions ?? []) {
+        listing.push({
+          plugin: plugin.name,
+          key: declaration.key,
+          label: declaration.label,
+          description: declaration.description,
+        });
+      }
+    }
+    return listing;
+  }
+
+  /**
+   * Performs one declared plugin action on the LIVE world, now.
+   *
+   * THE HOST OWNS THE ACT (PluginHost.invokeAction): it holds the enabled
+   * set, the per-plugin views and the fault containment, so the checks that
+   * an action needs — declared, enabled, did not throw — are made where the
+   * facts are. This method only supplies the session.
+   */
+  actPlugin(
+    pluginName: string,
+    key: string,
+    site: PluginActionSite,
+  ): PluginActionOutcome | PluginActionRefusal {
+    const session = this.session;
+    if (session === null) return 'noWorldLoaded';
+    return session.host.invokeAction(pluginName, key, site);
   }
 
   /**

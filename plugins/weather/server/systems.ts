@@ -645,6 +645,42 @@ export function spawnSystem(world: WeatherWorld): WeatherSystem {
   return system;
 }
 
+/**
+ * Puts one system of a NAMED kind in the sky at a NAMED place — the admin
+ * panel's debug spawn (2026-09-01). An ordinary system in every respect but
+ * how it was drawn: it gathers from envelope 0, drifts on the wind, ages and
+ * dies like the rest, so what the operator sees is this plugin's weather.
+ *
+ * `kind` is taken as asked, snow over lowland included: a person who asked
+ * for snow to look at it is not served by rain.
+ */
+export function spawnSystemOfKind(
+  world: WeatherWorld,
+  kind: WeatherKind,
+  x: number,
+  y: number,
+): WeatherSystem {
+  const system: WeatherSystem = {
+    id: nextSystemId++,
+    kind,
+    x,
+    y,
+    // The middle of the band this world allows, as the dev override chooses:
+    // an ordinary system rather than the largest or smallest one.
+    radius: meanRadiusFor(world.worldSize),
+    peakIntensity: SYSTEM_MAX_PEAK_INTENSITY,
+    envelope: 0,
+    retiring: false,
+  };
+  systems.push(system);
+  return system;
+}
+
+/** Whether the dev override (`forceWeather`) is parking the sky. */
+export function isWeatherForced(): boolean {
+  return forcedKind !== null;
+}
+
 // ── The tick ─────────────────────────────────────────────────────────────────
 
 /**

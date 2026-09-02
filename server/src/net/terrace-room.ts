@@ -97,6 +97,7 @@ export const WORLD_ADMIN_MESSAGE_TYPES = [
   'worldPluginList',
   'worldPluginSet',
   'worldPluginConfigure',
+  'worldPluginAct',
   'worldPluginReload',
   'serverRestart',
   'worldSwitchCancel',
@@ -421,8 +422,12 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     // A successful action changed what the panel is showing, so the fresh
     // listing rides along rather than making the client ask for it. Only
     // on success, and only for a client that just proved it holds the key
-    // — a refusal must not become an oracle for what worlds exist.
-    if (result.ok) client.send('worldListing', this.context.admin.listing());
+    // — a refusal must not become an oracle for what worlds exist. A plugin
+    // ACTION changes no listing at all (it is an event, not a file), so it
+    // is spared the worlds-directory read the refresh costs.
+    if (result.ok && request.type !== 'worldPluginAct') {
+      client.send('worldListing', this.context.admin.listing());
+    }
   }
 
   /**

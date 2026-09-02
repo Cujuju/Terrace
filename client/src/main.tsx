@@ -272,6 +272,17 @@ render(
       worlds={{
         send: (message) => connection.sendWorldAdmin(message),
       }}
+      // The cell under the orbit target — the inverse of scene.ts's
+      // focusWorld, which puts the target at (cell × CELL_WORLD_SIZE). Read
+      // at call time, never cached: the camera moves every frame.
+      focusCell={() => {
+        if (world.worldSize() === 0) return null;
+        const target = viewport.controls.target;
+        return {
+          x: Math.round(target.x / CELL_WORLD_SIZE),
+          y: Math.round(target.z / CELL_WORLD_SIZE),
+        };
+      }}
     />
   ),
   hudRoot,

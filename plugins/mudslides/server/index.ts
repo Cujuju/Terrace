@@ -50,6 +50,8 @@
 
 import type {
   PersistenceSlice,
+  PluginActionOutcome,
+  PluginActionSite,
   Player,
   TerracePlugin,
   WorldApi,
@@ -69,7 +71,7 @@ import {
   type MudslideFrequency,
   type SlideState,
 } from '../protocol.ts';
-import { forceSlideFromEnv, resetDevForce, tickDevForce } from './dev.ts';
+import { forceSlideFromEnv, forceSlideNear, resetDevForce, tickDevForce } from './dev.ts';
 import { MUDSLIDES_SLICE_VERSION, loadSlides, saveSlides } from './persistence.ts';
 import {
   FREQUENCY_INTERVAL_MULTIPLIERS,
@@ -117,6 +119,9 @@ let activeBroadcastPending = false;
  */
 let frequency: MudslideFrequency = DEFAULT_MUDSLIDE_FREQUENCY;
 
+/** The admin panel's action key (PluginActionDeclaration). */
+const SLIDE_ACTION = 'slide';
+
 function resetSessionState(): void {
   tickCount = 0;
   frequency = DEFAULT_MUDSLIDE_FREQUENCY;
@@ -135,9 +140,9 @@ function resetSessionState(): void {
  * the shipped default and not a sentinel.
  */
 function intervalMultiplier(): number {
-  return frequency === 'common'
-    ? FREQUENCY_INTERVAL_MULTIPLIERS.common
-    : FREQUENCY_INTERVAL_MULTIPLIERS.rare;
+  return frequency === 'off'
+    ? FREQUENCY_INTERVAL_MULTIPLIERS.rare
+    : FREQUENCY_INTERVAL_MULTIPLIERS[frequency];
 }
 
 /**
@@ -304,6 +309,36 @@ export const plugin: TerracePlugin = {
     // release — but its sim state belongs to the world that is closing, and
     // leaving it standing would hand the next world this one's landslides.
     resetSessionState();
+  },
+
+  // THE ADMIN PANEL'S DEBUG SPAWN (server plugins/types.ts,
+  // PluginActionDeclaration): the same `startSlide` the trigger calls, on the
+  // hillside ./dev.ts's search picks near the operator's view — so the slide
+  // is an ordinary slide in everything but its timing.
+  actions: [
+    {
+      key: SLIDE_ACTION,
+      label: 'Start a mudslide',
+      description: 'Collapses the hillside with the longest run-out near where you are looking, rain or no rain.',
+    },
+  ],
+
+  onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
+    if (key !== SLIDE_ACTION) return { ok: false, detail: `no such action "${key}"` };
+    // `off` stops the sim as well as the trigger (onTick), so a slide started
+    // now would never advance — refused rather than left standing still.
+    if (frequency === 'off') {
+      return { ok: false, detail: 'mudslides are off for this world — set the frequency first' };
+    }
+    if (livingSlides().length >= MAX_ACTIVE_SLIDES) {
+      return { ok: false, detail: `${MAX_ACTIVE_SLIDES} slides are already running` };
+    }
+    const { slide, detail } = forceSlideNear(world, site);
+    if (slide === null) return { ok: false, detail };
+    // Clients are told now rather than on the next broadcast tick: the whole
+    // point of the action is watching the thing start.
+    broadcastActive(world);
+    return { ok: true, detail };
   },
 
   onTick(world: WorldApi, dt: number): void {
