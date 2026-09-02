@@ -37,8 +37,15 @@ export interface DiscSystemsViewSpec<R extends { readonly root: Group }> {
   readonly systemsMessage: string;
   /** Name of this plugin's own child Group, for the three.js inspector. */
   readonly containerName: string;
-  /** Built at attach, disposed at dispose. One rig per living mass. */
-  createPool(): RigPool<R>;
+  /**
+   * Built at attach, disposed at dispose. One rig per living mass.
+   *
+   * TAKES THE CONTEXT because a pool's materials have to be clipped to the
+   * revealed map (`ClientPluginCtx.applyRevealClip`) and its cloud deck has to
+   * be built from it, and both are decided once, when the material and the
+   * deck are created, rather than per frame.
+   */
+  createPool(ctx: ClientPluginCtx): RigPool<R>;
   /** One frame of one rig. */
   update(rig: R, disc: InterpolatedDisc, elapsed: number, dt: number, reduced: boolean): void;
   /**
@@ -61,6 +68,14 @@ export interface DiscSystemsView<R> {
   rigFor(id: number): R | undefined;
   /** This frame's interpolated pose for a mass, or undefined. */
   poseFor(id: number): InterpolatedDisc | undefined;
+  /**
+   * Every living mass's interpolated pose this frame.
+   *
+   * THE SAME MAP THE RIGS WERE DRAWN FROM, which is what makes a ground shade
+   * published out of it land under the cloud that is actually on screen rather
+   * than under where it was at the last broadcast.
+   */
+  poses(): ReadonlyMap<number, InterpolatedDisc>;
   /** Whether the viewer asked for reduced motion. */
   isReduced(): boolean;
 }
@@ -128,7 +143,7 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
 
   return {
     attach(ctx: ClientPluginCtx): void {
-      pool = spec.createPool();
+      pool = spec.createPool(ctx);
       reducedMotion = watchReducedMotion();
 
       // One child Group of our own inside the host's layer: it keeps every mass
@@ -178,6 +193,10 @@ export function createDiscSystemsView<R extends { readonly root: Group }>(
 
     poseFor(id: number): InterpolatedDisc | undefined {
       return interpolator.sample().get(id);
+    },
+
+    poses(): ReadonlyMap<number, InterpolatedDisc> {
+      return interpolator.sample();
     },
 
     isReduced(): boolean {

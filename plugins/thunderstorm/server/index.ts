@@ -126,9 +126,29 @@ function simulate(world: WorldApi, dt: number): void {
 
   const strikes = rollStrikes(world, systems.systems(), dt);
   if (strikes.length > 0) {
-    const payload = { strikes: packStrikes(strikes) };
-    world.broadcast(THUNDERSTORM_STRIKES_MESSAGE, payload);
-    world.emitEvent(THUNDERSTORM_STRIKES_MESSAGE, payload);
+    // THE BOLT IS FILTERED PER PLAYER, THE FIRE IS NOT (owner, 2026-09-02).
+    //
+    // A STRIKE HAS A CELL, unlike the systems above — a mass's position leaks
+    // nothing about the map, which is why those stay unfiltered by design, but
+    // a bolt names the exact cell it hit. Sent to everybody, a client could
+    // draw a bolt standing on floor it has never been sent, over the frontier
+    // mist, and #291's rule (off the map is visible to nobody) would not have
+    // been applied to the one message in this plugin that carries a place.
+    // `skipEmpty`, so a player who can see none of this tick's strikes is sent
+    // nothing at all rather than an empty list.
+    //
+    // The EVENT is unchanged and carries every strike: it is what sets forests
+    // alight (../../fire), and the fire is the world's, not a picture drawn for
+    // whoever happened to be looking. A player who has not revealed that ground
+    // still walks into the burn when they get there.
+    world.broadcastVisible(
+      THUNDERSTORM_STRIKES_MESSAGE,
+      strikes,
+      (strike) => strike,
+      (visible) => ({ strikes: packStrikes(visible) }),
+      { skipEmpty: true },
+    );
+    world.emitEvent(THUNDERSTORM_STRIKES_MESSAGE, { strikes: packStrikes(strikes) });
   }
 
   tickCount++;
