@@ -3,14 +3,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ONE RATE, AND THE TERMS THAT MULTIPLY IT.
 //
-// Every neighbour of every burning cell has a chance per second of catching:
+// Every neighbour of every burning cell is being HEATED, at a rate per second:
 //
 //   rate = BASE_SPREAD_RATE × intensity × wind × slope × diagonal × wet
 //
-// and `happensWithin` (./rng.ts) turns that rate into a yes or no for the step.
+// and ./heat.ts's ledger integrates that rate over the time the two were
+// exposed to each other, summed over every source heating the same target. The
+// target catches when the total reaches a threshold it drew once, on its first
+// exposure — mean 1, so a constant rate of r per second still means "catches in
+// 1/r seconds on average", which is the unit every constant below is quoted in.
 // Nothing else influences it. Keeping it to one product is what makes the
 // mechanic tunable at all — every term is a number a player can be taught, and
 // a term that cannot be explained in one sentence does not belong in it.
+//
+// THE RATE IS SPENT, NOT ROLLED, and that is issue #288 rather than a detail.
+// A per-step roll is memoryless: two equally exposed neighbours caught about
+// twelve seconds apart, so a fire threw isolated spots and the burn was a
+// percolation cluster instead of an edge that walks. ./heat.ts carries the
+// reasoning and the shape constant; nothing else in this file changed because
+// of it, which is the point — the product above is untouched.
 //
 //   INTENSITY  a fire that has not taken hold yet, and one that is guttering
 //              out, do not throw sparks. See SPREAD_MIN_INTENSITY.
@@ -86,9 +97,9 @@
 // So exposure is computed along the SWEPT SEGMENT each end travelled since the
 // previous step: how long the two were actually within reach of each other
 // (the DWELL) and how close they got while they were (the GAP). The dwell is
-// the `dt` handed to `happensWithin`, which is exactly what that function's
-// cadence-independence promises — half a second beside a flame is half a
-// second's worth of chance, whether it arrives as one sample or as two.
+// the exposure time the rate is charged over (./heat.ts), which is exactly
+// what accumulating rate × time promises — half a second beside a flame is
+// half a second's worth of heat, whether it arrives as one sample or as two.
 //
 // WHERE THE PREVIOUS POSITION COMES FROM: this file remembers it. It is not
 // asked of the registrants (./entityFuel.ts), and that is the point — the
@@ -106,13 +117,14 @@ import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   fireEntityKey,
   fireIntensity,
+  fireKey,
   type FireCellState,
   type FireEntityState,
 } from '../protocol.ts';
 import type { Blaze } from './blaze.ts';
 import type { EntityBlaze } from './entityBlaze.ts';
 import { entityFuelSources, type FlammableIndividual } from './entityFuel.ts';
-import { happensWithin } from './rng.ts';
+import { HeatLedger } from './heat.ts';
 import { currentWind, precipitationAt } from './weather-bridge.ts';
 
 /**
@@ -136,8 +148,9 @@ export interface SpreadSource {
  *
  * NOT every tick (10 Hz): spread is O(burning × 8) and evaluating it a hundred
  * times during one tree's burn buys nothing a player can see, since the outcome
- * is a Poisson process either way (`happensWithin` makes the cadence
- * balance-neutral — see its doc comment). One second is also roughly the pace at
+ * is the same integral either way (./heat.ts accumulates rate × time, so how
+ * finely the time is chopped cannot change the balance). One second is also
+ * roughly the pace at
  * which a watching player perceives "it jumped to the next tree" as an event
  * rather than as a continuous glow.
  */
@@ -149,13 +162,25 @@ export const SPREAD_INTERVAL_SECONDS = 1;
  *
  * Derived from the shape the mechanic has to have, not tuned blind. A tree
  * burns for FLORA_TREE_BURN_SECONDS (22 s) and spends most of that at full
- * intensity, so at 0.08/s each of its eight neighbours gets roughly a 4-in-5
+ * intensity, so at 0.08/s each of its eight neighbours got roughly a 4-in-5
  * chance of catching over the fire's life — a dense stand goes up, and an
  * isolated tree with one neighbour usually takes it with it but not always.
  * Much higher and every fire is total; much lower and fire stops being a threat
  * worth digging a break against.
+ *
+ * RAISED FROM 0.08 TO 0.14 WITH THE HEAT MODEL (./heat.ts), and this ×1.75 is
+ * AN EDUCATED GUESS pending an in-world retune (issue #158) — it is written
+ * down as a guess rather than presented as derived. WHY IT HAD TO MOVE AT ALL:
+ * the old memoryless roll let a target be LUCKY, and on a solid bed the lucky
+ * ignitions are what carried the burn outward. A threshold with a coefficient
+ * of variation of 0.35 removes most of that luck, and a rig over 60 s on a
+ * solid bed measured the burned area falling from 608 cells to 214 at the same
+ * 0.08 — the front is the right shape but too slow to be a threat. 1.75 is the
+ * factor that puts the burned area back in the neighbourhood of the pace the
+ * mechanic was balanced at; what it is NOT is a measurement of the pace the
+ * game wants, which is what #158 is for.
  */
-export const BASE_SPREAD_RATE_PER_SECOND = 0.08;
+export const BASE_SPREAD_RATE_PER_SECOND = 0.14;
 
 /**
  * A fire below this intensity does not spread.
@@ -281,9 +306,10 @@ export const CONTACT_IGNITION_SECONDS = 0.15;
 /**
  * Chance per second of catching while in direct contact with a flame.
  *
- * The reciprocal of the time above, which is what a rate IS for the exponential
- * form `happensWithin` uses: a thing in contact for CONTACT_IGNITION_SECONDS
- * has caught with probability 1 − 1/e. Derived rather than written down so the
+ * The reciprocal of the time above, which is what a rate IS once ./heat.ts
+ * spends it: a thing in contact for CONTACT_IGNITION_SECONDS has taken on
+ * exactly one mean threshold of heat, so a moment in the flame is an even
+ * chance and a moment longer is not. Derived rather than written down so the
  * two can never drift apart, and so the tunable number is the one that can be
  * explained to a player.
  */
@@ -393,7 +419,9 @@ function spreadingIntensity(source: SpreadSource): number {
 }
 
 /**
- * Chance per second that a fire at `from` sets whatever is at `to` alight.
+ * How fast a fire at `from` heats whatever is at `to`, per second — the rate
+ * ./heat.ts integrates, and a chance per second only in the sense that a target
+ * takes one mean threshold's worth of it in 1/rate seconds.
  *
  * Both ends are in FRACTIONAL CELL SPACE — the space things that move are
  * steered in — so a cell simply passes its integer coordinates. Exported
@@ -504,6 +532,16 @@ interface Position {
 let previousSweep = new Map<string, Position>();
 
 /**
+ * How much heat every flammable thing in reach of a flame has taken on.
+ *
+ * THE OTHER PIECE OF MODULE STATE, and the reason spread has a memory of its
+ * own at all: catching is an accumulation, so the accumulator has to outlive
+ * the step. It is reset wherever `previousSweep` is, for the same reason — see
+ * `resetSpreadSweep` and ./heat.ts's `clear`.
+ */
+const heatLedger = new HeatLedger();
+
+/**
  * Forgets the previous sample.
  *
  * Called when the world stops burning and when fire state is reset or rolled
@@ -518,6 +556,11 @@ let previousSweep = new Map<string, Position>();
  */
 export function resetSpreadSweep(): void {
   previousSweep.clear();
+  // ONE FUNCTION FOR BOTH MEMORIES. Heat and the previous sample are reset in
+  // exactly the same circumstances and would be a bug in exactly the same way
+  // if either were forgotten, so a caller is never given the chance to reset
+  // one and not the other.
+  heatLedger.clear();
 }
 
 /** Where this individual was one step ago, or `now` when there is no sample. */
@@ -813,7 +856,8 @@ function exposureAlongPaths(
 }
 
 /**
- * Rolls one source against every individual in reach of it.
+ * Heats every individual in reach of one source, and reports the ones that
+ * reached their threshold.
  *
  * The gap is measured EDGE TO CENTRE — the individual's own radius is taken off
  * the distance — so a two-cell hull catches from further out than a walker
@@ -862,7 +906,9 @@ function spreadToIndividuals(
       exposure.gapCells,
     );
     if (rate <= 0) continue;
-    if (!happensWithin(rate, exposure.dwellSeconds)) continue;
+    // Charged for the DWELL — how long the two were actually within reach —
+    // which is the exposure time ./heat.ts's units are quoted in.
+    if (!heatLedger.absorb(swept.key, rate, exposure.dwellSeconds)) continue;
 
     // May still decline — the entity cap is full, or something took it in the
     // meantime. An ordinary answer, exactly as Blaze.ignite's null is.
@@ -871,7 +917,8 @@ function spreadToIndividuals(
   }
 }
 
-/** Rolls one source against the cells around a position. */
+/** Heats the cells around one source's position, and reports the ones that
+ * reached their threshold. */
 function spreadToCells(
   world: WorldApi,
   blaze: Blaze,
@@ -890,7 +937,9 @@ function spreadToCells(
 
     const rate = spreadRate(world, from, { x, y }, wind);
     if (rate <= 0) continue;
-    if (!happensWithin(rate, dt)) continue;
+    // A cell stands where it is for the whole step, so its exposure is the
+    // step. Same ledger, same units as the individual path above.
+    if (!heatLedger.absorb(fireKey(x, y), rate, dt)) continue;
 
     // May still decline: nothing flammable there, or the world is already
     // burning at FIRE_CELL_CAP. Both are ordinary answers — see Blaze.ignite.
@@ -909,14 +958,16 @@ function spreadToCells(
  * iterate — the classic cellular-automaton bug where the update order becomes
  * the physics.
  *
- * THE ORDER OF THE ROLLS IS FIXED — cells against cells, cells against
+ * THE ORDER OF THE PAIRINGS IS FIXED — cells against cells, cells against
  * individuals, then individuals against both, each in its collection's own
- * stable order — because the rolls come off one seeded stream (./rng.ts) and a
- * replay that draws them in a different order is a different fire.
+ * stable order — because a target's ignition threshold is drawn off one seeded
+ * stream (./rng.ts) the first time anything heats it, and a replay that draws
+ * them in a different order is a different fire.
  *
- * A thing already alight is skipped BEFORE the roll rather than after, so a
- * fire surrounded by fire spends no randomness at all — which is what keeps the
- * cost of a large burn proportional to its PERIMETER rather than its area.
+ * A thing already alight is skipped BEFORE it is heated rather than after, so a
+ * fire surrounded by fire spends no randomness and keeps no ledger entries at
+ * all — which is what keeps the cost of a large burn proportional to its
+ * PERIMETER rather than its area.
  */
 export function spreadOnce(
   world: WorldApi,
@@ -968,6 +1019,12 @@ export function spreadOnce(
     sweep.set(fireEntityKey(fire.sourceName, fire.id), { x: fire.x, y: fire.y });
   }
   previousSweep = sweep;
+
+  // CLOSE THE LEDGER AFTER EVERY SOURCE HAS BEEN OFFERED, never before: a
+  // target heated by the last source of the step must count as touched, or it
+  // would be dropped and start the next step cold. See ./heat.ts on why one
+  // sweep here is the whole of the entry lifetime.
+  heatLedger.endStep();
 
   return { cells, entities };
 }
