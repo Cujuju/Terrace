@@ -184,7 +184,23 @@ export function tickSurge(
     // NEGATIVE: the sea takes ground away. Scaled by how hard the storm is
     // blowing, so a weakening cyclone scours less than one at full strength —
     // the same intensity that drives the damage events drives this.
-    world.sculpt(x, y, SURGE_BRUSH_RADIUS_CELLS, -SURGE_SCOUR_HEIGHT_UNITS * intensity);
+    //
+    // ROUNDED TO A WHOLE HEIGHT UNIT, and this is a FIX, not a tidy-up (found
+    // in-world 2026-09-02). A brush amount is an integer by contract
+    // (shared/src/heightmap.ts, `assertBrushArgs`: "brush amount must be an
+    // integer"), and `SURGE_SCOUR_HEIGHT_UNITS * intensity` almost never is —
+    // intensity is a continuous number in [SURGE_MIN_INTENSITY, 1]. Every
+    // surge this plugin has ever attempted therefore threw a RangeError inside
+    // onTick, was caught by the host's per-plugin guard and logged, and moved
+    // no ground at all: the mechanic was dead for as long as it has shipped.
+    // The magnitude cannot round to zero — the weakest storm allowed to surge
+    // is SURGE_MIN_INTENSITY (0.5) of half a band, which is 4 units.
+    world.sculpt(
+      x,
+      y,
+      SURGE_BRUSH_RADIUS_CELLS,
+      -Math.round(SURGE_SCOUR_HEIGHT_UNITS * intensity),
+    );
     return { x, y };
   }
   return null;

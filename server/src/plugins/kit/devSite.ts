@@ -9,10 +9,10 @@
 //
 // WHY THE SEARCH RUNS FROM THE MIDDLE OF THE WORLD. That is where a fresh
 // world's revealed square is (server/src/world/initial-unlock.ts), and every
-// plugin that forces something is fog-of-war bound one way or another: storms'
-// broadcast is filtered on the eye's cell, so a storm sited outside the square
-// is a storm no client is ever told about, and mudslides refuses to sculpt
-// unrevealed ground at all. A forced thing outside the square looks like a
+// plugin that forces something is fog-of-war bound one way or another: a
+// rotating storm's broadcast is filtered on its own cell, so one sited outside
+// the square is a storm no client is ever told about, and a plugin that sculpts
+// refuses to touch unrevealed ground at all. A forced thing outside the square looks like a
 // broken renderer or a broken sim.
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,14 +20,14 @@
 //
 // THE REACH, and THE OUTWARD RING SEARCH that two plugins now run over it. When
 // this module was cut (2026-09-01) the ring search had one caller and stayed
-// with it; the 2026-09-02 split turned that one caller into two — a funnel wants
-// the nearest LAND to the centre, a cyclone the nearest OPEN WATER — and one
-// search asked two questions is exactly the shape that belongs here. What each
-// caller passes is a PREDICATE; this file has no opinion about ground.
+// with it; the 2026-09-02 split turned that one caller into two — one wants the
+// nearest LAND to the centre, the other the nearest OPEN WATER — and one search
+// asked two questions is exactly the shape that belongs here. What each caller
+// passes is a PREDICATE; this file has no opinion about ground.
 //
-// WHAT IS NOT HERE: mudslides' force-spawn, which scans a GRID rather than
-// walking rings, and its own header records why it must ("A GRID SCAN, NOT A
-// RING SEARCH, which is the second thing this function got wrong… Qualifying
+// WHAT IS NOT HERE: the other force-spawn in this repo, which scans a GRID
+// rather than walking rings, and its own header records why it must ("A GRID
+// SCAN, NOT A RING SEARCH, which is the second thing this function got wrong… Qualifying
 // hillsides are rare enough that a ring's few hundred samples missed every one
 // of them on a 512-cell test world"). It wants the BEST hillside, scored by how
 // far mud would run, where a ring search wants the NEAREST anything. Two
@@ -71,10 +71,10 @@ const DEV_SEARCH_SPOKES = 16;
  *
  * THIRTY-TWO — eight world units. Without this the search returns the FIRST cell
  * that qualifies, which walking outward from a sea centre means the very edge of
- * the first beach: the forced tornado stood in the surf and photographed as a
- * waterspout. Requiring the four cells this far out to agree puts a forced
- * funnel on ground that is properly inland (and a forced cyclone in water that
- * is properly open) without needing a second area test.
+ * the first beach: a forced storm stood in the surf and photographed as a
+ * waterspout. Requiring the four cells this far out to agree puts a thing that
+ * wants land properly inland, and one that wants water in water that is properly
+ * open, without needing a second area test.
  */
 const DEV_SITE_CLEARANCE_CELLS = 32;
 
