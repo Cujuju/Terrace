@@ -22,6 +22,13 @@
 // the same one the wire uses — because it must know where the horizon
 // crossings are to draw them.
 //
+// THE PAINTING IS THE WHOLE BANNER (owner ask, 2026-09-01, after seeing the
+// strip in-world): the sky and ground run edge to edge behind the title row
+// too, so the header reads as one card painted with the hour rather than a
+// title over a picture. The SVG therefore carries an empty TITLE BAND of sky
+// at its top, sized to the title row's height, and WorldHeader overlays the
+// name on it; a scrim darkens the band so the title stays legible at noon.
+//
 // STATIC PARTS ARE BUILT ONCE. The curve, the gradients, the stars and the
 // horizon ticks depend on nothing in the reading, so they are module-level
 // constants rather than per-render work; the only nodes that change from one
@@ -32,20 +39,31 @@ import type { WorldClockReading } from '../plugins/hudPanels.ts';
 
 // ── Geometry, in the strip's own units (the SVG viewBox; CSS scales it) ─────
 
-/** The strip's drawing size. 220 fits under the longest generated world name
- *  at the header's 17px title without widening the banner. */
+/** The strip's drawing size. 220 fits the longest generated world name at the
+ *  header's 17px title; a longer one ellipsises (hud.css) rather than widening
+ *  the banner, which would scale the painting with it. */
 const STRIP_WIDTH = 220;
+/**
+ * The sky above the clock proper that the title row sits on. Matches the
+ * title row's rendered height at 1× — 17px type at line-height 1.2 plus the
+ * banner's 6px top padding — so the weekday caption below it clears the name.
+ * hud.css's .world-header--almanac positions the title row over this band.
+ */
+const TITLE_BAND_HEIGHT = 28;
+/** The clock strip itself, below the title band. */
 const STRIP_HEIGHT = 48;
-/** Where the horizon line sits: the sky gets a little less than half the strip,
- *  the ground the rest, because the ground also has to hold the time tag. */
-const HORIZON_Y = 21;
+const TOTAL_HEIGHT = TITLE_BAND_HEIGHT + STRIP_HEIGHT;
+/** Where the horizon line sits: the strip's sky gets a little less than half of
+ *  it, the ground the rest, because the ground also has to hold the time tag. */
+const HORIZON_Y = TITLE_BAND_HEIGHT + 21;
 /** How high the day arc climbs above the horizon at noon … */
 const DAY_ARC_HEIGHT = 12;
 /** … and how deep the night arc dips at midnight. Shallower than the day arc so
  *  the moon at its lowest clears the tag and the day caption. */
 const NIGHT_ARC_DEPTH = 9;
-/** Corner radius of the sky and ground panels. */
-const PANEL_RADIUS = 3;
+/** How much of the title band the scrim darkens, fading to nothing at its
+ *  foot so the sky shows through unbroken by a hard edge. */
+const TITLE_SCRIM_OPACITY = 0.55;
 
 /**
  * Phase conventions restated from the day/night wire (plugins/daynight/
@@ -83,13 +101,13 @@ const TAG_WIDTH = 34;
 const TAG_HEIGHT = 10;
 const TAG_RADIUS = 2;
 const TAG_X = STRIP_WIDTH / 2 - TAG_WIDTH / 2;
-const TAG_Y = STRIP_HEIGHT - TAG_HEIGHT - 3;
+const TAG_Y = TOTAL_HEIGHT - TAG_HEIGHT - 3;
 
 /** Caption baselines: weekday in the sky's top-left, day in the ground's
  *  bottom-left. */
 const CAPTION_X = 3;
-const WEEKDAY_BASELINE_Y = 7.5;
-const DAY_BASELINE_Y = STRIP_HEIGHT - 3;
+const WEEKDAY_BASELINE_Y = TITLE_BAND_HEIGHT + 7.5;
+const DAY_BASELINE_Y = TOTAL_HEIGHT - 3;
 
 /** Horizon ticks at the two crossings. */
 const TICK_HALF_HEIGHT = 3;
@@ -197,7 +215,7 @@ function starField(xFrom: number, xTo: number, seed: number): readonly Star[] {
     return state / 233280;
   };
   const yFrom = HORIZON_Y + 2;
-  const yTo = STRIP_HEIGHT - 2;
+  const yTo = TOTAL_HEIGHT - 2;
   const stars: Star[] = [];
   for (let i = 0; i < STARS_PER_NIGHT_HALF; i++) {
     stars.push({
@@ -226,6 +244,7 @@ const TWILIGHT_OUTER_SPAN = 0.04;
  *  cannot collide. */
 const SKY_GRADIENT_ID = 'almanac-sky';
 const GROUND_GRADIENT_ID = 'almanac-ground';
+const TITLE_SCRIM_ID = 'almanac-scrim';
 const MOON_MASK_ID = 'almanac-moon';
 
 /** The crescent: a circle with a second, offset circle masked out of it. */
@@ -251,9 +270,9 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
   return (
     <svg
       class="almanac"
-      viewBox={`0 0 ${STRIP_WIDTH} ${STRIP_HEIGHT}`}
+      viewBox={`0 0 ${STRIP_WIDTH} ${TOTAL_HEIGHT}`}
       width={STRIP_WIDTH}
-      height={STRIP_HEIGHT}
+      height={TOTAL_HEIGHT}
       role="img"
       aria-label={[props.reading.weekday, props.reading.day !== null ? `Day ${props.reading.day}` : null, props.reading.time]
         .filter((part) => part !== null)
@@ -275,6 +294,10 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
           <stop offset={0} stop-color={GROUND_TOP} />
           <stop offset={1} stop-color={GROUND_BOTTOM} />
         </linearGradient>
+        <linearGradient id={TITLE_SCRIM_ID} x1="0" y1="0" x2="0" y2="1">
+          <stop offset={0} stop-color={TAG_FILL} stop-opacity={TITLE_SCRIM_OPACITY} />
+          <stop offset={1} stop-color={TAG_FILL} stop-opacity={0} />
+        </linearGradient>
         <mask id={MOON_MASK_ID}>
           <rect
             x={-MOON_RADIUS - 2}
@@ -287,13 +310,13 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
         </mask>
       </defs>
 
-      {/* Sky and ground */}
+      {/* Sky and ground, edge to edge — the banner's own rounded corners clip
+        * them (hud.css, overflow hidden) */}
       <rect
         x={0}
         y={0}
         width={STRIP_WIDTH}
         height={HORIZON_Y}
-        rx={PANEL_RADIUS}
         fill={`url(#${SKY_GRADIENT_ID})`}
         opacity={SKY_OPACITY}
       />
@@ -301,10 +324,10 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
         x={0}
         y={HORIZON_Y}
         width={STRIP_WIDTH}
-        height={STRIP_HEIGHT - HORIZON_Y}
-        rx={PANEL_RADIUS}
+        height={TOTAL_HEIGHT - HORIZON_Y}
         fill={`url(#${GROUND_GRADIENT_ID})`}
       />
+      <rect x={0} y={0} width={STRIP_WIDTH} height={TITLE_BAND_HEIGHT} fill={`url(#${TITLE_SCRIM_ID})`} />
       {STARS.map((star) => (
         <circle cx={f1(star.x)} cy={f1(star.y)} r={f1(star.r)} fill={MOON} opacity={f1(star.opacity)} />
       ))}

@@ -721,15 +721,43 @@ button.world-header {
   color: var(--hud-muted);
 }
 
-/* The almanac clock (AlmanacClock.tsx). The SVG is drawn in its own 220×48
-   units and scales down with the banner on narrow screens (the header caps
-   its width in the mobile rules above), never up: at its drawn size the text
-   in it is 6.5–7 units, the HUD's smallest legible type. */
+/* The almanac clock (AlmanacClock.tsx) paints the WHOLE banner: with a clock
+   present the card drops its padding and its own gap, the SVG becomes the only
+   flow child (so the card is exactly the painting's size), and the title row
+   floats over the SVG's title band. The card's radius clips the painting's
+   corners; the chrome — border, blur, translucent slate — stays underneath, so
+   the sky's 0.8 opacity still shows the world through it as every other HUD
+   surface does. The SVG is drawn in its own 220-wide units and scales DOWN
+   with the banner on narrow screens (max-width, mobile rules above), never
+   up: at its drawn size the text in it is 6.5–7 units, the HUD's smallest
+   legible type. */
+.world-header--almanac {
+  position: relative;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.world-header--almanac .world-header__title-row {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+/* Inside the painted card the name is bounded by the painting's width, not
+   its own 320px cap: min-width 0 lets the flex item shrink so the ellipsis
+   rule above actually fires instead of the name overflowing the card. */
+.world-header--almanac .world-header__name {
+  min-width: 0;
+}
+
 .world-header__clock {
   display: block;
   width: 220px;
   max-width: 100%;
-  margin-top: 2px;
 }
 
 .almanac {
