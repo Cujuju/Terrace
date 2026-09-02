@@ -744,6 +744,19 @@ button.world-header {
   overflow: hidden;
 }
 
+/* The one frosted chrome for anything that floats over the painting — the
+   title band and the time tag wear the same glass, by rule (owner,
+   2026-09-01): the sky shows through blurred, so type stays legible over noon
+   without the SVG scrim having to darken the whole band. */
+.hud-frost {
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* The band under the name and icon, edge to edge (owner ask, 2026-09-01,
+   widened from a pill the same day). The banner's own overflow clip rounds
+   its top corners. */
 .world-header--almanac .world-header__title-row {
   grid-area: 1 / 1;
   align-self: start;
@@ -751,20 +764,13 @@ button.world-header {
   z-index: 1;
   padding: 5px 12px;
   box-sizing: border-box;
-  /* A frosted band under the name and icon, edge to edge (owner ask,
-     2026-09-01, widened from a pill the same day): the sky painting shows
-     through blurred, so the title stays legible over noon without the SVG
-     scrim having to darken the whole band. The banner's own overflow clip
-     rounds its top corners. */
-  background: var(--hud-bg);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 /* The floor matches AlmanacClock.tsx's STRIP_MIN_WIDTH: below it the arc
    stops reading as an arc. */
 .world-header__clock {
   grid-area: 1 / 1;
+  position: relative;
   display: block;
   width: 100%;
   min-width: 220px;
@@ -805,13 +811,23 @@ button.world-header {
 }
 
 .almanac__time {
+  /* Floated over the painting at the top AlmanacClock.tsx sets inline, so the
+     tag's place lives with the rest of the strip's geometry. */
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 2px;
   font-size: 8.5px;
+  line-height: 1;
   font-weight: 600;
   letter-spacing: 0.02em;
-  font-family: inherit;
   font-variant-numeric: tabular-nums;
-  text-anchor: middle;
-  fill: var(--hud-text);
+  white-space: nowrap;
+  color: var(--hud-text);
 }
 
 /* Invite plugin: the share URL must survive narrow panels intact. */

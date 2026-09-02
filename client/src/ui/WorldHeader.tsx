@@ -79,7 +79,10 @@ export function WorldHeader(): JSX.Element {
         title={worldHeaderAction()?.label}
         onClick={() => worldHeaderAction()?.onClick()}
       >
-        <span class="world-header__title-row">
+        {/* Over the painting the row wears the HUD's frost (hud.css .hud-frost),
+         * the same glass as the clock's time tag; the plain card is already
+         * frosted as a whole. */}
+        <span class="world-header__title-row" classList={{ 'hud-frost': worldClock() !== null }}>
           <Show when={worldIdentity().name}>
             {(name) => (
               <span class="world-header__name" title={NAME_TITLE}>
