@@ -171,23 +171,58 @@ export function releaseWorldHeaderAction(pluginName: string): void {
 }
 
 /**
- * The world clock, as DISPLAY TEXT — e.g. `3:45 p.m.` or `15:45`, formatted
- * by the owning plugin in the viewer system's own 12/24-hour convention.
+ * One reading of the world clock, as the header draws it (ui/AlmanacClock.tsx).
  *
+ * WHAT CROSSES THE SEAM. Until 2026-09-01 this was a single display string
+ * (`Friday · Day 534 · 11:13 PM`) and the header printed it verbatim. The
+ * almanac clock (owner pick, 2026-09-01) draws the sun or moon at its place in
+ * the day, so core now needs the PHASE as a number as well as the words — but
+ * the division stays the same: the plugin decides what the clock reads, core
+ * decides how it looks. Core never advances, wraps or formats a phase; it only
+ * places a mark on a curve at the fraction it was handed.
+ *
+ * Every field is minute-granular on the writer's side (plugins/daynight), so
+ * the equality below dedupes the per-frame writes down to one DOM update per
+ * in-world minute — the same property the old string had by construction.
+ */
+export interface WorldClockReading {
+  /**
+   * Fraction of a world day in [0, 1) — 0 is DAWN (sunrise), 0.25 noon, 0.5
+   * dusk (sunset), 0.75 midnight. The same convention as the day/night wire
+   * phase (plugins/daynight/protocol.ts), restated here so the header does not
+   * import a plugin to learn where the horizon is.
+   */
+  readonly phase: number;
+  /** The time as text, in the viewer's own 12/24-hour convention. */
+  readonly time: string;
+  /** Weekday name, or null when the server did not say which day it is. */
+  readonly weekday: string | null;
+  /** One-based day of the world's age ("Day 534"), or null as above. */
+  readonly day: number | null;
+}
+
+/**
  * Lives here (not in hudState.ts) because it is a PLUGIN → core write: the
  * day/night plugin owns the clock (its interpolator advances the phase every
- * frame) and this module is already the seam plugins write through. A string,
- * not a phase number, keeps that seam one-way and narrow — core renders text
- * it did not compute. Nullable because a server without the day/night plugin
- * has no world time at all; the header then shows just name and difficulty,
- * never an invented clock. Server-derived and therefore not persisted (see
- * hudState.ts's header).
+ * frame) and this module is already the seam plugins write through. Nullable
+ * because a server without the day/night plugin has no world time at all; the
+ * header then shows just name and difficulty, never an invented clock.
+ * Server-derived and therefore not persisted (see hudState.ts's header).
  */
-const [worldTimeText, setWorldTimeTextSignal] = createSignal<string | null>(null);
+const [worldClock, setWorldClockSignal] = createSignal<WorldClockReading | null>(null, {
+  equals: (a, b) =>
+    a === b ||
+    (a !== null &&
+      b !== null &&
+      a.phase === b.phase &&
+      a.time === b.time &&
+      a.weekday === b.weekday &&
+      a.day === b.day),
+});
 
-export { worldTimeText };
+export { worldClock };
 
-/** Written by the day/night plugin each frame; Solid dedupes equal strings. */
-export function setWorldTimeText(text: string | null): void {
-  setWorldTimeTextSignal(text);
+/** Written by the day/night plugin each frame; equal readings do not re-render. */
+export function setWorldClock(reading: WorldClockReading | null): void {
+  setWorldClockSignal(reading);
 }

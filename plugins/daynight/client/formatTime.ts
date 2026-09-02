@@ -1,9 +1,10 @@
 // Rendering the world clock as display text for the HUD's world header.
 //
-// The header shows `Difficulty 50 – Monday · Day 57 · 3:45 p.m.` on one line;
-// this file owns everything right of the dash. Pure functions of a phase and a
-// day — no DOM, no clock — so the node test runner can assert the formatting
-// directly.
+// The header draws the clock as an almanac line (client/src/ui/AlmanacClock.tsx)
+// — the sun or moon on its arc, with the weekday, the day number and the time
+// as text; this file owns every WORD on it and the minute-granular phase the
+// mark is placed at. Pure functions of a phase and a day — no DOM, no clock —
+// so the node test runner can assert the formatting directly.
 //
 // THE CONVENTION ASK (owner, 2026-08-21): the time must read in the VIEWER'S
 // own system convention — `a.m.`/`p.m.` where the locale uses them, 24-hour
@@ -16,6 +17,7 @@
 
 import { DAY_LENGTH_SECONDS } from '../protocol.ts';
 import { DAWN_HOUR, weekdayOf } from '@terrace/shared';
+import type { WorldClockReading } from '../../../client/src/plugins/hudPanels.ts';
 
 const MINUTES_PER_HOUR = 60;
 const HOURS_PER_DAY = 24;
@@ -83,17 +85,14 @@ export function formatWorldTime(phase: number): string {
 }
 
 /**
- * Separator between the header clock's parts.
+ * The whole header clock as ONE READING for core to draw: `Monday`, `Day 57`,
+ * `3:45 p.m.` and the phase they were read at.
  *
- * The middle dot, because the chronicle's own headings already join a weekday
- * to a day with one (plugins/chronicle/client/ChroniclePanel.tsx) and the two
- * readouts name the same day — a header that punctuated it differently would
- * read as a different kind of fact.
- */
-const CLOCK_PART_SEPARATOR = ' \u00b7 ';
-
-/**
- * The whole header clock: `Monday · Day 57 · 3:45 p.m.`
+ * THE PHASE IS QUANTISED TO THE MINUTE before it crosses the seam, so the
+ * reading only changes when the time text does — the header then updates once
+ * per in-world minute (one real second) rather than every frame, which is what
+ * keeps a per-frame writer from re-rendering an SVG 140 times a second for a
+ * mark that moves less than a tenth of a pixel between frames.
  *
  * `day` is the world's AGE in days and `genesisDay` the calendar day its day 0
  * fell on (protocol.ts) — the weekday needs the calendar day, so it is the sum
@@ -111,12 +110,17 @@ const CLOCK_PART_SEPARATOR = ' \u00b7 ';
  * That is the same instant the chronicle starts a new heading, so the two
  * agree; it is a property of the shared calendar, not of this formatting.
  */
-export function formatWorldClock(
+export function worldClockReading(
   phase: number,
   day: number | null,
   genesisDay: number | null,
-): string {
-  const time = formatWorldTime(phase);
-  if (day === null || genesisDay === null) return time;
-  return [weekdayOf(day + genesisDay), `Day ${day + 1}`, time].join(CLOCK_PART_SEPARATOR);
+): WorldClockReading {
+  const wholeMinutes = Math.floor(phase * DAY_LENGTH_SECONDS);
+  const known = day !== null && genesisDay !== null;
+  return {
+    phase: wholeMinutes / DAY_LENGTH_SECONDS,
+    time: formatWorldTime(phase),
+    weekday: known ? weekdayOf(day + genesisDay) : null,
+    day: known ? day + 1 : null,
+  };
 }
