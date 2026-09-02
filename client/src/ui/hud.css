@@ -731,18 +731,24 @@ button.world-header {
    with the banner on narrow screens (max-width, mobile rules above), never
    up: at its drawn size the text in it is 6.5–7 units, the HUD's smallest
    legible type. */
+/* The painted banner is a one-cell grid: the clock and the title row share
+   the cell, so the card is as wide as the WIDER of the two — the title row's
+   natural width, or the painting's 220px floor — and the name is never
+   squeezed (owner rule, 2026-09-01: the name always renders in full). The
+   clock stretches to the cell and repaints itself at that width
+   (AlmanacClock.tsx); the title row sits at the cell's top, above it. */
 .world-header--almanac {
-  position: relative;
+  display: grid;
   gap: 0;
   padding: 0;
   overflow: hidden;
 }
 
 .world-header--almanac .world-header__title-row {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  grid-area: 1 / 1;
+  align-self: start;
+  position: relative;
+  z-index: 1;
   padding: 5px 12px;
   box-sizing: border-box;
   /* A frosted band under the name and icon, edge to edge (owner ask,
@@ -755,17 +761,13 @@ button.world-header {
   -webkit-backdrop-filter: blur(6px);
 }
 
-/* Inside the painted card the name is bounded by the painting's width, not
-   its own 320px cap: min-width 0 lets the flex item shrink so the ellipsis
-   rule above actually fires instead of the name overflowing the card. */
-.world-header--almanac .world-header__name {
-  min-width: 0;
-}
-
+/* The floor matches AlmanacClock.tsx's STRIP_MIN_WIDTH: below it the arc
+   stops reading as an arc. */
 .world-header__clock {
+  grid-area: 1 / 1;
   display: block;
-  width: 220px;
-  max-width: 100%;
+  width: 100%;
+  min-width: 220px;
 }
 
 .almanac {

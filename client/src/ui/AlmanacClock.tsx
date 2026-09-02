@@ -29,20 +29,28 @@
 // at its top, sized to the title row's height, and WorldHeader overlays the
 // name on it; a scrim darkens the band so the title stays legible at noon.
 //
-// STATIC PARTS ARE BUILT ONCE. The curve, the gradients, the stars and the
-// horizon ticks depend on nothing in the reading, so they are module-level
-// constants rather than per-render work; the only nodes that change from one
+// THE PAINTING FITS THE CARD, THE CARD FITS THE NAME (owner rule, 2026-09-01:
+// the name must never be reduced to an ellipsis). The banner's width is set
+// by its title row in hud.css; the SVG fills that width and measures it with a
+// ResizeObserver, and every horizontal position here is a function of the
+// measured width, in units of one CSS pixel. The height never changes: the
+// strip is TOTAL_HEIGHT px tall whatever the name is.
+//
+// STATIC PARTS ARE BUILT ONCE PER WIDTH. The curve, the stars, the tag's
+// place and the horizon crossings depend only on the width, so they are memos
+// keyed on it rather than per-render work; the gradients are in fractions of
+// the width and never change at all. The only nodes that change from one
 // minute to the next are the two bodies, the tag text and the two captions.
 
-import { createMemo, type JSX } from 'solid-js';
+import { createMemo, createSignal, onCleanup, onMount, type JSX } from 'solid-js';
 import type { WorldClockReading } from '../plugins/hudPanels.ts';
 
-// ── Geometry, in the strip's own units (the SVG viewBox; CSS scales it) ─────
+// ── Geometry, in CSS pixels (the SVG viewBox is sized 1:1 with the element) ─
 
-/** The strip's drawing size. 220 fits the longest generated world name at the
- *  header's 17px title; a longer one ellipsises (hud.css) rather than widening
- *  the banner, which would scale the painting with it. */
-const STRIP_WIDTH = 220;
+/** The strip's narrowest width: what a short name leaves the painting, and
+ *  the least the dawn-to-dusk arc needs to read as an arc. hud.css's
+ *  .world-header__clock carries the same floor as its min-width. */
+const STRIP_MIN_WIDTH = 220;
 /**
  * The sky above the clock proper that the title row sits on. Matches the
  * title row's rendered height at 1× — 17px type at line-height 1.2 plus the
@@ -84,8 +92,9 @@ const TITLE_SCRIM_OPACITY = 0.55;
  */
 const SUNSET_PHASE = 0.5;
 const PHASE_OF_MIDNIGHT = 0.75;
-const SUNRISE_X = STRIP_WIDTH * (1 - PHASE_OF_MIDNIGHT);
-const SUNSET_X = STRIP_WIDTH * (1 - PHASE_OF_MIDNIGHT + SUNSET_PHASE);
+/** Where the two crossings fall, as fractions of the strip's width. */
+const SUNRISE_FRACTION = 1 - PHASE_OF_MIDNIGHT;
+const SUNSET_FRACTION = 1 - PHASE_OF_MIDNIGHT + SUNSET_PHASE;
 
 /**
  * How long the handover at each horizon takes, as a fraction of the day: the
@@ -113,7 +122,6 @@ const MOON_RADIUS = 3.4;
 const TAG_WIDTH = 40;
 const TAG_HEIGHT = 12;
 const TAG_RADIUS = 2;
-const TAG_X = STRIP_WIDTH / 2 - TAG_WIDTH / 2;
 const TAG_Y = TOTAL_HEIGHT - STRIP_INSET - TAG_HEIGHT - 3;
 /** Where the time's baseline sits inside the tag: 3 units of tag below the
  *  baseline balances the ~3 above the caps at the 8.5-unit type size. */
@@ -169,8 +177,8 @@ const STAR_OPACITY_RANGE = 0.6;
 const TWO_PI = Math.PI * 2;
 
 /** Horizontal position of a phase: midnight at the left edge, wrapping. */
-function xOfPhase(phase: number): number {
-  return ((phase - PHASE_OF_MIDNIGHT + 1) % 1) * STRIP_WIDTH;
+function xOfPhase(phase: number, width: number): number {
+  return ((phase - PHASE_OF_MIDNIGHT + 1) % 1) * width;
 }
 
 /** Vertical position of a phase: above the horizon by day, below it by night —
@@ -201,22 +209,25 @@ function sunVisibility(phase: number): number {
 
 const f1 = (n: number): string => n.toFixed(1);
 
-/** The whole day's path, sampled once: left edge (midnight) to right edge. */
-const CURVE_PATH = ((): string => {
+/** The whole day's path, sampled once per width: left edge (midnight) to
+ *  right edge. */
+function curvePath(width: number): string {
   let d = '';
   for (let i = 0; i <= CURVE_SAMPLES; i++) {
     const phase = (PHASE_OF_MIDNIGHT + i / CURVE_SAMPLES) % 1;
-    const x = (i / CURVE_SAMPLES) * STRIP_WIDTH;
+    const x = (i / CURVE_SAMPLES) * width;
     d += `${i === 0 ? 'M' : 'L'}${f1(x)} ${f1(yOfPhase(phase))}`;
   }
   return d;
-})();
+}
 
 /**
  * Fixed star fields under the two night stretches of the ground. A small
  * linear-congruential generator rather than Math.random so the stars are in
  * the same places every render and every session — a HUD element that changed
- * between mounts would look broken, not lively.
+ * between mounts would look broken, not lively. Positions are fractions of the
+ * night stretch, so a wider strip spreads the same stars rather than rolling
+ * new ones.
  */
 interface Star {
   readonly x: number;
@@ -245,14 +256,13 @@ function starField(xFrom: number, xTo: number, seed: number): readonly Star[] {
   return stars;
 }
 
-const STARS: readonly Star[] = [
-  ...starField(0, SUNRISE_X, STAR_SEED_LEFT),
-  ...starField(SUNSET_X, STRIP_WIDTH, STAR_SEED_RIGHT),
-];
+function stars(width: number): readonly Star[] {
+  return [
+    ...starField(0, SUNRISE_FRACTION * width, STAR_SEED_LEFT),
+    ...starField(SUNSET_FRACTION * width, width, STAR_SEED_RIGHT),
+  ];
+}
 
-/** Gradient stop offsets, as fractions of the strip's width. */
-const SUNRISE_FRACTION = SUNRISE_X / STRIP_WIDTH;
-const SUNSET_FRACTION = SUNSET_X / STRIP_WIDTH;
 /** How far either side of a crossing the warm dawn/dusk band reaches. */
 const TWILIGHT_INNER_SPAN = 0.08;
 const TWILIGHT_OUTER_SPAN = 0.04;
@@ -276,8 +286,29 @@ export interface AlmanacClockProps {
 }
 
 export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
+  // The strip's width in CSS pixels: the floor until the element is measured,
+  // then whatever the card gives it. Integer so the viewBox stays 1:1 with
+  // device pixels at 1× and the horizon line stays crisp.
+  const [width, setWidth] = createSignal(STRIP_MIN_WIDTH);
+  let svg: SVGSVGElement | undefined;
+  onMount(() => {
+    if (svg === undefined || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const measured = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (measured > 0) setWidth(Math.max(STRIP_MIN_WIDTH, measured));
+    });
+    observer.observe(svg);
+    onCleanup(() => observer.disconnect());
+  });
+
+  const sunriseX = createMemo(() => SUNRISE_FRACTION * width());
+  const sunsetX = createMemo(() => SUNSET_FRACTION * width());
+  const tagX = createMemo(() => width() / 2 - TAG_WIDTH / 2);
+  const path = createMemo(() => curvePath(width()));
+  const skyStars = createMemo(() => stars(width()));
+
   const phase = (): number => props.reading.phase;
-  const x = createMemo(() => xOfPhase(phase()));
+  const x = createMemo(() => xOfPhase(phase(), width()));
   const y = createMemo(() => yOfPhase(phase()));
   const sunAlpha = createMemo(() => sunVisibility(phase()));
   // The body in the sky follows the curve; the other waits under the horizon.
@@ -286,9 +317,9 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
 
   return (
     <svg
+      ref={svg}
       class="almanac"
-      viewBox={`0 0 ${STRIP_WIDTH} ${TOTAL_HEIGHT}`}
-      width={STRIP_WIDTH}
+      viewBox={`0 0 ${width()} ${TOTAL_HEIGHT}`}
       height={TOTAL_HEIGHT}
       role="img"
       aria-label={[props.reading.weekday, props.reading.day !== null ? `Day ${props.reading.day}` : null, props.reading.time]
@@ -332,7 +363,7 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
       <rect
         x={0}
         y={0}
-        width={STRIP_WIDTH}
+        width={width()}
         height={HORIZON_Y}
         fill={`url(#${SKY_GRADIENT_ID})`}
         opacity={SKY_OPACITY}
@@ -340,30 +371,30 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
       <rect
         x={0}
         y={HORIZON_Y}
-        width={STRIP_WIDTH}
+        width={width()}
         height={TOTAL_HEIGHT - HORIZON_Y}
         fill={`url(#${GROUND_GRADIENT_ID})`}
       />
-      <rect x={0} y={0} width={STRIP_WIDTH} height={TITLE_BAND_HEIGHT} fill={`url(#${TITLE_SCRIM_ID})`} />
-      {STARS.map((star) => (
+      <rect x={0} y={0} width={width()} height={TITLE_BAND_HEIGHT} fill={`url(#${TITLE_SCRIM_ID})`} />
+      {skyStars().map((star) => (
         <circle cx={f1(star.x)} cy={f1(star.y)} r={f1(star.r)} fill={MOON} opacity={f1(star.opacity)} />
       ))}
 
       {/* The day's path, the horizon, and its two crossings */}
-      <path d={CURVE_PATH} fill="none" stroke={CURVE_STROKE} stroke-width={1} stroke-dasharray="1.5 2" />
-      <line x1={0} y1={HORIZON_Y} x2={STRIP_WIDTH} y2={HORIZON_Y} stroke={HORIZON_STROKE} stroke-width={1} />
+      <path d={path()} fill="none" stroke={CURVE_STROKE} stroke-width={1} stroke-dasharray="1.5 2" />
+      <line x1={0} y1={HORIZON_Y} x2={width()} y2={HORIZON_Y} stroke={HORIZON_STROKE} stroke-width={1} />
       <line
-        x1={SUNRISE_X}
+        x1={sunriseX()}
         y1={HORIZON_Y - TICK_HALF_HEIGHT}
-        x2={SUNRISE_X}
+        x2={sunriseX()}
         y2={HORIZON_Y + TICK_HALF_HEIGHT}
         stroke={DAWN}
         stroke-width={1.2}
       />
       <line
-        x1={SUNSET_X}
+        x1={sunsetX()}
         y1={HORIZON_Y - TICK_HALF_HEIGHT}
-        x2={SUNSET_X}
+        x2={sunsetX()}
         y2={HORIZON_Y + TICK_HALF_HEIGHT}
         stroke={DUSK}
         stroke-width={1.2}
@@ -387,7 +418,7 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
       </g>
 
       {/* The time, pinned */}
-      <g transform={`translate(${TAG_X} ${TAG_Y})`}>
+      <g transform={`translate(${f1(tagX())} ${TAG_Y})`}>
         <rect
           width={TAG_WIDTH}
           height={TAG_HEIGHT}

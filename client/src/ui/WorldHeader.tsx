@@ -6,9 +6,11 @@
 // difficulty as a small superscript after it, and beneath it the almanac clock
 // (AlmanacClock.tsx) — the sun or moon on the day's arc, with the weekday, the
 // day number and the time laid out on the strip. The clock's painting fills
-// the whole banner (`world-header--almanac`, hud.css): the SVG is the card's
-// only flow child and the title row floats over its sky. Without a clock the
-// banner is the plain chrome card it always was. Before this the rating row
+// the whole banner (`world-header--almanac`, hud.css): the title row and the
+// SVG share one grid cell, the title row sets the card's width so the name
+// always renders in full, and the SVG stretches to it and floats the title
+// over its sky. Without a clock the banner is the plain chrome card it always
+// was. Before this the rating row
 // read `Difficulty 50 – Friday · Day 534 · 11:13 PM` as one line of text.
 //
 // CORE, NOT A PLUGIN. A world's name and its difficulty rating are identity —
