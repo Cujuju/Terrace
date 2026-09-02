@@ -1,6 +1,7 @@
 // The AIM BANNER — the second step of an admin action (owner, 2026-09-01).
 //
-// A card in the admin panel ARMS an action; this strip, top-centre, says what
+// A card in the admin panel ARMS an action; this strip, in the top-centre
+// stack under the world header, says what
 // is armed and that the next ground press fires it there, with a Cancel. The
 // press itself is handled in main.tsx (the placement listener), which sends
 // the request and clears the arm; the receipt that comes back is shown here
@@ -78,7 +79,7 @@ export function AdminAim(): JSX.Element {
     <>
       <Show when={armedAction()}>
         {(armed) => (
-          <div class="world-banner admin-aim-banner" role="status" aria-live="polite">
+          <div class="admin-aim-banner" role="status" aria-live="polite">
             <span class="admin-aim-crosshair" aria-hidden="true" />
             <span>
               <strong>{armed().label}</strong> — click the ground where it should happen
@@ -97,7 +98,7 @@ export function AdminAim(): JSX.Element {
       <Show when={receipt()}>
         {(shown) => (
           <div
-            class="world-banner admin-aim-banner admin-receipt"
+            class="admin-aim-banner admin-receipt"
             classList={{ [`admin-receipt-${receiptTone(shown())}`]: true }}
             role="status"
             aria-live="polite"
