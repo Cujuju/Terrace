@@ -826,6 +826,9 @@ button.world-header {
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--hud-text);
+  /* Blur only, no slate tint (owner, 2026-09-01): the ground under the tag is
+     already dark, so the tint added a box without adding legibility. */
+  background: none;
 }
 
 /* Invite plugin: the share URL must survive narrow panels intact. */

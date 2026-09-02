@@ -420,7 +420,7 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
     <span class="almanac__day" style={{ left: `${CAPTION_X}px`, top: `${DAY_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
       {props.reading.day !== null ? `DAY ${props.reading.day}` : ''}
     </span>
-    {/* The time, pinned: frosted like the title band (hud.css) */}
+    {/* The time, pinned: the title band's blur, without its tint (hud.css) */}
     <span class="almanac__time hud-frost" style={{ top: `${TAG_TOP_Y}px`, height: `${TAG_HEIGHT}px` }}>
       {props.reading.time}
     </span>
