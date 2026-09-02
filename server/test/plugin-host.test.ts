@@ -14,6 +14,7 @@ import {
 } from '../src/config.ts';
 import { PluginLoadError, discoverPlugins } from '../src/plugins/discovery.ts';
 import { MAX_TERRAIN_CHANGE_DEPTH, PluginHost } from '../src/plugins/host.ts';
+import { ALLOW } from '../src/plugins/types.ts';
 import type { TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { namespacedMessageType } from '../src/plugins/world-api.ts';
 import type { Player } from '../src/player.ts';
@@ -379,6 +380,119 @@ describe('PluginHost', () => {
     // The guard fired: the cascade ran exactly to the cap and stopped there,
     // instead of recursing until the stack (or the tick) died.
     expect(depth).toBe(MAX_TERRAIN_CHANGE_DEPTH);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // runIntent — the verdict phase. Issue #278: a plugin that allowed the
+  // ORIGINAL intent must also get to judge the EFFECTIVE one, or a later
+  // plugin's `modify` binds it to a stroke it never saw (mana approving
+  // radius 2, relics widening to 3, mana billed for 3 → overdraft). The
+  // chain re-asks only the plugins that did NOT modify, so an unconditional
+  // widener is never compounded and no plugin needs an idempotence rule.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const INTENT: SculptIntent = { type: 'sculpt', x: 4, y: 4, radius: 2, dir: 1 };
+
+  it('re-asks every allowing plugin against the effective intent once a later plugin modifies it', () => {
+    const judged: number[] = [];
+    const judge: TerracePlugin = {
+      name: 'a-judge',
+      onIntent(intent) {
+        judged.push(intent.radius);
+        return { kind: 'allow' };
+      },
+    };
+    const widener: TerracePlugin = {
+      name: 'b-widener',
+      onIntent(intent) {
+        return { kind: 'modify', intent: { ...intent, radius: intent.radius + 1 } };
+      },
+    };
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [judge, widener].map(asLoadedPlugin));
+
+    const verdict = host.runIntent(INTENT, PLAYER);
+
+    expect(verdict).toEqual({ kind: 'modify', intent: { ...INTENT, radius: 3 } });
+    expect(judged).toEqual([2, 3]);
+  });
+
+  it('lets a re-asked plugin deny the effective intent it would have been bound to', () => {
+    const affordable = 2;
+    const gate: TerracePlugin = {
+      name: 'a-gate',
+      onIntent(intent) {
+        return intent.radius > affordable ? { kind: 'deny', reason: 'too-big' } : { kind: 'allow' };
+      },
+    };
+    const widener: TerracePlugin = {
+      name: 'b-widener',
+      onIntent(intent) {
+        return { kind: 'modify', intent: { ...intent, radius: intent.radius + 1 } };
+      },
+    };
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [gate, widener].map(asLoadedPlugin));
+
+    expect(host.runIntent(INTENT, PLAYER)).toEqual({ kind: 'deny', reason: 'too-big' });
+  });
+
+  it('never re-runs a modifier, so an unconditional widener is applied exactly once', () => {
+    let widenerCalls = 0;
+    const widener: TerracePlugin = {
+      name: 'a-widener',
+      onIntent(intent) {
+        widenerCalls += 1;
+        return { kind: 'modify', intent: { ...intent, radius: intent.radius + 1 } };
+      },
+    };
+    const bystander: TerracePlugin = { name: 'b-bystander', onIntent: () => undefined };
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [widener, bystander].map(asLoadedPlugin));
+
+    const verdict = host.runIntent(INTENT, PLAYER);
+
+    expect(verdict).toEqual({ kind: 'modify', intent: { ...INTENT, radius: 3 } });
+    expect(widenerCalls).toBe(1);
+  });
+
+  it('asks each plugin exactly once when nothing modifies the intent', () => {
+    const calls: string[] = [];
+    const first: TerracePlugin = { name: 'a-first', onIntent: () => void calls.push('a') };
+    const second: TerracePlugin = { name: 'b-second', onIntent: () => (calls.push('b'), ALLOW) };
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [first, second].map(asLoadedPlugin));
+
+    expect(host.runIntent(INTENT, PLAYER)).toEqual({ kind: 'allow' });
+    expect(calls).toEqual(['a', 'b']);
+  });
+
+  it('treats a modify returned on the second look as a deny, and records it as a fault', () => {
+    // A plugin that allowed the original intent but rewrites the effective
+    // one has no third look coming — looping until the chain settles would
+    // hand plugins a way to never settle. The rewrite is refused, not
+    // applied, and the plugin is charged with a fault exactly like a throw.
+    const flipFlop: TerracePlugin = {
+      name: 'a-flipflop',
+      onIntent(intent) {
+        return intent.radius === 2 ? { kind: 'allow' } : { kind: 'modify', intent: { ...intent, radius: 1 } };
+      },
+    };
+    const widener: TerracePlugin = {
+      name: 'b-widener',
+      onIntent(intent) {
+        return { kind: 'modify', intent: { ...intent, radius: intent.radius + 1 } };
+      },
+    };
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    const host = new PluginHost(world, [flipFlop, widener].map(asLoadedPlugin));
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const verdict = host.runIntent(INTENT, PLAYER);
+    errors.mockRestore();
+
+    expect(verdict.kind).toBe('deny');
+    expect(host.faultCount('a-flipflop')).toBe(1);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
