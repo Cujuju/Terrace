@@ -14,7 +14,7 @@ plugins; you should never have to touch core.
 - **Your world is one SQLite file.** Kill the process, restart, the world comes back.
 - **License:** MIT.
 
-Design decisions and their rationale live in [`docs/DESIGN.md`](docs/DESIGN.md).
+Standing rules and architecture live in [`docs/DESIGN.md`](docs/DESIGN.md); dated decisions in [`docs/decisions/`](docs/decisions/README.md).
 
 ---
 

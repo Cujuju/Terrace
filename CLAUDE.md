@@ -1,7 +1,9 @@
 # Terrace — project instructions
 
-Read `docs/DESIGN.md` first. It is the design & decision record; decisions there
-are settled with the owner — do not relitigate without new information.
+Consult `docs/DESIGN.md` for standing rules and architecture, and
+`docs/decisions/<arc>.md` for the dated decisions of the area you are touching.
+Both are settled with the owner — do not relitigate without new information.
+Do not append to either without the owner's permission in the current turn.
 
 ## Task tracking
 
@@ -14,14 +16,8 @@ GitHub Issues on `Cujuju/Terrace`. Arcs are `arc/<slug>` labels, buckets are
 - `pnpm test` — run Vitest across the workspace
 - Tests and typecheck must pass before any commit that touches `shared/`.
 
-## Tests
-
-Do not write tests unless the owner asks for them. Owner, 2026-08-23: tests
-written after the fact just confirm the code that was written and pass by
-construction, which is worthless — and a feature that has not been seen working
-is not helped by them. What must always hold is that `pnpm typecheck` passes.
-
-When the owner does ask, write the test FIRST and make the feature pass it.
+# Tests
+- Never add or write tests without my explicit permission; permission is per-session only and must be re-granted in each new session.
 
 Failing tests in packages you did not touch are other agents' in-flight work —
 check `git status` before reporting them as breakage.
@@ -61,10 +57,3 @@ shared checkout is blocked from inside a worktree until you do.
 - A `.tsx` exports only components (+ types — erased, exempt). A runtime const/fn stays **unexported-local** if used once; promote to a sibling `.ts` only when **shared by ≥2 modules**. Never `export` a non-component value from a `.tsx`.
 
 # Documentation
-
-# Naming
-- React components: `PascalCase`
-- Hooks: `useCamelCase`
-- Utilities/services: `camelCase`
-- CSS tokens: `--kebab-case`
-- localStorage keys: `appNameHere:camelCase`
