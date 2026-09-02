@@ -63,6 +63,7 @@ import {
   approachEnvelope,
   type SwimmerDreadSpec,
 } from './dread.ts';
+import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -98,36 +99,6 @@ const BOLT_JAG_TURN_RADIANS = 2.4;
  * the sea. A positive render order puts every sheet after it, unconditionally.
  */
 const DREAD_RENDER_ORDER = 1;
-
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
-
-/**
- * Tracks the user's motion preference LIVE, the way the mana gauge does
- * (plugins/mana/client/ManaGauge.tsx): someone who turns it on mid-session must
- * not have to reload to stop the lightning.
- *
- * Falls back to "reduced" being false where matchMedia does not exist. That is
- * the honest default rather than the safe-looking one: the only environment in
- * this project without matchMedia is the node test runner, which draws nothing,
- * and defaulting to true there would let the effect's normal path go untested.
- */
-function watchReducedMotion(): { matches(): boolean; stop(): void } {
-  const query =
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(REDUCED_MOTION_QUERY)
-      : null;
-  if (query === null) return { matches: () => false, stop: () => {} };
-
-  let reduced = query.matches;
-  const onChange = (event: MediaQueryListEvent): void => {
-    reduced = event.matches;
-  };
-  query.addEventListener('change', onChange);
-  return {
-    matches: () => reduced,
-    stop: () => query.removeEventListener('change', onChange),
-  };
-}
 
 /** Radius multiplier of the wobbled outline at bearing `angle`. */
 function edgeWobble(angle: number): number {

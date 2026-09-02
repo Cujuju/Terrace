@@ -26,6 +26,7 @@ import {
 } from '../protocol.ts';
 import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.ts';
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
+import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { createWildlifeModels, type WildlifeModels } from './models.ts';
 import { WHALE_SPECIES } from './whaleSpecies.ts';
 import {
@@ -104,14 +105,13 @@ let unsubscribeFrames: (() => void) | null = null;
  * and where it was last drawn.
  */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void {
-  for (const id of sampled.keys()) {
-    if (views.has(id)) continue;
-    views.set(id, { phase: id * PHASE_RADIANS_PER_ID, drawnX: 0, drawnZ: 0, drawnY: null });
-  }
-
-  for (const id of views.keys()) {
-    if (!sampled.has(id)) views.delete(id);
-  }
+  reconcileById(sampled, views, {
+    acquire: (id) => ({ phase: id * PHASE_RADIANS_PER_ID, drawnX: 0, drawnZ: 0, drawnY: null }),
+    // A creature's view is four numbers and no scene object of its own — the
+    // instanced meshes are shared and rebuilt from the live set every frame —
+    // so retiring one is dropping the entry, which the kit does.
+    release: () => {},
+  });
 }
 
 /**

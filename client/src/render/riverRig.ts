@@ -79,6 +79,7 @@ import {
   type RiverNetworkSource,
 } from './water/riverNetworkSource.ts';
 import { EMPTY_RIVER_SURFACE, type RiverSurface } from './water/riverSurface.ts';
+import { watchReducedMotion } from '../plugins/kit/reducedMotion.ts';
 
 // ── Recompute throttle ───────────────────────────────────────────────────────
 
@@ -527,34 +528,6 @@ export interface RiverRigOptions {
    * and previews want; the client passes the worker-backed one.
    */
   readonly networkSource?: RiverNetworkSource;
-}
-
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
-
-/**
- * Tracks the user's motion preference live. A near-duplicate of the same
- * small watcher plugins/weather/client/index.ts, the mana gauge and the
- * monsters plugin's dread already each keep their own copy of — this module
- * lives in core (rivers are not a plugin — see docs/DESIGN.md), which has no
- * shared client utility module to hang one shared copy on, so a fourth small
- * copy here follows the same house pattern rather than inventing a new one.
- */
-function watchReducedMotion(): { matches(): boolean; stop(): void } {
-  const query =
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(REDUCED_MOTION_QUERY)
-      : null;
-  if (query === null) return { matches: () => false, stop: () => {} };
-
-  let reduced = query.matches;
-  const onChange = (event: MediaQueryListEvent): void => {
-    reduced = event.matches;
-  };
-  query.addEventListener('change', onChange);
-  return {
-    matches: () => reduced,
-    stop: () => query.removeEventListener('change', onChange),
-  };
 }
 
 /**

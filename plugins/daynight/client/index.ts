@@ -24,34 +24,7 @@ import { DayNightInterpolator } from './interpolation.ts';
 import { worldClockReading } from './formatTime.ts';
 import { setWorldClock } from '../../../client/src/plugins/hudPanels.ts';
 import { skyStateAtPhase } from './sky.ts';
-
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
-
-/**
- * Tracks the user's motion preference LIVE — the same pattern weather and
- * monsters use, restated rather than imported (plugin halves do not depend on
- * each other's internals). Falls back to "reduced" being false where
- * matchMedia does not exist, which is the node test runner: the only
- * environment here without it, and it draws nothing, so defaulting to true
- * there would let the normal (non-frozen) path go untested.
- */
-function watchReducedMotion(): { matches(): boolean; stop(): void } {
-  const query =
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(REDUCED_MOTION_QUERY)
-      : null;
-  if (query === null) return { matches: () => false, stop: () => {} };
-
-  let reduced = query.matches;
-  const onChange = (event: MediaQueryListEvent): void => {
-    reduced = event.matches;
-  };
-  query.addEventListener('change', onChange);
-  return {
-    matches: () => reduced,
-    stop: () => query.removeEventListener('change', onChange),
-  };
-}
+import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 
 /** Module-level singletons — the host constructs exactly one plugin instance. */
 const interpolator = new DayNightInterpolator();

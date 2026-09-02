@@ -40,6 +40,8 @@ import {
 import { WeatherInterpolator, type InterpolatedSystem } from './interpolation.ts';
 import { createWeatherRigs, type WeatherRig, type WeatherRigs } from './rig.ts';
 import { LightningGovernor } from './sky.ts';
+import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
+import { reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDERING IS ANCHORED TO THE SYSTEM, NOT TO THE CAMERA.
@@ -73,40 +75,6 @@ import { LightningGovernor } from './sky.ts';
  */
 const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
-
-/**
- * Tracks the user's motion preference LIVE, the way the mana gauge and the
- * monsters plugin's dread do: someone who turns it on mid-session must not have
- * to reload to stop the lightning.
- *
- * Falls back to "reduced" being false where matchMedia does not exist. That is
- * the honest default rather than the safe-looking one: the only environment in
- * this project without matchMedia is the node test runner, which draws nothing,
- * and defaulting to true there would let the effect's normal path go untested.
- *
- * ONE WATCHER FOR THE WHOLE PLUGIN, not one per rig: the preference is a
- * property of the user, not of a rain cloud, and a listener per system would add
- * and remove listeners every time the weather turned over.
- */
-function watchReducedMotion(): { matches(): boolean; stop(): void } {
-  const query =
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(REDUCED_MOTION_QUERY)
-      : null;
-  if (query === null) return { matches: () => false, stop: () => {} };
-
-  let reduced = query.matches;
-  const onChange = (event: MediaQueryListEvent): void => {
-    reduced = event.matches;
-  };
-  query.addEventListener('change', onChange);
-  return {
-    matches: () => reduced,
-    stop: () => query.removeEventListener('change', onChange),
-  };
-}
-
 /**
  * Module-level singletons, matching the shape of this repo's other plugins. The
  * client host constructs exactly one instance of each plugin (client/src/
@@ -136,30 +104,31 @@ let unsubscribeFrames: (() => void) | null = null;
 
 /** Adds/removes rigs so `views` matches the sampled system list. */
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSystem>): void {
-  if (rigs === null || container === null) return;
+  const pool = rigs;
+  const scene = container;
+  if (pool === null || scene === null) return;
 
-  // RELEASES FIRST, THEN ACQUIRES. One broadcast can retire a system and
-  // introduce another of the same kind, and doing it the other way round makes
-  // the newcomer build a rig while the one it could have reused is still a frame
-  // away from the free list — a needless buffer and, for a storm, a needless
-  // shader recompile.
-  for (const [id, rig] of views) {
-    if (sampled.has(id)) continue;
-    container.remove(rig.root);
-    // Back to the pool, not disposed: the next system of this kind is minutes
-    // away and will want exactly this rig. See createWeatherRigs.
-    rigs.release(rig);
-    views.delete(id);
-  }
-
-  for (const [id, system] of sampled) {
-    if (views.has(id)) continue;
-    // A system's kind is fixed for its life, so the rig is chosen once here and
-    // never re-chosen — which is what lets rigs be pooled by kind.
-    const rig = rigs.acquire(system.kind);
-    container.add(rig.root);
-    views.set(id, rig);
-  }
+  reconcileById(sampled, views, {
+    // RELEASES FIRST, THEN ACQUIRES. One broadcast can retire a system and
+    // introduce another of the same kind, and doing it the other way round makes
+    // the newcomer build a rig while the one it could have reused is still a
+    // frame away from the free list — a needless buffer and, for a storm, a
+    // needless shader recompile.
+    order: 'release-first',
+    acquire: (_id, system) => {
+      // A system's kind is fixed for its life, so the rig is chosen once here
+      // and never re-chosen — which is what lets rigs be pooled by kind.
+      const rig = pool.acquire(system.kind);
+      scene.add(rig.root);
+      return rig;
+    },
+    release: (_id, rig) => {
+      scene.remove(rig.root);
+      // Back to the pool, not disposed: the next system of this kind is minutes
+      // away and will want exactly this rig. See createWeatherRigs.
+      pool.release(rig);
+    },
+  });
 }
 
 /**

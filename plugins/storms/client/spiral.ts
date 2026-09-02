@@ -49,6 +49,12 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { CYCLONE_DECK_HEIGHT_WORLD_UNITS, CYCLONE_EYE_RADIUS_FRACTION } from '../protocol.ts';
+import {
+  PUFF_ALPHA_DISCARD_GLSL,
+  PUFF_BILLBOARD_GLSL,
+  PUFF_INSTANCE_BASE_GLSL,
+  puffMaskGlsl,
+} from '../../../client/src/plugins/kit/puffDeck.ts';
 
 /**
  * Puffs in one cyclone's deck.
@@ -163,7 +169,7 @@ const SPIRAL_VERTEX_SHADER = /* glsl */ `
     vQuad = position.xy;
 
     // The instance matrix carries ONLY the eye's world position.
-    vec3 base = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    ${PUFF_INSTANCE_BASE_GLSL}
 
     // THE LOGARITHMIC SPIRAL. aAlong runs 0 at the eyewall to 1 at the rim;
     // the radius interpolates from the eye's edge to the storm's, and the angle
@@ -197,9 +203,7 @@ const SPIRAL_VERTEX_SHADER = /* glsl */ `
     // Puffs vary in size with their seed so the deck is not a grid of clones.
     float size = aRadius * ${PUFF_SIZE_RADIUS_FRACTION.toFixed(3)} *
       (0.7 + 0.6 * fract(aSeed * 5.7));
-    vec4 viewPosition = viewMatrix * vec4(world, 1.0);
-    viewPosition.xy += position.xy * size;
-    gl_Position = projectionMatrix * viewPosition;
+    ${PUFF_BILLBOARD_GLSL}
   }
 `;
 
@@ -214,9 +218,7 @@ const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
   void main() {
     // A soft round puff. The quad is authored two units across, so vQuad is the
     // offset from its centre in half-widths.
-    float radius = length(vQuad);
-    float puff = 1.0 - smoothstep(0.0, 1.0, radius);
-    if (puff <= 0.0) discard;
+    ${puffMaskGlsl('0.0')}
 
     // DARKEST AT THE EYEWALL, THINNING TO THE RIM. That is where the weather
     // actually is, and it is also what gives the deck a centre to read: a
@@ -245,7 +247,7 @@ const SPIRAL_FRAGMENT_SHADER = /* glsl */ `
     // what is behind it, and additive blending can only lighten (fire's
     // smoke.ts wrote this rule down; the volcano plume paid for relearning it).
     float alpha = puff * edge * vStrength * 0.55;
-    if (alpha <= 0.004) discard;
+    ${PUFF_ALPHA_DISCARD_GLSL}
     gl_FragColor = vec4(color, alpha);
   }
 `;
