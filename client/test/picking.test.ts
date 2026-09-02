@@ -82,11 +82,16 @@ describe('worldPointToCell', () => {
     });
   });
 
-  it('rejects points beyond the terrain extent', () => {
-    expect(worldPointToCell(at(-1), at(0), WORLD)).toBeNull();
-    expect(worldPointToCell(at(0), at(-1), WORLD)).toBeNull();
-    expect(worldPointToCell(at(WORLD), at(0), WORLD)).toBeNull();
-    expect(worldPointToCell(at(0), at(WORLD), WORLD)).toBeNull();
+  it('clamps points beyond the terrain extent to the edge cell (issue #281 A)', () => {
+    // A drag's plane is infinite; a pull past the border is a pull TO the
+    // border. Each axis clamps independently, so a corner overshoot lands on
+    // the corner cell and a one-axis overshoot keeps the other coordinate.
+    expect(worldPointToCell(at(-1), at(0), WORLD)).toEqual({ x: 0, y: 0 });
+    expect(worldPointToCell(at(0), at(-1), WORLD)).toEqual({ x: 0, y: 0 });
+    expect(worldPointToCell(at(WORLD), at(0), WORLD)).toEqual({ x: WORLD - 1, y: 0 });
+    expect(worldPointToCell(at(0), at(WORLD), WORLD)).toEqual({ x: 0, y: WORLD - 1 });
+    expect(worldPointToCell(at(WORLD * 10), at(-WORLD), WORLD)).toEqual({ x: WORLD - 1, y: 0 });
+    expect(worldPointToCell(at(7), at(WORLD + 50), WORLD)).toEqual({ x: 7, y: WORLD - 1 });
   });
 
   it('rejects non-finite coordinates rather than emitting NaN cells', () => {
