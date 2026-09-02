@@ -820,7 +820,9 @@ export const FLORA_GRASS_CHANGES_MESSAGE = 'grassChanges';
  * A LOOK, NOT A FACT ABOUT THE WORLD (issue #289, owner 2026-09-01: the tuft
  * roll decides "only what is drawn"). Every unoccupied green cell is meadow —
  * it is fuel, it burns, and it scars — whether or not this roll put a blade on
- * it (server/grass.ts's isMeadowCell, server/index.ts's floraFuelAt). So what
+ * it (server/grass.ts's isMeadowCell, server/index.ts's floraFuelAt); and once
+ * it HAS burned it is bare, not meadow, until it regrows
+ * (FLORA_SCORCH_REGROW_SECONDS, server/scorch.ts, issue #290). So what
  * this number buys is coverage on screen and the wire and GPU cost of it,
  * nothing more. The paragraph below is kept because the measurement was real,
  * but its conclusion is not: this constant no longer decides whether a meadow
