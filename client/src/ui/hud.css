@@ -696,12 +696,75 @@ button.world-header {
 }
 
 /* The rating is a footnote to the name — same muted treatment as the HUD's
-   other secondary readouts, with tabular figures so it does not jitter. */
+   other secondary readouts, with tabular figures so it does not jitter. Only
+   rendered when there is no name to carry the superscript below. */
 .world-header__rating {
   font-size: 11px;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
   color: var(--hud-muted);
+}
+
+/* The difficulty as a superscript on the name (owner move, 2026-09-01): small,
+   muted, tabular, and pulled up rather than relying on the UA's <sup> shift,
+   which also shrinks the line box and would jog the title row. */
+.world-header__difficulty {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 0;
+  vertical-align: baseline;
+  position: relative;
+  top: -0.55em;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-muted);
+}
+
+/* The almanac clock (AlmanacClock.tsx). The SVG is drawn in its own 220×48
+   units and scales down with the banner on narrow screens (the header caps
+   its width in the mobile rules above), never up: at its drawn size the text
+   in it is 6.5–7 units, the HUD's smallest legible type. */
+.world-header__clock {
+  display: block;
+  width: 220px;
+  max-width: 100%;
+  margin-top: 2px;
+}
+
+.almanac {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* Text inside the strip. Sizes are in the strip's own units so they scale with
+   it. Tabular figures on the time so 1:01 and 11:11 are the same width. */
+.almanac__weekday,
+.almanac__day {
+  font-size: 6.5px;
+  letter-spacing: 0.08em;
+  font-family: inherit;
+}
+
+.almanac__weekday {
+  fill: var(--hud-text);
+  opacity: 0.8;
+}
+
+.almanac__day {
+  fill: var(--hud-muted);
+}
+
+.almanac__time {
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-anchor: middle;
+  fill: var(--hud-text);
 }
 
 /* Invite plugin: the share URL must survive narrow panels intact. */

@@ -21,8 +21,8 @@ import {
   parseClockPayload,
 } from '../protocol.ts';
 import { DayNightInterpolator } from './interpolation.ts';
-import { formatWorldClock } from './formatTime.ts';
-import { setWorldTimeText } from '../../../client/src/plugins/hudPanels.ts';
+import { worldClockReading } from './formatTime.ts';
+import { setWorldClock } from '../../../client/src/plugins/hudPanels.ts';
 import { skyStateAtPhase } from './sky.ts';
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
@@ -142,13 +142,13 @@ export const clientPlugin: TerraceClientPlugin = {
       interpolator.advance(dt);
 
       // THE WORLD CLOCK READOUT (owner ask, 2026-08-21): the same interpolated
-      // phase that drives the sky also feeds the header's time text, so the
+      // phase that drives the sky also feeds the header's clock, so the
       // clock and the sky can never disagree. Written every frame but as a
-      // minute-granular string — Solid's signal dedupes equal values, so the
+      // minute-granular reading — the signal dedupes equal readings, so the
       // DOM updates once per in-world minute, not per frame. Cleared on
       // dispose so a plugin unload leaves no frozen lie on the header.
-      setWorldTimeText(
-        formatWorldClock(interpolator.samplePhase(), calendarDay, calendarGenesisDay),
+      setWorldClock(
+        worldClockReading(interpolator.samplePhase(), calendarDay, calendarGenesisDay),
       );
 
       const reduced = reducedMotion?.matches() ?? false;
@@ -169,7 +169,7 @@ export const clientPlugin: TerraceClientPlugin = {
     hasPushedInitialSky = false;
     calendarDay = null;
     calendarGenesisDay = null;
-    setWorldTimeText(null);
+    setWorldClock(null);
 
     reducedMotion?.stop();
     reducedMotion = null;
