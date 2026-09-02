@@ -45,6 +45,7 @@ const SEEDED_CREATURE: WildlifeEntity = {
   species: 'grazer',
   schoolId: 1,
   size: 'medium',
+  idle: false,
   x: 12,
   y: 12,
   heading: 0,
