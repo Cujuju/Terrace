@@ -192,7 +192,9 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
+  Plane,
   SRGBColorSpace,
+  Vector3,
   type Scene,
 } from 'three';
 import {
@@ -913,7 +915,69 @@ function brushGeometry(
  */
 export const BRUSH_PREVIEW_DRAW_OBJECTS = 4;
 
-export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPreview {
+/**
+ * Half a cell, in cells: how far a cell's outer EDGE lies from its centre. The
+ * world's editable ground is cells 0..size-1, so its true extent in cell
+ * coordinates is [-½, size-½] — the same half-cell the picker grants
+ * (terrain/picking.ts worldPointToCell) and the vertex grid's "KNOWN, ACCEPTED"
+ * note measures the drawn rim against.
+ */
+const CELL_EDGE_FROM_CENTRE_CELLS = 0.5;
+
+/**
+ * CLIPPED AT THE WORLD'S EDGE (issue #281 B). The ring, its skirt and the cell
+ * grid are one geometry per (radius, tool, edge, dir), position-independent by
+ * design, so a footprint centred near the border used to be drawn whole —
+ * promising cells past the edge that the brush cannot edit (the shared math
+ * drops them, and prices the stroke as if it had not). Four world-space
+ * clipping planes on the overlay materials cut every outline at the editable
+ * extent instead. Static per world size, so there is no per-hover work and no
+ * per-hover allocation: `syncTo` only rewrites four constants, and only when
+ * the size it last saw changes. Requires `renderer.localClippingEnabled`
+ * (render/scene.ts sets it); nothing else in the client clips.
+ *
+ * Plane convention (three.js): a point is KEPT where normal·p + constant ≥ 0.
+ * So "keep x ≥ min" is normal +X with constant −min, and "keep x ≤ max" is
+ * normal −X with constant +max.
+ */
+interface WorldEdgeClip {
+  readonly planes: readonly Plane[];
+  syncTo(worldSizeCells: number): void;
+}
+
+function createWorldEdgeClip(): WorldEdgeClip {
+  const west = new Plane(new Vector3(1, 0, 0), 0);
+  const east = new Plane(new Vector3(-1, 0, 0), 0);
+  const north = new Plane(new Vector3(0, 0, 1), 0);
+  const south = new Plane(new Vector3(0, 0, -1), 0);
+  let syncedSize = -1;
+  return {
+    planes: [west, east, north, south],
+    syncTo(worldSizeCells: number): void {
+      if (worldSizeCells === syncedSize) return;
+      syncedSize = worldSizeCells;
+      const min = -CELL_EDGE_FROM_CENTRE_CELLS * CELL_WORLD_SIZE;
+      const max = (worldSizeCells - 1 + CELL_EDGE_FROM_CENTRE_CELLS) * CELL_WORLD_SIZE;
+      west.constant = -min;
+      east.constant = max;
+      north.constant = -min;
+      south.constant = max;
+    },
+  };
+}
+
+/**
+ * `worldSize` is read live (cells to a side; 0 before the first snapshot),
+ * because the world can be switched under a running client and the clip above
+ * must follow it — the same accessor shape main.tsx hands every other module
+ * that must not hold a stale size.
+ */
+export function createBrushPreview(
+  scene: Scene,
+  canvas: CursorSurface,
+  worldSize: () => number,
+): BrushPreview {
+  const edgeClip = createWorldEdgeClip();
   /**
    * Every (radius, tool, edge, direction) the PICKER can select, built once at
    * startup — see the module header for the cost, for why it is eager rather
@@ -978,6 +1042,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     // Overlay semantics — see the module header.
     depthTest: false,
     depthWrite: false,
+    clippingPlanes: [...edgeClip.planes],
   });
 
   // LineLoop, not LineSegments: the outline is one closed contour now, so the
@@ -998,6 +1063,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     opacity: SKIRT_OPACITY,
     side: DoubleSide,
     depthWrite: false,
+    clippingPlanes: [...edgeClip.planes],
   });
   const skirt = new Mesh(initial.skirt, skirtMaterial);
   // Below the two overlays: it is part of the world's depth-sorted pass, and
@@ -1017,6 +1083,7 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
     opacity: CELL_GRID_OPACITY,
     depthTest: false,
     depthWrite: false,
+    clippingPlanes: [...edgeClip.planes],
   });
   const cellGrid = new LineSegments(initial.cellGrid, cellGridMaterial);
   // Under the ring and the crosshair, over the skirt.
@@ -1127,6 +1194,9 @@ export function createBrushPreview(scene: Scene, canvas: CursorSurface): BrushPr
         show(false);
         return;
       }
+      // Before anything is shown, so no frame can draw an outline clipped to
+      // a previous world's extent. A no-op whenever the size is unchanged.
+      edgeClip.syncTo(worldSize());
       // THE POINT THE RAY MET THE TERRAIN. Optional on the hover, because the
       // cell centre at the cap IS that point on every horizontal face — see
       // BrushHover.hitX. Read once here so no branch below can forget the

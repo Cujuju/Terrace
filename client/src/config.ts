@@ -257,11 +257,8 @@ export const WATER_SURFACE_LIFT = 1 / 32;
  *
  * Chosen at 120 ms — deliberately just above the server's 100 ms tick period
  * (TICK_HZ 10, design doc §3.2) — so a held brush can never queue more than
- * one intent per tick. That bounds both the wire rate and the size of the
- * per-tick diff the server has to broadcast, which is exactly the budget the
- * design doc's server performance target asks for. Because it is the FLOOR,
- * no ramped interval is ever shorter than it, so that bound holds for the
- * whole ramp — which is also what keeps terrain/prediction.ts's in-flight cap
+ * one intent per tick. Because it is the FLOOR, no ramped interval is ever
+ * shorter than it, which is what keeps terrain/prediction.ts's in-flight cap
  * (derived from this constant) a true upper bound rather than an estimate.
  *
  * PROVISIONAL / feel-tuning: at one BAND_HEIGHT per intent a fully ramped hold

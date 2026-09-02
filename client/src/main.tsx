@@ -230,7 +230,7 @@ const sculptInput = createSculptInput({
 // the meshes; radius, tool and edge are all read live so the outline reshapes
 // the moment the
 // HUD changes it.
-const brushPreview = createBrushPreview(viewport.scene, canvas);
+const brushPreview = createBrushPreview(viewport.scene, canvas, () => world.worldSize());
 // The pick-debug overlay reads the SAME pick object as the outline, so the two
 // can never disagree about what is under the pointer. See its module header for
 // why it draws one cell and nothing richer.

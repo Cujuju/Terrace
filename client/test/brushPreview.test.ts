@@ -8,7 +8,7 @@
 // is positioned at the hovered cell's centre.
 
 import { describe, expect, it } from 'vitest';
-import { Scene, type BufferAttribute, LineLoop, LineSegments, type Object3D } from 'three';
+import { Scene, type BufferAttribute, LineLoop, LineSegments, Mesh, type Object3D, type Material } from 'three';
 import {
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
@@ -153,6 +153,70 @@ function brush(radius: number): BrushSelection {
   return { radius, tool: 'stamp', profile: 'hard', dir: 1 };
 }
 
+/** World edge for the tests below: any size works, the clip must follow it. */
+const TEST_WORLD_SIZE_CELLS = 64;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLIPPED AT THE WORLD'S EDGE (issue #281 B). The outline geometry is one per
+// (radius, tool, edge, dir) and position-independent, so at the border it would
+// promise cells the brush cannot edit. The overlay materials carry four
+// world-space clipping planes at the editable extent, [-½, size-½] cells.
+describe('world-edge clipping', () => {
+  const hover = { x: 0, y: 0, surfaceY: 0, hitRiser: false, grabbable: false };
+  const stamp = { radius: BRUSH_RADII[0]!, tool: 'stamp', profile: 'hard', dir: 1 } as const;
+
+  /** Every overlay drawn for the footprint: ring, skirt, cell grid. */
+  function footprintMaterials(scene: Scene): Material[] {
+    return scene.children
+      .filter((c): c is LineLoop | LineSegments | Mesh => c instanceof LineLoop || c instanceof LineSegments || c instanceof Mesh)
+      .map((c) => c.material as Material);
+  }
+
+  /** The kept half-space of a plane along an axis, as the world coordinate where it cuts. */
+  function cutAt(material: Material, nx: number, nz: number): number {
+    const plane = material.clippingPlanes!.find((p) => p.normal.x === nx && p.normal.z === nz);
+    expect(plane).toBeDefined();
+    // normal·p + constant = 0 on the plane; with a unit axis normal the cut is at -constant/n.
+    return -plane!.constant / (nx !== 0 ? nx : nz);
+  }
+
+  it('cuts the ring, skirt and cell grid at the editable extent, and follows a world switch', () => {
+    let size = TEST_WORLD_SIZE_CELLS;
+    const scene = new Scene();
+    const preview = createBrushPreview(scene, fakeCanvas(), () => size);
+    preview.update(hover, stamp);
+
+    const clipped = footprintMaterials(scene).filter((m) => m.clippingPlanes !== null && m.clippingPlanes.length > 0);
+    expect(clipped).toHaveLength(3); // ring, skirt, cell grid — the crosshair is never clipped
+    for (const material of clipped) {
+      expect(material.clippingPlanes).toHaveLength(4);
+      expect(cutAt(material, 1, 0)).toBe(-0.5 * CELL_WORLD_SIZE);
+      expect(cutAt(material, -1, 0)).toBe((size - 0.5) * CELL_WORLD_SIZE);
+      expect(cutAt(material, 0, 1)).toBe(-0.5 * CELL_WORLD_SIZE);
+      expect(cutAt(material, 0, -1)).toBe((size - 0.5) * CELL_WORLD_SIZE);
+    }
+
+    size = TEST_WORLD_SIZE_CELLS * 2;
+    preview.update(hover, stamp);
+    for (const material of clipped) {
+      expect(cutAt(material, -1, 0)).toBe((size - 0.5) * CELL_WORLD_SIZE);
+      expect(cutAt(material, 0, -1)).toBe((size - 0.5) * CELL_WORLD_SIZE);
+    }
+    preview.dispose();
+  });
+
+  it('leaves the outline geometry itself position-independent — clipping is the material\'s job', () => {
+    const scene = new Scene();
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
+    const line = outlineOf(scene);
+    preview.update(hover, stamp);
+    const centre = outlinePoints(line);
+    preview.update({ ...hover, x: TEST_WORLD_SIZE_CELLS - 1, y: TEST_WORLD_SIZE_CELLS - 1 }, stamp);
+    expect(outlinePoints(line)).toEqual(centre);
+    preview.dispose();
+  });
+});
+
 describe('createBrushPreview', () => {
   it('encloses exactly the cells the brush edits, and no others', () => {
     // The terrain's honesty invariant, applied to the preview: a contour never
@@ -161,7 +225,7 @@ describe('createBrushPreview', () => {
     // what makes this a test of the PROMISE ("these cells move") instead of a
     // snapshot of whichever smoothing pass happens to be configured.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas());
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -205,7 +269,7 @@ describe('createBrushPreview', () => {
     // outlined against 749 edited. This loop fails on every soft entry and on
     // smooth+hard if the direction stops reaching the simulation.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas());
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
     const line = outlineOf(scene);
 
     for (const radius of [1, 2, 4, 8]) {
@@ -246,7 +310,7 @@ describe('createBrushPreview', () => {
     // brushPreview.ts, Chaikin pushed 24 of radius 8's 96 vertices and 48 of
     // radius 16's 160 over concave steps, overhanging by 0.1875 of a cell.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas());
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -278,7 +342,7 @@ describe('createBrushPreview', () => {
     // that a segment count alone would not catch — a grid drawn from all four
     // edges of every cell looks identical and is twice the geometry.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas());
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
     const grids = scene.children.filter(
       (c): c is LineSegments => c instanceof LineSegments,
     );
@@ -312,7 +376,7 @@ describe('createBrushPreview', () => {
     // the moment the drawn shape stops agreeing with the cells it stands for,
     // whatever geometry is used to draw it.
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas());
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -333,7 +397,7 @@ describe('createBrushPreview', () => {
 
   it('places the outline at the hovered cell centre', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas());
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS);
     const line = outlineOf(scene);
 
     preview.update({ x: 7, y: 11, surfaceY: 3, hitRiser: false, grabbable: false }, brush(MIN_BRUSH_RADIUS));
@@ -347,7 +411,7 @@ describe('createBrushPreview', () => {
   it('hides the pointer exactly while an outline is drawn', () => {
     const scene = new Scene();
     const canvas = fakeCanvas();
-    const preview = createBrushPreview(scene, canvas);
+    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS);
 
     // Nothing hovered yet: the player still has their arrow.
     expect(canvas.on).toBe(false);
@@ -375,7 +439,7 @@ describe('createBrushPreview', () => {
   it('writes the cursor class only when it changes', () => {
     const scene = new Scene();
     const canvas = fakeCanvas();
-    const preview = createBrushPreview(scene, canvas);
+    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS);
 
     // `update` runs every frame; a steady hover must not touch the DOM.
     for (let frame = 0; frame < 60; frame++) {
