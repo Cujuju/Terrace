@@ -98,17 +98,24 @@ nothing is required to boot a world.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `WORLD_SIZE` | `512` | Cells per world edge. Must be a multiple of 16 (the chunk size), max 4096. `128` is Populous-proven playable and comfortable on a small VPS; `512` wants a mid-size box. This is the size **new** worlds are created at; an existing world keeps the size it was made with, and worlds of different sizes coexist happily. |
+| `WORLD_SIZE` | `512` under Compose, `2048` otherwise | Cells per world edge. **Cells are not world units**: four cells make one world unit, so `512` cells is the 128-unit Populous-proven minimum that fits a small VPS and `2048` cells (512 units) is the server's own default. Must be a multiple of 16 (the chunk size), at least 448 and at most 4096. This is the size **new** worlds are created at; an existing world keeps the size it was made with, and worlds of different sizes coexist happily. |
+| `WORLD_DIFFICULTY` | `50` | How hard this world is meant to be, 1 (warm) to 100 (punishing). Core stores it and attaches no mechanics; plugins read it (today: mana's default regen rate). Out-of-range values clamp with a warning. |
 | `PORT` | `2567` | Port the world server listens on. Compose maps the same number on the host, so host and container never disagree. Change it and you must update `PUBLIC_WS_URL` too. |
 | `WORLDS_DIR` | `/data/worlds` | Where your worlds live — **one SQLite file per world**, plus `.trash/` for archived ones and `.active` naming the one to load at boot. Must be under the mounted volume or it is lost on the next rebuild. |
 | `DB_PATH` | `/data/world.db` | The **legacy** single-world database, from before worlds were files. Copied into `WORLDS_DIR` on the next boot — copied, never moved — and then ignored forever. |
-| `WORLD_ADMIN_KEY` | `terrace` *(public!)* | Unlocks the in-game **Worlds** panel: create, load, rename, duplicate, archive. Separate from `ROLLBACK_KEY` because it has a bigger blast radius. Set your own, or `WORLD_ADMIN_KEY=` to turn it off. |
+| `ROLLBACK_KEY` | `terrace` *(public!)* | Unlocks the in-game **Restore points** panel and the offline `pnpm --dir server rollback` script. Unset means the built-in key, which is in the source, so the server warns at every boot. Set your own (8+ characters), or `ROLLBACK_KEY=` to turn rollback off. |
+| `WORLD_ADMIN_KEY` | `terrace` *(public!)* | Unlocks the in-game **Worlds** panel: create, load, rename, duplicate, archive, plugin enablement and plugin actions. Separate from `ROLLBACK_KEY` because it has a bigger blast radius. Same rules: 8+ characters, or `WORLD_ADMIN_KEY=` to turn it off. |
 | `WORLD_SWITCH_COUNTDOWN_S` | `10` | Seconds a world switch is announced for when somebody other than the operator is connected. Skipped when the operator is alone; `0` makes every switch immediate. |
 | `TICK_HZ` | `10` | Fixed simulation tick rate, 1–60. Rendering interpolates, so raising this mostly buys CPU load. |
 | `SNAPSHOT_INTERVAL_S` | `60` | How often a changed world is written to SQLite, 1–3600. An idle world writes nothing at all. |
+| `SNAPSHOT_RETENTION` | `10` | How many restore points a world keeps, 1–100. With the cadence above this is your undo depth: 10 × 60 s is ten minutes of history. Pinned points do not count. |
 | `PLUGINS_DIR` | `<repo>/plugins` | Directory scanned for plugins at boot. Inside the image that is `/app/plugins`; leave it alone unless you are mounting plugins from elsewhere. |
 | `PUBLIC_WS_URL` | `ws://localhost:2567` | *Compose only.* The WebSocket address the browser dials, **baked into the client bundle at build time** — changing it requires `docker compose up --build`. |
 | `CLIENT_PORT` | `8080` | *Compose only.* Host port that serves the client page. |
+| `TERRACE_VERSION` | *(unset)* | *Compose only.* Build stamp baked into the server image, e.g. `TERRACE_VERSION=$(git rev-parse --short HEAD) docker compose up --build`. Open pages compare it across a restart to decide whether to reload for a new client bundle. Unset, every restart looks like a new build and pages reload once. |
+
+Plugins read their own variables from the same `.env` (`MANA_REGEN_PER_S`, for one);
+`.env.example` documents each with its default.
 
 Invalid values fail fast at boot with a message naming the variable, rather than
 corrupting a world hours later.
@@ -156,7 +163,9 @@ file and cannot reach another's.
 and writes one final snapshot on clean shutdown. So `docker compose stop` /
 `Ctrl-C` never loses work, and a crash costs at most one interval. **Pin** a
 restore point to exempt it from retention entirely — pinned points survive any
-amount of later play, and do not count against your undo depth.
+amount of later play, and do not count against your undo depth. Rolling back
+is done from the in-game **Restore points** panel (`ROLLBACK_KEY`) or offline
+with `pnpm --dir server rollback`.
 
 **Managing worlds** (in-game, with `WORLD_ADMIN_KEY`): the Worlds panel lists
 every world with its size, restore points, disk use and when you last played it.
@@ -305,6 +314,7 @@ authoritative contract — read them before relying on any subtlety below):
 | `messages` | `{ [type]: (world, player, payload) => void }` — client→server handlers, received on the wire as `hello:<type>`. Validate `payload`; it came from a browser. |
 | `persistence` | `{ version, save(), load(data, fromVersion) }` — your slice of the world snapshot (below). |
 | `settings` | Per-world operator settings this plugin offers (below). |
+| `actions` / `onAction(world, key, site)` | On-demand operator actions (`{ key, label, description }`) rendered as buttons in the world panel behind the admin key — "erupt the nearest volcano". `onAction` runs between ticks at the clicked cell and returns `{ ok, detail }`; the one-line `detail` is shown to the operator verbatim. |
 
 The `world: WorldApi` you are handed is narrow on purpose:
 
@@ -406,8 +416,9 @@ A plugin's client half lives at `plugins/<name>/client/index.ts`, exports a
 the client bundle — add one import line to `client/src/plugins/registry.ts`. Its
 `attach(ctx)` receives a `ClientPluginCtx` (`client/src/plugins/types.ts`): a private
 Three.js `layer`, `onMessage` / `send` for your namespaced messages, `onFrame`,
-`registerHudPanel` (Solid components), `registerTool`, terrain picking, and
-`onLocalIntent` for a client-side gate that mirrors your server `onIntent`. Client
+`registerHudPanel` (Solid components), `registerTool`, terrain picking,
+`onLocalIntent` for a client-side gate that mirrors your server `onIntent`, plus
+mover poses and sky-rig hooks — the file's doc comments are the contract. Client
 halves need a `package.json` with `solid-js` (see `plugins/mana`).
 
 Because the client half is compiled in, **updating a plugin's client code always needs
@@ -538,13 +549,23 @@ client/     Vite + SolidJS + Three.js. Solid owns the HUD; a plain imperative
 server/     Colyseus room, tick loop, intent pipeline, unlock mask, SQLite
             snapshots, plugin host. One process = one world.
 plugins/    auto-discovered at boot, alphabetical directory order:
+              boats       a coastal settlement's fleet, which fights the kraken
+              chronicle   the world's history, written from other plugins' events
+              daynight    a slow server-authoritative day/night clock and sky
+              fire        cells that burn, consuming fuel other plugins register
               flora       trees grow in on green ground left undisturbed
               invite      hands joining players a shareable URL for their friends
               mana        a regenerating resource pool that vetoes/charges sculpts
               monsters    a singleton habitat creature that guards its territory
+              mudslides   saturated steep ground gives way and flows downhill
+              pilgrims    settlers who walk from the temple and found homes
+              populous    the Bullfrog growth rule, selectable in structures (server-only)
               relics      collectible skill gems (passive and active) players find
               reveal      per-player progressive territory unlock
+              storms      tornadoes, hurricanes, typhoons and cyclones
               structures  settlements as Conway's Game of Life over buildable land
+              temples     the one player-placed building
+              volcanoes   cones, eruptions and lava flows
               weather     ambient rain/storm/snow/fog — reads terrain, never writes it
               wildlife    ambient/reactive fauna population sim
 ```
