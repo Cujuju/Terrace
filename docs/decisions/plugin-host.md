@@ -103,3 +103,45 @@ the structures tick reads `worldSize` once per scanned cell before any
 early-out: 4.1% of server busy time in the 2026-08-29 profile. `simMillis`
 moves every tick and `genesisMillis` is stamped after construction, so both
 stay getters.
+
+## Decisions made 2026-09-01 (a library tier under the isolation rule, #283)
+
+**Plugins never import each other; they may import `@terrace/shared` and
+core's plugin kit.** The isolation rule (chronicle.md, "never by import;
+cross-plugin agreement travels as documented copies") exists so a plugin
+folder can be deleted, disabled for a world, or reloaded without another
+plugin noticing at module-resolution time. A helper library is not a plugin:
+it has no name, no lifecycle, cannot be disabled, and is not re-imported by a
+plugin reload (reload-hooks re-import only inside the plugin's own directory),
+so it behaves exactly as core and `@terrace/shared` already do. Issue #180
+(`roundBroadcastPosition` into `shared/wire.ts`) was the first instance;
+this makes it the rule rather than the exception.
+
+**What is shared, and where.** Split by dependency, not by plugin:
+- `@terrace/shared` — dependency-free, erasable TS: random-number
+  generators, wire rounding, payload parse helpers, world-scale constants.
+- `server/src/plugins/kit/` — server mechanics that need core's plugin types:
+  the sibling-bridge factory, dev force-spawn site search, versioned slice
+  helpers, the shared sim engines.
+- `client/src/plugins/kit/` — client mechanics that need three or the client
+  plugin contract: pose interpolator, reduced-motion watcher, instanced puff
+  deck, disc sheet, id-keyed view reconcile.
+Kit code names no plugin. A future npm-plugin step (§3.5) publishes the two
+kit directories plus the plugin types as `@terrace/plugin-kit`; that package
+was rejected NOW because plugins already reach core by relative path on both
+halves and the wiring would buy no behaviour.
+
+**What stays a documented copy.** The CONTRACT between two plugins: the
+duck-typed interface a bridge checks for, an event payload's shape, a
+derivation both sides must agree on (the settler race hash). Those are what
+must survive one side being absent or older, and a shared import would turn
+"the sibling is missing" back into a resolution failure. Mechanism is shared;
+agreement is copied.
+
+**Owner decisions of the same day:** weather and storms decompose into one
+plugin per kind (`rain`, `thunderstorm`, `snow`, `fog`, `tornado`, `cyclone`)
+over the kit engines; `weather` stays as the hub that owns the one wind and
+the inward registry kind plugins join, so fire's and mudslides' bridges do
+not change. Snow that cannot be sited must still be able to become rain
+across the split (#285). Kit contract tests are written BEFORE the code they
+cover, and kept short.
