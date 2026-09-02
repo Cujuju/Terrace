@@ -744,10 +744,10 @@ button.world-header {
   overflow: hidden;
 }
 
-/* The one frosted chrome for anything that floats over the painting — the
-   title band and the time tag wear the same glass, by rule (owner,
-   2026-09-01): the sky shows through blurred, so type stays legible over noon
-   without the SVG scrim having to darken the whole band. */
+/* The frosted chrome for anything that floats over the painting (today, the
+   title band): the sky shows through blurred, so type stays legible over
+   noon without the SVG scrim having to darken the whole band. The time tag
+   went bare on the owner's call, 2026-09-01. */
 .hud-frost {
   background: var(--hud-bg);
   backdrop-filter: blur(6px);
@@ -819,16 +819,11 @@ button.world-header {
 .almanac__time {
   left: 50%;
   transform: translateX(-50%);
-  padding: 0 5px;
-  border-radius: 2px;
   font-size: 8.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--hud-text);
-  /* Blur only, no slate tint (owner, 2026-09-01): the ground under the tag is
-     already dark, so the tint added a box without adding legibility. */
-  background: none;
 }
 
 /* Invite plugin: the share URL must survive narrow panels intact. */
