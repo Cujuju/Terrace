@@ -740,11 +740,21 @@ button.world-header {
 
 .world-header--almanac .world-header__title-row {
   position: absolute;
-  top: 6px;
+  top: 3px;
   left: 0;
   right: 0;
-  padding: 0 12px;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  padding: 2px 10px;
   box-sizing: border-box;
+  /* A frosted pill under the name and icon (owner ask, 2026-09-01): the sky
+     painting shows through blurred, so the title stays legible over noon
+     without the SVG scrim having to darken the whole band. */
+  border-radius: 999px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 /* Inside the painted card the name is bounded by the painting's width, not
@@ -768,12 +778,21 @@ button.world-header {
 }
 
 /* Text inside the strip. Sizes are in the strip's own units so they scale with
-   it. Tabular figures on the time so 1:01 and 11:11 are the same width. */
+   it. Tabular figures on the time so 1:01 and 11:11 are the same width. The
+   day and time are a step larger than the weekday (owner ask, 2026-09-01):
+   they are what the player reads, the weekday is a caption. */
 .almanac__weekday,
 .almanac__day {
-  font-size: 6.5px;
   letter-spacing: 0.08em;
   font-family: inherit;
+}
+
+.almanac__weekday {
+  font-size: 6.5px;
+}
+
+.almanac__day {
+  font-size: 8px;
 }
 
 .almanac__weekday {
@@ -786,7 +805,7 @@ button.world-header {
 }
 
 .almanac__time {
-  font-size: 7px;
+  font-size: 8.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   font-family: inherit;
